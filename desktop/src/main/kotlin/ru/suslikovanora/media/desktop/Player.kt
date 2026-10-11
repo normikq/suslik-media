@@ -94,6 +94,44 @@ object Vlc {
     val available: Boolean by lazy { runCatching { NativeDiscovery().discover() }.getOrDefault(false) }
 }
 
+/**
+ * One VLC engine for the whole app run. Creating it scans every VLC plugin (hundreds of ms, seconds on a cold start),
+ * so it is built once at app start (warm-up) and reused by every player. Only a change of night mode / subtitle size
+ * (options VLC reads at start) builds a new one; the old one stays alive, a player may still be releasing on it.
+ */
+object VlcFactory {
+    private val built = HashMap<String, MediaPlayerFactory>()
+
+    @Synchronized fun get(night: Boolean, subScale: Int): MediaPlayerFactory =
+        built.getOrPut("$night|$subScale") { build(night, subScale) }
+
+    /** App start: build the engine with the current player settings in the background. */
+    fun warm() {
+        val ui = Store("player_ui")
+        get(ui.get("night") == "1", ui.get("subScale")?.toIntOrNull()?.coerceIn(50, 300) ?: 100)
+    }
+
+    private fun build(night: Boolean, subScale: Int): MediaPlayerFactory {
+        val base = listOf(
+            "--avcodec-hw=any", "--no-video-title-show",
+            // WASAPI first: it pauses and resumes instantly. When it failed, VLC silently fell back to an output with a
+            // long buffer — sound kept going after pause and came back late (or not at all) after resume.
+            "--aout=mmdevice,directsound",
+            // Decode AC3/DTS to PCM instead of trying passthrough (the failed passthrough attempt is what broke WASAPI).
+            "--mmdevice-passthrough=0", "--no-spdif"
+        )
+        val extra = ArrayList<String>()
+        // Night mode: a dynamic range compressor — quiet dialogue up, explosions down.
+        if (night) extra += listOf(
+            "--audio-filter=compressor", "--compressor-rms-peak=0.2", "--compressor-attack=25", "--compressor-release=100",
+            "--compressor-threshold=-24", "--compressor-ratio=6", "--compressor-knee=4.5", "--compressor-makeup-gain=10"
+        )
+        if (subScale != 100) extra += "--sub-text-scale=$subScale"
+        // An option this VLC does not know would stop it from starting: then start without the extras.
+        return runCatching { MediaPlayerFactory(*(base + extra).toTypedArray()) }.getOrElse { MediaPlayerFactory(*base.toTypedArray()) }
+    }
+}
+
 private data class Entry(val title: String, val url: String)
 
 private fun parseM3u(text: String): List<Entry> {
@@ -225,28 +263,15 @@ fun PlayerView(
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val vlcExecutor = remember { java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "vlc-control").apply { isDaemon = true } } }
     val vlcThread = remember { vlcExecutor.asCoroutineDispatcher() }
+    /**
+     * Every call into VLC goes through here, onto the player's own thread. A libVLC call can block while VLC is busy
+     * with the network (opening, seeking, a slow mirror): made from the window's thread, that froze the whole app.
+     */
+    fun vlc(block: () -> Unit) { runCatching { vlcExecutor.execute { runCatching(block) } } }
     // Settings VLC only reads when it starts (applied by re-creating the player, see restartPlayer()).
     val nightMode = remember { ui.get("night") == "1" }
     val subScale = remember { ui.get("subScale")?.toIntOrNull()?.coerceIn(50, 300) ?: 100 }
-    val factory = remember {
-        val base = listOf(
-            "--avcodec-hw=any", "--no-video-title-show",
-            // WASAPI first: it pauses and resumes instantly. When it failed, VLC silently fell back to an output with a
-            // long buffer — sound kept going after pause and came back late (or not at all) after resume.
-            "--aout=mmdevice,directsound",
-            // Decode AC3/DTS to PCM instead of trying passthrough (the failed passthrough attempt is what broke WASAPI).
-            "--mmdevice-passthrough=0", "--no-spdif"
-        )
-        val extra = ArrayList<String>()
-        // Night mode: a dynamic range compressor — quiet dialogue up, explosions down.
-        if (nightMode) extra += listOf(
-            "--audio-filter=compressor", "--compressor-rms-peak=0.2", "--compressor-attack=25", "--compressor-release=100",
-            "--compressor-threshold=-24", "--compressor-ratio=6", "--compressor-knee=4.5", "--compressor-makeup-gain=10"
-        )
-        if (subScale != 100) extra += "--sub-text-scale=$subScale"
-        // An option this VLC does not know would stop it from starting: then start without the extras.
-        runCatching { MediaPlayerFactory(*(base + extra).toTypedArray()) }.getOrElse { MediaPlayerFactory(*base.toTypedArray()) }
-    }
+    val factory = remember { VlcFactory.get(nightMode, subScale) }
     val canvas = remember { java.awt.Canvas().apply { background = java.awt.Color.BLACK; isFocusable = false } }
     val mp = remember {
         factory.mediaPlayers().newEmbeddedMediaPlayer().also {
@@ -285,12 +310,15 @@ fun PlayerView(
     var picker by remember { mutableStateOf<String?>(null) } // "audio" / "spu" while the track list is open
     var lastFrame by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) } // still for the exit animation
     var pickerItems by remember { mutableStateOf(emptyList<Pair<Int, String>>()) }
+    var pickerCurrent by remember { mutableStateOf(-2) } // selected track id in the open list
+    var prefsUntil by remember { mutableStateOf(0L) }     // remembered tracks may still be applied until then (new tracks keep arriving)
     var rate by remember { mutableStateOf(ui.get("rate")?.toFloatOrNull()?.coerceIn(0.25f, 4f) ?: 1f) }
     var subDelay by remember { mutableStateOf(0L) }       // ms, Shift+[ / Shift+]
     var chapters by remember { mutableStateOf(emptyList<Pair<Long, String>>()) } // (start ms, name)
     var infoOpen by remember { mutableStateOf(false) }
     var infoText by remember { mutableStateOf("") }
     var mini by remember { mutableStateOf(false) }
+    var lastSeekAt by remember { mutableStateOf(0L) } // a seek in flight: VLC's clock still reports the old place
     var hoverAt by remember { mutableStateOf<Long?>(null) } // time under the cursor on the seek bar
     val beforeMini = remember { arrayOfNulls<Any>(4) }    // size, position, placement, onTop before mini mode
 
@@ -335,7 +363,10 @@ fun PlayerView(
         audioDelay = ui.get("adelay:${seriesKey()}")?.toLongOrNull() ?: 0L
         subDelay = ui.get("sdelay:${seriesKey()}")?.toLongOrNull() ?: 0L
         pauseMuted = false; pausedAt = 0L; resumeFrom = -1L // a new stream never inherits the pause mute
-        val opts = ArrayList(listOf(":http-reconnect", ":input-fast-seek", ":network-caching=6000"))
+        val opts = ArrayList(listOf(":http-reconnect", ":network-caching=6000"))
+        // Fast seek jumps to the nearest keyframe of the VIDEO; an external voice-over is a separate input that lands
+        // on the exact moment instead — the two drifted apart after every seek. With a voice-over: exact seeks.
+        if (extras.first.isEmpty()) opts += ":input-fast-seek"
         if (startAt > 0) opts += ":start-time=${startAt / 1000.0}"
         prefLanguage("audio")?.let { opts += ":audio-language=$it" }
         prefLanguage("spu")?.let { opts += ":sub-language=$it" }
@@ -362,13 +393,15 @@ fun PlayerView(
      * Re-seeking to the current moment flushes that read-ahead, so the chosen track is heard almost at once.
      */
     fun applyTrackNow() {
-        val t = mp.status().time()
-        if (t > 0) javax.swing.Timer(120) { runCatching { mp.controls().setTime(mp.status().time().coerceAtLeast(0L)) } }.apply { isRepeats = false; start() }
+        scope.launch(vlcThread) {
+            delay(120)
+            runCatching { val t = mp.status().time(); if (t > 0) mp.controls().setTime(t) }
+        }
     }
     fun applyPrefs() {
         val audio = ui.get("audio:${seriesKey()}") ?: ui.get("audio:*")
         val spu = ui.get("spu:${seriesKey()}") ?: ui.get("spu:*")
-        runCatching {
+        vlc {
             // Switch only if VLC did not already pick it (every switch restarts the audio decoder = a hiccup).
             if (audio != null) mp.audio().trackDescriptions().firstOrNull { it.description() == audio }?.let { if (mp.audio().track() != it.id()) { mp.audio().setTrack(it.id()); applyTrackNow() } }
             if (spu == "__off__") { if (mp.subpictures().track() != -1) mp.subpictures().setTrack(-1) }
@@ -413,6 +446,18 @@ fun PlayerView(
         }
         return map.toList()
     }
+    /** The track list is read on the player's thread, then shown. */
+    fun openPicker(kind: String) {
+        scope.launch {
+            val (items, cur) = withContext(vlcThread) {
+                val audio = kind == "audio"
+                val list = trackList(audio)
+                (if (audio) list else listOf(-1 to "Выключить") + list) to
+                    runCatching { if (audio) mp.audio().track() else mp.subpictures().track() }.getOrDefault(-2)
+            }
+            pickerItems = items; pickerCurrent = cur; picker = kind
+        }
+    }
     /**
      * Pause/resume from the real player state. Before, "is it playing?" was false while buffering, so pressing pause
      * during buffering sent PLAY instead — the picture/sound went on. VLC calls run on the player's thread.
@@ -420,27 +465,27 @@ fun PlayerView(
     fun unmuteAfterPause() {
         if (!pauseMuted || pausedAt > 0) return
         pauseMuted = false; resumeFrom = -1L
-        runCatching { mp.audio().setMute(userMuted) }
+        val m = userMuted
+        vlc { mp.audio().setMute(m) }
     }
     fun togglePause() {
-        val wasPaused = runCatching { mp.status().state() == uk.co.caprica.vlcj.player.base.State.PAUSED }.getOrDefault(!playing)
+        // Our own state decides, VLC is never asked from the window's thread: paused by us, or VLC reported a pause.
+        // Pressing pause while buffering (not "playing" yet) still pauses.
+        val wasPaused = pausedAt > 0 || vlcPaused
         if (!wasPaused) {
             playing = false; pausedAt = System.currentTimeMillis()
             // VLC's pause is a request to its stream thread, which may be busy reading the network for a moment: the
-            // sound would play on until it gets there. Muting the output takes effect at once.
+            // sound would play on until it gets there. Muting the output first takes effect at once.
             pauseMuted = true
-            runCatching { mp.audio().setMute(true) }
-            vlcExecutor.execute { runCatching { mp.controls().setPause(true) } }
+            vlc { mp.audio().setMute(true); mp.controls().setPause(true) }
         } else {
             val longPause = pausedAt > 0 && System.currentTimeMillis() - pausedAt > 8_000L
-            playing = true; pausedAt = 0L; resumeFrom = time
-            vlcExecutor.execute {
-                runCatching {
-                    mp.controls().setPause(false)
-                    // After a long pause the network inputs (video + external voice-over) drift apart or the server
-                    // has closed the connection: a seek to the same moment restarts them together, in sync.
-                    if (longPause) mp.controls().setTime(mp.status().time().coerceAtLeast(0L))
-                }
+            playing = true; pausedAt = 0L; vlcPaused = false; resumeFrom = time
+            vlc {
+                mp.controls().setPause(false)
+                // After a long pause the network inputs (video + external voice-over) drift apart or the server
+                // has closed the connection: a seek to the same moment restarts them together, in sync.
+                if (longPause) mp.controls().setTime(mp.status().time().coerceAtLeast(0L))
             }
             // Sound comes back once the picture really moves again (see timeChanged); this is only a safety net.
             javax.swing.Timer(2500) { unmuteAfterPause() }.apply { isRepeats = false; start() }
@@ -455,11 +500,11 @@ fun PlayerView(
      * then leave "no audio track" selected. If nothing is playing sound, take the first real audio track.
      */
     fun ensureAudio() {
-        runCatching {
-            if (mp.audio().track() != -1) return
-            val first = mp.audio().trackDescriptions().firstOrNull { it.id() != -1 } ?: return
+        vlc {
+            if (mp.audio().track() != -1) return@vlc
+            val first = mp.audio().trackDescriptions().firstOrNull { it.id() != -1 } ?: return@vlc
             mp.audio().setTrack(first.id()); applyTrackNow()
-            flash("Звук: ${first.description()}", "Звук:")
+            SwingUtilities.invokeLater { flash("Звук: ${first.description()}", "Звук:") }
         }
     }
     fun shiftSubs(ms: Long) {
@@ -480,8 +525,8 @@ fun PlayerView(
     fun jumpChapter(d: Int) {
         if (chapters.size < 2) return
         val i = (chapterAt(time) + d).coerceIn(0, chapters.size - 1)
-        val t = chapters[i].first; time = t
-        vlcExecutor.execute { runCatching { mp.controls().setTime(t) } }
+        val t = chapters[i].first; time = t; lastSeekAt = System.currentTimeMillis()
+        vlc { mp.controls().setTime(t) }
         flash("Глава ${i + 1}: ${chapters[i].second.ifBlank { "без названия" }}", "Глава")
     }
     val introRe = Regex("""(?i)(intro|opening|заставк|опенинг|вступлен|начальн|^op\b|\bop\s?\d*$)""")
@@ -525,7 +570,12 @@ fun PlayerView(
         status = "Задержка звука: ${if (d > 0) "+" else ""}$d мс"
         javax.swing.Timer(2000) { if (status?.startsWith("Задержка звука") == true) status = null }.apply { isRepeats = false; start() }
     }
-    fun seekBy(d: Long) { val t = (mp.status().time() + d).coerceAtLeast(0L); mp.controls().setTime(t); time = t }
+    fun seekBy(d: Long) {
+        var t = (time + d).coerceAtLeast(0L)
+        if (length > 0) t = t.coerceAtMost((length - 2_000L).coerceAtLeast(0L))
+        time = t; lastSeekAt = System.currentTimeMillis()
+        vlc { mp.controls().setTime(t) }
+    }
     fun toggleFullscreen() {
         win.placement = if (win.placement == WindowPlacement.Fullscreen) WindowPlacement.Floating else WindowPlacement.Fullscreen
     }
@@ -570,14 +620,14 @@ fun PlayerView(
                 Key.Spacebar, Key.K -> togglePause()
                 Key.DirectionRight -> seekBy(if (e.isShiftPressed) 60_000L else 10_000L)
                 Key.DirectionLeft -> seekBy(if (e.isShiftPressed) -60_000L else -10_000L)
-                Key.DirectionUp -> { volume = (volume + 5).coerceAtMost(150); mp.audio().setVolume(volume) }
-                Key.DirectionDown -> { volume = (volume - 5).coerceAtLeast(0); mp.audio().setVolume(volume) }
+                Key.DirectionUp -> { volume = (volume + 5).coerceAtMost(150); val v = volume; vlc { mp.audio().setVolume(v) } }
+                Key.DirectionDown -> { volume = (volume - 5).coerceAtLeast(0); val v = volume; vlc { mp.audio().setVolume(v) } }
                 Key.F, Key.Enter -> toggleFullscreen()
                 Key.Escape -> if (win.placement == WindowPlacement.Fullscreen) win.placement = WindowPlacement.Floating else close()
                 Key.Backspace -> close()
                 Key.N -> playEntry(index + 1)
                 Key.P -> playEntry(index - 1)
-                Key.M -> { userMuted = !userMuted; if (!pauseMuted) mp.audio().setMute(userMuted) }
+                Key.M -> { userMuted = !userMuted; val m = userMuted; if (!pauseMuted) vlc { mp.audio().setMute(m) } }
                 Key.LeftBracket -> if (e.isShiftPressed) shiftSubs(-100L) else shiftAudio(-100L)   // [ : earlier
                 Key.RightBracket -> if (e.isShiftPressed) shiftSubs(100L) else shiftAudio(100L)    // ] : later
                 Key.Backslash -> if (e.isShiftPressed) shiftSubs(-subDelay) else shiftAudio(-audioDelay) // \ : reset
@@ -596,6 +646,7 @@ fun PlayerView(
         onDispose { keys.value = null }
     }
 
+    val prefsTimer = remember { javax.swing.Timer(300) { applyPrefs(); ensureAudio() }.apply { isRepeats = false } }
     DisposableEffect(Unit) {
         val ui2 = { block: () -> Unit -> SwingUtilities.invokeLater(block) } // vlcj events come on a native thread
         mp.events().addMediaPlayerEventListener(object : MediaPlayerEventAdapter() {
@@ -605,7 +656,10 @@ fun PlayerView(
                 // not after every resume — a needless track switch is exactly the "sound gone after pause" glitch).
                 if (!prefsApplied) {
                     prefsApplied = true
-                    javax.swing.Timer(1500) { applyPrefs(); ensureAudio() }.apply { isRepeats = false; start() }
+                    // Applied as soon as the tracks are known: now, and again whenever VLC reports a new one (an
+                    // external voice-over or a Blu-ray audio stream shows up later) — no fixed guess-the-delay timer.
+                    prefsUntil = System.currentTimeMillis() + 8_000L
+                    prefsTimer.initialDelay = 300; prefsTimer.restart()
                     javax.swing.Timer(4500) { ensureAudio() }.apply { isRepeats = false; start() }
                     if (audioDelay != 0L) { val d = audioDelay; vlcExecutor.execute { runCatching { mp.audio().setDelay(d * 1000L) } } }
                     if (subDelay != 0L) { val d = subDelay; vlcExecutor.execute { runCatching { mp.subpictures().setDelay(d * 1000L) } } }
@@ -613,8 +667,12 @@ fun PlayerView(
                     // Chapters (MKV): read once the container is parsed.
                     scope.launch { delay(1200); chapters = withContext(vlcThread) { readChapters(mp) } }
                 }
-                mp.audio().setVolume(volume)
-                mp.audio().setMute(userMuted || pauseMuted)
+                val v = volume; val m = userMuted || pauseMuted
+                vlc { mp.audio().setVolume(v); mp.audio().setMute(m) }
+            }
+            override fun elementaryStreamAdded(p: MediaPlayer, type: uk.co.caprica.vlcj.media.TrackType, id: Int) = ui2 {
+                // A track appeared: re-check the remembered choice shortly after the burst of new tracks settles.
+                if (System.currentTimeMillis() < prefsUntil) { prefsTimer.initialDelay = 400; prefsTimer.restart() }
             }
             override fun paused(p: MediaPlayer) = ui2 { playing = false; vlcPaused = true; savePos(time, length) }
             override fun stopped(p: MediaPlayer) = ui2 { vlcPaused = false }
@@ -623,7 +681,9 @@ fun PlayerView(
             override fun timeChanged(p: MediaPlayer, newTime: Long) = ui2 {
                 // Resumed and the clock really moves again (the old position + a bit): give the sound back.
                 if (pauseMuted && pausedAt == 0L && resumeFrom >= 0 && kotlin.math.abs(newTime - resumeFrom) > 120) unmuteAfterPause()
-                if (seeking == null) time = newTime
+                // The bar needs a few updates a second, not every VLC tick: fewer redraws of the whole bar. Right after a
+                // seek VLC still reports the old place for a moment — keep the target instead of jumping back.
+                if (seeking == null && System.currentTimeMillis() - lastSeekAt > 600 && (kotlin.math.abs(newTime - time) >= 250 || newTime < time)) time = newTime
                 lastGood = newTime
                 if (newTime / 10_000 != (newTime - 300) / 10_000) savePos(newTime, length)
             }
@@ -645,6 +705,7 @@ fun PlayerView(
             }
         })
         onDispose {
+            prefsTimer.stop()
             if (!closing) savePos(time, length)
             if (mini) setMini(false)
             ui.put("volume", volume.toString())
@@ -652,8 +713,7 @@ fun PlayerView(
             // Released on the player's thread, after any switch still in progress (no freeze on the way out).
             vlcExecutor.execute {
                 runCatching { mp.controls().stop() }
-                runCatching { mp.release() }
-                runCatching { factory.release() }
+                runCatching { mp.release() } // the engine (factory) is shared and stays for the next player
             }
             vlcExecutor.shutdown()
         }
@@ -768,7 +828,7 @@ fun PlayerView(
                 )
                 // Track list opens inside the bar: a popup would be hidden behind the native video surface.
                 if (picker == "audio" || picker == "spu") picker?.let { kind ->
-                    val current = runCatching { if (kind == "audio") mp.audio().track() else mp.subpictures().track() }.getOrDefault(-2)
+                    val current = pickerCurrent
                     androidx.compose.foundation.layout.FlowRow(
                         Modifier.fillMaxWidth().padding(bottom = 8.dp),
                         horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -778,9 +838,9 @@ fun PlayerView(
                         pickerItems.forEach { (id, name) ->
                             val on = id == current
                             Chip(name, on) {
-                                if (kind == "audio") { mp.audio().setTrack(id); applyTrackNow(); ui.put("audio:${seriesKey()}", name); ui.put("audio:*", name) }
+                                if (kind == "audio") { vlc { mp.audio().setTrack(id) }; applyTrackNow(); ui.put("audio:${seriesKey()}", name); ui.put("audio:*", name) }
                                 else {
-                                    mp.subpictures().setTrack(id); if (id != -1) applyTrackNow()
+                                    vlc { mp.subpictures().setTrack(id) }; if (id != -1) applyTrackNow()
                                     val v = if (id == -1) "__off__" else name
                                     ui.put("spu:${seriesKey()}", v); ui.put("spu:*", v)
                                 }
@@ -806,7 +866,7 @@ fun PlayerView(
                         position = seeking?.toLong() ?: time, length = length, marks = chapters.map { it.first },
                         modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
                         onScrub = { t -> seeking = t?.toFloat(); poke() },
-                        onSeek = { t -> seeking = null; time = t; vlcExecutor.execute { runCatching { mp.controls().setTime(t) } } },
+                        onSeek = { t -> seeking = null; time = t; lastSeekAt = System.currentTimeMillis(); vlc { mp.controls().setTime(t) } },
                         onHover = { t -> hoverAt = t }
                     )
                     Text(if (length > 0) fmt(length) else "--:--", color = Sm.muted, fontFamily = Onest, fontSize = 13.sp)
@@ -825,10 +885,10 @@ fun PlayerView(
                     OutlineButton("+10") { seekBy(10_000L) }
                     if (index < queue.size - 1) OutlineButton("⏭ Следующая") { playEntry(index + 1) }
                     OutlineButton(if (picker == "audio") "♫ Аудио ▴" else "♫ Аудио") {
-                        if (picker == "audio") picker = null else { pickerItems = trackList(audio = true); picker = "audio" }
+                        if (picker == "audio") picker = null else openPicker("audio")
                     }
                     OutlineButton(if (picker == "spu") "CC Субтитры ▴" else "CC Субтитры") {
-                        if (picker == "spu") picker = null else { pickerItems = listOf(-1 to "Выключить") + trackList(audio = false); picker = "spu" }
+                        if (picker == "spu") picker = null else openPicker("spu")
                     }
                     OutlineButton((if (picker == "more") "⚙ Ещё ▴" else "⚙ Ещё") + if (rate != 1f) "  ${fmtRate(rate)}" else "") {
                         picker = if (picker == "more") null else "more"
@@ -839,7 +899,7 @@ fun PlayerView(
                     Text("🔊", fontSize = 14.sp, color = Sm.text)
                     Slider(
                         value = volume.toFloat(), valueRange = 0f..150f,
-                        onValueChange = { volume = it.toInt(); mp.audio().setVolume(volume); poke() },
+                        onValueChange = { volume = it.toInt(); val v = volume; vlc { mp.audio().setVolume(v) }; poke() },
                         colors = SliderDefaults.colors(thumbColor = Sm.text, activeTrackColor = Sm.lamp, inactiveTrackColor = Sm.line2),
                         modifier = Modifier.width(110.dp)
                     )

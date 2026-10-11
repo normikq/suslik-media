@@ -77,7 +77,7 @@ private fun app() = application {
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
             val ok = Vlc.available
-            if (ok) runCatching { MediaPlayerFactory("--avcodec-hw=any").release() }
+            if (ok) runCatching { VlcFactory.warm() } // the real engine, reused by every player
             vlcWarm.complete(ok)
         }
     }
@@ -204,6 +204,8 @@ private fun app() = application {
             }
             // New version on the server: card over the library (never over a playing film).
             UpdateCheck(authenticated = lib.authenticated == true, show = playing == null)
+            // Once after an update: what changed, in plain words.
+            WhatsNew(enabled = lib.authenticated == true && playing == null)
           }
             if (preparing) AlertDialog(
                 onDismissRequest = {},

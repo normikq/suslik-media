@@ -27,7 +27,30 @@ class Store(name: String) {
     @Synchronized fun get(k: String): String? = p.getProperty(k)
     @Synchronized fun put(k: String, v: String?) {
         if (v == null) p.remove(k) else p.setProperty(k, v)
-        runCatching { f.outputStream().use { p.store(it, null) } }
+        scheduleSave()
+    }
+    // Writing the file is done in the background and coalesced: the player saves its position every 10 s from the
+    // window's thread, and rewriting the whole file there was a small stutter each time.
+    private var pending = false
+    private fun scheduleSave() {
+        if (pending) return
+        pending = true
+        writer.schedule({ flush() }, 400, java.util.concurrent.TimeUnit.MILLISECONDS)
+    }
+    @Synchronized fun flush() {
+        if (!pending) return
+        pending = false
+        runCatching {
+            val tmp = java.io.File(f.parentFile, f.name + ".tmp")
+            tmp.outputStream().use { p.store(it, null) }
+            if (!tmp.renameTo(f)) { f.delete(); tmp.renameTo(f) }
+        }
+    }
+    init { all += this }
+    companion object {
+        private val all = java.util.concurrent.CopyOnWriteArrayList<Store>()
+        private val writer = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "store-writer").apply { isDaemon = true } }
+        init { Runtime.getRuntime().addShutdownHook(Thread { all.forEach { it.flush() } }) } // nothing lost on exit
     }
     @Synchronized fun keys(): Set<String> = p.stringPropertyNames()
 }

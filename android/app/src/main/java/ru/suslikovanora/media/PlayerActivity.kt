@@ -125,6 +125,8 @@ class PlayerActivity : ComponentActivity() {
     private var subsForUrl = ""
     private var watchKeys: List<String> = emptyList()
     private var prefsAppliedForUrl = ""
+    private var prefsUntil = 0L // remembered tracks may still be applied until then
+    private val prefsRunnable = Runnable { mediaPlayer?.let { applyPreferredTracks(it) } }
     private lateinit var nextCard: LinearLayout
     private lateinit var nextCardTitle: TextView
     private lateinit var nextCardTimer: TextView
@@ -231,10 +233,13 @@ class PlayerActivity : ComponentActivity() {
                 startWatchdog()
                 applyVideoFrameRate(owner)
                 updatePipParams(playing = true)
-                attachSidecarSubtitles(owner)
                 if (prefsAppliedForUrl != currentUrl && !restoreTracks) {
                     prefsAppliedForUrl = currentUrl
-                    handler.postDelayed({ if (owner === mediaPlayer) applyPreferredTracks(owner) }, 1500L)
+                    // Remembered tracks: applied as soon as they are known, and again when VLC reports a new one
+                    // (voice-over files arrive a little later) — instead of one fixed 1.5 s guess.
+                    prefsUntil = SystemClock.uptimeMillis() + 8_000L
+                    handler.removeCallbacks(prefsRunnable)
+                    handler.postDelayed(prefsRunnable, 300L)
                 }
                 updateSession()
                 if (restoreTracks) {
@@ -252,6 +257,10 @@ class PlayerActivity : ComponentActivity() {
                 updateSession()
             }
             MediaPlayer.Event.Stopped -> root.keepScreenOn = false
+            MediaPlayer.Event.ESAdded -> if (SystemClock.uptimeMillis() < prefsUntil) {
+                handler.removeCallbacks(prefsRunnable)
+                handler.postDelayed(prefsRunnable, 400L)
+            }
             MediaPlayer.Event.EndReached -> {
                 // A dead network connection also shows up as EOF, so only a position near the known
                 // duration is a real end; anything else is treated as a dropped stream and reloaded.
@@ -732,9 +741,19 @@ class PlayerActivity : ComponentActivity() {
     private fun buildMedia(vlc: LibVLC, url: String, positionMs: Long) = Media(vlc, Uri.parse(url)).apply {
         setHWDecoderEnabled(true, false)
         addOption(":http-reconnect")
+        val sidecars = url == subsForUrl
         // Seek to the nearest keyframe: the picture appears right away instead of waiting (or freezing) on
         // hardware decoders after a jump into the middle of a GOP. ±10 s taps do not need frame accuracy.
-        addOption(":input-fast-seek")
+        // Not with an external voice-over: it is a separate input that lands on the exact moment, while the video
+        // jumped to its keyframe — the sound drifted after every seek. Then seeks are exact for both.
+        if (!sidecars || audioUrls.isEmpty()) addOption(":input-fast-seek")
+        // External voice-overs / subtitles are part of the media from the start. Added to the running player (as
+        // before, on every "Playing" — so again after each pause and reconnect) they reopened inputs mid-playback:
+        // a hiccup and a drifting voice-over.
+        if (sidecars) {
+            for (u in audioUrls) runCatching { addSlave(org.videolan.libvlc.interfaces.IMedia.Slave(org.videolan.libvlc.interfaces.IMedia.Slave.Type.Audio, 4, u)) }
+            for (u in subUrls) runCatching { addSlave(org.videolan.libvlc.interfaces.IMedia.Slave(org.videolan.libvlc.interfaces.IMedia.Slave.Type.Subtitle, 4, u)) }
+        }
         // Reliable resume over HTTP: seeking before play() is ignored by many streams.
         if (positionMs > 0L) addOption(":start-time=${positionMs / 1000.0}")
     }
@@ -1184,13 +1203,6 @@ class PlayerActivity : ComponentActivity() {
     private fun currentWatchKey(): String? =
         if (queue.isNotEmpty() && queueIndex >= 0) watchKeys.getOrNull(queueIndex) else watchKeys.firstOrNull()
 
-    /** .srt/.ass files that lay next to the video in the torrent: added as extra subtitle tracks (not selected). */
-    private fun attachSidecarSubtitles(p: MediaPlayer) {
-        if (currentUrl != subsForUrl) return
-        for (u in audioUrls) runCatching { p.addSlave(1 /* audio */, Uri.parse(u), false) }
-        for (u in subUrls) runCatching { p.addSlave(0 /* subtitle */, Uri.parse(u), false) }
-    }
-
     // ---- remembered audio / subtitle choice (per series, with a global fallback) ---------------
     private fun seriesKey() = currentTitle.substringBefore(" · ").trim().lowercase(Locale.ROOT)
 
@@ -1205,7 +1217,7 @@ class PlayerActivity : ComponentActivity() {
         runCatching {
             pickTrack(p.audioTracks, audio)?.let { id -> if (id != p.audioTrack) { p.setAudioTrack(id); selectedAudioId = id; armQuickFreezeCheck() } }
             if (spu == SPU_OFF) { if (p.spuTrack != -1) { p.setSpuTrack(-1); selectedSpuId = -1 } }
-            else pickTrack(p.spuTracks, spu)?.let { id -> p.setSpuTrack(id); selectedSpuId = id }
+            else pickTrack(p.spuTracks, spu)?.let { id -> if (id != p.spuTrack) p.setSpuTrack(id); selectedSpuId = id }
         }
     }
 

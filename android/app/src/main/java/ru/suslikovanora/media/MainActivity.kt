@@ -158,6 +158,8 @@ class MainActivity : ComponentActivity() {
                     add.resume()
                 }
             }
+            // Once after an update: what changed, in plain words (not on top of the update offer).
+            WhatsNew(enabled = store.authenticated == true && update == null)
             update?.let { u -> UpdateDialog(u) { update = null } }
             playTarget?.let { t ->
                 PlaySheet(
