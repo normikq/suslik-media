@@ -396,7 +396,7 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
 @media (max-width:340px){.navrow button{font-size:10px!important}.navrow button::before{font-size:15px!important}}
 </style>
 <script>/* App 1.2+: native library and bottom bar */try{if(Number(window.__suslikApp||0)>=3)document.documentElement.classList.add("suslik-native");}catch(e){}</script>
-<link rel="stylesheet" href="redesign.css?v=8">
+<link rel="stylesheet" href="redesign.css?v=9">
 </head>
 <body>
 <main>
@@ -464,11 +464,43 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
     </section>
     <section id="appsTab" class="hidden">
       <div class="apps-hero">
-        <div class="apps-hero-glow" aria-hidden="true"></div>
-        <span class="apps-kicker">Приложения</span>
-        <h2>Suslik Media на ваших устройствах</h2>
-        <p>Нативная библиотека, плеер VLC с аппаратным декодированием, озвучки и субтитры из раздачи, прогресс просмотра.
-           Приложения сами проверяют обновления при каждом запуске.</p>
+        <div class="apps-hero-clip" aria-hidden="true"><div class="apps-hero-glow"></div></div>
+        <div class="apps-hero-text">
+          <span class="apps-kicker">Приложения</span>
+          <h2>Suslik Media на ваших устройствах</h2>
+          <p>Нативная библиотека, плеер VLC с аппаратным декодированием, озвучки и субтитры из раздачи, прогресс просмотра.
+             Приложения сами проверяют обновления при каждом запуске.</p>
+        </div>
+        <div class="growth" id="appsGrowth">
+          <div class="growth-head">
+            <span class="growth-title">Как росли приложения</span>
+            <div class="growth-switch" role="tablist" aria-label="Платформа">
+              <span role="tab" tabindex="0" data-p="desktop" class="on">Windows</span>
+              <span role="tab" tabindex="0" data-p="android">Android</span>
+              <i class="growth-lens" aria-hidden="true"></i>
+            </div>
+          </div>
+          <div class="growth-plot">
+            <svg viewBox="0 0 400 200" aria-hidden="true">
+              <defs>
+                <linearGradient id="growthFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#ffb02e" stop-opacity=".28"/><stop offset="1" stop-color="#ffb02e" stop-opacity="0"/>
+                </linearGradient>
+                <linearGradient id="growthStroke" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0" stop-color="#ffb02e" stop-opacity=".35"/><stop offset=".55" stop-color="#ffb02e"/><stop offset="1" stop-color="#ffd27a"/>
+                </linearGradient>
+                <filter id="growthGlow" x="-20%" y="-40%" width="140%" height="180%"><feGaussianBlur stdDeviation="4"/></filter>
+              </defs>
+              <g class="growth-grid"><line x1="0" y1="50" x2="400" y2="50"/><line x1="0" y1="100" x2="400" y2="100"/><line x1="0" y1="150" x2="400" y2="150"/></g>
+              <path class="growth-area" d=""/>
+              <path class="growth-line-glow" d="" pathLength="1"/>
+              <path class="growth-line" d="" pathLength="1"/>
+            </svg>
+            <div class="growth-points"></div>
+            <div class="growth-tip" role="tooltip" aria-hidden="true"></div>
+          </div>
+          <div class="growth-hint">Наведите на точку, чтобы узнать, что изменилось</div>
+        </div>
       </div>
       <div id="appsGrid" class="apps-grid">
         <article class="app-card" data-platform="desktop">
@@ -708,7 +740,7 @@ function setTab(tab) {
   $("showLibraryTab").classList.toggle("secondary", !library);
   $("showSearchTab").classList.toggle("secondary", !search);
   $("showAppsTab").classList.toggle("secondary", !apps);
-  if (apps) loadAppVersions();
+  if (apps) { loadAppVersions(); growth.show(); }
   if (library && (!cachedLibrary.length || libraryDirty)) { libraryDirty = false; loadLibrary(); }
   if (search) setTimeout(() => { try { $("searchInput").focus(); } catch {} }, 50);
 }
@@ -745,6 +777,118 @@ async function loadAppVersions() {
     } catch (err) { ver.textContent = "Не удалось проверить"; ver.classList.add("muted"); }
   }));
 }
+// ---- Приложения: «Как росли приложения» — ломаная с точками версий, по наведению — что изменилось ------
+const APP_HISTORY = {
+  desktop: [
+    { v: "1.5.1", t: "Избранное и новый плеер", items: [
+      "Звёздочка на постере: избранное всегда сверху библиотеки, у каждого своё.",
+      "Список «Продолжить просмотр» можно очистить целиком или убрать отдельный фильм.",
+      "Новая вкладка «Ссылка»: раздачи по magnet-ссылке или .torrent-файлом.",
+      "Трилогии и сборники показывают все фильмы, а не только первый.",
+      "В плеере: скорость, главы, пропуск заставки, мини-плеер и ночной звук." ] },
+    { v: "1.5.2", t: "Обновления в один клик", items: [
+      "Когда выходит новая версия, в шапке мягко «дышит» кнопка обновления.",
+      "Одно нажатие — приложение само скачает, установит обновление и откроется снова.",
+      "Старые установщики удаляются сами и не занимают место." ] },
+    { v: "1.6.0", t: "Плеер стал плавнее", items: [
+      "Пауза, перемотка и смена серии больше не подвешивают окно.",
+      "Озвучка из отдельного файла не убегает от картинки после перемотки и паузы.",
+      "Выбранные озвучка и субтитры включаются сразу.",
+      "Плеер открывается быстрее.",
+      "После обновления приложение показывает, что нового." ] }
+  ],
+  android: [
+    { v: "1.4.1", t: "Избранное и обновления", items: [
+      "Звёздочка на постере: избранное всегда сверху библиотеки.",
+      "Библиотека больше не мигает при открытии.",
+      "Приложение само сообщает о новой версии и ставит её в пару нажатий.",
+      "Новая иконка." ] },
+    { v: "1.5.0", t: "Полностью новое приложение", items: [
+      "Все вкладки теперь «родные» — быстрее и плавнее.",
+      "Вкладка «Ссылка»: magnet-ссылка или .torrent-файл прямо с телефона.",
+      "Magnet-ссылки из браузера открываются сразу в Suslik Media.",
+      "Поиск раздач работает внутри приложения." ] },
+    { v: "1.6.0", t: "Плеер стал стабильнее", items: [
+      "Озвучка из отдельного файла не сбивается после паузы и перемотки.",
+      "Выбранные озвучка и субтитры включаются сразу.",
+      "Меньше заминок звука при продолжении просмотра.",
+      "После обновления приложение показывает, что нового." ] }
+  ]
+};
+const growth = (() => {
+  const box = $("appsGrowth"); if (!box) return { show() {} };
+  const plot = box.querySelector(".growth-plot"), pts = box.querySelector(".growth-points"), tip = box.querySelector(".growth-tip");
+  const line = box.querySelector(".growth-line"), glow = box.querySelector(".growth-line-glow"), area = box.querySelector(".growth-area");
+  const tabs = [...box.querySelectorAll(".growth-switch [data-p]")], lens = box.querySelector(".growth-lens");
+  const W = 400, H = 200;
+  // Изломы: неровный, но уверенный рост слева направо; перед первой версией — «предыстория» от нижнего края.
+  const SHAPES = { desktop: [[0, 188], [70, 150], [118, 162], [205, 104], [262, 116], [360, 40], [400, 26]],
+                   android: [[0, 190], [62, 158], [112, 166], [200, 112], [256, 98], [360, 46], [400, 30]] };
+  const DOTS = [1, 3, 5]; // какие изломы — версии
+  let platform = "desktop", active = -1, hideTimer = 0;
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  function moveLens() { const on = tabs.find(t => t.dataset.p === platform); if (on) { lens.style.width = on.offsetWidth + "px"; lens.style.transform = `translateX(${on.offsetLeft - 3}px)`; } }
+  function hideTip() { active = -1; tip.classList.remove("on"); tip.setAttribute("aria-hidden", "true"); pts.querySelectorAll(".growth-dot").forEach(d => d.classList.remove("active")); }
+  function showTip(i) {
+    clearTimeout(hideTimer);
+    const rel = APP_HISTORY[platform][i], [x, y] = SHAPES[platform][DOTS[i]];
+    const latest = i === APP_HISTORY[platform].length - 1;
+    tip.innerHTML = `<div class="growth-tip-head"><b class="${latest ? "new" : ""}">${esc(rel.v)}</b><span>${esc(rel.t)}</span></div>` +
+      `<ul>${rel.items.map(it => `<li>${esc(it)}</li>`).join("")}</ul>`;
+    const pw = plot.clientWidth, ph = plot.clientHeight, px = x / W * pw, py = y / H * ph;
+    const tw = Math.min(300, pw + 40); tip.style.width = tw + "px";
+    const left = Math.max(-20, Math.min(pw - tw + 20, px - tw / 2));
+    const below = py < ph * 0.45; // верхняя точка — окошко под ней
+    tip.style.left = left + "px";
+    tip.style.top = below ? (py + 18) + "px" : "";
+    tip.style.bottom = below ? "" : (ph - py + 18) + "px";
+    tip.style.setProperty("--arrow", (px - left) + "px");
+    tip.classList.toggle("below", below);
+    if (active !== i) { tip.classList.remove("on"); void tip.offsetWidth; }
+    active = i; tip.classList.add("on"); tip.setAttribute("aria-hidden", "false");
+    pts.querySelectorAll(".growth-dot").forEach((d, k) => d.classList.toggle("active", k === i));
+  }
+  function draw() {
+    hideTip();
+    const s = SHAPES[platform], d = s.map((p, i) => (i ? "L" : "M") + p[0] + " " + p[1]).join(" ");
+    for (const el of [line, glow]) { el.classList.remove("drawn"); el.setAttribute("d", d); }
+    area.classList.remove("drawn"); area.setAttribute("d", `${d} L ${s[s.length - 1][0]} ${H} L 0 ${H} Z`);
+    pts.textContent = "";
+    APP_HISTORY[platform].forEach((rel, i) => {
+      const [x, y] = s[DOTS[i]];
+      const dot = document.createElement("span");
+      dot.className = "growth-dot" + (i === APP_HISTORY[platform].length - 1 ? " latest" : "");
+      dot.tabIndex = 0; dot.setAttribute("role", "button"); dot.setAttribute("aria-label", `Версия ${rel.v}: ${rel.t}`);
+      dot.style.left = (x / W * 100) + "%"; dot.style.top = (y / H * 100) + "%";
+      dot.style.setProperty("--d", (0.35 + i * 0.28) + "s"); dot.style.setProperty("--b", (i * 0.7) + "s");
+      dot.innerHTML = `<i></i><em>${esc(rel.v)}</em>`;
+      // Наведение — только мышью: на телефоне касание даёт и «наведение», и клик, окошко открылось бы и сразу закрылось.
+      dot.addEventListener("pointerenter", e => { if (e.pointerType === "mouse") showTip(i); });
+      dot.addEventListener("focus", () => { if (dot.matches(":focus-visible")) showTip(i); }); // клавиатура (Tab), не касание
+      dot.addEventListener("pointerleave", e => { if (e.pointerType === "mouse") hideTimer = setTimeout(hideTip, 160); });
+      dot.addEventListener("blur", () => { hideTimer = setTimeout(hideTip, 160); });
+      dot.addEventListener("click", e => { e.stopPropagation(); if (e.pointerType === "mouse") return; active === i ? hideTip() : showTip(i); }); // телефон: по нажатию
+      pts.append(dot);
+    });
+    requestAnimationFrame(() => requestAnimationFrame(() => { line.classList.add("drawn"); glow.classList.add("drawn"); area.classList.add("drawn"); }));
+    moveLens();
+  }
+  for (const t of tabs) {
+    const pick = () => { if (t.dataset.p === platform) return; platform = t.dataset.p; tabs.forEach(x => x.classList.toggle("on", x === t)); draw(); };
+    t.addEventListener("click", pick);
+    t.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
+  }
+  tip.addEventListener("mouseenter", () => clearTimeout(hideTimer));
+  tip.addEventListener("mouseleave", () => { hideTimer = setTimeout(hideTip, 160); });
+  document.addEventListener("click", e => { if (active >= 0 && !box.contains(e.target)) hideTip(); });
+  window.addEventListener("resize", () => { moveLens(); if (active >= 0) showTip(active); });
+  return { show() {
+    const ua = navigator.userAgent || "";
+    platform = /Android/i.test(ua) ? "android" : "desktop";
+    tabs.forEach(x => x.classList.toggle("on", x.dataset.p === platform));
+    draw();
+  } };
+})();
 // ---- Поиск по трекерам ------------------------------------------------------------------
 const searchState = { items: [], shown: 0 };
 const SEARCH_PAGE = 40;

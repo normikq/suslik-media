@@ -246,3 +246,62 @@ html.suslik-native body{padding-bottom:16px!important}
 @media (prefers-reduced-motion:reduce){#appsTab,.app-card,.apps-step,.apps-hero-glow{animation:none!important}.app-card:hover{transform:none}}
 .navrow #showAppsTab::before{content:"⇩"}
 @media(max-width:520px){.app-badge{font-size:10.5px;padding:5px 8px}.app-card-head{flex-wrap:wrap}}
+
+/* ---- Приложения: график роста версий ------------------------------------------------------------- */
+.apps-hero{overflow:visible;display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,440px);gap:28px;align-items:center;z-index:2}
+.apps-hero-clip{position:absolute;inset:0;overflow:hidden;border-radius:inherit;pointer-events:none}
+.apps-hero-text{position:relative;min-width:0}
+.growth{position:relative;animation:tileIn .6s .12s var(--ease) both}
+.growth-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}
+.growth-title{font:600 12px/1 var(--ui);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.growth-switch{position:relative;display:flex;padding:3px;border-radius:999px;background:#0d1017;border:1px solid var(--line2)}
+.growth-switch span{position:relative;z-index:1;cursor:pointer;user-select:none;padding:6px 12px;border-radius:999px;font:600 12px/1 var(--ui);color:var(--muted);transition:color .25s}
+.growth-switch span:hover{color:var(--text)}
+.growth-switch span.on{color:var(--lamp-ink)}
+.growth-switch span:focus-visible{outline:2px solid var(--lamp);outline-offset:1px}
+.growth-lens{position:absolute;top:3px;bottom:3px;left:3px;border-radius:999px;background:var(--lamp);box-shadow:0 0 16px #ffb02e55;transition:transform .42s var(--ease),width .42s var(--ease)}
+.growth-plot{position:relative;aspect-ratio:2/1;width:100%}
+.growth-plot svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.growth-grid line{stroke:#ffffff0d;stroke-width:1;stroke-dasharray:3 6;vector-effect:non-scaling-stroke}
+.growth-line,.growth-line-glow{fill:none;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:1;vector-effect:non-scaling-stroke}
+.growth-line{stroke:url(#growthStroke);stroke-width:2.5}
+.growth-line-glow{stroke:#ffb02e;stroke-width:7;opacity:.35;filter:url(#growthGlow)}
+.growth-line.drawn,.growth-line-glow.drawn{stroke-dashoffset:0;transition:stroke-dashoffset 1.1s var(--ease)}
+.growth-area{fill:url(#growthFill);opacity:0}
+.growth-area.drawn{opacity:1;transition:opacity .9s .35s ease}
+.growth-points{position:absolute;inset:0}
+.growth-dot{position:absolute;width:30px;height:30px;margin:-15px 0 0 -15px;border-radius:50%;cursor:pointer;outline:none;
+  opacity:0;transform:scale(.4);animation:growthPop .5s var(--d,0s) var(--ease) forwards}
+.growth-dot::before{content:"";position:absolute;inset:3px;border-radius:50%;background:radial-gradient(closest-side,#ffb02e66,#ffb02e00);
+  animation:growthBreath 2.8s var(--b,0s) ease-in-out infinite}
+.growth-dot i{position:absolute;left:50%;top:50%;width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;background:#ffd27a;
+  border:2px solid var(--lamp);box-shadow:0 0 0 4px #ffb02e1f,0 0 14px #ffb02eaa;transition:transform .3s var(--ease),box-shadow .3s}
+.growth-dot.latest i{background:#fff3d6;box-shadow:0 0 0 5px #ffb02e2e,0 0 20px #ffb02ecc}
+.growth-dot em{position:absolute;left:50%;top:100%;transform:translateX(-50%);font:600 11px/1 var(--ui);font-style:normal;color:var(--muted);white-space:nowrap;transition:color .25s}
+.growth-dot:hover i,.growth-dot:focus-visible i,.growth-dot.active i{transform:scale(1.35);box-shadow:0 0 0 6px #ffb02e33,0 0 24px #ffb02e}
+.growth-dot:hover em,.growth-dot.active em,.growth-dot:focus-visible em{color:var(--lamp)}
+@keyframes growthPop{to{opacity:1;transform:scale(1)}}
+@keyframes growthBreath{0%,100%{transform:scale(.75);opacity:.55}50%{transform:scale(1.45);opacity:1}}
+.growth-tip{position:absolute;z-index:20;pointer-events:none;opacity:0;transform:translateY(8px) scale(.97);transform-origin:var(--arrow,50%) 100%;
+  padding:14px 16px 12px;border-radius:16px;background:#151925f2;border:1px solid #ffb02e55;
+  box-shadow:0 22px 50px #000b,0 0 0 1px #ffb02e1a,0 0 36px #ffb02e1c;backdrop-filter:blur(10px);
+  transition:opacity .26s var(--ease),transform .32s var(--ease)}
+.growth-tip.below{transform:translateY(-8px) scale(.97);transform-origin:var(--arrow,50%) 0}
+.growth-tip.on{opacity:1;transform:none;pointer-events:auto}
+.growth-tip::after{content:"";position:absolute;left:var(--arrow,50%);bottom:-6px;width:10px;height:10px;margin-left:-5px;transform:rotate(45deg);
+  background:#151925;border-right:1px solid #ffb02e55;border-bottom:1px solid #ffb02e55}
+.growth-tip.below::after{bottom:auto;top:-6px;border:0;border-left:1px solid #ffb02e55;border-top:1px solid #ffb02e55}
+.growth-tip-head{display:flex;align-items:center;gap:9px;margin-bottom:8px}
+.growth-tip-head b{font:700 11.5px/1 var(--ui);padding:5px 8px;border-radius:7px;background:var(--film);color:var(--muted)}
+.growth-tip-head b.new{background:var(--lamp);color:var(--lamp-ink)}
+.growth-tip-head span{font:600 14.5px/1.25 var(--ui);color:var(--text)}
+.growth-tip ul{margin:0;padding:0;list-style:none;display:grid;gap:6px}
+.growth-tip li{position:relative;padding-left:15px;color:#c9cedb;font-size:13px;line-height:1.45;opacity:0;transform:translateY(4px)}
+.growth-tip.on li{opacity:1;transform:none;transition:opacity .3s var(--ease),transform .35s var(--ease)}
+.growth-tip.on li:nth-child(2){transition-delay:.04s}.growth-tip.on li:nth-child(3){transition-delay:.08s}
+.growth-tip.on li:nth-child(4){transition-delay:.12s}.growth-tip.on li:nth-child(5){transition-delay:.16s}.growth-tip.on li:nth-child(6){transition-delay:.2s}
+.growth-tip li::before{content:"";position:absolute;left:2px;top:.55em;width:5px;height:5px;border-radius:50%;background:var(--lamp)}
+.growth-hint{margin-top:14px;text-align:right;color:var(--muted);font-size:12px;opacity:.8}
+@media(max-width:900px){.apps-hero{grid-template-columns:1fr;gap:18px}.growth-hint{text-align:left}.growth-hint::after{content:" (на телефоне — нажмите)"}}
+@media (prefers-reduced-motion:reduce){.growth,.growth-dot,.growth-dot::before{animation:none!important;opacity:1;transform:none}
+  .growth-line,.growth-line-glow{stroke-dashoffset:0}.growth-area{opacity:1}}
