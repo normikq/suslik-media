@@ -106,7 +106,7 @@ object VlcFactory {
     @Synchronized fun releaseAll() { built.values.forEach { runCatching { it.release() } }; built.clear() }
 
     @Synchronized fun get(night: Boolean, subScale: Int): MediaPlayerFactory =
-        built.getOrPut("$night|$subScale") { build(night, subScale).also { PlayerLog.attach(it) } }
+        built.getOrPut("$night|$subScale") { build(night, subScale) }
 
     /** App start: build the engine with the current player settings in the background. */
     fun warm() {

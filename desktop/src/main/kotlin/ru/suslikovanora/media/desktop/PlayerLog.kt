@@ -27,12 +27,6 @@ object PlayerLog {
         }
     }
 
-    /** VLC's native log (warnings and errors only) into the journal; once per engine. */
-    fun attach(factory: uk.co.caprica.vlcj.factory.MediaPlayerFactory) {
-        runCatching {
-            val log = factory.application().newLog()
-            log.setLevel(uk.co.caprica.vlcj.log.LogLevel.WARNING)
-            log.addLogListener { level, module, _, _, _, _, _, message -> write("vlc $level [$module] $message") }
-        }.onFailure { write("vlc log unavailable: ${it.message}") }
-    }
+    // VLC's own log is NOT attached: its native callback (vlcj NativeLog) crashed the whole app on Windows at the
+    // first message VLC wrote — that is why 1.9.4 closed as soon as a film opened.
 }
