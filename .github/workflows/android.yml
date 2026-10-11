@@ -34,7 +34,17 @@ jobs:
           SIGNING_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          if [ "$HAS_KEY" = "1" ]; then gradle --no-daemon assembleRelease; else gradle --no-daemon assembleDebug; fi
+          set -o pipefail
+          T=assembleDebug; [ "$HAS_KEY" = "1" ] && T=assembleRelease
+          gradle --no-daemon $T 2>&1 | tee "$RUNNER_TEMP/build.log"
+      - name: Report build errors
+        if: failure()
+        run: |
+          # Errors as annotations: readable through the GitHub API (job logs are not always reachable).
+          grep -E "^e: |error:|What went wrong|Caused by|Missing class|> .*" "$RUNNER_TEMP/build.log" | grep -v "^> Task" | head -40 |
+            while IFS= read -r l; do echo "::error::$(echo "$l" | cut -c1-900)"; done
+          echo "::error::--- tail ---"
+          tail -25 "$RUNNER_TEMP/build.log" | while IFS= read -r l; do echo "::error::$(echo "$l" | cut -c1-900)"; done
       - name: Name the APK by version
         run: |
           V=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts)

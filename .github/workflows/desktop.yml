@@ -20,7 +20,16 @@ jobs:
         with: { distribution: temurin, java-version: "17" }
       - uses: gradle/actions/setup-gradle@v4
       - name: Build MSI
-        run: ./gradlew --no-daemon packageMsi
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon packageMsi 2>&1 | tee "$RUNNER_TEMP/build.log"
+      - name: Report build errors
+        if: failure()
+        run: |
+          grep -E "^e: |error:|What went wrong|Caused by|> .*" "$RUNNER_TEMP/build.log" | grep -v "^> Task" | head -40 |
+            while IFS= read -r l; do echo "::error::$(echo "$l" | cut -c1-900)"; done
+          echo "::error::--- tail ---"
+          tail -25 "$RUNNER_TEMP/build.log" | while IFS= read -r l; do echo "::error::$(echo "$l" | cut -c1-900)"; done
       - name: Collect
         run: |
           mkdir -p ../dist && cp build/compose/binaries/main/msi/*.msi ../dist/
