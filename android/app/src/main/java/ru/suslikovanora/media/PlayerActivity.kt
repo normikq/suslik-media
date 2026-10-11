@@ -748,9 +748,16 @@ class PlayerActivity : ComponentActivity() {
     }
 
     // Every stream goes through BurstProxy (see there): downloaded in bursts so the radio can sleep between them.
-    private fun buildMedia(vlc: LibVLC, url: String, positionMs: Long) = Media(vlc, Uri.parse(burst(url))).apply {
+    private fun buildMedia(vlc: LibVLC, url: String, positionMs: Long): Media {
+        // «Настройки» on the main screen: reserve size (0 = off) and the player's own buffer.
+        ru.suslikovanora.media.net.BurstProxy.capBytes = PlaybackSettings.burstMb(this).toLong() shl 20
+        return Media(vlc, Uri.parse(burst(url))).apply { configureMedia(url, positionMs) }
+    }
+
+    private fun Media.configureMedia(url: String, positionMs: Long) {
         setHWDecoderEnabled(true, false)
         addOption(":http-reconnect")
+        addOption(":network-caching=${PlaybackSettings.cacheMs(this@PlayerActivity)}")
         val sidecars = url == subsForUrl
         // Only what this episode needs stays in the stream cache (the previous episode's files are dropped).
         ru.suslikovanora.media.net.BurstProxy.keepOnly(listOf(url) + if (sidecars) audioUrls + subUrls else emptyList())

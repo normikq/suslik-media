@@ -33,8 +33,9 @@ import java.util.concurrent.atomic.AtomicLong
  * reads, e.g. MKV indexes at the end of a file, are served without bursting). Disk use is capped per window.
  */
 object BurstProxy {
-    private const val CAP = 160L shl 20            // ring file per window
-    private const val MAX_WINDOWS = 3              // per stream
+    private const val MAX_WINDOWS = 2              // per stream (the film + one far seek / index read)
+    /** Reserve per window (ring file), from «Настройки → Экономная загрузка»; 0 = off (VLC reads directly). */
+    @Volatile var capBytes = 96L shl 20
     private const val PROBE_AHEAD = 2L shl 20      // before a window proves to be real playback
     private const val PROBE_LIMIT = 6L shl 20      // read sequentially this far = playback → bursts
     private const val CHUNK = 256 * 1024
@@ -77,7 +78,9 @@ object BurstProxy {
     fun wrap(url: String): String {
         val d = dir ?: return url
         if (!url.startsWith("https://")) return url
-        if (runCatching { d.usableSpace }.getOrDefault(0L) < (CAP * MAX_WINDOWS + (300L shl 20))) return url
+        val cap = capBytes
+        if (cap <= 0) return url
+        if (runCatching { d.usableSpace }.getOrDefault(0L) < (cap * MAX_WINDOWS + (300L shl 20))) return url
         val s = ensureServer() ?: return url
         val token = byUrl.getOrPut(url) {
             val t = UUID.randomUUID().toString().replace("-", "")
@@ -119,6 +122,7 @@ object BurstProxy {
 
     // ---- a contiguous downloaded range, kept in a ring file ---------------------------------------
     private class Window(val src: Source, val start: Long) {
+        private val CAP = capBytes.coerceAtLeast(16L shl 20) // fixed for this window's life
         private val file = File(dir, "${ids.incrementAndGet()}.bin")
         private val raf = RandomAccessFile(file, "rw")
         var written = 0L            // bytes from [start] available (contiguous)
@@ -136,10 +140,12 @@ object BurstProxy {
         private fun burst() = sequential >= PROBE_LIMIT
 
         /** How far ahead to fill, and when to start again (radio wakes up). Sized by the film's bitrate. */
+        // Up to ~110 s ahead (or what the reserve holds), refill when ~25 s are left. A small reserve keeps a part of
+        // itself for going back a little (seek back without a new download).
         private fun high(): Long = if (!burst()) PROBE_AHEAD else
-            (src.rate * 110).toLong().coerceIn(24L shl 20, CAP - (16L shl 20))
+            (src.rate * 110).toLong().coerceIn(minOf(24L shl 20, CAP * 3 / 4), CAP * 7 / 8)
         private fun low(): Long = if (!burst()) PROBE_AHEAD / 2 else
-            (src.rate * 25).toLong().coerceIn(6L shl 20, high() / 2)
+            (src.rate * 25).toLong().coerceIn(minOf(6L shl 20, high() / 3), high() / 2)
 
         fun close() {
             closed = true

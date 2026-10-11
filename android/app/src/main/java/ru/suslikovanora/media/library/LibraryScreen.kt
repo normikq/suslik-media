@@ -152,7 +152,7 @@ val LocalHeaderHeight = androidx.compose.runtime.compositionLocalOf { 46.dp }
 fun HeaderSlot() = Spacer(Modifier.fillMaxWidth().height(LocalHeaderHeight.current))
 
 @Composable
-fun BrandHeader(onLogout: (() -> Unit)?) {
+fun BrandHeader(onLogout: (() -> Unit)?, onSettings: (() -> Unit)? = null) {
     Row(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(
             Modifier.size(40.dp).shadow(14.dp, CircleShape, ambientColor = Sm.lamp, spotColor = Sm.lamp)
@@ -163,7 +163,33 @@ fun BrandHeader(onLogout: (() -> Unit)?) {
             Text("Приватная медиатека", color = Sm.muted, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp)
             Text("Suslik Media", color = Sm.text, fontFamily = Unbounded, fontWeight = FontWeight.Bold, fontSize = 15.sp)
         }
+        if (onSettings != null) { SettingsButton(onSettings); Spacer(Modifier.width(8.dp)) }
         if (onLogout != null) OutlineButton("Выйти", onClick = onLogout)
+    }
+}
+
+/** Square outline button with a gear drawn in code (no icon font). */
+@Composable
+private fun SettingsButton(onClick: () -> Unit) {
+    val source = remember { MutableInteractionSource() }
+    val pressed by source.collectIsPressedAsState()
+    val turn by animateFloatAsState(if (pressed) 30f else 0f, tween(260, easing = Sm.ease), label = "gear")
+    Box(
+        Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).border(1.dp, Sm.line2, RoundedCornerShape(12.dp))
+            .clickable(interactionSource = source, indication = null, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        androidx.compose.foundation.Canvas(Modifier.size(20.dp).graphicsLayer { rotationZ = turn }) {
+            val c = center; val r = size.minDimension / 2
+            for (i in 0 until 8) {
+                val a = Math.toRadians(i * 45.0)
+                val o = androidx.compose.ui.geometry.Offset((c.x + kotlin.math.cos(a) * r * 0.62).toFloat(), (c.y + kotlin.math.sin(a) * r * 0.62).toFloat())
+                val e = androidx.compose.ui.geometry.Offset((c.x + kotlin.math.cos(a) * r * 0.95).toFloat(), (c.y + kotlin.math.sin(a) * r * 0.95).toFloat())
+                drawLine(Sm.text, o, e, strokeWidth = r * 0.28f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+            }
+            drawCircle(Sm.text, r * 0.62f, c, style = androidx.compose.ui.graphics.drawscope.Stroke(width = r * 0.22f))
+            drawCircle(Sm.text, r * 0.16f, c)
+        }
     }
 }
 

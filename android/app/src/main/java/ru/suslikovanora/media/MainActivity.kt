@@ -141,6 +141,7 @@ class MainActivity : ComponentActivity() {
         val logout: () -> Unit = { scope.launch { store.logout() } }
         val density = LocalDensity.current
         var headerHeight by remember { mutableStateOf(46.dp) }
+        var settingsOpen by remember { mutableStateOf(false) }
         CompositionLocalProvider(LocalHeaderHeight provides headerHeight) {
         Box(Modifier.fillMaxSize().background(Sm.night).windowInsetsPadding(WindowInsets.safeDrawing)) {
             Column(Modifier.fillMaxSize()) {
@@ -188,7 +189,7 @@ class MainActivity : ComponentActivity() {
                         Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 14.dp)
                             .graphicsLayer { translationY = -headerY.value; alpha = 1f - (headerY.value / headerHidePx).coerceIn(0f, 1f) * 0.15f }
                             .onSizeChanged { sz -> val h = with(density) { sz.height.toDp() }; if (h != headerHeight && h > 0.dp) headerHeight = h }
-                    ) { BrandHeader(onLogout = logout) }
+                    ) { BrandHeader(onLogout = logout, onSettings = { settingsOpen = true }) }
                 }
               }
                 if (!imeVisible && store.authenticated != false) NavBar(current = tab, onSelect = ::selectTab)
@@ -202,6 +203,7 @@ class MainActivity : ComponentActivity() {
             // Once after an update: what changed, in plain words (not on top of the update offer).
             WhatsNew(enabled = store.authenticated == true && update == null)
             update?.let { u -> UpdateDialog(u) { update = null } }
+            if (settingsOpen) SettingsSheet { settingsOpen = false }
             playTarget?.let { t ->
                 PlaySheet(
                     target = t,
