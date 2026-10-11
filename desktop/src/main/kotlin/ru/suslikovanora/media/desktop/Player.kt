@@ -389,7 +389,12 @@ fun PlayerView(
         audioDelay = ui.get("adelay:${seriesKey()}")?.toLongOrNull() ?: 0L
         subDelay = ui.get("sdelay:${seriesKey()}")?.toLongOrNull() ?: 0L
         pauseMuted = false; pausedAt = 0L; resumeFrom = -1L // a new stream never inherits the pause mute
-        val opts = ArrayList(listOf(":http-reconnect", ":network-caching=6000"))
+        // «Настройки»: the player's buffer and the reserve on disk (BurstProxy; 0 = off, VLC reads the mirror).
+        val opts = ArrayList(listOf(":http-reconnect", ":network-caching=${PlaybackSettings.cacheMs()}"))
+        BurstProxy.init()
+        BurstProxy.capBytes = PlaybackSettings.burstMb().toLong() shl 20
+        BurstProxy.keepOnly(listOf(url) + extras.first)
+        val playUrl = BurstProxy.wrap(url)
         // Fast seek jumps to the nearest keyframe of the VIDEO; an external voice-over is a separate input that lands
         // on the exact moment instead — the two drifted apart after every seek. With a voice-over: exact seeks.
         if (extras.first.isEmpty()) opts += ":input-fast-seek"
@@ -406,8 +411,8 @@ fun PlayerView(
             }
             // Extra voice-overs / subtitles are attached BEFORE the media starts: adding them during playback
             // reopens inputs and makes the sound stutter and drift at the start.
-            mp.media().prepare(url, *opts.toTypedArray())
-            extras.first.forEach { u -> runCatching { mp.media().slaves().add(MediaSlaveType.AUDIO, MediaSlavePriority.HIGHEST, u) } }
+            mp.media().prepare(playUrl, *opts.toTypedArray())
+            extras.first.forEach { u -> runCatching { mp.media().slaves().add(MediaSlaveType.AUDIO, MediaSlavePriority.HIGHEST, BurstProxy.wrap(u)) } }
             extras.second.forEach { u -> runCatching { mp.media().slaves().add(MediaSlaveType.SUBTITLE, MediaSlavePriority.HIGHEST, u) } }
             mp.controls().play()
         }
@@ -735,6 +740,7 @@ fun PlayerView(
         })
         onDispose {
             prefsTimer.stop()
+            BurstProxy.clear() // the temporary reserve of the films watched here
             if (!closing) savePos(time, length)
             if (mini) setMini(false)
             ui.put("volume", volume.toString())
@@ -801,7 +807,8 @@ fun PlayerView(
         val video = queue[next].url
         val extras = kotlinx.coroutines.withTimeoutOrNull(10_000) { sidecars(next).await() }
         withContext(Dispatchers.IO) {
-            (listOf(video) + extras?.first.orEmpty()).forEach { u -> launch { warmUp(u, if (u == video) 4L shl 20 else 1L shl 20) } }
+            // Through the disk reserve when it is on: the next episode's start is then already on this computer.
+            (listOf(video) + extras?.first.orEmpty()).forEach { u -> launch { warmUp(BurstProxy.wrap(u), if (u == video) 4L shl 20 else 1L shl 20) } }
         }
     }
     DisposableEffect(canvas) {
@@ -824,7 +831,8 @@ fun PlayerView(
         while (infoOpen) {
             infoText = withContext(vlcThread) { describePlayback(mp) } +
                 "  ·  скорость ${fmtRate(rate)}  ·  звук ${if (audioDelay > 0) "+" else ""}$audioDelay мс  ·  субтитры ${if (subDelay > 0) "+" else ""}$subDelay мс" +
-                (if (nightMode) "  ·  ночной режим" else "") + "  ·  буфер сети 6 с"
+                (if (nightMode) "  ·  ночной режим" else "") + "  ·  буфер ${PlaybackSettings.cacheMs() / 1000.0} с" +
+                (if (PlaybackSettings.burstMb() > 0) "  ·  запас на диске ${PlaybackSettings.burstMb()} МБ" else "")
             delay(1000)
         }
     }

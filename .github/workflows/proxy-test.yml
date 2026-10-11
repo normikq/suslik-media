@@ -3,7 +3,7 @@ name: Burst proxy test
 # JVM test of android/.../net/BurstProxy.kt against a local Range server (no Android needed).
 on:
   push:
-    paths: ["android/app/src/main/java/ru/suslikovanora/media/net/BurstProxy.kt", "android/tools/burstproxy-test/**", ".github/workflows/proxy-test.yml"]
+    paths: ["android/app/src/main/java/ru/suslikovanora/media/net/BurstProxy.kt", "desktop/src/main/kotlin/ru/suslikovanora/media/desktop/BurstProxy.kt", "android/tools/burstproxy-test/**", ".github/workflows/proxy-test.yml"]
   workflow_dispatch:
 
 jobs:
@@ -33,3 +33,18 @@ jobs:
         run: |
           echo "::notice::$(grep -v '^w: ' out.log | tail -14 | tr '\n' '|')"
           echo "::notice::origin $(wc -l < origin.log) requests: $(head -40 origin.log | tr '\n' '|')"
+      - name: Desktop version
+        if: always()
+        run: |
+          set -o pipefail
+          D=../burstproxy-test-desktop; rm -rf $D; mkdir -p $D/src/main/kotlin/ru/suslikovanora/media/desktop
+          cp build.gradle.kts settings.gradle.kts $D/
+          sed 's#if (!url.startsWith("https://")) return url#if (!url.startsWith("http")) return url#' \
+            ../../../desktop/src/main/kotlin/ru/suslikovanora/media/desktop/BurstProxy.kt > $D/src/main/kotlin/ru/suslikovanora/media/desktop/BurstProxy.kt
+          printf 'package ru.suslikovanora.media.desktop\nobject Api { val client: java.net.http.HttpClient = java.net.http.HttpClient.newBuilder().proxy(java.net.ProxySelector.of(null)).build() }\n' > $D/src/main/kotlin/ru/suslikovanora/media/desktop/Api.kt
+          sed -e 's#import ru.suslikovanora.media.net.BurstProxy#import ru.suslikovanora.media.desktop.BurstProxy#' \
+              -e 's#BurstProxy.init(android.content.Context(tmp))#BurstProxy.init()#' \
+              -e 's#tmp.resolve("stream").list()#java.io.File(System.getProperty("java.io.tmpdir"), "SuslikMedia-stream").list()#' \
+              src/main/kotlin/Test.kt > $D/src/main/kotlin/Test.kt
+          cd $D && timeout 600 gradle -q run --args="http://127.0.0.1:3995/blob.bin?sig=y $MD5 120000000" 2>&1 | tee out.log
+          echo "::notice::DESKTOP $(grep -v '^w: ' out.log | tail -14 | tr '\n' '|')"

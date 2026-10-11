@@ -211,6 +211,7 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
             UpdateCheck(authenticated = lib.authenticated == true, show = playing == null)
             // Once after an update: what changed, in plain words.
             WhatsNew(enabled = lib.authenticated == true && playing == null)
+            if (PlaybackSettings.open && playing == null) SettingsSheet { PlaybackSettings.open = false }
           }
             if (preparing) AlertDialog(
                 onDismissRequest = {},

@@ -95,6 +95,34 @@ private fun clock(ms: Long): String {
 }
 
 @Composable
+/** Square outline button with a gear drawn in code; turns a little on hover. */
+@Composable
+private fun GearButton(onClick: () -> Unit) {
+    val src = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val hovered by src.collectIsHoveredAsState()
+    val turn by androidx.compose.animation.core.animateFloatAsState(if (hovered) 45f else 0f, androidx.compose.animation.core.tween(380, easing = Sm.ease))
+    Box(
+        Modifier.size(40.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+            .border(1.dp, if (hovered) Sm.lamp else Sm.line2, androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+            .hoverClick(src, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        androidx.compose.foundation.Canvas(Modifier.size(20.dp).graphicsLayer { rotationZ = turn }) {
+            val c = center; val r = size.minDimension / 2
+            val col = if (hovered) Sm.lamp else Sm.text
+            for (i in 0 until 8) {
+                val a = Math.toRadians(i * 45.0)
+                drawLine(col, androidx.compose.ui.geometry.Offset((c.x + kotlin.math.cos(a) * r * 0.62).toFloat(), (c.y + kotlin.math.sin(a) * r * 0.62).toFloat()),
+                    androidx.compose.ui.geometry.Offset((c.x + kotlin.math.cos(a) * r * 0.95).toFloat(), (c.y + kotlin.math.sin(a) * r * 0.95).toFloat()),
+                    strokeWidth = r * 0.28f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+            }
+            drawCircle(col, r * 0.62f, c, style = androidx.compose.ui.graphics.drawscope.Stroke(width = r * 0.22f))
+            drawCircle(col, r * 0.16f, c)
+        }
+    }
+}
+
+@Composable
 fun Brand(onLogout: (() -> Unit)?, tabs: (@Composable () -> Unit)? = null) {
     // Logo on the left, tabs in the middle of the window, "log out" on the right.
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -112,6 +140,8 @@ fun Brand(onLogout: (() -> Unit)?, tabs: (@Composable () -> Unit)? = null) {
         if (onLogout != null) Row(Modifier.align(Alignment.CenterEnd), verticalAlignment = Alignment.CenterVertically) {
             UpdateButton() // appears (breathing) only when a newer version is on the server
             if (Updater.available != null) Spacer(Modifier.width(10.dp))
+            GearButton { PlaybackSettings.open = true }
+            Spacer(Modifier.width(10.dp))
             OutlineButton("Выйти", onClick = onLogout)
         }
     }
