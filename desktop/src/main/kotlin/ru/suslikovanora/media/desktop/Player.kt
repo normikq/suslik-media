@@ -808,7 +808,9 @@ fun PlayerView(
             if (lastMove != keysAt) { keysAt = lastMove; movedAt = now } // key presses count as activity
             val w = javax.swing.SwingUtilities.getWindowAncestor(canvas)
             val b = w?.bounds
-            val inside = b != null && pos != null && b.contains(pos) && w?.isActive == true
+            // Not "and the window is active": in a normal window that is not focused (another app was clicked last)
+            // moving the mouse over the film did nothing — the bar stayed down and the cursor stayed hidden.
+            val inside = b != null && pos != null && b.contains(pos)
             val zone = b?.let { (it.height * 0.16).toInt().coerceIn(130, 220) } ?: 0
             val nearBottom = inside && pos!!.y >= b!!.y + b.height - zone
             val hold = b == null || !started || vlcPaused || nextIn >= 0 || picker != null || seeking != null || closing || infoOpen || inIntro()
