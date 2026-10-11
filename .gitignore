@@ -6,6 +6,7 @@
 website/.env
 website/updates/
 website/data/
+website/changelog/
 website/*.json
 !website/package.json
 !website/package-lock.json

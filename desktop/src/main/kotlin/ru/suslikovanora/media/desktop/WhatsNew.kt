@@ -38,22 +38,24 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * What changed, in plain words. The texts live on the server (website/changelog/releases.json) — the same ones the
- * site's «Приложения» tab shows — so a new release only needs a new block there, not a new app build.
+ * What changed, in plain words. The texts ship inside the app (desktop/src/main/resources/changelog.json): every build carries its own
+ * history, nothing to fetch. The same file is sent to the site by CI, so the «Приложения» tab shows the same texts.
  */
 object Changelog {
     data class Release(val version: String, val title: String, val items: List<String>)
 
-    /** The last 3 releases up to [current]; null when the server could not be reached (asked again next start). */
-    suspend fun load(current: String): List<Release>? = runCatching {
-        val j = Api.get("/api/app/changelog?platform=desktop&upto=${java.net.URLEncoder.encode(current, "UTF-8")}&limit=3")
-        val arr = j.optJSONArray("releases") ?: return@runCatching emptyList()
+    /** The last 3 releases up to [current] (newest first). */
+    fun load(current: String): List<Release> = runCatching {
+        val text = Changelog::class.java.getResourceAsStream("/changelog.json")!!.use { it.readBytes().toString(Charsets.UTF_8) }
+        val arr = org.json.JSONArray(text)
         (0 until arr.length()).mapNotNull { k ->
             val r = arr.optJSONObject(k) ?: return@mapNotNull null
             val items = r.optJSONArray("items")?.let { a -> (0 until a.length()).map { a.optString(it) }.filter { it.isNotBlank() } }.orEmpty()
             Release(r.optString("version"), r.optString("title"), items).takeIf { it.version.isNotBlank() && items.isNotEmpty() }
-        }
-    }.getOrNull()
+        }.filter { !Updater.isNewer(it.version, current) }
+            .sortedWith { a, b -> if (Updater.isNewer(a.version, b.version)) -1 else if (Updater.isNewer(b.version, a.version)) 1 else 0 }
+            .take(3)
+    }.getOrDefault(emptyList())
 }
 
 private val seen = Store("whatsnew")
@@ -65,7 +67,7 @@ fun WhatsNew(enabled: Boolean) {
     var releases by remember { mutableStateOf<List<Changelog.Release>?>(null) }
     LaunchedEffect(enabled) {
         if (enabled && current != "0" && seen.get("version") != current) {
-            val list = Changelog.load(current) ?: return@LaunchedEffect // offline: try again next start
+            val list = Changelog.load(current)
             if (list.isEmpty()) { seen.put("version", current); return@LaunchedEffect } // nothing written for it
             delay(700) // the library appears first
             releases = list

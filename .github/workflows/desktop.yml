@@ -44,3 +44,6 @@ jobs:
         run: |
           curl -fsS -H "X-Update-Token: $UPDATE_TOKEN" -H "X-File-Name: $(basename "$MSI")" \
                -H "Content-Type: application/octet-stream" --data-binary @"$MSI" "$SITE_URL/api/app/upload"
+          # «Что нового» этой сборки — на сайт (вкладка «Приложения»)
+          curl -fsS -H "X-Update-Token: $UPDATE_TOKEN" -H "Content-Type: application/json" \
+               --data-binary @desktop/src/main/resources/changelog.json "$SITE_URL/api/app/changelog?platform=desktop"

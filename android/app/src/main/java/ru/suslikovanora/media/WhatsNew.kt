@@ -41,28 +41,29 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import ru.suslikovanora.media.library.LampButton
-import ru.suslikovanora.media.net.Api
 import ru.suslikovanora.media.ui.Onest
 import ru.suslikovanora.media.ui.Sm
 import ru.suslikovanora.media.ui.Unbounded
 
 /**
- * What changed, in plain words. The texts live on the server (website/changelog/releases.json) — the same ones the
- * site's «Приложения» tab shows — so a new release only needs a new block there, not a new app build.
+ * What changed, in plain words. The texts ship inside the app (android/app/src/main/assets/changelog.json): every build carries its own
+ * history, nothing to fetch. The same file is sent to the site by CI, so the «Приложения» tab shows the same texts.
  */
 object Changelog {
     data class Release(val version: String, val title: String, val items: List<String>)
 
-    /** The last 3 releases up to [current]; null when the server could not be reached (asked again next start). */
-    suspend fun load(current: String): List<Release>? = runCatching {
-        val j = Api.get("/api/app/changelog?platform=android&upto=${java.net.URLEncoder.encode(current, "UTF-8")}&limit=3")
-        val arr = j.optJSONArray("releases") ?: return@runCatching emptyList()
+    /** The last 3 releases up to [current] (newest first). */
+    fun load(ctx: Context, current: String): List<Release> = runCatching {
+        val text = ctx.assets.open("changelog.json")!!.use { it.readBytes().toString(Charsets.UTF_8) }
+        val arr = org.json.JSONArray(text)
         (0 until arr.length()).mapNotNull { k ->
             val r = arr.optJSONObject(k) ?: return@mapNotNull null
             val items = r.optJSONArray("items")?.let { a -> (0 until a.length()).map { a.optString(it) }.filter { it.isNotBlank() } }.orEmpty()
             Release(r.optString("version"), r.optString("title"), items).takeIf { it.version.isNotBlank() && items.isNotEmpty() }
-        }
-    }.getOrNull()
+        }.filter { !Updater.isNewer(it.version, current) }
+            .sortedWith { a, b -> if (Updater.isNewer(a.version, b.version)) -1 else if (Updater.isNewer(b.version, a.version)) 1 else 0 }
+            .take(3)
+    }.getOrDefault(emptyList())
 }
 
 private fun seenPrefs(ctx: Context) = ctx.getSharedPreferences("whatsnew", Context.MODE_PRIVATE)
@@ -76,7 +77,7 @@ fun WhatsNew(enabled: Boolean) {
     fun markSeen() = seenPrefs(ctx).edit().putString("version", current).apply()
     LaunchedEffect(enabled) {
         if (enabled && current != "0" && seenPrefs(ctx).getString("version", null) != current) {
-            val list = Changelog.load(current) ?: return@LaunchedEffect // offline: try again next start
+            val list = Changelog.load(ctx, current)
             if (list.isEmpty()) { markSeen(); return@LaunchedEffect } // nothing written for this version
             delay(700) // the library appears first
             releases = list

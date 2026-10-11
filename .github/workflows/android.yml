@@ -73,3 +73,6 @@ jobs:
         run: |
           curl -fsS -H "X-Update-Token: $UPDATE_TOKEN" -H "X-File-Name: $(basename "$APK")" \
                -H "Content-Type: application/octet-stream" --data-binary @"$APK" "$SITE_URL/api/app/upload"
+          # «Что нового» этой сборки — на сайт (вкладка «Приложения»)
+          curl -fsS -H "X-Update-Token: $UPDATE_TOKEN" -H "Content-Type: application/json" \
+               --data-binary @android/app/src/main/assets/changelog.json "$SITE_URL/api/app/changelog?platform=android"

@@ -170,6 +170,7 @@ try {
 } catch { console.warn("Модуль compression не установлен (npm install): ответы отдаются без сжатия."); }
 // Playlists carry one AllDebrid link per episode and can exceed the default 20 kb.
 app.use("/api/playlist", express.json({ limit: "200kb" }));
+app.use("/api/app/changelog", express.json({ limit: "200kb" }));
 app.use(express.json({ limit: "20kb" }));
 app.use(express.urlencoded({ extended: false, limit: "20kb" }));
 
@@ -662,39 +663,61 @@ function pruneOldUpdates(platform, best) {
     if (notes !== best.full.replace(/\.[^.]+$/, ".txt")) fs.rm(notes, { force: true }, () => {});
   }
 }
-// «Что нового»: changelog/releases.json — одно место для текстов сайта и обоих приложений.
-// Формат: { "desktop": [{ version, title, items: [..] }, ...], "android": [...] }, новые версии сверху.
-// Файл перечитывается, только если изменился (можно править на сервере без перезапуска).
-const CHANGELOG_FILE = process.env.CHANGELOG_FILE ? path.resolve(process.env.CHANGELOG_FILE) : path.join(__dirname, "changelog", "releases.json");
+// «Что нового»: тексты изменений приезжают вместе с приложениями. Источник — файлы в самих приложениях
+// (desktop/src/main/resources/changelog.json, android/app/src/main/assets/changelog.json); GitHub Actions
+// присылает их сюда (POST с X-Update-Token), руками ничего править не нужно. Хранятся в DATA_DIR/changelog/.
+const CHANGELOG_DIR = path.join(DATA_DIR, "changelog");
+try { fs.mkdirSync(CHANGELOG_DIR, { recursive: true }); } catch {}
 const vparts = v => String(v).split(".").map(n => parseInt(n, 10) || 0);
-let changelogCache = { mtime: 0, data: {} };
-function readChangelog() {
-  try {
-    const st = fs.statSync(CHANGELOG_FILE);
-    if (st.mtimeMs !== changelogCache.mtime) {
-      const data = JSON.parse(fs.readFileSync(CHANGELOG_FILE, "utf8"));
-      changelogCache = { mtime: st.mtimeMs, data: data && typeof data === "object" ? data : {} };
-    }
-  } catch (err) {
-    if (err.code !== "ENOENT") console.warn(`[changelog] не удалось прочитать ${CHANGELOG_FILE}: ${err.message}`);
-  }
-  return changelogCache.data;
+const changelogCache = {};
+function cleanReleases(list) {
+  return (Array.isArray(list) ? list : [])
+    .filter(r => r && typeof r.version === "string" && /^\d+(\.\d+){0,3}$/.test(r.version) && Array.isArray(r.items))
+    .map(r => ({ version: r.version, title: String(r.title || "").slice(0, 120), items: r.items.map(x => String(x).slice(0, 400)).filter(Boolean).slice(0, 12) }))
+    .filter(r => r.items.length)
+    .sort((a, b) => cmpVersion(vparts(b.version), vparts(a.version)))
+    .slice(0, 50);
 }
-// GET /api/app/changelog?platform=desktop&upto=1.6.0 → { releases: [3 последних версии не новее upto] }
+function readChangelog(platform) {
+  const file = path.join(CHANGELOG_DIR, `${platform}.json`);
+  try {
+    const st = fs.statSync(file);
+    const c = changelogCache[platform];
+    if (c && c.mtime === st.mtimeMs) return c.list;
+    const list = cleanReleases(JSON.parse(fs.readFileSync(file, "utf8")));
+    changelogCache[platform] = { mtime: st.mtimeMs, list };
+    return list;
+  } catch (err) {
+    if (err.code !== "ENOENT") console.warn(`[changelog] ${file}: ${err.message}`);
+    return [];
+  }
+}
+// GET /api/app/changelog?platform=desktop[&upto=1.6.0] → { releases: [3 последних] }.
+// Без upto (сайт) — только версии, которые уже выложены в updates/: ещё не вышедшая не показывается.
 app.get("/api/app/changelog", apiLimiter, (req, res) => {
   const platform = String(req.query.platform || "");
   if (!UPDATE_KINDS[platform]) return res.status(400).json({ error: "platform: android | desktop" });
-  const upto = typeof req.query.upto === "string" && /^\d+(\.\d+){0,3}$/.test(req.query.upto) ? req.query.upto : "";
+  let upto = typeof req.query.upto === "string" && /^\d+(\.\d+){0,3}$/.test(req.query.upto) ? req.query.upto : "";
+  if (!upto) { try { upto = latestUpdate(platform)?.version || ""; } catch {} }
   const limit = Math.min(10, Math.max(1, parseInt(req.query.limit, 10) || 3));
-  const list = Array.isArray(readChangelog()[platform]) ? readChangelog()[platform] : [];
-  const releases = list
-    .filter(r => r && typeof r.version === "string" && Array.isArray(r.items))
-    .map(r => ({ version: r.version, title: String(r.title || ""), items: r.items.map(String).slice(0, 12) }))
-    .filter(r => !upto || cmpVersion(vparts(r.version), vparts(upto)) <= 0)
-    .sort((a, b) => cmpVersion(vparts(b.version), vparts(a.version)))
-    .slice(0, limit);
+  const releases = readChangelog(platform).filter(r => !upto || cmpVersion(vparts(r.version), vparts(upto)) <= 0).slice(0, limit);
   res.setHeader("Cache-Control", "no-cache");
   res.json({ releases });
+});
+// POST /api/app/changelog?platform=desktop, тело — JSON-массив версий (из CI вместе со сборкой).
+app.post("/api/app/changelog", (req, res) => {
+  const token = process.env.UPDATE_TOKEN || "";
+  const given = String(req.get("X-Update-Token") || "");
+  if (!token || given.length !== token.length || !crypto.timingSafeEqual(Buffer.from(given), Buffer.from(token)))
+    return res.status(403).json({ error: "Загрузка выключена или неверный X-Update-Token." });
+  const platform = String(req.query.platform || "");
+  if (!UPDATE_KINDS[platform]) return res.status(400).json({ error: "platform: android | desktop" });
+  const list = cleanReleases(req.body);
+  if (!list.length) return res.status(400).json({ error: "Ожидается JSON-массив [{ version, title, items: [...] }]" });
+  const file = path.join(CHANGELOG_DIR, `${platform}.json`), tmp = file + ".tmp";
+  try { fs.writeFileSync(tmp, JSON.stringify(list, null, 2)); fs.renameSync(tmp, file); }
+  catch (err) { return res.status(500).json({ error: err.message }); }
+  res.json({ ok: true, versions: list.map(r => r.version) });
 });
 app.get("/api/app/update", requireLogin, apiLimiter, (req, res) => {
   const platform = String(req.query.platform || "");
