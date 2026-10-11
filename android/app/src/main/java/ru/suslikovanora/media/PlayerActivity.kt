@@ -178,7 +178,9 @@ class PlayerActivity : ComponentActivity() {
 
     private val handler = Handler(Looper.getMainLooper())
     private val hideControlsRunnable = Runnable { setControlsVisible(false) }
-    private val reconnectRunnable = Runnable { reconnect() }
+    // Several quick reconnects in a row did not help: the VLC engine itself may be stuck on a dead connection, so
+    // the next attempt starts it from scratch instead of building yet another player on it.
+    private val reconnectRunnable = Runnable { if (retryCount >= 3 && mediaPlayer != null) restartClean(play = !userPaused, resetRetries = false) else reconnect() }
     // No buffering/open progress for a while: treat as a dead connection (goes through backoff).
     private val stallRunnable = Runnable { if (mediaPlayer != null && !userPaused && !ended) handleError() }
     private val seekLabelHideRunnable = Runnable { seekLabel.visibility = View.GONE }
@@ -1557,7 +1559,18 @@ class PlayerActivity : ComponentActivity() {
         super.onStart()
         session?.isActive = true
         handler.removeCallbacks(idleReleaseRunnable)
-        if (keptOnStop && mediaPlayer != null) resumeAfterStop() else { keptOnStop = false; initializePlayer() }
+        val away = SystemClock.uptimeMillis() - stoppedAt
+        when {
+            keptOnStop && mediaPlayer != null && away < FAST_RESUME_MS && activeNetworkNow() == networkAtStop -> resumeAfterStop()
+            keptOnStop && mediaPlayer != null -> {
+                // Away longer: the server / the phone's network has most likely dropped the paused connection, and
+                // VLC waits on such a dead socket forever (the endless "0 %" / "Переподключение" loop). Start clean
+                // from the same moment instead.
+                keptOnStop = false; videoParked = false
+                restartClean(play = playOnStart)
+            }
+            else -> { keptOnStop = false; initializePlayer() }
+        }
     }
 
     // ---- screen locked / app switched: keep the player, just paused ------------------------------
@@ -1585,7 +1598,25 @@ class PlayerActivity : ComponentActivity() {
         if (t > 0L) seekTo(t)
     }
 
+    private var stoppedAt = 0L
+    private var networkAtStop: Network? = null // Wi-Fi <-> mobile while locked = the paused connection is dead
+    private fun activeNetworkNow(): Network? =
+        runCatching { (getSystemService(CONNECTIVITY_SERVICE) as? ConnectivityManager)?.activeNetwork }.getOrNull()
+
+    /** Everything torn down (VLC too, in the background) and opened again at the same moment. */
+    private fun restartClean(play: Boolean, resetRetries: Boolean = true) {
+        val pos = perceivedPosition()
+        releasePlayer()
+        playbackPosition = pos; lastTime = pos; pendingSeekPos = null
+        if (resetRetries) retryCount = 0
+        reconnectScheduled = false; needsReload = false
+        if (!play) userPaused = true
+        initializePlayer()
+    }
+
     private fun keepOnStop(p: MediaPlayer) {
+        stoppedAt = SystemClock.uptimeMillis()
+        networkAtStop = activeNetworkNow()
         playOnStart = !userPaused && !ended && (p.isPlaying || playWhenReady || buffering)
         runCatching { p.pause() } // not doPause(): the user did not pause, the film continues on return
         keptOnStop = true
@@ -1707,6 +1738,7 @@ class PlayerActivity : ComponentActivity() {
         private const val STALL_TIMEOUT_MS = 12_000L
         private const val OPEN_TIMEOUT_MS = 20_000L
         private const val WATCHDOG_TICK_MS = 2_000L
+        private const val FAST_RESUME_MS = 20_000L // back within this: just continue the paused player
         private const val IDLE_RELEASE_MS = 10 * 60_000L // locked longer than this: free VLC and the connection
         const val EXTRA_SUB_URLS = "media_sub_urls"
         const val EXTRA_WATCH_KEYS = "media_watch_keys"
