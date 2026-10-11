@@ -156,6 +156,20 @@ if (!SITE_PASSWORD) {
 }
 
 app.disable("x-powered-by");
+// Заголовки безопасности. Страница (index.html) получает свою строгую CSP — см. pageCsp(): скрипты только с нашего сайта
+// и три встроенных блока по их хешам, запросы только к нашему сайту. Остальным ответам (JSON, видео, картинки) хватает
+// запрета встраивать их в чужие страницы: строгая CSP на них ничего не даёт, а встроенный видеоплеер браузера ломает.
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Content-Security-Policy", "frame-ancestors 'none'");
+  res.setHeader("Referrer-Policy", "same-origin");
+  res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
+  // HSTS только по https (за nginx с TRUST_PROXY=1 req.secure это видит). Без includeSubDomains: на домене есть и другие службы.
+  if (req.secure) res.setHeader("Strict-Transport-Security", "max-age=15552000");
+  next();
+});
 // Behind nginx/Caddy set TRUST_PROXY=1 so req.protocol/host reflect the public https URL.
 if (process.env.TRUST_PROXY) app.set("trust proxy", /^\d+$/.test(process.env.TRUST_PROXY) ? Number(process.env.TRUST_PROXY) : process.env.TRUST_PROXY);
 // Страница и стили сайта сжимаются один раз (gzip и brotli), а не на каждый запрос: на одном ядре это заметная
@@ -171,6 +185,7 @@ function precompressed(name) {
   const raw = fs.readFileSync(file);
   const entry = {
     mtime: st.mtimeMs, raw,
+    csp: name.endsWith(".html") ? pageCsp(raw.toString("utf8")) : null,
     gz: zlib.gzipSync(raw, { level: 9 }),
     br: zlib.brotliCompressSync(raw, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 11 } }),
     etag: `"${crypto.createHash("sha1").update(raw).digest("base64url").slice(0, 22)}"`,
@@ -179,9 +194,29 @@ function precompressed(name) {
   precompressedCache.set(name, entry);
   return entry;
 }
+// CSP страницы: встроенные <script> разрешены только такими, какие они есть в файле (sha256), — внедрённый скрипт
+// (XSS через название торрента и т. п.) не выполнится. Хеши пересчитываются при замене index.html.
+function pageCsp(html) {
+  const hashes = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)]
+    .map(m => `'sha256-${crypto.createHash("sha256").update(m[1], "utf8").digest("base64")}'`);
+  return [
+    "default-src 'self'",
+    `script-src 'self' ${hashes.join(" ")}`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    "media-src 'self' blob:",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "frame-ancestors 'none'"
+  ].join("; ");
+}
 function sendPrecompressed(req, res, name) {
   const e = precompressed(name);
   if (!e) return false;
+  if (e.csp) res.setHeader("Content-Security-Policy", e.csp);
   res.setHeader("Content-Type", e.type);
   res.setHeader("ETag", e.etag);
   res.setHeader("Vary", "Accept-Encoding");
@@ -672,8 +707,9 @@ app.post("/api/favorites", requireLogin, apiLimiter, (req, res) => {
 const UPDATES_DIR = process.env.UPDATES_DIR ? path.resolve(process.env.UPDATES_DIR) : path.join(DATA_DIR, "updates");
 try { fs.mkdirSync(UPDATES_DIR, { recursive: true }); } catch {}
 const UPDATE_KINDS = { android: /\.apk$/i, desktop: /\.(msi|exe)$/i };
-function versionOf(name) { const m = /(\d+)\.(\d+)\.(\d+)/.exec(name); return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null; }
-function cmpVersion(a, b) { for (let i = 0; i < 3; i++) if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) - (b[i] || 0); return 0; }
+// «2.0.0» или «2.0.0.1» (четвёртое число — промежуточные беты между релизами).
+function versionOf(name) { const m = /(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?/.exec(name); return m ? m.slice(1).filter(x => x !== undefined).map(Number) : null; }
+function cmpVersion(a, b) { for (let i = 0; i < 4; i++) if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) - (b[i] || 0); return 0; }
 // Бета-канал: updates/beta/. Его версии видят только устройства с кодом тестировщика (BETA_CODE в .env, вводится в
 // «Настройках» приложения). Проверили — POST /api/app/promote (или workflow «Promote beta») переносит её всем.
 const BETA_DIR = path.join(UPDATES_DIR, "beta");
@@ -1752,7 +1788,11 @@ app.use(express.static(path.join(__dirname, "public"), {
   // Always revalidate the page so a server update is never hidden behind a cached old index.html.
   // Шрифты не меняются — кэш на год. CSS/JS с ?v=… в адресе (версия в index.html) — тоже на год, без повторных проверок.
   setHeaders: (res, filePath) => {
-    if (/\.html?$/i.test(filePath)) res.setHeader("Cache-Control", "no-cache");
+    if (/\.html?$/i.test(filePath)) {
+      res.setHeader("Cache-Control", "no-cache");
+      const page = precompressed("index.html");
+      if (page && page.csp) res.setHeader("Content-Security-Policy", page.csp);
+    }
     else if (/\.woff2$/i.test(filePath) || (/\.(?:css|js)$/i.test(filePath) && res.req && res.req.query && res.req.query.v)) res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
   }
 }));
@@ -1760,6 +1800,8 @@ app.use(express.static(path.join(__dirname, "public"), {
 app.get("*path", (req, res, next) => {
   if (req.path.startsWith("/api/")) return res.status(404).json({ error: "Не найдено." });
   if (sendPrecompressed(req, res, "index.html")) return;
+  const page = precompressed("index.html");
+  if (page && page.csp) res.setHeader("Content-Security-Policy", page.csp);
   res.sendFile(path.join(__dirname, "public", "index.html"), err => {
     if (err) next(err);
   });

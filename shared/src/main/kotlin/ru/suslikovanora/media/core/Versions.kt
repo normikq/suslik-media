@@ -1,12 +1,12 @@
 package ru.suslikovanora.media.core
 
-/** "1.9.5" style versions (any extra text ignored). */
+/** "1.9.5" / "2.0.0.1" style versions (up to four numbers; any extra text ignored). */
 object Versions {
-    private fun parts(v: String) = Regex("""\d+""").findAll(v).map { it.value.toInt() }.toList().let { it + List(3) { 0 } }.take(3)
+    private fun parts(v: String) = Regex("""\d+""").findAll(v).map { it.value.toInt() }.toList().let { it + List(4) { 0 } }.take(4)
 
     fun isNewer(remote: String, local: String): Boolean {
         val a = parts(remote); val b = parts(local)
-        for (i in 0 until 3) if (a[i] != b[i]) return a[i] > b[i]
+        for (i in 0 until 4) if (a[i] != b[i]) return a[i] > b[i]
         return false
     }
 

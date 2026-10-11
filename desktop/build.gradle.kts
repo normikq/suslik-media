@@ -28,7 +28,9 @@ dependencies {
 }
 
 // One place for the version: the installer, and the app itself (update check) via -Dsuslik.version.
-val appVersion = "2.0.0"
+val appVersion = "2.0.0.1"
+// Windows Installer takes at most three numbers (2.0.0.1 → 2.0.0); the app itself and the file name keep all four.
+val msiVersion = appVersion.split(".").take(3).joinToString(".")
 
 composeCompiler { stabilityConfigurationFile.set(project.layout.projectDirectory.file("compose-stability.conf")) }
 
@@ -42,6 +44,9 @@ compose.desktop {
             "-XX:MinHeapFreeRatio=10", "-XX:MaxHeapFreeRatio=30",
             "-XX:MaxMetaspaceSize=128m", "-XX:ReservedCodeCacheSize=48m",
             "-Dfile.encoding=UTF-8",
+            // Keep idle connections to the site for 3 min (default 30 s): the next reserve burst ~1.5 min later reuses
+            // the connection instead of a new TLS handshake (nginx keepalive_timeout 180s, see NGINX-MIRROR.md).
+            "-Djdk.httpclient.keepalive.timeout=180",
             "-Dsuslik.version=$appVersion",
             // AppCDS (Java 19+): on the first exit the JVM saves the classes it loaded into an archive next to the app;
             // from then on they are mapped from it instead of being read and verified again — the window opens noticeably
@@ -55,7 +60,7 @@ compose.desktop {
             // java.net.http: API client, jdk.crypto.ec: HTTPS, jdk.unsupported: JNA (VLC)
             modules("java.net.http", "jdk.crypto.ec", "jdk.unsupported", "java.naming", "jdk.accessibility")
             packageName = "Suslik Media"
-            packageVersion = appVersion
+            packageVersion = msiVersion
             description = "Suslik Media"
             windows {
                 iconFile.set(project.file("icon.ico")) // .exe, installer, Start menu / desktop shortcut

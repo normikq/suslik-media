@@ -234,9 +234,17 @@ object BurstProxy {
         private fun fetch() {
             val from = end()
             if (src.total in 0..from) { synchronized(lock) { eof = true; lock.notifyAll() }; return }
-            val res = (upstream ?: throw FatalUpstream("no upstream")).open(src.url, from)
+            // Journal (option «Г»): how each burst went — answer time, time to the first data, speed, why it stopped.
+            // On mobile internet this shows whether stutters come from slow starts of new requests or from the speed.
+            val t0 = System.currentTimeMillis()
+            var tFirst = 0L
+            var got = 0L
+            var why = "error"
+            val res = try { (upstream ?: throw FatalUpstream("no upstream")).open(src.url, from) }
+                      catch (e: IOException) { log("reserve: burst at ${from / 1048576} MB: no answer after ${System.currentTimeMillis() - t0} ms (${e.message})"); throw e }
+            val tAnswer = System.currentTimeMillis() - t0
             response = res
-            res.use { r ->
+            try { res.use { r ->
                 val code = r.code
                 when {
                     code == 416 -> { synchronized(lock) { eof = true; lock.notifyAll() }; return }
@@ -257,22 +265,33 @@ object BurstProxy {
                     // requests to the mirror share one HTTP/2 connection, and data piling up in an unread one used up the
                     // connection's flow-control window — the place the player had just jumped to then got nothing for
                     // seconds ("Буферизация 0 %" for long after a seek, then a sudden fast load).
-                    if (abandoned()) return
+                    if (abandoned()) { why = "player left"; return }
                     val ahead = end() - readPos
                     // Real playback: a burst ends once enough is ahead (the radio rests until the reserve runs low).
-                    if (burst() && ahead >= high()) return
+                    if (burst() && ahead >= high()) { why = "reserve full"; return }
                     // Not proven yet (start-up / just after a seek): keep the one open request streaming — reopening it
                     // costs a full round trip through the mirror each time; it stops when VLC leaves or the ring is full.
-                    if (ahead >= CAP * 7 / 8) return
+                    if (ahead >= CAP * 7 / 8) { why = "ring full"; return }
                     val n = input.read(buf)
-                    if (n < 0) { synchronized(lock) { eof = true; lock.notifyAll() }; return }
+                    if (n < 0) { why = "end of file"; synchronized(lock) { eof = true; lock.notifyAll() }; return }
+                    if (tFirst == 0L) tFirst = System.currentTimeMillis() - t0
+                    got += n
                     synchronized(lock) {
-                        if (closed) return
+                        if (closed) { why = "closed"; return }
                         ringWrite(end(), buf, n)
                         written += n
                         lock.notifyAll()
                     }
                 }
+                why = "closed"
+            } } finally {
+                val ms = System.currentTimeMillis() - t0
+                val dataMs = (ms - tFirst).coerceAtLeast(1)
+                val ahead = (end() - readPos).coerceAtLeast(0) / 1048576.0
+                val rate = if (src.rate > 0) " · film %.1f".format(src.rate * 8 / 1_000_000) else ""
+                log("reserve: burst at %d MB: %.1f MB in %.1f s, %.1f Mbit/s%s · answer %d ms, first data %d ms · ahead %.0f MB · %s".format(
+                    from / 1048576, got / 1048576.0, ms / 1000.0, if (got > 0) got * 8.0 / 1000 / dataMs else 0.0, rate,
+                    tAnswer, tFirst, ahead, why))
             }
         }
 
@@ -327,17 +346,21 @@ object BurstProxy {
                 val input = BufferedInputStream(s.getInputStream())
                 val requestLine = readLine(input) ?: return
                 var range: String? = null
+                var fromBrowser = false
                 while (true) {
                     val h = readLine(input) ?: return
                     if (h.isEmpty()) break
                     if (h.startsWith("range:", ignoreCase = true)) range = h.substringAfter(':').trim()
+                    // Only the player talks to this server. A web page in a browser on the same device sends Origin —
+                    // refused outright (the address also carries a random 128-bit token that nobody else knows).
+                    if (h.startsWith("origin:", ignoreCase = true)) fromBrowser = true
                 }
                 val parts = requestLine.split(' ')
                 val method = parts.getOrNull(0).orEmpty()
                 val token = parts.getOrNull(1)?.removePrefix("/s/")?.substringBefore('/').orEmpty()
                 val src = sources[token]
                 val out = s.getOutputStream()
-                if (src == null || (method != "GET" && method != "HEAD")) { status(out, "404 Not Found"); return }
+                if (src == null || fromBrowser || (method != "GET" && method != "HEAD")) { status(out, "404 Not Found"); return }
                 var from = 0L; var to = -1L
                 range?.removePrefix("bytes=")?.split('-')?.let { r ->
                     from = r.getOrNull(0)?.toLongOrNull() ?: 0L

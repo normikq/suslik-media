@@ -37,7 +37,9 @@ jobs:
           tail -25 "$RUNNER_TEMP/build.log" | while IFS= read -r l; do echo "::error::$(echo "$l" | cut -c1-900)"; done
       - name: Collect
         run: |
-          mkdir -p ../dist && cp build/compose/binaries/main/msi/*.msi ../dist/
+          # Full version (2.0.0.1) in the file name: the installer itself can only carry three numbers.
+          V=$(sed -n 's/^val appVersion = "\([^"]*\)".*/\1/p' build.gradle.kts)
+          mkdir -p ../dist && cp "$(ls build/compose/binaries/main/msi/*.msi | head -1)" "../dist/Suslik Media-$V.msi"
           echo "MSI=$(ls ../dist/*.msi | head -1 | sed 's#^\.\./##')" >> "$GITHUB_ENV"
           ls -la ../dist
       - uses: actions/upload-artifact@v4

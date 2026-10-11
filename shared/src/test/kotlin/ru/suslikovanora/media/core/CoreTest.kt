@@ -10,6 +10,9 @@ class VersionsTest {
         assertTrue(Versions.isNewer("1.10.0", "1.9.5"))
         assertFalse(Versions.isNewer("1.9.5", "1.9.5"))
         assertTrue(Versions.isNewer("2.0.0", "1.99.99"))
+        assertTrue(Versions.isNewer("2.0.0.1", "2.0.0"))
+        assertFalse(Versions.isNewer("2.0.0.1", "2.0.1"))
+        assertTrue(Versions.isNewer("2.0.1", "2.0.0.1"))
         assertEquals(-1, Versions.compare("1.2", "1.2.1"))
     }
 
@@ -19,6 +22,8 @@ class VersionsTest {
         assertEquals(UpdateChannel.Verdict.Older, UpdateChannel.verdict("2.0.0", "2.0.1", release = false))
         assertEquals(UpdateChannel.Verdict.Replace, UpdateChannel.verdict("1.9.5", "2.0.3", release = true))
         assertEquals(UpdateChannel.Verdict.Nothing, UpdateChannel.verdict(null, "2.0.1", release = true))
+        assertEquals(UpdateChannel.Verdict.Offer, UpdateChannel.verdict("2.0.0.1", "2.0.0", release = false))
+        assertEquals(UpdateChannel.Verdict.Replace, UpdateChannel.verdict("2.0.0", "2.0.0.1", release = true))
     }
 }
 

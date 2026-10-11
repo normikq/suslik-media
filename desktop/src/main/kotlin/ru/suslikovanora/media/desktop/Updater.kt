@@ -118,10 +118,20 @@ object Updater {
     }
 
     /** Starts the installer and closes the app (Windows cannot replace files of a running program). */
+    /**
+     * Windows Installer looks only at the first three numbers of a version: 2.0.0.1 counts as the same as 2.0.0 and
+     * would not replace it. Such an installer (and any lower one) goes the "remove, then install" way.
+     */
+    fun needsReinstall(remote: String): Boolean {
+        fun msi(v: String) = Regex("""\d+""").findAll(v).map { it.value }.take(3).joinToString(".")
+        return !Versions.isNewer(msi(remote), msi(current))
+    }
+
     fun installAndExit(file: File, replace: Boolean = false) {
         val msi = file.name.endsWith(".msi", true)
         val cmd = when {
-            // Windows Installer refuses to put a lower version over a higher one: the installed beta is removed first
+            // Windows Installer refuses to put a lower (or, by its first three numbers, equal) version over the installed
+            // one: the installed copy is removed first
             // (settings, sign-in and progress live in %APPDATA% and stay), then the release is installed. Runs after the
             // app has closed.
             replace && msi -> {
@@ -199,7 +209,7 @@ fun UpdateButton() {
                 .hoverClick(src, enabled = !busy) {
                     Updater.error = null; Updater.progress = 0f
                     scope.launch {
-                        try { val f = Updater.download(i) { Updater.progress = it }; Updater.progress = 1f; Updater.installAndExit(f, i.replace) }
+                        try { val f = Updater.download(i) { Updater.progress = it }; Updater.progress = 1f; Updater.installAndExit(f, i.replace || Updater.needsReinstall(i.version)) }
                         catch (e: Exception) { Updater.progress = null; Updater.error = Api.describe(e) }
                     }
                 }
