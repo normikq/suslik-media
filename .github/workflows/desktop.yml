@@ -47,6 +47,11 @@ jobs:
         working-directory: .
         env: { UPDATE_TOKEN: "${{ secrets.UPDATE_TOKEN }}", SITE_URL: "${{ secrets.SITE_URL }}" }
         run: |
+          # A server without the beta channel would ignore X-Channel and give the build to everyone: refuse then.
+          if [ "${{ inputs.channel || 'beta' }}" = "beta" ]; then
+            code=$(curl -s -o /dev/null -w "%{http_code}" -H "X-Update-Token: $UPDATE_TOKEN" "$SITE_URL/api/app/reports?limit=1")
+            if [ "$code" != "200" ]; then echo "::error::Сервер ещё без бета-канала (обновите website/server.js) — публикация отменена"; exit 1; fi
+          fi
           curl -fsS -H "X-Update-Token: $UPDATE_TOKEN" -H "X-File-Name: $(basename "$MSI")" \
                -H "X-Channel: ${{ inputs.channel || 'beta' }}" \
                -H "Content-Type: application/octet-stream" --data-binary @"$MSI" "$SITE_URL/api/app/upload"
