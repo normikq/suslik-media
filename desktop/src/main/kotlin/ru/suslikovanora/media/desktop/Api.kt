@@ -50,7 +50,8 @@ class Store(name: String) {
     companion object {
         private val all = java.util.concurrent.CopyOnWriteArrayList<Store>()
         private val writer = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "store-writer").apply { isDaemon = true } }
-        init { Runtime.getRuntime().addShutdownHook(Thread { all.forEach { it.flush() } }) } // nothing lost on exit
+        init { Runtime.getRuntime().addShutdownHook(Thread { flushAll() }) } // nothing lost on exit
+        fun flushAll() = all.forEach { runCatching { it.flush() } }
     }
     @Synchronized fun keys(): Set<String> = p.stringPropertyNames()
 }

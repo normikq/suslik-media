@@ -54,10 +54,15 @@ const val MIN_H = 685
 fun main() {
     // Compose's DirectX renderer crashes on some new GPUs/drivers (seen on RTX 50xx); OpenGL is stable.
     if (System.getProperty("skiko.renderApi") == null) System.setProperty("skiko.renderApi", "OPENGL")
+    // VLC hands over every text (track names, chapters, titles) as UTF-8. Without this JNA decoded it with the
+    // Windows code page — Russian voice-over / subtitle names came out as «РЎСѓР±С‚РёС‚СЂС‹».
+    System.setProperty("jna.encoding", "UTF-8")
     app()
+    // The window is gone: make sure the process really ends (no "ghost" left in Task Manager).
+    AppExit.finish()
 }
 
-private fun app() = application {
+private fun app() = application(exitProcessOnExit = false) { // the exit itself: AppExit.finish() in main()
     val lib = remember { Library() }
     val win = rememberWindowState(width = 1280.dp, height = 860.dp)
     var playing by remember { mutableStateOf<PlayRequest?>(null) }

@@ -115,7 +115,7 @@ object Updater {
         val cmd = if (file.name.endsWith(".msi", true)) listOf("msiexec", "/i", file.absolutePath) else listOf(file.absolutePath)
         ProcessBuilder(cmd).start()
         Thread.sleep(400)
-        kotlin.system.exitProcess(0)
+        AppExit.finish()
     }
 }
 

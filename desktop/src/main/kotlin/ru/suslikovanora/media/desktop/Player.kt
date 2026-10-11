@@ -102,6 +102,9 @@ object Vlc {
 object VlcFactory {
     private val built = HashMap<String, MediaPlayerFactory>()
 
+    /** On exit: lets VLC stop its audio/video threads cleanly (an unreleased engine can hold the process). */
+    @Synchronized fun releaseAll() { built.values.forEach { runCatching { it.release() } }; built.clear() }
+
     @Synchronized fun get(night: Boolean, subScale: Int): MediaPlayerFactory =
         built.getOrPut("$night|$subScale") { build(night, subScale) }
 
@@ -273,7 +276,7 @@ fun PlayerView(
 ) {
     val ui = remember { Store("player_ui") }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
-    val vlcExecutor = remember { java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "vlc-control").apply { isDaemon = true } } }
+    val vlcExecutor = remember { java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "vlc-control").apply { isDaemon = true } }.also { AppExit.track(it) } }
     val vlcThread = remember { vlcExecutor.asCoroutineDispatcher() }
     /**
      * Every call into VLC goes through here, onto the player's own thread. A libVLC call can block while VLC is busy
@@ -728,6 +731,9 @@ fun PlayerView(
                 runCatching { mp.release() } // the engine (factory) is shared and stays for the next player
             }
             vlcExecutor.shutdown()
+            // Kept in AppExit's list until its release job ran: an exit right now waits for it (briefly).
+            Thread({ runCatching { vlcExecutor.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS) }; AppExit.untrack(vlcExecutor) }, "vlc-untrack")
+                .apply { isDaemon = true; start() }
         }
     }
 
