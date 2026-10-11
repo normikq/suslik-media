@@ -778,43 +778,20 @@ async function loadAppVersions() {
   }));
 }
 // ---- Приложения: «Как росли приложения» — ломаная с точками версий, по наведению — что изменилось ------
-const APP_HISTORY = {
-  desktop: [
-    { v: "1.5.1", t: "Избранное и новый плеер", items: [
-      "Звёздочка на постере: избранное всегда сверху библиотеки, у каждого своё.",
-      "Список «Продолжить просмотр» можно очистить целиком или убрать отдельный фильм.",
-      "Новая вкладка «Ссылка»: раздачи по magnet-ссылке или .torrent-файлом.",
-      "Трилогии и сборники показывают все фильмы, а не только первый.",
-      "В плеере: скорость, главы, пропуск заставки, мини-плеер и ночной звук." ] },
-    { v: "1.5.2", t: "Обновления в один клик", items: [
-      "Когда выходит новая версия, в шапке мягко «дышит» кнопка обновления.",
-      "Одно нажатие — приложение само скачает, установит обновление и откроется снова.",
-      "Старые установщики удаляются сами и не занимают место." ] },
-    { v: "1.6.0", t: "Плеер стал плавнее", items: [
-      "Пауза, перемотка и смена серии больше не подвешивают окно.",
-      "Озвучка из отдельного файла не убегает от картинки после перемотки и паузы.",
-      "Выбранные озвучка и субтитры включаются сразу.",
-      "Плеер открывается быстрее.",
-      "После обновления приложение показывает, что нового." ] }
-  ],
-  android: [
-    { v: "1.4.1", t: "Избранное и обновления", items: [
-      "Звёздочка на постере: избранное всегда сверху библиотеки.",
-      "Библиотека больше не мигает при открытии.",
-      "Приложение само сообщает о новой версии и ставит её в пару нажатий.",
-      "Новая иконка." ] },
-    { v: "1.5.0", t: "Полностью новое приложение", items: [
-      "Все вкладки теперь «родные» — быстрее и плавнее.",
-      "Вкладка «Ссылка»: magnet-ссылка или .torrent-файл прямо с телефона.",
-      "Magnet-ссылки из браузера открываются сразу в Suslik Media.",
-      "Поиск раздач работает внутри приложения." ] },
-    { v: "1.6.0", t: "Плеер стал стабильнее", items: [
-      "Озвучка из отдельного файла не сбивается после паузы и перемотки.",
-      "Выбранные озвучка и субтитры включаются сразу.",
-      "Меньше заминок звука при продолжении просмотра.",
-      "После обновления приложение показывает, что нового." ] }
-  ]
-};
+// Тексты приходят с сервера (changelog/releases.json — то же, что показывают приложения в «Что нового»).
+const APP_HISTORY = { desktop: [], android: [] };
+let appHistoryAt = 0;
+async function loadAppHistory() {
+  if (Date.now() - appHistoryAt < 60_000) return false;
+  appHistoryAt = Date.now();
+  await Promise.all(["desktop", "android"].map(async p => {
+    try {
+      const j = await api(`/api/app/changelog?platform=${p}&limit=3`);
+      APP_HISTORY[p] = (j.releases || []).slice().reverse().map(r => ({ v: r.version, t: r.title, items: r.items || [] }));
+    } catch { /* остаётся прошлый список */ }
+  }));
+  return true;
+}
 const growth = (() => {
   const box = $("appsGrowth"); if (!box) return { show() {} };
   const plot = box.querySelector(".growth-plot"), pts = box.querySelector(".growth-points"), tip = box.querySelector(".growth-tip");
@@ -824,14 +801,15 @@ const growth = (() => {
   // Изломы: неровный, но уверенный рост слева направо; перед первой версией — «предыстория» от нижнего края.
   const SHAPES = { desktop: [[0, 188], [70, 150], [118, 162], [205, 104], [262, 116], [360, 40], [400, 26]],
                    android: [[0, 190], [62, 158], [112, 166], [200, 112], [256, 98], [360, 46], [400, 30]] };
-  const DOTS = [1, 3, 5]; // какие изломы — версии
+  const DOTS = [1, 3, 5]; // какие изломы — версии (если версий меньше — занимают последние)
+  const dotIndex = i => DOTS[DOTS.length - APP_HISTORY[platform].length + i];
   let platform = "desktop", active = -1, hideTimer = 0;
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   function moveLens() { const on = tabs.find(t => t.dataset.p === platform); if (on) { lens.style.width = on.offsetWidth + "px"; lens.style.transform = `translateX(${on.offsetLeft - 3}px)`; } }
   function hideTip() { active = -1; tip.classList.remove("on"); tip.setAttribute("aria-hidden", "true"); pts.querySelectorAll(".growth-dot").forEach(d => d.classList.remove("active")); }
   function showTip(i) {
     clearTimeout(hideTimer);
-    const rel = APP_HISTORY[platform][i], [x, y] = SHAPES[platform][DOTS[i]];
+    const rel = APP_HISTORY[platform][i], [x, y] = SHAPES[platform][dotIndex(i)];
     const latest = i === APP_HISTORY[platform].length - 1;
     tip.innerHTML = `<div class="growth-tip-head"><b class="${latest ? "new" : ""}">${esc(rel.v)}</b><span>${esc(rel.t)}</span></div>` +
       `<ul>${rel.items.map(it => `<li>${esc(it)}</li>`).join("")}</ul>`;
@@ -854,8 +832,9 @@ const growth = (() => {
     for (const el of [line, glow]) { el.classList.remove("drawn"); el.setAttribute("d", d); }
     area.classList.remove("drawn"); area.setAttribute("d", `${d} L ${s[s.length - 1][0]} ${H} L 0 ${H} Z`);
     pts.textContent = "";
-    APP_HISTORY[platform].forEach((rel, i) => {
-      const [x, y] = s[DOTS[i]];
+    box.classList.toggle("empty", !APP_HISTORY[platform].length);
+    APP_HISTORY[platform].slice(-DOTS.length).forEach((rel, i) => {
+      const [x, y] = s[dotIndex(i)];
       const dot = document.createElement("span");
       dot.className = "growth-dot" + (i === APP_HISTORY[platform].length - 1 ? " latest" : "");
       dot.tabIndex = 0; dot.setAttribute("role", "button"); dot.setAttribute("aria-label", `Версия ${rel.v}: ${rel.t}`);
@@ -882,10 +861,11 @@ const growth = (() => {
   tip.addEventListener("mouseleave", () => { hideTimer = setTimeout(hideTip, 160); });
   document.addEventListener("click", e => { if (active >= 0 && !box.contains(e.target)) hideTip(); });
   window.addEventListener("resize", () => { moveLens(); if (active >= 0) showTip(active); });
-  return { show() {
-    const ua = navigator.userAgent || "";
-    platform = /Android/i.test(ua) ? "android" : "desktop";
+  let picked = false;
+  return { async show() {
+    if (!picked) { picked = true; platform = /Android/i.test(navigator.userAgent || "") ? "android" : "desktop"; }
     tabs.forEach(x => x.classList.toggle("on", x.dataset.p === platform));
+    await loadAppHistory(); // тексты версий с сервера (раз в минуту), затем линия прорисовывается один раз
     draw();
   } };
 })();

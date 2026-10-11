@@ -662,6 +662,40 @@ function pruneOldUpdates(platform, best) {
     if (notes !== best.full.replace(/\.[^.]+$/, ".txt")) fs.rm(notes, { force: true }, () => {});
   }
 }
+// «Что нового»: changelog/releases.json — одно место для текстов сайта и обоих приложений.
+// Формат: { "desktop": [{ version, title, items: [..] }, ...], "android": [...] }, новые версии сверху.
+// Файл перечитывается, только если изменился (можно править на сервере без перезапуска).
+const CHANGELOG_FILE = process.env.CHANGELOG_FILE ? path.resolve(process.env.CHANGELOG_FILE) : path.join(__dirname, "changelog", "releases.json");
+const vparts = v => String(v).split(".").map(n => parseInt(n, 10) || 0);
+let changelogCache = { mtime: 0, data: {} };
+function readChangelog() {
+  try {
+    const st = fs.statSync(CHANGELOG_FILE);
+    if (st.mtimeMs !== changelogCache.mtime) {
+      const data = JSON.parse(fs.readFileSync(CHANGELOG_FILE, "utf8"));
+      changelogCache = { mtime: st.mtimeMs, data: data && typeof data === "object" ? data : {} };
+    }
+  } catch (err) {
+    if (err.code !== "ENOENT") console.warn(`[changelog] не удалось прочитать ${CHANGELOG_FILE}: ${err.message}`);
+  }
+  return changelogCache.data;
+}
+// GET /api/app/changelog?platform=desktop&upto=1.6.0 → { releases: [3 последних версии не новее upto] }
+app.get("/api/app/changelog", apiLimiter, (req, res) => {
+  const platform = String(req.query.platform || "");
+  if (!UPDATE_KINDS[platform]) return res.status(400).json({ error: "platform: android | desktop" });
+  const upto = typeof req.query.upto === "string" && /^\d+(\.\d+){0,3}$/.test(req.query.upto) ? req.query.upto : "";
+  const limit = Math.min(10, Math.max(1, parseInt(req.query.limit, 10) || 3));
+  const list = Array.isArray(readChangelog()[platform]) ? readChangelog()[platform] : [];
+  const releases = list
+    .filter(r => r && typeof r.version === "string" && Array.isArray(r.items))
+    .map(r => ({ version: r.version, title: String(r.title || ""), items: r.items.map(String).slice(0, 12) }))
+    .filter(r => !upto || cmpVersion(vparts(r.version), vparts(upto)) <= 0)
+    .sort((a, b) => cmpVersion(vparts(b.version), vparts(a.version)))
+    .slice(0, limit);
+  res.setHeader("Cache-Control", "no-cache");
+  res.json({ releases });
+});
 app.get("/api/app/update", requireLogin, apiLimiter, (req, res) => {
   const platform = String(req.query.platform || "");
   if (!UPDATE_KINDS[platform]) return res.status(400).json({ error: "platform: android | desktop" });

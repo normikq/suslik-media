@@ -41,34 +41,28 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import ru.suslikovanora.media.library.LampButton
+import ru.suslikovanora.media.net.Api
 import ru.suslikovanora.media.ui.Onest
 import ru.suslikovanora.media.ui.Sm
 import ru.suslikovanora.media.ui.Unbounded
 
-/** What changed, in plain words, for the last big releases (newest first). Shown once after an update. */
+/**
+ * What changed, in plain words. The texts live on the server (website/changelog/releases.json) — the same ones the
+ * site's «Приложения» tab shows — so a new release only needs a new block there, not a new app build.
+ */
 object Changelog {
     data class Release(val version: String, val title: String, val items: List<String>)
 
-    val releases = listOf(
-        Release("1.6.0", "Плеер стал стабильнее", listOf(
-            "Озвучка из отдельного файла больше не сбивается после паузы и перемотки.",
-            "Выбранные вами озвучка и субтитры включаются сразу после старта серии.",
-            "Меньше заминок звука при продолжении просмотра.",
-            "Появилось это окно — теперь после обновления видно, что нового."
-        )),
-        Release("1.5.0", "Полностью новое приложение", listOf(
-            "Все вкладки теперь «родные» — приложение открывается быстрее и работает плавнее.",
-            "Вкладка «Ссылка»: magnet-ссылка или .torrent-файл прямо с телефона.",
-            "Magnet-ссылки из браузера и других приложений открываются сразу в Suslik Media.",
-            "Поиск раздач работает внутри приложения, а добавленное видно в истории."
-        )),
-        Release("1.4.1", "Избранное и обновления", listOf(
-            "Звёздочка на постере: избранное всегда сверху библиотеки.",
-            "Библиотека больше не мигает при открытии и обновлении.",
-            "Приложение само сообщает о новой версии и устанавливает её в пару нажатий.",
-            "Новая иконка."
-        ))
-    )
+    /** The last 3 releases up to [current]; null when the server could not be reached (asked again next start). */
+    suspend fun load(current: String): List<Release>? = runCatching {
+        val j = Api.get("/api/app/changelog?platform=android&upto=${java.net.URLEncoder.encode(current, "UTF-8")}&limit=3")
+        val arr = j.optJSONArray("releases") ?: return@runCatching emptyList()
+        (0 until arr.length()).mapNotNull { k ->
+            val r = arr.optJSONObject(k) ?: return@mapNotNull null
+            val items = r.optJSONArray("items")?.let { a -> (0 until a.length()).map { a.optString(it) }.filter { it.isNotBlank() } }.orEmpty()
+            Release(r.optString("version"), r.optString("title"), items).takeIf { it.version.isNotBlank() && items.isNotEmpty() }
+        }
+    }.getOrNull()
 }
 
 private fun seenPrefs(ctx: Context) = ctx.getSharedPreferences("whatsnew", Context.MODE_PRIVATE)
@@ -78,22 +72,23 @@ private fun seenPrefs(ctx: Context) = ctx.getSharedPreferences("whatsnew", Conte
 fun WhatsNew(enabled: Boolean) {
     val ctx = LocalContext.current
     val current = remember { Updater.currentVersion(ctx) }
-    var open by remember { mutableStateOf(false) }
+    var releases by remember { mutableStateOf<List<Changelog.Release>?>(null) }
+    fun markSeen() = seenPrefs(ctx).edit().putString("version", current).apply()
     LaunchedEffect(enabled) {
-        if (enabled && current != "0" && seenPrefs(ctx).getString("version", null) != current &&
-            Changelog.releases.any { !Updater.isNewer(it.version, current) }) {
+        if (enabled && current != "0" && seenPrefs(ctx).getString("version", null) != current) {
+            val list = Changelog.load(current) ?: return@LaunchedEffect // offline: try again next start
+            if (list.isEmpty()) { markSeen(); return@LaunchedEffect } // nothing written for this version
             delay(700) // the library appears first
-            open = true
+            releases = list
         }
     }
-    if (open) WhatsNewCard(current) { seenPrefs(ctx).edit().putString("version", current).apply(); open = false }
+    releases?.let { list -> WhatsNewCard(current, list) { markSeen(); releases = null } }
 }
 
 @Composable
-private fun WhatsNewCard(current: String, onDone: () -> Unit) {
+private fun WhatsNewCard(current: String, releases: List<Changelog.Release>, onDone: () -> Unit) {
     val scope = rememberCoroutineScope()
     val shown = remember { Animatable(0f) }
-    val releases = remember(current) { Changelog.releases.filter { !Updater.isNewer(it.version, current) }.take(3) }
     val items = remember { releases.map { Animatable(0f) } } // each block slides in a little after the previous one
     LaunchedEffect(Unit) {
         launch { shown.animateTo(1f, tween(380, easing = Sm.ease)) }

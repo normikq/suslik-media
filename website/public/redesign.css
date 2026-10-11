@@ -305,3 +305,4 @@ html.suslik-native body{padding-bottom:16px!important}
 @media(max-width:900px){.apps-hero{grid-template-columns:1fr;gap:18px}.growth-hint{text-align:left}.growth-hint::after{content:" (на телефоне — нажмите)"}}
 @media (prefers-reduced-motion:reduce){.growth,.growth-dot,.growth-dot::before{animation:none!important;opacity:1;transform:none}
   .growth-line,.growth-line-glow{stroke-dashoffset:0}.growth-area{opacity:1}}
+.growth.empty .growth-hint{visibility:hidden}
