@@ -142,7 +142,7 @@ private fun ChannelSection() {
         scope.launch {
             val installed = Updater.currentVersion(ctx)
             val info = Updater.latest(ctx)
-            val v = UpdateChannel.verdict(info?.version, installed, release = !PlaybackSettings.betaChannel(ctx))
+            val v = Updater.verdict(ctx, info, release = !PlaybackSettings.betaChannel(ctx))
             state = if (v == UpdateChannel.Verdict.Replace)
                 // Android itself never installs a lower version code over a higher one (no app can override that).
                 "Релиз ${info?.version} заменит бету $installed, но Android не ставит версию с меньшим номером поверх " +

@@ -56,11 +56,33 @@ import java.io.File
  * The new APK must be signed with the same key as the installed one (Android refuses otherwise).
  */
 object Updater {
-    data class Info(val version: String, val size: Long, val notes: String, val url: String, val beta: Boolean = false)
+    /** [code] = the APK's build number (from its file name, "-b34.apk"); null for files named without it. */
+    data class Info(val version: String, val size: Long, val notes: String, val url: String, val beta: Boolean = false, val code: Long? = null)
 
 
     fun currentVersion(ctx: Context): String =
         runCatching { @Suppress("DEPRECATION") ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "0"
+
+    fun currentCode(ctx: Context): Long = runCatching {
+        val p = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
+        if (Build.VERSION.SDK_INT >= 28) p.longVersionCode else @Suppress("DEPRECATION") p.versionCode.toLong()
+    }.getOrDefault(0L)
+
+    /**
+     * What to do with [info] here. Android installs by the build number: when the file carries it, that decides
+     * (a release named lower than an installed beta but built later installs fine). Otherwise — by the name.
+     */
+    fun verdict(ctx: Context, info: Info?, release: Boolean): UpdateChannel.Verdict {
+        val installed = currentVersion(ctx)
+        val code = info?.code ?: return UpdateChannel.verdict(info?.version, installed, release)
+        val mine = currentCode(ctx)
+        return when {
+            code > mine -> UpdateChannel.Verdict.Offer
+            code == mine -> UpdateChannel.Verdict.Installed
+            release -> UpdateChannel.Verdict.Replace
+            else -> UpdateChannel.Verdict.Older
+        }
+    }
 
     fun isNewer(remote: String, local: String): Boolean = Versions.isNewer(remote, local) // shared (core)
 
@@ -76,7 +98,8 @@ object Updater {
         withContext(Dispatchers.IO) { cleanup(ctx) }
         val info = latest(ctx) ?: return null
         prefs.edit().putLong("checkedAt", now).apply()
-        if (!isNewer(info.version, currentVersion(ctx))) return null
+        // Only what Android can really install (a higher build number); see verdict().
+        if (verdict(ctx, info, release = !PlaybackSettings.betaChannel(ctx)) != UpdateChannel.Verdict.Offer) return null
         if (!force && prefs.getString("skipped", null) == info.version) return null
         return info
     }
@@ -85,7 +108,8 @@ object Updater {
     suspend fun latest(@Suppress("UNUSED_PARAMETER") ctx: Context): Info? {
         val j = runCatching { Api.get("/api/app/update?platform=android") }.getOrNull() ?: return null
         if (!j.optBoolean("available")) return null
-        return Info(j.optString("version"), j.optLong("size"), j.optString("notes"), j.optString("url"), j.optString("channel") == "beta")
+        val code = Regex("""-b(\d+)\.apk$""", RegexOption.IGNORE_CASE).find(j.optString("file"))?.groupValues?.get(1)?.toLongOrNull()
+        return Info(j.optString("version"), j.optLong("size"), j.optString("notes"), j.optString("url"), j.optString("channel") == "beta", code)
     }
 
     fun skip(ctx: Context, version: String) =

@@ -59,6 +59,8 @@ fun main() {
     // VLC hands over every text (track names, chapters, titles) as UTF-8. Without this JNA decoded it with the
     // Windows code page — Russian voice-over / subtitle names came out as «РЎСѓР±С‚РёС‚СЂС‹».
     System.setProperty("jna.encoding", "UTF-8")
+    // Already open: that window comes to the front, this start ends here (no second window, no second VLC).
+    if (!SingleInstance.acquire()) return
     CrashReports.start() // last run crashed? → report; from now on uncaught errors report themselves
     app()
     // The window is gone: make sure the process really ends (no "ghost" left in Task Manager).
@@ -141,6 +143,14 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
                 }
             }
             window.minimumSize = java.awt.Dimension(MIN_W, MIN_H) // smaller than this the header and tabs no longer fit
+            // Started again while open: show this window instead (restored, in front, focused).
+            SingleInstance.register {
+                win.isMinimized = false
+                window.toFront()
+                // Windows only flashes the taskbar button for toFront() from a background app: a short "on top" lifts it.
+                if (!window.isAlwaysOnTop) { window.isAlwaysOnTop = true; window.isAlwaysOnTop = onTop.value }
+                window.requestFocus()
+            }
         }
         val lens by androidx.compose.animation.core.animateFloatAsState(tab.ordinal.toFloat(), tween(420, easing = Sm.ease))
         focus[0] = androidx.compose.ui.platform.LocalFocusManager.current

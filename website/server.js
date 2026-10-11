@@ -828,12 +828,28 @@ app.post("/api/app/upload", (req, res) => {
     fs.rename(tmp, path.join(dir, name), err => {
       if (err) return res.status(500).json({ error: err.message });
       // сразу убрать прошлые версии этой платформы (в своём канале)
-      for (const platform of Object.keys(UPDATE_KINDS)) if (UPDATE_KINDS[platform].test(name)) latestUpdate(platform, dir);
+      for (const platform of Object.keys(UPDATE_KINDS)) if (UPDATE_KINDS[platform].test(name)) {
+        latestUpdate(platform, dir);
+        // Релиз для всех заменяет все беты этой платформы: их номера не связаны с релизными, и старая бета с большим
+        // номером иначе продолжала бы предлагаться тестировщикам (а следующая бета с меньшим номером тут же удалялась бы).
+        if (dir !== BETA_DIR) clearBetas(platform);
+      }
       res.json({ ok: true, file: name, size, channel: dir === BETA_DIR ? "beta" : "stable" });
     });
   });
   out.on("error", err => { fs.rm(tmp, { force: true }, () => {}); if (!res.headersSent) res.status(500).json({ error: err.message }); });
 });
+
+function clearBetas(platform) {
+  const re = UPDATE_KINDS[platform];
+  let names; try { names = fs.readdirSync(BETA_DIR); } catch { return; }
+  for (const name of names) {
+    if (!re.test(name)) continue;
+    const full = path.join(BETA_DIR, name);
+    fs.rm(full, { force: true }, err => { if (!err) console.log(`[updates] бета ${name} убрана: вышел релиз`); });
+    fs.rm(full.replace(/\.[^.]+$/, ".txt"), { force: true }, () => {});
+  }
+}
 
 function updateTokenOk(req) {
   const token = process.env.UPDATE_TOKEN || "";

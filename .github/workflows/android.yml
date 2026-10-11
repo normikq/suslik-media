@@ -65,9 +65,11 @@ jobs:
       - name: Name the APK by version
         run: |
           V=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts)
+          C=$(grep -oP 'versionCode\s*=\s*\K[0-9]+' app/build.gradle.kts)
           F=$(ls app/build/outputs/apk/*/*.apk | head -1)
-          mkdir -p ../dist && cp "$F" "../dist/suslik-media-$V.apk"
-          echo "APK=dist/suslik-media-$V.apk" >> "$GITHUB_ENV"
+          # -b<versionCode>: Android installs by this number, not by the name — the app reads it from the file name.
+          mkdir -p ../dist && cp "$F" "../dist/suslik-media-$V-b$C.apk"
+          echo "APK=dist/suslik-media-$V-b$C.apk" >> "$GITHUB_ENV"
           ls -la ../dist
       - uses: actions/upload-artifact@v4
         with: { name: android-apk, path: dist/*.apk, retention-days: 14 }
