@@ -121,7 +121,10 @@ object VlcFactory {
             // long buffer — sound kept going after pause and came back late (or not at all) after resume.
             "--aout=mmdevice,directsound",
             // Decode AC3/DTS to PCM instead of trying passthrough (the failed passthrough attempt is what broke WASAPI).
-            "--mmdevice-passthrough=0", "--no-spdif"
+            "--mmdevice-passthrough=0", "--no-spdif",
+            // When decoding falls behind (right after a pause / seek), drop whole late frames instead of half-decoding
+            // them — the half-decoded ones were the blocky artifacts after a pause.
+            "--no-avcodec-hurry-up"
         )
         val extra = ArrayList<String>()
         // Night mode: a dynamic range compressor — quiet dialogue up, explosions down.
@@ -345,6 +348,7 @@ fun PlayerView(
     var infoText by remember { mutableStateOf("") }
     var mini by remember { mutableStateOf(false) }
     var lastSeekAt by remember { mutableStateOf(0L) } // a seek in flight: VLC's clock still reports the old place
+    var hasVoiceOver by remember { mutableStateOf(false) } // the current episode plays an external audio file
     var hoverAt by remember { mutableStateOf<Long?>(null) } // time under the cursor on the seek bar
     val beforeMini = remember { arrayOfNulls<Any>(4) }    // size, position, placement, onTop before mini mode
 
@@ -394,6 +398,7 @@ fun PlayerView(
         BurstProxy.init()
         BurstProxy.capBytes = PlaybackSettings.burstMb().toLong() shl 20
         BurstProxy.keepOnly(listOf(url) + extras.first)
+        hasVoiceOver = extras.first.isNotEmpty()
         val playUrl = BurstProxy.wrap(url)
         // Fast seek jumps to the nearest keyframe of the VIDEO; an external voice-over is a separate input that lands
         // on the exact moment instead — the two drifted apart after every seek. With a voice-over: exact seeks.
@@ -517,7 +522,10 @@ fun PlayerView(
             // Directly from the mirror, a long pause lets the video and an external voice-over drift apart (or the server
             // closes the connection), so a re-seek restarts them together. Through the disk reserve both continue from
             // the local copy in step — no re-seek, no 10–20 s wait for a new buffer.
-            val longPause = pausedAt > 0 && System.currentTimeMillis() - pausedAt > 8_000L && !BurstProxy.isActive(currentUrl)
+            // With an external voice-over the re-seek stays (from the local copy it takes a moment): VLC resumes the two
+            // inputs a little apart after a long pause — that was the remaining audio offset after pauses.
+            val longPause = pausedAt > 0 && System.currentTimeMillis() - pausedAt > 8_000L &&
+                (!BurstProxy.isActive(currentUrl) || hasVoiceOver)
             playing = true; pausedAt = 0L; vlcPaused = false; resumeFrom = time
             vlc {
                 mp.controls().setPause(false)

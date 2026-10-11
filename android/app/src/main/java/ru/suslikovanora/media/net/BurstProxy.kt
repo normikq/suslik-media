@@ -102,6 +102,9 @@ object BurstProxy {
 
     fun clear() = keepOnly(emptyList())
 
+    /** The film is read through the local reserve right now (not directly from the mirror). */
+    fun isActive(url: String): Boolean = capBytes > 0 && byUrl[url]?.let { sources[it]?.broken == false } == true
+
     // ---- one stream (one original URL) ----------------------------------------------------------
     private class Source(val token: String, val url: String) {
         @Volatile var total = -1L
@@ -145,7 +148,12 @@ object BurstProxy {
          * downloading its whole reserve at full speed and took half the bandwidth from the place the player jumped to —
          * the main reason a seek beyond the reserve took long.
          */
-        fun abandoned() = System.currentTimeMillis() - lastReadAt > 1500 && src.current() !== this
+        fun abandoned(): Boolean {
+            val quiet = System.currentTimeMillis() - lastReadAt
+            // VLC closed its connection to this place (a short index read, or it jumped elsewhere): stop at once.
+            return (readers == 0 && quiet > 400) || (quiet > 1500 && src.current() !== this)
+        }
+        @Volatile var readers = 0 // VLC connections reading this window right now
         fun validFrom() = start + maxOf(0L, written - CAP)
         private fun burst() = sequential >= PROBE_LIMIT
 
@@ -212,12 +220,17 @@ object BurstProxy {
                 val input: InputStream = res.body?.byteStream() ?: throw IOException("no body")
                 val buf = ByteArray(CHUNK)
                 while (!closed) {
+                    // Nobody reads here any more → close the request at once. Never keep an unread request open: all
+                    // requests to the mirror share one HTTP/2 connection, and data piling up in an unread one used up the
+                    // connection's flow-control window — the place the player had just jumped to then got nothing for
+                    // seconds ("Буферизация 0 %" for long after a seek, then a sudden fast load).
                     if (abandoned()) return
-                    // Enough ahead → close this request at once. Never keep an unread request open: all requests to the
-                    // mirror share one HTTP/2 connection, and data piling up in an unread one used up the connection's
-                    // flow-control window — the request for the place the player had just jumped to then got nothing
-                    // for seconds ("Буферизация 0 %" for a long time after a seek, then a sudden fast load).
-                    if (end() - readPos >= high()) return
+                    val ahead = end() - readPos
+                    // Real playback: a burst ends once enough is ahead (the radio rests until the reserve runs low).
+                    if (burst() && ahead >= high()) return
+                    // Not proven yet (start-up / just after a seek): keep the one open request streaming — reopening it
+                    // costs a full round trip through the mirror each time; it stops when VLC leaves or the ring is full.
+                    if (ahead >= CAP * 7 / 8) return
                     val n = input.read(buf)
                     if (n < 0) { synchronized(lock) { eof = true; lock.notifyAll() }; return }
                     synchronized(lock) {
@@ -298,6 +311,15 @@ object BurstProxy {
                     to = r.getOrNull(1)?.toLongOrNull() ?: -1L
                 }
                 val w = src.windowFor(from)
+                synchronized(w.lock) { w.readers++; w.lastReadAt = System.currentTimeMillis(); w.lock.notifyAll() }
+                try { serveWindow(s, out, src, w, method, range, from, to) }
+                finally { synchronized(w.lock) { w.readers--; w.lock.notifyAll() } }
+            }
+        }
+    }
+
+    private fun serveWindow(s: Socket, out: OutputStream, src: Source, w: Window, method: String, range: String?, from: Long, to: Long) {
+            run {
                 // The length is known after the first upstream answer.
                 val waitStart = System.currentTimeMillis()
                 while (src.total < 0 && w.error == null && !src.broken && System.currentTimeMillis() - waitStart < 30_000) Thread.sleep(50)
@@ -326,7 +348,6 @@ object BurstProxy {
                 }
                 out.flush()
             }
-        }
     }
 
     private fun status(out: OutputStream, s: String) { out.write("HTTP/1.1 $s\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray()) }

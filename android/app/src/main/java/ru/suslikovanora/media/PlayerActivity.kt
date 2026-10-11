@@ -206,7 +206,7 @@ class PlayerActivity : ComponentActivity() {
             if (!userPaused && !ended && !networkLost && !buffering && !resumeOnFocusGain) {
                 val t = p.time
                 if (t == lastWatchTime) {
-                    if (++watchStuckTicks >= WATCHDOG_STUCK_TICKS) { watchStuckTicks = 0; handleError() }
+                    if (++watchStuckTicks >= stuckTicks()) { watchStuckTicks = 0; handleError() }
                 } else { lastWatchTime = t; watchStuckTicks = 0; checkPictureFrozen(p); checkSoundAlive(p) }
             } else { watchStuckTicks = 0; frozenTicks = 0 }
             handler.postDelayed(this, WATCHDOG_TICK_MS)
@@ -297,7 +297,7 @@ class PlayerActivity : ComponentActivity() {
                     )
                     // Dead socket after a network switch = no more events: recover if buffering goes silent.
                     handler.removeCallbacks(stallRunnable)
-                    handler.postDelayed(stallRunnable, STALL_TIMEOUT_MS)
+                    handler.postDelayed(stallRunnable, stallTimeout())
                 } else {
                     buffering = false
                     bufferingShown = 0
@@ -656,6 +656,9 @@ class PlayerActivity : ComponentActivity() {
                 this,
                 arrayListOf(
                     "--avcodec-hw=any",
+                    // When decoding falls behind (right after a pause / seek), drop whole late frames instead of
+                    // half-decoding them — the half-decoded ones were the blocky artifacts.
+                    "--no-avcodec-hurry-up",
                     // 6 s of buffer rides out short mobile-network dips (4 s was sometimes too little for 4K).
                     "--network-caching=6000",
                     "--no-video-title-show",
@@ -680,7 +683,7 @@ class PlayerActivity : ComponentActivity() {
                 player.play()
                 // Opening itself can hang (bad network right at start): make sure something retries.
                 handler.removeCallbacks(stallRunnable)
-                handler.postDelayed(stallRunnable, OPEN_TIMEOUT_MS)
+                handler.postDelayed(stallRunnable, openTimeout())
             }
             startWatchdog()
             showControlsTemporarily()
@@ -778,6 +781,17 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun burst(u: String) = ru.suslikovanora.media.net.BurstProxy.wrap(u)
+
+    /**
+     * Through the local reserve VLC only talks to the phone itself: when data stops coming, it is the reserve that
+     * waits for the network and reconnects by itself. Tearing VLC down then (black screen, timer at 00:00, a new
+     * start from the saved place) only made the wait longer — so with the reserve the player waits much longer
+     * before it rebuilds itself, and does not rebuild at all on a Wi-Fi ↔ mobile switch.
+     */
+    private fun viaReserve() = ru.suslikovanora.media.net.BurstProxy.isActive(currentUrl)
+    private fun stallTimeout() = if (viaReserve()) 35_000L else STALL_TIMEOUT_MS
+    private fun openTimeout() = if (viaReserve()) 45_000L else OPEN_TIMEOUT_MS
+    private fun stuckTicks() = if (viaReserve()) 15 else WATCHDOG_STUCK_TICKS
 
     /**
      * A film this phone has no hardware decoder for (often 4K / HEVC 10-bit / AV1 on older phones) is decoded by the
@@ -892,7 +906,7 @@ class PlayerActivity : ComponentActivity() {
             }
             lastWatchTime = -1L; watchStuckTicks = 0
             // The new connection may hang in "opening" without any event: arm the stall timer right away.
-            handler.postDelayed(stallRunnable, OPEN_TIMEOUT_MS)
+            handler.postDelayed(stallRunnable, openTimeout())
         } catch (e: Exception) {
             handleError()
         }
@@ -1053,6 +1067,11 @@ class PlayerActivity : ComponentActivity() {
         networkLost = false
         if (mediaPlayer == null) return
         if (previous == null && !wasLost) return // initial callback right after registration
+        if (viaReserve()) {
+            // VLC's connection is local and still alive; the reserve reconnects to the server by itself.
+            if (wasLost && !buffering) bufferingLabel.visibility = View.GONE
+            return
+        }
         if (previous == network && !wasLost) return
         // Wi-Fi <-> mobile switch or connectivity is back: old sockets are dead.
         retryCount = 0
@@ -1069,7 +1088,7 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun onNetworkValidated(network: Network) {
-        if (!awaitingValidation || network != lastNetwork || mediaPlayer == null) return
+        if (!awaitingValidation || network != lastNetwork || mediaPlayer == null || viaReserve()) return
         awaitingValidation = false
         reconnectScheduled = true
         handler.removeCallbacks(reconnectRunnable)
@@ -1120,7 +1139,8 @@ class PlayerActivity : ComponentActivity() {
         if (!force && now - lastUiUpdateAt < 1000L) return
         lastUiUpdateAt = now
         val length = p.length.coerceAtLeast(0L)
-        val time = p.time.coerceAtLeast(0L)
+        // While a stream is (re)opening VLC reports 0: show where the film will continue instead of 00:00.
+        val time = p.time.takeIf { it > 0L } ?: pendingSeekPos ?: playbackPosition.coerceAtLeast(0L)
         // M2TS often has no duration: show --:-- and disable the duration-based seek bar.
         if (length > 0L) {
             val max = length.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
@@ -1697,7 +1717,7 @@ class PlayerActivity : ComponentActivity() {
             // The connection may have been closed while paused: VLC reconnects by itself; if it hangs, the usual
             // stall recovery takes over.
             handler.removeCallbacks(stallRunnable)
-            handler.postDelayed(stallRunnable, STALL_TIMEOUT_MS)
+            handler.postDelayed(stallRunnable, stallTimeout())
         }
         startWatchdog()
         showControlsTemporarily()
