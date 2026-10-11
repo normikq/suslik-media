@@ -221,6 +221,7 @@ class PlayerActivity : ComponentActivity() {
         if (owner !== mediaPlayer) return@EventListener
         when (event.type) {
             MediaPlayer.Event.Playing -> {
+                bufferingShown = 0
                 playWhenReady = true
                 ended = false
                 buffering = false
@@ -285,15 +286,19 @@ class PlayerActivity : ComponentActivity() {
             MediaPlayer.Event.Buffering ->
                 if (event.buffering < 100f) {
                     buffering = true
+                    // VLC refills its buffer from 0 after every jump (start at the saved place, seek, track switch,
+                    // an automatic reconnect): within one wait the number only goes up instead of falling back to 0.
+                    bufferingShown = maxOf(bufferingShown, event.buffering.toInt())
                     showStatus(
                         if (networkLost) "Нет сети — ждём подключение…"
-                        else "Буферизация ${event.buffering.toInt()}%"
+                        else "Буферизация $bufferingShown%"
                     )
                     // Dead socket after a network switch = no more events: recover if buffering goes silent.
                     handler.removeCallbacks(stallRunnable)
                     handler.postDelayed(stallRunnable, STALL_TIMEOUT_MS)
                 } else {
                     buffering = false
+                    bufferingShown = 0
                     handler.removeCallbacks(stallRunnable)
                     if (!networkLost) bufferingLabel.visibility = View.GONE
                 }
@@ -1495,13 +1500,13 @@ class PlayerActivity : ComponentActivity() {
     private val reattachRunnable = Runnable { reattachVideo() }
     private val surfaceCallback = object : SurfaceHolder.Callback {
         override fun surfaceCreated(holder: SurfaceHolder) {
-            if (!surfaceLost) return
+            if (!surfaceLost || videoParked) return
             surfaceLost = false
             handler.removeCallbacks(reattachRunnable)
             handler.postDelayed(reattachRunnable, 150L)
         }
         override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {}
-        override fun surfaceDestroyed(holder: SurfaceHolder) { if (mediaPlayer != null) surfaceLost = true }
+        override fun surfaceDestroyed(holder: SurfaceHolder) { if (mediaPlayer != null && !videoParked) surfaceLost = true }
     }
 
     private fun hookSurfaces() {
@@ -1534,12 +1539,34 @@ class PlayerActivity : ComponentActivity() {
     // (IDLE_RELEASE_MS) everything is released after all — no resources held for a phone left in a drawer.
     private var keptOnStop = false
     private var playOnStart = false
-    private val idleReleaseRunnable = Runnable { if (keptOnStop) { keptOnStop = false; releasePlayer() } }
+    private val idleReleaseRunnable = Runnable { if (keptOnStop) { keptOnStop = false; videoParked = false; releasePlayer() } }
+    private var videoParked = false
+    private var bufferingShown = 0 // highest buffering % of the current wait
+    /**
+     * Video back on the new surface. A hardware decoder can only show a picture from the next keyframe (often 5–10 s
+     * away), so we jump to the current moment: the picture is decoded from the keyframe right there and appears at once.
+     */
+    private val videoBackRunnable = Runnable {
+        val p = mediaPlayer ?: return@Runnable
+        if (!videoParked) return@Runnable
+        videoParked = false
+        if (p.videoTracksCount <= 0) return@Runnable
+        runCatching { p.setVideoTrackEnabled(true) }
+        applyVideoFrameRate(p)
+        val t = p.time
+        if (t > 0L) seekTo(t)
+    }
 
     private fun keepOnStop(p: MediaPlayer) {
         playOnStart = !userPaused && !ended && (p.isPlaying || playWhenReady || buffering)
         runCatching { p.pause() } // not doPause(): the user did not pause, the film continues on return
         keptOnStop = true
+        // The screen's surface goes away: let go of it cleanly (video off, views detached) instead of letting the
+        // video output die with it — that is what gave ~10 s of black / flicker after unlocking.
+        videoParked = true
+        runCatching { if (p.videoTracksCount > 0) p.setVideoTrackEnabled(false) }
+        runCatching { p.detachViews() }
+        handler.removeCallbacks(reattachRunnable); surfaceLost = false
         // Nothing may restart playback (or reconnect) behind the lock screen.
         for (r in listOf(watchdogRunnable, stallRunnable, reconnectRunnable, seekWatchdogRunnable, quickFreezeRunnable, prefsRunnable))
             handler.removeCallbacks(r)
@@ -1553,6 +1580,10 @@ class PlayerActivity : ComponentActivity() {
     private fun resumeAfterStop() {
         val p = mediaPlayer ?: return
         keptOnStop = false
+        runCatching { p.attachViews(videoLayout, null, true, false) }
+        hookSurfaces()
+        handler.removeCallbacks(videoBackRunnable)
+        handler.postDelayed(videoBackRunnable, 150L) // once the new surface exists
         ContextCompat.registerReceiver(this, noisyReceiver, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY), ContextCompat.RECEIVER_NOT_EXPORTED)
         noisyRegistered = true
         registerNetworkCallback()
