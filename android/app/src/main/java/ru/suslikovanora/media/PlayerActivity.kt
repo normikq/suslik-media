@@ -399,11 +399,11 @@ class PlayerActivity : ComponentActivity() {
             ?: intent.getStringExtra(EXTRA_URL).orEmpty()
         currentTitle = savedInstanceState?.getString(KEY_TITLE)?.takeIf { it.isNotBlank() }
             ?: intent.getStringExtra(EXTRA_TITLE)?.ifBlank { "Видео" } ?: "Видео"
-        playbackPosition = savedInstanceState?.getLong(KEY_POSITION) ?: savedPosition()
+        playbackPosition = savedInstanceState?.getLong(KEY_POSITION) ?: startPosition(intent)
         playWhenReady = savedInstanceState?.getBoolean(KEY_PLAYING) ?: true
         userPaused = !playWhenReady
         readSideExtras(intent)
-        playbackPosition = savedInstanceState?.getLong(KEY_POSITION) ?: savedPosition()
+        playbackPosition = savedInstanceState?.getLong(KEY_POSITION) ?: startPosition(intent)
         scaleIndex = uiPrefs.getInt("scale", 0).coerceIn(0, SCALES.size - 1)
 
         videoLayout = VLCVideoLayout(this)
@@ -1334,6 +1334,8 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun savedPosition(): Long = positionKey()?.let { prefs.getLong(it, 0L) } ?: 0L
+    /** Where a film opened from the library starts: the remembered place, or 0 when «С начала» was chosen. */
+    private fun startPosition(i: Intent): Long = if (i.getBooleanExtra(EXTRA_FROM_START, false)) 0L else savedPosition()
 
     private fun persistPosition(time: Long, length: Long) {
         val key = positionKey() ?: return
@@ -1961,7 +1963,7 @@ class PlayerActivity : ComponentActivity() {
         titleView.text = currentTitle
         updateQueueUi()
         selectedAudioId = null; selectedSpuId = null
-        playbackPosition = savedPosition(); lastTime = playbackPosition
+        playbackPosition = startPosition(intent); lastTime = playbackPosition
         pendingSeekPos = null; ended = false; userPaused = false; playWhenReady = true; retryCount = 0; needsReload = false
         if (mediaPlayer != null) reconnect(forcePlay = true, startAt = playbackPosition)
         intent.getStringExtra(EXTRA_PLAYLIST)?.takeIf { it.isNotBlank() }?.let { fetchPlaylist(it) }
@@ -2023,6 +2025,7 @@ class PlayerActivity : ComponentActivity() {
         const val EXTRA_URL = "media_url"
         const val EXTRA_TITLE = "media_title"
         const val EXTRA_PLAYLIST = "media_playlist"
+        const val EXTRA_FROM_START = "media_from_start"
         private const val KEY_URL = "current_url"
         private val NIGHT = 0xFF090B10.toInt()
         private const val KEY_TITLE = "current_title"

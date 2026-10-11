@@ -224,7 +224,7 @@ fun LibraryView(
                 Tile(item, lib, onOpen = { target = it }, modifier = Modifier.animateItem(fadeInSpec = tween(300), fadeOutSpec = tween(200)))
             }
         }
-        target?.let { t -> PlayDialog(t, onDismiss = { target = null }, onPlay = { target = null; onPlay(it) }) }
+        target?.let { t -> PlayDialog(t, lib, onDismiss = { target = null }, onPlay = { target = null; onPlay(it) }) }
     }
 }
 
@@ -387,7 +387,10 @@ private fun RemoveButton(downloading: Boolean, onConfirm: suspend () -> String?)
 
 /** Source choice, like the site's play sheet: mirror (with the season playlist) or direct AllDebrid link. */
 @Composable
-private fun PlayDialog(t: PlayTarget, onDismiss: () -> Unit, onPlay: (PlayRequest) -> Unit) {
+private fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPlay: (PlayRequest) -> Unit) {
+    // Where the player stopped last time (the same place it resumes from); null = nothing to resume.
+    val resumeAt = remember(t) { lib.watchInfo(watchKey(t.magnetId, t.file))?.takeIf { !it.watched && it.pos >= 5_000L }?.pos }
+    var fromStart by remember(t) { mutableStateOf(false) }
     var sub by remember(t) { mutableStateOf("Получение ссылок…") }
     var mirror by remember(t) { mutableStateOf<String?>(null) }
     var direct by remember(t) { mutableStateOf<String?>(null) }
@@ -423,6 +426,12 @@ private fun PlayDialog(t: PlayTarget, onDismiss: () -> Unit, onPlay: (PlayReques
             .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {}.padding(22.dp)) {
             Text(t.label, fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 18.sp, color = Sm.text)
             Text(sub + (if (audio.isNotEmpty()) " · озвучек из раздачи: ${audio.size}" else "") + (if (subs.isNotEmpty()) " · субтитров: ${subs.size}" else ""), color = Sm.muted, fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(top = 4.dp, bottom = 16.dp))
+            resumeAt?.let { at ->
+                Row(Modifier.fillMaxWidth().padding(bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StartOption("▶  С ${clock(at)}", "продолжить с прошлого места", !fromStart, Modifier.weight(1f)) { fromStart = false }
+                    StartOption("⟲  С начала", "смотреть заново", fromStart, Modifier.weight(1f)) { fromStart = true }
+                }
+            }
             Source("Через зеркало", if (playlist != null) "Через ваш сервер · дальше все серии сезона" else "Трафик идёт через ваш сервер", mirror) {
                 val keys = if (playlist != null) t.following.filter { f -> f.link != null }.map { f -> watchKey(t.magnetId, f) } else listOf(watchKey(t.magnetId, t.file))
                 val list = t.following.filter { f -> f.link != null }
@@ -430,13 +439,25 @@ private fun PlayDialog(t: PlayTarget, onDismiss: () -> Unit, onPlay: (PlayReques
                 val resolve: suspend (Int) -> Pair<List<String>, List<String>> = { i ->
                     list.getOrNull(i)?.let { f -> val (a, sb) = t.sidecarsOf(f); mirrorUrls(a) to mirrorUrls(sb) } ?: (emptyList<String>() to emptyList())
                 }
-                onPlay(PlayRequest(it, t.label, playlist, subs, keys, audio, if (playlist != null) resolve else null))
+                onPlay(PlayRequest(it, t.label, playlist, subs, keys, audio, if (playlist != null) resolve else null, fromStart))
             }
             Spacer(Modifier.height(10.dp))
-            Source("Напрямую", "Прямая ссылка AllDebrid", direct) { onPlay(PlayRequest(it, t.label, null, subs, listOf(watchKey(t.magnetId, t.file)), audio)) }
+            Source("Напрямую", "Прямая ссылка AllDebrid", direct) { onPlay(PlayRequest(it, t.label, null, subs, listOf(watchKey(t.magnetId, t.file)), audio, fromStart = fromStart)) }
             Spacer(Modifier.height(14.dp))
             OutlineButton("Закрыть", Modifier.fillMaxWidth(), onDismiss)
         }
+    }
+}
+
+/** «Продолжить с …» / «С начала»: two halves of one choice, the chosen one lit. */
+@Composable
+private fun StartOption(title: String, hint: String, on: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    val edge by animateColorAsState(if (on) Sm.lamp else Sm.line, tween(220))
+    val bg by animateColorAsState(if (on) Color(0x24FFB02E) else Sm.film, tween(220))
+    Column(modifier.clip(RoundedCornerShape(14.dp)).background(bg).border(1.dp, edge, RoundedCornerShape(14.dp))
+        .hoverClick(remember { MutableInteractionSource() }, onClick = onClick).padding(horizontal = 14.dp, vertical = 10.dp)) {
+        Text(title, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp, color = if (on) Sm.lamp else Sm.text, maxLines = 1)
+        Text(hint, fontFamily = Onest, fontSize = 12.5.sp, color = Sm.muted)
     }
 }
 

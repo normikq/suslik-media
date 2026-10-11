@@ -88,7 +88,9 @@ data class PlayRequest(
     val watchKeys: List<String>,  // "magnetId|path" for this and the following episodes (progress in the library)
     val audioUrls: List<String> = emptyList(), // external voice-overs (.mka/.ac3…) next to the video
     /** Playlist episode index -> (voice-overs, subtitles) of that episode. */
-    val sidecars: (suspend (Int) -> Pair<List<String>, List<String>>)? = null
+    val sidecars: (suspend (Int) -> Pair<List<String>, List<String>>)? = null,
+    /** «С начала» chosen in the play dialog: ignore the remembered place this time. */
+    val fromStart: Boolean = false
 )
 
 object Vlc {
@@ -806,7 +808,7 @@ fun PlayerView(
             val entries = Api.text(req.playlist)?.let { parseM3u(it) }.orEmpty()
             if (entries.size > startIndex) { queue = entries; playEntry(startIndex); return@LaunchedEffect }
         }
-        open(req.url, savedPos(), req.audioUrls to req.subUrls)
+        open(req.url, if (req.fromStart) 0L else savedPos(), req.audioUrls to req.subUrls)
     }
     // Prefetch the next episode's extra tracks while this one plays, so the switch starts at once.
     LaunchedEffect(index, queue.size) { if (index + 1 < queue.size) { delay(15_000); sidecars(index + 1) } }

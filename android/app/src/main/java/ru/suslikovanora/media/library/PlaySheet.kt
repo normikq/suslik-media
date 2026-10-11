@@ -8,6 +8,7 @@ import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -50,7 +51,9 @@ data class PlayRequest(
     val playlist: String?,
     val subUrls: List<String>,
     val watchKeys: List<String>,
-    val audioUrls: List<String> = emptyList()
+    val audioUrls: List<String> = emptyList(),
+    /** «С начала» chosen in the sheet: ignore the remembered place this time. */
+    val fromStart: Boolean = false
 )
 
 /**
@@ -73,6 +76,12 @@ fun PlaySheet(
     var preparingPlaylist by remember(target) { mutableStateOf(false) }
     var subUrls by remember(target) { mutableStateOf<List<String>>(emptyList()) }
     var audioUrls by remember(target) { mutableStateOf<List<String>>(emptyList()) }
+    // Where the player stopped last time (the same place the player itself resumes from); null = nothing to resume.
+    val resumeAt = remember(target) {
+        context.getSharedPreferences("positions", Context.MODE_PRIVATE).getLong("w:" + watchKey(target.magnetId, target.file), 0L)
+            .takeIf { it >= 5_000L }
+    }
+    var fromStart by remember(target) { mutableStateOf(false) }
 
     LaunchedEffect(target) {
         val link = target.file.link
@@ -141,20 +150,26 @@ fun PlaySheet(
         Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(bottom = 18.dp).navigationBarsPadding()) {
             Text(target.label, fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 17.sp, lineHeight = 22.sp, color = Sm.text)
             Text(sub, fontFamily = Onest, fontSize = 13.5.sp, color = Sm.muted, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
+            resumeAt?.let { at ->
+                Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StartOption("▶  С ${clock(at)}", "продолжить", !fromStart, Modifier.weight(1f)) { fromStart = false }
+                    StartOption("⟲  С начала", "заново", fromStart, Modifier.weight(1f)) { fromStart = true }
+                }
+            }
             SourceGroup(
                 title = "Через зеркало", hint = if (playlist != null) "Через ваш сервер · дальше все серии сезона" else "Трафик идёт через ваш сервер",
                 url = mirror, busy = preparingPlaylist,
                 onPlay = {
                     val keys = if (playlist != null) target.following.filter { f -> f.link != null }.map { f -> watchKey(target.magnetId, f) }
                     else listOf(watchKey(target.magnetId, target.file))
-                    onPlay(PlayRequest(it, target.label, playlist, subUrls, keys, audioUrls))
+                    onPlay(PlayRequest(it, target.label, playlist, subUrls, keys, audioUrls, fromStart))
                 }, onCopy = { copy(context, it) }
             )
             Spacer(Modifier.height(10.dp))
             SourceGroup(
                 title = "Напрямую", hint = "Прямая ссылка AllDebrid",
                 url = direct, busy = false,
-                onPlay = { onPlay(PlayRequest(it, target.label, null, subUrls, listOf(watchKey(target.magnetId, target.file)), audioUrls)) },
+                onPlay = { onPlay(PlayRequest(it, target.label, null, subUrls, listOf(watchKey(target.magnetId, target.file)), audioUrls, fromStart)) },
                 onCopy = { copy(context, it) }
             )
             Spacer(Modifier.height(12.dp))
@@ -179,6 +194,24 @@ private fun SourceGroup(title: String, hint: String, url: String?, busy: Boolean
             OutlineButton("Копировать", color = if (url != null) Sm.text else Sm.muted) { url?.let(onCopy) }
         }
     }
+}
+
+/** «Продолжить с …» / «С начала»: two halves of one choice, the chosen one lit. */
+@Composable
+private fun StartOption(title: String, hint: String, on: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    Column(
+        modifier.clip(RoundedCornerShape(14.dp)).background(if (on) Sm.lampSoft else Sm.film)
+            .border(1.dp, if (on) Sm.lamp else Sm.line, RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 10.dp)
+    ) {
+        Text(title, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = if (on) Sm.lamp else Sm.text, maxLines = 1)
+        Text(hint, fontFamily = Onest, fontSize = 12.sp, color = Sm.muted)
+    }
+}
+
+private fun clock(ms: Long): String {
+    val s = ms / 1000
+    return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, s % 3600 / 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
 }
 
 private fun copy(context: Context, text: String) {

@@ -212,7 +212,7 @@ class MainActivity : ComponentActivity() {
                 PlaySheet(
                     target = t,
                     onDismiss = { playTarget = null },
-                    onPlay = { r -> playTarget = null; handlePlay(r.url, r.title, r.playlist, r.subUrls, r.watchKeys, r.audioUrls) }
+                    onPlay = { r -> playTarget = null; handlePlay(r.url, r.title, r.playlist, r.subUrls, r.watchKeys, r.audioUrls, r.fromStart) }
                 )
             }
         }
@@ -230,7 +230,8 @@ class MainActivity : ComponentActivity() {
 
     private fun handlePlay(
         url: String, title: String?, playlist: String? = null,
-        subUrls: List<String> = emptyList(), watchKeys: List<String> = emptyList(), audioUrls: List<String> = emptyList()
+        subUrls: List<String> = emptyList(), watchKeys: List<String> = emptyList(), audioUrls: List<String> = emptyList(),
+        fromStart: Boolean = false
     ) {
         val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return
         if (uri.scheme !in listOf("http", "https")) {
@@ -248,6 +249,7 @@ class MainActivity : ComponentActivity() {
             if (subUrls.isNotEmpty()) putStringArrayListExtra(PlayerActivity.EXTRA_SUB_URLS, ArrayList(subUrls))
             if (watchKeys.isNotEmpty()) putStringArrayListExtra(PlayerActivity.EXTRA_WATCH_KEYS, ArrayList(watchKeys))
             if (audioUrls.isNotEmpty()) putStringArrayListExtra(PlayerActivity.EXTRA_AUDIO_URLS, ArrayList(audioUrls))
+            putExtra(PlayerActivity.EXTRA_FROM_START, fromStart)
         })
     }
 
