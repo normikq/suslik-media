@@ -1,0 +1,9 @@
+.env
+node_modules/
+npm-debug.log*
+.DS_Store
+
+sessions.json
+library-files-cache.json
+media-metadata-cache.json
+*.tmp

@@ -1,0 +1,1594 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Suslik Media — медиатека</title>
+  <style>
+    :root{color-scheme:dark;--bg:#0b0c10;--panel:#141720;--line:#292d3a;--text:#f3f4f8;--muted:#9da4b5;--accent:#b7a0ff;--accent2:#8b70ed}
+    *{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at top,#19152a 0,#0b0c10 55%);color:var(--text);font:16px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh}
+    main{width:min(900px,calc(100% - 32px));margin:0 auto;padding:54px 0 80px}.brand{display:flex;align-items:center;gap:12px;margin-bottom:34px}.logo{width:44px;height:44px;border-radius:14px;background:linear-gradient(135deg,var(--accent),#7357d8);display:grid;place-items:center;font-size:22px;color:#100d1b}.eyebrow{color:var(--accent);font-size:12px;letter-spacing:.16em;text-transform:uppercase;font-weight:700}
+    h1{font-size:clamp(30px,5vw,46px);line-height:1.1;letter-spacing:-.04em;margin:0 0 12px}p{color:var(--muted)}.hero{margin-bottom:28px}.panel{background:rgba(20,23,32,.92);border:1px solid var(--line);border-radius:20px;padding:24px;box-shadow:0 18px 60px #0003;margin:18px 0}.hidden{display:none!important}label{display:block;font-size:13px;color:#c7cada;margin:0 0 8px}input{width:100%;background:#0c0e14;border:1px solid #35394a;border-radius:11px;padding:13px 14px;color:var(--text);font:inherit;outline:none}input:focus{border-color:var(--accent)}button,.button{border:0;border-radius:11px;padding:12px 16px;background:var(--accent);color:#171222;font:600 14px system-ui;cursor:pointer;text-decoration:none;display:inline-flex;justify-content:center;align-items:center;gap:8px}button:hover,.button:hover{background:#c8b7ff}button.secondary,.button.secondary{background:#252938;color:var(--text);border:1px solid #373c4d}button:disabled{opacity:.55;cursor:wait}.split-actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:6px}.split-button{display:inline-flex;border:1px solid #373c4d;border-radius:11px;overflow:hidden;background:#252938}.split-button button,.split-button a{border:0;border-radius:0;padding:10px 13px;background:#252938;color:var(--text);font:600 13px system-ui;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;white-space:nowrap}.split-button button+button,.split-button a+a{border-left:1px solid #41475b}.split-button button:hover,.split-button a:hover{background:#343a4d}.row{display:flex;gap:10px}.row input{flex:1;min-width:0}.status{font-size:13px;min-height:22px;margin-top:12px;color:var(--muted)}.error{color:#ff9caa}.success{color:#9be6bd}.result-title{font-size:20px;font-weight:700;overflow-wrap:anywhere}.meta{font-size:13px;color:var(--muted);margin:6px 0 16px}.actions{display:flex;flex-wrap:wrap;gap:8px}.foot{font-size:12px;color:#777f92;margin-top:22px}.navrow{margin:14px 0}.magnet-card{background:rgba(20,23,32,.92);border:1px solid var(--line);border-radius:16px;padding:18px;margin:12px 0}.file-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0;border-top:1px solid #292d3a}.file-path{overflow-wrap:anywhere;min-width:0}.file-meta{font-size:12px;color:var(--muted)}.topline{display:flex;justify-content:space-between;align-items:center;gap:10px}
+    .library-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:16px;margin:18px 0}
+    .library-tile{padding:0;overflow:hidden;text-align:left;display:block;background:#151722;color:var(--text);border:1px solid #303344;border-radius:16px;min-width:0;width:100%}
+    .tile-art{height:230px;display:flex;align-items:end;padding:15px;background:linear-gradient(155deg,#3b2c67 0%,#171a2a 52%,#090a0f 100%);position:relative;overflow:hidden}
+    .tile-art:before{content:"▶";position:absolute;right:-5px;top:-35px;font-size:130px;color:#ffffff0b;transform:rotate(-12deg)}
+    .tile-art img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.tile-progress-track{position:absolute;left:15px;right:15px;bottom:42px;height:5px;background:#ffffff50;border-radius:9px;overflow:hidden}.tile-progress-fill{height:100%;background:#c8b7ff;transition:width .45s ease}.tile-progress-label{position:relative;margin-top:auto;font-size:11px;font-weight:700;text-shadow:0 2px 8px #000;background:#0008;border-radius:6px;padding:3px 6px;align-self:flex-start}
+    .tile-title{position:relative;font-size:17px;font-weight:800;line-height:1.15;text-shadow:0 2px 8px #000;overflow-wrap:anywhere}
+    .tile-remove{margin-top:6px;padding:4px 10px;min-height:28px;border-radius:8px;border:1px solid #ff6b6b66;background:#ff6b6b1a;color:#ffb3b3;font:inherit;font-size:12px;line-height:1.2;cursor:pointer;width:auto}.tile-remove:disabled{opacity:.6;cursor:default}.tile-remove.cancel{border-color:#ffb86b66;background:#ffb86b1a;color:#ffd9a8}.tile-remove.armed{background:#ff4d4d;color:#fff;border-color:#ff4d4d}.tile-info{padding:12px}.tile-info strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.tile-info .file-meta{margin-top:5px}.tile-media{color:#cfc6ff;font-weight:600}.tile-media.media-pending{opacity:.55}
+    .modal-backdrop{position:fixed;inset:0;background:#05060bd9;backdrop-filter:blur(8px);z-index:50;display:flex;align-items:center;justify-content:center;padding:20px;animation:rise-in .2s ease}
+    .library-modal{width:min(850px,100%);max-height:min(85vh,900px);overflow:auto;background:#12151f;border:1px solid #383b4d;border-radius:20px;padding:22px;box-shadow:0 24px 90px #0009}
+    .modal-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}.modal-head h2{margin:0;overflow-wrap:anywhere}.modal-files{margin-top:16px}
+    @media(max-width:600px){.library-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.tile-art{height:190px}.library-modal{padding:15px}.modal-backdrop{padding:10px}}
+    /* Subtle motion, with reduced-motion accessibility support. */
+    button,.button,.panel,.magnet-card,.file-row,details{transition:background-color .18s ease,border-color .18s ease,transform .18s ease,box-shadow .18s ease,opacity .18s ease}
+    button:hover,.button:hover{transform:translateY(-1px);box-shadow:0 5px 18px #0003}
+    .panel,.magnet-card{animation:rise-in .32s ease both}
+    .magnet-card:hover{border-color:#49415f}
+    .logo{animation:soft-glow 4s ease-in-out infinite}
+    .progress-track{height:10px;background:#252938;border-radius:999px;overflow:hidden;margin-top:10px;border:1px solid #373c4d}
+    .progress-fill{height:100%;width:0;background:linear-gradient(90deg,#8b70ed,#c8b7ff);border-radius:999px;transition:width .45s ease}
+    .history-item{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid var(--line)}
+    .history-value{min-width:0;overflow-wrap:anywhere;font-size:13px;flex:1}.history-actions{display:flex;gap:6px;flex-shrink:0}.history-progress{display:inline-flex;align-items:center;gap:8px;margin-left:12px;min-width:120px;justify-content:flex-end}.history-progress-track{width:84px;height:7px;background:#252938;border:1px solid #373c4d;border-radius:999px;overflow:hidden}.history-progress-fill{height:100%;background:linear-gradient(90deg,#8b70ed,#c8b7ff);transition:width .45s ease}.history-title-row{display:flex;align-items:center;justify-content:space-between;gap:8px}.history-percent{font-size:12px;color:var(--muted);white-space:nowrap}
+    @keyframes rise-in{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes soft-glow{0%,100%{box-shadow:0 0 0 #8b70ed00}50%{box-shadow:0 0 20px #8b70ed35}}
+    @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}}
+    @media(max-width:600px){main{padding-top:30px}.panel{padding:18px}.row{flex-direction:column}.row button{width:100%}.history-item{align-items:flex-start;flex-direction:column}.history-actions{width:100%}}
+  
+.torrent-upload{margin-top:14px;padding-top:12px;border-top:1px solid var(--border,#292d3a)}
+.torrent-upload input[type="file"]{min-width:0;flex:1;padding:10px}
+
+    .input-modes{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:10px 0 22px}
+    .mode-card{display:flex;align-items:center;gap:12px;text-align:left;min-height:78px;background:#11141d;color:var(--text);border:1px solid #35394a;border-radius:14px;padding:14px;transition:border-color .18s,background .18s,transform .18s}
+    .mode-card:hover{background:#1a1d29;border-color:#68617f;transform:translateY(-1px)}
+    .mode-card.selected{background:linear-gradient(135deg,#25213a,#171a25);border-color:var(--accent);box-shadow:0 0 0 1px #a78bfa33 inset}
+    .mode-icon{display:grid;place-items:center;width:38px;height:38px;border-radius:11px;background:#29243d;color:#c8b7ff;font-size:23px;flex-shrink:0}
+    .mode-card strong,.mode-card small{display:block}.mode-card small{font-size:12px;color:var(--muted);font-weight:400;margin-top:4px}
+    .input-area{margin-top:6px}.torrent-dropzone{border:1.5px dashed #4a4e62;background:#10131b;border-radius:16px;min-height:155px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:18px;cursor:pointer;transition:border-color .18s,background .18s}
+    .torrent-dropzone:hover,.torrent-dropzone.dragover{border-color:var(--accent);background:#191626}
+    .drop-icon{font-size:28px;color:#c8b7ff;margin-bottom:8px}.torrent-dropzone p{font-size:13px;margin:6px 0 14px}
+    .torrent-chosen{display:flex;align-items:center;gap:10px;margin-top:12px;padding:12px;background:#11141d;border:1px solid #373c4d;border-radius:12px}
+    .torrent-file-icon{font-size:10px;font-weight:800;letter-spacing:.05em;background:#29243d;color:#c8b7ff;padding:8px;border-radius:7px}
+    .torrent-chosen-name{min-width:0;overflow-wrap:anywhere;flex:1;font-size:13px}.detach-btn{padding:6px 11px!important;font-size:20px!important}
+    .submit-torrent{width:100%;margin-top:14px}.hidden{display:none!important}
+    @media(max-width:600px){.input-modes{gap:8px}.mode-card{padding:10px;gap:8px}.mode-icon{width:32px;height:32px}.mode-card small{font-size:11px}}
+
+.file-link-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.split-actions{display:inline-flex;align-items:stretch;gap:0}
+.split-actions .split-first{border-top-right-radius:0;border-bottom-right-radius:0;margin:0}
+.split-actions .split-last{border-top-left-radius:0;border-bottom-left-radius:0;margin:0;border-left:0}
+.file-link-actions button,.file-link-actions .button{min-height:42px}
+
+.file-link-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:10px}
+.split-actions{display:inline-flex;align-items:stretch;vertical-align:middle}
+.split-actions button,.split-actions a{display:inline-flex;align-items:center;justify-content:center;min-height:42px;box-sizing:border-box;white-space:nowrap}
+.split-actions .split-first{border-top-right-radius:0;border-bottom-right-radius:0;margin:0}
+.split-actions .split-last{border-top-left-radius:0;border-bottom-left-radius:0;margin:0;border-left:0}
+.file-link-actions>button{min-height:42px}
+.file-row .file-link-actions{width:100%}
+.file-row .split-actions{flex:0 0 auto}
+@media(max-width:620px){.file-link-actions{gap:7px}.split-actions button,.split-actions a{white-space:normal}}
+
+
+/* Smooth motion system */\n
+/* Stable mosaic reveal: cards stay still while images load, then fade from blur to sharp. */
+.library-tile.mosaic-pending{opacity:1;animation:none;transform:none;filter:none;pointer-events:none}
+.library-tile:not(.mosaic-pending){opacity:1;animation:mosaic-clear .48s ease-out both;animation-delay:calc(min(var(--tile-index,0),18)*32ms)}
+.library-tile.mosaic-pending .tile-art{background:#191b28;animation:none}
+.library-tile .tile-art img{opacity:0;filter:blur(12px);transition:opacity .55s ease,filter .75s ease}
+.library-tile .tile-art img.poster-loaded{opacity:1;filter:blur(0)}
+@keyframes mosaic-clear{from{opacity:0;filter:blur(2px);transform:translateY(5px) scale(.997)}to{opacity:1;filter:blur(0);transform:translateY(0) scale(1)}}
+
+:root{scroll-behavior:smooth}
+button,.button,input,select,textarea,.panel,.library-tile,.file-row,.modal-backdrop,.library-modal{
+  transition:background-color .22s ease,border-color .22s ease,color .22s ease,box-shadow .24s ease,transform .24s cubic-bezier(.2,.75,.25,1),opacity .22s ease
+}
+button:not(:disabled):active,.button:active{transform:translateY(0) scale(.975)}
+input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px #b99cff25}
+.library-grid{perspective:1000px}
+.library-tile{
+  opacity:1;
+  transform-origin:50% 70%;
+}
+.library-tile:hover{transform:translateY(-5px) scale(1.012);border-color:#a995ef;box-shadow:0 14px 34px #0005}
+.library-tile:hover .tile-art img{transform:scale(1.045)}
+.tile-art img{transition:transform .55s cubic-bezier(.2,.75,.25,1),opacity .3s ease}
+.tile-art:after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(115deg,transparent 20%,#ffffff0a 45%,transparent 70%);transform:translateX(-120%);transition:transform .7s ease}
+.library-tile:hover .tile-art:after{transform:translateX(120%)}
+.tile-progress-fill,.history-progress-fill,.progress-fill{transition:width .7s cubic-bezier(.2,.75,.25,1)}
+.mosaic-item{opacity:0;animation:mosaic-in .38s ease forwards;animation-delay:calc(min(var(--tile-index,0), 18) * 24ms)}
+.modal-backdrop:not(.hidden){animation:fade-in .2s ease both}
+.modal-backdrop:not(.hidden) .library-modal{animation:modal-pop .28s cubic-bezier(.2,.75,.25,1) both}
+.status{transition:opacity .2s ease,color .2s ease}
+@keyframes mosaic-in{from{opacity:0;transform:translateY(16px) scale(.975);filter:blur(3px)}to{opacity:1;transform:translateY(0) scale(1);filter:blur(0)}}
+@keyframes fade-in{from{opacity:0}to{opacity:1}}
+@keyframes modal-pop{from{opacity:0;transform:translateY(12px) scale(.985)}to{opacity:1;transform:translateY(0) scale(1)}}
+@media(prefers-reduced-motion:reduce){
+  :root{scroll-behavior:auto}
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important;filter:none!important}
+  .library-tile,.mosaic-item{opacity:1}
+}
+
+
+.folder-toggle{min-width:28px;padding:3px 7px;margin-right:6px;line-height:1;border-radius:7px}
+.file-row.folder-collapsed{display:none}
+.file-row[data-file-type="folder"] .file-path{display:flex;align-items:center;gap:5px}
+.file-row[data-file-type="folder"] .file-path>span:last-child{font-weight:700}
+.file-depth{display:inline-flex;align-items:center;justify-content:center;min-width:24px;padding:2px 5px;border:1px solid #3b4154;border-radius:6px;background:#202536;color:#aeb8d5;font-size:10px;font-weight:700;white-space:nowrap}
+.file-row[data-depth="0"] .file-depth{display:none}
+\n
+/* SUSLIK — smooth woodland redesign */
+:root {
+  --bg: #100d19; --panel: rgba(29,24,45,.84); --line: rgba(218,184,255,.16);
+  --text: #fff7ed; --muted: #c7bbd8; --orange: #ffb96b; --pink: #ff83a5;
+  --violet: #aa8cff; --mint: #7ce5c2;
+}
+html { scroll-behavior: smooth; }
+body {
+  color: var(--text);
+  background:
+    radial-gradient(ellipse at 12% 0%, rgba(119,63,139,.25), transparent 38%),
+    radial-gradient(ellipse at 92% 14%, rgba(255,131,165,.13), transparent 30%),
+    linear-gradient(150deg,#100d19 0%,#171226 55%,#21152a 100%);
+  background-attachment: fixed;
+}
+main { width: min(1020px, calc(100% - 32px)); padding-top: 32px; }
+.brand { animation: suslik-enter .8s cubic-bezier(.2,.8,.2,1) both; }
+.logo {
+  background: linear-gradient(135deg,#ffe2a0,#ffb96b 52%,#ff83a5);
+  color: #35182e; box-shadow: 0 8px 28px rgba(255,145,104,.18);
+  transform: rotate(-4deg); animation: suslik-logo 7s ease-in-out infinite;
+}
+.eyebrow { color: var(--mint); letter-spacing: .09em; }
+h1 {
+  background: linear-gradient(100deg,#fff5df 0%,#ffc77d 43%,#ff91b2 76%,#b7a0ff 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.hero {
+  position: relative; overflow: hidden; isolation: isolate;
+  padding: 30px; margin-bottom: 28px; border-radius: 28px;
+  border: 1px solid rgba(255,198,160,.22);
+  background: linear-gradient(115deg,rgba(62,37,77,.94),rgba(37,28,59,.94) 56%,rgba(68,37,61,.94));
+  box-shadow: 0 24px 70px rgba(4,2,12,.32), inset 0 1px rgba(255,255,255,.07);
+}
+.hero::before {
+  content:""; position:absolute; z-index:-1; width:300px; height:300px; right:-75px; top:-145px;
+  border-radius:50%; background:radial-gradient(circle,rgba(255,190,109,.22),transparent 68%);
+  animation: suslik-glow 8s ease-in-out infinite alternate;
+}
+.hero p { max-width: 620px; color: #e0d5f1; }
+.mascot-orbit {
+  position:absolute; right:34px; bottom:20px; width:98px; height:98px;
+  display:grid; place-items:center; font-size:64px; border-radius:34px;
+  background:linear-gradient(145deg,#ffe0a0,#ffad83 58%,#ff8eae);
+  border:2px solid rgba(255,245,220,.75); box-shadow:0 15px 38px rgba(255,145,104,.18);
+  transform:rotate(5deg); animation:suslik-float 4.4s cubic-bezier(.45,0,.55,1) infinite;
+}
+.panel,.magnet-card {
+  background:linear-gradient(145deg,rgba(34,27,52,.94),rgba(23,20,38,.94));
+  border-color:var(--line); box-shadow:0 12px 34px rgba(4,2,12,.19);
+  transition:transform .38s cubic-bezier(.2,.8,.2,1),border-color .38s ease,box-shadow .38s ease,background .38s ease;
+}
+.panel:hover,.magnet-card:hover { border-color:rgba(255,185,107,.42); box-shadow:0 18px 42px rgba(4,2,12,.28); }
+input { background:rgba(13,10,22,.75); border-color:#4b3b5e; transition:border-color .25s ease,box-shadow .25s ease; }
+input:focus { border-color:var(--mint); box-shadow:0 0 0 4px rgba(124,229,194,.13); }
+button,.button {
+  color:#32152a; border:1px solid rgba(255,255,255,.13); border-radius:14px;
+  background:linear-gradient(115deg,#ffcf79,#ffab75 52%,#ff8ba9);
+  box-shadow:0 6px 18px rgba(255,145,104,.12);
+  transition:transform .28s cubic-bezier(.2,.8,.2,1),filter .28s ease,box-shadow .28s ease,background .28s ease;
+}
+button:hover,.button:hover { filter:brightness(1.06); transform:translateY(-2px); box-shadow:0 11px 24px rgba(255,145,104,.2); }
+button:active,.button:active { transform:translateY(0) scale(.985); }
+button.secondary,.button.secondary { background:rgba(48,38,70,.9); color:#f9efff; border-color:#55436b; box-shadow:none; }
+button.secondary:hover,.button.secondary:hover { background:rgba(67,51,91,.95); }
+.library-tile {
+  background:linear-gradient(145deg,rgba(39,29,59,.94),rgba(24,20,39,.96));
+  border-color:rgba(218,184,255,.16); border-radius:20px;
+  transition:transform .38s cubic-bezier(.2,.8,.2,1),border-color .38s ease,box-shadow .38s ease;
+}
+.library-tile:hover { transform:translateY(-4px); border-color:rgba(255,185,107,.5); box-shadow:0 15px 30px rgba(4,2,12,.28); }
+.tile-art { background:linear-gradient(155deg,#79518d,#39274f 54%,#171224); }
+.tile-progress-fill { background:linear-gradient(90deg,#7ce5c2,#ffcf79,#ff83a5); }
+.status.success { color:var(--mint); } .status.error { color:#ff91a9; }
+.modal-backdrop { background:rgba(12,8,20,.78); backdrop-filter:blur(10px); animation:suslik-fade .22s ease both; }
+.library-modal { background:#1d182d; border-color:#514063; box-shadow:0 30px 90px #05030db0; animation:suslik-modal .3s cubic-bezier(.2,.8,.2,1) both; }
+.file-row { border-color:rgba(218,184,255,.13); transition:background .25s ease; }
+.file-row:hover { background:rgba(255,255,255,.035); }
+@keyframes suslik-enter { from {opacity:0;transform:translateY(14px)} to {opacity:1;transform:translateY(0)} }
+@keyframes suslik-float { 0%,100% {transform:translateY(0) rotate(5deg)} 50% {transform:translateY(-8px) rotate(-2deg)} }
+@keyframes suslik-logo { 0%,90%,100% {transform:rotate(-4deg)} 94% {transform:rotate(3deg)} 97% {transform:rotate(-1deg)} }
+@keyframes suslik-glow { from {transform:translate3d(0,0,0) scale(.9);opacity:.65} to {transform:translate3d(-22px,20px,0) scale(1.15);opacity:1} }
+@keyframes suslik-fade { from {opacity:0} to {opacity:1} }
+@keyframes suslik-modal { from {opacity:0;transform:translateY(10px) scale(.985)} to {opacity:1;transform:translateY(0) scale(1)} }
+@media(max-width:620px) {
+  main { padding-top:22px; }
+  .hero { padding:24px 20px 112px; }
+  .mascot-orbit { width:78px;height:78px;right:18px;bottom:15px;font-size:51px; }
+}
+@media(prefers-reduced-motion:reduce) {
+  *,*::before,*::after { animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important; }
+}
+
+
+/* Mobile/tablet layout fixes */
+@media (max-width: 900px) {
+  main { width: min(100% - 24px, 760px); padding: 28px 0 100px; }
+  .panel { padding: 18px; }
+  .library-grid { grid-template-columns: repeat(auto-fill, minmax(min(150px, 100%), 1fr)); gap: 12px; }
+  .tile-art { height: clamp(155px, 28vw, 220px); }
+  .library-modal { max-height: calc(100dvh - 28px); }
+  .modal-backdrop { padding: 12px; }
+}
+@media (max-width: 620px) {
+  body { font-size: 15px; }
+  main { width: calc(100% - 20px); padding: 18px 0 110px; }
+  .brand { margin-bottom: 22px; }
+  .panel { padding: 14px; border-radius: 16px; margin: 12px 0; }
+  .topline { align-items: flex-start; }
+  .topline > div { min-width: 0; }
+  .topline h2 { margin-top: 0; }
+  .topline button { flex-shrink: 0; padding: 10px 12px; }
+  .row { flex-wrap: wrap; }
+  .row > input { flex: 1 1 100%; }
+  .split-actions, .actions { gap: 7px; }
+  .split-actions > *, .actions > * { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+  .magnet-card { padding: 12px; border-radius: 14px; }
+  .file-row { display: flex; flex-direction: column; align-items: stretch; gap: 8px; min-width: 0; padding: 12px 0; }
+  .file-row > *, .file-path, .file-link-actions { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+  .file-link-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+  .file-link-actions button, .file-link-actions a { flex: 1 1 auto; min-width: 120px; white-space: normal; overflow-wrap: anywhere; }
+  .library-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+  .tile-art { height: clamp(145px, 48vw, 210px); padding: 10px; }
+  .tile-title { font-size: 15px; }
+  .tile-info { padding: 10px; }
+  .library-modal { width: 100%; max-height: calc(100dvh - 20px); border-radius: 16px; }
+  .modal-backdrop { padding: 10px; align-items: center; }
+  /* Telegram-style floating bottom tab switcher */
+  .navrow {
+    position: fixed; z-index: 45; left: 50%; transform: translateX(-50%);
+    bottom: max(10px, env(safe-area-inset-bottom)); width: min(440px, calc(100% - 24px));
+    display: flex; gap: 7px; margin: 0; padding: 7px;
+    border: 1px solid #414052; border-radius: 999px;
+    background: rgba(20, 21, 32, .92); backdrop-filter: blur(18px);
+    box-shadow: 0 10px 35px #0008;
+  }
+  .navrow button { flex: 1; min-height: 46px; border-radius: 999px; padding: 10px 12px; font-size: 13px; }
+  .navrow button.secondary { background: transparent; border-color: transparent; color: #c4c4d3; }
+  .navrow button:not(.secondary) { background: linear-gradient(135deg, var(--accent), #9278ef); color: #171222; }
+  .foot { line-height: 1.45; }
+}
+@media (max-width: 360px) {
+  .library-grid { grid-template-columns: minmax(0, 1fr); }
+  .tile-art { height: 210px; }
+  .topline { flex-wrap: wrap; }
+}
+
+
+/* Bottom navigation: single horizontal pill bar, Telegram-inspired */
+@media (max-width: 900px) {
+  .navrow {
+    position: fixed !important; z-index: 9999; left: 50% !important;
+    right: auto !important; bottom: max(12px, env(safe-area-inset-bottom)) !important;
+    transform: translateX(-50%) !important;
+    width: min(520px, calc(100% - 24px)) !important;
+    box-sizing: border-box; display: flex !important; flex-direction: row !important;
+    flex-wrap: nowrap !important; align-items: stretch; justify-content: stretch;
+    gap: 6px !important; margin: 0 !important; padding: 7px !important;
+    border: 1px solid rgba(150,170,200,.22); border-radius: 999px;
+    background: rgba(24, 35, 51, .94); backdrop-filter: blur(18px);
+    box-shadow: 0 8px 32px rgba(0,0,0,.4);
+  }
+  .navrow button {
+    display: flex !important; flex: 1 1 0 !important; width: 50% !important;
+    min-width: 0 !important; max-width: none !important; min-height: 48px;
+    margin: 0 !important; padding: 10px 8px !important;
+    align-items: center; justify-content: center; text-align: center;
+    border-radius: 999px !important; white-space: normal !important;
+    overflow-wrap: anywhere; line-height: 1.15; font-size: clamp(12px, 3.4vw, 15px);
+  }
+  .navrow button::before { display: inline-block; margin-right: 7px; font-size: 18px; line-height: 1; flex-shrink: 0; }
+  .navrow #showLinkTab::before { content: "↗"; }
+  .navrow #showLibraryTab::before { content: "▤"; }
+}
+@media (max-width: 360px) {
+  .navrow { gap: 4px !important; padding: 5px !important; }
+  .navrow button { padding: 9px 5px !important; font-size: 12px; }
+  .navrow button::before { margin-right: 4px; font-size: 16px; }
+}
+
+
+/* Compact minimalist bottom navigation */
+@media (max-width: 620px) {
+  .navrow {
+    width: min(340px, calc(100% - 36px)) !important;
+    gap: 4px !important;
+    padding: 5px !important;
+    bottom: max(8px, env(safe-area-inset-bottom)) !important;
+    border-radius: 999px !important;
+    background: rgba(20, 21, 32, .94) !important;
+    border-color: rgba(255,255,255,.10) !important;
+    box-shadow: 0 5px 22px rgba(0,0,0,.28) !important;
+  }
+  .navrow button {
+    min-height: 38px !important;
+    padding: 8px 10px !important;
+    font-size: 12px !important;
+    font-weight: 500 !important;
+    border-radius: 999px !important;
+    box-shadow: none !important;
+  }
+}
+
+.media-technical{overflow-wrap:anywhere;line-height:1.4;font-size:12px;opacity:.9}
+</style>
+<style id="tile-play-styles">
+.library-tile{cursor:pointer;font:600 14px system-ui;color:var(--text)}
+.library-tile:focus-visible{outline:2px solid #b99cff;outline-offset:2px}
+.tile-media{color:#cfc6ff;font-weight:600}
+button.tile-play{position:absolute;z-index:3;left:calc(50% - 30px);top:calc(50% - 44px);width:60px;height:60px;padding:0 0 0 4px;border-radius:50%;font-size:24px;line-height:1;color:#fff;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.38);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);box-shadow:0 6px 20px rgba(0,0,0,.35)}
+button.tile-play:hover{background:rgba(255,255,255,.28)}
+button.tile-play:disabled{opacity:.6;cursor:default}
+.tile-controls{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.tile-controls select{width:100%;min-width:0;min-height:42px;padding:8px 34px 8px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.1) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23fff' stroke-width='2'/%3E%3C/svg%3E") no-repeat right 12px center/12px 8px;color:var(--text);font:600 14px system-ui;-webkit-appearance:none;appearance:none;color-scheme:dark;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);cursor:pointer;text-overflow:ellipsis}
+.tile-controls select option{background:#1b1730;color:#fff}
+.tile-controls select:focus{outline:none;border-color:#b99cff}
+.play-sheet{position:fixed;inset:0;z-index:100000;display:none;align-items:flex-end;justify-content:center;background:rgba(6,4,14,.55);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+.play-sheet.open{display:flex}
+.play-sheet-card{width:min(460px,100%);padding:18px 16px calc(18px + env(safe-area-inset-bottom));border-radius:22px 22px 0 0;background:rgba(30,23,50,.74);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);border:1px solid rgba(255,255,255,.16);display:flex;flex-direction:column;gap:10px;max-height:90vh;overflow:auto}
+.play-sheet-title{font:800 17px/1.25 system-ui;color:#fff;overflow-wrap:anywhere}
+.play-sheet-sub{font:500 13px system-ui;color:rgba(255,255,255,.65);margin-top:-4px}
+a.sheet-btn,button.sheet-btn{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:56px;padding:10px 14px;border-radius:14px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.24);color:#fff;text-decoration:none;font:700 16px system-ui;text-align:center;width:100%;box-sizing:border-box}
+.sheet-btn small{font:500 12px system-ui;opacity:.72}
+.sheet-btn.disabled{opacity:.45;pointer-events:none}
+button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight:600}
+.play-toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:100001;max-width:min(92vw,420px);padding:12px 16px;border-radius:14px;background:rgba(30,23,50,.8);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,.2);color:#fff;font:600 14px system-ui;text-align:center;pointer-events:none;opacity:0;transition:opacity .2s}
+.sheet-group{display:flex;flex-direction:column;gap:8px;padding:10px;border-radius:16px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1)}
+.sheet-group-title{font:700 15px system-ui;color:#fff;display:flex;flex-direction:column;gap:2px}
+.sheet-group-title small{font:500 12px system-ui;opacity:.65}
+.sheet-row{display:flex;gap:8px}
+.sheet-row .sheet-btn{flex:1 1 0;min-width:0;min-height:50px;padding:8px 6px;font:700 14px system-ui;border-radius:12px;cursor:pointer;flex-direction:row}
+.sheet-row .sheet-btn:first-child{flex:1.25 1 0}
+.play-toast.show{opacity:1}
+.play-toast.error{border-color:rgba(255,120,120,.6)}
+@media(min-width:700px){.play-sheet{align-items:center}.play-sheet-card{border-radius:22px}}
+@media(max-width:600px){.tile-controls select{font-size:16px}button.tile-play{width:56px;height:56px;left:calc(50% - 28px);top:calc(50% - 40px)}.tile-info{padding:10px}}
+.season-playlist-btn{white-space:normal;max-width:100%;line-height:1.25}
+.season-playlist-note{flex-basis:100%;overflow-wrap:anywhere}
+@media(max-width:600px){.season-playlist-btn{width:100%;min-height:42px}.file-row{min-width:0}.file-path{min-width:0;overflow-wrap:anywhere}.season-playlist-note{font-size:.82rem}}
+</style>
+<style>
+.navrow #showSearchTab::before{content:"⌕"}
+.search-form{display:flex;gap:10px}.search-form input{flex:1;min-width:0}
+.search-providers{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 4px}
+.chip{font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid #373c4d;background:#1b1f2c;color:var(--muted)}
+.chip.ok{color:#9be6bd;border-color:#2f5b47}.chip.bad{color:#ff9caa;border-color:#6a3340}
+.search-tools{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:12px 0}
+.search-tools select{background:#0c0e14;border:1px solid #35394a;border-radius:11px;padding:9px 10px;color:var(--text);font:inherit}
+.search-tools label{display:flex;align-items:center;gap:6px;margin:0;font-size:13px;white-space:nowrap}
+.search-tools input[type=checkbox]{width:auto}
+.search-tools input[type=search]{flex:1;min-width:140px;padding:9px 12px}
+.sr-row{padding:12px 0;border-top:1px solid #292d3a}
+.sr-title{font-weight:650;overflow-wrap:anywhere}
+.sr-meta{font-size:12px;color:var(--muted);margin:4px 0 8px;display:flex;flex-wrap:wrap;gap:4px 12px}
+.sr-meta .seed{color:#9be6bd}.sr-meta .seed.zero{color:#ff9caa}
+.sr-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.sr-actions button{padding:9px 13px;font-size:13px}
+.sr-note{font-size:12px;color:var(--muted)}.sr-note.error{color:#ff9caa}.sr-note.success{color:#9be6bd}
+@media(max-width:600px){.search-form{flex-direction:column}.sr-actions button{flex:1 1 auto}}
+</style>
+<style id="nav-final">
+.ru-badge{font-weight:700;font-size:10px;letter-spacing:.04em;padding:1px 6px;border-radius:6px;background:#2a3a5e;color:#bcd0ff}
+.nav-short{display:none}
+@media (max-width:900px){
+  /* Компактная нижняя панель: иконка над короткой подписью, три равные кнопки, без переносов. */
+  .navrow{width:min(330px,calc(100% - 32px))!important;padding:4px!important;gap:2px!important;
+    bottom:max(8px,env(safe-area-inset-bottom))!important;border-radius:18px!important;
+    background:rgba(20,21,32,.95)!important;border:1px solid rgba(255,255,255,.1)!important;box-shadow:0 4px 18px rgba(0,0,0,.35)!important}
+  .navrow button{flex:1 1 0!important;width:auto!important;min-width:0!important;min-height:44px!important;padding:5px 2px!important;
+    flex-direction:column!important;gap:1px!important;border-radius:14px!important;font-size:10.5px!important;line-height:1.1!important;
+    font-weight:600!important;letter-spacing:.01em;white-space:nowrap!important;overflow:hidden;box-shadow:none!important}
+  .navrow button::before{margin:0!important;font-size:17px!important;line-height:1!important}
+  .nav-long{display:none}.nav-short{display:inline;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+  /* Контент не должен прятаться под панелью. */
+  body{padding-bottom:calc(76px + env(safe-area-inset-bottom))}
+}
+@media (max-width:340px){.navrow button{font-size:10px!important}.navrow button::before{font-size:15px!important}}
+</style>
+<script>/* App 1.2+: native library and bottom bar */try{if(Number(window.__suslikApp||0)>=3)document.documentElement.classList.add("suslik-native");}catch(e){}</script>
+<link rel="stylesheet" href="redesign.css?v=8">
+</head>
+<body>
+<main>
+  <div class="brand"><div class="logo">▶</div><div><div class="eyebrow">Приватная медиатека</div><strong>Suslik Media</strong></div></div>
+  <section class="hero"><div class="eyebrow">Все ваши ссылки в одном месте</div><h1>Найдите. Разблокируйте.<br>Смотрите как удобно.</h1><p>Приватный портал для ссылок и внешних видеоплееров.</p>
+<div class="mascot-orbit" role="img" aria-label="Мультяшный суслик">🐿️</div></section>
+
+  <section id="loginPanel" class="panel">
+    <h2>Войти</h2><p>Введите общий пароль доступа.</p>
+    <form id="loginForm"><label for="password">Пароль доступа</label><div class="row"><input id="password" type="password" autocomplete="current-password" required maxlength="256"><button type="submit">Войти</button></div></form>
+    <div id="loginStatus" class="status" role="status"></div>
+  </section>
+
+  <section id="appPanel" class="hidden">
+    <div class="topline"><div><h2>Suslik Media</h2><p>Ссылки и ваша библиотека AllDebrid.</p></div><button id="logout" class="secondary">Выйти</button></div>
+    <div class="row navrow"><button id="showLinkTab"><span class="nav-long">Открыть ссылку</span><span class="nav-short">Ссылка</span></button><button id="showLibraryTab" class="secondary"><span class="nav-long">Моя библиотека</span><span class="nav-short">Библиотека</span></button><button id="showSearchTab" class="secondary"><span class="nav-long">Поиск раздач</span><span class="nav-short">Поиск</span></button><button id="showAppsTab" class="secondary"><span class="nav-long">Приложения</span><span class="nav-short">Скачать</span></button></div>
+    <section id="linkTab">
+    <div class="panel">
+      <form id="linkForm">
+        <label>Выберите тип ввода</label>
+        <div class="input-modes" role="group" aria-label="Input type">
+          <button id="magnetModeBtn" class="mode-card selected" type="button" aria-pressed="true"><span class="mode-icon">↗</span><span><strong>Magnet-ссылка</strong><small>Вставьте magnet-ссылку</small></span></button>
+          <button id="torrentModeBtn" class="mode-card" type="button" aria-pressed="false"><span class="mode-icon">⇧</span><span><strong>Torrent-файл</strong><small>Выберите файл .torrent</small></span></button>
+        </div>
+        <div id="magnetInputArea" class="input-area"><label for="url">Magnet-ссылка</label><div class="row"><input id="url" type="text" placeholder="magnet:?xt=urn:btih:…" maxlength="5000" autocomplete="off"><button id="submitBtn" type="submit">Добавить magnet</button></div></div>
+        <div id="torrentInputArea" class="input-area hidden"><label>Torrent-файл <span class="file-meta">(max 1 MB)</span></label><input id="torrentФайл" class="hidden" type="file" accept=".torrent,application/x-bittorrent"><div id="torrentDropzone" class="torrent-dropzone" role="button" tabindex="0"><div class="drop-icon">⇧</div><strong id="torrentDropTitle">Перетащите сюда файл .torrent</strong><p id="torrentDropHint">или нажмите, чтобы выбрать файл на устройстве</p><button id="chooseTorrentBtn" class="secondary" type="button">Выбрать файл</button></div><div id="torrentChosen" class="torrent-chosen hidden"><span class="torrent-file-icon">TORRENT</span><span id="torrentChosenName" class="torrent-chosen-name"></span><span id="torrentChosenSize" class="file-meta"></span><button id="removeTorrentBtn" class="secondary detach-btn" type="button" aria-label="Detach file" title="Detach file">×</button></div><button id="submitTorrentBtn" type="submit" class="submit-torrent hidden">Загрузить торрент</button></div>
+      </form>
+      <div id="linkStatus" class="status" role="status"></div>
+      <section id="historyPanel" class="history-panel"><div class="topline"><h3>История поиска</h3><button id="clearHistory" class="secondary" type="button">Очистить</button></div><p class="file-meta">Сохраняется в этом браузере, в том числе после обновления страницы.</p><div id="searchHistory"></div></section>
+    </div>
+    <div id="magnetPanel" class="panel hidden"><div id="magnetStatus" class="status"></div><div id="magnetФайлы" class="actions"></div></div>
+    <div id="resultPanel" class="panel hidden">
+      <div id="filename" class="result-title"></div><div id="metadata" class="meta"></div>
+      <div class="actions"><button id="copyBtn">Копировать ссылку для воспроизведения</button><a id="openBtn" class="button secondary" href="#" target="_blank" rel="noopener noreferrer">Открыть ссылку</a></div>
+      <p class="foot">Для VLC/PotPlayer скопируйте ссылку и откройте сетевой поток в плеере. Браузер не может напрямую запускать настольные плееры без специального помощника.</p>
+    </div>
+    </section>
+    <section id="searchTab" class="hidden">
+      <div class="panel">
+        <div class="topline"><div><h2>Поиск раздач</h2><p>Один запрос — сразу по нескольким трекерам. Результат добавляется в вашу библиотеку AllDebrid.</p></div></div>
+        <form id="searchForm" class="search-form" role="search">
+          <input id="searchInput" type="search" placeholder="Название фильма или сериала…" maxlength="120" autocomplete="off" enterkeyhint="search" aria-label="Название для поиска">
+          <button id="searchBtn" type="submit">Найти</button>
+        </form>
+        <div id="searchProviders" class="search-providers"></div>
+        <div id="searchStatus" class="status" role="status"></div>
+        <div id="searchTools" class="search-tools hidden">
+          <select id="searchSort" aria-label="Сортировка"><option value="ru">RU сначала</option><option value="seeders">По сидам</option><option value="size">По размеру</option><option value="date">По дате</option></select>
+          <select id="searchKind" aria-label="Тип раздачи"><option value="video">Фильмы и сериалы</option><option value="movie">Только фильмы</option><option value="series">Только сериалы</option><option value="all">Всё подряд</option></select>
+          <label><input id="searchHideDead" type="checkbox"> Только с сидами</label>
+          <input id="searchFilter" type="search" placeholder="Уточнить: 1080p, 2160p, rus…" autocomplete="off">
+        </div>
+        <div id="searchHidden" class="file-meta"></div>
+        <div id="searchResults"></div>
+        <div class="actions"><button id="searchMore" class="secondary hidden" type="button">Показать ещё</button></div>
+      </div>
+    </section>
+    <section id="libraryTab" class="hidden">
+      <div class="panel">
+        <div class="topline"><div><h2>Моя библиотека AllDebrid</h2><p>Торренты, папки и файлы из вашего аккаунта.</p></div><button id="refreshLibrary">Обновить</button></div>
+        <label for="libraryПоиск">Поиск торрентов и файлов</label><input id="libraryПоиск" type="search" placeholder="Поиск по названию…" autocomplete="off">
+        <div id="libraryStatus" class="status" role="status">Нажмите «Обновить», чтобы загрузить медиатеку.</div>
+      </div>
+      <div id="libraryResults" class="library-grid"></div>
+    </section>
+    <section id="appsTab" class="hidden">
+      <div class="apps-hero">
+        <div class="apps-hero-glow" aria-hidden="true"></div>
+        <span class="apps-kicker">Приложения</span>
+        <h2>Suslik Media на ваших устройствах</h2>
+        <p>Нативная библиотека, плеер VLC с аппаратным декодированием, озвучки и субтитры из раздачи, прогресс просмотра.
+           Приложения сами проверяют обновления при каждом запуске.</p>
+      </div>
+      <div id="appsGrid" class="apps-grid">
+        <article class="app-card" data-platform="desktop">
+          <div class="app-card-head">
+            <span class="app-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3.5" width="19" height="13" rx="2.2"/><path d="M8 20.5h8M12 16.5v4"/></svg></span>
+            <div><h3>Windows</h3><p class="app-req">Windows 10 / 11 · 64-bit</p></div>
+            <span class="app-badge hidden">Для этого устройства</span>
+          </div>
+          <div class="app-meta"><span class="app-version">Проверяем…</span><span class="app-size"></span><span class="app-date"></span></div>
+          <ul class="app-features">
+            <li>Плеер прямо в окне библиотеки, оригинальное разрешение</li>
+            <li>Мини-плеер поверх окон, главы, скорость, ночной звук</li>
+            <li>Нужен установленный <a href="https://www.videolan.org/vlc/" target="_blank" rel="noopener">VLC 3.x (64-bit)</a></li>
+          </ul>
+          <details class="app-notes hidden"><summary>Что нового</summary><div class="app-notes-text"></div></details>
+          <a class="app-download disabled" aria-disabled="true">Скачать .msi</a>
+        </article>
+        <article class="app-card" data-platform="android">
+          <div class="app-card-head">
+            <span class="app-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2.5" width="12" height="19" rx="2.6"/><path d="M10.5 18.5h3"/></svg></span>
+            <div><h3>Android</h3><p class="app-req">Android 7.0 и новее</p></div>
+            <span class="app-badge hidden">Для этого устройства</span>
+          </div>
+          <div class="app-meta"><span class="app-version">Проверяем…</span><span class="app-size"></span><span class="app-date"></span></div>
+          <ul class="app-features">
+            <li>Плеер VLC: жесты, картинка в картинке, фоновый звук</li>
+            <li>Библиотека, поиск и загрузки — как на сайте</li>
+            <li>При установке разрешите «установку из этого источника»</li>
+          </ul>
+          <details class="app-notes hidden"><summary>Что нового</summary><div class="app-notes-text"></div></details>
+          <a class="app-download disabled" aria-disabled="true">Скачать .apk</a>
+        </article>
+      </div>
+      <div class="apps-steps">
+        <div class="apps-step"><b>1</b><div><strong>Скачайте</strong><span>файл для своей платформы — он всегда последней версии.</span></div></div>
+        <div class="apps-step"><b>2</b><div><strong>Установите</strong><span>Windows: запустите .msi. Android: откройте .apk и разрешите установку.</span></div></div>
+        <div class="apps-step"><b>3</b><div><strong>Войдите</strong><span>тем же паролем, что и на сайте. Дальше обновления приходят сами.</span></div></div>
+      </div>
+    </section>
+    <div id="libraryModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="library-modal"><div class="modal-head"><div><h2 id="modalTitle">Файлы</h2><p id="modalMeta"></p></div><div class="actions"><button id="openWebdav" class="secondary" type="button">WebDAV</button><button id="closeLibraryModal" class="secondary" type="button">Закрыть</button></div></div><div id="modalФайлы" class="modal-files"></div></div></div>
+    <div class="foot">Данные API хранятся на сервере. Запросы AllDebrid выполняются сервером. При прямом воспроизведении видеотрафик может идти с вашего устройства к AllDebrid.</div>
+  </section>
+  <div class="foot">Используйте только контент и ссылки, к которым у вас есть разрешённый доступ.</div>
+</main>
+<script>
+
+  // Обновить the library every time it is opened, while preventing overlapping requests.
+  let libraryОбновитьInFlight = null;
+  async function refreshLibraryOnОткрыть() {
+    if (libraryОбновитьInFlight) return libraryОбновитьInFlight;
+    const refreshFn =
+      (typeof refreshLibrary === 'function' ? refreshLibrary :
+      (typeof loadLibrary === 'function' ? loadLibrary :
+      (typeof fetchLibrary === 'function' ? fetchLibrary : null)));
+    if (!refreshFn) return;
+    libraryОбновитьInFlight = Promise.resolve().then(() => refreshFn()).finally(() => {
+      libraryОбновитьInFlight = null;
+    });
+    return libraryОбновитьInFlight;
+  }
+
+
+const $ = id => document.getElementById(id);
+async function api(path, options={}) {
+  const response = await fetch(path, { credentials:"same-origin", ...options, headers:{"Content-Type":"application/json", ...(options.headers||{})} });
+  const data = await response.json().catch(()=>({error:"Некорректный ответ сервера"}));
+  if (!response.ok) throw new Error(data.error || `Не удалось выполнить запрос (${response.status})`);
+  return data;
+}
+function showApp(authenticated) { $("loginPanel").classList.toggle("hidden", authenticated); $("appPanel").classList.toggle("hidden", !authenticated); }
+// In the app (1.2+) the library is native: the hidden web copy is not loaded at all.
+function webLibraryNeeded(){ return !document.documentElement.classList.contains("suslik-native"); }
+async function checkSession() { try { const data=await api("/api/session"); showApp(data.authenticated); if(data.authenticated && webLibraryNeeded()) loadLibrary(); } catch { showApp(false); } }
+$("loginForm").addEventListener("submit", async e => {
+  e.preventDefault(); $("loginStatus").textContent="Выполняется вход…"; $("loginStatus").className="status";
+  try { await api("/api/login",{method:"POST",body:JSON.stringify({password:$("password").value})}); $("password").value=""; showApp(true); if(webLibraryNeeded()) loadLibrary(); }
+  catch(err) { $("loginStatus").textContent=err.message; $("loginStatus").className="status error"; }
+});
+$("logout").addEventListener("click", async()=>{try{await api("/api/logout",{method:"POST"});}catch{} showApp(false);});
+async function wait(ms){return new Promise(resolve=>setTimeout(resolve,ms));}
+const HISTORY_KEY = "moviePortal.searchHistory.v1";
+const LIBRARY_SNAPSHOT_KEY = "moviePortal.librarySnapshot.v1";
+const posterCache = new Map();
+function readHistory(){try{const value=JSON.parse(localStorage.getItem(HISTORY_KEY)||"[]");return Array.isArray(value)?value:[];}catch{return [];}}
+function saveHistory(value){try{localStorage.setItem(HISTORY_KEY,JSON.stringify(value.slice(0,30)));}catch{}if(window.ensureHistoryPoll)window.ensureHistoryPoll();}
+function rememberПоиск(value){const history=readHistory().filter(item=>item.value!==value);history.unshift({value,at:Date.now(),title:value.startsWith("magnet:?")?"Загрузка по magnet-ссылке":"Проверка ссылки",status:"Отправлено"});saveHistory(history);renderHistory();}
+function updateHistory(value, patch){const history=readHistory();const item=history.find(entry=>entry.value===value);if(item)Object.assign(item,patch,{updatedAt:Date.now()});saveHistory(history);renderHistory();}
+function renderHistory(){const target=$("searchHistory");if(!target)return;target.replaceChildren();const history=readHistory();if(!history.length){const empty=document.createElement("p");empty.className="file-meta";empty.textContent="История поиска пуста.";target.append(empty);return;}for(const item of history){const row=document.createElement("div");row.className="history-item";const info=document.createElement("div");info.className="history-value";const titleRow=document.createElement("div");titleRow.className="history-title-row";const title=document.createElement("strong");title.textContent=item.title|| (item.value.startsWith("magnet:?")?"Загрузка по magnet-ссылке":"Проверка ссылки");title.style.display="block";titleRow.append(title);if(item.magnetId && !item.ready && !item.cancelled){const progress=document.createElement("div");progress.className="history-progress";const track=document.createElement("div");track.className="history-progress-track";track.setAttribute("role","progressbar");track.setAttribute("aria-valuemin","0");track.setAttribute("aria-valuemax","100");const fill=document.createElement("div");fill.className="history-progress-fill";const pct=item.percent==null?0:Math.max(0,Math.min(100,Number(item.percent)));fill.style.width=pct+"%";track.append(fill);const percent=document.createElement("span");percent.className="history-percent";percent.textContent=item.percent==null?"…":pct+"%";progress.append(track,percent);titleRow.append(progress);}const detail=document.createElement("div");detail.className="file-meta";detail.textContent=[item.status||"Отправлено",item.ready?"100%": ""].filter(Boolean).join(" · ");info.append(titleRow,detail);const actions=document.createElement("div");actions.className="history-actions";const activeСкачать=Boolean(item.magnetId && !item.ready && !item.cancelled && !item.failed);if(activeСкачать){const cancel=document.createElement("button");cancel.type="button";cancel.className="secondary";cancel.textContent="Отменить загрузку";cancel.addEventListener("click",async()=>{if(!confirm("Отменить загрузку и удалить magnet-ссылку из AllDebrid? Это действие нельзя отменить."))return;cancel.disabled=true;cancel.textContent="Отмена…";try{await api(`/api/magnets/${item.magnetId}/cancel`,{method:"POST"});updateHistory(item.value,{status:"Отменено",cancelled:true});}catch(err){alert(err.message);cancel.disabled=false;cancel.textContent="Отменить загрузку";}});actions.append(cancel);}else{const reuse=document.createElement("button");reuse.type="button";reuse.className="secondary";reuse.textContent="Использовать снова";reuse.addEventListener("click",()=>{if(item.sourceType==="torrent-file"){setInputMode("torrent");$("linkStatus").textContent="Выберите файл .torrent повторно: браузер не позволяет восстановить вложение автоматически.";$("linkStatus").className="status";$("torrentDropzone").focus();}else{setInputMode("magnet");$("url").value=item.value;$("url").focus();}});actions.append(reuse);if(item.ready || item.cancelled || item.failed){const remove=document.createElement("button");remove.type="button";remove.className="secondary";remove.textContent="×";remove.title="Удалить из истории";remove.setAttribute("aria-label","Удалить из истории");remove.addEventListener("click",event=>{event.preventDefault();event.stopPropagation();saveHistory(readHistory().filter(entry=>entry.value!==item.value));renderHistory();});actions.append(remove);}}row.append(info,actions);target.append(row);}}
+$("clearHistory").addEventListener("click",()=>{saveHistory(readHistory().filter(item=>!(item.ready || item.cancelled || item.failed)));renderHistory();});
+let inputMode = "magnet";
+function setInputMode(mode){
+  inputMode=mode; const magnet=mode==="magnet";
+  $("magnetModeBtn").classList.toggle("selected",magnet); $("magnetModeBtn").setAttribute("aria-pressed",String(magnet));
+  $("torrentModeBtn").classList.toggle("selected",!magnet); $("torrentModeBtn").setAttribute("aria-pressed",String(!magnet));
+  $("magnetInputArea").classList.toggle("hidden",!magnet); $("torrentInputArea").classList.toggle("hidden",magnet);
+  if(magnet){$("torrentФайл").value="";renderChosenTorrent();} else {$("url").value="";}
+}
+function renderChosenTorrent(){const file=$("torrentФайл").files?.[0]||null;$("torrentDropzone").classList.toggle("hidden",Boolean(file));$("torrentChosen").classList.toggle("hidden",!file);$("submitTorrentBtn").classList.toggle("hidden",!file);if(file){$("torrentChosenName").textContent=file.name;$("torrentChosenSize").textContent=(file.size/1024).toFixed(0)+" KB";}}
+$("magnetModeBtn").addEventListener("click",()=>setInputMode("magnet"));
+$("torrentModeBtn").addEventListener("click",()=>setInputMode("torrent"));
+$("chooseTorrentBtn").addEventListener("click",()=>$("torrentФайл").click());
+$("torrentDropzone").addEventListener("click",e=>{if(!e.target.closest("button"))$("torrentФайл").click();});
+$("torrentDropzone").addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();$("torrentФайл").click();}});
+$("torrentФайл").addEventListener("change",()=>{const file=$("torrentФайл").files?.[0];if(file&&file.size>1024*1024){$("torrentФайл").value="";renderChosenTorrent();$("linkStatus").textContent="Размер файла .torrent не должен превышать 1 МБ.";$("linkStatus").className="status error";return;}if(file&&!file.name.toLowerCase().endsWith(".torrent")){$("torrentФайл").value="";renderChosenTorrent();$("linkStatus").textContent="Выберите файл с расширением .torrent.";$("linkStatus").className="status error";return;}renderChosenTorrent();});
+$("removeTorrentBtn").addEventListener("click",()=>{$("torrentФайл").value="";renderChosenTorrent();});
+for(const ev of ["dragenter","dragover"])$("torrentDropzone").addEventListener(ev,e=>{e.preventDefault();$("torrentDropzone").classList.add("dragover");});
+for(const ev of ["dragleave","drop"])$("torrentDropzone").addEventListener(ev,e=>{e.preventDefault();$("torrentDropzone").classList.remove("dragover");});
+$("torrentDropzone").addEventListener("drop",e=>{const file=e.dataTransfer?.files?.[0];if(!file)return;e.preventDefault();if(file.size>1024*1024){$("linkStatus").textContent="Размер файла .torrent не должен превышать 1 МБ.";$("linkStatus").className="status error";return;}if(!file.name.toLowerCase().endsWith(".torrent")){$("linkStatus").textContent="Выберите файл с расширением .torrent.";$("linkStatus").className="status error";return;}const transfer=new DataTransfer();transfer.items.add(file);$("torrentФайл").files=transfer.files;renderChosenTorrent();});
+$("linkForm").addEventListener("submit", async e=>{
+  e.preventDefault();
+  // The active mode is authoritative, so one submit can never send both types.
+  const torrentФайл=inputMode==="torrent"?($("torrentФайл").files?.[0]||null):null;
+  const value=inputMode==="magnet"?$("url").value.trim():"", btn=inputMode==="torrent"?$("submitTorrentBtn"):$("submitBtn");
+  if(inputMode==="torrent"&&!torrentФайл){$("linkStatus").textContent="Сначала выберите файл .torrent.";$("linkStatus").className="status error";return;}
+  if(torrentФайл&&torrentФайл.size>1024*1024){$("linkStatus").textContent="Размер файла .torrent не должен превышать 1 МБ.";$("linkStatus").className="status error";return;}
+  if(inputMode==="magnet"&&!value){$("linkStatus").textContent="Введите magnet-ссылку или поддерживаемый URL.";$("linkStatus").className="status error";return;}
+  const historyValue=torrentФайл?`torrentfile:${torrentФайл.name}:${torrentФайл.size}:${torrentФайл.lastModified}`:value;
+  btn.disabled=true; btn.textContent="Выполняется…";
+  $("linkStatus").textContent="Обработка ссылки…"; $("linkStatus").className="status";
+  $("resultPanel").classList.add("hidden"); $("magnetPanel").classList.add("hidden");
+  try {
+    if(torrentФайл || value.startsWith("magnet:?")){
+      let submitted;
+      if (torrentФайл) {
+        const bytes = await torrentФайл.arrayBuffer();
+        submitted = await api("/api/torrents", { method:"POST", headers:{"Content-Type":"application/x-bittorrent","X-Torrent-Filename":encodeURIComponent(torrentФайл.name)}, body:bytes });
+      } else {
+        submitted = await api("/api/magnets",{method:"POST",body:JSON.stringify({magnet:value})});
+      }
+      // Only persist a search after the server accepted a real magnet/torrent.
+      rememberПоиск(historyValue);
+      const identity = submitted.sha256 || null;
+      const existing = readHistory().find(entry => entry.value !== historyValue && ((identity && entry.sha256 === identity) || String(entry.magnetId || "") === String(submitted.id)));
+      if (existing) {
+        saveHistory(readHistory().filter(entry => entry.value !== historyValue));
+        updateHistory(existing.value,{magnetId:submitted.id,sha256:identity||existing.sha256,title:submitted.name||(torrentФайл?torrentФайл.name.replace(/\.torrent$/i,""):"Загрузка по magnet-ссылке"),status:"Проверка состояния",ready:false,percent:0,sourceType:torrentФайл?"torrent-file":"magnet",sourceName:torrentФайл?.name||null});
+      } else {
+        updateHistory(historyValue,{magnetId:submitted.id,sha256:identity,title:submitted.name||(torrentФайл?torrentФайл.name.replace(/\.torrent$/i,""):"Загрузка по magnet-ссылке"),status:"Проверка состояния",ready:false,percent:0,sourceType:torrentФайл?"torrent-file":"magnet",sourceName:torrentФайл?.name||null});
+      }
+      const activeHistoryValue = existing ? existing.value : historyValue;
+      $("magnetPanel").classList.remove("hidden");
+      $("magnetStatus").textContent=`Added: ${submitted.name}. Проверка состояния…`;
+      let status=null;
+      function updateProgress(current){ /* Progress is displayed in История поиска only. */ }
+      updateProgress({size:0,downloaded:0});
+      for(let i=0;i<30;i++){
+        await wait(3000);
+        status=await api(`/api/magnets/${submitted.id}`);
+        $("magnetStatus").textContent=`${status.filename || submitted.name}: ${status.status || "Обработка"}${status.size ? " · "+(status.size/1024/1024).toFixed(1)+" MB" : ""}`;
+        updateProgress(status);
+        const total=Number(status.size)||0, done=Number(status.downloaded)||0;
+        updateHistory(activeHistoryValue,{magnetId:submitted.id,title:status.filename||submitted.name||"Загрузка по magnet-ссылке",status:status.status||"Обработка",percent:total>0?Math.floor(Math.min(100,done/total*100)):null,ready:Boolean(status.ready||status.statusCode===4)});
+        if(status.statusCode===4 || status.ready) break;
+        if(status.statusCode>=5) {
+          updateHistory(activeHistoryValue,{status:status.status||"Ошибка",failed:true,ready:false,percent:null});
+          throw new Error(`AllDebrid magnet processing failed: ${status.status}`);
+        }
+      }
+      if(!status || !(status.statusCode===4 || status.ready)){
+        updateHistory(activeHistoryValue,{status:"Всё ещё обрабатывается",magnetId:submitted.id});
+        $("linkStatus").textContent="Magnet-ссылка ещё обрабатывается. Статус будет обновляться в истории поиска. Не отправляйте её повторно, чтобы не создать дубликат.";
+        $("linkStatus").className="status error";
+      } else {
+        updateHistory(activeHistoryValue,{status:"Готово",percent:100,ready:true,magnetId:submitted.id});
+        const result=await api(`/api/magnets/${submitted.id}/files`);
+        const list=$("magnetФайлы"); list.replaceChildren();
+        if(!result.files || !result.files.length) {
+          $("magnetStatus").textContent += "  — готово, но ссылки на файлы не получены. Проверьте ответ API AllDebrid.";
+        } else {
+          for(const file of result.files){
+            const wrap=document.createElement("div"); wrap.style.cssText="width:100%;padding:10px 0;border-bottom:1px solid #292d3a";
+            wrap.dataset.playTitle=String(file.name||"").split("/").pop();
+            const title=document.createElement("div"); title.textContent=file.name; title.style.cssText="overflow-wrap:anywhere;margin-bottom:8px";
+            wrap.append(title);
+            if (typeof file.sourceUrl === "string" && /^https:\/\//i.test(file.sourceUrl)) {
+              // Links are requested only when the user asks: one unlock call per click, not one per file up front.
+              const getLinks=document.createElement("button"); getLinks.type="button"; getLinks.className="secondary"; getLinks.textContent="Получить ссылки";
+              getLinks.addEventListener("click",async()=>{
+                getLinks.disabled=true; getLinks.textContent="Получение ссылок…";
+                try{ wrap.append(await fileLinkActions(file.sourceUrl,String(file.name||"").split("/").pop())); getLinks.remove(); }
+                catch(err){ getLinks.disabled=false; getLinks.textContent="Повторить"; $("linkStatus").textContent=err.message; $("linkStatus").className="status error"; }
+              });
+              wrap.append(getLinks);
+            } else {
+              const unavailable=document.createElement("div"); unavailable.className="file-meta"; unavailable.textContent=file.note || "Прямая ссылка на этот файл пока недоступна.";
+              wrap.append(unavailable);
+            }
+            list.append(wrap);
+          }
+          $("magnetStatus").textContent += ` — ${result.files.length} file(s) available.`;
+          $("linkStatus").textContent="Magnet-ссылка готова. Выберите файл ниже."; $("linkStatus").className="status success";
+        }
+      }
+    } else {
+      const data=await api("/api/unlock",{method:"POST",body:JSON.stringify({url:value})});
+      // Ошибка/unsupported text never reaches history.
+      rememberПоиск(historyValue);
+      updateHistory(historyValue,{title:data.filename || "Ссылка для воспроизведения",status:"Готово",ready:true,percent:100});
+      $("filename").textContent=data.filename || "Ссылка для воспроизведения";
+      $("metadata").textContent=[data.host, data.mimeType, data.filesize ? `${data.filesize} bytes` : ""].filter(Boolean).join(" · ");
+      $("copyBtn").dataset.url=data.url; $("openBtn").href=data.url;
+      $("copyBtn").textContent="Копировать прямую ссылку"; $("openBtn").textContent="Открыть";
+      $("copyBtn").className="secondary split-first"; $("openBtn").className="button secondary split-last";
+      $("openBtn").style.marginLeft="0"; $("openBtn").style.borderLeft="0";
+      $("resultPanel").classList.remove("hidden");
+      let vpsActions=$("resultVpsActions");
+      if (!vpsActions) { vpsActions=document.createElement("div"); vpsActions.id="resultVpsActions"; vpsActions.className="actions"; $("resultPanel").querySelector(".actions").after(vpsActions); }
+      vpsActions.replaceChildren();
+      const parsedInput=(()=>{try{return new URL(value)}catch{return null}})();
+      if (parsedInput && ["alldebrid.com","www.alldebrid.com"].includes(parsedInput.hostname.toLowerCase()) && parsedInput.pathname.startsWith("/f/")) {
+        const vpsUrl=await signedMirror(parsedInput.toString());
+        const group=document.createElement("div"); group.className="split-actions";
+        const copyVps=document.createElement("button"); copyVps.className="secondary split-first"; copyVps.textContent="Копировать ссылку-зеркало";
+        copyVps.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(vpsUrl);$("linkStatus").textContent="Ссылка-зеркало успешно скопирована.";$("linkStatus").className="status success";}catch{$("linkStatus").textContent="Не удалось скопировать ссылку-зеркало.";$("linkStatus").className="status error";}});
+        const openVps=document.createElement("a"); openVps.className="button secondary split-last"; openVps.href=vpsUrl; openVps.target="_blank"; openVps.rel="noopener noreferrer"; openVps.textContent="Открыть";
+        group.append(copyVps,openVps); vpsActions.append(group);
+        const potVps=document.createElement("button"); potVps.className="secondary"; potVps.textContent="▶ PotPlayer · зеркало"; potVps.addEventListener("click",()=>{window.location.href=`potplayer://${vpsUrl}`}); vpsActions.append(potVps);
+      }
+      const potDirect=document.createElement("button"); potDirect.className="secondary"; potDirect.textContent="▶ PotPlayer · напрямую"; potDirect.addEventListener("click",()=>{window.location.href=`potplayer://${data.url}`}); vpsActions.append(potDirect);
+      $("linkStatus").textContent="Ссылка успешно подготовлена."; $("linkStatus").className="status success";
+    }
+  } catch(err) {
+    $("linkStatus").textContent=err.message; $("linkStatus").className="status error";
+  }
+  finally {btn.disabled=false;btn.textContent=inputMode==="torrent"?"Загрузить торрент":"Добавить magnet";}
+});
+$("copyBtn").addEventListener("click", async()=>{try{await navigator.clipboard.writeText($("copyBtn").dataset.url);$("linkStatus").textContent="Ссылка успешно скопирована."; $("linkStatus").className="status success";}catch{$("linkStatus").textContent="Не удалось скопировать ссылку. Нажмите «Открыть ссылку» или скопируйте её из адресной строки."; $("linkStatus").className="status error";}});
+let cachedLibrary = [];
+let libraryDirty = false;
+function setTab(tab) {
+  const library = tab === "library", search = tab === "search", apps = tab === "apps";
+  $("linkTab").classList.toggle("hidden", library || search || apps);
+  $("libraryTab").classList.toggle("hidden", !library);
+  $("searchTab").classList.toggle("hidden", !search);
+  $("appsTab").classList.toggle("hidden", !apps);
+  $("showLinkTab").classList.toggle("secondary", tab !== "links");
+  $("showLibraryTab").classList.toggle("secondary", !library);
+  $("showSearchTab").classList.toggle("secondary", !search);
+  $("showAppsTab").classList.toggle("secondary", !apps);
+  if (apps) loadAppVersions();
+  if (library && (!cachedLibrary.length || libraryDirty)) { libraryDirty = false; loadLibrary(); }
+  if (search) setTimeout(() => { try { $("searchInput").focus(); } catch {} }, 50);
+}
+$("showLinkTab").addEventListener("click", () => setTab("links"));
+$("showLibraryTab").addEventListener("click", () => setTab("library"));
+$("showSearchTab").addEventListener("click", () => setTab("search"));
+$("showAppsTab").addEventListener("click", () => setTab("apps"));
+// ---- Приложения: актуальные версии из папки updates/ на сервере ---------------------------
+let appVersionsAt = 0;
+async function loadAppVersions() {
+  if (Date.now() - appVersionsAt < 60_000) return; // не чаще раза в минуту
+  appVersionsAt = Date.now();
+  const ua = navigator.userAgent || "";
+  const mine = /Android/i.test(ua) ? "android" : (/Windows/i.test(ua) ? "desktop" : "");
+  const grid = $("appsGrid");
+  // своя платформа — первой и с отметкой
+  for (const card of grid.querySelectorAll(".app-card")) {
+    const own = card.dataset.platform === mine;
+    card.classList.toggle("own", own); card.querySelector(".app-badge").classList.toggle("hidden", !own);
+    if (own) grid.prepend(card);
+  }
+  await Promise.all([...grid.querySelectorAll(".app-card")].map(async card => {
+    const p = card.dataset.platform, ver = card.querySelector(".app-version"), size = card.querySelector(".app-size"),
+      date = card.querySelector(".app-date"), btn = card.querySelector(".app-download"), notes = card.querySelector(".app-notes");
+    try {
+      const u = await api(`/api/app/update?platform=${p}`);
+      if (!u.available) { ver.textContent = "Скоро"; ver.classList.add("muted"); size.textContent = ""; date.textContent = ""; btn.classList.add("disabled"); btn.removeAttribute("href"); btn.textContent = "Пока не выложено"; return; }
+      ver.textContent = "Версия " + u.version; ver.classList.remove("muted");
+      size.textContent = formatBytes(u.size);
+      date.textContent = u.publishedAt ? new Date(u.publishedAt).toLocaleDateString() : "";
+      btn.href = u.url; btn.setAttribute("download", u.file || ""); btn.classList.remove("disabled"); btn.removeAttribute("aria-disabled");
+      btn.textContent = (p === "android" ? "Скачать .apk" : (/\.exe$/i.test(u.file || "") ? "Скачать .exe" : "Скачать .msi")) + " · " + u.version;
+      notes.classList.toggle("hidden", !u.notes); notes.querySelector(".app-notes-text").textContent = u.notes || "";
+    } catch (err) { ver.textContent = "Не удалось проверить"; ver.classList.add("muted"); }
+  }));
+}
+// ---- Поиск по трекерам ------------------------------------------------------------------
+const searchState = { items: [], shown: 0 };
+const SEARCH_PAGE = 40;
+function fmtDate(ms) { if (!ms) return ""; try { return new Date(ms).toLocaleDateString(); } catch { return ""; } }
+function srEl(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+function renderSearchProviders(list) {
+  const box = $("searchProviders"); box.textContent = "";
+  for (const p of list || []) {
+    const chip = srEl("span", "chip " + (p.ok ? "ok" : "bad"), `${p.ok ? "✓" : "✕"} ${p.name}${p.ok ? " · " + p.count : ""}`);
+    if (!p.ok && p.error) chip.title = p.error;
+    box.append(chip);
+  }
+  // On a phone there are no tooltips: print the reason of every failed tracker as text.
+  for (const p of (list || []).filter(x => !x.ok && x.error)) box.append(srEl("div", "sr-note error", `${p.name}: ${p.error}`));
+}
+function filteredSearchItems() {
+  const sort = $("searchSort").value, dead = $("searchHideDead").checked;
+  const words = $("searchFilter").value.toLowerCase().split(/\s+/).filter(Boolean);
+  const kind = $("searchKind").value;
+  const kindOk = r => kind === "all" || (kind === "video" ? r.kind !== "other" : kind === "movie" ? (r.kind === "movie" || r.kind === "unknown") : r.kind === "series");
+  searchState.hiddenKind = searchState.items.filter(r => !kindOk(r)).length;
+  let items = searchState.items.filter(r => kindOk(r) && (!dead || r.seeders > 0) && words.every(w => r.title.toLowerCase().includes(w)));
+  if (sort === "ru") { // живые RU, живые остальные, мёртвые RU, мёртвые остальные
+    const tier = r => (r.ru ? 0 : 1) + (r.seeders > 0 ? 0 : 2);
+    return items.sort((a, b) => tier(a) - tier(b) || b.seeders - a.seeders || b.size - a.size);
+  }
+  const key = { seeders: r => r.seeders, size: r => r.size, date: r => r.date }[sort] || (r => r.seeders);
+  return items.sort((a, b) => key(b) - key(a) || b.seeders - a.seeders);
+}
+function renderSearchResults(reset = true) {
+  const box = $("searchResults");
+  const items = filteredSearchItems();
+  if (reset) { box.textContent = ""; searchState.shown = 0; }
+  $("searchHidden").textContent = searchState.hiddenKind ? `Скрыто как не фильмы и не сериалы: ${searchState.hiddenKind} (игры, софт, музыка, книги). Выберите «Всё подряд», чтобы показать.` : "";
+  const next = items.slice(searchState.shown, searchState.shown + SEARCH_PAGE);
+  for (const r of next) box.append(searchRow(r));
+  searchState.shown += next.length;
+  $("searchMore").classList.toggle("hidden", searchState.shown >= items.length);
+  if (reset && !items.length && searchState.items.length) box.append(srEl("p", "file-meta", "Ничего не подходит под фильтр."));
+}
+function searchRow(r) {
+  const row = srEl("div", "sr-row");
+  row.append(srEl("div", "sr-title", r.title));
+  const meta = srEl("div", "sr-meta");
+  if (r.size) meta.append(srEl("span", "", formatBytes(r.size)));
+  meta.append(srEl("span", "seed" + (r.seeders ? "" : " zero"), `↑ ${r.seeders}`), srEl("span", "", `↓ ${r.leechers}`));
+  if (r.ru) meta.append(srEl("span", "ru-badge", "RU"));
+  if (r.kind === "series") meta.append(srEl("span", "", "сериал")); else if (r.kind === "movie") meta.append(srEl("span", "", "фильм"));
+  meta.append(srEl("span", "", r.sources && r.sources.length > 1 ? r.sources.join(" + ") : r.provider));
+  const d = fmtDate(r.date); if (d) meta.append(srEl("span", "", d));
+  row.append(meta);
+  const act = srEl("div", "sr-actions");
+  const add = srEl("button", "", "＋ В библиотеку"); add.type = "button";
+  const note = srEl("span", "sr-note");
+  add.addEventListener("click", () => addSearchResult(r, add, note));
+  act.append(add);
+  if (r.magnet) {
+    const mg = srEl("button", "secondary", "Magnet"); mg.type = "button";
+    mg.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(r.magnet); mg.textContent = "✓ Скопировано"; setTimeout(() => { mg.textContent = "Magnet"; }, 1500); }
+      catch { window.prompt("Скопируйте magnet-ссылку:", r.magnet); }
+    });
+    act.append(mg);
+  }
+  act.append(note);
+  row.append(act);
+  return row;
+}
+async function runSearch(ev) {
+  if (ev) ev.preventDefault();
+  const q = $("searchInput").value.trim(), btn = $("searchBtn"), st = $("searchStatus");
+  if (q.length < 2) { st.textContent = "Введите минимум 2 символа."; st.className = "status error"; return; }
+  btn.disabled = true; btn.textContent = "Ищем…";
+  st.textContent = "Опрашиваем трекеры…"; st.className = "status";
+  $("searchResults").textContent = ""; $("searchMore").classList.add("hidden"); $("searchTools").classList.add("hidden");
+  try {
+    const data = await api("/api/search?q=" + encodeURIComponent(q));
+    searchState.items = data.results || [];
+    renderSearchProviders(data.providers);
+    renderSearchResults(true);
+    const failed = (data.providers || []).filter(p => !p.ok).length;
+    $("searchTools").classList.toggle("hidden", !searchState.items.length);
+    if (!searchState.items.length) {
+      st.textContent = failed === (data.providers || []).length ? "Ни один трекер не ответил. Проверьте настройки или зеркала в .env." : "Ничего не найдено. Попробуйте другое название (в т.ч. на английском).";
+      st.className = "status error";
+    } else {
+      st.textContent = `Найдено ${data.total} за ${(data.tookMs / 1000).toFixed(1)} с` + (failed ? ` · не ответили: ${failed}` : "");
+      st.className = "status success";
+    }
+  } catch (err) { st.textContent = err.message; st.className = "status error"; }
+  finally { btn.disabled = false; btn.textContent = "Найти"; }
+}
+async function addSearchResult(r, btn, note) {
+  btn.disabled = true; btn.textContent = "Добавляю…"; note.textContent = ""; note.className = "sr-note";
+  try {
+    const res = await api("/api/search/add", { method: "POST", body: JSON.stringify({ id: r.id }) });
+    btn.textContent = "✓ Добавлено";
+    note.textContent = "AllDebrid обрабатывает…";
+    libraryDirty = true;
+    pollAdded(res.id, note, res.ready);
+  } catch (err) {
+    btn.disabled = false; btn.textContent = "Повторить";
+    note.textContent = err.message; note.className = "sr-note error";
+  }
+}
+async function pollAdded(id, note, alreadyReady) {
+  if (alreadyReady) { note.textContent = "Готово — уже в библиотеке (кэш AllDebrid)"; note.className = "sr-note success"; return; }
+  const started = Date.now();
+  for (let i = 0; i < 60; i++) {
+    const age = Date.now() - started;
+    await wait(age < 60e3 ? 4000 : age < 300e3 ? 10000 : 20000);
+    while (document.hidden) await wait(3000);
+    let st;
+    try { st = await api("/api/magnets/" + id); } catch { continue; }
+    const total = Number(st.size) || 0, done = Number(st.downloaded) || 0;
+    note.textContent = `${st.status || "Обработка"}${total > 0 ? " · " + Math.floor(Math.min(100, done / total * 100)) + "%" : ""}`;
+    if (st.statusCode === 4 || st.ready) { note.textContent = "Готово — файлы в библиотеке"; note.className = "sr-note success"; return; }
+    if (st.statusCode >= 5) { note.textContent = "Ошибка: " + (st.status || "AllDebrid не смог загрузить"); note.className = "sr-note error"; return; }
+  }
+  note.textContent = "Загрузка идёт долго — следите за статусом в библиотеке.";
+}
+$("searchForm").addEventListener("submit", runSearch);
+$("searchSort").addEventListener("change", () => renderSearchResults(true));
+$("searchHideDead").addEventListener("change", () => renderSearchResults(true));
+try { const k = localStorage.getItem("searchKind"); if (k && [...$("searchKind").options].some(o => o.value === k)) $("searchKind").value = k; } catch {}
+$("searchKind").addEventListener("change", () => { try { localStorage.setItem("searchKind", $("searchKind").value); } catch {} renderSearchResults(true); });
+$("searchFilter").addEventListener("input", () => renderSearchResults(true));
+$("searchMore").addEventListener("click", () => renderSearchResults(false));
+$("refreshLibrary").addEventListener("click", loadLibrary);
+$("libraryПоиск").addEventListener("input", () => renderLibrary(false));
+function formatBytes(value) {
+  if (!value) return "";
+  const units=["B","KB","MB","GB","TB"]; let n=value, i=0;
+  while(n>=1024 && i<units.length-1){n/=1024;i++;}
+  return `${n.toFixed(i===0?0:1)} ${units[i]}`;
+}
+async function loadLibrary() {
+  const status=$("libraryStatus"), button=$("refreshLibrary");
+  button.disabled=true; status.textContent="Загрузка торрентов и файлов из AllDebrid…"; status.className="status";
+  try {
+    const data=await api("/api/library");
+    cachedLibrary=data.magnets || [];
+    try { localStorage.setItem(LIBRARY_SNAPSHOT_KEY, JSON.stringify({ savedAt: Date.now(), magnets: cachedLibrary })); } catch {}
+    renderLibrary();
+    status.textContent=`Загружено ${data.total} торрент(ов). Копия библиотеки сохранена в браузере.`; status.className="status success";
+  } catch(err) { status.textContent=err.message; status.className="status error"; }
+  finally { button.disabled=false; }
+}
+function escapeTitle(value) {
+  let s = String(value || "Untitled").replace(/\.[a-z0-9]{2,5}$/i, "").replace(/[._]+/g," ");
+  // Strip common release tags/codecs so TMDB receives the actual title.
+  s = s.replace(/\b(2160p|1080p|720p|480p|4k|8k|web[- ]?dl|web[- ]?rip|bluray|blu[- ]?ray|bdrip|bdremux|remux|hdr10?\+?|dv|dovi|hevc|h\.?265|x265|h\.?264|x264|aac|dts|ddp?5?\.?1|proper|repack|extended|limited|internal|amzn|nf|dsnp|hmax|yts|rarbg)\b.*$/i, "");
+  s = s.replace(/\b(19|20)\d{2}\b.*$/," ").replace(/[\[\](){}]/g," ").replace(/\s+/g," ").trim();
+  return s || String(value || "Untitled").replace(/[._]+/g," ").trim();
+}
+const MEDIA_INFO_KEY="mediaInfoCacheV1";
+const mediaInfoInflight=new Map();
+let mediaInfoQueue=Promise.resolve();
+function readMediaInfoCache(){try{return JSON.parse(localStorage.getItem(MEDIA_INFO_KEY)||"{}")||{};}catch{return {};}}
+function writeMediaInfoCache(key,value){try{const c=readMediaInfoCache();c[key]=value;localStorage.setItem(MEDIA_INFO_KEY,JSON.stringify(c));}catch{}}
+function pickMainВидео(magnet){
+  const vids=(magnet.files||[]).filter(f=>f.type!=="folder" && /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso)$/i.test(f.path||""));
+  const real=vids.filter(f=>!/\.iso$/i.test(f.path));
+  return (real.length?real:vids).sort((a,b)=>(Number(b.size)||0)-(Number(a.size)||0))[0]||null;
+}
+function loadTileMediaInfo(magnet,line,fileArg){
+  const file=fileArg||pickMainВидео(magnet);
+  if(!file){return;}
+  const key=magnet.id+"|"+file.path;
+  line.dataset.key=key;
+  const show=m=>{if(line.dataset.key!==key)return;line.textContent="🎞 "+formatMediaInfo(m);line.title=file.path;line.classList.remove("media-pending");};
+  const cached=readMediaInfoCache()[key];
+  if(cached && !cached.__failedAt){show(cached);return;}
+  if(cached && Date.now()-cached.__failedAt < 6*3600e3){line.textContent="🎞 разрешение: н/д";line.classList.remove("media-pending");return;}
+  line.textContent="🎞 анализ видео…";line.title="";line.classList.add("media-pending");
+  let p=mediaInfoInflight.get(key);
+  if(!p){
+    // One ffprobe at a time: each analysis can take several seconds and reads the remote file.
+    p=new Promise((resolve,reject)=>{
+      mediaInfoQueue=mediaInfoQueue.then(async()=>{
+        try{
+          const r=await api("/api/media-metadata",{method:"POST",body:JSON.stringify({link:file.sourceLink||"",magnetId:magnet.id,path:file.path})});
+          writeMediaInfoCache(key,r.metadata);resolve(r.metadata);
+        }catch(err){reject(err);}
+      });
+    }).finally(()=>mediaInfoInflight.delete(key));
+    mediaInfoInflight.set(key,p);
+  }
+  p.then(show).catch(err=>{if(!/HTTP 4|сеть|network|fetch/i.test(String(err&&err.message)))writeMediaInfoCache(key,{__failedAt:Date.now()});if(line.dataset.key!==key)return;line.textContent="🎞 разрешение: н/д";line.title=err.message;line.classList.remove("media-pending");});
+}
+const VIDEO_EXT=/\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso)$/i;
+const IS_MOBILE=/Android|iPhone|iPad|iPod/i.test(navigator.userAgent||"");
+const LAST_EP_KEY="lastEpisodeV1";
+function parseEpisode(path){
+  const p=String(path||"").replace(/\\/g,"/"), name=p.split("/").pop();
+  const seasonMatch=p.match(/(?:season|сезон)[ ._-]?(\d{1,2})/i)||p.match(/(?:^|\/)S(\d{1,2})(?:\/|$)/i);
+  const folderSeason=seasonMatch?+seasonMatch[1]:null;
+  let m=name.match(/S(\d{1,2})[ ._-]?E(\d{1,3})/i)||p.match(/S(\d{1,2})[ ._-]?E(\d{1,3})/i);
+  if(m) return {season:+m[1],episode:+m[2]};
+  m=name.match(/(?:^|[^\d])(\d{1,2})x(\d{2,3})(?!\d)/i);
+  if(m) return {season:+m[1],episode:+m[2]};
+  m=name.match(/(?:^|[^a-z0-9а-я])(?:e|ep|episode|серия)[ ._-]?(\d{1,3})(?!\d)/i);
+  if(m) return {season:folderSeason||1,episode:+m[1]};
+  if(folderSeason!==null){
+    m=name.match(/^\s*(\d{1,3})(?=[ ._-])/);
+    if(m) return {season:folderSeason,episode:+m[1]};
+  }
+  return null;
+}
+function buildPlaylist(magnet){
+  const vids=(magnet.files||[]).filter(f=>f.type!=="folder"&&VIDEO_EXT.test(f.path||"")&&!/(^|[\/._ -])sample([\/._ -]|$)/i.test(f.path||""));
+  const seasonOf=(path)=>{
+    const p=String(path||"").replace(/\\/g,"/");
+    const m=p.match(/(?:^|\/)(?:season|сезон)[ ._-]?(\d{1,2})(?:\/|$)/i)||p.match(/(?:^|\/)S(\d{1,2})(?:\/|$)/i);
+    return m?Number(m[1]):null;
+  };
+  const basename=(path)=>String(path||"").replace(/\\/g,"/").split("/").pop();
+  // Prefer the actual directory structure: many releases have descriptive episode
+  // titles with no SxxEyy or numeric prefix in the filename.
+  const bySeason=new Map();
+  for(const file of vids){
+    const season=seasonOf(file.path);
+    if(season===null) continue;
+    if(!bySeason.has(season)) bySeason.set(season,[]);
+    bySeason.get(season).push(file);
+  }
+  if(bySeason.size>=2 || (bySeason.size===1 && vids.length>1)){
+    const seasons=[...bySeason.entries()].sort((a,b)=>a[0]-b[0]).map(([season,files])=>({
+      season,
+      items:files.sort((a,b)=>basename(a.path).localeCompare(basename(b.path),undefined,{numeric:true,sensitivity:"base"}))
+        .map((file,index)=>({season,episode:index+1,file}))
+    }));
+    return {type:"series",seasons};
+  }
+  const eps=[];
+  for(const f of vids){const e=parseEpisode(f.path);if(e)eps.push({season:e.season,episode:e.episode,file:f});}
+  if(eps.length>=2){
+    const seasons=new Map();
+    for(const e of eps){if(!seasons.has(e.season))seasons.set(e.season,[]);seasons.get(e.season).push(e);}
+    const list=[...seasons.entries()].sort((a,b)=>a[0]-b[0]).map(([season,items])=>({season,items:items.sort((a,b)=>a.episode-b.episode||String(a.file.path).localeCompare(String(b.file.path)))}));
+    return {type:"series",seasons:list};
+  }
+  return {type:"movie",file:pickMainВидео(magnet)};
+}
+function readLastEpisode(id){try{return (JSON.parse(localStorage.getItem(LAST_EP_KEY)||"{}")||{})[id]||null;}catch{return null;}}
+function saveLastEpisode(id,path){try{const c=JSON.parse(localStorage.getItem(LAST_EP_KEY)||"{}")||{};c[id]=path;localStorage.setItem(LAST_EP_KEY,JSON.stringify(c));}catch{}}
+let toastTimer=null;
+function showToast(text,isError){
+  let t=document.getElementById("playToast");
+  if(!t){t=document.createElement("div");t.id="playToast";t.className="play-toast";t.setAttribute("role","status");document.body.append(t);}
+  t.textContent=text;t.classList.toggle("error",Boolean(isError));
+  requestAnimationFrame(()=>t.classList.add("show"));
+  clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove("show"),isError?4500:2500);
+}
+const IS_ANDROID=/Android/i.test(navigator.userAgent||"");
+const IS_IOS=/iPhone|iPad|iPod/i.test(navigator.userAgent||"");
+let playSheetToken=0;
+// Browsers on Android/iOS cannot play most .mkv/HEVC files, so hand the URL to a player app.
+function androidIntent(url){
+  const u=new URL(url);
+  return "intent://"+u.host+u.pathname+u.search+"#Intent;scheme="+u.protocol.replace(":","")+";action=android.intent.action.VIEW;type=video/*;S.browser_fallback_url="+encodeURIComponent(url)+";end";
+}
+function playerHref(url){
+  if(IS_ANDROID) return androidIntent(url);
+  if(IS_IOS) return "vlc-x-callback://x-callback-url/stream?url="+encodeURIComponent(url);
+  return "potplayer://"+url;
+}
+function playerLabel(){return IS_ANDROID?"▶ Плеер":(IS_IOS?"▶ VLC":"▶ PotPlayer");}
+function sheetGroup(kind,title,hint){
+  return '<div class="sheet-group" data-kind="'+kind+'"><div class="sheet-group-title">'+title+'<small>'+hint+'</small></div><div class="sheet-row">'+
+    '<a class="sheet-btn disabled" data-act="player" rel="noopener noreferrer"></a>'+
+    '<a class="sheet-btn disabled" data-act="browser" target="_blank" rel="noopener noreferrer">🌐 Браузер</a>'+
+    '<button type="button" class="sheet-btn disabled" data-act="copy">Копировать</button></div></div>';
+}
+function ensurePlaySheet(){
+  let s=document.getElementById("playSheet");
+  if(s) return s;
+  s=document.createElement("div");s.id="playSheet";s.className="play-sheet";s.setAttribute("role","dialog");s.setAttribute("aria-modal","true");
+  s.innerHTML='<div class="play-sheet-card"><div class="play-sheet-title"></div><div class="play-sheet-sub"></div>'+
+    sheetGroup("mirror","Через зеркало","Трафик идёт через ваш сервер")+
+    sheetGroup("direct","Напрямую","Прямая ссылка AllDebrid")+
+    '<button type="button" class="sheet-btn sheet-cancel">Закрыть</button></div>';
+  s.querySelectorAll('[data-act="player"]').forEach(a=>{a.textContent=playerLabel();});
+  const close=()=>{playSheetToken++;s.classList.remove("open");document.body.style.overflow="";};
+  s.addEventListener("click",e=>{if(e.target===s)close();});
+  s.querySelector(".sheet-cancel").addEventListener("click",close);
+  s.querySelectorAll("a.sheet-btn").forEach(a=>a.addEventListener("click",e=>{
+    if(a.classList.contains("disabled")||!a.getAttribute("href")){e.preventDefault();return;}
+    setTimeout(close,400);
+  }));
+  s.querySelectorAll('[data-act="copy"]').forEach(b=>b.addEventListener("click",async()=>{
+    const url=b.dataset.url;if(!url||b.classList.contains("disabled"))return;
+    try{await navigator.clipboard.writeText(url);b.textContent="✓ Готово";setTimeout(()=>{b.textContent="Копировать";},1600);}
+    catch{window.prompt("Скопируйте ссылку:",url);}
+  }));
+  document.addEventListener("keydown",e=>{if(e.key==="Escape"&&s.classList.contains("open"))close();});
+  document.body.append(s);return s;
+}
+function fillSheetGroup(s,kind,url){
+  const g=s.querySelector('.sheet-group[data-kind="'+kind+'"]');
+  const player=g.querySelector('[data-act="player"]'),browser=g.querySelector('[data-act="browser"]'),copy=g.querySelector('[data-act="copy"]');
+  if(!url){for(const el of [player,browser,copy]){el.classList.add("disabled");el.removeAttribute("href");delete el.dataset.url;}delete player.dataset.mediaUrl;delete player.dataset.playlist;return;}
+  player.href=playerHref(url);player.dataset.mediaUrl=url;delete player.dataset.playlist;browser.href=url;copy.dataset.url=url;
+  for(const el of [player,browser,copy])el.classList.remove("disabled");
+}
+async function openPlaySheet(file,label,playlistReq){
+  const s=ensurePlaySheet(), token=++playSheetToken;
+  s.querySelector(".play-sheet-title").textContent=label;
+  const sub=s.querySelector(".play-sheet-sub");sub.textContent="Получение ссылок…";
+  fillSheetGroup(s,"mirror",null);fillSheetGroup(s,"direct",null);
+  s.classList.add("open");document.body.style.overflow="hidden";
+  const name=file.name||String(file.path||"video").split("/").pop();
+  const [direct,mirror]=await Promise.allSettled([
+    api("/api/file/unlock",{method:"POST",body:JSON.stringify({link:file.sourceLink})}),
+    api("/api/file/mirror-url?link="+encodeURIComponent(file.sourceLink)+"&name="+encodeURIComponent(name))
+  ]);
+  if(token!==playSheetToken) return;
+  const mUrl=mirror.status==="fulfilled"?mirror.value.url:null, dUrl=direct.status==="fulfilled"?direct.value.url:null;
+  fillSheetGroup(s,"mirror",mUrl);fillSheetGroup(s,"direct",dUrl);
+  // PotPlayer (desktop) and the Android app: this episode plus every following one to the end of the season.
+  if(mUrl&&(IS_DESKTOP||nativeApp())&&playlistReq&&playlistReq.items.length>1){
+    const mp=s.querySelector('.sheet-group[data-kind="mirror"] [data-act="player"]');mp.classList.add("disabled");
+    try{
+      const pl=await api("/api/playlist",{method:"POST",body:JSON.stringify({magnetId:playlistReq.magnetId,title:label,items:playlistReq.items})});
+      if(token!==playSheetToken) return;
+      if(pl&&pl.url){ if(IS_DESKTOP) mp.href="potplayer://"+pl.url; else mp.dataset.playlist=pl.url; }
+    }catch{}
+    if(token===playSheetToken)mp.classList.remove("disabled");
+  }
+  sub.textContent=(mUrl||dUrl)?"Выберите источник и способ открытия":((direct.reason||mirror.reason)?.message||"Не удалось получить ссылки");
+}
+function playФайл(file,label,playlistReq){
+  if(!file||!file.sourceLink){showToast("Ссылка на файл ещё не готова — нажмите «Обновить» в библиотеке.",true);return;}
+  openPlaySheet(file,label,playlistReq);
+}
+function makeSelect(label){const s=document.createElement("select");s.setAttribute("aria-label",label);return s;}
+function setupTilePlayback(magnet,tile,art,info){
+  const pl=buildPlaylist(magnet);
+  if(pl.type==="movie"&&!pl.file) return;
+  const baseTitle=escapeTitle(magnet.name);
+  const mediaLine=document.createElement("div");mediaLine.className="file-meta tile-media";
+  const playBtn=document.createElement("button");playBtn.type="button";playBtn.className="tile-play";playBtn.textContent="▶";
+  playBtn.setAttribute("aria-label","Смотреть");
+  playBtn.title="Смотреть";
+  let current=null,label=baseTitle;
+  const controls=document.createElement("div");controls.className="tile-controls";
+  if(pl.type==="series"){
+    const seasonSel=makeSelect("Сезон"),epSel=makeSelect("Серия");
+    const saved=readLastEpisode(magnet.id);
+    let startSeason=pl.seasons[0],startPath=null;
+    if(saved){const hit=pl.seasons.find(s=>s.items.some(e=>e.file.path===saved));if(hit){startSeason=hit;startPath=saved;}}
+    for(const s of pl.seasons){const o=document.createElement("option");o.value=String(s.season);o.textContent=s.season===0?"Спецвыпуски":"Сезон "+s.season;seasonSel.append(o);}
+    const fillEpisodes=(season,pickPath)=>{
+      epSel.replaceChildren();
+      const seen=new Map();
+      season.items.forEach((e,i)=>{
+        const o=document.createElement("option");o.value=String(i);
+        const n=seen.get(e.episode)||0;seen.set(e.episode,n+1);
+        o.textContent="Серия "+e.episode+(n?" ("+(n+1)+")":"");
+        epSel.append(o);
+      });
+      let idx=pickPath?season.items.findIndex(e=>e.file.path===pickPath):0;if(idx<0)idx=0;
+      epSel.value=String(idx);
+    };
+    const applyEpisode=(reload)=>{
+      const season=pl.seasons.find(s=>String(s.season)===seasonSel.value)||pl.seasons[0];
+      const item=season.items[Number(epSel.value)]||season.items[0];
+      current=item.file;
+      label=baseTitle+" · "+(season.season===0?"Спец.":"S"+String(season.season).padStart(2,"0"))+"E"+String(item.episode).padStart(2,"0");
+      saveLastEpisode(magnet.id,current.path);
+      if(reload) loadTileMediaInfo(magnet,mediaLine,current);
+    };
+    seasonSel.value=String(startSeason.season);
+    fillEpisodes(startSeason,startPath);
+    seasonSel.addEventListener("change",()=>{const s=pl.seasons.find(x=>String(x.season)===seasonSel.value);fillEpisodes(s,null);applyEpisode(true);});
+    epSel.addEventListener("change",()=>applyEpisode(true));
+    applyEpisode(false);
+    if(pl.seasons.length>1) controls.append(seasonSel);
+    controls.append(epSel);
+  }else{current=pl.file;}
+  controls.addEventListener("click",e=>e.stopPropagation());
+  controls.addEventListener("keydown",e=>e.stopPropagation());
+  playBtn.addEventListener("click",e=>{e.stopPropagation();
+    let playlistReq=null;
+    if(pl.type==="series"){
+      const season=pl.seasons.find(x=>x.items.some(i=>i.file===current));
+      if(season){
+        const idx=season.items.findIndex(i=>i.file===current);
+        const items=season.items.slice(idx).map(i=>({index:magnet.files.indexOf(i.file),link:i.file.sourceLink})).filter(i=>i.index>=0&&i.link);
+        playlistReq={magnetId:magnet.id,items};
+      }
+    }
+    playФайл(current,label,playlistReq);});
+  playBtn.addEventListener("keydown",e=>e.stopPropagation());
+  art.append(playBtn);
+  info.append(mediaLine);
+  if(controls.children.length) info.append(controls);
+  whenVisible(tile, ()=>loadTileMediaInfo(magnet,mediaLine,current));
+}
+// Плитки переиспользуются, если раздача не изменилась: обновление списка (снимок -> сервер, поиск, избранное) не
+// пересоздаёт их и не перезапускает анимацию — ничего не моргает. Новые плитки плавно выезжают по очереди,
+// переставленные (избранное наверх) плавно переезжают на новое место.
+let libraryTiles=new Map();
+function tileSig(m){ return JSON.stringify([m.name,m.status,m.statusCode,m.size,m.downloaded,Boolean(m.favorite),m.canRemove!==false,(m.files||[]).length]); }
+function renderLibrary(animate=true) {
+  const target=$("libraryResults"), query=$("libraryПоиск").value.trim().toLowerCase();
+  const before=new Map(); for(const [id,t] of libraryTiles) if(t.tile.isConnected){ const r=t.tile.getBoundingClientRect(); before.set(id,{x:r.left,y:r.top}); }
+  const prevTiles=libraryTiles, nodes=[]; libraryTiles=new Map();
+  // Избранное (своё у каждого устройства) — первым, остальной порядок не меняется.
+  const magnets=cachedLibrary.filter(m => !query || m.name.toLowerCase().includes(query) || m.files.some(f => f.path.toLowerCase().includes(query)))
+    .map((m,i)=>[m,i]).sort((a,b)=>(Number(Boolean(b[0].favorite))-Number(Boolean(a[0].favorite)))||(a[1]-b[1])).map(x=>x[0]);
+  if (!magnets.length) {
+    target.replaceChildren();
+    const empty=document.createElement("div"); empty.className="panel"; empty.textContent=cachedLibrary.length ? "Совпадений не найдено." : "Сохранённой медиатеки пока нет. Нажмите «Обновить», чтобы загрузить данные из AllDebrid."; target.append(empty); return;
+  }
+  let fresh=0;
+  for (const magnet of magnets) {
+    const sig=tileSig(magnet), old=prevTiles.get(magnet.id);
+    if(old && old.sig===sig){ nodes.push(old.tile); libraryTiles.set(magnet.id,old); continue; }
+    const tile=document.createElement("div"); tile.setAttribute("role","button"); tile.tabIndex=0;
+    // Анимация только у действительно новых плиток; при первом показе — каскадом, потом — сразу.
+    tile.className="library-tile tile-enter"; tile.style.setProperty("--tile-index", String(animate&&!before.size ? fresh++ : 0));
+    tile.addEventListener("animationend",e=>{ if(e.target===tile) tile.classList.remove("tile-enter"); });
+    const art=document.createElement("div"); art.className="tile-art";
+    const title=document.createElement("div"); title.className="tile-title"; title.textContent=escapeTitle(magnet.name); art.append(title);
+    const videoФайл = (magnet.files || []).find(f => /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso)$/i.test(f.path || ""));
+    const posterQueries = [...new Set([escapeTitle(magnet.name), videoФайл ? escapeTitle(videoФайл.name || videoФайл.path.split("/").pop()) : ""].filter(Boolean))];
+    whenVisible(tile, ()=>(async()=>{
+      let url=null;
+      for (const q of posterQueries) { url=await getPoster(q); if(url) break; }
+      if(url && art.isConnected && !art.querySelector("img")){
+        const img=document.createElement("img"); img.alt="Постер: "+(posterQueries[0]||magnet.name); img.decoding="async";
+        img.onerror=()=>{ img.remove(); art.classList.add("poster-missing"); };
+        // Плитка ~170–260 px: на телефоне хватает w342 (меньше трафика и декодирования), на ПК/retina — w500.
+        const pm=/\/api\/poster\/img\/w500\/([A-Za-z0-9_-]+\.(?:jpg|png|webp))$/.exec(url);
+        if(pm){ img.srcset=`/api/poster/img/w342/${pm[1]} 342w, ${url} 500w`; img.sizes="(max-width:600px) 48vw, 260px"; }
+        img.src=url;
+        try { if (img.decode) await img.decode(); else if (!img.complete) await new Promise(resolve=>{img.onload=resolve;img.onerror=resolve;}); } catch {}
+        if (art.isConnected) { art.prepend(img); requestAnimationFrame(()=>{ if(img.isConnected) img.classList.add("poster-loaded"); }); }
+      }
+    })().catch(()=>{}).finally(()=>{
+      if (tile.isConnected) tile.classList.remove("mosaic-pending");
+    }));
+    const fav=document.createElement("button"); fav.type="button"; fav.className="tile-fav"+(magnet.favorite?" on":"");
+    fav.textContent=magnet.favorite?"★":"☆"; fav.title=magnet.favorite?"Убрать из избранного":"В избранное"; fav.setAttribute("aria-label",fav.title); fav.setAttribute("aria-pressed",String(Boolean(magnet.favorite)));
+    fav.addEventListener("click",async e=>{
+      e.stopPropagation(); if(fav.disabled) return;
+      const next=!magnet.favorite; fav.disabled=true; fav.classList.add("pop");
+      try{
+        await api("/api/favorites",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:magnet.id,favorite:next})});
+        for(const m of cachedLibrary) if(m.id===magnet.id) m.favorite=next;
+        try{ localStorage.setItem(LIBRARY_SNAPSHOT_KEY, JSON.stringify({ savedAt: Date.now(), magnets: cachedLibrary })); }catch{}
+        renderLibrary(false);
+      }catch(err){ fav.disabled=false; fav.classList.remove("pop"); fav.title="Ошибка: "+(err.message||"не удалось"); }
+    });
+    fav.addEventListener("keydown",e=>e.stopPropagation());
+    art.append(fav);
+    const total=Number(magnet.size)||0, done=Number(magnet.downloaded)||0;
+    if(Number(magnet.statusCode)===4){ const ready=document.createElement("div"); ready.className="tile-progress-label"; ready.textContent="Готово · 100%"; art.append(ready); }
+    else if(total>0 && Number(magnet.statusCode)<4){ const pct=Math.max(0,Math.min(100,done/total*100)); const track=document.createElement("div"); track.className="tile-progress-track"; const fill=document.createElement("div"); fill.className="tile-progress-fill"; fill.style.width=pct+"%"; track.append(fill); const label=document.createElement("div"); label.className="tile-progress-label"; label.textContent=Math.floor(pct)+"% · "+(magnet.status||"Обработка"); art.append(track,label); }
+    const info=document.createElement("div"); info.className="tile-info";
+    const name=document.createElement("strong"); name.textContent=magnet.name;
+    const meta=document.createElement("div"); meta.className="file-meta"; meta.textContent=`${magnet.status} · ${magnet.files.length} entries`;
+    const size=document.createElement("div"); size.className="file-meta"; size.textContent=formatBytes(magnet.size);
+    info.append(name,meta,size);
+    if(magnet.canRemove!==false){
+      const downloading=Number(magnet.statusCode)<4;
+      const label=downloading?"✕ Отменить":"🗑 Удалить";
+      const rm=document.createElement("button"); rm.type="button"; rm.className="tile-remove"+(downloading?" cancel":"");
+      rm.textContent=label; rm.title=downloading?"Отменить загрузку":"Удалить из библиотеки"; rm.setAttribute("aria-label",rm.title);
+      let armTimer=null;
+      rm.addEventListener("click",async e=>{
+        e.stopPropagation();
+        // Подтверждение вторым нажатием: окна confirm() в WebView приложения не показываются.
+        if(!rm.classList.contains("armed")){ rm.classList.add("armed"); rm.textContent="Точно? Нажмите ещё раз"; armTimer=setTimeout(()=>{rm.classList.remove("armed");rm.textContent=label;},4000); return; }
+        clearTimeout(armTimer); rm.disabled=true; rm.textContent=downloading?"Отмена…":"Удаление…";
+        try{
+          await api(`/api/magnets/${magnet.id}/${downloading?"cancel":"delete"}`,{method:"POST"});
+          cachedLibrary=cachedLibrary.filter(x=>x.id!==magnet.id);
+          try{ localStorage.setItem(LIBRARY_SNAPSHOT_KEY, JSON.stringify({ savedAt: Date.now(), magnets: cachedLibrary })); }catch{}
+          renderLibrary(false);
+        }catch(err){ rm.disabled=false; rm.classList.remove("armed"); rm.textContent="Ошибка: "+(err.message||"не удалось").slice(0,60); setTimeout(()=>{rm.textContent=label;},4000); }
+      });
+      rm.addEventListener("keydown",e=>e.stopPropagation());
+      info.append(rm);
+    }
+    tile.append(art,info);
+    if(Number(magnet.statusCode)===4) setupTilePlayback(magnet,tile,art,info);
+    tile.addEventListener("click",()=>openLibraryModal(magnet));
+    tile.addEventListener("keydown",e=>{if(e.target===tile&&(e.key==="Enter"||e.key===" ")){e.preventDefault();openLibraryModal(magnet);}});
+    nodes.push(tile); libraryTiles.set(magnet.id,{tile,sig});
+  }
+  target.replaceChildren(...nodes);
+  // Скрытые поиском плитки тоже держим: при стирании запроса они вернутся без перестройки.
+  for(const [id,t] of prevTiles) if(!libraryTiles.has(id) && cachedLibrary.some(m=>m.id===id && tileSig(m)===t.sig)) libraryTiles.set(id,t);
+  // FLIP: оставшиеся плитки плавно переезжают со старого места на новое.
+  if(before.size && !matchMedia("(prefers-reduced-motion: reduce)").matches){
+    for(const [id,t] of libraryTiles){
+      const b=before.get(id); if(!b || !t.tile.isConnected) continue;
+      const r=t.tile.getBoundingClientRect(), dx=b.x-r.left, dy=b.y-r.top;
+      if(!dx && !dy) continue;
+      t.tile.style.transition="none"; t.tile.style.transform=`translate(${dx}px,${dy}px)`;
+      requestAnimationFrame(()=>requestAnimationFrame(()=>{ t.tile.style.transition="transform .5s cubic-bezier(.22,.8,.24,1)"; t.tile.style.transform="";
+        setTimeout(()=>{ t.tile.style.transition=""; },520); }));
+    }
+  }
+}
+function formatMediaInfo(m){
+  const parts=[];
+  if(m.width&&m.height) parts.push(m.width+"×"+m.height);
+  parts.push(m.bitrateMbps?m.bitrateMbps+" Мбит/с":"битрейт н/д");
+  if(m.codec) parts.push(String(m.codec).toUpperCase());
+  if(m.frameRate&&/^\d+\/\d+$/.test(m.frameRate)){const [a,b]=m.frameRate.split("/").map(Number);if(b&&a/b>0)parts.push((Math.round(a/b*100)/100)+" fps");}
+  return parts.join(" · ");
+}
+// Ленивая работа для плиток: постер и анализ видео запрашиваются, только когда плитка подходит к экрану.
+const lazyIO = ("IntersectionObserver" in window) ? new IntersectionObserver(entries=>{
+  for (const e of entries) {
+    if (!e.isIntersecting) continue;
+    lazyIO.unobserve(e.target);
+    const jobs=e.target.__lazyJobs||[]; e.target.__lazyJobs=null;
+    for (const fn of jobs) { try { fn(); } catch {} }
+  }
+}, { rootMargin:"600px 0px" }) : null;
+function whenVisible(el, fn) {
+  if (!lazyIO) { fn(); return; }
+  (el.__lazyJobs ||= []).push(fn);
+  lazyIO.observe(el);
+}
+// Постеры запоминаются в браузере: найденный — на 30 дней, «нет постера» — на 3 дня. Повторные открытия не ходят в сеть.
+const POSTER_STORE_KEY="posterCacheV2";
+let posterStore=null, posterSaveTimer=null;
+function posterDb(){ if(!posterStore){ try{ posterStore=JSON.parse(localStorage.getItem(POSTER_STORE_KEY)||"{}")||{}; }catch{ posterStore={}; } } return posterStore; }
+function savePosterDb(){
+  clearTimeout(posterSaveTimer);
+  posterSaveTimer=setTimeout(()=>{ try{
+    const db=posterDb(), keys=Object.keys(db);
+    if(keys.length>1500) keys.sort((a,b)=>db[a].t-db[b].t).slice(0,keys.length-1500).forEach(k=>delete db[k]);
+    localStorage.setItem(POSTER_STORE_KEY, JSON.stringify(db));
+  }catch{} }, 1500);
+}
+async function getPoster(title) {
+  const key=title.toLowerCase(); if(posterCache.has(key)) return posterCache.get(key);
+  const hit=posterDb()[key];
+  if (hit && Date.now()-hit.t < (hit.u ? 30 : 3)*864e5) { const p=Promise.resolve(hit.u||null); posterCache.set(key,p); return p; }
+  const task=api("/api/poster?q="+encodeURIComponent(title)).then(data=>{
+    const u=typeof data.poster==="string" && data.poster.startsWith("/api/poster/img/") ? data.poster : (data.poster||null);
+    posterDb()[key]={u,t:Date.now()}; savePosterDb(); return u;
+  }).catch(()=>null);
+  posterCache.set(key,task); return task;
+}
+async function signedMirror(link,name=""){
+  // Players have no session cookie, so the server signs a time-limited mirror URL for this link.
+  // No silent fallback to an unsigned URL: it would look fine but return 401 in every external player.
+  const r=await api("/api/file/mirror-url?link="+encodeURIComponent(link)+(name?"&name="+encodeURIComponent(name):""));
+  if(!r||!r.url) throw new Error("Сервер не выдал подписанную ссылку-зеркало. Перезапустите сервер с новым server.js.");
+  return r.url;
+}
+const IS_DESKTOP=!IS_ANDROID&&!IS_IOS;
+function launchPotPlayer(url){window.location.href="potplayer://"+url;}
+// ---- Contract with the Android app -------------------------------------------------------
+// The app announces itself with window.__suslikApp (>=2) and a SuslikNative bridge, and understands one
+// call: nativePlay({url, title, playlist}). The site decides what is playable; the app does not scrape buttons.
+function nativeApp(){return Number(window.__suslikApp||0)>=2&&!!window.SuslikNative;}
+function nativePlay(payload){
+  const n=window.SuslikNative,msg=JSON.stringify(payload);
+  if(typeof n.postMessage==="function") n.postMessage(msg); else n.playJson(msg);
+}
+function titleForLink(a){
+  if(a.closest(".play-sheet")) return (document.querySelector(".play-sheet-title")||{}).textContent||document.title;
+  if(a.id==="openBtn") return ($("filename")||{}).textContent||document.title;
+  const row=a.closest(".file-row,.magnet-card,[data-play-title]");
+  const t=row&&(row.dataset.playTitle||(row.querySelector(".file-path,.result-title")||{}).textContent);
+  return String(t||document.title||"Видео").trim().slice(0,180);
+}
+document.addEventListener("click",e=>{
+  if(!nativeApp()) return;
+  const a=e.target&&e.target.closest?e.target.closest("a"):null;
+  if(!a) return;
+  const isPlay=a.matches('[data-act="player"]')||a.id==="openBtn"||a.classList.contains("split-last");
+  const url=a.dataset.mediaUrl||a.href;
+  if(!isPlay||!/^https?:\/\//i.test(url||"")) return;
+  e.preventDefault();e.stopImmediatePropagation();
+  nativePlay({url,title:titleForLink(a),playlist:a.dataset.playlist||null});
+},true);
+
+// One file: unlock + mirror link on demand (nothing is requested from AllDebrid until the user asks).
+async function fileLinkActions(sourceLink,fileName){
+  const [direct,mirror]=await Promise.allSettled([
+    api("/api/file/unlock",{method:"POST",body:JSON.stringify({link:sourceLink})}),
+    signedMirror(sourceLink,fileName)
+  ]);
+  if(direct.status==="rejected"&&mirror.status==="rejected") throw direct.reason;
+  const directUrl=direct.status==="fulfilled"?direct.value.url:null, mirrorUrl=mirror.status==="fulfilled"?mirror.value:null;
+  const makeSplit=(label,url,kind)=>{
+    const group=document.createElement("div");group.className="split-button";
+    const copy=document.createElement("button");copy.type="button";copy.className="secondary split-first";copy.textContent="Копировать "+label;
+    copy.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(url);copy.textContent="Скопировано";setTimeout(()=>{copy.textContent="Копировать "+label;},1600);}catch{window.prompt("Скопируйте ссылку:",url);}});
+    const open=document.createElement("a");open.className="button secondary split-last";open.href=url;open.target="_blank";open.rel="noopener noreferrer";open.textContent="Открыть";
+    if(kind==="mirror") open.title="Видео передаётся через этот VPS; используется исходящий трафик сервера.";
+    group.append(copy,open);return group;
+  };
+  const actions=document.createElement("div");actions.className="file-link-actions";
+  if(directUrl) actions.append(makeSplit("прямую ссылку",directUrl,"direct"));
+  if(mirrorUrl) actions.append(makeSplit("ссылку-зеркало",mirrorUrl,"mirror"));
+  if(IS_DESKTOP){
+    const pot=(label,url)=>{const b=document.createElement("button");b.type="button";b.className="secondary";b.textContent=label;b.addEventListener("click",()=>launchPotPlayer(url));return b;};
+    if(directUrl) actions.append(pot("▶ PotPlayer · напрямую",directUrl));
+    if(mirrorUrl) actions.append(pot("▶ PotPlayer · зеркало",mirrorUrl));
+  }
+  return actions;
+}
+let currentLibraryMagnetName = "";
+function webdavMagnetPath(name, innerPath="") {
+  const clean = value => String(value || "").split("/").filter(Boolean).join("/");
+  const base = "magnets/" + clean(name);
+  const inner = clean(innerPath);
+  return inner ? base + "/" + inner : base + "/";
+}
+function openLibraryModal(magnet) {
+  currentLibraryMagnetName = String(magnet.name || "");
+  $("modalTitle").textContent=magnet.name;
+  $("modalMeta").textContent=`${magnet.status} · ID ${magnet.id} · ${formatBytes(magnet.size)} · ${magnet.files.length} file/folder entries`;
+  const target=$("modalФайлы"); target.replaceChildren();
+  // Blu-ray main featurette shortcut: largest available M2TS stream.
+  const mainM2ts=(magnet.files||[])
+    .filter(f=>f.type!=="folder" && /\.m2ts$/i.test(String(f.path||f.name||"")) && f.sourceLink)
+    .sort((a,b)=>(Number(b.size)||0)-(Number(a.size)||0))[0];
+  if(mainM2ts){
+    const quickWrap=document.createElement("div");quickWrap.className="file-row";
+    const quickPlay=document.createElement("button");quickPlay.type="button";quickPlay.className="button";
+    quickPlay.textContent="▶ Запустить основной фильм (M2TS · "+formatBytes(mainM2ts.size)+")";
+    quickPlay.title=String(mainM2ts.path||mainM2ts.name||"");
+    quickPlay.addEventListener("click",async()=>{
+      quickPlay.disabled=true;quickPlay.textContent="Разблокировка M2TS…";
+      try{
+        const name=String(mainM2ts.name||String(mainM2ts.path||"main.m2ts").split("/").pop()||"main.m2ts");
+        const result=await api("/api/file/unlock",{method:"POST",body:JSON.stringify({link:mainM2ts.sourceLink})});
+        const mirror=await api("/api/file/mirror-url?link="+encodeURIComponent(mainM2ts.sourceLink)+"&name="+encodeURIComponent(name));
+        const actions=document.createElement("div");actions.className="file-link-actions";
+        const directGroup=document.createElement("div");directGroup.className="split-actions";
+        const directКопировать=document.createElement("button");directКопировать.type="button";directКопировать.className="secondary split-first";directКопировать.textContent="Прямая ссылка";
+        directКопировать.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(result.url);directКопировать.textContent="Скопировано";}catch{window.prompt("Скопируйте прямую ссылку:",result.url);}});
+        const directOpen=document.createElement("a");directOpen.className="button secondary split-last";directOpen.href=result.url;directOpen.target="_blank";directOpen.rel="noopener noreferrer";directOpen.textContent="Открыть";
+        directGroup.append(directКопировать,directOpen);
+        const mirrorGroup=document.createElement("div");mirrorGroup.className="split-actions";
+        const mirrorКопировать=document.createElement("button");mirrorКопировать.type="button";mirrorКопировать.className="secondary split-first";mirrorКопировать.textContent="Ссылка-зеркало";
+        mirrorКопировать.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(mirror.url);mirrorКопировать.textContent="Скопировано";}catch{window.prompt("Скопируйте ссылку-зеркало:",mirror.url);}});
+        const mirrorOpen=document.createElement("a");mirrorOpen.className="button secondary split-last";mirrorOpen.href=mirror.url;mirrorOpen.target="_blank";mirrorOpen.rel="noopener noreferrer";mirrorOpen.textContent="Открыть";
+        mirrorGroup.append(mirrorКопировать,mirrorOpen);
+        actions.append(directGroup,mirrorGroup);quickWrap.append(actions);quickPlay.remove();
+      }catch(err){quickPlay.disabled=false;quickPlay.textContent="Повторить запуск M2TS";let note=quickWrap.querySelector(".unlock-error");if(!note){note=document.createElement("div");note.className="unlock-error status error";quickWrap.append(note);}note.textContent=err.message;}
+    });
+    quickWrap.append(quickPlay);target.append(quickWrap);
+  }
+  const query=$("libraryПоиск").value.trim().toLowerCase();
+  const files=magnet.files.filter(f=>!query||f.path.toLowerCase().includes(query));
+  if(!files.length){const empty=document.createElement("p");empty.className="file-meta";empty.textContent="No files returned for this magnet yet.";target.append(empty);}
+  const folderState = new Map();
+  const rows = [];
+  const folderPaths = files.filter(f=>f.type==="folder").map(f=>String(f.path||"").replace(/\/+$/,"")).sort((a,b)=>a.length-b.length);
+  for(const file of files){
+    const filePath=String(file.path||"");
+    const row=document.createElement("div");row.className="file-row mosaic-item";row.style.setProperty("--tile-index", String(target.children.length));
+    row.dataset.filePath=filePath;row.dataset.fileType=file.type==="folder"?"folder":"file";
+    const parentПапкаs=folderPaths.filter(folder=>folder!==filePath && filePath.startsWith(folder+"/"));
+    const depth=parentПапкаs.length;
+    row.dataset.depth=String(depth);
+    row.dataset.parentПапкаs=JSON.stringify(parentПапкаs);
+    const left=document.createElement("div");left.className="file-path";left.style.paddingLeft=`${depth*18}px`;
+    if(depth>0){const level=document.createElement("span");level.className="file-depth";level.textContent=`L${depth}`;level.title=`Уровень вложенности: ${depth}`;left.append(level);}
+    const icon=document.createElement("span");icon.textContent=file.type==="folder"?"📁 ":(/\\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso)$/i.test(filePath)?"🎬 ":"📄 ");
+    if(file.type==="folder"){
+      const toggle=document.createElement("button");toggle.type="button";toggle.className="folder-toggle secondary";toggle.setAttribute("aria-expanded","false");toggle.textContent="▸";
+      toggle.title="Раскрыть папку";
+      folderState.set(filePath,false);
+      toggle.addEventListener("click",()=>{
+        const expanded=!folderState.get(filePath);folderState.set(filePath,expanded);
+        toggle.textContent=expanded?"▾":"▸";toggle.setAttribute("aria-expanded",String(expanded));toggle.title=expanded?"Свернуть папку":"Раскрыть папку";
+        updateПапкаVisibility();
+      });
+      left.append(toggle);
+    }
+    const path=document.createElement("span");path.textContent=filePath;left.append(icon,path);row.append(left);
+    rows.push(row);    const right=document.createElement("div");right.style.cssText="display:flex;align-items:center;gap:8px;flex-wrap:wrap";
+    if(file.size){const size=document.createElement("span");size.className="file-meta";size.textContent=formatBytes(file.size);right.append(size);}
+    // Offer a season playlist when a folder contains video files with AllDebrid source links.
+    if(file.type==="folder" && /(?:season|сезон)\\s*0*\\d+/i.test(filePath)){
+      const seasonFiles=(magnet.files||[])
+        .filter(f=>f.type!=="folder" && String(f.path||"").startsWith(filePath.replace(/\/+$/,"")+"/") && f.sourceLink && /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts)$/i.test(String(f.path||"")))
+        .sort((a,b)=>String(a.path||a.name||"").localeCompare(String(b.path||b.name||""),"ru",{numeric:true,sensitivity:"base"}));
+      if(seasonFiles.length){
+        const playlistBtn=document.createElement("button");playlistBtn.type="button";playlistBtn.className="button season-playlist-btn";
+        playlistBtn.textContent="▶ Весь сезон · PotPlayer";
+        playlistBtn.title=`Подготовить плейлист из ${seasonFiles.length} серий для PotPlayer`;
+        playlistBtn.addEventListener("click",async()=>{
+          playlistBtn.disabled=true;playlistBtn.textContent="Подготовка 0/"+seasonFiles.length+"…";
+          try{
+            const entries=[];
+            for(let i=0;i<seasonFiles.length;i++){
+              const episode=seasonFiles[i];
+              const name=String(episode.path||episode.name||"Серия "+(i+1)).split("/").pop();
+              const mirror=await api("/api/file/mirror-url?link="+encodeURIComponent(episode.sourceLink)+"&name="+encodeURIComponent(name));
+              entries.push({name,url:mirror.url});
+              playlistBtn.textContent=`Подготовка ${i+1}/${seasonFiles.length}…`;
+            }
+            const safeName=String(filePath.split("/").pop()||"Season").replace(/[\\/:*?"<>|]+/g,"_");
+            const m3u=["#EXTM3U",...entries.flatMap(item=>["#EXTINF:-1,"+item.name,item.url])].join("\\r\\n")+"\\r\\n";
+            const blob=new Blob(["\\uFEFF"+m3u],{type:"audio/x-mpegurl;charset=utf-8"});
+            const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=safeName+".m3u";document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
+            playlistBtn.textContent="✓ Плейлист готов";
+            let note=row.querySelector(".season-playlist-note");if(!note){note=document.createElement("div");note.className="file-meta season-playlist-note";row.append(note);}
+            note.textContent="Откройте скачанный .m3u в PotPlayer. Ссылки-зеркала действуют ограниченное время.";
+          }catch(err){playlistBtn.disabled=false;playlistBtn.textContent="▶ Повторить подготовку";let note=row.querySelector(".season-playlist-note");if(!note){note=document.createElement("div");note.className="status error season-playlist-note";row.append(note);}note.textContent=err.message||"Не удалось подготовить плейлист.";}
+        });
+        right.append(playlistBtn);
+      }
+    }
+    if(file.type==="folder" && (/\bBDMV\b/i.test(filePath) || /\bBLURAY\b|\bBLU-RAY\b/i.test(filePath))){
+      const webdavPlay=document.createElement("button");webdavPlay.type="button";webdavPlay.className="secondary";webdavPlay.textContent="▶ Blu-ray · подключить как диск";
+      webdavPlay.title="Подключает через WebDAV родительскую папку, содержащую BDMV. Требуется поддержка WebDAV в Windows.";
+      webdavPlay.addEventListener("click",async()=>{
+        webdavPlay.disabled=true;
+        try{
+          const discRoot=filePath.replace(/\/+$/,"").replace(/(^|\/)BDMV(\/.*)?$/i,"");
+          const info=await api("/api/webdav?mount=1&path="+encodeURIComponent(webdavMagnetPath(currentLibraryMagnetName,discRoot)+"/"));
+          const u=new URL(info.url);
+          const port=(u.port && u.port!=="443") ? "@"+u.port : "";
+          const unc="\\\\"+u.hostname+"@SSL"+port+"\\DavWWWRoot"+u.pathname.replace(/\//g,"\\");
+          const cmd='net use Z: "'+unc+'" /persistent:no';
+          try{await navigator.clipboard.writeText(cmd);}catch{}
+          window.prompt("Скопируйте команду в cmd (Win+R → cmd). После подключения откройте Z:\\ в PotPlayer. Отключить диск: net use Z: /delete",cmd);
+        }catch(err){alert("Не удалось сформировать WebDAV-ссылку: "+err.message);}
+        finally{webdavPlay.disabled=false;}
+      });right.append(webdavPlay);
+    }
+    if(file.sourceLink){
+      const unlock=document.createElement("button");unlock.className="secondary";unlock.textContent="Получить ссылки";
+      unlock.addEventListener("click",async()=>{
+        unlock.disabled=true;unlock.textContent="Получение ссылок…";
+        try{
+          const actions=await fileLinkActions(file.sourceLink,String(file.path||file.name||"").split("/").pop());
+          row.append(actions);unlock.remove();
+        }catch(err){unlock.disabled=false;unlock.textContent="Повторить";let note=row.querySelector(".unlock-error");if(!note){note=document.createElement("div");note.className="unlock-error status error";row.append(note);}note.textContent=err.message;}
+      });right.append(unlock);
+    }
+    row.append(right);
+  }
+  function updateПапкаVisibility(){
+    for(const row of rows){
+      const parents=JSON.parse(row.dataset.parentПапкаs||"[]");
+      const visible=parents.every(folder=>folderState.get(folder)===true);
+      row.classList.toggle("folder-collapsed",!visible);
+      row.setAttribute("aria-hidden",String(!visible));
+    }
+  }
+  updateПапкаVisibility();
+  for(const row of rows) target.append(row);
+  $("libraryModal").classList.remove("hidden");document.body.style.overflow="hidden";
+}
+function closeLibraryModal(){$("libraryModal").classList.add("hidden");document.body.style.overflow="";}
+$("openWebdav").addEventListener("click",async()=>{
+  const button=$("openWebdav");button.disabled=true;
+  try{const path=currentLibraryMagnetName ? webdavMagnetPath(currentLibraryMagnetName) : "magnets/";const info=await api("/api/webdav?path="+encodeURIComponent(path));window.open(info.url,"_blank","noopener,noreferrer");}
+  catch(err){alert("Не удалось открыть WebDAV: "+err.message);}
+  finally{button.disabled=false;}
+});
+$("closeLibraryModal").addEventListener("click",closeLibraryModal);
+$("libraryModal").addEventListener("click",e=>{if(e.target===$("libraryModal"))closeLibraryModal();});
+document.addEventListener("keydown",e=>{if(e.key==="Escape")closeLibraryModal();});
+try { const snapshot=webLibraryNeeded()?JSON.parse(localStorage.getItem(LIBRARY_SNAPSHOT_KEY)||"null"):null; if(snapshot && Array.isArray(snapshot.magnets)){ cachedLibrary=snapshot.magnets; renderLibrary(); const when=new Date(snapshot.savedAt).toLocaleString(); $("libraryStatus").textContent=`Showing saved library snapshot from ${when}. Press Обновить for current AllDebrid status.`; } } catch {}
+renderHistory();
+// Обновить active magnet entries in the local history automatically. Poll conservatively.
+let historyPollBusy = false;
+async function refreshActiveHistory() {
+  if (historyPollBusy || document.hidden) return;
+  historyPollBusy = true;
+  try {
+    const active = readHistory().filter(item => item.magnetId && !item.ready && !item.cancelled && !item.failed).slice(0, 12);
+    for (const item of active) {
+      try {
+        const status = await api(`/api/magnets/${item.magnetId}`);
+        const size = Number(status.size) || 0;
+        const downloaded = Number(status.downloaded) || 0;
+        const ready = Boolean(status.ready || Number(status.statusCode) === 4);
+        const failed = Number(status.statusCode) >= 5;
+        updateHistory(item.value, {
+          title: status.filename || item.title || "Загрузка по magnet-ссылке",
+          status: ready ? "Готово" : (failed ? (status.status || "Ошибка") : (status.status || "Скачатьing")),
+          percent: ready ? 100 : (size > 0 ? Math.floor(Math.min(100, downloaded / size * 100)) : null),
+          ready,
+          failed,
+          lastCheckedAt: Date.now()
+        });
+      } catch (err) {
+        // Keep the last known state on transient network/API errors.
+      }
+    }
+  } finally { historyPollBusy = false; }
+}
+// Опрос статуса загрузок: 5 с первые 2 минуты, затем 15 с, после 10 минут — 30 с. Нет активных загрузок — нет запросов.
+let historyPollTimer=null, historyPollSince=Date.now();
+function hasActiveHistory(){ try { return readHistory().some(item => item.magnetId && !item.ready && !item.cancelled && !item.failed); } catch { return false; } }
+function scheduleHistoryPoll(){
+  clearTimeout(historyPollTimer); historyPollTimer=null;
+  if (document.hidden || !hasActiveHistory()) return;
+  const age=Date.now()-historyPollSince;
+  historyPollTimer=setTimeout(async()=>{ historyPollTimer=null; await refreshActiveHistory(); scheduleHistoryPoll(); }, age<120e3?5000:age<600e3?15000:30000);
+}
+// Новая загрузка в истории: снова начинаем с частого опроса, если опрос сейчас не запланирован.
+window.ensureHistoryPoll=()=>{ if(!historyPollTimer && !historyPollBusy){ historyPollSince=Date.now(); scheduleHistoryPoll(); } };
+refreshActiveHistory().finally(scheduleHistoryPoll);
+document.addEventListener("visibilitychange",()=>{ if(!document.hidden){ refreshActiveHistory().finally(scheduleHistoryPoll); } else clearTimeout(historyPollTimer); });
+
+checkSession();
+</script>
+
+<script>
+(function () {
+  var isAndroid = /Android/i.test(navigator.userAgent || "");
+  if (!isAndroid) return;
+  document.documentElement.classList.add("android-device");
+  var hidePotPlayer = function (root) {
+    if (!root || !root.querySelectorAll) return;
+    root.querySelectorAll("button,a,[role='button']").forEach(function (el) {
+      if (/potplayer/i.test((el.textContent || "") + " " + (el.getAttribute("aria-label") || ""))) {
+        el.remove();
+      }
+    });
+  };
+  hidePotPlayer(document);
+  new MutationObserver(function (records) {
+    records.forEach(function (record) {
+      record.addedNodes.forEach(function (node) {
+        if (node.nodeType === 1) {
+          if (/potplayer/i.test(node.textContent || "")) hidePotPlayer(node.parentNode || node);
+          hidePotPlayer(node);
+        }
+      });
+    });
+  }).observe(document.documentElement, { childList: true, subtree: true });
+})();
+</script>
+
+<script src="redesign.js?v=5" defer></script>
+</body>
+</html>

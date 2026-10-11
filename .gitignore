@@ -1,0 +1,16 @@
+**/build/
+**/.gradle/
+**/.kotlin/
+**/local.properties
+**/node_modules/
+website/.env
+website/updates/
+website/data/
+website/*.json
+!website/package.json
+!website/package-lock.json
+dist/
+*.jks
+*.keystore
+.idea/
+*.iml
