@@ -28,7 +28,10 @@ fun main(args: Array<String>) {
     val (c3, b3) = get(local, "bytes=${size - 10}-"); println("tail: $c3 ${b3.size}")
     val (c4, _) = get(local, "bytes=${size + 10}-"); println("beyond: $c4")
     // 3. throttled sequential read (simulated player) - check burst pattern via origin log
-    val c = URL(local).openConnection(java.net.Proxy.NO_PROXY) as HttpURLConnection
+    BurstProxy.clear()
+    println("--- throttled from a fresh start (origin requests below are its bursts)")
+    val local2 = BurstProxy.wrap(origin)
+    val c = URL(local2).openConnection(java.net.Proxy.NO_PROXY) as HttpURLConnection
     c.setRequestProperty("Range", "bytes=0-")
     val inp = c.inputStream; val buf = ByteArray(64 * 1024); var tot = 0L; val t0 = System.currentTimeMillis()
     val md = MessageDigest.getInstance("MD5")
