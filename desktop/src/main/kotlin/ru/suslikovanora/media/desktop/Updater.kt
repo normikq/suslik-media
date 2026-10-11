@@ -1,6 +1,7 @@
 package ru.suslikovanora.media.desktop
 
 import androidx.compose.foundation.background
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.foundation.layout.size
