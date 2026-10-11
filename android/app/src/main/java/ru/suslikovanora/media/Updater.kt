@@ -93,7 +93,7 @@ object Updater {
     suspend fun download(ctx: Context, info: Info, onProgress: (Float) -> Unit): File = withContext(Dispatchers.IO) {
         val dir = File(ctx.cacheDir, "updates").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
         val out = File(dir, "suslik-media-${info.version}.apk")
-        Api.client.newCall(Request.Builder().url(Api.BASE + info.url).get().build()).execute().use { res ->
+        Api.plain.newCall(Request.Builder().url(Api.BASE + info.url).get().build()).execute().use { res ->
             if (!res.isSuccessful) throw Api.HttpError(res.code, "Сервер не отдал файл обновления (${res.code})")
             val body = res.body ?: throw Api.HttpError(res.code, "Пустой ответ")
             val total = body.contentLength().takeIf { it > 0 } ?: info.size

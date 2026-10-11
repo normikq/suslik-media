@@ -6,8 +6,8 @@ plugins {
     id("org.jetbrains.compose") version "1.7.3"
 }
 
-// No fixed toolchain: builds with whatever JDK 17+ runs Gradle (e.g. the JDK 21 bundled with the IDE),
-// bytecode stays Java 17.
+// No fixed toolchain: builds with whatever JDK runs Gradle; the installer bundles THAT runtime, so build with
+// JDK 21+ (AppCDS below needs it; the JDK 21 bundled with the IDE is fine). Bytecode stays Java 17.
 java {
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17
@@ -27,7 +27,7 @@ dependencies {
 }
 
 // One place for the version: the installer, and the app itself (update check) via -Dsuslik.version.
-val appVersion = "1.6.0"
+val appVersion = "1.7.0"
 
 compose.desktop {
     application {
@@ -39,7 +39,11 @@ compose.desktop {
             "-XX:MinHeapFreeRatio=10", "-XX:MaxHeapFreeRatio=30",
             "-XX:MaxMetaspaceSize=128m", "-XX:ReservedCodeCacheSize=48m",
             "-Dfile.encoding=UTF-8",
-            "-Dsuslik.version=$appVersion"
+            "-Dsuslik.version=$appVersion",
+            // AppCDS (Java 19+): on the first exit the JVM saves the classes it loaded into an archive next to the app;
+            // from then on they are mapped from it instead of being read and verified again — the window opens noticeably
+            // sooner and takes less memory. A new version makes the archive outdated: the JVM rebuilds it by itself.
+            "-XX:+AutoCreateSharedArchive", "-XX:SharedArchiveFile=\$APPDIR/suslik.jsa"
         )
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe)

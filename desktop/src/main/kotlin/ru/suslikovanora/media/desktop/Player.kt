@@ -146,6 +146,18 @@ private fun parseM3u(text: String): List<Entry> {
     return out
 }
 
+/** Reads (and throws away) the first [bytes] of [url]: the server and the file host get ready for the real request. */
+private fun warmUp(url: String, bytes: Long) {
+    runCatching {
+        val req = java.net.http.HttpRequest.newBuilder(java.net.URI.create(url)).timeout(java.time.Duration.ofSeconds(30))
+            .header("Range", "bytes=0-${bytes - 1}").GET().build()
+        Api.client.send(req, java.net.http.HttpResponse.BodyHandlers.ofInputStream()).body().use { input ->
+            val buf = ByteArray(64 * 1024); var left = bytes
+            while (left > 0) { val n = input.read(buf); if (n < 0) break; left -= n }
+        }
+    }
+}
+
 private fun fmt(ms: Long): String {
     val t = (ms / 1000).coerceAtLeast(0); val h = t / 3600; val m = (t % 3600) / 60; val s = t % 60
     return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s)
@@ -734,6 +746,20 @@ fun PlayerView(
     }
     // Prefetch the next episode's extra tracks while this one plays, so the switch starts at once.
     LaunchedEffect(index, queue.size) { if (index + 1 < queue.size) { delay(15_000); sidecars(index + 1) } }
+    // About a minute before the end the next episode is "warmed up": the server gets its AllDebrid link ready (that
+    // lookup is most of the wait when a new file starts) and the first megabytes of the video and voice-over are
+    // fetched once. When the episode ends — or "Следующая" is pressed — the next one starts almost at once.
+    val warmed = remember { HashSet<Int>() }
+    val nearEnd = length > 0 && length - time in 1..60_000L
+    LaunchedEffect(index, nearEnd) {
+        val next = index + 1
+        if (!nearEnd || next !in queue.indices || !warmed.add(next)) return@LaunchedEffect
+        val video = queue[next].url
+        val extras = kotlinx.coroutines.withTimeoutOrNull(10_000) { sidecars(next).await() }
+        withContext(Dispatchers.IO) {
+            (listOf(video) + extras?.first.orEmpty()).forEach { u -> launch { warmUp(u, if (u == video) 4L shl 20 else 1L shl 20) } }
+        }
+    }
     DisposableEffect(canvas) {
         // Single click = pause, double click = fullscreen (the single-click action waits to see if a second comes).
         val single = javax.swing.Timer(260) { togglePause() }.apply { isRepeats = false }

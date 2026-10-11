@@ -37,7 +37,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import ru.suslikovanora.media.net.Api
@@ -117,7 +116,7 @@ class SearchModel(private val scope: CoroutineScope, private val store: LibraryS
                 note(h.id, "Добавлено, AllDebrid качает…", true)
                 val started = System.currentTimeMillis()
                 repeat(60) {
-                    delay(if (System.currentTimeMillis() - started < 60_000) 4000 else 15000)
+                    ru.suslikovanora.media.Foreground.pause(if (System.currentTimeMillis() - started < 60_000) 4000 else 15000)
                     val st = runCatching { Api.get("/api/magnets/$id") }.getOrNull() ?: return@repeat
                     val total = st.optLong("size"); val done = st.optLong("downloaded")
                     val code = st.optInt("statusCode")
@@ -146,7 +145,7 @@ fun SearchScreen(m: SearchModel, listState: LazyListState, onLogout: () -> Unit,
         modifier.fillMaxSize().background(Sm.night), state = listState,
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 24.dp)
     ) {
-        item(key = "header") { BrandHeader(onLogout = onLogout); Spacer(Modifier.height(16.dp)) }
+        item(key = "header") { HeaderSlot(); Spacer(Modifier.height(16.dp)) }
         item(key = "panel") {
             Panel(Modifier.animateContentSize(tween(260))) {
                 Text("Поиск раздач", fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 19.sp, color = Sm.text)

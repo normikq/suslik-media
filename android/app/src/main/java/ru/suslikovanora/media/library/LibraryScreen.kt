@@ -81,7 +81,7 @@ object Posters {
     /** Shares the API's HTTP client (cookie + keep-alive); Coil keeps decoded posters in memory and files on disk. */
     fun loader(context: Context): ImageLoader = loader ?: synchronized(this) {
         loader ?: ImageLoader.Builder(context.applicationContext)
-            .okHttpClient(Api.client)
+            .okHttpClient(Api.plain)
             .crossfade(350)
             .build().also { loader = it }
     }
@@ -113,9 +113,7 @@ fun LibraryScreen(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
-        item(key = "header", span = { GridItemSpan(maxLineSpan) }) {
-            BrandHeader(onLogout = onLogout)
-        }
+        item(key = "header", span = { GridItemSpan(maxLineSpan) }) { HeaderSlot() }
         item(key = "panel", span = { GridItemSpan(maxLineSpan) }) {
             LibraryPanel(
                 query = query, onQuery = onQuery,
@@ -143,6 +141,15 @@ fun LibraryScreen(
         }
     }
 }
+
+/**
+ * Height of the brand header. The header itself is drawn once above the tabs (MainActivity) and follows the open
+ * tab's scrolling, so it stays put while the tabs slide; each tab keeps this empty slot where it used to be.
+ */
+val LocalHeaderHeight = androidx.compose.runtime.compositionLocalOf { 46.dp }
+
+@Composable
+fun HeaderSlot() = Spacer(Modifier.fillMaxWidth().height(LocalHeaderHeight.current))
 
 @Composable
 fun BrandHeader(onLogout: (() -> Unit)?) {

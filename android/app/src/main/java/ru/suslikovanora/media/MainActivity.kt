@@ -38,6 +38,16 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.animation.core.Animatable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.dp
+import ru.suslikovanora.media.library.BrandHeader
+import ru.suslikovanora.media.library.LocalHeaderHeight
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
@@ -71,6 +81,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ru.suslikovanora.media.net.Api.init(this)
         val bg = android.graphics.Color.rgb(8, 9, 11)
         enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(bg), navigationBarStyle = SystemBarStyle.dark(bg))
         CookieManager.getInstance().setAcceptCookie(true)
@@ -128,8 +139,12 @@ class MainActivity : ComponentActivity() {
         val searchList = rememberLazyListState()
         var query by rememberSaveable { mutableStateOf("") }
         val logout: () -> Unit = { scope.launch { store.logout() } }
+        val density = LocalDensity.current
+        var headerHeight by remember { mutableStateOf(46.dp) }
+        CompositionLocalProvider(LocalHeaderHeight provides headerHeight) {
         Box(Modifier.fillMaxSize().background(Sm.night).windowInsetsPadding(WindowInsets.safeDrawing)) {
             Column(Modifier.fillMaxSize()) {
+              Box(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
                 // Tabs glide sideways in the direction of the chosen tab (no flash: every page has the same dark background).
                 AnimatedContent(
                     targetState = tab,
@@ -138,7 +153,7 @@ class MainActivity : ComponentActivity() {
                         (fadeIn(tween(260, delayMillis = 50)) + slideInHorizontally(tween(380, easing = Sm.ease)) { dir * it / 12 }) togetherWith
                             (fadeOut(tween(150)) + slideOutHorizontally(tween(380, easing = Sm.ease)) { -dir * it / 12 })
                     },
-                    modifier = Modifier.weight(1f).fillMaxWidth().background(Sm.night),
+                    modifier = Modifier.fillMaxSize().background(Sm.night),
                     label = "tabs"
                 ) { t ->
                     when (t) {
@@ -150,6 +165,32 @@ class MainActivity : ComponentActivity() {
                         Tab.Search -> SearchScreen(search, searchList, onLogout = logout)
                     }
                 }
+                // The brand header is drawn once, over the tabs: it does not slide with them. It follows the open tab's
+                // scrolling exactly like a first list item would (each tab keeps an empty slot of the same height).
+                if (store.authenticated != false) {
+                    val headerY = remember { Animatable(0f) }
+                    val headerHidePx = with(LocalDensity.current) { (headerHeight + 14.dp).toPx() }
+                    fun offsetOf(t: Tab): Float {
+                        val (i, o) = when (t) {
+                            Tab.Links -> addList.firstVisibleItemIndex to addList.firstVisibleItemScrollOffset
+                            Tab.Library -> gridState.firstVisibleItemIndex to gridState.firstVisibleItemScrollOffset
+                            Tab.Search -> searchList.firstVisibleItemIndex to searchList.firstVisibleItemScrollOffset
+                        }
+                        return if (i == 0) o.toFloat().coerceAtMost(headerHidePx) else headerHidePx
+                    }
+                    LaunchedEffect(tab) {
+                        // Another tab scrolled to another place: glide there together with the tab change, then follow.
+                        val target = offsetOf(tab)
+                        if (kotlin.math.abs(headerY.value - target) > 1f) headerY.animateTo(target, tween(380, easing = Sm.ease))
+                        snapshotFlow { offsetOf(tab) }.collect { headerY.snapTo(it) }
+                    }
+                    Box(
+                        Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 14.dp)
+                            .graphicsLayer { translationY = -headerY.value; alpha = 1f - (headerY.value / headerHidePx).coerceIn(0f, 1f) * 0.15f }
+                            .onSizeChanged { sz -> val h = with(density) { sz.height.toDp() }; if (h != headerHeight && h > 0.dp) headerHeight = h }
+                    ) { BrandHeader(onLogout = logout) }
+                }
+              }
                 if (!imeVisible && store.authenticated != false) NavBar(current = tab, onSelect = ::selectTab)
             }
             if (store.authenticated == false) {
@@ -168,6 +209,7 @@ class MainActivity : ComponentActivity() {
                     onPlay = { r -> playTarget = null; handlePlay(r.url, r.title, r.playlist, r.subUrls, r.watchKeys, r.audioUrls) }
                 )
             }
+        }
         }
     }
 
@@ -202,6 +244,9 @@ class MainActivity : ComponentActivity() {
             if (audioUrls.isNotEmpty()) putStringArrayListExtra(PlayerActivity.EXTRA_AUDIO_URLS, ArrayList(audioUrls))
         })
     }
+
+    override fun onStart() { super.onStart(); Foreground.visible.value = true }
+    override fun onStop() { Foreground.visible.value = false; super.onStop() }
 
     override fun onResume() {
         super.onResume()

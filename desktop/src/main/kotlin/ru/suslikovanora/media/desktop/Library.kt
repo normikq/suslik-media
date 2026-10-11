@@ -38,6 +38,7 @@ fun formatMediaInfo(m: JSONObject): String {
 /** Same behaviour as the Android LibraryStore, with files in %APPDATA%\SuslikMedia instead of SharedPreferences. */
 class Library {
     private val snapshot = AppDir.file("library.json")
+    private val libraryEtag = Store("library_etag") // version of the list above, for "not modified" answers
     private val posterIndex = Store("posters")
     private val mediaIndex = Store("media_info")
     private val episodes = Store("last_episode")
@@ -86,11 +87,19 @@ class Library {
         loading = true
         status = "Загрузка торрентов и файлов из AllDebrid…"; statusKind = StatusKind.Info
         try {
-            val json = Api.get("/api/library")
+            // Unchanged since the last load (same ETag) = a tiny 304 instead of the whole list: nothing to redo.
+            val known = libraryEtag.get("etag")?.takeIf { items.isNotEmpty() }
+            val res = Api.getIfChanged("/api/library", known)
+            if (res.code == 304) {
+                status = "Загружено ${items.size} торрент(ов)."; statusKind = StatusKind.Ok
+                return
+            }
+            val json = res.json
             val list = withContext(Dispatchers.Default) { parseLibrary(json) }
             publish(list)
             withContext(Dispatchers.IO) { runCatching { snapshot.writeText(json.toString()) } }
             val stale = json.optBoolean("stale")
+            libraryEtag.put("etag", if (stale) null else res.etag)
             status = if (stale) "AllDebrid не ответил — показана последняя копия (${list.size})." else "Загружено ${list.size} торрент(ов)."
             statusKind = if (stale) StatusKind.Info else StatusKind.Ok
         } catch (e: CancellationException) {

@@ -44,15 +44,27 @@ object Api {
         }
     }
 
-    /** Shared by API calls and the poster loader (one connection pool, keep-alive, HTTP/2). */
+    @Volatile private var cacheDir: java.io.File? = null
+    /** Called once by the activities: enables the small HTTP cache (needs a Context for its folder). */
+    fun init(ctx: android.content.Context) { if (cacheDir == null) cacheDir = java.io.File(ctx.applicationContext.cacheDir, "http") }
+
+    /**
+     * API calls (one connection pool, keep-alive, HTTP/2). With the 10 MB cache the client sends the ETag back, so an
+     * unchanged library is answered "304 Not Modified" (a few hundred bytes) instead of the whole list again: less
+     * data, and the radio goes back to sleep sooner.
+     */
     val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
+            .apply { cacheDir?.let { cache(okhttp3.Cache(it, 10L * 1024 * 1024)) } }
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .addInterceptor(CookieBridge)
             .build()
     }
+
+    /** Same connections, no HTTP cache: posters (Coil keeps its own image cache) and the update download. */
+    val plain: OkHttpClient by lazy { client.newBuilder().cache(null).build() }
 
     private val jsonType = "application/json".toMediaType()
 

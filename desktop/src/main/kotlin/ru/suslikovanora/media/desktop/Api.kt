@@ -116,13 +116,30 @@ object Api {
         }.getOrNull()
     }
 
-    private suspend fun call(req: HttpRequest): JSONObject = withContext(Dispatchers.IO) {
-        val res = client.send(req, HttpResponse.BodyHandlers.ofString(Charsets.UTF_8))
+    private suspend fun call(req: HttpRequest): JSONObject = fetch(req).json
+
+    class Fetched(val code: Int, val json: JSONObject, val etag: String?)
+
+    /**
+     * JSON answers come gzip-compressed (Java's client does not ask for it by itself: the library list used to travel
+     * uncompressed, several times bigger). 304 = unchanged since [etag] — then there is no body at all.
+     */
+    private suspend fun fetch(req0: HttpRequest, etag: String? = null): Fetched = withContext(Dispatchers.IO) {
+        val req = HttpRequest.newBuilder(req0, { _, _ -> true }).header("Accept-Encoding", "gzip")
+            .apply { if (etag != null) header("If-None-Match", etag) }.build()
+        val res = client.send(req, HttpResponse.BodyHandlers.ofInputStream())
         storeCookies(res)
-        val json = runCatching { JSONObject(res.body()) }.getOrElse { JSONObject() }
-        if (res.statusCode() !in 200..299) throw HttpError(res.statusCode(), json.optString("error").ifBlank { "Ошибка сервера (${res.statusCode()})" })
-        json
+        val gz = res.headers().firstValue("content-encoding").orElse("").equals("gzip", true)
+        val text = res.body().use { input -> (if (gz) java.util.zip.GZIPInputStream(input) else input).readBytes().toString(Charsets.UTF_8) }
+        val code = res.statusCode()
+        if (code == 304) return@withContext Fetched(304, JSONObject(), etag)
+        val json = runCatching { JSONObject(text) }.getOrElse { JSONObject() }
+        if (code !in 200..299) throw HttpError(code, json.optString("error").ifBlank { "Ошибка сервера ($code)" })
+        Fetched(code, json, res.headers().firstValue("etag").orElse(null))
     }
+
+    /** GET that may answer "not modified" (304) when the server's copy still has the same [etag]. */
+    suspend fun getIfChanged(path: String, etag: String?): Fetched = fetch(request(path).GET().build(), etag)
 
     fun describe(e: Throwable): String = when (e) {
         is HttpError -> e.message ?: "Ошибка сервера"

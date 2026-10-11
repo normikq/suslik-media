@@ -66,7 +66,6 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -196,15 +195,19 @@ class AddModel(context: Context, private val scope: CoroutineScope, private val 
         polling[e.magnetId] = scope.launch {
             val started = System.currentTimeMillis()
             while (e.active) {
-                delay(if (System.currentTimeMillis() - started < 60_000) 4000 else 15000)
+                ru.suslikovanora.media.Foreground.pause(if (System.currentTimeMillis() - started < 60_000) 4000 else 15000)
                 val st = runCatching { Api.get("/api/magnets/${e.magnetId}") }.getOrNull() ?: continue
                 val total = st.optLong("size"); val done = st.optLong("downloaded")
                 val code = st.optInt("statusCode")
+                val before = Triple(e.title, e.status, e.percent)
                 st.optString("filename").takeIf { it.isNotBlank() }?.let { e.title = it }
                 when {
                     code == 4 || st.optBoolean("ready") -> { e.ready = true; e.percent = 100; e.status = "Готово — в библиотеке"; save(); store.refresh() }
                     code >= 5 -> { e.failed = true; e.status = "Ошибка: ${st.optString("status")}"; save() }
-                    else -> { e.status = st.optString("status").ifBlank { "Обработка" }; e.percent = if (total > 0) (done * 100 / total).toInt() else -1; save() }
+                    else -> {
+                        e.status = st.optString("status").ifBlank { "Обработка" }; e.percent = if (total > 0) (done * 100 / total).toInt() else -1
+                        if (Triple(e.title, e.status, e.percent) != before) save() // the phone's storage only when something changed
+                    }
                 }
                 if (System.currentTimeMillis() - started > 6 * 3_600_000L) break // not forever
             }
@@ -264,7 +267,7 @@ fun AddScreen(m: AddModel, listState: LazyListState, onPlay: (String, String) ->
         modifier.fillMaxSize().background(Sm.night), state = listState,
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 24.dp)
     ) {
-        item(key = "header") { BrandHeader(onLogout = onLogout); Spacer(Modifier.height(16.dp)) }
+        item(key = "header") { HeaderSlot(); Spacer(Modifier.height(16.dp)) }
         item(key = "panel") {
             Panel(Modifier.animateContentSize(tween(280, easing = Sm.ease))) {
                 Text("Добавить раздачу", fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 19.sp, color = Sm.text)

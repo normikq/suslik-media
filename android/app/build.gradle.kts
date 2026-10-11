@@ -49,8 +49,8 @@ android {
         applicationId = "ru.suslikovanora.media"
         minSdk = 24
         targetSdk = 35
-        versionCode = 18
-        versionName = "1.6.0"
+        versionCode = 19
+        versionName = "1.7.0"
 
         // Package native VLC libraries only for 64-bit ARM Android devices.
         ndk {
@@ -63,6 +63,9 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.activity:activity-ktx:1.10.0")
     implementation("androidx.fragment:fragment-ktx:1.8.9")
+    // Installs the ready-made start-up profiles of Compose & co. at install time: smooth first launches and scrolls,
+    // less CPU (and battery) than running that code interpreted until the JIT warms up.
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     // Origin-restricted JS bridge (addWebMessageListener) and document-start scripts.
     // VLC engine: handles more containers/protocols than the platform player.
     implementation("org.videolan.android:libvlc-all:3.6.0")

@@ -158,6 +158,44 @@ if (!SITE_PASSWORD) {
 app.disable("x-powered-by");
 // Behind nginx/Caddy set TRUST_PROXY=1 so req.protocol/host reflect the public https URL.
 if (process.env.TRUST_PROXY) app.set("trust proxy", /^\d+$/.test(process.env.TRUST_PROXY) ? Number(process.env.TRUST_PROXY) : process.env.TRUST_PROXY);
+// Страница и стили сайта сжимаются один раз (gzip и brotli), а не на каждый запрос: на одном ядре это заметная
+// работа (index.html ~140 КБ). Файл перечитывается, если его заменили на диске (обновление сайта без перезапуска).
+const zlib = require("zlib");
+const PRECOMPRESSED = { "/index.html": "index.html", "/redesign.css": "redesign.css" };
+const precompressedCache = new Map(); // name -> { mtime, raw, gz, br, etag, type }
+function precompressed(name) {
+  const file = path.join(__dirname, "public", name);
+  let st; try { st = fs.statSync(file); } catch { return null; }
+  const hit = precompressedCache.get(name);
+  if (hit && hit.mtime === st.mtimeMs) return hit;
+  const raw = fs.readFileSync(file);
+  const entry = {
+    mtime: st.mtimeMs, raw,
+    gz: zlib.gzipSync(raw, { level: 9 }),
+    br: zlib.brotliCompressSync(raw, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 11 } }),
+    etag: `"${crypto.createHash("sha1").update(raw).digest("base64url").slice(0, 22)}"`,
+    type: name.endsWith(".css") ? "text/css; charset=utf-8" : "text/html; charset=utf-8"
+  };
+  precompressedCache.set(name, entry);
+  return entry;
+}
+function sendPrecompressed(req, res, name) {
+  const e = precompressed(name);
+  if (!e) return false;
+  res.setHeader("Content-Type", e.type);
+  res.setHeader("ETag", e.etag);
+  res.setHeader("Vary", "Accept-Encoding");
+  res.setHeader("Cache-Control", name.endsWith(".css") && req.query && req.query.v ? "public, max-age=31536000, immutable" : "no-cache");
+  if (req.fresh) { res.status(304).end(); return true; }
+  const ae = String(req.headers["accept-encoding"] || "");
+  const body = /\bbr\b/.test(ae) ? (res.setHeader("Content-Encoding", "br"), e.br) : /\bgzip\b/.test(ae) ? (res.setHeader("Content-Encoding", "gzip"), e.gz) : e.raw;
+  res.setHeader("Content-Length", body.length);
+  res.end(req.method === "HEAD" ? undefined : body);
+  return true;
+}
+app.get(["/", "/index.html", "/redesign.css"], (req, res, next) => {
+  if (!sendPrecompressed(req, res, PRECOMPRESSED[req.path] || "index.html")) next();
+});
 // Сжатие текстовых ответов (страница, JSON медиатеки и поиска, CSS/JS): меньше байт — меньше работы радио телефона.
 // Видео-прокси, WebDAV и плейлисты не сжимаются: это потоки с Range, им сжатие только мешает.
 try {
@@ -168,6 +206,13 @@ try {
     filter: (req, res) => !NO_COMPRESS.test(req.path) && !req.headers.range && compression.filter(req, res)
   }));
 } catch { console.warn("Модуль compression не установлен (npm install): ответы отдаются без сжатия."); }
+// Something changed through the site/apps (added, deleted, cancelled a torrent…): the short library cache is dropped,
+// so the next library load shows it at once.
+app.use((req, res, next) => {
+  if (req.method !== "GET" && req.method !== "HEAD" && req.path.startsWith("/api/") && !req.path.startsWith("/api/app/"))
+    res.on("finish", () => { if (res.statusCode < 400) libraryFresh = null; });
+  next();
+});
 // Playlists carry one AllDebrid link per episode and can exceed the default 20 kb.
 app.use("/api/playlist", express.json({ limit: "200kb" }));
 app.use("/api/app/changelog", express.json({ limit: "200kb" }));
@@ -764,6 +809,8 @@ app.get("/api/favorites", requireLogin, apiLimiter, (req, res) => {
 });
 let libraryInflight = null;
 let libraryLastGood = null;
+let libraryFresh = null; // { at, data } — the last AllDebrid answer, reused for a few seconds
+const LIBRARY_CACHE_MS = Number(process.env.LIBRARY_CACHE_MS || 20000);
 async function buildLibrary() {
   const statusResponse = await axios.post("https://api.alldebrid.com/v4.1/magnet/status",
     new URLSearchParams(),
@@ -798,9 +845,16 @@ async function buildLibrary() {
 
 app.get("/api/library", requireLogin, apiLimiter, async (req, res) => {
   try {
-    // Concurrent refreshes (several tabs/people) share one AllDebrid round trip.
-    if (!libraryInflight) libraryInflight = buildLibrary().finally(() => { libraryInflight = null; });
-    const data = await libraryInflight;
+    // Concurrent refreshes (several tabs/people) share one AllDebrid round trip, and for LIBRARY_CACHE_MS after it
+    // the same result is reused: phone + PC + browser opening at once cost one AllDebrid call, not three.
+    // Any change made through the site (add, delete, cancel…) drops this copy at once (see the POST hook above).
+    let data;
+    if (libraryFresh && Date.now() - libraryFresh.at < LIBRARY_CACHE_MS) data = libraryFresh.data;
+    else {
+      if (!libraryInflight) libraryInflight = buildLibrary().then(d => { libraryFresh = { at: Date.now(), data: d }; return d; })
+        .finally(() => { libraryInflight = null; });
+      data = await libraryInflight;
+    }
     libraryLastGood = data;
     res.setHeader("Cache-Control", "private, no-cache"); // revalidate; Express adds an ETag, so unchanged = 304
     res.json(withRemovable(data, req));
@@ -1092,10 +1146,36 @@ async function openUpstream(key, rangeHeaders) {
   throw lastErr;
 }
 
-app.get(["/api/file/proxy", "/api/file/proxy/:name"], mirrorAuth, mirrorLimiter, async (req, res) => {
+// MIRROR_ACCEL=1 (nginx настроен по website/NGINX-MIRROR.md): Node только проверяет подпись и получает прямую ссылку
+// AllDebrid, а сами байты видео nginx берёт оттуда и отдаёт плееру сам (X-Accel-Redirect). Node на одном ядре больше
+// не пропускает через себя гигабайты — сайт не тормозит во время просмотра, перемотка отвечает быстрее.
+// Видео по-прежнему идёт через этот сервер (обход блокировок не меняется).
+// Если файл-хост ответил ошибкой (ссылка устарела), nginx повторяет запрос сюда с X-Mirror-Retry: 1 — тогда ссылка
+// получается заново и поток идёт через Node, как раньше.
+const MIRROR_ACCEL = process.env.MIRROR_ACCEL === "1";
+app.get(["/api/file/proxy", "/api/file/proxy/:name"], mirrorAuth, mirrorLimiter, async (req, res, next) => {
+  if (!MIRROR_ACCEL || req.get("X-Mirror-Retry")) return next();
+  const parsed = safeHttpsUrl(typeof req.query.link === "string" ? req.query.link.trim() : "");
+  if (!isAllDebridFileLink(parsed)) return res.status(400).send("Некорректная ссылка на файл AllDebrid.");
+  let entry;
+  try { entry = await resolveDirect(parsed.toString(), false); }
+  catch (err) {
+    mirrorLog(req, `502 ${err.message}`);
+    return res.status(502).send(err instanceof UnlockError ? err.message : "Не удалось получить ссылку на файл.");
+  }
+  const u = new URL(entry.url);
+  mirrorLog(req, `accel -> ${u.host}`);
+  const disp = contentDisposition(req.params.name || entry.name);
+  if (disp) res.setHeader("Content-Disposition", disp);
+  res.setHeader("Cache-Control", "private, no-store");
+  res.setHeader("X-Accel-Redirect", `/_alld/${u.protocol.replace(":", "")}/${u.host}${u.pathname}${u.search}`);
+  res.end();
+});
+app.get(["/api/file/proxy", "/api/file/proxy/:name"], mirrorAuth, async (req, res) => {
   const parsed = safeHttpsUrl(typeof req.query.link === "string" ? req.query.link.trim() : "");
   if (!isAllDebridFileLink(parsed)) return res.status(400).send("Некорректная ссылка на файл AllDebrid.");
   const key = parsed.toString();
+  if (req.get("X-Mirror-Retry")) unlockCache.delete(key); // nginx: the cached direct link failed, get a fresh one
   let upstream;
   let idleTimer;
   const stopIdle = () => clearTimeout(idleTimer);
@@ -1574,6 +1654,7 @@ app.use(express.static(path.join(__dirname, "public"), {
 
 app.get("*path", (req, res, next) => {
   if (req.path.startsWith("/api/")) return res.status(404).json({ error: "Не найдено." });
+  if (sendPrecompressed(req, res, "index.html")) return;
   res.sendFile(path.join(__dirname, "public", "index.html"), err => {
     if (err) next(err);
   });
@@ -1588,6 +1669,7 @@ app.use((err, req, res, next) => {
 const server = app.listen(PORT, "127.0.0.1", () => {
   console.log(`Медиапортал запущен: http://127.0.0.1:${PORT}`);
   console.log("Для публикации используйте HTTPS-обратный прокси-сервер.");
+  if (MIRROR_ACCEL) console.log("Видео через nginx (MIRROR_ACCEL) включено — см. NGINX-MIRROR.md");
 });
 // Longer than the reverse proxy's upstream keep-alive (nginx default 60 s): avoids sporadic 502 when the proxy
 // reuses a connection that Node has just closed — which showed up as failed seeks/reconnects.
