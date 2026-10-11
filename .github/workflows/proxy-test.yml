@@ -41,6 +41,7 @@ jobs:
           cp build.gradle.kts settings.gradle.kts $D/
           sed 's#if (!url.startsWith("https://")) return url#if (!url.startsWith("http")) return url#' \
             ../../../desktop/src/main/kotlin/ru/suslikovanora/media/desktop/BurstProxy.kt > $D/src/main/kotlin/ru/suslikovanora/media/desktop/BurstProxy.kt
+          printf 'package ru.suslikovanora.media.desktop\nobject PlayerLog { fun write(m: String) = println("log: " + m) }\n' > $D/src/main/kotlin/ru/suslikovanora/media/desktop/PlayerLog.kt
           printf 'package ru.suslikovanora.media.desktop\nobject Api { val client: java.net.http.HttpClient = java.net.http.HttpClient.newBuilder().proxy(java.net.ProxySelector.of(null)).build() }\n' > $D/src/main/kotlin/ru/suslikovanora/media/desktop/Api.kt
           sed -e 's#import ru.suslikovanora.media.net.BurstProxy#import ru.suslikovanora.media.desktop.BurstProxy#' \
               -e 's#BurstProxy.init(android.content.Context(tmp))#BurstProxy.init()#' \
