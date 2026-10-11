@@ -6,8 +6,8 @@ import java.time.format.DateTimeFormatter
 import java.util.concurrent.Executors
 
 /**
- * Player journal: %APPDATA%\SuslikMedia\player.log. VLC's own warnings and errors (decoder, video output, network),
- * what the player did (open, seek, pause, recovery) and the disk reserve's requests. Written in the background, kept
+ * Player journal: %APPDATA%\SuslikMedia\player.log. What the player did (open, seek, pause, buffering, recovery) and
+ * the disk reserve's requests. Written in the background, kept
  * small (the previous part is renamed to player.old.log at 2 MB). When something goes wrong, this file says why.
  */
 object PlayerLog {
