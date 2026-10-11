@@ -28,7 +28,13 @@
         proxy_set_header Authorization "";
         proxy_ssl_server_name on;
         proxy_ssl_name $alld_host;
-        proxy_buffering off;                        # поток, без записи на диск
+        # Читать файл-хост крупными кусками в память (до 4 МБ на поток), без записи на диск: меньше системных вызовов
+        # на одном ядре, файл-хост не ждёт медленного клиента. (С proxy_buffering off nginx читает по 4–8 КБ.)
+        proxy_buffering on;
+        proxy_buffer_size 64k;
+        proxy_buffers 32 128k;
+        proxy_busy_buffers_size 512k;
+        proxy_max_temp_file_size 0;
         proxy_read_timeout 30s;                     # файл-хост замолчал — плеер переподключится
         proxy_connect_timeout 10s;
         proxy_hide_header Set-Cookie;
