@@ -94,7 +94,6 @@ private fun clock(ms: Long): String {
     return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s)
 }
 
-@Composable
 /** Square outline button with a gear drawn in code; turns a little on hover. */
 @Composable
 private fun GearButton(onClick: () -> Unit) {
