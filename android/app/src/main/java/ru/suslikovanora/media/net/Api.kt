@@ -23,6 +23,8 @@ object Api {
 
     class HttpError(val code: Int, message: String) : Exception(message)
 
+    @Volatile private var lastFlush = 0L
+
     private object CookieBridge : Interceptor {
         override fun intercept(chain: Interceptor.Chain): Response {
             val req = chain.request()
@@ -37,7 +39,11 @@ object Api {
                 if (set.isNotEmpty()) {
                     val cm = CookieManager.getInstance()
                     for (c in set) cm.setCookie(BASE, c)
-                    cm.flush()
+                    // The server renews the login cookie on every answer: writing the cookie file to disk each time
+                    // (dozens of times while posters load) is wasted work. Once a minute is enough; CookieManager
+                    // also saves by itself, and the activity flushes when it goes to the background.
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    if (now - lastFlush > 60_000L) { lastFlush = now; cm.flush() }
                 }
             }
             return res

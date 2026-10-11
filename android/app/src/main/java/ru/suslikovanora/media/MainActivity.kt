@@ -246,7 +246,11 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStart() { super.onStart(); Foreground.visible.value = true }
-    override fun onStop() { Foreground.visible.value = false; super.onStop() }
+    override fun onStop() {
+        Foreground.visible.value = false
+        runCatching { CookieManager.getInstance().flush() } // login saved for sure before the app may be killed
+        super.onStop()
+    }
 
     override fun onResume() {
         super.onResume()

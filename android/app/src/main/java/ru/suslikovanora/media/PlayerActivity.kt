@@ -284,7 +284,7 @@ class PlayerActivity : ComponentActivity() {
                 }
             }
             MediaPlayer.Event.EncounteredError -> handleError()
-            MediaPlayer.Event.Vout -> if (event.voutCount > 0) { applyVideoFrameRate(owner); updatePipParams(playing = owner.isPlaying) }
+            MediaPlayer.Event.Vout -> if (event.voutCount > 0) { applyVideoFrameRate(owner); updatePipParams(playing = owner.isPlaying); warnIfSoftwareDecoding(owner) }
             MediaPlayer.Event.Buffering ->
                 if (event.buffering < 100f) {
                     buffering = true
@@ -346,6 +346,7 @@ class PlayerActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         ru.suslikovanora.media.net.Api.init(this)
+        ru.suslikovanora.media.net.BurstProxy.init(this)
         if (Build.VERSION.SDK_INT >= 28) {
             window.attributes = window.attributes.also {
                 it.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
@@ -746,10 +747,13 @@ class PlayerActivity : ComponentActivity() {
         if (exec != null && !exec.isShutdown) { exec.execute(job); exec.shutdown() } else Thread(job).start()
     }
 
-    private fun buildMedia(vlc: LibVLC, url: String, positionMs: Long) = Media(vlc, Uri.parse(url)).apply {
+    // Every stream goes through BurstProxy (see there): downloaded in bursts so the radio can sleep between them.
+    private fun buildMedia(vlc: LibVLC, url: String, positionMs: Long) = Media(vlc, Uri.parse(burst(url))).apply {
         setHWDecoderEnabled(true, false)
         addOption(":http-reconnect")
         val sidecars = url == subsForUrl
+        // Only what this episode needs stays in the stream cache (the previous episode's files are dropped).
+        ru.suslikovanora.media.net.BurstProxy.keepOnly(listOf(url) + if (sidecars) audioUrls + subUrls else emptyList())
         // Seek to the nearest keyframe: the picture appears right away instead of waiting (or freezing) on
         // hardware decoders after a jump into the middle of a GOP. ±10 s taps do not need frame accuracy.
         // Not with an external voice-over: it is a separate input that lands on the exact moment, while the video
@@ -759,11 +763,43 @@ class PlayerActivity : ComponentActivity() {
         // before, on every "Playing" — so again after each pause and reconnect) they reopened inputs mid-playback:
         // a hiccup and a drifting voice-over.
         if (sidecars) {
-            for (u in audioUrls) runCatching { addSlave(org.videolan.libvlc.interfaces.IMedia.Slave(org.videolan.libvlc.interfaces.IMedia.Slave.Type.Audio, 4, u)) }
+            for (u in audioUrls) runCatching { addSlave(org.videolan.libvlc.interfaces.IMedia.Slave(org.videolan.libvlc.interfaces.IMedia.Slave.Type.Audio, 4, burst(u))) }
             for (u in subUrls) runCatching { addSlave(org.videolan.libvlc.interfaces.IMedia.Slave(org.videolan.libvlc.interfaces.IMedia.Slave.Type.Subtitle, 4, u)) }
         }
         // Reliable resume over HTTP: seeking before play() is ignored by many streams.
         if (positionMs > 0L) addOption(":start-time=${positionMs / 1000.0}")
+    }
+
+    private fun burst(u: String) = ru.suslikovanora.media.net.BurstProxy.wrap(u)
+
+    /**
+     * A film this phone has no hardware decoder for (often 4K / HEVC 10-bit / AV1 on older phones) is decoded by the
+     * processor — many times the battery use, and the phone gets warm. VLC does that silently; say it once per file.
+     */
+    private var decodeCheckedUrl = ""
+    private fun warnIfSoftwareDecoding(p: MediaPlayer) {
+        if (decodeCheckedUrl == currentUrl) return
+        val t = runCatching { p.currentVideoTrack }.getOrNull() ?: return
+        decodeCheckedUrl = currentUrl
+        val mime = when (t.codec?.lowercase(Locale.ROOT)?.trim()) {
+            "h264", "avc1", "x264" -> "video/avc"
+            "hevc", "h265", "hev1", "hvc1" -> "video/hevc"
+            "av01", "av1" -> "video/av01"
+            "vp90", "vp09", "vp9" -> "video/x-vnd.on2.vp9"
+            "vp80", "vp8" -> "video/x-vnd.on2.vp8"
+            "mpgv", "mp2v" -> "video/mpeg2"
+            else -> return
+        }
+        val hw = runCatching {
+            android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).codecInfos.any { info ->
+                if (info.isEncoder || info.supportedTypes.none { it.equals(mime, true) }) return@any false
+                val hardware = if (Build.VERSION.SDK_INT >= 29) info.isHardwareAccelerated
+                    else !info.name.startsWith("OMX.google.") && !info.name.startsWith("c2.android.")
+                hardware && runCatching { info.getCapabilitiesForType(mime).videoCapabilities.isSizeSupported(t.width, t.height) }.getOrDefault(true)
+            }
+        }.getOrDefault(true)
+        if (!hw) Toast.makeText(this, "Телефон не умеет аппаратно декодировать этот файл (${t.width}×${t.height}) — " +
+            "он воспроизводится процессором и заметно сильнее расходует батарею.", Toast.LENGTH_LONG).show()
     }
 
     /**
@@ -1580,7 +1616,9 @@ class PlayerActivity : ComponentActivity() {
     // (IDLE_RELEASE_MS) everything is released after all — no resources held for a phone left in a drawer.
     private var keptOnStop = false
     private var playOnStart = false
-    private val idleReleaseRunnable = Runnable { if (keptOnStop) { keptOnStop = false; videoParked = false; releasePlayer() } }
+    private val idleReleaseRunnable = Runnable {
+        if (keptOnStop) { keptOnStop = false; videoParked = false; releasePlayer(); ru.suslikovanora.media.net.BurstProxy.clear() }
+    }
     private var videoParked = false
     private var bufferingShown = 0 // highest buffering % of the current wait
     /**
@@ -1685,6 +1723,7 @@ class PlayerActivity : ComponentActivity() {
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
         if (keptOnStop) { keptOnStop = false; releasePlayer() }
+        if (isFinishing) ru.suslikovanora.media.net.BurstProxy.clear() // the film's cached part is no longer needed
         session?.release(); session = null
         for (sv in hookedSurfaces) runCatching { sv.holder.removeCallback(surfaceCallback) }
         hookedSurfaces.clear()
