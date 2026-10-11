@@ -1,5 +1,7 @@
 package ru.suslikovanora.media
 
+import ru.suslikovanora.media.core.*
+
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
@@ -60,12 +62,7 @@ object Updater {
     fun currentVersion(ctx: Context): String =
         runCatching { @Suppress("DEPRECATION") ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "0"
 
-    private fun parts(v: String) = Regex("""\d+""").findAll(v).map { it.value.toInt() }.toList().let { it + List(3) { 0 } }.take(3)
-    fun isNewer(remote: String, local: String): Boolean {
-        val a = parts(remote); val b = parts(local)
-        for (i in 0 until 3) if (a[i] != b[i]) return a[i] > b[i]
-        return false
-    }
+    fun isNewer(remote: String, local: String): Boolean = Versions.isNewer(remote, local) // shared (core)
 
     /** The installer of the previous update is no longer needed once the app starts again: free the space. */
     fun cleanup(ctx: Context) {

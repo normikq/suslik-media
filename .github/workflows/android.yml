@@ -2,7 +2,7 @@ name: Android APK
 
 on:
   push:
-    paths: ["android/**", ".github/workflows/android.yml"]
+    paths: ["android/**", "shared/**", ".github/workflows/android.yml"]
   workflow_dispatch:
     inputs:
       publish:

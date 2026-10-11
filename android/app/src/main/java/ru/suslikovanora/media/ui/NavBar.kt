@@ -1,5 +1,7 @@
 package ru.suslikovanora.media.ui
 
+import ru.suslikovanora.media.core.*
+
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween

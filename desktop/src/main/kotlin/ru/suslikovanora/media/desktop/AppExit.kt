@@ -1,5 +1,7 @@
 package ru.suslikovanora.media.desktop
 
+import ru.suslikovanora.media.core.*
+
 import com.sun.jna.Library
 import com.sun.jna.Native
 import com.sun.jna.Pointer

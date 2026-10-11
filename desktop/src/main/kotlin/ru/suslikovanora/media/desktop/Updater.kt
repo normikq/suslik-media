@@ -1,5 +1,7 @@
 package ru.suslikovanora.media.desktop
 
+import ru.suslikovanora.media.core.*
+
 import androidx.compose.foundation.background
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.ui.graphics.Color
@@ -61,12 +63,7 @@ object Updater {
     /** Set by the build (-Dsuslik.version); "0" when unknown (then any server version counts as newer). */
     val current: String get() = System.getProperty("suslik.version") ?: System.getProperty("jpackage.app-version") ?: "0"
 
-    private fun parts(v: String) = Regex("""\d+""").findAll(v).map { it.value.toInt() }.toList().let { it + List(3) { 0 } }.take(3)
-    fun isNewer(remote: String, local: String): Boolean {
-        val a = parts(remote); val b = parts(local)
-        for (i in 0 until 3) if (a[i] != b[i]) return a[i] > b[i]
-        return false
-    }
+    fun isNewer(remote: String, local: String): Boolean = Versions.isNewer(remote, local) // shared (core)
 
     private val tempDir get() = File(System.getProperty("java.io.tmpdir"), "SuslikMedia-update")
 

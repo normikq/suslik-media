@@ -1,5 +1,7 @@
 package ru.suslikovanora.media
 
+import ru.suslikovanora.media.core.*
+
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle

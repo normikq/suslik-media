@@ -1,5 +1,7 @@
 package ru.suslikovanora.media
 
+import ru.suslikovanora.media.core.*
+
 import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
@@ -45,26 +47,11 @@ import ru.suslikovanora.media.ui.Onest
 import ru.suslikovanora.media.ui.Sm
 import ru.suslikovanora.media.ui.Unbounded
 
-/**
- * What changed, in plain words. The texts ship inside the app (android/app/src/main/assets/changelog.json): every build carries its own
- * history, nothing to fetch. The same file is sent to the site by CI, so the «Приложения» tab shows the same texts.
- */
-object Changelog {
-    data class Release(val version: String, val title: String, val items: List<String>)
-
-    /** The last 3 releases up to [current] (newest first). */
-    fun load(ctx: Context, current: String): List<Release> = runCatching {
-        val text = ctx.assets.open("changelog.json")!!.use { it.readBytes().toString(Charsets.UTF_8) }
-        val arr = org.json.JSONArray(text)
-        (0 until arr.length()).mapNotNull { k ->
-            val r = arr.optJSONObject(k) ?: return@mapNotNull null
-            val items = r.optJSONArray("items")?.let { a -> (0 until a.length()).map { a.optString(it) }.filter { it.isNotBlank() } }.orEmpty()
-            Release(r.optString("version"), r.optString("title"), items).takeIf { it.version.isNotBlank() && items.isNotEmpty() }
-        }.filter { !Updater.isNewer(it.version, current) }
-            .sortedWith { a, b -> if (Updater.isNewer(a.version, b.version)) -1 else if (Updater.isNewer(b.version, a.version)) 1 else 0 }
-            .take(3)
-    }.getOrDefault(emptyList())
-}
+/** The notes this build carries (assets/changelog.json); parsing and choosing are shared (core.Changelog). */
+private fun bundledNotes(ctx: Context, current: String): List<Changelog.Release> = runCatching {
+    val text = ctx.assets.open("changelog.json").use { it.readBytes().toString(Charsets.UTF_8) }
+    Changelog.upTo(Changelog.parse(text), current)
+}.getOrDefault(emptyList())
 
 private fun seenPrefs(ctx: Context) = ctx.getSharedPreferences("whatsnew", Context.MODE_PRIVATE)
 
@@ -77,10 +64,9 @@ fun WhatsNew(enabled: Boolean) {
     fun markSeen() = seenPrefs(ctx).edit().putString("version", current).apply()
     LaunchedEffect(enabled) {
         if (enabled && current != "0" && seenPrefs(ctx).getString("version", null) != current) {
-            val list = Changelog.load(ctx, current)
+            val list = bundledNotes(ctx, current)
             // Nothing new to tell (a small fix without its own notes: the newest notes were already shown).
-            val last = seenPrefs(ctx).getString("version", null)
-            if (list.isEmpty() || (last != null && !Updater.isNewer(list.first().version, last))) { markSeen(); return@LaunchedEffect }
+            if (!Changelog.shouldShow(list, seenPrefs(ctx).getString("version", null))) { markSeen(); return@LaunchedEffect }
             delay(700) // the library appears first
             releases = list
         }

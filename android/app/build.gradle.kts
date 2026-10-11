@@ -59,10 +59,13 @@ android {
     }
 }
 
+composeCompiler { stabilityConfigurationFile.set(project.layout.projectDirectory.file("compose-stability.conf")) }
+
 dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.activity:activity-ktx:1.10.0")
     implementation("androidx.fragment:fragment-ktx:1.8.9")
+    implementation("ru.suslikovanora.media:shared") // ../shared (includeBuild): models, changelog, reserve, supervisor
     // Installs the ready-made start-up profiles of Compose & co. at install time: smooth first launches and scrolls,
     // less CPU (and battery) than running that code interpreted until the JIT warms up.
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")

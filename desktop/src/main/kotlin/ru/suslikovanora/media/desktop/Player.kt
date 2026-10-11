@@ -1,5 +1,7 @@
 package ru.suslikovanora.media.desktop
 
+import ru.suslikovanora.media.core.*
+
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.animation.core.tween
@@ -395,7 +397,7 @@ fun PlayerView(
         pauseMuted = false; pausedAt = 0L; resumeFrom = -1L // a new stream never inherits the pause mute
         // «Настройки»: the player's buffer and the reserve on disk (BurstProxy; 0 = off, VLC reads the mirror).
         val opts = ArrayList(listOf(":http-reconnect", ":network-caching=${PlaybackSettings.cacheMs()}"))
-        BurstProxy.init()
+        Reserve.init()
         BurstProxy.capBytes = PlaybackSettings.burstMb().toLong() shl 20
         BurstProxy.keepOnly(listOf(url) + extras.first)
         hasVoiceOver = extras.first.isNotEmpty()

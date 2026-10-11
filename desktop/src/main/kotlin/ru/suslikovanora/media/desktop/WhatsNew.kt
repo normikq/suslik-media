@@ -1,5 +1,7 @@
 package ru.suslikovanora.media.desktop
 
+import ru.suslikovanora.media.core.*
+
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -37,26 +39,12 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-/**
- * What changed, in plain words. The texts ship inside the app (desktop/src/main/resources/changelog.json): every build carries its own
- * history, nothing to fetch. The same file is sent to the site by CI, so the «Приложения» tab shows the same texts.
- */
-object Changelog {
-    data class Release(val version: String, val title: String, val items: List<String>)
-
-    /** The last 3 releases up to [current] (newest first). */
-    fun load(current: String): List<Release> = runCatching {
-        val text = Changelog::class.java.getResourceAsStream("/changelog.json")!!.use { it.readBytes().toString(Charsets.UTF_8) }
-        val arr = org.json.JSONArray(text)
-        (0 until arr.length()).mapNotNull { k ->
-            val r = arr.optJSONObject(k) ?: return@mapNotNull null
-            val items = r.optJSONArray("items")?.let { a -> (0 until a.length()).map { a.optString(it) }.filter { it.isNotBlank() } }.orEmpty()
-            Release(r.optString("version"), r.optString("title"), items).takeIf { it.version.isNotBlank() && items.isNotEmpty() }
-        }.filter { !Updater.isNewer(it.version, current) }
-            .sortedWith { a, b -> if (Updater.isNewer(a.version, b.version)) -1 else if (Updater.isNewer(b.version, a.version)) 1 else 0 }
-            .take(3)
-    }.getOrDefault(emptyList())
-}
+/** The notes this build carries (resources/changelog.json); parsing and choosing are shared (core.Changelog). */
+private fun bundledNotes(current: String): List<Changelog.Release> = runCatching {
+    val text = WhatsNewRes::class.java.getResourceAsStream("/changelog.json")!!.use { it.readBytes().toString(Charsets.UTF_8) }
+    Changelog.upTo(Changelog.parse(text), current)
+}.getOrDefault(emptyList())
+private object WhatsNewRes
 
 private val seen = Store("whatsnew")
 
@@ -67,10 +55,9 @@ fun WhatsNew(enabled: Boolean) {
     var releases by remember { mutableStateOf<List<Changelog.Release>?>(null) }
     LaunchedEffect(enabled) {
         if (enabled && current != "0" && seen.get("version") != current) {
-            val list = Changelog.load(current)
+            val list = bundledNotes(current)
             // Nothing new to tell (a small fix without its own notes: the newest notes were already shown).
-            val last = seen.get("version")
-            if (list.isEmpty() || (last != null && !Updater.isNewer(list.first().version, last))) { seen.put("version", current); return@LaunchedEffect }
+            if (!Changelog.shouldShow(list, seen.get("version"))) { seen.put("version", current); return@LaunchedEffect }
             delay(700) // the library appears first
             releases = list
         }

@@ -1,5 +1,7 @@
 package ru.suslikovanora.media.desktop
 
+import ru.suslikovanora.media.core.*
+
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.collectIsHoveredAsState

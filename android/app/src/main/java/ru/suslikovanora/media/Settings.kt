@@ -1,5 +1,7 @@
 package ru.suslikovanora.media
 
+import ru.suslikovanora.media.core.*
+
 import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
@@ -47,28 +49,11 @@ import ru.suslikovanora.media.ui.Unbounded
 
 /** Playback settings (stored on the phone, read by the player each time a film opens). */
 object PlaybackSettings {
-    data class Preset(val value: Int, val title: String, val hint: String)
-
-    /** Size of the «экономная загрузка» reserve per film, in MB (0 = off: VLC reads the mirror directly). */
-    val burstPresets = listOf(
-        Preset(0, "Выкл", "Как раньше: фильм идёт напрямую, без запаса на телефоне. Связь не отдыхает."),
-        Preset(32, "32 МБ", "SD и 720p (до ~4 Мбит/с, файлы до ~2 ГБ). Когда на телефоне мало места."),
-        Preset(64, "64 МБ", "Обычный 1080p (до ~8 Мбит/с, файлы 2–6 ГБ). Примерно минута запаса."),
-        Preset(96, "96 МБ", "1080p хорошего качества (до ~15 Мбит/с, файлы 6–12 ГБ). Подходит почти всем."),
-        Preset(160, "160 МБ", "1080p Remux и лёгкий 4K (до ~25 Мбит/с, файлы 12–25 ГБ)."),
-        Preset(256, "256 МБ", "4K (до ~40 Мбит/с, файлы 25–40 ГБ)."),
-        Preset(512, "512 МБ", "4K Remux / Blu-ray (до ~80 Мбит/с, файлы от 40 ГБ). Нужно ~1,5 ГБ свободного места.")
-    )
-    const val BURST_DEFAULT = 96
-
-    /** VLC's own buffer, ms: how much it holds before playing (start / after a seek). */
-    val cachePresets = listOf(
-        Preset(1500, "1,5 с", "Самый быстрый старт и перемотка. Только со стабильным интернетом или экономной загрузкой."),
-        Preset(3000, "3 с", "Рекомендуется вместе с экономной загрузкой: быстро стартует, провалы сети гасит запас."),
-        Preset(6000, "6 с", "Без экономной загрузки: выдерживает короткие провалы сети."),
-        Preset(10000, "10 с", "Слабая или нестабильная мобильная сеть: дольше старт, зато меньше остановок.")
-    )
-    const val CACHE_DEFAULT = 3000
+    // Presets and their hints live in core.PlaybackPresets (the same texts in both apps).
+    val burstPresets = PlaybackPresets.burst("на телефоне")
+    const val BURST_DEFAULT = PlaybackPresets.BURST_DEFAULT
+    val cachePresets = PlaybackPresets.cache
+    const val CACHE_DEFAULT = PlaybackPresets.CACHE_DEFAULT
 
     private fun prefs(ctx: Context) = ctx.getSharedPreferences("settings", Context.MODE_PRIVATE)
     fun burstMb(ctx: Context) = prefs(ctx).getInt("burst_mb", BURST_DEFAULT)
@@ -137,7 +122,7 @@ private fun Section(title: String, text: String, top: androidx.compose.ui.unit.D
 }
 
 @Composable
-private fun PresetRow(p: PlaybackSettings.Preset, on: Boolean, onClick: () -> Unit) {
+private fun PresetRow(p: PlaybackPresets.Preset, on: Boolean, onClick: () -> Unit) {
     val edge by animateColorAsState(if (on) Sm.lamp else Sm.line, tween(220), label = "edge")
     val bg by animateColorAsState(if (on) Sm.lampSoft else Sm.film, tween(220), label = "bg")
     Row(

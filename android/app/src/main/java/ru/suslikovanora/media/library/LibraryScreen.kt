@@ -1,5 +1,7 @@
 package ru.suslikovanora.media.library
 
+import ru.suslikovanora.media.core.*
+
 import android.content.Context
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState

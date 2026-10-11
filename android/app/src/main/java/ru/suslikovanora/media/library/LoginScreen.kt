@@ -1,5 +1,7 @@
 package ru.suslikovanora.media.library
 
+import ru.suslikovanora.media.core.*
+
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background

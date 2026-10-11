@@ -1,5 +1,7 @@
 package ru.suslikovanora.media.ui
 
+import ru.suslikovanora.media.core.*
+
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography

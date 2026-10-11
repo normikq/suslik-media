@@ -1,5 +1,7 @@
 package ru.suslikovanora.media.desktop
 
+import ru.suslikovanora.media.core.*
+
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
@@ -39,28 +41,11 @@ import kotlinx.coroutines.launch
 
 /** Playback settings (stored on the phone, read by the player each time a film opens). */
 object PlaybackSettings {
-    data class Preset(val value: Int, val title: String, val hint: String)
-
-    /** Size of the «экономная загрузка» reserve per film, in MB (0 = off: VLC reads the mirror directly). */
-    val burstPresets = listOf(
-        Preset(0, "Выкл", "Как раньше: VLC читает зеркало напрямую, без запаса на диске."),
-        Preset(32, "32 МБ", "SD и 720p (до ~4 Мбит/с, файлы до ~2 ГБ). Когда на диске мало места."),
-        Preset(64, "64 МБ", "Обычный 1080p (до ~8 Мбит/с, файлы 2–6 ГБ). Примерно минута запаса."),
-        Preset(96, "96 МБ", "1080p хорошего качества (до ~15 Мбит/с, файлы 6–12 ГБ). Подходит почти всем."),
-        Preset(160, "160 МБ", "1080p Remux и лёгкий 4K (до ~25 Мбит/с, файлы 12–25 ГБ)."),
-        Preset(256, "256 МБ", "4K (до ~40 Мбит/с, файлы 25–40 ГБ)."),
-        Preset(512, "512 МБ", "4K Remux / Blu-ray (до ~80 Мбит/с, файлы от 40 ГБ). Нужно ~1,5 ГБ свободного места.")
-    )
-    const val BURST_DEFAULT = 96
-
-    /** VLC's own buffer, ms: how much it holds before playing (start / after a seek). */
-    val cachePresets = listOf(
-        Preset(1500, "1,5 с", "Самый быстрый старт и перемотка. Только со стабильным интернетом или запасом на диске."),
-        Preset(3000, "3 с", "Рекомендуется вместе с запасом на диске: быстро стартует, провалы сети гасит запас."),
-        Preset(6000, "6 с", "Без запаса на диске: выдерживает короткие провалы сети."),
-        Preset(10000, "10 с", "Слабый или нестабильный интернет: дольше старт, зато меньше остановок.")
-    )
-    const val CACHE_DEFAULT = 3000
+    // Presets and their hints live in core.PlaybackPresets (the same texts in both apps).
+    val burstPresets = PlaybackPresets.burst("на диске")
+    const val BURST_DEFAULT = PlaybackPresets.BURST_DEFAULT
+    val cachePresets = PlaybackPresets.cache
+    const val CACHE_DEFAULT = PlaybackPresets.CACHE_DEFAULT
 
     private val store = Store("settings")
     fun burstMb() = store.get("burst_mb")?.toIntOrNull() ?: BURST_DEFAULT
@@ -131,7 +116,7 @@ private fun Section(title: String, text: String, top: androidx.compose.ui.unit.D
 }
 
 @Composable
-private fun PresetRow(p: PlaybackSettings.Preset, on: Boolean, onClick: () -> Unit) {
+private fun PresetRow(p: PlaybackPresets.Preset, on: Boolean, onClick: () -> Unit) {
     val edge by animateColorAsState(if (on) Sm.lamp else Sm.line, tween(220), label = "edge")
     val bg by animateColorAsState(if (on) androidx.compose.ui.graphics.Color(0x24FFB02E) else Sm.film, tween(220), label = "bg")
     Row(

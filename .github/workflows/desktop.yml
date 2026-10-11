@@ -2,7 +2,7 @@ name: Windows MSI
 
 on:
   push:
-    paths: ["desktop/**", ".github/workflows/desktop.yml"]
+    paths: ["desktop/**", "shared/**", ".github/workflows/desktop.yml"]
   workflow_dispatch:
     inputs:
       publish:

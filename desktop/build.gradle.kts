@@ -24,10 +24,13 @@ dependencies {
     // VLC engine (uses the VLC installed on the PC: 64-bit VLC 3.x)
     implementation("uk.co.caprica:vlcj:4.8.3")
     implementation("net.java.dev.jna:jna:5.14.0") // title bar colours (dwmapi)
+    implementation("ru.suslikovanora.media:shared") // ../shared (includeBuild)
 }
 
 // One place for the version: the installer, and the app itself (update check) via -Dsuslik.version.
 val appVersion = "1.9.5"
+
+composeCompiler { stabilityConfigurationFile.set(project.layout.projectDirectory.file("compose-stability.conf")) }
 
 compose.desktop {
     application {

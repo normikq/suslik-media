@@ -1,5 +1,7 @@
 package ru.suslikovanora.media
 
+import ru.suslikovanora.media.core.*
+
 import android.app.AlertDialog
 import android.app.PictureInPictureParams
 import android.content.BroadcastReceiver
@@ -346,7 +348,12 @@ class PlayerActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         ru.suslikovanora.media.net.Api.init(this)
-        ru.suslikovanora.media.net.BurstProxy.init(this)
+        BurstProxy.init(java.io.File(cacheDir, "stream")) { url, from ->
+            // The shared reserve downloads through OkHttp here (same connections as the rest of the app).
+            val res = ru.suslikovanora.media.net.Api.plain.newCall(okhttp3.Request.Builder().url(url)
+                .header("Range", "bytes=$from-").header("Accept-Encoding", "identity").build()).execute()
+            BurstProxy.UpstreamResponse(res.code, { n -> res.header(n) }, res.body?.byteStream())
+        }
         if (Build.VERSION.SDK_INT >= 28) {
             window.attributes = window.attributes.also {
                 it.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
@@ -750,7 +757,7 @@ class PlayerActivity : ComponentActivity() {
     // Every stream goes through BurstProxy (see there): downloaded in bursts so the radio can sleep between them.
     private fun buildMedia(vlc: LibVLC, url: String, positionMs: Long): Media {
         // «Настройки» on the main screen: reserve size (0 = off) and the player's own buffer.
-        ru.suslikovanora.media.net.BurstProxy.capBytes = PlaybackSettings.burstMb(this).toLong() shl 20
+        BurstProxy.capBytes = PlaybackSettings.burstMb(this).toLong() shl 20
         return Media(vlc, Uri.parse(burst(url))).apply { configureMedia(url, positionMs) }
     }
 
@@ -760,7 +767,7 @@ class PlayerActivity : ComponentActivity() {
         addOption(":network-caching=${PlaybackSettings.cacheMs(this@PlayerActivity)}")
         val sidecars = url == subsForUrl
         // Only what this episode needs stays in the stream cache (the previous episode's files are dropped).
-        ru.suslikovanora.media.net.BurstProxy.keepOnly(listOf(url) + if (sidecars) audioUrls + subUrls else emptyList())
+        BurstProxy.keepOnly(listOf(url) + if (sidecars) audioUrls + subUrls else emptyList())
         // Seek to the nearest keyframe: the picture appears right away instead of waiting (or freezing) on
         // hardware decoders after a jump into the middle of a GOP. ±10 s taps do not need frame accuracy.
         // Not with an external voice-over: it is a separate input that lands on the exact moment, while the video
@@ -777,7 +784,7 @@ class PlayerActivity : ComponentActivity() {
         if (positionMs > 0L) addOption(":start-time=${positionMs / 1000.0}")
     }
 
-    private fun burst(u: String) = ru.suslikovanora.media.net.BurstProxy.wrap(u)
+    private fun burst(u: String) = BurstProxy.wrap(u)
 
     /**
      * Through the local reserve VLC only talks to the phone itself: when data stops coming, it is the reserve that
@@ -785,7 +792,7 @@ class PlayerActivity : ComponentActivity() {
      * start from the saved place) only made the wait longer — so with the reserve the player waits much longer
      * before it rebuilds itself, and does not rebuild at all on a Wi-Fi ↔ mobile switch.
      */
-    private fun viaReserve() = ru.suslikovanora.media.net.BurstProxy.isActive(currentUrl)
+    private fun viaReserve() = BurstProxy.isActive(currentUrl)
     private fun stallTimeout() = if (viaReserve()) 35_000L else STALL_TIMEOUT_MS
     private fun openTimeout() = if (viaReserve()) 45_000L else OPEN_TIMEOUT_MS
     private fun stuckTicks() = if (viaReserve()) 15 else WATCHDOG_STUCK_TICKS
@@ -1641,7 +1648,7 @@ class PlayerActivity : ComponentActivity() {
     private var keptOnStop = false
     private var playOnStart = false
     private val idleReleaseRunnable = Runnable {
-        if (keptOnStop) { keptOnStop = false; videoParked = false; releasePlayer(); ru.suslikovanora.media.net.BurstProxy.clear() }
+        if (keptOnStop) { keptOnStop = false; videoParked = false; releasePlayer(); BurstProxy.clear() }
     }
     private var videoParked = false
     private var bufferingShown = 0 // highest buffering % of the current wait
@@ -1747,7 +1754,7 @@ class PlayerActivity : ComponentActivity() {
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
         if (keptOnStop) { keptOnStop = false; releasePlayer() }
-        if (isFinishing) ru.suslikovanora.media.net.BurstProxy.clear() // the film's cached part is no longer needed
+        if (isFinishing) BurstProxy.clear() // the film's cached part is no longer needed
         session?.release(); session = null
         for (sv in hookedSurfaces) runCatching { sv.holder.removeCallback(surfaceCallback) }
         hookedSurfaces.clear()
