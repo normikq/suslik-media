@@ -1520,7 +1520,53 @@ class PlayerActivity : ComponentActivity() {
     }
 
     // ---- lifecycle -------------------------------------------------------------------------
-    override fun onStart() { super.onStart(); session?.isActive = true; initializePlayer() }
+    override fun onStart() {
+        super.onStart()
+        session?.isActive = true
+        handler.removeCallbacks(idleReleaseRunnable)
+        if (keptOnStop && mediaPlayer != null) resumeAfterStop() else { keptOnStop = false; initializePlayer() }
+    }
+
+    // ---- screen locked / app switched: keep the player, just paused ------------------------------
+    // Before, stopping the activity released VLC entirely; unlocking then had to start VLC again, reconnect through
+    // the mirror and refill the 6 s buffer from the saved position — a long wait. Now the player only pauses: the
+    // connection and what is already buffered stay, so the film continues at once. After a long absence
+    // (IDLE_RELEASE_MS) everything is released after all — no resources held for a phone left in a drawer.
+    private var keptOnStop = false
+    private var playOnStart = false
+    private val idleReleaseRunnable = Runnable { if (keptOnStop) { keptOnStop = false; releasePlayer() } }
+
+    private fun keepOnStop(p: MediaPlayer) {
+        playOnStart = !userPaused && !ended && (p.isPlaying || playWhenReady || buffering)
+        runCatching { p.pause() } // not doPause(): the user did not pause, the film continues on return
+        keptOnStop = true
+        // Nothing may restart playback (or reconnect) behind the lock screen.
+        for (r in listOf(watchdogRunnable, stallRunnable, reconnectRunnable, seekWatchdogRunnable, quickFreezeRunnable, prefsRunnable))
+            handler.removeCallbacks(r)
+        unregisterNetworkCallback()
+        if (noisyRegistered) { runCatching { unregisterReceiver(noisyReceiver) }; noisyRegistered = false }
+        abandonAudioFocus()
+        root.keepScreenOn = false
+        handler.postDelayed(idleReleaseRunnable, IDLE_RELEASE_MS)
+    }
+
+    private fun resumeAfterStop() {
+        val p = mediaPlayer ?: return
+        keptOnStop = false
+        ContextCompat.registerReceiver(this, noisyReceiver, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY), ContextCompat.RECEIVER_NOT_EXPORTED)
+        noisyRegistered = true
+        registerNetworkCallback()
+        if (playOnStart && !userPaused) {
+            requestAudioFocus()
+            runCatching { p.play() }
+            // The connection may have been closed while paused: VLC reconnects by itself; if it hangs, the usual
+            // stall recovery takes over.
+            handler.removeCallbacks(stallRunnable)
+            handler.postDelayed(stallRunnable, STALL_TIMEOUT_MS)
+        }
+        startWatchdog()
+        showControlsTemporarily()
+    }
 
     // Tapping "play" twice must not stack two players: the running one switches to the new stream.
     override fun onNewIntent(intent: Intent) {
@@ -1545,6 +1591,7 @@ class PlayerActivity : ComponentActivity() {
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
+        if (keptOnStop) { keptOnStop = false; releasePlayer() }
         session?.release(); session = null
         for (sv in hookedSurfaces) runCatching { sv.holder.removeCallback(surfaceCallback) }
         hookedSurfaces.clear()
@@ -1559,7 +1606,8 @@ class PlayerActivity : ComponentActivity() {
         // playWhenReady is maintained by events, so a mid-buffering stop no longer resumes paused.
         handler.removeCallbacks(hideControlsRunnable)
         handler.removeCallbacks(countdownRunnable)
-        releasePlayer()
+        val p = mediaPlayer
+        if (p != null && !isFinishing && !isChangingConfigurations) keepOnStop(p) else releasePlayer()
         session?.isActive = false
         super.onStop()
     }
@@ -1597,6 +1645,7 @@ class PlayerActivity : ComponentActivity() {
         private const val STALL_TIMEOUT_MS = 12_000L
         private const val OPEN_TIMEOUT_MS = 20_000L
         private const val WATCHDOG_TICK_MS = 2_000L
+        private const val IDLE_RELEASE_MS = 10 * 60_000L // locked longer than this: free VLC and the connection
         const val EXTRA_SUB_URLS = "media_sub_urls"
         const val EXTRA_WATCH_KEYS = "media_watch_keys"
         const val EXTRA_AUDIO_URLS = "media_audio_urls"
