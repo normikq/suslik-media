@@ -1,6 +1,11 @@
 package ru.suslikovanora.media.desktop
 
 import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -43,6 +48,12 @@ import java.net.http.HttpResponse
  */
 object Updater {
     data class Info(val version: String, val size: Long, val notes: String, val url: String, val file: String)
+
+    /** Shown as the breathing button in the header (null = up to date). */
+    var available by mutableStateOf<Info?>(null)
+    /** 0..1 while downloading the installer, null otherwise. */
+    var progress by mutableStateOf<Float?>(null)
+    var error by mutableStateOf<String?>(null)
 
     private val prefs = Store("updates")
 
@@ -109,65 +120,94 @@ object Updater {
 
 private fun mb(bytes: Long) = if (bytes > 0) "%.1f МБ".format(bytes / 1048576.0) else ""
 
-/** Checks once at start; shows the update card over the library when there is something new. */
+/** Checks once at start (after sign-in); a newer version lights up the update button in the header. */
 @Composable
-fun UpdateCheck(authenticated: Boolean, show: Boolean) {
-    var info by remember { mutableStateOf<Updater.Info?>(null) }
-    LaunchedEffect(authenticated) { if (authenticated) info = Updater.check() }
-    val i = info ?: return
-    if (show) UpdateDialog(i) { info = null }
+fun UpdateCheck(authenticated: Boolean, @Suppress("UNUSED_PARAMETER") show: Boolean = true) {
+    LaunchedEffect(authenticated) { if (authenticated) Updater.available = Updater.check() }
 }
 
+/**
+ * Square amber button that softly "breathes" while an update is waiting. Hover: it widens and says which version.
+ * Click: downloads with a progress ring around the arrow, starts the installer, the app closes and comes back updated.
+ */
 @Composable
-private fun UpdateDialog(info: Updater.Info, onDismiss: () -> Unit) {
-    val scope = rememberCoroutineScope()
-    var progress by remember { mutableStateOf<Float?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var shown by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { shown = true }
-    val a by androidx.compose.animation.core.animateFloatAsState(if (shown) 1f else 0f, androidx.compose.animation.core.tween(260, easing = Sm.ease))
-    Box(
-        Modifier.fillMaxSize().graphicsLayer { alpha = a }.background(Sm.scrim)
-            .hoverClick(remember { MutableInteractionSource() }, enabled = progress == null) { onDismiss() },
-        contentAlignment = Alignment.Center
+fun UpdateButton() {
+    val info = Updater.available
+    androidx.compose.animation.AnimatedVisibility(
+        visible = info != null,
+        enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(400)) +
+            androidx.compose.animation.scaleIn(androidx.compose.animation.core.tween(500, easing = Sm.ease), initialScale = 0.6f),
+        exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(200))
     ) {
-        Column(
-            Modifier.graphicsLayer { translationY = (1f - a) * 24f }.widthIn(max = 520.dp).clip(RoundedCornerShape(20.dp)).background(Sm.booth)
-                .border(1.dp, Sm.line2, RoundedCornerShape(20.dp))
-                .hoverClick(remember { MutableInteractionSource() }) {}.padding(22.dp)
-        ) {
-            Text("Доступна версия ${info.version}", color = Sm.text, fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 19.sp)
-            Text("Установлена ${Updater.current}" + (mb(info.size).takeIf { it.isNotEmpty() }?.let { " · $it" } ?: ""),
-                color = Sm.muted, fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
-            if (info.notes.isNotBlank()) {
-                Box(Modifier.fillMaxWidth().heightIn(max = 240.dp).clip(RoundedCornerShape(12.dp)).background(Sm.film).padding(14.dp)) {
-                    Text(info.notes, color = Sm.text, fontFamily = Onest, fontSize = 14.sp, lineHeight = 20.sp, modifier = Modifier.verticalScroll(rememberScrollState()))
+        val i = info ?: return@AnimatedVisibility
+        val scope = rememberCoroutineScope()
+        val src = remember { MutableInteractionSource() }
+        val hovered by src.collectIsHoveredAsState()
+        val progress = Updater.progress
+        val busy = progress != null
+        val failed = Updater.error != null && !busy
+        // breathing: slow in-out pulse of the glow and a hair of scale; calm while hovered / downloading
+        val breath = androidx.compose.animation.core.rememberInfiniteTransition(label = "breath")
+        val b by breath.animateFloat(
+            0f, 1f,
+            androidx.compose.animation.core.infiniteRepeatable(
+                androidx.compose.animation.core.tween(1700, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+                androidx.compose.animation.core.RepeatMode.Reverse
+            ), label = "b"
+        )
+        val calm = hovered || busy
+        val glow = if (calm) 0.55f else 0.18f + 0.5f * b
+        val scale = if (calm) 1f else 1f + 0.035f * b
+        val ring by androidx.compose.animation.core.animateFloatAsState(progress ?: 0f, androidx.compose.animation.core.tween(300), label = "ring")
+        val accent = if (failed) Sm.bad else Sm.lamp
+        Row(
+            Modifier.graphicsLayer { scaleX = scale; scaleY = scale }
+                .drawBehind {
+                    // soft halo outside the button
+                    val spread = 7.dp.toPx() * (if (calm) 0.8f else 0.4f + 0.6f * b)
+                    drawRoundRect(accent.copy(alpha = glow * 0.45f), topLeft = androidx.compose.ui.geometry.Offset(-spread, -spread),
+                        size = androidx.compose.ui.geometry.Size(size.width + 2 * spread, size.height + 2 * spread),
+                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(12.dp.toPx() + spread))
                 }
-                Box(Modifier.height(14.dp))
-            }
-            progress?.let { p ->
-                Box(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(6.dp)).background(Sm.line)) {
-                    Box(Modifier.fillMaxWidth(p.coerceIn(0f, 1f)).height(6.dp).background(Sm.lamp))
-                }
-                Text(if (p >= 1f) "Запускаем установщик…" else "Загрузка… ${(p * 100).toInt()}%", color = Sm.muted, fontFamily = Onest, fontSize = 13.sp,
-                    modifier = Modifier.padding(top = 6.dp, bottom = 12.dp))
-            }
-            error?.let { Text(it, color = Sm.bad, fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(bottom = 12.dp)) }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                LampButton(if (progress == null) "Обновить и перезапустить" else "Загрузка…", enabled = progress == null) {
-                    error = null; progress = 0f
+                .clip(RoundedCornerShape(12.dp))
+                .background(if (failed) Color(0x33FF6B6B) else if (hovered && !busy) Color(0xFFFFC04F) else Sm.lamp)
+                .hoverClick(src, enabled = !busy) {
+                    Updater.error = null; Updater.progress = 0f
                     scope.launch {
-                        try { val f = Updater.download(info) { progress = it }; progress = 1f; Updater.installAndExit(f) }
-                        catch (e: Exception) { progress = null; error = Api.describe(e) }
+                        try { val f = Updater.download(i) { Updater.progress = it }; Updater.progress = 1f; Updater.installAndExit(f) }
+                        catch (e: Exception) { Updater.progress = null; Updater.error = Api.describe(e) }
                     }
                 }
-                if (progress == null) {
-                    OutlineButton("Позже") { onDismiss() }
-                    OutlineButton("Пропустить версию") { Updater.skip(info.version); onDismiss() }
+                .animateContentSize(androidx.compose.animation.core.tween(260, easing = Sm.ease))
+                .height(40.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+                androidx.compose.foundation.Canvas(Modifier.size(22.dp)) {
+                    val ink = if (failed) Sm.bad else Sm.lampInk
+                    val w = size.width; val st = 2.2.dp.toPx()
+                    if (busy) {
+                        // progress ring
+                        drawArc(ink.copy(alpha = 0.25f), 0f, 360f, false, style = androidx.compose.ui.graphics.drawscope.Stroke(st))
+                        drawArc(ink, -90f, 360f * ring, false, style = androidx.compose.ui.graphics.drawscope.Stroke(st, cap = androidx.compose.ui.graphics.StrokeCap.Round))
+                    } else {
+                        // arrow into a tray
+                        val cap = androidx.compose.ui.graphics.StrokeCap.Round
+                        drawLine(ink, androidx.compose.ui.geometry.Offset(w / 2, w * 0.12f), androidx.compose.ui.geometry.Offset(w / 2, w * 0.62f), st, cap)
+                        drawLine(ink, androidx.compose.ui.geometry.Offset(w * 0.28f, w * 0.42f), androidx.compose.ui.geometry.Offset(w / 2, w * 0.64f), st, cap)
+                        drawLine(ink, androidx.compose.ui.geometry.Offset(w * 0.72f, w * 0.42f), androidx.compose.ui.geometry.Offset(w / 2, w * 0.64f), st, cap)
+                        drawLine(ink, androidx.compose.ui.geometry.Offset(w * 0.14f, w * 0.86f), androidx.compose.ui.geometry.Offset(w * 0.86f, w * 0.86f), st, cap)
+                    }
                 }
             }
-            Text("Приложение закроется, установщик обновит его и сохранит все настройки и прогресс просмотра.",
-                color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 12.dp))
+            val label = when {
+                busy -> if ((progress ?: 0f) >= 1f) "Запуск установщика…" else "${((progress ?: 0f) * 100).toInt()}%"
+                failed && hovered -> "Ошибка: ${Updater.error!!.take(40)} — повторить"
+                hovered -> "Обновить до ${i.version}" + (mb(i.size).takeIf { it.isNotEmpty() }?.let { " · $it" } ?: "")
+                else -> null
+            }
+            if (label != null) Text(label, color = if (failed) Sm.bad else Sm.lampInk, fontFamily = Onest, fontWeight = FontWeight.SemiBold,
+                fontSize = 13.sp, maxLines = 1, modifier = Modifier.padding(end = 14.dp))
         }
     }
 }

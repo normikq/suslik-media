@@ -109,7 +109,11 @@ fun Brand(onLogout: (() -> Unit)?, tabs: (@Composable () -> Unit)? = null) {
             }
         }
         tabs?.invoke()
-        if (onLogout != null) Box(Modifier.align(Alignment.CenterEnd)) { OutlineButton("Выйти", onClick = onLogout) }
+        if (onLogout != null) Row(Modifier.align(Alignment.CenterEnd), verticalAlignment = Alignment.CenterVertically) {
+            UpdateButton() // appears (breathing) only when a newer version is on the server
+            if (Updater.available != null) Spacer(Modifier.width(10.dp))
+            OutlineButton("Выйти", onClick = onLogout)
+        }
     }
 }
 
