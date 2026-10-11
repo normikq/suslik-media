@@ -50,7 +50,7 @@ import java.net.http.HttpResponse
  * every 6 h); the installer is downloaded with the session cookie, started, and the app closes so it can be replaced.
  */
 object Updater {
-    data class Info(val version: String, val size: Long, val notes: String, val url: String, val file: String)
+    data class Info(val version: String, val size: Long, val notes: String, val url: String, val file: String, val beta: Boolean = false)
 
     /** Shown as the breathing button in the header (null = up to date). */
     var available by mutableStateOf<Info?>(null)
@@ -79,7 +79,7 @@ object Updater {
         val version = j.optString("version")
         if (current == "0" || !isNewer(version, current)) return null // dev run without a version: never nag
         if (!force && prefs.get("skipped") == version) return null
-        return Info(version, j.optLong("size"), j.optString("notes"), j.optString("url"), j.optString("file"))
+        return Info(version, j.optLong("size"), j.optString("notes"), j.optString("url"), j.optString("file"), j.optString("channel") == "beta")
     }
 
     fun skip(version: String) = prefs.put("skipped", version)
@@ -201,7 +201,7 @@ fun UpdateButton() {
             val label = when {
                 busy -> if ((progress ?: 0f) >= 1f) "Запуск установщика…" else "${((progress ?: 0f) * 100).toInt()}%"
                 failed && hovered -> "Ошибка: ${Updater.error!!.take(40)} — повторить"
-                hovered -> "Обновить до ${i.version}" + (mb(i.size).takeIf { it.isNotEmpty() }?.let { " · $it" } ?: "")
+                hovered -> "Обновить до ${i.version}" + (if (i.beta) " (бета)" else "") + (mb(i.size).takeIf { it.isNotEmpty() }?.let { " · $it" } ?: "")
                 else -> null
             }
             if (label != null) Text(label, color = if (failed) Sm.bad else Sm.lampInk, fontFamily = Onest, fontWeight = FontWeight.SemiBold,

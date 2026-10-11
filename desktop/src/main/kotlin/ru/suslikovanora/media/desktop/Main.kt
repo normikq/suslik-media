@@ -59,6 +59,7 @@ fun main() {
     // VLC hands over every text (track names, chapters, titles) as UTF-8. Without this JNA decoded it with the
     // Windows code page — Russian voice-over / subtitle names came out as «РЎСѓР±С‚РёС‚СЂС‹».
     System.setProperty("jna.encoding", "UTF-8")
+    CrashReports.start() // last run crashed? → report; from now on uncaught errors report themselves
     app()
     // The window is gone: make sure the process really ends (no "ghost" left in Task Manager).
     AppExit.finish()

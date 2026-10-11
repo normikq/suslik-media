@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -52,6 +54,10 @@ object PlaybackSettings {
     fun setBurstMb(v: Int) = store.put("burst_mb", v.toString())
     fun cacheMs() = store.get("vlc_cache_ms")?.toIntOrNull() ?: CACHE_DEFAULT
     fun setCacheMs(v: Int) = store.put("vlc_cache_ms", v.toString())
+
+    /** Tester code (BETA_CODE on the server): with it, update checks also offer versions from the beta channel. */
+    fun betaCode() = store.get("beta_code").orEmpty()
+    fun setBetaCode(v: String) = store.put("beta_code", v.trim().ifBlank { null })
 
     /** The gear in the header opens the sheet (shown by Main over the library). */
     var open by mutableStateOf(false)
@@ -101,12 +107,40 @@ fun SettingsSheet(onClose: () -> Unit) {
                 PlaybackSettings.cachePresets.forEach { p ->
                     PresetRow(p, p.value == cache) { cache = p.value; PlaybackSettings.setCacheMs(p.value) }
                 }
+                BetaSection()
             }
             Row(Modifier.fillMaxWidth().padding(top = 14.dp), horizontalArrangement = Arrangement.End) {
                 LampButton("Готово") { close() }
             }
         }
     }
+}
+
+/** «Бета-версии»: the tester code; checked on the server right away. */
+@Composable
+private fun BetaSection() {
+    val scope = rememberCoroutineScope()
+    var code by remember { mutableStateOf(PlaybackSettings.betaCode()) }
+    var state by remember { mutableStateOf<String?>(if (PlaybackSettings.betaCode().isNotBlank()) "Код сохранён." else null) }
+    fun check() {
+        PlaybackSettings.setBetaCode(code)
+        if (code.isBlank()) { state = "Бета-версии выключены."; return }
+        state = "Проверяем…"
+        scope.launch {
+            state = runCatching { Api.get("/api/app/beta").optBoolean("tester") }.getOrNull().let {
+                when (it) { true -> "Код принят: новые бета-версии будут приходить сюда первыми."; false -> "Сервер не принял этот код."; null -> "Не удалось проверить — код сохранён." }
+            }
+            if (code.isNotBlank()) Updater.available = Updater.check(force = true)
+        }
+    }
+    Section("Бета-версии", "Только для проверки новых версий до выхода всем. Введите код тестировщика (BETA_CODE с сервера); " +
+        "пустое поле — обычные обновления.", top = 18.dp)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.weight(1f)) { Field(code, { code = it }, "Код тестировщика", password = true, onDone = { check() }) }
+        Spacer(Modifier.width(10.dp))
+        OutlineButton("Сохранить") { check() }
+    }
+    state?.let { Text(it, color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 6.dp)) }
 }
 
 @Composable

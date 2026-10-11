@@ -28,7 +28,7 @@ dependencies {
 }
 
 // One place for the version: the installer, and the app itself (update check) via -Dsuslik.version.
-val appVersion = "1.9.5"
+val appVersion = "2.0.0"
 
 composeCompiler { stabilityConfigurationFile.set(project.layout.projectDirectory.file("compose-stability.conf")) }
 
@@ -46,7 +46,9 @@ compose.desktop {
             // AppCDS (Java 19+): on the first exit the JVM saves the classes it loaded into an archive next to the app;
             // from then on they are mapped from it instead of being read and verified again — the window opens noticeably
             // sooner and takes less memory. A new version makes the archive outdated: the JVM rebuilds it by itself.
-            "-XX:+AutoCreateSharedArchive", "-XX:SharedArchiveFile=\$APPDIR/suslik.jsa"
+            "-XX:+AutoCreateSharedArchive", "-XX:SharedArchiveFile=\$APPDIR/suslik.jsa",
+            // A native crash (VLC) leaves its report next to the app; CrashReports sends it at the next start.
+            "-XX:ErrorFile=\$APPDIR/hs_err_pid%p.log"
         )
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe)

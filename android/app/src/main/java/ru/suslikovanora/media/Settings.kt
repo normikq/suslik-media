@@ -60,6 +60,9 @@ object PlaybackSettings {
     fun setBurstMb(ctx: Context, v: Int) = prefs(ctx).edit().putInt("burst_mb", v).apply()
     fun cacheMs(ctx: Context) = prefs(ctx).getInt("vlc_cache_ms", CACHE_DEFAULT)
     fun setCacheMs(ctx: Context, v: Int) = prefs(ctx).edit().putInt("vlc_cache_ms", v).apply()
+    /** Tester code (BETA_CODE on the server): sent with requests (Api), unlocks updates from the beta channel. */
+    fun betaCode(ctx: Context) = prefs(ctx).getString("beta_code", null).orEmpty()
+    fun setBetaCode(ctx: Context, v: String) = prefs(ctx).edit().putString("beta_code", v.trim().ifBlank { null }).apply()
 }
 
 /** «Настройки» over the main screen: the same card style and entrance as «Что нового». */
@@ -107,12 +110,44 @@ fun SettingsSheet(onClose: () -> Unit) {
                 PlaybackSettings.cachePresets.forEach { p ->
                     PresetRow(p, p.value == cache) { cache = p.value; PlaybackSettings.setCacheMs(ctx, p.value) }
                 }
+                BetaSection()
             }
             Row(Modifier.fillMaxWidth().padding(top = 14.dp), horizontalArrangement = Arrangement.End) {
                 LampButton("Готово") { close() }
             }
         }
     }
+}
+
+/** «Бета-версии»: the tester code; checked on the server right away. */
+@Composable
+private fun BetaSection() {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var code by remember { mutableStateOf(PlaybackSettings.betaCode(ctx)) }
+    var state by remember { mutableStateOf<String?>(if (PlaybackSettings.betaCode(ctx).isNotBlank()) "Код сохранён." else null) }
+    fun check() {
+        PlaybackSettings.setBetaCode(ctx, code)
+        if (code.isBlank()) { state = "Бета-версии выключены."; return }
+        state = "Проверяем…"
+        scope.launch {
+            state = runCatching { ru.suslikovanora.media.net.Api.get("/api/app/beta").optBoolean("tester") }.getOrNull().let {
+                when (it) {
+                    true -> "Код принят: новые бета-версии будут приходить сюда первыми (при следующем запуске)."
+                    false -> "Сервер не принял этот код."
+                    null -> "Не удалось проверить — код сохранён."
+                }
+            }
+        }
+    }
+    Section("Бета-версии", "Только для проверки новых версий до выхода всем. Введите код тестировщика (BETA_CODE с сервера); " +
+        "пустое поле — обычные обновления.", top = 18.dp)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.weight(1f)) { ru.suslikovanora.media.library.SearchField(code, { code = it }, "Код тестировщика", password = true, onDone = { check() }) }
+        androidx.compose.foundation.layout.Spacer(Modifier.size(10.dp))
+        ru.suslikovanora.media.library.OutlineButton("Сохранить") { check() }
+    }
+    state?.let { Text(it, color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 6.dp)) }
 }
 
 @Composable

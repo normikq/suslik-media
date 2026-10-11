@@ -141,24 +141,6 @@ class PlayerActivity : ComponentActivity() {
             handler.postDelayed(this, 1000L)
         }
     }
-    // Frozen picture while the clock runs (seen after seeks with hardware decoding): restart the video decoder.
-    private var lastDisplayed = -1
-    private var frozenTicks = 0
-    private var lastFreezeFixAt = 0L
-    private var movingTicks = 0          // the picture really advanced on this stream (not a static cover image)
-    private var freezeFixes = 0          // per stream: give up after a couple of attempts, never loop reconnects
-    private var freezeStatsUrl = ""
-    // Right after an audio-track switch VLC restarts the audio decoder and resyncs the clock; with hardware video
-    // decoding the picture can stall until the next keyframe (seconds). For 10 s the freeze check runs every second.
-    private var quickFreezeUntil = 0L
-    private val quickFreezeRunnable = object : Runnable {
-        override fun run() {
-            if (SystemClock.uptimeMillis() > quickFreezeUntil) return
-            mediaPlayer?.let { if (it.isPlaying && !buffering && !userPaused) checkPictureFrozen(it) }
-            handler.postDelayed(this, 1000L)
-        }
-    }
-
     // Current episode + optional playlist (this episode and the ones after it, from the site).
     private data class Entry(val title: String, val url: String)
     private var currentUrl = ""
@@ -204,15 +186,51 @@ class PlayerActivity : ComponentActivity() {
     private val watchdogRunnable = object : Runnable {
         override fun run() {
             val p = mediaPlayer ?: return
-            if (!p.isPlaying) { watchStuckTicks = 0; return }
-            if (!userPaused && !ended && !networkLost && !buffering && !resumeOnFocusGain) {
-                val t = p.time
-                if (t == lastWatchTime) {
-                    if (++watchStuckTicks >= stuckTicks()) { watchStuckTicks = 0; handleError() }
-                } else { lastWatchTime = t; watchStuckTicks = 0; checkPictureFrozen(p); checkSoundAlive(p) }
-            } else { watchStuckTicks = 0; frozenTicks = 0 }
+            if (!p.isPlaying) return // paused: nobody wakes up (restarted by the Playing event)
+            // Network trouble is handled by the reconnect logic; the supervisor judges only real playback.
+            if (!userPaused && !ended && !networkLost && !resumeOnFocusGain) statsOf(p)?.let { supervisor.tick(it) }
             handler.postDelayed(this, WATCHDOG_TICK_MS)
         }
+    }
+
+    // ---- playback health: the supervisor shared with the PC app (core.PlaybackSupervisor) ---------------
+    // One place decides when playback is broken and what to do — only while the film really plays, never right after
+    // a seek / resume / reconnect, one gentle step at a time (video restart, sound fix) before any reopen.
+    private val supervisor = PlaybackSupervisor(object : PlaybackSupervisor.Actions {
+        override fun restartVideo() {
+            val p = mediaPlayer ?: return
+            runCatching { p.setVideoTrackEnabled(false); p.setVideoTrackEnabled(true) }
+            val t = perceivedPosition()
+            if (t > 0L) seekTo(t) // new decoder from the keyframe right here: the picture comes back at once
+        }
+        override fun fixSound() {
+            val p = mediaPlayer ?: return
+            val id = p.audioTrack.takeIf { it != -1 } ?: p.audioTracks?.firstOrNull { it.id != -1 }?.id ?: return
+            runCatching { p.setAudioTrack(-1); p.setAudioTrack(id) } // restarts the audio decoder and output
+            selectedAudioId = id
+        }
+        override fun reopen(fresh: Boolean) {
+            CrashReports.recovery("reopen at ${perceivedPosition() / 1000}s (fresh=$fresh)")
+            if (fresh) { BurstProxy.keepOnly(emptyList()); restartClean(play = !userPaused) }
+            else reconnect(forcePlay = true, startAt = perceivedPosition())
+        }
+        override fun notice(text: String) {
+            showStatus(text)
+            handler.postDelayed({ if (!buffering && !networkLost) bufferingLabel.visibility = View.GONE }, 2500L)
+        }
+        override fun log(message: String) = AppLog.write(message)
+    }, stuckLimitMs = { if (viaReserve()) 30_000L else 8_000L })
+
+    private fun statsOf(p: MediaPlayer): PlaybackSupervisor.Stats? {
+        val st = runCatching { media?.stats }.getOrNull() ?: return null
+        val vt = runCatching { p.currentVideoTrack }.getOrNull()
+        val fps = if (vt != null && vt.frameRateNum > 0 && vt.frameRateDen > 0) vt.frameRateNum.toDouble() / vt.frameRateDen else 0.0
+        return PlaybackSupervisor.Stats(
+            timeMs = p.time, audioPlayed = st.playedAbuffers.toLong(), audioDecoded = st.decodedAudio.toLong(),
+            pictures = st.displayedPictures.toLong(), expectedFps = fps,
+            audioTracks = p.audioTracks?.count { it.id != -1 } ?: 0, audioSelected = p.audioTrack != -1,
+            videoTracks = p.videoTracksCount, userMuted = p.volume == 0
+        )
     }
     // Reset retry backoff only after the stream has played continuously, not on the first Playing event.
     private val stablePlaybackRunnable = Runnable { retryCount = 0 }
@@ -225,6 +243,7 @@ class PlayerActivity : ComponentActivity() {
         if (owner !== mediaPlayer) return@EventListener
         when (event.type) {
             MediaPlayer.Event.Playing -> {
+                supervisor.playing()
                 bufferingShown = 0
                 playWhenReady = true
                 ended = false
@@ -272,6 +291,7 @@ class PlayerActivity : ComponentActivity() {
                 val length = owner.length
                 val pos = maxOf(owner.time, lastTime)
                 if (length > 0L && pos >= length - 5_000L) {
+                    supervisor.ended()
                     persistPosition(length, length) // watched to the end
                     if (!offerNextEpisode()) {
                         ended = true
@@ -287,7 +307,8 @@ class PlayerActivity : ComponentActivity() {
             }
             MediaPlayer.Event.EncounteredError -> handleError()
             MediaPlayer.Event.Vout -> if (event.voutCount > 0) { applyVideoFrameRate(owner); updatePipParams(playing = owner.isPlaying); warnIfSoftwareDecoding(owner) }
-            MediaPlayer.Event.Buffering ->
+            MediaPlayer.Event.Buffering -> {
+                supervisor.buffering(event.buffering)
                 if (event.buffering < 100f) {
                     buffering = true
                     // VLC refills its buffer from 0 after every jump (start at the saved place, seek, track switch,
@@ -306,6 +327,7 @@ class PlayerActivity : ComponentActivity() {
                     handler.removeCallbacks(stallRunnable)
                     if (!networkLost) bufferingLabel.visibility = View.GONE
                 }
+            }
             MediaPlayer.Event.TimeChanged, MediaPlayer.Event.LengthChanged -> {
                 val t = owner.time
                 if (t > 0L) {
@@ -328,12 +350,12 @@ class PlayerActivity : ComponentActivity() {
 
     private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
         when (change) {
-            AudioManager.AUDIOFOCUS_LOSS -> { resumeOnFocusGain = false; mediaPlayer?.pause() }
+            AudioManager.AUDIOFOCUS_LOSS -> { resumeOnFocusGain = false; supervisor.paused(); mediaPlayer?.pause() }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
                 if (mediaPlayer?.isPlaying == true) { resumeOnFocusGain = true; mediaPlayer?.pause() }
             }
             AudioManager.AUDIOFOCUS_GAIN -> {
-                if (resumeOnFocusGain) { resumeOnFocusGain = false; mediaPlayer?.play() }
+                if (resumeOnFocusGain) { resumeOnFocusGain = false; supervisor.resumed(); mediaPlayer?.play() }
             }
         }
     }
@@ -348,6 +370,10 @@ class PlayerActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         ru.suslikovanora.media.net.Api.init(this)
+        CrashReports.init(this)
+        alive = true
+        CrashReports.playerRunning(this, true) // still set at the next start = this screen died (native crash)
+        BurstProxy.log = { AppLog.write(it) }
         BurstProxy.init(java.io.File(cacheDir, "stream")) { url, from ->
             // The shared reserve downloads through OkHttp here (same connections as the rest of the app).
             val res = ru.suslikovanora.media.net.Api.plain.newCall(okhttp3.Request.Builder().url(url)
@@ -566,6 +592,7 @@ class PlayerActivity : ComponentActivity() {
 
         addOnPictureInPictureModeChangedListener { info ->
             inPip = info.isInPictureInPictureMode
+            supervisor.surfaceChanged()
             if (inPip) setControlsVisible(false) else showControlsTemporarily()
             // The window size changed: let VLC re-measure (and recover if the surface was recreated meanwhile).
             handler.post { mediaPlayer?.updateVideoSurfaces() }
@@ -705,6 +732,8 @@ class PlayerActivity : ComponentActivity() {
         player.attachViews(videoLayout, null, true, false)
         hookSurfaces()
         runCatching { player.setVideoScale(SCALES[scaleIndex].first) }
+        supervisor.opening(url)
+        AppLog.write("open ${Uri.parse(url).lastPathSegment ?: "?"} at ${positionMs / 1000}s, reserve=${PlaybackSettings.burstMb(this)}MB, buffer=${PlaybackSettings.cacheMs(this)}ms")
         val item = buildMedia(vlc, url, positionMs)
         media = item
         player.media = item
@@ -869,6 +898,7 @@ class PlayerActivity : ComponentActivity() {
      * Used after Wi-Fi <-> mobile switches, network return, stalls, failed seeks and transient errors.
      */
     private fun reconnect(forcePlay: Boolean = false, startAt: Long? = null) {
+        AppLog.write("reconnect at ${(startAt ?: perceivedPosition()) / 1000}s (retry $retryCount)")
         handler.removeCallbacks(reconnectRunnable)
         handler.removeCallbacks(stallRunnable)
         handler.removeCallbacks(seekWatchdogRunnable)
@@ -959,6 +989,7 @@ class PlayerActivity : ComponentActivity() {
      */
     private fun seekTo(target: Long) {
         val p = mediaPlayer ?: return
+        supervisor.seeked(); AppLog.write("seek to ${target / 1000}s")
         hideNextCard()
         val length = p.length
         val t = target.coerceAtLeast(0L).let { if (length > 0L) it.coerceAtMost((length - 1_000L).coerceAtLeast(0L)) else it }
@@ -1001,6 +1032,7 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun handleError(fromEof: Boolean = false) {
+        AppLog.write("stream problem${if (fromEof) " (unexpected end of stream)" else ""}, network lost=$networkLost")
         root.keepScreenOn = false
         handler.removeCallbacks(stallRunnable)
         if (networkLost) {
@@ -1165,7 +1197,7 @@ class PlayerActivity : ComponentActivity() {
         if (tracks.isEmpty()) { Toast.makeText(this, "Аудиодорожки пока не определены", Toast.LENGTH_SHORT).show(); return }
         AlertDialog.Builder(this).setTitle("Аудиодорожка")
             .setItems(tracks.map { it.name }.toTypedArray()) { _, which ->
-                selectedAudioId = tracks[which].id; mediaPlayer?.setAudioTrack(tracks[which].id); armQuickFreezeCheck()
+                selectedAudioId = tracks[which].id; mediaPlayer?.setAudioTrack(tracks[which].id); supervisor.seeked()
                 saveTrackPref("audio", tracks[which].name); showControlsTemporarily()
             }.setNegativeButton("Закрыть", null).show()
     }
@@ -1255,6 +1287,7 @@ class PlayerActivity : ComponentActivity() {
     private fun doPlay() {
         val p = mediaPlayer ?: return
         userPaused = false
+        supervisor.resumed(); AppLog.write("play")
         if (needsReload || ended) { reconnect(forcePlay = true); return }
         resumeOnFocusGain = false
         requestAudioFocus()
@@ -1263,6 +1296,7 @@ class PlayerActivity : ComponentActivity() {
 
     private fun doPause() {
         userPaused = true
+        supervisor.paused(); AppLog.write("pause at ${perceivedPosition() / 1000}s")
         mediaPlayer?.pause()
     }
 
@@ -1290,7 +1324,7 @@ class PlayerActivity : ComponentActivity() {
         val audio = uiPrefs.getString("track:audio:$key", null) ?: uiPrefs.getString("track:audio:*", null)
         val spu = uiPrefs.getString("track:spu:$key", null) ?: uiPrefs.getString("track:spu:*", null)
         runCatching {
-            pickTrack(p.audioTracks, audio)?.let { id -> if (id != p.audioTrack) { p.setAudioTrack(id); selectedAudioId = id; armQuickFreezeCheck() } }
+            pickTrack(p.audioTracks, audio)?.let { id -> if (id != p.audioTrack) { p.setAudioTrack(id); selectedAudioId = id; supervisor.seeked() } }
             if (spu == SPU_OFF) { if (p.spuTrack != -1) { p.setSpuTrack(-1); selectedSpuId = -1 } }
             else pickTrack(p.spuTracks, spu)?.let { id -> if (id != p.spuTrack) p.setSpuTrack(id); selectedSpuId = id }
         }
@@ -1333,70 +1367,6 @@ class PlayerActivity : ComponentActivity() {
         if (::nextCard.isInitialized && nextCard.visibility == View.VISIBLE) {
             nextCard.animate().alpha(0f).setDuration(180).withEndAction { nextCard.visibility = View.GONE }.start()
         }
-    }
-
-    // ---- frozen picture -----------------------------------------------------------------------
-    /** Clock advances but no new pictures for ~4 s: restart the video decoder; if that does not help, reopen. */
-    private fun checkPictureFrozen(p: MediaPlayer) {
-        if (inPip || p.videoTracksCount <= 0) { frozenTicks = 0; return }
-        if (freezeStatsUrl != currentUrl) { freezeStatsUrl = currentUrl; freezeFixes = 0; movingTicks = 0; lastDisplayed = -1 }
-        if (freezeFixes >= 3) return
-        val stats = runCatching { media?.stats }.getOrNull() ?: return
-        val shown = stats.displayedPictures
-        if (shown <= 0) return // stats not available on this stream/decoder
-        if (shown != lastDisplayed) {
-            if (lastDisplayed >= 0 && shown > lastDisplayed) movingTicks++
-            lastDisplayed = shown; frozenTicks = 0; return
-        }
-        // A file whose "video" is one still image (audio with cover art) never advances: do not touch it.
-        if (movingTicks < 3) return
-        if (++frozenTicks < 2) return
-        frozenTicks = 0
-        freezeFixes++
-        val now = SystemClock.uptimeMillis()
-        if (now - lastFreezeFixAt > 30_000L) {
-            lastFreezeFixAt = now
-            runCatching { p.setVideoTrackEnabled(false); p.setVideoTrackEnabled(true) }
-        } else {
-            lastFreezeFixAt = 0L
-            reconnect(forcePlay = true, startAt = perceivedPosition())
-        }
-    }
-
-    // ---- silent film: picture moves, but no sound reaches the speaker -------------------------
-    // Seen when the audio output failed to start (Bluetooth just switched, audio busy in another app) or the chosen
-    // voice-over stopped delivering: track changes did not help, only opening the film again did. Now the player
-    // notices it by itself: first it re-selects a real audio track, then it reopens the stream at the same moment.
-    private var soundStatsUrl = ""
-    private var lastPlayedAudio = -1
-    private var silentTicks = 0
-    private var soundFixes = 0
-    private fun checkSoundAlive(p: MediaPlayer) {
-        if (soundStatsUrl != currentUrl) { soundStatsUrl = currentUrl; soundFixes = 0; silentTicks = 0; lastPlayedAudio = -1 }
-        if (soundFixes >= 2 || p.audioTracksCount <= 0 || p.volume == 0) { silentTicks = 0; return }
-        if (p.audioTrack == -1) {
-            // tracks exist but none is selected (Blu-ray .m2ts streams appear late): take the first real one
-            p.audioTracks?.firstOrNull { it.id != -1 }?.let { runCatching { p.setAudioTrack(it.id) }; selectedAudioId = it.id }
-            silentTicks = 0; return
-        }
-        val stats = runCatching { media?.stats }.getOrNull() ?: return
-        val played = stats.playedAbuffers
-        if (played != lastPlayedAudio) { lastPlayedAudio = played; silentTicks = 0; return }
-        if (stats.displayedPictures <= 0 && stats.decodedAudio <= 0) return // no statistics on this stream
-        if (++silentTicks < 3) return // ~6 s of moving picture without a single sound buffer
-        silentTicks = 0
-        soundFixes++
-        showStatus("Восстанавливаем звук…")
-        handler.postDelayed({ if (!buffering) bufferingLabel.visibility = View.GONE }, 2500L)
-        reconnect(forcePlay = true, startAt = perceivedPosition())
-    }
-
-    private fun armQuickFreezeCheck() {
-        if (freezeFixes >= 3) freezeFixes = 2 // a deliberate switch earns one more recovery attempt
-        frozenTicks = 0
-        quickFreezeUntil = SystemClock.uptimeMillis() + 10_000L
-        handler.removeCallbacks(quickFreezeRunnable)
-        handler.postDelayed(quickFreezeRunnable, 1000L)
     }
 
     // ---- frame mode ---------------------------------------------------------------------------
@@ -1612,6 +1582,7 @@ class PlayerActivity : ComponentActivity() {
 
     private fun reattachVideo() {
         val p = mediaPlayer ?: return
+        supervisor.surfaceChanged()
         runCatching { p.detachViews() }
         runCatching { p.attachViews(videoLayout, null, true, false) }
         hookSurfaces()
@@ -1688,6 +1659,7 @@ class PlayerActivity : ComponentActivity() {
         networkAtStop = activeNetworkNow()
         playOnStart = !userPaused && !ended && (p.isPlaying || playWhenReady || buffering)
         runCatching { p.pause() } // not doPause(): the user did not pause, the film continues on return
+        supervisor.paused(); AppLog.write("screen off / app hidden: paused, keeping the player")
         keptOnStop = true
         // The screen's surface goes away: let go of it cleanly (video off, views detached) instead of letting the
         // video output die with it — that is what gave ~10 s of black / flicker after unlocking.
@@ -1696,7 +1668,7 @@ class PlayerActivity : ComponentActivity() {
         runCatching { p.detachViews() }
         handler.removeCallbacks(reattachRunnable); surfaceLost = false
         // Nothing may restart playback (or reconnect) behind the lock screen.
-        for (r in listOf(watchdogRunnable, stallRunnable, reconnectRunnable, seekWatchdogRunnable, quickFreezeRunnable, prefsRunnable))
+        for (r in listOf(watchdogRunnable, stallRunnable, reconnectRunnable, seekWatchdogRunnable, prefsRunnable))
             handler.removeCallbacks(r)
         unregisterNetworkCallback()
         if (noisyRegistered) { runCatching { unregisterReceiver(noisyReceiver) }; noisyRegistered = false }
@@ -1715,7 +1687,9 @@ class PlayerActivity : ComponentActivity() {
         ContextCompat.registerReceiver(this, noisyReceiver, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY), ContextCompat.RECEIVER_NOT_EXPORTED)
         noisyRegistered = true
         registerNetworkCallback()
+        AppLog.write("back after ${(SystemClock.uptimeMillis() - stoppedAt) / 1000}s: continue")
         if (playOnStart && !userPaused) {
+            supervisor.resumed()
             requestAudioFocus()
             runCatching { p.play() }
             // The connection may have been closed while paused: VLC reconnects by itself; if it hangs, the usual
@@ -1752,6 +1726,9 @@ class PlayerActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        alive = false
+        CrashReports.playerRunning(this, false)
+        supervisor.closed()
         handler.removeCallbacksAndMessages(null)
         if (keptOnStop) { keptOnStop = false; releasePlayer() }
         if (isFinishing) BurstProxy.clear() // the film's cached part is no longer needed
@@ -1798,6 +1775,8 @@ class PlayerActivity : ComponentActivity() {
     }
 
     companion object {
+        /** This screen exists right now (CrashReports tells a crash from a normal close by it). */
+        @Volatile var alive = false
         const val EXTRA_URL = "media_url"
         const val EXTRA_TITLE = "media_title"
         const val EXTRA_PLAYLIST = "media_playlist"

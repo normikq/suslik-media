@@ -84,6 +84,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         ru.suslikovanora.media.net.Api.init(this)
+        CrashReports.init(this)
+        CrashReports.sendPending() // a crash or a player that died last time → report
         val bg = android.graphics.Color.rgb(8, 9, 11)
         enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(bg), navigationBarStyle = SystemBarStyle.dark(bg))
         CookieManager.getInstance().setAcceptCookie(true)

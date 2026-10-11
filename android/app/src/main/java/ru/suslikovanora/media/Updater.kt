@@ -56,7 +56,7 @@ import java.io.File
  * The new APK must be signed with the same key as the installed one (Android refuses otherwise).
  */
 object Updater {
-    data class Info(val version: String, val size: Long, val notes: String, val url: String)
+    data class Info(val version: String, val size: Long, val notes: String, val url: String, val beta: Boolean = false)
 
 
     fun currentVersion(ctx: Context): String =
@@ -80,7 +80,7 @@ object Updater {
         val version = j.optString("version")
         if (!isNewer(version, currentVersion(ctx))) return null
         if (!force && prefs.getString("skipped", null) == version) return null
-        return Info(version, j.optLong("size"), j.optString("notes"), j.optString("url"))
+        return Info(version, j.optLong("size"), j.optString("notes"), j.optString("url"), j.optString("channel") == "beta")
     }
 
     fun skip(ctx: Context, version: String) =
@@ -145,7 +145,7 @@ fun UpdateDialog(info: Updater.Info, onDismiss: () -> Unit) {
             Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Sm.booth)
                 .border(1.dp, Sm.line2, RoundedCornerShape(20.dp)).padding(20.dp)
         ) {
-            Text("Доступна версия ${info.version}", color = Sm.text, fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 18.sp)
+            Text("Доступна версия ${info.version}" + if (info.beta) " (бета)" else "", color = Sm.text, fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 18.sp)
             Text("Установлена ${Updater.currentVersion(ctx)}" + (mb(info.size).takeIf { it.isNotEmpty() }?.let { " · $it" } ?: ""),
                 color = Sm.muted, fontFamily = Onest, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
             if (info.notes.isNotBlank()) {

@@ -40,6 +40,7 @@ object AppExit {
             for (e in players) runCatching { e.awaitTermination((deadline - System.currentTimeMillis()).coerceAtLeast(0), TimeUnit.MILLISECONDS) }
             Thread({ runCatching { VlcFactory.releaseAll() } }, "vlc-release").apply { isDaemon = true; start(); join(1_000) }
             Store.flushAll()
+            CrashReports.stop() // clean exit: nothing to report next time
             runCatching { BurstProxy.clear() } // the films' temporary reserve on disk
         }
         kotlin.system.exitProcess(code)

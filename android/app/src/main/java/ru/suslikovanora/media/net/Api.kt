@@ -26,6 +26,10 @@ object Api {
     class HttpError(val code: Int, message: String) : Exception(message)
 
     @Volatile private var lastFlush = 0L
+    @Volatile private var appCtx: android.content.Context? = null
+    /** Tester code («Настройки → Бета-версии»): sent with every request to our server, unlocks beta updates. */
+    private fun betaCode(): String? = appCtx?.getSharedPreferences("settings", android.content.Context.MODE_PRIVATE)
+        ?.getString("beta_code", null)?.takeIf { it.isNotBlank() }
 
     private object CookieBridge : Interceptor {
         override fun intercept(chain: Interceptor.Chain): Response {
@@ -34,6 +38,7 @@ object Api {
             val builder = req.newBuilder()
             if (ours) {
                 CookieManager.getInstance().getCookie(BASE)?.takeIf { it.isNotBlank() }?.let { builder.header("Cookie", it) }
+                betaCode()?.let { builder.header("X-Beta-Code", it) }
             }
             val res = chain.proceed(builder.build())
             if (ours) {
@@ -54,7 +59,10 @@ object Api {
 
     @Volatile private var cacheDir: java.io.File? = null
     /** Called once by the activities: enables the small HTTP cache (needs a Context for its folder). */
-    fun init(ctx: android.content.Context) { if (cacheDir == null) cacheDir = java.io.File(ctx.applicationContext.cacheDir, "http") }
+    fun init(ctx: android.content.Context) {
+        appCtx = ctx.applicationContext
+        if (cacheDir == null) cacheDir = java.io.File(ctx.applicationContext.cacheDir, "http")
+    }
 
     /**
      * API calls (one connection pool, keep-alive, HTTP/2). With the 10 MB cache the client sends the ETag back, so an

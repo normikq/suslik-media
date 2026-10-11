@@ -90,6 +90,7 @@ object Api {
         HttpRequest.newBuilder(URI.create(if (path.startsWith("http")) path else BASE + path))
             .timeout(Duration.ofSeconds(30))
             .header("Cookie", cookieHeader())
+            .apply { PlaybackSettings.betaCode().takeIf { it.isNotBlank() }?.let { header("X-Beta-Code", it) } } // tester: beta updates
 
     suspend fun get(path: String): JSONObject = call(request(path).GET().build())
 
