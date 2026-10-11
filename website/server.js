@@ -641,9 +641,26 @@ function latestUpdate(platform) {
     if (!best || cmpVersion(v, best.v) > 0 || (cmpVersion(v, best.v) === 0 && /\.msi$/i.test(name))) best = { v, name, full, size: st.size, at: st.mtimeMs };
   }
   if (!best) return null;
+  pruneOldUpdates(platform, best);
   let notes = "";
   try { notes = fs.readFileSync(best.full.replace(/\.[^.]+$/, ".txt"), "utf8").slice(0, 4000).trim(); } catch {}
   return { ...best, version: best.v.join("."), notes };
+}
+// Остаётся только самая новая версия каждой платформы: старые .apk / .msi / .exe (и их .txt) удаляются —
+// сразу после загрузки новой и при первом же запросе после того, как файл подложили вручную (scp).
+function pruneOldUpdates(platform, best) {
+  const re = UPDATE_KINDS[platform];
+  let names; try { names = fs.readdirSync(UPDATES_DIR); } catch { return; }
+  for (const name of names) {
+    if (!re.test(name) || name === best.name) continue;
+    const v = versionOf(name);
+    // та же версия в другом формате (exe рядом с msi) тоже лишняя
+    if (v && cmpVersion(v, best.v) > 0) continue;
+    const full = path.join(UPDATES_DIR, name);
+    fs.rm(full, { force: true }, err => { if (!err) console.log(`[updates] удалена старая версия: ${name}`); });
+    const notes = full.replace(/\.[^.]+$/, ".txt");
+    if (notes !== best.full.replace(/\.[^.]+$/, ".txt")) fs.rm(notes, { force: true }, () => {});
+  }
 }
 app.get("/api/app/update", requireLogin, apiLimiter, (req, res) => {
   const platform = String(req.query.platform || "");
@@ -675,7 +692,12 @@ app.post("/api/app/upload", (req, res) => {
   req.pipe(out); // на диск потоком — без буфера в памяти
   out.on("finish", () => {
     if (size === 0 || size > LIMIT) { fs.rm(tmp, { force: true }, () => {}); return res.status(400).json({ error: "Пустой или слишком большой файл." }); }
-    fs.rename(tmp, path.join(UPDATES_DIR, name), err => err ? res.status(500).json({ error: err.message }) : res.json({ ok: true, file: name, size }));
+    fs.rename(tmp, path.join(UPDATES_DIR, name), err => {
+      if (err) return res.status(500).json({ error: err.message });
+      // сразу убрать прошлые версии этой платформы
+      for (const platform of Object.keys(UPDATE_KINDS)) if (UPDATE_KINDS[platform].test(name)) latestUpdate(platform);
+      res.json({ ok: true, file: name, size });
+    });
   });
   out.on("error", err => { fs.rm(tmp, { force: true }, () => {}); if (!res.headersSent) res.status(500).json({ error: err.message }); });
 });
