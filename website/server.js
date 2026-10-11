@@ -787,6 +787,17 @@ app.get("/api/app/update", requireLogin, apiLimiter, (req, res) => {
   res.json({ available: true, channel: ch, version: u.version, size: u.size, notes: u.notes, file: u.name, publishedAt: Math.round(u.at),
     url: `/api/app/download/${platform}/${encodeURIComponent(u.name)}${ch === "beta" ? "?ch=beta" : ""}` });
 });
+// Первая установка беты на устройство, где ещё нет поля для кода: открыть в браузере (будучи на сайте под паролем)
+// /api/app/beta-download/android?code=… или …/desktop?code=… — скачается бета-сборка.
+app.get("/api/app/beta-download/:platform", requireLogin, (req, res) => {
+  const code = process.env.BETA_CODE || "", given = String(req.query.code || "");
+  if (!code || given.length !== code.length || !crypto.timingSafeEqual(Buffer.from(given), Buffer.from(code)))
+    return res.status(403).json({ error: "Неверный код тестировщика." });
+  const u = latestUpdate(String(req.params.platform), BETA_DIR);
+  if (!u) return res.status(404).json({ error: "В бета-канале сейчас нет версии для этой платформы." });
+  res.setHeader("Cache-Control", "no-store");
+  res.download(u.full, u.name, { dotfiles: "deny" });
+});
 // Проверка кода тестировщика (поле в «Настройках»).
 app.get("/api/app/beta", requireLogin, apiLimiter, (req, res) => res.json({ tester: isTester(req) }));
 app.get("/api/app/download/:platform/:name", requireLogin, (req, res) => {
