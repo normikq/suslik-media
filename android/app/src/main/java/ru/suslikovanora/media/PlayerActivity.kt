@@ -338,6 +338,7 @@ class PlayerActivity : ComponentActivity() {
                 }
             }
             MediaPlayer.Event.TimeChanged, MediaPlayer.Event.LengthChanged -> {
+                if (event.type == MediaPlayer.Event.LengthChanged) BurstProxy.setDuration(currentUrl, owner.length)
                 val t = owner.time
                 if (t > 0L) {
                     val pending = pendingSeekPos

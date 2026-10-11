@@ -747,7 +747,7 @@ fun PlayerView(
                     if (ms > 1500) PlayerLog.write("buffering took $ms ms at ${time / 1000}s")
                 }
             }
-            override fun lengthChanged(p: MediaPlayer, newLength: Long) = ui2 { length = newLength }
+            override fun lengthChanged(p: MediaPlayer, newLength: Long) = ui2 { length = newLength; BurstProxy.setDuration(currentUrl, newLength) }
             override fun timeChanged(p: MediaPlayer, newTime: Long) = ui2 {
                 // Resumed and the clock really moves again (the old position + a bit): give the sound back.
                 if (pauseMuted && pausedAt == 0L && resumeFrom >= 0 && kotlin.math.abs(newTime - resumeFrom) > 120) unmuteAfterPause()

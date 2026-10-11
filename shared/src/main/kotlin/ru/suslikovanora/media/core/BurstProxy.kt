@@ -111,6 +111,21 @@ object BurstProxy {
 
     fun clear() = keepOnly(emptyList())
 
+    /**
+     * The player knows the film's length: its average bitrate (file size ÷ duration) sizes the bursts from the first
+     * second. Before, the bitrate was only measured after ~20 s of playback; until then a refill started with just
+     * 6 MB (~4 s of a 13 Mbit/s film) left — on mobile internet, where a new request takes 1–3 s to get up to speed,
+     * that meant stutters right after the start and after every seek. The measured value takes over later.
+     */
+    fun setDuration(url: String, ms: Long) {
+        if (ms <= 0) return
+        val src = byUrl[url]?.let { sources[it] } ?: return
+        val total = src.total
+        if (total <= 0 || src.rate > 0) return
+        src.rate = total * 1000.0 / ms
+        log("reserve: bitrate from size/length ≈ %.1f Mbit/s".format(src.rate * 8 / 1_000_000))
+    }
+
     /** The film is read through the local reserve right now (not directly from the mirror). */
     fun isActive(url: String): Boolean = capBytes > 0 && byUrl[url]?.let { sources[it]?.broken == false } == true
 
