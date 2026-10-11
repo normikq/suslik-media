@@ -720,6 +720,7 @@ function cleanReleases(list) {
     .filter(r => r && typeof r.version === "string" && /^\d+(\.\d+){0,3}$/.test(r.version) && Array.isArray(r.items))
     .map(r => ({ version: r.version, title: String(r.title || "").slice(0, 120), items: r.items.map(x => String(x).slice(0, 400)).filter(Boolean).slice(0, 12) }))
     .filter(r => r.items.length)
+    .filter((r, i, all) => all.findIndex(x => x.version === r.version) === i) // одна версия — одна точка
     .sort((a, b) => cmpVersion(vparts(b.version), vparts(a.version)))
     .slice(0, 50);
 }
