@@ -106,7 +106,7 @@ object VlcFactory {
     @Synchronized fun releaseAll() { built.values.forEach { runCatching { it.release() } }; built.clear() }
 
     @Synchronized fun get(night: Boolean, subScale: Int): MediaPlayerFactory =
-        built.getOrPut("$night|$subScale") { build(night, subScale) }
+        built.getOrPut("$night|$subScale") { build(night, subScale).also { PlayerLog.attach(it) } }
 
     /** App start: build the engine with the current player settings in the background. */
     fun warm() {
@@ -121,10 +121,9 @@ object VlcFactory {
             // long buffer — sound kept going after pause and came back late (or not at all) after resume.
             "--aout=mmdevice,directsound",
             // Decode AC3/DTS to PCM instead of trying passthrough (the failed passthrough attempt is what broke WASAPI).
-            "--mmdevice-passthrough=0", "--no-spdif",
-            // When decoding falls behind (right after a pause / seek), drop whole late frames instead of half-decoding
-            // them — the half-decoded ones were the blocky artifacts after a pause.
-            "--no-avcodec-hurry-up"
+            "--mmdevice-passthrough=0", "--no-spdif"
+            // (no "--no-avcodec-hurry-up" any more: without hurry-up a decoder that fell behind after a stall could not
+            // catch up again and stayed at ~5 fps)
         )
         val extra = ArrayList<String>()
         // Night mode: a dynamic range compressor — quiet dialogue up, explosions down.
@@ -348,6 +347,7 @@ fun PlayerView(
     var infoText by remember { mutableStateOf("") }
     var mini by remember { mutableStateOf(false) }
     var lastSeekAt by remember { mutableStateOf(0L) } // a seek in flight: VLC's clock still reports the old place
+    var bufferingSince by remember { mutableStateOf(0L) }
     var hasVoiceOver by remember { mutableStateOf(false) } // the current episode plays an external audio file
     var hoverAt by remember { mutableStateOf<Long?>(null) } // time under the cursor on the seek bar
     val beforeMini = remember { arrayOfNulls<Any>(4) }    // size, position, placement, onTop before mini mode
@@ -399,6 +399,8 @@ fun PlayerView(
         BurstProxy.capBytes = PlaybackSettings.burstMb().toLong() shl 20
         BurstProxy.keepOnly(listOf(url) + extras.first)
         hasVoiceOver = extras.first.isNotEmpty()
+        PlayerLog.write("open ${url.substringBefore('?').substringAfterLast('/')} at ${startAt / 1000}s, voice-overs=${extras.first.size}, " +
+            "buffer=${PlaybackSettings.cacheMs()}ms, reserve=${PlaybackSettings.burstMb()}MB")
         val playUrl = BurstProxy.wrap(url)
         // Fast seek jumps to the nearest keyframe of the VIDEO; an external voice-over is a separate input that lands
         // on the exact moment instead — the two drifted apart after every seek. With a voice-over: exact seeks.
@@ -524,8 +526,9 @@ fun PlayerView(
             // the local copy in step — no re-seek, no 10–20 s wait for a new buffer.
             // With an external voice-over the re-seek stays (from the local copy it takes a moment): VLC resumes the two
             // inputs a little apart after a long pause — that was the remaining audio offset after pauses.
-            val longPause = pausedAt > 0 && System.currentTimeMillis() - pausedAt > 8_000L &&
-                (!BurstProxy.isActive(currentUrl) || hasVoiceOver)
+            val paused = if (pausedAt > 0) System.currentTimeMillis() - pausedAt else 0L
+            val longPause = (paused > 8_000L && !BurstProxy.isActive(currentUrl)) || (hasVoiceOver && paused > 1_500L)
+            PlayerLog.write("resume after ${paused} ms${if (longPause) " (re-seek)" else ""}")
             playing = true; pausedAt = 0L; vlcPaused = false; resumeFrom = time
             vlc {
                 mp.controls().setPause(false)
@@ -617,6 +620,7 @@ fun PlayerView(
         javax.swing.Timer(2000) { if (status?.startsWith("Задержка звука") == true) status = null }.apply { isRepeats = false; start() }
     }
     fun seekBy(d: Long) {
+        PlayerLog.write("seek ${if (d > 0) "+" else ""}${d / 1000}s")
         var t = (time + d).coerceAtLeast(0L)
         if (length > 0) t = t.coerceAtMost((length - 2_000L).coerceAtLeast(0L))
         time = t; lastSeekAt = System.currentTimeMillis()
@@ -725,7 +729,14 @@ fun PlayerView(
             }
             override fun paused(p: MediaPlayer) = ui2 { playing = false; vlcPaused = true; savePos(time, length) }
             override fun stopped(p: MediaPlayer) = ui2 { vlcPaused = false }
-            override fun buffering(p: MediaPlayer, newCache: Float) = ui2 { status = if (newCache < 100f) "Буферизация ${newCache.toInt()}%" else null }
+            override fun buffering(p: MediaPlayer, newCache: Float) = ui2 {
+                status = if (newCache < 100f) "Буферизация ${newCache.toInt()}%" else null
+                if (newCache < 100f) { if (bufferingSince == 0L) bufferingSince = System.currentTimeMillis() }
+                else if (bufferingSince > 0) {
+                    val ms = System.currentTimeMillis() - bufferingSince; bufferingSince = 0L
+                    if (ms > 1500) PlayerLog.write("buffering took $ms ms at ${time / 1000}s")
+                }
+            }
             override fun lengthChanged(p: MediaPlayer, newLength: Long) = ui2 { length = newLength }
             override fun timeChanged(p: MediaPlayer, newTime: Long) = ui2 {
                 // Resumed and the clock really moves again (the old position + a bit): give the sound back.
@@ -797,6 +808,7 @@ fun PlayerView(
     // Restarts the video output (new decoder + vout) at the current moment: the cure for a picture that froze while
     // the sound and the clock go on (seen after leaving fullscreen: the video surface was resized under VLC).
     fun restartVideo() {
+        PlayerLog.write("restart video output at ${time / 1000}s")
         vlc {
             val id = mp.video().track()
             if (id >= 0) { mp.video().setTrack(-1); mp.video().setTrack(id) }
@@ -807,6 +819,7 @@ fun PlayerView(
     LaunchedEffect(currentUrl) {
         var lastPlayed = -1L; var silent = 0; var fixes = 0; var silentFrom = 0L
         var lastPics = -1L; var frozen = 0; var picsFrom = 0L; var lastVideoFix = 0L; var moving = 0
+        var slow = 0; var slowFixes = 0; var lastTick = 0L; var lastTickPics = -1L; var lastTickTime = 0L
         while (true) {
             delay(2000)
             if (!playing || pausedAt > 0 || status?.startsWith("Буфер") == true) { silent = 0; frozen = 0; continue }
@@ -817,6 +830,26 @@ fun PlayerView(
             val (stats, tr, videoTracks) = st
             if (stats == null) continue
             val t = time
+            // Choppy picture (~5 fps): the decoder fell behind after a stall and does not catch up. The film's own frame
+            // rate vs. pictures really shown over the last 2 s of film time; 6 s of that → restart the video output
+            // (new decoder at the current moment); still choppy → reopen the film with a fresh disk reserve (what
+            // "another film and back" did by hand).
+            run {
+                val now = System.currentTimeMillis()
+                val expected = withContext(vlcThread) { (call(mp.video(), "fps") as? Number)?.toDouble() ?: 0.0 }
+                val dTime = t - lastTickTime
+                if (lastTickPics >= 0 && stats.third > 0 && expected >= 15 && dTime in 1500..4000) {
+                    val shown = (stats.third - lastTickPics) * 1000.0 / dTime
+                    if (shown < expected * 0.45) slow++ else { slow = 0; if (shown > expected * 0.8) slowFixes = 0 }
+                    if (slow >= 3 && slowFixes < 2) {
+                        slow = 0; slowFixes++
+                        PlayerLog.write("choppy picture: %.1f of %.1f fps at ${t / 1000}s, fix #$slowFixes".format(shown, expected))
+                        if (slowFixes == 1) restartVideo()
+                        else { flash("Восстанавливаем картинку…", "Восстанав"); BurstProxy.keepOnly(emptyList()); reopen(time) }
+                    }
+                }
+                lastTick = now; lastTickPics = stats.third; lastTickTime = t
+            }
             // Frozen picture: the clock moved on by 3 s and more, not one new picture was shown.
             // (only for a picture that did move before — not a still cover image — and when VLC gives statistics)
             if (videoTracks > 0 && stats.third > 0) {
@@ -839,7 +872,7 @@ fun PlayerView(
                 vlc { mp.audio().setMute(false); mp.audio().setVolume(v) }
                 if (tr.first == -1) ensureAudio()
                 pauseMuted = false
-            } else { flash("Восстанавливаем звук…", "Восстанав"); reopen(time) }
+            } else { flash("Восстанавливаем звук…", "Восстанав"); PlayerLog.write("silent film at ${t / 1000}s: reopen"); reopen(time) }
         }
     }
     // Right after entering / leaving fullscreen: check quickly that the picture still moves.
@@ -884,7 +917,8 @@ fun PlayerView(
             infoText = withContext(vlcThread) { describePlayback(mp) } +
                 "  ·  скорость ${fmtRate(rate)}  ·  звук ${if (audioDelay > 0) "+" else ""}$audioDelay мс  ·  субтитры ${if (subDelay > 0) "+" else ""}$subDelay мс" +
                 (if (nightMode) "  ·  ночной режим" else "") + "  ·  буфер ${PlaybackSettings.cacheMs() / 1000.0} с" +
-                (BurstProxy.aheadMb(currentUrl)?.let { "  ·  запас на диске: %.0f МБ вперёд (из ${PlaybackSettings.burstMb()})".format(it) } ?: "  ·  без запаса (напрямую)")
+                (BurstProxy.aheadMb(currentUrl)?.let { "  ·  запас на диске: %.0f МБ вперёд (из ${PlaybackSettings.burstMb()})".format(it) } ?: "  ·  без запаса (напрямую)") +
+                "  ·  журнал: ${PlayerLog.file.absolutePath}"
             delay(1000)
         }
     }

@@ -123,6 +123,7 @@ object BurstProxy {
         @Synchronized fun windowFor(pos: Long): Window {
             windows.firstOrNull { pos >= it.validFrom() && pos <= it.end() + NEAR }?.let { return it }
             if (windows.size >= MAX_WINDOWS) windows.minByOrNull { it.lastReadAt }?.let { windows.remove(it); it.close() }
+            PlayerLog.write("reserve: new window at ${pos / 1048576} MB of ${url.substringBefore('?').substringAfterLast('/')}")
             return Window(this, pos).also { windows += it; pool.execute { it.download() } }
         }
 
@@ -194,6 +195,7 @@ object BurstProxy {
                     failures = 0
                 } catch (e: IOException) {
                     if (closed) return
+                    PlayerLog.write("reserve: request failed (${e.message}), attempt ${failures + 1}")
                     if (e is FatalUpstream) { synchronized(lock) { error = e.message; lock.notifyAll() }; return }
                     failures++
                     if (failures > 8) { synchronized(lock) { error = e.message ?: "network"; lock.notifyAll() }; return }

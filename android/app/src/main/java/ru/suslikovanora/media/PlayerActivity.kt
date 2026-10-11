@@ -656,9 +656,6 @@ class PlayerActivity : ComponentActivity() {
                 this,
                 arrayListOf(
                     "--avcodec-hw=any",
-                    // When decoding falls behind (right after a pause / seek), drop whole late frames instead of
-                    // half-decoding them — the half-decoded ones were the blocky artifacts.
-                    "--no-avcodec-hurry-up",
                     // 6 s of buffer rides out short mobile-network dips (4 s was sometimes too little for 4K).
                     "--network-caching=6000",
                     "--no-video-title-show",
