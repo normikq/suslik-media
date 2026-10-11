@@ -181,6 +181,17 @@ private fun readChapters(mp: MediaPlayer): List<Pair<Long, String>> {
     }.sortedBy { it.first }
 }
 
+/** (decoded audio blocks, audio buffers played, pictures shown) — null when this VLC gives no statistics. */
+private fun soundStats(mp: MediaPlayer): Triple<Long, Long, Long>? = runCatching {
+    val info = mp.media().info() ?: return null
+    val cls = Class.forName("uk.co.caprica.vlcj.media.MediaStatistics")
+    val st = cls.getDeclaredConstructor().newInstance()
+    info.javaClass.getMethod("statistics", cls).invoke(info, st)
+    fun n(vararg names: String): Long? = names.firstNotNullOfOrNull { (call(st, it) as? Number)?.toLong() }
+    Triple(n("decodedAudio", "audioDecoded") ?: return null, n("audioBuffersPlayed", "playedAudioBuffers") ?: return null,
+        n("picturesDisplayed", "displayedPictures") ?: 0L)
+}.getOrNull()
+
 /** One line for the info panel: picture, codecs, bitrate, dropped frames. Runs on the player thread. */
 private fun describePlayback(mp: MediaPlayer): String {
     val parts = ArrayList<String>()
@@ -683,7 +694,10 @@ fun PlayerView(
                     scope.launch { delay(1200); chapters = withContext(vlcThread) { readChapters(mp) } }
                 }
                 val v = volume; val m = userMuted || pauseMuted
-                vlc { mp.audio().setVolume(v); mp.audio().setMute(m) }
+                // Pause was pressed while the film was still opening: VLC ignores a pause then and starts anyway —
+                // the film ran on muted, with the "paused" state kept. Really pause it now.
+                if (pausedAt > 0) { playing = false; vlc { mp.audio().setMute(true); mp.controls().setPause(true) } }
+                else vlc { mp.audio().setVolume(v); mp.audio().setMute(m) }
             }
             override fun elementaryStreamAdded(p: MediaPlayer, type: uk.co.caprica.vlcj.media.TrackType, id: Int) = ui2 {
                 // A track appeared: re-check the remembered choice shortly after the burst of new tracks settles.
@@ -755,6 +769,30 @@ fun PlayerView(
     // About a minute before the end the next episode is "warmed up": the server gets its AllDebrid link ready (that
     // lookup is most of the wait when a new file starts) and the first megabytes of the video and voice-over are
     // fetched once. When the episode ends — or "Следующая" is pressed — the next one starts almost at once.
+    // Silent film: the picture moves but no sound comes out (the audio output failed to start — a headset was just
+    // switched, the device was busy — or the voice-over stopped delivering). Changing tracks did not help, only
+    // reopening did. Every 2 s while playing: no sound buffer played for ~6 s → first make sure nothing is muted and a
+    // real track is selected, then reopen the film at the same moment (at most twice per episode).
+    LaunchedEffect(currentUrl) {
+        var lastPlayed = -1L; var silent = 0; var fixes = 0
+        while (fixes < 3) {
+            delay(2000)
+            if (!playing || pausedAt > 0 || userMuted || volume == 0 || status?.startsWith("Буфер") == true) { silent = 0; continue }
+            val st = withContext(vlcThread) { soundStats(mp) to runCatching { mp.audio().track() to mp.audio().trackCount() }.getOrNull() }
+            val (stats, tr) = st
+            if (stats == null || tr == null || tr.second <= 0) continue
+            if (stats.second != lastPlayed) { lastPlayed = stats.second; silent = 0; continue }
+            if (stats.third <= 0 && stats.first <= 0) continue
+            if (++silent < 3) continue
+            silent = 0; fixes++
+            if (fixes == 1) {
+                val v = volume
+                vlc { mp.audio().setMute(false); mp.audio().setVolume(v) }
+                if (tr.first == -1) ensureAudio()
+                pauseMuted = false
+            } else { flash("Восстанавливаем звук…", "Восстанав"); reopen(time) }
+        }
+    }
     val warmed = remember { HashSet<Int>() }
     val nearEnd = length > 0 && length - time in 1..60_000L
     LaunchedEffect(index, nearEnd) {

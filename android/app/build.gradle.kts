@@ -49,8 +49,8 @@ android {
         applicationId = "ru.suslikovanora.media"
         minSdk = 24
         targetSdk = 35
-        versionCode = 20
-        versionName = "1.7.1"
+        versionCode = 21
+        versionName = "1.8.0"
 
         // Package native VLC libraries only for 64-bit ARM Android devices.
         ndk {

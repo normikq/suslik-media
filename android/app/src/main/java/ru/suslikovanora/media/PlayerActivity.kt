@@ -205,7 +205,7 @@ class PlayerActivity : ComponentActivity() {
                 val t = p.time
                 if (t == lastWatchTime) {
                     if (++watchStuckTicks >= WATCHDOG_STUCK_TICKS) { watchStuckTicks = 0; handleError() }
-                } else { lastWatchTime = t; watchStuckTicks = 0; checkPictureFrozen(p) }
+                } else { lastWatchTime = t; watchStuckTicks = 0; checkPictureFrozen(p); checkSoundAlive(p) }
             } else { watchStuckTicks = 0; frozenTicks = 0 }
             handler.postDelayed(this, WATCHDOG_TICK_MS)
         }
@@ -1294,6 +1294,34 @@ class PlayerActivity : ComponentActivity() {
         }
     }
 
+    // ---- silent film: picture moves, but no sound reaches the speaker -------------------------
+    // Seen when the audio output failed to start (Bluetooth just switched, audio busy in another app) or the chosen
+    // voice-over stopped delivering: track changes did not help, only opening the film again did. Now the player
+    // notices it by itself: first it re-selects a real audio track, then it reopens the stream at the same moment.
+    private var soundStatsUrl = ""
+    private var lastPlayedAudio = -1
+    private var silentTicks = 0
+    private var soundFixes = 0
+    private fun checkSoundAlive(p: MediaPlayer) {
+        if (soundStatsUrl != currentUrl) { soundStatsUrl = currentUrl; soundFixes = 0; silentTicks = 0; lastPlayedAudio = -1 }
+        if (soundFixes >= 2 || p.audioTracksCount <= 0 || p.volume == 0) { silentTicks = 0; return }
+        if (p.audioTrack == -1) {
+            // tracks exist but none is selected (Blu-ray .m2ts streams appear late): take the first real one
+            p.audioTracks?.firstOrNull { it.id != -1 }?.let { runCatching { p.setAudioTrack(it.id) }; selectedAudioId = it.id }
+            silentTicks = 0; return
+        }
+        val stats = runCatching { media?.stats }.getOrNull() ?: return
+        val played = stats.playedAbuffers
+        if (played != lastPlayedAudio) { lastPlayedAudio = played; silentTicks = 0; return }
+        if (stats.displayedPictures <= 0 && stats.decodedAudio <= 0) return // no statistics on this stream
+        if (++silentTicks < 3) return // ~6 s of moving picture without a single sound buffer
+        silentTicks = 0
+        soundFixes++
+        showStatus("Восстанавливаем звук…")
+        handler.postDelayed({ if (!buffering) bufferingLabel.visibility = View.GONE }, 2500L)
+        reconnect(forcePlay = true, startAt = perceivedPosition())
+    }
+
     private fun armQuickFreezeCheck() {
         if (freezeFixes >= 3) freezeFixes = 2 // a deliberate switch earns one more recovery attempt
         frozenTicks = 0
@@ -1605,6 +1633,9 @@ class PlayerActivity : ComponentActivity() {
         setIntent(intent)
         val url = intent.getStringExtra(EXTRA_URL)?.takeIf { it.isNotBlank() } ?: return
         if (url == currentUrl) return
+        // Another film chosen while this one was parked behind the lock screen / in the background: wake the player
+        // up first (receivers, video surface) without resuming the old film — the new one replaces it right below.
+        if (keptOnStop) { playOnStart = false; handler.removeCallbacks(idleReleaseRunnable); resumeAfterStop() }
         mediaPlayer?.let { persistPosition(perceivedPosition(), it.length) }
         currentUrl = url
         currentTitle = intent.getStringExtra(EXTRA_TITLE)?.ifBlank { "Видео" } ?: "Видео"
