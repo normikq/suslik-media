@@ -37,7 +37,7 @@ object BurstProxy {
     private const val PROBE_AHEAD = 2L shl 20      // before a window proves to be real playback
     private const val PROBE_LIMIT = 6L shl 20      // read sequentially this far = playback → bursts
     private const val CHUNK = 256 * 1024
-    private const val NEAR = 2L shl 20             // a request this close to a window's end joins it
+    private const val NEAR = 8L shl 20             // a request this close to a window's end joins it (the downloader gets there in a moment)
 
     private var dir: File? = null
     @Volatile private var server: ServerSocket? = null
@@ -100,12 +100,23 @@ object BurstProxy {
 
     fun clear() = keepOnly(emptyList())
 
+    /** The film is read through the local reserve right now (not directly from the mirror). */
+    fun isActive(url: String): Boolean = capBytes > 0 && byUrl[url]?.let { sources[it]?.broken == false } == true
+
+    /** For the info panel: MB downloaded ahead of the player in the window being read, or null when not in use. */
+    fun aheadMb(url: String): Double? {
+        val src = byUrl[url]?.let { sources[it] } ?: return null
+        val w = synchronized(src) { src.windows.maxByOrNull { it.lastReadAt } } ?: return 0.0
+        return (w.end() - w.readPos).coerceAtLeast(0L) / 1048576.0
+    }
+
     // ---- one stream (one original URL) ----------------------------------------------------------
     private class Source(val token: String, val url: String) {
         @Volatile var total = -1L
         @Volatile var type = "application/octet-stream"
         @Volatile var broken = false
-        val windows = ArrayList<Window>()
+        // Copy-on-write: the downloaders read it (current()) without the source's lock — no lock-order deadlock.
+        val windows = java.util.concurrent.CopyOnWriteArrayList<Window>()
         // consumption speed of the player (bytes/s), to size the bursts
         @Volatile var rate = 0.0
 
@@ -116,6 +127,9 @@ object BurstProxy {
         }
 
         @Synchronized fun close() { windows.forEach { it.close() }; windows.clear() }
+
+        /** The window the player read last: only it may download. */
+        fun current(): Window? = windows.maxByOrNull { it.lastReadAt }
     }
 
     // ---- a contiguous downloaded range, kept in a ring file ---------------------------------------
@@ -134,6 +148,12 @@ object BurstProxy {
         val lock = java.lang.Object()
 
         fun end() = start + written
+        /**
+         * The player jumped elsewhere (another window is being read now): stop filling this one. Before, it went on
+         * downloading its whole reserve at full speed and took half the bandwidth from the place the player jumped to —
+         * the main reason a seek beyond the reserve took long.
+         */
+        fun abandoned() = System.currentTimeMillis() - lastReadAt > 1500 && src.current() !== this
         fun validFrom() = start + maxOf(0L, written - CAP)
         private fun burst() = sequential >= PROBE_LIMIT
 
@@ -158,7 +178,7 @@ object BurstProxy {
                 // Wait while there is enough ahead (or nobody has read for a minute: paused / abandoned window).
                 synchronized(lock) {
                     while (!closed && !eof) {
-                        val idle = System.currentTimeMillis() - lastReadAt > 60_000
+                        val idle = System.currentTimeMillis() - lastReadAt > 60_000 || abandoned()
                         if (!idle && end() - readPos < low()) break
                         lock.wait(1000)
                     }
@@ -204,6 +224,7 @@ object BurstProxy {
                 val input: InputStream = input0
                 val buf = ByteArray(CHUNK)
                 while (!closed) {
+                    if (abandoned()) return
                     if (end() - readPos >= high()) {
                         // Burst done: enough ahead → close the connection, let the radio sleep.
                         if (burst()) return

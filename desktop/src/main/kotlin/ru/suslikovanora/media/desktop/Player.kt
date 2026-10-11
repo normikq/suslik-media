@@ -505,12 +505,19 @@ fun PlayerView(
         val wasPaused = pausedAt > 0 || vlcPaused
         if (!wasPaused) {
             playing = false; pausedAt = System.currentTimeMillis()
-            // VLC's pause is a request to its stream thread, which may be busy reading the network for a moment: the
-            // sound would play on until it gets there. Muting the output first takes effect at once.
-            pauseMuted = true
-            vlc { mp.audio().setMute(true); mp.controls().setPause(true) }
+            // Picture and sound stop together: VLC pauses both at the same moment. Muting first (as before) cut the
+            // sound while the picture still ran on for a moment. Only if VLC has not paused within 300 ms (its input
+            // stuck on a slow network read — possible without the disk reserve) is the sound cut by muting.
+            vlc { mp.controls().setPause(true) }
+            scope.launch {
+                delay(300)
+                if (pausedAt > 0 && !vlcPaused) { pauseMuted = true; vlc { mp.audio().setMute(true) } }
+            }
         } else {
-            val longPause = pausedAt > 0 && System.currentTimeMillis() - pausedAt > 8_000L
+            // Directly from the mirror, a long pause lets the video and an external voice-over drift apart (or the server
+            // closes the connection), so a re-seek restarts them together. Through the disk reserve both continue from
+            // the local copy in step — no re-seek, no 10–20 s wait for a new buffer.
+            val longPause = pausedAt > 0 && System.currentTimeMillis() - pausedAt > 8_000L && !BurstProxy.isActive(currentUrl)
             playing = true; pausedAt = 0L; vlcPaused = false; resumeFrom = time
             vlc {
                 mp.controls().setPause(false)
@@ -779,17 +786,45 @@ fun PlayerView(
     // switched, the device was busy — or the voice-over stopped delivering). Changing tracks did not help, only
     // reopening did. Every 2 s while playing: no sound buffer played for ~6 s → first make sure nothing is muted and a
     // real track is selected, then reopen the film at the same moment (at most twice per episode).
+    // Restarts the video output (new decoder + vout) at the current moment: the cure for a picture that froze while
+    // the sound and the clock go on (seen after leaving fullscreen: the video surface was resized under VLC).
+    fun restartVideo() {
+        vlc {
+            val id = mp.video().track()
+            if (id >= 0) { mp.video().setTrack(-1); mp.video().setTrack(id) }
+            val t = mp.status().time()
+            if (t > 0) mp.controls().setTime(t)
+        }
+    }
     LaunchedEffect(currentUrl) {
-        var lastPlayed = -1L; var silent = 0; var fixes = 0
-        while (fixes < 3) {
+        var lastPlayed = -1L; var silent = 0; var fixes = 0; var silentFrom = 0L
+        var lastPics = -1L; var frozen = 0; var picsFrom = 0L; var lastVideoFix = 0L; var moving = 0
+        while (true) {
             delay(2000)
-            if (!playing || pausedAt > 0 || userMuted || volume == 0 || status?.startsWith("Буфер") == true) { silent = 0; continue }
-            val st = withContext(vlcThread) { soundStats(mp) to runCatching { mp.audio().track() to mp.audio().trackCount() }.getOrNull() }
-            val (stats, tr) = st
-            if (stats == null || tr == null || tr.second <= 0) continue
+            if (!playing || pausedAt > 0 || status?.startsWith("Буфер") == true) { silent = 0; frozen = 0; continue }
+            val st = withContext(vlcThread) {
+                Triple(soundStats(mp), runCatching { mp.audio().track() to mp.audio().trackCount() }.getOrNull(),
+                    runCatching { mp.video().trackCount() }.getOrDefault(0))
+            }
+            val (stats, tr, videoTracks) = st
+            if (stats == null) continue
+            val t = time
+            // Frozen picture: the clock moved on by 3 s and more, not one new picture was shown.
+            // (only for a picture that did move before — not a still cover image — and when VLC gives statistics)
+            if (videoTracks > 0 && stats.third > 0) {
+                if (stats.third != lastPics) { if (lastPics >= 0) moving++; lastPics = stats.third; frozen = 0; picsFrom = t }
+                else if (moving < 3) frozen = 0
+                else if (++frozen >= 2 && t - picsFrom >= 3000 && System.currentTimeMillis() - lastVideoFix > 20_000) {
+                    frozen = 0; lastVideoFix = System.currentTimeMillis(); restartVideo()
+                }
+            }
+            // Silent film (see above). Only counts while the clock really runs — after a seek or a pause VLC waits for
+            // its buffer without playing anything, which is not silence (that false alarm reopened the film).
+            if (userMuted || volume == 0 || tr == null || tr.second <= 0 || fixes >= 3) { silent = 0; continue }
             if (stats.second != lastPlayed) { lastPlayed = stats.second; silent = 0; continue }
             if (stats.third <= 0 && stats.first <= 0) continue
-            if (++silent < 3) continue
+            if (silent == 0) silentFrom = t
+            if (++silent < 3 || t - silentFrom < 4000) continue
             silent = 0; fixes++
             if (fixes == 1) {
                 val v = volume
@@ -798,6 +833,15 @@ fun PlayerView(
                 pauseMuted = false
             } else { flash("Восстанавливаем звук…", "Восстанав"); reopen(time) }
         }
+    }
+    // Right after entering / leaving fullscreen: check quickly that the picture still moves.
+    LaunchedEffect(win.placement) {
+        if (!started) return@LaunchedEffect
+        delay(1500)
+        val a = withContext(vlcThread) { soundStats(mp)?.third } ?: return@LaunchedEffect
+        delay(900)
+        val b = withContext(vlcThread) { soundStats(mp)?.third } ?: return@LaunchedEffect
+        if (playing && pausedAt == 0L && a > 0 && a == b) restartVideo()
     }
     val warmed = remember { HashSet<Int>() }
     val nearEnd = length > 0 && length - time in 1..60_000L
@@ -832,7 +876,7 @@ fun PlayerView(
             infoText = withContext(vlcThread) { describePlayback(mp) } +
                 "  ·  скорость ${fmtRate(rate)}  ·  звук ${if (audioDelay > 0) "+" else ""}$audioDelay мс  ·  субтитры ${if (subDelay > 0) "+" else ""}$subDelay мс" +
                 (if (nightMode) "  ·  ночной режим" else "") + "  ·  буфер ${PlaybackSettings.cacheMs() / 1000.0} с" +
-                (if (PlaybackSettings.burstMb() > 0) "  ·  запас на диске ${PlaybackSettings.burstMb()} МБ" else "")
+                (BurstProxy.aheadMb(currentUrl)?.let { "  ·  запас на диске: %.0f МБ вперёд (из ${PlaybackSettings.burstMb()})".format(it) } ?: "  ·  без запаса (напрямую)")
             delay(1000)
         }
     }

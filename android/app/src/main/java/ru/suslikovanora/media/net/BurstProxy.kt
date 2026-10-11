@@ -107,7 +107,8 @@ object BurstProxy {
         @Volatile var total = -1L
         @Volatile var type = "application/octet-stream"
         @Volatile var broken = false
-        val windows = ArrayList<Window>()
+        // Copy-on-write: the downloaders read it (current()) without the source's lock — no lock-order deadlock.
+        val windows = java.util.concurrent.CopyOnWriteArrayList<Window>()
         // consumption speed of the player (bytes/s), to size the bursts
         @Volatile var rate = 0.0
 
@@ -118,6 +119,9 @@ object BurstProxy {
         }
 
         @Synchronized fun close() { windows.forEach { it.close() }; windows.clear() }
+
+        /** The window the player read last: only it may download. */
+        fun current(): Window? = windows.maxByOrNull { it.lastReadAt }
     }
 
     // ---- a contiguous downloaded range, kept in a ring file ---------------------------------------
@@ -136,6 +140,12 @@ object BurstProxy {
         val lock = java.lang.Object()
 
         fun end() = start + written
+        /**
+         * The player jumped elsewhere (another window is being read now): stop filling this one. Before, it went on
+         * downloading its whole reserve at full speed and took half the bandwidth from the place the player jumped to —
+         * the main reason a seek beyond the reserve took long.
+         */
+        fun abandoned() = System.currentTimeMillis() - lastReadAt > 1500 && src.current() !== this
         fun validFrom() = start + maxOf(0L, written - CAP)
         private fun burst() = sequential >= PROBE_LIMIT
 
@@ -160,7 +170,7 @@ object BurstProxy {
                 // Wait while there is enough ahead (or nobody has read for a minute: paused / abandoned window).
                 synchronized(lock) {
                     while (!closed && !eof) {
-                        val idle = System.currentTimeMillis() - lastReadAt > 60_000
+                        val idle = System.currentTimeMillis() - lastReadAt > 60_000 || abandoned()
                         if (!idle && end() - readPos < low()) break
                         lock.wait(1000)
                     }
@@ -202,6 +212,7 @@ object BurstProxy {
                 val input: InputStream = res.body?.byteStream() ?: throw IOException("no body")
                 val buf = ByteArray(CHUNK)
                 while (!closed) {
+                    if (abandoned()) return
                     if (end() - readPos >= high()) {
                         // Burst done: enough ahead → close the connection, let the radio sleep.
                         if (burst()) return
