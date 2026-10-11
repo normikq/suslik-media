@@ -1,0 +1,332 @@
+package ru.suslikovanora.media.net
+
+import android.content.Context
+import okhttp3.Call
+import okhttp3.Request
+import java.io.BufferedInputStream
+import java.io.File
+import java.io.IOException
+import java.io.InputStream
+import java.io.OutputStream
+import java.io.RandomAccessFile
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.net.Socket
+import java.net.URLEncoder
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
+
+/**
+ * «Экономная загрузка»: a tiny HTTP server on the phone itself (127.0.0.1) between VLC and the mirror.
+ *
+ * VLC reads a stream as it plays: a few hundred KB every moment, so the radio (mobile data or Wi-Fi) never gets to
+ * sleep during a film — one of the biggest battery costs of streaming. Here the film is fetched in bursts instead:
+ * as fast as the network allows up to ~1.5–2 minutes ahead (kept in a file in the app's cache), then the connection
+ * is closed and the radio can idle until the reserve runs low. VLC reads from the local copy and notices nothing.
+ *
+ * A side effect: VLC only ever talks to localhost, so a dropped mobile connection or a Wi-Fi ↔ mobile switch no
+ * longer leaves it waiting on a dead socket — the downloader simply reconnects and continues where it stopped.
+ *
+ * Seeks are cheap: a request far from what is already downloaded opens a new "window" at that place (short probe
+ * reads, e.g. MKV indexes at the end of a file, are served without bursting). Disk use is capped per window.
+ */
+object BurstProxy {
+    private const val CAP = 160L shl 20            // ring file per window
+    private const val MAX_WINDOWS = 3              // per stream
+    private const val PROBE_AHEAD = 2L shl 20      // before a window proves to be real playback
+    private const val PROBE_LIMIT = 6L shl 20      // read sequentially this far = playback → bursts
+    private const val CHUNK = 256 * 1024
+    private const val NEAR = 2L shl 20             // a request this close to a window's end joins it
+
+    private var dir: File? = null
+    @Volatile private var server: ServerSocket? = null
+    private val pool = Executors.newCachedThreadPool { r -> Thread(r, "burst-proxy").apply { isDaemon = true; priority = Thread.NORM_PRIORITY - 1 } }
+    private val sources = ConcurrentHashMap<String, Source>()   // token -> source
+    private val byUrl = ConcurrentHashMap<String, String>()     // original url -> token
+    private val ids = AtomicLong()
+
+    /** Once per process. Leftovers of a previous run are removed. */
+    @Synchronized fun init(ctx: Context) {
+        if (dir != null) return
+        val d = File(ctx.applicationContext.cacheDir, "stream")
+        runCatching { d.deleteRecursively(); d.mkdirs() }
+        dir = d
+    }
+
+    @Synchronized private fun ensureServer(): ServerSocket? {
+        server?.takeIf { !it.isClosed }?.let { return it }
+        return runCatching {
+            ServerSocket(0, 16, InetAddress.getByName("127.0.0.1")).also { s ->
+                server = s
+                pool.execute {
+                    while (!s.isClosed) {
+                        val c = runCatching { s.accept() }.getOrNull() ?: break
+                        pool.execute { serve(c) }
+                    }
+                }
+            }
+        }.getOrNull()
+    }
+
+    /**
+     * The address VLC should open for [url]: the local proxy, or [url] itself when the proxy cannot be used
+     * (not an https stream, not enough free space, server could not start).
+     */
+    fun wrap(url: String): String {
+        val d = dir ?: return url
+        if (!url.startsWith("https://")) return url
+        if (runCatching { d.usableSpace }.getOrDefault(0L) < (CAP * MAX_WINDOWS + (300L shl 20))) return url
+        val s = ensureServer() ?: return url
+        val token = byUrl.getOrPut(url) {
+            val t = UUID.randomUUID().toString().replace("-", "")
+            sources[t] = Source(t, url)
+            t
+        }
+        if (sources[token]?.broken == true) return url // this stream did not work through the proxy: go direct
+        val name = url.substringBefore('?').substringAfterLast('/').ifBlank { "stream" }
+        return "http://127.0.0.1:${s.localPort}/s/$token/${URLEncoder.encode(java.net.URLDecoder.decode(name, "UTF-8"), "UTF-8").replace("+", "%20")}"
+    }
+
+    /** Streams that are no longer needed (another episode, player closed): stop downloading, delete their files. */
+    fun keepOnly(urls: Collection<String>) {
+        val keep = urls.toSet()
+        for ((url, token) in byUrl.entries.toList()) if (url !in keep) {
+            byUrl.remove(url); sources.remove(token)?.close()
+        }
+    }
+
+    fun clear() = keepOnly(emptyList())
+
+    // ---- one stream (one original URL) ----------------------------------------------------------
+    private class Source(val token: String, val url: String) {
+        @Volatile var total = -1L
+        @Volatile var type = "application/octet-stream"
+        @Volatile var broken = false
+        val windows = ArrayList<Window>()
+        // consumption speed of the player (bytes/s), to size the bursts
+        @Volatile var rate = 0.0
+
+        @Synchronized fun windowFor(pos: Long): Window {
+            windows.firstOrNull { pos >= it.validFrom() && pos <= it.end() + NEAR }?.let { return it }
+            if (windows.size >= MAX_WINDOWS) windows.minByOrNull { it.lastReadAt }?.let { windows.remove(it); it.close() }
+            return Window(this, pos).also { windows += it; pool.execute { it.download() } }
+        }
+
+        @Synchronized fun close() { windows.forEach { it.close() }; windows.clear() }
+    }
+
+    // ---- a contiguous downloaded range, kept in a ring file ---------------------------------------
+    private class Window(val src: Source, val start: Long) {
+        private val file = File(dir, "${ids.incrementAndGet()}.bin")
+        private val raf = RandomAccessFile(file, "rw")
+        var written = 0L            // bytes from [start] available (contiguous)
+        var readPos = start         // where the player reads now
+        var sequential = 0L         // bytes read in order (decides probe → burst)
+        var lastReadAt = System.currentTimeMillis()
+        var eof = false
+        var error: String? = null
+        @Volatile var closed = false
+        @Volatile var call: Call? = null
+        val lock = java.lang.Object()
+
+        fun end() = start + written
+        fun validFrom() = start + maxOf(0L, written - CAP)
+        private fun burst() = sequential >= PROBE_LIMIT
+
+        /** How far ahead to fill, and when to start again (radio wakes up). Sized by the film's bitrate. */
+        private fun high(): Long = if (!burst()) PROBE_AHEAD else
+            (src.rate * 110).toLong().coerceIn(24L shl 20, CAP - (16L shl 20))
+        private fun low(): Long = if (!burst()) PROBE_AHEAD / 2 else
+            (src.rate * 25).toLong().coerceIn(6L shl 20, high() / 2)
+
+        fun close() {
+            closed = true
+            runCatching { call?.cancel() }
+            synchronized(lock) { lock.notifyAll() }
+            runCatching { raf.close() }; runCatching { file.delete() }
+        }
+
+        fun download() {
+            var failures = 0
+            while (!closed) {
+                // Wait while there is enough ahead (or nobody has read for a minute: paused / abandoned window).
+                synchronized(lock) {
+                    while (!closed && !eof) {
+                        val idle = System.currentTimeMillis() - lastReadAt > 60_000
+                        if (!idle && end() - readPos < low()) break
+                        lock.wait(1000)
+                    }
+                }
+                if (closed || eof) return
+                try {
+                    fetch()
+                    failures = 0
+                } catch (e: IOException) {
+                    if (closed) return
+                    if (e is FatalUpstream) { synchronized(lock) { error = e.message; lock.notifyAll() }; return }
+                    failures++
+                    if (failures > 8) { synchronized(lock) { error = e.message ?: "network"; lock.notifyAll() }; return }
+                    Thread.sleep(minOf(8_000L, 500L shl minOf(failures, 4)))
+                }
+            }
+        }
+
+        /** One burst: from [end] until [high] bytes are ready ahead of the player (or the file ends). */
+        private fun fetch() {
+            val from = end()
+            if (src.total in 0..from) { synchronized(lock) { eof = true; lock.notifyAll() }; return }
+            val req = Request.Builder().url(src.url).header("Range", "bytes=$from-").header("Accept-Encoding", "identity").build()
+            val c = Api.plain.newCall(req); call = c
+            c.execute().use { res ->
+                when {
+                    res.code == 416 -> { synchronized(lock) { eof = true; lock.notifyAll() }; return }
+                    res.code == 200 && from > 0 -> { src.broken = true; throw FatalUpstream("no ranges") }
+                    res.code in 400..499 -> throw FatalUpstream("HTTP ${res.code}")
+                    !res.isSuccessful -> throw IOException("HTTP ${res.code}")
+                }
+                res.header("Content-Type")?.let { src.type = it }
+                if (src.total < 0) {
+                    val cr = res.header("Content-Range")
+                    src.total = cr?.substringAfterLast('/')?.toLongOrNull()
+                        ?: res.body?.contentLength()?.takeIf { it >= 0 }?.let { it + from } ?: -1L
+                }
+                synchronized(lock) { lock.notifyAll() }
+                val input: InputStream = res.body?.byteStream() ?: throw IOException("no body")
+                val buf = ByteArray(CHUNK)
+                while (!closed) {
+                    if (end() - readPos >= high()) {
+                        // Burst done: enough ahead → close the connection, let the radio sleep.
+                        if (burst()) return
+                        // Still probing (start-up, index reads): keep the connection, wait for the player a little.
+                        synchronized(lock) {
+                            val t = System.currentTimeMillis()
+                            while (!closed && end() - readPos >= high() && System.currentTimeMillis() - t < 10_000) lock.wait(300)
+                        }
+                        if (closed || end() - readPos >= high()) return
+                    }
+                    val n = input.read(buf)
+                    if (n < 0) { synchronized(lock) { eof = true; lock.notifyAll() }; return }
+                    synchronized(lock) {
+                        if (closed) return
+                        ringWrite(end(), buf, n)
+                        written += n
+                        lock.notifyAll()
+                    }
+                }
+            }
+        }
+
+        private fun ringWrite(abs: Long, buf: ByteArray, n: Int) {
+            var off = 0
+            var pos = abs
+            while (off < n) {
+                val at = (pos - start) % CAP
+                val len = minOf((n - off).toLong(), CAP - at).toInt()
+                raf.seek(at); raf.write(buf, off, len)
+                off += len; pos += len
+            }
+        }
+
+        /** Copies up to [max] bytes at [abs] into [buf]; waits for the downloader when needed. -1 = nothing more. */
+        fun read(abs: Long, buf: ByteArray, max: Int): Int {
+            synchronized(lock) {
+                val waitStart = System.currentTimeMillis()
+                while (!closed && abs >= end() && !eof && error == null) {
+                    readPos = abs; lastReadAt = System.currentTimeMillis(); lock.notifyAll()
+                    if (System.currentTimeMillis() - waitStart > 45_000) return -1
+                    lock.wait(500)
+                }
+                if (closed || abs >= end() || abs < validFrom()) return -1
+                val n = minOf(max.toLong(), end() - abs).toInt()
+                var off = 0; var pos = abs
+                while (off < n) {
+                    val at = (pos - start) % CAP
+                    val len = minOf((n - off).toLong(), CAP - at).toInt()
+                    raf.seek(at); raf.readFully(buf, off, len)
+                    off += len; pos += len
+                }
+                return n
+            }
+        }
+
+        fun consumed(abs: Long, n: Int) {
+            synchronized(lock) {
+                if (abs == readPos) sequential += n
+                readPos = abs + n; lastReadAt = System.currentTimeMillis(); lock.notifyAll()
+            }
+        }
+    }
+
+    private class FatalUpstream(msg: String) : IOException(msg)
+
+    // ---- the local HTTP side (what VLC talks to) --------------------------------------------------
+    private fun serve(sock: Socket) {
+        sock.use { s ->
+            runCatching {
+                s.soTimeout = 60_000
+                val input = BufferedInputStream(s.getInputStream())
+                val requestLine = readLine(input) ?: return
+                var range: String? = null
+                while (true) {
+                    val h = readLine(input) ?: return
+                    if (h.isEmpty()) break
+                    if (h.startsWith("range:", ignoreCase = true)) range = h.substringAfter(':').trim()
+                }
+                val parts = requestLine.split(' ')
+                val method = parts.getOrNull(0).orEmpty()
+                val token = parts.getOrNull(1)?.removePrefix("/s/")?.substringBefore('/').orEmpty()
+                val src = sources[token]
+                val out = s.getOutputStream()
+                if (src == null || (method != "GET" && method != "HEAD")) { status(out, "404 Not Found"); return }
+                var from = 0L; var to = -1L
+                range?.removePrefix("bytes=")?.split('-')?.let { r ->
+                    from = r.getOrNull(0)?.toLongOrNull() ?: 0L
+                    to = r.getOrNull(1)?.toLongOrNull() ?: -1L
+                }
+                val w = src.windowFor(from)
+                // The length is known after the first upstream answer.
+                val waitStart = System.currentTimeMillis()
+                while (src.total < 0 && w.error == null && !src.broken && System.currentTimeMillis() - waitStart < 30_000) Thread.sleep(50)
+                if (src.total < 0) { status(out, "502 Bad Gateway"); return }
+                if (from >= src.total) { out.write("HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */${src.total}\r\nConnection: close\r\n\r\n".toByteArray()); return }
+                val last = if (to in from until src.total) to else src.total - 1
+                val head = StringBuilder()
+                head.append(if (range != null) "HTTP/1.1 206 Partial Content\r\n" else "HTTP/1.1 200 OK\r\n")
+                head.append("Content-Type: ${src.type}\r\nAccept-Ranges: bytes\r\nContent-Length: ${last - from + 1}\r\n")
+                if (range != null) head.append("Content-Range: bytes $from-$last/${src.total}\r\n")
+                head.append("Connection: close\r\n\r\n")
+                out.write(head.toString().toByteArray())
+                if (method == "HEAD") return
+                val buf = ByteArray(CHUNK)
+                var pos = from
+                val t0 = System.currentTimeMillis(); val p0 = from
+                while (pos <= last) {
+                    val n = w.read(pos, buf, minOf(CHUNK.toLong(), last - pos + 1).toInt())
+                    if (n <= 0) break
+                    out.write(buf, 0, n)
+                    w.consumed(pos, n)
+                    pos += n
+                    // bitrate of the film ≈ how fast the player takes data once it is past its start-up buffer
+                    val dt = System.currentTimeMillis() - t0
+                    if (dt > 20_000) src.rate = maxOf(src.rate * 0.7 + ((pos - p0) * 1000.0 / dt) * 0.3, 0.0)
+                }
+                out.flush()
+            }
+        }
+    }
+
+    private fun status(out: OutputStream, s: String) { out.write("HTTP/1.1 $s\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray()) }
+
+    private fun readLine(input: InputStream): String? {
+        val sb = StringBuilder()
+        while (true) {
+            val b = input.read()
+            if (b < 0) return if (sb.isEmpty()) null else sb.toString()
+            if (b == '\n'.code) return sb.toString().trimEnd('\r')
+            sb.append(b.toChar())
+            if (sb.length > 8192) return null
+        }
+    }
+}

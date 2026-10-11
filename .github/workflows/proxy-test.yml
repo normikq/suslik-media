@@ -1,0 +1,36 @@
+name: Burst proxy test
+
+# JVM test of android/.../net/BurstProxy.kt against a local Range server (no Android needed).
+on:
+  push:
+    paths: ["android/app/src/main/java/ru/suslikovanora/media/net/BurstProxy.kt", "android/tools/burstproxy-test/**", ".github/workflows/proxy-test.yml"]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: android/tools/burstproxy-test } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with: { distribution: temurin, java-version: "21" }
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: "8.10.2" }
+      - name: Prepare
+        run: |
+          sed 's#if (!url.startsWith("https://")) return url#if (!url.startsWith("http")) return url#' \
+            ../../app/src/main/java/ru/suslikovanora/media/net/BurstProxy.kt > src/main/kotlin/ru/suslikovanora/media/net/BurstProxy.kt
+          head -c 60000000 /dev/urandom > blob.bin
+          echo "MD5=$(md5sum blob.bin | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          (node origin.js blob.bin > origin.log 2>&1 &)
+          sleep 1
+      - name: Run
+        run: |
+          set -o pipefail
+          timeout 600 gradle -q run --args="http://127.0.0.1:3995/blob.bin?sig=x $MD5 60000000" 2>&1 | tee out.log
+      - name: Report
+        if: always()
+        run: |
+          grep -v "^w: " out.log | tail -30 | while IFS= read -r l; do echo "::notice::$l"; done
+          echo "::notice::origin requests: $(wc -l < origin.log)"
+          head -30 origin.log | while IFS= read -r l; do echo "::notice::origin $l"; done
