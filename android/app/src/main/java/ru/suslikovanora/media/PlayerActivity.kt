@@ -1453,6 +1453,7 @@ class PlayerActivity : ComponentActivity() {
         val card = nextCard.layoutParams as FrameLayout.LayoutParams
         if (full) {
             sp.height = -1; sp.topMargin = 0
+            videoLayout.layoutParams = (videoLayout.layoutParams as FrameLayout.LayoutParams).apply { width = -1; height = -1; gravity = Gravity.CENTER }
             infoPanel.visibility = View.GONE
             topBar.setPadding(dp(18) + i.left, dp(12) + i.top, dp(18) + i.right, dp(12))
             controls.setPadding(dp(20) + i.left, dp(12), dp(20) + i.right, dp(18) + i.bottom)
@@ -1467,6 +1468,11 @@ class PlayerActivity : ComponentActivity() {
             val w = root.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
             val h = w * 9 / 16
             sp.height = h; sp.topMargin = i.top
+            // VLC's own sizing (libVLC VideoHelper) swaps width and height when a wide area sits on a screen held
+            // upright — it took the 16:9 strip for a tall 9:16 one: the picture came out small and cut, «Заполнить»
+            // showed only its middle. A slightly-taller-than-wide video area avoids that swap; centred on the strip,
+            // the fitted picture lands exactly in it (the extra above/below is empty and clipped).
+            videoLayout.layoutParams = (videoLayout.layoutParams as FrameLayout.LayoutParams).apply { width = -1; height = w + dp(2); gravity = Gravity.CENTER }
             pp.topMargin = i.top + h
             panel.bottomInsetPx = i.bottom
             infoPanel.visibility = View.VISIBLE
@@ -1609,10 +1615,10 @@ class PlayerActivity : ComponentActivity() {
     private fun setScale(index: Int) {
         scaleIndex = index.coerceIn(0, SCALES.size - 1)
         uiPrefs.edit().putInt("scale", scaleIndex).apply()
-        runCatching { mediaPlayer?.setVideoScale(SCALES[scaleIndex].first) }
+        runCatching { mediaPlayer?.setVideoScale(shownScale()) }
         scaleButton.text = "⤢  ${SCALES[scaleIndex].second}"
         panel.scale = SCALES[scaleIndex].second
-        showSeekLabel("Кадр: ${SCALES[scaleIndex].second}")
+        showSeekLabel(if (isFull()) "Кадр: ${SCALES[scaleIndex].second}" else "Кадр на весь экран: ${SCALES[scaleIndex].second}")
     }
 
     // ---- gestures: horizontal = seek, left edge vertical = brightness, right = volume ----------

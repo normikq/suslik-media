@@ -14,10 +14,11 @@ class VersionsTest {
     }
 
     @Test fun channelVerdict() {
-        assertEquals(UpdateChannel.Verdict.Offer, UpdateChannel.verdict("2.0.1", "2.0.0"))
-        assertEquals(UpdateChannel.Verdict.Installed, UpdateChannel.verdict("2.0.1", "2.0.1"))
-        assertEquals(UpdateChannel.Verdict.Older, UpdateChannel.verdict("2.0.0", "2.0.1"))
-        assertEquals(UpdateChannel.Verdict.Nothing, UpdateChannel.verdict(null, "2.0.1"))
+        assertEquals(UpdateChannel.Verdict.Offer, UpdateChannel.verdict("2.0.1", "2.0.0", release = false))
+        assertEquals(UpdateChannel.Verdict.Installed, UpdateChannel.verdict("2.0.1", "2.0.1", release = true))
+        assertEquals(UpdateChannel.Verdict.Older, UpdateChannel.verdict("2.0.0", "2.0.1", release = false))
+        assertEquals(UpdateChannel.Verdict.Replace, UpdateChannel.verdict("1.9.5", "2.0.3", release = true))
+        assertEquals(UpdateChannel.Verdict.Nothing, UpdateChannel.verdict(null, "2.0.1", release = true))
     }
 }
 

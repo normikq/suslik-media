@@ -50,7 +50,9 @@ import java.net.http.HttpResponse
  * every 6 h); the installer is downloaded with the session cookie, started, and the app closes so it can be replaced.
  */
 object Updater {
-    data class Info(val version: String, val size: Long, val notes: String, val url: String, val file: String, val beta: Boolean = false)
+    /** [replace] = the release replacing a beta with a higher number (the installer cannot do that by itself). */
+    data class Info(val version: String, val size: Long, val notes: String, val url: String, val file: String, val beta: Boolean = false,
+                    val replace: Boolean = false)
 
     /** Shown as the breathing button in the header (null = up to date). */
     var available by mutableStateOf<Info?>(null)
@@ -75,7 +77,8 @@ object Updater {
         withContext(Dispatchers.IO) { cleanup() }
         val info = latest() ?: return null
         prefs.put("checkedAt", now.toString())
-        if (current == "0" || !isNewer(info.version, current)) return null // dev run without a version: never nag
+        if (current == "0") return null // dev run without a version: never nag
+        if (!UpdateChannel.offers(UpdateChannel.verdict(info.version, current, release = !PlaybackSettings.betaChannel()))) return null
         if (!force && prefs.get("skipped") == info.version) return null
         return info
     }
@@ -84,7 +87,9 @@ object Updater {
     suspend fun latest(): Info? {
         val j = runCatching { Api.get("/api/app/update?platform=desktop") }.getOrNull() ?: return null
         if (!j.optBoolean("available")) return null
-        return Info(j.optString("version"), j.optLong("size"), j.optString("notes"), j.optString("url"), j.optString("file"), j.optString("channel") == "beta")
+        val version = j.optString("version")
+        return Info(version, j.optLong("size"), j.optString("notes"), j.optString("url"), j.optString("file"), j.optString("channel") == "beta",
+            replace = !PlaybackSettings.betaChannel() && current != "0" && Versions.compare(version, current) < 0)
     }
 
     fun skip(version: String) = prefs.put("skipped", version)
@@ -113,8 +118,25 @@ object Updater {
     }
 
     /** Starts the installer and closes the app (Windows cannot replace files of a running program). */
-    fun installAndExit(file: File) {
-        val cmd = if (file.name.endsWith(".msi", true)) listOf("msiexec", "/i", file.absolutePath) else listOf(file.absolutePath)
+    fun installAndExit(file: File, replace: Boolean = false) {
+        val msi = file.name.endsWith(".msi", true)
+        val cmd = when {
+            // Windows Installer refuses to put a lower version over a higher one: the installed beta is removed first
+            // (settings, sign-in and progress live in %APPDATA% and stay), then the release is installed. Runs after the
+            // app has closed.
+            replace && msi -> {
+                val script = "Start-Sleep -Seconds 2\n" +
+                    "Get-ChildItem 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall' | Get-ItemProperty | " +
+                    "Where-Object { \$_.DisplayName -eq 'Suslik Media' } | ForEach-Object { " +
+                    "Start-Process msiexec -ArgumentList ('/x ' + \$_.PSChildName + ' /passive /norestart') -Wait }\n" +
+                    "Start-Process msiexec -ArgumentList ('/i \"' + '${file.absolutePath.replace("'", "''")}' + '\"')\n"
+                // Encoded: the script then needs no quoting on the command line (Windows argument quoting is fragile).
+                val encoded = java.util.Base64.getEncoder().encodeToString(script.toByteArray(Charsets.UTF_16LE))
+                listOf("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-EncodedCommand", encoded)
+            }
+            msi -> listOf("msiexec", "/i", file.absolutePath)
+            else -> listOf(file.absolutePath)
+        }
         ProcessBuilder(cmd).start()
         Thread.sleep(400)
         AppExit.finish()
@@ -177,7 +199,7 @@ fun UpdateButton() {
                 .hoverClick(src, enabled = !busy) {
                     Updater.error = null; Updater.progress = 0f
                     scope.launch {
-                        try { val f = Updater.download(i) { Updater.progress = it }; Updater.progress = 1f; Updater.installAndExit(f) }
+                        try { val f = Updater.download(i) { Updater.progress = it }; Updater.progress = 1f; Updater.installAndExit(f, i.replace) }
                         catch (e: Exception) { Updater.progress = null; Updater.error = Api.describe(e) }
                     }
                 }

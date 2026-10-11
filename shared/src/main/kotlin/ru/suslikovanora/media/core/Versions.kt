@@ -14,26 +14,29 @@ object Versions {
 }
 
 /**
- * «Канал обновлений» in the settings: what to tell after switching (or checking) the channel, the same in both apps.
- * A version older than the installed one cannot be put over it (Android refuses a lower version, the Windows
- * installer refuses a downgrade), so that case only explains when the release channel will catch up.
+ * «Канал обновлений», the same rule in both apps. Beta numbers are not tied to release numbers: on the release
+ * channel the current release always wins — any other installed version (a beta, even with a higher number) is
+ * replaced by it. On the beta channel only a newer version is offered.
  */
 object UpdateChannel {
-    enum class Verdict { Offer, Installed, Older, Nothing }
+    enum class Verdict { Offer, Replace, Installed, Older, Nothing }
 
-    fun verdict(remote: String?, installed: String): Verdict = when {
+    fun verdict(remote: String?, installed: String, release: Boolean): Verdict = when {
         remote.isNullOrBlank() -> Verdict.Nothing
         Versions.isNewer(remote, installed) -> Verdict.Offer
         Versions.compare(remote, installed) == 0 -> Verdict.Installed
+        release -> Verdict.Replace
         else -> Verdict.Older
     }
 
+    /** Should the update be offered at all (start-up check, the header button)? */
+    fun offers(v: Verdict) = v == Verdict.Offer || v == Verdict.Replace
+
     fun message(v: Verdict, remote: String?, installed: String, beta: Boolean): String = when (v) {
         Verdict.Offer -> "Доступна версия $remote" + (if (beta) " (бета)" else "") + "."
+        Verdict.Replace -> "Релиз $remote заменит установленную бету $installed."
         Verdict.Installed -> "Установлена актуальная " + (if (beta) "бета-версия" else "версия") + " $installed."
-        Verdict.Older -> if (beta) "Установлена $installed — она новее последней беты ($remote)."
-            else "Сейчас установлена бета $installed, а последний релиз — $remote (он старше). Поставить старую версию " +
-                "поверх новой система не даёт: обновление по релизному каналу придёт само, как только выйдет версия новее $installed."
+        Verdict.Older -> "Установлена $installed — она новее последней беты ($remote)."
         Verdict.Nothing -> "Не удалось проверить обновления — попробуйте позже."
     }
 }

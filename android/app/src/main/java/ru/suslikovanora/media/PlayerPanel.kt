@@ -75,7 +75,7 @@ fun PlayerInfoPanel(s: PlayerPanelState) {
             PanelChip("⛶  На весь экран", accent = true, onClick = s.onFull)
             PanelChip("♫  Аудио", onClick = s.onAudio)
             PanelChip("CC  Субтитры", onClick = s.onSubs)
-            PanelChip("⤢  ${s.scale}", onClick = s.onScale)
+            PanelChip("⤢  Весь экран: ${s.scale}", onClick = s.onScale)
             PanelChip("🔒  Блокировка", onClick = s.onLock)
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(Sm.line))

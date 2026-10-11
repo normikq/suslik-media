@@ -63,6 +63,8 @@ object PlaybackSettings {
     fun setBetaOn(on: Boolean) = store.put("beta_off", if (on) null else "1")
     /** The code that goes with requests: only while the beta channel is chosen. */
     fun sentBetaCode() = betaCode().takeIf { it.isNotBlank() && betaOn() }
+    /** The beta channel is really in use (chosen and a code saved); otherwise — the release channel. */
+    fun betaChannel() = sentBetaCode() != null
 
     /** The gear in the header opens the sheet (shown by Main over the library). */
     var open by mutableStateOf(false)
@@ -137,10 +139,13 @@ private fun ChannelSection() {
         scope.launch {
             val installed = Updater.current
             val info = Updater.latest()
-            val v = UpdateChannel.verdict(info?.version, installed)
-            state = UpdateChannel.message(v, info?.version, installed, info?.beta == true) +
-                if (v == UpdateChannel.Verdict.Offer) " Кнопка «Обновить» — в шапке, рядом с настройками." else ""
-            Updater.available = if (v == UpdateChannel.Verdict.Offer) info else null
+            val v = UpdateChannel.verdict(info?.version, installed, release = !PlaybackSettings.betaChannel())
+            state = UpdateChannel.message(v, info?.version, installed, info?.beta == true) + when (v) {
+                UpdateChannel.Verdict.Offer -> " Кнопка «Обновить» — в шапке, рядом с настройками."
+                UpdateChannel.Verdict.Replace -> " Кнопка «Обновить» — в шапке: бета удалится, настройки, вход и прогресс просмотра останутся."
+                else -> ""
+            }
+            Updater.available = if (UpdateChannel.offers(v)) info else null
         }
     }
     fun saveCode() {

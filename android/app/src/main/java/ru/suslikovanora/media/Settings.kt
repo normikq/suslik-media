@@ -66,6 +66,8 @@ object PlaybackSettings {
     /** «Канал обновлений»: false = Релиз (the code stays saved but is not sent, so only versions for everyone come). */
     fun betaOn(ctx: Context) = !prefs(ctx).getBoolean("beta_off", false)
     fun setBetaOn(ctx: Context, on: Boolean) = prefs(ctx).edit().putBoolean("beta_off", !on).apply()
+    /** The beta channel is really in use (chosen and a code saved); otherwise — the release channel. */
+    fun betaChannel(ctx: Context) = betaOn(ctx) && betaCode(ctx).isNotBlank()
 }
 
 /** «Настройки» over the main screen: the same card style and entrance as «Что нового». */
@@ -140,8 +142,13 @@ private fun ChannelSection() {
         scope.launch {
             val installed = Updater.currentVersion(ctx)
             val info = Updater.latest(ctx)
-            val v = UpdateChannel.verdict(info?.version, installed)
-            state = UpdateChannel.message(v, info?.version, installed, info?.beta == true)
+            val v = UpdateChannel.verdict(info?.version, installed, release = !PlaybackSettings.betaChannel(ctx))
+            state = if (v == UpdateChannel.Verdict.Replace)
+                // Android itself never installs a lower version code over a higher one (no app can override that).
+                "Релиз ${info?.version} заменит бету $installed, но Android не ставит версию с меньшим номером поверх " +
+                    "большей. Сейчас перейти можно только так: удалить приложение и установить релиз с сайта (вход и прогресс " +
+                    "на телефоне сбросятся). Или дождаться следующего релиза — он установится сам."
+            else UpdateChannel.message(v, info?.version, installed, info?.beta == true)
             if (v == UpdateChannel.Verdict.Offer) offer = info
         }
     }
