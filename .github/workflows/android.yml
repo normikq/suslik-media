@@ -16,7 +16,7 @@ jobs:
     defaults: { run: { working-directory: android } }
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with: { distribution: temurin, java-version: "17" }
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: "8.10.2" }
@@ -28,10 +28,22 @@ jobs:
             echo "SIGNING_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
             echo "HAS_KEY=1" >> "$GITHUB_ENV"
           fi
+      - name: Check the key alias
+        if: env.HAS_KEY == '1'
+        env:
+          STORE_PW: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          ALIAS=$(printf '%s' "$ALIAS" | tr -d '\r\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+          LIST=$(keytool -list -keystore "$SIGNING_KEYSTORE" -storepass "$STORE_PW" 2>&1) || { echo "::error::Keystore: $(echo "$LIST" | head -3 | tr '\n' ' ') — проверьте ANDROID_STORE_PASSWORD"; exit 1; }
+          FOUND=$(echo "$LIST" | grep -iE "PrivateKeyEntry" | cut -d, -f1)
+          echo "::notice::Ключи в keystore: $(echo $FOUND)"
+          if echo "$FOUND" | grep -qix "$ALIAS"; then USE="$ALIAS"
+          else USE=$(echo "$FOUND" | head -1); echo "::warning::Алиас из ANDROID_KEY_ALIAS не найден, используется '$USE'"; fi
+          echo "SIGNING_KEY_ALIAS=$USE" >> "$GITHUB_ENV"
       - name: Build
         env:
           SIGNING_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
-          SIGNING_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -o pipefail
