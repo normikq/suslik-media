@@ -674,35 +674,45 @@ try { fs.mkdirSync(UPDATES_DIR, { recursive: true }); } catch {}
 const UPDATE_KINDS = { android: /\.apk$/i, desktop: /\.(msi|exe)$/i };
 function versionOf(name) { const m = /(\d+)\.(\d+)\.(\d+)/.exec(name); return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null; }
 function cmpVersion(a, b) { for (let i = 0; i < 3; i++) if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) - (b[i] || 0); return 0; }
-function latestUpdate(platform) {
+// Бета-канал: updates/beta/. Его версии видят только устройства с кодом тестировщика (BETA_CODE в .env, вводится в
+// «Настройках» приложения). Проверили — POST /api/app/promote (или workflow «Promote beta») переносит её всем.
+const BETA_DIR = path.join(UPDATES_DIR, "beta");
+try { fs.mkdirSync(BETA_DIR, { recursive: true }); } catch {}
+function isTester(req) {
+  const code = process.env.BETA_CODE || "";
+  const given = String(req.get("X-Beta-Code") || "");
+  return !!code && given.length === code.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(code));
+}
+function latestUpdate(platform, dir = UPDATES_DIR) {
   const re = UPDATE_KINDS[platform]; if (!re) return null;
   let best = null;
-  for (const name of fs.readdirSync(UPDATES_DIR)) {
+  let names; try { names = fs.readdirSync(dir); } catch { return null; }
+  for (const name of names) {
     if (!re.test(name)) continue;
     const v = versionOf(name); if (!v) continue;
-    const full = path.join(UPDATES_DIR, name);
+    const full = path.join(dir, name);
     let st; try { st = fs.statSync(full); } catch { continue; }
     if (!st.isFile() || st.size === 0) continue;
     // при одинаковой версии msi предпочтительнее exe
     if (!best || cmpVersion(v, best.v) > 0 || (cmpVersion(v, best.v) === 0 && /\.msi$/i.test(name))) best = { v, name, full, size: st.size, at: st.mtimeMs };
   }
   if (!best) return null;
-  pruneOldUpdates(platform, best);
+  pruneOldUpdates(platform, best, dir);
   let notes = "";
   try { notes = fs.readFileSync(best.full.replace(/\.[^.]+$/, ".txt"), "utf8").slice(0, 4000).trim(); } catch {}
   return { ...best, version: best.v.join("."), notes };
 }
 // Остаётся только самая новая версия каждой платформы: старые .apk / .msi / .exe (и их .txt) удаляются —
 // сразу после загрузки новой и при первом же запросе после того, как файл подложили вручную (scp).
-function pruneOldUpdates(platform, best) {
+function pruneOldUpdates(platform, best, dir = UPDATES_DIR) {
   const re = UPDATE_KINDS[platform];
-  let names; try { names = fs.readdirSync(UPDATES_DIR); } catch { return; }
+  let names; try { names = fs.readdirSync(dir); } catch { return; }
   for (const name of names) {
     if (!re.test(name) || name === best.name) continue;
     const v = versionOf(name);
     // та же версия в другом формате (exe рядом с msi) тоже лишняя
     if (v && cmpVersion(v, best.v) > 0) continue;
-    const full = path.join(UPDATES_DIR, name);
+    const full = path.join(dir, name);
     fs.rm(full, { force: true }, err => { if (!err) console.log(`[updates] удалена старая версия: ${name}`); });
     const notes = full.replace(/\.[^.]+$/, ".txt");
     if (notes !== best.full.replace(/\.[^.]+$/, ".txt")) fs.rm(notes, { force: true }, () => {});
@@ -768,13 +778,21 @@ app.post("/api/app/changelog", (req, res) => {
 app.get("/api/app/update", requireLogin, apiLimiter, (req, res) => {
   const platform = String(req.query.platform || "");
   if (!UPDATE_KINDS[platform]) return res.status(400).json({ error: "platform: android | desktop" });
-  const u = latestUpdate(platform);
+  const stable = latestUpdate(platform);
+  // Тестировщик получает бету, если она новее того, что вышло для всех.
+  const beta = isTester(req) ? latestUpdate(platform, BETA_DIR) : null;
+  const u = beta && (!stable || cmpVersion(beta.v, stable.v) > 0) ? beta : stable;
   if (!u) return res.json({ available: false });
-  res.json({ available: true, version: u.version, size: u.size, notes: u.notes, file: u.name, publishedAt: Math.round(u.at),
-    url: `/api/app/download/${platform}/${encodeURIComponent(u.name)}` });
+  const ch = u === beta ? "beta" : "stable";
+  res.json({ available: true, channel: ch, version: u.version, size: u.size, notes: u.notes, file: u.name, publishedAt: Math.round(u.at),
+    url: `/api/app/download/${platform}/${encodeURIComponent(u.name)}${ch === "beta" ? "?ch=beta" : ""}` });
 });
+// Проверка кода тестировщика (поле в «Настройках»).
+app.get("/api/app/beta", requireLogin, apiLimiter, (req, res) => res.json({ tester: isTester(req) }));
 app.get("/api/app/download/:platform/:name", requireLogin, (req, res) => {
-  const u = latestUpdate(String(req.params.platform));
+  const beta = req.query.ch === "beta";
+  if (beta && !isTester(req)) return res.status(403).json({ error: "Бета-версии доступны только тестировщикам." });
+  const u = latestUpdate(String(req.params.platform), beta ? BETA_DIR : UPDATES_DIR);
   if (!u || u.name !== req.params.name) return res.status(404).json({ error: "Файл обновления не найден (возможно, уже вышла новее)." });
   res.setHeader("Cache-Control", "no-store");
   res.download(u.full, u.name, { dotfiles: "deny" }); // поддерживает Range: прерванная загрузка докачивается
@@ -788,21 +806,80 @@ app.post("/api/app/upload", (req, res) => {
   const name = path.basename(String(req.get("X-File-Name") || "")).replace(/[^\w .()+-]/g, "_").slice(0, 120);
   if (!name || !versionOf(name) || !Object.values(UPDATE_KINDS).some(re => re.test(name)))
     return res.status(400).json({ error: "X-File-Name: имя с версией и расширением .apk / .msi / .exe, например suslik-media-1.3.4.apk" });
-  const tmp = path.join(UPDATES_DIR, `.upload-${crypto.randomBytes(6).toString("hex")}`);
+  const dir = String(req.get("X-Channel") || "").toLowerCase() === "beta" ? BETA_DIR : UPDATES_DIR; // по умолчанию — всем
+  const tmp = path.join(dir, `.upload-${crypto.randomBytes(6).toString("hex")}`);
   const out = fs.createWriteStream(tmp);
   let size = 0; const LIMIT = 500 * 1024 * 1024;
   req.on("data", c => { size += c.length; if (size > LIMIT) { req.destroy(); out.destroy(); fs.rm(tmp, { force: true }, () => {}); } });
   req.pipe(out); // на диск потоком — без буфера в памяти
   out.on("finish", () => {
     if (size === 0 || size > LIMIT) { fs.rm(tmp, { force: true }, () => {}); return res.status(400).json({ error: "Пустой или слишком большой файл." }); }
-    fs.rename(tmp, path.join(UPDATES_DIR, name), err => {
+    fs.rename(tmp, path.join(dir, name), err => {
       if (err) return res.status(500).json({ error: err.message });
-      // сразу убрать прошлые версии этой платформы
-      for (const platform of Object.keys(UPDATE_KINDS)) if (UPDATE_KINDS[platform].test(name)) latestUpdate(platform);
-      res.json({ ok: true, file: name, size });
+      // сразу убрать прошлые версии этой платформы (в своём канале)
+      for (const platform of Object.keys(UPDATE_KINDS)) if (UPDATE_KINDS[platform].test(name)) latestUpdate(platform, dir);
+      res.json({ ok: true, file: name, size, channel: dir === BETA_DIR ? "beta" : "stable" });
     });
   });
   out.on("error", err => { fs.rm(tmp, { force: true }, () => {}); if (!res.headersSent) res.status(500).json({ error: err.message }); });
+});
+
+function updateTokenOk(req) {
+  const token = process.env.UPDATE_TOKEN || "";
+  const given = String(req.get("X-Update-Token") || "");
+  return !!token && given.length === token.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(token));
+}
+// Бета проверена → всем: файл из updates/beta/ переносится в updates/ (старая версия для всех удаляется).
+app.post("/api/app/promote", (req, res) => {
+  if (!updateTokenOk(req)) return res.status(403).json({ error: "Неверный X-Update-Token." });
+  const platform = String(req.query.platform || "");
+  if (!UPDATE_KINDS[platform]) return res.status(400).json({ error: "platform: android | desktop" });
+  const b = latestUpdate(platform, BETA_DIR);
+  if (!b) return res.status(404).json({ error: "В бета-канале нет версии для " + platform });
+  const dest = path.join(UPDATES_DIR, b.name);
+  try {
+    fs.renameSync(b.full, dest);
+    const notes = b.full.replace(/\.[^.]+$/, ".txt");
+    if (fs.existsSync(notes)) fs.renameSync(notes, dest.replace(/\.[^.]+$/, ".txt"));
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+  latestUpdate(platform); // убрать прошлую версию для всех
+  console.log(`[updates] ${b.name}: бета → всем`);
+  res.json({ ok: true, file: b.name, version: b.version });
+});
+
+// ---- Отчёты о сбоях: приложения присылают журнал сами (падение, перезапуск плеера, сработал сторож) ----
+// Хранятся в DATA_DIR/reports (последние 300). Читаются через GET /api/app/reports с X-Update-Token
+// (workflow «Crash reports» в GitHub показывает свежие отчёты).
+const REPORTS_DIR = path.join(DATA_DIR, "reports");
+try { fs.mkdirSync(REPORTS_DIR, { recursive: true }); } catch {}
+const reportLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 30, standardHeaders: "draft-7", legacyHeaders: false });
+app.post("/api/app/report", reportLimiter, express.text({ type: () => true, limit: "1mb" }), (req, res) => {
+  const platform = String(req.get("X-Platform") || "").replace(/[^a-z]/gi, "").slice(0, 12) || "unknown";
+  const version = String(req.get("X-App-Version") || "").replace(/[^\w.-]/g, "").slice(0, 20) || "0";
+  const kind = String(req.get("X-Report-Kind") || "report").replace(/[^\w-]/g, "").slice(0, 30) || "report";
+  const text = typeof req.body === "string" ? req.body : "";
+  if (!text.trim()) return res.status(400).json({ error: "Пустой отчёт." });
+  const name = `${Date.now()}-${platform}-${version}-${kind}-${crypto.randomBytes(3).toString("hex")}.txt`;
+  const device = readCookie(req, "sdev");
+  try {
+    fs.writeFileSync(path.join(REPORTS_DIR, name), `platform=${platform} version=${version} kind=${kind} device=${String(device).slice(0, 8)} ` +
+      `ua="${String(req.get("user-agent") || "").slice(0, 120)}"\n\n${text}`);
+    const all = fs.readdirSync(REPORTS_DIR).filter(n => n.endsWith(".txt")).sort();
+    for (const old of all.slice(0, Math.max(0, all.length - 300))) fs.rm(path.join(REPORTS_DIR, old), { force: true }, () => {});
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+  res.json({ ok: true });
+});
+app.get("/api/app/reports", (req, res) => {
+  if (!updateTokenOk(req)) return res.status(403).json({ error: "Неверный X-Update-Token." });
+  let names = [];
+  try { names = fs.readdirSync(REPORTS_DIR).filter(n => n.endsWith(".txt")).sort().reverse(); } catch {}
+  const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 10));
+  const tail = Math.min(200_000, Math.max(500, parseInt(req.query.tail, 10) || 6000));
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ total: names.length, reports: names.slice(0, limit).map(n => {
+    let text = ""; try { text = fs.readFileSync(path.join(REPORTS_DIR, n), "utf8"); } catch {}
+    return { name: n, at: Number(n.split("-")[0]) || 0, head: text.split("\n")[0], text: text.length > tail ? "…" + text.slice(-tail) : text };
+  }) });
 });
 
 app.get("/api/favorites", requireLogin, apiLimiter, (req, res) => {

@@ -9,6 +9,11 @@ on:
         description: "Выложить MSI на сайт (папка updates/)"
         type: boolean
         default: false
+      channel:
+        description: "Кому: beta — только тестировщику (по коду), stable — всем"
+        type: choice
+        options: [beta, stable]
+        default: beta
 
 jobs:
   build:
@@ -43,6 +48,7 @@ jobs:
         env: { UPDATE_TOKEN: "${{ secrets.UPDATE_TOKEN }}", SITE_URL: "${{ secrets.SITE_URL }}" }
         run: |
           curl -fsS -H "X-Update-Token: $UPDATE_TOKEN" -H "X-File-Name: $(basename "$MSI")" \
+               -H "X-Channel: ${{ inputs.channel || 'beta' }}" \
                -H "Content-Type: application/octet-stream" --data-binary @"$MSI" "$SITE_URL/api/app/upload"
           # «Что нового» этой сборки — на сайт (вкладка «Приложения»)
           curl -fsS -H "X-Update-Token: $UPDATE_TOKEN" -H "Content-Type: application/json" \

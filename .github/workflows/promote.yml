@@ -1,0 +1,24 @@
+name: Promote beta to everyone
+
+# Бета проверена на своём устройстве → одна кнопка: версия из бета-канала становится доступна всем.
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "Какую бету выпустить всем"
+        type: choice
+        options: [both, desktop, android]
+        default: both
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Promote
+        env: { UPDATE_TOKEN: "${{ secrets.UPDATE_TOKEN }}", SITE_URL: "${{ secrets.SITE_URL }}", P: "${{ inputs.platform }}" }
+        run: |
+          for p in desktop android; do
+            if [ "$P" != "both" ] && [ "$P" != "$p" ]; then continue; fi
+            r=$(curl -sS -w " HTTP %{http_code}" -X POST -H "X-Update-Token: $UPDATE_TOKEN" "$SITE_URL/api/app/promote?platform=$p")
+            echo "::notice::$p: $r"
+          done

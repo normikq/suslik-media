@@ -1,0 +1,26 @@
+name: Crash reports
+
+# Свежие отчёты о сбоях, которые приложения сами прислали на сервер (журнал плеера, падения).
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Сколько последних отчётов показать"
+        default: "8"
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch
+        env: { UPDATE_TOKEN: "${{ secrets.UPDATE_TOKEN }}", SITE_URL: "${{ secrets.SITE_URL }}", LIMIT: "${{ inputs.limit }}" }
+        run: |
+          curl -fsS -H "X-Update-Token: $UPDATE_TOKEN" "$SITE_URL/api/app/reports?limit=${LIMIT:-8}&tail=3500" > reports.json
+          python3 - <<'PY'
+          import json
+          d = json.load(open("reports.json"))
+          print(f"::notice::total reports on server: {d['total']}")
+          for r in d["reports"]:
+              text = r["text"].replace("\r", "").replace("%", "%25").replace("\n", "%0A")
+              print(f"::warning title={r['name']}::{text[-3500:]}")
+          PY
