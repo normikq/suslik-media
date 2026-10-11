@@ -78,7 +78,9 @@ fun WhatsNew(enabled: Boolean) {
     LaunchedEffect(enabled) {
         if (enabled && current != "0" && seenPrefs(ctx).getString("version", null) != current) {
             val list = Changelog.load(ctx, current)
-            if (list.isEmpty()) { markSeen(); return@LaunchedEffect } // nothing written for this version
+            // Nothing new to tell (a small fix without its own notes: the newest notes were already shown).
+            val last = seenPrefs(ctx).getString("version", null)
+            if (list.isEmpty() || (last != null && !Updater.isNewer(list.first().version, last))) { markSeen(); return@LaunchedEffect }
             delay(700) // the library appears first
             releases = list
         }
