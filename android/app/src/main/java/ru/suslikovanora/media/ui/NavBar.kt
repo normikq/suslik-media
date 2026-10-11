@@ -41,13 +41,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-enum class Tab(val label: String, val webTab: String?) {
-    Links("Ссылка", "links"),
-    Library("Библиотека", null),
-    Search("Поиск", "search")
+enum class Tab(val label: String) {
+    Links("Ссылка"),
+    Library("Библиотека"),
+    Search("Поиск")
 }
 
-/** The website's floating bottom bar with the amber "lens" that slides under the active tab. */
+/** Floating bottom bar (same look as the website's) with the amber "lens" that slides under the active tab. */
 @Composable
 fun NavBar(current: Tab, onSelect: (Tab) -> Unit, modifier: Modifier = Modifier) {
     Box(modifier.fillMaxWidth().padding(top = 6.dp, bottom = 8.dp), contentAlignment = Alignment.Center) {

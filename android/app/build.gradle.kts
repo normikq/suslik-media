@@ -49,8 +49,8 @@ android {
         applicationId = "ru.suslikovanora.media"
         minSdk = 24
         targetSdk = 35
-        versionCode = 16
-        versionName = "1.4.1"
+        versionCode = 17
+        versionName = "1.5.0"
 
         // Package native VLC libraries only for 64-bit ARM Android devices.
         ndk {
@@ -64,7 +64,6 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.10.0")
     implementation("androidx.fragment:fragment-ktx:1.8.9")
     // Origin-restricted JS bridge (addWebMessageListener) and document-start scripts.
-    implementation("androidx.webkit:webkit:1.12.1")
     // VLC engine: handles more containers/protocols than the platform player.
     implementation("org.videolan.android:libvlc-all:3.6.0")
 

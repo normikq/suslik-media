@@ -58,6 +58,12 @@ object Api {
 
     suspend fun get(path: String): JSONObject = call(Request.Builder().url(BASE + path).get().build())
 
+    /** Upload a .torrent file the way the site does (raw body, name in a header). */
+    suspend fun postTorrent(bytes: ByteArray, filename: String): JSONObject =
+        call(Request.Builder().url("$BASE/api/torrents")
+            .header("X-Torrent-Filename", java.net.URLEncoder.encode(filename, "UTF-8").replace("+", "%20"))
+            .post(bytes.toRequestBody("application/x-bittorrent".toMediaType())).build())
+
     suspend fun post(path: String, body: JSONObject? = null): JSONObject =
         call(Request.Builder().url(BASE + path).post((body?.toString() ?: "{}").toRequestBody(jsonType)).build())
 
