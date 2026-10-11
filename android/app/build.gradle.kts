@@ -62,6 +62,7 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.activity:activity-ktx:1.10.0")
+    implementation("androidx.fragment:fragment-ktx:1.8.9")
     // Origin-restricted JS bridge (addWebMessageListener) and document-start scripts.
     implementation("androidx.webkit:webkit:1.12.1")
     // VLC engine: handles more containers/protocols than the platform player.
