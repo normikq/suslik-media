@@ -27,7 +27,7 @@ dependencies {
 }
 
 // One place for the version: the installer, and the app itself (update check) via -Dsuslik.version.
-val appVersion = "1.5.0"
+val appVersion = "1.5.1"
 
 compose.desktop {
     application {
