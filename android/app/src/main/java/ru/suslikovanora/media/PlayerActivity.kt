@@ -71,7 +71,7 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var root: FrameLayout
     private lateinit var stage: FrameLayout            // the film + everything over it
     private lateinit var infoPanel: android.view.View   // below the film while the phone is upright
-    private lateinit var fullButton: TextView
+    private lateinit var fullButton: android.widget.ImageView
     private lateinit var optionsRow: LinearLayout
     private lateinit var centerRow: FrameLayout
     private var lastInsets = androidx.core.graphics.Insets.NONE
@@ -79,7 +79,7 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var videoLayout: VLCVideoLayout
     private lateinit var controls: LinearLayout
     private lateinit var topBar: LinearLayout
-    private lateinit var playPauseButton: TextView
+    private lateinit var playPauseButton: android.widget.ImageView
     private lateinit var seekBar: SeekBar
     private lateinit var timeLabel: TextView
     private lateinit var volumeBar: SeekBar
@@ -157,8 +157,8 @@ class PlayerActivity : ComponentActivity() {
     private var queue: List<Entry> = emptyList()
     private var queueIndex = -1
     private lateinit var titleView: TextView
-    private lateinit var prevButton: TextView
-    private lateinit var nextButton: TextView
+    private lateinit var prevButton: android.widget.ImageView
+    private lateinit var nextButton: android.widget.ImageView
 
     // Network handling: reload the stream in place (same LibVLC/activity) when the network changes.
     private var lastNetwork: Network? = null
@@ -262,7 +262,7 @@ class PlayerActivity : ComponentActivity() {
                 handler.postDelayed(stablePlaybackRunnable, STABLE_PLAYBACK_MS)
                 root.keepScreenOn = true
                 bufferingLabel.visibility = View.GONE
-                playPauseButton.text = "Ⅱ"
+                setPlayIcon(true)
                 startWatchdog()
                 applyVideoFrameRate(owner)
                 updatePipParams(playing = true)
@@ -285,7 +285,7 @@ class PlayerActivity : ComponentActivity() {
                 playWhenReady = false
                 root.keepScreenOn = false
                 updatePipParams(playing = false)
-                playPauseButton.text = "▶"
+                setPlayIcon(false)
                 updateProgress(force = true)
                 updateSession()
             }
@@ -307,7 +307,7 @@ class PlayerActivity : ComponentActivity() {
                         playWhenReady = false
                         playbackPosition = 0L
                         root.keepScreenOn = false
-                        playPauseButton.text = "▶"
+                        setPlayIcon(false)
                         showControlsTemporarily()
                     }
                 } else {
@@ -418,12 +418,11 @@ class PlayerActivity : ComponentActivity() {
             setPadding(dp(18), dp(12), dp(18), dp(12))
             background = gradient(intArrayOf(0xB8000000.toInt(), 0x00000000), 0)
         }
-        val back = circleButton("‹", 46, 0xB8222228.toInt()).apply {
-            textSize = 32f
+        val back = iconButton(R.drawable.ic_pl_back, 44, 0x99151820.toInt(), 26).apply {
             setOnClickListener { leave() }
             contentDescription = "Назад"
         }
-        topBar.addView(back, LinearLayout.LayoutParams(dp(46), dp(46)))
+        topBar.addView(back, LinearLayout.LayoutParams(dp(44), dp(44)))
         val title = TextView(this).apply {
             text = currentTitle
             setTextColor(Color.WHITE); textSize = 16f; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
@@ -431,12 +430,11 @@ class PlayerActivity : ComponentActivity() {
         }
         titleView = title
         topBar.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
-        fullButton = circleButton("⛶", 46, 0xB8222228.toInt()).apply {
-            setTextColor(Color.WHITE); textSize = 20f
+        fullButton = iconButton(R.drawable.ic_pl_full, 44, 0x99151820.toInt(), 24).apply {
             contentDescription = "На весь экран"
             setOnClickListener { toggleFullscreen() }
         }
-        topBar.addView(fullButton, LinearLayout.LayoutParams(dp(46), dp(46)).apply { marginStart = dp(10) })
+        topBar.addView(fullButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginStart = dp(10) })
         stage.addView(topBar, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
 
         bufferingLabel = TextView(this).apply {
@@ -487,26 +485,27 @@ class PlayerActivity : ComponentActivity() {
         }
 
         val center = FrameLayout(this)
-        playPauseButton = circleButton(if (playWhenReady) "Ⅱ" else "▶", 68, 0xE6FFFFFF.toInt()).apply {
-            setTextColor(Color.BLACK); textSize = 26f
+        playPauseButton = iconButton(if (playWhenReady) R.drawable.ic_pl_pause else R.drawable.ic_pl_play, 64, 0xF2FFFFFF.toInt(), 32, Color.BLACK).apply {
+            contentDescription = "Пауза / воспроизведение"
+            elevation = dp(3).toFloat()
             setOnClickListener {
                 if (mediaPlayer?.isPlaying == true && !needsReload) doPause() else doPlay()
                 showControlsTemporarily()
             }
         }
-        center.addView(playPauseButton, FrameLayout.LayoutParams(dp(68), dp(68), Gravity.CENTER))
-        prevButton = circleButton("⏮", 48, 0xB8222228.toInt()).apply {
-            setTextColor(Color.WHITE); textSize = 18f; visibility = View.GONE
+        center.addView(playPauseButton, FrameLayout.LayoutParams(dp(64), dp(64), Gravity.CENTER))
+        prevButton = iconButton(R.drawable.ic_pl_prev, 46, 0x99151820.toInt(), 24).apply {
+            visibility = View.GONE
             contentDescription = "Предыдущая серия"
             setOnClickListener { playQueueEntry(queueIndex - 1) }
         }
-        nextButton = circleButton("⏭", 48, 0xB8222228.toInt()).apply {
-            setTextColor(Color.WHITE); textSize = 18f; visibility = View.GONE
+        nextButton = iconButton(R.drawable.ic_pl_next, 46, 0x99151820.toInt(), 24).apply {
+            visibility = View.GONE
             contentDescription = "Следующая серия"
             setOnClickListener { playQueueEntry(queueIndex + 1) }
         }
-        center.addView(prevButton, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.CENTER).apply { leftMargin = 0; rightMargin = dp(150) })
-        center.addView(nextButton, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.CENTER).apply { leftMargin = dp(150) })
+        center.addView(prevButton, FrameLayout.LayoutParams(dp(46), dp(46), Gravity.CENTER).apply { rightMargin = dp(140) })
+        center.addView(nextButton, FrameLayout.LayoutParams(dp(46), dp(46), Gravity.CENTER).apply { leftMargin = dp(140) })
         controls.addView(center, LinearLayout.LayoutParams(-1, dp(82)))
         centerRow = center
 
@@ -584,6 +583,11 @@ class PlayerActivity : ComponentActivity() {
         panel.onLock = { lockScreen() }
         panel.onEpisode = { i -> if (i != queueIndex) playQueueEntry(i) }
         root.addOnLayoutChangeListener { _, l, _, r, _, ol, _, or_, _ -> if (r - l != or_ - ol) root.post { applyMode() } }
+        // The film's area changed size (small player ⇄ full screen, rotation): VLC must re-measure its picture for it,
+        // otherwise it keeps the old (bigger) size and the picture spills past the area and is cut off.
+        stage.addOnLayoutChangeListener { _, l, t, r, b, ol, ot, or_, ob ->
+            if (r - l != or_ - ol || b - t != ob - ot) stage.post { runCatching { mediaPlayer?.updateVideoSurfaces() } }
+        }
         infoPanel = androidx.compose.ui.platform.ComposeView(this).apply {
             setContent { PlayerInfoPanel(panel) }
         }
@@ -781,7 +785,7 @@ class PlayerActivity : ComponentActivity() {
         // enableSubtitles = true so selected subtitle tracks are rendered; SurfaceView is cheaper than TextureView.
         player.attachViews(videoLayout, null, true, false)
         hookSurfaces()
-        runCatching { player.setVideoScale(SCALES[scaleIndex].first) }
+        runCatching { player.setVideoScale(shownScale()) }
         supervisor.opening(url)
         AppLog.write("open ${Uri.parse(url).lastPathSegment ?: "?"} at ${positionMs / 1000}s, reserve=${PlaybackSettings.burstMb(this)}MB, buffer=${PlaybackSettings.cacheMs(this)}ms")
         val item = buildMedia(vlc, url, positionMs)
@@ -1104,7 +1108,7 @@ class PlayerActivity : ComponentActivity() {
             ended = true
             playWhenReady = false
             bufferingLabel.visibility = View.GONE
-            playPauseButton.text = "▶"
+            setPlayIcon(false)
             showControlsTemporarily()
         } else {
             bufferingLabel.visibility = View.GONE
@@ -1282,12 +1286,21 @@ class PlayerActivity : ComponentActivity() {
 
     private fun showControlsTemporarily() = setControlsVisible(true)
 
-    private fun circleButton(label: String, size: Int, color: Int) = TextView(this).apply {
-        text = label; gravity = Gravity.CENTER; textSize = 22f
-        background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(color) }
+    /** Round button with a vector icon, centred exactly (text glyphs like ‹ Ⅱ ▶ sat off-centre and differed per phone font). */
+    private fun iconButton(icon: Int, size: Int, bg: Int, iconSize: Int, tint: Int = Color.WHITE) = android.widget.ImageView(this).apply {
+        setImageResource(icon)
+        imageTintList = ColorStateList.valueOf(tint)
+        scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+        val pad = dp((size - iconSize) / 2)
+        setPadding(pad, pad, pad, pad)
+        background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(bg); if (bg ushr 24 < 0xF0) setStroke(dp(1), 0x26FFFFFF) }
         isClickable = true; isFocusable = true
-        val out = dp(size)
-        minimumWidth = out; minimumHeight = out
+        foreground = android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), null,
+            GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE) })
+    }
+
+    private fun setPlayIcon(playing: Boolean) {
+        if (::playPauseButton.isInitialized) playPauseButton.setImageResource(if (playing) R.drawable.ic_pl_pause else R.drawable.ic_pl_play)
     }
 
     private fun pillButton(label: String) = TextView(this).apply {
@@ -1400,7 +1413,7 @@ class PlayerActivity : ComponentActivity() {
         ended = true
         playWhenReady = false
         root.keepScreenOn = true // the countdown should not let the screen sleep
-        playPauseButton.text = "▶"
+        setPlayIcon(false)
         nextCardTitle.text = queue[queueIndex + 1].title
         countdown = NEXT_COUNTDOWN_S
         nextCard.alpha = 0f; nextCard.translationY = dp(16).toFloat(); nextCard.visibility = View.VISIBLE
@@ -1448,7 +1461,7 @@ class PlayerActivity : ComponentActivity() {
             playPauseButton.scaleX = 1f; playPauseButton.scaleY = 1f
             card.rightMargin = dp(24); card.bottomMargin = dp(110)
             badge.gravity = Gravity.CENTER; badge.topMargin = 0
-            fullButton.text = "⛶"; fullButton.contentDescription = "Выйти из полноэкранного режима"
+            fullButton.setImageResource(R.drawable.ic_pl_full_exit); fullButton.contentDescription = "Выйти из полноэкранного режима"
             hideSystemUi()
         } else {
             val w = root.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
@@ -1464,12 +1477,21 @@ class PlayerActivity : ComponentActivity() {
             playPauseButton.scaleX = 0.82f; playPauseButton.scaleY = 0.82f
             card.rightMargin = dp(10); card.bottomMargin = dp(10)
             badge.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; badge.topMargin = i.top + h / 2 - dp(25)
-            fullButton.text = "⛶"; fullButton.contentDescription = "На весь экран"
+            fullButton.setImageResource(R.drawable.ic_pl_full); fullButton.contentDescription = "На весь экран"
             WindowCompat.setDecorFitsSystemWindows(window, false)
             WindowInsetsControllerCompat(window, window.decorView).show(WindowInsetsCompat.Type.systemBars())
         }
         stage.layoutParams = sp; infoPanel.layoutParams = pp; unlockBadge.layoutParams = badge; nextCard.layoutParams = card
+        if (modeFull != full) {
+            modeFull = full
+            // The small player always shows the whole frame: «Заполнить» / «Растянуть» chosen for the full screen cropped
+            // the picture past the small area's edges. Back on the full screen the chosen frame mode returns.
+            runCatching { mediaPlayer?.setVideoScale(shownScale()) }
+        }
     }
+
+    private var modeFull: Boolean? = null
+    private fun shownScale() = if (isFull()) SCALES[scaleIndex].first else MediaPlayer.ScaleType.SURFACE_BEST_FIT
 
     /** The button: upright → sideways full screen, and back. Turning the phone does the same by itself. */
     private fun toggleFullscreen() {

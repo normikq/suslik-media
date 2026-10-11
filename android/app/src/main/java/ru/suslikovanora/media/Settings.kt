@@ -63,6 +63,9 @@ object PlaybackSettings {
     /** Tester code (BETA_CODE on the server): sent with requests (Api), unlocks updates from the beta channel. */
     fun betaCode(ctx: Context) = prefs(ctx).getString("beta_code", null).orEmpty()
     fun setBetaCode(ctx: Context, v: String) = prefs(ctx).edit().putString("beta_code", v.trim().ifBlank { null }).apply()
+    /** «Канал обновлений»: false = Релиз (the code stays saved but is not sent, so only versions for everyone come). */
+    fun betaOn(ctx: Context) = !prefs(ctx).getBoolean("beta_off", false)
+    fun setBetaOn(ctx: Context, on: Boolean) = prefs(ctx).edit().putBoolean("beta_off", !on).apply()
 }
 
 /** «Настройки» over the main screen: the same card style and entrance as «Что нового». */
@@ -110,7 +113,7 @@ fun SettingsSheet(onClose: () -> Unit) {
                 PlaybackSettings.cachePresets.forEach { p ->
                     PresetRow(p, p.value == cache) { cache = p.value; PlaybackSettings.setCacheMs(ctx, p.value) }
                 }
-                BetaSection()
+                ChannelSection()
             }
             Row(Modifier.fillMaxWidth().padding(top = 14.dp), horizontalArrangement = Arrangement.End) {
                 LampButton("Готово") { close() }
@@ -119,35 +122,81 @@ fun SettingsSheet(onClose: () -> Unit) {
     }
 }
 
-/** «Бета-версии»: the tester code; checked on the server right away. */
+/**
+ * «Канал обновлений»: Релиз / Бета. Switching checks the server at once: a version that is not installed yet is
+ * offered right here; an older one (back from a beta to the release) cannot be installed over a newer one, which
+ * is explained instead.
+ */
 @Composable
-private fun BetaSection() {
+private fun ChannelSection() {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
+    var beta by remember { mutableStateOf(PlaybackSettings.betaOn(ctx) && PlaybackSettings.betaCode(ctx).isNotBlank()) }
     var code by remember { mutableStateOf(PlaybackSettings.betaCode(ctx)) }
-    var state by remember { mutableStateOf<String?>(if (PlaybackSettings.betaCode(ctx).isNotBlank()) "Код сохранён." else null) }
-    fun check() {
-        PlaybackSettings.setBetaCode(ctx, code)
-        if (code.isBlank()) { state = "Бета-версии выключены."; return }
-        state = "Проверяем…"
+    var state by remember { mutableStateOf<String?>(null) }
+    var offer by remember { mutableStateOf<Updater.Info?>(null) }
+    fun checkUpdates() {
+        state = "Проверяем обновления…"
         scope.launch {
-            state = runCatching { ru.suslikovanora.media.net.Api.get("/api/app/beta").optBoolean("tester") }.getOrNull().let {
-                when (it) {
-                    true -> "Код принят: новые бета-версии будут приходить сюда первыми (при следующем запуске)."
-                    false -> "Сервер не принял этот код."
-                    null -> "Не удалось проверить — код сохранён."
-                }
+            val installed = Updater.currentVersion(ctx)
+            val info = Updater.latest(ctx)
+            val v = UpdateChannel.verdict(info?.version, installed)
+            state = UpdateChannel.message(v, info?.version, installed, info?.beta == true)
+            if (v == UpdateChannel.Verdict.Offer) offer = info
+        }
+    }
+    fun saveCode() {
+        PlaybackSettings.setBetaCode(ctx, code)
+        if (code.isBlank()) { state = "Введите код тестировщика."; return }
+        state = "Проверяем код…"
+        scope.launch {
+            when (runCatching { ru.suslikovanora.media.net.Api.get("/api/app/beta").optBoolean("tester") }.getOrNull()) {
+                true -> checkUpdates()
+                false -> state = "Сервер не принял этот код."
+                null -> state = "Не удалось проверить — код сохранён."
             }
         }
     }
-    Section("Бета-версии", "Только для проверки новых версий до выхода всем. Введите код тестировщика (BETA_CODE с сервера); " +
-        "пустое поле — обычные обновления.", top = 18.dp)
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.weight(1f)) { ru.suslikovanora.media.library.SearchField(code, { code = it }, "Код тестировщика", password = true, onDone = { check() }) }
-        androidx.compose.foundation.layout.Spacer(Modifier.size(10.dp))
-        ru.suslikovanora.media.library.OutlineButton("Сохранить") { check() }
+    fun pick(b: Boolean) {
+        if (b == beta) return
+        beta = b
+        PlaybackSettings.setBetaOn(ctx, b)
+        if (!b) checkUpdates() else if (code.isBlank()) state = "Введите код тестировщика и нажмите «Сохранить»." else saveCode()
     }
-    state?.let { Text(it, color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 6.dp)) }
+    Section("Канал обновлений", "Релиз — проверенные версии для всех. Бета — новые версии раньше всех, " +
+        "для проверки (нужен код тестировщика).", top = 18.dp)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ChannelOption("Релиз", !beta, Modifier.weight(1f)) { pick(false) }
+        ChannelOption("Бета", beta, Modifier.weight(1f)) { pick(true) }
+    }
+    androidx.compose.animation.AnimatedVisibility(beta) {
+        Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f)) { ru.suslikovanora.media.library.SearchField(code, { code = it }, "Код тестировщика", password = true, onDone = { saveCode() }) }
+            androidx.compose.foundation.layout.Spacer(Modifier.size(10.dp))
+            ru.suslikovanora.media.library.OutlineButton("Сохранить") { saveCode() }
+        }
+    }
+    Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(state ?: "Установлена версия ${Updater.currentVersion(ctx)}.", color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp,
+            lineHeight = 17.sp, modifier = Modifier.weight(1f))
+        Text("Проверить", color = Sm.lamp, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.sp,
+            modifier = Modifier.padding(start = 10.dp).clip(RoundedCornerShape(8.dp))
+                .clickable { checkUpdates() }.padding(horizontal = 8.dp, vertical = 6.dp))
+    }
+    offer?.let { UpdateDialog(it) { offer = null } }
+}
+
+@Composable
+private fun ChannelOption(title: String, on: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    val edge by animateColorAsState(if (on) Sm.lamp else Sm.line, tween(220), label = "edge")
+    val bg by animateColorAsState(if (on) Sm.lampSoft else Sm.film, tween(220), label = "bg")
+    Box(
+        modifier.clip(RoundedCornerShape(14.dp)).background(bg).border(1.dp, edge, RoundedCornerShape(14.dp))
+            .clickable(remember { MutableInteractionSource() }, indication = null, onClick = onClick).padding(vertical = 12.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(title, color = if (on) Sm.lamp else Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp)
+    }
 }
 
 @Composable

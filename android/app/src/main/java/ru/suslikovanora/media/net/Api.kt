@@ -29,6 +29,7 @@ object Api {
     @Volatile private var appCtx: android.content.Context? = null
     /** Tester code («Настройки → Бета-версии»): sent with every request to our server, unlocks beta updates. */
     private fun betaCode(): String? = appCtx?.getSharedPreferences("settings", android.content.Context.MODE_PRIVATE)
+        ?.takeIf { !it.getBoolean("beta_off", false) } // «Канал обновлений: Релиз»
         ?.getString("beta_code", null)?.takeIf { it.isNotBlank() }
 
     private object CookieBridge : Interceptor {

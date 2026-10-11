@@ -73,13 +73,18 @@ object Updater {
     suspend fun check(force: Boolean = false): Info? {
         val now = System.currentTimeMillis()
         withContext(Dispatchers.IO) { cleanup() }
-        val j = runCatching { Api.get("/api/app/update?platform=desktop") }.getOrNull() ?: return null
+        val info = latest() ?: return null
         prefs.put("checkedAt", now.toString())
+        if (current == "0" || !isNewer(info.version, current)) return null // dev run without a version: never nag
+        if (!force && prefs.get("skipped") == info.version) return null
+        return info
+    }
+
+    /** The newest version on the server for this computer's channel, newer or not (null = none / no answer). */
+    suspend fun latest(): Info? {
+        val j = runCatching { Api.get("/api/app/update?platform=desktop") }.getOrNull() ?: return null
         if (!j.optBoolean("available")) return null
-        val version = j.optString("version")
-        if (current == "0" || !isNewer(version, current)) return null // dev run without a version: never nag
-        if (!force && prefs.get("skipped") == version) return null
-        return Info(version, j.optLong("size"), j.optString("notes"), j.optString("url"), j.optString("file"), j.optString("channel") == "beta")
+        return Info(j.optString("version"), j.optLong("size"), j.optString("notes"), j.optString("url"), j.optString("file"), j.optString("channel") == "beta")
     }
 
     fun skip(version: String) = prefs.put("skipped", version)

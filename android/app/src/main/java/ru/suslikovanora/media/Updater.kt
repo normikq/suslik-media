@@ -74,13 +74,18 @@ object Updater {
         val prefs = ctx.getSharedPreferences("updates", Context.MODE_PRIVATE)
         val now = System.currentTimeMillis()
         withContext(Dispatchers.IO) { cleanup(ctx) }
-        val j = runCatching { Api.get("/api/app/update?platform=android") }.getOrNull() ?: return null
+        val info = latest(ctx) ?: return null
         prefs.edit().putLong("checkedAt", now).apply()
+        if (!isNewer(info.version, currentVersion(ctx))) return null
+        if (!force && prefs.getString("skipped", null) == info.version) return null
+        return info
+    }
+
+    /** The newest version on the server for this device's channel, newer or not (null = none / no answer). */
+    suspend fun latest(@Suppress("UNUSED_PARAMETER") ctx: Context): Info? {
+        val j = runCatching { Api.get("/api/app/update?platform=android") }.getOrNull() ?: return null
         if (!j.optBoolean("available")) return null
-        val version = j.optString("version")
-        if (!isNewer(version, currentVersion(ctx))) return null
-        if (!force && prefs.getString("skipped", null) == version) return null
-        return Info(version, j.optLong("size"), j.optString("notes"), j.optString("url"), j.optString("channel") == "beta")
+        return Info(j.optString("version"), j.optLong("size"), j.optString("notes"), j.optString("url"), j.optString("channel") == "beta")
     }
 
     fun skip(ctx: Context, version: String) =

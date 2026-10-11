@@ -12,6 +12,13 @@ class VersionsTest {
         assertTrue(Versions.isNewer("2.0.0", "1.99.99"))
         assertEquals(-1, Versions.compare("1.2", "1.2.1"))
     }
+
+    @Test fun channelVerdict() {
+        assertEquals(UpdateChannel.Verdict.Offer, UpdateChannel.verdict("2.0.1", "2.0.0"))
+        assertEquals(UpdateChannel.Verdict.Installed, UpdateChannel.verdict("2.0.1", "2.0.1"))
+        assertEquals(UpdateChannel.Verdict.Older, UpdateChannel.verdict("2.0.0", "2.0.1"))
+        assertEquals(UpdateChannel.Verdict.Nothing, UpdateChannel.verdict(null, "2.0.1"))
+    }
 }
 
 class ChangelogTest {
