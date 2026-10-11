@@ -32,7 +32,8 @@ fun main(args: Array<String>) {
     c.setRequestProperty("Range", "bytes=0-")
     val inp = c.inputStream; val buf = ByteArray(64 * 1024); var tot = 0L; val t0 = System.currentTimeMillis()
     val md = MessageDigest.getInstance("MD5")
-    while (true) { val n = inp.read(buf); if (n < 0) break; md.update(buf, 0, n); tot += n; Thread.sleep(2) }
+    // ~2 MB/s like a high-bitrate film: 64 KB every 32 ms
+    while (true) { val n = inp.read(buf); if (n < 0) break; md.update(buf, 0, n); tot += n; Thread.sleep(32L * n / (64 * 1024)) }
     println("throttled: $tot ${md.digest().joinToString("") { "%02x".format(it) } == expectedMd5} in ${System.currentTimeMillis() - t0} ms")
     BurstProxy.clear()
     println("files left: ${tmp.resolve("stream").list()?.size}")

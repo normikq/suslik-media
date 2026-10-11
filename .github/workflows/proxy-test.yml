@@ -20,17 +20,16 @@ jobs:
         run: |
           sed 's#if (!url.startsWith("https://")) return url#if (!url.startsWith("http")) return url#' \
             ../../app/src/main/java/ru/suslikovanora/media/net/BurstProxy.kt > src/main/kotlin/ru/suslikovanora/media/net/BurstProxy.kt
-          head -c 60000000 /dev/urandom > blob.bin
+          head -c 120000000 /dev/urandom > blob.bin
           echo "MD5=$(md5sum blob.bin | cut -d' ' -f1)" >> "$GITHUB_ENV"
           (node origin.js blob.bin > origin.log 2>&1 &)
           sleep 1
       - name: Run
         run: |
           set -o pipefail
-          timeout 600 gradle -q run --args="http://127.0.0.1:3995/blob.bin?sig=x $MD5 60000000" 2>&1 | tee out.log
+          timeout 600 gradle -q run --args="http://127.0.0.1:3995/blob.bin?sig=x $MD5 120000000" 2>&1 | tee out.log
       - name: Report
         if: always()
         run: |
-          grep -v "^w: " out.log | tail -30 | while IFS= read -r l; do echo "::notice::$l"; done
-          echo "::notice::origin requests: $(wc -l < origin.log)"
-          head -30 origin.log | while IFS= read -r l; do echo "::notice::origin $l"; done
+          echo "::notice::$(grep -v '^w: ' out.log | tail -14 | tr '\n' '|')"
+          echo "::notice::origin $(wc -l < origin.log) requests: $(head -40 origin.log | tr '\n' '|')"
