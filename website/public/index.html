@@ -396,7 +396,7 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
 @media (max-width:340px){.navrow button{font-size:10px!important}.navrow button::before{font-size:15px!important}}
 </style>
 <script>/* App 1.2+: native library and bottom bar */try{if(Number(window.__suslikApp||0)>=3)document.documentElement.classList.add("suslik-native");}catch(e){}</script>
-<link rel="stylesheet" href="redesign.css?v=9">
+<link rel="stylesheet" href="redesign.css?v=10">
 </head>
 <body>
 <main>
@@ -813,14 +813,20 @@ const growth = (() => {
     const latest = i === APP_HISTORY[platform].length - 1;
     tip.innerHTML = `<div class="growth-tip-head"><b class="${latest ? "new" : ""}">${esc(rel.v)}</b><span>${esc(rel.t)}</span></div>` +
       `<ul>${rel.items.map(it => `<li>${esc(it)}</li>`).join("")}</ul>`;
-    const pw = plot.clientWidth, ph = plot.clientHeight, px = x / W * pw, py = y / H * ph;
-    const tw = Math.min(300, pw + 40); tip.style.width = tw + "px";
-    const left = Math.max(-20, Math.min(pw - tw + 20, px - tw / 2));
-    const below = py < ph * 0.45; // верхняя точка — окошко под ней
-    tip.style.left = left + "px";
-    tip.style.top = below ? (py + 18) + "px" : "";
-    tip.style.bottom = below ? "" : (ph - py + 18) + "px";
-    tip.style.setProperty("--arrow", (px - left) + "px");
+    // Окошко живёт поверх всей страницы (position:fixed в <body>): внутри блока его перекрывало меню вкладок.
+    // Место выбирается по экрану: сверху от точки, если помещается, иначе снизу (на телефоне — не под нижним меню).
+    const dot = pts.children[i], r = dot.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const vw = document.documentElement.clientWidth, vh = window.innerHeight;
+    const tw = Math.min(300, vw - 16); tip.style.width = tw + "px";
+    const th = tip.offsetHeight;
+    const nav = document.querySelector(".navrow"), navFixed = nav && getComputedStyle(nav).position === "fixed";
+    const topLimit = 8, bottomLimit = (navFixed ? nav.getBoundingClientRect().top : vh) - 8;
+    const spaceAbove = cy - 18 - topLimit, spaceBelow = bottomLimit - (cy + 18);
+    const below = spaceAbove < th && (spaceBelow >= th || spaceBelow > spaceAbove);
+    const left = Math.max(8, Math.min(vw - tw - 8, cx - tw / 2));
+    const top = below ? cy + 18 : cy - 18 - th;
+    tip.style.left = left + "px"; tip.style.top = Math.max(topLimit, top) + "px"; tip.style.bottom = "";
+    tip.style.setProperty("--arrow", Math.max(16, Math.min(tw - 16, cx - left)) + "px");
     tip.classList.toggle("below", below);
     if (active !== i) { tip.classList.remove("on"); void tip.offsetWidth; }
     active = i; tip.classList.add("on"); tip.setAttribute("aria-hidden", "false");
@@ -857,6 +863,8 @@ const growth = (() => {
     t.addEventListener("click", pick);
     t.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
   }
+  document.body.append(tip); // поверх меню и соседних блоков
+  window.addEventListener("scroll", () => { if (active >= 0) hideTip(); }, { passive: true });
   tip.addEventListener("mouseenter", () => clearTimeout(hideTimer));
   tip.addEventListener("mouseleave", () => { hideTimer = setTimeout(hideTip, 160); });
   document.addEventListener("click", e => { if (active >= 0 && !box.contains(e.target)) hideTip(); });
