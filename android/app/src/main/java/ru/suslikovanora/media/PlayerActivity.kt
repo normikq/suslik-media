@@ -8,7 +8,9 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.ActivityInfo
 import android.content.res.ColorStateList
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -67,6 +69,13 @@ class PlayerActivity : ComponentActivity() {
     private var mediaPlayer: MediaPlayer? = null
     private var media: Media? = null
     private lateinit var root: FrameLayout
+    private lateinit var stage: FrameLayout            // the film + everything over it
+    private lateinit var infoPanel: android.view.View   // below the film while the phone is upright
+    private lateinit var fullButton: TextView
+    private lateinit var optionsRow: LinearLayout
+    private lateinit var centerRow: FrameLayout
+    private var lastInsets = androidx.core.graphics.Insets.NONE
+    private val panel = PlayerPanelState()
     private lateinit var videoLayout: VLCVideoLayout
     private lateinit var controls: LinearLayout
     private lateinit var topBar: LinearLayout
@@ -397,8 +406,11 @@ class PlayerActivity : ComponentActivity() {
         scaleIndex = uiPrefs.getInt("scale", 0).coerceIn(0, SCALES.size - 1)
 
         videoLayout = VLCVideoLayout(this)
-        root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
-        root.addView(videoLayout, FrameLayout.LayoutParams(-1, -1))
+        root = FrameLayout(this).apply { setBackgroundColor(NIGHT) }
+        // The film and everything drawn over it; below it (phone held upright) the info panel.
+        stage = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
+        root.addView(stage, FrameLayout.LayoutParams(-1, -1))
+        stage.addView(videoLayout, FrameLayout.LayoutParams(-1, -1))
 
         topBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -408,7 +420,7 @@ class PlayerActivity : ComponentActivity() {
         }
         val back = circleButton("‹", 46, 0xB8222228.toInt()).apply {
             textSize = 32f
-            setOnClickListener { finish() }
+            setOnClickListener { leave() }
             contentDescription = "Назад"
         }
         topBar.addView(back, LinearLayout.LayoutParams(dp(46), dp(46)))
@@ -419,7 +431,13 @@ class PlayerActivity : ComponentActivity() {
         }
         titleView = title
         topBar.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
-        root.addView(topBar, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
+        fullButton = circleButton("⛶", 46, 0xB8222228.toInt()).apply {
+            setTextColor(Color.WHITE); textSize = 20f
+            contentDescription = "На весь экран"
+            setOnClickListener { toggleFullscreen() }
+        }
+        topBar.addView(fullButton, LinearLayout.LayoutParams(dp(46), dp(46)).apply { marginStart = dp(10) })
+        stage.addView(topBar, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
 
         bufferingLabel = TextView(this).apply {
             setTextColor(Color.WHITE); textSize = 13f; gravity = Gravity.CENTER
@@ -427,7 +445,7 @@ class PlayerActivity : ComponentActivity() {
             background = GradientDrawable().apply { cornerRadius = dp(18).toFloat(); setColor(0xB8222228.toInt()) }
             visibility = View.GONE
         }
-        root.addView(bufferingLabel, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+        stage.addView(bufferingLabel, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
         seekLabel = TextView(this).apply {
             setTextColor(Color.WHITE); textSize = 18f; gravity = Gravity.CENTER
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
@@ -435,7 +453,7 @@ class PlayerActivity : ComponentActivity() {
             background = GradientDrawable().apply { cornerRadius = dp(24).toFloat(); setColor(0xB8222228.toInt()) }
             visibility = View.GONE
         }
-        root.addView(seekLabel, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_HORIZONTAL or Gravity.TOP).apply { topMargin = dp(72) })
+        stage.addView(seekLabel, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_HORIZONTAL or Gravity.TOP).apply { topMargin = dp(72) })
 
         nextCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -460,7 +478,7 @@ class PlayerActivity : ComponentActivity() {
         }, LinearLayout.LayoutParams(-2, dp(42)).apply { marginEnd = dp(8) })
         nextRow.addView(pillButton("Отмена").apply { setOnClickListener { hideNextCard(); showControlsTemporarily() } }, LinearLayout.LayoutParams(-2, dp(42)))
         nextCard.addView(nextRow)
-        root.addView(nextCard, FrameLayout.LayoutParams(dp(320), -2, Gravity.END or Gravity.BOTTOM).apply { rightMargin = dp(24); bottomMargin = dp(110) })
+        stage.addView(nextCard, FrameLayout.LayoutParams(dp(320), -2, Gravity.END or Gravity.BOTTOM).apply { rightMargin = dp(24); bottomMargin = dp(110) })
 
         controls = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -490,6 +508,7 @@ class PlayerActivity : ComponentActivity() {
         center.addView(prevButton, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.CENTER).apply { leftMargin = 0; rightMargin = dp(150) })
         center.addView(nextButton, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.CENTER).apply { leftMargin = dp(150) })
         controls.addView(center, LinearLayout.LayoutParams(-1, dp(82)))
+        centerRow = center
 
         val seekRow = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         timeLabel = TextView(this).apply {
@@ -530,7 +549,9 @@ class PlayerActivity : ComponentActivity() {
         scaleButton = pillButton("⤢  ${SCALES[scaleIndex].second}").apply { setOnClickListener { cycleScale(); showControlsTemporarily() } }
         options.addView(audioButton, LinearLayout.LayoutParams(-2, dp(42)).apply { marginEnd = dp(8) })
         options.addView(subsButton, LinearLayout.LayoutParams(-2, dp(42)).apply { marginEnd = dp(8) })
-        options.addView(scaleButton, LinearLayout.LayoutParams(-2, dp(42)).apply { marginEnd = dp(14) })
+        options.addView(scaleButton, LinearLayout.LayoutParams(-2, dp(42)).apply { marginEnd = dp(8) })
+        options.addView(pillButton("🔒").apply { contentDescription = "Блокировка экрана"; setOnClickListener { lockScreen() } },
+            LinearLayout.LayoutParams(dp(48), dp(42)).apply { marginEnd = dp(14) })
         options.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
         volumeLabel = TextView(this).apply { text = "🔊"; textSize = 16f; setTextColor(Color.WHITE) }
         options.addView(volumeLabel, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(4) })
@@ -550,30 +571,55 @@ class PlayerActivity : ComponentActivity() {
         }
         options.addView(volumeBar, LinearLayout.LayoutParams(dp(92), dp(36)))
         controls.addView(options)
-        root.addView(controls, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+        optionsRow = options
+        stage.addView(controls, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
 
-        // Keep controls out of the camera cutout (landscape notch) while the video stays full-bleed.
+        // The panel under the film (phone upright) does the same as the buttons over it.
+        panel.title = currentTitle
+        panel.scale = SCALES[scaleIndex].second
+        panel.onAudio = { showAudioTracks() }
+        panel.onSubs = { showSubtitleTracks() }
+        panel.onScale = { cycleScale() }
+        panel.onFull = { toggleFullscreen() }
+        panel.onLock = { lockScreen() }
+        panel.onEpisode = { i -> if (i != queueIndex) playQueueEntry(i) }
+        root.addOnLayoutChangeListener { _, l, _, r, _, ol, _, or_, _ -> if (r - l != or_ - ol) root.post { applyMode() } }
+        infoPanel = androidx.compose.ui.platform.ComposeView(this).apply {
+            setContent { PlayerInfoPanel(panel) }
+        }
+        root.addView(infoPanel, FrameLayout.LayoutParams(-1, -1))
+        buildLock()
+        // Keep controls out of the camera cutout / system bars while the video stays full-bleed.
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val i = insets.getInsets(WindowInsetsCompat.Type.displayCutout() or WindowInsetsCompat.Type.systemBars())
-            topBar.setPadding(dp(18) + i.left, dp(12) + i.top, dp(18) + i.right, dp(12))
-            controls.setPadding(dp(20) + i.left, dp(12), dp(20) + i.right, dp(18) + i.bottom)
+            lastInsets = i
+            applyMode()
             insets
         }
         setContentView(root)
-        hideSystemUi()
+        applyMode()
+        onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() { if (locked) showUnlockBadge() else leave() }
+        })
+        if (Build.VERSION.SDK_INT >= 34) {
+            overrideActivityTransition(android.app.Activity.OVERRIDE_TRANSITION_OPEN, R.anim.player_in, 0)
+            overrideActivityTransition(android.app.Activity.OVERRIDE_TRANSITION_CLOSE, 0, R.anim.player_out)
+        }
+        else { @Suppress("DEPRECATION") overridePendingTransition(R.anim.player_in, 0) }
+        if (savedInstanceState == null) playEnterAnimation()
 
         gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: MotionEvent): Boolean = true
 
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
                 // Rapid follow-up taps after a double-tap keep seeking (like video apps do).
-                if (SystemClock.uptimeMillis() - lastSeekTapAt < REPEAT_TAP_WINDOW_MS) { tapSeek(e.x >= root.width / 2f); return true }
+                if (SystemClock.uptimeMillis() - lastSeekTapAt < REPEAT_TAP_WINDOW_MS) { tapSeek(e.x >= stage.width / 2f); return true }
                 if (controlsVisible) setControlsVisible(false) else showControlsTemporarily()
                 return true
             }
 
             override fun onDoubleTap(e: MotionEvent): Boolean {
-                tapSeek(e.x >= root.width / 2f)
+                tapSeek(e.x >= stage.width / 2f)
                 return true
             }
         })
@@ -586,12 +632,13 @@ class PlayerActivity : ComponentActivity() {
             }
         })
         val touchListener = View.OnTouchListener { _, event -> onPlayerTouch(event); true }
-        root.setOnTouchListener(touchListener)
+        stage.setOnTouchListener(touchListener)
         videoLayout.setOnTouchListener(touchListener)
         setupSession()
 
         addOnPictureInPictureModeChangedListener { info ->
             inPip = info.isInPictureInPictureMode
+            applyMode()
             supervisor.surfaceChanged()
             if (inPip) setControlsVisible(false) else showControlsTemporarily()
             // The window size changed: let VLC re-measure (and recover if the surface was recreated meanwhile).
@@ -648,6 +695,9 @@ class PlayerActivity : ComponentActivity() {
         prevButton.visibility = if (has && queueIndex > 0) View.VISIBLE else View.GONE
         nextButton.visibility = if (has && queueIndex < queue.size - 1) View.VISIBLE else View.GONE
         titleView.text = if (has) "$currentTitle  ·  ${queueIndex + 1}/${queue.size}" else currentTitle
+        panel.title = currentTitle
+        panel.episodes = if (has) queue.map { it.title } else emptyList()
+        panel.index = if (has) queueIndex else -1
     }
 
     /** Switch to another entry of the playlist on the existing player (no activity or LibVLC restart). */
@@ -1214,6 +1264,7 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun setControlsVisible(visible: Boolean) {
+        if (visible && locked) return // locked: the panel comes back only after «Разблокировать»
         controlsVisible = visible
         val target = if (visible) 1f else 0f
         topBar.animate().alpha(target).translationY(if (visible) 0f else -dp(14).toFloat()).setDuration(220).start()
@@ -1369,6 +1420,167 @@ class PlayerActivity : ComponentActivity() {
         }
     }
 
+    // ---- layout: upright phone = film on top + info below; sideways (or PiP) = the whole screen ----------------
+    private fun isFull() = inPip || resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        applyMode()
+        supervisor.surfaceChanged()
+    }
+
+    /** Places the film and the panel for the current orientation (no activity restart: VLC keeps playing). */
+    private fun applyMode() {
+        if (!::infoPanel.isInitialized) return
+        val full = isFull()
+        val i = lastInsets
+        val sp = stage.layoutParams as FrameLayout.LayoutParams
+        val pp = infoPanel.layoutParams as FrameLayout.LayoutParams
+        val badge = unlockBadge.layoutParams as FrameLayout.LayoutParams
+        val card = nextCard.layoutParams as FrameLayout.LayoutParams
+        if (full) {
+            sp.height = -1; sp.topMargin = 0
+            infoPanel.visibility = View.GONE
+            topBar.setPadding(dp(18) + i.left, dp(12) + i.top, dp(18) + i.right, dp(12))
+            controls.setPadding(dp(20) + i.left, dp(12), dp(20) + i.right, dp(18) + i.bottom)
+            optionsRow.visibility = View.VISIBLE
+            centerRow.layoutParams = centerRow.layoutParams.apply { height = dp(82) }
+            playPauseButton.scaleX = 1f; playPauseButton.scaleY = 1f
+            card.rightMargin = dp(24); card.bottomMargin = dp(110)
+            badge.gravity = Gravity.CENTER; badge.topMargin = 0
+            fullButton.text = "⛶"; fullButton.contentDescription = "Выйти из полноэкранного режима"
+            hideSystemUi()
+        } else {
+            val w = root.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
+            val h = w * 9 / 16
+            sp.height = h; sp.topMargin = i.top
+            pp.topMargin = i.top + h
+            panel.bottomInsetPx = i.bottom
+            infoPanel.visibility = View.VISIBLE
+            topBar.setPadding(dp(10) + i.left, dp(6), dp(10) + i.right, dp(6))
+            controls.setPadding(dp(14) + i.left, dp(2), dp(14) + i.right, dp(6))
+            optionsRow.visibility = View.GONE // the same buttons are in the panel below
+            centerRow.layoutParams = centerRow.layoutParams.apply { height = dp(60) }
+            playPauseButton.scaleX = 0.82f; playPauseButton.scaleY = 0.82f
+            card.rightMargin = dp(10); card.bottomMargin = dp(10)
+            badge.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; badge.topMargin = i.top + h / 2 - dp(25)
+            fullButton.text = "⛶"; fullButton.contentDescription = "На весь экран"
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+            WindowInsetsControllerCompat(window, window.decorView).show(WindowInsetsCompat.Type.systemBars())
+        }
+        stage.layoutParams = sp; infoPanel.layoutParams = pp; unlockBadge.layoutParams = badge; nextCard.layoutParams = card
+    }
+
+    /** The button: upright → sideways full screen, and back. Turning the phone does the same by itself. */
+    private fun toggleFullscreen() {
+        if (inPip) return
+        val goFull = !isFull()
+        requestedOrientation = if (goFull) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        releaseOrientationWhenHeld(goFull)
+        showControlsTemporarily()
+    }
+
+    /**
+     * After the button forced an orientation, the phone's sensor takes over again once the phone is really held that
+     * way — so turning it back later works as usual. With auto-rotate off in the system, the button's choice stays.
+     * The sensor listens only during that short wait.
+     */
+    private var orientationWatch: android.view.OrientationEventListener? = null
+    private fun releaseOrientationWhenHeld(landscape: Boolean) {
+        orientationWatch?.disable(); orientationWatch = null
+        val autoRotate = runCatching { android.provider.Settings.System.getInt(contentResolver, android.provider.Settings.System.ACCELEROMETER_ROTATION, 0) == 1 }.getOrDefault(false)
+        if (!autoRotate) return
+        val watch = object : android.view.OrientationEventListener(this) {
+            override fun onOrientationChanged(deg: Int) {
+                if (deg == android.view.OrientationEventListener.ORIENTATION_UNKNOWN) return
+                val held = if (landscape) deg in 60..120 || deg in 240..300 else deg <= 25 || deg >= 335
+                if (!held) return
+                disable(); if (orientationWatch === this) orientationWatch = null
+                requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_USER
+            }
+        }
+        if (watch.canDetectOrientation()) { orientationWatch = watch; watch.enable() }
+    }
+
+    /** Opening upright: the film slides down into place, the panel rises under it. */
+    private fun playEnterAnimation() {
+        if (isFull()) return
+        val ease = android.view.animation.DecelerateInterpolator(2.2f)
+        // Set before the first frame is drawn (no flash of the final layout); the animators start on the next frame.
+        stage.translationY = -(resources.displayMetrics.widthPixels * 9f / 16f) * 0.35f
+        stage.animate().translationY(0f).setDuration(380).setInterpolator(ease).start()
+        infoPanel.alpha = 0f; infoPanel.translationY = dp(36).toFloat()
+        infoPanel.animate().alpha(1f).translationY(0f).setStartDelay(90).setDuration(380).setInterpolator(ease).start()
+    }
+
+    /** Back / «‹»: the same in reverse, then the library fades back in. */
+    private var leaving = false
+    private fun leave() {
+        if (leaving) return
+        leaving = true
+        if (isFull()) { finishQuietly(); return }
+        val ease = android.view.animation.AccelerateInterpolator(1.6f)
+        stage.animate().translationY(-stage.height * 0.35f).setDuration(240).setInterpolator(ease).start()
+        infoPanel.animate().alpha(0f).translationY(dp(36).toFloat()).setDuration(240).setInterpolator(ease)
+            .withEndAction { finishQuietly() }.start()
+    }
+
+    private fun finishQuietly() {
+        finish()
+        if (Build.VERSION.SDK_INT < 34) { @Suppress("DEPRECATION") overridePendingTransition(0, R.anim.player_out) }
+    }
+
+    // ---- screen lock against accidental touches ---------------------------------------------------------------
+    // Locked: nothing on the screen reacts (no pause, seek, brightness, panel); a touch only shows «Разблокировать».
+    private var locked = false
+    private lateinit var lockShield: View
+    private lateinit var unlockBadge: TextView
+    private val hideBadgeRunnable = Runnable {
+        unlockBadge.animate().alpha(0f).setDuration(200).withEndAction { unlockBadge.visibility = View.GONE }.start()
+    }
+
+    private fun buildLock() {
+        lockShield = View(this).apply {
+            visibility = View.GONE
+            setOnTouchListener { _, ev -> if (ev.actionMasked == MotionEvent.ACTION_UP) showUnlockBadge(); true }
+        }
+        root.addView(lockShield, FrameLayout.LayoutParams(-1, -1))
+        unlockBadge = pillButton("🔓  Разблокировать").apply {
+            textSize = 15f; setPadding(dp(24), 0, dp(24), 0); visibility = View.GONE
+            background = GradientDrawable().apply { cornerRadius = dp(25).toFloat(); setColor(0xF011141B.toInt()); setStroke(dp(1), 0x88FFB02E.toInt()) }
+            contentDescription = "Разблокировать экран"
+            setOnClickListener { unlockScreen() }
+        }
+        root.addView(unlockBadge, FrameLayout.LayoutParams(-2, dp(50), Gravity.CENTER))
+    }
+
+    private fun lockScreen() {
+        if (locked) return
+        setControlsVisible(false)
+        locked = true
+        lockShield.visibility = View.VISIBLE
+        showSeekLabel("🔒  Экран заблокирован")
+        handler.postDelayed({ if (locked) showUnlockBadge() }, 700L) // shows once where to unlock
+    }
+
+    private fun showUnlockBadge() {
+        if (!locked) return
+        handler.removeCallbacks(hideBadgeRunnable)
+        unlockBadge.animate().cancel()
+        if (unlockBadge.visibility != View.VISIBLE) { unlockBadge.alpha = 0f; unlockBadge.visibility = View.VISIBLE }
+        unlockBadge.animate().alpha(1f).setDuration(180).start()
+        handler.postDelayed(hideBadgeRunnable, 3000L)
+    }
+
+    private fun unlockScreen() {
+        locked = false
+        handler.removeCallbacks(hideBadgeRunnable)
+        unlockBadge.animate().cancel()
+        unlockBadge.visibility = View.GONE
+        lockShield.visibility = View.GONE
+        showControlsTemporarily()
+    }
+
     // ---- frame mode ---------------------------------------------------------------------------
     private fun cycleScale() = setScale((scaleIndex + 1) % SCALES.size)
 
@@ -1377,6 +1589,7 @@ class PlayerActivity : ComponentActivity() {
         uiPrefs.edit().putInt("scale", scaleIndex).apply()
         runCatching { mediaPlayer?.setVideoScale(SCALES[scaleIndex].first) }
         scaleButton.text = "⤢  ${SCALES[scaleIndex].second}"
+        panel.scale = SCALES[scaleIndex].second
         showSeekLabel("Кадр: ${SCALES[scaleIndex].second}")
     }
 
@@ -1401,7 +1614,7 @@ class PlayerActivity : ComponentActivity() {
 
     private fun startDragIfNeeded(ev: MotionEvent) {
         val dx = ev.x - dragStartX; val dy = ev.y - dragStartY
-        val h = root.height.toFloat().coerceAtLeast(1f)
+        val h = stage.height.toFloat().coerceAtLeast(1f)
         // Leave the screen edges to the system (notification shade, home/back gestures).
         val edge = dp(40).toFloat()
         if (dragStartY < edge || dragStartY > h - edge) return
@@ -1410,7 +1623,7 @@ class PlayerActivity : ComponentActivity() {
             kotlin.math.abs(dx) > touchSlop && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.5f &&
                 p != null && (p.length > 0L || p.isSeekable) -> Drag.Seek
             kotlin.math.abs(dy) > touchSlop && kotlin.math.abs(dy) > kotlin.math.abs(dx) * 1.5f ->
-                if (dragStartX < root.width / 2f) Drag.Brightness else Drag.Volume
+                if (dragStartX < stage.width / 2f) Drag.Brightness else Drag.Volume
             else -> Drag.None
         }
         if (drag == Drag.None) return
@@ -1427,7 +1640,7 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun updateDrag(ev: MotionEvent) {
-        val w = root.width.toFloat().coerceAtLeast(1f); val h = root.height.toFloat().coerceAtLeast(1f)
+        val w = stage.width.toFloat().coerceAtLeast(1f); val h = stage.height.toFloat().coerceAtLeast(1f)
         when (drag) {
             Drag.Seek -> {
                 val length = mediaPlayer?.length ?: -1L
@@ -1727,6 +1940,7 @@ class PlayerActivity : ComponentActivity() {
 
     override fun onDestroy() {
         alive = false
+        orientationWatch?.disable(); orientationWatch = null
         CrashReports.playerRunning(this, false)
         supervisor.closed()
         handler.removeCallbacksAndMessages(null)
@@ -1762,7 +1976,7 @@ class PlayerActivity : ComponentActivity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) hideSystemUi()
+        if (hasFocus && isFull()) hideSystemUi()
     }
 
     private fun formatTime(ms: Long): String {
@@ -1781,6 +1995,7 @@ class PlayerActivity : ComponentActivity() {
         const val EXTRA_TITLE = "media_title"
         const val EXTRA_PLAYLIST = "media_playlist"
         private const val KEY_URL = "current_url"
+        private val NIGHT = 0xFF090B10.toInt()
         private const val KEY_TITLE = "current_title"
         private const val KEY_POSITION = "playback_position"
         private const val KEY_PLAYING = "play_when_ready"

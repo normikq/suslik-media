@@ -56,7 +56,7 @@ object PlaybackSettings {
     const val CACHE_DEFAULT = PlaybackPresets.CACHE_DEFAULT
 
     private fun prefs(ctx: Context) = ctx.getSharedPreferences("settings", Context.MODE_PRIVATE)
-    fun burstMb(ctx: Context) = prefs(ctx).getInt("burst_mb", BURST_DEFAULT)
+    fun burstMb(ctx: Context) = PlaybackPresets.clampBurst(prefs(ctx).getInt("burst_mb", BURST_DEFAULT))
     fun setBurstMb(ctx: Context, v: Int) = prefs(ctx).edit().putInt("burst_mb", v).apply()
     fun cacheMs(ctx: Context) = prefs(ctx).getInt("vlc_cache_ms", CACHE_DEFAULT)
     fun setCacheMs(ctx: Context, v: Int) = prefs(ctx).edit().putInt("vlc_cache_ms", v).apply()

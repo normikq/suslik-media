@@ -50,7 +50,7 @@ object PlaybackSettings {
     const val CACHE_DEFAULT = PlaybackPresets.CACHE_DEFAULT
 
     private val store = Store("settings")
-    fun burstMb() = store.get("burst_mb")?.toIntOrNull() ?: BURST_DEFAULT
+    fun burstMb() = PlaybackPresets.clampBurst(store.get("burst_mb")?.toIntOrNull() ?: BURST_DEFAULT)
     fun setBurstMb(v: Int) = store.put("burst_mb", v.toString())
     fun cacheMs() = store.get("vlc_cache_ms")?.toIntOrNull() ?: CACHE_DEFAULT
     fun setCacheMs(v: Int) = store.put("vlc_cache_ms", v.toString())
