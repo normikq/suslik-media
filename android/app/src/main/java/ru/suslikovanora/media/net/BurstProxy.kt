@@ -36,7 +36,7 @@ object BurstProxy {
     private const val MAX_WINDOWS = 2              // per stream (the film + one far seek / index read)
     /** Reserve per window (ring file), from «Настройки → Экономная загрузка»; 0 = off (VLC reads directly). */
     @Volatile var capBytes = 96L shl 20
-    private const val PROBE_AHEAD = 2L shl 20      // before a window proves to be real playback
+    private const val PROBE_AHEAD = 4L shl 20      // before a window proves to be real playback
     private const val PROBE_LIMIT = 6L shl 20      // read sequentially this far = playback → bursts
     private const val CHUNK = 256 * 1024
     private const val NEAR = 2L shl 20             // a request this close to a window's end joins it
@@ -213,16 +213,11 @@ object BurstProxy {
                 val buf = ByteArray(CHUNK)
                 while (!closed) {
                     if (abandoned()) return
-                    if (end() - readPos >= high()) {
-                        // Burst done: enough ahead → close the connection, let the radio sleep.
-                        if (burst()) return
-                        // Still probing (start-up, index reads): keep the connection, wait for the player a little.
-                        synchronized(lock) {
-                            val t = System.currentTimeMillis()
-                            while (!closed && end() - readPos >= high() && System.currentTimeMillis() - t < 10_000) lock.wait(300)
-                        }
-                        if (closed || end() - readPos >= high()) return
-                    }
+                    // Enough ahead → close this request at once. Never keep an unread request open: all requests to the
+                    // mirror share one HTTP/2 connection, and data piling up in an unread one used up the connection's
+                    // flow-control window — the request for the place the player had just jumped to then got nothing
+                    // for seconds ("Буферизация 0 %" for a long time after a seek, then a sudden fast load).
+                    if (end() - readPos >= high()) return
                     val n = input.read(buf)
                     if (n < 0) { synchronized(lock) { eof = true; lock.notifyAll() }; return }
                     synchronized(lock) {
