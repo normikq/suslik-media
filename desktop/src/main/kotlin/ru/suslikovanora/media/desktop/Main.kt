@@ -99,9 +99,9 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
         if (leaving) return
         appScope.launch {
             leaving = true
-            presence.animateTo(0f, tween(560, easing = Sm.ease))
+            // (The player already told the library about the new progress, before this animation started.)
+            presence.animateTo(0f, tween(620, easing = Sm.ease))
             playing = null; leaving = false; onTop.value = false
-            lib.bumpWatch()
         }
     }
     fun requestPlay(req: PlayRequest) {
@@ -187,11 +187,19 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
                 }
             }
             playing?.let { req ->
+                val filmId = remember(req) { req.watchKeys.firstOrNull()?.substringBefore('|')?.toLongOrNull() }
+                val lastHome = remember(req) { arrayOfNulls<androidx.compose.ui.geometry.Rect>(1) } // plain holder, not state
                 Box(Modifier.fillMaxSize()
                     .graphicsLayer {
                         val p = presence.value
-                        if (leaving) {
-                            // Exit: the picture shrinks into a rounded card and fades as the library comes forward.
+                        // Read live (the library is still settling); a frame where it is briefly unknown keeps the last one.
+                        val home = if (leaving) (TileBounds.target(filmId) ?: lastHome[0]) else null
+                        lastHome[0] = home
+                        if (home != null) {
+                            // Exit: the frame flies back into its own poster in the library.
+                            flyInto(home, 1f - p)
+                        } else if (leaving) {
+                            // Exit when the poster is not on screen: the picture shrinks into a rounded card and fades.
                             val s = 0.86f + 0.14f * p
                             scaleX = s; scaleY = s
                             alpha = (p * 1.6f).coerceIn(0f, 1f)

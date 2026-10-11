@@ -377,11 +377,12 @@ fun PlayerView(
         else scope.async(Dispatchers.IO) { runCatching { req.sidecars?.invoke(i) }.getOrNull() ?: (emptyList<String>() to emptyList()) }
     }
     /** Still of the current frame (must run on the player thread). */
-    fun grabFrame() {
+    fun grabFrame(): androidx.compose.ui.graphics.ImageBitmap? {
         val img = runCatching { if (mp.video().videoDimension() != null) mp.snapshots().get(canvas.width.coerceIn(320, 1920), 0) else null }.getOrNull()
-            ?: return
+            ?: return null
         val bmp = img.toComposeImageBitmap()
         SwingUtilities.invokeLater { lastFrame = bmp }
+        return bmp
     }
     var openJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     /**
@@ -593,6 +594,7 @@ fun PlayerView(
         if (closing) return
         closing = true
         savePos(time, length)
+        library.bumpWatch()
         scope.launch {
             withTimeoutOrNull(800) { withContext(vlcThread) { grabFrame(); runCatching { mp.controls().stop() } } }
             showCanvas = false
@@ -641,31 +643,29 @@ fun PlayerView(
 
     /**
      * Leaving: the native video cannot be animated, so it is swapped for a still of the current frame, which the main
-     * window then shrinks away. VLC is stopped BEFORE its window goes away — removing the video area while VLC is still
-     * opening a stream (e.g. right after "next") made it retry every video output and froze the app.
-     * Nothing here blocks the UI: all VLC calls run on the player's own thread.
+     * window then flies back into the film's poster.
+     *
+     * It used to wait for VLC to STOP before the animation began (up to half a second with a frozen picture), and
+     * the library recomputed everyone's progress only after the return — both were the "freeze" on the way back.
+     * Now only the still is awaited (normally ~50 ms, at most 180 ms, while the film keeps playing), the native video
+     * is moved off-screen at once (at a normal size: shrinking it to a few pixels makes Direct3D fail) and VLC stops in
+     * the background; its window is removed only when the player goes away, after the animation, when VLC has
+     * long let go of it (removing it while VLC is still opening a stream froze the app).
      */
     fun close() {
         if (closing) return
         closing = true
         savePos(time, length)
+        library.bumpWatch() // the library updates progress now, behind the film, not when it is already on screen
         nextIn = -1
-        if (mini) setMini(false)
-        if (win.placement == WindowPlacement.Fullscreen) win.placement = WindowPlacement.Floating
+        supRef.get()?.closed()
         scope.launch {
-            // Normally a still + stop take well under 0.2 s. Then the video area is removed cleanly (VLC already let go of it).
-            val stopped = withTimeoutOrNull(450) {
-                withContext(vlcThread) { grabFrame(); runCatching { mp.controls().stop() }; true }
-            } == true
-            delay(16) // let the still land
-            if (stopped) showCanvas = false
-            else {
-                // VLC is stuck opening a stream: move its window off-screen at a normal size (shrinking it to a few
-                // pixels makes Direct3D fail) and stop it in the background.
-                parked = true
-                vlcExecutor.execute { runCatching { mp.controls().stop() } }
-            }
-            onClose()
+            withTimeoutOrNull(180) { withContext(vlcThread) { grabFrame() } }?.let { lastFrame = it }
+            parked = true
+            if (mini) setMini(false)
+            if (win.placement == WindowPlacement.Fullscreen) win.placement = WindowPlacement.Floating
+            onClose() // the exit animation starts right away
+            vlcExecutor.execute { runCatching { mp.controls().stop() } }
         }
     }
 
@@ -777,11 +777,12 @@ fun PlayerView(
         })
         onDispose {
             prefsTimer.stop()
-            BurstProxy.clear() // the temporary reserve of the films watched here
-            if (!closing) savePos(time, length)
+            // The temporary reserve of the films watched here: closing its downloads and deleting the files can take
+            // a moment — never on the UI thread (it was part of the hitch right as the library came back).
+            Thread({ runCatching { BurstProxy.clear() } }, "reserve-clear").apply { isDaemon = true; start() }
+            if (!closing) { savePos(time, length); library.bumpWatch() } // (close() / restartPlayer() already did)
             if (mini) setMini(false)
             ui.put("volume", volume.toString())
-            library.bumpWatch()
             // Released on the player's thread, after any switch still in progress (no freeze on the way out).
             vlcExecutor.execute {
                 runCatching { mp.controls().stop() }
@@ -932,7 +933,7 @@ fun PlayerView(
             val inside = b != null && pos != null && b.contains(pos)
             val zone = b?.let { (it.height * 0.16).toInt().coerceIn(130, 220) } ?: 0
             val nearBottom = inside && pos!!.y >= b!!.y + b.height - zone
-            val hold = b == null || !started || vlcPaused || nextIn >= 0 || picker != null || seeking != null || closing || infoOpen || inIntro()
+            val hold = b == null || !started || vlcPaused || nextIn >= 0 || picker != null || seeking != null || infoOpen || inIntro()
             val show = hold || nearBottom || (inside && now - movedAt < 2500L)
             if (show != barVisible) barVisible = show
             delay(150)
@@ -962,7 +963,8 @@ fun PlayerView(
         // Slides down / up inside its own slot. The video is resized only ONCE per show/hide (slot added at the start of
         // showing, removed at the end of hiding) — resizing it every frame was what made the bar stutter.
         if (barInLayout) Box(Modifier.fillMaxWidth().clipToBounds()) {
-            Column(Modifier.fillMaxWidth().graphicsLayer { translationY = barSlide.value * size.height; alpha = 1f - 0.5f * barSlide.value }
+            // Leaving: the bar vanishes but keeps its place (the still must not jump while it flies to the poster).
+            Column(Modifier.fillMaxWidth().graphicsLayer { translationY = barSlide.value * size.height; alpha = if (closing) 0f else 1f - 0.5f * barSlide.value }
                 .background(Sm.booth).padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 10.dp)) {
                 if (infoOpen) Text(infoText.ifBlank { "Собираем данные…" }, color = Color(0xFFFFD791), fontFamily = Onest, fontSize = 12.5.sp,
                     modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp))

@@ -59,6 +59,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -197,6 +198,7 @@ fun LibraryView(
     Box(Modifier.fillMaxSize().background(Sm.night)) {
         LazyVerticalGrid(
             columns = GridCells.Adaptive(190.dp), state = grid,
+            modifier = Modifier.onGloballyPositioned { TileBounds.viewport = it },
             contentPadding = PaddingValues(28.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), verticalArrangement = Arrangement.spacedBy(22.dp)
         ) {
             item(span = { GridItemSpan(maxLineSpan) }) {
@@ -270,10 +272,11 @@ private fun Tile(item: LibraryItem, lib: Library, onOpen: (PlayTarget) -> Unit, 
 
     Column(modifier.graphicsLayer { translationY = lift }.hoverable(src)) {
         Box(
-            Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(14.dp))
+            Modifier.fillMaxWidth().aspectRatio(2f / 3f).onGloballyPositioned { TileBounds.poster[m.id] = it }
+                .clip(RoundedCornerShape(14.dp))
                 .background(Brush.linearGradient(listOf(Color(0xFF242A3A), Color(0xFF10131A))))
                 .border(1.dp, edge, RoundedCornerShape(14.dp))
-                .clickable(enabled = canPlay) { target()?.let(onOpen) }
+                .clickable(enabled = canPlay) { TileBounds.fromContinue = false; target()?.let(onOpen) }
                 .then(if (canPlay) Modifier.pointerHoverIcon(PointerIcon.Hand) else Modifier)
         ) {
             val p = poster
@@ -543,6 +546,7 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
                     val e = entries[i]
                     ContinueCard(e, lib, Modifier.animateItem(fadeInSpec = tween(250), fadeOutSpec = tween(200)),
                         onRemove = { lib.hideContinue(listOf(e.item.m.id)) }) {
+                        TileBounds.fromContinue = true
                         lib.saveEpisode(e.item.m.id, e.target.file.path); onOpen(e.target)
                     }
                 }
@@ -567,7 +571,7 @@ private fun ContinueCard(e: ContinueEntry, lib: Library, modifier: Modifier, onR
         Modifier.width(320.dp).height(112.dp).clip(RoundedCornerShape(14.dp)).background(Sm.booth)
             .border(1.dp, edge, RoundedCornerShape(14.dp)).hoverClick(src, onClick = onClick)
     ) {
-        Box(Modifier.width(75.dp).fillMaxHeight().background(Brush.linearGradient(listOf(Color(0xFF242A3A), Color(0xFF10131A))))) {
+        Box(Modifier.width(75.dp).fillMaxHeight().onGloballyPositioned { TileBounds.cont[e.item.m.id] = it }.background(Brush.linearGradient(listOf(Color(0xFF242A3A), Color(0xFF10131A))))) {
             poster?.let { Image(it, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
             Box(Modifier.align(Alignment.Center).size(34.dp).clip(CircleShape).background(if (hovered) Sm.lamp else Color(0xB3090B10)),
                 contentAlignment = Alignment.Center) { Text("▶", color = if (hovered) Sm.lampInk else Color.White, fontSize = 13.sp) }

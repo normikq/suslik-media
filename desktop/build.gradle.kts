@@ -28,7 +28,7 @@ dependencies {
 }
 
 // One place for the version: the installer, and the app itself (update check) via -Dsuslik.version.
-val appVersion = "2.0.0"
+val appVersion = "2.0.1"
 
 composeCompiler { stabilityConfigurationFile.set(project.layout.projectDirectory.file("compose-stability.conf")) }
 
