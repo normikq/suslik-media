@@ -53,7 +53,8 @@ jobs:
         run: |
           set -o pipefail
           T=assembleDebug; [ "$HAS_KEY" = "1" ] && T=assembleRelease
-          gradle --no-daemon $T 2>&1 | tee "$RUNNER_TEMP/build.log"
+          # + the debug build «Suslik Debug» (detailed journal, own package; DEBUG-BUILD.md) as a separate artifact.
+          gradle --no-daemon $T assembleDiag 2>&1 | tee "$RUNNER_TEMP/build.log"
       - name: Report build errors
         if: failure()
         run: |
@@ -66,13 +67,16 @@ jobs:
         run: |
           V=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts)
           C=$(grep -oP 'versionCode\s*=\s*\K[0-9]+' app/build.gradle.kts)
-          F=$(ls app/build/outputs/apk/*/*.apk | head -1)
+          F=$(ls app/build/outputs/apk/release/*.apk app/build/outputs/apk/debug/*.apk 2>/dev/null | head -1)
           # -b<versionCode>: Android installs by this number, not by the name — the app reads it from the file name.
           mkdir -p ../dist && cp "$F" "../dist/suslik-media-$V-b$C.apk"
           echo "APK=dist/suslik-media-$V-b$C.apk" >> "$GITHUB_ENV"
-          ls -la ../dist
+          mkdir -p ../dist-diag && cp app/build/outputs/apk/diag/*.apk "../dist-diag/suslik-debug-$V-b$C.apk"
+          ls -la ../dist ../dist-diag
       - uses: actions/upload-artifact@v4
         with: { name: android-apk, path: dist/*.apk, retention-days: 14 }
+      - uses: actions/upload-artifact@v4
+        with: { name: android-debug-apk, path: dist-diag/*.apk, retention-days: 30 }
       - name: Publish to the site
         if: ${{ inputs.publish && env.HAS_KEY == '1' }}
         working-directory: .

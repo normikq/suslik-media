@@ -90,6 +90,7 @@ class BurstProxyTest {
         assertTrue(a != BurstProxy.wrap(addr("L2", 2)))              // another file: its own
         val (code, head) = get(a, "bytes=0-999999")
         assertEquals(206, code); assertContentEquals(data.copyOfRange(0, 1_000_000), head)
+        BurstProxy.snapshot().let { assertTrue("film.mkv" in it && "ahead" in it && "sig=" !in it, it) } // debug line, no signatures
         BurstProxy.clear()                                           // the player is closed: kept on disk for a while
         val again = BurstProxy.wrap(addr("L1", 3))
         assertEquals(a, again)

@@ -22,6 +22,7 @@ android {
     // Native library screen (Jetpack Compose); the other tabs are still the website in a WebView.
     buildFeatures {
         compose = true
+        buildConfig = true // BuildConfig.DIAG: the debug build's detailed journal (always false in the normal app)
     }
 
     // Release signing from the environment (GitHub Actions secrets). Without it, only debug builds are signed.
@@ -43,6 +44,19 @@ android {
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
+        // Debug build («Suslik Debug»): the release app plus a detailed journal (system, network, VLC, reserve, HTTP
+        // timings, UI frames) for tracing what to optimise. Its own package — installs next to the normal app, own
+        // login and settings, never updates itself. Optimised like the release (fair numbers), names kept readable,
+        // profileable from a computer. Built by CI as a separate artifact; never published to the site.
+        create("diag") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".diag"
+            matchingFallbacks += listOf("release")
+            proguardFiles("proguard-diag.pro")
+            buildConfigField("boolean", "DIAG", "true")
+            manifestPlaceholders["appLabel"] = "Suslik Debug"
+            if (ksPath == null) signingConfig = signingConfigs.getByName("debug")
+        }
     }
 
     defaultConfig {
@@ -51,6 +65,8 @@ android {
         targetSdk = 35
         versionCode = 38
         versionName = "2.0.0.4"
+        buildConfigField("boolean", "DIAG", "false")
+        manifestPlaceholders["appLabel"] = "Suslik Media — медиатека"
 
         // Package native VLC libraries only for 64-bit ARM Android devices.
         ndk {

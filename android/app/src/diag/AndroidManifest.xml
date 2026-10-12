@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug build only (merged over src/main). The protected permissions below are never granted on install: they are
+     switched on from a computer with `adb shell pm grant ru.suslikovanora.media.diag <permission>` (see DEBUG-BUILD.md). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- System log (warnings of all processes: network stack, radio, power) next to the app's own log. -->
+    <uses-permission android:name="android.permission.READ_LOGS" tools:ignore="ProtectedPermissions" />
+    <!-- `dumpsys batterystats`: radio-active time, wakelocks and CPU of the app — the battery picture from inside. -->
+    <uses-permission android:name="android.permission.DUMP" tools:ignore="ProtectedPermissions" />
+    <!-- Mobile network generation (LTE / 5G / 3G) in the journal. -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <!-- Wi-Fi signal strength in the journal. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <application>
+        <!-- CPU / memory profiling from a computer (Android Studio, Perfetto) without the cost of a debuggable app. -->
+        <profileable android:shell="true" tools:targetApi="29" />
+    </application>
+</manifest>

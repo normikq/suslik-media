@@ -203,6 +203,53 @@ class PlayerActivity : ComponentActivity() {
         }
     }
 
+    // ---- debug build: [vlc] and [proxy] lines every 5 s, also with the screen off (keepOnStop leaves this running) ----
+    private val diagRunnable = object : Runnable {
+        override fun run() { runCatching { diagSample() }; handler.postDelayed(this, 5_000L) }
+    }
+    private var diagPrev: org.videolan.libvlc.interfaces.IMedia.Stats? = null
+    private var diagAt = 0L
+
+    private fun diagSample() {
+        val now = SystemClock.elapsedRealtime()
+        val span = if (diagAt == 0L) 0L else now - diagAt
+        diagAt = now
+        val p = mediaPlayer
+        val sb = StringBuilder("[vlc] ")
+        if (p == null) sb.append("no player${if (keptOnStop) " (parked)" else ""}")
+        else {
+            sb.append("%.1f/%ds ".format(p.time / 1000.0, p.length / 1000))
+            sb.append(when {
+                keptOnStop -> "parked (screen off / hidden)"
+                p.isPlaying -> "playing"
+                userPaused -> "paused by user"
+                else -> "not playing"
+            })
+            if (buffering) sb.append(" BUFFERING")
+            if (networkLost) sb.append(" NETWORK-LOST")
+            runCatching { p.rate }.getOrNull()?.takeIf { it != 1f }?.let { sb.append(" speed ${it}x") }
+            val st = runCatching { media?.stats }.getOrNull()
+            val q = diagPrev
+            if (st != null) {
+                // Counters restart with every new Media (reopen / next episode): then the raw values are shown.
+                val fresh = q == null || st.readBytes < q.readBytes || st.displayedPictures < q.displayedPictures
+                fun d(a: Int, b: Int?) = if (fresh || b == null) a else a - b
+                val read = if (fresh) st.readBytes.toLong() else (st.readBytes - q!!.readBytes).toLong()
+                sb.append(" · read +%.2f MB%s".format(read / 1048576.0,
+                    if (span > 0 && !fresh) " (%.1f Mbit/s)".format(read * 8.0 / 1000 / span) else ""))
+                sb.append(" · pictures shown +${d(st.displayedPictures, q?.displayedPictures)} lost +${d(st.lostPictures, q?.lostPictures)}")
+                sb.append(" · decoded video +${d(st.decodedVideo, q?.decodedVideo)} audio +${d(st.decodedAudio, q?.decodedAudio)}")
+                sb.append(" · audio played +${d(st.playedAbuffers, q?.playedAbuffers)} lost +${d(st.lostAbuffers, q?.lostAbuffers)}")
+                if (st.demuxCorrupted > 0 || st.demuxDiscontinuity > 0) sb.append(" · demux corrupted ${st.demuxCorrupted} discontinuities ${st.demuxDiscontinuity}")
+                if (fresh) sb.append(" (counters since open)")
+            }
+            diagPrev = st
+        }
+        BurstProxy.aheadMb(currentUrl)?.let { sb.append(" · reserve ahead %.1f MB".format(it)) }
+        AppLog.write(sb.toString())
+        AppLog.write("[proxy] " + BurstProxy.snapshot())
+    }
+
     // ---- playback health: the supervisor shared with the PC app (core.PlaybackSupervisor) ---------------
     // One place decides when playback is broken and what to do — only while the film really plays, never right after
     // a seek / resume / reconnect, one gentle step at a time (video restart, sound fix) before any reopen.
@@ -385,6 +432,7 @@ class PlayerActivity : ComponentActivity() {
         alive = true
         CrashReports.playerRunning(this, true) // still set at the next start = this screen died (native crash)
         BurstProxy.log = { AppLog.write(it) }
+        if (Diag.on) { Diag.playerOpen = true; handler.postDelayed(diagRunnable, 3000L) }
         TrafficMeter.init(this)
         sessionStartMb = BurstProxy.downloadedMb()
         BurstProxy.init(java.io.File(cacheDir, "stream")) { url, from ->
@@ -555,6 +603,11 @@ class PlayerActivity : ComponentActivity() {
         options.addView(scaleButton, LinearLayout.LayoutParams(-2, dp(42)).apply { marginEnd = dp(8) })
         options.addView(pillButton("🔒").apply { contentDescription = "Блокировка экрана"; setOnClickListener { lockScreen() } },
             LinearLayout.LayoutParams(dp(48), dp(42)).apply { marginEnd = dp(14) })
+        if (Diag.on) options.addView(pillButton("📍").apply {
+            contentDescription = "Метка в журнале"
+            setOnClickListener { val n = Diag.mark("player at ${perceivedPosition() / 1000}s"); showStatus("Метка #$n"); showControlsTemporarily()
+                handler.postDelayed({ if (!buffering && !networkLost) bufferingLabel.visibility = View.GONE }, 1500L) }
+        }, LinearLayout.LayoutParams(dp(48), dp(42)).apply { marginEnd = dp(14) })
         options.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
         volumeLabel = TextView(this).apply { text = "🔊"; textSize = 16f; setTextColor(Color.WHITE) }
         options.addView(volumeLabel, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(4) })
@@ -753,7 +806,7 @@ class PlayerActivity : ComponentActivity() {
                     "--no-video-title-show",
                     // stats stay on: the watchdog uses "displayed pictures" to notice a frozen picture.
                     "--no-sub-autodetect-file" // do not probe the HTTP server for sidecar subtitle files
-                )
+                ).apply { if (Diag.vlcVerbose(this@PlayerActivity)) add("-vv") } // debug build: VLC's own log → logcat.log
             )
             libVlc = vlc
             teardownExec = Executors.newSingleThreadExecutor { r -> Thread(r, "vlc-teardown").apply { isDaemon = true } }
@@ -2007,6 +2060,7 @@ class PlayerActivity : ComponentActivity() {
         AppLog.write("player closed: %.0f MB fetched in this session (%s)".format(
             BurstProxy.downloadedMb() - sessionStartMb, if (TrafficMeter.isMetered(this)) "mobile" else "wifi"))
         TrafficMeter.flush(this)
+        if (Diag.on) { diagSample(); Diag.playerOpen = false; Diag.batterySnapshot("film closed") }
         orientationWatch?.disable(); orientationWatch = null
         CrashReports.playerRunning(this, false)
         supervisor.closed()

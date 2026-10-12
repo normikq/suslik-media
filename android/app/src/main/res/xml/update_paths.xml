@@ -2,4 +2,6 @@
 <!-- Downloaded app updates (cacheDir/updates) handed to the system installer. -->
 <paths>
     <cache-path name="updates" path="updates/" />
+    <!-- Debug build: the zipped journal handed to «Поделиться». -->
+    <cache-path name="diag" path="diag-share/" />
 </paths>

@@ -196,6 +196,22 @@ object BurstProxy {
     /** MB downloaded from the mirror since the process started. */
     fun downloadedMb(): Double = downloaded.get() / 1048576.0
 
+    /**
+     * Debug build: the reserve's state in one line — every stream (size, bitrates) and its windows (where, how much is
+     * ahead of the player, phase, downloading or resting, how long nobody read). For tracing what the downloader does.
+     */
+    fun snapshot(): String {
+        if (sources.isEmpty()) return "no streams"
+        val now = System.currentTimeMillis()
+        return sources.values.joinToString(" | ") { s ->
+            val name = s.url.substringBefore('?').substringAfterLast('/').take(40)
+            val retired = if (s.retiredAt > 0) " retired ${(now - s.retiredAt) / 1000}s ago" else ""
+            val ws = s.windows.joinToString(", ") { w -> w.describe(now) }.ifEmpty { "no windows" }
+            "%s %dMB · film %.1f avg %.1f net %.1f Mbit/s%s · %s".format(name, maxOf(s.total, 0L) shr 20,
+                s.rate * 8 / 1e6, s.avgRate * 8 / 1e6, s.netRate * 8 / 1e6, retired, ws)
+        }
+    }
+
     // ---- one stream (one original URL) ----------------------------------------------------------
     private class Source(val token: String, @Volatile var url: String) {
         @Volatile var total = -1L
@@ -245,6 +261,16 @@ object BurstProxy {
 
         fun end() = start + written
         fun cap() = CAP
+        fun describe(now: Long): String {
+            val state = when {
+                closed -> "closed"; error != null -> "error($error)"; eof -> "eof"
+                response != null -> "downloading"; else -> "resting"
+            }
+            val phase = when { !burst() -> "probe"; ramping() -> "ramp"; else -> "full" }
+            return "@%dMB ahead %.1fMB (low %d high %d) kept %dMB %s %s readers %d quiet %ds".format(start shr 20,
+                (end() - readPos).coerceAtLeast(0) / 1048576.0, low() shr 20, high() shr 20,
+                written.coerceAtMost(CAP) shr 20, phase, state, readers, (now - lastReadAt) / 1000)
+        }
         /**
          * The player jumped elsewhere (another window is being read now): stop filling this one. Before, it went on
          * downloading its whole reserve at full speed and took half the bandwidth from the place the player jumped to —
@@ -370,6 +396,7 @@ object BurstProxy {
                 }
                 why = "closed"
             } } finally {
+                response = null
                 val ms = System.currentTimeMillis() - t0
                 val dataMs = (ms - tFirst).coerceAtLeast(1)
                 if (got >= (3L shl 20) && dataMs >= 200) {

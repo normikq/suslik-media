@@ -77,6 +77,7 @@ object Api {
             .readTimeout(30, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .addInterceptor(CookieBridge)
+            .apply { if (ru.suslikovanora.media.Diag.on) eventListenerFactory(ru.suslikovanora.media.Diag.http) } // debug build: [http] timings
             .build()
     }
 

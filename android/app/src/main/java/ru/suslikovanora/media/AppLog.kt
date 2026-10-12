@@ -19,7 +19,16 @@ object AppLog {
     private val writer = Executors.newSingleThreadExecutor { r -> Thread(r, "app-log").apply { isDaemon = true } }
     private val fmt = SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.ROOT)
 
-    fun init(ctx: Context) { if (dir == null) dir = ctx.applicationContext.filesDir }
+    // Debug build: a much bigger journal in the app's folder on the shared storage, so a computer can take it with
+    // `adb pull /sdcard/Android/data/ru.suslikovanora.media.diag/files/diag`.
+    private val limit = if (BuildConfig.DIAG) 20_000_000L else 1_000_000L
+
+    fun init(ctx: Context) {
+        if (dir != null) return
+        val c = ctx.applicationContext
+        dir = if (BuildConfig.DIAG) runCatching { c.getExternalFilesDir("diag") }.getOrNull() ?: c.filesDir else c.filesDir
+    }
+    val folder: File? get() = dir
     val file: File? get() = dir?.let { File(it, "player.log") }
 
     fun write(msg: String) {
@@ -28,7 +37,7 @@ object AppLog {
         runCatching {
             writer.execute {
                 runCatching {
-                    if (f.length() > 1_000_000) { val old = File(f.parentFile, "player.old.log"); old.delete(); f.renameTo(old) }
+                    if (f.length() > limit) { val old = File(f.parentFile, "player.old.log"); old.delete(); f.renameTo(old) }
                     f.appendText(line)
                 }
             }
@@ -38,14 +47,27 @@ object AppLog {
     /** Both parts (previous + current), newest last, at most [max] characters — for «Отправить журнал». */
     fun full(max: Int = 850_000): String = runCatching {
         val f = file!!
-        val old = File(f.parentFile, "player.old.log").takeIf { it.exists() }?.readText().orEmpty()
-        val t = old + (if (f.exists()) f.readText() else "")
+        val cur = tailOf(f, max.toLong())
+        val old = if (cur.length < max) tailOf(File(f.parentFile, "player.old.log"), (max - cur.length).toLong()) else ""
+        val t = old + cur
         if (t.length > max) "…" + t.takeLast(max) else t.ifEmpty { "(журнал пуст)" }
     }.getOrDefault("(no journal)")
 
     fun tail(max: Int = 60_000): String = runCatching {
-        val t = file!!.readText(); if (t.length > max) "…" + t.takeLast(max) else t
+        val t = tailOf(file!!, max.toLong()); if (t.length >= max) "…$t" else t
     }.getOrDefault("(no journal)")
+
+    /** The last [bytes] of a file, read from the end (the debug journal is tens of MB: never read it whole). */
+    private fun tailOf(f: File, bytes: Long): String {
+        if (!f.exists() || bytes <= 0) return ""
+        java.io.RandomAccessFile(f, "r").use { r ->
+            val from = maxOf(0L, r.length() - bytes)
+            val buf = ByteArray((r.length() - from).toInt())
+            r.seek(from); r.readFully(buf)
+            val t = String(buf, Charsets.UTF_8)
+            return if (from > 0) t.substringAfter('\n') else t // drop the cut first line
+        }
+    }
 }
 
 /**
@@ -62,6 +84,7 @@ object CrashReports {
         if (app != null) return
         app = ctx.applicationContext
         AppLog.init(ctx)
+        Diag.init(ctx)
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { t, e ->
             runCatching {
@@ -107,7 +130,7 @@ object CrashReports {
             val body = (head + AppLog.full()).toRequestBody("text/plain; charset=utf-8".toMediaType())
             val req = okhttp3.Request.Builder().url(ru.suslikovanora.media.net.Api.BASE + "/api/app/report")
                 .header("Content-Type", "text/plain; charset=utf-8").header("X-Platform", "android")
-                .header("X-App-Version", Updater.currentVersion(ctx)).header("X-Report-Kind", "journal")
+                .header("X-App-Version", Updater.currentVersion(ctx)).header("X-Report-Kind", if (Diag.on) "diag-journal" else "journal")
                 .post(body).build()
             ru.suslikovanora.media.net.Api.plain.newCall(req).execute().use { it.isSuccessful }
         }.getOrDefault(false)

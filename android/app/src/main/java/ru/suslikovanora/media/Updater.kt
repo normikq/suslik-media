@@ -93,6 +93,7 @@ object Updater {
 
     /** null = nothing new (or not time to ask yet, unless [force]). */
     suspend fun check(ctx: Context, force: Boolean = false): Info? {
+        if (Diag.on) return null // the debug build is its own app (another package): installed from a computer, never updated here
         val prefs = ctx.getSharedPreferences("updates", Context.MODE_PRIVATE)
         val now = System.currentTimeMillis()
         withContext(Dispatchers.IO) { cleanup(ctx) }

@@ -120,7 +120,7 @@ fun SettingsSheet(onClose: () -> Unit) {
                     PresetRow(p, p.value == cache) { cache = p.value; PlaybackSettings.setCacheMs(ctx, p.value) }
                 }
                 TrafficSection()
-                ChannelSection()
+                if (Diag.on) DiagSection() else ChannelSection()
                 JournalSection()
             }
             Row(Modifier.fillMaxWidth().padding(top = 14.dp), horizontalArrangement = Arrangement.End) {
@@ -244,6 +244,44 @@ private fun JournalSection() {
             }
         }
     }
+}
+
+/** Debug build only: where the detailed journal is, which adb permissions are on, and its buttons. */
+@Composable
+private fun DiagSection() {
+    val ctx = LocalContext.current
+    var state by remember { mutableStateOf<String?>(null) }
+    var verbose by remember { mutableStateOf(Diag.vlcVerbose(ctx)) }
+    Section("Отладочная сборка", "Подробный журнал: Android/data/${ctx.packageName}/files/diag " +
+        "(с компьютера: adb pull /sdcard/Android/data/${ctx.packageName}/files/diag). Разрешения: ${Diag.permissions(ctx)}. " +
+        "Обновления в этой сборке выключены — новая ставится с компьютера.", top = 18.dp)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ru.suslikovanora.media.library.OutlineButton("Метка", Modifier.weight(1f)) { state = "Метка #${Diag.mark("settings")} записана в журнал" }
+        ru.suslikovanora.media.library.OutlineButton("Батарея", Modifier.weight(1f)) {
+            Diag.batterySnapshot("button"); state = "Снимок батареи пишется в журнал (нужно разрешение DUMP)"
+        }
+    }
+    Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ru.suslikovanora.media.library.OutlineButton("Поделиться", Modifier.weight(1f)) {
+            val zip = Diag.zipJournal(ctx)
+            if (zip == null) state = "Не получилось собрать архив" else runCatching {
+                val uri = androidx.core.content.FileProvider.getUriForFile(ctx, ctx.packageName + ".updates", zip)
+                ctx.startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND)
+                    .setType("application/zip").putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                    .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION), "Журнал отладки")
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+                state = "Архив ${zip.length() / 1024} КБ"
+            }.onFailure { state = "Ошибка: ${it.message}" }
+        }
+        ru.suslikovanora.media.library.OutlineButton("Очистить", Modifier.weight(1f)) { Diag.clearJournal(); state = "Старые части удалены" }
+    }
+    Section("Журнал VLC", "Подробный (-vv) пишет каждое действие декодера в logcat.log — много мегабайт в минуту. " +
+        "Включайте на время одного опыта. Применяется при следующем открытии фильма.", top = 12.dp)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ChannelOption("Обычный", !verbose, Modifier.weight(1f)) { verbose = false; Diag.setVlcVerbose(ctx, false) }
+        ChannelOption("Подробный", verbose, Modifier.weight(1f)) { verbose = true; Diag.setVlcVerbose(ctx, true) }
+    }
+    state?.let { Text(it, color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 6.dp)) }
 }
 
 @Composable
