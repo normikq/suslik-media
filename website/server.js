@@ -892,6 +892,18 @@ function updateTokenOk(req) {
   const given = String(req.get("X-Update-Token") || "");
   return !!token && given.length === token.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(token));
 }
+// Что сервер видит в папках обновлений (workflow «Update status»): какая версия у релиза и у беты, какие файлы лежат.
+// SERVER_REV меняется вместе с логикой версий — по нему видно, что на VPS действительно запущен новый server.js.
+const SERVER_REV = "2026-10-12 versions-4";
+app.get("/api/app/status", (req, res) => {
+  if (!updateTokenOk(req)) return res.status(403).json({ error: "Нужен X-Update-Token." });
+  const list = dir => { try { return fs.readdirSync(dir).filter(n => /\.(apk|msi|exe)$/i.test(n)); } catch { return []; } };
+  const pick = u => u ? { file: u.name, version: u.version } : null;
+  const out = { rev: SERVER_REV, node: process.version, betaCodeSet: !!process.env.BETA_CODE, stable: {}, beta: {} };
+  for (const p of Object.keys(UPDATE_KINDS)) { out.stable[p] = pick(latestUpdate(p)); out.beta[p] = pick(latestUpdate(p, BETA_DIR)); }
+  out.files = { stable: list(UPDATES_DIR), beta: list(BETA_DIR) };
+  res.json(out);
+});
 // Бета проверена → всем: файл из updates/beta/ переносится в updates/ (старая версия для всех удаляется).
 app.post("/api/app/promote", (req, res) => {
   if (!updateTokenOk(req)) return res.status(403).json({ error: "Неверный X-Update-Token." });
