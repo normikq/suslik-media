@@ -23,7 +23,6 @@
 - The website's private password/login flow is used as-is inside WebView. Не встраивайте общий пароль или ключ API AllDebrid в приложение.
 - The native VLC player intercepts common “Open” actions. Некоторые источники возвращают временные URL, требуют специальных заголовков/cookie или ограничивают воспроизведение определёнными клиентами; такие сценарии нужно проверить на реальном аккаунте и потоке.
 - Позиция воспроизведения сохраняется при остановке или пересоздании активности плеера, но не синхронизируется с сайтом.
-- WebDAV пока не реализован; архитектура позволяет добавить выбор источника позже.
 - `android:usesCleartextTraffic="true"` is enabled to allow external HTTP media URLs in the prototype. The site itself is loaded over HTTPS. For a production release, prefer HTTPS streams and remove cleartext access once all sources support it.
 
 ## Идентификатор приложения

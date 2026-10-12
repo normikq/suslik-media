@@ -269,15 +269,7 @@ async function getPoster(title) {
   const key=title.toLowerCase(); if(posterCache.has(key)) return posterCache.get(key);
   const task=api("/api/poster?q="+encodeURIComponent(title)).then(data=>data.poster||null).catch(()=>null); posterCache.set(key,task); return task;
 }
-let currentLibraryMagnetName = "";
-function webdavMagnetPath(name, innerPath="") {
-  const clean = value => String(value || "").split("/").filter(Boolean).join("/");
-  const base = "magnets/" + clean(name);
-  const inner = clean(innerPath);
-  return inner ? base + "/" + inner : base + "/";
-}
 function openLibraryModal(magnet) {
-  currentLibraryMagnetName = String(magnet.name || "");
   $("modalTitle").textContent=magnet.name;
   $("modalMeta").textContent=`${magnet.status} · ID ${magnet.id} · ${formatBytes(magnet.size)} · ${magnet.files.length} file/folder entries`;
   const target=$("modalФайлы"); target.replaceChildren();
@@ -343,24 +335,6 @@ function openLibraryModal(magnet) {
     const path=document.createElement("span");path.textContent=filePath;left.append(icon,path);row.append(left);
     rows.push(row);    const right=document.createElement("div");right.style.cssText="display:flex;align-items:center;gap:8px;flex-wrap:wrap";
     if(file.size){const size=document.createElement("span");size.className="file-meta";size.textContent=formatBytes(file.size);right.append(size);}
-    if(file.type==="folder" && (/\bBDMV\b/i.test(filePath) || /\bBLURAY\b|\bBLU-RAY\b/i.test(filePath))){
-      const webdavPlay=document.createElement("button");webdavPlay.type="button";webdavPlay.className="secondary";webdavPlay.textContent="▶ Blu-ray · подключить как диск";
-      webdavPlay.title="Подключает через WebDAV родительскую папку, содержащую BDMV. Требуется поддержка WebDAV в Windows.";
-      webdavPlay.addEventListener("click",async()=>{
-        webdavPlay.disabled=true;
-        try{
-          const discRoot=filePath.replace(/\/+$/,"").replace(/(^|\/)BDMV(\/.*)?$/i,"");
-          const info=await api("/api/webdav?mount=1&path="+encodeURIComponent(webdavMagnetPath(currentLibraryMagnetName,discRoot)+"/"));
-          const u=new URL(info.url);
-          const port=(u.port && u.port!=="443") ? "@"+u.port : "";
-          const unc="\\\\"+u.hostname+"@SSL"+port+"\\DavWWWRoot"+u.pathname.replace(/\//g,"\\");
-          const cmd='net use Z: "'+unc+'" /persistent:no';
-          try{await navigator.clipboard.writeText(cmd);}catch{}
-          window.prompt("Скопируйте команду в cmd (Win+R → cmd). После подключения откройте Z:\\ в PotPlayer. Отключить диск: net use Z: /delete",cmd);
-        }catch(err){alert("Не удалось сформировать WebDAV-ссылку: "+err.message);}
-        finally{webdavPlay.disabled=false;}
-      });right.append(webdavPlay);
-    }
     if(file.sourceLink){
       const unlock=document.createElement("button");unlock.className="secondary";unlock.textContent="Получить ссылки";
       unlock.addEventListener("click",async()=>{
@@ -404,12 +378,6 @@ function openLibraryModal(magnet) {
   $("libraryModal").classList.remove("hidden");document.body.style.overflow="hidden";
 }
 function closeLibraryModal(){$("libraryModal").classList.add("hidden");document.body.style.overflow="";}
-$("openWebdav").addEventListener("click",async()=>{
-  const button=$("openWebdav");button.disabled=true;
-  try{const path=currentLibraryMagnetName ? webdavMagnetPath(currentLibraryMagnetName) : "magnets/";const info=await api("/api/webdav?path="+encodeURIComponent(path));window.open(info.url,"_blank","noopener,noreferrer");}
-  catch(err){alert("Не удалось открыть WebDAV: "+err.message);}
-  finally{button.disabled=false;}
-});
 $("closeLibraryModal").addEventListener("click",closeLibraryModal);
 $("libraryModal").addEventListener("click",e=>{if(e.target===$("libraryModal"))closeLibraryModal();});
 document.addEventListener("keydown",e=>{if(e.key==="Escape")closeLibraryModal();});

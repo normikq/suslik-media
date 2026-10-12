@@ -174,6 +174,9 @@ private fun fmt(ms: Long): String {
 
 private fun fmtRate(r: Float): String = (if (r % 1f == 0f) r.toInt().toString() else r.toString().trimEnd('0')) + "×"
 
+/** VLC's name for a track without a name of its own (Blu-ray streams): «Track 1», «Дорожка 2». */
+private val GENERIC_TRACK = Regex("""(?i)(track|дорожка)\s*\d+""")
+
 /** Reflection keeps this independent of the exact vlcj method signatures. */
 private fun call(o: Any?, name: String): Any? =
     o?.let { runCatching { it.javaClass.getMethod(name).invoke(it) }.getOrNull() }
@@ -526,6 +529,7 @@ fun PlayerView(
             val desc = if (audio) mp.audio().trackDescriptions() else mp.subpictures().trackDescriptions()
             desc.filter { it.id() != -1 }.forEach { map[it.id()] = it.description() }
         }
+        val extra = ArrayList<String>() // declared by the file but not (yet) in VLC's list — e.g. an external voice-over
         runCatching {
             val info = mp.media().info()
             val declared = if (audio) info?.audioTracks() else info?.textTracks()
@@ -536,9 +540,16 @@ fun PlayerView(
                         t.language()?.takeIf { it.isNotBlank() }?.let { "[$it]" },
                         t.codecDescription()?.takeIf { it.isNotBlank() }
                     ).joinToString(" ").ifBlank { "Дорожка ${t.id()}" }
-                    map[t.id()] = name
+                    if (TsClock.isTs(currentUrl)) extra += name else map[t.id()] = name
                 }
             }
+        }
+        if (extra.isNotEmpty()) {
+            // Blu-ray (.m2ts): VLC lists its streams as «Track 1, Track 2…», and the same streams come again under other
+            // ids with their names («Russian», «English») — every track twice. One entry each: VLC's id (that is the one
+            // it switches to) with the real name, in the same order; extra names beyond VLC's list are dropped.
+            val generic = map.entries.filter { GENERIC_TRACK.matches(it.value.trim()) }
+            generic.forEachIndexed { i, e -> extra.getOrNull(i)?.let { e.setValue(it) } }
         }
         return map.toList()
     }
