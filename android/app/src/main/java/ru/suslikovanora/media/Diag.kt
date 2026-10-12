@@ -124,8 +124,10 @@ object Diag {
         val uid = Process.myUid()
         val rx = TrafficStats.getUidRxBytes(uid); val tx = TrafficStats.getUidTxBytes(uid)
         val proxy = BurstProxy.downloaded.get()
-        if (lastRx >= 0 && rx >= 0) sb.append(" · app rx +%.2f MB tx +%.3f MB (reserve +%.2f MB)".format(
-            (rx - lastRx) / 1048576.0, (tx - lastTx) / 1048576.0, (proxy - lastProxy) / 1048576.0))
+        // The reserve counter is the film's real network traffic. The uid counters also count the player↔proxy traffic
+        // on 127.0.0.1 on some phones (Samsung, 2.0.0.4 journal: rx ≈ 2× reserve, tx ≈ reserve), so they are only for the rest.
+        if (lastRx >= 0 && rx >= 0) sb.append(" · film from network +%.2f MB · uid rx +%.2f tx +%.2f MB (incl. local loopback)".format(
+            (proxy - lastProxy) / 1048576.0, (rx - lastRx) / 1048576.0, (tx - lastTx) / 1048576.0))
         lastRx = rx; lastTx = tx; lastProxy = proxy
 
         val cpu = Process.getElapsedCpuTime()

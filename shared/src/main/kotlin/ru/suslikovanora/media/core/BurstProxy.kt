@@ -295,11 +295,12 @@ object BurstProxy {
         private fun low(): Long = if (!burst()) PROBE_AHEAD / 2 else
             (src.sizing() * 25).toLong().coerceIn(minOf(6L shl 20, high() / 3), high() / 2)
 
-        // Start-up reserve: right after an open or a seek only ~24 MB (≥ 8 s of the film) is fetched; the full reserve is
-        // filled once the player has stayed here ~10 s. Before, every open / seek / switch of an episode pulled a whole
-        // reserve (80–160 MB at a fast network) that was thrown away when the viewer moved on within seconds.
-        private fun rampAfter() = maxOf(16L shl 20, (src.sizing() * 10).toLong()).coerceAtMost(CAP / 2)
-        private fun rampAhead() = maxOf(24L shl 20, (src.sizing() * 8).toLong())
+        // Start-up reserve: right after an open or a seek only ~24 MB (≥ 10 s of the film) is fetched; the full reserve is
+        // filled once the player has stayed here ~45 s of the film. Before, every open / seek / switch of an episode pulled
+        // a whole reserve (80–160 MB at a fast network) that was thrown away when the viewer moved on within seconds.
+        // (2.0.0.4 journal: the ramp ended after ~13 s, so a seek at 19 s still wasted ~94 MB — 3–4× what was watched.)
+        private fun rampAfter() = maxOf(32L shl 20, (src.sizing() * 45).toLong()).coerceAtMost(CAP * 3 / 4)
+        private fun rampAhead() = maxOf(24L shl 20, (src.sizing() * 10).toLong())
         private fun ramping(): Boolean {
             if (consumedTotal >= rampAfter()) return false
             // A network slower than 3× the film's bitrate never gets the short reserve: the full one protects against stutter.

@@ -40,6 +40,10 @@ adb shell dumpsys batterystats --reset   # обнулить счётчики б�
 adb pull /sdcard/Android/data/ru.suslikovanora.media.diag/files/diag
 ```
 
+Снимок батареи из приложения на новых Samsung (Android 17) отвечает «нужно PACKAGE_USAGE_STATS». Тогда выдайте
+`adb shell appops set $P GET_USAGE_STATS allow` или снимайте с компьютера после опыта:
+`adb shell dumpsys batterystats ru.suslikovanora.media.diag > batterystats.txt`.
+
 Без компьютера: «Настройки → Поделиться» (zip всех файлов) или «Отправить журнал» (хвост журнала на сервер, kind = diag-journal).
 
 ## Файлы
