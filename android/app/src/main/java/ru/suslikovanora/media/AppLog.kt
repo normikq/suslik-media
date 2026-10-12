@@ -35,6 +35,14 @@ object AppLog {
         }
     }
 
+    /** Both parts (previous + current), newest last, at most [max] characters — for «Отправить журнал». */
+    fun full(max: Int = 850_000): String = runCatching {
+        val f = file!!
+        val old = File(f.parentFile, "player.old.log").takeIf { it.exists() }?.readText().orEmpty()
+        val t = old + (if (f.exists()) f.readText() else "")
+        if (t.length > max) "…" + t.takeLast(max) else t.ifEmpty { "(журнал пуст)" }
+    }.getOrDefault("(no journal)")
+
     fun tail(max: Int = 60_000): String = runCatching {
         val t = file!!.readText(); if (t.length > max) "…" + t.takeLast(max) else t
     }.getOrDefault("(no journal)")
@@ -86,6 +94,23 @@ object CrashReports {
         lastRecovery = now
         Thread({ runCatching { Thread.sleep(20_000) }; send("recovery", "$reason\n\n--- journal ---\n${AppLog.tail()}") }, "report")
             .apply { isDaemon = true; start() }
+    }
+
+    /**
+     * «Настройки → Отправить журнал»: the whole player journal goes to the server now (workflow «Crash reports»,
+     * kind = journal). Returns whether the server took it.
+     */
+    suspend fun sendJournal(ctx: Context): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        runCatching {
+            val head = "Журнал отправлен вручную · ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} · Android " +
+                "${android.os.Build.VERSION.RELEASE} · запас ${PlaybackSettings.burstMb(ctx)} МБ\n\n"
+            val body = (head + AppLog.full()).toRequestBody("text/plain; charset=utf-8".toMediaType())
+            val req = okhttp3.Request.Builder().url(ru.suslikovanora.media.net.Api.BASE + "/api/app/report")
+                .header("Content-Type", "text/plain; charset=utf-8").header("X-Platform", "android")
+                .header("X-App-Version", Updater.currentVersion(ctx)).header("X-Report-Kind", "journal")
+                .post(body).build()
+            ru.suslikovanora.media.net.Api.plain.newCall(req).execute().use { it.isSuccessful }
+        }.getOrDefault(false)
     }
 
     private fun send(kind: String, text: String) {

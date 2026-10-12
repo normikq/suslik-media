@@ -7,14 +7,43 @@ on:
       limit:
         description: "Сколько последних отчётов показать"
         default: "8"
+      journal:
+        description: "Последний присланный журнал (кнопка «Отправить журнал»): только строки подгрузки, переоткрытия и перемотки"
+        type: boolean
+        default: false
 
 jobs:
   fetch:
     runs-on: ubuntu-latest
     steps:
       - name: Fetch
-        env: { UPDATE_TOKEN: "${{ secrets.UPDATE_TOKEN }}", SITE_URL: "${{ secrets.SITE_URL }}", LIMIT: "${{ inputs.limit }}" }
+        env: { UPDATE_TOKEN: "${{ secrets.UPDATE_TOKEN }}", SITE_URL: "${{ secrets.SITE_URL }}", LIMIT: "${{ inputs.limit }}", JOURNAL: "${{ inputs.journal }}" }
         run: |
+          if [ "$JOURNAL" = "true" ]; then
+            curl -fsS -H "X-Update-Token: $UPDATE_TOKEN" "$SITE_URL/api/app/reports?limit=30&tail=200000" > reports.json
+            python3 - <<'PY'
+          import json, re
+          d = json.load(open("reports.json"))
+          j = next((r for r in d["reports"] if "kind=journal" in r["head"]), None)
+          if not j:
+              print("::warning::Журнала среди последних 30 отчётов нет — нажмите «Отправить журнал» в настройках приложения"); raise SystemExit
+          print(j["text"])  # целиком — в лог шага
+          keep = re.compile(r"reserve: burst|reserve: new window|reserve: request failed|bitrate|open |seek to|reconnect|stream problem|supervisor|recover|buffer", re.I)
+          lines = [l for l in j["text"].split("\n") if keep.search(l)][-400:]
+          print(f"::notice title={j['name']}::{j['head'][:300]} · строк подгрузки: {len(lines)}")
+          # аннотации: до 10 на уровень в шаге — куски по ~3800 символов
+          chunks, cur = [], ""
+          for l in lines:
+              if len(cur) + len(l) > 3800: chunks.append(cur); cur = ""
+              cur += l + "\n"
+          if cur: chunks.append(cur)
+          chunks = chunks[-19:]
+          for i, c in enumerate(chunks):
+              lvl = "warning" if i < 10 else "error"
+              print(f"::{lvl} title=journal {i + 1}/{len(chunks)}::" + c.replace("%", "%25").replace("\r", "").replace("\n", "%0A"))
+          PY
+            exit 0
+          fi
           curl -fsS -H "X-Update-Token: $UPDATE_TOKEN" "$SITE_URL/api/app/reports?limit=${LIMIT:-8}&tail=3500" > reports.json
           python3 - <<'PY'
           import json

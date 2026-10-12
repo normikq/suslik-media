@@ -116,6 +116,7 @@ fun SettingsSheet(onClose: () -> Unit) {
                     PresetRow(p, p.value == cache) { cache = p.value; PlaybackSettings.setCacheMs(ctx, p.value) }
                 }
                 ChannelSection()
+                JournalSection()
             }
             Row(Modifier.fillMaxWidth().padding(top = 14.dp), horizontalArrangement = Arrangement.End) {
                 LampButton("Готово") { close() }
@@ -191,6 +192,31 @@ private fun ChannelSection() {
                 .clickable { checkUpdates() }.padding(horizontal = 8.dp, vertical = 6.dp))
     }
     offer?.let { UpdateDialog(it) { offer = null } }
+}
+
+/** «Журнал плеера»: send the journal to the server (to analyse stutters: every reserve burst is in it). */
+@Composable
+private fun JournalSection() {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var state by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    Section("Журнал плеера", "Если фильм подтормаживал, отправьте журнал разработчику: в нём видно, как грузился фильм " +
+        "и сколько ждали сервер. В нём есть имена файлов, но нет ссылок и паролей. Журнал уходит только на ваш сервер.", top = 18.dp)
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(state ?: "Отправляется только по кнопке.", color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp,
+            lineHeight = 17.sp, modifier = Modifier.weight(1f))
+        androidx.compose.foundation.layout.Spacer(Modifier.size(10.dp))
+        ru.suslikovanora.media.library.OutlineButton(if (busy) "Отправка…" else "Отправить журнал") {
+            if (busy) return@OutlineButton
+            busy = true; state = "Отправляем…"
+            scope.launch {
+                val ok = CrashReports.sendJournal(ctx)
+                busy = false
+                state = if (ok) "Журнал отправлен. Спасибо!" else "Не получилось отправить — проверьте интернет и попробуйте ещё раз."
+            }
+        }
+    }
 }
 
 @Composable
