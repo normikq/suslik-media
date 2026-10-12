@@ -47,7 +47,7 @@ class BurstProxyTest {
         }
         BurstProxy.capBytes = 16L shl 20 // smaller than the file: the ring wraps around
     }
-    @AfterTest fun stop() { BurstProxy.clear(); origin.stop(0) }
+    @AfterTest fun stop() { BurstProxy.dropAll(); origin.stop(0) }
 
     private fun get(local: String, range: String?): Pair<Int, ByteArray> {
         val c = URL(local).openConnection(java.net.Proxy.NO_PROXY) as HttpURLConnection
@@ -81,6 +81,22 @@ class BurstProxyTest {
         assertContentEquals(data, out.toByteArray())
         val used = requests.get() - before
         assertTrue(used in 1..12, "upstream requests: $used") // bursts, not one per chunk
+    }
+
+    @Test fun sameFileKeepsItsReserveAcrossSignedAddressesAndShortAbsence() {
+        fun addr(link: String, n: Int) = "https://origin.test/film.mkv?link=$link&exp=$n&sig=s$n"
+        val a = BurstProxy.wrap(addr("L1", 1))
+        assertEquals(a, BurstProxy.wrap(addr("L1", 2)))              // the same file, a new signature: one reserve
+        assertTrue(a != BurstProxy.wrap(addr("L2", 2)))              // another file: its own
+        val (code, head) = get(a, "bytes=0-999999")
+        assertEquals(206, code); assertContentEquals(data.copyOfRange(0, 1_000_000), head)
+        BurstProxy.clear()                                           // the player is closed: kept on disk for a while
+        val again = BurstProxy.wrap(addr("L1", 3))
+        assertEquals(a, again)
+        val (c2, mid) = get(again, "bytes=100000-299999")            // read after coming back: same bytes
+        assertEquals(206, c2); assertContentEquals(data.copyOfRange(100_000, 300_000), mid)
+        BurstProxy.dropAll()                                         // a clean restart: everything is forgotten
+        assertTrue(a != BurstProxy.wrap(addr("L1", 4)))
     }
 
     @Test fun offWhenReserveIsZero() {

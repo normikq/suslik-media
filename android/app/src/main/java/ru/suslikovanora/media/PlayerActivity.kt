@@ -196,6 +196,7 @@ class PlayerActivity : ComponentActivity() {
         override fun run() {
             val p = mediaPlayer ?: return
             if (!p.isPlaying) return // paused: nobody wakes up (restarted by the Playing event)
+            checkHeavy()
             // Network trouble is handled by the reconnect logic; the supervisor judges only real playback.
             if (!userPaused && !ended && !networkLost && !resumeOnFocusGain) statsOf(p)?.let { supervisor.tick(it) }
             handler.postDelayed(this, WATCHDOG_TICK_MS)
@@ -220,7 +221,7 @@ class PlayerActivity : ComponentActivity() {
         }
         override fun reopen(fresh: Boolean) {
             CrashReports.recovery("reopen at ${perceivedPosition() / 1000}s (fresh=$fresh)")
-            if (fresh) { BurstProxy.keepOnly(emptyList()); restartClean(play = !userPaused) }
+            if (fresh) { BurstProxy.dropAll(); restartClean(play = !userPaused) }
             else reconnect(forcePlay = true, startAt = perceivedPosition())
         }
         override fun notice(text: String) {
@@ -338,7 +339,7 @@ class PlayerActivity : ComponentActivity() {
                 }
             }
             MediaPlayer.Event.TimeChanged, MediaPlayer.Event.LengthChanged -> {
-                if (event.type == MediaPlayer.Event.LengthChanged) BurstProxy.setDuration(currentUrl, owner.length)
+                if (event.type == MediaPlayer.Event.LengthChanged) { BurstProxy.setDuration(currentUrl, owner.length); checkHeavy() }
                 val t = owner.time
                 if (t > 0L) {
                     val pending = pendingSeekPos
@@ -384,6 +385,8 @@ class PlayerActivity : ComponentActivity() {
         alive = true
         CrashReports.playerRunning(this, true) // still set at the next start = this screen died (native crash)
         BurstProxy.log = { AppLog.write(it) }
+        TrafficMeter.init(this)
+        sessionStartMb = BurstProxy.downloadedMb()
         BurstProxy.init(java.io.File(cacheDir, "stream")) { url, from ->
             // The shared reserve downloads through OkHttp here (same connections as the rest of the app).
             val res = ru.suslikovanora.media.net.Api.plain.newCall(okhttp3.Request.Builder().url(url)
@@ -788,7 +791,8 @@ class PlayerActivity : ComponentActivity() {
         hookSurfaces()
         runCatching { player.setVideoScale(shownScale()) }
         supervisor.opening(url)
-        AppLog.write("open ${Uri.parse(url).lastPathSegment ?: "?"} at ${positionMs / 1000}s, reserve=${PlaybackSettings.burstMb(this)}MB, buffer=${PlaybackSettings.cacheMs(this)}ms")
+        AppLog.write("open ${Uri.parse(url).lastPathSegment ?: "?"} at ${positionMs / 1000}s, reserve=${PlaybackSettings.burstMb(this)}MB, buffer=${PlaybackSettings.cacheMs(this)}ms, " +
+            "network=${if (TrafficMeter.isMetered(this)) "mobile" else "wifi"}")
         val item = buildMedia(vlc, url, positionMs)
         media = item
         player.media = item
@@ -907,6 +911,7 @@ class PlayerActivity : ComponentActivity() {
                 hardware && runCatching { info.getCapabilitiesForType(mime).videoCapabilities.isSizeSupported(t.width, t.height) }.getOrDefault(true)
             }
         }.getOrDefault(true)
+        AppLog.write("video: ${t.codec} ${t.width}x${t.height}, hardware decoder ${if (hw) "available" else "NOT available (processor will decode)"}")
         if (!hw) Toast.makeText(this, "Телефон не умеет аппаратно декодировать этот файл (${t.width}×${t.height}) — " +
             "он воспроизводится процессором и заметно сильнее расходует батарею.", Toast.LENGTH_LONG).show()
     }
@@ -1348,6 +1353,33 @@ class PlayerActivity : ComponentActivity() {
             val pos = if (nearEnd || (ended && length > 0L)) length else time
             watchPrefs.edit().putString(wk, "$pos|${length.coerceAtLeast(0L)}|${System.currentTimeMillis()}").apply()
         }
+    }
+
+    // ---- a heavy film on mobile data: ask once ------------------------------------------------------------------
+    private var sessionStartMb = 0.0
+    private val heavyOk = HashSet<String>()
+    private var heavyDialog: AlertDialog? = null
+
+    /** Called when the film's bitrate is known (and again by the watchdog tick until it is): once per file. */
+    private fun checkHeavy() {
+        val limit = PlaybackSettings.heavyMbit(this)
+        if (limit <= 0 || heavyDialog != null || isFinishing) return
+        val mbit = BurstProxy.bitrateMbit(currentUrl) ?: return
+        val name = Uri.parse(currentUrl).lastPathSegment ?: return
+        if (mbit < limit || name in heavyOk || !TrafficMeter.isMetered(this)) return
+        heavyOk += name
+        val gbPerHour = mbit * 3600 / 8 / 1000
+        AppLog.write("heavy file on mobile data: %.1f Mbit/s (limit %d), asking".format(mbit, limit))
+        doPause()
+        heavyDialog = AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("Тяжёлый файл на мобильной сети")
+            .setMessage("Этот файл ≈ %.0f Мбит/с — около %.1f ГБ в час. Мобильный интернет и заряд уйдут быстро. ".format(mbit, gbPerHour) +
+                "Лучше дождаться Wi-Fi или выбрать файл полегче.")
+            .setPositiveButton("Всё равно смотреть") { _, _ -> heavyDialog = null; doPlay() }
+            .setNeutralButton("Не спрашивать") { _, _ -> heavyDialog = null; PlaybackSettings.setHeavyMbit(this, 0); doPlay() }
+            .setNegativeButton("Закрыть") { _, _ -> heavyDialog = null; leave() }
+            .setOnCancelListener { heavyDialog = null; leave() }
+            .show()
     }
 
     // ---- play / pause (button, headset, Bluetooth, PiP) ------------------------------------------
@@ -1971,6 +2003,10 @@ class PlayerActivity : ComponentActivity() {
 
     override fun onDestroy() {
         alive = false
+        heavyDialog?.let { runCatching { it.dismiss() } }; heavyDialog = null
+        AppLog.write("player closed: %.0f MB fetched in this session (%s)".format(
+            BurstProxy.downloadedMb() - sessionStartMb, if (TrafficMeter.isMetered(this)) "mobile" else "wifi"))
+        TrafficMeter.flush(this)
         orientationWatch?.disable(); orientationWatch = null
         CrashReports.playerRunning(this, false)
         supervisor.closed()

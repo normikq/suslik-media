@@ -13,6 +13,7 @@ import java.net.URLEncoder
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -37,13 +38,30 @@ object BurstProxy {
     private const val PROBE_AHEAD = 4L shl 20      // before a window proves to be real playback
     private const val PROBE_LIMIT = 6L shl 20      // read sequentially this far = playback → bursts
     private const val CHUNK = 256 * 1024
+    private const val KEEP_MS = 10 * 60_000L       // a closed film's downloaded part stays on disk this long (back in via «Продолжить»)
     private const val NEAR = 8L shl 20             // a request this close to a window's end joins it (the downloader gets there in a moment)
 
     private var dir: File? = null
     @Volatile private var server: ServerSocket? = null
     private val pool = Executors.newCachedThreadPool { r -> Thread(r, "burst-proxy").apply { isDaemon = true; priority = Thread.NORM_PRIORITY - 1 } }
     private val sources = ConcurrentHashMap<String, Source>()   // token -> source
-    private val byUrl = ConcurrentHashMap<String, String>()     // original url -> token
+    private val byUrl = ConcurrentHashMap<String, String>()     // stable key of the url (see keyOf) -> token
+    private val sweeper by lazy { java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "burst-sweep").apply { isDaemon = true } } }
+
+    /** Bytes fetched from the mirror since the process started (all windows), and a hook for the apps' traffic meter. */
+    val downloaded = AtomicLong()
+    @Volatile var onBytes: (Long) -> Unit = {}
+
+    /**
+     * The same file has a different signed address (…?link=…&exp=…&sig=…) each time it is opened, so the address itself
+     * cannot recognise it. The file's identity is the path plus the `link` parameter; other addresses are used as they are.
+     */
+    private fun keyOf(url: String): String {
+        val q = url.substringAfter('?', "")
+        val link = q.split('&').firstOrNull { it.startsWith("link=") } ?: return url
+        return url.substringBefore('?') + "?" + link
+    }
+    private fun sourceOf(url: String): Source? = byUrl[keyOf(url)]?.let { sources[it] }
     private val ids = AtomicLong()
 
     /** How a range of a stream is fetched (OkHttp on Android, java.net.http on the PC). */
@@ -91,25 +109,57 @@ object BurstProxy {
         if (cap <= 0) return url
         if (runCatching { d.usableSpace }.getOrDefault(0L) < (cap * MAX_WINDOWS + (300L shl 20))) return url
         val s = ensureServer() ?: return url
-        val token = byUrl.getOrPut(url) {
+        val key = keyOf(url)
+        val token = byUrl.getOrPut(key) {
             val t = UUID.randomUUID().toString().replace("-", "")
             sources[t] = Source(t, url)
             t
+        }
+        sources[token]?.let { src ->
+            src.url = url // the newest signature: the old one may have expired
+            if (src.retiredAt != 0L) { src.retiredAt = 0L; log("reserve: back to a film kept on disk (${src.keptMb()} MB)") }
         }
         if (sources[token]?.broken == true) return url // this stream did not work through the proxy: go direct
         val name = url.substringBefore('?').substringAfterLast('/').ifBlank { "stream" }
         return "http://127.0.0.1:${s.localPort}/s/$token/${URLEncoder.encode(java.net.URLDecoder.decode(name, "UTF-8"), "UTF-8").replace("+", "%20")}"
     }
 
-    /** Streams that are no longer needed (another episode, player closed): stop downloading, delete their files. */
+    /**
+     * Streams that are no longer needed (another episode, player closed). Their downloaded part is not thrown away at
+     * once: it stays on disk for [KEEP_MS] (nothing is downloaded meanwhile), so «Продолжить» right after leaving the player
+     * reads it from disk instead of fetching the same place again. Only the last closed film is kept.
+     */
     fun keepOnly(urls: Collection<String>) {
-        val keep = urls.toSet()
-        for ((url, token) in byUrl.entries.toList()) if (url !in keep) {
-            byUrl.remove(url); sources.remove(token)?.close()
+        val keep = urls.map { keyOf(it) }.toSet()
+        val stamp = System.currentTimeMillis()
+        var retired = false
+        for ((key, token) in byUrl.entries.toList()) if (key !in keep) {
+            val src = sources[token] ?: continue
+            if (src.retiredAt == 0L) { src.retiredAt = stamp; retired = true }
+        }
+        // Older closed films go now: one is enough, the disk is the phone's.
+        for ((key, token) in byUrl.entries.toList()) {
+            val src = sources[token] ?: continue
+            if (src.retiredAt != 0L && src.retiredAt != stamp) { byUrl.remove(key); sources.remove(token)?.close() }
+        }
+        if (retired) runCatching { sweeper.schedule({ sweep() }, KEEP_MS + 1000, TimeUnit.MILLISECONDS) }
+    }
+
+    private fun sweep() {
+        val now = System.currentTimeMillis()
+        for ((key, token) in byUrl.entries.toList()) {
+            val src = sources[token] ?: continue
+            if (src.retiredAt != 0L && now - src.retiredAt >= KEEP_MS) { byUrl.remove(key); sources.remove(token)?.close() }
         }
     }
 
+    /** The player is closed: keep what was downloaded for a while (see [keepOnly]). */
     fun clear() = keepOnly(emptyList())
+
+    /** Throw everything away now (a clean restart after a problem, the app exits). */
+    fun dropAll() {
+        for ((key, token) in byUrl.entries.toList()) { byUrl.remove(key); sources.remove(token)?.close() }
+    }
 
     /**
      * The player knows the film's length: its average bitrate (file size ÷ duration) sizes the bursts from the first
@@ -119,7 +169,7 @@ object BurstProxy {
      */
     fun setDuration(url: String, ms: Long) {
         if (ms <= 0) return
-        val src = byUrl[url]?.let { sources[it] } ?: return
+        val src = sourceOf(url) ?: return
         val total = src.total
         if (total <= 0 || src.rate > 0) return
         src.rate = total * 1000.0 / ms
@@ -127,17 +177,23 @@ object BurstProxy {
     }
 
     /** The film is read through the local reserve right now (not directly from the mirror). */
-    fun isActive(url: String): Boolean = capBytes > 0 && byUrl[url]?.let { sources[it]?.broken == false } == true
+    fun isActive(url: String): Boolean = capBytes > 0 && sourceOf(url)?.broken == false
 
     /** For the info panel: MB downloaded ahead of the player in the window being read, or null when not in use. */
     fun aheadMb(url: String): Double? {
-        val src = byUrl[url]?.let { sources[it] } ?: return null
+        val src = sourceOf(url) ?: return null
         val w = synchronized(src) { src.windows.maxByOrNull { it.lastReadAt } } ?: return 0.0
         return (w.end() - w.readPos).coerceAtLeast(0L) / 1048576.0
     }
 
+    /** The film's average bitrate in Mbit/s (file size ÷ length), once the player has told the length; null before. */
+    fun bitrateMbit(url: String): Double? = sourceOf(url)?.rate?.takeIf { it > 0 }?.let { it * 8 / 1_000_000 }
+
+    /** MB downloaded from the mirror since the process started. */
+    fun downloadedMb(): Double = downloaded.get() / 1048576.0
+
     // ---- one stream (one original URL) ----------------------------------------------------------
-    private class Source(val token: String, val url: String) {
+    private class Source(val token: String, @Volatile var url: String) {
         @Volatile var total = -1L
         @Volatile var type = "application/octet-stream"
         @Volatile var broken = false
@@ -145,9 +201,13 @@ object BurstProxy {
         val windows = java.util.concurrent.CopyOnWriteArrayList<Window>()
         // consumption speed of the player (bytes/s), to size the bursts
         @Volatile var rate = 0.0
+        // how fast the network delivered the last bursts (bytes/s): a slow one never gets the short start-up reserve
+        @Volatile var netRate = 0.0
+        @Volatile var retiredAt = 0L // the player left; kept on disk until then + KEEP_MS (0 = in use)
+        fun keptMb(): Long = windows.sumOf { it.written.coerceAtMost(it.cap()) } shr 20
 
         @Synchronized fun windowFor(pos: Long): Window {
-            windows.firstOrNull { pos >= it.validFrom() && pos <= it.end() + NEAR }?.let { return it }
+            windows.firstOrNull { it.error == null && !it.closed && pos >= it.validFrom() && pos <= it.end() + NEAR }?.let { return it }
             if (windows.size >= MAX_WINDOWS) windows.minByOrNull { it.lastReadAt }?.let { windows.remove(it); it.close() }
             log("reserve: new window at ${pos / 1048576} MB of ${url.substringBefore('?').substringAfterLast('/')}")
             return Window(this, pos).also { windows += it; pool.execute { it.download() } }
@@ -167,6 +227,7 @@ object BurstProxy {
         var written = 0L            // bytes from [start] available (contiguous)
         var readPos = start         // where the player reads now
         var sequential = 0L         // bytes read in order (decides probe → burst)
+        var consumedTotal = 0L      // bytes the player has taken from this window (decides when the short start-up reserve ends)
         var lastReadAt = System.currentTimeMillis()
         var eof = false
         var error: String? = null
@@ -175,6 +236,7 @@ object BurstProxy {
         val lock = java.lang.Object()
 
         fun end() = start + written
+        fun cap() = CAP
         /**
          * The player jumped elsewhere (another window is being read now): stop filling this one. Before, it went on
          * downloading its whole reserve at full speed and took half the bandwidth from the place the player jumped to —
@@ -192,10 +254,24 @@ object BurstProxy {
         /** How far ahead to fill, and when to start again (radio wakes up). Sized by the film's bitrate. */
         // Up to ~110 s ahead (or what the reserve holds), refill when ~25 s are left. A small reserve keeps a part of
         // itself for going back a little (seek back without a new download).
-        private fun high(): Long = if (!burst()) PROBE_AHEAD else
-            (src.rate * 110).toLong().coerceIn(minOf(24L shl 20, CAP * 3 / 4), CAP * 7 / 8)
+        private fun high(): Long = if (!burst()) PROBE_AHEAD else {
+            val full = (src.rate * 110).toLong().coerceIn(minOf(24L shl 20, CAP * 3 / 4), CAP * 7 / 8)
+            if (ramping()) minOf(full, rampAhead()) else full
+        }
         private fun low(): Long = if (!burst()) PROBE_AHEAD / 2 else
             (src.rate * 25).toLong().coerceIn(minOf(6L shl 20, high() / 3), high() / 2)
+
+        // Start-up reserve: right after an open or a seek only ~24 MB (≥ 8 s of the film) is fetched; the full reserve is
+        // filled once the player has stayed here ~10 s. Before, every open / seek / switch of an episode pulled a whole
+        // reserve (80–160 MB at a fast network) that was thrown away when the viewer moved on within seconds.
+        private fun rampAfter() = maxOf(16L shl 20, (src.rate * 10).toLong()).coerceAtMost(CAP / 2)
+        private fun rampAhead() = maxOf(24L shl 20, (src.rate * 8).toLong())
+        private fun ramping(): Boolean {
+            if (consumedTotal >= rampAfter()) return false
+            // A network slower than 3× the film's bitrate never gets the short reserve: the full one protects against stutter.
+            if (src.netRate > 0 && src.rate > 0 && src.netRate < src.rate * 3) return false
+            return true
+        }
 
         fun close() {
             closed = true
@@ -276,6 +352,7 @@ object BurstProxy {
                     if (n < 0) { why = "end of file"; synchronized(lock) { eof = true; lock.notifyAll() }; return }
                     if (tFirst == 0L) tFirst = System.currentTimeMillis() - t0
                     got += n
+                    downloaded.addAndGet(n.toLong()); onBytes(n.toLong())
                     synchronized(lock) {
                         if (closed) { why = "closed"; return }
                         ringWrite(end(), buf, n)
@@ -287,6 +364,10 @@ object BurstProxy {
             } } finally {
                 val ms = System.currentTimeMillis() - t0
                 val dataMs = (ms - tFirst).coerceAtLeast(1)
+                if (got >= (3L shl 20) && dataMs >= 200) {
+                    val v = got * 1000.0 / dataMs
+                    src.netRate = if (src.netRate <= 0) v else src.netRate * 0.5 + v * 0.5
+                }
                 val ahead = (end() - readPos).coerceAtLeast(0) / 1048576.0
                 val rate = if (src.rate > 0) " · film %.1f".format(src.rate * 8 / 1_000_000) else ""
                 log("reserve: burst at %d MB: %.1f MB in %.1f s, %.1f Mbit/s%s · answer %d ms, first data %d ms · ahead %.0f MB · %s".format(
@@ -331,6 +412,7 @@ object BurstProxy {
         fun consumed(abs: Long, n: Int) {
             synchronized(lock) {
                 if (abs == readPos) sequential += n
+                consumedTotal += n
                 readPos = abs + n; lastReadAt = System.currentTimeMillis(); lock.notifyAll()
             }
         }

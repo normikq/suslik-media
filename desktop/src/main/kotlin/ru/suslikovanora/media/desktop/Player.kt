@@ -846,7 +846,7 @@ fun PlayerView(
             override fun reopen(fresh: Boolean) {
                 PlayerLog.write("supervisor: reopen at ${time / 1000}s${if (fresh) " with a fresh reserve" else ""}")
                 CrashReports.recovery("reopen at ${time / 1000}s (fresh=$fresh)")
-                if (fresh) BurstProxy.keepOnly(emptyList())
+                if (fresh) BurstProxy.dropAll()
                 reopenAt(time)
             }
             override fun notice(text: String) = flash(text, text.take(10))

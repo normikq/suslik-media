@@ -66,6 +66,10 @@ object PlaybackSettings {
     /** «Канал обновлений»: false = Релиз (the code stays saved but is not sent, so only versions for everyone come). */
     fun betaOn(ctx: Context) = !prefs(ctx).getBoolean("beta_off", false)
     fun setBetaOn(ctx: Context, on: Boolean) = prefs(ctx).edit().putBoolean("beta_off", !on).apply()
+    /** «Тяжёлые файлы на мобильной сети»: ask before a film heavier than this many Mbit/s (0 = never ask). */
+    const val HEAVY_DEFAULT = 20
+    fun heavyMbit(ctx: Context) = prefs(ctx).getInt("heavy_mbit", HEAVY_DEFAULT)
+    fun setHeavyMbit(ctx: Context, v: Int) = prefs(ctx).edit().putInt("heavy_mbit", v).apply()
     /** The beta channel is really in use (chosen and a code saved); otherwise — the release channel. */
     fun betaChannel(ctx: Context) = betaOn(ctx) && betaCode(ctx).isNotBlank()
 }
@@ -115,6 +119,7 @@ fun SettingsSheet(onClose: () -> Unit) {
                 PlaybackSettings.cachePresets.forEach { p ->
                     PresetRow(p, p.value == cache) { cache = p.value; PlaybackSettings.setCacheMs(ctx, p.value) }
                 }
+                TrafficSection()
                 ChannelSection()
                 JournalSection()
             }
@@ -192,6 +197,28 @@ private fun ChannelSection() {
                 .clickable { checkUpdates() }.padding(horizontal = 8.dp, vertical = 6.dp))
     }
     offer?.let { UpdateDialog(it) { offer = null } }
+}
+
+/** «Трафик фильмов» and the question before a heavy film on mobile data. */
+@Composable
+private fun TrafficSection() {
+    val ctx = LocalContext.current
+    var usage by remember { mutableStateOf(TrafficMeter.month(ctx)) }
+    var limit by remember { mutableStateOf(PlaybackSettings.heavyMbit(ctx)) }
+    Section("Трафик фильмов", "Сколько фильмов скачано через экономную загрузку в этом месяце. " +
+        "Постеры и списки в счёт не входят.", top = 18.dp)
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text("Мобильная сеть: ${TrafficMeter.format(usage.first)}\nWi-Fi: ${TrafficMeter.format(usage.second)}",
+            color = Sm.text, fontFamily = Onest, fontSize = 14.sp, lineHeight = 21.sp, modifier = Modifier.weight(1f))
+        ru.suslikovanora.media.library.OutlineButton("Сбросить") { TrafficMeter.reset(ctx); usage = 0L to 0L }
+    }
+    Section("Тяжёлые файлы на мобильной сети", "Перед просмотром спросим, стоит ли тратить мобильный интернет, если файл " +
+        "тяжелее выбранного. 13 Мбит/с — это около 6 ГБ в час, Remux и 4K — 20–30 ГБ.", top = 14.dp)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf(0 to "Выкл", 12 to "12 Мбит", 20 to "20 Мбит", 40 to "40 Мбит").forEach { (v, label) ->
+            ChannelOption(label, limit == v, Modifier.weight(1f)) { limit = v; PlaybackSettings.setHeavyMbit(ctx, v) }
+        }
+    }
 }
 
 /** «Журнал плеера»: send the journal to the server (to analyse stutters: every reserve burst is in it). */
