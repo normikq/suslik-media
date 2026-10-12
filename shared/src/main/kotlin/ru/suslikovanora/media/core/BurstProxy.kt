@@ -171,9 +171,12 @@ object BurstProxy {
         if (ms <= 0) return
         val src = sourceOf(url) ?: return
         val total = src.total
-        if (total <= 0 || src.rate > 0) return
-        src.rate = total * 1000.0 / ms
-        log("reserve: bitrate from size/length ≈ %.1f Mbit/s".format(src.rate * 8 / 1_000_000))
+        if (total <= 0) return
+        val avg = total * 1000.0 / ms
+        val first = src.avgRate <= 0
+        src.avgRate = avg
+        if (src.rate <= 0) src.rate = avg
+        if (first) log("reserve: bitrate from size/length ≈ %.1f Mbit/s".format(avg * 8 / 1_000_000))
     }
 
     /** The film is read through the local reserve right now (not directly from the mirror). */
@@ -187,7 +190,8 @@ object BurstProxy {
     }
 
     /** The film's average bitrate in Mbit/s (file size ÷ length), once the player has told the length; null before. */
-    fun bitrateMbit(url: String): Double? = sourceOf(url)?.rate?.takeIf { it > 0 }?.let { it * 8 / 1_000_000 }
+    fun bitrateMbit(url: String): Double? =
+        sourceOf(url)?.let { if (it.avgRate > 0) it.avgRate else it.rate }?.takeIf { it > 0 }?.let { it * 8 / 1_000_000 }
 
     /** MB downloaded from the mirror since the process started. */
     fun downloadedMb(): Double = downloaded.get() / 1048576.0
@@ -201,6 +205,10 @@ object BurstProxy {
         val windows = java.util.concurrent.CopyOnWriteArrayList<Window>()
         // consumption speed of the player (bytes/s), to size the bursts
         @Volatile var rate = 0.0
+        // the film's average bitrate (file size ÷ length): never measured, so a pause or a start-up read cannot distort it
+        @Volatile var avgRate = 0.0
+        /** The bitrate that sizes the reserve: the measured one, kept within 0.5–4× the file's average. */
+        fun sizing(): Double = if (avgRate > 0) rate.coerceIn(avgRate * 0.5, avgRate * 4) else rate
         // how fast the network delivered the last bursts (bytes/s): a slow one never gets the short start-up reserve
         @Volatile var netRate = 0.0
         @Volatile var retiredAt = 0L // the player left; kept on disk until then + KEEP_MS (0 = in use)
@@ -255,21 +263,21 @@ object BurstProxy {
         // Up to ~110 s ahead (or what the reserve holds), refill when ~25 s are left. A small reserve keeps a part of
         // itself for going back a little (seek back without a new download).
         private fun high(): Long = if (!burst()) PROBE_AHEAD else {
-            val full = (src.rate * 110).toLong().coerceIn(minOf(24L shl 20, CAP * 3 / 4), CAP * 7 / 8)
+            val full = (src.sizing() * 110).toLong().coerceIn(minOf(24L shl 20, CAP * 3 / 4), CAP * 7 / 8)
             if (ramping()) minOf(full, rampAhead()) else full
         }
         private fun low(): Long = if (!burst()) PROBE_AHEAD / 2 else
-            (src.rate * 25).toLong().coerceIn(minOf(6L shl 20, high() / 3), high() / 2)
+            (src.sizing() * 25).toLong().coerceIn(minOf(6L shl 20, high() / 3), high() / 2)
 
         // Start-up reserve: right after an open or a seek only ~24 MB (≥ 8 s of the film) is fetched; the full reserve is
         // filled once the player has stayed here ~10 s. Before, every open / seek / switch of an episode pulled a whole
         // reserve (80–160 MB at a fast network) that was thrown away when the viewer moved on within seconds.
-        private fun rampAfter() = maxOf(16L shl 20, (src.rate * 10).toLong()).coerceAtMost(CAP / 2)
-        private fun rampAhead() = maxOf(24L shl 20, (src.rate * 8).toLong())
+        private fun rampAfter() = maxOf(16L shl 20, (src.sizing() * 10).toLong()).coerceAtMost(CAP / 2)
+        private fun rampAhead() = maxOf(24L shl 20, (src.sizing() * 8).toLong())
         private fun ramping(): Boolean {
             if (consumedTotal >= rampAfter()) return false
             // A network slower than 3× the film's bitrate never gets the short reserve: the full one protects against stutter.
-            if (src.netRate > 0 && src.rate > 0 && src.netRate < src.rate * 3) return false
+            if (src.netRate > 0 && src.sizing() > 0 && src.netRate < src.sizing() * 3) return false
             return true
         }
 
@@ -369,7 +377,7 @@ object BurstProxy {
                     src.netRate = if (src.netRate <= 0) v else src.netRate * 0.5 + v * 0.5
                 }
                 val ahead = (end() - readPos).coerceAtLeast(0) / 1048576.0
-                val rate = if (src.rate > 0) " · film %.1f".format(src.rate * 8 / 1_000_000) else ""
+                val rate = if (src.rate > 0) " · film %.1f (avg %.1f)".format(src.rate * 8 / 1_000_000, src.avgRate * 8 / 1_000_000) else ""
                 log("reserve: burst at %d MB: %.1f MB in %.1f s, %.1f Mbit/s%s · answer %d ms, first data %d ms · ahead %.0f MB · %s".format(
                     from / 1048576, got / 1048576.0, ms / 1000.0, if (got > 0) got * 8.0 / 1000 / dataMs else 0.0, rate,
                     tAnswer, tFirst, ahead, why))
@@ -473,16 +481,25 @@ object BurstProxy {
                 if (method == "HEAD") return
                 val buf = ByteArray(CHUNK)
                 var pos = from
-                val t0 = System.currentTimeMillis(); val p0 = from
+                val t0 = System.currentTimeMillis()
+                var tm = 0L; var pm = 0L // base of the bitrate measurement, set once the player's start-up read-ahead is over
                 while (pos <= last) {
                     val n = w.read(pos, buf, minOf(CHUNK.toLong(), last - pos + 1).toInt())
                     if (n <= 0) break
                     out.write(buf, 0, n)
                     w.consumed(pos, n)
                     pos += n
-                    // bitrate of the film ≈ how fast the player takes data once it is past its start-up buffer
-                    val dt = System.currentTimeMillis() - t0
-                    if (dt > 20_000) src.rate = maxOf(src.rate * 0.7 + ((pos - p0) * 1000.0 / dt) * 0.3, 0.0)
+                    // The film's local bitrate ≈ how fast the player takes data, measured over 20 s intervals after the first
+                    // 15 s. (Counted from the very start it came out as 25 Mbit/s for a 9 Mbit/s film: VLC reads its
+                    // start-up buffer at disk speed.) An interval with a pause or a stall in it (far below the file's
+                    // average) is skipped, so a pause no longer drags the reserve down to a few MB.
+                    val now = System.currentTimeMillis()
+                    if (tm == 0L) { if (now - t0 > 15_000) { tm = now; pm = pos } }
+                    else if (now - tm >= 20_000) {
+                        val m = (pos - pm) * 1000.0 / (now - tm)
+                        if (m >= src.avgRate * 0.4) src.rate = if (src.rate > 0) src.rate * 0.7 + m * 0.3 else m
+                        tm = now; pm = pos
+                    }
                 }
                 out.flush()
             }

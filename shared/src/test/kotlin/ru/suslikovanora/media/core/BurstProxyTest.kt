@@ -99,6 +99,15 @@ class BurstProxyTest {
         assertTrue(a != BurstProxy.wrap(addr("L1", 4)))
     }
 
+    @Test fun bitrateComesFromSizeAndLength() {
+        val local = BurstProxy.wrap(url)
+        get(local, "bytes=0-99")                       // the first answer tells the file's size (40 MiB)
+        BurstProxy.setDuration(url, 40_000)            // 40 MiB in 40 s
+        assertEquals(8.39, BurstProxy.bitrateMbit(url)!!, 0.05)
+        BurstProxy.setDuration(url, 20_000)            // the player corrected the length: the average follows
+        assertEquals(16.78, BurstProxy.bitrateMbit(url)!!, 0.05)
+    }
+
     @Test fun offWhenReserveIsZero() {
         BurstProxy.capBytes = 0
         assertEquals("https://origin.test/other.mkv", BurstProxy.wrap("https://origin.test/other.mkv"))
