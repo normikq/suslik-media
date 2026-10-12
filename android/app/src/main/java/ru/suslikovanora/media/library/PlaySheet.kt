@@ -74,6 +74,7 @@ fun PlaySheet(
     var direct by remember(target) { mutableStateOf<String?>(null) }
     var playlist by remember(target) { mutableStateOf<String?>(null) }
     var preparingPlaylist by remember(target) { mutableStateOf(false) }
+    var preparingExtras by remember(target) { mutableStateOf(false) }
     var subUrls by remember(target) { mutableStateOf<List<String>>(emptyList()) }
     var audioUrls by remember(target) { mutableStateOf<List<String>>(emptyList()) }
     // Where the player stopped last time (the same place the player itself resumes from); null = nothing to resume.
@@ -88,54 +89,45 @@ fun PlaySheet(
         if (link == null) { sub = "Ссылка на файл ещё не готова — нажмите «Обновить» в библиотеке."; return@LaunchedEffect }
         val name = target.file.name.ifBlank { target.file.path.substringAfterLast('/') }
         val enc = { v: String -> URLEncoder.encode(v, "UTF-8") }
-        var firstError: String? = null
+        // The mirror does not wait for the direct link. Both used to be awaited together, and the direct one goes to
+        // AllDebrid through the server: on a bad mobile network (12.10) it failed twice and took ~18 s while the mirror
+        // link was there after 5 s — «Получение ссылок…» for all that time. The mirror is the main way (AllDebrid is
+        // blocked in Russia), so it is offered as soon as it comes; the direct link fills in when it is ready.
         coroutineScope {
             val d = async { runCatching { Api.post("/api/file/unlock", JSONObject().put("link", link)).optString("url").ifBlank { null } } }
-            val m = async { runCatching { Api.get("/api/file/mirror-url?link=${enc(link)}&name=${enc(name)}").optString("url").ifBlank { null } } }
-            val dr = d.await(); val mr = m.await()
-            direct = dr.getOrNull(); mirror = mr.getOrNull()
-            firstError = (dr.exceptionOrNull() ?: mr.exceptionOrNull())?.let { Api.describe(it) }
-        }
-        sub = if (mirror != null || direct != null) "Выберите источник" else (firstError ?: "Не удалось получить ссылки")
-        // Subtitle files next to the video: the player adds them as extra tracks (signed mirror links, no login needed).
-        if (target.subs.isNotEmpty() && (mirror != null || direct != null)) {
-            subUrls = coroutineScope {
-                target.subs.map { f ->
-                    async {
-                        runCatching {
-                            Api.get("/api/file/mirror-url?link=${enc(f.link!!)}&name=${enc(f.name.ifBlank { f.path.substringAfterLast('/') })}")
-                                .optString("url").ifBlank { null }
-                        }.getOrNull()
-                    }
-                }.mapNotNull { it.await() }
+            val mr = runCatching { Api.get("/api/file/mirror-url?link=${enc(link)}&name=${enc(name)}").optString("url").ifBlank { null } }
+            mirror = mr.getOrNull()
+            if (mirror != null) {
+                sub = "Выберите источник"
+                // Subtitle files and voice-overs next to the video: the player adds them as extra tracks (signed mirror
+                // links, no login needed). «Смотреть» waits for them so the film does not start without them.
+                preparingExtras = target.subs.isNotEmpty() || target.audio.isNotEmpty()
+                if (target.subs.isNotEmpty()) {
+                    subUrls = mirrorUrls(target.subs, enc)
+                    if (subUrls.isNotEmpty()) sub = "Выберите источник · субтитров из раздачи: ${subUrls.size}"
+                }
+                if (target.audio.isNotEmpty()) {
+                    audioUrls = mirrorUrls(target.audio, enc)
+                    if (audioUrls.isNotEmpty()) sub = "$sub · озвучек из раздачи: ${audioUrls.size}"
+                }
+                preparingExtras = false
+                // Series via the mirror: this episode plus every following one to the end of the season.
+                val following = target.following.filter { it.link != null }
+                if (following.size > 1) {
+                    preparingPlaylist = true
+                    runCatching {
+                        val items = JSONArray()
+                        following.forEach { items.put(JSONObject().put("index", it.index).put("link", it.link)) }
+                        Api.post("/api/playlist", JSONObject().put("magnetId", target.magnetId).put("title", target.label).put("items", items))
+                            .optString("url").ifBlank { null }
+                    }.onSuccess { playlist = it }
+                    preparingPlaylist = false
+                }
             }
-            if (subUrls.isNotEmpty()) sub = "Выберите источник · субтитров из раздачи: ${subUrls.size}"
-        }
-        // External voice-overs (.mka/.ac3 next to the video): added by the player as extra audio tracks.
-        if (target.audio.isNotEmpty() && (mirror != null || direct != null)) {
-            audioUrls = coroutineScope {
-                target.audio.map { f ->
-                    async {
-                        runCatching {
-                            Api.get("/api/file/mirror-url?link=${enc(f.link!!)}&name=${enc(f.name.ifBlank { f.path.substringAfterLast('/') })}")
-                                .optString("url").ifBlank { null }
-                        }.getOrNull()
-                    }
-                }.mapNotNull { it.await() }
-            }
-            if (audioUrls.isNotEmpty()) sub = "$sub · озвучек из раздачи: ${audioUrls.size}"
-        }
-        // Series via the mirror: this episode plus every following one to the end of the season.
-        val following = target.following.filter { it.link != null }
-        if (mirror != null && following.size > 1) {
-            preparingPlaylist = true
-            runCatching {
-                val items = JSONArray()
-                following.forEach { items.put(JSONObject().put("index", it.index).put("link", it.link)) }
-                Api.post("/api/playlist", JSONObject().put("magnetId", target.magnetId).put("title", target.label).put("items", items))
-                    .optString("url").ifBlank { null }
-            }.onSuccess { playlist = it }
-            preparingPlaylist = false
+            val dr = d.await()
+            direct = dr.getOrNull()
+            if (mirror == null) sub = if (direct != null) "Выберите источник"
+                else ((mr.exceptionOrNull() ?: dr.exceptionOrNull())?.let { Api.describe(it) } ?: "Не удалось получить ссылки")
         }
     }
 
@@ -158,7 +150,7 @@ fun PlaySheet(
             }
             SourceGroup(
                 title = "Через зеркало", hint = if (playlist != null) "Через ваш сервер · дальше все серии сезона" else "Трафик идёт через ваш сервер",
-                url = mirror, busy = preparingPlaylist,
+                url = mirror, busy = preparingPlaylist || preparingExtras, busyText = if (preparingPlaylist) "Готовим плейлист…" else "Готовим дорожки…",
                 onPlay = {
                     val keys = if (playlist != null) target.following.filter { f -> f.link != null }.map { f -> watchKey(target.magnetId, f) }
                     else listOf(watchKey(target.magnetId, target.file))
@@ -179,7 +171,7 @@ fun PlaySheet(
 }
 
 @Composable
-private fun SourceGroup(title: String, hint: String, url: String?, busy: Boolean, onPlay: (String) -> Unit, onCopy: (String) -> Unit) {
+private fun SourceGroup(title: String, hint: String, url: String?, busy: Boolean, busyText: String = "Готовим плейлист…", onPlay: (String) -> Unit, onCopy: (String) -> Unit) {
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Sm.film)
             .border(1.dp, Sm.line, RoundedCornerShape(14.dp)).padding(12.dp)
@@ -188,7 +180,7 @@ private fun SourceGroup(title: String, hint: String, url: String?, busy: Boolean
         Text(hint, fontFamily = Onest, fontSize = 12.5.sp, color = Sm.muted, modifier = Modifier.padding(top = 2.dp, bottom = 10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             LampButton(
-                if (busy) "Готовим плейлист…" else "▶ Смотреть", enabled = url != null && !busy,
+                if (busy) busyText else "▶ Смотреть", enabled = url != null && !busy,
                 modifier = Modifier.weight(1f)
             ) { url?.let(onPlay) }
             OutlineButton("Копировать", color = if (url != null) Sm.text else Sm.muted) { url?.let(onCopy) }
@@ -218,4 +210,16 @@ private fun copy(context: Context, text: String) {
     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     cm.setPrimaryClip(ClipData.newPlainText("Ссылка", text))
     Toast.makeText(context, "Ссылка скопирована", Toast.LENGTH_SHORT).show()
+}
+
+/** Signed mirror links for the files next to the video (subtitles, voice-overs); the ones that fail are left out. */
+private suspend fun mirrorUrls(files: List<MFile>, enc: (String) -> String): List<String> = coroutineScope {
+    files.map { f ->
+        async {
+            runCatching {
+                Api.get("/api/file/mirror-url?link=${enc(f.link!!)}&name=${enc(f.name.ifBlank { f.path.substringAfterLast('/') })}")
+                    .optString("url").ifBlank { null }
+            }.getOrNull()
+        }
+    }.mapNotNull { it.await() }
 }

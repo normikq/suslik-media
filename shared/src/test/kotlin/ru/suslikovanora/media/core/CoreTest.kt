@@ -98,6 +98,24 @@ class SupervisorTest {
         assertEquals(listOf("restartVideo"), log)
     }
 
+    @Test fun frozenAfterEveryRebufferingNeverReopens() {
+        startPlaying()
+        // 12.10 journal: a network slower than the film — the buffer runs dry again and again, and after each
+        // rebuffering the picture stands while the sound plays. Each time: a new decoder, never a reopen.
+        repeat(6) {
+            sup.buffering(40f); step(filmMs = 0, sound = false, picturesPerSec = 0.0); sup.buffering(100f)
+            repeat(3) { step(picturesPerSec = 0.0) }
+            repeat(5) { step() }
+        }
+        assertEquals(List(6) { "restartVideo" }, log)
+    }
+
+    @Test fun frozenAgainReopensKeepingTheReserveFirst() {
+        startPlaying()
+        repeat(60) { step(picturesPerSec = 0.0) }
+        assertEquals(listOf("restartVideo", "restartVideo", "reopen(false)"), log.take(3))
+    }
+
     @Test fun choppyThenFreshReopen() {
         startPlaying()
         repeat(4) { step(picturesPerSec = 5.0) }

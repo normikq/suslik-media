@@ -40,6 +40,8 @@ object BurstProxy {
     private const val CHUNK = 256 * 1024
     private const val KEEP_MS = 10 * 60_000L       // a closed film's downloaded part stays on disk this long (back in via «Продолжить»)
     private const val NEAR = 8L shl 20             // a request this close to a window's end joins it (the downloader gets there in a moment)
+    private const val BRIDGE = 16L shl 20          // a request this close before a window's data only fetches the gap (see windowFor)
+    private const val MAX_BRIDGES = 4              // such gap windows per stream (they are small: one keyframe search step each)
 
     private var dir: File? = null
     @Volatile private var server: ServerSocket? = null
@@ -228,6 +230,52 @@ object BurstProxy {
     fun downloadedMb(): Double = downloaded.get() / 1048576.0
 
     /**
+     * The network delivers less than the film needs (measured, with a 15 % margin): the reserve can never fill while
+     * the film plays, VLC runs dry every few seconds. (12.10 journal: 12 Mbit/s LTE for a 13.2 Mbit/s film — the
+     * reserve stayed at 0 MB for minutes and every short rebuffering left the hardware decoder showing a still picture.)
+     */
+    fun slowerThanFilm(url: String): Boolean {
+        val src = sourceOf(url) ?: return false
+        val film = if (src.avgRate > 0) src.avgRate else src.rate
+        return src.netRate > 0 && film > 0 && src.netRate < film * 1.15
+    }
+
+    /**
+     * How much reserve (MB) a pause to catch up should gather: ~30 s of the film, at most half the reserve — the other
+     * half keeps what was just played, so a jump back to the last keyframe is served from the phone.
+     */
+    fun catchUpTargetMb(url: String): Double {
+        val src = sourceOf(url) ?: return 0.0
+        val film = if (src.avgRate > 0) src.avgRate else src.rate
+        return minOf(film * 30, capBytes * 0.5) / 1048576.0
+    }
+
+    /** Seconds of the film still kept on the phone just behind the place the player reads (0 = unknown / nothing). */
+    fun keptBehindSec(url: String): Double {
+        val src = sourceOf(url) ?: return 0.0
+        val w = src.current() ?: return 0.0
+        val film = if (src.avgRate > 0) src.avgRate else src.rate
+        if (film <= 0) return 0.0
+        return synchronized(w.lock) { (w.readPos - w.validFrom()).coerceAtLeast(0L) / film }
+    }
+
+    /**
+     * Gather a reserve before the player gets more ([ms] at most; 0 = let go now). The window being read keeps
+     * downloading, but the player gets nothing beyond the place it reads now: for VLC it is just a longer buffering.
+     * (Pausing VLC instead did not work — 12.10 test: paused, VLC kept pulling everything into its own buffer, so the
+     * reserve never showed, and a pause in the middle of a buffering raised VLC's delay to ~8 s and froze the picture.)
+     */
+    fun hold(url: String, ms: Long) {
+        val src = sourceOf(url) ?: return
+        val w = src.current() ?: return
+        synchronized(w.lock) {
+            if (ms > 0) { if (!w.held()) w.gateAt = w.readPos; w.heldUntil = System.currentTimeMillis() + ms }
+            else w.heldUntil = 0L
+            w.lock.notifyAll()
+        }
+    }
+
+    /**
      * Debug build: the reserve's state in one line — every stream (size, bitrates) and its windows (where, how much is
      * ahead of the player, phase, downloading or resting, how long nobody read). For tracing what the downloader does.
      */
@@ -258,15 +306,32 @@ object BurstProxy {
         fun sizing(): Double = if (avgRate > 0) rate.coerceIn(avgRate * 0.5, avgRate * 4) else rate
         // how fast the network delivered the last bursts (bytes/s): a slow one never gets the short start-up reserve
         @Volatile var netRate = 0.0
+        fun addNetSample(v: Double) { netRate = if (netRate <= 0) v else netRate * 0.5 + v * 0.5 }
         @Volatile var retiredAt = 0L // the player left; kept on disk until then + KEEP_MS (0 = in use)
         fun keptMb(): Long = windows.sumOf { it.written.coerceAtMost(it.cap()) } shr 20
 
         @Synchronized fun windowFor(pos: Long): Window {
-            windows.firstOrNull { it.error == null && !it.closed && pos >= it.validFrom() && pos <= it.end() + NEAR }?.let { return it }
-            if (windows.size >= MAX_WINDOWS) windows.minByOrNull { it.lastReadAt }?.let { windows.remove(it); it.close() }
+            windowAt(pos)?.let { return it }
+            // A little before data that is already here: VLC looking for a keyframe after a seek back steps ~1.5 MB
+            // backwards again and again. Each step used to open a whole new window — a new request to the mirror that
+            // pulled 6–11 MB forward (data already on the phone) before VLC stepped back again: 12.10, 31 requests and
+            // 259 MB in 54 s. Now only the gap is fetched, and the player reads on into the data that is already here.
+            windows.filter { it.usable() && pos < it.validFrom() && it.validFrom() - pos <= BRIDGE }
+                .minByOrNull { it.validFrom() - pos }?.let { next ->
+                    val bridges = windows.filter { it.limit >= 0 }
+                    if (bridges.size >= MAX_BRIDGES) bridges.minByOrNull { it.lastReadAt }?.let { windows.remove(it); it.close() }
+                    log("reserve: bridge at ${pos / 1048576} MB: only ${(next.validFrom() - pos) / 1024} KB up to what is already here")
+                    return Window(this, pos, limit = next.validFrom()).also { windows += it; pool.execute { it.download() } }
+                }
+            val full = windows.filter { it.limit < 0 }
+            if (full.size >= MAX_WINDOWS) full.minByOrNull { it.lastReadAt }?.let { windows.remove(it); it.close() }
             log("reserve: new window at ${pos / 1048576} MB of ${url.substringBefore('?').substringAfterLast('/')}")
             return Window(this, pos).also { windows += it; pool.execute { it.download() } }
         }
+
+        /** The window that already holds [pos] (or gets there in a moment); a bridge only below its end. */
+        fun windowAt(pos: Long): Window? =
+            windows.firstOrNull { it.usable() && pos >= it.validFrom() && (if (it.limit >= 0) pos < it.limit else pos <= it.end() + NEAR) }
 
         @Synchronized fun close() { windows.forEach { it.close() }; windows.clear() }
 
@@ -275,7 +340,9 @@ object BurstProxy {
     }
 
     // ---- a contiguous downloaded range, kept in a ring file ---------------------------------------
-    private class Window(val src: Source, val start: Long) {
+    /** [limit] ≥ 0: a bridge — fetches only [start] until [limit] (where another window's data begins), then stops. */
+    private class Window(val src: Source, val start: Long, val limit: Long = -1L) {
+        fun usable() = error == null && !closed
         private val CAP = capBytes.coerceAtLeast(16L shl 20) // fixed for this window's life
         private val file = File(dir, "${ids.incrementAndGet()}.bin")
         private val raf = RandomAccessFile(file, "rw")
@@ -326,7 +393,7 @@ object BurstProxy {
                 closed -> "closed"; error != null -> "error($error)"; eof -> "eof"
                 response != null -> "downloading"; else -> "resting"
             }
-            val phase = when { !burst() -> "probe"; ramping() -> "ramp"; else -> "full" }
+            val phase = when { limit >= 0 -> "bridge to ${limit shr 20}MB"; !burst() -> "probe"; ramping() -> "ramp"; else -> "full" }
             return "@%dMB ahead %.1fMB (low %d high %d) kept %dMB %s %s readers %d quiet %ds".format(start shr 20,
                 (end() - readPos).coerceAtLeast(0) / 1048576.0, low() shr 20, high() shr 20,
                 written.coerceAtMost(CAP) shr 20, phase, state, readers, (now - lastReadAt) / 1000)
@@ -337,11 +404,15 @@ object BurstProxy {
          * the main reason a seek beyond the reserve took long.
          */
         fun abandoned(): Boolean {
+            if (held()) return false
             val quiet = System.currentTimeMillis() - lastReadAt
             // VLC closed its connection to this place (a short index read, or it jumped elsewhere): stop at once.
             return (readers == 0 && quiet > 400) || (quiet > 1500 && src.current() !== this)
         }
         @Volatile var readers = 0 // VLC connections reading this window right now
+        @Volatile var heldUntil = 0L // see BurstProxy.hold
+        var gateAt = 0L              // while held, the player gets nothing from here on
+        fun held() = System.currentTimeMillis() < heldUntil
         fun validFrom() = start + maxOf(0L, written - CAP)
         private fun burst() = sequential >= PROBE_LIMIT
 
@@ -378,10 +449,11 @@ object BurstProxy {
 
         fun download() {
             while (!closed) {
+                if (limit >= 0 && end() >= limit) return // a bridge is complete: the rest is in the next window
                 // Wait while there is enough ahead (or nobody has read for a minute: paused / abandoned window).
                 synchronized(lock) {
                     while (!closed && !eof) {
-                        val idle = System.currentTimeMillis() - lastReadAt > 60_000 || abandoned()
+                        val idle = !held() && (System.currentTimeMillis() - lastReadAt > 60_000 || abandoned())
                         if (!idle && end() - readPos < low()) break
                         lock.wait(1000)
                     }
@@ -402,15 +474,31 @@ object BurstProxy {
                         // No network at all (airplane mode, a tunnel): this is not the server failing, so it does not use up
                         // the attempts. 2.0.2 journal: the windows gave up after 4.5 s offline and never came back.
                         // Wait quietly; a network change wakes it at once.
-                        synchronized(lock) { if (!kicked && !closed) lock.wait(3_000L) }
+                        pause(3_000L)
                         if (kicked) { kicked = false; failures = 0 }
                         continue
                     }
                     failures++
                     if (failures > 8) { synchronized(lock) { error = e.message ?: "network"; lock.notifyAll() }; return }
                     if (stalled != null) { runCatching { resetConnections() }; Thread.sleep(200) }
-                    else synchronized(lock) { if (!kicked && !closed) lock.wait(minOf(8_000L, 500L shl minOf(failures, 4))) } // a network change wakes it
+                    else pause(minOf(8_000L, 500L shl minOf(failures, 4))) // a network change wakes it
                     if (kicked) { kicked = false; failures = 0 }
+                }
+            }
+        }
+
+        /**
+         * Waits [ms] before the next attempt; only a network change ([kick]) or [close] ends it early. The lock is also
+         * notified by every read of the player — VLC retries about twice a second while it has no data, and a plain
+         * wait woke up on each: 12.10 journal, ~50 failed attempts in 25 s offline instead of one every 3 s.
+         */
+        private fun pause(ms: Long) {
+            val until = System.currentTimeMillis() + ms
+            synchronized(lock) {
+                while (!kicked && !closed) {
+                    val left = until - System.currentTimeMillis()
+                    if (left <= 0) break
+                    lock.wait(left)
                 }
             }
         }
@@ -424,11 +512,18 @@ object BurstProxy {
             val t0 = System.currentTimeMillis()
             var tFirst = 0L
             var got = 0L
+            // The network's speed is measured every ~5 s while data comes, not only when a burst ends: on a network slower
+            // than the film a burst never ends (12.10 journal: one request ran 9 minutes and the speed stayed unknown).
+            var mAt = 0L; var mGot = 0L; var sampled = false
             var why = "error"
             // A proven (playing) stream asks for exactly what is missing: the answer then ends by itself and the connection
             // stays alive for the next burst (2.0.0.4 journal: every burst cut an open-ended answer off → a new TCP+TLS
             // connection each time, 0.5–0.9 s on mobile). Not proven yet / size unknown: the one open request.
-            val to = if (burst() && src.total > 0) minOf(src.total - 1, from + maxOf(high() - (end() - readPos).coerceAtLeast(0), 1L shl 20) - 1) else -1L
+            val to = when {
+                limit >= 0 -> limit - 1 // a bridge: exactly the gap
+                burst() && src.total > 0 -> minOf(src.total - 1, from + maxOf(high() - (end() - readPos).coerceAtLeast(0), 1L shl 20) - 1)
+                else -> -1L
+            }
             kicked = false; stalledWhy = null
             val c = Cancel()
             cancel = c; gotHeaders = false; fetchAt = t0; lastByteAt = t0
@@ -479,6 +574,11 @@ object BurstProxy {
                     lastByteAt = System.currentTimeMillis()
                     if (tFirst == 0L) tFirst = System.currentTimeMillis() - t0
                     got += n
+                    if (mAt == 0L) { mAt = lastByteAt; mGot = got }
+                    else if (lastByteAt - mAt >= 5_000) {
+                        if (got - mGot >= (1L shl 20)) src.addNetSample((got - mGot) * 1000.0 / (lastByteAt - mAt))
+                        mAt = lastByteAt; mGot = got; sampled = true
+                    }
                     downloaded.addAndGet(n.toLong()); onBytes(n.toLong())
                     synchronized(lock) {
                         if (closed) { why = "closed"; return }
@@ -492,9 +592,13 @@ object BurstProxy {
                 response = null; cancel = null
                 val ms = System.currentTimeMillis() - t0
                 val dataMs = (ms - tFirst).coerceAtLeast(1)
-                if (got >= (3L shl 20) && dataMs >= 200) {
-                    val v = got * 1000.0 / dataMs
-                    src.netRate = if (src.netRate <= 0) v else src.netRate * 0.5 + v * 0.5
+                if (!sampled) {
+                    // a short burst: the whole of it is one sample
+                    if (got >= (3L shl 20) && dataMs >= 200) src.addNetSample(got * 1000.0 / dataMs)
+                } else {
+                    // the tail since the last sample on the way
+                    val tailMs = t0 + ms - mAt
+                    if (got - mGot >= (3L shl 20) && tailMs >= 200) src.addNetSample((got - mGot) * 1000.0 / tailMs)
                 }
                 val ahead = (end() - readPos).coerceAtLeast(0) / 1048576.0
                 val rate = if (src.rate > 0) " · film %.1f (avg %.1f)".format(src.rate * 8 / 1_000_000, src.avgRate * 8 / 1_000_000) else ""
@@ -517,15 +621,25 @@ object BurstProxy {
 
         /** Copies up to [max] bytes at [abs] into [buf]; waits for the downloader when needed. -1 = nothing more. */
         fun read(abs: Long, buf: ByteArray, max: Int): Int {
+            if (limit in 0..abs) return -1 // past a bridge: the reader moves on to the next window
             synchronized(lock) {
-                val waitStart = System.currentTimeMillis()
-                while (!closed && abs >= end() && !eof && error == null) {
+                var waitStart = System.currentTimeMillis()
+                while (!closed && error == null) {
+                    if (held() && abs >= gateAt) {
+                        // gathering a reserve: the player waits (this wait is not the 45 s "nothing comes" limit)
+                        readPos = abs; lastReadAt = System.currentTimeMillis()
+                        lock.wait(minOf(500L, (heldUntil - System.currentTimeMillis()).coerceAtLeast(1L)))
+                        waitStart = System.currentTimeMillis()
+                        continue
+                    }
+                    if (abs < end() || eof) break
                     readPos = abs; lastReadAt = System.currentTimeMillis(); lock.notifyAll()
                     if (System.currentTimeMillis() - waitStart > 45_000) return -1
                     lock.wait(500)
                 }
                 if (closed || abs >= end() || abs < validFrom()) return -1
-                val n = minOf(max.toLong(), end() - abs).toInt()
+                var n = minOf(max.toLong(), end() - abs).toInt()
+                if (held() && gateAt > abs) n = minOf(n.toLong(), gateAt - abs).toInt()
                 var off = 0; var pos = abs
                 while (off < n) {
                     val at = (pos - start) % CAP
@@ -587,15 +701,16 @@ object BurstProxy {
                     from = r.getOrNull(0)?.toLongOrNull() ?: 0L
                     to = r.getOrNull(1)?.toLongOrNull() ?: -1L
                 }
-                val w = src.windowFor(from)
-                synchronized(w.lock) { w.readers++; w.lastReadAt = System.currentTimeMillis(); w.lock.notifyAll() }
-                try { serveWindow(s, out, src, w, method, range, from, to) }
-                finally { synchronized(w.lock) { w.readers--; w.lock.notifyAll() } }
+                val reading = arrayOf(src.windowFor(from)) // the window read now (a bridge hands over to the next one)
+                reading[0].let { w -> synchronized(w.lock) { w.readers++; w.lastReadAt = System.currentTimeMillis(); w.lock.notifyAll() } }
+                try { serveWindow(s, out, src, reading, method, range, from, to) }
+                finally { reading[0].let { w -> synchronized(w.lock) { w.readers--; w.lock.notifyAll() } } }
             }
         }
     }
 
-    private fun serveWindow(s: Socket, out: OutputStream, src: Source, w: Window, method: String, range: String?, from: Long, to: Long) {
+    private fun serveWindow(s: Socket, out: OutputStream, src: Source, reading: Array<Window>, method: String, range: String?, from: Long, to: Long) {
+            var w = reading[0]
             run {
                 // The length is known after the first upstream answer.
                 val waitStart = System.currentTimeMillis()
@@ -616,7 +731,15 @@ object BurstProxy {
                 var tm = 0L; var pm = 0L // base of the bitrate measurement, set once the player's start-up read-ahead is over
                 while (pos <= last) {
                     val n = w.read(pos, buf, minOf(CHUNK.toLong(), last - pos + 1).toInt())
-                    if (n <= 0) break
+                    if (n <= 0) {
+                        // the end of a bridge: on into the window whose data starts here (or a new one if it is gone)
+                        if (w.limit < 0 || pos < w.limit) break
+                        val next = src.windowFor(pos)
+                        synchronized(w.lock) { w.readers--; w.lock.notifyAll() }
+                        synchronized(next.lock) { next.readers++; next.lastReadAt = System.currentTimeMillis(); next.lock.notifyAll() }
+                        w = next; reading[0] = next
+                        continue
+                    }
                     out.write(buf, 0, n)
                     w.consumed(pos, n)
                     pos += n

@@ -20,6 +20,7 @@ class BurstProxyTest {
     private lateinit var origin: HttpServer
     private val requests = AtomicInteger()
     private val stallNext = AtomicInteger()                       // the next N answers send their headers and then nothing
+    @Volatile private var slowOrigin = false                      // answers trickle at ~2 MB/s (a mobile network slower than the film)
     private val ranges = java.util.concurrent.CopyOnWriteArrayList<String>()
     private lateinit var url: String
 
@@ -36,7 +37,8 @@ class BurstProxyTest {
                 if (r != null) ex.responseHeaders.add("Content-Range", "bytes $a-$z/${data.size}")
                 ex.sendResponseHeaders(if (r != null) 206 else 200, (z - a + 1).toLong())
                 if (stallNext.getAndDecrement() > 0) { runCatching { Thread.sleep(6_000) }; ex.close(); return@createContext } // a hung connection
-                runCatching { ex.responseBody.use { it.write(data, a, z - a + 1) } }
+                if (slowOrigin) runCatching { ex.responseBody.use { o -> var p = a; while (p <= z) { val n = minOf(65_536, z - p + 1); o.write(data, p, n); o.flush(); p += n; Thread.sleep(32) } } }
+                else runCatching { ex.responseBody.use { it.write(data, a, z - a + 1) } }
                 ex.close()
             }
             executor = java.util.concurrent.Executors.newCachedThreadPool()
@@ -146,6 +148,59 @@ class BurstProxyTest {
         assertEquals(8.39, BurstProxy.bitrateMbit(url)!!, 0.05)
         BurstProxy.setDuration(url, 20_000)            // the player corrected the length: the average follows
         assertEquals(16.78, BurstProxy.bitrateMbit(url)!!, 0.05)
+    }
+
+    @Test fun slowNetworkIsKnownWhileTheFirstBurstStillRuns() {
+        slowOrigin = true
+        val local = BurstProxy.wrap(url)
+        get(local, "bytes=0-99")
+        BurstProxy.setDuration(url, 10_000) // 40 MiB in 10 s = 4 MiB/s film, the network gives ~2
+        // the player reads the stream as it comes (one long request: the reserve never fills)
+        val reader = Thread { runCatching { get(local, "bytes=0-") } }.apply { isDaemon = true; start() }
+        Thread.sleep(7_500)
+        assertTrue(reader.isAlive, "the first burst should still be running")
+        assertTrue(BurstProxy.slowerThanFilm(url), BurstProxy.snapshot())
+        assertTrue(BurstProxy.catchUpTargetMb(url) in 1.0..(16.0 * 0.6 + 0.01), "target ${BurstProxy.catchUpTargetMb(url)}")
+        slowOrigin = false
+    }
+
+    @Test fun holdGathersAReserveThePlayerGetsAfterwards() {
+        val local = BurstProxy.wrap(url)
+        get(local, "bytes=0-99")
+        BurstProxy.hold(url, 10_000)
+        var result: Pair<Int, ByteArray>? = null
+        val reader = Thread { result = get(local, "bytes=0-5999999") }.apply { isDaemon = true; start() }
+        Thread.sleep(1_500)
+        assertTrue(reader.isAlive, "the player must wait while the reserve is gathered")
+        val ahead = BurstProxy.aheadMb(url)!!
+        assertTrue(ahead >= 2.0, "ahead $ahead MB: the reserve should grow meanwhile")
+        BurstProxy.hold(url, 0)  // let go
+        reader.join(5_000)
+        assertEquals(206, result?.first)
+        assertContentEquals(data.copyOfRange(0, 6_000_000), result?.second)
+    }
+
+    @Test fun keyframeSearchBackwardsFetchesOnlyTheGaps() {
+        val local = BurstProxy.wrap(url)
+        val p = 20_000_000
+        // a seek: the player lands at p and reads a little
+        assertContentEquals(data.copyOfRange(p, p + 3_000_000), get(local, "bytes=$p-${p + 2_999_999}").second)
+        Thread.sleep(300)
+        // VLC looks for a keyframe: 1.5 MB back each time, reading on across what is already on the phone
+        var start = p
+        repeat(4) {
+            start -= 1_500_000
+            val (c, b) = get(local, "bytes=$start-${start + 2_999_999}")
+            assertEquals(206, c); assertContentEquals(data.copyOfRange(start, start + 3_000_000), b, "step at $start")
+        }
+        // each step asked the mirror for its gap only (a bounded range), not for megabytes the phone already had;
+        // the first one up to where the seek's window still holds data (its small test ring has moved on a little)
+        assertTrue(ranges.any { it.startsWith("bytes=${p - 1_500_000}-") && !it.endsWith("-") }, "step 1: ranges $ranges")
+        for (k in 2..4) {
+            val a = p - k * 1_500_000
+            assertTrue("bytes=$a-${a + 1_499_999}" in ranges, "step $k: ranges $ranges")
+        }
+        assertEquals(5, requests.get(), "one request per step: $ranges")
     }
 
     @Test fun offWhenReserveIsZero() {

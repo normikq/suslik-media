@@ -62,6 +62,8 @@ class PlaybackSupervisor(
     private var videoFixes = 0
     private var soundFixes = 0
     private var reopens = 0
+    private var afterBufferFixes = 0
+    private var bufferedAt = -1L       // when the last real rebuffering ended (Buffering → Playing)
     private var lastAction = 0L
     // running measurements
     private var last: Stats? = null
@@ -76,13 +78,15 @@ class PlaybackSupervisor(
     // ---- events ----------------------------------------------------------------------------------------------
     /** A stream starts opening. A new [episodeKey] resets the budgets. */
     fun opening(episodeKey: String) {
-        if (episodeKey != episode) { episode = episodeKey; videoFixes = 0; soundFixes = 0; reopens = 0 }
+        if (episodeKey != episode) { episode = episodeKey; videoFixes = 0; soundFixes = 0; reopens = 0; afterBufferFixes = 0 }
+        bufferedAt = -1L
         enter(State.Opening, grace = 8_000)
     }
     fun buffering(percent: Float) {
         if (state == State.Paused || state == State.Ended) return
         if (percent < 100f) { if (state != State.Opening) enter(State.Buffering, grace = 4_000) }
-        else if (state == State.Buffering || state == State.Opening) enter(State.Playing, grace = 4_000)
+        else if (state == State.Buffering) { bufferedAt = now(); enter(State.Playing, grace = 2_000) }
+        else if (state == State.Opening) enter(State.Playing, grace = 4_000)
     }
     fun playing() { if (state != State.Paused && state != State.Playing) enter(State.Playing, grace = 4_000) }
     fun paused() = enter(State.Paused)
@@ -141,8 +145,15 @@ class PlaybackSupervisor(
         if (s.videoTracks > 0 && s.pictures > 0 && picturesMoved >= 3) {
             if (s.pictures == prev.pictures) frozenFor += clock else frozenFor = 0
             if (frozenFor >= 3_000) {
+                // Right after a rebuffering it is VLC's known trouble, not a broken stream: the buffer ran dry, VLC raised
+                // its delay and the hardware decoder fell behind — sound plays, the picture stands. A new decoder at this
+                // moment fixes it every time; a reopen (as before, after two fixes) only threw the reserve away.
+                // (12.10 journal: 8 of 8 freezes came right after "buffer deadlock prevented" at the end of buffering.)
+                if (bufferedAt >= 0 && t - bufferedAt < 30_000 && afterBufferFixes < 20) {
+                    act("frozen picture after buffering") { afterBufferFixes++; actions.restartVideo() }; return
+                }
                 if (videoFixes < 2) { act("frozen picture") { videoFixes++; actions.restartVideo() }; return }
-                if (reopens < 3) { act("frozen picture again") { reopens++; actions.reopen(fresh = true) }; return }
+                if (reopens < 3) { act("frozen picture again") { reopens++; actions.reopen(fresh = reopens >= 2) }; return }
             }
         }
 
