@@ -62,6 +62,7 @@ fun main() {
     // Already open: that window comes to the front, this start ends here (no second window, no second VLC).
     if (!SingleInstance.acquire()) return
     CrashReports.start() // last run crashed? → report; from now on uncaught errors report themselves
+    Diag.start() // debug build only: the detailed journal
     app()
     // The window is gone: make sure the process really ends (no "ghost" left in Task Manager).
     AppExit.finish()
@@ -125,7 +126,7 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
 
     Window(
         onCloseRequest = ::exitApplication,
-        title = playing?.let { "${it.title} — Suslik Media" } ?: "Suslik Media — медиатека",
+        title = (if (Diag.on) "Suslik Debug" else "Suslik Media").let { app -> playing?.let { "${it.title} — $app" } ?: "$app — медиатека" },
         icon = painterResource("icons/icon-256.png"),
         state = win,
         alwaysOnTop = onTop.value,

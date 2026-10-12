@@ -53,6 +53,10 @@ Changelog (русский) — `android/app/src/main/assets/changelog.json` и `
 `batterystats` из приложения пустой без `adb shell appops set ru.suslikovanora.media.diag GET_USAGE_STATS allow`.
 Телефон владельца: `R5CY71AQBGK`; `adb` лежит в `C:\Users\nanar\OneDrive\Desktop\platform-tools`.
 
+**Windows:** `./gradlew packageMsi -Pdiag` → `Suslik Debug-<V>.msi` (свой upgradeUuid, ставится рядом). Подробно: `desktop/DEBUG-BUILD.md`.
+Артефакт CI `windows-debug-msi`. Журнал `%APPDATA%\SuslikMediaDebug\player.log`; теги `[sys]` `[net]` `[http]` `[vlc]` `[proxy]` `[mark]` (F8 в плеере).
+Без самообновления; в рантайм добавлены `java.management`/`jdk.management` только для этой сборки.
+
 ## Что известно из журналов
 
 - Мобильная сеть: первое соединение к серверу медленное (TCP ~1,1 с из-за потерянного SYN, TLS до 5 с), иногда рукопожатие висит 30 с.

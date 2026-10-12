@@ -9,7 +9,8 @@ object Reserve {
         if (ready) return
         ready = true
         BurstProxy.log = { PlayerLog.write(it) }
-        BurstProxy.init(java.io.File(System.getProperty("java.io.tmpdir"), "SuslikMedia-stream")) { url, from, to, cancel ->
+        // Own folder for the debug build: init() empties it, and the normal app may be playing from its own at the same time.
+        BurstProxy.init(java.io.File(System.getProperty("java.io.tmpdir"), if (Diag.on) "SuslikDebug-stream" else "SuslikMedia-stream")) { url, from, to, cancel ->
             val req = java.net.http.HttpRequest.newBuilder(java.net.URI.create(url))
                 .timeout(java.time.Duration.ofSeconds(20)).header("Range", "bytes=$from-" + if (to >= 0) "$to" else "").GET().build()
             val future = Api.client.sendAsync(req, java.net.http.HttpResponse.BodyHandlers.ofInputStream())

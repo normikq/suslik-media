@@ -32,6 +32,10 @@ val appVersion = "2.0.4"
 // Windows Installer takes at most three numbers (2.0.0.1 → 2.0.0); the app itself and the file name keep all four.
 val msiVersion = appVersion.split(".").take(3).joinToString(".")
 
+// Debug build «Suslik Debug»: `./gradlew packageMsi -Pdiag`. A separate app next to the normal one (own installer id,
+// Start menu entry, data folder %APPDATA%\SuslikMediaDebug), a detailed journal, no self-update. See DEBUG-BUILD.md.
+val diag = (findProperty("diag") as String?)?.let { it != "false" } ?: false
+
 composeCompiler { stabilityConfigurationFile.set(project.layout.projectDirectory.file("compose-stability.conf")) }
 
 compose.desktop {
@@ -48,6 +52,7 @@ compose.desktop {
             // the connection instead of a new TLS handshake (nginx keepalive_timeout 180s, see NGINX-MIRROR.md).
             "-Djdk.httpclient.keepalive.timeout=180",
             "-Dsuslik.version=$appVersion",
+            "-Dsuslik.diag=$diag",
             // AppCDS (Java 19+): on the first exit the JVM saves the classes it loaded into an archive next to the app;
             // from then on they are mapped from it instead of being read and verified again — the window opens noticeably
             // sooner and takes less memory. A new version makes the archive outdated: the JVM rebuilds it by itself.
@@ -59,13 +64,15 @@ compose.desktop {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe)
             // java.net.http: API client, jdk.crypto.ec: HTTPS, jdk.unsupported: JNA (VLC)
             modules("java.net.http", "jdk.crypto.ec", "jdk.unsupported", "java.naming", "jdk.accessibility")
-            packageName = "Suslik Media"
+            // debug build: CPU / threads / memory for the [sys] journal lines
+            if (diag) modules("java.management", "jdk.management")
+            packageName = if (diag) "Suslik Debug" else "Suslik Media"
             packageVersion = msiVersion
-            description = "Suslik Media"
+            description = if (diag) "Suslik Debug" else "Suslik Media"
             windows {
                 iconFile.set(project.file("icon.ico")) // .exe, installer, Start menu / desktop shortcut
                 // Fixed id: a newer .msi replaces the installed version instead of installing a second copy.
-                upgradeUuid = "6f1d2b9e-4c7a-4f3e-9a51-2d8c5e7b3a10"
+                upgradeUuid = if (diag) "b3e0c5a1-7d24-4b8e-9f63-1a5c8d2e4f70" else "6f1d2b9e-4c7a-4f3e-9a51-2d8c5e7b3a10"
                 menu = true
                 shortcut = true
                 perUserInstall = true

@@ -13,10 +13,12 @@ import java.net.http.HttpResponse
 import java.time.Duration
 import java.util.Properties
 
-/** App data folder: %APPDATA%\SuslikMedia on Windows, ~/.suslikmedia elsewhere. */
+/** App data folder: %APPDATA%\SuslikMedia on Windows (the debug build: SuslikMediaDebug), ~/.suslikmedia elsewhere. */
 object AppDir {
     val dir: File by lazy {
-        val base = System.getenv("APPDATA")?.let { File(it, "SuslikMedia") } ?: File(System.getProperty("user.home"), ".suslikmedia")
+        // The debug build keeps its own folder: its own sign-in, settings, progress and journal, next to the normal app.
+        val name = if (System.getProperty("suslik.diag") == "true") "SuslikMediaDebug" else "SuslikMedia"
+        val base = System.getenv("APPDATA")?.let { File(it, name) } ?: File(System.getProperty("user.home"), "." + name.lowercase())
         base.apply { mkdirs() }
     }
     fun file(name: String) = File(dir, name)
@@ -131,11 +133,14 @@ object Api {
     private suspend fun fetch(req0: HttpRequest, etag: String? = null): Fetched = withContext(Dispatchers.IO) {
         val req = HttpRequest.newBuilder(req0, { _, _ -> true }).header("Accept-Encoding", "gzip")
             .apply { if (etag != null) header("If-None-Match", etag) }.build()
-        val res = client.send(req, HttpResponse.BodyHandlers.ofInputStream())
+        val t0 = System.currentTimeMillis()
+        val res = try { client.send(req, HttpResponse.BodyHandlers.ofInputStream()) }
+            catch (e: Exception) { Diag.http(req.method(), req.uri().path, null, System.currentTimeMillis() - t0, 0, e); throw e }
         storeCookies(res)
         val gz = res.headers().firstValue("content-encoding").orElse("").equals("gzip", true)
         val text = res.body().use { input -> (if (gz) java.util.zip.GZIPInputStream(input) else input).readBytes().toString(Charsets.UTF_8) }
         val code = res.statusCode()
+        Diag.http(req.method(), req.uri().path, code, System.currentTimeMillis() - t0, text.length)
         if (code == 304) return@withContext Fetched(304, JSONObject(), etag)
         val json = runCatching { JSONObject(text) }.getOrElse { JSONObject() }
         if (code !in 200..299) throw HttpError(code, json.optString("error").ifBlank { "Ошибка сервера ($code)" })

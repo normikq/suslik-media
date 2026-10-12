@@ -114,7 +114,7 @@ fun SettingsSheet(onClose: () -> Unit) {
                 PlaybackSettings.cachePresets.forEach { p ->
                     PresetRow(p, p.value == cache) { cache = p.value; PlaybackSettings.setCacheMs(p.value) }
                 }
-                ChannelSection()
+                if (Diag.on) DiagSection() else ChannelSection()
             }
             Row(Modifier.fillMaxWidth().padding(top = 14.dp), horizontalArrangement = Arrangement.End) {
                 LampButton("Готово") { close() }
@@ -199,6 +199,24 @@ private fun ChannelOption(title: String, on: Boolean, modifier: Modifier, onClic
     ) {
         Text(title, color = if (on) Sm.lamp else Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp)
     }
+}
+
+/** Debug build only, in place of «Канал обновлений»: where the journal is, a mark, the journal as one zip. */
+@Composable
+private fun DiagSection() {
+    var state by remember { mutableStateOf("") }
+    Section("Отладочная сборка", "Подробный журнал: ${PlayerLog.file.absolutePath}. В плеере F8 ставит метку в момент " +
+        "проблемы. Эта сборка не обновляется сама — новая ставится с компьютера.", top = 18.dp)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlineButton("Метка", Modifier.weight(1f)) { state = "Метка #${Diag.mark("settings")} записана в журнал" }
+        OutlineButton("Папка журнала", Modifier.weight(1f)) {
+            state = runCatching { java.awt.Desktop.getDesktop().open(AppDir.dir); "" }.getOrElse { "Не открылась: ${it.message}" }
+        }
+        OutlineButton("Архив", Modifier.weight(1f)) {
+            state = Diag.zipJournal()?.let { "На рабочем столе: ${it.name}" } ?: "Не получилось собрать архив"
+        }
+    }
+    if (state.isNotEmpty()) Text(state, color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 6.dp))
 }
 
 @Composable

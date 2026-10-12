@@ -198,6 +198,21 @@ private fun soundStats(mp: MediaPlayer): Triple<Long, Long, Long>? = runCatching
         n("picturesDisplayed", "displayedPictures") ?: 0L)
 }.getOrNull()
 
+/** Debug build: VLC's cumulative counters for the [vlc] journal line (empty when this VLC gives none). Player thread. */
+private fun vlcStats(mp: MediaPlayer): Map<String, Long> = runCatching {
+    val info = mp.media().info() ?: return emptyMap()
+    val cls = Class.forName("uk.co.caprica.vlcj.media.MediaStatistics")
+    val st = cls.getDeclaredConstructor().newInstance()
+    info.javaClass.getMethod("statistics", cls).invoke(info, st)
+    fun n(vararg names: String): Long = names.firstNotNullOfOrNull { (call(st, it) as? Number)?.toLong() } ?: 0L
+    mapOf(
+        "read" to n("inputBytesRead", "readBytes"), "shown" to n("picturesDisplayed", "displayedPictures"),
+        "lost" to n("picturesLost", "lostPictures"), "video" to n("decodedVideo", "videoDecoded"),
+        "audio" to n("decodedAudio", "audioDecoded"), "played" to n("audioBuffersPlayed", "playedAudioBuffers"),
+        "aLost" to n("audioBuffersLost", "lostAudioBuffers"), "corrupt" to n("demuxCorrupted"), "discont" to n("demuxDiscontinuity"),
+    )
+}.getOrDefault(emptyMap())
+
 /** One line for the info panel: picture, codecs, bitrate, dropped frames. Runs on the player thread. */
 private fun describePlayback(mp: MediaPlayer): String {
     val parts = ArrayList<String>()
@@ -699,11 +714,46 @@ fun PlayerView(
                 Key.I -> infoOpen = !infoOpen
                 Key.O -> setMini(!mini)
                 Key.T -> if (!mini) onTop.value = !onTop.value
+                Key.F8 -> if (Diag.on) flash("📍 Метка #${Diag.mark("player at ${time / 1000}s")}", "mark") else return@handler false
                 else -> return@handler false
             }
             true
         }
         onDispose { keys.value = null }
+    }
+
+    // ---- debug build: [vlc] and [proxy] lines every 5 s (counters since the last line) ---------------------------
+    if (Diag.on) {
+        DisposableEffect(Unit) { Diag.playerOpen = true; onDispose { Diag.playerOpen = false } }
+        LaunchedEffect(Unit) {
+            var prev: Map<String, Long>? = null
+            var prevAt = 0L
+            while (true) {
+                delay(5_000)
+                if (closing) continue
+                val line = withContext(vlcThread) { runCatching {
+                    val now = System.currentTimeMillis()
+                    val st = vlcStats(mp)
+                    val p = prev
+                    fun d(k: String) = (st[k] ?: 0L) - (if (p != null && (st["read"] ?: 0L) >= (p["read"] ?: 0L)) p[k] ?: 0L else 0L)
+                    val span = if (prevAt == 0L) 0L else now - prevAt
+                    val read = d("read")
+                    val sb = StringBuilder("[vlc] %.1f/%ds ".format(mp.status().time() / 1000.0, mp.status().length() / 1000))
+                    sb.append(when { mp.status().isPlaying -> "playing"; vlcPaused -> "paused"; else -> "not playing" })
+                    if (bufferingSince > 0) sb.append(" BUFFERING")
+                    if (rate != 1f) sb.append(" speed ${rate}x")
+                    sb.append(" · read +%.2f MB%s".format(read / 1048576.0, if (span > 0) " (%.1f Mbit/s)".format(read * 8.0 / 1000 / span) else ""))
+                    sb.append(" · pictures shown +${d("shown")} lost +${d("lost")} · decoded video +${d("video")} audio +${d("audio")}")
+                    sb.append(" · audio played +${d("played")} lost +${d("aLost")}")
+                    if ((st["corrupt"] ?: 0L) > 0 || (st["discont"] ?: 0L) > 0) sb.append(" · demux corrupted ${st["corrupt"]} discontinuities ${st["discont"]}")
+                    BurstProxy.aheadMb(currentUrl)?.let { sb.append(" · reserve ahead %.1f MB".format(it)) }
+                    prev = st; prevAt = now
+                    sb.toString()
+                }.getOrNull() }
+                line?.let { PlayerLog.write(it) }
+                PlayerLog.write("[proxy] " + BurstProxy.snapshot())
+            }
+        }
     }
 
     val prefsTimer = remember { javax.swing.Timer(300) { applyPrefs(); ensureAudio() }.apply { isRepeats = false } }

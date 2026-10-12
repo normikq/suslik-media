@@ -22,7 +22,7 @@ object PlayerLog {
         runCatching {
             writer.execute {
                 runCatching {
-                    if (file.length() > 2_000_000) { val old = AppDir.file("player.old.log"); old.delete(); file.renameTo(old) }
+                    if (file.length() > (if (Diag.on) 20_000_000 else 2_000_000)) { val old = AppDir.file("player.old.log"); old.delete(); file.renameTo(old) }
                     file.appendText(line)
                 }
             }

@@ -158,7 +158,8 @@ private fun mb(bytes: Long) = if (bytes > 0) "%.1f МБ".format(bytes / 1048576.
 /** Checks once at start (after sign-in); a newer version lights up the update button in the header. */
 @Composable
 fun UpdateCheck(authenticated: Boolean, @Suppress("UNUSED_PARAMETER") show: Boolean = true) {
-    LaunchedEffect(authenticated) { if (authenticated) Updater.available = Updater.check() }
+    // The debug build never updates itself (it is a separate app; a new one is installed from the PC).
+    LaunchedEffect(authenticated) { if (authenticated && !Diag.on) Updater.available = Updater.check() }
 }
 
 /**
