@@ -19,6 +19,8 @@ class BurstProxyTest {
     private val data = Random(7).nextBytes(40 shl 20)
     private lateinit var origin: HttpServer
     private val requests = AtomicInteger()
+    private val stallNext = AtomicInteger()                       // the next N answers send their headers and then nothing
+    private val ranges = java.util.concurrent.CopyOnWriteArrayList<String>()
     private lateinit var url: String
 
     @BeforeTest fun start() {
@@ -26,12 +28,14 @@ class BurstProxyTest {
             createContext("/film.mkv") { ex ->
                 requests.incrementAndGet()
                 val r = ex.requestHeaders.getFirst("Range")
+                ranges.add(r ?: "")
                 var a = 0; var z = data.size - 1
                 if (r != null) { val m = Regex("""bytes=(\d*)-(\d*)""").find(r)!!; a = m.groupValues[1].toInt(); if (m.groupValues[2].isNotEmpty()) z = minOf(m.groupValues[2].toInt(), data.size - 1) }
                 if (a >= data.size) { ex.responseHeaders.add("Content-Range", "bytes */${data.size}"); ex.sendResponseHeaders(416, -1); ex.close(); return@createContext }
                 ex.responseHeaders.add("Content-Type", "video/x-matroska")
                 if (r != null) ex.responseHeaders.add("Content-Range", "bytes $a-$z/${data.size}")
                 ex.sendResponseHeaders(if (r != null) 206 else 200, (z - a + 1).toLong())
+                if (stallNext.getAndDecrement() > 0) { runCatching { Thread.sleep(6_000) }; ex.close(); return@createContext } // a hung connection
                 runCatching { ex.responseBody.use { it.write(data, a, z - a + 1) } }
                 ex.close()
             }
@@ -40,9 +44,11 @@ class BurstProxyTest {
         }
         url = "https://origin.test/film.mkv?sig=1"
         val dir = File(System.getProperty("java.io.tmpdir"), "bp-test-${System.nanoTime()}")
-        BurstProxy.init(dir) { u, from ->
+        BurstProxy.init(dir) { u, from, to, cancel ->
             val c = URL("http://127.0.0.1:${origin.address.port}/" + u.substringAfter("origin.test/")).openConnection() as HttpURLConnection
-            c.setRequestProperty("Range", "bytes=$from-")
+            cancel.attach { c.disconnect() }
+            c.setRequestProperty("Range", "bytes=$from-" + if (to >= 0) "$to" else "")
+            c.readTimeout = 20_000
             BurstProxy.UpstreamResponse(c.responseCode, { c.getHeaderField(it) }, runCatching { c.inputStream }.getOrNull())
         }
         BurstProxy.capBytes = 16L shl 20 // smaller than the file: the ring wraps around
@@ -81,6 +87,34 @@ class BurstProxyTest {
         assertContentEquals(data, out.toByteArray())
         val used = requests.get() - before
         assertTrue(used in 1..12, "upstream requests: $used") // bursts, not one per chunk
+        // A playing stream asks for exactly what is missing (bytes=a-b), so the answer ends by itself and the connection is reused.
+        assertTrue(ranges.any { Regex("""bytes=\d+-\d+""").matches(it) }, "ranges: $ranges")
+    }
+
+    @Test fun stalledAnswerIsRepeatedOnANewConnection() {
+        BurstProxy.headerStallMs = 700; BurstProxy.bodyStallMs = 700
+        try {
+            stallNext.set(1) // the first answer comes with headers and then hangs
+            val local = BurstProxy.wrap(url)
+            val t0 = System.currentTimeMillis()
+            val (code, b) = get(local, "bytes=0-2999999")
+            assertEquals(206, code); assertContentEquals(data.copyOfRange(0, 3_000_000), b)
+            val took = System.currentTimeMillis() - t0
+            assertTrue(took < 5_500, "took $took ms: the hung answer should be given up after ~1-2 s, not after its 6 s")
+            assertTrue(requests.get() >= 2, "requests: ${requests.get()}")
+        } finally { BurstProxy.headerStallMs = 8_000; BurstProxy.bodyStallMs = 6_000 }
+    }
+
+    @Test fun networkChangeRestartsRequestsInFlight() {
+        stallNext.set(1)
+        val local = BurstProxy.wrap(url)
+        var result: Pair<Int, ByteArray>? = null
+        val th = Thread { result = get(local, "bytes=0-1999999") }.apply { start() }
+        Thread.sleep(600)           // the first answer is hanging now
+        BurstProxy.networkChanged() // Wi-Fi → mobile: no waiting for a timeout
+        th.join(4_000)
+        assertEquals(206, result?.first)
+        assertContentEquals(data.copyOfRange(0, 2_000_000), result?.second)
     }
 
     @Test fun sameFileKeepsItsReserveAcrossSignedAddressesAndShortAbsence() {

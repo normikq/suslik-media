@@ -65,19 +65,50 @@ object BurstProxy {
     private val ids = AtomicLong()
 
     /** How a range of a stream is fetched (OkHttp on Android, java.net.http on the PC). */
-    fun interface Upstream { fun open(url: String, from: Long): UpstreamResponse }
+    fun interface Upstream {
+        /** Bytes [from]..[to] (inclusive; [to] < 0 = to the end of the file). [cancel]: attach what aborts this request. */
+        fun open(url: String, from: Long, to: Long, cancel: Cancel): UpstreamResponse
+    }
+    /** Lets the downloader abort a request that is still connecting / waiting for the answer (a hung TLS handshake). */
+    class Cancel {
+        @Volatile private var action: (() -> Unit)? = null
+        @Volatile var cancelled = false; private set
+        fun attach(a: () -> Unit) { action = a; if (cancelled) runCatching(a) }
+        fun cancel() { cancelled = true; action?.let { runCatching(it) } }
+    }
     /** [header]: by name, case-insensitive. Closing [body] aborts the transfer. */
     class UpstreamResponse(val code: Int, val header: (String) -> String?, val body: java.io.InputStream?) : java.io.Closeable {
         override fun close() { runCatching { body?.close() } }
     }
 
     @Volatile private var upstream: Upstream? = null
+    /** Drops pooled connections (they belong to a network that is gone, or hang): set by the app. */
+    @Volatile var resetConnections: () -> Unit = {}
+    /** A request with no answer / no data for this long is cancelled and repeated on a fresh connection. */
+    @Volatile var headerStallMs = 8_000L
+    @Volatile var bodyStallMs = 6_000L
+    private val watchdog by lazy {
+        java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "burst-watch").apply { isDaemon = true; priority = Thread.NORM_PRIORITY - 1 } }
+            .also { it.scheduleWithFixedDelay({ runCatching { val now = System.currentTimeMillis(); sources.values.forEach { s -> s.windows.forEach { w -> w.checkStall(now) } } } },
+                1, 1, java.util.concurrent.TimeUnit.SECONDS) }
+    }
+
+    /**
+     * The device switched networks (Wi-Fi ↔ mobile, VPN up / down): the requests in flight and the pooled connections
+     * belong to the old one. Everything is dropped and repeated at once instead of waiting for a 30 s timeout.
+     */
+    fun networkChanged() {
+        log("reserve: network changed → restarting the requests")
+        runCatching { resetConnections() }
+        sources.values.forEach { s -> s.windows.forEach { it.kick() } }
+    }
     /** Journal hook (the app's player log). */
     @Volatile var log: (String) -> Unit = {}
 
     /** Once per process: where the reserve files go (leftovers of a previous run are removed) and how to download. */
     @Synchronized fun init(directory: File, up: Upstream) {
         upstream = up
+        watchdog // starts the stall watcher (once)
         if (dir != null) return
         runCatching { directory.deleteRecursively(); directory.mkdirs() }
         dir = directory
@@ -258,6 +289,33 @@ object BurstProxy {
         @Volatile var closed = false
         @Volatile var response: UpstreamResponse? = null
         val lock = java.lang.Object()
+        // The request in flight (for the stall watcher and for network changes)
+        @Volatile private var cancel: Cancel? = null
+        @Volatile private var fetchAt = 0L
+        @Volatile private var lastByteAt = 0L
+        @Volatile private var gotHeaders = false
+        @Volatile private var stalledWhy: String? = null
+        @Volatile private var kicked = false
+        private var failures = 0
+
+        /** No answer / no data for too long: abort, the downloader repeats the burst on a new connection. */
+        fun checkStall(now: Long) {
+            val c = cancel ?: return
+            if (closed) return
+            val head = headerStallMs + 4_000L * minOf(failures, 2) // a repeatedly failing network gets more patience
+            val why = when {
+                !gotHeaders && now - fetchAt > head -> "no answer for %.0f s".format((now - fetchAt) / 1000.0)
+                gotHeaders && now - lastByteAt > bodyStallMs -> "no data for %.0f s".format((now - lastByteAt) / 1000.0)
+                else -> null
+            } ?: return
+            stalledWhy = why
+            c.cancel(); runCatching { response?.close() }
+        }
+
+        fun kick() {
+            synchronized(lock) { kicked = true; lock.notifyAll() }
+            cancel?.cancel(); runCatching { response?.close() }
+        }
 
         fun end() = start + written
         fun cap() = CAP
@@ -310,13 +368,13 @@ object BurstProxy {
 
         fun close() {
             closed = true
+            cancel?.cancel()
             runCatching { response?.close() }
             synchronized(lock) { lock.notifyAll() }
             runCatching { raf.close() }; runCatching { file.delete() }
         }
 
         fun download() {
-            var failures = 0
             while (!closed) {
                 // Wait while there is enough ahead (or nobody has read for a minute: paused / abandoned window).
                 synchronized(lock) {
@@ -332,11 +390,17 @@ object BurstProxy {
                     failures = 0
                 } catch (e: IOException) {
                     if (closed) return
-                    log("reserve: request failed (${e.message}), attempt ${failures + 1}")
+                    val stalled = stalledWhy; stalledWhy = null
+                    val netChange = kicked; kicked = false
+                    log("reserve: request failed (${stalled ?: e.message}), attempt ${failures + 1}" +
+                        (if (stalled != null) " → new connection" else if (netChange) " (network changed) → new connection" else ""))
                     if (e is FatalUpstream) { synchronized(lock) { error = e.message; lock.notifyAll() }; return }
+                    if (netChange) { failures = 0; runCatching { resetConnections() }; continue } // the new network: try again at once
                     failures++
                     if (failures > 8) { synchronized(lock) { error = e.message ?: "network"; lock.notifyAll() }; return }
-                    Thread.sleep(minOf(8_000L, 500L shl minOf(failures, 4)))
+                    if (stalled != null) { runCatching { resetConnections() }; Thread.sleep(200) }
+                    else synchronized(lock) { if (!kicked && !closed) lock.wait(minOf(8_000L, 500L shl minOf(failures, 4))) } // a network change wakes it
+                    if (kicked) { kicked = false; failures = 0 }
                 }
             }
         }
@@ -351,9 +415,17 @@ object BurstProxy {
             var tFirst = 0L
             var got = 0L
             var why = "error"
-            val res = try { (upstream ?: throw FatalUpstream("no upstream")).open(src.url, from) }
-                      catch (e: IOException) { log("reserve: burst at ${from / 1048576} MB: no answer after ${System.currentTimeMillis() - t0} ms (${e.message})"); throw e }
+            // A proven (playing) stream asks for exactly what is missing: the answer then ends by itself and the connection
+            // stays alive for the next burst (2.0.0.4 journal: every burst cut an open-ended answer off → a new TCP+TLS
+            // connection each time, 0.5–0.9 s on mobile). Not proven yet / size unknown: the one open request.
+            val to = if (burst() && src.total > 0) minOf(src.total - 1, from + maxOf(high() - (end() - readPos).coerceAtLeast(0), 1L shl 20) - 1) else -1L
+            kicked = false; stalledWhy = null
+            val c = Cancel()
+            cancel = c; gotHeaders = false; fetchAt = t0; lastByteAt = t0
+            val res = try { (upstream ?: throw FatalUpstream("no upstream")).open(src.url, from, to, c) }
+                      catch (e: IOException) { cancel = null; log("reserve: burst at ${from / 1048576} MB: no answer after ${System.currentTimeMillis() - t0} ms (${e.message})"); throw e }
             val tAnswer = System.currentTimeMillis() - t0
+            gotHeaders = true; lastByteAt = System.currentTimeMillis()
             response = res
             try { res.use { r ->
                 val code = r.code
@@ -384,7 +456,17 @@ object BurstProxy {
                     // costs a full round trip through the mirror each time; it stops when VLC leaves or the ring is full.
                     if (ahead >= CAP * 7 / 8) { why = "ring full"; return }
                     val n = input.read(buf)
-                    if (n < 0) { why = "end of file"; synchronized(lock) { eof = true; lock.notifyAll() }; return }
+                    if (n < 0) {
+                        // The answer ended. Real end of the file only when everything up to the size arrived; a bounded answer
+                        // that is complete is just the end of this burst; anything shorter is a connection cut early.
+                        val total = src.total
+                        when {
+                            total > 0 && end() < total && to >= 0 && end() > to -> { why = "burst done"; return }
+                            total > 0 && end() < total -> throw IOException("answer ended at ${end() shr 20} of ${total shr 20} MB")
+                            else -> { why = "end of file"; synchronized(lock) { eof = true; lock.notifyAll() }; return }
+                        }
+                    }
+                    lastByteAt = System.currentTimeMillis()
                     if (tFirst == 0L) tFirst = System.currentTimeMillis() - t0
                     got += n
                     downloaded.addAndGet(n.toLong()); onBytes(n.toLong())
@@ -397,7 +479,7 @@ object BurstProxy {
                 }
                 why = "closed"
             } } finally {
-                response = null
+                response = null; cancel = null
                 val ms = System.currentTimeMillis() - t0
                 val dataMs = (ms - tFirst).coerceAtLeast(1)
                 if (got >= (3L shl 20) && dataMs >= 200) {

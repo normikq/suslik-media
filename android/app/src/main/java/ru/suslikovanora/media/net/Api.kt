@@ -84,6 +84,14 @@ object Api {
     /** Same connections, no HTTP cache: posters (Coil keeps its own image cache) and the update download. */
     val plain: OkHttpClient by lazy { client.newBuilder().cache(null).build() }
 
+    /**
+     * The film reserve's downloads: the same pool and connections, but short timeouts. A dead connection is noticed in
+     * seconds (the reserve also has its own stall watcher) instead of the 30 s of the API client.
+     */
+    val reserve: OkHttpClient by lazy {
+        plain.newBuilder().connectTimeout(8, TimeUnit.SECONDS).readTimeout(15, TimeUnit.SECONDS).build()
+    }
+
     private val jsonType = "application/json".toMediaType()
 
     suspend fun get(path: String): JSONObject = call(Request.Builder().url(BASE + path).get().build())

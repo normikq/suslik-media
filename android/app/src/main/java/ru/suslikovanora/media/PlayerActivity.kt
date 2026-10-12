@@ -435,12 +435,16 @@ class PlayerActivity : ComponentActivity() {
         if (Diag.on) { Diag.playerOpen = true; handler.postDelayed(diagRunnable, 3000L) }
         TrafficMeter.init(this)
         sessionStartMb = BurstProxy.downloadedMb()
-        BurstProxy.init(java.io.File(cacheDir, "stream")) { url, from ->
-            // The shared reserve downloads through OkHttp here (same connections as the rest of the app).
-            val res = ru.suslikovanora.media.net.Api.plain.newCall(okhttp3.Request.Builder().url(url)
-                .header("Range", "bytes=$from-").header("Accept-Encoding", "identity").build()).execute()
+        BurstProxy.init(java.io.File(cacheDir, "stream")) { url, from, to, cancel ->
+            // The shared reserve downloads through OkHttp here (same connection pool as the rest of the app).
+            val call = ru.suslikovanora.media.net.Api.reserve.newCall(okhttp3.Request.Builder().url(url)
+                .header("Range", "bytes=$from-" + if (to >= 0) "$to" else "").header("Accept-Encoding", "identity").build())
+            cancel.attach { call.cancel() } // a request stuck in connect / TLS can be aborted from outside
+            val res = call.execute()
             BurstProxy.UpstreamResponse(res.code, { n -> res.header(n) }, res.body?.byteStream())
         }
+        // Dead sockets of a network that is gone (or a hung one) must not be reused by the repeated request.
+        BurstProxy.resetConnections = { ru.suslikovanora.media.net.Api.plain.connectionPool.evictAll() }
         if (Build.VERSION.SDK_INT >= 28) {
             window.attributes = window.attributes.also {
                 it.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
@@ -1214,6 +1218,13 @@ class PlayerActivity : ComponentActivity() {
         val wasLost = networkLost
         lastNetwork = network
         networkLost = false
+        // The device really switched networks (not the first callback after registering): the reserve's requests in
+        // flight belong to the old one. 2.0.0.4 journal: after Wi-Fi → mobile the film hung ~36 s on a 30 s timeout.
+        if (previous != network && (previous != null || wasLost)) {
+            AppLog.write("network changed (${if (isValidated(network)) "validated" else "not validated yet"}): restarting the reserve's requests")
+            BurstProxy.networkChanged()
+            kickWhenValidated = !isValidated(network)
+        }
         if (mediaPlayer == null) return
         if (previous == null && !wasLost) return // initial callback right after registration
         if (viaReserve()) {
@@ -1236,7 +1247,10 @@ class PlayerActivity : ComponentActivity() {
         }
     }
 
+    private var kickWhenValidated = false
+
     private fun onNetworkValidated(network: Network) {
+        if (kickWhenValidated && network == lastNetwork) { kickWhenValidated = false; BurstProxy.networkChanged() } // the connections made before validation may hang
         if (!awaitingValidation || network != lastNetwork || mediaPlayer == null || viaReserve()) return
         awaitingValidation = false
         reconnectScheduled = true
