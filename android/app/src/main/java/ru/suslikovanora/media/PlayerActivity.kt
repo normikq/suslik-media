@@ -1227,11 +1227,13 @@ class PlayerActivity : ComponentActivity() {
         }
         if (mediaPlayer == null) return
         if (previous == null && !wasLost) return // initial callback right after registration
-        if (viaReserve()) {
+        if (viaReserve() && !(wasLost && (needsReload || ended.not() && mediaPlayer?.isPlaying != true && !userPaused))) {
             // VLC's connection is local and still alive; the reserve reconnects to the server by itself.
             if (wasLost && !buffering) bufferingLabel.visibility = View.GONE
             return
         }
+        // Otherwise (2.0.2 journal): the network was gone long enough for the reserve to run dry and VLC to stop —
+        // nothing will restart it, so reconnect like for a plain stream.
         if (previous == network && !wasLost) return
         // Wi-Fi <-> mobile switch or connectivity is back: old sockets are dead.
         retryCount = 0

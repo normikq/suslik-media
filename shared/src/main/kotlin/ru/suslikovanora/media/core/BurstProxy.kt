@@ -398,6 +398,14 @@ object BurstProxy {
                         (if (stalled != null) " → new connection" else if (netChange) " (network changed) → new connection" else ""))
                     if (e is FatalUpstream) { synchronized(lock) { error = e.message; lock.notifyAll() }; return }
                     if (netChange) { failures = 0; runCatching { resetConnections() }; continue } // the new network: try again at once
+                    if (isOffline(e)) {
+                        // No network at all (airplane mode, a tunnel): this is not the server failing, so it does not use up
+                        // the attempts. 2.0.2 journal: the windows gave up after 4.5 s offline and never came back.
+                        // Wait quietly; a network change wakes it at once.
+                        synchronized(lock) { if (!kicked && !closed) lock.wait(3_000L) }
+                        if (kicked) { kicked = false; failures = 0 }
+                        continue
+                    }
                     failures++
                     if (failures > 8) { synchronized(lock) { error = e.message ?: "network"; lock.notifyAll() }; return }
                     if (stalled != null) { runCatching { resetConnections() }; Thread.sleep(200) }
@@ -539,6 +547,17 @@ object BurstProxy {
     }
 
     private class FatalUpstream(msg: String) : IOException(msg)
+
+    private fun isOffline(e: Throwable): Boolean {
+        var t: Throwable? = e
+        var depth = 0
+        while (t != null && depth++ < 5) {
+            if (t is java.net.UnknownHostException || t is java.net.NoRouteToHostException ||
+                t is java.net.ConnectException || t is java.net.PortUnreachableException) return true
+            t = t.cause
+        }
+        return false
+    }
 
     // ---- the local HTTP side (what VLC talks to) --------------------------------------------------
     private fun serve(sock: Socket) {

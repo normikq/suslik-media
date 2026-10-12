@@ -100,20 +100,58 @@ object Api {
     suspend fun postTorrent(bytes: ByteArray, filename: String): JSONObject =
         call(Request.Builder().url("$BASE/api/torrents")
             .header("X-Torrent-Filename", java.net.URLEncoder.encode(filename, "UTF-8").replace("+", "%20"))
-            .post(bytes.toRequestBody("application/x-bittorrent".toMediaType())).build())
+            .post(bytes.toRequestBody("application/x-bittorrent".toMediaType())).build(), hedged = false)
 
     suspend fun post(path: String, body: JSONObject? = null): JSONObject =
         call(Request.Builder().url(BASE + path).post((body?.toString() ?: "{}").toRequestBody(jsonType)).build())
 
-    private suspend fun call(request: Request): JSONObject = withContext(Dispatchers.IO) {
-        client.newCall(request).execute().use { res ->
-            val text = res.body?.string().orEmpty()
-            val json = runCatching { JSONObject(text) }.getOrElse { JSONObject() }
-            if (!res.isSuccessful) {
-                throw HttpError(res.code, json.optString("error").ifBlank { "Ошибка сервера (${res.code})" })
+    private val watchdog by lazy {
+        java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "api-watchdog").apply { isDaemon = true } }
+    }
+
+    /**
+     * One attempt. If the server's answer (headers) does not arrive within [limitMs], the call is cancelled: on a mobile
+     * network a new connection sometimes hangs in the TLS handshake for the whole 30 s (2.0.2 journal: library 20 s,
+     * unlock and mirror-url 30 s), while a fresh one connects in a second.
+     */
+    private fun attempt(request: Request, limitMs: Long?): JSONObject {
+        val call = client.newCall(request)
+        val timedOut = java.util.concurrent.atomic.AtomicBoolean(false)
+        val task = limitMs?.let { watchdog.schedule({ timedOut.set(true); call.cancel() }, it, TimeUnit.MILLISECONDS) }
+        try {
+            call.execute().use { res ->
+                task?.cancel(false)
+                if (timedOut.get()) throw java.net.SocketTimeoutException("no answer in ${limitMs} ms")
+                val text = res.body?.string().orEmpty()
+                val json = runCatching { JSONObject(text) }.getOrElse { JSONObject() }
+                if (!res.isSuccessful) {
+                    throw HttpError(res.code, json.optString("error").ifBlank { "Ошибка сервера (${res.code})" })
+                }
+                return json
             }
-            json
+        } catch (e: java.io.IOException) {
+            if (timedOut.get() && e !is java.net.SocketTimeoutException) throw java.net.SocketTimeoutException("no answer in ${limitMs} ms")
+            throw e
+        } finally {
+            task?.cancel(false)
         }
+    }
+
+    private suspend fun call(request: Request, hedged: Boolean = true): JSONObject = withContext(Dispatchers.IO) {
+        if (!hedged) return@withContext attempt(request, null)
+        val limits = longArrayOf(6_000L, 8_000L, 10_000L)
+        var n = 0
+        while (true) {
+            try {
+                return@withContext attempt(request, limits[n])
+            } catch (e: java.net.SocketTimeoutException) {
+                n++
+                if (n >= limits.size || kotlin.coroutines.coroutineContext[kotlinx.coroutines.Job]?.isActive == false) throw e
+                ru.suslikovanora.media.AppLog.write("api: no answer for ${request.url.encodedPath}, retrying on a new connection ($n)")
+                runCatching { client.connectionPool.evictAll() }
+            }
+        }
+        @Suppress("UNREACHABLE_CODE") error("unreachable")
     }
 
     /** Human-readable message for any failure (no network, timeout, server error). */
