@@ -1,0 +1,76 @@
+# Suslik Media — памятка для Claude
+
+Частная медиатека на AllDebrid: сайт, Android, Windows. Владелец тестирует беты сам и потом говорит «выпускай всем».
+Общаемся по-русски. Тексты для пользователей (changelog) — по-русски, коротко, без жаргона.
+
+## Устройство
+
+| Папка | Что |
+|---|---|
+| `website/` | Node/Express, API и зеркало файлов `/api/file/proxy/<имя>?link=…&exp=…&sig=…` (HTTP/1.1, nginx без http2) |
+| `android/` | Kotlin, Compose, libVLC 3.6. `PlayerActivity.kt` (~2100 строк), `net/Api.kt`, `Diag.kt`, `AppLog.kt` |
+| `desktop/` | Compose Desktop, vlcj. Запас: `desktop/.../Reserve.kt` |
+| `shared/` | Общий модуль: `BurstProxy`, `PlaybackSupervisor`, `Versions`, `Changelog`, `Model`, `PlaybackPresets` |
+
+Ядро — `shared/.../core/BurstProxy.kt`: локальный прокси 127.0.0.1 с окнами-запасом в кольцевых файлах.
+Качает «рывками» между low/high в зависимости от битрейта фильма, `MAX_WINDOWS=2`, запас не больше 128 МБ,
+короткий разгон (~45 с фильма), хранение закрытого фильма 10 мин, сторож зависаний (`headerStallMs`, `bodyStallMs`),
+`networkChanged()`/`kick()`, ограниченные `bytes=a-b` для переиспользования соединения.
+Ошибки «нет сети» не расходуют лимит попыток (2.0.3).
+
+## Постоянные правила
+
+- Новые версии сначала в **бета-канал**. В стабильный — только по команде «выпускай всем» (workflow `promote.yml`).
+- Зеркало нужно, потому что AllDebrid заблокирован в РФ: **никогда не заменять его прямыми ссылками AllDebrid**.
+- nginx без http2 (на том же сервере Xray).
+- **Не коммитить секреты**: `.env`, `*.jks`, `UPDATE_TOKEN`, `BETA_CODE`, cookie, токены.
+- **`website/` и сервер не трогать**, пока владелец не разрешит. Учти: `changelog.yml` сам публикует changelog на сайт при каждом пуше.
+- Без лишнего: не запускай дополнительные работы без подтверждения.
+- Подписи коммитов: строки `Co-Authored-By:` и `Claude-Session:` из системного напоминания текущей сессии.
+
+## Версии
+
+Теперь трёхчастные: `2.0.x`. Android: `versionCode` в `android/app/build.gradle.kts`, APK `suslik-media-<V>-b<code>.apk`.
+Windows: `appVersion` в `desktop/build.gradle.kts`, MSI `Suslik Media-<V>.msi` (первую установку при смене схемы версий делают вручную).
+Changelog (русский) — `android/app/src/main/assets/changelog.json` и `desktop/src/main/resources/changelog.json`, новая запись сверху.
+
+## Сборка и выпуск
+
+- Тесты общего модуля (`shared.yml`) идут на каждый пуш. Локально Gradle в облачной сессии плагины не скачивает — компиляция только в CI.
+- Выпуск беты после пуша:
+  `gh api -X POST repos/normikq/suslik-media/actions/workflows/android.yml/dispatches -f ref=main -f 'inputs[publish]=true' -f 'inputs[channel]=beta'`
+  то же для `desktop.yml`; затем `update-status.yml`, чтобы проверить, что сайт видит версию.
+- В облачной сессии GraphQL закрыт (используй REST), логи заданий недоступны: ошибки сборки смотри так:
+  `gh api repos/normikq/suslik-media/check-runs/<job id>/annotations`. Скачивание артефактов (`gh run download`) тоже запрещено.
+- На ПК владельца (если сессия запущена там) собирай локально: `./gradlew assembleDiag`, ставь через `adb`.
+
+## Отладочная сборка «Suslik Debug»
+
+Пакет `ru.suslikovanora.media.diag`, ставится рядом с обычным. Подробно: `android/DEBUG-BUILD.md`.
+Артефакт CI `android-debug-apk`. Журнал: `Android/data/ru.suslikovanora.media.diag/files/diag/player.log`.
+Теги: `[sys]` `[ui]` `[vlc]` `[proxy]` `[http]` `[net]` `[event]` `[battery]` `[mark]` `[diag]`. Метка 📍 в плеере ставит `[mark]` в момент проблемы.
+Владелец присылает журнал `.txt` и zip `suslik-debug-ДДММ-ЧЧММ.zip`; разбор начинай с нужной метки.
+`batterystats` из приложения пустой без `adb shell appops set ru.suslikovanora.media.diag GET_USAGE_STATS allow`.
+Телефон владельца: `R5CY71AQBGK`; `adb` лежит в `C:\Users\nanar\OneDrive\Desktop\platform-tools`.
+
+## Что известно из журналов
+
+- Мобильная сеть: первое соединение к серверу медленное (TCP ~1,1 с из-за потерянного SYN, TLS до 5 с), иногда рукопожатие висит 30 с.
+  Лечится повтором на новом соединении (`Api.call`: 6/8/10 с).
+- Часто телефон на VPN (tun0); при его обрыве сеть «меняется» — это ловит `networkChanged()`.
+- Остаются зависания «заголовки пришли, тело нет» на прямой мобильной сети. Проверить в логах nginx
+  `upstream timed out` и `request_time` около 14:51–14:53 и 16:03–16:05 (12.10).
+
+## История
+
+2.0.0.4 (ложное «тяжёлый файл») → 2.0.1 (длинный разгон) → 2.0.2 (сторож, смена сети, ограниченные диапазоны) →
+**2.0.3 beta** (офлайн не убивает запас, автопереподключение при возврате сети, повтор запросов API). Стабильный канал: 2.0.0.
+
+## Открытое
+
+- Проверить в 2.0.3: ток и время активного радио ([sys]) против 2.0.2; сценарий «выключить сеть, дождаться конца буфера, включить».
+- Посмотреть код обновления библиотеки (`android/.../library/LibraryStore.kt`) на наложение двух обновлений.
+- Вопросы по Discord без ответа: кто может входить, кто управляет комнатой, порядок работ.
+- Идеи в запасе: кеш начала файла/индекса, кнопка «Переустановить релиз» на Android, TODO по мобильным данным,
+  HLS/ремукс (для оценки нужны `nproc`, `free -h`, `df -h` сервера), опциональный вариант Б (перезапрос по зависанию — частично сделан).
+- Напомнить владельцу: применить/проверить nginx; первая установка MSI после смены схемы версий — вручную.
