@@ -50,6 +50,40 @@ class TsClockTest {
         assertTrue(TsClock.pcrs(ByteArray(10)).isEmpty())
     }
 
+    // ---- TsPlayback ----
+    private val hour = 3_600_000L
+
+    @Test fun resumeJumpsAtOnceAndAddsTheOffsetWhenVlcCountsFromZero() {
+        val ts = TsPlayback(2 * hour)
+        val pos = ts.openJump(hour)!!
+        assertEquals(0.5f, pos, 0.0001f)
+        assertNull(ts.openLanded(800, 0.0003f))          // still the start of the file
+        assertEquals(hour, ts.openLanded(2_000, 0.5002f))  // there, and VLC counts from 0: the landing is the saved place
+        assertEquals(hour + 58_000, ts.filmTime(60_000))   // ...and later times follow it
+        assertTrue(!ts.opening)
+    }
+
+    @Test fun resumeWhereVlcKeepsTheRealClockNeedsNoOffset() {
+        val ts = TsPlayback(2 * hour)
+        ts.openJump(hour)
+        assertEquals(hour + 1_000, ts.openLanded(hour + 1_000, 0.5f))
+        assertEquals(0L, ts.offset)
+        assertNull(TsPlayback(2 * hour).openJump(5_000)) // a few seconds in: just start from the beginning
+    }
+
+    @Test fun seeksAreMeasuredFromHereAndFromAJumpInFlight() {
+        val ts = TsPlayback(2 * hour)
+        // VLC is at 30 min but its share of the file is 0.26 (the bitrate is not even): +10 s goes from there
+        val p1 = ts.seek(30 * 60_000L + 10_000, 30 * 60_000L, 0.26f)
+        assertEquals(0.26f + 10_000f / (2 * hour), p1, 0.00001f)
+        // next tap before VLC got there: VLC still says 30:00, but the step is taken from the first target
+        val p2 = ts.seek(30 * 60_000L + 20_000, 30 * 60_000L, p1)
+        assertEquals(p1 + 10_000f / (2 * hour), p2, 0.00001f)
+        assertTrue(!ts.seekLanded(30 * 60_000L + 300))  // the old place, still
+        assertTrue(ts.seekLanded(30 * 60_000L + 19_000)) // landed
+        assertTrue(!ts.seeking)
+    }
+
     @Test fun recognisesBlurayFiles() {
         assertTrue(TsClock.isTs("https://x/api/file/proxy/00800.m2ts?link=a&sig=b"))
         assertTrue(!TsClock.isTs("https://x/api/file/proxy/Film.mkv?link=a"))

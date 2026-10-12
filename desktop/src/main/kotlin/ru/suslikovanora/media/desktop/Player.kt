@@ -332,6 +332,13 @@ fun PlayerView(
     var playing by remember { mutableStateOf(false) }
     var time by remember { mutableStateOf(0L) }
     var length by remember { mutableStateOf(0L) }
+    // Blu-ray (.m2ts): VLC knows no length over HTTP — read from the stream's clock (TsClock), seeks by position
+    // (TsPlayback, shared with the Android app; see there).
+    var ts by remember { mutableStateOf<TsPlayback?>(null) }
+    var tsLen by remember { mutableStateOf(0L) }       // length read for tsLenUrl
+    var tsLenUrl by remember { mutableStateOf("") }
+    var tsStartAt by remember { mutableStateOf(0L) }  // where the stream was opened (:start-time is ignored there)
+    var tsOpenDone by remember { mutableStateOf(true) }
     var status by remember { mutableStateOf<String?>("Открываем…") }
     var volume by remember { mutableStateOf(ui.get("volume")?.toIntOrNull() ?: 100) }
     var queue by remember { mutableStateOf(listOf(Entry(req.title, req.url))) }
@@ -427,13 +434,25 @@ fun PlayerView(
         // Fast seek jumps to the nearest keyframe of the VIDEO; an external voice-over is a separate input that lands
         // on the exact moment instead — the two drifted apart after every seek. With a voice-over: exact seeks.
         if (extras.first.isEmpty()) opts += ":input-fast-seek"
-        if (startAt > 0) opts += ":start-time=${startAt / 1000.0}"
+        val isTs = TsClock.isTs(url)
+        if (startAt > 0 && !isTs) opts += ":start-time=${startAt / 1000.0}"
+        tsStartAt = startAt; tsOpenDone = !isTs; if (!isTs) ts = null
         prefLanguage("audio")?.let { opts += ":audio-language=$it" }
         prefLanguage("spu")?.let { opts += ":sub-language=$it" }
         val prev = openJob
         openJob = scope.launch(vlcThread) {
             prev?.join()
             if (closing) return@launch
+            if (isTs) {
+                // Blu-ray: its length before VLC starts (two small requests to both ends of the file, once per file)
+                if (tsLenUrl != url) {
+                    val r = withContext(Dispatchers.IO) { TsClock.probe(url) }
+                    tsLen = r?.first ?: 0L; tsLenUrl = url
+                    PlayerLog.write(if (r != null) "[ts] duration from the stream's clock: ${fmt(r.first)}" else "[ts] no duration in the stream's clock")
+                }
+                withContext(Dispatchers.Main) { ts = if (tsLen > 0) TsPlayback(tsLen) else null; if (tsLen > 0) length = tsLen }
+                if (closing) return@launch
+            }
             if (mp.status().isPlayable) {
                 grabFrame() // fallback still for the exit animation if the user leaves while the next one is starting
                 runCatching { mp.controls().stop() }
@@ -448,6 +467,22 @@ fun PlayerView(
     }
     /** Re-open the current episode (reconnect after a network error) with its own extra tracks. */
     fun reopen(at: Long) { val i = index; scope.launch { open(currentUrl, at, sidecars(i).await()) } }
+    /** Seek to the film time [t]: by time, or for a Blu-ray by position measured from here (TsPlayback). */
+    fun vlcSeekTo(t: Long) {
+        val s = ts
+        if (s == null) { vlc { mp.controls().setTime(t) }; return }
+        vlc {
+            val now = s.filmTime(mp.status().time()); val nowPos = mp.status().position()
+            val pos = s.seek(t, now, nowPos)
+            PlayerLog.write("[ts] seek %ds → position %.4f (now %ds at %.4f)".format(t / 1000, pos, now / 1000, nowPos))
+            mp.controls().setPosition(pos)
+        }
+    }
+    /** A seek to the current moment (restarts the decoders / inputs together). Runs on the player thread. */
+    fun reseekHereNow() {
+        if (ts != null) mp.controls().setPosition(mp.status().position())
+        else { val t = mp.status().time(); if (t > 0) mp.controls().setTime(t) }
+    }
     /**
      * A new audio/subtitle track normally starts only when VLC's read-ahead (6 s of network cache) reaches it.
      * Re-seeking to the current moment flushes that read-ahead, so the chosen track is heard almost at once.
@@ -456,7 +491,7 @@ fun PlayerView(
         supRef.get()?.seeked()
         scope.launch(vlcThread) {
             delay(120)
-            runCatching { val t = mp.status().time(); if (t > 0) mp.controls().setTime(t) }
+            runCatching { reseekHereNow() }
         }
     }
     fun applyPrefs() {
@@ -559,7 +594,7 @@ fun PlayerView(
                 mp.controls().setPause(false)
                 // After a long pause the network inputs (video + external voice-over) drift apart or the server
                 // has closed the connection: a seek to the same moment restarts them together, in sync.
-                if (longPause) mp.controls().setTime(mp.status().time().coerceAtLeast(0L))
+                if (longPause) reseekHereNow()
             }
             // Sound comes back once the picture really moves again (see timeChanged); this is only a safety net.
             javax.swing.Timer(2500) { unmuteAfterPause() }.apply { isRepeats = false; start() }
@@ -600,7 +635,7 @@ fun PlayerView(
         if (chapters.size < 2) return
         val i = (chapterAt(time) + d).coerceIn(0, chapters.size - 1)
         val t = chapters[i].first; time = t; lastSeekAt = System.currentTimeMillis(); supRef.get()?.seeked()
-        vlc { mp.controls().setTime(t) }
+        vlcSeekTo(t)
         flash("Глава ${i + 1}: ${chapters[i].second.ifBlank { "без названия" }}", "Глава")
     }
     val introRe = Regex("""(?i)(intro|opening|заставк|опенинг|вступлен|начальн|^op\b|\bop\s?\d*$)""")
@@ -651,7 +686,7 @@ fun PlayerView(
         var t = (time + d).coerceAtLeast(0L)
         if (length > 0) t = t.coerceAtMost((length - 2_000L).coerceAtLeast(0L))
         time = t; lastSeekAt = System.currentTimeMillis()
-        vlc { mp.controls().setTime(t) }
+        vlcSeekTo(t)
     }
     fun toggleFullscreen() {
         win.placement = if (win.placement == WindowPlacement.Fullscreen) WindowPlacement.Floating else WindowPlacement.Fullscreen
@@ -762,6 +797,11 @@ fun PlayerView(
         mp.events().addMediaPlayerEventListener(object : MediaPlayerEventAdapter() {
             override fun playing(p: MediaPlayer) = ui2 {
                 playing = true; status = null; retries = 0; started = true; vlcPaused = false
+                // Blu-ray: the length to the reserve; opened at a saved place → jump there now (TsPlayback.openJump)
+                ts?.let { s ->
+                    BurstProxy.setDuration(currentUrl, s.lengthMs)
+                    if (!tsOpenDone) { tsOpenDone = true; s.openJump(tsStartAt)?.let { pos -> PlayerLog.write("[ts] continue at ${tsStartAt / 1000}s → position %.4f".format(pos)); vlc { mp.controls().setPosition(pos) } } }
+                }
                 if (pausedAt == 0L) supRef.get()?.playing()
                 // Remembered voice-over / subtitles, once the extra tracks above have been probed (only on start,
                 // not after every resume — a needless track switch is exactly the "sound gone after pause" glitch).
@@ -799,8 +839,17 @@ fun PlayerView(
                     if (ms > 1500) PlayerLog.write("buffering took $ms ms at ${time / 1000}s")
                 }
             }
-            override fun lengthChanged(p: MediaPlayer, newLength: Long) = ui2 { length = newLength; BurstProxy.setDuration(currentUrl, newLength) }
-            override fun timeChanged(p: MediaPlayer, newTime: Long) = ui2 {
+            override fun lengthChanged(p: MediaPlayer, newLength: Long) = ui2 {
+                if (newLength > 0 || ts == null) { length = newLength; BurstProxy.setDuration(currentUrl, newLength) } // Blu-ray: 0 — keep its own
+            }
+            override fun timeChanged(p: MediaPlayer, vlcTime: Long) = ui2 tick@{
+                // Blu-ray: VLC's time → the film's (offset after a continued open; its old place right after a seek is ignored)
+                val s = ts
+                val newTime = if (s == null) vlcTime else {
+                    val f = if (s.opening) s.openLanded(vlcTime, p.status().position()) else s.filmTime(vlcTime)
+                    if (f == null || (s.seeking && !s.seekLanded(f))) return@tick
+                    f
+                }
                 // Resumed and the clock really moves again (the old position + a bit): give the sound back.
                 if (pauseMuted && pausedAt == 0L && resumeFrom >= 0 && kotlin.math.abs(newTime - resumeFrom) > 120) unmuteAfterPause()
                 // The bar needs a few updates a second, not every VLC tick: fewer redraws of the whole bar. Right after a
@@ -876,8 +925,7 @@ fun PlayerView(
         vlc {
             val id = mp.video().track()
             if (id >= 0) { mp.video().setTrack(-1); mp.video().setTrack(id) }
-            val t = mp.status().time()
-            if (t > 0) mp.controls().setTime(t)
+            reseekHereNow()
         }
     }
     // Playback health: one supervisor (shared with the Android app) decides when something is wrong and what to do —
@@ -1073,7 +1121,7 @@ fun PlayerView(
                         position = seeking?.toLong() ?: time, length = length, marks = chapters.map { it.first },
                         modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
                         onScrub = { t -> seeking = t?.toFloat(); poke() },
-                        onSeek = { t -> seeking = null; time = t; lastSeekAt = System.currentTimeMillis(); supRef.get()?.seeked(); PlayerLog.write("seek to ${t / 1000}s"); vlc { mp.controls().setTime(t) } },
+                        onSeek = { t -> seeking = null; time = t; lastSeekAt = System.currentTimeMillis(); supRef.get()?.seeked(); PlayerLog.write("seek to ${t / 1000}s"); vlcSeekTo(t) },
                         onHover = { t -> hoverAt = t }
                     )
                     Text(if (length > 0) fmt(length) else "--:--", color = Sm.muted, fontFamily = Onest, fontSize = 13.sp)
