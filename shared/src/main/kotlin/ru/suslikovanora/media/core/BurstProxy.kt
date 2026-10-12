@@ -309,7 +309,9 @@ object BurstProxy {
                 else -> null
             } ?: return
             stalledWhy = why
-            c.cancel(); runCatching { response?.close() }
+            val r = response
+            // Off the watcher thread: closing an answer can wait for the reader on some HTTP stacks.
+            pool.execute { c.cancel(); runCatching { r?.close() } }
         }
 
         fun kick() {

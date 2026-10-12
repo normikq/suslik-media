@@ -44,12 +44,17 @@ class BurstProxyTest {
         }
         url = "https://origin.test/film.mkv?sig=1"
         val dir = File(System.getProperty("java.io.tmpdir"), "bp-test-${System.nanoTime()}")
+        // java.net.http like on the PC: an answer in flight can be cut from another thread (HttpURLConnection.disconnect() waits for the reader)
+        val client = java.net.http.HttpClient.newBuilder().version(java.net.http.HttpClient.Version.HTTP_1_1).build()
         BurstProxy.init(dir) { u, from, to, cancel ->
-            val c = URL("http://127.0.0.1:${origin.address.port}/" + u.substringAfter("origin.test/")).openConnection() as HttpURLConnection
-            cancel.attach { c.disconnect() }
-            c.setRequestProperty("Range", "bytes=$from-" + if (to >= 0) "$to" else "")
-            c.readTimeout = 20_000
-            BurstProxy.UpstreamResponse(c.responseCode, { c.getHeaderField(it) }, runCatching { c.inputStream }.getOrNull())
+            val req = java.net.http.HttpRequest.newBuilder(java.net.URI.create("http://127.0.0.1:${origin.address.port}/" + u.substringAfter("origin.test/")))
+                .header("Range", "bytes=$from-" + if (to >= 0) "$to" else "").GET().build()
+            val future = client.sendAsync(req, java.net.http.HttpResponse.BodyHandlers.ofInputStream())
+            cancel.attach { future.cancel(true) }
+            val res = try { future.get() }
+                catch (e: java.util.concurrent.ExecutionException) { throw (e.cause as? java.io.IOException) ?: java.io.IOException(e.message) }
+                catch (e: java.util.concurrent.CancellationException) { throw java.io.IOException("cancelled") }
+            BurstProxy.UpstreamResponse(res.statusCode(), { res.headers().firstValue(it).orElse(null) }, res.body())
         }
         BurstProxy.capBytes = 16L shl 20 // smaller than the file: the ring wraps around
     }
