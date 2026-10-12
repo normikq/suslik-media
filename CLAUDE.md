@@ -75,6 +75,9 @@ Changelog (русский) — `android/app/src/main/assets/changelog.json` и `
 пробуждений каждые 0,5 с, `elapsedRealtime` для времени блокировки, зеркало в PlaySheet не ждёт `unlock`.
 Замеры 12.10 (слабый LTE): ~700 мА при просмотре, мобильное радио ~43% батареи и активно ~100% времени, если сеть
 медленнее фильма. Журналы: `C:\Users\nanar\suslik-test-1012*`.
+**2.0.5 beta** (13.10, только Android): Blu-ray .m2ts — длительность по часам потока (`TsClock`, читается до запуска VLC),
+перемотка по доле файла от текущего места (`tsSeek`), «Продолжить» одним прыжком со смещением времени (`tsOffset`);
+VC-1 на Samsung даёт чёрный экран → файл переоткрывается с программным декодером (`softwareVideo`, `checkNoPicture`).
 
 ## Открытое
 
@@ -82,9 +85,8 @@ Changelog (русский) — `android/app/src/main/assets/changelog.json` и `
   Windows с новым сторожем/запасом вообще не запускали.
 - Честное сравнение энергопотребления: один фильм 1080p, одно место, по 15 мин, без кабеля, сброс batterystats.
 - Снимок `[battery]` из Suslik Debug на Android 17 не пишется (нужен PACKAGE_USAGE_STATS) — брать `dumpsys batterystats` по adb.
-- На ПК владельца нет `gradlew` и `gh`: Gradle 8.10.2 лежит в `~/.gradle/wrapper/dists`, JAVA_HOME = `C:\Program Files\Java\jdk-21.0.12`,
+- ПК владельца: `gh` установлен (`C:\Program Files\GitHub CLI`, добавить в PATH); в `android/` нет `gradlew` — Gradle 8.10.2 в `~/.gradle/wrapper/dists`, JAVA_HOME = `C:\Program Files\Java\jdk-21.0.12`,
   ANDROID_HOME = `C:\Users\nanar\AppData\Local\Android\Sdk`. Локальная diag-сборка подписана другим ключом, чем CI (ставится только после удаления).
-- Посмотреть код обновления библиотеки (`android/.../library/LibraryStore.kt`) на наложение двух обновлений.
 - Вопросы по Discord без ответа: кто может входить, кто управляет комнатой, порядок работ.
 - Идеи в запасе: кеш начала файла/индекса, кнопка «Переустановить релиз» на Android, TODO по мобильным данным,
   HLS/ремукс (для оценки нужны `nproc`, `free -h`, `df -h` сервера), опциональный вариант Б (перезапрос по зависанию — частично сделан).

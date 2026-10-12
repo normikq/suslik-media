@@ -186,7 +186,8 @@ class PlayerActivity : ComponentActivity() {
     private val seekWatchdogRunnable = Runnable {
         val target = pendingSeekPos ?: return@Runnable
         val p = mediaPlayer ?: return@Runnable
-        if (kotlin.math.abs(p.time - target) > SEEK_CONFIRM_TOLERANCE_MS) {
+        if (tsWatchdog(p, target)) return@Runnable
+        if (kotlin.math.abs(timeOf(p) - target) > SEEK_CONFIRM_TOLERANCE_MS) {
             reconnect(forcePlay = !userPaused, startAt = target)
         } else pendingSeekPos = null
     }
@@ -196,6 +197,8 @@ class PlayerActivity : ComponentActivity() {
         override fun run() {
             val p = mediaPlayer ?: return
             if (!p.isPlaying) return // paused: nobody wakes up (restarted by the Playing event)
+            warnIfSoftwareDecoding(p) // once per file; the track may not be known yet at the first picture
+            checkNoPicture(p)
             checkHeavy()
             // Network trouble is handled by the reconnect logic; the supervisor judges only real playback.
             if (!userPaused && !ended && !networkLost && !resumeOnFocusGain) statsOf(p)?.let { supervisor.tick(it) }
@@ -305,6 +308,7 @@ class PlayerActivity : ComponentActivity() {
         if (owner !== mediaPlayer) return@EventListener
         when (event.type) {
             MediaPlayer.Event.Playing -> {
+                tsPlaying(owner) // Blu-ray: the length to the reserve, continue at the saved place
                 supervisor.playing()
                 bufferingShown = 0
                 playWhenReady = true
@@ -350,8 +354,8 @@ class PlayerActivity : ComponentActivity() {
             MediaPlayer.Event.EndReached -> {
                 // A dead network connection also shows up as EOF, so only a position near the known
                 // duration is a real end; anything else is treated as a dropped stream and reloaded.
-                val length = owner.length
-                val pos = maxOf(owner.time, lastTime)
+                val length = lengthOf(owner)
+                val pos = maxOf(timeOf(owner), lastTime)
                 if (length > 0L && pos >= length - 5_000L) {
                     supervisor.ended()
                     persistPosition(length, length) // watched to the end
@@ -396,13 +400,24 @@ class PlayerActivity : ComponentActivity() {
             }
             MediaPlayer.Event.TimeChanged, MediaPlayer.Event.LengthChanged -> {
                 if (event.type == MediaPlayer.Event.LengthChanged) { BurstProxy.setDuration(currentUrl, owner.length); checkHeavy() }
-                val t = owner.time
+                // Blu-ray continued at a saved place: VLC may count from 0 there — timeOf() adds the known offset.
+                if (tsOpenJump && owner.time > 0L) tsOpenLanded(owner)
+                val t = if (tsOpenJump) 0L else timeOf(owner) // before the jump: the start of the file, not the film's time
                 if (t > 0L) {
                     val pending = pendingSeekPos
                     if (pending == null) {
                         lastTime = t
                         playbackPosition = t
                         maybePersist(t)
+                    } else if (tsSeekTarget >= 0) {
+                        // a position seek (Blu-ray): accepted as soon as VLC reports the new place
+                        if (!tsSettling(t)) {
+                            tsSeekTarget = -1L
+                            pendingSeekPos = null
+                            handler.removeCallbacks(seekWatchdogRunnable)
+                            lastTime = t
+                            playbackPosition = t
+                        }
                     } else if (kotlin.math.abs(t - pending) <= SEEK_CONFIRM_TOLERANCE_MS) {
                         pendingSeekPos = null
                         handler.removeCallbacks(seekWatchdogRunnable)
@@ -588,7 +603,7 @@ class PlayerActivity : ComponentActivity() {
                 override fun onStartTrackingTouch(seekBar: SeekBar) { userSeeking = true; showControlsTemporarily() }
                 override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
                     if (fromUser) {
-                        val length = mediaPlayer?.length ?: -1L
+                        val length = lengthOf(mediaPlayer)
                         val durationText = if (length > 0L) formatTime(length) else "--:--"
                         timeLabel.text = "${formatTime(progress.toLong())}  /  $durationText"
                     }
@@ -779,7 +794,7 @@ class PlayerActivity : ComponentActivity() {
         hideNextCard()
         if (index < 0 || index >= queue.size || mediaPlayer == null) return
         // Remember where the episode we are leaving stopped (cleared automatically when it was watched to the end).
-        mediaPlayer?.let { persistPosition(it.time.coerceAtLeast(0L), it.length) }
+        mediaPlayer?.let { persistPosition(timeOf(it).coerceAtLeast(0L), lengthOf(it)) }
         val entry = queue[index]
         queueIndex = index
         currentUrl = entry.url
@@ -807,6 +822,7 @@ class PlayerActivity : ComponentActivity() {
 
     private fun initializePlayer() {
         if (mediaPlayer != null) return
+        if (probeTsFirst()) return // Blu-ray: its length first (comes back here)
         val url = currentUrl.takeIf { it.isNotBlank() } ?: run { finish(); return }
         try {
             // HW decoding first, VLC falls back to software by itself. Caching is set once, on LibVLC.
@@ -851,6 +867,11 @@ class PlayerActivity : ComponentActivity() {
     /** New MediaPlayer on the given LibVLC, attached to the shared video layout, with its own event listener. */
     private fun createPlayer(vlc: LibVLC, url: String, positionMs: Long): MediaPlayer {
         catchUpNotBefore = SystemClock.elapsedRealtime() + 15_000L; catchUpFrom = positionMs + CATCH_UP_AFTER_PLAYED_MS
+        tsOpenAt = positionMs; tsOpenFixed = false; tsSeekTarget = -1L; tsOffset = 0L; tsOpenJump = false
+        lastOpenAtTime = positionMs
+        // A Blu-ray reopened at a saved place: until the jump there the bar shows that place, not VLC's 0:00, and the
+        // position is not saved over it (see tsPlaying / tsOpenLanded).
+        if (tsLengthUrl == url && positionMs > 10_000L) pendingSeekPos = positionMs
         val player = MediaPlayer(vlc)
         player.setEventListener(listenerFor(player))
         // enableSubtitles = true so selected subtitle tracks are rendered; SurfaceView is cheaper than TextureView.
@@ -918,7 +939,7 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun Media.configureMedia(url: String, positionMs: Long) {
-        setHWDecoderEnabled(true, false)
+        setHWDecoderEnabled(url !in softwareVideo, false)
         addOption(":http-reconnect")
         addOption(":network-caching=${PlaybackSettings.cacheMs(this@PlayerActivity)}")
         val sidecars = url == subsForUrl
@@ -958,18 +979,43 @@ class PlayerActivity : ComponentActivity() {
      * processor — many times the battery use, and the phone gets warm. VLC does that silently; say it once per file.
      */
     private var decodeCheckedUrl = ""
+    private val softwareVideo = HashSet<String>() // files played without hardware decoding (VC-1, see warnIfSoftwareDecoding)
+    private var lastOpenAtTime = 0L // film time this stream was opened at (checkNoPicture waits 6 s of play from there)
+    /**
+     * Safety net for a hardware decoder that takes a format but gives no pictures (sound over a black screen, like
+     * VC-1 on Samsung): the film plays for 6 s, pictures are decoded, none is shown → this file without hardware decoding.
+     */
+    private fun checkNoPicture(p: MediaPlayer) {
+        if (currentUrl in softwareVideo || p.videoTracksCount <= 0 || timeOf(p) - lastOpenAtTime < 6_000L) return
+        val st = runCatching { media?.stats }.getOrNull() ?: return
+        if (st.displayedPictures > 0 || st.decodedVideo < 60) return
+        softwareVideo += currentUrl
+        AppLog.write("video: ${st.decodedVideo} pictures decoded, none shown — reopening with VLC's own decoder")
+        reconnect(forcePlay = !userPaused, startAt = perceivedPosition())
+    }
+
     private fun warnIfSoftwareDecoding(p: MediaPlayer) {
         if (decodeCheckedUrl == currentUrl) return
         val t = runCatching { p.currentVideoTrack }.getOrNull() ?: return
         decodeCheckedUrl = currentUrl
-        val mime = when (t.codec?.lowercase(Locale.ROOT)?.trim()) {
+        val codec = t.codec?.lowercase(Locale.ROOT)?.trim()
+        // VC-1 (old Blu-rays): the phone's own decoder takes it but gives no pictures — sound over a black screen
+        // (12.10, Samsung c2.sec.vc1.decoder: «Unsupported mime video/wvc1», dequeueOutputBuffer failed). VLC's own
+        // decoder plays it fine: open this file once more without hardware decoding, at the same moment.
+        if (codec != null && VC1.any { codec.contains(it) } && currentUrl !in softwareVideo) {
+            softwareVideo += currentUrl
+            AppLog.write("video: $codec ${t.width}x${t.height} — the hardware decoder gives no picture for VC-1, reopening with VLC's own decoder")
+            reconnect(forcePlay = !userPaused, startAt = perceivedPosition())
+            return
+        }
+        val mime = when (codec) {
             "h264", "avc1", "x264" -> "video/avc"
             "hevc", "h265", "hev1", "hvc1" -> "video/hevc"
             "av01", "av1" -> "video/av01"
             "vp90", "vp09", "vp9" -> "video/x-vnd.on2.vp9"
             "vp80", "vp8" -> "video/x-vnd.on2.vp8"
             "mpgv", "mp2v" -> "video/mpeg2"
-            else -> return
+            else -> { AppLog.write("video: $codec ${t.width}x${t.height}"); return }
         }
         val hw = runCatching {
             android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).codecInfos.any { info ->
@@ -1042,7 +1088,7 @@ class PlayerActivity : ComponentActivity() {
         if (userPaused && !forcePlay) { needsReload = true; return }
         // Position to resume from: explicit target > unconfirmed seek > furthest confirmed time. lastTime follows
         // TimeChanged and is reset by seeks, so a backward seek is not undone by a stale larger value.
-        val position = startAt ?: pendingSeekPos ?: maxOf(old.time.coerceAtLeast(0L), lastTime)
+        val position = startAt ?: pendingSeekPos ?: maxOf(timeOf(old).coerceAtLeast(0L), lastTime)
         playbackPosition = position
         lastTime = position
         pendingSeekPos = null
@@ -1077,19 +1123,19 @@ class PlayerActivity : ComponentActivity() {
     // ---- seeking ---------------------------------------------------------------------------
     /** Current position as the user perceives it (an unconfirmed seek counts as already done). */
     private fun perceivedPosition(): Long =
-        tapSeekTarget ?: pendingSeekPos ?: (mediaPlayer?.time?.takeIf { it > 0L } ?: lastTime).coerceAtLeast(0L)
+        tapSeekTarget ?: pendingSeekPos ?: (mediaPlayer?.let { timeOf(it) }?.takeIf { it > 0L } ?: lastTime).coerceAtLeast(0L)
 
     /** Double-tap / repeated tap: accumulates ±10 s steps, applies one real seek after a short pause. */
     private fun tapSeek(forward: Boolean) {
         val p = mediaPlayer ?: return
-        if (!p.isSeekable && p.length <= 0L && !hasSeekedOk) {
+        if (!p.isSeekable && lengthOf(p) <= 0L && !hasSeekedOk) {
             showSeekLabel("Перемотка недоступна для этого потока")
             return
         }
         lastSeekTapAt = SystemClock.uptimeMillis()
         if (tapSeekTarget == null) tapSeekStart = perceivedPosition()
         val base = tapSeekTarget ?: tapSeekStart
-        val length = p.length
+        val length = lengthOf(p)
         var target = base + if (forward) 10_000L else -10_000L
         target = target.coerceAtLeast(0L)
         if (length > 0L) target = target.coerceAtMost((length - 1_000L).coerceAtLeast(0L))
@@ -1121,7 +1167,7 @@ class PlayerActivity : ComponentActivity() {
         if (catchingUp) endCatchUp() // a jump: the gathered reserve belongs to the old place
         catchUpNotBefore = SystemClock.elapsedRealtime() + 15_000L; catchUpFrom = target.coerceAtLeast(0L) + CATCH_UP_AFTER_PLAYED_MS
         hideNextCard()
-        val length = p.length
+        val length = lengthOf(p)
         val t = target.coerceAtLeast(0L).let { if (length > 0L) it.coerceAtMost((length - 1_000L).coerceAtLeast(0L)) else it }
         playbackPosition = t
         lastTime = t
@@ -1139,7 +1185,7 @@ class PlayerActivity : ComponentActivity() {
             return
         }
         pendingSeekPos = t
-        p.setTime(t)
+        if (tsMode(p)) tsSeek(p, t) else { tsSeekTarget = -1L; p.setTime(t) }
         hasSeekedOk = true
         ended = false
         handler.postDelayed(seekWatchdogRunnable, SEEK_CONFIRM_TIMEOUT_MS)
@@ -1158,7 +1204,7 @@ class PlayerActivity : ComponentActivity() {
         val now = SystemClock.uptimeMillis()
         if (now - lastPersistAt < 10_000L) return
         lastPersistAt = now
-        persistPosition(time, mediaPlayer?.length ?: -1L)
+        persistPosition(time, lengthOf(mediaPlayer))
     }
 
     private fun handleError(fromEof: Boolean = false) {
@@ -1178,7 +1224,7 @@ class PlayerActivity : ComponentActivity() {
             reconnectScheduled = true
             handler.removeCallbacks(reconnectRunnable)
             handler.postDelayed(reconnectRunnable, delay)
-        } else if (fromEof && (mediaPlayer?.length ?: -1L) <= 0L) {
+        } else if (fromEof && lengthOf(mediaPlayer) <= 0L) {
             // Unknown duration (e.g. M2TS) and repeated EOF: this really is the end of the file.
             if (offerNextEpisode()) return
             ended = true
@@ -1317,9 +1363,10 @@ class PlayerActivity : ComponentActivity() {
         val now = SystemClock.uptimeMillis()
         if (!force && now - lastUiUpdateAt < 1000L) return
         lastUiUpdateAt = now
-        val length = p.length.coerceAtLeast(0L)
+        val length = lengthOf(p)
         // While a stream is (re)opening VLC reports 0: show where the film will continue instead of 00:00.
-        val time = p.time.takeIf { it > 0L } ?: pendingSeekPos ?: playbackPosition.coerceAtLeast(0L)
+        // A seek in flight shows where it goes (VLC still reports the old place, or 0 while a Blu-ray reloads).
+        val time = pendingSeekPos ?: timeOf(p).takeIf { it > 0L } ?: playbackPosition.coerceAtLeast(0L)
         // M2TS often has no duration: show --:-- and disable the duration-based seek bar.
         if (length > 0L) {
             val max = length.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
@@ -1447,7 +1494,7 @@ class PlayerActivity : ComponentActivity() {
     private fun checkHeavy() {
         val limit = PlaybackSettings.heavyMbit(this)
         if (limit <= 0 || heavyDialog != null || isFinishing) return
-        val mbit = BurstProxy.bitrateMbit(currentUrl) ?: return
+        val mbit = BurstProxy.bitrateMbit(currentUrl) ?: tsMbit.takeIf { it > 0 && tsLengthUrl == currentUrl } ?: return
         val name = Uri.parse(currentUrl).lastPathSegment ?: return
         if (mbit < limit || name in heavyOk || !TrafficMeter.isMetered(this)) return
         heavyOk += name
@@ -1463,6 +1510,119 @@ class PlayerActivity : ComponentActivity() {
             .setNegativeButton("Закрыть") { _, _ -> heavyDialog = null; leave() }
             .setOnCancelListener { heavyDialog = null; leave() }
             .show()
+    }
+
+    // ---- Blu-ray (.m2ts): no duration in the file — read from the stream's clock; seeking by position ------------------
+    // Over HTTP VLC does not read the end of an MPEG transport stream, so the length stayed 0: «--:--», no seek bar.
+    // TsClock reads both ends of the file (two small requests) before VLC starts — the length and the bitrate are known
+    // at once, the «heavy file» question comes before anything is loaded. Seeks then go by position (share of the
+    // file), measured from where VLC is now (see tsSeek).
+    private var tsLength = 0L          // ms, valid for tsLengthUrl
+    private var tsMbit = 0.0           // file size ÷ length, for the heavy-file question before VLC knows anything
+    private var tsLengthUrl = ""
+    private var tsProbed = ""          // probed (or tried) before opening: open the player then
+    private var tsOpenAt = 0L          // where the stream was opened: :start-time is ignored on such a stream
+    private var tsOpenFixed = false
+    private var tsSeekTarget = -1L     // a position seek in flight
+    private var tsSeekFrom = 0L        // VLC's time when it was asked (to tell its old time events from the new place)
+    private var tsWaits = 0
+    private var tsLastPos = 0f         // the position last asked for
+    private var tsOffset = 0L          // added to VLC's time when it counts a continued Blu-ray from 0
+    private var tsOpenJump = false     // the jump to the saved place is on its way
+    private var tsOpenPos = 0f
+
+    /** The film's length: VLC's, or for a transport stream the one read from its clock (0 = unknown). */
+    private fun lengthOf(p: MediaPlayer?): Long =
+        p?.length?.takeIf { it > 0L } ?: if (tsLengthUrl == currentUrl) tsLength else 0L
+
+    private fun tsMode(p: MediaPlayer) = p.length <= 0L && tsLengthUrl == currentUrl && tsLength > 0L
+
+    /** Before VLC opens a transport stream: read its length (once per file). true = wait, initializePlayer comes again. */
+    private fun probeTsFirst(): Boolean {
+        val url = currentUrl
+        if (!TsClock.isTs(url) || tsProbed == url) return false
+        tsProbed = url
+        showStatus("Открываем…")
+        Thread({
+            val r = TsClock.probe(url)
+            handler.post {
+                if (url != currentUrl || isFinishing || isDestroyed) return@post
+                if (r != null) {
+                    tsLength = r.first; tsLengthUrl = url; tsMbit = r.second * 8.0 / r.first / 1000.0
+                    AppLog.write("[ts] duration from the stream's clock: %s, ≈ %.1f Mbit/s".format(formatTime(r.first), tsMbit))
+                    checkHeavy()
+                } else AppLog.write("[ts] no duration in the stream's clock")
+                initializePlayer()
+            }
+        }, "ts-clock").apply { isDaemon = true }.start()
+        return true
+    }
+
+    /** The film's time: VLC's, plus the offset when VLC counts a continued Blu-ray from 0 (see tsOpenLanded). */
+    private fun timeOf(p: MediaPlayer?): Long = (p?.time ?: 0L).let { if (it > 0L && tsLengthUrl == currentUrl) it + tsOffset else it }
+
+    /**
+     * VLC plays: give the reserve the length; opened at a saved place → jump there right away (one buffering, not
+     * two: waiting for VLC to play the file's start first meant loading twice, 12.10). Jumping this early, VLC may take
+     * the clock of the new place as its start and count from 0 — tsOpenLanded notices that and adds the offset.
+     */
+    private fun tsPlaying(p: MediaPlayer) {
+        if (tsLengthUrl != currentUrl) return
+        BurstProxy.setDuration(currentUrl, tsLength)
+        if (tsOpenFixed || !tsMode(p) || tsOpenAt <= 10_000L) return
+        tsOpenFixed = true; tsOpenJump = true
+        tsOpenPos = (tsOpenAt.toDouble() / tsLength).toFloat().coerceIn(0f, 0.999f)
+        tsLastPos = tsOpenPos
+        AppLog.write("[ts] continue at ${tsOpenAt / 1000}s → position %.4f".format(tsOpenPos))
+        p.position = tsOpenPos
+    }
+
+    /** VLC reports a time after the jump of tsPlaying: has it moved there yet, and does it count from 0 there? */
+    private fun tsOpenLanded(p: MediaPlayer) {
+        if (p.position < tsOpenPos * 0.5f) return // still the start of the file
+        val raw = p.time
+        tsOpenJump = false
+        tsOffset = if (raw < tsOpenAt / 2) tsOpenAt - raw else 0L
+        if (pendingSeekPos == tsOpenAt) pendingSeekPos = null
+        AppLog.write("[ts] landed: VLC time ${raw / 1000}s" + if (tsOffset > 0) ", counts from 0 here → +${tsOffset / 1000}s" else "")
+    }
+
+    /**
+     * A seek by position, measured from where VLC is (or, with a seek still in flight, from where that one goes —
+     * taps in a row: VLC's time is still the old place while its position is already the new one, 12.10): that share
+     * of the file plus the distance to [t]. The uneven bitrate of a disc only errs by a share of the jump itself.
+     */
+    private fun tsSeek(p: MediaPlayer, t: Long) {
+        val inFlight = tsSeekTarget >= 0 || tsOpenJump
+        val nowT = if (tsSeekTarget >= 0) tsSeekTarget else if (tsOpenJump) tsOpenAt else timeOf(p)
+        val nowPos = if (inFlight) tsLastPos else p.position
+        val base = if (nowT > 0L && nowPos > 0f) nowPos.toDouble() - nowT.toDouble() / tsLength else 0.0
+        tsSeekTarget = t; tsSeekFrom = timeOf(p); tsWaits = 0
+        val pos = (base + t.toDouble() / tsLength).toFloat().coerceIn(0f, 0.999f)
+        tsLastPos = pos
+        AppLog.write("[ts] seek %ds → position %.4f (from %ds at %.4f)".format(t / 1000, pos, nowT / 1000, nowPos))
+        p.position = pos
+    }
+
+    /** VLC reported [t] after a position seek. true = not settled yet (its old time, from before the jump). */
+    private fun tsSettling(t: Long): Boolean =
+        kotlin.math.abs(t - tsSeekFrom) < 1_500L && kotlin.math.abs(tsSeekTarget - tsSeekFrom) > 3_000L
+
+
+    /**
+     * The seek watchdog for a position seek. VLC does not confirm a seek while paused, and on a slow network loading the
+     * new place takes longer than 9 s — reopening (as for a dead socket) restarted it from 0 again and again (12.10).
+     * true = handled here.
+     */
+    private fun tsWatchdog(p: MediaPlayer, target: Long): Boolean {
+        if (tsSeekTarget < 0) return false
+        if (userPaused || !p.isPlaying || kotlin.math.abs(timeOf(p) - tsSeekFrom) > 1_500L) {
+            tsSeekTarget = -1L; pendingSeekPos = null; lastTime = target; playbackPosition = target
+            return true
+        }
+        if (++tsWaits <= 3) { handler.postDelayed(seekWatchdogRunnable, SEEK_CONFIRM_TIMEOUT_MS); return true }
+        tsSeekTarget = -1L
+        return false // 36 s and VLC did not move at all: the usual reconnect
     }
 
     // ---- a network slower than the film: one longer wait instead of a stutter every few seconds ------------------
@@ -1481,7 +1641,7 @@ class PlayerActivity : ComponentActivity() {
 
     private fun maybeCatchUp(p: MediaPlayer) {
         if (catchingUp || !viaReserve() || networkLost || userPaused || ended || heavyDialog != null) return
-        if (pendingSeekPos != null || p.time < catchUpFrom || p.time <= 0L || SystemClock.elapsedRealtime() < catchUpNotBefore) return
+        if (pendingSeekPos != null || timeOf(p) < catchUpFrom || p.time <= 0L || SystemClock.elapsedRealtime() < catchUpNotBefore) return
         if (!BurstProxy.slowerThanFilm(currentUrl) || (BurstProxy.aheadMb(currentUrl) ?: 99.0) >= 2.0) return
         catchingUp = true
         catchUpStartedAt = SystemClock.elapsedRealtime()
@@ -1839,7 +1999,7 @@ class PlayerActivity : ComponentActivity() {
         val p = mediaPlayer
         drag = when {
             kotlin.math.abs(dx) > touchSlop && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.5f &&
-                p != null && (p.length > 0L || p.isSeekable) -> Drag.Seek
+                p != null && (lengthOf(p) > 0L || p.isSeekable) -> Drag.Seek
             kotlin.math.abs(dy) > touchSlop && kotlin.math.abs(dy) > kotlin.math.abs(dx) * 1.5f ->
                 if (dragStartX < stage.width / 2f) Drag.Brightness else Drag.Volume
             else -> Drag.None
@@ -1861,7 +2021,7 @@ class PlayerActivity : ComponentActivity() {
         val w = stage.width.toFloat().coerceAtLeast(1f); val h = stage.height.toFloat().coerceAtLeast(1f)
         when (drag) {
             Drag.Seek -> {
-                val length = mediaPlayer?.length ?: -1L
+                val length = lengthOf(mediaPlayer)
                 var t = dragSeekBase + ((ev.x - dragStartX) / w * SEEK_SWIPE_RANGE_MS).toLong()
                 t = t.coerceAtLeast(0L)
                 if (length > 0L) t = t.coerceAtMost((length - 1_000L).coerceAtLeast(0L))
@@ -1949,7 +2109,7 @@ class PlayerActivity : ComponentActivity() {
             s.setMetadata(
                 MediaMetadata.Builder()
                     .putString(MediaMetadata.METADATA_KEY_TITLE, titleView.text?.toString() ?: currentTitle)
-                    .putLong(MediaMetadata.METADATA_KEY_DURATION, (p?.length ?: -1L).coerceAtLeast(0L))
+                    .putLong(MediaMetadata.METADATA_KEY_DURATION, lengthOf(p))
                     .build()
             )
         }
@@ -2065,7 +2225,7 @@ class PlayerActivity : ComponentActivity() {
         if (p.videoTracksCount <= 0) return@Runnable
         runCatching { p.setVideoTrackEnabled(true) }
         applyVideoFrameRate(p)
-        val t = p.time
+        val t = timeOf(p)
         if (t > 0L) seekTo(t)
     }
 
@@ -2111,7 +2271,7 @@ class PlayerActivity : ComponentActivity() {
 
     private fun resumeAfterStop() {
         val p = mediaPlayer ?: return
-        catchUpNotBefore = SystemClock.elapsedRealtime() + 15_000L; catchUpFrom = p.time + CATCH_UP_AFTER_PLAYED_MS
+        catchUpNotBefore = SystemClock.elapsedRealtime() + 15_000L; catchUpFrom = timeOf(p) + CATCH_UP_AFTER_PLAYED_MS
         keptOnStop = false
         runCatching { p.attachViews(videoLayout, null, true, false) }
         hookSurfaces()
@@ -2143,7 +2303,7 @@ class PlayerActivity : ComponentActivity() {
         // Another film chosen while this one was parked behind the lock screen / in the background: wake the player
         // up first (receivers, video surface) without resuming the old film — the new one replaces it right below.
         if (keptOnStop) { playOnStart = false; handler.removeCallbacks(idleReleaseRunnable); resumeAfterStop() }
-        mediaPlayer?.let { persistPosition(perceivedPosition(), it.length) }
+        mediaPlayer?.let { persistPosition(perceivedPosition(), lengthOf(it)) }
         currentUrl = url
         currentTitle = intent.getStringExtra(EXTRA_TITLE)?.ifBlank { "Видео" } ?: "Видео"
         queue = emptyList(); queueIndex = -1
@@ -2180,7 +2340,7 @@ class PlayerActivity : ComponentActivity() {
     override fun onStop() {
         mediaPlayer?.let { p ->
             playbackPosition = perceivedPosition()
-            persistPosition(playbackPosition, p.length)
+            persistPosition(playbackPosition, lengthOf(p))
         }
         // playWhenReady is maintained by events, so a mid-buffering stop no longer resumes paused.
         handler.removeCallbacks(hideControlsRunnable)
@@ -2230,6 +2390,7 @@ class PlayerActivity : ComponentActivity() {
         private const val WATCHDOG_TICK_MS = 2_000L
         private const val FAST_RESUME_MS = 20_000L // back within this: just continue the paused player
         private const val CATCH_UP_MAX_MS = 45_000L // the longest pause to gather a reserve on a slow network
+        private val VC1 = setOf("wvc1", "vc-1", "vc1", "wmv3") // VLC's names of the VC-1 / WMV9 video codec
         private const val CATCH_UP_AFTER_PLAYED_MS = 5_000L // film played at a new place before a wait for a reserve
         private const val IDLE_RELEASE_MS = 10 * 60_000L // locked longer than this: free VLC and the connection
         const val EXTRA_SUB_URLS = "media_sub_urls"

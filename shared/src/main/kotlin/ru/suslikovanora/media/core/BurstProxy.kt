@@ -230,6 +230,29 @@ object BurstProxy {
     fun downloadedMb(): Double = downloaded.get() / 1048576.0
 
     /**
+     * A small piece of a stream straight from the mirror, not through the reserve (its windows stay as they are):
+     * bytes [from] … [from] + [len] − 1 and the file's size. Blocking, gives up after 15 s. For TsClock.
+     */
+    fun readRange(url: String, from: Long, len: Int): Pair<ByteArray, Long>? = runCatching {
+        val up = upstream ?: return null
+        val c = Cancel()
+        val timer = watchdog.schedule({ c.cancel() }, 15, TimeUnit.SECONDS)
+        try {
+            up.open(url, from, from + len - 1, c).use { r ->
+                if (r.code !in 200..299) return null
+                val total = r.header("content-range")?.substringAfterLast('/')?.toLongOrNull()
+                    ?: r.header("content-length")?.toLongOrNull()?.takeIf { r.code == 200 } ?: -1L
+                val body = r.body ?: return null
+                val out = java.io.ByteArrayOutputStream(len)
+                val buf = ByteArray(64 * 1024)
+                while (out.size() < len) { val n = body.read(buf, 0, minOf(buf.size, len - out.size())); if (n < 0) break; out.write(buf, 0, n) }
+                downloaded.addAndGet(out.size().toLong()); onBytes(out.size().toLong())
+                out.toByteArray() to total
+            }
+        } finally { timer.cancel(false) }
+    }.getOrNull()
+
+    /**
      * The network delivers less than the film needs (measured, with a 15 % margin): the reserve can never fill while
      * the film plays, VLC runs dry every few seconds. (12.10 journal: 12 Mbit/s LTE for a 13.2 Mbit/s film — the
      * reserve stayed at 0 MB for minutes and every short rebuffering left the hardware decoder showing a still picture.)

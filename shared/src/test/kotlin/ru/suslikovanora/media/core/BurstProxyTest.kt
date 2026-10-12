@@ -203,6 +203,12 @@ class BurstProxyTest {
         assertEquals(5, requests.get(), "one request per step: $ranges")
     }
 
+    @Test fun readRangeGivesAPieceAndTheSize() {
+        val (bytes, total) = BurstProxy.readRange(url, data.size - 5000L, 5000)!!
+        assertEquals(data.size.toLong(), total)
+        assertContentEquals(data.copyOfRange(data.size - 5000, data.size), bytes)
+    }
+
     @Test fun offWhenReserveIsZero() {
         BurstProxy.capBytes = 0
         assertEquals("https://origin.test/other.mkv", BurstProxy.wrap("https://origin.test/other.mkv"))
