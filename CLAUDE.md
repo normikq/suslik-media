@@ -36,7 +36,8 @@ Changelog (русский) — `android/app/src/main/assets/changelog.json` и `
 
 ## Сборка и выпуск
 
-- Тесты общего модуля (`shared.yml`) идут на каждый пуш. Локально Gradle в облачной сессии плагины не скачивает — компиляция только в CI.
+- Тесты общего модуля (`shared.yml`) идут на каждый пуш: `shared/src/test/...` (`ModelTest`, `BurstProxyTest`, `TsClockTest`, `CoreTest`). Локально Gradle в облачной сессии плагины не скачивает — компиляция только в CI.
+- Серверные модульные тесты: `website/test/classify.test.js` (`node --test test/classify.test.js`).
 - Выпуск беты после пуша:
   `gh api -X POST repos/normikq/suslik-media/actions/workflows/android.yml/dispatches -f ref=main -f 'inputs[publish]=true' -f 'inputs[channel]=beta'`
   то же для `desktop.yml`; затем `update-status.yml`, чтобы проверить, что сайт видит версию.

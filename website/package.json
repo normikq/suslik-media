@@ -7,7 +7,8 @@
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
-    "check": "node scripts/check.js"
+    "check": "node scripts/check.js",
+    "test": "node --test"
   },
   "dependencies": {
     "axios": "^1.20.0",
