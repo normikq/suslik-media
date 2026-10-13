@@ -189,6 +189,31 @@ object BurstProxy {
     /** The player is closed: keep what was downloaded for a while (see [keepOnly]). */
     fun clear() = keepOnly(emptyList())
 
+    /**
+     * Closed films still kept on disk (see [keepOnly]) whose file [keep] no longer accepts — they left the library:
+     * removed now. Returns how many.
+     */
+    fun forgetRetired(keep: (link: String) -> Boolean): Int {
+        var n = 0
+        for ((key, token) in byUrl.entries.toList()) {
+            val src = sources[token] ?: continue
+            if (src.retiredAt == 0L) continue // playing now
+            val link = key.substringAfter("?link=", "").let { runCatching { java.net.URLDecoder.decode(it, "UTF-8") }.getOrDefault(it) }
+            if (link.isNotEmpty() && !keep(link)) { byUrl.remove(key); sources.remove(token)?.close(); n++ }
+        }
+        return n
+    }
+
+    /** «Очистить кэш»: every closed film kept on disk goes now (a film that is playing stays). Returns how many. */
+    fun dropRetired(): Int = forgetRetired { false }
+
+    /** The reserve has its folder in this process (a player was opened): its files are in use, see [dropRetired]. */
+    val initialized: Boolean get() = dir != null
+
+    /** Bytes the reserve takes on disk in [directory] (its folder; also before init, when [dir] is not set yet). */
+    fun diskBytes(directory: File? = dir): Long =
+        directory?.walkTopDown()?.filter { it.isFile }?.sumOf { it.length() } ?: 0L
+
     /** Throw everything away now (a clean restart after a problem, the app exits). */
     fun dropAll() {
         for ((key, token) in byUrl.entries.toList()) { byUrl.remove(key); sources.remove(token)?.close() }

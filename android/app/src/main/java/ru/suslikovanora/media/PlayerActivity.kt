@@ -401,6 +401,7 @@ class PlayerActivity : ComponentActivity() {
             MediaPlayer.Event.TimeChanged, MediaPlayer.Event.LengthChanged -> {
                 if (event.type == MediaPlayer.Event.LengthChanged) { BurstProxy.setDuration(currentUrl, owner.length); checkHeavy() }
                 // Blu-ray continued at a saved place: VLC may count from 0 there — timeOf() adds the known offset.
+                if (tsAbsolute && owner.time > 0L) tsAbsoluteJump(owner) // reopened for a seek back: VLC knows the real clock now
                 if (tsOpenJump && owner.time > 0L) tsOpenLanded(owner)
                 val t = if (tsOpenJump) 0L else timeOf(owner) // before the jump: the start of the file, not the film's time
                 if (t > 0L) {
@@ -1185,6 +1186,7 @@ class PlayerActivity : ComponentActivity() {
             return
         }
         pendingSeekPos = t
+        if (tsMode(p) && tsSeekBeforeClock(t)) return
         if (tsMode(p)) tsSeek(p, t) else { tsSeekTarget = -1L; p.setTime(t) }
         hasSeekedOk = true
         ended = false
@@ -1529,6 +1531,7 @@ class PlayerActivity : ComponentActivity() {
     private var tsLastPos = 0f         // the position last asked for
     private var tsOffset = 0L          // added to VLC's time when it counts a continued Blu-ray from 0
     private var tsOpenJump = false     // the jump to the saved place is on its way
+    private var tsAbsolute = false     // reopened for a seek before VLC's clock: jump only after it read the clock at the start
     private var tsOpenPos = 0f
 
     /** The film's length: VLC's, or for a transport stream the one read from its clock (0 = unknown). */
@@ -1570,11 +1573,38 @@ class PlayerActivity : ComponentActivity() {
         if (tsLengthUrl != currentUrl) return
         BurstProxy.setDuration(currentUrl, tsLength)
         if (tsOpenFixed || !tsMode(p) || tsOpenAt <= 10_000L) return
+        if (tsAbsolute) return // reopened for a seek back: jump once VLC has read the clock at the start (tsAbsoluteJump)
+        tsJumpToOpenPlace(p)
+    }
+
+    private fun tsJumpToOpenPlace(p: MediaPlayer) {
         tsOpenFixed = true; tsOpenJump = true
         tsOpenPos = (tsOpenAt.toDouble() / tsLength).toFloat().coerceIn(0f, 0.999f)
         tsLastPos = tsOpenPos
         AppLog.write("[ts] continue at ${tsOpenAt / 1000}s → position %.4f".format(tsOpenPos))
         p.position = tsOpenPos
+    }
+
+    /**
+     * After a continued open VLC counts its clock from the place it jumped to (tsOffset). A seek back before that
+     * place has no time on VLC's clock: it showed 0:00 and stood there (13.10). Such a seek reopens the film so that
+     * VLC first reads the real clock at the start of the file and only then jumps — its times stay true from then on.
+     * One extra loading, only for this seek. true = handled (reopening).
+     */
+    private fun tsSeekBeforeClock(t: Long): Boolean {
+        if (tsOffset <= 0L || t >= tsOffset + 2_000L) return false
+        AppLog.write("[ts] seek to ${t / 1000}s is before VLC's clock (starts at ${tsOffset / 1000}s): reopening with the real clock")
+        tsAbsolute = true
+        reconnect(forcePlay = !userPaused, startAt = t)
+        return true
+    }
+
+    /** Reopened by tsSeekBeforeClock: VLC now has its clock from the file's start — go to the place. */
+    private fun tsAbsoluteJump(p: MediaPlayer) {
+        tsAbsolute = false
+        if (tsOpenFixed || !tsMode(p)) return
+        if (tsOpenAt <= 10_000L) { tsOpenFixed = true; return }
+        tsJumpToOpenPlace(p)
     }
 
     /** VLC reports a time after the jump of tsPlaying: has it moved there yet, and does it count from 0 there? */

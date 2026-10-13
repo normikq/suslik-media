@@ -150,3 +150,24 @@ class SupervisorTest {
         assertTrue(log.size <= 5, log.toString())
     }
 }
+
+class LibraryKeepTest {
+    private fun magnet(id: Long, name: String, link: String) =
+        Magnet(id, name, "Готово", 4, 1, 1, listOf(MFile(0, "$name.mkv", "$name.mkv", false, 1, link)), true)
+
+    @Test fun keepsWhatIsStillInTheLibrary() {
+        val keep = LibraryKeep(prepareItems(listOf(magnet(7, "Interstellar.2014.1080p", "https://alld/f/abc"))))
+        assertTrue(keep.usable)
+        assertTrue(keep.keepsKey("7|Interstellar.2014.1080p.mkv"))
+        assertTrue(keep.keepsKey("w:7|Interstellar.2014.1080p.mkv"))
+        assertTrue(keep.keepsKey("7"))
+        assertFalse(keep.keepsKey("8|Gone.mkv"))        // a film that left the library
+        assertFalse(keep.keepsKey("w:8|Gone.mkv"))
+        assertTrue(keep.keepsKey("pos:host/some/stream")) // not a library key: kept
+        assertTrue(keep.posterKeys.any { keep.keepsPoster(it) })
+        assertFalse(keep.keepsPoster("gone"))
+        assertTrue("https://alld/f/abc" in keep.links)
+    }
+
+    @Test fun anEmptyListIsNeverUsedForCleaning() = assertFalse(LibraryKeep(emptyList()).usable)
+}

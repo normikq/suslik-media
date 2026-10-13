@@ -28,7 +28,7 @@ dependencies {
 }
 
 // One place for the version: the installer, and the app itself (update check) via -Dsuslik.version.
-val appVersion = "2.0.6"
+val appVersion = "2.0.7"
 // Windows Installer takes at most three numbers (2.0.0.1 → 2.0.0); the app itself and the file name keep all four.
 val msiVersion = appVersion.split(".").take(3).joinToString(".")
 

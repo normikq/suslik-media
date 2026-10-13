@@ -120,6 +120,7 @@ fun SettingsSheet(onClose: () -> Unit) {
                     PresetRow(p, p.value == cache) { cache = p.value; PlaybackSettings.setCacheMs(ctx, p.value) }
                 }
                 TrafficSection()
+                StorageSection()
                 if (Diag.on) DiagSection() else ChannelSection()
                 JournalSection()
             }
@@ -219,6 +220,35 @@ private fun TrafficSection() {
             ChannelOption(label, limit == v, Modifier.weight(1f)) { limit = v; PlaybackSettings.setHeavyMbit(ctx, v) }
         }
     }
+}
+
+/** «Память»: how much the reserve, the posters and the rest take; «Очистить кэш». */
+@Composable
+private fun StorageSection() {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var sizes by remember { mutableStateOf<Storage.Sizes?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var state by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) { sizes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { Storage.sizes(ctx) } }
+    Section("Память", "Кэш можно очистить: всё нужное скачается снова. Прогресс просмотра, вход и настройки не удаляются. " +
+        "Данные фильмов, которых больше нет в медиатеке, удаляются сами при её обновлении; постеры, которые не показывались 7 дней, тоже.", top = 18.dp)
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        val s = sizes
+        Text(if (s == null) "Считаем…" else "Запас фильмов: ${formatBytes(s.reserve)}\nПостеры: ${formatBytes(s.posters)}\nПрочее: ${formatBytes(s.other)}",
+            color = Sm.text, fontFamily = Onest, fontSize = 14.sp, lineHeight = 21.sp, modifier = Modifier.weight(1f))
+        ru.suslikovanora.media.library.OutlineButton(if (busy) "Очистка…" else "Очистить кэш") {
+            if (busy) return@OutlineButton
+            busy = true
+            scope.launch {
+                val before = sizes
+                val after = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { Storage.clear(ctx); Storage.sizes(ctx) }
+                sizes = after; busy = false
+                state = before?.let { b -> "Освобождено ${formatBytes((b.reserve + b.posters + b.other - after.reserve - after.posters - after.other).coerceAtLeast(0L))}" } ?: "Готово"
+            }
+        }
+    }
+    if (state.isNotEmpty()) Text(state, color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 6.dp))
 }
 
 /** «Журнал плеера»: send the journal to the server (to analyse stutters: every reserve burst is in it). */

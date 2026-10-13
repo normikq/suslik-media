@@ -43,6 +43,9 @@ fun formatMediaInfo(m: JSONObject): String {
  * Library state for the native screen. The last good server answer is kept on disk, so the grid shows
  * instantly on start (and offline); the network refresh replaces it when it arrives.
  */
+/** A poster picture no tile showed for this long leaves the disk cache (see LibraryStore.prunePosters). */
+private const val POSTER_UNUSED_MS = 7L * 86_400_000L
+
 class LibraryStore(context: Context) {
     private val app = context.applicationContext
     private val snapshotFile = File(app.filesDir, "library.json")
@@ -137,6 +140,8 @@ class LibraryStore(context: Context) {
             val json = Api.get("/api/library")
             val list = withContext(Dispatchers.Default) { parseLibrary(json) }
             publish(list)
+            cleanUp(items) // what films that left the library left behind (posters, progress, reserve…)
+            prunePosters() // once per start: pictures not shown for 7 days
             loadedOnce = true
             lastRefreshAt = System.currentTimeMillis()
             withContext(Dispatchers.IO) { runCatching { snapshotFile.writeText(json.toString()) } }
@@ -184,9 +189,38 @@ class LibraryStore(context: Context) {
     suspend fun poster(queries: List<String>): String? {
         for (q in queries) {
             val url = posterFor(q)
-            if (url != null) return Api.BASE + url
+            if (url != null) return (Api.BASE + url).also { markShown(it) }
         }
         return null
+    }
+
+    // ---- poster pictures not shown for 7 days are deleted (Coil's own cache only has a size limit) ----
+    private val posterShown = app.getSharedPreferences("posters_shown", Context.MODE_PRIVATE)
+    private var postersPruned = false
+
+    private fun markShown(url: String) {
+        val now = System.currentTimeMillis()
+        if (now - posterShown.getLong(url, 0L) > 6 * 3_600_000L) posterShown.edit().putLong(url, now).apply()
+    }
+
+    /** Once per start: pictures no tile showed for 7 days leave the disk cache (downloaded again when needed). */
+    private suspend fun prunePosters() = withContext(Dispatchers.IO) {
+        if (postersPruned) return@withContext
+        postersPruned = true
+        val cache = runCatching { Posters.loader(app).diskCache }.getOrNull() ?: return@withContext
+        val now = System.currentTimeMillis()
+        val shown = posterShown.all
+        val edit = posterShown.edit()
+        // Pictures cached before this version have no mark yet: they count from now.
+        posterPrefs.all.values.mapNotNull { (it as? String)?.substringAfter('|', "")?.ifBlank { null } }
+            .map { Api.BASE + it }.filter { it !in shown }.forEach { edit.putLong(it, now) }
+        var n = 0
+        for ((url, at) in shown) {
+            if (now - ((at as? Long) ?: now) <= POSTER_UNUSED_MS) continue
+            runCatching { cache.remove(url) }; edit.remove(url); n++
+        }
+        edit.apply()
+        if (n > 0) ru.suslikovanora.media.AppLog.write("posters: $n picture(s) not shown for 7 days removed from the cache")
     }
 
     private suspend fun posterFor(query: String): String? {
@@ -295,6 +329,37 @@ class LibraryStore(context: Context) {
             if (best == null || w.at > best.second.at) best = f to w
         }
         return best
+    }
+
+    // ---- cleaning up after films that left the library (after every successful refresh) ----
+    /**
+     * Posters (and their picture files, unless another tile shows the same one), the video info line, watch
+     * progress, the resume place, the last episode, and a reserve still kept on disk — of films no longer in the list.
+     */
+    private suspend fun cleanUp(list: List<LibraryItem>) = withContext(Dispatchers.IO) {
+        val keep = LibraryKeep(list)
+        if (!keep.usable) return@withContext
+        var n = 0
+        fun prune(prefs: android.content.SharedPreferences, keepIt: (String) -> Boolean) {
+            val gone = prefs.all.keys.filterNot(keepIt)
+            if (gone.isEmpty()) return
+            prefs.edit().apply { gone.forEach { remove(it) } }.apply()
+            n += gone.size
+        }
+        fun url(v: Any?) = (v as? String)?.substringAfter('|', "")?.ifBlank { null }
+        val posters = posterPrefs.all
+        val keptUrls = posters.filterKeys { keep.keepsPoster(it) }.values.mapNotNullTo(HashSet()) { url(it) }
+        val goneUrls = posters.filterKeys { !keep.keepsPoster(it) }.values.mapNotNull { url(it) }.filter { it !in keptUrls }
+        prune(posterPrefs, keep::keepsPoster)
+        runCatching { Posters.loader(app).diskCache?.let { cache -> goneUrls.forEach { u -> cache.remove(Api.BASE + u) } } }
+        if (goneUrls.isNotEmpty()) posterShown.edit().apply { goneUrls.forEach { remove(Api.BASE + it) } }.apply()
+        prune(mediaPrefs, keep::keepsKey)
+        prune(watchPrefs, keep::keepsKey)
+        prune(episodePrefs, keep::keepsKey)
+        prune(app.getSharedPreferences("positions", Context.MODE_PRIVATE)) { !it.startsWith("w:") || keep.keepsKey(it) }
+        val reserves = BurstProxy.forgetRetired { it in keep.links }
+        if (n + reserves > 0) ru.suslikovanora.media.AppLog.write(
+            "library cleanup: $n entries and ${goneUrls.size} poster(s) of films no longer in the library, $reserves reserve(s) on disk")
     }
 
     // ---- last chosen episode per torrent ----

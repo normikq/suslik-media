@@ -114,6 +114,7 @@ fun SettingsSheet(onClose: () -> Unit) {
                 PlaybackSettings.cachePresets.forEach { p ->
                     PresetRow(p, p.value == cache) { cache = p.value; PlaybackSettings.setCacheMs(p.value) }
                 }
+                StorageSection()
                 if (Diag.on) DiagSection() else ChannelSection()
             }
             Row(Modifier.fillMaxWidth().padding(top = 14.dp), horizontalArrangement = Arrangement.End) {
@@ -214,6 +215,34 @@ private fun DiagSection() {
         }
         OutlineButton("Архив", Modifier.weight(1f)) {
             state = Diag.zipJournal()?.let { "На рабочем столе: ${it.name}" } ?: "Не получилось собрать архив"
+        }
+    }
+    if (state.isNotEmpty()) Text(state, color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 6.dp))
+}
+
+/** «Память»: how much the reserve, the posters and the rest take; «Очистить кэш». */
+@Composable
+private fun StorageSection() {
+    val scope = rememberCoroutineScope()
+    var sizes by remember { mutableStateOf<Storage.Sizes?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var state by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) { sizes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { Storage.sizes() } }
+    Section("Память", "Кэш можно очистить: всё нужное скачается снова. Прогресс просмотра, вход и настройки не удаляются. " +
+        "Данные фильмов, которых больше нет в медиатеке, удаляются сами при её обновлении; постеры, которые не показывались 7 дней, удаляются, и их хранится не больше 100 МБ.", top = 18.dp)
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        val s = sizes
+        Text(if (s == null) "Считаем…" else "Запас фильмов: ${formatBytes(s.reserve)}\nПостеры: ${formatBytes(s.posters)}\nПрочее: ${formatBytes(s.other)}",
+            color = Sm.text, fontFamily = Onest, fontSize = 14.sp, lineHeight = 21.sp, modifier = Modifier.weight(1f))
+        OutlineButton(if (busy) "Очистка…" else "Очистить кэш") {
+            if (busy) return@OutlineButton
+            busy = true
+            scope.launch {
+                val before = sizes
+                val after = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { Storage.clear(); Storage.sizes() }
+                sizes = after; busy = false
+                state = before?.let { b -> "Освобождено ${formatBytes((b.reserve + b.posters + b.other - after.reserve - after.posters - after.other).coerceAtLeast(0L))}" } ?: "Готово"
+            }
         }
     }
     if (state.isNotEmpty()) Text(state, color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 6.dp))

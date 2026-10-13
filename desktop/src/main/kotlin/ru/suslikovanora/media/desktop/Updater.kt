@@ -71,6 +71,8 @@ object Updater {
 
     /** The installer that updated us is no longer needed once the app runs again: free the space (100+ MB). */
     fun cleanup() { runCatching { tempDir.listFiles()?.forEach { it.delete() }; tempDir.delete() } }
+    /** Bytes of a downloaded update still lying in the temp folder (for «Очистить кэш»). */
+    fun tempBytes(): Long = tempDir.listFiles()?.sumOf { it.length() } ?: 0L
 
     suspend fun check(force: Boolean = false): Info? {
         val now = System.currentTimeMillis()

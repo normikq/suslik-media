@@ -209,6 +209,18 @@ class BurstProxyTest {
         assertContentEquals(data.copyOfRange(data.size - 5000, data.size), bytes)
     }
 
+    @Test fun aClosedFilmThatLeftTheLibraryIsForgotten() {
+        fun addr(link: String) = "https://origin.test/film.mkv?link=" + java.net.URLEncoder.encode(link, "UTF-8") + "&exp=1&sig=s"
+        val gone = "https://alld.test/f/gone"; val kept = "https://alld.test/f/kept"
+        val a = BurstProxy.wrap(addr(gone)); val b = BurstProxy.wrap(addr(kept))
+        get(a, "bytes=0-99999"); get(b, "bytes=0-99999")
+        BurstProxy.clear()                                   // both closed: kept on disk for a while
+        assertTrue(BurstProxy.diskBytes() > 0)
+        assertEquals(1, BurstProxy.forgetRetired { it == kept })
+        assertEquals(b, BurstProxy.wrap(addr(kept)))         // the one still in the library is still here
+        assertTrue(a != BurstProxy.wrap(addr(gone)))         // the gone one starts from nothing
+    }
+
     @Test fun offWhenReserveIsZero() {
         BurstProxy.capBytes = 0
         assertEquals("https://origin.test/other.mkv", BurstProxy.wrap("https://origin.test/other.mkv"))

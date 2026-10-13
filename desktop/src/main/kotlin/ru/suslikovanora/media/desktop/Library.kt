@@ -37,6 +37,11 @@ fun formatMediaInfo(m: JSONObject): String {
     return parts.joinToString(" · ")
 }
 
+/** Poster pictures on disk at most (see Library.prunePosterFiles). */
+private const val POSTER_CAP = 100L shl 20
+/** A poster picture not shown for this many days is deleted (it is downloaded again when the tile shows up). */
+private const val POSTER_UNUSED_DAYS = 7L
+
 /** Same behaviour as the Android LibraryStore, with files in %APPDATA%\SuslikMedia instead of SharedPreferences. */
 class Library {
     private val snapshot = AppDir.file("library.json")
@@ -65,6 +70,7 @@ class Library {
 
     suspend fun restoreSnapshot() {
         if (items.isNotEmpty()) return
+        withContext(Dispatchers.IO) { runCatching { prunePosterFiles() } } // once at start: limits of the poster folder
         val list = withContext(Dispatchers.IO) { runCatching { parseLibrary(JSONObject(snapshot.readText())) }.getOrNull() } ?: return
         publish(list)
         status = "Показана сохранённая копия — обновляем…"
@@ -99,6 +105,7 @@ class Library {
             val json = res.json
             val list = withContext(Dispatchers.Default) { parseLibrary(json) }
             publish(list)
+            cleanUp(items) // what films that left the library left behind (posters, progress, reserve…)
             withContext(Dispatchers.IO) { runCatching { snapshot.writeText(json.toString()) } }
             val stale = json.optBoolean("stale")
             libraryEtag.put("etag", if (stale) null else res.etag)
@@ -111,6 +118,51 @@ class Library {
             if (e is Api.HttpError && e.code == 401) authenticated = false
             status = Api.describe(e); statusKind = StatusKind.Error
         } finally { loading = false }
+    }
+
+    // ---- cleaning up after films that left the library (after every new list) ----
+    /**
+     * Posters (and their picture files, unless another tile shows the same one), the video info line, watch progress,
+     * the last episode, «Продолжить» hidden marks, and a reserve still kept on disk — of films no longer in the list.
+     */
+    private suspend fun cleanUp(list: List<LibraryItem>) = withContext(Dispatchers.IO) {
+        val keep = LibraryKeep(list)
+        if (!keep.usable) return@withContext
+        var n = 0
+        fun prune(store: Store, keepIt: (String) -> Boolean) { store.keys().filterNot(keepIt).forEach { store.put(it, null); n++ } }
+        fun path(v: String?) = v?.substringAfter('|', "")?.ifBlank { null }
+        val keys = posterIndex.keys()
+        val keptPaths = keys.filter(keep::keepsPoster).mapNotNullTo(HashSet()) { path(posterIndex.get(it)) }
+        val gonePaths = keys.filterNot(keep::keepsPoster).mapNotNull { path(posterIndex.get(it)) }.filter { it !in keptPaths }
+        prune(posterIndex, keep::keepsPoster)
+        gonePaths.forEach { runCatching { posterFile(it).delete() } }
+        prune(mediaIndex, keep::keepsKey)
+        prune(watch, keep::keepsKey)
+        prune(episodes, keep::keepsKey)
+        prune(continueHidden, keep::keepsKey)
+        val reserves = BurstProxy.forgetRetired { it in keep.links }
+        if (n + reserves > 0) PlayerLog.write("library cleanup: $n entries and ${gonePaths.size} poster(s) of films no longer in the library, $reserves reserve(s) on disk")
+        prunePosterFiles()
+    }
+
+    /**
+     * Poster pictures on disk: none that was not shown for 7 days, and at most 100 MB — the least recently shown go
+     * first (showing one touches its file, see loadImage). Before, they only piled up.
+     */
+    fun prunePosterFiles() {
+        val files = AppDir.file("posters").listFiles()?.filter { it.isFile }?.toMutableList() ?: return
+        val old = System.currentTimeMillis() - POSTER_UNUSED_DAYS * 86_400_000L
+        files.filter { it.lastModified() < old }.forEach { if (it.delete()) files.remove(it) }
+        var total = files.sumOf { it.length() }
+        for (f in files.sortedBy { it.lastModified() }) {
+            if (total <= POSTER_CAP) break
+            total -= f.length(); f.delete()
+        }
+    }
+
+    private fun posterFile(path: String): java.io.File {
+        val name = MessageDigest.getInstance("SHA-1").digest(path.toByteArray()).joinToString("") { "%02x".format(it) }
+        return AppDir.file("posters").apply { mkdirs() }.resolve("$name.img")
     }
 
     /** Favourite on/off for this device (the server keeps it per device cookie). Updates the list at once. */
@@ -170,9 +222,9 @@ class Library {
     }
 
     private suspend fun loadImage(path: String): ImageBitmap? = withContext(Dispatchers.IO) {
-        val name = MessageDigest.getInstance("SHA-1").digest(path.toByteArray()).joinToString("") { "%02x".format(it) }
-        val f = AppDir.file("posters").apply { mkdirs() }.resolve("$name.img")
-        val bytes = if (f.exists()) f.readBytes() else Api.bytes(path)?.also { runCatching { f.writeBytes(it) } }
+        val f = posterFile(path)
+        // shown now: its file counts as recently used (prunePosterFiles deletes the least recently used first)
+        val bytes = if (f.exists()) f.also { it.setLastModified(System.currentTimeMillis()) }.readBytes() else Api.bytes(path)?.also { runCatching { f.writeBytes(it) } }
         bytes?.let { runCatching { downscale(org.jetbrains.skia.Image.makeFromEncoded(it), 320) }.getOrNull() }
     }
 

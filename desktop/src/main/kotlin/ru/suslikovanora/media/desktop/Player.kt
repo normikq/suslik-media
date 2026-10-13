@@ -342,6 +342,7 @@ fun PlayerView(
     var tsLenUrl by remember { mutableStateOf("") }
     var tsStartAt by remember { mutableStateOf(0L) }  // where the stream was opened (:start-time is ignored there)
     var tsOpenDone by remember { mutableStateOf(true) }
+    var tsAbsolute by remember { mutableStateOf(false) } // reopened for a seek before VLC's clock (see vlcSeekTo)
     var status by remember { mutableStateOf<String?>("Открываем…") }
     var volume by remember { mutableStateOf(ui.get("volume")?.toIntOrNull() ?: 100) }
     var queue by remember { mutableStateOf(listOf(Entry(req.title, req.url))) }
@@ -439,7 +440,7 @@ fun PlayerView(
         if (extras.first.isEmpty()) opts += ":input-fast-seek"
         val isTs = TsClock.isTs(url)
         if (startAt > 0 && !isTs) opts += ":start-time=${startAt / 1000.0}"
-        tsStartAt = startAt; tsOpenDone = !isTs; if (!isTs) ts = null
+        tsStartAt = startAt; tsOpenDone = !isTs; if (!isTs) { ts = null; tsAbsolute = false }
         prefLanguage("audio")?.let { opts += ":audio-language=$it" }
         prefLanguage("spu")?.let { opts += ":sub-language=$it" }
         val prev = openJob
@@ -474,6 +475,13 @@ fun PlayerView(
     fun vlcSeekTo(t: Long) {
         val s = ts
         if (s == null) { vlc { mp.controls().setTime(t) }; return }
+        // After a continued open VLC counts from 0 at that place (TsPlayback.offset): a seek back before it has no time
+        // on VLC's clock — it showed 0:00 and stood (13.10). Reopen so that VLC reads the real clock at the file's start
+        // first and jumps after that (one extra loading, only for this seek).
+        if (s.offset > 0 && t < s.offset + 2_000L) {
+            PlayerLog.write("[ts] seek to ${t / 1000}s is before VLC's clock (starts at ${s.offset / 1000}s): reopening with the real clock")
+            tsAbsolute = true; reopen(t); return
+        }
         vlc {
             val now = s.filmTime(mp.status().time()); val nowPos = mp.status().position()
             val pos = s.seek(t, now, nowPos)
@@ -811,7 +819,7 @@ fun PlayerView(
                 // Blu-ray: the length to the reserve; opened at a saved place → jump there now (TsPlayback.openJump)
                 ts?.let { s ->
                     BurstProxy.setDuration(currentUrl, s.lengthMs)
-                    if (!tsOpenDone) { tsOpenDone = true; s.openJump(tsStartAt)?.let { pos -> PlayerLog.write("[ts] continue at ${tsStartAt / 1000}s → position %.4f".format(pos)); vlc { mp.controls().setPosition(pos) } } }
+                    if (!tsOpenDone && !tsAbsolute) { tsOpenDone = true; s.openJump(tsStartAt)?.let { pos -> PlayerLog.write("[ts] continue at ${tsStartAt / 1000}s → position %.4f".format(pos)); vlc { mp.controls().setPosition(pos) } } }
                 }
                 if (pausedAt == 0L) supRef.get()?.playing()
                 // Remembered voice-over / subtitles, once the extra tracks above have been probed (only on start,
@@ -855,6 +863,8 @@ fun PlayerView(
             }
             override fun timeChanged(p: MediaPlayer, vlcTime: Long) = ui2 tick@{
                 // Blu-ray: VLC's time → the film's (offset after a continued open; its old place right after a seek is ignored)
+                // Reopened for a seek back (vlcSeekTo): VLC has read the real clock at the start now — go to the place.
+                ts?.let { s0 -> if (tsAbsolute && !tsOpenDone && vlcTime > 0) { tsAbsolute = false; tsOpenDone = true; s0.openJump(tsStartAt)?.let { pos -> vlc { mp.controls().setPosition(pos) } } } }
                 val s = ts
                 val newTime = if (s == null) vlcTime else {
                     val f = if (s.opening) s.openLanded(vlcTime, p.status().position()) else s.filmTime(vlcTime)
