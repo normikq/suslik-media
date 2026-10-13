@@ -454,7 +454,7 @@ fun PlayerView(
                     tsLen = r?.first ?: 0L; tsLenUrl = url
                     PlayerLog.write(if (r != null) "[ts] duration from the stream's clock: ${fmt(r.first)}" else "[ts] no duration in the stream's clock")
                 }
-                withContext(Dispatchers.Main) { ts = if (tsLen > 0) TsPlayback(tsLen) else null; if (tsLen > 0) length = tsLen }
+                withContext(Dispatchers.Main) { ts = if (tsLen > 0) TsPlayback(tsLen, url) else null; if (tsLen > 0) length = tsLen }
                 if (closing) return@launch
             }
             if (mp.status().isPlayable) {
@@ -867,8 +867,10 @@ fun PlayerView(
                 ts?.let { s0 -> if (tsAbsolute && !tsOpenDone && vlcTime > 0) { tsAbsolute = false; tsOpenDone = true; s0.openJump(tsStartAt)?.let { pos -> vlc { mp.controls().setPosition(pos) } } } }
                 val s = ts
                 val newTime = if (s == null) vlcTime else {
-                    val f = if (s.opening) s.openLanded(vlcTime, p.status().position()) else s.filmTime(vlcTime)
-                    if (f == null || (s.seeking && !s.seekLanded(f))) return@tick
+                    val pos = p.status().position()
+                    val f = if (s.opening) s.openLanded(vlcTime, pos) else s.filmTime(vlcTime)
+                    if (f == null || (s.seeking && !s.seekLanded(f, pos))) return@tick
+                    s.tick(vlcTime, pos)
                     f
                 }
                 // Resumed and the clock really moves again (the old position + a bit): give the sound back.

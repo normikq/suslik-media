@@ -15,7 +15,7 @@ package ru.suslikovanora.media.core
  *
  * Thread-safe: the PC player seeks on its VLC thread while times come on the window's thread.
  */
-class TsPlayback(val lengthMs: Long) {
+class TsPlayback(val lengthMs: Long, val url: String = "") {
     /** Added to VLC's time (VLC counts from 0 at the place it jumped to right after opening). */
     var offset = 0L
         private set
@@ -28,7 +28,7 @@ class TsPlayback(val lengthMs: Long) {
     /** The film's time for a time VLC reports. */
     @Synchronized fun filmTime(vlcTime: Long): Long = if (vlcTime > 0) vlcTime + offset else vlcTime
 
-    private fun posOf(ms: Long) = (ms.toDouble() / lengthMs).toFloat().coerceIn(0f, 0.999f)
+    private fun posOf(ms: Long) = if (url.isNotEmpty()) TsClock.posFor(url, ms, lengthMs) else (ms.toDouble() / lengthMs).toFloat().coerceIn(0f, 0.999f)
 
     /** VLC started a stream that was opened at [savedMs]: the position to jump to now, or null (from the start). */
     @Synchronized fun openJump(savedMs: Long): Float? {
@@ -49,6 +49,7 @@ class TsPlayback(val lengthMs: Long) {
         if (vlcTime <= 0 || vlcPos < openPos * 0.5f) return null
         offset = if (vlcTime < openTarget / 2) openTarget - vlcTime else 0L
         openTarget = -1
+        if (url.isNotEmpty() && offset == 0L && vlcTime > 1_000L) TsClock.learn(url, vlcTime, vlcPos)
         return filmTime(vlcTime)
     }
 
@@ -59,20 +60,47 @@ class TsPlayback(val lengthMs: Long) {
             openTarget >= 0 -> openTarget to openPos
             else -> nowMs to nowPos
         }
+        if (url.isNotEmpty()) {
+            if (t0 > 0 && p0 > 0f) TsClock.learn(url, t0, p0)
+            val pos = TsClock.posFor(url, targetMs, lengthMs)
+            target = targetMs; from = nowMs; lastPos = pos
+            return pos
+        }
         val base = if (t0 > 0 && p0 > 0f) p0 - t0.toDouble() / lengthMs else 0.0
-        val pos = (base + targetMs.toDouble() / lengthMs).toFloat().coerceIn(0f, 0.999f)
+        val distance = kotlin.math.abs(targetMs - t0)
+        val weight = when {
+            distance <= 15_000L -> 1.0
+            distance >= 60_000L -> 0.0
+            else -> (60_000.0 - distance) / 45_000.0
+        }
+        val pos = (base * weight + targetMs.toDouble() / lengthMs).toFloat().coerceIn(0f, 0.999f)
         target = targetMs; from = nowMs; lastPos = pos
         return pos
+    }
+
+    private var lastLearnedTime = 0L
+
+    /** Periodic playback progress update: records runtime checkpoints when steady. */
+    @Synchronized fun tick(vlcTime: Long, vlcPos: Float) {
+        if (url.isNotEmpty() && offset == 0L && !opening && !seeking && vlcTime > 5_000L && vlcPos > 0.005f) {
+            if (kotlin.math.abs(vlcTime - lastLearnedTime) >= 5_000L) {
+                lastLearnedTime = vlcTime
+                TsClock.learn(url, vlcTime, vlcPos)
+            }
+        }
     }
 
     /** A seek is in flight. */
     val seeking: Boolean get() = target >= 0
 
     /** A film time from VLC while [seeking]: false = still the old place (ignore it), true = landed. */
-    @Synchronized fun seekLanded(filmMs: Long): Boolean {
+    @Synchronized fun seekLanded(filmMs: Long, vlcPos: Float = 0f): Boolean {
         if (target < 0) return true
         if (kotlin.math.abs(filmMs - from) < 1_500L && kotlin.math.abs(target - from) > 3_000L) return false
         target = -1
+        if (url.isNotEmpty() && offset == 0L && filmMs > 1_000L && vlcPos > 0.005f) {
+            TsClock.learn(url, filmMs, vlcPos)
+        }
         return true
     }
 

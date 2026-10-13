@@ -1,28 +1,27 @@
 package ru.suslikovanora.media
 
 import ru.suslikovanora.media.core.*
+import ru.suslikovanora.media.player.PlayerAudioSession
+import ru.suslikovanora.media.player.PlayerBluRayController
+import ru.suslikovanora.media.player.PlayerControlsOverlay
+import ru.suslikovanora.media.player.PlayerDiagnostics
+import ru.suslikovanora.media.player.PlayerGestures
+import ru.suslikovanora.media.player.PlayerNetworkMonitor
+import ru.suslikovanora.media.player.PlayerPipController
+import ru.suslikovanora.media.player.PlayerPlaylistQueue
+import ru.suslikovanora.media.player.PlayerTrackSelector
+import ru.suslikovanora.media.player.PlayerWatchProgress
 
 import android.app.AlertDialog
-import android.app.PictureInPictureParams
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.ActivityInfo
 import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.media.AudioAttributes
-import android.media.AudioFocusRequest
-import android.media.AudioManager
-import android.media.MediaMetadata
-import android.media.session.MediaSession
-import android.media.session.PlaybackState
-import android.net.ConnectivityManager
 import android.net.Network
-import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -30,11 +29,8 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Rational
-import android.view.GestureDetector
 import android.view.Gravity
 import android.view.MotionEvent
-import android.view.ScaleGestureDetector
-import android.view.ViewConfiguration
 import android.graphics.Rect
 import android.view.Surface
 import android.view.SurfaceHolder
@@ -85,18 +81,16 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var volumeBar: SeekBar
     private lateinit var volumeLabel: TextView
     private lateinit var bufferingLabel: TextView
-    private lateinit var gestureDetector: GestureDetector
+    private lateinit var gestures: PlayerGestures
 
     private var userSeeking = false
     private var playbackPosition = 0L
     private var playWhenReady = true
-    private var resumeOnFocusGain = false
     private var ended = false
-    private var controlsVisible = true
-    private var inPip = false
+    private val controlsVisible: Boolean get() = controlsOverlay.isVisible
+    private val locked: Boolean get() = controlsOverlay.isLocked
+    private val inPip: Boolean get() = pipController.inPip
     private var lastUiUpdateAt = 0L
-    private var noisyRegistered = false
-    private var focusRequest: AudioFocusRequest? = null
 
     // Stability state.
     private var teardownExec: ExecutorService? = null   // serial native teardown: players first, LibVLC last
@@ -105,90 +99,79 @@ class PlayerActivity : ComponentActivity() {
     private var pendingSeekPos: Long? = null            // seek issued but not yet confirmed by TimeChanged
     private var tapSeekTarget: Long? = null             // accumulated double-tap target, applied after a short pause
     private var tapSeekStart = 0L
-    private var lastSeekTapAt = 0L
     private var lastWatchTime = -1L
     private var watchStuckTicks = 0
-    private var awaitingValidation = false
-    private var selectedAudioId: Int? = null
-    private var selectedSpuId: Int? = null
-    private var restoreTracks = false
-    private var lastPersistAt = 0L
     private lateinit var seekLabel: TextView
 
     // 1.3: gestures, frame mode, media session, sidecar subtitles, remembered tracks, next-episode card, watch progress.
     private val uiPrefs by lazy { getSharedPreferences("player_ui", MODE_PRIVATE) }
-    private val watchPrefs by lazy { getSharedPreferences("watch", MODE_PRIVATE) } // read by the native library
-    private lateinit var scaleDetector: ScaleGestureDetector
-    private enum class Drag { None, Seek, Brightness, Volume }
-    private var drag = Drag.None
-    private var dragStartX = 0f
-    private var dragStartY = 0f
-    private var dragStartValue = 0f
-    private var dragSeekBase = 0L
-    private var dragSeekTarget = 0L
-    private var pinchFactor = 1f
-    private val touchSlop by lazy { ViewConfiguration.get(this).scaledTouchSlop * 2f }
     private var scaleIndex = 0
     private lateinit var scaleButton: TextView
-    private var session: MediaSession? = null
-    private var subUrls: List<String> = emptyList()
-    private var audioUrls: List<String> = emptyList()
-    private var subsForUrl = ""
-    private var watchKeys: List<String> = emptyList()
-    private var prefsAppliedForUrl = ""
-    private var prefsUntil = 0L // remembered tracks may still be applied until then
-    private val prefsRunnable = Runnable { mediaPlayer?.let { applyPreferredTracks(it) } }
-    private lateinit var nextCard: LinearLayout
-    private lateinit var nextCardTitle: TextView
-    private lateinit var nextCardTimer: TextView
-    private var countdown = 0
-    private val countdownRunnable = object : Runnable {
-        override fun run() {
-            if (countdown <= 0) { hideNextCard(); playQueueEntry(queueIndex + 1); return }
-            nextCardTimer.text = "Через $countdown с"
-            countdown--
-            handler.postDelayed(this, 1000L)
-        }
-    }
-    // Current episode + optional playlist (this episode and the ones after it, from the site).
-    private data class Entry(val title: String, val url: String)
     private var currentUrl = ""
     private var currentTitle = "Видео"
-    private var queue: List<Entry> = emptyList()
-    private var queueIndex = -1
     private lateinit var titleView: TextView
     private lateinit var prevButton: android.widget.ImageView
     private lateinit var nextButton: android.widget.ImageView
 
     // Network handling: reload the stream in place (same LibVLC/activity) when the network changes.
-    private var lastNetwork: Network? = null
-    private var networkLost = false
     private var needsReload = false
     private var userPaused = false // only set by the Play/Pause button; VLC's own Paused events must not count
     private var retryCount = 0
     private var lastTime = 0L
-    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private val networkLost: Boolean get() = networkMonitor.isNetworkLost
+
+    private val networkMonitor by lazy {
+        PlayerNetworkMonitor(this, object : PlayerNetworkMonitor.Callback {
+            override fun hasPlayer(): Boolean = mediaPlayer != null
+            override fun isViaReserve(): Boolean = viaReserve()
+            override fun shouldReconnectViaReserve(wasLost: Boolean): Boolean =
+                wasLost && (needsReload || (!ended && mediaPlayer?.isPlaying != true && !userPaused))
+            override fun onScheduleReconnect(delayMs: Long) {
+                retryCount = 0
+                reconnectScheduled = true
+                handler.removeCallbacks(reconnectRunnable)
+                handler.postDelayed(reconnectRunnable, delayMs)
+            }
+            override fun onNetworkLost() {
+                if (catchingUp) endCatchUp()
+                handler.removeCallbacks(stallRunnable)
+                if (!userPaused && !ended) showStatus("Нет сети — ждём подключение…")
+            }
+            override fun onNetworkRestoredWithoutReconnect() {
+                if (!buffering) bufferingLabel.visibility = View.GONE
+            }
+        })
+    }
 
     private val handler = Handler(Looper.getMainLooper())
-    private val hideControlsRunnable = Runnable { setControlsVisible(false) }
     // Several quick reconnects in a row did not help: the VLC engine itself may be stuck on a dead connection, so
     // the next attempt starts it from scratch instead of building yet another player on it.
     private val reconnectRunnable = Runnable { if (retryCount >= 3 && mediaPlayer != null) restartClean(play = !userPaused, resetRetries = false) else reconnect() }
     // No buffering/open progress for a while: treat as a dead connection (goes through backoff).
     private val stallRunnable = Runnable { if (mediaPlayer != null && !userPaused && !ended) handleError() }
-    private val seekLabelHideRunnable = Runnable { seekLabel.visibility = View.GONE }
     private val applyTapSeekRunnable = Runnable {
         val t = tapSeekTarget ?: return@Runnable
         tapSeekTarget = null
         seekTo(t)
     }
     // A seek that VLC never confirms (dead socket after a Wi-Fi <-> mobile switch) is redone on a fresh connection.
-    private val seekWatchdogRunnable = Runnable {
+    private val seekWatchdogRunnable: Runnable = Runnable {
         val target = pendingSeekPos ?: return@Runnable
         val p = mediaPlayer ?: return@Runnable
-        if (tsWatchdog(p, target)) return@Runnable
-        if (kotlin.math.abs(timeOf(p) - target) > SEEK_CONFIRM_TOLERANCE_MS) {
-            reconnect(forcePlay = !userPaused, startAt = target)
+        if (bluRayController.onWatchdog(p, currentUrl, userPaused, target)) return@Runnable
+        val t = timeOf(p)
+        if (kotlin.math.abs(t - target) > SEEK_CONFIRM_TOLERANCE_MS) {
+            if (buffering || !p.isPlaying) {
+                // The stream is still opening or buffering (e.g. slow network): give it another cycle
+                handler.postDelayed(seekWatchdogRunnable, SEEK_CONFIRM_TIMEOUT_MS)
+                return@Runnable
+            }
+            if (p.isSeekable && retryCount == 0) {
+                p.setTime(target)
+                handler.postDelayed(seekWatchdogRunnable, SEEK_CONFIRM_TIMEOUT_MS)
+            } else {
+                reconnect(forcePlay = !userPaused, startAt = target)
+            }
         } else pendingSeekPos = null
     }
     // Playing but the clock does not move and no buffering is reported = frozen playback.
@@ -201,58 +184,12 @@ class PlayerActivity : ComponentActivity() {
             checkNoPicture(p)
             checkHeavy()
             // Network trouble is handled by the reconnect logic; the supervisor judges only real playback.
-            if (!userPaused && !ended && !networkLost && !resumeOnFocusGain) statsOf(p)?.let { supervisor.tick(it) }
+            if (!userPaused && !ended && !networkMonitor.isNetworkLost && !audioSession.isPausedForFocus) statsOf(p)?.let { supervisor.tick(it) }
             handler.postDelayed(this, WATCHDOG_TICK_MS)
         }
     }
 
-    // ---- debug build: [vlc] and [proxy] lines every 5 s, also with the screen off (keepOnStop leaves this running) ----
-    private val diagRunnable = object : Runnable {
-        override fun run() { runCatching { diagSample() }; handler.postDelayed(this, 5_000L) }
-    }
-    private var diagPrev: org.videolan.libvlc.interfaces.IMedia.Stats? = null
-    private var diagAt = 0L
-
-    private fun diagSample() {
-        val now = SystemClock.elapsedRealtime()
-        val span = if (diagAt == 0L) 0L else now - diagAt
-        diagAt = now
-        val p = mediaPlayer
-        val sb = StringBuilder("[vlc] ")
-        if (p == null) sb.append("no player${if (keptOnStop) " (parked)" else ""}")
-        else {
-            sb.append("%.1f/%ds ".format(p.time / 1000.0, p.length / 1000))
-            sb.append(when {
-                keptOnStop -> "parked (screen off / hidden)"
-                p.isPlaying -> "playing"
-                userPaused -> "paused by user"
-                else -> "not playing"
-            })
-            if (buffering) sb.append(" BUFFERING")
-            if (networkLost) sb.append(" NETWORK-LOST")
-            if (catchingUp) sb.append(" CATCHING-UP")
-            runCatching { p.rate }.getOrNull()?.takeIf { it != 1f }?.let { sb.append(" speed ${it}x") }
-            val st = runCatching { media?.stats }.getOrNull()
-            val q = diagPrev
-            if (st != null) {
-                // Counters restart with every new Media (reopen / next episode): then the raw values are shown.
-                val fresh = q == null || st.readBytes < q.readBytes || st.displayedPictures < q.displayedPictures
-                fun d(a: Int, b: Int?) = if (fresh || b == null) a else a - b
-                val read = if (fresh) st.readBytes.toLong() else (st.readBytes - q!!.readBytes).toLong()
-                sb.append(" · read +%.2f MB%s".format(read / 1048576.0,
-                    if (span > 0 && !fresh) " (%.1f Mbit/s)".format(read * 8.0 / 1000 / span) else ""))
-                sb.append(" · pictures shown +${d(st.displayedPictures, q?.displayedPictures)} lost +${d(st.lostPictures, q?.lostPictures)}")
-                sb.append(" · decoded video +${d(st.decodedVideo, q?.decodedVideo)} audio +${d(st.decodedAudio, q?.decodedAudio)}")
-                sb.append(" · audio played +${d(st.playedAbuffers, q?.playedAbuffers)} lost +${d(st.lostAbuffers, q?.lostAbuffers)}")
-                if (st.demuxCorrupted > 0 || st.demuxDiscontinuity > 0) sb.append(" · demux corrupted ${st.demuxCorrupted} discontinuities ${st.demuxDiscontinuity}")
-                if (fresh) sb.append(" (counters since open)")
-            }
-            diagPrev = st
-        }
-        BurstProxy.aheadMb(currentUrl)?.let { sb.append(" · reserve ahead %.1f MB".format(it)) }
-        AppLog.write(sb.toString())
-        AppLog.write("[proxy] " + BurstProxy.snapshot())
-    }
+    private fun diagSample() = diagnostics.sample()
 
     // ---- playback health: the supervisor shared with the PC app (core.PlaybackSupervisor) ---------------
     // One place decides when playback is broken and what to do — only while the film really plays, never right after
@@ -270,9 +207,7 @@ class PlayerActivity : ComponentActivity() {
         }
         override fun fixSound() {
             val p = mediaPlayer ?: return
-            val id = p.audioTrack.takeIf { it != -1 } ?: p.audioTracks?.firstOrNull { it.id != -1 }?.id ?: return
-            runCatching { p.setAudioTrack(-1); p.setAudioTrack(id) } // restarts the audio decoder and output
-            selectedAudioId = id
+            trackSelector.fixSound(p)
         }
         override fun reopen(fresh: Boolean) {
             CrashReports.recovery("reopen at ${perceivedPosition() / 1000}s (fresh=$fresh)")
@@ -299,8 +234,6 @@ class PlayerActivity : ComponentActivity() {
     }
     // Reset retry backoff only after the stream has played continuously, not on the first Playing event.
     private val stablePlaybackRunnable = Runnable { retryCount = 0 }
-    private val audioManager by lazy { getSystemService(AUDIO_SERVICE) as AudioManager }
-    private val prefs by lazy { getSharedPreferences("positions", MODE_PRIVATE) }
 
     // ---- libVLC events (one listener per MediaPlayer) ----------------------------------------
     // Events of a player that was already replaced can still sit in the main looper queue; they are ignored.
@@ -308,7 +241,7 @@ class PlayerActivity : ComponentActivity() {
         if (owner !== mediaPlayer) return@EventListener
         when (event.type) {
             MediaPlayer.Event.Playing -> {
-                tsPlaying(owner) // Blu-ray: the length to the reserve, continue at the saved place
+                bluRayController.onPlaying(owner, currentUrl) // Blu-ray: the length to the reserve, continue at the saved place
                 supervisor.playing()
                 bufferingShown = 0
                 playWhenReady = true
@@ -323,19 +256,8 @@ class PlayerActivity : ComponentActivity() {
                 startWatchdog()
                 applyVideoFrameRate(owner)
                 updatePipParams(playing = true)
-                if (prefsAppliedForUrl != currentUrl && !restoreTracks) {
-                    prefsAppliedForUrl = currentUrl
-                    // Remembered tracks: applied as soon as they are known, and again when VLC reports a new one
-                    // (voice-over files arrive a little later) — instead of one fixed 1.5 s guess.
-                    prefsUntil = SystemClock.uptimeMillis() + 8_000L
-                    handler.removeCallbacks(prefsRunnable)
-                    handler.postDelayed(prefsRunnable, 300L)
-                }
+                trackSelector.onPlaying(owner, currentUrl, currentTitle)
                 updateSession()
-                if (restoreTracks) {
-                    restoreTracks = false
-                    handler.postDelayed({ if (owner === mediaPlayer) restoreSelectedTracks(owner) }, 700L)
-                }
                 updateProgress(force = true)
             }
             MediaPlayer.Event.Paused -> {
@@ -347,10 +269,7 @@ class PlayerActivity : ComponentActivity() {
                 updateSession()
             }
             MediaPlayer.Event.Stopped -> root.keepScreenOn = false
-            MediaPlayer.Event.ESAdded -> if (SystemClock.uptimeMillis() < prefsUntil) {
-                handler.removeCallbacks(prefsRunnable)
-                handler.postDelayed(prefsRunnable, 400L)
-            }
+            MediaPlayer.Event.ESAdded -> trackSelector.onESAdded()
             MediaPlayer.Event.EndReached -> {
                 // A dead network connection also shows up as EOF, so only a position near the known
                 // duration is a real end; anything else is treated as a dropped stream and reloaded.
@@ -401,23 +320,22 @@ class PlayerActivity : ComponentActivity() {
             MediaPlayer.Event.TimeChanged, MediaPlayer.Event.LengthChanged -> {
                 if (event.type == MediaPlayer.Event.LengthChanged) { BurstProxy.setDuration(currentUrl, owner.length); checkHeavy() }
                 // Blu-ray continued at a saved place: VLC may count from 0 there — timeOf() adds the known offset.
-                if (tsAbsolute && owner.time > 0L) tsAbsoluteJump(owner) // reopened for a seek back: VLC knows the real clock now
-                if (tsOpenJump && owner.time > 0L) tsOpenLanded(owner)
-                val t = if (tsOpenJump) 0L else timeOf(owner) // before the jump: the start of the file, not the film's time
+                val t = bluRayController.handleTimeUpdate(owner, currentUrl)
                 if (t > 0L) {
                     val pending = pendingSeekPos
                     if (pending == null) {
                         lastTime = t
                         playbackPosition = t
                         maybePersist(t)
-                    } else if (tsSeekTarget >= 0) {
+                    } else if (bluRayController.isSeeking) {
                         // a position seek (Blu-ray): accepted as soon as VLC reports the new place
-                        if (!tsSettling(t)) {
-                            tsSeekTarget = -1L
+                        if (!bluRayController.isSettling(t)) {
+                            bluRayController.clearSeekTarget()
                             pendingSeekPos = null
                             handler.removeCallbacks(seekWatchdogRunnable)
                             lastTime = t
                             playbackPosition = t
+                            bluRayController.onSettled(currentUrl, t, mediaPlayer?.position ?: 0f)
                         }
                     } else if (kotlin.math.abs(t - pending) <= SEEK_CONFIRM_TOLERANCE_MS) {
                         pendingSeekPos = null
@@ -431,24 +349,187 @@ class PlayerActivity : ComponentActivity() {
         }
     }
 
-    private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
-        when (change) {
-            AudioManager.AUDIOFOCUS_LOSS -> { resumeOnFocusGain = false; supervisor.paused(); mediaPlayer?.pause() }
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                if (mediaPlayer?.isPlaying == true) { resumeOnFocusGain = true; mediaPlayer?.pause() }
+    private val audioSession by lazy {
+        PlayerAudioSession(this, object : PlayerAudioSession.Callback {
+            override fun onMediaPlay() { doPlay() }
+            override fun onMediaPause() { doPause() }
+            override fun onSeekTo(pos: Long) { seekTo(pos) }
+            override fun onSkipToNext() {
+                if (playlistQueue.hasNext) playlistQueue.playNext() else tapSeek(true)
             }
-            AudioManager.AUDIOFOCUS_GAIN -> {
-                if (resumeOnFocusGain) { resumeOnFocusGain = false; supervisor.resumed(); mediaPlayer?.play() }
+            override fun onSkipToPrevious() {
+                if (playlistQueue.hasPrevious) playlistQueue.playPrevious() else tapSeek(false)
             }
-        }
+            override fun onFastForward() { tapSeek(true) }
+            override fun onRewind() { tapSeek(false) }
+            override fun isPlaying(): Boolean = mediaPlayer?.isPlaying == true
+            override fun onTransientPause() { mediaPlayer?.pause() }
+            override fun onFocusLossPause() { supervisor.paused(); mediaPlayer?.pause() }
+            override fun onFocusGainResume() { supervisor.resumed(); mediaPlayer?.play() }
+            override fun onBecomingNoisy() { mediaPlayer?.pause() }
+        })
     }
 
-    // Headphones unplugged / BT disconnected -> pause instead of blasting through the speaker.
-    private val noisyReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) mediaPlayer?.pause()
-        }
+    private val bluRayController: PlayerBluRayController by lazy {
+        PlayerBluRayController(handler, object : PlayerBluRayController.Callback {
+            override fun isActivityAlive(): Boolean = alive && !isFinishing && !isDestroyed
+            override fun showStatus(text: String) = this@PlayerActivity.showStatus(text)
+            override fun onDurationProbed(url: String, durationMs: Long, mbit: Double) {
+                checkHeavy()
+            }
+            override fun onProbeCompleted() {
+                initializePlayer()
+            }
+            override fun reconnect(forcePlay: Boolean, startAt: Long) {
+                this@PlayerActivity.reconnect(forcePlay = forcePlay, startAt = startAt)
+            }
+            override fun scheduleSeekWatchdog() {
+                handler.postDelayed(seekWatchdogRunnable, SEEK_CONFIRM_TIMEOUT_MS)
+            }
+            override fun onSeekSettled(target: Long) {
+                pendingSeekPos = null
+                lastTime = target
+                playbackPosition = target
+            }
+            override fun clearPendingSeekIfMatches(positionMs: Long) {
+                if (pendingSeekPos == positionMs) pendingSeekPos = null
+            }
+        })
     }
+
+    private val trackSelector: PlayerTrackSelector by lazy {
+        PlayerTrackSelector(this, handler, object : PlayerTrackSelector.Callback {
+            override fun onAudioTrackChanged() {
+                supervisor.seeked()
+                handler.removeCallbacks(reseekRunnable)
+                handler.postDelayed(reseekRunnable, 120L)
+            }
+            override fun isPlayerAlive(p: MediaPlayer): Boolean = p === mediaPlayer
+            override fun getCurrentTitle(): String = currentTitle
+            override fun getCurrentPlayer(): MediaPlayer? = mediaPlayer
+        })
+    }
+
+    private val reseekRunnable = Runnable { reseekHereNow() }
+
+    private val pipController: PlayerPipController by lazy {
+        PlayerPipController(this, videoLayout, object : PlayerPipController.Callback {
+            override fun getCurrentPlayer(): MediaPlayer? = mediaPlayer
+            override fun onPipModeChanged(inPip: Boolean) {
+                applyMode()
+                supervisor.surfaceChanged()
+                if (inPip) setControlsVisible(false) else showControlsTemporarily()
+                // The window size changed: let VLC re-measure (and recover if the surface was recreated meanwhile).
+                handler.post { mediaPlayer?.updateVideoSurfaces() }
+            }
+        })
+    }
+
+    private val controlsOverlay: PlayerControlsOverlay by lazy {
+        PlayerControlsOverlay(this, handler, object : PlayerControlsOverlay.Callback {
+            override fun isPip(): Boolean = inPip
+            override fun onControlsShown() {
+                updateProgress(force = true)
+                volumeBar.progress = audioSession.getStreamVolume()
+            }
+        })
+    }
+
+    private val diagnostics: PlayerDiagnostics by lazy {
+        PlayerDiagnostics(this, handler, object : PlayerDiagnostics.Callback {
+            override fun getCurrentUrl(): String = currentUrl
+            override fun getCurrentPlayer(): MediaPlayer? = mediaPlayer
+            override fun getCurrentMedia(): org.videolan.libvlc.interfaces.IMedia? = media
+            override fun isUserPaused(): Boolean = userPaused
+            override fun isBuffering(): Boolean = buffering
+            override fun isNetworkLost(): Boolean = networkLost
+            override fun isCatchingUp(): Boolean = catchingUp
+            override fun isKeptOnStop(): Boolean = keptOnStop
+            override fun getPerceivedPosition(): Long = perceivedPosition()
+            override fun onReopenWithoutHardwareDecoder(startAt: Long) {
+                reconnect(forcePlay = !userPaused, startAt = startAt)
+            }
+        })
+    }
+
+    private val watchProgress: PlayerWatchProgress by lazy {
+        PlayerWatchProgress(this, object : PlayerWatchProgress.Callback {
+            override fun getCurrentUrl(): String = currentUrl
+            override fun getCurrentQueueIndex(): Int = playlistQueue.currentIndex
+            override fun getQueueSize(): Int = playlistQueue.size
+        })
+    }
+
+    private val playlistQueue: PlayerPlaylistQueue by lazy {
+        PlayerPlaylistQueue(handler, object : PlayerPlaylistQueue.Callback {
+            override fun isActivityAlive(): Boolean = alive && !isDestroyed && !isFinishing
+            override fun getCurrentUrl(): String = currentUrl
+            override fun onSaveCurrentPosition() {
+                mediaPlayer?.let { persistPosition(timeOf(it).coerceAtLeast(0L), lengthOf(it)) }
+            }
+            override fun onPlayEntry(entry: PlayerPlaylistQueue.Entry, index: Int) {
+                currentUrl = entry.url
+                lastKnownLength = 0L
+                lastKnownLengthUrl = ""
+                currentTitle = entry.title
+                playbackPosition = savedPosition()
+                lastTime = playbackPosition
+                ended = false
+                userPaused = false
+                playWhenReady = true
+                retryCount = 0
+                needsReload = false
+                seekBar.progress = 0
+                reconnect(forcePlay = true, startAt = playbackPosition)
+            }
+            override fun onQueueUiUpdated(
+                hasMultiple: Boolean,
+                hasPrevious: Boolean,
+                hasNext: Boolean,
+                displayText: String?,
+                episodes: List<String>,
+                index: Int
+            ) {
+                prevButton.visibility = if (hasPrevious) View.VISIBLE else View.GONE
+                nextButton.visibility = if (hasNext) View.VISIBLE else View.GONE
+                titleView.text = if (displayText != null) "$currentTitle  ·  $displayText" else currentTitle
+                panel.title = currentTitle
+                panel.episodes = episodes
+                panel.index = index
+            }
+            override fun onNextEpisodeOffered() {
+                ended = true
+                playWhenReady = false
+                root.keepScreenOn = true
+                setPlayIcon(false)
+                showControlsTemporarily()
+            }
+            override fun onNextCardDismissed() {
+                if (ended) root.keepScreenOn = false
+            }
+            override fun showControlsTemporarily() {
+                this@PlayerActivity.showControlsTemporarily()
+            }
+        })
+    }
+
+    private fun hideNextCard() = playlistQueue.hideNextCard()
+    private fun offerNextEpisode(): Boolean = playlistQueue.offerNextEpisode()
+    private fun playQueueEntry(index: Int) = playlistQueue.playEntry(index)
+    private fun advanceToNext(): Boolean {
+        if (!playlistQueue.hasNext) return false
+        watchProgress.clearPosition()
+        Toast.makeText(this, "Следующая серия", Toast.LENGTH_SHORT).show()
+        return playlistQueue.advanceToNext()
+    }
+    private fun updateQueueUi() = playlistQueue.notifyUiUpdated()
+    private fun fetchPlaylist(url: String) = playlistQueue.fetchPlaylist(url)
+
+    private fun positionKey(): String? = watchProgress.positionKey()
+    private fun savedPosition(): Long = watchProgress.savedPosition()
+    private fun startPosition(i: Intent): Long = watchProgress.startPosition(i)
+    private fun persistPosition(time: Long, length: Long) = watchProgress.persistPosition(time, length, ended)
+    private fun maybePersist(time: Long) = watchProgress.maybePersist(time, lengthOf(mediaPlayer), ended)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -457,7 +538,7 @@ class PlayerActivity : ComponentActivity() {
         alive = true
         CrashReports.playerRunning(this, true) // still set at the next start = this screen died (native crash)
         BurstProxy.log = { AppLog.write(it) }
-        if (Diag.on) { Diag.playerOpen = true; handler.postDelayed(diagRunnable, 3000L) }
+        diagnostics.onResume()
         TrafficMeter.init(this)
         sessionStartMb = BurstProxy.downloadedMb()
         BurstProxy.init(java.io.File(cacheDir, "stream")) { url, from, to, cancel ->
@@ -469,7 +550,10 @@ class PlayerActivity : ComponentActivity() {
             BurstProxy.UpstreamResponse(res.code, { n -> res.header(n) }, res.body?.byteStream())
         }
         // Dead sockets of a network that is gone (or a hung one) must not be reused by the repeated request.
-        BurstProxy.resetConnections = { ru.suslikovanora.media.net.Api.plain.connectionPool.evictAll() }
+        BurstProxy.resetConnections = {
+            ru.suslikovanora.media.net.Api.plain.connectionPool.evictAll()
+            ru.suslikovanora.media.net.Api.reserve.connectionPool.evictAll()
+        }
         if (Build.VERSION.SDK_INT >= 28) {
             window.attributes = window.attributes.also {
                 it.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
@@ -534,29 +618,7 @@ class PlayerActivity : ComponentActivity() {
         }
         stage.addView(seekLabel, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_HORIZONTAL or Gravity.TOP).apply { topMargin = dp(72) })
 
-        nextCard = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(14), dp(18), dp(14))
-            background = GradientDrawable().apply { cornerRadius = dp(18).toFloat(); setColor(0xEB11141B.toInt()); setStroke(dp(1), 0x55FFB02E) }
-            visibility = View.GONE
-            isClickable = true
-        }
-        nextCard.addView(TextView(this).apply { text = "Следующая серия"; setTextColor(0xFF8E96A8.toInt()); textSize = 13f })
-        nextCardTitle = TextView(this).apply {
-            setTextColor(Color.WHITE); textSize = 16f; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            maxLines = 2; setPadding(0, dp(2), 0, dp(2))
-        }
-        nextCard.addView(nextCardTitle)
-        nextCardTimer = TextView(this).apply { setTextColor(0xFFFFB02E.toInt()); textSize = 13f }
-        nextCard.addView(nextCardTimer)
-        val nextRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(10), 0, 0) }
-        nextRow.addView(pillButton("▶  Смотреть сейчас").apply {
-            background = GradientDrawable().apply { cornerRadius = dp(22).toFloat(); setColor(0xFFFFB02E.toInt()) }
-            setTextColor(0xFF1C1200.toInt())
-            setOnClickListener { hideNextCard(); playQueueEntry(queueIndex + 1) }
-        }, LinearLayout.LayoutParams(-2, dp(42)).apply { marginEnd = dp(8) })
-        nextRow.addView(pillButton("Отмена").apply { setOnClickListener { hideNextCard(); showControlsTemporarily() } }, LinearLayout.LayoutParams(-2, dp(42)))
-        nextCard.addView(nextRow)
+        val nextCard = playlistQueue.buildNextCard(this, ::dp, ::pillButton)
         stage.addView(nextCard, FrameLayout.LayoutParams(dp(320), -2, Gravity.END or Gravity.BOTTOM).apply { rightMargin = dp(24); bottomMargin = dp(110) })
 
         controls = LinearLayout(this).apply {
@@ -578,12 +640,12 @@ class PlayerActivity : ComponentActivity() {
         prevButton = iconButton(R.drawable.ic_pl_prev, 46, 0x99151820.toInt(), 24).apply {
             visibility = View.GONE
             contentDescription = "Предыдущая серия"
-            setOnClickListener { playQueueEntry(queueIndex - 1) }
+            setOnClickListener { playlistQueue.playPrevious() }
         }
         nextButton = iconButton(R.drawable.ic_pl_next, 46, 0x99151820.toInt(), 24).apply {
             visibility = View.GONE
             contentDescription = "Следующая серия"
-            setOnClickListener { playQueueEntry(queueIndex + 1) }
+            setOnClickListener { playlistQueue.playNext() }
         }
         center.addView(prevButton, FrameLayout.LayoutParams(dp(46), dp(46), Gravity.CENTER).apply { rightMargin = dp(140) })
         center.addView(nextButton, FrameLayout.LayoutParams(dp(46), dp(46), Gravity.CENTER).apply { leftMargin = dp(140) })
@@ -624,8 +686,8 @@ class PlayerActivity : ComponentActivity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, dp(8), 0, 0)
         }
-        val audioButton = pillButton("♫  Аудио").apply { setOnClickListener { showAudioTracks(); showControlsTemporarily() } }
-        val subsButton = pillButton("CC  Субтитры").apply { setOnClickListener { showSubtitleTracks(); showControlsTemporarily() } }
+        val audioButton = pillButton("♫  Аудио").apply { setOnClickListener { trackSelector.showAudioTracks(this@PlayerActivity, mediaPlayer) { showControlsTemporarily() } } }
+        val subsButton = pillButton("CC  Субтитры").apply { setOnClickListener { trackSelector.showSubtitleTracks(this@PlayerActivity, mediaPlayer) { showControlsTemporarily() } } }
         scaleButton = pillButton("⤢  ${SCALES[scaleIndex].second}").apply { setOnClickListener { cycleScale(); showControlsTemporarily() } }
         options.addView(audioButton, LinearLayout.LayoutParams(-2, dp(42)).apply { marginEnd = dp(8) })
         options.addView(subsButton, LinearLayout.LayoutParams(-2, dp(42)).apply { marginEnd = dp(8) })
@@ -642,8 +704,8 @@ class PlayerActivity : ComponentActivity() {
         options.addView(volumeLabel, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(4) })
         // System media volume (the same as the hardware buttons and the right-edge swipe).
         volumeBar = SeekBar(this).apply {
-            max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-            progress = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            max = audioSession.getStreamMaxVolume()
+            progress = audioSession.getStreamVolume()
             progressTintList = ColorStateList.valueOf(0xFFE6B94A.toInt())
             thumbTintList = ColorStateList.valueOf(Color.WHITE)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -662,12 +724,12 @@ class PlayerActivity : ComponentActivity() {
         // The panel under the film (phone upright) does the same as the buttons over it.
         panel.title = currentTitle
         panel.scale = SCALES[scaleIndex].second
-        panel.onAudio = { showAudioTracks() }
-        panel.onSubs = { showSubtitleTracks() }
+        panel.onAudio = { trackSelector.showAudioTracks(this, mediaPlayer) { showControlsTemporarily() } }
+        panel.onSubs = { trackSelector.showSubtitleTracks(this, mediaPlayer) { showControlsTemporarily() } }
         panel.onScale = { cycleScale() }
         panel.onFull = { toggleFullscreen() }
         panel.onLock = { lockScreen() }
-        panel.onEpisode = { i -> if (i != queueIndex) playQueueEntry(i) }
+        panel.onEpisode = { i -> if (i != playlistQueue.currentIndex) playlistQueue.playEntry(i) }
         root.addOnLayoutChangeListener { _, l, _, r, _, ol, _, or_, _ -> if (r - l != or_ - ol) root.post { applyMode() } }
         // The film's area changed size (small player ⇄ full screen, rotation): VLC must re-measure its picture for it,
         // otherwise it keeps the old (bigger) size and the picture spills past the area and is cut off.
@@ -678,7 +740,7 @@ class PlayerActivity : ComponentActivity() {
             setContent { PlayerInfoPanel(panel) }
         }
         root.addView(infoPanel, FrameLayout.LayoutParams(-1, -1))
-        buildLock()
+        controlsOverlay.attachViews(root, topBar, controls, seekLabel, ::pillButton)
         // Keep controls out of the camera cutout / system bars while the video stays full-bleed.
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val i = insets.getInsets(WindowInsetsCompat.Type.displayCutout() or WindowInsetsCompat.Type.systemBars())
@@ -698,132 +760,50 @@ class PlayerActivity : ComponentActivity() {
         else { @Suppress("DEPRECATION") overridePendingTransition(R.anim.player_in, 0) }
         if (savedInstanceState == null) playEnterAnimation()
 
-        gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onDown(e: MotionEvent): Boolean = true
-
-            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                // Rapid follow-up taps after a double-tap keep seeking (like video apps do).
-                if (SystemClock.uptimeMillis() - lastSeekTapAt < REPEAT_TAP_WINDOW_MS) { tapSeek(e.x >= stage.width / 2f); return true }
+        gestures = PlayerGestures(this, object : PlayerGestures.Callback {
+            override fun getStageWidth(): Float = stage.width.toFloat()
+            override fun getStageHeight(): Float = stage.height.toFloat()
+            override fun isSeekable(): Boolean {
+                val p = mediaPlayer ?: return false
+                return lengthOf(p) > 0L || p.isSeekable
+            }
+            override fun getMediaLength(): Long = lengthOf(mediaPlayer)
+            override fun getPerceivedPosition(): Long = perceivedPosition()
+            override fun onSeekTo(position: Long) { seekTo(position) }
+            override fun onTapSeek(forward: Boolean) { tapSeek(forward) }
+            override fun onToggleControls() {
                 if (controlsVisible) setControlsVisible(false) else showControlsTemporarily()
-                return true
             }
-
-            override fun onDoubleTap(e: MotionEvent): Boolean {
-                tapSeek(e.x >= stage.width / 2f)
-                return true
+            override fun onShowControlsTemporarily() { showControlsTemporarily() }
+            override fun onScaleChanged(scaleIndex: Int) { setScale(scaleIndex) }
+            override fun onShowSeekLabel(text: String) { showSeekLabel(text) }
+            override fun getScreenBrightness(): Float = currentBrightness()
+            override fun setScreenBrightness(brightness: Float) {
+                window.attributes = window.attributes.also { it.screenBrightness = brightness }
             }
+            override fun getStreamVolume(): Int = audioSession.getStreamVolume()
+            override fun getStreamMaxVolume(): Int = audioSession.getStreamMaxVolume()
+            override fun setStreamVolume(volume: Int) { audioSession.setStreamVolume(volume) }
+            override fun onVolumeChanged(current: Int, max: Int) {
+                volumeBar.progress = current
+            }
+            override fun dp(value: Int): Int = this@PlayerActivity.dp(value)
         })
-        scaleDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
-            override fun onScaleBegin(detector: ScaleGestureDetector): Boolean { pinchFactor = 1f; return true }
-            override fun onScale(detector: ScaleGestureDetector): Boolean { pinchFactor *= detector.scaleFactor; return true }
-            override fun onScaleEnd(detector: ScaleGestureDetector) {
-                // Pinch out = fill the screen (crop the black bars), pinch in = whole frame.
-                if (pinchFactor > 1.08f) setScale(1) else if (pinchFactor < 0.92f) setScale(0)
-            }
-        })
-        val touchListener = View.OnTouchListener { _, event -> onPlayerTouch(event); true }
+        val touchListener = View.OnTouchListener { _, event -> gestures.onTouch(event) }
         stage.setOnTouchListener(touchListener)
         videoLayout.setOnTouchListener(touchListener)
-        setupSession()
+        audioSession.setup()
 
-        addOnPictureInPictureModeChangedListener { info ->
-            inPip = info.isInPictureInPictureMode
-            applyMode()
-            supervisor.surfaceChanged()
-            if (inPip) setControlsVisible(false) else showControlsTemporarily()
-            // The window size changed: let VLC re-measure (and recover if the surface was recreated meanwhile).
-            handler.post { mediaPlayer?.updateVideoSurfaces() }
-        }
+        pipController.setup()
         showControlsTemporarily()
         intent.getStringExtra(EXTRA_PLAYLIST)?.takeIf { it.isNotBlank() }?.let { fetchPlaylist(it) }
     }
 
-    // ---- playlist: this episode plus every following one (built by the site/server as an .m3u) ----
-    private fun fetchPlaylist(playlistUrl: String) {
-        Thread {
-            val entries: List<Entry> = try {
-                val c = URL(playlistUrl).openConnection() as HttpURLConnection
-                c.connectTimeout = 10_000; c.readTimeout = 15_000
-                try {
-                    if (c.responseCode != 200) emptyList<Entry>() else parseM3u(c.inputStream.bufferedReader(Charsets.UTF_8).readText())
-                } finally { c.disconnect() }
-            } catch (_: Exception) { emptyList<Entry>() }
-            runOnUiThread { if (!isDestroyed && !isFinishing) applyQueue(entries) }
-        }.start()
-    }
 
-    private fun parseM3u(text: String): List<Entry> {
-        val out = ArrayList<Entry>()
-        var title: String? = null
-        for (raw in text.removePrefix("\uFEFF").lineSequence()) {
-            val line = raw.trim()
-            when {
-                line.isEmpty() -> {}
-                line.startsWith("#EXTINF") -> title = line.substringAfter(',', "").trim()
-                line.startsWith("#") -> {}
-                line.startsWith("https://") || line.startsWith("http://") -> {
-                    out.add(Entry(title?.takeIf { it.isNotBlank() } ?: line.substringAfterLast('/').substringBefore('?'), line))
-                    title = null
-                }
-            }
-        }
-        return out
-    }
-
-    private fun mediaKey(url: String): String { val u = Uri.parse(url); return u.host.orEmpty() + u.path.orEmpty() }
-
-    private fun applyQueue(entries: List<Entry>) {
-        val idx = entries.indexOfFirst { mediaKey(it.url) == mediaKey(currentUrl) }
-        if (idx < 0) return // the playlist does not contain what is playing: ignore it
-        queue = entries
-        queueIndex = idx
-        updateQueueUi()
-    }
-
-    private fun updateQueueUi() {
-        val has = queue.size > 1 && queueIndex >= 0
-        prevButton.visibility = if (has && queueIndex > 0) View.VISIBLE else View.GONE
-        nextButton.visibility = if (has && queueIndex < queue.size - 1) View.VISIBLE else View.GONE
-        titleView.text = if (has) "$currentTitle  ·  ${queueIndex + 1}/${queue.size}" else currentTitle
-        panel.title = currentTitle
-        panel.episodes = if (has) queue.map { it.title } else emptyList()
-        panel.index = if (has) queueIndex else -1
-    }
-
-    /** Switch to another entry of the playlist on the existing player (no activity or LibVLC restart). */
-    private fun playQueueEntry(index: Int) {
-        hideNextCard()
-        if (index < 0 || index >= queue.size || mediaPlayer == null) return
-        // Remember where the episode we are leaving stopped (cleared automatically when it was watched to the end).
-        mediaPlayer?.let { persistPosition(timeOf(it).coerceAtLeast(0L), lengthOf(it)) }
-        val entry = queue[index]
-        queueIndex = index
-        currentUrl = entry.url
-        currentTitle = entry.title
-        playbackPosition = savedPosition()
-        lastTime = playbackPosition
-        ended = false
-        userPaused = false
-        playWhenReady = true
-        retryCount = 0
-        needsReload = false
-        seekBar.progress = 0
-        updateQueueUi()
-        reconnect(forcePlay = true, startAt = playbackPosition)
-    }
-
-    /** Called when an episode really finished. True when playback moved on to the next one. */
-    private fun advanceToNext(): Boolean {
-        if (queueIndex < 0 || queueIndex >= queue.size - 1) return false
-        positionKey()?.let { prefs.edit().remove(it).apply() }
-        Toast.makeText(this, "Следующая серия", Toast.LENGTH_SHORT).show()
-        playQueueEntry(queueIndex + 1)
-        return true
-    }
 
     private fun initializePlayer() {
         if (mediaPlayer != null) return
-        if (probeTsFirst()) return // Blu-ray: its length first (comes back here)
+        if (bluRayController.probeFirst(currentUrl)) return // Blu-ray: its length first (comes back here)
         val url = currentUrl.takeIf { it.isNotBlank() } ?: run { finish(); return }
         try {
             // HW decoding first, VLC falls back to software by itself. Caching is set once, on LibVLC.
@@ -844,14 +824,10 @@ class PlayerActivity : ComponentActivity() {
             pendingSeekPos = null
             val player = createPlayer(vlc, url, position)
             mediaPlayer = player
-            ContextCompat.registerReceiver(
-                this, noisyReceiver, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY),
-                ContextCompat.RECEIVER_NOT_EXPORTED
-            )
-            noisyRegistered = true
-            registerNetworkCallback()
+            audioSession.registerNoisyReceiver()
+            networkMonitor.register()
             if (!userPaused && !ended) {
-                requestAudioFocus()
+                audioSession.requestAudioFocus()
                 player.play()
                 // Opening itself can hang (bad network right at start): make sure something retries.
                 handler.removeCallbacks(stallRunnable)
@@ -868,11 +844,16 @@ class PlayerActivity : ComponentActivity() {
     /** New MediaPlayer on the given LibVLC, attached to the shared video layout, with its own event listener. */
     private fun createPlayer(vlc: LibVLC, url: String, positionMs: Long): MediaPlayer {
         catchUpNotBefore = SystemClock.elapsedRealtime() + 15_000L; catchUpFrom = positionMs + CATCH_UP_AFTER_PLAYED_MS
-        tsOpenAt = positionMs; tsOpenFixed = false; tsSeekTarget = -1L; tsOffset = 0L; tsOpenJump = false
-        lastOpenAtTime = positionMs
-        // A Blu-ray reopened at a saved place: until the jump there the bar shows that place, not VLC's 0:00, and the
-        // position is not saved over it (see tsPlaying / tsOpenLanded).
-        if (tsLengthUrl == url && positionMs > 10_000L) pendingSeekPos = positionMs
+        diagnostics.onMediaOpened(positionMs)
+        // A Blu-ray or regular stream reopened at a saved place: until the jump there the bar shows that place, not
+        // VLC's 0:00, and the position is not saved over it (see tsPlaying / tsOpenLanded).
+        if (bluRayController.onPlayerCreated(url, positionMs)) {
+            pendingSeekPos = positionMs
+        } else if (positionMs > 0L) {
+            pendingSeekPos = positionMs
+            handler.removeCallbacks(seekWatchdogRunnable)
+            handler.postDelayed(seekWatchdogRunnable, SEEK_CONFIRM_TIMEOUT_MS)
+        }
         val player = MediaPlayer(vlc)
         player.setEventListener(listenerFor(player))
         // enableSubtitles = true so selected subtitle tracks are rendered; SurfaceView is cheaper than TextureView.
@@ -902,12 +883,17 @@ class PlayerActivity : ComponentActivity() {
     /** Detach on the UI thread, do the (potentially blocking) native teardown off it, strictly in order. */
     private fun releasePlayer() {
         endCatchUp()
-        if (noisyRegistered) { runCatching { unregisterReceiver(noisyReceiver) }; noisyRegistered = false }
-        unregisterNetworkCallback()
-        abandonAudioFocus()
+        audioSession.unregisterNoisyReceiver()
+        networkMonitor.unregister()
+        needsReload = false; retryCount = 0; reconnectScheduled = false
+        handler.removeCallbacks(reconnectRunnable); handler.removeCallbacks(stallRunnable)
+        handler.removeCallbacks(stablePlaybackRunnable)
+        audioSession.abandonAudioFocus()
         handler.removeCallbacks(watchdogRunnable)
         handler.removeCallbacks(seekWatchdogRunnable)
         handler.removeCallbacks(applyTapSeekRunnable)
+        lastKnownLength = 0L
+        lastKnownLengthUrl = ""
         // A seek still in flight must survive the release (resume from where the user wanted to be).
         (tapSeekTarget ?: pendingSeekPos)?.let { playbackPosition = it; lastTime = it }
         tapSeekTarget = null; pendingSeekPos = null
@@ -940,24 +926,20 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun Media.configureMedia(url: String, positionMs: Long) {
-        setHWDecoderEnabled(url !in softwareVideo, false)
+        setHWDecoderEnabled(diagnostics.isHardwareDecoderAllowed(url), false)
         addOption(":http-reconnect")
         addOption(":network-caching=${PlaybackSettings.cacheMs(this@PlayerActivity)}")
-        val sidecars = url == subsForUrl
         // Only what this episode needs stays in the stream cache (the previous episode's files are dropped).
-        BurstProxy.keepOnly(listOf(url) + if (sidecars) audioUrls + subUrls else emptyList())
+        BurstProxy.keepOnly(trackSelector.allEpisodeUrls(url))
         // Seek to the nearest keyframe: the picture appears right away instead of waiting (or freezing) on
         // hardware decoders after a jump into the middle of a GOP. ±10 s taps do not need frame accuracy.
         // Not with an external voice-over: it is a separate input that lands on the exact moment, while the video
         // jumped to its keyframe — the sound drifted after every seek. Then seeks are exact for both.
-        if (!sidecars || audioUrls.isEmpty()) addOption(":input-fast-seek")
+        if (!trackSelector.hasExternalAudio(url)) addOption(":input-fast-seek")
         // External voice-overs / subtitles are part of the media from the start. Added to the running player (as
         // before, on every "Playing" — so again after each pause and reconnect) they reopened inputs mid-playback:
         // a hiccup and a drifting voice-over.
-        if (sidecars) {
-            for (u in audioUrls) runCatching { addSlave(org.videolan.libvlc.interfaces.IMedia.Slave(org.videolan.libvlc.interfaces.IMedia.Slave.Type.Audio, 4, burst(u))) }
-            for (u in subUrls) runCatching { addSlave(org.videolan.libvlc.interfaces.IMedia.Slave(org.videolan.libvlc.interfaces.IMedia.Slave.Type.Subtitle, 4, u)) }
-        }
+        trackSelector.attachSidecars(this, url) { burst(it) }
         // Reliable resume over HTTP: seeking before play() is ignored by many streams.
         if (positionMs > 0L) addOption(":start-time=${positionMs / 1000.0}")
     }
@@ -975,93 +957,10 @@ class PlayerActivity : ComponentActivity() {
     private fun openTimeout() = if (viaReserve()) 45_000L else OPEN_TIMEOUT_MS
     private fun stuckTicks() = if (viaReserve()) 15 else WATCHDOG_STUCK_TICKS
 
-    /**
-     * A film this phone has no hardware decoder for (often 4K / HEVC 10-bit / AV1 on older phones) is decoded by the
-     * processor — many times the battery use, and the phone gets warm. VLC does that silently; say it once per file.
-     */
-    private var decodeCheckedUrl = ""
-    private val softwareVideo = HashSet<String>() // files played without hardware decoding (VC-1, see warnIfSoftwareDecoding)
-    private var lastOpenAtTime = 0L // film time this stream was opened at (checkNoPicture waits 6 s of play from there)
-    /**
-     * Safety net for a hardware decoder that takes a format but gives no pictures (sound over a black screen, like
-     * VC-1 on Samsung): the film plays for 6 s, pictures are decoded, none is shown → this file without hardware decoding.
-     */
-    private fun checkNoPicture(p: MediaPlayer) {
-        if (currentUrl in softwareVideo || p.videoTracksCount <= 0 || timeOf(p) - lastOpenAtTime < 6_000L) return
-        val st = runCatching { media?.stats }.getOrNull() ?: return
-        if (st.displayedPictures > 0 || st.decodedVideo < 60) return
-        softwareVideo += currentUrl
-        AppLog.write("video: ${st.decodedVideo} pictures decoded, none shown — reopening with VLC's own decoder")
-        reconnect(forcePlay = !userPaused, startAt = perceivedPosition())
-    }
-
-    private fun warnIfSoftwareDecoding(p: MediaPlayer) {
-        if (decodeCheckedUrl == currentUrl) return
-        val t = runCatching { p.currentVideoTrack }.getOrNull() ?: return
-        decodeCheckedUrl = currentUrl
-        val codec = t.codec?.lowercase(Locale.ROOT)?.trim()
-        // VC-1 (old Blu-rays): the phone's own decoder takes it but gives no pictures — sound over a black screen
-        // (12.10, Samsung c2.sec.vc1.decoder: «Unsupported mime video/wvc1», dequeueOutputBuffer failed). VLC's own
-        // decoder plays it fine: open this file once more without hardware decoding, at the same moment.
-        if (codec != null && VC1.any { codec.contains(it) } && currentUrl !in softwareVideo) {
-            softwareVideo += currentUrl
-            AppLog.write("video: $codec ${t.width}x${t.height} — the hardware decoder gives no picture for VC-1, reopening with VLC's own decoder")
-            reconnect(forcePlay = !userPaused, startAt = perceivedPosition())
-            return
-        }
-        val mime = when (codec) {
-            "h264", "avc1", "x264" -> "video/avc"
-            "hevc", "h265", "hev1", "hvc1" -> "video/hevc"
-            "av01", "av1" -> "video/av01"
-            "vp90", "vp09", "vp9" -> "video/x-vnd.on2.vp9"
-            "vp80", "vp8" -> "video/x-vnd.on2.vp8"
-            "mpgv", "mp2v" -> "video/mpeg2"
-            else -> { AppLog.write("video: $codec ${t.width}x${t.height}"); return }
-        }
-        val hw = runCatching {
-            android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).codecInfos.any { info ->
-                if (info.isEncoder || info.supportedTypes.none { it.equals(mime, true) }) return@any false
-                val hardware = if (Build.VERSION.SDK_INT >= 29) info.isHardwareAccelerated
-                    else !info.name.startsWith("OMX.google.") && !info.name.startsWith("c2.android.")
-                hardware && runCatching { info.getCapabilitiesForType(mime).videoCapabilities.isSizeSupported(t.width, t.height) }.getOrDefault(true)
-            }
-        }.getOrDefault(true)
-        AppLog.write("video: ${t.codec} ${t.width}x${t.height}, hardware decoder ${if (hw) "available" else "NOT available (processor will decode)"}")
-        if (!hw) Toast.makeText(this, "Телефон не умеет аппаратно декодировать этот файл (${t.width}×${t.height}) — " +
-            "он воспроизводится процессором и заметно сильнее расходует батарею.", Toast.LENGTH_LONG).show()
-    }
-
-    /**
-     * Android 11+: tells the system the video's real frame rate. On 90/120 Hz screens the display can then run
-     * at 24/30/60 Hz during playback (a large share of the screen's power), without any visual change: on
-     * Android 12+ only seamless switches are allowed, so there is never a black flash or mode-change pause.
-     */
-    private fun applyVideoFrameRate(owner: MediaPlayer) {
-        if (Build.VERSION.SDK_INT < 30) return
-        val track = runCatching { owner.currentVideoTrack }.getOrNull() ?: return
-        if (track.frameRateNum <= 0 || track.frameRateDen <= 0) return
-        val fps = track.frameRateNum.toFloat() / track.frameRateDen
-        if (fps < 10f || fps > 121f) return
-        for (sv in surfaceViews(videoLayout)) {
-            val surface = sv.holder?.surface?.takeIf { it.isValid } ?: continue
-            try { setSurfaceFrameRate(surface, fps) } catch (_: Exception) { }
-        }
-    }
-
-    @RequiresApi(30)
-    private fun setSurfaceFrameRate(surface: Surface, fps: Float) {
-        if (Build.VERSION.SDK_INT >= 31) {
-            surface.setFrameRate(fps, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE, Surface.CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS)
-        } else {
-            surface.setFrameRate(fps, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE)
-        }
-    }
-
-    private fun surfaceViews(v: View, out: MutableList<SurfaceView> = ArrayList()): List<SurfaceView> {
-        if (v is SurfaceView) out.add(v)
-        if (v is ViewGroup) for (i in 0 until v.childCount) surfaceViews(v.getChildAt(i), out)
-        return out
-    }
+    private fun checkNoPicture(p: MediaPlayer) = diagnostics.checkNoPicture(p)
+    private fun warnIfSoftwareDecoding(p: MediaPlayer) = diagnostics.warnIfSoftwareDecoding(p)
+    private fun applyVideoFrameRate(owner: MediaPlayer) = diagnostics.applyVideoFrameRate(owner, videoLayout)
+    private fun surfaceViews(v: View, out: MutableList<SurfaceView> = ArrayList()) = PlayerDiagnostics.surfaceViews(v, out)
 
     private fun showStatus(text: String) {
         bufferingLabel.text = text
@@ -1096,7 +995,7 @@ class PlayerActivity : ComponentActivity() {
         needsReload = false
         ended = false
         buffering = false
-        restoreTracks = selectedAudioId != null || selectedSpuId != null
+        trackSelector.prepareForReconnect()
         showStatus("Переподключение…")
         try {
             // A dead socket makes stop()/setMedia() block, so never reuse the old player: build a fresh
@@ -1106,7 +1005,7 @@ class PlayerActivity : ComponentActivity() {
             runCatching { old.detachViews() }
             val player = createPlayer(vlc, url, position)
             mediaPlayer = player
-            requestAudioFocus()
+            audioSession.requestAudioFocus()
             player.play()
             runTeardown {
                 runCatching { old.stop() }
@@ -1133,7 +1032,7 @@ class PlayerActivity : ComponentActivity() {
             showSeekLabel("Перемотка недоступна для этого потока")
             return
         }
-        lastSeekTapAt = SystemClock.uptimeMillis()
+        gestures.recordTapSeek()
         if (tapSeekTarget == null) tapSeekStart = perceivedPosition()
         val base = tapSeekTarget ?: tapSeekStart
         val length = lengthOf(p)
@@ -1148,12 +1047,7 @@ class PlayerActivity : ComponentActivity() {
         showControlsTemporarily()
     }
 
-    private fun showSeekLabel(text: String) {
-        seekLabel.text = text
-        seekLabel.visibility = View.VISIBLE
-        handler.removeCallbacks(seekLabelHideRunnable)
-        handler.postDelayed(seekLabelHideRunnable, 1200L)
-    }
+    private fun showSeekLabel(text: String) = controlsOverlay.showSeekLabel(text)
 
     private var hasSeekedOk = false
 
@@ -1186,8 +1080,11 @@ class PlayerActivity : ComponentActivity() {
             return
         }
         pendingSeekPos = t
-        if (tsMode(p) && tsSeekBeforeClock(t)) return
-        if (tsMode(p)) tsSeek(p, t) else { tsSeekTarget = -1L; p.setTime(t) }
+        when (bluRayController.seek(p, currentUrl, t, userPaused)) {
+            PlayerBluRayController.SeekResult.REOPENING -> return
+            PlayerBluRayController.SeekResult.NOT_TS -> p.setTime(t)
+            PlayerBluRayController.SeekResult.HANDLED -> Unit
+        }
         hasSeekedOk = true
         ended = false
         handler.postDelayed(seekWatchdogRunnable, SEEK_CONFIRM_TIMEOUT_MS)
@@ -1195,22 +1092,26 @@ class PlayerActivity : ComponentActivity() {
         updateSession()
     }
 
-    private fun restoreSelectedTracks(p: MediaPlayer) {
-        runCatching {
-            selectedAudioId?.let { id -> if (p.audioTracks?.any { it.id == id } == true) p.setAudioTrack(id) }
-            selectedSpuId?.let { id -> if (id == -1 || p.spuTracks?.any { it.id == id } == true) p.setSpuTrack(id) }
+
+
+
+    /**
+     * A seek to the current moment (flushes LibVLC's 3-6 s network read-ahead buffer so a newly chosen
+     * audio track is heard almost immediately).
+     */
+    private fun reseekHereNow() {
+        val p = mediaPlayer ?: return
+        if (userPaused || !p.isPlaying || buffering) return
+        supervisor.seeked()
+        if (bluRayController.isTsMode(p, currentUrl)) {
+            val pos = p.position
+            if (pos > 0.001f) p.position = pos
+        } else {
+            val t = p.time
+            if (t > 0L) p.time = t
         }
     }
-
-    private fun maybePersist(time: Long) {
-        val now = SystemClock.uptimeMillis()
-        if (now - lastPersistAt < 10_000L) return
-        lastPersistAt = now
-        persistPosition(time, lengthOf(mediaPlayer))
-    }
-
     private fun handleError(fromEof: Boolean = false) {
-        AppLog.write("stream problem${if (fromEof) " (unexpected end of stream)" else ""}, network lost=$networkLost")
         root.keepScreenOn = false
         handler.removeCallbacks(stallRunnable)
         if (networkLost) {
@@ -1241,123 +1142,6 @@ class PlayerActivity : ComponentActivity() {
         }
     }
 
-    private fun registerNetworkCallback() {
-        val cm = getSystemService(CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
-        val cb = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) { runOnUiThread { onNetworkAvailable(network) } }
-            override fun onLost(network: Network) { runOnUiThread { onNetworkLost(network) } }
-            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
-                // A freshly attached mobile/Wi-Fi network is often not validated yet: reconnect once it is.
-                if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) runOnUiThread { onNetworkValidated(network) }
-            }
-        }
-        try {
-            cm.registerDefaultNetworkCallback(cb)
-            networkCallback = cb
-        } catch (_: Exception) { networkCallback = null }
-    }
-
-    private fun unregisterNetworkCallback() {
-        networkCallback?.let { cb ->
-            (getSystemService(CONNECTIVITY_SERVICE) as? ConnectivityManager)?.let { runCatching { it.unregisterNetworkCallback(cb) } }
-        }
-        networkCallback = null
-        lastNetwork = null; networkLost = false; needsReload = false; retryCount = 0
-        awaitingValidation = false; reconnectScheduled = false
-        handler.removeCallbacks(reconnectRunnable); handler.removeCallbacks(stallRunnable)
-        handler.removeCallbacks(stablePlaybackRunnable)
-    }
-
-    private fun isValidated(network: Network): Boolean {
-        val cm = getSystemService(CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return true
-        return runCatching { cm.getNetworkCapabilities(network)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) }
-            .getOrNull() ?: true
-    }
-
-    private fun onNetworkAvailable(network: Network) {
-        val previous = lastNetwork
-        val wasLost = networkLost
-        lastNetwork = network
-        networkLost = false
-        // The device really switched networks (not the first callback after registering): the reserve's requests in
-        // flight belong to the old one. 2.0.0.4 journal: after Wi-Fi → mobile the film hung ~36 s on a 30 s timeout.
-        if (previous != network && (previous != null || wasLost)) {
-            AppLog.write("network changed (${if (isValidated(network)) "validated" else "not validated yet"}): restarting the reserve's requests")
-            BurstProxy.networkChanged()
-            kickWhenValidated = !isValidated(network)
-        }
-        if (mediaPlayer == null) return
-        if (previous == null && !wasLost) return // initial callback right after registration
-        if (viaReserve() && !(wasLost && (needsReload || ended.not() && mediaPlayer?.isPlaying != true && !userPaused))) {
-            // VLC's connection is local and still alive; the reserve reconnects to the server by itself.
-            if (wasLost && !buffering) bufferingLabel.visibility = View.GONE
-            return
-        }
-        // Otherwise (2.0.2 journal): the network was gone long enough for the reserve to run dry and VLC to stop —
-        // nothing will restart it, so reconnect like for a plain stream.
-        if (previous == network && !wasLost) return
-        // Wi-Fi <-> mobile switch or connectivity is back: old sockets are dead.
-        retryCount = 0
-        reconnectScheduled = true
-        handler.removeCallbacks(reconnectRunnable)
-        if (isValidated(network)) {
-            awaitingValidation = false
-            handler.postDelayed(reconnectRunnable, 500L)
-        } else {
-            // Not validated yet: wait for onCapabilitiesChanged, but never longer than a few seconds.
-            awaitingValidation = true
-            handler.postDelayed(reconnectRunnable, 4_000L)
-        }
-    }
-
-    private var kickWhenValidated = false
-
-    private fun onNetworkValidated(network: Network) {
-        if (kickWhenValidated && network == lastNetwork) { kickWhenValidated = false; BurstProxy.networkChanged() } // the connections made before validation may hang
-        if (!awaitingValidation || network != lastNetwork || mediaPlayer == null || viaReserve()) return
-        awaitingValidation = false
-        reconnectScheduled = true
-        handler.removeCallbacks(reconnectRunnable)
-        handler.postDelayed(reconnectRunnable, 300L)
-    }
-
-    private fun onNetworkLost(network: Network) {
-        if (network != lastNetwork) return // an old network went away after we already switched
-        lastNetwork = null
-        networkLost = true
-        if (catchingUp) endCatchUp() // the film goes on as before; the usual «no network» handling takes over
-        handler.removeCallbacks(stallRunnable)
-        if (!userPaused && !ended) showStatus("Нет сети — ждём подключение…")
-    }
-
-    private fun requestAudioFocus() {
-        if (Build.VERSION.SDK_INT >= 26) {
-            val req = focusRequest ?: AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-                .setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
-                        .build()
-                )
-                .setOnAudioFocusChangeListener(focusListener)
-                .build().also { focusRequest = it }
-            audioManager.requestAudioFocus(req)
-        } else {
-            @Suppress("DEPRECATION")
-            audioManager.requestAudioFocus(focusListener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN)
-        }
-    }
-
-    private fun abandonAudioFocus() {
-        if (Build.VERSION.SDK_INT >= 26) {
-            focusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
-            focusRequest = null
-        } else {
-            @Suppress("DEPRECATION")
-            audioManager.abandonAudioFocus(focusListener)
-        }
-    }
-
     /** UI is refreshed only from player events, only while controls are visible, at most once per second. */
     private fun updateProgress(force: Boolean) {
         val p = mediaPlayer ?: return
@@ -1384,45 +1168,10 @@ class PlayerActivity : ComponentActivity() {
         }
     }
 
-    private fun showAudioTracks() {
-        val tracks = mediaPlayer?.audioTracks.orEmpty()
-        if (tracks.isEmpty()) { Toast.makeText(this, "Аудиодорожки пока не определены", Toast.LENGTH_SHORT).show(); return }
-        AlertDialog.Builder(this).setTitle("Аудиодорожка")
-            .setItems(tracks.map { it.name }.toTypedArray()) { _, which ->
-                selectedAudioId = tracks[which].id; mediaPlayer?.setAudioTrack(tracks[which].id); supervisor.seeked()
-                saveTrackPref("audio", tracks[which].name); showControlsTemporarily()
-            }.setNegativeButton("Закрыть", null).show()
-    }
 
-    private fun showSubtitleTracks() {
-        val tracks = mediaPlayer?.spuTracks.orEmpty()
-        val labels = listOf("Выключить субтитры") + tracks.map { it.name }
-        AlertDialog.Builder(this).setTitle("Субтитры")
-            .setItems(labels.toTypedArray()) { _, which ->
-                if (which == 0) { selectedSpuId = -1; mediaPlayer?.setSpuTrack(-1); saveTrackPref("spu", SPU_OFF) }
-                else { selectedSpuId = tracks[which - 1].id; mediaPlayer?.setSpuTrack(tracks[which - 1].id); saveTrackPref("spu", tracks[which - 1].name) }
-                showControlsTemporarily()
-            }.setNegativeButton("Закрыть", null).show()
-    }
 
-    private fun setControlsVisible(visible: Boolean) {
-        if (visible && locked) return // locked: the panel comes back only after «Разблокировать»
-        controlsVisible = visible
-        val target = if (visible) 1f else 0f
-        topBar.animate().alpha(target).translationY(if (visible) 0f else -dp(14).toFloat()).setDuration(220).start()
-        controls.animate().alpha(target).translationY(if (visible) 0f else dp(18).toFloat()).setDuration(220).withEndAction {
-            if (!controlsVisible) { controls.visibility = View.INVISIBLE; topBar.visibility = View.INVISIBLE }
-        }.start()
-        handler.removeCallbacks(hideControlsRunnable)
-        if (visible) {
-            controls.visibility = View.VISIBLE; topBar.visibility = View.VISIBLE
-            updateProgress(force = true) // catch up after being hidden
-            volumeBar.progress = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-            if (!inPip) handler.postDelayed(hideControlsRunnable, 3800)
-        }
-    }
-
-    private fun showControlsTemporarily() = setControlsVisible(true)
+    private fun setControlsVisible(visible: Boolean) = controlsOverlay.setVisible(visible)
+    private fun showControlsTemporarily() = controlsOverlay.showTemporarily()
 
     /** Round button with a vector icon, centred exactly (text glyphs like ‹ Ⅱ ▶ sat off-centre and differed per phone font). */
     private fun iconButton(icon: Int, size: Int, bg: Int, iconSize: Int, tint: Int = Color.WHITE) = android.widget.ImageView(this).apply {
@@ -1454,38 +1203,9 @@ class PlayerActivity : ComponentActivity() {
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 
-    private fun hideSystemUi() {
-        WindowCompat.setDecorFitsSystemWindows(window, false)
-        WindowInsetsControllerCompat(window, window.decorView).apply {
-            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            hide(WindowInsetsCompat.Type.systemBars())
-        }
-    }
+    private fun hideSystemUi() = controlsOverlay.hideSystemUi(window)
 
-    // ---- position persistence (across app restarts, keyed by host+path, query/token ignored) --
-    private fun positionKey(): String? {
-        currentWatchKey()?.let { return "w:$it" }
-        val u = Uri.parse(currentUrl.ifBlank { return null })
-        val key = u.host.orEmpty() + u.path.orEmpty()
-        return if (key.isBlank()) null else "pos:$key"
-    }
 
-    private fun savedPosition(): Long = positionKey()?.let { prefs.getLong(it, 0L) } ?: 0L
-    /** Where a film opened from the library starts: the remembered place, or 0 when «С начала» was chosen. */
-    private fun startPosition(i: Intent): Long = if (i.getBooleanExtra(EXTRA_FROM_START, false)) 0L else savedPosition()
-
-    private fun persistPosition(time: Long, length: Long) {
-        val key = positionKey() ?: return
-        val nearEnd = length > 0L && time > length - 15_000L
-        if (ended || nearEnd || time < 5_000L) prefs.edit().remove(key).apply()
-        else prefs.edit().putLong(key, time).apply()
-        // Progress for the library tiles ("продолжить с …", watched bar). Watched to the end = pos == len.
-        currentWatchKey()?.let { wk ->
-            if (time < 5_000L && !nearEnd) return@let
-            val pos = if (nearEnd || (ended && length > 0L)) length else time
-            watchPrefs.edit().putString(wk, "$pos|${length.coerceAtLeast(0L)}|${System.currentTimeMillis()}").apply()
-        }
-    }
 
     // ---- a heavy film on mobile data: ask once ------------------------------------------------------------------
     private var sessionStartMb = 0.0
@@ -1496,7 +1216,7 @@ class PlayerActivity : ComponentActivity() {
     private fun checkHeavy() {
         val limit = PlaybackSettings.heavyMbit(this)
         if (limit <= 0 || heavyDialog != null || isFinishing) return
-        val mbit = BurstProxy.bitrateMbit(currentUrl) ?: tsMbit.takeIf { it > 0 && tsLengthUrl == currentUrl } ?: return
+        val mbit = BurstProxy.bitrateMbit(currentUrl) ?: bluRayController.getBitrateMbit(currentUrl) ?: return
         val name = Uri.parse(currentUrl).lastPathSegment ?: return
         if (mbit < limit || name in heavyOk || !TrafficMeter.isMetered(this)) return
         heavyOk += name
@@ -1514,146 +1234,23 @@ class PlayerActivity : ComponentActivity() {
             .show()
     }
 
-    // ---- Blu-ray (.m2ts): no duration in the file — read from the stream's clock; seeking by position ------------------
-    // Over HTTP VLC does not read the end of an MPEG transport stream, so the length stayed 0: «--:--», no seek bar.
-    // TsClock reads both ends of the file (two small requests) before VLC starts — the length and the bitrate are known
-    // at once, the «heavy file» question comes before anything is loaded. Seeks then go by position (share of the
-    // file), measured from where VLC is now (see tsSeek).
-    private var tsLength = 0L          // ms, valid for tsLengthUrl
-    private var tsMbit = 0.0           // file size ÷ length, for the heavy-file question before VLC knows anything
-    private var tsLengthUrl = ""
-    private var tsProbed = ""          // probed (or tried) before opening: open the player then
-    private var tsOpenAt = 0L          // where the stream was opened: :start-time is ignored on such a stream
-    private var tsOpenFixed = false
-    private var tsSeekTarget = -1L     // a position seek in flight
-    private var tsSeekFrom = 0L        // VLC's time when it was asked (to tell its old time events from the new place)
-    private var tsWaits = 0
-    private var tsLastPos = 0f         // the position last asked for
-    private var tsOffset = 0L          // added to VLC's time when it counts a continued Blu-ray from 0
-    private var tsOpenJump = false     // the jump to the saved place is on its way
-    private var tsAbsolute = false     // reopened for a seek before VLC's clock: jump only after it read the clock at the start
-    private var tsOpenPos = 0f
+    // ---- Blu-ray (.m2ts): length and time delegated to PlayerBluRayController ------------------
+    private var lastKnownLength = 0L
+    private var lastKnownLengthUrl = ""
 
     /** The film's length: VLC's, or for a transport stream the one read from its clock (0 = unknown). */
-    private fun lengthOf(p: MediaPlayer?): Long =
-        p?.length?.takeIf { it > 0L } ?: if (tsLengthUrl == currentUrl) tsLength else 0L
-
-    private fun tsMode(p: MediaPlayer) = p.length <= 0L && tsLengthUrl == currentUrl && tsLength > 0L
-
-    /** Before VLC opens a transport stream: read its length (once per file). true = wait, initializePlayer comes again. */
-    private fun probeTsFirst(): Boolean {
-        val url = currentUrl
-        if (!TsClock.isTs(url) || tsProbed == url) return false
-        tsProbed = url
-        showStatus("Открываем…")
-        Thread({
-            val r = TsClock.probe(url)
-            handler.post {
-                if (url != currentUrl || isFinishing || isDestroyed) return@post
-                if (r != null) {
-                    tsLength = r.first; tsLengthUrl = url; tsMbit = r.second * 8.0 / r.first / 1000.0
-                    AppLog.write("[ts] duration from the stream's clock: %s, ≈ %.1f Mbit/s".format(formatTime(r.first), tsMbit))
-                    checkHeavy()
-                } else AppLog.write("[ts] no duration in the stream's clock")
-                initializePlayer()
-            }
-        }, "ts-clock").apply { isDaemon = true }.start()
-        return true
-    }
-
-    /** The film's time: VLC's, plus the offset when VLC counts a continued Blu-ray from 0 (see tsOpenLanded). */
-    private fun timeOf(p: MediaPlayer?): Long = (p?.time ?: 0L).let { if (it > 0L && tsLengthUrl == currentUrl) it + tsOffset else it }
-
-    /**
-     * VLC plays: give the reserve the length; opened at a saved place → jump there right away (one buffering, not
-     * two: waiting for VLC to play the file's start first meant loading twice, 12.10). Jumping this early, VLC may take
-     * the clock of the new place as its start and count from 0 — tsOpenLanded notices that and adds the offset.
-     */
-    private fun tsPlaying(p: MediaPlayer) {
-        if (tsLengthUrl != currentUrl) return
-        BurstProxy.setDuration(currentUrl, tsLength)
-        if (tsOpenFixed || !tsMode(p) || tsOpenAt <= 10_000L) return
-        if (tsAbsolute) return // reopened for a seek back: jump once VLC has read the clock at the start (tsAbsoluteJump)
-        tsJumpToOpenPlace(p)
-    }
-
-    private fun tsJumpToOpenPlace(p: MediaPlayer) {
-        tsOpenFixed = true; tsOpenJump = true
-        tsOpenPos = (tsOpenAt.toDouble() / tsLength).toFloat().coerceIn(0f, 0.999f)
-        tsLastPos = tsOpenPos
-        AppLog.write("[ts] continue at ${tsOpenAt / 1000}s → position %.4f".format(tsOpenPos))
-        p.position = tsOpenPos
-    }
-
-    /**
-     * After a continued open VLC counts its clock from the place it jumped to (tsOffset). A seek back before that
-     * place has no time on VLC's clock: it showed 0:00 and stood there (13.10). Such a seek reopens the film so that
-     * VLC first reads the real clock at the start of the file and only then jumps — its times stay true from then on.
-     * One extra loading, only for this seek. true = handled (reopening).
-     */
-    private fun tsSeekBeforeClock(t: Long): Boolean {
-        if (tsOffset <= 0L || t >= tsOffset + 2_000L) return false
-        AppLog.write("[ts] seek to ${t / 1000}s is before VLC's clock (starts at ${tsOffset / 1000}s): reopening with the real clock")
-        tsAbsolute = true
-        reconnect(forcePlay = !userPaused, startAt = t)
-        return true
-    }
-
-    /** Reopened by tsSeekBeforeClock: VLC now has its clock from the file's start — go to the place. */
-    private fun tsAbsoluteJump(p: MediaPlayer) {
-        tsAbsolute = false
-        if (tsOpenFixed || !tsMode(p)) return
-        if (tsOpenAt <= 10_000L) { tsOpenFixed = true; return }
-        tsJumpToOpenPlace(p)
-    }
-
-    /** VLC reports a time after the jump of tsPlaying: has it moved there yet, and does it count from 0 there? */
-    private fun tsOpenLanded(p: MediaPlayer) {
-        if (p.position < tsOpenPos * 0.5f) return // still the start of the file
-        val raw = p.time
-        tsOpenJump = false
-        tsOffset = if (raw < tsOpenAt / 2) tsOpenAt - raw else 0L
-        if (pendingSeekPos == tsOpenAt) pendingSeekPos = null
-        AppLog.write("[ts] landed: VLC time ${raw / 1000}s" + if (tsOffset > 0) ", counts from 0 here → +${tsOffset / 1000}s" else "")
-    }
-
-    /**
-     * A seek by position, measured from where VLC is (or, with a seek still in flight, from where that one goes —
-     * taps in a row: VLC's time is still the old place while its position is already the new one, 12.10): that share
-     * of the file plus the distance to [t]. The uneven bitrate of a disc only errs by a share of the jump itself.
-     */
-    private fun tsSeek(p: MediaPlayer, t: Long) {
-        val inFlight = tsSeekTarget >= 0 || tsOpenJump
-        val nowT = if (tsSeekTarget >= 0) tsSeekTarget else if (tsOpenJump) tsOpenAt else timeOf(p)
-        val nowPos = if (inFlight) tsLastPos else p.position
-        val base = if (nowT > 0L && nowPos > 0f) nowPos.toDouble() - nowT.toDouble() / tsLength else 0.0
-        tsSeekTarget = t; tsSeekFrom = timeOf(p); tsWaits = 0
-        val pos = (base + t.toDouble() / tsLength).toFloat().coerceIn(0f, 0.999f)
-        tsLastPos = pos
-        AppLog.write("[ts] seek %ds → position %.4f (from %ds at %.4f)".format(t / 1000, pos, nowT / 1000, nowPos))
-        p.position = pos
-    }
-
-    /** VLC reported [t] after a position seek. true = not settled yet (its old time, from before the jump). */
-    private fun tsSettling(t: Long): Boolean =
-        kotlin.math.abs(t - tsSeekFrom) < 1_500L && kotlin.math.abs(tsSeekTarget - tsSeekFrom) > 3_000L
-
-
-    /**
-     * The seek watchdog for a position seek. VLC does not confirm a seek while paused, and on a slow network loading the
-     * new place takes longer than 9 s — reopening (as for a dead socket) restarted it from 0 again and again (12.10).
-     * true = handled here.
-     */
-    private fun tsWatchdog(p: MediaPlayer, target: Long): Boolean {
-        if (tsSeekTarget < 0) return false
-        if (userPaused || !p.isPlaying || kotlin.math.abs(timeOf(p) - tsSeekFrom) > 1_500L) {
-            tsSeekTarget = -1L; pendingSeekPos = null; lastTime = target; playbackPosition = target
-            return true
+    private fun lengthOf(p: MediaPlayer?): Long {
+        val len = bluRayController.lengthOf(p, currentUrl)
+        if (len > 0L) {
+            lastKnownLength = len
+            lastKnownLengthUrl = currentUrl
+            return len
         }
-        if (++tsWaits <= 3) { handler.postDelayed(seekWatchdogRunnable, SEEK_CONFIRM_TIMEOUT_MS); return true }
-        tsSeekTarget = -1L
-        return false // 36 s and VLC did not move at all: the usual reconnect
+        return if (lastKnownLengthUrl == currentUrl) lastKnownLength else 0L
     }
+
+    /** The film's time: VLC's, plus the offset when VLC counts a continued Blu-ray from 0. */
+    private fun timeOf(p: MediaPlayer?): Long = bluRayController.timeOf(p, currentUrl)
 
     // ---- a network slower than the film: one longer wait instead of a stutter every few seconds ------------------
     // 12.10 journal (LTE 12 Mbit/s, film 13.2): the reserve stayed at 0 MB, VLC stopped for 3–6 s every 15–30 s, and
@@ -1732,8 +1329,8 @@ class PlayerActivity : ComponentActivity() {
         userPaused = false
         supervisor.resumed(); AppLog.write("play")
         if (needsReload || ended) { reconnect(forcePlay = true); return }
-        resumeOnFocusGain = false
-        requestAudioFocus()
+        audioSession.onUserPlay()
+        audioSession.requestAudioFocus()
         p.play()
     }
 
@@ -1746,71 +1343,8 @@ class PlayerActivity : ComponentActivity() {
 
     // ---- extras from the library: sidecar subtitles and watch-progress keys --------------------
     private fun readSideExtras(i: Intent?) {
-        subUrls = i?.getStringArrayListExtra(EXTRA_SUB_URLS)?.filter { it.startsWith("https://") }.orEmpty()
-        audioUrls = i?.getStringArrayListExtra(EXTRA_AUDIO_URLS)?.filter { it.startsWith("https://") }.orEmpty()
-        subsForUrl = i?.getStringExtra(EXTRA_URL).orEmpty()
-        watchKeys = i?.getStringArrayListExtra(EXTRA_WATCH_KEYS).orEmpty()
-    }
-
-    /** "magnetId|path" of what is playing (the playlist starts with the current episode, like watchKeys). */
-    private fun currentWatchKey(): String? =
-        if (queue.isNotEmpty() && queueIndex >= 0) watchKeys.getOrNull(queueIndex) else watchKeys.firstOrNull()
-
-    // ---- remembered audio / subtitle choice (per series, with a global fallback) ---------------
-    private fun seriesKey() = currentTitle.substringBefore(" · ").trim().lowercase(Locale.ROOT)
-
-    private fun saveTrackPref(kind: String, name: String) {
-        uiPrefs.edit().putString("track:$kind:${seriesKey()}", name).putString("track:$kind:*", name).apply()
-    }
-
-    private fun applyPreferredTracks(p: MediaPlayer) {
-        val key = seriesKey()
-        val audio = uiPrefs.getString("track:audio:$key", null) ?: uiPrefs.getString("track:audio:*", null)
-        val spu = uiPrefs.getString("track:spu:$key", null) ?: uiPrefs.getString("track:spu:*", null)
-        runCatching {
-            pickTrack(p.audioTracks, audio)?.let { id -> if (id != p.audioTrack) { p.setAudioTrack(id); selectedAudioId = id; supervisor.seeked() } }
-            if (spu == SPU_OFF) { if (p.spuTrack != -1) { p.setSpuTrack(-1); selectedSpuId = -1 } }
-            else pickTrack(p.spuTracks, spu)?.let { id -> if (id != p.spuTrack) p.setSpuTrack(id); selectedSpuId = id }
-        }
-    }
-
-    /** Same name first, then the same language tag ("[Russian]"), then a name that contains the old one. */
-    private fun pickTrack(tracks: Array<MediaPlayer.TrackDescription>?, wanted: String?): Int? {
-        if (wanted.isNullOrBlank() || tracks == null) return null
-        val list = tracks.filter { it.id != -1 }
-        list.firstOrNull { it.name == wanted }?.let { return it.id }
-        val lang = Regex("""\[([^\]]+)]""").find(wanted)?.groupValues?.get(1)?.lowercase(Locale.ROOT)
-        if (lang != null) list.firstOrNull { it.name.lowercase(Locale.ROOT).contains("[$lang]") }?.let { return it.id }
-        val core = wanted.lowercase(Locale.ROOT).replace(Regex("""^(track|дорожка)\s*\d+\s*-\s*"""), "").trim()
-        if (core.length >= 3) list.firstOrNull { it.name.lowercase(Locale.ROOT).contains(core) }?.let { return it.id }
-        return null
-    }
-
-    // ---- next episode card -------------------------------------------------------------------
-    /** End of an episode with a following one: show "Следующая серия" with a 10 s countdown. */
-    private fun offerNextEpisode(): Boolean {
-        if (queueIndex < 0 || queueIndex >= queue.size - 1) return false
-        ended = true
-        playWhenReady = false
-        root.keepScreenOn = true // the countdown should not let the screen sleep
-        setPlayIcon(false)
-        nextCardTitle.text = queue[queueIndex + 1].title
-        countdown = NEXT_COUNTDOWN_S
-        nextCard.alpha = 0f; nextCard.translationY = dp(16).toFloat(); nextCard.visibility = View.VISIBLE
-        nextCard.animate().alpha(1f).translationY(0f).setDuration(260).start()
-        handler.removeCallbacks(countdownRunnable)
-        handler.post(countdownRunnable)
-        showControlsTemporarily()
-        return true
-    }
-
-    private fun hideNextCard() {
-        handler.removeCallbacks(countdownRunnable)
-        // "Отмена" leaves the player on a finished episode: let the screen sleep again.
-        if (ended) root.keepScreenOn = false
-        if (::nextCard.isInitialized && nextCard.visibility == View.VISIBLE) {
-            nextCard.animate().alpha(0f).setDuration(180).withEndAction { nextCard.visibility = View.GONE }.start()
-        }
+        trackSelector.readSideExtras(i)
+        watchProgress.readIntent(i)
     }
 
     // ---- layout: upright phone = film on top + info below; sideways (or PiP) = the whole screen ----------------
@@ -1829,8 +1363,6 @@ class PlayerActivity : ComponentActivity() {
         val i = lastInsets
         val sp = stage.layoutParams as FrameLayout.LayoutParams
         val pp = infoPanel.layoutParams as FrameLayout.LayoutParams
-        val badge = unlockBadge.layoutParams as FrameLayout.LayoutParams
-        val card = nextCard.layoutParams as FrameLayout.LayoutParams
         if (full) {
             sp.height = -1; sp.topMargin = 0
             videoLayout.layoutParams = (videoLayout.layoutParams as FrameLayout.LayoutParams).apply { width = -1; height = -1; gravity = Gravity.CENTER }
@@ -1840,8 +1372,8 @@ class PlayerActivity : ComponentActivity() {
             optionsRow.visibility = View.VISIBLE
             centerRow.layoutParams = centerRow.layoutParams.apply { height = dp(82) }
             playPauseButton.scaleX = 1f; playPauseButton.scaleY = 1f
-            card.rightMargin = dp(24); card.bottomMargin = dp(110)
-            badge.gravity = Gravity.CENTER; badge.topMargin = 0
+            playlistQueue.updateCardMargins(full = true)
+            controlsOverlay.updateUnlockBadgeLayout(full = true, topInset = 0, filmHeight = 0)
             fullButton.setImageResource(R.drawable.ic_pl_full_exit); fullButton.contentDescription = "Выйти из полноэкранного режима"
             hideSystemUi()
         } else {
@@ -1861,13 +1393,12 @@ class PlayerActivity : ComponentActivity() {
             optionsRow.visibility = View.GONE // the same buttons are in the panel below
             centerRow.layoutParams = centerRow.layoutParams.apply { height = dp(60) }
             playPauseButton.scaleX = 0.82f; playPauseButton.scaleY = 0.82f
-            card.rightMargin = dp(10); card.bottomMargin = dp(10)
-            badge.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; badge.topMargin = i.top + h / 2 - dp(25)
+            playlistQueue.updateCardMargins(full = false)
+            controlsOverlay.updateUnlockBadgeLayout(full = false, topInset = i.top, filmHeight = h)
             fullButton.setImageResource(R.drawable.ic_pl_full); fullButton.contentDescription = "На весь экран"
-            WindowCompat.setDecorFitsSystemWindows(window, false)
-            WindowInsetsControllerCompat(window, window.decorView).show(WindowInsetsCompat.Type.systemBars())
+            controlsOverlay.showSystemUi(window)
         }
-        stage.layoutParams = sp; infoPanel.layoutParams = pp; unlockBadge.layoutParams = badge; nextCard.layoutParams = card
+        stage.layoutParams = sp; infoPanel.layoutParams = pp
         if (modeFull != full) {
             modeFull = full
             // The small player always shows the whole frame: «Заполнить» / «Растянуть» chosen for the full screen cropped
@@ -1939,55 +1470,9 @@ class PlayerActivity : ComponentActivity() {
     }
 
     // ---- screen lock against accidental touches ---------------------------------------------------------------
-    // Locked: nothing on the screen reacts (no pause, seek, brightness, panel); a touch only shows «Разблокировать».
-    private var locked = false
-    private lateinit var lockShield: View
-    private lateinit var unlockBadge: TextView
-    private val hideBadgeRunnable = Runnable {
-        unlockBadge.animate().alpha(0f).setDuration(200).withEndAction { unlockBadge.visibility = View.GONE }.start()
-    }
-
-    private fun buildLock() {
-        lockShield = View(this).apply {
-            visibility = View.GONE
-            setOnTouchListener { _, ev -> if (ev.actionMasked == MotionEvent.ACTION_UP) showUnlockBadge(); true }
-        }
-        root.addView(lockShield, FrameLayout.LayoutParams(-1, -1))
-        unlockBadge = pillButton("🔓  Разблокировать").apply {
-            textSize = 15f; setPadding(dp(24), 0, dp(24), 0); visibility = View.GONE
-            background = GradientDrawable().apply { cornerRadius = dp(25).toFloat(); setColor(0xF011141B.toInt()); setStroke(dp(1), 0x88FFB02E.toInt()) }
-            contentDescription = "Разблокировать экран"
-            setOnClickListener { unlockScreen() }
-        }
-        root.addView(unlockBadge, FrameLayout.LayoutParams(-2, dp(50), Gravity.CENTER))
-    }
-
-    private fun lockScreen() {
-        if (locked) return
-        setControlsVisible(false)
-        locked = true
-        lockShield.visibility = View.VISIBLE
-        showSeekLabel("🔒  Экран заблокирован")
-        handler.postDelayed({ if (locked) showUnlockBadge() }, 700L) // shows once where to unlock
-    }
-
-    private fun showUnlockBadge() {
-        if (!locked) return
-        handler.removeCallbacks(hideBadgeRunnable)
-        unlockBadge.animate().cancel()
-        if (unlockBadge.visibility != View.VISIBLE) { unlockBadge.alpha = 0f; unlockBadge.visibility = View.VISIBLE }
-        unlockBadge.animate().alpha(1f).setDuration(180).start()
-        handler.postDelayed(hideBadgeRunnable, 3000L)
-    }
-
-    private fun unlockScreen() {
-        locked = false
-        handler.removeCallbacks(hideBadgeRunnable)
-        unlockBadge.animate().cancel()
-        unlockBadge.visibility = View.GONE
-        lockShield.visibility = View.GONE
-        showControlsTemporarily()
-    }
+    private fun lockScreen() = controlsOverlay.lock()
+    private fun unlockScreen() = controlsOverlay.unlock()
+    private fun showUnlockBadge() = controlsOverlay.showUnlockBadge()
 
     // ---- frame mode ---------------------------------------------------------------------------
     private fun cycleScale() = setScale((scaleIndex + 1) % SCALES.size)
@@ -2001,88 +1486,6 @@ class PlayerActivity : ComponentActivity() {
         showSeekLabel(if (isFull()) "Кадр: ${SCALES[scaleIndex].second}" else "Кадр на весь экран: ${SCALES[scaleIndex].second}")
     }
 
-    // ---- gestures: horizontal = seek, left edge vertical = brightness, right = volume ----------
-    private fun onPlayerTouch(ev: MotionEvent) {
-        scaleDetector.onTouchEvent(ev)
-        if (ev.pointerCount > 1 || scaleDetector.isInProgress) {
-            if (drag != Drag.None) cancelDrag()
-            return
-        }
-        when (ev.actionMasked) {
-            MotionEvent.ACTION_DOWN -> { dragStartX = ev.x; dragStartY = ev.y; drag = Drag.None }
-            MotionEvent.ACTION_MOVE -> {
-                if (drag == Drag.None) startDragIfNeeded(ev) else updateDrag(ev)
-                if (drag != Drag.None) return
-            }
-            MotionEvent.ACTION_UP -> if (drag != Drag.None) { finishDrag(); return }
-            MotionEvent.ACTION_CANCEL -> if (drag != Drag.None) { cancelDrag(); return }
-        }
-        gestureDetector.onTouchEvent(ev)
-    }
-
-    private fun startDragIfNeeded(ev: MotionEvent) {
-        val dx = ev.x - dragStartX; val dy = ev.y - dragStartY
-        val h = stage.height.toFloat().coerceAtLeast(1f)
-        // Leave the screen edges to the system (notification shade, home/back gestures).
-        val edge = dp(40).toFloat()
-        if (dragStartY < edge || dragStartY > h - edge) return
-        val p = mediaPlayer
-        drag = when {
-            kotlin.math.abs(dx) > touchSlop && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.5f &&
-                p != null && (lengthOf(p) > 0L || p.isSeekable) -> Drag.Seek
-            kotlin.math.abs(dy) > touchSlop && kotlin.math.abs(dy) > kotlin.math.abs(dx) * 1.5f ->
-                if (dragStartX < stage.width / 2f) Drag.Brightness else Drag.Volume
-            else -> Drag.None
-        }
-        if (drag == Drag.None) return
-        // Stop the tap detector from firing a single tap on release.
-        val cancel = MotionEvent.obtain(ev).apply { action = MotionEvent.ACTION_CANCEL }
-        gestureDetector.onTouchEvent(cancel); cancel.recycle()
-        dragStartX = ev.x; dragStartY = ev.y
-        when (drag) {
-            Drag.Seek -> { dragSeekBase = perceivedPosition(); dragSeekTarget = dragSeekBase; showControlsTemporarily() }
-            Drag.Brightness -> dragStartValue = currentBrightness()
-            Drag.Volume -> dragStartValue = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()
-            Drag.None -> {}
-        }
-    }
-
-    private fun updateDrag(ev: MotionEvent) {
-        val w = stage.width.toFloat().coerceAtLeast(1f); val h = stage.height.toFloat().coerceAtLeast(1f)
-        when (drag) {
-            Drag.Seek -> {
-                val length = lengthOf(mediaPlayer)
-                var t = dragSeekBase + ((ev.x - dragStartX) / w * SEEK_SWIPE_RANGE_MS).toLong()
-                t = t.coerceAtLeast(0L)
-                if (length > 0L) t = t.coerceAtMost((length - 1_000L).coerceAtLeast(0L))
-                dragSeekTarget = t
-                val diff = (t - dragSeekBase) / 1000
-                val sign = if (diff >= 0) "+" else "−"
-                showSeekLabel("$sign${formatTime(kotlin.math.abs(diff) * 1000)}  ·  ${formatTime(t)}" + if (length > 0L) " / ${formatTime(length)}" else "")
-            }
-            Drag.Brightness -> {
-                val v = (dragStartValue - (ev.y - dragStartY) / (h * 0.8f)).coerceIn(0.01f, 1f)
-                window.attributes = window.attributes.also { it.screenBrightness = v }
-                showSeekLabel("☀  ${(v * 100).toInt()}%")
-            }
-            Drag.Volume -> {
-                val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-                val v = (dragStartValue - (ev.y - dragStartY) / (h * 0.8f) * max).toInt().coerceIn(0, max)
-                setSystemVolume(v)
-                volumeBar.progress = v
-                showSeekLabel((if (v == 0) "🔇  " else "🔊  ") + "${v * 100 / max.coerceAtLeast(1)}%")
-            }
-            Drag.None -> {}
-        }
-    }
-
-    private fun finishDrag() {
-        if (drag == Drag.Seek && dragSeekTarget != dragSeekBase) seekTo(dragSeekTarget)
-        drag = Drag.None
-    }
-
-    private fun cancelDrag() { drag = Drag.None }
-
     private fun currentBrightness(): Float {
         val own = window.attributes.screenBrightness
         if (own >= 0f) return own
@@ -2092,92 +1495,34 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun setSystemVolume(v: Int) {
-        runCatching { audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, v, 0) }
+        audioSession.setStreamVolume(v)
     }
 
     // ---- MediaSession: headset / Bluetooth buttons, PiP controls ---------------------------------
-    private fun setupSession() {
-        val s = runCatching { MediaSession(this, "SuslikPlayer") }.getOrNull() ?: return
-        s.setCallback(object : MediaSession.Callback() {
-            override fun onPlay() { doPlay() }
-            override fun onPause() { doPause() }
-            override fun onStop() { doPause() }
-            override fun onSkipToNext() { if (queueIndex in 0 until queue.size - 1) playQueueEntry(queueIndex + 1) else tapSeek(true) }
-            override fun onSkipToPrevious() { if (queueIndex > 0) playQueueEntry(queueIndex - 1) else tapSeek(false) }
-            override fun onFastForward() { tapSeek(true) }
-            override fun onRewind() { tapSeek(false) }
-            override fun onSeekTo(pos: Long) { seekTo(pos) }
-        })
-        @Suppress("DEPRECATION")
-        s.setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS or MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS)
-        s.isActive = true
-        session = s
-        updateSession()
-    }
-
     /** State + position with its timestamp: the system extrapolates the position itself (no periodic updates). */
     private fun updateSession() {
-        val s = session ?: return
         val p = mediaPlayer
-        val playing = p?.isPlaying == true
-        val state = when {
-            p == null -> PlaybackState.STATE_NONE
-            buffering -> PlaybackState.STATE_BUFFERING
-            playing -> PlaybackState.STATE_PLAYING
-            ended -> PlaybackState.STATE_STOPPED
-            else -> PlaybackState.STATE_PAUSED
-        }
-        var actions = PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE or
-            PlaybackState.ACTION_SEEK_TO or PlaybackState.ACTION_FAST_FORWARD or PlaybackState.ACTION_REWIND or PlaybackState.ACTION_STOP
-        if (queueIndex in 0 until queue.size - 1) actions = actions or PlaybackState.ACTION_SKIP_TO_NEXT
-        if (queueIndex > 0) actions = actions or PlaybackState.ACTION_SKIP_TO_PREVIOUS
-        runCatching {
-            s.setPlaybackState(
-                PlaybackState.Builder().setActions(actions)
-                    .setState(state, perceivedPosition(), if (playing) 1f else 0f, SystemClock.elapsedRealtime()).build()
-            )
-            s.setMetadata(
-                MediaMetadata.Builder()
-                    .putString(MediaMetadata.METADATA_KEY_TITLE, titleView.text?.toString() ?: currentTitle)
-                    .putLong(MediaMetadata.METADATA_KEY_DURATION, lengthOf(p))
-                    .build()
-            )
-        }
+        audioSession.update(
+            title = titleView.text?.toString() ?: currentTitle,
+            duration = lengthOf(p),
+            position = perceivedPosition(),
+            isPlaying = p?.isPlaying == true,
+            isBuffering = buffering,
+            isEnded = ended,
+            hasPlayer = p != null,
+            canSkipNext = playlistQueue.hasNext,
+            canSkipPrevious = playlistQueue.hasPrevious
+        )
     }
 
     // ---- Picture-in-Picture ----------------------------------------------------------------
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        // Android 12+ enters PiP by itself (setAutoEnterEnabled): smoother, and the video surface is not torn down.
-        if (Build.VERSION.SDK_INT >= 26 && Build.VERSION.SDK_INT < 31 && mediaPlayer?.isPlaying == true) {
-            try { enterPictureInPictureMode(buildPipParams(playing = true)) } catch (_: Exception) { }
-        }
+        pipController.onUserLeaveHint()
     }
 
     private fun updatePipParams(playing: Boolean) {
-        if (Build.VERSION.SDK_INT < 26) return
-        try { setPictureInPictureParams(buildPipParams(playing)) } catch (_: Exception) { }
-    }
-
-    @RequiresApi(26)
-    private fun buildPipParams(playing: Boolean): PictureInPictureParams {
-        val b = PictureInPictureParams.Builder().setAspectRatio(pipAspect())
-        val r = Rect()
-        if (videoLayout.isAttachedToWindow && videoLayout.getGlobalVisibleRect(r) && !r.isEmpty) b.setSourceRectHint(r)
-        if (Build.VERSION.SDK_INT >= 31) b.setAutoEnterEnabled(playing)
-        return b.build()
-    }
-
-    /** Video's own aspect ratio when known (PiP accepts 1:2.39 … 2.39:1), otherwise 16:9. */
-    private fun pipAspect(): Rational {
-        val t = runCatching { mediaPlayer?.currentVideoTrack }.getOrNull()
-        if (t != null && t.width > 0 && t.height > 0) {
-            val sar = if (t.sarNum > 0 && t.sarDen > 0) t.sarNum.toDouble() / t.sarDen else 1.0
-            val w = (t.width * sar).toInt()
-            val ratio = w.toDouble() / t.height
-            if (ratio in 0.42..2.38) return Rational(w, t.height)
-        }
-        return Rational(16, 9)
+        pipController.updatePipParams(playing)
     }
 
     // ---- video surface recovery --------------------------------------------------------------
@@ -2210,17 +1555,17 @@ class PlayerActivity : ComponentActivity() {
         // Restart the video output on the new surface; audio and position are not interrupted.
         runCatching { if (p.videoTracksCount > 0) { p.setVideoTrackEnabled(false); p.setVideoTrackEnabled(true) } }
         applyVideoFrameRate(p)
-        if (!networkLost && !buffering) bufferingLabel.visibility = View.GONE
+        if (!networkMonitor.isNetworkLost && !buffering) bufferingLabel.visibility = View.GONE
     }
 
     // ---- lifecycle -------------------------------------------------------------------------
     override fun onStart() {
         super.onStart()
-        session?.isActive = true
+        audioSession.setActive(true)
         handler.removeCallbacks(idleReleaseRunnable)
         val away = SystemClock.elapsedRealtime() - stoppedAt // elapsedRealtime: the phone sleeps while locked, uptime stops then
         when {
-            keptOnStop && mediaPlayer != null && away < FAST_RESUME_MS && activeNetworkNow() == networkAtStop -> resumeAfterStop()
+            keptOnStop && mediaPlayer != null && away < FAST_RESUME_MS && networkMonitor.activeNetwork() == networkAtStop -> resumeAfterStop()
             keptOnStop && mediaPlayer != null -> {
                 // Away longer: the server / the phone's network has most likely dropped the paused connection, and
                 // VLC waits on such a dead socket forever (the endless "0 %" / "Переподключение" loop). Start clean
@@ -2261,8 +1606,6 @@ class PlayerActivity : ComponentActivity() {
 
     private var stoppedAt = 0L
     private var networkAtStop: Network? = null // Wi-Fi <-> mobile while locked = the paused connection is dead
-    private fun activeNetworkNow(): Network? =
-        runCatching { (getSystemService(CONNECTIVITY_SERVICE) as? ConnectivityManager)?.activeNetwork }.getOrNull()
 
     /** Everything torn down (VLC too, in the background) and opened again at the same moment. */
     private fun restartClean(play: Boolean, resetRetries: Boolean = true) {
@@ -2277,7 +1620,7 @@ class PlayerActivity : ComponentActivity() {
 
     private fun keepOnStop(p: MediaPlayer) {
         stoppedAt = SystemClock.elapsedRealtime()
-        networkAtStop = activeNetworkNow()
+        networkAtStop = networkMonitor.activeNetwork()
         endCatchUp()
         playOnStart = !userPaused && !ended && (p.isPlaying || playWhenReady || buffering)
         runCatching { p.pause() } // not doPause(): the user did not pause, the film continues on return
@@ -2290,11 +1633,15 @@ class PlayerActivity : ComponentActivity() {
         runCatching { p.detachViews() }
         handler.removeCallbacks(reattachRunnable); surfaceLost = false
         // Nothing may restart playback (or reconnect) behind the lock screen.
-        for (r in listOf(watchdogRunnable, stallRunnable, reconnectRunnable, seekWatchdogRunnable, prefsRunnable))
+        trackSelector.stop()
+        for (r in listOf(watchdogRunnable, stallRunnable, reconnectRunnable, seekWatchdogRunnable, reseekRunnable))
             handler.removeCallbacks(r)
-        unregisterNetworkCallback()
-        if (noisyRegistered) { runCatching { unregisterReceiver(noisyReceiver) }; noisyRegistered = false }
-        abandonAudioFocus()
+        networkMonitor.unregister()
+        needsReload = false; retryCount = 0; reconnectScheduled = false
+        handler.removeCallbacks(reconnectRunnable); handler.removeCallbacks(stallRunnable)
+        handler.removeCallbacks(stablePlaybackRunnable)
+        audioSession.unregisterNoisyReceiver()
+        audioSession.abandonAudioFocus()
         root.keepScreenOn = false
         handler.postDelayed(idleReleaseRunnable, IDLE_RELEASE_MS)
     }
@@ -2307,13 +1654,12 @@ class PlayerActivity : ComponentActivity() {
         hookSurfaces()
         handler.removeCallbacks(videoBackRunnable)
         handler.postDelayed(videoBackRunnable, 150L) // once the new surface exists
-        ContextCompat.registerReceiver(this, noisyReceiver, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY), ContextCompat.RECEIVER_NOT_EXPORTED)
-        noisyRegistered = true
-        registerNetworkCallback()
+        audioSession.registerNoisyReceiver()
+        networkMonitor.register()
         AppLog.write("back after ${(SystemClock.elapsedRealtime() - stoppedAt) / 1000}s: continue")
         if (playOnStart && !userPaused) {
             supervisor.resumed()
-            requestAudioFocus()
+            audioSession.requestAudioFocus()
             runCatching { p.play() }
             // The connection may have been closed while paused: VLC reconnects by itself; if it hangs, the usual
             // stall recovery takes over.
@@ -2335,13 +1681,13 @@ class PlayerActivity : ComponentActivity() {
         if (keptOnStop) { playOnStart = false; handler.removeCallbacks(idleReleaseRunnable); resumeAfterStop() }
         mediaPlayer?.let { persistPosition(perceivedPosition(), lengthOf(it)) }
         currentUrl = url
+        lastKnownLength = 0L
+        lastKnownLengthUrl = ""
         currentTitle = intent.getStringExtra(EXTRA_TITLE)?.ifBlank { "Видео" } ?: "Видео"
-        queue = emptyList(); queueIndex = -1
+        playlistQueue.reset()
         readSideExtras(intent)
-        hideNextCard()
         titleView.text = currentTitle
-        updateQueueUi()
-        selectedAudioId = null; selectedSpuId = null
+        trackSelector.resetSelectedTracks()
         playbackPosition = startPosition(intent); lastTime = playbackPosition
         pendingSeekPos = null; ended = false; userPaused = false; playWhenReady = true; retryCount = 0; needsReload = false
         if (mediaPlayer != null) reconnect(forcePlay = true, startAt = playbackPosition)
@@ -2354,14 +1700,15 @@ class PlayerActivity : ComponentActivity() {
         AppLog.write("player closed: %.0f MB fetched in this session (%s)".format(
             BurstProxy.downloadedMb() - sessionStartMb, if (TrafficMeter.isMetered(this)) "mobile" else "wifi"))
         TrafficMeter.flush(this)
-        if (Diag.on) { diagSample(); Diag.playerOpen = false; Diag.batterySnapshot("film closed") }
+        diagnostics.onDestroy()
         orientationWatch?.disable(); orientationWatch = null
         CrashReports.playerRunning(this, false)
         supervisor.closed()
         handler.removeCallbacksAndMessages(null)
         if (keptOnStop) { keptOnStop = false; releasePlayer() }
         if (isFinishing) BurstProxy.clear() // the film's cached part is no longer needed
-        session?.release(); session = null
+        audioSession.release()
+        controlsOverlay.destroy()
         for (sv in hookedSurfaces) runCatching { sv.holder.removeCallback(surfaceCallback) }
         hookedSurfaces.clear()
         super.onDestroy()
@@ -2373,11 +1720,11 @@ class PlayerActivity : ComponentActivity() {
             persistPosition(playbackPosition, lengthOf(p))
         }
         // playWhenReady is maintained by events, so a mid-buffering stop no longer resumes paused.
-        handler.removeCallbacks(hideControlsRunnable)
-        handler.removeCallbacks(countdownRunnable)
+        controlsOverlay.onStop()
+        playlistQueue.stop()
         val p = mediaPlayer
         if (p != null && !isFinishing && !isChangingConfigurations) keepOnStop(p) else releasePlayer()
-        session?.isActive = false
+        audioSession.setActive(false)
         super.onStop()
     }
 
@@ -2394,14 +1741,7 @@ class PlayerActivity : ComponentActivity() {
         if (hasFocus && isFull()) hideSystemUi()
     }
 
-    private fun formatTime(ms: Long): String {
-        val totalSeconds = ms.coerceAtLeast(0L) / 1000L
-        val h = totalSeconds / 3600
-        val m = (totalSeconds % 3600) / 60
-        val s = totalSeconds % 60
-        return if (h > 0) String.format(Locale.getDefault(), "%d:%02d:%02d", h, m, s)
-        else String.format(Locale.getDefault(), "%02d:%02d", m, s)
-    }
+    private fun formatTime(ms: Long): String = PlayerGestures.formatTime(ms)
 
     companion object {
         /** This screen exists right now (CrashReports tells a crash from a normal close by it). */
@@ -2420,15 +1760,11 @@ class PlayerActivity : ComponentActivity() {
         private const val WATCHDOG_TICK_MS = 2_000L
         private const val FAST_RESUME_MS = 20_000L // back within this: just continue the paused player
         private const val CATCH_UP_MAX_MS = 45_000L // the longest pause to gather a reserve on a slow network
-        private val VC1 = setOf("wvc1", "vc-1", "vc1", "wmv3") // VLC's names of the VC-1 / WMV9 video codec
         private const val CATCH_UP_AFTER_PLAYED_MS = 5_000L // film played at a new place before a wait for a reserve
         private const val IDLE_RELEASE_MS = 10 * 60_000L // locked longer than this: free VLC and the connection
         const val EXTRA_SUB_URLS = "media_sub_urls"
         const val EXTRA_WATCH_KEYS = "media_watch_keys"
         const val EXTRA_AUDIO_URLS = "media_audio_urls"
-        private const val SPU_OFF = "__off__"
-        private const val SEEK_SWIPE_RANGE_MS = 180_000L // full screen width = 3 min
-        private const val NEXT_COUNTDOWN_S = 10
         private val SCALES = listOf(
             MediaPlayer.ScaleType.SURFACE_BEST_FIT to "Вписать",
             MediaPlayer.ScaleType.SURFACE_FIT_SCREEN to "Заполнить",
@@ -2439,7 +1775,6 @@ class PlayerActivity : ComponentActivity() {
         private const val SEEK_CONFIRM_TIMEOUT_MS = 9_000L
         private const val SEEK_CONFIRM_TOLERANCE_MS = 4_000L
         private const val TAP_SEEK_APPLY_MS = 350L
-        private const val REPEAT_TAP_WINDOW_MS = 900L
         private const val STABLE_PLAYBACK_MS = 30_000L
         private const val MAX_RETRY_DELAY_MS = 15_000L
         private const val MAX_RETRIES = 5

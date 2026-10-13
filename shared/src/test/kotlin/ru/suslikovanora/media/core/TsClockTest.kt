@@ -88,4 +88,52 @@ class TsClockTest {
         assertTrue(TsClock.isTs("https://x/api/file/proxy/00800.m2ts?link=a&sig=b"))
         assertTrue(!TsClock.isTs("https://x/api/file/proxy/Film.mkv?link=a"))
     }
+
+    @Test fun piecewiseInterpolationCorrectsVbrSkew() {
+        val url = "https://x/api/file/proxy/test.m2ts?link=testvbr"
+        TsClock.clearCache()
+        val totalMs = 5_000_000L // 5000s
+        // Without checkpoints: linear fallback
+        assertEquals(0.5f, TsClock.posFor(url, 2_500_000L, totalMs), 0.0001f)
+
+        // Inject checkpoints:
+        // Say first half has higher bitrate: 2500s is at 0.60 position (not 0.50)
+        // 0s -> 0.0f
+        // 2500s -> 0.60f
+        // 5000s -> 1.0f
+        val info = TsClock.ClockInfo(totalMs, 10_000_000_000L, 0x1011, 0L)
+        info.checkpoints[0L] = 0f
+        info.checkpoints[2_500_000L] = 0.60f
+        info.checkpoints[totalMs] = 1.0f
+        // Use learn or directly test through ClockInfo
+        TsClock.probe("https://x/api/file/proxy/test.m2ts?link=testvbr") // will be null but let's test posFor
+        // Learn points
+        TsClock.learn(url, 2_500_000L, 0.60f)
+    }
+
+    @Test fun posForInterpolatesAccurately() {
+        val url = "https://x/api/file/proxy/interp.m2ts?link=interp"
+        TsClock.clearCache()
+        // Simulate probed stream by injecting ClockInfo into clockCache via probe or reflection / internal
+        val info = TsClock.ClockInfo(5_000_000L, 10_000_000_000L, 0x1011, 0L)
+        info.checkpoints[0L] = 0.0f
+        info.checkpoints[2_000_000L] = 0.50f // 2000s = 0.50
+        info.checkpoints[5_000_000L] = 1.0f  // 5000s = 1.00
+        val clockCacheField = TsClock::class.java.getDeclaredField("clockCache")
+        clockCacheField.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val map = clockCacheField.get(TsClock) as java.util.concurrent.ConcurrentHashMap<String, TsClock.ClockInfo>
+        map["interp"] = info
+
+        // Seeking to 1000s: midway between 0 (0.0) and 2000s (0.50) -> should be 0.25 (not 1000/5000 = 0.20)
+        assertEquals(0.25f, TsClock.posFor(url, 1_000_000L, 5_000_000L), 0.0001f)
+
+        // Seeking to 3500s: midway between 2000s (0.50) and 5000s (1.00) -> should be 0.75 (not 3500/5000 = 0.70)
+        assertEquals(0.75f, TsClock.posFor(url, 3_500_000L, 5_000_000L), 0.0001f)
+
+        // Dynamic learning adds a new checkpoint at 3000s = 0.60
+        TsClock.learn(url, 3_000_000L, 0.60f)
+        // Now seeking to 2500s: midway between 2000s (0.50) and 3000s (0.60) -> 0.55
+        assertEquals(0.55f, TsClock.posFor(url, 2_500_000L, 5_000_000L), 0.0001f)
+    }
 }

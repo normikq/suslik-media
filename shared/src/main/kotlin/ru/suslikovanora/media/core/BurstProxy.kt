@@ -9,6 +9,8 @@ import java.io.RandomAccessFile
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.SocketException
+import java.net.SocketTimeoutException
 import java.net.URLEncoder
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -261,7 +263,7 @@ object BurstProxy {
     fun readRange(url: String, from: Long, len: Int): Pair<ByteArray, Long>? = runCatching {
         val up = upstream ?: return null
         val c = Cancel()
-        val timer = watchdog.schedule({ c.cancel() }, 15, TimeUnit.SECONDS)
+        val timer = watchdog.schedule({ c.cancel() }, 7, TimeUnit.SECONDS)
         try {
             up.open(url, from, from + len - 1, c).use { r ->
                 if (r.code !in 200..299) return null
@@ -417,7 +419,8 @@ object BurstProxy {
         fun checkStall(now: Long) {
             val c = cancel ?: return
             if (closed) return
-            val head = headerStallMs + 4_000L * minOf(failures, 2) // a repeatedly failing network gets more patience
+            val starving = (end() - readPos) < (2L shl 20)
+            val head = if (starving) headerStallMs else headerStallMs + 4_000L * minOf(failures, 2) // a repeatedly failing network gets more patience only when buffered ahead
             val why = when {
                 !gotHeaders && now - fetchAt > head -> "no answer for %.0f s".format((now - fetchAt) / 1000.0)
                 gotHeaders && now - lastByteAt > bodyStallMs -> "no data for %.0f s".format((now - lastByteAt) / 1000.0)
@@ -514,8 +517,13 @@ object BurstProxy {
                     if (closed) return
                     val stalled = stalledWhy; stalledWhy = null
                     val netChange = kicked; kicked = false
+                    val isConnError = stalled != null || e is SocketException || e is SocketTimeoutException ||
+                        e.message?.contains("Software caused connection abort") == true || e.message?.contains("Socket closed") == true
+                    if (isConnError) {
+                        runCatching { resetConnections() }
+                    }
                     log("reserve: request failed (${stalled ?: e.message}), attempt ${failures + 1}" +
-                        (if (stalled != null) " → new connection" else if (netChange) " (network changed) → new connection" else ""))
+                        (if (isConnError) " → new connection" else if (netChange) " (network changed) → new connection" else ""))
                     if (e is FatalUpstream) { synchronized(lock) { error = e.message; lock.notifyAll() }; return }
                     if (netChange) { failures = 0; runCatching { resetConnections() }; continue } // the new network: try again at once
                     if (isOffline(e)) {
@@ -528,8 +536,15 @@ object BurstProxy {
                     }
                     failures++
                     if (failures > 8) { synchronized(lock) { error = e.message ?: "network"; lock.notifyAll() }; return }
-                    if (stalled != null) { runCatching { resetConnections() }; Thread.sleep(200) }
-                    else pause(minOf(8_000L, 500L shl minOf(failures, 4))) // a network change wakes it
+                    val starving = (end() - readPos) < (2L shl 20)
+                    if (starving) {
+                        // The player is buffering / waiting for data right now: don't sleep for seconds, retry quickly
+                        Thread.sleep(150)
+                    } else if (isConnError) {
+                        Thread.sleep(200)
+                    } else {
+                        pause(minOf(8_000L, 500L shl minOf(failures, 4))) // a network change wakes it
+                    }
                     if (kicked) { kicked = false; failures = 0 }
                 }
             }
