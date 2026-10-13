@@ -4,7 +4,7 @@
 // 2) иначе эвристика по названию (русские и английские релиз-теги).
 const SERIES = [
   /\bS\d{1,2}E\d{1,3}\b/i, /\bS\d{2}\b/i, /\bSeason\s*\d/i, /\bSeasons?\b/i, /\bComplete\s+Series\b/i, /\bEpisodes?\b/i,
-  /сезон/i, /сериал/i, /\bСерии?\b/i, /\bЭпизод/i, /\[TV(?:-\d+)?\]/i, /\b\d+\s*(?:из|of)\s*\d+\b/i
+  /сезон/i, /сериал/i, /(?:^|[^а-яa-z0-9])сери[яи](?:[^а-яa-z0-9]|$)/i, /(?:^|[^а-яa-z0-9])эпизод/i, /\[TV(?:-\d+)?\]/i, /\b\d+\s*(?:из|of)\s*\d+\b/i
 ];
 const VIDEO = /\b(BDRip|BD-?Rip|BDRemux|BluRay|Blu-?ray|WEB-?DL(?:Rip)?|WEB-?Rip|HDRip|DVDRip|DVD[59]|HDTV(?:Rip)?|TVRip|SATRip|REMUX|CAMRip|HDCAM|HDTS|DVDScr|1080[pi]|720p|2160p|480p|4K|UHD|HDR10?|x26[45]|HEVC|AVC|H\.?26[45]|Dolby\s*Vision|IMAX)\b/i;
 const NON_VIDEO = new RegExp([
@@ -19,7 +19,7 @@ function classify(title, cats) {
     if (cats.some(c => c >= 6000 && c < 7000)) return "other"; // 18+
     if (cats.some(c => c >= 5000 && c < 6000)) return "series"; // TV (в т.ч. аниме 5070)
     if (cats.some(c => c >= 2000 && c < 3000)) return "movie";
-    if (cats.some(c => (c >= 1000 && c < 2000) || (c >= 3000 && c < 5000) || c >= 6000)) return "other"; // консоли, аудио, PC, 18+, книги
+    if (cats.some(c => (c >= 1000 && c < 2000) || (c >= 3000 && c < 5000) || (c >= 6000 && c < 9000))) return "other"; // консоли, аудио, PC, 18+, книги
   }
   const t = String(title || "");
   if (SERIES.some(r => r.test(t))) return "series";
