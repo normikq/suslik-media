@@ -43,7 +43,7 @@ jobs:
           echo "MSI=$(ls ../dist/*.msi | head -1 | sed 's#^\.\./##')" >> "$GITHUB_ENV"
           ls -la ../dist
       - uses: actions/upload-artifact@v4
-        with: { name: windows-msi, path: dist/*.msi, retention-days: 14 }
+        with: { name: windows-msi, path: dist/*.msi, retention-days: 2 }
       # «Suslik Debug» (detailed journal, installs next to the normal app, never published): see desktop/DEBUG-BUILD.md
       - name: Build debug MSI
         run: |
