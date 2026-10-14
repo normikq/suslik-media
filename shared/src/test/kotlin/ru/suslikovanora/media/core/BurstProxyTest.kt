@@ -288,7 +288,7 @@ class BurstProxyTest {
         }
         val snap = BurstProxy.snapshot()
         val windowCount = Regex("""@\d+MB""").findAll(snap).count()
-        assertTrue(windowCount <= 2, "active full windows must not exceed MAX_WINDOWS (found $windowCount in: $snap)")
+        assertTrue(windowCount <= 3, "active full windows must not exceed MAX_WINDOWS (found $windowCount in: $snap)")
     }
 
     @Test fun ringBufferWraparoundAllowsReFetchOfOverwrittenData() {

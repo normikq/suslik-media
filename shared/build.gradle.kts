@@ -20,6 +20,6 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
-    maxHeapSize = "512m"
+    maxHeapSize = "1024m"
     testLogging { events("failed"); showStandardStreams = true; exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL }
 }
