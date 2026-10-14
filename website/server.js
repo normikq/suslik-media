@@ -14,7 +14,7 @@ const torrentSearch = require("./search");
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const SITE_PASSWORD = process.env.SITE_PASSWORD || "";
-const SESSION_SECRET = process.env.SESSION_SECRET || "";
+const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString("hex");
 const ALLDEBRID_API_KEY = process.env.ALLDEBRID_API_KEY || "";
 const TMDB_API_KEY = process.env.TMDB_API_KEY || "";
 const COOKIE_SECURE = process.env.COOKIE_SECURE === "true";
@@ -148,8 +148,8 @@ function releaseTrackedDownload(id) {
   }
 }
 
-if (!SESSION_SECRET) {
-  console.warn("ПРЕДУПРЕЖДЕНИЕ: SESSION_SECRET не задан. Укажите его в .env перед использованием сервера вне локального компьютера.");
+if (!process.env.SESSION_SECRET) {
+  console.warn("ПРЕДУПРЕЖДЕНИЕ: SESSION_SECRET не задан в .env (сгенерирован временный случайный ключ). Сеансы и временные ссылки зеркала сбросятся при перезапуске сервера.");
 }
 if (!SITE_PASSWORD) {
   console.warn("ПРЕДУПРЕЖДЕНИЕ: SITE_PASSWORD не задан. Вход будет недоступен, пока пароль не будет указан в .env.");
@@ -170,8 +170,11 @@ app.use((req, res, next) => {
   if (req.secure) res.setHeader("Strict-Transport-Security", "max-age=15552000");
   next();
 });
-// Behind nginx/Caddy set TRUST_PROXY=1 so req.protocol/host reflect the public https URL.
-if (process.env.TRUST_PROXY) app.set("trust proxy", /^\d+$/.test(process.env.TRUST_PROXY) ? Number(process.env.TRUST_PROXY) : process.env.TRUST_PROXY);
+// Behind nginx/Caddy set TRUST_PROXY=1 so req.protocol/host and client IP reflect the public HTTPS request.
+if (process.env.TRUST_PROXY) {
+  const tp = String(process.env.TRUST_PROXY).trim().toLowerCase();
+  app.set("trust proxy", tp === "true" ? true : /^\d+$/.test(tp) ? Number(tp) : process.env.TRUST_PROXY);
+}
 // Страница и стили сайта сжимаются один раз (gzip и brotli), а не на каждый запрос: на одном ядре это заметная
 // работа (index.html ~140 КБ). Файл перечитывается, если его заменили на диске (обновление сайта без перезапуска).
 const zlib = require("zlib");
@@ -298,7 +301,7 @@ const sessionStore = new FileSessionStore(path.join(DATA_DIR, "sessions.json"));
 app.use(session({
   name: "movieportal.sid",
   store: sessionStore,
-  secret: SESSION_SECRET || crypto.randomBytes(32).toString("hex"),
+  secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   rolling: true, // Refresh cookie expiration while the authenticated session is active.
@@ -374,13 +377,35 @@ async function alldebridRequest(endpoint, params = {}) {
 app.post("/api/login", loginLimiter, (req, res) => {
   if (!SITE_PASSWORD) return res.status(503).json({ error: "Set SITE_PASSWORD in .env first." });
   const password = typeof req.body.password === "string" ? req.body.password : "";
-  if (!password || password.length > 256 || password !== SITE_PASSWORD) {
+  if (!password || password.length > 256) {
     return res.status(401).json({ error: "Неверный пароль." });
   }
-  req.session.authenticated = true;
-  req.session.save(err => {
-    if (err) return res.status(500).json({ error: "Не удалось создать сеанс." });
-    res.json({ ok: true });
+
+  let passwordOk = false;
+  if (/^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/.test(SITE_PASSWORD)) {
+    try {
+      const bcrypt = require("bcryptjs");
+      passwordOk = bcrypt.compareSync(password, SITE_PASSWORD);
+    } catch {
+      passwordOk = false;
+    }
+  } else {
+    const hashGiven = crypto.createHash("sha256").update(password).digest();
+    const hashExpected = crypto.createHash("sha256").update(SITE_PASSWORD).digest();
+    passwordOk = crypto.timingSafeEqual(hashGiven, hashExpected);
+  }
+
+  if (!passwordOk) {
+    return res.status(401).json({ error: "Неверный пароль." });
+  }
+
+  req.session.regenerate(regenErr => {
+    if (regenErr) return res.status(500).json({ error: "Не удалось создать сеанс." });
+    req.session.authenticated = true;
+    req.session.save(err => {
+      if (err) return res.status(500).json({ error: "Не удалось создать сеанс." });
+      res.json({ ok: true });
+    });
   });
 });
 
@@ -823,6 +848,10 @@ app.get("/api/app/update", requireLogin, apiLimiter, (req, res) => {
   res.json({ available: true, channel: ch, version: u.version, size: u.size, notes: u.notes, file: u.name, publishedAt: Math.round(u.at),
     url: `/api/app/download/${platform}/${encodeURIComponent(u.name)}${ch === "beta" ? "?ch=beta" : ""}` });
 });
+// Ограничение скорости скачивания релизов приложений: 40 Мбит/с = 5 МБ/с (5 242 880 байт/с).
+// Nginx перехватывает заголовок X-Accel-Limit-Rate и аппаратно шейпит сокет, предотвращая просадку канала сервера.
+const APP_DOWNLOAD_RATE_LIMIT = "5242880";
+
 // Первая установка беты на устройство, где ещё нет поля для кода: открыть в браузере (будучи на сайте под паролем)
 // /api/app/beta-download/android?code=… или …/desktop?code=… — скачается бета-сборка.
 app.get("/api/app/beta-download/:platform", requireLogin, (req, res) => {
@@ -832,6 +861,7 @@ app.get("/api/app/beta-download/:platform", requireLogin, (req, res) => {
   const u = latestUpdate(String(req.params.platform), BETA_DIR);
   if (!u) return res.status(404).json({ error: "В бета-канале сейчас нет версии для этой платформы." });
   res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Accel-Limit-Rate", APP_DOWNLOAD_RATE_LIMIT);
   res.download(u.full, u.name, { dotfiles: "deny" });
 });
 // Проверка кода тестировщика (поле в «Настройках»).
@@ -842,6 +872,7 @@ app.get("/api/app/download/:platform/:name", requireLogin, (req, res) => {
   const u = latestUpdate(String(req.params.platform), beta ? BETA_DIR : UPDATES_DIR);
   if (!u || u.name !== req.params.name) return res.status(404).json({ error: "Файл обновления не найден (возможно, уже вышла новее)." });
   res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Accel-Limit-Rate", APP_DOWNLOAD_RATE_LIMIT);
   res.download(u.full, u.name, { dotfiles: "deny" }); // поддерживает Range: прерванная загрузка докачивается
 });
 app.post("/api/app/upload", (req, res) => {
@@ -1114,7 +1145,7 @@ app.post("/api/file/unlock", requireLogin, apiLimiter, async (req, res) => {
 // signed: /api/file/proxy?link=...&exp=...&sig=... . A signature covers one specific link only.
 const MIRROR_TTL = Math.max(1, Number(process.env.MIRROR_TTL_HOURS || 12)) * 3600;
 function makeMirrorToken(link, expires) {
-  return crypto.createHmac("sha256", SESSION_SECRET || ALLDEBRID_API_KEY).update(`mirror:${expires}:${link}`).digest("hex");
+  return crypto.createHmac("sha256", SESSION_SECRET).update(`mirror:${expires}:${link}`).digest("hex");
 }
 function isValidMirrorToken(link, expires, token) {
   const now = Math.floor(Date.now() / 1000);
@@ -1151,7 +1182,7 @@ app.get("/api/file/mirror-url", requireLogin, apiLimiter, (req, res) => {
 // with HMAC, and the .m3u is rebuilt on every request. Nothing is stored, so it survives restarts.
 const PLAYLIST_MAX_ITEMS = 200;
 function makePlaylistToken(id, idxStr, expires) {
-  return crypto.createHmac("sha256", SESSION_SECRET || ALLDEBRID_API_KEY).update(`playlist:${expires}:${id}:${idxStr}`).digest("hex");
+  return crypto.createHmac("sha256", SESSION_SECRET).update(`playlist:${expires}:${id}:${idxStr}`).digest("hex");
 }
 function isValidPlaylistToken(id, idxStr, expires, token) {
   const now = Math.floor(Date.now() / 1000);
