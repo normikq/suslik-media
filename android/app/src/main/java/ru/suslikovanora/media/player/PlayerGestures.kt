@@ -98,32 +98,31 @@ class PlayerGestures(
                 val dy = ev.y - dragStartY
                 val dist = hypot(dx, dy)
                 val duration = SystemClock.uptimeMillis() - downTime
-                if (dist <= touchSlop && duration <= 650L) {
+                // If not dragging, allow generous movement tolerance (up to 2.5x touchSlop)
+                // so natural thumb jitter on high-res displays does not drop the tap.
+                if (dist <= touchSlop * 2.5f && duration <= 800L) {
                     val now = SystemClock.uptimeMillis()
-                    val isRapidSeek = now - lastSeekTapAt < REPEAT_TAP_WINDOW_MS
-                    val isDoubleTap = !isRapidSeek && (now - lastTapTime < 320L) &&
-                        (hypot(ev.x - lastTapX, ev.y - lastTapY) < touchSlop * 1.5f)
+                    val stageWidth = callback.getStageWidth().coerceAtLeast(1f)
+                    val isEdgeTap = ev.x < stageWidth * 0.35f || ev.x > stageWidth * 0.65f
+                    val isRapidSeek = isEdgeTap && (now - lastSeekTapAt < REPEAT_TAP_WINDOW_MS)
+                    val isDoubleTap = isEdgeTap && !isRapidSeek && (now - lastTapTime < 320L) &&
+                        (hypot(ev.x - lastTapX, ev.y - lastTapY) < touchSlop * 2f)
 
                     if (isDoubleTap || isRapidSeek) {
                         pendingTapRunnable?.let { handler.removeCallbacks(it); pendingTapRunnable = null }
                         recordTapSeek()
-                        callback.onTapSeek(ev.x >= callback.getStageWidth() / 2f)
+                        callback.onTapSeek(ev.x >= stageWidth / 2f)
                     } else {
                         lastTapTime = now
                         lastTapX = ev.x
                         lastTapY = ev.y
-                        val tapX = ev.x
+                        pendingTapRunnable?.let { handler.removeCallbacks(it) }
                         val runnable = Runnable {
                             pendingTapRunnable = null
-                            if (SystemClock.uptimeMillis() - lastSeekTapAt < REPEAT_TAP_WINDOW_MS) {
-                                recordTapSeek()
-                                callback.onTapSeek(tapX >= callback.getStageWidth() / 2f)
-                            } else {
-                                callback.onToggleControls()
-                            }
+                            callback.onToggleControls()
                         }
                         pendingTapRunnable = runnable
-                        handler.postDelayed(runnable, 280L)
+                        handler.postDelayed(runnable, 240L)
                     }
                     return true
                 }
@@ -209,7 +208,7 @@ class PlayerGestures(
 
     companion object {
         private const val SEEK_SWIPE_RANGE_MS = 180_000L // full screen width = 3 min
-        private const val REPEAT_TAP_WINDOW_MS = 900L
+        private const val REPEAT_TAP_WINDOW_MS = 650L
 
         fun formatTime(ms: Long): String {
             val totalSeconds = ms.coerceAtLeast(0L) / 1000L

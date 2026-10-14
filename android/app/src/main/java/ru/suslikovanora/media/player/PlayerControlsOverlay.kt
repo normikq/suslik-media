@@ -112,10 +112,13 @@ class PlayerControlsOverlay(
         }?.start()
     }
 
+    val isVisuallyShowing: Boolean
+        get() = isVisible && (controls?.visibility == View.VISIBLE) && ((controls?.alpha ?: 0f) > 0.05f)
+
     fun showTemporarily() = setVisible(true)
 
     fun toggle() {
-        if (isVisible) setVisible(false) else showTemporarily()
+        if (isVisuallyShowing) setVisible(false) else showTemporarily()
     }
 
     fun lock() {
@@ -184,6 +187,7 @@ class PlayerControlsOverlay(
 
     fun onStop() {
         handler.removeCallbacks(hideControlsRunnable)
+        isVisible = false
     }
 
     fun destroy() {

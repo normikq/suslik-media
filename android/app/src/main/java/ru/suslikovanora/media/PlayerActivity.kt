@@ -788,7 +788,7 @@ class PlayerActivity : ComponentActivity() {
             override fun onSeekTo(position: Long) { seekTo(position) }
             override fun onTapSeek(forward: Boolean) { tapSeek(forward) }
             override fun onToggleControls() {
-                if (controlsVisible) setControlsVisible(false) else showControlsTemporarily()
+                controlsOverlay.toggle()
             }
             override fun onShowControlsTemporarily() { showControlsTemporarily() }
             override fun onScaleChanged(scaleIndex: Int) { setScale(scaleIndex) }
@@ -807,7 +807,6 @@ class PlayerActivity : ComponentActivity() {
         })
         val touchListener = View.OnTouchListener { _, event -> gestures.onTouch(event) }
         stage.setOnTouchListener(touchListener)
-        videoLayout.setOnTouchListener(touchListener)
         audioSession.setup()
 
         pipController.setup()
