@@ -12,6 +12,7 @@ import ru.suslikovanora.media.player.PlayerPlaylistQueue
 import ru.suslikovanora.media.player.PlayerTrackSelector
 import ru.suslikovanora.media.player.PlayerWatchProgress
 
+import android.animation.ValueAnimator
 import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
@@ -38,6 +39,7 @@ import android.view.SurfaceView
 import android.view.ViewGroup
 import android.view.View
 import android.view.WindowManager
+import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.SeekBar
@@ -447,6 +449,13 @@ class PlayerActivity : ComponentActivity() {
             override fun onControlsShown() {
                 updateProgress(force = true)
                 volumeBar.progress = audioSession.getStreamVolume()
+                handler.removeCallbacks(progressTicker)
+                handler.post(progressTicker)
+            }
+            override fun onControlsHidden() {
+                handler.removeCallbacks(progressTicker)
+                bufferAnimator?.cancel()
+                bufferAnimator = null
             }
         })
     }
@@ -677,7 +686,8 @@ class PlayerActivity : ComponentActivity() {
         seekBar = SeekBar(this).apply {
             progressTintList = ColorStateList.valueOf(0xFFE6B94A.toInt())
             thumbTintList = ColorStateList.valueOf(Color.WHITE)
-            progressBackgroundTintList = ColorStateList.valueOf(0x66FFFFFF)
+            secondaryProgressTintList = ColorStateList.valueOf(0x80B4B8C4.toInt())
+            progressBackgroundTintList = ColorStateList.valueOf(0x33FFFFFF)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onStartTrackingTouch(seekBar: SeekBar) { userSeeking = true; showControlsTemporarily() }
                 override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
@@ -1157,12 +1167,22 @@ class PlayerActivity : ComponentActivity() {
         }
     }
 
-    /** UI is refreshed only from player events, only while controls are visible, at most once per second. */
+    private var bufferAnimator: ValueAnimator? = null
+
+    private val progressTicker = object : Runnable {
+        override fun run() {
+            if (!controlsVisible || !alive) return
+            updateProgress(force = false)
+            handler.postDelayed(this, 200L)
+        }
+    }
+
+    /** UI is refreshed smoothly while controls are visible. */
     private fun updateProgress(force: Boolean) {
         val p = mediaPlayer ?: return
         if (userSeeking || inPip || !controlsVisible) return
         val now = SystemClock.uptimeMillis()
-        if (!force && now - lastUiUpdateAt < 1000L) return
+        if (!force && now - lastUiUpdateAt < 200L) return
         lastUiUpdateAt = now
         val length = lengthOf(p)
         // While a stream is (re)opening VLC reports 0: show where the film will continue instead of 00:00.
@@ -1175,11 +1195,46 @@ class PlayerActivity : ComponentActivity() {
             seekBar.progress = time.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
             timeLabel.text = "${formatTime(time)}  /  ${formatTime(length)}"
             if (!seekBar.isEnabled) seekBar.isEnabled = true
+
+            // Preloaded buffer: VLC network caching (time buffer ~6s) + BurstProxy disk buffer
+            val vlcTimeBufferMs = if (p.isPlaying || buffering) 6_000L else 0L
+            val diskBufferMs = BurstProxy.aheadMs(currentUrl, length)
+            val targetBuffered = (time + vlcTimeBufferMs + diskBufferMs).coerceIn(time, length).toInt()
+            updateSecondaryProgress(targetBuffered, force)
         } else {
             if (seekBar.max != 1000) seekBar.max = 1000
             seekBar.progress = 0
+            seekBar.secondaryProgress = 0
             timeLabel.text = "${formatTime(time)}  /  --:--"
             if (seekBar.isEnabled) seekBar.isEnabled = false
+        }
+    }
+
+    private fun updateSecondaryProgress(target: Int, force: Boolean) {
+        val current = seekBar.secondaryProgress
+        if (force) {
+            bufferAnimator?.cancel()
+            bufferAnimator = null
+            seekBar.secondaryProgress = target
+            return
+        }
+        val diff = target - current
+        if (diff > 500) {
+            bufferAnimator?.cancel()
+            bufferAnimator = ValueAnimator.ofInt(current, target).apply {
+                duration = 260L
+                interpolator = DecelerateInterpolator()
+                addUpdateListener { anim ->
+                    if (controlsVisible) seekBar.secondaryProgress = anim.animatedValue as Int
+                }
+                start()
+            }
+        } else if (diff < -5_000) {
+            bufferAnimator?.cancel()
+            bufferAnimator = null
+            seekBar.secondaryProgress = target
+        } else if (bufferAnimator == null || !bufferAnimator!!.isRunning) {
+            seekBar.secondaryProgress = target
         }
     }
 

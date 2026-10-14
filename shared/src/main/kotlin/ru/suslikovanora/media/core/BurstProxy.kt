@@ -288,6 +288,25 @@ object BurstProxy {
         return (w.end() - w.readPos).coerceAtLeast(0L) / 1048576.0
     }
 
+    /**
+     * Estimated milliseconds of preloaded playback content on disk ahead of the player's read position.
+     * Takes [url] and the known total [durationMs] of the film.
+     */
+    fun aheadMs(url: String, durationMs: Long): Long {
+        val src = sourceOf(url) ?: return 0L
+        val w = synchronized(src) { src.windows.maxByOrNull { it.lastReadAt } } ?: return 0L
+        val bytesAhead = synchronized(w.lock) { (w.end() - w.readPos).coerceAtLeast(0L) }
+        if (bytesAhead <= 0L) return 0L
+        if (src.total > 0L && durationMs > 0L) {
+            return (bytesAhead.toDouble() / src.total * durationMs).toLong()
+        }
+        val filmRate = if (src.avgRate > 0) src.avgRate else src.rate
+        if (filmRate > 0) {
+            return (bytesAhead / filmRate * 1000.0).toLong()
+        }
+        return 0L
+    }
+
     /** The film's average bitrate in Mbit/s (file size ÷ length), once the player has told the length; null before. */
     fun bitrateMbit(url: String): Double? =
         sourceOf(url)?.let { if (it.avgRate > 0) it.avgRate else it.rate }?.takeIf { it > 0 }?.let { it * 8 / 1_000_000 }

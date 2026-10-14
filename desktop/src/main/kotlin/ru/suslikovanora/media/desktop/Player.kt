@@ -245,7 +245,7 @@ private fun describePlayback(mp: MediaPlayer): String {
  * [onScrub] reports the scrub position while dragging (null when done), [onHover] the time under the cursor.
  */
 @Composable
-private fun SeekBar(position: Long, length: Long, marks: List<Long>, modifier: Modifier,
+private fun SeekBar(position: Long, length: Long, buffered: Long = 0L, marks: List<Long>, modifier: Modifier,
                     onScrub: (Long?) -> Unit, onSeek: (Long) -> Unit, onHover: (Long?) -> Unit) {
     var w by remember { mutableStateOf(1f) }
     var hover by remember { mutableStateOf(false) }
@@ -281,6 +281,8 @@ private fun SeekBar(position: Long, length: Long, marks: List<Long>, modifier: M
                 val cy = size.height / 2
                 val r = androidx.compose.ui.geometry.CornerRadius(h / 2)
                 drawRoundRect(Sm.line2, topLeft = Offset(0f, cy - h / 2), size = Size(size.width, h), cornerRadius = r)
+                val bf = if (length > 0) (buffered.toFloat() / length).coerceIn(0f, 1f) else 0f
+                if (bf > 0f) drawRoundRect(Color(0x80B4B8C4), topLeft = Offset(0f, cy - h / 2), size = Size(size.width * bf, h), cornerRadius = r)
                 val f = if (length > 0) (position.toFloat() / length).coerceIn(0f, 1f) else 0f
                 if (f > 0f) drawRoundRect(Sm.lamp, topLeft = Offset(0f, cy - h / 2), size = Size(size.width * f, h), cornerRadius = r)
                 // chapter boundaries: small dark gaps across the track
@@ -392,6 +394,16 @@ fun PlayerView(
     val supRef = remember { java.util.concurrent.atomic.AtomicReference<PlaybackSupervisor?>(null) } // events → supervisor
     var hasVoiceOver by remember { mutableStateOf(false) } // the current episode plays an external audio file
     var hoverAt by remember { mutableStateOf<Long?>(null) } // time under the cursor on the seek bar
+    var bufferedMs by remember { mutableStateOf(0L) }
+    LaunchedEffect(barVisible, currentUrl, length, time, playing, bufferingSince) {
+        if (!barVisible) return@LaunchedEffect
+        while (true) {
+            val vlcTimeBufferMs = if (playing || bufferingSince > 0L) 6_000L else 0L
+            val diskBufferMs = BurstProxy.aheadMs(currentUrl, length)
+            bufferedMs = if (length > 0L) (time + vlcTimeBufferMs + diskBufferMs).coerceIn(time, length) else 0L
+            delay(200L)
+        }
+    }
     val beforeMini = remember { arrayOfNulls<Any>(4) }    // size, position, placement, onTop before mini mode
     fun seriesKey() = title.substringBefore(" · ").lowercase()
     /** "Track 3 - [Russian]" -> "Russian": lets VLC pick the remembered language itself, without a switch later. */
@@ -1129,11 +1141,15 @@ fun PlayerView(
                         OutlineButton("Отмена") { nextIn = -1 }
                     }
                 }
+                val animBuffered by androidx.compose.animation.core.animateFloatAsState(
+                    targetValue = bufferedMs.toFloat(),
+                    animationSpec = tween(260)
+                )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(fmt(hoverAt ?: seeking?.toLong() ?: time), color = if (hoverAt != null) Sm.lamp else Sm.text, fontFamily = Onest, fontSize = 13.sp,
                         modifier = Modifier.width(64.dp))
                     SeekBar(
-                        position = seeking?.toLong() ?: time, length = length, marks = chapters.map { it.first },
+                        position = seeking?.toLong() ?: time, length = length, buffered = animBuffered.toLong(), marks = chapters.map { it.first },
                         modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
                         onScrub = { t -> seeking = t?.toFloat(); poke() },
                         onSeek = { t -> seeking = null; time = t; lastGood = t; lastSeekAt = System.currentTimeMillis(); supRef.get()?.seeked(); PlayerLog.write("seek to ${t / 1000}s"); vlcSeekTo(t) },

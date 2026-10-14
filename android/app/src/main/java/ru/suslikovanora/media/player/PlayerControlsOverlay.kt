@@ -27,6 +27,7 @@ class PlayerControlsOverlay(
     interface Callback {
         fun isPip(): Boolean
         fun onControlsShown()
+        fun onControlsHidden()
     }
 
     var isVisible: Boolean = true
@@ -102,6 +103,8 @@ class PlayerControlsOverlay(
             topBar?.visibility = View.VISIBLE
             callback.onControlsShown()
             if (!callback.isPip()) handler.postDelayed(hideControlsRunnable, CONTROLS_TIMEOUT_MS)
+        } else {
+            callback.onControlsHidden()
         }
         topBar?.animate()?.alpha(target)?.translationY(if (visible) 0f else -dp(14).toFloat())?.setDuration(220)?.start()
         controls?.animate()?.alpha(target)?.translationY(if (visible) 0f else dp(18).toFloat())?.setDuration(220)?.withEndAction {
@@ -188,6 +191,7 @@ class PlayerControlsOverlay(
     fun onStop() {
         handler.removeCallbacks(hideControlsRunnable)
         isVisible = false
+        callback.onControlsHidden()
     }
 
     fun destroy() {
@@ -197,6 +201,7 @@ class PlayerControlsOverlay(
         unlockBadge?.animate()?.cancel()
         topBar?.animate()?.cancel()
         controls?.animate()?.cancel()
+        callback.onControlsHidden()
     }
 
     companion object {
