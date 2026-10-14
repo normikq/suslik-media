@@ -154,6 +154,7 @@ class PlayerActivity : ComponentActivity() {
     private val applyTapSeekRunnable = Runnable {
         val t = tapSeekTarget ?: return@Runnable
         tapSeekTarget = null
+        gestures.resetTapState()
         seekTo(t)
     }
     // A seek that VLC never confirms (dead socket after a Wi-Fi <-> mobile switch) is redone on a fresh connection.
@@ -788,6 +789,7 @@ class PlayerActivity : ComponentActivity() {
         if (savedInstanceState == null) playEnterAnimation()
 
         gestures = PlayerGestures(this, object : PlayerGestures.Callback {
+            override fun areControlsVisible(): Boolean = controlsOverlay.isVisible
             override fun getStageWidth(): Float = stage.width.toFloat()
             override fun getStageHeight(): Float = stage.height.toFloat()
             override fun isSeekable(): Boolean {
@@ -799,6 +801,7 @@ class PlayerActivity : ComponentActivity() {
             override fun onSeekTo(position: Long) { seekTo(position) }
             override fun onTapSeek(forward: Boolean) { tapSeek(forward) }
             override fun onToggleControls() {
+                gestures.resetTapState()
                 controlsOverlay.toggle()
             }
             override fun onShowControlsTemporarily() { showControlsTemporarily() }
@@ -819,6 +822,8 @@ class PlayerActivity : ComponentActivity() {
         val touchListener = View.OnTouchListener { _, event -> gestures.onTouch(event) }
         stage.setOnTouchListener(touchListener)
         videoLayout.setOnTouchListener(touchListener)
+        controls.setOnTouchListener(touchListener)
+        topBar.setOnTouchListener(touchListener)
         audioSession.setup()
 
         pipController.setup()

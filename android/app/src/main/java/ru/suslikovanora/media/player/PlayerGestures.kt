@@ -16,6 +16,7 @@ class PlayerGestures(
     private val callback: Callback
 ) {
     interface Callback {
+        fun areControlsVisible(): Boolean
         fun getStageWidth(): Float
         fun getStageHeight(): Float
         fun isSeekable(): Boolean
@@ -110,6 +111,24 @@ class PlayerGestures(
                     val stageWidth = callback.getStageWidth().coerceAtLeast(1f)
                     val isEdgeTap = ev.x < stageWidth * 0.22f || ev.x > stageWidth * 0.78f
                     val isRapidSeek = isEdgeTap && (now - lastSeekTapAt < REPEAT_TAP_WINDOW_MS)
+
+                    // If controls are currently visible on screen:
+                    if (callback.areControlsVisible()) {
+                        // Rapid tap on the edge still accumulates seek (+10, +20, etc.)
+                        if (isRapidSeek) {
+                            pendingTapRunnable?.let { handler.removeCallbacks(it); pendingTapRunnable = null }
+                            recordTapSeek()
+                            callback.onTapSeek(ev.x >= stageWidth / 2f)
+                            return true
+                        }
+                        // Any other tap while controls are visible dismisses them immediately.
+                        // Must reset tap state so subsequent taps to re-open start completely clean.
+                        resetTapState()
+                        callback.onToggleControls()
+                        return true
+                    }
+
+                    // Controls are currently hidden:
                     val isDoubleTap = isEdgeTap && !isRapidSeek && (now - lastTapTime < 320L) &&
                         (hypot(ev.x - lastTapX, ev.y - lastTapY) < touchSlop * 2.5f)
 
@@ -119,10 +138,7 @@ class PlayerGestures(
                         callback.onTapSeek(ev.x >= stageWidth / 2f)
                     } else if (!isEdgeTap) {
                         // Center tap: toggle controls IMMEDIATELY (no double-tap seek in center area)
-                        pendingTapRunnable?.let { handler.removeCallbacks(it); pendingTapRunnable = null }
-                        lastTapTime = now
-                        lastTapX = ev.x
-                        lastTapY = ev.y
+                        resetTapState()
                         callback.onToggleControls()
                     } else {
                         // Edge tap: might be first tap of a double-tap seek, wait briefly
@@ -132,6 +148,7 @@ class PlayerGestures(
                         pendingTapRunnable?.let { handler.removeCallbacks(it) }
                         val runnable = Runnable {
                             pendingTapRunnable = null
+                            resetTapState()
                             callback.onToggleControls()
                         }
                         pendingTapRunnable = runnable

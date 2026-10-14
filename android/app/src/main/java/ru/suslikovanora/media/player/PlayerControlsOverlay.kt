@@ -94,25 +94,31 @@ class PlayerControlsOverlay(
     fun setVisible(visible: Boolean) {
         if (visible && isLocked) return // locked: the panel comes back only after unlock
         isVisible = visible
-        val target = if (visible) 1f else 0f
         topBar?.animate()?.cancel()
         controls?.animate()?.cancel()
         handler.removeCallbacks(hideControlsRunnable)
         if (visible) {
             controls?.visibility = View.VISIBLE
             topBar?.visibility = View.VISIBLE
+            controls?.isClickable = true
+            topBar?.isClickable = true
             callback.onControlsShown()
             if (!callback.isPip()) handler.postDelayed(hideControlsRunnable, CONTROLS_TIMEOUT_MS)
+            topBar?.animate()?.alpha(1f)?.translationY(0f)?.setDuration(220)?.start()
+            controls?.animate()?.alpha(1f)?.translationY(0f)?.setDuration(220)?.start()
         } else {
             callback.onControlsHidden()
-        }
-        topBar?.animate()?.alpha(target)?.translationY(if (visible) 0f else -dp(14).toFloat())?.setDuration(220)?.start()
-        controls?.animate()?.alpha(target)?.translationY(if (visible) 0f else dp(18).toFloat())?.setDuration(220)?.withEndAction {
-            if (!isVisible) {
-                controls?.visibility = View.INVISIBLE
-                topBar?.visibility = View.INVISIBLE
+            controls?.isClickable = false
+            topBar?.isClickable = false
+            val hideAction = Runnable {
+                if (!isVisible) {
+                    controls?.visibility = View.GONE
+                    topBar?.visibility = View.GONE
+                }
             }
-        }?.start()
+            topBar?.animate()?.alpha(0f)?.translationY(-dp(14).toFloat())?.setDuration(220)?.withEndAction(hideAction)?.start()
+            controls?.animate()?.alpha(0f)?.translationY(dp(18).toFloat())?.setDuration(220)?.withEndAction(hideAction)?.start()
+        }
     }
 
     val isVisuallyShowing: Boolean
@@ -121,7 +127,7 @@ class PlayerControlsOverlay(
     fun showTemporarily() = setVisible(true)
 
     fun toggle() {
-        if (isVisuallyShowing) setVisible(false) else showTemporarily()
+        if (isVisible) setVisible(false) else showTemporarily()
     }
 
     fun lock() {
