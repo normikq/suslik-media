@@ -19,12 +19,14 @@ class BurstProxyTest {
     private val data = Random(7).nextBytes(40 shl 20)
     private lateinit var origin: HttpServer
     private val requests = AtomicInteger()
+    private val cancelledRequests = AtomicInteger()
     private val stallNext = AtomicInteger()                       // the next N answers send their headers and then nothing
     @Volatile private var slowOrigin = false                      // answers trickle at ~2 MB/s (a mobile network slower than the film)
     private val ranges = java.util.concurrent.CopyOnWriteArrayList<String>()
     private lateinit var url: String
 
     @BeforeTest fun start() {
+        cancelledRequests.set(0)
         origin = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
             createContext("/film.mkv") { ex ->
                 requests.incrementAndGet()
@@ -52,7 +54,7 @@ class BurstProxyTest {
             val req = java.net.http.HttpRequest.newBuilder(java.net.URI.create("http://127.0.0.1:${origin.address.port}/" + u.substringAfter("origin.test/")))
                 .header("Range", "bytes=$from-" + if (to >= 0) "$to" else "").GET().build()
             val future = client.sendAsync(req, java.net.http.HttpResponse.BodyHandlers.ofInputStream())
-            cancel.attach { future.cancel(true) }
+            cancel.attach { cancelledRequests.incrementAndGet(); future.cancel(true) }
             val res = try { future.get() }
                 catch (e: java.util.concurrent.ExecutionException) { throw (e.cause as? java.io.IOException) ?: java.io.IOException(e.message) }
                 catch (e: java.util.concurrent.CancellationException) { throw java.io.IOException("cancelled") }
@@ -224,5 +226,81 @@ class BurstProxyTest {
     @Test fun offWhenReserveIsZero() {
         BurstProxy.capBytes = 0
         assertEquals("https://origin.test/other.mkv", BurstProxy.wrap("https://origin.test/other.mkv"))
+    }
+
+    @Test fun offlineServesBufferedRangeWithoutNetworkAndResumesOnNetworkChanged() {
+        val local = BurstProxy.wrap(url)
+        // 1. Pre-buffer first 4 MB
+        val (c1, b1) = get(local, "bytes=0-3999999")
+        assertEquals(206, c1)
+        assertContentEquals(data.copyOfRange(0, 4_000_000), b1)
+
+        val reqsBeforeOffline = requests.get()
+
+        // 2. Network goes completely offline
+        BurstProxy.networkLost()
+        assertTrue(!BurstProxy.isNetworkOnline, "isNetworkOnline must be false after networkLost")
+
+        // 3. Read sub-range within the already buffered data
+        val (c2, b2) = get(local, "bytes=1000000-2999999")
+        assertEquals(206, c2)
+        assertContentEquals(data.copyOfRange(1_000_000, 3_000_000), b2)
+        assertEquals(reqsBeforeOffline, requests.get(), "no upstream requests should be made when reading buffered data offline")
+
+        // 4. Network returns
+        BurstProxy.networkChanged()
+        assertTrue(BurstProxy.isNetworkOnline, "isNetworkOnline must be true after networkChanged")
+
+        // 5. Read next chunk far beyond what was pre-buffered (e.g. at 15 MB)
+        val (c3, b3) = get(local, "bytes=15000000-15999999")
+        assertEquals(206, c3)
+        assertContentEquals(data.copyOfRange(15_000_000, 16_000_000), b3)
+        assertTrue(requests.get() > reqsBeforeOffline, "upstream requests should resume after networkChanged")
+    }
+
+    @Test fun farSeekCancelsInFlightUpstreamAndStartsNewWindow() {
+        val local = BurstProxy.wrap(url)
+        slowOrigin = true
+        try {
+            val reader = Thread { runCatching { get(local, "bytes=0-9999999") } }.apply { isDaemon = true; start() }
+            Thread.sleep(400) // let the initial trickle request begin
+
+            val seekPos = 25_000_000
+            val (code, chunk) = get(local, "bytes=$seekPos-${seekPos + 999_999}")
+            assertEquals(206, code)
+            assertContentEquals(data.copyOfRange(seekPos, seekPos + 1_000_000), chunk)
+
+            Thread.sleep(600) // allow abandoned window to notify/cancel
+            assertTrue(cancelledRequests.get() > 0 || requests.get() >= 2,
+                "far seek should start a new window and cancel or abandon the old request")
+        } finally {
+            slowOrigin = false
+        }
+    }
+
+    @Test fun fastScrubbingDoesNotExceedMaxWindows() {
+        val local = BurstProxy.wrap(url)
+        val positions = listOf(1_000_000, 10_000_000, 20_000_000, 28_000_000, 35_000_000)
+        for (pos in positions) {
+            val (code, chunk) = get(local, "bytes=$pos-${pos + 99_999}")
+            assertEquals(206, code)
+            assertContentEquals(data.copyOfRange(pos, pos + 100_000), chunk, "failed at pos $pos")
+        }
+        val snap = BurstProxy.snapshot()
+        val windowCount = Regex("""@\d+MB""").findAll(snap).count()
+        assertTrue(windowCount <= 2, "active full windows must not exceed MAX_WINDOWS (found $windowCount in: $snap)")
+    }
+
+    @Test fun ringBufferWraparoundAllowsReFetchOfOverwrittenData() {
+        val local = BurstProxy.wrap(url)
+        // capBytes is 16 MB. Read 20 MB sequentially so validFrom() moves forward past byte 0
+        val (c1, b1) = get(local, "bytes=0-19999999")
+        assertEquals(206, c1)
+        assertContentEquals(data.copyOfRange(0, 20_000_000), b1)
+
+        // Read the overwritten start of the stream again
+        val (c2, b2) = get(local, "bytes=0-99999")
+        assertEquals(206, c2)
+        assertContentEquals(data.copyOfRange(0, 100_000), b2)
     }
 }
