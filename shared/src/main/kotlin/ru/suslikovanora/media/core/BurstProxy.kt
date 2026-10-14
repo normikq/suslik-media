@@ -97,13 +97,28 @@ object BurstProxy {
                 1, 1, java.util.concurrent.TimeUnit.SECONDS) }
     }
 
+    @Volatile var isNetworkOnline: Boolean = true
+        private set
+
     /**
      * The device switched networks (Wi-Fi ↔ mobile, VPN up / down): the requests in flight and the pooled connections
      * belong to the old one. Everything is dropped and repeated at once instead of waiting for a 30 s timeout.
      */
     fun networkChanged() {
+        isNetworkOnline = true
         log("reserve: network changed → restarting the requests")
         runCatching { resetConnections() }
+        sources.values.forEach { s -> s.windows.forEach { it.kick() } }
+    }
+
+    /**
+     * The network was completely lost (airplane mode, mobile/Wi-Fi turned off).
+     * Stops active requests immediately and notifies downloaders to suspend retries until network returns.
+     */
+    fun networkLost() {
+        if (!isNetworkOnline) return
+        isNetworkOnline = false
+        log("reserve: network lost → suspending requests until connection returns")
         sources.values.forEach { s -> s.windows.forEach { it.kick() } }
     }
     /** Journal hook (the app's player log). */
@@ -414,6 +429,7 @@ object BurstProxy {
         @Volatile private var stalledWhy: String? = null
         @Volatile private var kicked = false
         private var failures = 0
+        private var offlineCycles = 0
 
         /** No answer / no data for too long: abort, the downloader repeats the burst on a new connection. */
         fun checkStall(now: Long) {
@@ -517,23 +533,32 @@ object BurstProxy {
                     if (closed) return
                     val stalled = stalledWhy; stalledWhy = null
                     val netChange = kicked; kicked = false
-                    val isConnError = stalled != null || e is SocketException || e is SocketTimeoutException ||
-                        e.message?.contains("Software caused connection abort") == true || e.message?.contains("Socket closed") == true
-                    if (isConnError) {
+                    val isConnError = stalled != null || e is SocketTimeoutException
+                    if (stalled != null) {
                         runCatching { resetConnections() }
                     }
                     log("reserve: request failed (${stalled ?: e.message}), attempt ${failures + 1}" +
-                        (if (isConnError) " → new connection" else if (netChange) " (network changed) → new connection" else ""))
+                        (if (stalled != null) " → new connection" else if (netChange) " (network changed) → new connection" else ""))
                     if (e is FatalUpstream) { synchronized(lock) { error = e.message; lock.notifyAll() }; return }
                     if (netChange) { failures = 0; runCatching { resetConnections() }; continue } // the new network: try again at once
                     if (isOffline(e)) {
-                        // No network at all (airplane mode, a tunnel): this is not the server failing, so it does not use up
-                        // the attempts. 2.0.2 journal: the windows gave up after 4.5 s offline and never came back.
-                        // Wait quietly; a network change wakes it at once.
-                        pause(3_000L)
-                        if (kicked) { kicked = false; failures = 0 }
+                        // No network at all (airplane mode, mobile/Wi-Fi off, tunnel, or DNS unresolvable):
+                        // This is not the server failing, so it does not use up the fatal failure attempts.
+                        // Backoff: 1s → 5s → 15s → 30s. If network is completely offline according to ConnectivityManager,
+                        // sleep up to 30s per check without waking the CPU unnecessarily. Any network change wakes it at once.
+                        offlineCycles++
+                        val backoffMs = when {
+                            !isNetworkOnline -> 30_000L
+                            offlineCycles == 1 -> 1_000L
+                            offlineCycles == 2 -> 5_000L
+                            offlineCycles == 3 -> 15_000L
+                            else -> 30_000L
+                        }
+                        pause(backoffMs)
+                        if (kicked) { kicked = false; failures = 0; offlineCycles = 0 }
                         continue
                     }
+                    offlineCycles = 0
                     failures++
                     if (failures > 8) { synchronized(lock) { error = e.message ?: "network"; lock.notifyAll() }; return }
                     val starving = (end() - readPos) < (2L shl 20)
@@ -545,7 +570,7 @@ object BurstProxy {
                     } else {
                         pause(minOf(8_000L, 500L shl minOf(failures, 4))) // a network change wakes it
                     }
-                    if (kicked) { kicked = false; failures = 0 }
+                    if (kicked) { kicked = false; failures = 0; offlineCycles = 0 }
                 }
             }
         }

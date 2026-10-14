@@ -159,7 +159,18 @@ class PlayerActivity : ComponentActivity() {
         val target = pendingSeekPos ?: return@Runnable
         val p = mediaPlayer ?: return@Runnable
         if (bluRayController.onWatchdog(p, currentUrl, userPaused, target)) return@Runnable
+        if (userPaused) {
+            // User paused playback: do not wake up the device or re-seek in the background
+            return@Runnable
+        }
         val t = timeOf(p)
+        if (p.isPlaying && !buffering && kotlin.math.abs(t - target) <= 25_000L) {
+            // Stream is actively playing smoothly near the target (keyframe landed): confirm it now
+            pendingSeekPos = null
+            lastTime = t
+            playbackPosition = t
+            return@Runnable
+        }
         if (kotlin.math.abs(t - target) > SEEK_CONFIRM_TOLERANCE_MS) {
             if (buffering || !p.isPlaying) {
                 // The stream is still opening or buffering (e.g. slow network): give it another cycle
@@ -172,7 +183,11 @@ class PlayerActivity : ComponentActivity() {
             } else {
                 reconnect(forcePlay = !userPaused, startAt = target)
             }
-        } else pendingSeekPos = null
+        } else {
+            pendingSeekPos = null
+            lastTime = t
+            playbackPosition = t
+        }
     }
     // Playing but the clock does not move and no buffering is reported = frozen playback.
     // Runs only while VLC reports "playing" (restarted by the Playing event), so a paused player wakes nobody up.
@@ -337,7 +352,8 @@ class PlayerActivity : ComponentActivity() {
                             playbackPosition = t
                             bluRayController.onSettled(currentUrl, t, mediaPlayer?.position ?: 0f)
                         }
-                    } else if (kotlin.math.abs(t - pending) <= SEEK_CONFIRM_TOLERANCE_MS) {
+                    } else if (kotlin.math.abs(t - pending) <= SEEK_CONFIRM_TOLERANCE_MS ||
+                               (owner.isPlaying && !buffering && lastTime != t && kotlin.math.abs(t - pending) <= 25_000L)) {
                         pendingSeekPos = null
                         handler.removeCallbacks(seekWatchdogRunnable)
                         lastTime = t
@@ -1773,7 +1789,7 @@ class PlayerActivity : ComponentActivity() {
         )
         private const val WATCHDOG_STUCK_TICKS = 4 // 4 x 2 s = the same 8 s as before
         private const val SEEK_CONFIRM_TIMEOUT_MS = 9_000L
-        private const val SEEK_CONFIRM_TOLERANCE_MS = 4_000L
+        private const val SEEK_CONFIRM_TOLERANCE_MS = 12_000L
         private const val TAP_SEEK_APPLY_MS = 350L
         private const val STABLE_PLAYBACK_MS = 30_000L
         private const val MAX_RETRY_DELAY_MS = 15_000L

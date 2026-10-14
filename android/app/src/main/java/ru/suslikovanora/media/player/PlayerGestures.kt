@@ -1,13 +1,15 @@
 package ru.suslikovanora.media.player
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
-import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.ViewConfiguration
 import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.hypot
 
 class PlayerGestures(
     private val context: Context,
@@ -46,26 +48,12 @@ class PlayerGestures(
 
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop * 2f
 
-    private val gestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
-        override fun onDown(e: MotionEvent): Boolean = true
-
-        override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-            // Rapid follow-up taps after a double-tap keep seeking (like video apps do).
-            if (SystemClock.uptimeMillis() - lastSeekTapAt < REPEAT_TAP_WINDOW_MS) {
-                recordTapSeek()
-                callback.onTapSeek(e.x >= callback.getStageWidth() / 2f)
-                return true
-            }
-            callback.onToggleControls()
-            return true
-        }
-
-        override fun onDoubleTap(e: MotionEvent): Boolean {
-            recordTapSeek()
-            callback.onTapSeek(e.x >= callback.getStageWidth() / 2f)
-            return true
-        }
-    })
+    private val handler = Handler(Looper.getMainLooper())
+    private var pendingTapRunnable: Runnable? = null
+    private var lastTapTime = 0L
+    private var lastTapX = 0f
+    private var lastTapY = 0f
+    private var downTime = 0L
 
     private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScaleBegin(detector: ScaleGestureDetector): Boolean { pinchFactor = 1f; return true }
@@ -83,6 +71,7 @@ class PlayerGestures(
     fun onTouch(ev: MotionEvent): Boolean {
         scaleDetector.onTouchEvent(ev)
         if (ev.pointerCount > 1 || scaleDetector.isInProgress) {
+            pendingTapRunnable?.let { handler.removeCallbacks(it); pendingTapRunnable = null }
             if (drag != Drag.None) cancelDrag()
             return true
         }
@@ -91,15 +80,59 @@ class PlayerGestures(
                 dragStartX = ev.x
                 dragStartY = ev.y
                 drag = Drag.None
+                downTime = SystemClock.uptimeMillis()
             }
             MotionEvent.ACTION_MOVE -> {
                 if (drag == Drag.None) startDragIfNeeded(ev) else updateDrag(ev)
-                if (drag != Drag.None) return true
+                if (drag != Drag.None) {
+                    pendingTapRunnable?.let { handler.removeCallbacks(it); pendingTapRunnable = null }
+                    return true
+                }
             }
-            MotionEvent.ACTION_UP -> if (drag != Drag.None) { finishDrag(); return true }
-            MotionEvent.ACTION_CANCEL -> if (drag != Drag.None) { cancelDrag(); return true }
+            MotionEvent.ACTION_UP -> {
+                if (drag != Drag.None) {
+                    finishDrag()
+                    return true
+                }
+                val dx = ev.x - dragStartX
+                val dy = ev.y - dragStartY
+                val dist = hypot(dx, dy)
+                val duration = SystemClock.uptimeMillis() - downTime
+                if (dist <= touchSlop && duration <= 650L) {
+                    val now = SystemClock.uptimeMillis()
+                    val isRapidSeek = now - lastSeekTapAt < REPEAT_TAP_WINDOW_MS
+                    val isDoubleTap = !isRapidSeek && (now - lastTapTime < 320L) &&
+                        (hypot(ev.x - lastTapX, ev.y - lastTapY) < touchSlop * 1.5f)
+
+                    if (isDoubleTap || isRapidSeek) {
+                        pendingTapRunnable?.let { handler.removeCallbacks(it); pendingTapRunnable = null }
+                        recordTapSeek()
+                        callback.onTapSeek(ev.x >= callback.getStageWidth() / 2f)
+                    } else {
+                        lastTapTime = now
+                        lastTapX = ev.x
+                        lastTapY = ev.y
+                        val tapX = ev.x
+                        val runnable = Runnable {
+                            pendingTapRunnable = null
+                            if (SystemClock.uptimeMillis() - lastSeekTapAt < REPEAT_TAP_WINDOW_MS) {
+                                recordTapSeek()
+                                callback.onTapSeek(tapX >= callback.getStageWidth() / 2f)
+                            } else {
+                                callback.onToggleControls()
+                            }
+                        }
+                        pendingTapRunnable = runnable
+                        handler.postDelayed(runnable, 280L)
+                    }
+                    return true
+                }
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                pendingTapRunnable?.let { handler.removeCallbacks(it); pendingTapRunnable = null }
+                if (drag != Drag.None) { cancelDrag(); return true }
+            }
         }
-        gestureDetector.onTouchEvent(ev)
         return true
     }
 
@@ -117,11 +150,6 @@ class PlayerGestures(
             else -> Drag.None
         }
         if (drag == Drag.None) return
-
-        // Stop the tap detector from firing a single tap on release.
-        val cancel = MotionEvent.obtain(ev).apply { action = MotionEvent.ACTION_CANCEL }
-        gestureDetector.onTouchEvent(cancel)
-        cancel.recycle()
 
         dragStartX = ev.x
         dragStartY = ev.y

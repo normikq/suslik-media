@@ -145,6 +145,7 @@ class PlayerNetworkMonitor(
         if (network != lastNetwork) return // an old network went away after we already switched
         lastNetwork = null
         isNetworkLost = true
+        BurstProxy.networkLost()
         callback.onNetworkLost()
     }
 }
