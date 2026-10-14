@@ -68,10 +68,16 @@ class PlayerGestures(
         lastSeekTapAt = SystemClock.uptimeMillis()
     }
 
+    fun resetTapState() {
+        pendingTapRunnable?.let { handler.removeCallbacks(it); pendingTapRunnable = null }
+        lastTapTime = 0L
+        lastSeekTapAt = 0L
+    }
+
     fun onTouch(ev: MotionEvent): Boolean {
         scaleDetector.onTouchEvent(ev)
         if (ev.pointerCount > 1 || scaleDetector.isInProgress) {
-            pendingTapRunnable?.let { handler.removeCallbacks(it); pendingTapRunnable = null }
+            resetTapState()
             if (drag != Drag.None) cancelDrag()
             return true
         }
@@ -98,21 +104,28 @@ class PlayerGestures(
                 val dy = ev.y - dragStartY
                 val dist = hypot(dx, dy)
                 val duration = SystemClock.uptimeMillis() - downTime
-                // If not dragging, allow generous movement tolerance (up to 2.5x touchSlop)
-                // so natural thumb jitter on high-res displays does not drop the tap.
-                if (dist <= touchSlop * 2.5f && duration <= 800L) {
+                // Generous tolerance for natural thumb jitter on high-res displays
+                if (dist <= touchSlop * 3f && duration <= 800L) {
                     val now = SystemClock.uptimeMillis()
                     val stageWidth = callback.getStageWidth().coerceAtLeast(1f)
-                    val isEdgeTap = ev.x < stageWidth * 0.35f || ev.x > stageWidth * 0.65f
+                    val isEdgeTap = ev.x < stageWidth * 0.22f || ev.x > stageWidth * 0.78f
                     val isRapidSeek = isEdgeTap && (now - lastSeekTapAt < REPEAT_TAP_WINDOW_MS)
                     val isDoubleTap = isEdgeTap && !isRapidSeek && (now - lastTapTime < 320L) &&
-                        (hypot(ev.x - lastTapX, ev.y - lastTapY) < touchSlop * 2f)
+                        (hypot(ev.x - lastTapX, ev.y - lastTapY) < touchSlop * 2.5f)
 
                     if (isDoubleTap || isRapidSeek) {
                         pendingTapRunnable?.let { handler.removeCallbacks(it); pendingTapRunnable = null }
                         recordTapSeek()
                         callback.onTapSeek(ev.x >= stageWidth / 2f)
+                    } else if (!isEdgeTap) {
+                        // Center tap: toggle controls IMMEDIATELY (no double-tap seek in center area)
+                        pendingTapRunnable?.let { handler.removeCallbacks(it); pendingTapRunnable = null }
+                        lastTapTime = now
+                        lastTapX = ev.x
+                        lastTapY = ev.y
+                        callback.onToggleControls()
                     } else {
+                        // Edge tap: might be first tap of a double-tap seek, wait briefly
                         lastTapTime = now
                         lastTapX = ev.x
                         lastTapY = ev.y
@@ -122,13 +135,13 @@ class PlayerGestures(
                             callback.onToggleControls()
                         }
                         pendingTapRunnable = runnable
-                        handler.postDelayed(runnable, 240L)
+                        handler.postDelayed(runnable, 200L)
                     }
                     return true
                 }
             }
             MotionEvent.ACTION_CANCEL -> {
-                pendingTapRunnable?.let { handler.removeCallbacks(it); pendingTapRunnable = null }
+                resetTapState()
                 if (drag != Drag.None) { cancelDrag(); return true }
             }
         }
@@ -200,10 +213,12 @@ class PlayerGestures(
     private fun finishDrag() {
         if (drag == Drag.Seek && dragSeekTarget != dragSeekBase) callback.onSeekTo(dragSeekTarget)
         drag = Drag.None
+        resetTapState()
     }
 
     private fun cancelDrag() {
         drag = Drag.None
+        resetTapState()
     }
 
     companion object {

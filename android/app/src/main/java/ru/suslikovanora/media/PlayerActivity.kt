@@ -699,6 +699,7 @@ class PlayerActivity : ComponentActivity() {
                 }
                 override fun onStopTrackingTouch(seekBar: SeekBar) {
                     userSeeking = false
+                    gestures.resetTapState()
                     seekTo(seekBar.progress.toLong())
                     showControlsTemporarily()
                 }
@@ -817,6 +818,7 @@ class PlayerActivity : ComponentActivity() {
         })
         val touchListener = View.OnTouchListener { _, event -> gestures.onTouch(event) }
         stage.setOnTouchListener(touchListener)
+        videoLayout.setOnTouchListener(touchListener)
         audioSession.setup()
 
         pipController.setup()
@@ -1083,6 +1085,7 @@ class PlayerActivity : ComponentActivity() {
      */
     private fun seekTo(target: Long) {
         val p = mediaPlayer ?: return
+        gestures.resetTapState()
         supervisor.seeked(); AppLog.write("seek to ${target / 1000}s")
         if (catchingUp) endCatchUp() // a jump: the gathered reserve belongs to the old place
         catchUpNotBefore = SystemClock.elapsedRealtime() + 15_000L; catchUpFrom = target.coerceAtLeast(0L) + CATCH_UP_AFTER_PLAYED_MS
