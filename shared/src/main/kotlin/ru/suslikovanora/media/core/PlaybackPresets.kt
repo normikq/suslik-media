@@ -10,14 +10,15 @@ object PlaybackPresets {
         Preset(32, "32 МБ", "SD и 720p (до ~4 Мбит/с, файлы до ~2 ГБ). Когда $where мало места."),
         Preset(64, "64 МБ", "Обычный 1080p (до ~8 Мбит/с, файлы 2–6 ГБ). Примерно минута запаса."),
         Preset(96, "96 МБ", "1080p хорошего качества (до ~15 Мбит/с, файлы 6–12 ГБ). Подходит почти всем."),
-        Preset(128, "128 МБ", "1080p Remux и 4K (от ~15 Мбит/с, файлы от 12 ГБ). Больше запас почти ничего не даёт.")
+        Preset(128, "128 МБ", "1080p Remux и 4K (от ~15 Мбит/с, файлы от 12 ГБ)."),
+        Preset(160, "160 МБ", "Тяжёлый 4K и Remux (до ~30 Мбит/с, файлы 20–40 ГБ). Большой запас при нестабильной связи."),
+        Preset(256, "256 МБ", "Максимальный запас: файлы от 40–50 ГБ. Качает большими порциями, выдерживает долгие обрывы связи.")
     )
     const val BURST_DEFAULT = 96
     /**
-     * Never more than this per film: a bigger reserve barely helps (the network refills 128 MB in seconds) and is
-     * mostly thrown away after a seek — only more load on the server. Older settings of 160–512 MB come down to it.
+     * Never more than this per film. Extended up to 256 MB so high-bitrate films can buffer more data.
      */
-    const val BURST_MAX = 128
+    const val BURST_MAX = 256
     fun clampBurst(mb: Int) = mb.coerceIn(0, BURST_MAX)
 
     /** VLC's own buffer, ms: how much it holds before playing (start / after a seek). */

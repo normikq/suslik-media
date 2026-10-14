@@ -1578,6 +1578,7 @@ class PlayerActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         audioSession.setActive(true)
+        BurstProxy.onScreenOn()
         handler.removeCallbacks(idleReleaseRunnable)
         val away = SystemClock.elapsedRealtime() - stoppedAt // elapsedRealtime: the phone sleeps while locked, uptime stops then
         when {
@@ -1641,6 +1642,7 @@ class PlayerActivity : ComponentActivity() {
         playOnStart = !userPaused && !ended && (p.isPlaying || playWhenReady || buffering)
         runCatching { p.pause() } // not doPause(): the user did not pause, the film continues on return
         supervisor.paused(); AppLog.write("screen off / app hidden: paused, keeping the player")
+        BurstProxy.onScreenOff()
         keptOnStop = true
         // The screen's surface goes away: let go of it cleanly (video off, views detached) instead of letting the
         // video output die with it — that is what gave ~10 s of black / flicker after unlocking.

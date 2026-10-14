@@ -18,4 +18,8 @@ dependencies {
     testImplementation("org.json:json:20240303")
 }
 
-tasks.test { useJUnitPlatform(); testLogging { events("failed"); showStandardStreams = true; exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL } }
+tasks.test {
+    useJUnitPlatform()
+    maxHeapSize = "512m"
+    testLogging { events("failed"); showStandardStreams = true; exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL }
+}

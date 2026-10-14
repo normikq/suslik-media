@@ -171,3 +171,16 @@ class LibraryKeepTest {
 
     @Test fun anEmptyListIsNeverUsedForCleaning() = assertFalse(LibraryKeep(emptyList()).usable)
 }
+
+class PlaybackPresetsTest {
+    @Test fun clampAndValues() {
+        assertEquals(0, PlaybackPresets.clampBurst(-5))
+        assertEquals(0, PlaybackPresets.clampBurst(0))
+        assertEquals(96, PlaybackPresets.clampBurst(96))
+        assertEquals(160, PlaybackPresets.clampBurst(160))
+        assertEquals(256, PlaybackPresets.clampBurst(256))
+        assertEquals(256, PlaybackPresets.clampBurst(512))
+        val presets = PlaybackPresets.burst("на телефоне")
+        assertEquals(listOf(0, 32, 64, 96, 128, 160, 256), presets.map { it.value })
+    }
+}
