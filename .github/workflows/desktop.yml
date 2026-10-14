@@ -52,7 +52,7 @@ jobs:
           V=$(sed -n 's/^val appVersion = "\([^"]*\)".*/\1/p' build.gradle.kts)
           mkdir -p ../dist-diag && cp "$(ls build/compose/binaries/main/msi/Suslik\ Debug*.msi | head -1)" "../dist-diag/Suslik Debug-$V.msi"
       - uses: actions/upload-artifact@v4
-        with: { name: windows-debug-msi, path: dist-diag/*.msi, retention-days: 30 }
+        with: { name: windows-debug-msi, path: dist-diag/*.msi, retention-days: 2 }
       - name: Publish to the site
         if: ${{ inputs.publish }}
         working-directory: .
