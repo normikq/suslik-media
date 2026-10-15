@@ -225,6 +225,7 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
                 ) {
                     key(req, playerGen) {
                         PlayerView(req, lib, win, keys, onTop, startIndex = playerStart,
+                            parentWindow = window,
                             onRestart = { i -> playerStart = i; playerGen++ }) { closePlayer() }
                     }
                 }

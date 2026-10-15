@@ -10,13 +10,16 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Slider
@@ -27,6 +30,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -37,7 +41,25 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.hoverable
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Surface
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.awt.SwingPanel
+import androidx.compose.ui.awt.ComposeDialog
+import javax.swing.JDialog
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
@@ -284,14 +306,14 @@ private fun SeekBar(position: Long, length: Long, buffered: Long = 0L, marks: Li
                 val bf = if (length > 0) (buffered.toFloat() / length).coerceIn(0f, 1f) else 0f
                 if (bf > 0f) drawRoundRect(Color(0x80B4B8C4), topLeft = Offset(0f, cy - h / 2), size = Size(size.width * bf, h), cornerRadius = r)
                 val f = if (length > 0) (position.toFloat() / length).coerceIn(0f, 1f) else 0f
-                if (f > 0f) drawRoundRect(Sm.lamp, topLeft = Offset(0f, cy - h / 2), size = Size(size.width * f, h), cornerRadius = r)
+                if (f > 0f) drawRoundRect(Color.White, topLeft = Offset(0f, cy - h / 2), size = Size(size.width * f, h), cornerRadius = r)
                 // chapter boundaries: small dark gaps across the track
                 if (length > 0) for (m in marks) {
                     if (m <= 0 || m >= length) continue
                     val x = size.width * (m.toFloat() / length)
                     drawRect(Sm.booth, topLeft = Offset(x - 1.5f, cy - h / 2 - 1), size = Size(3f, h + 2))
                 }
-                drawCircle(Sm.lamp, radius = (5f + 3f * grow).dp.toPx(), center = Offset(size.width * f, cy))
+                drawCircle(Color.White, radius = (5f + 3f * grow).dp.toPx(), center = Offset(size.width * f, cy))
             }
     )
 }
@@ -308,6 +330,7 @@ fun PlayerView(
     req: PlayRequest, library: Library, win: WindowState, keys: MutableState<((KeyEvent) -> Boolean)?>,
     onTop: MutableState<Boolean>,           // main window "always on top" (mini-player / pin)
     startIndex: Int = 0,                    // playlist episode to start with (after a settings restart)
+    parentWindow: java.awt.Window? = null,  // main window for owning transparent overlay dialogs
     onRestart: (Int) -> Unit = {},          // re-create the player at this episode (night mode / subtitle size)
     onClose: () -> Unit
 ) {
@@ -361,6 +384,7 @@ fun PlayerView(
     var tsAbsolute by remember { mutableStateOf(false) } // reopened for a seek before VLC's clock (see vlcSeekTo)
     var status by remember { mutableStateOf<String?>("Открываем…") }
     var volume by remember { mutableStateOf(ui.get("volume")?.toIntOrNull() ?: 100) }
+    var lastVolumeWheelAt by remember { mutableStateOf(0L) }
     var queue by remember { mutableStateOf(listOf(Entry(req.title, req.url))) }
     var currentUrl by remember { mutableStateOf(req.url) }
     var nextIn by remember { mutableStateOf(-1) }       // countdown seconds, -1 = no card
@@ -698,7 +722,10 @@ fun PlayerView(
     fun toggleFullscreen() {
         win.placement = if (win.placement == WindowPlacement.Fullscreen) WindowPlacement.Floating else WindowPlacement.Fullscreen
     }
-    fun poke() { lastMove = System.currentTimeMillis() }
+    fun poke() {
+        lastMove = System.currentTimeMillis()
+        if (!barVisible) barVisible = true
+    }
 
     /**
      * Leaving: the native video cannot be animated, so it is swapped for a still of the current frame, which the main
@@ -737,8 +764,28 @@ fun PlayerView(
                 Key.Spacebar, Key.K -> togglePause()
                 Key.DirectionRight -> seekBy(if (e.isShiftPressed) 60_000L else 10_000L)
                 Key.DirectionLeft -> seekBy(if (e.isShiftPressed) -60_000L else -10_000L)
-                Key.DirectionUp -> { volume = (volume + 5).coerceAtMost(150); val v = volume; vlc { mp.audio().setVolume(v) } }
-                Key.DirectionDown -> { volume = (volume - 5).coerceAtLeast(0); val v = volume; vlc { mp.audio().setVolume(v) } }
+                Key.DirectionUp -> {
+                    volume = (volume + 5).coerceAtMost(150)
+                    val v = volume
+                    vlc { mp.audio().setVolume(v) }
+                    if (userMuted) {
+                        userMuted = false
+                        vlc { mp.audio().setMute(false) }
+                    }
+                    lastVolumeWheelAt = System.currentTimeMillis()
+                    flash("Громкость: $v%", "Громкость:")
+                }
+                Key.DirectionDown -> {
+                    volume = (volume - 5).coerceAtLeast(0)
+                    val v = volume
+                    vlc { mp.audio().setVolume(v) }
+                    if (userMuted) {
+                        userMuted = false
+                        vlc { mp.audio().setMute(false) }
+                    }
+                    lastVolumeWheelAt = System.currentTimeMillis()
+                    flash("Громкость: $v%", "Громкость:")
+                }
                 Key.F, Key.Enter -> toggleFullscreen()
                 Key.Escape -> if (win.placement == WindowPlacement.Fullscreen) win.placement = WindowPlacement.Floating else close()
                 Key.Backspace -> close()
@@ -1010,10 +1057,18 @@ fun PlayerView(
                 volume = (volume + step).coerceIn(0, 150)
                 val v = volume
                 vlc { mp.audio().setVolume(v) }
+                if (userMuted) {
+                    userMuted = false
+                    vlc { mp.audio().setMute(false) }
+                }
+                lastVolumeWheelAt = System.currentTimeMillis()
                 poke()
                 flash("Громкость: $v%", "Громкость:")
             }
         }
+        // No mouse-motion listener on purpose: Windows sends a WM_MOUSEMOVE to the window under a resting cursor whenever an
+        // overlay dialog is shown or hidden, so hiding the bar itself "moved the mouse" and brought it straight back.
+        // The polling loop below compares real screen coordinates instead.
         canvas.addMouseListener(clicks)
         canvas.addMouseWheelListener(wheel)
         onDispose {
@@ -1044,152 +1099,1037 @@ fun PlayerView(
     // roll down. It stays while the cursor rests over the bottom of the window, while paused / opening, while choosing a
     // track, dragging the slider or on the next-episode card. No event plumbing that a resizing video could disturb.
     val fullscreen = win.placement == WindowPlacement.Fullscreen
+
+    // System-wide pointer tracking: detects mouse moves even over VLC native surface
     LaunchedEffect(Unit) {
         var last: java.awt.Point? = null
-        var movedAt = System.currentTimeMillis()
-        var keysAt = lastMove
         while (true) {
-            val now = System.currentTimeMillis()
             val pos = runCatching { java.awt.MouseInfo.getPointerInfo()?.location }.getOrNull()
-            if (pos != null && pos != last) { if (last != null) movedAt = now; last = pos }
-            if (lastMove != keysAt) { keysAt = lastMove; movedAt = now } // key presses count as activity
-            val w = javax.swing.SwingUtilities.getWindowAncestor(canvas)
-            val b = w?.bounds
-            // Not "and the window is active": in a normal window that is not focused (another app was clicked last)
-            // moving the mouse over the film did nothing — the bar stayed down and the cursor stayed hidden.
-            val inside = b != null && pos != null && b.contains(pos)
-            val zone = b?.let { (it.height * 0.16).toInt().coerceIn(130, 220) } ?: 0
-            val nearBottom = inside && pos!!.y >= b!!.y + b.height - zone
-            val hold = b == null || !started || vlcPaused || nextIn >= 0 || picker != null || seeking != null || infoOpen || inIntro()
-            val show = hold || nearBottom || (inside && now - movedAt < 2500L)
-            if (show != barVisible) barVisible = show
-            delay(150)
+            if (pos != null && pos != last) {
+                if (last != null) {
+                    val w = javax.swing.SwingUtilities.getWindowAncestor(canvas)
+                    val b = w?.bounds
+                    val inside = (w?.mousePosition != null) || (canvas.mousePosition != null) || (b != null && b.contains(pos))
+                    if (inside) poke()
+                }
+                last = pos
+            }
+            delay(100)
         }
     }
-    val barSlide = remember { androidx.compose.animation.core.Animatable(0f) } // 0 = shown, 1 = rolled down
-    var barInLayout by remember { mutableStateOf(true) }
-    LaunchedEffect(barVisible) {
-        if (barVisible) { barInLayout = true; barSlide.animateTo(0f, tween(280, easing = Sm.ease)) }
-        else { barSlide.animateTo(1f, tween(260, easing = Sm.ease)); barInLayout = false }
+
+    // Auto-hide timer: when bar is visible and playing, rolls down after 2.5s of inactivity
+    LaunchedEffect(barVisible, lastMove, started, vlcPaused, nextIn, picker, seeking, infoOpen) {
+        val hold = !started || vlcPaused || nextIn >= 0 || picker != null || seeking != null || infoOpen || inIntro()
+        if (hold) {
+            barVisible = true
+            return@LaunchedEffect
+        }
+        if (!barVisible) return@LaunchedEffect
+        delay(2500)
+        val stillHold = !started || vlcPaused || nextIn >= 0 || picker != null || seeking != null || infoOpen || inIntro()
+        if (!stillHold) {
+            barVisible = false
+        }
     }
+
+    val barSlide = remember { androidx.compose.animation.core.Animatable(0f) }
     // The cursor disappears together with the bar.
     val blankCursor = remember {
         java.awt.Toolkit.getDefaultToolkit().createCustomCursor(java.awt.image.BufferedImage(1, 1, java.awt.image.BufferedImage.TYPE_INT_ARGB), java.awt.Point(0, 0), "blank")
     }
-    LaunchedEffect(lastMove, barVisible) {
-        canvas.cursor = java.awt.Cursor.getDefaultCursor()
-        if (!barVisible) canvas.cursor = blankCursor // over the bare picture the cursor goes away with the bar
+    LaunchedEffect(barVisible) {
+        if (barVisible) {
+            canvas.cursor = java.awt.Cursor.getDefaultCursor()
+        } else {
+            canvas.cursor = blankCursor
+        }
     }
 
-    Column(Modifier.fillMaxSize().background(Color.Black)) {
-        Box(Modifier.weight(1f).fillMaxWidth()) {
-            if (showCanvas) SwingPanel(factory = { canvas }, modifier = if (parked) Modifier.offset(x = (-8000).dp).size(320.dp, 180.dp) else Modifier.fillMaxSize(), background = Color.Black)
-            if (!showCanvas || parked) lastFrame?.let { androidx.compose.foundation.Image(it, null, contentScale = androidx.compose.ui.layout.ContentScale.Fit, modifier = Modifier.fillMaxSize()) }
-                ?: Text(if (closing) "" else "Открываем…", color = Sm.muted, fontFamily = Onest, fontSize = 15.sp, modifier = Modifier.align(Alignment.Center))
+    val owner = parentWindow ?: runCatching { java.awt.Frame.getFrames().firstOrNull { it.isShowing } }.getOrNull()
+
+    val topDialog = remember(owner) {
+        if (owner == null) null else ComposeDialog(owner).apply {
+            isUndecorated = true
+            isTransparent = true
+            isResizable = false
+            focusableWindowState = false
         }
-        // Slides down / up inside its own slot. The video is resized only ONCE per show/hide (slot added at the start of
-        // showing, removed at the end of hiding) — resizing it every frame was what made the bar stutter.
-        if (barInLayout) Box(Modifier.fillMaxWidth().clipToBounds()) {
-            // Leaving: the bar vanishes but keeps its place (the still must not jump while it flies to the poster).
-            Column(Modifier.fillMaxWidth().graphicsLayer { translationY = barSlide.value * size.height; alpha = if (closing) 0f else 1f - 0.5f * barSlide.value }
-                .background(Sm.booth).padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 10.dp)) {
-                if (infoOpen) Text(infoText.ifBlank { "Собираем данные…" }, color = Color(0xFFFFD791), fontFamily = Onest, fontSize = 12.5.sp,
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp))
-                if (inIntro()) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
-                    Text("Идёт заставка", color = Sm.muted, fontFamily = Onest, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                    LampButton("Пропустить заставку (S) ⏭") { skipIntro() }
+    }
+    val bottomDialog = remember(owner) {
+        if (owner == null) null else ComposeDialog(owner).apply {
+            isUndecorated = true
+            isTransparent = true
+            isResizable = false
+            focusableWindowState = false
+        }
+    }
+
+    fun syncOverlayBounds() {
+        val comp = if (canvas.isShowing) canvas else ((owner as? javax.swing.RootPaneContainer)?.contentPane ?: owner) ?: return
+        val loc = runCatching { comp.locationOnScreen }.getOrNull() ?: return
+        val w = comp.width
+        val h = comp.height
+        if (w <= 0 || h <= 0) return
+        if (parked) return // the video area is off-screen then: keep the overlays where they were
+        val topH = 75
+        // Tall enough for the open menu AND the scrubber + buttons under it (Column gives the last children what is left).
+        val bottomH = (when {
+            picker == "more" -> 600 + (if (infoOpen) 60 else 0)
+            picker != null -> 460 + (if (infoOpen) 60 else 0)
+            infoOpen -> 240
+            inIntro() || nextIn >= 0 -> 220
+            else -> 210
+        }).coerceAtMost(h - topH)
+
+        topDialog?.setBounds(loc.x, loc.y, w, topH)
+        bottomDialog?.setBounds(loc.x, loc.y + h - bottomH, w, bottomH)
+        topDialog?.revalidate()
+        bottomDialog?.revalidate()
+    }
+
+    DisposableEffect(owner, canvas) {
+        val compListener = object : java.awt.event.ComponentAdapter() {
+            override fun componentMoved(e: java.awt.event.ComponentEvent) { syncOverlayBounds() }
+            override fun componentResized(e: java.awt.event.ComponentEvent) { syncOverlayBounds() }
+        }
+        val winListener = object : java.awt.event.WindowAdapter() {
+            override fun windowIconified(e: java.awt.event.WindowEvent) {
+                topDialog?.isVisible = false
+                bottomDialog?.isVisible = false
+            }
+            override fun windowDeiconified(e: java.awt.event.WindowEvent) {
+                if (barVisible) {
+                    syncOverlayBounds()
+                    topDialog?.isVisible = true
+                    bottomDialog?.isVisible = true
                 }
-                if (picker == "more") MorePanel(
-                    rates = rates, rate = rate, onRate = { setSpeed(it) },
-                    subScale = subScale, onSubScale = { v -> ui.put("subScale", if (v == 100) null else v.toString()); restartPlayer() },
-                    subDelay = subDelay, onSubDelay = { d -> shiftSubs(d) },
-                    night = nightMode, onNight = { ui.put("night", if (nightMode) null else "1"); restartPlayer() },
-                    onTop = onTop.value, onOnTop = { onTop.value = !onTop.value }, mini = mini, onMini = { setMini(!mini); picker = null },
-                    info = infoOpen, onInfo = { infoOpen = !infoOpen },
-                    chapters = chapters, current = chapterAt(time), onChapter = { i -> jumpChapter(i - chapterAt(time)) }
-                )
-                // Track list opens inside the bar: a popup would be hidden behind the native video surface.
-                if (picker == "audio" || picker == "spu") picker?.let { kind ->
-                    val current = pickerCurrent
-                    androidx.compose.foundation.layout.FlowRow(
-                        Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        if (pickerItems.none { it.first != -1 })
-                            Text("Дорожки ещё не определены", color = Sm.muted, fontFamily = Onest, fontSize = 13.sp)
-                        pickerItems.forEach { (id, name) ->
-                            val on = id == current
-                            Chip(name, on) {
-                                if (kind == "audio") { vlc { mp.audio().setTrack(id) }; applyTrackNow(); ui.put("audio:${seriesKey()}", name); ui.put("audio:*", name) }
-                                else {
-                                    vlc { mp.subpictures().setTrack(id) }
-                                    val v = if (id == -1) "__off__" else name
-                                    ui.put("spu:${seriesKey()}", v); ui.put("spu:*", v)
-                                }
-                                picker = null
-                            }
+            }
+        }
+        owner?.addComponentListener(compListener)
+        owner?.addWindowListener(winListener)
+        canvas.addComponentListener(compListener)
+        onDispose {
+            owner?.removeComponentListener(compListener)
+            owner?.removeWindowListener(winListener)
+            canvas.removeComponentListener(compListener)
+            topDialog?.isVisible = false
+            bottomDialog?.isVisible = false
+            topDialog?.dispose()
+            bottomDialog?.dispose()
+        }
+    }
+
+    LaunchedEffect(barVisible, closing) {
+        if (closing) {
+            topDialog?.isVisible = false
+            bottomDialog?.isVisible = false
+            return@LaunchedEffect
+        }
+        if (barVisible) {
+            syncOverlayBounds()
+            topDialog?.isVisible = true
+            bottomDialog?.isVisible = true
+            barSlide.animateTo(0f, tween(280, easing = Sm.ease))
+        } else {
+            barSlide.animateTo(1f, tween(260, easing = Sm.ease))
+            topDialog?.isVisible = false
+            bottomDialog?.isVisible = false
+        }
+    }
+
+    LaunchedEffect(picker, infoOpen, inIntro(), nextIn, win.placement) {
+        if (barVisible && !closing) {
+            syncOverlayBounds()
+        }
+    }
+
+    // Video layer in main window: fills the window permanently without resizing or jumping
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        if (event.type == PointerEventType.Press) {
+                            poke()
                         }
                     }
                 }
-                if (nextIn >= 0 && index < queue.size - 1) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
-                        Text("Следующая серия: ${queue[index + 1].title}", color = Sm.text, fontFamily = Onest, fontSize = 14.sp,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                        Text("через $nextIn с", color = Sm.lamp, fontFamily = Onest, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 12.dp))
-                        LampButton("▶ Сейчас") { playEntry(index + 1) }
-                        Spacer(Modifier.width(8.dp))
-                        OutlineButton("Отмена") { nextIn = -1 }
+            }
+    ) {
+        if (showCanvas) SwingPanel(factory = { canvas }, modifier = if (parked) Modifier.offset(x = (-8000).dp).size(320.dp, 180.dp) else Modifier.fillMaxSize(), background = Color.Black)
+        if (!showCanvas || parked) lastFrame?.let { androidx.compose.foundation.Image(it, null, contentScale = androidx.compose.ui.layout.ContentScale.Fit, modifier = Modifier.fillMaxSize()) }
+            ?: Text(if (closing) "" else "Открываем…", color = Sm.muted, fontFamily = Onest, fontSize = 15.sp, modifier = Modifier.align(Alignment.Center))
+    }
+
+    DisposableEffect(topDialog, bottomDialog) {
+        topDialog?.setContent {
+            val controlsAlpha = if (closing) 0f else (1f - barSlide.value).coerceIn(0f, 1f)
+            SuslikTheme {
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(
+                                    Color(0xCC090B10),
+                                    Color(0x66090B10),
+                                    Color.Transparent
+                                )
+                            )
+                        )
+                        .padding(horizontal = 24.dp, vertical = 14.dp)
+                        .graphicsLayer {
+                            translationY = -barSlide.value * 90.dp.toPx()
+                            alpha = controlsAlpha
+                        }
+                        .pointerHoverIcon(PointerIcon.Default)
+                        .pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val e = awaitPointerEvent()
+                                    if (e.type == PointerEventType.Press) { // not Move: Compose sends synthetic moves while the bar re-lays out, which would keep it up forever; real moves come from the polling loop
+                                        poke()
+                                    }
+                                }
+                            }
+                        },
+                    horizontalArrangement = Arrangement.Start,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        GlassIconButton(onClick = { close() }, tooltip = "В библиотеку (Esc)") {
+                            Text("‹", color = Sm.text, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                        }
+                        GlassIconButton(
+                            onClick = { onTop.value = !onTop.value },
+                            active = onTop.value,
+                            tooltip = if (onTop.value) "Открепить окно (T)" else "Поверх всех окон (T)"
+                        ) {
+                            Text("⧉", color = if (onTop.value) Sm.lamp else Sm.text, fontSize = 18.sp)
+                        }
                     }
+                    Text(
+                        title + if (queue.size > 1) "  ·  ${index + 1}/${queue.size}" else "",
+                        color = Sm.text.copy(alpha = 0.9f),
+                        fontFamily = Onest,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(start = 16.dp).weight(1f)
+                    )
                 }
+            }
+        }
+
+        bottomDialog?.setContent {
+            val controlsAlpha = if (closing) 0f else (1f - barSlide.value).coerceIn(0f, 1f)
+            SuslikTheme {
                 val animBuffered by androidx.compose.animation.core.animateFloatAsState(
                     targetValue = bufferedMs.toFloat(),
                     animationSpec = tween(260)
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(fmt(hoverAt ?: seeking?.toLong() ?: time), color = if (hoverAt != null) Sm.lamp else Sm.text, fontFamily = Onest, fontSize = 13.sp,
-                        modifier = Modifier.width(64.dp))
-                    SeekBar(
-                        position = seeking?.toLong() ?: time, length = length, buffered = animBuffered.toLong(), marks = chapters.map { it.first },
-                        modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
-                        onScrub = { t -> seeking = t?.toFloat(); poke() },
-                        onSeek = { t -> seeking = null; time = t; lastGood = t; lastSeekAt = System.currentTimeMillis(); supRef.get()?.seeked(); PlayerLog.write("seek to ${t / 1000}s"); vlcSeekTo(t) },
-                        onHover = { t -> hoverAt = t }
-                    )
-                    Text(if (length > 0) fmt(length) else "--:--", color = Sm.muted, fontFamily = Onest, fontSize = 13.sp)
+                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                    val totalWidth = maxWidth
+                    val isCompact = totalWidth < 880.dp
+                    val isVeryNarrow = totalWidth < 680.dp
+                    val buttonSpacing = when {
+                        isVeryNarrow -> 4.dp
+                        isCompact -> 6.dp
+                        else -> 10.dp
+                    }
+                    val btnSize = when {
+                        isVeryNarrow -> 34.dp
+                        isCompact -> 38.dp
+                        else -> 42.dp
+                    }
+                    val heroSize = when {
+                        isVeryNarrow -> 40.dp
+                        isCompact -> 44.dp
+                        else -> 48.dp
+                    }
+                    Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(
+                                    Color.Transparent,
+                                    Color(0x33090B10),
+                                    Color(0xB3090B10),
+                                    Color(0xF0090B10)
+                                )
+                            )
+                        )
+                        .padding(start = if (isVeryNarrow) 12.dp else 24.dp, end = if (isVeryNarrow) 12.dp else 24.dp, bottom = 14.dp)
+                        .graphicsLayer {
+                            translationY = barSlide.value * 300.dp.toPx()
+                            alpha = controlsAlpha
+                        }
+                        .pointerHoverIcon(PointerIcon.Default)
+                        .pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val e = awaitPointerEvent()
+                                    if (e.type == PointerEventType.Press) { // not Move: Compose sends synthetic moves while the bar re-lays out, which would keep it up forever; real moves come from the polling loop
+                                        poke()
+                                    } else if (e.type == PointerEventType.Scroll) {
+                                        val delta = e.changes.firstOrNull()?.scrollDelta?.y ?: 0f
+                                        if (delta != 0f) {
+                                            val step = if (delta < 0) 5 else -5
+                                            volume = (volume + step).coerceIn(0, 150)
+                                            val v = volume
+                                            vlc { mp.audio().setVolume(v) }
+                                            if (userMuted) {
+                                                userMuted = false
+                                                vlc { mp.audio().setMute(false) }
+                                            }
+                                            lastVolumeWheelAt = System.currentTimeMillis()
+                                            poke()
+                                            flash("Громкость: $v%", "Громкость:")
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                    verticalArrangement = Arrangement.Bottom
+                ) {
+                    if (infoOpen) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 10.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(Color(0xE6141824))
+                                .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(14.dp))
+                                .padding(12.dp)
+                        ) {
+                            Text(infoText.ifBlank { "Собираем данные…" }, color = Color(0xFFFFD791), fontFamily = Onest, fontSize = 12.sp)
+                        }
+                    }
+
+                    if (inIntro()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .background(Color(0xCC161B26))
+                                    .border(1.dp, Sm.lamp, RoundedCornerShape(50))
+                                    .clickable { skipIntro() }
+                                    .pointerHoverIcon(PointerIcon.Hand)
+                                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text("Пропустить заставку (S)", color = Sm.lamp, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                    Text("⏭", color = Sm.lamp, fontSize = 14.sp)
+                                }
+                            }
+                        }
+                    }
+
+                    if (picker == "more") {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(Color(0xF0121622))
+                                .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(16.dp))
+                                .padding(14.dp)
+                        ) {
+                            Column {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("Настройки воспроизведения", color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
+                                    GlassIconButton(onClick = { picker = null }, size = 26.dp, tooltip = "Закрыть") {
+                                        Text("✕", color = Sm.muted, fontSize = 12.sp)
+                                    }
+                                }
+                                MorePanel(
+                                    rates = rates, rate = rate, onRate = { setSpeed(it) },
+                                    subScale = subScale, onSubScale = { v -> ui.put("subScale", if (v == 100) null else v.toString()); restartPlayer() },
+                                    subDelay = subDelay, onSubDelay = { d -> shiftSubs(d) },
+                                    night = nightMode, onNight = { ui.put("night", if (nightMode) null else "1"); restartPlayer() },
+                                    onTop = onTop.value, onOnTop = { onTop.value = !onTop.value }, mini = mini, onMini = { setMini(!mini); picker = null },
+                                    info = infoOpen, onInfo = { infoOpen = !infoOpen },
+                                    chapters = chapters, current = chapterAt(time), onChapter = { i -> jumpChapter(i - chapterAt(time)) }
+                                )
+                            }
+                        }
+                    }
+
+                    if (picker == "audio" || picker == "spu") picker?.let { kind ->
+                        val current = pickerCurrent
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(Color(0xF0121622))
+                                .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(16.dp))
+                                .padding(14.dp)
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        if (kind == "audio") "Аудиодорожки" else "Субтитры",
+                                        color = Sm.text,
+                                        fontFamily = Onest,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 13.5.sp
+                                    )
+                                    GlassIconButton(onClick = { picker = null }, size = 26.dp, tooltip = "Закрыть") {
+                                        Text("✕", color = Sm.muted, fontSize = 12.sp)
+                                    }
+                                }
+                                androidx.compose.foundation.layout.FlowRow(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    if (pickerItems.none { it.first != -1 })
+                                        Text("Дорожки ещё не определены", color = Sm.muted, fontFamily = Onest, fontSize = 13.sp)
+                                    pickerItems.forEach { (id, name) ->
+                                        val on = id == current
+                                        Chip(name, on) {
+                                            if (kind == "audio") {
+                                                vlc { mp.audio().setTrack(id) }
+                                                applyTrackNow()
+                                                ui.put("audio:${seriesKey()}", name)
+                                                ui.put("audio:*", name)
+                                            } else {
+                                                vlc { mp.subpictures().setTrack(id) }
+                                                val v = if (id == -1) "__off__" else name
+                                                ui.put("spu:${seriesKey()}", v)
+                                                ui.put("spu:*", v)
+                                            }
+                                            picker = null
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (nextIn >= 0 && index < queue.size - 1) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.CenterHorizontally)
+                                .padding(bottom = 10.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(Color(0xCC161B26))
+                                .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(50))
+                                .padding(horizontal = 14.dp, vertical = 6.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text("Следующая: ${queue[index + 1].title}", color = Sm.text, fontFamily = Onest, fontSize = 13.sp, maxLines = 1)
+                                Text("через $nextIn с", color = Sm.lamp, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                GlassIconButton(onClick = { playEntry(index + 1) }, size = 30.dp, tooltip = "Включить сейчас") {
+                                    Text("▶", color = Sm.text, fontSize = 11.sp)
+                                }
+                                GlassIconButton(onClick = { nextIn = -1 }, size = 30.dp, tooltip = "Отмена") {
+                                    Text("✕", color = Sm.text, fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    }
+
+                    // Scrubber row
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            fmt(hoverAt ?: seeking?.toLong() ?: time),
+                            color = if (hoverAt != null) Sm.lamp else Sm.text,
+                            fontFamily = Onest,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 13.sp,
+                            modifier = Modifier.width(54.dp)
+                        )
+                        SeekBar(
+                            position = seeking?.toLong() ?: time,
+                            length = length,
+                            buffered = animBuffered.toLong(),
+                            marks = chapters.map { it.first },
+                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                            onScrub = { t -> seeking = t?.toFloat(); poke() },
+                            onSeek = { t ->
+                                seeking = null
+                                time = t
+                                lastGood = t
+                                lastSeekAt = System.currentTimeMillis()
+                                supRef.get()?.seeked()
+                                PlayerLog.write("seek to ${t / 1000}s")
+                                vlcSeekTo(t)
+                            },
+                            onHover = { t -> hoverAt = t }
+                        )
+                        Text(
+                            if (length > 0) fmt(length) else "--:--",
+                            color = Sm.muted,
+                            fontFamily = Onest,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 13.sp,
+                            modifier = Modifier.width(54.dp),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.End
+                        )
+                    }
+
+                    if (mini) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            HeroPlayButton(playing = playing, onClick = { togglePause() })
+                            if (index < queue.size - 1) {
+                                GlassIconButton(onClick = { playEntry(index + 1) }, tooltip = "Следующая") {
+                                    Text("⏭", color = Sm.text, fontSize = 16.sp)
+                                }
+                            }
+                            Text(
+                                title,
+                                color = Sm.text.copy(alpha = 0.9f),
+                                fontFamily = Onest,
+                                fontSize = 12.5.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
+                            )
+                            GlassIconButton(onClick = { setMini(false) }, tooltip = "Обычный режим (O)") {
+                                Text("⤢", color = Sm.text, fontSize = 16.sp)
+                            }
+                        }
+                    } else {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Left group (Next episode, status)
+                            Box(
+                                modifier = Modifier.weight(1f),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(buttonSpacing)
+                                ) {
+                                    if (index < queue.size - 1) {
+                                        GlassIconButton(
+                                            onClick = { playEntry(index + 1) },
+                                            tooltip = "Следующая: ${queue[index + 1].title}",
+                                            size = btnSize
+                                        ) {
+                                            Text("⏭", color = Sm.text, fontSize = if (isCompact) 14.sp else 16.sp)
+                                        }
+                                    }
+                                    status?.let {
+                                        Text(it, color = Sm.lamp, fontFamily = Onest, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                }
+                            }
+
+                            // Center Controls (Rewind 10, Hero Play/Pause, Forward 10)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(if (isCompact) 8.dp else 12.dp)
+                            ) {
+                                GlassIconButton(
+                                    onClick = { seekBy(-10_000L) },
+                                    size = if (isCompact) 36.dp else 40.dp
+                                ) {
+                                    Seek10Icon(forward = false, color = Sm.text)
+                                }
+                                HeroPlayButton(playing = playing, onClick = { togglePause() }, size = heroSize)
+                                GlassIconButton(
+                                    onClick = { seekBy(10_000L) },
+                                    size = if (isCompact) 36.dp else 40.dp
+                                ) {
+                                    Seek10Icon(forward = true, color = Sm.text)
+                                }
+                            }
+
+                            // Right group (Separator, Audio, Subtitles, Settings, Volume capsule, Fullscreen)
+                            Box(
+                                modifier = Modifier.weight(1f),
+                                contentAlignment = Alignment.CenterEnd
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(buttonSpacing, Alignment.End)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .padding(horizontal = 4.dp)
+                                            .width(1.dp)
+                                            .height(18.dp)
+                                            .background(Color(0x33FFFFFF))
+                                    )
+                                    GlassIconButton(
+                                        onClick = { if (picker == "audio") picker = null else openPicker("audio") },
+                                        active = (picker == "audio"),
+                                        size = btnSize
+                                    ) {
+                                        Text("♫", color = if (picker == "audio") Sm.lamp else Sm.text, fontSize = if (isCompact) 14.sp else 16.sp)
+                                    }
+                                    GlassIconButton(
+                                        onClick = { if (picker == "spu") picker = null else openPicker("spu") },
+                                        active = (picker == "spu"),
+                                        size = btnSize
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .border(1.2.dp, if (picker == "spu") Sm.lamp else Sm.text, RoundedCornerShape(4.dp))
+                                                .padding(horizontal = 3.dp, vertical = 0.5.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text("CC", color = if (picker == "spu") Sm.lamp else Sm.text, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = if (isCompact) 10.sp else 11.sp)
+                                        }
+                                    }
+                                    GlassIconButton(
+                                        onClick = { picker = if (picker == "more") null else "more" },
+                                        active = (picker == "more"),
+                                        size = btnSize
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text("⚙", color = if (picker == "more") Sm.lamp else Sm.text, fontSize = if (isCompact) 14.sp else 16.sp)
+                                            if (rate != 1f && !isVeryNarrow) {
+                                                Text(" ${fmtRate(rate)}", color = Sm.lamp, fontFamily = Onest, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+                                    }
+                                    VolumeGlassCapsule(
+                                        volume = volume,
+                                        muted = userMuted,
+                                        onVolumeChange = {
+                                            volume = it
+                                            vlc { mp.audio().setVolume(it) }
+                                            poke()
+                                        },
+                                        onMuteToggle = {
+                                            userMuted = !userMuted
+                                            vlc { mp.audio().setMute(userMuted) }
+                                            poke()
+                                            flash(if (userMuted) "Без звука" else "Звук: $volume%", "Звук:")
+                                        },
+                                        verticalOnly = isCompact,
+                                        size = btnSize,
+                                        wheelTrigger = lastVolumeWheelAt
+                                    )
+                                    GlassIconButton(
+                                        onClick = { toggleFullscreen() },
+                                        size = btnSize
+                                    ) {
+                                        Text(if (fullscreen) "⤡" else "⛶", color = Sm.text, fontSize = if (isCompact) 14.sp else 16.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
-                if (mini) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    // Mini-player: just the essentials.
-                    LampButton(if (playing) "Ⅱ" else "▶") { togglePause() }
-                    if (index < queue.size - 1) OutlineButton("⏭") { playEntry(index + 1) }
-                    Text(title, color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f).padding(horizontal = 4.dp))
-                    OutlineButton("⤢ Обычный (O)") { setMini(false) }
-                } else Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlineButton("‹ Библиотека") { close() }
-                    OutlineButton("−10") { seekBy(-10_000L) }
-                    LampButton(if (playing) "Ⅱ  Пауза" else "▶  Играть") { togglePause() }
-                    OutlineButton("+10") { seekBy(10_000L) }
-                    if (index < queue.size - 1) OutlineButton("⏭ Следующая") { playEntry(index + 1) }
-                    OutlineButton(if (picker == "audio") "♫ Аудио ▴" else "♫ Аудио") {
-                        if (picker == "audio") picker = null else openPicker("audio")
+            }
+        }
+        }
+        onDispose { }
+    }
+}
+
+@Composable
+private fun GlassIconButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    active: Boolean = false,
+    tooltip: String? = null,
+    size: androidx.compose.ui.unit.Dp = 42.dp,
+    shape: androidx.compose.ui.graphics.Shape = CircleShape,
+    content: @Composable () -> Unit
+) {
+    val src = remember { MutableInteractionSource() }
+    val hovered by src.collectIsHoveredAsState()
+    val pressed by src.collectIsPressedAsState()
+    val scale = hoverScale(hovered && enabled, pressed && enabled, 1.05f)
+
+    val bg = when {
+        !enabled -> Color.Transparent
+        active -> Color(0x33FFB02E)
+        hovered -> Color(0x26FFFFFF)
+        else -> Color.Transparent
+    }
+    val border = when {
+        active -> Sm.lamp
+        else -> Color.Transparent
+    }
+
+    Box(
+        modifier = modifier
+            .graphicsLayer { scaleX = scale; scaleY = scale; alpha = if (enabled) 1f else 0.4f }
+            .size(size)
+            .clip(shape)
+            .background(bg)
+            .then(if (active) Modifier.border(1.dp, border, shape) else Modifier)
+            .hoverClick(src, enabled, onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        content()
+    }
+}
+
+@Composable
+private fun HeroPlayButton(
+    playing: Boolean,
+    onClick: () -> Unit,
+    size: androidx.compose.ui.unit.Dp = 48.dp
+) {
+    val src = remember { MutableInteractionSource() }
+    val hovered by src.collectIsHoveredAsState()
+    val pressed by src.collectIsPressedAsState()
+    val scale = hoverScale(hovered, pressed, 1.06f)
+    val bg = if (hovered) Color(0xFFF2F4F8) else Color.White
+
+    Box(
+        modifier = Modifier
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .size(size)
+            .clip(CircleShape)
+            .background(bg)
+            .hoverClick(src, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        if (playing) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(4.5.dp)
+                        .height(18.dp)
+                        .clip(RoundedCornerShape(1.dp))
+                        .background(Color(0xFF111418))
+                )
+                Box(
+                    modifier = Modifier
+                        .width(4.5.dp)
+                        .height(18.dp)
+                        .clip(RoundedCornerShape(1.dp))
+                        .background(Color(0xFF111418))
+                )
+            }
+        } else {
+            Text(
+                "▶",
+                color = Color(0xFF111418),
+                fontSize = (size.value * 0.42f).sp,
+                modifier = Modifier.padding(start = 2.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun Seek10Icon(
+    forward: Boolean,
+    modifier: Modifier = Modifier,
+    color: Color = Sm.text
+) {
+    Box(modifier = modifier.size(36.dp), contentAlignment = Alignment.Center) {
+        Canvas(modifier = Modifier.size(24.dp)) {
+            val strokeWidth = 1.6.dp.toPx()
+            val stroke = Stroke(
+                width = strokeWidth,
+                cap = StrokeCap.Round
+            )
+            val pad = strokeWidth + 1.5.dp.toPx()
+            val arcSize = Size(size.width - pad * 2, size.height - pad * 2)
+            val topLeft = Offset(pad, pad)
+
+            val startAngle = if (forward) -60f else 240f
+            val sweepAngle = if (forward) 300f else -300f
+            drawArc(
+                color = color,
+                startAngle = startAngle,
+                sweepAngle = sweepAngle,
+                useCenter = false,
+                topLeft = topLeft,
+                size = arcSize,
+                style = stroke
+            )
+
+            val tipPath = Path()
+            val arrowSize = 3.5.dp.toPx()
+            if (forward) {
+                val ax = size.width / 2 + (arcSize.width / 2) * kotlin.math.cos(Math.toRadians(-60.0)).toFloat()
+                val ay = size.height / 2 + (arcSize.height / 2) * kotlin.math.sin(Math.toRadians(-60.0)).toFloat()
+                tipPath.moveTo(ax, ay - arrowSize * 0.9f)
+                tipPath.lineTo(ax + arrowSize * 1.2f, ay)
+                tipPath.lineTo(ax + arrowSize * 0.2f, ay + arrowSize)
+            } else {
+                val ax = size.width / 2 + (arcSize.width / 2) * kotlin.math.cos(Math.toRadians(240.0)).toFloat()
+                val ay = size.height / 2 + (arcSize.height / 2) * kotlin.math.sin(Math.toRadians(240.0)).toFloat()
+                tipPath.moveTo(ax, ay - arrowSize * 0.9f)
+                tipPath.lineTo(ax - arrowSize * 1.2f, ay)
+                tipPath.lineTo(ax - arrowSize * 0.2f, ay + arrowSize)
+            }
+            drawPath(
+                path = tipPath,
+                color = color,
+                style = Stroke(
+                    width = strokeWidth,
+                    cap = StrokeCap.Round,
+                    join = StrokeJoin.Round
+                )
+            )
+        }
+        Text(
+            "10",
+            color = color,
+            fontFamily = Onest,
+            fontWeight = FontWeight.Bold,
+            fontSize = 9.sp,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+@Composable
+private fun VerticalVolumeSlider(
+    volume: Int,
+    onVolumeChange: (Int) -> Unit,
+    onDragStateChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier
+            .width(38.dp)
+            .height(134.dp),
+        shape = RoundedCornerShape(19.dp),
+        color = Color(0xF2141824),
+        border = BorderStroke(1.dp, Color(0x4DFFFFFF)),
+        shadowElevation = 8.dp
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(vertical = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                "$volume%",
+                color = if (volume > 100) Sm.lamp else Sm.text,
+                fontFamily = Onest,
+                fontWeight = FontWeight.Bold,
+                fontSize = 10.sp
+            )
+            Spacer(Modifier.height(6.dp))
+            BoxWithConstraints(
+                modifier = Modifier
+                    .weight(1f)
+                    .width(28.dp)
+                    .pointerInput(Unit) {
+                        detectVerticalDragGestures(
+                            onDragStart = { offset ->
+                                onDragStateChange(true)
+                                val frac = (1f - (offset.y / size.height)).coerceIn(0f, 1f)
+                                onVolumeChange((frac * 150f).toInt())
+                            },
+                            onDragEnd = { onDragStateChange(false) },
+                            onDragCancel = { onDragStateChange(false) },
+                            onVerticalDrag = { change, _ ->
+                                change.consume()
+                                val frac = (1f - (change.position.y / size.height)).coerceIn(0f, 1f)
+                                onVolumeChange((frac * 150f).toInt())
+                            }
+                        )
                     }
-                    OutlineButton(if (picker == "spu") "CC Субтитры ▴" else "CC Субтитры") {
-                        if (picker == "spu") picker = null else openPicker("spu")
-                    }
-                    OutlineButton((if (picker == "more") "⚙ Ещё ▴" else "⚙ Ещё") + if (rate != 1f) "  ${fmtRate(rate)}" else "") {
-                        picker = if (picker == "more") null else "more"
-                    }
-                    Text(title + if (queue.size > 1) "  ·  ${index + 1}/${queue.size}" else "", color = Sm.muted, fontFamily = Onest,
-                        fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(horizontal = 8.dp))
-                    status?.let { Text(it, color = Sm.lamp, fontFamily = Onest, fontSize = 13.sp, maxLines = 1) }
-                    Text("🔊", fontSize = 14.sp, color = Sm.text)
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val ev = awaitPointerEvent()
+                                if (ev.type == PointerEventType.Press) {
+                                    val y = ev.changes.firstOrNull()?.position?.y ?: continue
+                                    val frac = (1f - (y / size.height)).coerceIn(0f, 1f)
+                                    onVolumeChange((frac * 150f).toInt())
+                                }
+                            }
+                        }
+                    },
+                contentAlignment = Alignment.BottomCenter
+            ) {
+                val totalH = maxHeight
+                val fillRatio = (volume / 150f).coerceIn(0f, 1f)
+
+                // Background track
+                Box(
+                    modifier = Modifier
+                        .width(4.dp)
+                        .fillMaxHeight()
+                        .align(Alignment.Center)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(Color(0x33FFFFFF))
+                )
+                // Active track
+                Box(
+                    modifier = Modifier
+                        .width(4.dp)
+                        .height(totalH * fillRatio)
+                        .align(Alignment.BottomCenter)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(Color.White)
+                )
+                // Thumb circle
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .offset(y = -(totalH * fillRatio - 5.dp).coerceAtLeast(0.dp))
+                        .size(11.dp)
+                        .clip(CircleShape)
+                        .background(Color.White)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun VolumeGlassCapsule(
+    volume: Int,
+    muted: Boolean,
+    onVolumeChange: (Int) -> Unit,
+    onMuteToggle: () -> Unit,
+    verticalOnly: Boolean = false,
+    size: androidx.compose.ui.unit.Dp = 42.dp,
+    wheelTrigger: Long = 0L
+) {
+    val src = remember { MutableInteractionSource() }
+    val hovered by src.collectIsHoveredAsState()
+    var dragging by remember { mutableStateOf(false) }
+    var wheelActive by remember { mutableStateOf(false) }
+
+    LaunchedEffect(wheelTrigger) {
+        if (wheelTrigger > 0L) {
+            wheelActive = true
+            delay(1500)
+            wheelActive = false
+        }
+    }
+
+    val icon = when {
+        muted || volume == 0 -> "🔇"
+        volume < 40 -> "🔈"
+        volume < 100 -> "🔉"
+        else -> "🔊"
+    }
+
+    if (verticalOnly) {
+        val showPopup = hovered || dragging || wheelActive
+        Box(
+            modifier = Modifier.hoverable(src),
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            AnimatedVisibility(
+                visible = showPopup,
+                enter = fadeIn(tween(180)),
+                exit = fadeOut(tween(180)),
+                modifier = Modifier.padding(bottom = (size + 6.dp))
+            ) {
+                VerticalVolumeSlider(
+                    volume = volume,
+                    onVolumeChange = onVolumeChange,
+                    onDragStateChange = { dragging = it }
+                )
+            }
+
+            GlassIconButton(
+                onClick = onMuteToggle,
+                active = muted,
+                size = size
+            ) {
+                Text(icon, fontSize = if (size < 40.dp) 13.sp else 15.sp, color = if (muted) Sm.lamp else Sm.text)
+            }
+        }
+    } else {
+        val isExpanded = hovered || dragging || wheelActive
+        val width by androidx.compose.animation.core.animateDpAsState(
+            targetValue = if (isExpanded) 160.dp else size,
+            animationSpec = tween(220, easing = Sm.ease)
+        )
+
+        val bg = if (isExpanded) Color(0x99161B26) else if (hovered) Color(0x26FFFFFF) else Color.Transparent
+        val border = if (isExpanded) Color(0x33FFFFFF) else Color.Transparent
+
+        val animVol by androidx.compose.animation.core.animateFloatAsState(
+            targetValue = volume.toFloat(),
+            animationSpec = tween(120)
+        )
+
+        Box(
+            modifier = Modifier
+                .height(size)
+                .width(width)
+                .clip(RoundedCornerShape(50))
+                .background(bg)
+                .then(if (isExpanded) Modifier.border(1.dp, border, RoundedCornerShape(50)) else Modifier)
+                .hoverable(src)
+                .padding(horizontal = 4.dp),
+            contentAlignment = Alignment.CenterStart
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxSize()
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(size - 6.dp)
+                        .clip(CircleShape)
+                        .clickable(onClick = onMuteToggle)
+                        .pointerHoverIcon(PointerIcon.Hand),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(icon, fontSize = 15.sp, color = if (muted) Sm.lamp else Sm.text)
+                }
+                if (width > 60.dp) {
+                    Spacer(Modifier.width(2.dp))
                     Slider(
-                        value = volume.toFloat(), valueRange = 0f..150f,
-                        onValueChange = { volume = it.toInt(); val v = volume; vlc { mp.audio().setVolume(v) }; poke() },
-                        colors = SliderDefaults.colors(thumbColor = Sm.text, activeTrackColor = Sm.lamp, inactiveTrackColor = Sm.line2),
-                        modifier = Modifier.width(110.dp)
+                        value = if (dragging) volume.toFloat() else animVol,
+                        valueRange = 0f..150f,
+                        onValueChange = {
+                            dragging = true
+                            onVolumeChange(it.toInt())
+                        },
+                        onValueChangeFinished = {
+                            dragging = false
+                        },
+                        colors = SliderDefaults.colors(
+                            thumbColor = Color.White,
+                            activeTrackColor = Color.White,
+                            inactiveTrackColor = Color(0x4DFFFFFF)
+                        ),
+                        modifier = Modifier.weight(1f).height(24.dp)
                     )
-                    OutlineButton(if (fullscreen) "⤡ (F)" else "⛶ (F)") { toggleFullscreen() }
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        "$volume%",
+                        color = Sm.text.copy(alpha = 0.85f),
+                        fontFamily = Onest,
+                        fontSize = 11.sp,
+                        modifier = Modifier.padding(end = 4.dp)
+                    )
                 }
             }
         }
