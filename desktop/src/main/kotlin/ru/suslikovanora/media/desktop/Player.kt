@@ -1309,7 +1309,7 @@ fun PlayerView(
                             active = onTop.value,
                             tooltip = if (onTop.value) "Открепить окно (T)" else "Поверх всех окон (T)"
                         ) {
-                            Text("⧉", color = if (onTop.value) Sm.lamp else Sm.text, fontSize = 18.sp)
+                            Text("⧉", color = Sm.text, fontSize = 18.sp)
                         }
                     }
                     Text(
@@ -1403,12 +1403,18 @@ fun PlayerView(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(bottom = 10.dp)
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(Color(0xE6141824))
-                                .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(14.dp))
-                                .padding(12.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color(0xD90E1118))
+                                .border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(10.dp))
+                                .padding(horizontal = 14.dp, vertical = 7.dp)
                         ) {
-                            Text(infoText.ifBlank { "Собираем данные…" }, color = Color(0xFFFFD791), fontFamily = Onest, fontSize = 12.sp)
+                            Text(
+                                infoText.ifBlank { "Собираем данные…" },
+                                color = Color.White.copy(alpha = 0.85f),
+                                fontFamily = Onest,
+                                fontSize = 11.5.sp,
+                                lineHeight = 15.sp
+                            )
                         }
                     }
 
@@ -1421,14 +1427,14 @@ fun PlayerView(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(50))
                                     .background(Color(0xCC161B26))
-                                    .border(1.dp, Sm.lamp, RoundedCornerShape(50))
+                                    .border(1.dp, Color(0x4DFFFFFF), RoundedCornerShape(50))
                                     .clickable { skipIntro() }
                                     .pointerHoverIcon(PointerIcon.Hand)
                                     .padding(horizontal = 16.dp, vertical = 8.dp)
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Text("Пропустить заставку (S)", color = Sm.lamp, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                                    Text("⏭", color = Sm.lamp, fontSize = 14.sp)
+                                    Text("Пропустить заставку (S)", color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                    Text("⏭", color = Color.White, fontSize = 14.sp)
                                 }
                             }
                         }
@@ -1439,20 +1445,20 @@ fun PlayerView(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(bottom = 12.dp)
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(Color(0xF0121622))
-                                .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(16.dp))
-                                .padding(14.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(Color(0xF20E1118))
+                                .border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(14.dp))
+                                .padding(16.dp)
                         ) {
                             Column {
                                 Row(
-                                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                                    modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text("Настройки воспроизведения", color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
-                                    GlassIconButton(onClick = { picker = null }, size = 26.dp, tooltip = "Закрыть") {
-                                        Text("✕", color = Sm.muted, fontSize = 12.sp)
+                                    Text("Настройки воспроизведения", color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                    GlassIconButton(onClick = { picker = null }, size = 26.dp) {
+                                        Text("✕", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
                                     }
                                 }
                                 MorePanel(
@@ -1474,12 +1480,12 @@ fun PlayerView(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(bottom = 12.dp)
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(Color(0xF0121622))
-                                .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(16.dp))
-                                .padding(14.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(Color(0xF20E1118))
+                                .border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(14.dp))
+                                .padding(16.dp)
                         ) {
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1487,13 +1493,13 @@ fun PlayerView(
                                 ) {
                                     Text(
                                         if (kind == "audio") "Аудиодорожки" else "Субтитры",
-                                        color = Sm.text,
+                                        color = Color.White,
                                         fontFamily = Onest,
                                         fontWeight = FontWeight.SemiBold,
-                                        fontSize = 13.5.sp
+                                        fontSize = 14.sp
                                     )
-                                    GlassIconButton(onClick = { picker = null }, size = 26.dp, tooltip = "Закрыть") {
-                                        Text("✕", color = Sm.muted, fontSize = 12.sp)
+                                    GlassIconButton(onClick = { picker = null }, size = 26.dp) {
+                                        Text("✕", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
                                     }
                                 }
                                 androidx.compose.foundation.layout.FlowRow(
@@ -1502,10 +1508,10 @@ fun PlayerView(
                                     verticalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     if (pickerItems.none { it.first != -1 })
-                                        Text("Дорожки ещё не определены", color = Sm.muted, fontFamily = Onest, fontSize = 13.sp)
+                                        Text("Дорожки ещё не определены", color = Color.White.copy(alpha = 0.5f), fontFamily = Onest, fontSize = 13.sp)
                                     pickerItems.forEach { (id, name) ->
                                         val on = id == current
-                                        Chip(name, on) {
+                                        PlayerChip(name, on) {
                                             if (kind == "audio") {
                                                 vlc { mp.audio().setTrack(id) }
                                                 applyTrackNow()
@@ -1639,7 +1645,7 @@ fun PlayerView(
                                         }
                                     }
                                     status?.let {
-                                        Text(it, color = Sm.lamp, fontFamily = Onest, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(it, color = Color.White, fontFamily = Onest, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     }
                                 }
                             }
@@ -1685,7 +1691,7 @@ fun PlayerView(
                                         active = (picker == "audio"),
                                         size = btnSize
                                     ) {
-                                        Text("♫", color = if (picker == "audio") Sm.lamp else Sm.text, fontSize = if (isCompact) 14.sp else 16.sp)
+                                        Text("♫", color = Color.White, fontSize = if (isCompact) 18.sp else 21.sp)
                                     }
                                     GlassIconButton(
                                         onClick = { if (picker == "spu") picker = null else openPicker("spu") },
@@ -1694,11 +1700,18 @@ fun PlayerView(
                                     ) {
                                         Box(
                                             modifier = Modifier
-                                                .border(1.2.dp, if (picker == "spu") Sm.lamp else Sm.text, RoundedCornerShape(4.dp))
-                                                .padding(horizontal = 3.dp, vertical = 0.5.dp),
+                                                .border(1.dp, Color.White, RoundedCornerShape(3.dp))
+                                                .padding(horizontal = 3.5.dp, vertical = 0.5.dp),
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            Text("CC", color = if (picker == "spu") Sm.lamp else Sm.text, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = if (isCompact) 10.sp else 11.sp)
+                                            Text(
+                                                "CC",
+                                                color = Color.White,
+                                                fontFamily = Onest,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = if (isCompact) 9.5.sp else 10.5.sp,
+                                                letterSpacing = 0.5.sp
+                                            )
                                         }
                                     }
                                     GlassIconButton(
@@ -1707,9 +1720,9 @@ fun PlayerView(
                                         size = btnSize
                                     ) {
                                         Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Text("⚙", color = if (picker == "more") Sm.lamp else Sm.text, fontSize = if (isCompact) 14.sp else 16.sp)
+                                            Text("⚙", color = Color.White, fontSize = if (isCompact) 15.sp else 17.sp)
                                             if (rate != 1f && !isVeryNarrow) {
-                                                Text(" ${fmtRate(rate)}", color = Sm.lamp, fontFamily = Onest, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                                Text(" ${fmtRate(rate)}", color = Color.White, fontFamily = Onest, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                                             }
                                         }
                                     }
@@ -1735,7 +1748,7 @@ fun PlayerView(
                                         onClick = { toggleFullscreen() },
                                         size = btnSize
                                     ) {
-                                        Text(if (fullscreen) "⤡" else "⛶", color = Sm.text, fontSize = if (isCompact) 14.sp else 16.sp)
+                                        Text(if (fullscreen) "⤡" else "⛶", color = Color.White, fontSize = if (isCompact) 15.sp else 17.sp)
                                     }
                                 }
                             }
@@ -1767,12 +1780,12 @@ private fun GlassIconButton(
 
     val bg = when {
         !enabled -> Color.Transparent
-        active -> Color(0x33FFB02E)
+        active -> Color(0x40FFFFFF)
         hovered -> Color(0x26FFFFFF)
         else -> Color.Transparent
     }
     val border = when {
-        active -> Sm.lamp
+        active -> Color(0x66FFFFFF)
         else -> Color.Transparent
     }
 
@@ -1848,53 +1861,51 @@ private fun Seek10Icon(
     modifier: Modifier = Modifier,
     color: Color = Sm.text
 ) {
-    Box(modifier = modifier.size(36.dp), contentAlignment = Alignment.Center) {
-        Canvas(modifier = Modifier.size(24.dp)) {
+    Box(
+        modifier = modifier.size(36.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(
+            modifier = Modifier
+                .size(26.dp)
+                .graphicsLayer {
+                    if (forward) scaleX = -1f
+                }
+        ) {
             val strokeWidth = 1.6.dp.toPx()
             val stroke = Stroke(
                 width = strokeWidth,
-                cap = StrokeCap.Round
+                cap = StrokeCap.Round,
+                join = StrokeJoin.Round
             )
-            val pad = strokeWidth + 1.5.dp.toPx()
-            val arcSize = Size(size.width - pad * 2, size.height - pad * 2)
-            val topLeft = Offset(pad, pad)
+            // Center of the circular track
+            val cx = size.width / 2f
+            val cy = size.height / 2f + 0.5.dp.toPx()
+            val r = 8.5.dp.toPx()
 
-            val startAngle = if (forward) -60f else 240f
-            val sweepAngle = if (forward) 300f else -300f
+            // Arc starting at top-right (-77 deg) and sweeping clockwise around the bottom to top-left (257 deg)
             drawArc(
                 color = color,
-                startAngle = startAngle,
-                sweepAngle = sweepAngle,
+                startAngle = -77f,
+                sweepAngle = 334f,
                 useCenter = false,
-                topLeft = topLeft,
-                size = arcSize,
+                topLeft = Offset(cx - r, cy - r),
+                size = Size(r * 2f, r * 2f),
                 style = stroke
             )
 
-            val tipPath = Path()
-            val arrowSize = 3.5.dp.toPx()
-            if (forward) {
-                val ax = size.width / 2 + (arcSize.width / 2) * kotlin.math.cos(Math.toRadians(-60.0)).toFloat()
-                val ay = size.height / 2 + (arcSize.height / 2) * kotlin.math.sin(Math.toRadians(-60.0)).toFloat()
-                tipPath.moveTo(ax, ay - arrowSize * 0.9f)
-                tipPath.lineTo(ax + arrowSize * 1.2f, ay)
-                tipPath.lineTo(ax + arrowSize * 0.2f, ay + arrowSize)
-            } else {
-                val ax = size.width / 2 + (arcSize.width / 2) * kotlin.math.cos(Math.toRadians(240.0)).toFloat()
-                val ay = size.height / 2 + (arcSize.height / 2) * kotlin.math.sin(Math.toRadians(240.0)).toFloat()
-                tipPath.moveTo(ax, ay - arrowSize * 0.9f)
-                tipPath.lineTo(ax - arrowSize * 1.2f, ay)
-                tipPath.lineTo(ax - arrowSize * 0.2f, ay + arrowSize)
+            // Crisp arrowhead at top-left pointing left
+            val tipX = cx - 5.5.dp.toPx()
+            val tipY = cy - r
+            val wingW = 3.6.dp.toPx()
+            val wingH = 3.2.dp.toPx()
+
+            val arrowPath = Path().apply {
+                moveTo(tipX + wingW, tipY - wingH)
+                lineTo(tipX, tipY)
+                lineTo(tipX + wingW, tipY + wingH)
             }
-            drawPath(
-                path = tipPath,
-                color = color,
-                style = Stroke(
-                    width = strokeWidth,
-                    cap = StrokeCap.Round,
-                    join = StrokeJoin.Round
-                )
-            )
+            drawPath(path = arrowPath, color = color, style = stroke)
         }
         Text(
             "10",
@@ -1902,7 +1913,8 @@ private fun Seek10Icon(
             fontFamily = Onest,
             fontWeight = FontWeight.Bold,
             fontSize = 9.sp,
-            textAlign = TextAlign.Center
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 1.dp)
         )
     }
 }
@@ -2136,6 +2148,41 @@ private fun VolumeGlassCapsule(
     }
 }
 
+@Composable
+private fun PlayerChip(label: String, on: Boolean, onClick: () -> Unit) {
+    val src = remember { MutableInteractionSource() }
+    val hovered by src.collectIsHoveredAsState()
+    val pressed by src.collectIsPressedAsState()
+    val scale = hoverScale(hovered, pressed, 1.04f)
+    val bg = when {
+        on -> Color.White
+        hovered -> Color(0x38FFFFFF)
+        else -> Color(0x1F161B26)
+    }
+    val border = when {
+        on -> Color.White
+        hovered -> Color(0x66FFFFFF)
+        else -> Color(0x33FFFFFF)
+    }
+    val fg = when {
+        on -> Color(0xFF111418)
+        else -> Color.White.copy(alpha = 0.9f)
+    }
+    val weight = if (on) FontWeight.Bold else FontWeight.Medium
+    Box(
+        modifier = Modifier
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clip(RoundedCornerShape(8.dp))
+            .background(bg)
+            .border(1.dp, border, RoundedCornerShape(8.dp))
+            .hoverClick(src, onClick = onClick)
+            .padding(horizontal = 11.dp, vertical = 5.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(text = label, color = fg, fontFamily = Onest, fontWeight = weight, fontSize = 12.5.sp, maxLines = 1)
+    }
+}
+
 /** "⚙ Ещё": speed, subtitles, night mode, window modes, info and chapters — inline in the bar (popups would hide behind the video). */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
@@ -2146,42 +2193,42 @@ private fun MorePanel(
     info: Boolean, onInfo: () -> Unit,
     chapters: List<Pair<Long, String>>, current: Int, onChapter: (Int) -> Unit
 ) {
-    @Composable fun Label(t: String) = Text(t, color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.width(92.dp))
+    @Composable fun Label(t: String) = Text(t, color = Color.White.copy(alpha = 0.6f), fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.width(92.dp))
     Column(Modifier.fillMaxWidth().padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Label("Скорость")
             androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                rates.forEach { r -> Chip(fmtRate(r), kotlin.math.abs(r - rate) < 0.01f) { onRate(r) } }
+                rates.forEach { r -> PlayerChip(fmtRate(r), kotlin.math.abs(r - rate) < 0.01f) { onRate(r) } }
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Label("Субтитры")
             androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf(75, 100, 125, 150, 200).forEach { v -> Chip("$v%", v == subScale) { if (v != subScale) onSubScale(v) } }
+                listOf(75, 100, 125, 150, 200).forEach { v -> PlayerChip("$v%", v == subScale) { if (v != subScale) onSubScale(v) } }
                 Spacer(Modifier.width(10.dp))
-                Chip("−0.1 с", false) { onSubDelay(-100L) }
-                Text("${if (subDelay > 0) "+" else ""}${subDelay} мс", color = Sm.text, fontFamily = Onest, fontSize = 13.sp,
+                PlayerChip("−0.1 с", false) { onSubDelay(-100L) }
+                Text("${if (subDelay > 0) "+" else ""}${subDelay} мс", color = Color.White, fontFamily = Onest, fontSize = 13.sp,
                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 7.dp))
-                Chip("+0.1 с", false) { onSubDelay(100L) }
-                if (subDelay != 0L) Chip("Сброс", false) { onSubDelay(-subDelay) }
+                PlayerChip("+0.1 с", false) { onSubDelay(100L) }
+                if (subDelay != 0L) PlayerChip("Сброс", false) { onSubDelay(-subDelay) }
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Label("Режимы")
             androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Chip("🌙 Ночной звук", night) { onNight() }
-                Chip("📌 Поверх окон (T)", onTop) { onOnTop() }
-                Chip("▣ Мини-плеер (O)", mini) { onMini() }
-                Chip("ⓘ Информация (I)", info) { onInfo() }
+                PlayerChip("🌙 Ночной звук", night) { onNight() }
+                PlayerChip("📌 Поверх окон (T)", onTop) { onOnTop() }
+                PlayerChip("▣ Мини-плеер (O)", mini) { onMini() }
+                PlayerChip("ⓘ Информация (I)", info) { onInfo() }
             }
         }
         if (chapters.size > 1) Row(verticalAlignment = Alignment.Top) {
             Label("Главы")
             androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                chapters.take(40).forEachIndexed { i, (_, name) -> Chip("${i + 1}. ${name.ifBlank { "Глава" }.take(28)}", i == current) { onChapter(i) } }
+                chapters.take(40).forEachIndexed { i, (_, name) -> PlayerChip("${i + 1}. ${name.ifBlank { "Глава" }.take(28)}", i == current) { onChapter(i) } }
             }
         }
         Text("Размер субтитров и ночной звук применяются перезапуском потока с того же места.  Клавиши: < > скорость · Shift+[ ] субтитры · PgUp/PgDn главы",
-            color = Sm.muted, fontFamily = Onest, fontSize = 11.5.sp)
+            color = Color.White.copy(alpha = 0.45f), fontFamily = Onest, fontSize = 11.5.sp)
     }
 }
