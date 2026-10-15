@@ -1,10 +1,22 @@
 package ru.suslikovanora.media.desktop.player
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -12,6 +24,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -133,6 +146,7 @@ fun PlayerBottomBar(
     onTop: Boolean,
     mini: Boolean,
     infoOpen: Boolean,
+    infoSource: String = "key",
     infoText: String,
     chapters: List<Pair<Long, String>>,
     chapterAtTime: Int,
@@ -197,20 +211,9 @@ fun PlayerBottomBar(
             isCompact -> 44.dp
             else -> 48.dp
         }
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        listOf(
-                            Color.Transparent,
-                            Color(0x33090B10),
-                            Color(0xB3090B10),
-                            Color(0xF0090B10)
-                        )
-                    )
-                )
-                .padding(start = if (isVeryNarrow) 12.dp else 24.dp, end = if (isVeryNarrow) 12.dp else 24.dp, bottom = 14.dp)
                 .graphicsLayer {
                     translationY = barSlide * 300.dp.toPx()
                     alpha = controlsAlpha
@@ -222,6 +225,9 @@ fun PlayerBottomBar(
                             val e = awaitPointerEvent()
                             if (e.type == PointerEventType.Press) {
                                 onPoke()
+                                if (picker != null) {
+                                    onClosePicker()
+                                }
                             } else if (e.type == PointerEventType.Scroll) {
                                 val delta = e.changes.firstOrNull()?.scrollDelta?.y ?: 0f
                                 if (delta != 0f) {
@@ -230,10 +236,59 @@ fun PlayerBottomBar(
                             }
                         }
                     }
-                },
-            verticalArrangement = Arrangement.Bottom
+                }
         ) {
-            if (infoOpen) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(200.dp)
+                    .align(Alignment.BottomCenter)
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                Color.Transparent,
+                                Color(0x33090B10),
+                                Color(0xB3090B10),
+                                Color(0xF0090B10)
+                            )
+                        )
+                    )
+            )
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
+                    .padding(start = if (isVeryNarrow) 12.dp else 24.dp, end = if (isVeryNarrow) 12.dp else 24.dp, bottom = 14.dp),
+                verticalArrangement = Arrangement.Bottom
+            ) {
+            val infoPivotX = if (infoSource == "button") 0.82f else 0.50f
+            val infoInitialScale = if (infoSource == "button") 0.25f else 0.85f
+            val infoOffsetYFactor = if (infoSource == "button") 0.20f else 0.35f
+
+            AnimatedVisibility(
+                visible = infoOpen,
+                enter = fadeIn(tween(200, easing = LinearOutSlowInEasing)) +
+                        scaleIn(
+                            initialScale = infoInitialScale,
+                            transformOrigin = TransformOrigin(infoPivotX, 1.0f),
+                            animationSpec = tween(300, easing = CubicBezierEasing(0.16f, 1.0f, 0.30f, 1.0f))
+                        ) +
+                        slideInVertically(
+                            initialOffsetY = { (it * infoOffsetYFactor).toInt() },
+                            animationSpec = tween(300, easing = CubicBezierEasing(0.16f, 1.0f, 0.30f, 1.0f))
+                        ),
+                exit = fadeOut(tween(160, easing = FastOutLinearInEasing)) +
+                       scaleOut(
+                           targetScale = infoInitialScale,
+                           transformOrigin = TransformOrigin(infoPivotX, 1.0f),
+                           animationSpec = tween(180, easing = FastOutLinearInEasing)
+                       ) +
+                       slideOutVertically(
+                           targetOffsetY = { (it * infoOffsetYFactor).toInt() },
+                           animationSpec = tween(180, easing = FastOutLinearInEasing)
+                       )
+            ) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -241,6 +296,7 @@ fun PlayerBottomBar(
                         .clip(RoundedCornerShape(10.dp))
                         .background(Color(0xD90E1118))
                         .border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(10.dp))
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
                         .padding(horizontal = 14.dp, vertical = 7.dp)
                 ) {
                     Text(
@@ -267,15 +323,40 @@ fun PlayerBottomBar(
                             .pointerHoverIcon(PointerIcon.Hand)
                             .padding(horizontal = 16.dp, vertical = 8.dp)
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("Пропустить заставку (S)", color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                            Text("⏭", color = Color.White, fontSize = 14.sp)
-                        }
+                        Text(
+                            "Пропустить заставку (S)",
+                            color = Color.White,
+                            fontFamily = Onest,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.sp
+                        )
                     }
                 }
             }
 
-            if (picker == "more") {
+            AnimatedVisibility(
+                visible = (picker == "more"),
+                enter = fadeIn(tween(200, easing = LinearOutSlowInEasing)) +
+                        scaleIn(
+                            initialScale = 0.25f,
+                            transformOrigin = TransformOrigin(0.82f, 1.0f),
+                            animationSpec = tween(320, easing = CubicBezierEasing(0.16f, 1.0f, 0.30f, 1.0f))
+                        ) +
+                        slideInVertically(
+                            initialOffsetY = { (it * 0.20f).toInt() },
+                            animationSpec = tween(320, easing = CubicBezierEasing(0.16f, 1.0f, 0.30f, 1.0f))
+                        ),
+                exit = fadeOut(tween(160, easing = FastOutLinearInEasing)) +
+                       scaleOut(
+                           targetScale = 0.25f,
+                           transformOrigin = TransformOrigin(0.82f, 1.0f),
+                           animationSpec = tween(180, easing = FastOutLinearInEasing)
+                       ) +
+                       slideOutVertically(
+                           targetOffsetY = { (it * 0.20f).toInt() },
+                           animationSpec = tween(180, easing = FastOutLinearInEasing)
+                       )
+            ) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -283,6 +364,7 @@ fun PlayerBottomBar(
                         .clip(RoundedCornerShape(14.dp))
                         .background(Color(0xF20E1118))
                         .border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(14.dp))
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
                         .padding(16.dp)
                 ) {
                     Column {
@@ -309,8 +391,38 @@ fun PlayerBottomBar(
                 }
             }
 
-            if (picker == "audio" || picker == "spu") picker?.let { kind ->
+            var lastTracksKind by remember { mutableStateOf("audio") }
+            if (picker == "audio" || picker == "spu") {
+                lastTracksKind = picker!!
+            }
+            val isTracksPicker = (picker == "audio" || picker == "spu")
+            val tracksPivotX = if (lastTracksKind == "audio") 0.70f else 0.76f
+
+            AnimatedVisibility(
+                visible = isTracksPicker,
+                enter = fadeIn(tween(200, easing = LinearOutSlowInEasing)) +
+                        scaleIn(
+                            initialScale = 0.25f,
+                            transformOrigin = TransformOrigin(tracksPivotX, 1.0f),
+                            animationSpec = tween(320, easing = CubicBezierEasing(0.16f, 1.0f, 0.30f, 1.0f))
+                        ) +
+                        slideInVertically(
+                            initialOffsetY = { (it * 0.20f).toInt() },
+                            animationSpec = tween(320, easing = CubicBezierEasing(0.16f, 1.0f, 0.30f, 1.0f))
+                        ),
+                exit = fadeOut(tween(160, easing = FastOutLinearInEasing)) +
+                       scaleOut(
+                           targetScale = 0.25f,
+                           transformOrigin = TransformOrigin(tracksPivotX, 1.0f),
+                           animationSpec = tween(180, easing = FastOutLinearInEasing)
+                       ) +
+                       slideOutVertically(
+                           targetOffsetY = { (it * 0.20f).toInt() },
+                           animationSpec = tween(180, easing = FastOutLinearInEasing)
+                       )
+            ) {
                 val current = pickerCurrent
+                val kind = lastTracksKind
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -318,6 +430,7 @@ fun PlayerBottomBar(
                         .clip(RoundedCornerShape(14.dp))
                         .background(Color(0xF20E1118))
                         .border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(14.dp))
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
                         .padding(16.dp)
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -363,16 +476,53 @@ fun PlayerBottomBar(
                         .clip(RoundedCornerShape(50))
                         .background(Color(0xCC161B26))
                         .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(50))
-                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                        .padding(start = 16.dp, end = 8.dp, top = 5.dp, bottom = 5.dp)
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Следующая: ${queue[index + 1].title}", color = Sm.text, fontFamily = Onest, fontSize = 13.sp, maxLines = 1)
-                        Text("через $nextIn с", color = Sm.lamp, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        GlassIconButton(onClick = { onPlayEntry(index + 1) }, size = 30.dp, tooltip = "Включить сейчас") {
-                            Text("▶", color = Sm.text, fontSize = 11.sp)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            "Следующая: ${queue[index + 1].title}",
+                            color = Sm.text,
+                            fontFamily = Onest,
+                            fontSize = 13.sp,
+                            maxLines = 1
+                        )
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(Color.White.copy(alpha = 0.16f))
+                                .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(6.dp))
+                                .padding(horizontal = 7.dp, vertical = 2.5.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                "через $nextIn с",
+                                color = Color.White,
+                                fontFamily = Onest,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 12.5.sp
+                            )
                         }
-                        GlassIconButton(onClick = onCancelNextIn, size = 30.dp, tooltip = "Отмена") {
-                            Text("✕", color = Sm.text, fontSize = 11.sp)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            GlassIconButton(
+                                onClick = { onPlayEntry(index + 1) },
+                                size = 32.dp,
+                                tooltip = "Включить сейчас"
+                            ) {
+                                NextPlayTriangleIcon(color = Color.White, size = 12.5.dp)
+                            }
+                            GlassIconButton(
+                                onClick = onCancelNextIn,
+                                size = 32.dp,
+                                tooltip = "Отмена"
+                            ) {
+                                CloseCrossIcon(color = Color.White, size = 12.dp)
+                            }
                         }
                     }
                 }
@@ -384,32 +534,13 @@ fun PlayerBottomBar(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp)
             ) {
                 val isScrubActive = (hoverAt != null || seeking != null)
-                val timeGlowAlpha by animateFloatAsState(
-                    targetValue = if (isScrubActive) 0.38f else 0f,
-                    animationSpec = tween(160)
-                )
                 Box(
                     modifier = Modifier
-                        .width(54.dp)
-                        .drawBehind {
-                            if (timeGlowAlpha > 0.001f) {
-                                val r = size.maxDimension * 0.70f
-                                drawCircle(
-                                    brush = Brush.radialGradient(
-                                        colorStops = arrayOf(
-                                            0.0f to Color.White.copy(alpha = timeGlowAlpha),
-                                            0.45f to Color.White.copy(alpha = timeGlowAlpha * 0.45f),
-                                            1.0f to Color.Transparent
-                                        ),
-                                        center = center,
-                                        radius = r
-                                    ),
-                                    radius = r,
-                                    center = center
-                                )
-                            }
-                        },
-                    contentAlignment = Alignment.CenterStart
+                        .defaultMinSize(minWidth = 52.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(if (isScrubActive) Color.White.copy(alpha = 0.16f) else Color.Transparent)
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                    contentAlignment = Alignment.Center
                 ) {
                     Text(
                         fmt(hoverAt ?: seeking?.toLong() ?: time),
@@ -438,7 +569,7 @@ fun PlayerBottomBar(
                     fontFamily = Onest,
                     fontWeight = FontWeight.Medium,
                     fontSize = 13.sp,
-                    modifier = Modifier.width(54.dp),
+                    modifier = Modifier.defaultMinSize(minWidth = 52.dp).padding(horizontal = 6.dp, vertical = 2.dp),
                     textAlign = TextAlign.End
                 )
             }
@@ -504,16 +635,18 @@ fun PlayerBottomBar(
                     ) {
                         GlassIconButton(
                             onClick = { onSeekBy(-10_000L) },
-                            size = if (isCompact) 36.dp else 40.dp
+                            size = if (isCompact) 38.dp else 42.dp,
+                            tooltip = "Назад на 10 сек (←)"
                         ) {
-                            Seek10Icon(forward = false, color = Sm.text)
+                            Seek10Icon(forward = false, color = Color.White)
                         }
                         HeroPlayButton(playing = playing, onClick = onTogglePause, size = heroSize)
                         GlassIconButton(
                             onClick = { onSeekBy(10_000L) },
-                            size = if (isCompact) 36.dp else 40.dp
+                            size = if (isCompact) 38.dp else 42.dp,
+                            tooltip = "Вперед на 10 сек (→)"
                         ) {
-                            Seek10Icon(forward = true, color = Sm.text)
+                            Seek10Icon(forward = true, color = Color.White)
                         }
                     }
 
@@ -594,3 +727,5 @@ fun PlayerBottomBar(
         }
     }
 }
+}
+

@@ -92,12 +92,12 @@ fun SubtitlesBadgeIcon(
         val w = this.size.width
         val h = this.size.height
 
-        val strokeW = 1.6.dp.toPx()
-        val padX = w * 0.06f
-        val padY = h * 0.16f
+        val strokeW = 1.4.dp.toPx()
+        val padX = w * 0.08f
+        val padY = h * 0.18f
         val rectW = w - padX * 2f
         val rectH = h - padY * 2f
-        val cornerRadius = 3.2.dp.toPx()
+        val cornerRadius = 3.0.dp.toPx()
 
         drawRoundRect(
             color = color,
@@ -107,12 +107,16 @@ fun SubtitlesBadgeIcon(
             style = Stroke(width = strokeW)
         )
 
-        val cRadius = rectH * 0.23f
+        val cRadius = rectH * 0.21f
         val centerY = padY + rectH * 0.5f
-        val cStroke = 1.7.dp.toPx()
+        val cStroke = 1.5.dp.toPx()
 
-        val c1CenterX = padX + rectW * 0.36f
-        val c2CenterX = padX + rectW * 0.64f
+        // 2.0dp guaranteed gap between the two 'C' glyphs
+        val gap = 2.0.dp.toPx()
+        val d = gap + 1.707f * cRadius
+        val cx = padX + rectW * 0.5f + 0.3.dp.toPx()
+        val c1CenterX = cx - d / 2f
+        val c2CenterX = cx + d / 2f
 
         drawArc(
             color = color,
@@ -202,22 +206,22 @@ fun VolumeSpeakerIcon(
     muted: Boolean,
     modifier: Modifier = Modifier,
     color: Color = Color.White,
-    size: Dp = 20.dp
+    size: Dp = 21.dp
 ) {
     Canvas(modifier = modifier.size(size)) {
         val w = this.size.width
         val h = this.size.height
 
-        val strokeW = 1.7.dp.toPx()
+        val strokeW = 1.8.dp.toPx()
         val stroke = Stroke(width = strokeW, cap = StrokeCap.Round, join = StrokeJoin.Round)
 
-        val backX = w * 0.16f
-        val hornStartX = w * 0.34f
-        val frontX = w * 0.50f
+        val backX = w * 0.08f
+        val hornStartX = w * 0.30f
+        val frontX = w * 0.48f
 
         val cy = h * 0.5f
-        val rectHalfH = h * 0.15f
-        val hornHalfH = h * 0.32f
+        val rectHalfH = h * 0.18f
+        val hornHalfH = h * 0.38f
 
         val speakerPath = Path().apply {
             moveTo(backX, cy - rectHalfH)
@@ -233,16 +237,16 @@ fun VolumeSpeakerIcon(
         if (muted) {
             drawLine(
                 color = color,
-                start = Offset(w * 0.20f, h * 0.22f),
-                end = Offset(w * 0.82f, h * 0.78f),
-                strokeWidth = 1.8.dp.toPx(),
+                start = Offset(w * 0.14f, h * 0.16f),
+                end = Offset(w * 0.86f, h * 0.84f),
+                strokeWidth = 1.9.dp.toPx(),
                 cap = StrokeCap.Round
             )
         } else if (volume > 0) {
-            val waveCenter = Offset(w * 0.36f, cy)
+            val waveCenter = Offset(w * 0.30f, cy)
 
             // Wave 1
-            val r1 = w * 0.24f
+            val r1 = w * 0.30f
             drawArc(
                 color = color,
                 startAngle = -42f,
@@ -255,7 +259,7 @@ fun VolumeSpeakerIcon(
 
             // Wave 2
             if (volume > 40) {
-                val r2 = w * 0.38f
+                val r2 = w * 0.48f
                 drawArc(
                     color = color,
                     startAngle = -42f,
@@ -363,59 +367,124 @@ fun NextEpisodeIcon(
 fun Seek10Icon(
     forward: Boolean,
     modifier: Modifier = Modifier,
-    color: Color = Sm.text
+    color: Color = Color.White
 ) {
     Box(
-        modifier = modifier.size(36.dp),
+        modifier = modifier,
         contentAlignment = Alignment.Center
     ) {
         Canvas(
-            modifier = Modifier
-                .size(26.dp)
-                .graphicsLayer {
-                    if (forward) scaleX = -1f
-                }
+            modifier = Modifier.size(28.dp)
         ) {
-            val strokeWidth = 1.6.dp.toPx()
+            val strokeWidth = 1.9.dp.toPx()
             val stroke = Stroke(
                 width = strokeWidth,
                 cap = StrokeCap.Round,
                 join = StrokeJoin.Round
             )
             val cx = size.width / 2f
-            val cy = size.height / 2f + 0.5.dp.toPx()
-            val r = 8.5.dp.toPx()
+            val cy = size.height / 2f
+            val r = 9.4.dp.toPx() // +10% enlarged diameter
 
-            drawArc(
-                color = color,
-                startAngle = -77f,
-                sweepAngle = 334f,
-                useCenter = false,
-                topLeft = Offset(cx - r, cy - r),
-                size = Size(r * 2f, r * 2f),
-                style = stroke
-            )
+            val headLen = 4.4.dp.toPx()
+            val headHalfH = 3.3.dp.toPx()
 
-            val tipX = cx - 5.5.dp.toPx()
-            val tipY = cy - r
-            val wingW = 3.6.dp.toPx()
-            val wingH = 3.2.dp.toPx()
+            if (!forward) {
+                // СЛЕВА НАЗАД (↺ Rewind 10):
+                // Стрелка вверху направлена НАЛЕВО (против часовой стрелки)
+                val baseX = cx + 0.8.dp.toPx()
+                val tipX = cx - 4.4.dp.toPx()
+                val tipY = cy - r
 
-            val arrowPath = Path().apply {
-                moveTo(tipX + wingW, tipY - wingH)
-                lineTo(tipX, tipY)
-                lineTo(tipX + wingW, tipY + wingH)
+                val arrowPath = Path().apply {
+                    moveTo(tipX, tipY) // вершина стрелки смотрит НАЛЕВО
+                    lineTo(baseX, tipY - headHalfH)
+                    lineTo(baseX, tipY + headHalfH)
+                    close()
+                }
+                drawPath(path = arrowPath, color = color, style = Fill)
+
+                // Дуга от основания стрелки идет по часовой стрелке вокруг круга
+                drawArc(
+                    color = color,
+                    startAngle = -86f,
+                    sweepAngle = 265f,
+                    useCenter = false,
+                    topLeft = Offset(cx - r, cy - r),
+                    size = Size(r * 2f, r * 2f),
+                    style = stroke
+                )
+            } else {
+                // СПРАВА ВПЕРЕД (↻ Forward 10):
+                // Стрелка вверху направлена НАПРАВО (по часовой стрелке)
+                val baseX = cx - 0.8.dp.toPx()
+                val tipX = cx + 4.4.dp.toPx()
+                val tipY = cy - r
+
+                val arrowPath = Path().apply {
+                    moveTo(tipX, tipY) // вершина стрелки смотрит НАПРАВО
+                    lineTo(baseX, tipY - headHalfH)
+                    lineTo(baseX, tipY + headHalfH)
+                    close()
+                }
+                drawPath(path = arrowPath, color = color, style = Fill)
+
+                // Дуга от основания стрелки идет против часовой стрелки вокруг круга
+                drawArc(
+                    color = color,
+                    startAngle = -94f,
+                    sweepAngle = -265f,
+                    useCenter = false,
+                    topLeft = Offset(cx - r, cy - r),
+                    size = Size(r * 2f, r * 2f),
+                    style = stroke
+                )
             }
-            drawPath(path = arrowPath, color = color, style = stroke)
         }
         Text(
             "10",
             color = color,
             fontFamily = Onest,
             fontWeight = FontWeight.Bold,
-            fontSize = 9.sp,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(top = 1.dp)
+            fontSize = 9.5.sp,
+            textAlign = TextAlign.Center
         )
     }
 }
+
+@Composable
+fun NextPlayTriangleIcon(
+    modifier: Modifier = Modifier,
+    color: Color = Color.White,
+    size: Dp = 12.dp
+) {
+    Canvas(modifier = modifier.size(size)) {
+        val w = this.size.width
+        val h = this.size.height
+        val path = Path().apply {
+            moveTo(w * 0.18f, h * 0.12f)
+            lineTo(w * 0.90f, h * 0.50f)
+            lineTo(w * 0.18f, h * 0.88f)
+            close()
+        }
+        drawPath(path, color = color, style = Fill)
+    }
+}
+
+@Composable
+fun CloseCrossIcon(
+    modifier: Modifier = Modifier,
+    color: Color = Color.White,
+    size: Dp = 12.dp,
+    strokeWidth: Dp = 1.6.dp
+) {
+    Canvas(modifier = modifier.size(size)) {
+        val w = this.size.width
+        val h = this.size.height
+        val sw = strokeWidth.toPx()
+        val pad = w * 0.14f
+        drawLine(color, Offset(pad, pad), Offset(w - pad, h - pad), strokeWidth = sw, cap = StrokeCap.Round)
+        drawLine(color, Offset(w - pad, pad), Offset(pad, h - pad), strokeWidth = sw, cap = StrokeCap.Round)
+    }
+}
+

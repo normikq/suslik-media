@@ -22,6 +22,7 @@ import androidx.compose.ui.awt.ComposeDialog
 import androidx.compose.ui.awt.SwingPanel
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toComposeImageBitmap
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
@@ -56,6 +57,8 @@ import ru.suslikovanora.media.desktop.MIN_W
 import ru.suslikovanora.media.desktop.PlaybackSettings
 import ru.suslikovanora.media.desktop.PlayerLog
 import ru.suslikovanora.media.desktop.Reserve
+import ru.suslikovanora.media.desktop.TitleBar
+import ru.suslikovanora.media.desktop.WindowMode
 import ru.suslikovanora.media.desktop.ui.Onest
 import ru.suslikovanora.media.desktop.ui.Sm
 import ru.suslikovanora.media.desktop.ui.SuslikTheme
@@ -80,7 +83,7 @@ fun PlayerView(
     onTop: MutableState<Boolean>,           // main window "always on top" (mini-player / pin)
     startIndex: Int = 0,                    // playlist episode to start with (after a settings restart)
     parentWindow: java.awt.Window? = null,  // main window for owning transparent overlay dialogs
-    onRestart: (Int) -> Unit = {},          // re-create the player at this episode (night mode / subtitle size)
+    onRestart: (Int) -> Unit = {},          // re-create the player at this episode (subtitle size)
     onClose: () -> Unit
 ) {
     val ui = remember { Store("player_ui") }
@@ -95,9 +98,9 @@ fun PlayerView(
     /** Every call into VLC goes through here, onto the player's own thread. */
     fun vlc(block: () -> Unit) { runCatching { vlcExecutor.execute { runCatching(block) } } }
 
-    val nightMode = remember { ui.get("night") == "1" }
+    var nightMode by remember { mutableStateOf(ui.get("night") == "1") }
     val subScale = remember { ui.get("subScale")?.toIntOrNull()?.coerceIn(50, 300) ?: 100 }
-    val factory = remember { VlcFactory.get(nightMode, subScale) }
+    val factory = remember { VlcFactory.get(subScale) }
     val canvas = remember { java.awt.Canvas().apply { background = java.awt.Color.BLACK; isFocusable = false } }
     val mp = remember {
         factory.mediaPlayers().newEmbeddedMediaPlayer().also {
@@ -107,7 +110,7 @@ fun PlayerView(
         }
     }
 
-    var index by remember { mutableStateOf(0) }
+    var index by remember { mutableStateOf(startIndex) }
     fun watchKey(i: Int = index) = req.watchKeys.getOrNull(i)
     fun savePos(t: Long, len: Long, i: Int = index) {
         val key = watchKey(i) ?: return
@@ -122,7 +125,7 @@ fun PlayerView(
 
     var title by remember { mutableStateOf(req.title) }
     var playing by remember { mutableStateOf(false) }
-    val initialPos = remember { if (req.fromStart) 0L else savedPos(0) }
+    val initialPos = remember { if (req.fromStart) 0L else savedPos(startIndex) }
     var time by remember { mutableStateOf(initialPos) }
     var length by remember { mutableStateOf(0L) }
     var ts by remember { mutableStateOf<TsPlayback?>(null) }
@@ -160,6 +163,7 @@ fun PlayerView(
     var subDelay by remember { mutableStateOf(0L) }
     var chapters by remember { mutableStateOf(emptyList<Pair<Long, String>>()) }
     var infoOpen by remember { mutableStateOf(false) }
+    var infoSource by remember { mutableStateOf("key") }
     var infoText by remember { mutableStateOf("") }
     var mini by remember { mutableStateOf(false) }
     var lastSeekAt by remember { mutableStateOf(0L) }
@@ -189,9 +193,56 @@ fun PlayerView(
         else scope.async(Dispatchers.IO) { runCatching { req.sidecars?.invoke(i) }.getOrNull() ?: (emptyList<String>() to emptyList()) }
     }
 
+    val owner = parentWindow ?: runCatching { java.awt.Frame.getFrames().firstOrNull { it.isShowing } }.getOrNull()
+
+    val topDialog = remember(owner) {
+        if (owner == null) null else ComposeDialog(owner).apply {
+            isUndecorated = true
+            isTransparent = true
+            isResizable = false
+            focusableWindowState = false
+            isAutoRequestFocus = false
+        }
+    }
+    val bottomDialog = remember(owner) {
+        if (owner == null) null else ComposeDialog(owner).apply {
+            isUndecorated = true
+            isTransparent = true
+            isResizable = false
+            focusableWindowState = false
+            isAutoRequestFocus = false
+        }
+    }
+
+    fun syncOverlayBounds() {
+        if (parked || owner?.isShowing != true) return
+        // Берем экранные координаты напрямую у canvas (если он показан), иначе у окна
+        val target = if (canvas.isShowing && canvas.width > 0 && canvas.height > 0) {
+            canvas
+        } else {
+            (owner as? javax.swing.RootPaneContainer)?.contentPane ?: owner ?: return
+        }
+
+        val loc = runCatching { target.locationOnScreen }.getOrNull() ?: return
+        val w = target.width
+        val h = target.height
+        if (w <= 0 || h <= 0) return
+
+        val topH = 75
+        val bottomH = 460.coerceAtMost(h - topH)
+
+        topDialog?.setBounds(loc.x, loc.y, w, topH)
+        bottomDialog?.setBounds(loc.x, loc.y + h - bottomH, w, bottomH)
+        topDialog?.revalidate()
+        bottomDialog?.revalidate()
+    }
+
     fun grabFrame(): androidx.compose.ui.graphics.ImageBitmap? {
-        val img = runCatching { if (mp.video().videoDimension() != null) mp.snapshots().get(canvas.width.coerceIn(320, 1920), 0) else null }.getOrNull()
-            ?: return null
+        val img = runCatching {
+            if (mp.status().isPlayable && mp.video().videoDimension() != null) {
+                mp.snapshots().get(canvas.width.coerceIn(320, 1920), 0)
+            } else null
+        }.getOrNull() ?: return null
         val bmp = img.toComposeImageBitmap()
         SwingUtilities.invokeLater { lastFrame = bmp }
         return bmp
@@ -210,6 +261,18 @@ fun PlayerView(
         pausedAt = 0L
 
         val opts = ArrayList(listOf(":http-reconnect", ":network-caching=${PlaybackSettings.cacheMs()}"))
+        if (nightMode) {
+            opts += listOf(
+                ":audio-filter=compressor",
+                ":compressor-rms-peak=0.2",
+                ":compressor-attack=25",
+                ":compressor-release=100",
+                ":compressor-threshold=-24",
+                ":compressor-ratio=6",
+                ":compressor-knee=4.5",
+                ":compressor-makeup-gain=10"
+            )
+        }
         Reserve.init()
         BurstProxy.capBytes = PlaybackSettings.burstMb().toLong() shl 20
         BurstProxy.keepOnly(listOf(url) + extras.first)
@@ -340,6 +403,15 @@ fun PlayerView(
         }
     }
 
+    fun closePicker() {
+        picker = null
+    }
+
+    fun toggleInfo(source: String = "key") {
+        infoSource = source
+        infoOpen = !infoOpen
+    }
+
     fun togglePause() {
         val wasPaused = pausedAt > 0 || vlcPaused
         if (!wasPaused) {
@@ -417,6 +489,7 @@ fun PlayerView(
     fun setMini(on: Boolean) {
         if (on == mini) return
         if (on) {
+            if (WindowMode.isFullscreen) WindowMode.setFullscreen(owner, false)
             beforeMini[0] = win.size; beforeMini[1] = win.position; beforeMini[2] = win.placement; beforeMini[3] = onTop.value
             javax.swing.SwingUtilities.getWindowAncestor(canvas)?.minimumSize = java.awt.Dimension(400, 280)
             val b = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().maximumWindowBounds
@@ -453,7 +526,9 @@ fun PlayerView(
     }
 
     fun toggleFullscreen() {
-        win.placement = if (win.placement == WindowPlacement.Fullscreen) WindowPlacement.Floating else WindowPlacement.Fullscreen
+        WindowMode.toggleFullscreen(owner)
+        syncOverlayBounds()
+        javax.swing.SwingUtilities.invokeLater { syncOverlayBounds() }
     }
 
     fun poke() {
@@ -469,13 +544,18 @@ fun PlayerView(
         nextIn = -1
         supRef.get()?.closed()
         scope.launch {
-            withTimeoutOrNull(180) { withContext(vlcThread) { grabFrame() } }?.let { lastFrame = it }
+            if (lastFrame == null) {
+                withTimeoutOrNull(180) { withContext(vlcThread) { grabFrame() } }?.let { lastFrame = it }
+            }
             parked = true
             if (mini) setMini(false)
-            if (win.placement == WindowPlacement.Fullscreen) win.placement = WindowPlacement.Floating
             onClose()
             vlcExecutor.execute { runCatching { mp.controls().stop() } }
         }
+    }
+
+    LaunchedEffect(Unit) {
+        WindowMode.restoreComposeFocus(owner)
     }
 
     // Keyboard shortcuts
@@ -509,8 +589,12 @@ fun PlayerView(
                     lastVolumeWheelAt = System.currentTimeMillis()
                     flash("Громкость: $v%", "Громкость:")
                 }
-                Key.F, Key.Enter -> toggleFullscreen()
-                Key.Escape -> if (win.placement == WindowPlacement.Fullscreen) win.placement = WindowPlacement.Floating else close()
+                Key.F, Key.Enter, Key.F11 -> toggleFullscreen()
+                Key.Escape -> if (WindowMode.isFullscreen) {
+                    WindowMode.setFullscreen(owner, false)
+                    syncOverlayBounds()
+                    javax.swing.SwingUtilities.invokeLater { syncOverlayBounds() }
+                } else close()
                 Key.Backspace -> close()
                 Key.N -> playEntry(index + 1)
                 Key.P -> playEntry(index - 1)
@@ -523,7 +607,7 @@ fun PlayerView(
                 Key.PageDown -> jumpChapter(1)
                 Key.PageUp -> jumpChapter(-1)
                 Key.S -> skipIntro()
-                Key.I -> infoOpen = !infoOpen
+                Key.I -> toggleInfo("key")
                 Key.O -> setMini(!mini)
                 Key.T -> if (!mini) onTop.value = !onTop.value
                 Key.F8 -> if (Diag.on) flash("📍 Метка #${Diag.mark("player at ${time / 1000}s")}", "mark") else return@handler false
@@ -572,6 +656,12 @@ fun PlayerView(
         val ui2 = { block: () -> Unit -> SwingUtilities.invokeLater(block) }
         mp.events().addMediaPlayerEventListener(object : MediaPlayerEventAdapter() {
             override fun playing(p: MediaPlayer) = ui2 {
+                WindowMode.disableNativeCanvasInput(canvas)
+                WindowMode.restoreComposeFocus(owner)
+                javax.swing.Timer(250) {
+                    WindowMode.disableNativeCanvasInput(canvas)
+                    WindowMode.restoreComposeFocus(owner)
+                }.apply { isRepeats = false; start() }
                 val wasStarted = started
                 playing = true; status = null; retries = 0; started = true; vlcPaused = false
                 ts?.let { s ->
@@ -610,19 +700,21 @@ fun PlayerView(
             override fun lengthChanged(p: MediaPlayer, newLength: Long) = ui2 {
                 if (newLength > 0 || ts == null) { length = newLength; BurstProxy.setDuration(currentUrl, newLength) }
             }
-            override fun timeChanged(p: MediaPlayer, vlcTime: Long) = ui2 tick@{
-                ts?.let { s0 -> if (tsAbsolute && !tsOpenDone && vlcTime > 0) { tsAbsolute = false; tsOpenDone = true; s0.openJump(tsStartAt)?.let { pos -> vlc { mp.controls().setPosition(pos) } } } }
-                val s = ts
-                val newTime = if (s == null) vlcTime else {
-                    val pos = p.status().position()
-                    val f = if (s.opening) s.openLanded(vlcTime, pos) else s.filmTime(vlcTime)
-                    if (f == null || (s.seeking && !s.seekLanded(f, pos))) return@tick
-                    s.tick(vlcTime, pos)
-                    f
+            override fun timeChanged(p: MediaPlayer, vlcTime: Long) {
+                val pos = runCatching { p.status().position() }.getOrDefault(0f)
+                ui2 tick@{
+                    ts?.let { s0 -> if (tsAbsolute && !tsOpenDone && vlcTime > 0) { tsAbsolute = false; tsOpenDone = true; s0.openJump(tsStartAt)?.let { jumpPos -> vlc { mp.controls().setPosition(jumpPos) } } } }
+                    val s = ts
+                    val newTime = if (s == null) vlcTime else {
+                        val f = if (s.opening) s.openLanded(vlcTime, pos) else s.filmTime(vlcTime)
+                        if (f == null || (s.seeking && !s.seekLanded(f, pos))) return@tick
+                        s.tick(vlcTime, pos)
+                        f
+                    }
+                    if (seeking == null && System.currentTimeMillis() - lastSeekAt > 600 && (kotlin.math.abs(newTime - time) >= 250 || newTime < time)) time = newTime
+                    lastGood = newTime
+                    if (newTime / 10_000 != (newTime - 300) / 10_000) savePos(newTime, length)
                 }
-                if (seeking == null && System.currentTimeMillis() - lastSeekAt > 600 && (kotlin.math.abs(newTime - time) >= 250 || newTime < time)) time = newTime
-                lastGood = newTime
-                if (newTime / 10_000 != (newTime - 300) / 10_000) savePos(newTime, length)
             }
             override fun finished(p: MediaPlayer) = ui2 {
                 if (!closing) {
@@ -663,6 +755,10 @@ fun PlayerView(
         showCanvas = true
         var waited = 0
         while ((!canvas.isDisplayable || canvas.width <= 0) && waited < 8000) { delay(50); waited += 50 }
+
+        // Запрещаем нативному окну VLC красть фокус клавиатуры у главного окна!
+        WindowMode.disableNativeCanvasInput(canvas)
+        WindowMode.restoreComposeFocus(owner)
         if (startIndex > 0 && req.playlist != null) {
             val entries = Api.text(req.playlist)?.let { parseM3u(it) }.orEmpty()
             if (entries.size > startIndex) { queue = entries; playEntry(startIndex); return@LaunchedEffect }
@@ -736,43 +832,16 @@ fun PlayerView(
         }
     }
 
-    DisposableEffect(canvas) {
-        val single = javax.swing.Timer(260) { togglePause() }.apply { isRepeats = false }
-        val clicks = object : java.awt.event.MouseAdapter() {
-            override fun mouseClicked(e: java.awt.event.MouseEvent) {
-                if (e.button != java.awt.event.MouseEvent.BUTTON1) return
-                if (e.clickCount >= 2) { single.stop(); toggleFullscreen() } else single.restart()
-            }
-        }
-        val wheel = java.awt.event.MouseWheelListener { e ->
-            val rot = e.wheelRotation
-            if (rot != 0) {
-                val step = if (rot < 0) 5 else -5
-                volume = (volume + step).coerceIn(0, 150)
-                val v = volume
-                vlc { mp.audio().setVolume(v) }
-                if (userMuted) {
-                    userMuted = false
-                    vlc { mp.audio().setMute(false) }
-                }
-                lastVolumeWheelAt = System.currentTimeMillis()
-                poke()
-                flash("Громкость: $v%", "Громкость:")
-            }
-        }
-        canvas.addMouseListener(clicks)
-        canvas.addMouseWheelListener(wheel)
-        onDispose {
-            single.stop()
-            canvas.removeMouseListener(clicks)
-            canvas.removeMouseWheelListener(wheel)
-        }
-    }
-
     LaunchedEffect(req.playlist) {
         val text = req.playlist?.let { Api.text(it) } ?: return@LaunchedEffect
         val entries = parseM3u(text)
-        if (entries.size > 1) queue = entries
+        if (entries.size > 1) {
+            queue = entries
+            if (startIndex in entries.indices && startIndex > 0 && title == req.title) {
+                title = entries[startIndex].title
+                currentUrl = entries[startIndex].url
+            }
+        }
     }
 
     LaunchedEffect(infoOpen) {
@@ -790,7 +859,7 @@ fun PlayerView(
         if (nextIn > 0) { delay(1000); nextIn-- } else if (nextIn == 0) playEntry(index + 1)
     }
 
-    val fullscreen = win.placement == WindowPlacement.Fullscreen
+    val fullscreen = WindowMode.isFullscreen
 
     LaunchedEffect(Unit) {
         var last: java.awt.Point? = null
@@ -828,55 +897,18 @@ fun PlayerView(
         java.awt.Toolkit.getDefaultToolkit().createCustomCursor(java.awt.image.BufferedImage(1, 1, java.awt.image.BufferedImage.TYPE_INT_ARGB), java.awt.Point(0, 0), "blank")
     }
     LaunchedEffect(barVisible) {
-        if (barVisible) {
-            canvas.cursor = java.awt.Cursor.getDefaultCursor()
-        } else {
-            canvas.cursor = blankCursor
-        }
+        val targetCursor = if (barVisible) java.awt.Cursor.getDefaultCursor() else blankCursor
+        canvas.cursor = targetCursor
+        owner?.cursor = targetCursor
     }
-
-    val owner = parentWindow ?: runCatching { java.awt.Frame.getFrames().firstOrNull { it.isShowing } }.getOrNull()
-
-    val topDialog = remember(owner) {
-        if (owner == null) null else ComposeDialog(owner).apply {
-            isUndecorated = true
-            isTransparent = true
-            isResizable = false
-            focusableWindowState = false
+    DisposableEffect(owner) {
+        onDispose {
+            owner?.cursor = java.awt.Cursor.getDefaultCursor()
         }
-    }
-    val bottomDialog = remember(owner) {
-        if (owner == null) null else ComposeDialog(owner).apply {
-            isUndecorated = true
-            isTransparent = true
-            isResizable = false
-            focusableWindowState = false
-        }
-    }
-
-    fun syncOverlayBounds() {
-        val comp = if (canvas.isShowing) canvas else ((owner as? javax.swing.RootPaneContainer)?.contentPane ?: owner) ?: return
-        val loc = runCatching { comp.locationOnScreen }.getOrNull() ?: return
-        val w = comp.width
-        val h = comp.height
-        if (w <= 0 || h <= 0) return
-        if (parked) return
-        val topH = 75
-        val bottomH = (when {
-            picker == "more" -> 600 + (if (infoOpen) 60 else 0)
-            picker != null -> 460 + (if (infoOpen) 60 else 0)
-            infoOpen -> 240
-            inIntro() || nextIn >= 0 -> 220
-            else -> 210
-        }).coerceAtMost(h - topH)
-
-        topDialog?.setBounds(loc.x, loc.y, w, topH)
-        bottomDialog?.setBounds(loc.x, loc.y + h - bottomH, w, bottomH)
-        topDialog?.revalidate()
-        bottomDialog?.revalidate()
     }
 
     DisposableEffect(owner, canvas) {
+        val root = (owner as? javax.swing.RootPaneContainer)?.contentPane
         val compListener = object : java.awt.event.ComponentAdapter() {
             override fun componentMoved(e: java.awt.event.ComponentEvent) { syncOverlayBounds() }
             override fun componentResized(e: java.awt.event.ComponentEvent) { syncOverlayBounds() }
@@ -895,10 +927,12 @@ fun PlayerView(
             }
         }
         owner?.addComponentListener(compListener)
+        root?.addComponentListener(compListener)
         owner?.addWindowListener(winListener)
         canvas.addComponentListener(compListener)
         onDispose {
             owner?.removeComponentListener(compListener)
+            root?.removeComponentListener(compListener)
             owner?.removeWindowListener(winListener)
             canvas.removeComponentListener(compListener)
             topDialog?.isVisible = false
@@ -906,6 +940,13 @@ fun PlayerView(
             topDialog?.dispose()
             bottomDialog?.dispose()
         }
+    }
+
+    fun revealOverlays() {
+        var changed = false
+        if (topDialog?.isVisible == false) { topDialog.isVisible = true; changed = true }
+        if (bottomDialog?.isVisible == false) { bottomDialog.isVisible = true; changed = true }
+        if (changed) WindowMode.restoreComposeFocus(owner)
     }
 
     LaunchedEffect(barVisible, closing) {
@@ -916,8 +957,7 @@ fun PlayerView(
         }
         if (barVisible) {
             syncOverlayBounds()
-            topDialog?.isVisible = true
-            bottomDialog?.isVisible = true
+            revealOverlays()
             barSlide.animateTo(0f, tween(280, easing = Sm.ease))
         } else {
             barSlide.animateTo(1f, tween(260, easing = Sm.ease))
@@ -926,11 +966,29 @@ fun PlayerView(
         }
     }
 
-    LaunchedEffect(picker, infoOpen, inIntro(), nextIn, win.placement) {
-        if (barVisible && !closing) {
+    LaunchedEffect(WindowMode.isFullscreen) {
+        if (!closing) {
+            // Прячем оверлеи на время перестройки нативного окна Windows
+            topDialog?.isVisible = false
+            bottomDialog?.isVisible = false
+
+            delay(80) // Ждем, пока AWT и Win32 применят новые границы и Insets
+            syncOverlayBounds()
+
+            if (barVisible) {
+                topDialog?.isVisible = true
+                bottomDialog?.isVisible = true
+            }
+            // Возвращаем клавиатурный фокус слою Compose, чтобы работали горячие клавиши
+            WindowMode.restoreComposeFocus(owner)
+
+            delay(150)
             syncOverlayBounds()
         }
     }
+
+    val singleClickTimer = remember { javax.swing.Timer(260) { togglePause() }.apply { isRepeats = false } }
+    DisposableEffect(Unit) { onDispose { singleClickTimer.stop() } }
 
     // Video layer in main window
     Box(
@@ -938,11 +996,37 @@ fun PlayerView(
             .fillMaxSize()
             .background(Color.Black)
             .pointerInput(Unit) {
+                var lastClickTime = 0L
                 awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent()
-                        if (event.type == PointerEventType.Press) {
-                            poke()
+                        when (event.type) {
+                            PointerEventType.Press -> {
+                                poke()
+                                WindowMode.restoreComposeFocus(owner)
+                                val now = System.currentTimeMillis()
+                                if (now - lastClickTime < 300L) {
+                                    singleClickTimer.stop()
+                                    toggleFullscreen()
+                                    lastClickTime = 0L
+                                } else {
+                                    singleClickTimer.restart()
+                                    lastClickTime = now
+                                }
+                            }
+                            PointerEventType.Scroll -> {
+                                val delta = event.changes.firstOrNull()?.scrollDelta?.y ?: 0f
+                                if (delta != 0f) {
+                                    val step = if (delta < 0f) 5 else -5
+                                    volume = (volume + step).coerceIn(0, 150)
+                                    val v = volume
+                                    vlc { mp.audio().setVolume(v) }
+                                    if (userMuted) { userMuted = false; vlc { mp.audio().setMute(false) } }
+                                    lastVolumeWheelAt = System.currentTimeMillis()
+                                    poke()
+                                    flash("Громкость: $v%", "Громкость:")
+                                }
+                            }
                         }
                     }
                 }
@@ -991,6 +1075,7 @@ fun PlayerView(
                     onTop = onTop.value,
                     mini = mini,
                     infoOpen = infoOpen,
+                    infoSource = infoSource,
                     infoText = infoText,
                     chapters = chapters,
                     chapterAtTime = chapterAt(time),
@@ -1017,7 +1102,7 @@ fun PlayerView(
                     },
                     onPlayEntry = { playEntry(it) },
                     onSkipIntro = { skipIntro() },
-                    onClosePicker = { picker = null },
+                    onClosePicker = { closePicker() },
                     onOpenPicker = { openPicker(it) },
                     onSelectTrack = { kind, id, name ->
                         if (kind == "audio") {
@@ -1031,7 +1116,7 @@ fun PlayerView(
                             ui.put("spu:${seriesKey()}", v)
                             ui.put("spu:*", v)
                         }
-                        picker = null
+                        closePicker()
                     },
                     onVolumeChange = {
                         volume = it
@@ -1052,15 +1137,18 @@ fun PlayerView(
                     },
                     onMoreSubDelay = { shiftSubs(it) },
                     onMoreNight = {
-                        ui.put("night", if (nightMode) null else "1")
-                        restartPlayer()
+                        nightMode = !nightMode
+                        ui.put("night", if (nightMode) "1" else null)
+                        poke()
+                        flash(if (nightMode) "Ночной звук включен" else "Ночной звук выключен", "Ночной звук")
+                        reopen(time)
                     },
                     onMoreOnTop = { onTop.value = !onTop.value },
                     onMoreMini = {
                         setMini(!mini)
-                        picker = null
+                        closePicker()
                     },
-                    onMoreInfo = { infoOpen = !infoOpen },
+                    onMoreInfo = { toggleInfo("button") },
                     onMoreChapter = { i -> jumpChapter(i - chapterAt(time)) },
                     onCancelNextIn = { nextIn = -1 },
                     onMiniToggle = { setMini(false) },

@@ -62,6 +62,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Fill
 import kotlinx.coroutines.delay
 import ru.suslikovanora.media.desktop.ui.Onest
 import ru.suslikovanora.media.desktop.ui.Sm
@@ -101,7 +104,7 @@ fun GlassIconButton(
             .size(size)
             .drawBehind {
                 if (glowAlpha > 0.001f) {
-                    val r = this.size.minDimension * 0.72f
+                    val r = this.size.minDimension * 0.58f
                     drawCircle(
                         brush = Brush.radialGradient(
                             colorStops = arrayOf(
@@ -131,48 +134,47 @@ fun HeroPlayButton(
     onClick: () -> Unit,
     size: Dp = 48.dp
 ) {
-    val src = remember { MutableInteractionSource() }
-    val hovered by src.collectIsHoveredAsState()
-    val pressed by src.collectIsPressedAsState()
-    val scale = hoverScale(hovered, pressed, 1.06f)
-    val bg = if (hovered) Color(0xFFF2F4F8) else Color.White
-
-    Box(
-        modifier = Modifier
-            .graphicsLayer { scaleX = scale; scaleY = scale }
-            .size(size)
-            .clip(CircleShape)
-            .background(bg)
-            .hoverClick(src, onClick = onClick),
-        contentAlignment = Alignment.Center
+    GlassIconButton(
+        onClick = onClick,
+        size = size,
+        tooltip = if (playing) "Пауза (Пробел)" else "Воспроизведение (Пробел)"
     ) {
         if (playing) {
             Row(
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.5.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(
                     modifier = Modifier
-                        .width(4.5.dp)
+                        .width(4.2.dp)
                         .height(18.dp)
-                        .clip(RoundedCornerShape(1.dp))
-                        .background(Color(0xFF111418))
+                        .clip(RoundedCornerShape(1.5.dp))
+                        .background(Color.White)
                 )
                 Box(
                     modifier = Modifier
-                        .width(4.5.dp)
+                        .width(4.2.dp)
                         .height(18.dp)
-                        .clip(RoundedCornerShape(1.dp))
-                        .background(Color(0xFF111418))
+                        .clip(RoundedCornerShape(1.5.dp))
+                        .background(Color.White)
                 )
             }
         } else {
-            Text(
-                "▶",
-                color = Color(0xFF111418),
-                fontSize = (size.value * 0.42f).sp,
-                modifier = Modifier.padding(start = 2.dp)
-            )
+            Canvas(
+                modifier = Modifier
+                    .size(20.dp)
+                    .offset(x = 1.5.dp)
+            ) {
+                val w = this.size.width
+                val h = this.size.height
+                val path = Path().apply {
+                    moveTo(w * 0.18f, h * 0.12f)
+                    lineTo(w * 0.88f, h * 0.50f)
+                    lineTo(w * 0.18f, h * 0.88f)
+                    close()
+                }
+                drawPath(path, color = Color.White, style = Fill)
+            }
         }
     }
 }
@@ -327,7 +329,7 @@ fun VolumeGlassCapsule(
                     volume = volume,
                     muted = muted,
                     color = if (muted) Sm.lamp else Color.White,
-                    size = if (size < 40.dp) 16.dp else 18.dp
+                    size = if (size < 40.dp) 19.dp else 22.dp
                 )
             }
         }
@@ -357,7 +359,7 @@ fun VolumeGlassCapsule(
                 .width(width)
                 .drawBehind {
                     if (glowAlpha > 0.001f) {
-                        val r = size.toPx() * 0.72f
+                        val r = size.toPx() * 0.58f
                         val centerOffset = Offset(size.toPx() / 2f, size.toPx() / 2f)
                         drawCircle(
                             brush = Brush.radialGradient(
@@ -398,7 +400,7 @@ fun VolumeGlassCapsule(
                         volume = volume,
                         muted = muted,
                         color = if (muted) Sm.lamp else Color.White,
-                        size = if (size < 40.dp) 16.dp else 18.dp
+                        size = if (size < 40.dp) 19.dp else 22.dp
                     )
                 }
                 if (width > 60.dp) {

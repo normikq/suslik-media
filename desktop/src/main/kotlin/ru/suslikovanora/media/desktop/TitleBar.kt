@@ -35,6 +35,18 @@ object TitleBar {
             set(35, ref(0x090B10))    // DWMWA_CAPTION_COLOR  = Sm.night
             set(36, ref(0xEEF0F5))    // DWMWA_TEXT_COLOR     = Sm.text
             set(34, ref(0x252A37))    // DWMWA_BORDER_COLOR   = Sm.line
+            set(33, 0)                // DWMWA_WINDOW_CORNER_PREFERENCE = DWMWCP_DEFAULT
+        }
+    }
+
+    fun setFullscreenDwm(window: Window) {
+        val api = dwm ?: return
+        runCatching {
+            val hwnd = Native.getWindowPointer(window) ?: return
+            fun set(attr: Int, v: Int) = api.DwmSetWindowAttribute(hwnd, attr, IntByReference(v), 4)
+            set(20, 1)                // DWMWA_USE_IMMERSIVE_DARK_MODE
+            set(34, 0xFFFFFFFE.toInt()) // DWMWA_BORDER_COLOR = DWMWA_COLOR_NONE (no accent border)
+            set(33, 1)                // DWMWA_WINDOW_CORNER_PREFERENCE = DWMWCP_DONOTROUND (rectangular)
         }
     }
 }

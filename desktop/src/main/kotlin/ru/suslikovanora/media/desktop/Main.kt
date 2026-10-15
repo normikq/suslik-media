@@ -38,6 +38,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
@@ -98,7 +102,7 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
     var leaving by remember { mutableStateOf(false) }
     val focus = remember { arrayOfNulls<androidx.compose.ui.focus.FocusManager>(1) } // plain holder, not state
     LaunchedEffect(playing) {
-        if (playing != null) { leaving = false; focus[0]?.clearFocus(); presence.animateTo(1f, tween(440, easing = Sm.ease)) }
+        if (playing != null) { leaving = false; presence.animateTo(1f, tween(440, easing = Sm.ease)) }
     }
     fun closePlayer() {
         if (leaving) return
@@ -132,10 +136,21 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
         icon = painterResource("icons/icon-256.png"),
         state = win,
         alwaysOnTop = onTop.value,
-        onPreviewKeyEvent = { e -> keys.value?.invoke(e) ?: false }
+        onPreviewKeyEvent = { event ->
+            if (playing != null) {
+                keys.value?.invoke(event) ?: false
+            } else if (event.type == KeyEventType.KeyDown && event.key == Key.F11) {
+                WindowMode.toggleFullscreen()
+                true
+            } else {
+                false
+            }
+        }
     ) {
+
         // Dark title bar in the app's colours, and a dark window behind Compose (no white flash while animating/resizing).
         LaunchedEffect(Unit) {
+            WindowMode.currentWindow = window
             window.background = java.awt.Color(0x09, 0x0B, 0x10)
             window.contentPane.background = java.awt.Color(0x09, 0x0B, 0x10)
             TitleBar.style(window)
