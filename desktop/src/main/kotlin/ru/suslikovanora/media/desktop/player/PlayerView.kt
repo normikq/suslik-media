@@ -69,6 +69,9 @@ import uk.co.caprica.vlcj.player.base.MediaPlayer
 import uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter
 import javax.swing.SwingUtilities
 
+/** Дольше всего прокси держит фильм, копя запас на сети медленнее фильма (как на Android). */
+private const val CATCH_UP_MAX_MS = 45_000L
+
 /**
  * Player inside the main window. VLC draws straight into a native canvas (original resolution, hardware decoding,
  * DirectX output, no frame copying); the controls are Compose bars layered over the picture.
@@ -179,6 +182,11 @@ fun PlayerView(
     var mini by remember { mutableStateOf(false) }
     var lastSeekAt by remember { mutableStateOf(0L) }
     var bufferingSince by remember { mutableStateOf(0L) }
+    // Сеть медленнее фильма: прокси держит фильм, пока не накопится запас (как на Android, см. PlayerActivity.maybeCatchUp)
+    var catchingUp by remember { mutableStateOf(false) }
+    var catchUpStartedAt by remember { mutableStateOf(0L) }
+    var openedAt by remember { mutableStateOf(0L) }
+    var catchUpEndedAt by remember { mutableStateOf(0L) }
     val supRef = remember { java.util.concurrent.atomic.AtomicReference<PlaybackSupervisor?>(null) }
     var bufferedMs by remember { mutableStateOf(0L) }
     // Высокое нижнее окно нужно только под всплывающие меню; иначе его прозрачная верхняя часть перехватывает клики по видео
@@ -299,6 +307,7 @@ fun PlayerView(
         BurstProxy.capBytes = PlaybackSettings.burstMb().toLong() shl 20
         BurstProxy.keepOnly(listOf(url) + extras.first)
         supRef.get()?.opening(url)
+        openedAt = System.currentTimeMillis()
         PlayerLog.write("open ${url.substringBefore('?').substringAfterLast('/')} at ${startAt / 1000}s, voice-overs=${extras.first.size}, " +
             "buffer=${PlaybackSettings.cacheMs()}ms, reserve=${PlaybackSettings.burstMb()}MB")
         val playUrl = BurstProxy.wrap(url)
@@ -450,7 +459,9 @@ fun PlayerView(
             PlayerLog.write("resume after ${paused} ms${if (longPause) " (re-seek)" else ""}")
             supRef.get()?.resumed()
             playing = true; pausedAt = 0L; vlcPaused = false
+            val m = userMuted
             vlc {
+                mp.audio().setMute(m)
                 mp.controls().setPause(false)
                 if (longPause) reseekHereNow()
             }
@@ -711,8 +722,15 @@ fun PlayerView(
                     scope.launch { delay(1200); chapters = withContext(vlcThread) { readChapters(mp) } }
                 }
                 val v = volume; val m = userMuted
-                if (pausedAt > 0) { playing = false; vlc { mp.audio().setMute(true); mp.controls().setPause(true) } }
-                else if (!wasStarted) vlc { mp.audio().setVolume(v); mp.audio().setMute(m) }
+                if (pausedAt > 0) {
+                    playing = false
+                    vlc { mp.audio().setMute(true); mp.controls().setPause(true) }
+                } else {
+                    vlc {
+                        mp.audio().setMute(m)
+                        if (!wasStarted) mp.audio().setVolume(v)
+                    }
+                }
             }
             override fun elementaryStreamAdded(p: MediaPlayer, type: uk.co.caprica.vlcj.media.TrackType, id: Int) = ui2 {
                 if (System.currentTimeMillis() < prefsUntil) { prefsTimer.initialDelay = 400; prefsTimer.restart() }
@@ -827,9 +845,55 @@ fun PlayerView(
             }
             override fun notice(text: String) = flash(text, text.take(10))
             override fun log(message: String) = PlayerLog.write(message)
-        }, stuckLimitMs = { if (BurstProxy.isActive(currentUrl)) 30_000L else 12_000L })
+        }, stuckLimitMs = { if (catchingUp) CATCH_UP_MAX_MS + 15_000L else if (BurstProxy.isActive(currentUrl)) 30_000L else 12_000L })
     }
     DisposableEffect(supervisor) { supRef.set(supervisor); onDispose { supRef.set(null) } }
+
+    // Сеть медленнее фильма: когда запас кончился, прокси не отдаёт VLC данные, пока не накопится ~30 с фильма (не дольше
+    // CATCH_UP_MAX_MS). Для VLC это одна долгая буферизация вместо остановок каждые 15–30 с, после которых аппаратный
+    // декодер показывает рассыпанную картинку (журнал 15.10: запас 0 МБ, сеть ≈ битрейт фильма). VLC на паузу не ставим.
+    LaunchedEffect(Unit) {
+        fun endCatchUp(restart: Boolean) {
+            if (!catchingUp) return
+            catchingUp = false
+            catchUpEndedAt = System.currentTimeMillis()
+            BurstProxy.hold(currentUrl, 0L)
+            val ahead = BurstProxy.aheadMb(currentUrl) ?: 0.0
+            PlayerLog.write("reserve gathered: %.0f MB in %d s".format(ahead, (System.currentTimeMillis() - catchUpStartedAt) / 1000))
+            if (status?.startsWith("Сеть медленнее") == true) status = null
+            if (!restart || closing) return
+            // С запасом позади: прыжок попадает на ближайший ключевой кадр из того, что уже на диске. Так VLC запускает
+            // декодеры заново, а не показывает картинку после долгого простоя.
+            val behind = BurstProxy.keptBehindSec(currentUrl)
+            if (time > 0L && behind >= 8.0) {
+                lastSeekAt = System.currentTimeMillis()
+                supRef.get()?.seeked()
+                vlcSeekTo(time)
+            } else PlayerLog.write("restart skipped: only %.1f s kept behind".format(behind))
+        }
+        while (true) {
+            delay(1_000L)
+            val now = System.currentTimeMillis()
+            if (catchingUp) {
+                val ahead = BurstProxy.aheadMb(currentUrl) ?: 0.0
+                val target = BurstProxy.catchUpTargetMb(currentUrl)
+                when {
+                    closing || pausedAt > 0L || vlcPaused || seeking != null || lastSeekAt > catchUpStartedAt -> endCatchUp(false)
+                    ahead >= target || now - catchUpStartedAt >= CATCH_UP_MAX_MS -> endCatchUp(true)
+                    bufferingSince > 0L -> status = "Сеть медленнее фильма — копим запас ${(ahead * 100 / target.coerceAtLeast(1.0)).toInt().coerceIn(0, 99)}%"
+                }
+                continue
+            }
+            if (closing || !started || pausedAt > 0L || vlcPaused || seeking != null || time <= 0L) continue
+            // не сразу после открытия или перемотки: VLC тогда и так наполняет свой буфер
+            if (now - openedAt < 20_000L || now - lastSeekAt < 20_000L || now - catchUpEndedAt < 20_000L) continue
+            if (!BurstProxy.isActive(currentUrl) || !BurstProxy.slowerThanFilm(currentUrl) || (BurstProxy.aheadMb(currentUrl) ?: 99.0) >= 2.0) continue
+            catchingUp = true
+            catchUpStartedAt = now
+            PlayerLog.write("network slower than the film, reserve empty: holding the film to gather %.0f MB".format(BurstProxy.catchUpTargetMb(currentUrl)))
+            BurstProxy.hold(currentUrl, CATCH_UP_MAX_MS + 5_000L)
+        }
+    }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -1175,7 +1239,12 @@ fun PlayerView(
                     },
                     onVolumeChange = {
                         volume = it
-                        vlc { mp.audio().setVolume(it) }
+                        val unmute = userMuted && it > 0
+                        if (unmute) userMuted = false
+                        vlc {
+                            mp.audio().setVolume(it)
+                            if (unmute) mp.audio().setMute(false)
+                        }
                         poke()
                     },
                     onMuteToggle = {
