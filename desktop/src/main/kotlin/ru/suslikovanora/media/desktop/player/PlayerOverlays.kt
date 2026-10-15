@@ -159,6 +159,8 @@ fun PlayerBottomBar(
     lastVolumeWheelAt: Long,
     nextIn: Int,
     inIntro: Boolean,
+    seeking: Float?,
+    onScrubChange: (Float?) -> Unit,
     onPoke: () -> Unit,
     onTogglePause: () -> Unit,
     onSeekBy: (Long) -> Unit,
@@ -184,7 +186,6 @@ fun PlayerBottomBar(
     onVolumeWheel: (Float) -> Unit
 ) {
     val controlsAlpha = if (closing) 0f else (1f - barSlide).coerceIn(0f, 1f)
-    var seeking by remember { mutableStateOf<Float?>(null) }
     var hoverAt by remember { mutableStateOf<Long?>(null) }
 
     val animBuffered by animateFloatAsState(
@@ -556,9 +557,9 @@ fun PlayerBottomBar(
                     buffered = animBuffered.toLong(),
                     marks = chapters.map { it.first },
                     modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
-                    onScrub = { t -> seeking = t?.toFloat(); onPoke() },
+                    onScrub = { t -> onScrubChange(t?.toFloat()); onPoke() },
                     onSeek = { t ->
-                        seeking = null
+                        onScrubChange(null)
                         onSeekTo(t)
                     },
                     onHover = { t -> hoverAt = t }

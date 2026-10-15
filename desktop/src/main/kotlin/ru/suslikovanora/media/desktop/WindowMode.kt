@@ -80,8 +80,41 @@ object WindowMode {
         fun EnableWindow(hwnd: Pointer, bEnable: Boolean): Boolean
         fun EnumChildWindows(hWndParent: Pointer, lpEnumFunc: WNDENUMPROC, lParam: Pointer?): Boolean
         fun SetFocus(hwnd: Pointer): Pointer?
+        fun SetWindowRgn(hwnd: Pointer, hRgn: Pointer?, bRedraw: Boolean): Int
     }
 
+    private interface Gdi32 : JnaLibrary {
+        companion object {
+            val INSTANCE: Gdi32? = if (!isWindows) null else runCatching {
+                Native.load("gdi32", Gdi32::class.java)
+            }.getOrNull()
+        }
+
+        fun CreateRectRgn(x1: Int, y1: Int, x2: Int, y2: Int): Pointer?
+    }
+
+    /**
+     * Оставляет у окна «живой» (рисуемый и принимающий мышь) только нижний прямоугольник высотой [visibleDip];
+     * остальное окно не перехватывает клики. Размер окна не меняется, поэтому Compose ничего не перестраивает.
+     */
+    fun clipToBottom(win: Window, visibleDip: Int) {
+        if (!isWindows || !win.isDisplayable) return
+        val user32 = User32.INSTANCE ?: return
+        val gdi = Gdi32.INSTANCE ?: return
+        runCatching {
+            val hwnd = Native.getWindowPointer(win) ?: return
+            val tr = win.graphicsConfiguration?.defaultTransform
+            val sx = tr?.scaleX ?: 1.0
+            val sy = tr?.scaleY ?: 1.0
+            val w = kotlin.math.ceil(win.width * sx).toInt() + 2
+            val h = kotlin.math.ceil(win.height * sy).toInt()
+            val vis = kotlin.math.ceil(visibleDip * sy).toInt().coerceIn(0, h)
+            val rgn = gdi.CreateRectRgn(0, h - vis, w, h + 2)
+            user32.SetWindowRgn(hwnd, rgn, true)
+        }
+    }
+
+    private var lastToggleAt = 0L
     private var savedStyle = 0
     private var savedPlacement: User32.WINDOWPLACEMENT? = null
 
@@ -117,6 +150,11 @@ object WindowMode {
         val win = window ?: currentWindow ?: runCatching { Frame.getFrames().firstOrNull { it.isShowing } }.getOrNull() ?: return
         currentWindow = win
         if (enable == isFullscreen) return
+        // Быстрые повторы F11: окно ещё перестраивается, и новая смена режима запоминала «промежуточное» состояние
+        // (без рамки, размером с экран) как обычное — после выхода окно вылезало за экран. Пропускаем такие нажатия.
+        val now = System.nanoTime()
+        if (now - lastToggleAt < 450_000_000L) return
+        lastToggleAt = now
 
         val user32 = User32.INSTANCE
         val hwnd = if (isWindows) runCatching { Native.getWindowPointer(win) }.getOrNull() else null
@@ -124,10 +162,14 @@ object WindowMode {
         if (user32 != null && hwnd != null) {
             runCatching {
                 if (enable) {
-                    val wp = User32.WINDOWPLACEMENT()
-                    user32.GetWindowPlacement(hwnd, wp)
-                    savedPlacement = wp
-                    savedStyle = user32.GetWindowLongW(hwnd, GWL_STYLE)
+                    val curStyle = user32.GetWindowLongW(hwnd, GWL_STYLE)
+                    // Запоминаем только настоящее оконное состояние (с рамкой), а не уже полноэкранное
+                    if (curStyle and WS_CAPTION == WS_CAPTION || savedPlacement == null) {
+                        val wp = User32.WINDOWPLACEMENT()
+                        user32.GetWindowPlacement(hwnd, wp)
+                        savedPlacement = wp
+                        savedStyle = curStyle
+                    }
 
                     val hMon = user32.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
                     if (hMon != null) {
@@ -159,8 +201,16 @@ object WindowMode {
                     if (prevStyle != 0 && prevPlacement != null) {
                         TitleBar.style(win)
                         user32.SetWindowLongW(hwnd, GWL_STYLE, prevStyle)
-                        prevPlacement.showCmd = if (prevPlacement.showCmd == 3) 3 else 1
+                        val wasMaximized = prevPlacement.showCmd == 3
+                        // Для Windows окно, открытое на весь экран, всё ещё «развёрнуто» (мы меняли только размер), и повторное
+                        // «развернуть» ничего не пересчитывает: окно с рамкой оставалось размером с монитор и уходило за экран.
+                        // Сначала возвращаем обычный размер, затем разворачиваем заново.
+                        prevPlacement.showCmd = 1
                         user32.SetWindowPlacement(hwnd, prevPlacement)
+                        if (wasMaximized) {
+                            prevPlacement.showCmd = 3
+                            user32.SetWindowPlacement(hwnd, prevPlacement)
+                        }
                         user32.SetWindowPos(
                             hwnd, if (win.isAlwaysOnTop) HWND_TOPMOST else HWND_NOTOPMOST,
                             0, 0, 0, 0,
@@ -215,15 +265,17 @@ object WindowMode {
             }
             w.requestFocus()
 
-            // Ищем внутренний слой Compose (SkiaLayer или внутренний Canvas), исключая наш VLC canvas
+            // Ищем именно слой Skia, который получает клавиши Compose. «Первый фокусируемый» тут нельзя:
+            // им оказывалась обёртка SwingPanel с холстом VLC, фокус уходил к ней, и горячие клавиши в плеере молчали.
+            fun isSkiaLayer(c: java.awt.Component): Boolean {
+                var k: Class<*>? = c.javaClass
+                while (k != null) { if (k.name == "org.jetbrains.skiko.SkiaLayer") return true; k = k.superclass }
+                return false
+            }
             fun findFocusable(c: java.awt.Container): java.awt.Component? {
                 for (comp in c.components) {
-                    if (!comp.isFocusable) continue
-                    if (comp is java.awt.Container) {
-                        val found = findFocusable(comp)
-                        if (found != null) return found
-                    }
-                    return comp
+                    if (isSkiaLayer(comp)) return comp
+                    if (comp is java.awt.Container) findFocusable(comp)?.let { return it }
                 }
                 return null
             }

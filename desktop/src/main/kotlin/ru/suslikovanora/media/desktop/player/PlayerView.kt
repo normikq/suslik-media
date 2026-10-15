@@ -14,6 +14,7 @@ import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -169,15 +170,20 @@ fun PlayerView(
     var lastSeekAt by remember { mutableStateOf(0L) }
     var bufferingSince by remember { mutableStateOf(0L) }
     val supRef = remember { java.util.concurrent.atomic.AtomicReference<PlaybackSupervisor?>(null) }
-    var hasVoiceOver by remember { mutableStateOf(false) }
     var bufferedMs by remember { mutableStateOf(0L) }
+    // Высокое нижнее окно нужно только под всплывающие меню; иначе его прозрачная верхняя часть перехватывает клики по видео
+    var tallBottom by remember { mutableStateOf(false) }
+    var lastClip by remember { mutableStateOf<Triple<Int, Int, Int>?>(null) }
 
-    LaunchedEffect(barVisible, currentUrl, length, time, playing, bufferingSince) {
+    // time is read inside the loop, so it must not be a key (it would restart the effect every tick)
+    val timeNow by rememberUpdatedState(time)
+    LaunchedEffect(barVisible, currentUrl, length, playing, bufferingSince) {
         if (!barVisible) return@LaunchedEffect
         while (true) {
             val vlcTimeBufferMs = if (playing || bufferingSince > 0L) 6_000L else 0L
             val diskBufferMs = BurstProxy.aheadMs(currentUrl, length)
-            bufferedMs = if (length > 0L) (time + vlcTimeBufferMs + diskBufferMs).coerceIn(time, length) else 0L
+            val t = timeNow
+            bufferedMs = if (length > 0L) (t + vlcTimeBufferMs + diskBufferMs).coerceIn(t, length) else 0L
             delay(200L)
         }
     }
@@ -231,10 +237,16 @@ fun PlayerView(
         val topH = 75
         val bottomH = 460.coerceAtMost(h - topH)
 
-        topDialog?.setBounds(loc.x, loc.y, w, topH)
-        bottomDialog?.setBounds(loc.x, loc.y + h - bottomH, w, bottomH)
-        topDialog?.revalidate()
-        bottomDialog?.revalidate()
+        val topRect = java.awt.Rectangle(loc.x, loc.y, w, topH)
+        val bottomRect = java.awt.Rectangle(loc.x, loc.y + h - bottomH, w, bottomH)
+        topDialog?.takeIf { it.bounds != topRect }?.let { it.bounds = topRect; it.revalidate() }
+        bottomDialog?.takeIf { it.bounds != bottomRect }?.let { it.bounds = bottomRect; it.revalidate() }
+        // Окно всегда высотой под меню (без перестройки и подёргиваний), но клики ловит только его нужная часть
+        bottomDialog?.let { d ->
+            val visible = if (tallBottom) bottomH else 220.coerceAtMost(bottomH)
+            val key = Triple(d.width, d.height, visible)
+            if (d.isDisplayable && key != lastClip) { lastClip = key; WindowMode.clipToBottom(d, visible) }
+        }
     }
 
     fun grabFrame(): androidx.compose.ui.graphics.ImageBitmap? {
@@ -276,7 +288,6 @@ fun PlayerView(
         Reserve.init()
         BurstProxy.capBytes = PlaybackSettings.burstMb().toLong() shl 20
         BurstProxy.keepOnly(listOf(url) + extras.first)
-        hasVoiceOver = extras.first.isNotEmpty()
         supRef.get()?.opening(url)
         PlayerLog.write("open ${url.substringBefore('?').substringAfterLast('/')} at ${startAt / 1000}s, voice-overs=${extras.first.size}, " +
             "buffer=${PlaybackSettings.cacheMs()}ms, reserve=${PlaybackSettings.burstMb()}MB")
@@ -654,14 +665,19 @@ fun PlayerView(
     val prefsTimer = remember { javax.swing.Timer(300) { applyPrefs(); ensureAudio() }.apply { isRepeats = false } }
     DisposableEffect(Unit) {
         val ui2 = { block: () -> Unit -> SwingUtilities.invokeLater(block) }
+        val oneShots = mutableListOf<javax.swing.Timer>()
+        fun oneShot(ms: Int, action: () -> Unit) {
+            oneShots.removeAll { !it.isRunning }
+            oneShots += javax.swing.Timer(ms) { action() }.apply { isRepeats = false; start() }
+        }
         mp.events().addMediaPlayerEventListener(object : MediaPlayerEventAdapter() {
             override fun playing(p: MediaPlayer) = ui2 {
                 WindowMode.disableNativeCanvasInput(canvas)
                 WindowMode.restoreComposeFocus(owner)
-                javax.swing.Timer(250) {
+                oneShot(250) {
                     WindowMode.disableNativeCanvasInput(canvas)
                     WindowMode.restoreComposeFocus(owner)
-                }.apply { isRepeats = false; start() }
+                }
                 val wasStarted = started
                 playing = true; status = null; retries = 0; started = true; vlcPaused = false
                 ts?.let { s ->
@@ -673,7 +689,7 @@ fun PlayerView(
                     prefsApplied = true
                     prefsUntil = System.currentTimeMillis() + 8_000L
                     prefsTimer.initialDelay = 300; prefsTimer.restart()
-                    javax.swing.Timer(4500) { ensureAudio() }.apply { isRepeats = false; start() }
+                    oneShot(4500) { ensureAudio() }
                     if (audioDelay != 0L) { val d = audioDelay; vlcExecutor.execute { runCatching { mp.audio().setDelay(d * 1000L) } } }
                     if (subDelay != 0L) { val d = subDelay; vlcExecutor.execute { runCatching { mp.subpictures().setDelay(d * 1000L) } } }
                     if (rate != 1f) { val r = rate; vlcExecutor.execute { runCatching { mp.controls().setRate(r) } } }
@@ -736,6 +752,7 @@ fun PlayerView(
         })
         onDispose {
             prefsTimer.stop()
+            oneShots.forEach { it.stop() }
             Thread({ runCatching { BurstProxy.clear() } }, "reserve-clear").apply { isDaemon = true; start() }
             if (!closing) { savePos(time, length); library.bumpWatch() }
             if (mini) setMini(false)
@@ -946,7 +963,7 @@ fun PlayerView(
         var changed = false
         if (topDialog?.isVisible == false) { topDialog.isVisible = true; changed = true }
         if (bottomDialog?.isVisible == false) { bottomDialog.isVisible = true; changed = true }
-        if (changed) WindowMode.restoreComposeFocus(owner)
+        if (changed) { lastClip = null; syncOverlayBounds(); WindowMode.restoreComposeFocus(owner) }
     }
 
     LaunchedEffect(barVisible, closing) {
@@ -983,6 +1000,27 @@ fun PlayerView(
             WindowMode.restoreComposeFocus(owner)
 
             delay(150)
+            syncOverlayBounds()
+        }
+    }
+
+    LaunchedEffect(picker, infoOpen) {
+        if (picker != null || infoOpen) {
+            tallBottom = true
+        } else {
+            delay(400) // пусть доиграет анимация закрытия меню
+            tallBottom = false
+        }
+        syncOverlayBounds()
+    }
+
+    // Выход из полного экрана: Windows и Compose донастраивают размеры окна и холста с задержкой, и события
+    // изменения размера могут прийти раньше, чем окно встанет на место, — нижняя панель оставалась за краем экрана.
+    // Пока панели видны, раз в 300 мс сверяем их положение с холстом (setBounds вызывается только при расхождении).
+    LaunchedEffect(barVisible, closing) {
+        if (closing || !barVisible) return@LaunchedEffect
+        while (true) {
+            delay(300)
             syncOverlayBounds()
         }
     }
@@ -1088,6 +1126,8 @@ fun PlayerView(
                     lastVolumeWheelAt = lastVolumeWheelAt,
                     nextIn = nextIn,
                     inIntro = inIntro(),
+                    seeking = seeking,
+                    onScrubChange = { seeking = it },
                     onPoke = { poke() },
                     onTogglePause = { togglePause() },
                     onSeekBy = { seekBy(it) },
@@ -1127,7 +1167,7 @@ fun PlayerView(
                         userMuted = !userMuted
                         vlc { mp.audio().setMute(userMuted) }
                         poke()
-                        flash(if (userMuted) "Без звука" else "Звук: $volume%", "Звук:")
+                        flash(if (userMuted) "Без звука" else "Звук: $volume%", if (userMuted) "Без звука" else "Звук:")
                     },
                     onFullscreenToggle = { toggleFullscreen() },
                     onMoreRate = { setSpeed(it) },
