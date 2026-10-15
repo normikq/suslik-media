@@ -99,6 +99,16 @@ fun PlayerView(
     /** Every call into VLC goes through here, onto the player's own thread. */
     fun vlc(block: () -> Unit) { runCatching { vlcExecutor.execute { runCatching(block) } } }
 
+    /**
+     * Ответ от потока VLC с настоящим тайм-аутом. `withTimeoutOrNull { withContext(vlcThread) { … } }` не годится:
+     * пока поток занят зависшим вызовом VLC (остановка или перемотка при провале сети), блок не стартует,
+     * а withContext не завершается, и меню дорожек/выход из плеера ждали бы бесконечно. Здесь ждём `await`, его можно оборвать.
+     */
+    suspend fun <T> vlcAwait(ms: Long, block: () -> T): T? {
+        val job = scope.async(vlcThread) { runCatching(block).getOrNull() }
+        return withTimeoutOrNull(ms) { job.await() }
+    }
+
     var nightMode by remember { mutableStateOf(ui.get("night") == "1") }
     val subScale = remember { ui.get("subScale")?.toIntOrNull()?.coerceIn(50, 300) ?: 100 }
     val factory = remember { VlcFactory.get(subScale) }
@@ -402,14 +412,19 @@ fun PlayerView(
         return map.toList()
     }
 
+    val trackMenuCache = remember { mutableMapOf<String, Pair<List<Pair<Int, String>>, Int>>() }
+
     fun openPicker(kind: String) {
         scope.launch {
-            val (items, cur) = withContext(vlcThread) {
+            val fresh = vlcAwait(700) {
                 val audio = kind == "audio"
                 val list = trackList(audio)
                 (if (audio) list else listOf(-1 to "Выключить") + list) to
                     runCatching { if (audio) mp.audio().track() else mp.subpictures().track() }.getOrDefault(-2)
             }
+            // VLC занят (сеть встала) — открываем меню с прошлым списком, а не оставляем кнопку мёртвой
+            if (fresh != null) trackMenuCache[kind] = fresh
+            val (items, cur) = fresh ?: trackMenuCache[kind] ?: (emptyList<Pair<Int, String>>() to -2)
             pickerItems = items; pickerCurrent = cur; picker = kind
         }
     }
@@ -491,7 +506,7 @@ fun PlayerView(
         savePos(time, length)
         library.bumpWatch()
         scope.launch {
-            withTimeoutOrNull(800) { withContext(vlcThread) { grabFrame(); runCatching { mp.controls().stop() } } }
+            vlcAwait(800) { grabFrame(); runCatching { mp.controls().stop() } }
             showCanvas = false
             onRestart(index)
         }
@@ -556,7 +571,7 @@ fun PlayerView(
         supRef.get()?.closed()
         scope.launch {
             if (lastFrame == null) {
-                withTimeoutOrNull(180) { withContext(vlcThread) { grabFrame() } }?.let { lastFrame = it }
+                vlcAwait(180) { grabFrame() }?.let { lastFrame = it }
             }
             parked = true
             if (mini) setMini(false)
