@@ -193,8 +193,8 @@ fun AddView(lib: Library, header: @Composable () -> Unit) {
                             Row(Modifier.padding(top = 10.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color(0xFF11141D))
                                 .border(1.dp, Sm.line2, RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 9.dp),
                                 verticalAlignment = Alignment.CenterVertically) {
-                                Text("TORRENT", color = Sm.lamp, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = 10.sp,
-                                    modifier = Modifier.clip(RoundedCornerShape(7.dp)).background(Color(0x24FFB02E)).padding(horizontal = 8.dp, vertical = 6.dp))
+                                Text("TORRENT", color = Color.White, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = 10.sp,
+                                    modifier = Modifier.clip(RoundedCornerShape(7.dp)).background(Color(0xFF282E3C)).border(1.dp, Color(0xFF3A4356), RoundedCornerShape(7.dp)).padding(horizontal = 8.dp, vertical = 6.dp))
                                 Text(f.name, color = Sm.text, fontFamily = Onest, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f).padding(horizontal = 10.dp))
                                 Text("${(f.length() / 1024).coerceAtLeast(1)} KB", color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp)
@@ -227,7 +227,7 @@ fun AddView(lib: Library, header: @Composable () -> Unit) {
 private fun AddedRow(a: Added, modifier: Modifier) {
     val src = remember { MutableInteractionSource() }
     val hovered by src.collectIsHoveredAsState()
-    val edge by animateColorAsState(if (hovered) Color(0x55FFB02E) else Sm.line, tween(200))
+    val edge by animateColorAsState(if (hovered) Color(0xFF3E475C) else Sm.line, tween(200))
     val bar by androidx.compose.animation.core.animateFloatAsState(a.progress.coerceAtLeast(0f), tween(600))
     Column(modifier.fillMaxWidth().padding(vertical = 3.dp).hoverable(src).clip(RoundedCornerShape(12.dp)).background(Sm.booth)
         .border(1.dp, edge, RoundedCornerShape(12.dp)).padding(14.dp)) {
@@ -235,17 +235,17 @@ private fun AddedRow(a: Added, modifier: Modifier) {
             Text(a.name, color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp,
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             Spacer(Modifier.width(12.dp))
-            Text(a.note, color = if (!a.ok) Sm.bad else if (a.done) Sm.ok else Sm.lamp, fontFamily = Onest, fontSize = 13.sp)
+            Text(a.note, color = if (!a.ok) Sm.bad else if (a.done) Sm.ok else Color.White, fontFamily = Onest, fontSize = 13.sp)
         }
         if (a.progress >= 0f && !a.done) {
             Box(Modifier.padding(top = 10.dp).fillMaxWidth().height(5.dp).clip(RoundedCornerShape(5.dp)).background(Sm.line)) {
-                Box(Modifier.fillMaxWidth(bar).height(5.dp).background(Sm.lamp))
+                Box(Modifier.fillMaxWidth(bar).height(5.dp).background(Color.White))
             }
         }
     }
 }
 
-/** The site's input-type card: icon disc, title + hint; the chosen one gets the amber edge and tint. */
+/** The site's input-type card: icon disc, title + hint; slate dark theme when selected. */
 @Composable
 private fun ModeCard(icon: String, title: String, hint: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
     val src = remember { MutableInteractionSource() }
@@ -253,10 +253,10 @@ private fun ModeCard(icon: String, title: String, hint: String, selected: Boolea
     val pressed by src.collectIsPressedAsState()
     val lift by androidx.compose.animation.core.animateFloatAsState(if (hovered && !selected) -2f else 0f, tween(220, easing = Sm.ease))
     val scale = hoverScale(false, pressed)
-    val edge by animateColorAsState(when { selected -> Sm.lamp; hovered -> Color(0xFF5A5F74); else -> Sm.line }, tween(240))
-    val bg by animateColorAsState(when { selected -> Color(0x1AFFB02E); hovered -> Color(0xFF1A1D29); else -> Sm.film }, tween(240))
-    val disc by animateColorAsState(if (selected) Sm.lamp else Color(0xFF252A37), tween(240))
-    val discInk by animateColorAsState(if (selected) Sm.lampInk else Sm.text, tween(240))
+    val edge by animateColorAsState(when { selected -> Color(0xFF3E475C); hovered -> Color(0xFF2C3344); else -> Color(0xFF222735) }, tween(240))
+    val bg by animateColorAsState(when { selected -> Color(0xFF1C202B); hovered -> Color(0xFF181B24); else -> Color(0xFF141720) }, tween(240))
+    val disc by animateColorAsState(if (selected) Color(0xFF282E3C) else Color(0xFF1E222D), tween(240))
+    val discInk by animateColorAsState(if (selected) Color.White else Color(0xFF8E96A8), tween(240))
     Row(
         modifier.graphicsLayer { translationY = lift; scaleX = scale; scaleY = scale }
             .clip(RoundedCornerShape(14.dp)).background(bg).border(1.dp, edge, RoundedCornerShape(14.dp))
@@ -267,8 +267,8 @@ private fun ModeCard(icon: String, title: String, hint: String, selected: Boolea
             Text(icon, color = discInk, fontSize = 18.sp, fontWeight = FontWeight.Bold)
         }
         Column(Modifier.padding(start = 12.dp)) {
-            Text(title, color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp)
-            Text(hint, color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 3.dp))
+            Text(title, color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp)
+            Text(hint, color = Color(0xFF8E96A8), fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 3.dp))
         }
     }
 }
@@ -278,7 +278,7 @@ private fun ModeCard(icon: String, title: String, hint: String, selected: Boolea
 private fun DropZone(hasFiles: Boolean, onPick: () -> Unit) {
     val src = remember { MutableInteractionSource() }
     val hovered by src.collectIsHoveredAsState()
-    val edge by animateColorAsState(if (hovered) Sm.lamp else Color(0xFF4A4E62), tween(200))
+    val edge by animateColorAsState(if (hovered) Color.White else Color(0xFF4A4E62), tween(200))
     val bg by animateColorAsState(if (hovered) Color(0xFF181A22) else Color(0xFF10131B), tween(200))
     val iconLift by androidx.compose.animation.core.animateFloatAsState(if (hovered) -4f else 0f, tween(300, easing = Sm.ease))
     Column(
@@ -292,7 +292,7 @@ private fun DropZone(hasFiles: Boolean, onPick: () -> Unit) {
             .hoverClick(src, onClick = onPick).heightIn(min = if (hasFiles) 96.dp else 150.dp).padding(18.dp),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
     ) {
-        Text("⇧", color = Sm.lamp, fontSize = 28.sp, modifier = Modifier.graphicsLayer { translationY = iconLift })
+        Text("⇧", color = if (hovered) Color.White else Color(0xFF8E96A8), fontSize = 28.sp, modifier = Modifier.graphicsLayer { translationY = iconLift })
         Text(if (hasFiles) "Добавить ещё файл" else "Выберите файл .torrent", color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
             modifier = Modifier.padding(top = 6.dp))
         if (!hasFiles) Text("Нажмите, чтобы открыть файл на компьютере — можно выбрать несколько", color = Sm.muted, fontFamily = Onest, fontSize = 13.sp,

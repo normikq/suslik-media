@@ -71,6 +71,7 @@ object WindowMode {
 
         fun GetWindowLongW(hwnd: Pointer, nIndex: Int): Int
         fun SetWindowLongW(hwnd: Pointer, nIndex: Int, dwNewLong: Int): Int
+        fun GetWindowRect(hwnd: Pointer, rect: RECT): Boolean
         fun GetWindowPlacement(hwnd: Pointer, lpwndpl: WINDOWPLACEMENT): Boolean
         fun SetWindowPlacement(hwnd: Pointer, lpwndpl: WINDOWPLACEMENT): Boolean
         fun MonitorFromWindow(hwnd: Pointer, dwFlags: Int): Pointer?
@@ -134,6 +135,8 @@ object WindowMode {
     private const val SWP_NOMOVE = 0x0002
     private const val SWP_NOSIZE = 0x0001
     private const val SWP_NOZORDER = 0x0004
+    private const val SWP_NOACTIVATE = 0x0010
+    private const val SWP_ASYNCWINDOWPOS = 0x4000
 
     private val HWND_TOP = Pointer.createConstant(0)
     private val HWND_NOTOPMOST = Pointer.createConstant(-2)
@@ -244,6 +247,173 @@ object WindowMode {
                 }
             }
             restoreComposeFocus(win)
+        }
+    }
+
+    var isMini by mutableStateOf(false)
+        private set
+
+    var miniAnimating by mutableStateOf(false)
+        private set
+
+    private var savedMiniStyle = 0
+    private var savedMiniPlacement: User32.WINDOWPLACEMENT? = null
+
+    /**
+     * Мини-плеер: только нативные вызовы (как в полноэкранном режиме), состояние Compose-окна не трогаем —
+     * иначе Compose и Win32 спорят за размер и окно «ломается». Размер [miniW]×[miniH] задаётся в dip, угол —
+     * правый нижний рабочей области монитора, где сейчас окно (физические пиксели, поэтому учитываем масштаб DPI).
+     */
+    fun setMiniMode(window: Window? = null, enable: Boolean, miniW: Int = 560, miniH: Int = 315, onFinished: (() -> Unit)? = null) {
+        val win = window ?: currentWindow ?: runCatching { Frame.getFrames().firstOrNull { it.isShowing } }.getOrNull() ?: return
+        currentWindow = win
+        if (enable == isMini) return
+
+        val user32 = User32.INSTANCE
+        val hwnd = if (isWindows) runCatching { Native.getWindowPointer(win) }.getOrNull() else null
+
+        if (user32 != null && hwnd != null) {
+            runCatching {
+                if (enable) {
+                    // Из полного экрана берём стиль и положение, сохранённые при его включении (там уже нет рамки)
+                    val fsBefore = isFullscreen
+                    if (isFullscreen && savedPlacement != null) {
+                        savedMiniStyle = savedStyle
+                        savedMiniPlacement = savedPlacement
+                        isFullscreen = false
+                    } else {
+                        savedMiniStyle = user32.GetWindowLongW(hwnd, GWL_STYLE)
+                        val saved = User32.WINDOWPLACEMENT()
+                        user32.GetWindowPlacement(hwnd, saved)
+                        savedMiniPlacement = saved
+                    }
+
+                    // Убираем заголовок И толстую рамку (она давала полупрозрачные полосы по контуру)
+                    val borderStyles = WS_CAPTION or WS_THICKFRAME or WS_MINIMIZEBOX or WS_MAXIMIZEBOX or WS_SYSMENU
+                    user32.SetWindowLongW(hwnd, GWL_STYLE, savedMiniStyle and borderStyles.inv())
+                    TitleBar.setMiniDwm(win)
+
+                    val scale = win.graphicsConfiguration?.defaultTransform?.scaleX ?: 1.0
+                    val w = (miniW * scale).toInt()
+                    val h = (miniH * scale).toInt()
+                    val margin = (24 * scale).toInt()
+                    // Откуда «улетаем»: текущие границы окна (из полного экрана — весь монитор), в физических пикселях
+                    val hMon = user32.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
+                    val mi = User32.MONITORINFO()
+                    if (hMon != null) user32.GetMonitorInfoW(hMon, mi)
+                    val fromFs = fsBefore
+                    val cur = User32.RECT()
+                    user32.GetWindowRect(hwnd, cur)
+                    var sx = cur.left
+                    var sy = cur.top
+                    var sw = cur.right - cur.left
+                    var sh = cur.bottom - cur.top
+                    if (fromFs) {
+                        sx = mi.rcMonitor.left; sy = mi.rcMonitor.top
+                        sw = mi.rcMonitor.right - mi.rcMonitor.left; sh = mi.rcMonitor.bottom - mi.rcMonitor.top
+                    }
+                    val x = (mi.rcWork.right - w - margin).coerceAtLeast(mi.rcWork.left)
+                    val y = (mi.rcWork.bottom - h - margin).coerceAtLeast(mi.rcWork.top)
+
+                    // Сбрасываем «развёрнуто», иначе Windows держит окно во весь экран, и сразу ставим стартовые границы
+                    val wp = User32.WINDOWPLACEMENT()
+                    user32.GetWindowPlacement(hwnd, wp)
+                    wp.showCmd = 1 // SW_SHOWNORMAL
+                    user32.SetWindowPlacement(hwnd, wp)
+                    user32.SetWindowPos(hwnd, HWND_TOPMOST, sx, sy, sw, sh, SWP_FRAMECHANGED or SWP_SHOWWINDOW)
+                    PlayerLog.write("[ui] mini on: from=$sx,$sy ${sw}x$sh to=$x,$y ${w}x$h scale=$scale")
+                    isMini = true
+                    miniAnimating = true
+
+                    // Плавный «уезд» в правый нижний угол (ease-out, ~320 мс)
+                    // Старт откладываем на один проход очереди событий: пусть сначала отработает перестройка Compose
+                    // от mini=true, иначе она попадает в середину полёта и окно «застывает»
+                    val dur = 320_000_000.0
+                    // Анимацию крутим в отдельном потоке: SetWindowPos безопасен вне EDT, а EDT в это время занят
+                    // перестройкой Compose после mini=true (до секунды) — в таймере Swing окно стояло на месте
+                    Thread {
+                        var t0 = 0L
+                        var lastTick = 0L
+                        var lastW = -1
+                        var lastH = -1
+                        while (true) {
+                            if (!isMini) { miniAnimating = false; break }
+                            val now = System.nanoTime()
+                            if (t0 == 0L) t0 = now
+                            if (lastTick != 0L && now - lastTick > 100_000_000L) PlayerLog.write("[ui] mini frame gap ${(now - lastTick) / 1_000_000} ms at ${(now - t0) / 1_000_000} ms")
+                            lastTick = now
+                            val p = ((now - t0) / dur).coerceIn(0.0, 1.0)
+                            val e = 1 - (1 - p) * (1 - p) * (1 - p)
+                            fun lerp(a: Int, b: Int) = (a + (b - a) * e).toInt()
+                            // Размер меняем только когда он сдвинулся заметно: каждая смена размера — перестройка Compose и холста VLC
+                            val cw = lerp(sw, w)
+                            val ch = lerp(sh, h)
+                            val resize = p >= 1.0 || lastW < 0 || kotlin.math.abs(cw - lastW) >= 24 || kotlin.math.abs(ch - lastH) >= 24
+                            if (resize) { lastW = cw; lastH = ch }
+                            runCatching {
+                                // Вызов из чужого потока синхронный (ждёт владельца окна); ASYNCWINDOWPOS — не ждать.
+                                // Последний кадр — обычный, чтобы финальный размер точно встал до синхронизации с AWT
+                                user32.SetWindowPos(
+                                    hwnd, null, lerp(sx, x), lerp(sy, y), cw, ch,
+                                    SWP_NOZORDER or SWP_NOACTIVATE or (if (p < 1.0) SWP_ASYNCWINDOWPOS else 0) or (if (resize) 0 else SWP_NOSIZE)
+                                )
+                            }
+                            if (p >= 1.0) {
+                                miniAnimating = false
+                                PlayerLog.write("[ui] mini done")
+                                javax.swing.SwingUtilities.invokeLater {
+                                    // Синхронизируем AWT/Compose с нативным размером (в dip), иначе они держат старый большой размер
+                                    runCatching {
+                                        win.setBounds(Math.round(x / scale).toInt(), Math.round(y / scale).toInt(), miniW, miniH)
+                                    }
+                                    PlayerLog.write("[ui] mini synced: awt=${win.bounds}")
+                                    win.invalidate(); win.validate(); win.repaint()
+                                    restoreComposeFocus(win)
+                                    onFinished?.invoke()
+                                }
+                                break
+                            }
+                            Thread.sleep(8)
+                        }
+                    }.apply { isDaemon = true; name = "mini-fly"; start() }
+                } else {
+                    val prevStyle = savedMiniStyle
+                    val prev = savedMiniPlacement
+                    if (prevStyle != 0 && prev != null) {
+                        TitleBar.style(win)
+                        user32.SetWindowLongW(hwnd, GWL_STYLE, prevStyle)
+                        val wasMaximized = prev.showCmd == 3
+                        prev.showCmd = 1
+                        user32.SetWindowPlacement(hwnd, prev)
+                        if (wasMaximized) {
+                            prev.showCmd = 3
+                            user32.SetWindowPlacement(hwnd, prev)
+                        }
+                        user32.SetWindowPos(
+                            hwnd, if (win.isAlwaysOnTop) HWND_TOPMOST else HWND_NOTOPMOST,
+                            0, 0, 0, 0,
+                            SWP_NOMOVE or SWP_NOSIZE or SWP_FRAMECHANGED or SWP_SHOWWINDOW
+                        )
+                    }
+                    isMini = false
+                    miniAnimating = false
+                    javax.swing.SwingUtilities.invokeLater {
+                        win.invalidate()
+                        win.validate()
+                        (win as? javax.swing.RootPaneContainer)?.apply {
+                            contentPane.invalidate()
+                            contentPane.validate()
+                            rootPane.revalidate()
+                        }
+                        win.repaint()
+                        restoreComposeFocus(win)
+                        onFinished?.invoke()
+                    }
+                }
+            }.onFailure { PlayerLog.write("[ui] setMiniMode failed: $it") }
+        } else {
+            isFullscreen = false
+            isMini = enable
         }
     }
 

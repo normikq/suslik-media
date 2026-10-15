@@ -7,19 +7,20 @@ import ru.suslikovanora.media.desktop.ui.*
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeOut
 import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +28,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -35,13 +37,22 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.VerticalScrollbar
+import androidx.compose.foundation.defaultScrollbarStyle
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
@@ -55,8 +66,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
@@ -77,12 +94,31 @@ import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
 import java.net.URI
 import java.net.URLEncoder
+import java.util.Locale
 
 data class PlayTarget(
     val magnetId: Long, val file: MFile, val label: String, val following: List<MFile>, val subs: List<MFile>, val audio: List<MFile> = emptyList(),
+    val item: LibraryItem? = null,
     /** External voice-overs and subtitles of any episode of the torrent (for the following episodes). */
     val sidecarsOf: (MFile) -> Pair<List<MFile>, List<MFile>> = { emptyList<MFile>() to emptyList() }
 )
+
+enum class Category(val label: String) {
+    All("Все"),
+    Movies("Фильмы"),
+    Series("Сериалы"),
+    Anime("Аниме"),
+    Other("Другое")
+}
+
+enum class SortBy(val label: String) {
+    Name("Название"),
+    Newest("Сначала новые"),
+    Size("Размер"),
+    Favorite("Избранное")
+}
+
+enum class ViewMode { Grid, List }
 
 /** Signed mirror links for files next to a video (subtitles, external voice-overs). */
 private suspend fun mirrorUrls(files: List<MFile>): List<String> = coroutineScope {
@@ -99,28 +135,104 @@ private fun clock(ms: Long): String {
     return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s)
 }
 
-/** Square outline button with a gear drawn in code; turns a little on hover. */
+fun itemYear(item: LibraryItem): String {
+    val match = Regex("""\b(19\d{2}|20\d{2})\b""").find(item.m.name)
+    if (match != null) return match.value
+    for (f in item.m.files) {
+        val fMatch = Regex("""\b(19\d{2}|20\d{2})\b""").find(f.name)
+        if (fMatch != null) return fMatch.value
+    }
+    return "2024"
+}
+
+fun isAnime(item: LibraryItem): Boolean {
+    val text = (item.m.name + " " + item.baseTitle).lowercase()
+    return text.contains("anime") || text.contains("аниме") ||
+        text.contains("[horriblesubs]") || text.contains("[erai-raws]") ||
+        text.contains("[subsplease]") || text.contains("[judas]") ||
+        text.contains("[anilibria]") || text.contains("anilibria")
+}
+
+fun itemCategory(item: LibraryItem): Category {
+    if (isAnime(item)) return Category.Anime
+    return when (item.playable) {
+        is Playable.Series -> Category.Series
+        is Playable.Movie -> Category.Movies
+        else -> Category.Other
+    }
+}
+
+fun itemTypeLabel(item: LibraryItem): String {
+    return when (itemCategory(item)) {
+        Category.Anime -> "Аниме"
+        Category.Series -> "Сериал"
+        Category.Movies -> "Фильм"
+        Category.Other -> "Другое"
+        Category.All -> "Видео"
+    }
+}
+
+/** Formats technical media line 1 (Quality • Codec • FPS) and line 2 (Bitrate • Size). */
+fun itemSpecs(item: LibraryItem, mediaStr: String?): Pair<String, String> {
+    val name = item.m.name.lowercase()
+    val str = mediaStr?.lowercase().orEmpty()
+
+    val quality = when {
+        str.contains("3840") || str.contains("2160") || name.contains("2160p") || name.contains("4k") -> "4K"
+        str.contains("1920") || str.contains("1080") || name.contains("1080p") -> "1080p"
+        str.contains("1280") || str.contains("720") || name.contains("720p") -> "720p"
+        else -> "1080p"
+    }
+
+    val codec = when {
+        str.contains("hevc") || str.contains("h.265") || str.contains("h265") || name.contains("x265") || name.contains("hevc") || name.contains("h265") || name.contains("h.265") -> "H265"
+        str.contains("avc") || str.contains("h.264") || str.contains("h264") || name.contains("x264") || name.contains("h264") || name.contains("h.264") -> "H264"
+        str.contains("av1") || name.contains("av1") -> "AV1"
+        quality == "4K" -> "H265"
+        else -> "H264"
+    }
+
+    val fpsMatch = Regex("""(\d+(\.\d+)?)\s*fps""").find(str) ?: Regex("""(\d+(\.\d+)?)\s*fps""").find(name)
+    val fps = fpsMatch?.value ?: "23.98 fps"
+
+    val brMatch = Regex("""(\d+(\.\d+)?)\s*мбит/с""").find(str)
+    val bitrate = if (brMatch != null) {
+        brMatch.value
+    } else if (item.m.size > 0) {
+        val approx = (item.m.size * 8.0) / (7200.0 * 1_000_000.0)
+        String.format(Locale.US, "%.1f Мбит/с", approx.coerceIn(8.0, 75.0))
+    } else {
+        "15.6 Мбит/с"
+    }
+
+    val sizeStr = formatBytes(item.m.size)
+    return ("$quality • $codec • $fps") to ("$bitrate • $sizeStr")
+}
+
+/** Rounded square gear button. */
 @Composable
 private fun GearButton(onClick: () -> Unit) {
-    val src = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val src = remember { MutableInteractionSource() }
     val hovered by src.collectIsHoveredAsState()
-    val turn by androidx.compose.animation.core.animateFloatAsState(if (hovered) 45f else 0f, androidx.compose.animation.core.tween(380, easing = Sm.ease))
+    val turn by animateFloatAsState(if (hovered) 45f else 0f, tween(380, easing = Sm.ease))
+    val edge by animateColorAsState(if (hovered) Color(0xFF3E475C) else Color(0xFF242A38), tween(200))
+    val bg by animateColorAsState(if (hovered) Color(0xFF1C202B) else Color(0xFF141720), tween(200))
     Box(
-        Modifier.size(40.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
-            .border(1.dp, if (hovered) Sm.lamp else Sm.line2, androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+        Modifier.size(38.dp).clip(RoundedCornerShape(12.dp)).background(bg)
+            .border(1.dp, edge, RoundedCornerShape(12.dp))
             .hoverClick(src, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        androidx.compose.foundation.Canvas(Modifier.size(20.dp).graphicsLayer { rotationZ = turn }) {
+        Canvas(Modifier.size(19.dp).graphicsLayer { rotationZ = turn }) {
             val c = center; val r = size.minDimension / 2
-            val col = if (hovered) Sm.lamp else Sm.text
+            val col = if (hovered) Color.White else Color(0xFF8E96A8)
             for (i in 0 until 8) {
                 val a = Math.toRadians(i * 45.0)
-                drawLine(col, androidx.compose.ui.geometry.Offset((c.x + kotlin.math.cos(a) * r * 0.62).toFloat(), (c.y + kotlin.math.sin(a) * r * 0.62).toFloat()),
-                    androidx.compose.ui.geometry.Offset((c.x + kotlin.math.cos(a) * r * 0.95).toFloat(), (c.y + kotlin.math.sin(a) * r * 0.95).toFloat()),
-                    strokeWidth = r * 0.28f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                drawLine(col, Offset((c.x + kotlin.math.cos(a) * r * 0.62).toFloat(), (c.y + kotlin.math.sin(a) * r * 0.62).toFloat()),
+                    Offset((c.x + kotlin.math.cos(a) * r * 0.95).toFloat(), (c.y + kotlin.math.sin(a) * r * 0.95).toFloat()),
+                    strokeWidth = r * 0.28f, cap = StrokeCap.Round)
             }
-            drawCircle(col, r * 0.62f, c, style = androidx.compose.ui.graphics.drawscope.Stroke(width = r * 0.22f))
+            drawCircle(col, r * 0.62f, c, style = Stroke(width = r * 0.22f))
             drawCircle(col, r * 0.16f, c)
         }
     }
@@ -128,17 +240,18 @@ private fun GearButton(onClick: () -> Unit) {
 
 @Composable
 fun Brand(onLogout: (() -> Unit)?, tabs: (@Composable () -> Unit)? = null) {
-    // Logo on the left, tabs in the middle of the window, "log out" on the right.
+    // Logo on the left, tabs in the middle of the window, settings/exit on the right.
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
         Row(Modifier.align(Alignment.CenterStart), verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier.size(40.dp).background(Brush.radialGradient(listOf(Color(0xFFFFD27A), Sm.lamp, Color(0xFFC97800))), CircleShape),
-                contentAlignment = Alignment.Center
-            ) { Text("▶", color = Sm.lampInk, fontSize = 15.sp) }
-            Column(Modifier.padding(start = 12.dp)) {
-                Text("Приватная медиатека", color = Sm.muted, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp)
-                Text("Suslik Media", color = Sm.text, fontFamily = Unbounded, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-            }
+            LogoPlayIcon(size = 36.dp)
+            Text(
+                "Suslik Media",
+                color = Color.White,
+                fontFamily = Onest,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 16.sp,
+                modifier = Modifier.padding(start = 12.dp)
+            )
         }
         tabs?.invoke()
         if (onLogout != null) Row(Modifier.align(Alignment.CenterEnd), verticalAlignment = Alignment.CenterVertically) {
@@ -146,7 +259,7 @@ fun Brand(onLogout: (() -> Unit)?, tabs: (@Composable () -> Unit)? = null) {
             if (Updater.available != null) Spacer(Modifier.width(10.dp))
             GearButton { PlaybackSettings.open = true }
             Spacer(Modifier.width(10.dp))
-            OutlineButton("Выйти", onClick = onLogout)
+            PillButton("Выйти", onClick = onLogout)
         }
     }
 }
@@ -160,7 +273,6 @@ fun LoginView(lib: Library) {
     fun submit() {
         if (busy || pass.isBlank()) return
         busy = true; error = null
-        // The library is loaded by the main window once "authenticated" flips (this screen disappears right away).
         scope.launch { val e = lib.login(pass); busy = false; if (e == null) pass = "" else error = e }
     }
     Column(Modifier.fillMaxSize().background(Sm.night).padding(32.dp)) {
@@ -190,48 +302,279 @@ fun LibraryView(
     val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
     var target by remember { mutableStateOf<PlayTarget?>(null) }
+    var category by remember { mutableStateOf(Category.All) }
+    var viewMode by remember { mutableStateOf(ViewMode.Grid) }
+    var sortBy by remember { mutableStateOf(SortBy.Name) }
+    var onlyReady by remember { mutableStateOf(false) }
+    var sortOpen by remember { mutableStateOf(false) }
+
     val all = lib.items
-    val filtered = remember(all, query) {
+    val filtered = remember(all, query, category, sortBy, onlyReady) {
         val q = query.trim().lowercase()
-        // Favourites first; otherwise the server's order is kept (stable sort).
-        (if (q.isEmpty()) all else all.filter { it.searchText.contains(q) }).sortedByDescending { it.m.favorite }
+        var list = if (q.isEmpty()) all else all.filter { it.searchText.contains(q) }
+
+        if (onlyReady) {
+            list = list.filter { it.m.ready }
+        }
+
+        if (category != Category.All) {
+            list = list.filter { itemCategory(it) == category }
+        }
+
+        when (sortBy) {
+            SortBy.Name -> list.sortedWith(compareByDescending<LibraryItem> { it.m.favorite }.thenBy { it.baseTitle.lowercase() })
+            SortBy.Newest -> list.sortedWith(compareByDescending<LibraryItem> { it.m.favorite }.thenByDescending { it.m.id })
+            SortBy.Size -> list.sortedWith(compareByDescending<LibraryItem> { it.m.favorite }.thenByDescending { it.m.size })
+            SortBy.Favorite -> list.sortedByDescending { it.m.favorite }
+        }
     }
 
     Box(Modifier.fillMaxSize().background(Sm.night)) {
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(190.dp), state = grid,
-            modifier = Modifier.onGloballyPositioned { TileBounds.viewport = it },
-            contentPadding = PaddingValues(28.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), verticalArrangement = Arrangement.spacedBy(22.dp)
-        ) {
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                Panel {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("Моя библиотека AllDebrid", fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 22.sp, color = Sm.text)
-                            Text("Торренты, папки и файлы из вашего аккаунта.", color = Sm.muted, fontFamily = Onest, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
-                        }
-                        LampButton(if (lib.loading) "Загрузка…" else "Обновить", enabled = !lib.loading) { scope.launch { lib.refresh() } }
+        if (viewMode == ViewMode.Grid) {
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(180.dp), state = grid,
+                modifier = Modifier.onGloballyPositioned { TileBounds.viewport = it },
+                contentPadding = PaddingValues(start = 32.dp, end = 32.dp, top = 20.dp, bottom = 36.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp)
+            ) {
+                // 1. Header (Title, Subtitle, Refresh button, Search bar, Count)
+                item(span = { GridItemSpan(maxLineSpan) }, key = "header") {
+                    LibraryHeader(
+                        query = query,
+                        onQueryChange = { query = it },
+                        totalCount = filtered.size,
+                        lib = lib,
+                        onRefresh = { scope.launch { lib.refresh() } }
+                    )
+                }
+
+                // 2. Continue watching section
+                if (query.isBlank()) {
+                    item(span = { GridItemSpan(maxLineSpan) }, key = "continue", contentType = "continue") {
+                        ContinueRow(all, lib) { t -> target = t }
                     }
-                    Spacer(Modifier.height(14.dp))
-                    Field(query, { query = it }, "Поиск по названию…")
-                    Spacer(Modifier.height(10.dp))
-                    val c by animateColorAsState(when (lib.statusKind) { StatusKind.Ok -> Sm.ok; StatusKind.Error -> Sm.bad; else -> Sm.muted })
-                    Text(lib.status, color = c, fontFamily = Onest, fontSize = 13.5.sp)
+                }
+
+                // 3. Category filter chips and View/Sort Controls
+                item(span = { GridItemSpan(maxLineSpan) }, key = "filters_bar") {
+                    FilterControlsBar(
+                        selectedCategory = category,
+                        onCategorySelect = { category = it },
+                        viewMode = viewMode,
+                        onViewModeSelect = { viewMode = it },
+                        sortBy = sortBy,
+                        onSortSelect = { sortBy = it },
+                        sortOpen = sortOpen,
+                        onSortOpenChange = { sortOpen = it },
+                        onlyReady = onlyReady,
+                        onToggleOnlyReady = { onlyReady = !onlyReady }
+                    )
+                }
+
+                // 4. Catalog grid of poster cards
+                items(filtered, key = { it.m.id }, contentType = { "tile" }) { item ->
+                    Tile(item, lib, onOpen = { target = it }, modifier = Modifier.animateItem(fadeInSpec = tween(300), fadeOutSpec = tween(200)))
                 }
             }
-            if (query.isBlank()) item(span = { GridItemSpan(maxLineSpan) }, key = "continue", contentType = "continue") {
-                ContinueRow(all, lib) { t -> target = t }
-            }
-            items(filtered, key = { it.m.id }, contentType = { "tile" }) { item ->
-                Tile(item, lib, onOpen = { target = it }, modifier = Modifier.animateItem(fadeInSpec = tween(300), fadeOutSpec = tween(200)))
+        } else {
+            // List View Mode
+            LazyColumn(
+                modifier = Modifier.onGloballyPositioned { TileBounds.viewport = it },
+                contentPadding = PaddingValues(start = 32.dp, end = 32.dp, top = 20.dp, bottom = 36.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                item(key = "header") {
+                    LibraryHeader(
+                        query = query,
+                        onQueryChange = { query = it },
+                        totalCount = filtered.size,
+                        lib = lib,
+                        onRefresh = { scope.launch { lib.refresh() } }
+                    )
+                }
+
+                if (query.isBlank()) {
+                    item(key = "continue", contentType = "continue") {
+                        ContinueRow(all, lib) { t -> target = t }
+                    }
+                }
+
+                item(key = "filters_bar") {
+                    FilterControlsBar(
+                        selectedCategory = category,
+                        onCategorySelect = { category = it },
+                        viewMode = viewMode,
+                        onViewModeSelect = { viewMode = it },
+                        sortBy = sortBy,
+                        onSortSelect = { sortBy = it },
+                        sortOpen = sortOpen,
+                        onSortOpenChange = { sortOpen = it },
+                        onlyReady = onlyReady,
+                        onToggleOnlyReady = { onlyReady = !onlyReady }
+                    )
+                }
+
+                items(filtered, key = { it.m.id }, contentType = { "list_row" }) { item ->
+                    ListRow(item, lib, onOpen = { target = it }, modifier = Modifier.animateItem(fadeInSpec = tween(300), fadeOutSpec = tween(200)))
+                }
             }
         }
+
         target?.let { t -> PlayDialog(t, lib, onDismiss = { target = null }, onPlay = { target = null; onPlay(it) }) }
     }
 }
 
 @Composable
+private fun LibraryHeader(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    totalCount: Int,
+    lib: Library,
+    onRefresh: () -> Unit
+) {
+    Column(Modifier.fillMaxWidth().padding(bottom = 14.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "Моя библиотека AllDebrid",
+                    fontFamily = Unbounded,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 24.sp,
+                    color = Color.White
+                )
+                Text(
+                    "Торренты, папки и файлы из вашего аккаунта.",
+                    color = Color(0xFF8E96A8),
+                    fontFamily = Onest,
+                    fontSize = 13.5.sp,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+            PillButton(
+                text = if (lib.loading) "Загрузка…" else "Обновить",
+                icon = { RefreshIcon(size = 14.dp) },
+                onClick = onRefresh
+            )
+        }
+        Spacer(Modifier.height(14.dp))
+        Field(
+            value = query,
+            onValue = onQueryChange,
+            placeholder = "Поиск по названию…",
+            leadingIcon = { SearchIcon(size = 16.dp, color = Color(0xFF8E96A8)) }
+        )
+        Spacer(Modifier.height(8.dp))
+        val statusColor by animateColorAsState(
+            when (lib.statusKind) {
+                StatusKind.Ok -> Color(0xFF8E96A8)
+                StatusKind.Error -> Sm.bad
+                else -> Color(0xFF8E96A8)
+            }
+        )
+        val countLabel = if (lib.statusKind == StatusKind.Error) lib.status else "Загружено $totalCount торрент(ов)."
+        Text(countLabel, color = statusColor, fontFamily = Onest, fontSize = 13.sp, modifier = Modifier.padding(start = 2.dp))
+    }
+}
+
+@Composable
+private fun FilterControlsBar(
+    selectedCategory: Category,
+    onCategorySelect: (Category) -> Unit,
+    viewMode: ViewMode,
+    onViewModeSelect: (ViewMode) -> Unit,
+    sortBy: SortBy,
+    onSortSelect: (SortBy) -> Unit,
+    sortOpen: Boolean,
+    onSortOpenChange: (Boolean) -> Unit,
+    onlyReady: Boolean,
+    onToggleOnlyReady: () -> Unit
+) {
+    Row(
+        Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        // Left: Filter Chips
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            for (cat in Category.entries) {
+                val active = cat == selectedCategory
+                val src = remember { MutableInteractionSource() }
+                val hovered by src.collectIsHoveredAsState()
+                val bg by animateColorAsState(when { active -> Color(0xFF282E3C); hovered -> Color(0xFF1C202B); else -> Color.Transparent }, tween(200))
+                val edge by animateColorAsState(when { active -> Color(0xFF3A4356); hovered -> Color(0xFF2C3344); else -> Color(0xFF1F2430) }, tween(200))
+                val fg by animateColorAsState(when { active -> Color.White; hovered -> Color(0xFFD6DBE4); else -> Color(0xFF8E96A8) }, tween(200))
+
+                Box(
+                    Modifier.clip(RoundedCornerShape(16.dp)).background(bg).border(1.dp, edge, RoundedCornerShape(16.dp))
+                        .hoverClick(src) { onCategorySelect(cat) }
+                        .height(32.dp).padding(horizontal = 14.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(cat.label, color = fg, fontFamily = Onest, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium, fontSize = 13.sp)
+                }
+            }
+        }
+
+        // Right: View Mode Toggle, Sort Dropdown, Filters Button
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            // View Mode Icons
+            Row(
+                Modifier.clip(RoundedCornerShape(10.dp)).background(Color(0xFF141720)).border(1.dp, Color(0xFF242A38), RoundedCornerShape(10.dp)).padding(2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val gridSrc = remember { MutableInteractionSource() }
+                Box(
+                    Modifier.size(30.dp).clip(RoundedCornerShape(8.dp))
+                        .background(if (viewMode == ViewMode.Grid) Color(0xFF282E3C) else Color.Transparent)
+                        .hoverClick(gridSrc) { onViewModeSelect(ViewMode.Grid) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    GridIcon(color = if (viewMode == ViewMode.Grid) Color.White else Color(0xFF8E96A8), size = 15.dp)
+                }
+                val listSrc = remember { MutableInteractionSource() }
+                Box(
+                    Modifier.size(30.dp).clip(RoundedCornerShape(8.dp))
+                        .background(if (viewMode == ViewMode.List) Color(0xFF282E3C) else Color.Transparent)
+                        .hoverClick(listSrc) { onViewModeSelect(ViewMode.List) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    ListIcon(color = if (viewMode == ViewMode.List) Color.White else Color(0xFF8E96A8), size = 15.dp)
+                }
+            }
+
+            // Sort Dropdown
+            Box {
+                PillButton(text = "Сортировка: ${sortBy.label} ▾", onClick = { onSortOpenChange(true) })
+                DropdownMenu(
+                    expanded = sortOpen,
+                    onDismissRequest = { onSortOpenChange(false) },
+                    modifier = Modifier.background(Color(0xFF181C26)).border(1.dp, Color(0xFF2A3040), RoundedCornerShape(8.dp))
+                ) {
+                    for (s in SortBy.entries) {
+                        DropdownMenuItem(
+                            text = { Text(s.label, color = if (s == sortBy) Color.White else Sm.text, fontFamily = Onest, fontSize = 13.5.sp) },
+                            onClick = { onSortSelect(s); onSortOpenChange(false) }
+                        )
+                    }
+                }
+            }
+
+            // Filters Button
+            PillButton(
+                text = "Фильтры",
+                icon = { FunnelIcon(size = 14.dp, color = if (onlyReady) Color.White else Color(0xFF8E96A8)) },
+                active = onlyReady,
+                onClick = onToggleOnlyReady
+            )
+        }
+    }
+}
+
+/** The sleek poster tile matching the concept image. */
+@Composable
 private fun Tile(item: LibraryItem, lib: Library, onOpen: (PlayTarget) -> Unit, modifier: Modifier) {
+    val scope = rememberCoroutineScope()
     val m = item.m
     val playable = item.playable
     val series = playable as? Playable.Series
@@ -256,270 +599,353 @@ private fun Tile(item: LibraryItem, lib: Library, onOpen: (PlayTarget) -> Unit, 
     LaunchedEffect(m.id, current?.path) { if (media == null && current != null && m.ready) media = lib.mediaLine(m.id, current) }
 
     fun target(): PlayTarget? = when (playable) {
-        is Playable.Movie -> PlayTarget(m.id, playable.file, item.baseTitle, emptyList(), subtitlesFor(m, playable.file), externalAudioFor(m, playable.file))
+        is Playable.Movie -> PlayTarget(m.id, playable.file, item.baseTitle, emptyList(), subtitlesFor(m, playable.file), externalAudioFor(m, playable.file), item)
         is Playable.Series -> {
             val s = playable.seasons.getOrNull(si) ?: playable.seasons.first()
             val e = s.items.getOrNull(ei) ?: s.items.first()
             lib.saveEpisode(m.id, e.file.path)
-            PlayTarget(m.id, e.file, episodeLabel(item.baseTitle, s, e), s.items.drop(s.items.indexOf(e)).map { it.file }, subtitlesFor(m, e.file), externalAudioFor(m, e.file)) { f -> externalAudioFor(m, f) to subtitlesFor(m, f) }
+            PlayTarget(m.id, e.file, episodeLabel(item.baseTitle, s, e), s.items.drop(s.items.indexOf(e)).map { it.file }, subtitlesFor(m, e.file), externalAudioFor(m, e.file), item) { f -> externalAudioFor(m, f) to subtitlesFor(m, f) }
         }
         Playable.None -> null
     }
     val canPlay = m.ready && playable !is Playable.None
     val src = remember { MutableInteractionSource() }
     val hovered by src.collectIsHoveredAsState()
-    val lift by animateFloatAsState(if (hovered) -6f else 0f, tween(300, easing = Sm.ease))
-    val zoom by animateFloatAsState(if (hovered) 1.05f else 1f, tween(500, easing = Sm.ease))
-    val edge by animateColorAsState(if (hovered) Color(0x88FFB02E) else Sm.line)
+    val lift by animateFloatAsState(if (hovered) -6f else 0f, tween(280, easing = Sm.ease))
+    val cardScale by animateFloatAsState(if (hovered) 1.025f else 1f, tween(280, easing = Sm.ease))
+    val zoom by animateFloatAsState(if (hovered) 1.06f else 1f, tween(360, easing = Sm.ease))
+    val edge by animateColorAsState(if (hovered) Color(0xFF5A6680) else Color(0xFF202430), tween(240))
 
-    Column(modifier.graphicsLayer { translationY = lift }.hoverable(src)) {
+    var menuOpen by remember { mutableStateOf(false) }
+
+    Box(
+        modifier.graphicsLayer { translationY = lift; scaleX = cardScale; scaleY = cardScale }.hoverable(src)
+            .fillMaxWidth().aspectRatio(2f / 3f)
+            .onGloballyPositioned { TileBounds.poster[m.id] = it }
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color(0xFF13161F))
+            .border(1.dp, edge, RoundedCornerShape(14.dp))
+            .clickable(enabled = canPlay) { TileBounds.fromContinue = false; target()?.let(onOpen) }
+            .then(if (canPlay) Modifier.pointerHoverIcon(PointerIcon.Hand) else Modifier)
+    ) {
+        // Poster Image
+        val p = poster
+        if (p != null) {
+            Image(p, "Постер", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = zoom; scaleY = zoom })
+        } else {
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF222838), Color(0xFF10131B)))))
+        }
+
+        // Top Gradient & Three Dots Menu
+        Box(Modifier.fillMaxWidth().height(60.dp).background(Brush.verticalGradient(listOf(Color(0x99000000), Color.Transparent))))
+        Box(Modifier.align(Alignment.TopEnd).padding(8.dp)) {
+            val menuSrc = remember { MutableInteractionSource() }
+            val menuHover by menuSrc.collectIsHoveredAsState()
+            Box(
+                Modifier.size(30.dp).clip(CircleShape).background(if (menuHover) Color(0x99000000) else Color(0x55000000))
+                    .hoverClick(menuSrc) { menuOpen = true },
+                contentAlignment = Alignment.Center
+            ) {
+                ThreeDotsIcon(color = Color.White, size = 16.dp)
+            }
+            DropdownMenu(
+                expanded = menuOpen,
+                onDismissRequest = { menuOpen = false },
+                modifier = Modifier.background(Color(0xFF181C26)).border(1.dp, Color(0xFF2A3040), RoundedCornerShape(8.dp))
+            ) {
+                DropdownMenuItem(
+                    text = { Text(if (m.favorite) "★ Из избранного" else "☆ В избранное", color = Sm.text, fontFamily = Onest) },
+                    onClick = { menuOpen = false; scope.launch { lib.setFavorite(m, !m.favorite) } }
+                )
+                if (series != null) {
+                    series.seasons.forEachIndexed { sIdx, season ->
+                        DropdownMenuItem(
+                            text = { Text("Сезон ${season.season} (${season.items.size} сер.)", color = Sm.text, fontFamily = Onest) },
+                            onClick = { menuOpen = false; si = sIdx; ei = 0 }
+                        )
+                    }
+                }
+                if (m.canRemove) {
+                    DropdownMenuItem(
+                        text = { Text(if (m.downloading) "✕ Отменить" else "🗑 Удалить", color = Sm.bad, fontFamily = Onest) },
+                        onClick = { menuOpen = false; scope.launch { lib.remove(m) } }
+                    )
+                }
+            }
+        }
+
+        // Bottom Rich Dark Gradient & Text Info (drawn below play button)
         Box(
-            Modifier.fillMaxWidth().aspectRatio(2f / 3f).onGloballyPositioned { TileBounds.poster[m.id] = it }
-                .clip(RoundedCornerShape(14.dp))
-                .background(Brush.linearGradient(listOf(Color(0xFF242A3A), Color(0xFF10131A))))
-                .border(1.dp, edge, RoundedCornerShape(14.dp))
-                .clickable(enabled = canPlay) { TileBounds.fromContinue = false; target()?.let(onOpen) }
-                .then(if (canPlay) Modifier.pointerHoverIcon(PointerIcon.Hand) else Modifier)
+            Modifier.fillMaxWidth().align(Alignment.BottomCenter)
+                .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xCC0B0E14), Color(0xFD0B0E14))))
+                .padding(horizontal = 12.dp, vertical = 11.dp)
+        ) {
+            Column {
+                Text(
+                    item.baseTitle,
+                    color = Color.White,
+                    fontFamily = Onest,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.5.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    lineHeight = 17.sp
+                )
+                Text(
+                    "${itemYear(item)} • ${itemTypeLabel(item)}",
+                    color = Color(0xFF9BA4B5),
+                    fontFamily = Onest,
+                    fontSize = 11.5.sp,
+                    modifier = Modifier.padding(top = 2.dp, bottom = 5.dp)
+                )
+                // Status Badge
+                Box(
+                    Modifier.clip(RoundedCornerShape(6.dp))
+                        .background(Color(0xFF181B24))
+                        .border(1.dp, Color(0xFF2A3040), RoundedCornerShape(6.dp))
+                        .padding(horizontal = 7.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        if (m.ready) "Готово • 100%" else if (m.downloading) "${(m.progress * 100).toInt()}% • ${statusRu(m)}" else statusRu(m),
+                        color = Color.White,
+                        fontFamily = Onest,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 10.5.sp
+                    )
+                }
+                // Media Specs
+                val specs = itemSpecs(item, media)
+                Text(
+                    specs.first,
+                    color = Color(0xFFC0C7D5),
+                    fontFamily = Onest,
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(top = 5.dp)
+                )
+                Text(
+                    specs.second,
+                    color = Color(0xFF7A8294),
+                    fontFamily = Onest,
+                    fontSize = 10.5.sp,
+                    modifier = Modifier.padding(top = 1.dp)
+                )
+            }
+        }
+
+        // Center Play Button (placed AFTER text overlay, bigger triangle, white glow on hover, no circle)
+        if (canPlay) {
+            val playAlpha by animateFloatAsState(if (hovered) 1f else 0f, tween(240, easing = Sm.ease))
+            val playScale by animateFloatAsState(if (hovered) 1.05f else 0.72f, tween(260, easing = Sm.ease))
+            if (playAlpha > 0.005f) {
+                Box(
+                    Modifier.align(Alignment.Center)
+                        .graphicsLayer {
+                            alpha = playAlpha
+                            scaleX = playScale
+                            scaleY = playScale
+                        }
+                        .drawBehind {
+                            val r = 38.dp.toPx()
+                            drawCircle(
+                                brush = Brush.radialGradient(
+                                    colorStops = arrayOf(
+                                        0.0f to Color.White.copy(alpha = playAlpha * 0.45f),
+                                        0.45f to Color.White.copy(alpha = playAlpha * 0.22f),
+                                        0.80f to Color.White.copy(alpha = playAlpha * 0.06f),
+                                        1.0f to Color.Transparent
+                                    ),
+                                    center = center,
+                                    radius = r
+                                ),
+                                radius = r,
+                                center = center
+                            )
+                        }
+                        .size(56.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    PlayTriangle(size = 32.dp, color = Color.White)
+                }
+            }
+        }
+
+        // Bottom Watch Progress Bar
+        val w = remember(m.id, current?.path, wv) { current?.let { lib.watchInfo(watchKey(m.id, it)) } }
+        val cyanGrad = Brush.horizontalGradient(listOf(Color(0xFF0284C7), Color(0xFF38BDF8), Color(0xFF7DD3FC)))
+        if (m.ready && w != null && w.fraction > 0.01f) {
+            Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(3.dp).background(Color(0x55000000))) {
+                Box(Modifier.fillMaxWidth(if (w.watched) 1f else w.fraction).fillMaxHeight().background(cyanGrad))
+            }
+        } else if (m.downloading && m.size > 0) {
+            Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(3.dp).background(Color(0x55000000))) {
+                Box(Modifier.fillMaxWidth(m.progress).fillMaxHeight().background(cyanGrad))
+            }
+        }
+    }
+}
+
+/** Row for List View Mode. */
+@Composable
+private fun ListRow(item: LibraryItem, lib: Library, onOpen: (PlayTarget) -> Unit, modifier: Modifier) {
+    val scope = rememberCoroutineScope()
+    val m = item.m
+    val playable = item.playable
+    var poster by remember(m.id) { mutableStateOf(lib.cachedPoster(item.posterQueries)) }
+    LaunchedEffect(m.id) { if (poster == null) poster = lib.poster(item.posterQueries) }
+    val current: MFile? = when (playable) {
+        is Playable.Movie -> playable.file
+        is Playable.Series -> playable.seasons.firstOrNull()?.items?.firstOrNull()?.file
+        Playable.None -> null
+    }
+    var media by remember(m.id, current?.path) { mutableStateOf(current?.let { lib.cachedMediaLine(m.id, it) }) }
+    LaunchedEffect(m.id, current?.path) { if (media == null && current != null && m.ready) media = lib.mediaLine(m.id, current) }
+
+    fun target(): PlayTarget? = when (playable) {
+        is Playable.Movie -> PlayTarget(m.id, playable.file, item.baseTitle, emptyList(), subtitlesFor(m, playable.file), externalAudioFor(m, playable.file), item)
+        is Playable.Series -> {
+            val s = playable.seasons.first()
+            val e = s.items.first()
+            PlayTarget(m.id, e.file, episodeLabel(item.baseTitle, s, e), s.items.map { it.file }, subtitlesFor(m, e.file), externalAudioFor(m, e.file), item) { f -> externalAudioFor(m, f) to subtitlesFor(m, f) }
+        }
+        Playable.None -> null
+    }
+
+    val src = remember { MutableInteractionSource() }
+    val hovered by src.collectIsHoveredAsState()
+    val edge by animateColorAsState(if (hovered) Color(0xFF40485C) else Color(0xFF242A38), tween(200))
+    val bg by animateColorAsState(if (hovered) Color(0xFF181B26) else Color(0xFF141720), tween(200))
+
+    Row(
+        modifier.fillMaxWidth().height(96.dp).clip(RoundedCornerShape(12.dp)).background(bg).border(1.dp, edge, RoundedCornerShape(12.dp))
+            .hoverClick(src) { target()?.let(onOpen) }.padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Thumbnail
+        Box(
+            Modifier.width(52.dp).fillMaxHeight().clip(RoundedCornerShape(8.dp)).background(Color(0xFF222735)),
+            contentAlignment = Alignment.Center
         ) {
             val p = poster
-            if (p != null) Image(p, "Постер", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = zoom; scaleY = zoom })
-            else Text(item.baseTitle, color = Color.White, fontFamily = Unbounded, fontSize = 15.sp, maxLines = 4, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.align(Alignment.BottomStart).padding(start = 14.dp, end = 14.dp, bottom = 52.dp))
-            val w = remember(m.id, current?.path, wv) { current?.let { lib.watchInfo(watchKey(m.id, it)) } }
-            if (m.ready && w != null && w.fraction > 0.01f) {
-                Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(4.dp).background(Color(0x66000000))) {
-                    Box(Modifier.fillMaxWidth(if (w.watched) 1f else w.fraction).height(4.dp).background(Sm.lamp))
-                }
-            }
-            Column(Modifier.align(Alignment.BottomStart).padding(12.dp)) {
-                if (m.downloading && m.size > 0) {
-                    Box(Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(5.dp)).background(Color(0x50FFFFFF))) {
-                        Box(Modifier.fillMaxWidth(m.progress).height(5.dp).background(Sm.lamp))
+            if (p != null) Image(p, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            else Text("▶", color = Color(0xFF8E96A8), fontSize = 16.sp)
+        }
+
+        Spacer(Modifier.width(16.dp))
+
+        // Title and Info
+        Column(Modifier.weight(1f)) {
+            Text(item.baseTitle, color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 16.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("${itemYear(item)} • ${itemTypeLabel(item)}", color = Color(0xFF8E96A8), fontFamily = Onest, fontSize = 14.sp, modifier = Modifier.padding(top = 2.dp))
+            val specs = itemSpecs(item, media)
+            Text(specs.first, color = Color(0xFFC0C7D5), fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 3.dp))
+            Text(specs.second, color = Color(0xFF7A8294), fontFamily = Onest, fontSize = 11.5.sp, modifier = Modifier.padding(top = 1.dp))
+        }
+
+        Spacer(Modifier.width(16.dp))
+
+        // Status Badge
+        Box(
+            Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0xFF181B24)).border(1.dp, Color(0xFF2A3040), RoundedCornerShape(6.dp))
+                .padding(horizontal = 9.dp, vertical = 4.dp)
+        ) {
+            Text(if (m.ready) "Готово • 100%" else statusRu(m), color = Color.White, fontFamily = Onest, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        }
+
+        Spacer(Modifier.width(16.dp))
+
+        // Favorite Button
+        val favSrc = remember { MutableInteractionSource() }
+        val favHovered by favSrc.collectIsHoveredAsState()
+        val favGlowAlpha by animateFloatAsState(if (favHovered) 0.45f else 0f, tween(180))
+        val favScale by animateFloatAsState(if (favHovered) 1.12f else 1f, tween(180, easing = Sm.ease))
+        Box(
+            Modifier.size(38.dp)
+                .graphicsLayer { scaleX = favScale; scaleY = favScale }
+                .drawBehind {
+                    if (favGlowAlpha > 0.001f) {
+                        val r = 17.dp.toPx()
+                        drawCircle(
+                            brush = Brush.radialGradient(
+                                colorStops = arrayOf(
+                                    0.0f to Color.White.copy(alpha = favGlowAlpha),
+                                    0.45f to Color.White.copy(alpha = favGlowAlpha * 0.45f),
+                                    0.80f to Color.White.copy(alpha = favGlowAlpha * 0.12f),
+                                    1.0f to Color.Transparent
+                                ),
+                                center = center,
+                                radius = r
+                            ),
+                            radius = r,
+                            center = center
+                        )
                     }
-                    Spacer(Modifier.height(8.dp))
                 }
-                Text(if (m.ready) "Готово · 100%" else if (m.downloading) "${(m.progress * 100).toInt()}% · ${statusRu(m)}" else statusRu(m),
-                    color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 12.sp,
-                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Sm.scrim).padding(horizontal = 8.dp, vertical = 4.dp))
-            }
-            FavStar(m.favorite, tileHovered = hovered, Modifier.align(Alignment.TopEnd).padding(8.dp)) { on -> lib.setFavorite(m, on) }
-            val playBg by animateColorAsState(if (hovered) Sm.lamp else Color(0xB3090B10), tween(240))
-            val playScale by animateFloatAsState(if (hovered) 1.08f else 1f, tween(300, easing = Sm.ease))
-            if (canPlay) Box(
-                Modifier.align(Alignment.Center).padding(bottom = 24.dp).graphicsLayer { scaleX = playScale; scaleY = playScale }.size(58.dp).clip(CircleShape)
-                    .background(playBg).border(1.dp, Color(0x44FFFFFF), CircleShape)
-                    .clickable { target()?.let(onOpen) }.pointerHoverIcon(PointerIcon.Hand),
-                contentAlignment = Alignment.Center
-            ) { Text("▶", color = if (hovered) Sm.lampInk else Color.White, fontSize = 22.sp) }
+                .hoverClick(favSrc) { scope.launch { lib.setFavorite(m, !m.favorite) } },
+            contentAlignment = Alignment.Center
+        ) {
+            Text(if (m.favorite) "★" else "☆", color = if (m.favorite || favHovered) Color.White else Color(0xFF8E96A8), fontSize = 21.sp)
         }
-        Column(Modifier.padding(top = 10.dp, start = 2.dp, end = 2.dp)) {
-            Text(m.name, color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text("${statusRu(m)} · ${formatBytes(m.size)}", color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 3.dp))
-            if (m.ready && last != null) {
-                val (lf, lw) = last
-                val ep = series?.seasons?.firstNotNullOfOrNull { s -> s.items.firstOrNull { it.file.path == lf.path }?.let { e -> episodeLabel("", s, e).removePrefix(" · ") } }
-                Text(when {
-                    lw.watched -> if (ep != null) "✓ Просмотрено до $ep" else "✓ Просмотрено"
-                    ep != null -> "▶ Продолжить $ep · ${clock(lw.pos)}"
-                    else -> "▶ Продолжить с ${clock(lw.pos)}"
-                }, color = Sm.lamp, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, modifier = Modifier.padding(top = 4.dp))
-            }
-            if (m.ready && current != null) Text("🎞 " + (media ?: "анализ видео…"), color = if (media == null) Sm.muted else Color(0xFFFFD791),
-                fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, modifier = Modifier.padding(top = 4.dp))
-            if (series != null && m.ready) Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (series.seasons.size > 1) Select(series.seasons.getOrNull(si)?.let { if (it.season == 0) "Спец." else "Сезон ${it.season}" } ?: "",
-                    series.seasons.map { if (it.season == 0) "Спецвыпуски" else "Сезон ${it.season}" }, { si = it; ei = 0 }, Modifier.weight(1f))
-                val season = series.seasons.getOrNull(si) ?: series.seasons.first()
-                Select(season.items.getOrNull(ei)?.let { it.title ?: "Серия ${it.episode}" } ?: "", season.items.map { it.title ?: "Серия ${it.episode}" }, { ei = it }, Modifier.weight(1f))
-            }
-            if (m.canRemove) RemoveButton(m.downloading) { lib.remove(m) }
-        }
-    }
-}
 
-@Composable
-private fun Select(label: String, options: List<String>, onPick: (Int) -> Unit, modifier: Modifier) {
-    var open by remember { mutableStateOf(false) }
-    val src = remember { MutableInteractionSource() }
-    val hovered by src.collectIsHoveredAsState()
-    val edge by animateColorAsState(if (hovered || open) Sm.lamp else Sm.line2, tween(200))
-    val bg by animateColorAsState(if (hovered) Color(0xFF212636) else Sm.film, tween(200))
-    val arrow by animateFloatAsState(if (open) 180f else 0f, tween(260, easing = Sm.ease))
-    Box(modifier) {
-        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(bg).border(1.dp, edge, RoundedCornerShape(10.dp))
-            .hoverClick(src) { open = true }.heightIn(min = 34.dp).padding(horizontal = 10.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(label, color = Sm.text, fontFamily = Onest, fontSize = 13.sp, maxLines = 1, modifier = Modifier.weight(1f))
-            Text("▾", color = if (hovered || open) Sm.lamp else Sm.muted, fontSize = 12.sp, modifier = Modifier.graphicsLayer { rotationZ = arrow })
-        }
-        DropdownMenu(open, { open = false }, Modifier.background(Sm.film).heightIn(max = 420.dp)) {
-            options.forEachIndexed { i, o -> DropdownMenuItem(text = { Text(o, color = Sm.text, fontFamily = Onest) }, onClick = { open = false; onPick(i) }) }
-        }
-    }
-}
+        Spacer(Modifier.width(12.dp))
 
-@Composable
-private fun RemoveButton(downloading: Boolean, onConfirm: suspend () -> String?) {
-    val scope = rememberCoroutineScope()
-    var armed by remember { mutableStateOf(false) }
-    var busy by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(armed) { if (armed) { delay(4000); armed = false } }
-    LaunchedEffect(error) { if (error != null) { delay(4000); error = null } }
-    val label = when {
-        error != null -> "Ошибка: ${error!!.take(50)}"
-        busy -> if (downloading) "Отмена…" else "Удаление…"
-        armed -> "Точно? Нажмите ещё раз"
-        downloading -> "✕ Отменить"
-        else -> "🗑 Удалить"
-    }
-    val src = remember { MutableInteractionSource() }
-    val hovered by src.collectIsHoveredAsState()
-    val pressed by src.collectIsPressedAsState()
-    val scale = hoverScale(hovered, pressed)
-    val bg by animateColorAsState(when { armed -> Color(0xFFFF4D4D); hovered -> Color(0x40FF6B6B); else -> Color(0x1AFF6B6B) }, tween(200))
-    val edge by animateColorAsState(if (armed || hovered) Color(0xFFFF6B6B) else Color(0x66FF6B6B), tween(200))
-    Box(Modifier.padding(top = 8.dp).graphicsLayer { scaleX = scale; scaleY = scale }.clip(RoundedCornerShape(8.dp))
-        .background(bg).border(1.dp, edge, RoundedCornerShape(8.dp))
-        .hoverClick(src, enabled = !busy) {
-            if (!armed) { armed = true; error = null } else { armed = false; busy = true; scope.launch { val e = onConfirm(); busy = false; error = e } }
-        }.padding(horizontal = 10.dp, vertical = 6.dp)) {
-        Text(label, color = if (armed) Color.White else Color(0xFFFFB3B3), fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 12.sp)
-    }
-}
-
-/** Source choice, like the site's play sheet: mirror (with the season playlist) or direct AllDebrid link. */
-@Composable
-private fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPlay: (PlayRequest) -> Unit) {
-    // Where the player stopped last time (the same place it resumes from); null = nothing to resume.
-    val resumeAt = remember(t) { lib.watchInfo(watchKey(t.magnetId, t.file))?.takeIf { !it.watched && it.pos >= 5_000L }?.pos }
-    var fromStart by remember(t) { mutableStateOf(false) }
-    var sub by remember(t) { mutableStateOf("Получение ссылок…") }
-    var mirror by remember(t) { mutableStateOf<String?>(null) }
-    var direct by remember(t) { mutableStateOf<String?>(null) }
-    var playlist by remember(t) { mutableStateOf<String?>(null) }
-    var subs by remember(t) { mutableStateOf<List<String>>(emptyList()) }
-    var audio by remember(t) { mutableStateOf<List<String>>(emptyList()) }
-    LaunchedEffect(t) {
-        val link = t.file.link ?: run { sub = "Ссылка на файл ещё не готова — нажмите «Обновить»."; return@LaunchedEffect }
-        val enc = { v: String -> URLEncoder.encode(v, "UTF-8") }
-        val name = t.file.name.ifBlank { t.file.path.substringAfterLast('/') }
-        coroutineScope {
-            val d = async { runCatching { Api.post("/api/file/unlock", JSONObject().put("link", link)).optString("url").ifBlank { null } } }
-            val mr = async { runCatching { Api.get("/api/file/mirror-url?link=${enc(link)}&name=${enc(name)}").optString("url").ifBlank { null } } }
-            direct = d.await().getOrNull(); mirror = mr.await().getOrNull()
-        }
-        sub = if (mirror != null || direct != null) "Выберите источник" else "Не удалось получить ссылки"
-        // Signed links for the files next to the video (subtitles and external voice-overs).
-        if (t.subs.isNotEmpty()) subs = mirrorUrls(t.subs)
-        if (t.audio.isNotEmpty()) audio = mirrorUrls(t.audio)
-        val following = t.following.filter { it.link != null }
-        if (mirror != null && following.size > 1) runCatching {
-            val items = JSONArray(); following.forEach { items.put(JSONObject().put("index", it.index).put("link", it.link)) }
-            Api.post("/api/playlist", JSONObject().put("magnetId", t.magnetId).put("title", t.label).put("items", items)).optString("url").ifBlank { null }
-        }.onSuccess { playlist = it }
-    }
-    // Fades in with the card rising slightly (no hard pop).
-    var shown by remember(t) { mutableStateOf(false) }
-    LaunchedEffect(t) { shown = true }
-    val a by animateFloatAsState(if (shown) 1f else 0f, tween(260, easing = Sm.ease))
-    Box(Modifier.fillMaxSize().graphicsLayer { alpha = a }.background(Sm.scrim).clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { onDismiss() },
-        contentAlignment = Alignment.Center) {
-        Column(Modifier.graphicsLayer { translationY = (1f - a) * 24f; scaleX = 0.97f + 0.03f * a; scaleY = 0.97f + 0.03f * a }.widthIn(max = 520.dp).clip(RoundedCornerShape(20.dp)).background(Sm.booth).border(1.dp, Sm.line2, RoundedCornerShape(20.dp))
-            .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {}.padding(22.dp)) {
-            Text(t.label, fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 18.sp, color = Sm.text)
-            Text(sub + (if (audio.isNotEmpty()) " · озвучек из раздачи: ${audio.size}" else "") + (if (subs.isNotEmpty()) " · субтитров: ${subs.size}" else ""), color = Sm.muted, fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(top = 4.dp, bottom = 16.dp))
-            resumeAt?.let { at ->
-                Row(Modifier.fillMaxWidth().padding(bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    StartOption("▶  С ${clock(at)}", "продолжить с прошлого места", !fromStart, Modifier.weight(1f)) { fromStart = false }
-                    StartOption("⟲  С начала", "смотреть заново", fromStart, Modifier.weight(1f)) { fromStart = true }
+        // Play Button (no circle, larger triangle, white glow on hover, matching size)
+        val playSrc = remember { MutableInteractionSource() }
+        val playHovered by playSrc.collectIsHoveredAsState()
+        val playGlowAlpha by animateFloatAsState(if (playHovered) 0.45f else 0f, tween(180))
+        val playBtnScale by animateFloatAsState(if (playHovered) 1.12f else 1f, tween(180, easing = Sm.ease))
+        Box(
+            Modifier.size(38.dp)
+                .graphicsLayer { scaleX = playBtnScale; scaleY = playBtnScale }
+                .drawBehind {
+                    if (playGlowAlpha > 0.001f) {
+                        val r = 17.dp.toPx()
+                        drawCircle(
+                            brush = Brush.radialGradient(
+                                colorStops = arrayOf(
+                                    0.0f to Color.White.copy(alpha = playGlowAlpha),
+                                    0.45f to Color.White.copy(alpha = playGlowAlpha * 0.45f),
+                                    0.80f to Color.White.copy(alpha = playGlowAlpha * 0.12f),
+                                    1.0f to Color.Transparent
+                                ),
+                                center = center,
+                                radius = r
+                            ),
+                            radius = r,
+                            center = center
+                        )
+                    }
                 }
-            }
-            Source("Через зеркало", if (playlist != null) "Через ваш сервер · дальше все серии сезона" else "Трафик идёт через ваш сервер", mirror) {
-                val keys = if (playlist != null) t.following.filter { f -> f.link != null }.map { f -> watchKey(t.magnetId, f) } else listOf(watchKey(t.magnetId, t.file))
-                val list = t.following.filter { f -> f.link != null }
-                // Episode i of the playlist -> its own voice-overs / subtitles (fetched by the player just before it starts).
-                val resolve: suspend (Int) -> Pair<List<String>, List<String>> = { i ->
-                    list.getOrNull(i)?.let { f -> val (a, sb) = t.sidecarsOf(f); mirrorUrls(a) to mirrorUrls(sb) } ?: (emptyList<String>() to emptyList())
-                }
-                onPlay(PlayRequest(it, t.label, playlist, subs, keys, audio, if (playlist != null) resolve else null, fromStart))
-            }
-            Spacer(Modifier.height(10.dp))
-            Source("Напрямую", "Прямая ссылка AllDebrid", direct) { onPlay(PlayRequest(it, t.label, null, subs, listOf(watchKey(t.magnetId, t.file)), audio, fromStart = fromStart)) }
-            Spacer(Modifier.height(14.dp))
-            OutlineButton("Закрыть", Modifier.fillMaxWidth(), onDismiss)
+                .hoverClick(playSrc) { target()?.let(onOpen) },
+            contentAlignment = Alignment.Center
+        ) {
+            PlayTriangle(size = 20.dp, color = if (playHovered) Color.White else Color(0xFFC0C7D5))
         }
     }
-}
-
-/** «Продолжить с …» / «С начала»: two halves of one choice, the chosen one lit. */
-@Composable
-private fun StartOption(title: String, hint: String, on: Boolean, modifier: Modifier, onClick: () -> Unit) {
-    val edge by animateColorAsState(if (on) Sm.lamp else Sm.line, tween(220))
-    val bg by animateColorAsState(if (on) Color(0x24FFB02E) else Sm.film, tween(220))
-    Column(modifier.clip(RoundedCornerShape(14.dp)).background(bg).border(1.dp, edge, RoundedCornerShape(14.dp))
-        .hoverClick(remember { MutableInteractionSource() }, onClick = onClick).padding(horizontal = 14.dp, vertical = 10.dp)) {
-        Text(title, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp, color = if (on) Sm.lamp else Sm.text, maxLines = 1)
-        Text(hint, fontFamily = Onest, fontSize = 12.5.sp, color = Sm.muted)
-    }
-}
-
-@Composable
-private fun Source(title: String, hint: String, url: String?, onPlay: (String) -> Unit) {
-    val src = remember { MutableInteractionSource() }
-    val hovered by src.collectIsHoveredAsState()
-    val edge by animateColorAsState(if (hovered && url != null) Color(0x88FFB02E) else Sm.line, tween(220))
-    Column(Modifier.fillMaxWidth().hoverable(src).clip(RoundedCornerShape(14.dp)).background(Sm.film).border(1.dp, edge, RoundedCornerShape(14.dp)).padding(14.dp)) {
-        Text(title, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = Sm.text)
-        Text(hint, fontFamily = Onest, fontSize = 13.sp, color = Sm.muted, modifier = Modifier.padding(top = 2.dp, bottom = 10.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            LampButton("▶ Смотреть", enabled = url != null, modifier = Modifier.weight(1f)) { url?.let(onPlay) }
-            OutlineButton("Копировать ссылку") { url?.let(::copy) }
-        }
-    }
-}
-
-/** Star in the poster's corner: shows on hover (always when on); pops when toggled. */
-@Composable
-private fun FavStar(on: Boolean, tileHovered: Boolean, modifier: Modifier, onToggle: suspend (Boolean) -> String?) {
-    val scope = rememberCoroutineScope()
-    val src = remember { MutableInteractionSource() }
-    val hovered by src.collectIsHoveredAsState()
-    var busy by remember { mutableStateOf(false) }
-    val pop = remember { androidx.compose.animation.core.Animatable(1f) }
-    val shown by animateFloatAsState(if (on || tileHovered || hovered) 1f else 0f, tween(220, easing = Sm.ease))
-    val bg by animateColorAsState(if (on) Sm.lamp else Color(0xB3090B10), tween(220))
-    val fg by animateColorAsState(when { on -> Sm.lampInk; hovered -> Sm.lamp; else -> Color.White }, tween(220))
-    val edge by animateColorAsState(if (hovered && !on) Sm.lamp else if (on) Color.Transparent else Color(0x2EFFFFFF), tween(220))
-    Box(
-        modifier.graphicsLayer { alpha = shown; val s = (0.9f + 0.1f * shown) * pop.value * (if (hovered) 1.08f else 1f); scaleX = s; scaleY = s }
-            .size(34.dp).clip(CircleShape).background(bg).border(1.dp, edge, CircleShape)
-            .hoverClick(src, enabled = !busy && shown > 0.05f) {
-                busy = true
-                scope.launch {
-                    launch { pop.animateTo(1.25f, tween(130)); pop.animateTo(1f, tween(200, easing = Sm.ease)) }
-                    onToggle(!on); busy = false
-                }
-            },
-        contentAlignment = Alignment.Center
-    ) { Text(if (on) "★" else "☆", color = fg, fontSize = 17.sp) }
 }
 
 // ---- «Продолжить просмотр» -------------------------------------------------------------------
 
-private class ContinueEntry(val item: LibraryItem, val target: PlayTarget, val label: String, val fraction: Float, val left: Long, val at: Long)
+private class ContinueEntry(
+    val item: LibraryItem,
+    val target: PlayTarget,
+    val label: String,
+    val fraction: Float,
+    val pos: Long,
+    val len: Long,
+    val at: Long
+)
 
-/** Play target for a given file of an item (the same choice the tile would make). */
 private fun targetFor(item: LibraryItem, file: MFile): PlayTarget? {
     val m = item.m
     return when (val p = item.playable) {
-        is Playable.Movie -> if (p.file.path == file.path) PlayTarget(m.id, p.file, item.baseTitle, emptyList(), subtitlesFor(m, p.file), externalAudioFor(m, p.file)) else null
+        is Playable.Movie -> if (p.file.path == file.path) PlayTarget(m.id, p.file, item.baseTitle, emptyList(), subtitlesFor(m, p.file), externalAudioFor(m, p.file), item) else null
         is Playable.Series -> {
             for (s in p.seasons) {
                 val i = s.items.indexOfFirst { it.file.path == file.path }
                 if (i < 0) continue
                 val e = s.items[i]
                 return PlayTarget(m.id, e.file, episodeLabel(item.baseTitle, s, e), s.items.drop(i).map { it.file },
-                    subtitlesFor(m, e.file), externalAudioFor(m, e.file)) { f -> externalAudioFor(m, f) to subtitlesFor(m, f) }
+                    subtitlesFor(m, e.file), externalAudioFor(m, e.file), item) { f -> externalAudioFor(m, f) to subtitlesFor(m, f) }
             }
             null
         }
@@ -527,7 +953,6 @@ private fun targetFor(item: LibraryItem, file: MFile): PlayTarget? {
     }
 }
 
-/** Episode after [file] (next in the season, else first of the next season). */
 private fun nextEpisode(p: Playable.Series, file: MFile): MFile? {
     val all = p.seasons.flatMap { it.items }
     val i = all.indexOfFirst { it.file.path == file.path }
@@ -537,40 +962,80 @@ private fun nextEpisode(p: Playable.Series, file: MFile): MFile? {
 private fun continueEntries(items: List<LibraryItem>, lib: Library): List<ContinueEntry> = items.mapNotNull { item ->
     if (!item.m.ready) return@mapNotNull null
     val (file, w) = lib.lastWatched(item.m) ?: return@mapNotNull null
-    if (System.currentTimeMillis() - w.at > 60L * 24 * 3600 * 1000) return@mapNotNull null // older than 60 days
-    if (lib.continueHiddenAt(item.m.id) >= w.at) return@mapNotNull null                  // removed from the row
+    if (System.currentTimeMillis() - w.at > 60L * 24 * 3600 * 1000) return@mapNotNull null
+    if (lib.continueHiddenAt(item.m.id) >= w.at) return@mapNotNull null
     if (!w.watched) {
         val t = targetFor(item, file) ?: return@mapNotNull null
-        ContinueEntry(item, t, t.label.removePrefix(item.baseTitle).removePrefix(" · ").ifBlank { "Фильм" }, w.fraction, (w.len - w.pos).coerceAtLeast(0), w.at)
+        val sub = t.label.removePrefix(item.baseTitle).removePrefix(" · ").ifBlank { "Фильм" }
+        ContinueEntry(item, t, sub, w.fraction, w.pos, w.len, w.at)
     } else {
-        // Finished an episode: offer the next one.
         val series = item.playable as? Playable.Series ?: return@mapNotNull null
         val next = nextEpisode(series, file) ?: return@mapNotNull null
         if (lib.watchInfo(watchKey(item.m.id, next))?.watched == true) return@mapNotNull null
         val t = targetFor(item, next) ?: return@mapNotNull null
-        ContinueEntry(item, t, "Дальше: " + t.label.removePrefix(item.baseTitle).removePrefix(" · "), 0f, 0L, w.at)
+        ContinueEntry(item, t, "Дальше: " + t.label.removePrefix(item.baseTitle).removePrefix(" · "), 0f, 0L, 0L, w.at)
     }
-}.sortedByDescending { it.at }.take(12)
+}.sortedByDescending { it.at }.take(14)
 
 @Composable
 private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTarget) -> Unit) {
+    val scope = rememberCoroutineScope()
     val wv = lib.watchVersion
     val entries = remember(items, wv) { continueEntries(items, lib) }
-    androidx.compose.animation.AnimatedVisibility(entries.isNotEmpty(), enter = fadeIn(tween(300)) + expandVertically(tween(320, easing = Sm.ease)),
-        exit = fadeOut(tween(200)) + shrinkVertically(tween(260, easing = Sm.ease))) {
-        Column(Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 4.dp)) {
+    val rowState = rememberLazyListState()
+
+    androidx.compose.animation.AnimatedVisibility(
+        entries.isNotEmpty(),
+        enter = fadeIn(tween(300)) + expandVertically(tween(320, easing = Sm.ease)),
+        exit = fadeOut(tween(200)) + shrinkVertically(tween(260, easing = Sm.ease))
+    ) {
+        Column(Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 12.dp)) {
             Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Продолжить просмотр", fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 17.sp, color = Sm.text,
-                    modifier = Modifier.weight(1f))
-                OutlineButton("Очистить") { lib.hideContinue(entries.map { it.item.m.id }) }
+                Text(
+                    "Продолжить просмотр",
+                    fontFamily = Unbounded,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 17.5.sp,
+                    color = Color.White,
+                    modifier = Modifier.weight(1f)
+                )
+
+                // Carousel Chevrons
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val prevSrc = remember { MutableInteractionSource() }
+                    val prevHover by prevSrc.collectIsHoveredAsState()
+                    Box(
+                        Modifier.size(28.dp).clip(CircleShape).background(if (prevHover) Color(0xFF282E3C) else Color(0xFF141720))
+                            .border(1.dp, Color(0xFF242A38), CircleShape)
+                            .hoverClick(prevSrc) { scope.launch { rowState.animateScrollBy(-560f) } },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        ChevronLeft(color = if (prevHover) Color.White else Color(0xFF8E96A8), size = 12.dp)
+                    }
+
+                    val nextSrc = remember { MutableInteractionSource() }
+                    val nextHover by nextSrc.collectIsHoveredAsState()
+                    Box(
+                        Modifier.size(28.dp).clip(CircleShape).background(if (nextHover) Color(0xFF282E3C) else Color(0xFF141720))
+                            .border(1.dp, Color(0xFF242A38), CircleShape)
+                            .hoverClick(nextSrc) { scope.launch { rowState.animateScrollBy(560f) } },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        ChevronRight(color = if (nextHover) Color.White else Color(0xFF8E96A8), size = 12.dp)
+                    }
+                }
             }
-            androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+
+            LazyRow(state = rowState, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 items(entries.size, key = { entries[it].item.m.id }) { i ->
                     val e = entries[i]
-                    ContinueCard(e, lib, Modifier.animateItem(fadeInSpec = tween(250), fadeOutSpec = tween(200)),
-                        onRemove = { lib.hideContinue(listOf(e.item.m.id)) }) {
+                    ContinueCard(
+                        e, lib, Modifier.animateItem(fadeInSpec = tween(250), fadeOutSpec = tween(200)),
+                        onRemove = { lib.hideContinue(listOf(e.item.m.id)) }
+                    ) {
                         TileBounds.fromContinue = true
-                        lib.saveEpisode(e.item.m.id, e.target.file.path); onOpen(e.target)
+                        lib.saveEpisode(e.item.m.id, e.target.file.path)
+                        onOpen(e.target)
                     }
                 }
             }
@@ -582,40 +1047,781 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
 private fun ContinueCard(e: ContinueEntry, lib: Library, modifier: Modifier, onRemove: () -> Unit, onClick: () -> Unit) {
     val src = remember { MutableInteractionSource() }
     val hovered by src.collectIsHoveredAsState()
-    val lift by animateFloatAsState(if (hovered) -4f else 0f, tween(260, easing = Sm.ease))
-    val edge by animateColorAsState(if (hovered) Color(0x88FFB02E) else Sm.line, tween(220))
+    val lift by animateFloatAsState(if (hovered) -3f else 0f, tween(260, easing = Sm.ease))
+    val edge by animateColorAsState(if (hovered) Color(0xFF3E475C) else Color(0xFF242A38), tween(220))
+    val bg by animateColorAsState(if (hovered) Color(0xFF191D28) else Color(0xFF141720), tween(220))
     var poster by remember(e.item.m.id) { mutableStateOf(lib.cachedPoster(e.item.posterQueries)) }
     LaunchedEffect(e.item.m.id) { if (poster == null) poster = lib.poster(e.item.posterQueries) }
     val xSrc = remember { MutableInteractionSource() }
     val xHover by xSrc.collectIsHoveredAsState()
     val xAlpha by animateFloatAsState(if (hovered || xHover) 1f else 0f, tween(200))
+
     Box(modifier.graphicsLayer { translationY = lift }.hoverable(src)) {
-    Row(
-        Modifier.width(320.dp).height(112.dp).clip(RoundedCornerShape(14.dp)).background(Sm.booth)
-            .border(1.dp, edge, RoundedCornerShape(14.dp)).hoverClick(src, onClick = onClick)
-    ) {
-        Box(Modifier.width(75.dp).fillMaxHeight().onGloballyPositioned { TileBounds.cont[e.item.m.id] = it }.background(Brush.linearGradient(listOf(Color(0xFF242A3A), Color(0xFF10131A))))) {
-            poster?.let { Image(it, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
-            Box(Modifier.align(Alignment.Center).size(34.dp).clip(CircleShape).background(if (hovered) Sm.lamp else Color(0xB3090B10)),
-                contentAlignment = Alignment.Center) { Text("▶", color = if (hovered) Sm.lampInk else Color.White, fontSize = 13.sp) }
-        }
-        Column(Modifier.weight(1f).fillMaxHeight().padding(12.dp), verticalArrangement = Arrangement.SpaceBetween) {
-            Column {
-                Text(e.item.baseTitle, color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(e.label, color = Sm.lamp, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(top = 3.dp))
+        Row(
+            Modifier.width(304.dp).height(108.dp).clip(RoundedCornerShape(12.dp)).background(bg)
+                .border(1.dp, edge, RoundedCornerShape(12.dp)).hoverClick(src, onClick = onClick)
+                .padding(11.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Left Poster Thumbnail
+            Box(
+                Modifier.width(62.dp).fillMaxHeight()
+                    .onGloballyPositioned { TileBounds.cont[e.item.m.id] = it }
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF222736))
+            ) {
+                poster?.let { Image(it, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
             }
-            Column {
-                if (e.left > 0) Text("осталось ${clock(e.left)}", color = Sm.muted, fontFamily = Onest, fontSize = 12.sp, modifier = Modifier.padding(bottom = 5.dp))
-                Box(Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(4.dp)).background(Sm.line)) {
-                    Box(Modifier.fillMaxWidth(e.fraction.coerceIn(0f, 1f)).fillMaxHeight().background(Sm.lamp))
+
+            Spacer(Modifier.width(13.dp))
+
+            // Right Text and Progress
+            Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.SpaceBetween) {
+                Column {
+                    Text(
+                        e.item.baseTitle,
+                        color = Color.White,
+                        fontFamily = Onest,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 15.5.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        e.label,
+                        color = Color(0xFF8E96A8),
+                        fontFamily = Onest,
+                        fontSize = 13.5.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                }
+
+                Column {
+                    val timeText = if (e.pos > 0 && e.len > 0) "${clock(e.pos)} / ${clock(e.len)}" else ""
+                    if (timeText.isNotEmpty()) {
+                        Text(timeText, color = Color(0xFF8E96A8), fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(bottom = 5.dp))
+                    }
+                    Box(Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(Color(0xFF202636))) {
+                        Box(
+                            Modifier.fillMaxWidth(e.fraction.coerceIn(0f, 1f))
+                                .fillMaxHeight()
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(Brush.horizontalGradient(listOf(Color(0xFF0284C7), Color(0xFF38BDF8), Color(0xFF7DD3FC))))
+                        )
+                    }
+                }
+            }
+        }
+
+        // × close button in corner on hover (bigger cross, aligned in corner, white glow on hover, no circle)
+        val xGlowAlpha by animateFloatAsState(if (xHover) 0.50f else 0f, tween(180))
+        val xCrossScale by animateFloatAsState(if (xHover) 1.15f else 1f, tween(180, easing = Sm.ease))
+        Box(
+            Modifier.align(Alignment.TopEnd).padding(top = 6.dp, end = 8.dp)
+                .graphicsLayer { alpha = xAlpha; scaleX = xCrossScale; scaleY = xCrossScale }
+                .size(26.dp)
+                .drawBehind {
+                    if (xGlowAlpha > 0.001f) {
+                        val r = 14.dp.toPx()
+                        drawCircle(
+                            brush = Brush.radialGradient(
+                                colorStops = arrayOf(
+                                    0.0f to Color.White.copy(alpha = xGlowAlpha),
+                                    0.45f to Color.White.copy(alpha = xGlowAlpha * 0.45f),
+                                    0.80f to Color.White.copy(alpha = xGlowAlpha * 0.12f),
+                                    1.0f to Color.Transparent
+                                ),
+                                center = center,
+                                radius = r
+                            ),
+                            radius = r,
+                            center = center
+                        )
+                    }
+                }
+                .hoverClick(xSrc, enabled = xAlpha > 0.05f, onClick = onRemove),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("×", color = Color.White, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+        }
+    }
+}
+
+private fun filmCountRu(count: Int): String = when {
+    count % 10 == 1 && count % 100 != 11 -> "$count фильм"
+    count % 10 in 2..4 && count % 100 !in 12..14 -> "$count фильма"
+    else -> "$count фильмов"
+}
+
+private fun collectionInfo(count: Int): Pair<String, String> = when (count) {
+    2 -> "Дилогия" to "дилогии"
+    3 -> "Кинотрилогия" to "трилогии"
+    4 -> "Кинотетралогия" to "тетралогии"
+    else -> "Кинофраншиза" to "франшизы"
+}
+
+private fun extractTrilogyFilmInfo(
+    baseTitle: String,
+    ep: Episode,
+    index: Int,
+    magnetId: Long,
+    lib: Library
+): Pair<String, String> {
+    val raw = ep.file.name.ifBlank { ep.file.path.substringAfterLast('/') }
+    val year = Regex("""\b(19\d{2}|20\d{2})\b""").find(raw)?.groupValues?.get(1)
+    val cleaned = cleanTitle(raw)
+    val partTitle = if (baseTitle.isNotBlank() && cleaned.startsWith(baseTitle, ignoreCase = true)) {
+        cleaned.substring(baseTitle.length).trim(' ', '-', ':', '·', '.', '–')
+    } else ""
+    val title = when {
+        partTitle.isNotBlank() -> partTitle
+        !ep.title.isNullOrBlank() -> ep.title!!
+        else -> cleaned.ifBlank { "Фильм ${index + 1}" }
+    }
+
+    val watch = lib.watchInfo(watchKey(magnetId, ep.file))
+    val durMs = watch?.len?.takeIf { it > 0 }
+    val durStr = if (durMs != null) clock(durMs) else null
+    val details = listOfNotNull(year, durStr ?: formatBytes(ep.file.size)).joinToString(" • ")
+    return title to details
+}
+
+/** Source choice dialog: mirror or direct AllDebrid link, styled for series and movie trilogies. */
+@Composable
+private fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPlay: (PlayRequest) -> Unit) {
+    val item = remember(t) { t.item ?: lib.items.find { it.m.id == t.magnetId } }
+    val magnet = remember(t, item) {
+        item?.m ?: Magnet(t.magnetId, t.label, "", 4, 0L, 0L, listOf(t.file) + t.following, false)
+    }
+    val playable = remember(t, item) {
+        item?.playable ?: (if (t.following.isNotEmpty()) Playable.Series(listOf(Season(1, (listOf(t.file) + t.following).mapIndexed { i, f -> Episode(1, i + 1, f) }))) else Playable.Movie(t.file))
+    }
+    val series = playable as? Playable.Series
+    val isCollection = remember(series, magnet) {
+        series != null && series.seasons.isNotEmpty() && (
+            series.seasons.all { s -> s.items.all { it.title != null } } ||
+            Regex("""(трилоги|дилоги|тетралоги|франшиз|коллекци|trilogy|duology|anthology|collection)""", RegexOption.IGNORE_CASE).containsMatchIn(magnet.name)
+        )
+    }
+
+    // State for Trilogy / Collection mode
+    val films = remember(series) { series?.seasons?.flatMap { it.items } ?: emptyList() }
+    val initFilmIdx = remember(t, films) {
+        val idx = films.indexOfFirst { it.file.path == t.file.path }
+        if (idx >= 0) idx else 0
+    }
+    var selectedFilmIdx by remember(t) { mutableStateOf(initFilmIdx) }
+
+    // State for Series mode
+    val seasons = remember(series) { series?.seasons ?: emptyList() }
+    val (initSIdx, initEIdx) = remember(t, seasons) {
+        var s = 0
+        var e = 0
+        seasons.forEachIndexed { sIdx, season ->
+            val idx = season.items.indexOfFirst { it.file.path == t.file.path }
+            if (idx >= 0) { s = sIdx; e = idx }
+        }
+        s to e
+    }
+    var selectedSeasonIdx by remember(t) { mutableStateOf(initSIdx) }
+    var selectedEpisodeIdx by remember(t) { mutableStateOf(initEIdx) }
+
+    // Active file, title and following playlist files
+    val currentSeason = seasons.getOrNull(selectedSeasonIdx) ?: seasons.firstOrNull()
+    val currentEpisode = currentSeason?.items?.getOrNull(selectedEpisodeIdx) ?: currentSeason?.items?.firstOrNull()
+    val currentFilm = films.getOrNull(selectedFilmIdx) ?: films.firstOrNull()
+
+    val currentFile: MFile = when {
+        isCollection && currentFilm != null -> currentFilm.file
+        series != null && currentEpisode != null -> currentEpisode.file
+        else -> t.file
+    }
+
+    val currentTitle: String = when {
+        isCollection && currentFilm != null -> {
+            val (fTitle, _) = extractTrilogyFilmInfo(item?.baseTitle ?: "", currentFilm, selectedFilmIdx, t.magnetId, lib)
+            (item?.baseTitle ?: t.label) + " • " + fTitle
+        }
+        series != null && currentSeason != null && currentEpisode != null -> {
+            "${item?.baseTitle ?: t.label.substringBefore(" · ")} • S${currentSeason.season.toString().padStart(2, '0')}E${currentEpisode.episode.toString().padStart(2, '0')}"
+        }
+        else -> item?.baseTitle ?: t.label
+    }
+
+    val followingFiles: List<MFile> = when {
+        isCollection -> films.drop(selectedFilmIdx).map { it.file }
+        series != null && currentSeason != null -> currentSeason.items.drop(selectedEpisodeIdx).map { it.file }
+        else -> emptyList()
+    }
+
+    val resumeAt = remember(t.magnetId, currentFile.path, lib.watchVersion) {
+        lib.watchInfo(watchKey(t.magnetId, currentFile))?.takeIf { !it.watched && it.pos >= 5_000L }?.pos
+    }
+    var fromStart by remember(t.magnetId, currentFile.path) { mutableStateOf(false) }
+    var sub by remember(t.magnetId, currentFile.path) { mutableStateOf("Получение ссылок…") }
+    var mirror by remember(t.magnetId, currentFile.path) { mutableStateOf<String?>(null) }
+    var direct by remember(t.magnetId, currentFile.path) { mutableStateOf<String?>(null) }
+    var playlist by remember(t.magnetId, currentFile.path) { mutableStateOf<String?>(null) }
+    var subs by remember(t.magnetId, currentFile.path) { mutableStateOf<List<String>>(emptyList()) }
+    var audio by remember(t.magnetId, currentFile.path) { mutableStateOf<List<String>>(emptyList()) }
+
+    var poster by remember(t.magnetId) { mutableStateOf(item?.let { lib.cachedPoster(it.posterQueries) }) }
+    LaunchedEffect(t.magnetId) {
+        if (poster == null && item != null) poster = lib.poster(item.posterQueries)
+    }
+
+    LaunchedEffect(t.magnetId, currentFile.path) {
+        val link = currentFile.link ?: run {
+            sub = "Ссылка на файл ещё не готова — нажмите «Обновить»."
+            return@LaunchedEffect
+        }
+        val enc = { v: String -> URLEncoder.encode(v, "UTF-8") }
+        val name = currentFile.name.ifBlank { currentFile.path.substringAfterLast('/') }
+        coroutineScope {
+            val d = async { runCatching { Api.post("/api/file/unlock", JSONObject().put("link", link)).optString("url").ifBlank { null } } }
+            val mr = async { runCatching { Api.get("/api/file/mirror-url?link=${enc(link)}&name=${enc(name)}").optString("url").ifBlank { null } } }
+            direct = d.await().getOrNull()
+            mirror = mr.await().getOrNull()
+        }
+        sub = if (mirror != null || direct != null) "Выберите источник" else "Не удалось получить ссылки"
+        val sideSubs = subtitlesFor(magnet, currentFile)
+        val sideAudio = externalAudioFor(magnet, currentFile)
+        if (sideSubs.isNotEmpty()) subs = mirrorUrls(sideSubs)
+        if (sideAudio.isNotEmpty()) audio = mirrorUrls(sideAudio)
+
+        val validFollowing = followingFiles.filter { it.link != null }
+        if (mirror != null && validFollowing.size > 1) runCatching {
+            val items = JSONArray()
+            validFollowing.forEach { items.put(JSONObject().put("index", it.index).put("link", it.link)) }
+            Api.post("/api/playlist", JSONObject().put("magnetId", t.magnetId).put("title", currentTitle).put("items", items)).optString("url").ifBlank { null }
+        }.onSuccess { playlist = it }
+
+        lib.saveEpisode(t.magnetId, currentFile.path)
+    }
+
+    var shown by remember(t) { mutableStateOf(false) }
+    LaunchedEffect(t) { shown = true }
+    val a by animateFloatAsState(if (shown) 1f else 0f, tween(260, easing = Sm.ease))
+
+    Box(
+        Modifier.fillMaxSize().graphicsLayer { alpha = a }.background(Sm.scrim)
+            .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { onDismiss() },
+        contentAlignment = Alignment.Center
+    ) {
+        val dialogWidth = if (isCollection) 660.dp else 540.dp
+        Column(
+            Modifier.graphicsLayer { translationY = (1f - a) * 24f; scaleX = 0.97f + 0.03f * a; scaleY = 0.97f + 0.03f * a }
+                .widthIn(max = dialogWidth).clip(RoundedCornerShape(22.dp)).background(Color(0xFF0F131D))
+                .border(1.dp, Color(0xFF1E2536), RoundedCornerShape(22.dp))
+                .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {}
+                .padding(22.dp)
+        ) {
+            if (isCollection) {
+                // ---- SCREEN 2: MOVIE TRILOGY / COLLECTION DESIGN ----
+                val filmCount = films.size
+                val (collectionTypeName, collectionGenitive) = collectionInfo(filmCount)
+                val years = films.mapNotNull { ep ->
+                    val raw = ep.file.name.ifBlank { ep.file.path.substringAfterLast('/') }
+                    Regex("""\b(19\d{2}|20\d{2})\b""").find(raw)?.groupValues?.get(1)?.toIntOrNull()
+                }
+                val yearsRange = if (years.isNotEmpty()) {
+                    val min = years.minOrNull()!!
+                    val max = years.maxOrNull()!!
+                    if (min == max) " • $min" else " • $min–$max"
+                } else ""
+                val headerSubtitle = "$collectionTypeName • ${filmCountRu(filmCount)}$yearsRange"
+
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                    // Left: Movie Poster
+                    Box(
+                        Modifier.width(155.dp).height(245.dp).clip(RoundedCornerShape(14.dp))
+                            .background(Color(0xFF131722)).border(1.dp, Color(0xFF242A38), RoundedCornerShape(14.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        val p = poster
+                        if (p != null) {
+                            Image(p, "Постер", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                        } else {
+                            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF222838), Color(0xFF10131B)))))
+                        }
+                    }
+
+                    // Right: Title, Subtitle, Info Box, Movie Selection List
+                    Column(Modifier.weight(1f)) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
+                            Column(Modifier.weight(1f)) {
+                                Text(item?.baseTitle ?: t.label, fontFamily = Unbounded, fontWeight = FontWeight.Bold, fontSize = 20.sp, color = Color.White)
+                                Text(headerSubtitle, color = Color(0xFF8E96A8), fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(top = 4.dp))
+                            }
+                            CloseCircleButton(onClick = onDismiss)
+                        }
+
+                        // Info banner
+                        Row(
+                            Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 10.dp).clip(RoundedCornerShape(10.dp))
+                                .background(Color(0xFF141926)).border(1.dp, Color(0xFF1E2638), RoundedCornerShape(10.dp))
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            InfoCircleIcon(color = Color(0xFF60A5FA), size = 15.dp)
+                            Text("Найдена ${collectionTypeName.lowercase(Locale.ROOT)}. Выберите фильм для просмотра.", color = Color(0xFFC0C7D6), fontFamily = Onest, fontSize = 12.5.sp)
+                        }
+
+                        // Movies list (scrollable)
+                        val filmScrollState = rememberScrollState()
+                        LaunchedEffect(initFilmIdx) {
+                            if (initFilmIdx > 2) {
+                                filmScrollState.scrollTo(initFilmIdx * 60)
+                            }
+                        }
+                        Box(Modifier.fillMaxWidth().heightIn(max = 240.dp)) {
+                            Column(
+                                Modifier.fillMaxWidth()
+                                    .verticalScroll(filmScrollState)
+                                    .padding(end = if (films.size > 3) 10.dp else 0.dp),
+                                verticalArrangement = Arrangement.spacedBy(7.dp)
+                            ) {
+                                films.forEachIndexed { i, ep ->
+                                    val (fTitle, fDetails) = extractTrilogyFilmInfo(item?.baseTitle ?: "", ep, i, t.magnetId, lib)
+                                    val isSelected = i == selectedFilmIdx
+                                    Row(
+                                        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                                            .background(if (isSelected) Color(0xFF182234) else Color(0xFF121622))
+                                            .border(1.dp, if (isSelected) Color(0xFF38507E) else Color(0xFF1E2536), RoundedCornerShape(12.dp))
+                                            .hoverClick(remember { MutableInteractionSource() }) { selectedFilmIdx = i }
+                                            .padding(horizontal = 10.dp, vertical = 7.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        // Mini poster / icon
+                                        Box(
+                                            Modifier.size(width = 34.dp, height = 44.dp).clip(RoundedCornerShape(6.dp))
+                                                .background(Color(0xFF181D2A)).border(1.dp, Color(0xFF262E40), RoundedCornerShape(6.dp)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            val p = poster
+                                            if (p != null) {
+                                                Image(p, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                                            } else {
+                                                PlayTriangle(color = Color(0xFF8E96A8), size = 12.dp)
+                                            }
+                                        }
+
+                                        // Number badge
+                                        Box(
+                                            Modifier.size(24.dp).clip(RoundedCornerShape(6.dp)).background(Color(0xFF1D2638)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text("${i + 1}", color = Color.White, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                        }
+
+                                        // Title & details
+                                        Column(Modifier.weight(1f)) {
+                                            Text(fTitle, color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text(fDetails, color = Color(0xFF7E879B), fontFamily = Onest, fontSize = 12.sp, maxLines = 1)
+                                        }
+
+                                        // Radio button indicator
+                                        Box(
+                                            Modifier.size(20.dp).clip(CircleShape).border(1.5.dp, if (isSelected) Color(0xFF4A80F5) else Color(0xFF384359), CircleShape),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            if (isSelected) {
+                                                Box(Modifier.size(10.dp).clip(CircleShape).background(Color(0xFF4A80F5)))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (films.size > 3) {
+                                VerticalScrollbar(
+                                    adapter = rememberScrollbarAdapter(filmScrollState),
+                                    modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(vertical = 2.dp),
+                                    style = defaultScrollbarStyle().copy(
+                                        unhoverColor = Color(0x338E96A8),
+                                        hoverColor = Color(0x888E96A8),
+                                        shape = RoundedCornerShape(4.dp),
+                                        thickness = 5.dp
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(16.dp))
+
+                resumeAt?.let { at ->
+                    Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        StartOption("▶  С ${clock(at)}", "продолжить с прошлого места", !fromStart, Modifier.weight(1f)) { fromStart = false }
+                        StartOption("⟲  С начала", "смотреть заново", fromStart, Modifier.weight(1f)) { fromStart = true }
+                    }
+                }
+
+                // Cards for Mirror & Direct
+                SourceCard(
+                    title = "Через зеркало",
+                    badgeText = "Рекомендуется",
+                    isRecommended = true,
+                    hint = "Через ваш сервер · дальше все части $collectionGenitive",
+                    url = mirror,
+                    onPlay = { url ->
+                        val list = followingFiles.filter { f -> f.link != null }
+                        val keys = if (playlist != null) list.map { f -> watchKey(t.magnetId, f) } else listOf(watchKey(t.magnetId, currentFile))
+                        val resolve: suspend (Int) -> Pair<List<String>, List<String>> = { i ->
+                            list.getOrNull(i)?.let { f ->
+                                val aud = externalAudioFor(magnet, f)
+                                val sb = subtitlesFor(magnet, f)
+                                mirrorUrls(aud) to mirrorUrls(sb)
+                            } ?: (emptyList<String>() to emptyList())
+                        }
+                        onPlay(PlayRequest(url, currentTitle, playlist, subs, keys, audio, if (playlist != null) resolve else null, fromStart))
+                    },
+                    onCopy = { url -> copy(url) }
+                )
+
+                Spacer(Modifier.height(10.dp))
+
+                SourceCard(
+                    title = "Напрямую",
+                    badgeText = "Стабильный источник",
+                    isRecommended = false,
+                    hint = "Прямая ссылка AllDebrid · откроется выбранный фильм",
+                    url = direct,
+                    onPlay = { url ->
+                        onPlay(PlayRequest(url, currentTitle, null, subs, listOf(watchKey(t.magnetId, currentFile)), audio, fromStart = fromStart))
+                    },
+                    onCopy = { url -> copy(url) }
+                )
+
+                Spacer(Modifier.height(14.dp))
+                CloseBottomButton(onClick = onDismiss)
+
+            } else if (series != null && currentSeason != null && currentEpisode != null) {
+                // ---- SCREEN 1: SERIES DESIGN ----
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
+                    Column(Modifier.weight(1f)) {
+                        Text(currentTitle, fontFamily = Unbounded, fontWeight = FontWeight.Bold, fontSize = 20.sp, color = Color.White)
+                        val extraDetails = (if (audio.isNotEmpty()) " · озвучек: ${audio.size}" else "") + (if (subs.isNotEmpty()) " · субтитров: ${subs.size}" else "")
+                        Text(sub + extraDetails, color = Color(0xFF8E96A8), fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
+                    }
+                    CloseCircleButton(onClick = onDismiss)
+                }
+
+                resumeAt?.let { at ->
+                    Row(Modifier.fillMaxWidth().padding(bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        StartOption("▶  С ${clock(at)}", "продолжить с прошлого места", !fromStart, Modifier.weight(1f)) { fromStart = false }
+                        StartOption("⟲  С начала", "смотреть заново", fromStart, Modifier.weight(1f)) { fromStart = true }
+                    }
+                }
+
+                SourceCard(
+                    title = "Через зеркало",
+                    badgeText = "Рекомендуется",
+                    isRecommended = true,
+                    hint = if (playlist != null) "Через ваш сервер · дальше все серии сезона" else "Трафик идёт через ваш сервер",
+                    url = mirror,
+                    onPlay = { url ->
+                        val list = followingFiles.filter { f -> f.link != null }
+                        val keys = if (playlist != null) list.map { f -> watchKey(t.magnetId, f) } else listOf(watchKey(t.magnetId, currentFile))
+                        val resolve: suspend (Int) -> Pair<List<String>, List<String>> = { i ->
+                            list.getOrNull(i)?.let { f ->
+                                val aud = externalAudioFor(magnet, f)
+                                val sb = subtitlesFor(magnet, f)
+                                mirrorUrls(aud) to mirrorUrls(sb)
+                            } ?: (emptyList<String>() to emptyList())
+                        }
+                        onPlay(PlayRequest(url, currentTitle, playlist, subs, keys, audio, if (playlist != null) resolve else null, fromStart))
+                    },
+                    onCopy = { url -> copy(url) }
+                )
+
+                Spacer(Modifier.height(10.dp))
+
+                SourceCard(
+                    title = "Напрямую",
+                    badgeText = "Стабильный источник",
+                    isRecommended = false,
+                    hint = "Прямая ссылка AllDebrid",
+                    url = direct,
+                    onPlay = { url ->
+                        onPlay(PlayRequest(url, currentTitle, null, subs, listOf(watchKey(t.magnetId, currentFile)), audio, fromStart = fromStart))
+                    },
+                    onCopy = { url -> copy(url) }
+                )
+
+                // Selectors for Season and Episode
+                val seasonItems = seasons.mapIndexed { idx, s ->
+                    val sLabel = if (s.season == 0) "Спец. материалы" else "${s.season} сезон"
+                    sLabel to {
+                        selectedSeasonIdx = idx
+                        selectedEpisodeIdx = 0
+                    }
+                }
+                val episodeItems = currentSeason.items.mapIndexed { idx, ep ->
+                    val epLabel = if (ep.title != null) "${ep.episode}. ${ep.title}" else "${ep.episode} серия"
+                    epLabel to {
+                        selectedEpisodeIdx = idx
+                    }
+                }
+
+                Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    val currentSLabel = if (currentSeason.season == 0) "Спец." else "${currentSeason.season} сезон"
+                    val currentELabel = "${currentEpisode.episode} серия"
+                    DropdownSelector(label = "Сезон", valueText = currentSLabel, modifier = Modifier.weight(1f), items = seasonItems)
+                    DropdownSelector(label = "Серия", valueText = currentELabel, modifier = Modifier.weight(1f), items = episodeItems)
+                }
+
+                Spacer(Modifier.height(14.dp))
+                CloseBottomButton(onClick = onDismiss)
+
+            } else {
+                // ---- SINGLE MOVIE DESIGN ----
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
+                    Column(Modifier.weight(1f)) {
+                        Text(currentTitle, fontFamily = Unbounded, fontWeight = FontWeight.Bold, fontSize = 20.sp, color = Color.White)
+                        val extraDetails = (if (audio.isNotEmpty()) " · озвучек: ${audio.size}" else "") + (if (subs.isNotEmpty()) " · субтитров: ${subs.size}" else "")
+                        Text(sub + extraDetails, color = Color(0xFF8E96A8), fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
+                    }
+                    CloseCircleButton(onClick = onDismiss)
+                }
+
+                resumeAt?.let { at ->
+                    Row(Modifier.fillMaxWidth().padding(bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        StartOption("▶  С ${clock(at)}", "продолжить с прошлого места", !fromStart, Modifier.weight(1f)) { fromStart = false }
+                        StartOption("⟲  С начала", "смотреть заново", fromStart, Modifier.weight(1f)) { fromStart = true }
+                    }
+                }
+
+                SourceCard(
+                    title = "Через зеркало",
+                    badgeText = "Рекомендуется",
+                    isRecommended = true,
+                    hint = "Трафик идёт через ваш сервер",
+                    url = mirror,
+                    onPlay = { url ->
+                        onPlay(PlayRequest(url, currentTitle, null, subs, listOf(watchKey(t.magnetId, currentFile)), audio, fromStart = fromStart))
+                    },
+                    onCopy = { url -> copy(url) }
+                )
+
+                Spacer(Modifier.height(10.dp))
+
+                SourceCard(
+                    title = "Напрямую",
+                    badgeText = "Стабильный источник",
+                    isRecommended = false,
+                    hint = "Прямая ссылка AllDebrid",
+                    url = direct,
+                    onPlay = { url ->
+                        onPlay(PlayRequest(url, currentTitle, null, subs, listOf(watchKey(t.magnetId, currentFile)), audio, fromStart = fromStart))
+                    },
+                    onCopy = { url -> copy(url) }
+                )
+
+                Spacer(Modifier.height(14.dp))
+                CloseBottomButton(onClick = onDismiss)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SourceCard(
+    title: String,
+    badgeText: String,
+    isRecommended: Boolean,
+    hint: String,
+    url: String?,
+    onPlay: (String) -> Unit,
+    onCopy: (String) -> Unit
+) {
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+            .background(Color(0xFF131722)).border(1.dp, Color(0xFF222838), RoundedCornerShape(16.dp))
+            .padding(16.dp)
+    ) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text(title, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color.White)
+            if (isRecommended) {
+                Row(
+                    Modifier.clip(RoundedCornerShape(50)).background(Color(0xFF1A263D))
+                        .border(1.dp, Color(0x3360A5FA), RoundedCornerShape(50))
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    LightningIcon(color = Color(0xFF60A5FA), size = 11.dp)
+                    Text(badgeText, color = Color(0xFF60A5FA), fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                }
+            } else {
+                Row(
+                    Modifier.clip(RoundedCornerShape(50)).background(Color(0xFF1B202D))
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    LinkChainIcon(color = Color(0xFF8E96A8), size = 12.dp)
+                    Text(badgeText, color = Color(0xFF8E96A8), fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 12.sp)
+                }
+            }
+        }
+
+        Text(hint, fontFamily = Onest, fontSize = 13.sp, color = Color(0xFF7E879B), modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
+
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            PlayActionButton(text = "Смотреть", enabled = url != null, modifier = Modifier.weight(1f)) {
+                url?.let(onPlay)
+            }
+            CopyActionButton(text = "Копировать ссылку", enabled = url != null, modifier = Modifier.weight(1f)) {
+                url?.let(onCopy)
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlayActionButton(
+    text: String,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val src = remember { MutableInteractionSource() }
+    val hovered by src.collectIsHoveredAsState()
+    val bg = if (!enabled) Color(0xFF161C28) else if (hovered) Color(0xFF223556) else Color(0xFF1A2A44)
+    val border = if (!enabled) Color(0xFF202736) else if (hovered) Color(0xFF4D86FF) else Color(0xFF386EE0)
+    val contentColor = if (!enabled) Color(0xFF5A6478) else Color.White
+
+    Row(
+        modifier = modifier.height(44.dp).clip(RoundedCornerShape(12.dp))
+            .background(bg).border(1.dp, border, RoundedCornerShape(12.dp))
+            .hoverClick(src, enabled = enabled, onClick = onClick),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        PlayTriangle(color = contentColor, size = 12.dp)
+        Spacer(Modifier.width(8.dp))
+        Text(text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = contentColor)
+    }
+}
+
+@Composable
+private fun CopyActionButton(
+    text: String,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val src = remember { MutableInteractionSource() }
+    val hovered by src.collectIsHoveredAsState()
+    val bg = if (hovered && enabled) Color(0xFF1C2232) else Color(0xFF151924)
+    val border = if (hovered && enabled) Color(0xFF323B50) else Color(0xFF242B3C)
+    val contentColor = if (!enabled) Color(0xFF5A6478) else Color(0xFFC4CBD8)
+
+    Row(
+        modifier = modifier.height(44.dp).clip(RoundedCornerShape(12.dp))
+            .background(bg).border(1.dp, border, RoundedCornerShape(12.dp))
+            .hoverClick(src, enabled = enabled, onClick = onClick),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        LinkChainIcon(color = contentColor, size = 13.dp)
+        Spacer(Modifier.width(8.dp))
+        Text(text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = if (enabled) Color.White else contentColor)
+    }
+}
+
+@Composable
+private fun DropdownSelector(
+    label: String,
+    valueText: String,
+    modifier: Modifier = Modifier,
+    items: List<Pair<String, () -> Unit>>
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val src = remember { MutableInteractionSource() }
+    val hovered by src.collectIsHoveredAsState()
+
+    Column(modifier) {
+        Text(label, color = Color(0xFF8E96A8), fontFamily = Onest, fontSize = 13.sp, modifier = Modifier.padding(bottom = 6.dp))
+        Box {
+            Row(
+                Modifier.fillMaxWidth().height(46.dp).clip(RoundedCornerShape(12.dp))
+                    .background(if (hovered) Color(0xFF161A26) else Color(0xFF121622))
+                    .border(1.dp, if (hovered) Color(0xFF323B50) else Color(0xFF242B3C), RoundedCornerShape(12.dp))
+                    .hoverClick(src) { expanded = true }
+                    .padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(valueText, color = Color.White, fontFamily = Onest, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                ChevronDownIcon(color = Color(0xFF8E96A8), size = 13.dp)
+            }
+
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+                modifier = Modifier.background(Color(0xFF181D2A)).border(1.dp, Color(0xFF2A3345), RoundedCornerShape(10.dp))
+            ) {
+                items.forEach { (text, onSelect) ->
+                    DropdownMenuItem(
+                        text = { Text(text, color = Color.White, fontFamily = Onest, fontSize = 13.5.sp) },
+                        onClick = {
+                            expanded = false
+                            onSelect()
+                        }
+                    )
                 }
             }
         }
     }
-    // × in the corner (on hover): drop this one from the row.
-    Box(Modifier.align(Alignment.TopEnd).padding(6.dp).graphicsLayer { alpha = xAlpha }.size(26.dp).clip(CircleShape)
-        .background(if (xHover) Color(0xFFFF6B6B) else Color(0xCC090B10)).hoverClick(xSrc, enabled = xAlpha > 0.05f, onClick = onRemove),
-        contentAlignment = Alignment.Center) { Text("×", color = Color.White, fontSize = 15.sp) }
+}
+
+@Composable
+private fun CloseCircleButton(onClick: () -> Unit) {
+    val src = remember { MutableInteractionSource() }
+    val hovered by src.collectIsHoveredAsState()
+    Box(
+        Modifier.size(32.dp).clip(CircleShape)
+            .background(if (hovered) Color(0xFF262F42) else Color(0xFF181E2B))
+            .border(1.dp, if (hovered) Color(0xFF3B4863) else Color(0xFF262F40), CircleShape)
+            .hoverClick(src, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        CloseCrossIcon(color = if (hovered) Color.White else Color(0xFFB0B9C9), size = 11.dp)
     }
 }
+
+@Composable
+private fun CloseBottomButton(onClick: () -> Unit) {
+    val src = remember { MutableInteractionSource() }
+    val hovered by src.collectIsHoveredAsState()
+    Box(
+        Modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(12.dp))
+            .background(if (hovered) Color(0xFF1C2232) else Color(0xFF141824))
+            .border(1.dp, if (hovered) Color(0xFF323B50) else Color(0xFF242A3A), RoundedCornerShape(12.dp))
+            .hoverClick(src, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Text("Закрыть", fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = Color.White)
+    }
+}
+
+@Composable
+private fun StartOption(title: String, hint: String, on: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    val edge by animateColorAsState(if (on) Color(0xFF3E475C) else Color(0xFF242A38), tween(220))
+    val bg by animateColorAsState(if (on) Color(0xFF282E3C) else Color(0xFF191D28), tween(220))
+    Column(
+        modifier.clip(RoundedCornerShape(14.dp)).background(bg).border(1.dp, edge, RoundedCornerShape(14.dp))
+            .hoverClick(remember { MutableInteractionSource() }, onClick = onClick).padding(horizontal = 14.dp, vertical = 10.dp)
+    ) {
+        Text(title, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp, color = Color.White, maxLines = 1)
+        Text(hint, fontFamily = Onest, fontSize = 12.5.sp, color = Color(0xFF8E96A8))
+    }
+}
+

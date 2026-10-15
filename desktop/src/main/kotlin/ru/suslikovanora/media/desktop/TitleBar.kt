@@ -49,4 +49,15 @@ object TitleBar {
             set(33, 1)                // DWMWA_WINDOW_CORNER_PREFERENCE = DWMWCP_DONOTROUND (rectangular)
         }
     }
+
+    fun setMiniDwm(window: Window) {
+        val api = dwm ?: return
+        runCatching {
+            val hwnd = Native.getWindowPointer(window) ?: return
+            fun set(attr: Int, v: Int) = api.DwmSetWindowAttribute(hwnd, attr, IntByReference(v), 4)
+            set(20, 1)                // DWMWA_USE_IMMERSIVE_DARK_MODE
+            set(34, ref(0x283042))    // DWMWA_BORDER_COLOR = subtle border (Sm.line)
+            set(33, 2)                // DWMWA_WINDOW_CORNER_PREFERENCE = DWMWCP_ROUND
+        }
+    }
 }

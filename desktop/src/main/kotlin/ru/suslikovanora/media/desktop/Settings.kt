@@ -5,6 +5,7 @@ import ru.suslikovanora.media.desktop.ui.*
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -36,6 +37,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -184,7 +191,7 @@ private fun ChannelSection() {
     Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(state ?: "Установлена версия ${Updater.current}.", color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp,
             lineHeight = 17.sp, modifier = Modifier.weight(1f))
-        Text("Проверить", color = Sm.lamp, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.sp,
+        Text("Проверить", color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.sp,
             modifier = Modifier.padding(start = 10.dp).clip(RoundedCornerShape(8.dp))
                 .hoverClick(remember { MutableInteractionSource() }) { checkUpdates() }.padding(horizontal = 8.dp, vertical = 6.dp))
     }
@@ -192,14 +199,35 @@ private fun ChannelSection() {
 
 @Composable
 private fun ChannelOption(title: String, on: Boolean, modifier: Modifier, onClick: () -> Unit) {
-    val edge by animateColorAsState(if (on) Sm.lamp else Sm.line, tween(220), label = "edge")
-    val bg by animateColorAsState(if (on) androidx.compose.ui.graphics.Color(0x24FFB02E) else Sm.film, tween(220), label = "bg")
+    val edge by animateColorAsState(if (on) Color.White.copy(alpha = 0.85f) else Sm.line, tween(220), label = "edge")
+    val bg by animateColorAsState(if (on) Color(0xFF1E2332) else Sm.film, tween(220), label = "bg")
+    val glowAlpha by animateFloatAsState(if (on) 0.35f else 0f, tween(220), label = "glow")
     Box(
-        modifier.clip(RoundedCornerShape(14.dp)).background(bg).border(1.dp, edge, RoundedCornerShape(14.dp))
+        modifier
+            .drawBehind {
+                if (glowAlpha > 0.001f) {
+                    val pad = 3.dp.toPx()
+                    drawRoundRect(
+                        brush = Brush.radialGradient(
+                            colorStops = arrayOf(
+                                0.0f to Color.White.copy(alpha = glowAlpha * 0.16f),
+                                0.5f to Color.White.copy(alpha = glowAlpha * 0.05f),
+                                1.0f to Color.Transparent
+                            ),
+                            center = center,
+                            radius = size.maxDimension * 0.65f
+                        ),
+                        topLeft = Offset(-pad, -pad),
+                        size = Size(size.width + pad * 2, size.height + pad * 2),
+                        cornerRadius = CornerRadius(16.dp.toPx(), 16.dp.toPx())
+                    )
+                }
+            }
+            .clip(RoundedCornerShape(14.dp)).background(bg).border(1.dp, edge, RoundedCornerShape(14.dp))
             .hoverClick(remember { MutableInteractionSource() }, onClick = onClick).padding(vertical = 11.dp),
         contentAlignment = Alignment.Center
     ) {
-        Text(title, color = if (on) Sm.lamp else Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp)
+        Text(title, color = if (on) Color.White else Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp)
     }
 }
 
@@ -257,20 +285,57 @@ private fun Section(title: String, text: String, top: androidx.compose.ui.unit.D
 
 @Composable
 private fun PresetRow(p: PlaybackPresets.Preset, on: Boolean, onClick: () -> Unit) {
-    val edge by animateColorAsState(if (on) Sm.lamp else Sm.line, tween(220), label = "edge")
-    val bg by animateColorAsState(if (on) androidx.compose.ui.graphics.Color(0x24FFB02E) else Sm.film, tween(220), label = "bg")
+    val edge by animateColorAsState(if (on) Color.White.copy(alpha = 0.85f) else Sm.line, tween(220), label = "edge")
+    val bg by animateColorAsState(if (on) Color(0xFF1E2332) else Sm.film, tween(220), label = "bg")
+    val glowAlpha by animateFloatAsState(if (on) 0.35f else 0f, tween(220), label = "glow")
     Row(
-        Modifier.fillMaxWidth().padding(vertical = 3.dp).clip(RoundedCornerShape(14.dp)).background(bg)
+        Modifier.fillMaxWidth().padding(vertical = 3.dp)
+            .drawBehind {
+                if (glowAlpha > 0.001f) {
+                    val pad = 3.dp.toPx()
+                    drawRoundRect(
+                        brush = Brush.radialGradient(
+                            colorStops = arrayOf(
+                                0.0f to Color.White.copy(alpha = glowAlpha * 0.16f),
+                                0.5f to Color.White.copy(alpha = glowAlpha * 0.05f),
+                                1.0f to Color.Transparent
+                            ),
+                            center = center,
+                            radius = size.maxDimension * 0.65f
+                        ),
+                        topLeft = Offset(-pad, -pad),
+                        size = Size(size.width + pad * 2, size.height + pad * 2),
+                        cornerRadius = CornerRadius(16.dp.toPx(), 16.dp.toPx())
+                    )
+                }
+            }
+            .clip(RoundedCornerShape(14.dp)).background(bg)
             .border(1.dp, edge, RoundedCornerShape(14.dp))
             .hoverClick(remember { MutableInteractionSource() }, onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(Modifier.size(18.dp).clip(CircleShape).border(2.dp, if (on) Sm.lamp else Sm.line2, CircleShape), contentAlignment = Alignment.Center) {
-            if (on) Box(Modifier.size(8.dp).clip(CircleShape).background(Sm.lamp))
+        Box(
+            Modifier.size(18.dp)
+                .drawBehind {
+                    if (on) {
+                        drawCircle(
+                            brush = Brush.radialGradient(
+                                listOf(Color.White.copy(alpha = 0.35f), Color.Transparent),
+                                center = center,
+                                radius = 12.dp.toPx()
+                            ),
+                            radius = 12.dp.toPx()
+                        )
+                    }
+                }
+                .clip(CircleShape).border(2.dp, if (on) Color.White else Sm.line2, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            if (on) Box(Modifier.size(8.dp).clip(CircleShape).background(Color.White))
         }
         Column(Modifier.padding(start = 12.dp)) {
-            Text(p.title, color = if (on) Sm.lamp else Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+            Text(p.title, color = if (on) Color.White else Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
             Text(p.hint, color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, lineHeight = 17.sp)
         }
     }

@@ -207,6 +207,16 @@ fun PlayerView(
     }
 
     val beforeMini = remember { arrayOfNulls<Any>(4) }
+    var videoAspect by remember { mutableStateOf(16.0 / 9.0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            vlc {
+                val d = mp.video().videoDimension()
+                if (d != null && d.width > 0 && d.height > 0) videoAspect = d.width.toDouble() / d.height
+            }
+            delay(1500)
+        }
+    }
     fun seriesKey() = title.substringBefore(" · ").lowercase()
     fun prefLanguage(kind: String): String? =
         (ui.get("$kind:${seriesKey()}") ?: ui.get("$kind:*"))?.let { Regex("""\[([^\]]+)]""").find(it)?.groupValues?.get(1) }
@@ -239,7 +249,7 @@ fun PlayerView(
     }
 
     fun syncOverlayBounds() {
-        if (parked || owner?.isShowing != true) return
+        if (parked || WindowMode.miniAnimating || owner?.isShowing != true) return
         // Берем экранные координаты напрямую у canvas (если он показан), иначе у окна
         val target = if (canvas.isShowing && canvas.width > 0 && canvas.height > 0) {
             canvas
@@ -251,6 +261,16 @@ fun PlayerView(
         val w = target.width
         val h = target.height
         if (w <= 0 || h <= 0) return
+
+        if (mini) {
+            topDialog?.isVisible = false
+            val fullRect = java.awt.Rectangle(loc.x, loc.y, w, h)
+            bottomDialog?.takeIf { it.bounds != fullRect }?.let { it.bounds = fullRect; it.revalidate() }
+            val d = bottomDialog ?: return
+            val key = Triple(w, h, h)
+            if (d.isDisplayable && key != lastClip) { lastClip = key; WindowMode.clipToBottom(d, h) }
+            return
+        }
 
         val topH = 75
         val bottomH = 460.coerceAtMost(h - topH)
@@ -524,24 +544,37 @@ fun PlayerView(
     }
 
     fun setMini(on: Boolean) {
-        if (on == mini) return
+        if (on == mini || WindowMode.miniAnimating) return
+        val target = owner ?: javax.swing.SwingUtilities.getWindowAncestor(canvas) ?: return
         if (on) {
-            if (WindowMode.isFullscreen) WindowMode.setFullscreen(owner, false)
-            beforeMini[0] = win.size; beforeMini[1] = win.position; beforeMini[2] = win.placement; beforeMini[3] = onTop.value
-            javax.swing.SwingUtilities.getWindowAncestor(canvas)?.minimumSize = java.awt.Dimension(400, 280)
-            val b = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().maximumWindowBounds
-            win.placement = WindowPlacement.Floating
-            win.size = androidx.compose.ui.unit.DpSize(560.dp, 390.dp)
-            win.position = androidx.compose.ui.window.WindowPosition((b.x + b.width - 580).dp, (b.y + b.height - 410).dp)
-            onTop.value = true
+            beforeMini[3] = onTop.value
+            target.minimumSize = java.awt.Dimension(200, 150)
+            // Размер как у картинки ~590×330 (16:9) по площади, но под формат фильма (ширина 400–620 dp);
+            // формат берём из кэша — VLC нельзя дёргать из потока интерфейса
+            val aspect = videoAspect.coerceIn(1.2, 2.4)
+            val mw = Math.sqrt(590.0 * 330.0 * aspect).toInt().coerceIn(400, 620)
+            val mh = (mw / aspect).toInt()
+            // Оверлеи прячем на время «уезда»: иначе каждый кадр анимации пересчитывает их границы
+            topDialog?.isVisible = false
+            bottomDialog?.isVisible = false
+            WindowMode.setMiniMode(target, true, mw, mh) {
+                // Тяжёлая перестройка интерфейса под мини-режим — только после полёта окна
+                mini = true
+                // Compose-флаг «поверх всех» включаем только после полёта, чтобы он не сбил анимацию
+                onTop.value = true
+                lastClip = null
+                syncOverlayBounds()
+                bottomDialog?.isVisible = !closing
+            }
         } else {
-            (beforeMini[2] as? WindowPlacement)?.let { win.placement = it }
-            (beforeMini[0] as? androidx.compose.ui.unit.DpSize)?.let { win.size = it }
-            (beforeMini[1] as? androidx.compose.ui.window.WindowPosition)?.let { win.position = it }
+            mini = false
+            WindowMode.setMiniMode(target, false)
             onTop.value = beforeMini[3] as? Boolean ?: false
-            javax.swing.SwingUtilities.getWindowAncestor(canvas)?.minimumSize = java.awt.Dimension(MIN_W, MIN_H)
+            target.minimumSize = java.awt.Dimension(MIN_W, MIN_H)
+            lastClip = null
+            syncOverlayBounds()
         }
-        mini = on
+        javax.swing.SwingUtilities.invokeLater { syncOverlayBounds() }
     }
 
     fun shiftAudio(ms: Long) {
@@ -563,6 +596,10 @@ fun PlayerView(
     }
 
     fun toggleFullscreen() {
+        if (mini) {
+            setMini(false)
+            return
+        }
         WindowMode.toggleFullscreen(owner)
         syncOverlayBounds()
         javax.swing.SwingUtilities.invokeLater { syncOverlayBounds() }
@@ -992,8 +1029,8 @@ fun PlayerView(
     val blankCursor = remember {
         java.awt.Toolkit.getDefaultToolkit().createCustomCursor(java.awt.image.BufferedImage(1, 1, java.awt.image.BufferedImage.TYPE_INT_ARGB), java.awt.Point(0, 0), "blank")
     }
-    LaunchedEffect(barVisible) {
-        val targetCursor = if (barVisible) java.awt.Cursor.getDefaultCursor() else blankCursor
+    LaunchedEffect(barVisible, mini) {
+        val targetCursor = if (mini || barVisible) java.awt.Cursor.getDefaultCursor() else blankCursor
         canvas.cursor = targetCursor
         owner?.cursor = targetCursor
     }
@@ -1038,17 +1075,99 @@ fun PlayerView(
         }
     }
 
+    var dragStartMouseX = 0
+    var dragStartMouseY = 0
+    var dragStartWinX = 0
+    var dragStartWinY = 0
+
+    val onWindowDragStart: () -> Unit = {
+        val p = java.awt.MouseInfo.getPointerInfo()?.location
+        if (p != null && owner != null) {
+            dragStartMouseX = p.x
+            dragStartMouseY = p.y
+            dragStartWinX = owner.x
+            dragStartWinY = owner.y
+        }
+    }
+
+    val onWindowDragMove: () -> Unit = {
+        val p = java.awt.MouseInfo.getPointerInfo()?.location
+        if (p != null && owner != null) {
+            val dx = p.x - dragStartMouseX
+            val dy = p.y - dragStartMouseY
+            val nx = dragStartWinX + dx
+            val ny = dragStartWinY + dy
+            owner.setLocation(nx, ny)
+            bottomDialog?.setLocation(nx, ny)
+        }
+    }
+
+    val onWindowDragEnd: () -> Unit = {
+        syncOverlayBounds()
+    }
+
+    // Window dragging in mini-mode
+    DisposableEffect(owner, bottomDialog, mini) {
+        if (!mini || owner == null) return@DisposableEffect onDispose {}
+        var startX = 0
+        var startY = 0
+        var isMouseDragging = false
+        val dragListener = object : java.awt.event.MouseAdapter() {
+            override fun mousePressed(e: java.awt.event.MouseEvent) {
+                if (e.button == java.awt.event.MouseEvent.BUTTON1) {
+                    startX = e.xOnScreen - owner.x
+                    startY = e.yOnScreen - owner.y
+                    isMouseDragging = true
+                }
+            }
+            override fun mouseDragged(e: java.awt.event.MouseEvent) {
+                if (isMouseDragging && (e.modifiersEx and java.awt.event.MouseEvent.BUTTON1_DOWN_MASK) != 0) {
+                    val nx = e.xOnScreen - startX
+                    val ny = e.yOnScreen - startY
+                    owner.setLocation(nx, ny)
+                    bottomDialog?.setLocation(nx, ny)
+                }
+            }
+            override fun mouseReleased(e: java.awt.event.MouseEvent) {
+                if (isMouseDragging) {
+                    isMouseDragging = false
+                    syncOverlayBounds()
+                }
+            }
+        }
+        owner.addMouseListener(dragListener)
+        owner.addMouseMotionListener(dragListener)
+        bottomDialog?.addMouseListener(dragListener)
+        bottomDialog?.addMouseMotionListener(dragListener)
+        onDispose {
+            owner.removeMouseListener(dragListener)
+            owner.removeMouseMotionListener(dragListener)
+            bottomDialog?.removeMouseListener(dragListener)
+            bottomDialog?.removeMouseMotionListener(dragListener)
+        }
+    }
+
     fun revealOverlays() {
         var changed = false
-        if (topDialog?.isVisible == false) { topDialog.isVisible = true; changed = true }
+        if (topDialog?.isVisible == false && !mini) { topDialog.isVisible = true; changed = true }
         if (bottomDialog?.isVisible == false) { bottomDialog.isVisible = true; changed = true }
         if (changed) { lastClip = null; syncOverlayBounds(); WindowMode.restoreComposeFocus(owner) }
     }
 
-    LaunchedEffect(barVisible, closing) {
+    LaunchedEffect(barVisible, closing, mini) {
         if (closing) {
             topDialog?.isVisible = false
             bottomDialog?.isVisible = false
+            return@LaunchedEffect
+        }
+        if (mini) {
+            topDialog?.isVisible = false
+            bottomDialog?.isVisible = !WindowMode.miniAnimating
+            if (barVisible) {
+                barSlide.animateTo(0f, tween(280, easing = Sm.ease))
+            } else {
+                barSlide.animateTo(1f, tween(260, easing = Sm.ease))
+            }
             return@LaunchedEffect
         }
         if (barVisible) {
@@ -1124,7 +1243,11 @@ fun PlayerView(
                                 val now = System.currentTimeMillis()
                                 if (now - lastClickTime < 300L) {
                                     singleClickTimer.stop()
-                                    toggleFullscreen()
+                                    if (mini) {
+                                        setMini(false)
+                                    } else {
+                                        toggleFullscreen()
+                                    }
                                     lastClickTime = 0L
                                 } else {
                                     singleClickTimer.restart()
@@ -1276,6 +1399,10 @@ fun PlayerView(
                     onMoreChapter = { i -> jumpChapter(i - chapterAt(time)) },
                     onCancelNextIn = { nextIn = -1 },
                     onMiniToggle = { setMini(false) },
+                    onClose = { close() },
+                    onWindowDragStart = onWindowDragStart,
+                    onWindowDragMove = onWindowDragMove,
+                    onWindowDragEnd = onWindowDragEnd,
                     onVolumeWheel = { delta ->
                         val step = if (delta < 0) 5 else -5
                         volume = (volume + step).coerceIn(0, 150)

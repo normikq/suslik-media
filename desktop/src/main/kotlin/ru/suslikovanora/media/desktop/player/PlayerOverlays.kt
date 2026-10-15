@@ -44,6 +44,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerButton
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
@@ -55,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ru.suslikovanora.media.desktop.ui.Onest
 import ru.suslikovanora.media.desktop.ui.Sm
+import ru.suslikovanora.media.desktop.ui.CloseCrossIcon
 
 @Composable
 fun PlayerTopBar(
@@ -125,7 +127,7 @@ fun PlayerTopBar(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun PlayerBottomBar(
     title: String,
@@ -183,6 +185,10 @@ fun PlayerBottomBar(
     onMoreChapter: (Int) -> Unit,
     onCancelNextIn: () -> Unit,
     onMiniToggle: () -> Unit,
+    onClose: () -> Unit = {},
+    onWindowDragStart: () -> Unit = {},
+    onWindowDragMove: () -> Unit = {},
+    onWindowDragEnd: () -> Unit = {},
     onVolumeWheel: (Float) -> Unit
 ) {
     val controlsAlpha = if (closing) 0f else (1f - barSlide).coerceIn(0f, 1f)
@@ -215,24 +221,77 @@ fun PlayerBottomBar(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .graphicsLayer {
-                    translationY = barSlide * 300.dp.toPx()
-                    alpha = controlsAlpha
-                }
+                .then(
+                    if (!mini) {
+                        Modifier.graphicsLayer {
+                            translationY = barSlide * 300.dp.toPx()
+                            alpha = controlsAlpha
+                        }
+                    } else Modifier
+                )
                 .pointerHoverIcon(PointerIcon.Default)
-                .pointerInput(Unit) {
+                .pointerInput(mini) {
                     awaitPointerEventScope {
+                        var isDragging = false
+                        var startPressTime = 0L
+                        var lastTapTime = 0L
+                        var startX = 0f
+                        var startY = 0f
                         while (true) {
                             val e = awaitPointerEvent()
-                            if (e.type == PointerEventType.Press) {
-                                onPoke()
-                                if (picker != null) {
-                                    onClosePicker()
+                            when (e.type) {
+                                PointerEventType.Press -> {
+                                    onPoke()
+                                    if (picker != null) {
+                                        onClosePicker()
+                                    }
+                                    if (mini && e.button == PointerButton.Primary) {
+                                        val change = e.changes.firstOrNull()
+                                        if (change != null && !change.isConsumed) {
+                                            startPressTime = System.currentTimeMillis()
+                                            startX = change.position.x
+                                            startY = change.position.y
+                                            isDragging = false
+                                            onWindowDragStart()
+                                        }
+                                    }
                                 }
-                            } else if (e.type == PointerEventType.Scroll) {
-                                val delta = e.changes.firstOrNull()?.scrollDelta?.y ?: 0f
-                                if (delta != 0f) {
-                                    onVolumeWheel(delta)
+                                PointerEventType.Move -> {
+                                    if (mini && startPressTime > 0L) {
+                                        val change = e.changes.firstOrNull()
+                                        if (change != null) {
+                                            val dist = kotlin.math.hypot(change.position.x - startX, change.position.y - startY)
+                                            if (dist > 4f) {
+                                                isDragging = true
+                                                onWindowDragMove()
+                                            }
+                                        }
+                                    }
+                                }
+                                PointerEventType.Release -> {
+                                    if (mini && startPressTime > 0L) {
+                                        val pressDuration = System.currentTimeMillis() - startPressTime
+                                        startPressTime = 0L
+                                        if (isDragging) {
+                                            isDragging = false
+                                            onWindowDragEnd()
+                                        } else if (pressDuration < 300L) {
+                                            val now = System.currentTimeMillis()
+                                            if (now - lastTapTime < 300L) {
+                                                lastTapTime = 0L
+                                                onMiniToggle()
+                                            } else {
+                                                lastTapTime = now
+                                                onTogglePause()
+                                            }
+                                        }
+                                    }
+                                }
+                                PointerEventType.Scroll -> {
+                                    val delta = e.changes.firstOrNull()?.scrollDelta?.y ?: 0f
+                                    if (delta != 0f) {
+                                        onVolumeWheel(delta)
+                                    }
                                 }
                             }
                         }
@@ -242,8 +301,16 @@ fun PlayerBottomBar(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(200.dp)
+                    .height(if (mini) 100.dp else 200.dp)
                     .align(Alignment.BottomCenter)
+                    .then(
+                        if (mini) {
+                            Modifier.graphicsLayer {
+                                translationY = barSlide * 110.dp.toPx()
+                                alpha = controlsAlpha
+                            }
+                        } else Modifier
+                    )
                     .background(
                         Brush.verticalGradient(
                             listOf(
@@ -260,6 +327,14 @@ fun PlayerBottomBar(
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.BottomCenter)
+                    .then(
+                        if (mini) {
+                            Modifier.graphicsLayer {
+                                translationY = barSlide * 110.dp.toPx()
+                                alpha = controlsAlpha
+                            }
+                        } else Modifier
+                    )
                     .padding(start = if (isVeryNarrow) 12.dp else 24.dp, end = if (isVeryNarrow) 12.dp else 24.dp, bottom = 14.dp),
                 verticalArrangement = Arrangement.Bottom
             ) {
@@ -598,6 +673,9 @@ fun PlayerBottomBar(
                     )
                     GlassIconButton(onClick = onMiniToggle, tooltip = "Обычный режим (O)") {
                         Text("⤢", color = Sm.text, fontSize = 16.sp)
+                    }
+                    GlassIconButton(onClick = onClose, tooltip = "Закрыть (Esc)") {
+                        CloseCrossIcon(color = Sm.text, size = 11.dp)
                     }
                 }
             } else {

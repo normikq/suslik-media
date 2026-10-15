@@ -60,23 +60,23 @@ enum class Tab(val label: String) { Library("Библиотека"), Search("П�
 @Composable
 fun NavTabs(current: Tab, lens: Float, onSelect: (Tab) -> Unit) {
     BoxWithConstraints(
-        Modifier.width(480.dp).clip(RoundedCornerShape(22.dp)).background(Sm.booth)
-            .border(1.dp, Sm.line, RoundedCornerShape(22.dp)).padding(4.dp).height(36.dp)
+        Modifier.width(460.dp).clip(RoundedCornerShape(20.dp)).background(Color(0xFF141720))
+            .border(1.dp, Color(0xFF242A38), RoundedCornerShape(20.dp)).padding(3.dp).height(38.dp)
     ) {
         val w = maxWidth / Tab.entries.size
-        Box(Modifier.offset(x = w * lens).width(w).fillMaxHeight().clip(RoundedCornerShape(18.dp)).background(Sm.lamp))
+        Box(Modifier.offset(x = w * lens).width(w).fillMaxHeight().clip(RoundedCornerShape(16.dp)).background(Color(0xFF282E3C)))
         Row(Modifier.fillMaxSize()) {
             for (t in Tab.entries) {
                 val src = remember { MutableInteractionSource() }
                 val hovered by src.collectIsHoveredAsState()
                 val near = kotlin.math.abs(lens - t.ordinal) < 0.5f
-                val fg by animateColorAsState(when { near -> Sm.lampInk; hovered -> Sm.text; else -> Sm.muted }, tween(220))
-                val hoverBg by animateColorAsState(if (hovered && !near) Color(0x14FFFFFF) else Color.Transparent, tween(220))
+                val fg by animateColorAsState(when { near -> Color.White; hovered -> Color(0xFFD6DBE4); else -> Color(0xFF8E96A8) }, tween(220))
+                val hoverBg by animateColorAsState(if (hovered && !near) Color(0x0EFFFFFF) else Color.Transparent, tween(220))
                 Box(
-                    Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(18.dp)).background(hoverBg)
+                    Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(16.dp)).background(hoverBg)
                         .hoverClick(src, enabled = t != current) { onSelect(t) },
                     contentAlignment = Alignment.Center
-                ) { Text(t.label, color = fg, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.sp) }
+                ) { Text(t.label, color = fg, fontFamily = Onest, fontWeight = if (near) FontWeight.SemiBold else FontWeight.Medium, fontSize = 13.sp) }
             }
         }
     }
@@ -197,19 +197,19 @@ fun SearchView(lib: Library, header: @Composable () -> Unit) {
             val rowSrc = remember { MutableInteractionSource() }
             val rowHover by rowSrc.collectIsHoveredAsState()
             val rowBg by animateColorAsState(if (rowHover) Color(0xFF171B25) else Sm.booth, tween(200))
-            val rowEdge by animateColorAsState(if (rowHover) Color(0x55FFB02E) else Color.Transparent, tween(200))
+            val rowEdge by animateColorAsState(if (rowHover) Color(0xFF3E475C) else Color.Transparent, tween(200))
             Row(Modifier.fillMaxWidth().padding(vertical = 2.dp).hoverable(rowSrc).clip(RoundedCornerShape(12.dp)).background(rowBg)
                 .border(1.dp, rowEdge, RoundedCornerShape(12.dp)).padding(14.dp),
                 verticalAlignment = Alignment.CenterVertically) {
-                if (h.ru) Box(Modifier.width(3.dp).height(44.dp).clip(RoundedCornerShape(3.dp)).background(Sm.lamp))
+                if (h.ru) Box(Modifier.width(3.dp).height(44.dp).clip(RoundedCornerShape(3.dp)).background(Color(0xFF3E475C)))
                 Column(Modifier.weight(1f).padding(start = if (h.ru) 12.dp else 0.dp)) {
                     Text(h.title, color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp)
                     Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         if (h.size > 0) Text(formatBytes(h.size), color = Sm.muted, fontFamily = Onest, fontSize = 13.sp)
                         Text("↑ ${h.seeders}", color = if (h.seeders > 0) Sm.ok else Sm.muted, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                         Text("↓ ${h.leechers}", color = Sm.muted, fontFamily = Onest, fontSize = 13.sp)
-                        if (h.ru) Text("RU", color = Sm.lamp, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = 11.sp,
-                            modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0x24FFB02E)).padding(horizontal = 6.dp, vertical = 1.dp))
+                        if (h.ru) Text("RU", color = Color.White, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = 11.sp,
+                            modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0xFF282E3C)).border(1.dp, Color(0xFF3A4356), RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 1.dp))
                         when (h.kind) { "series" -> "сериал"; "movie" -> "фильм"; else -> null }?.let { Text(it, color = Sm.muted, fontFamily = Onest, fontSize = 13.sp) }
                         Text(h.source, color = Sm.muted, fontFamily = Onest, fontSize = 13.sp)
                         if (h.date.isNotBlank()) Text(h.date, color = Sm.muted, fontFamily = Onest, fontSize = 13.sp)
