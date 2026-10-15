@@ -1,6 +1,7 @@
 package ru.suslikovanora.media.desktop
 
 import ru.suslikovanora.media.core.*
+import ru.suslikovanora.media.desktop.player.Vlc
 
 import com.sun.jna.Library
 import com.sun.jna.Native

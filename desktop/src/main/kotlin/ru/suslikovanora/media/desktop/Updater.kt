@@ -1,6 +1,7 @@
 package ru.suslikovanora.media.desktop
 
 import ru.suslikovanora.media.core.*
+import ru.suslikovanora.media.desktop.ui.*
 
 import androidx.compose.foundation.background
 import androidx.compose.animation.core.animateFloat

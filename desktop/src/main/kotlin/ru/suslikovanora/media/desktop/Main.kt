@@ -1,6 +1,8 @@
 package ru.suslikovanora.media.desktop
 
 import ru.suslikovanora.media.core.*
+import ru.suslikovanora.media.desktop.player.*
+import ru.suslikovanora.media.desktop.ui.*
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade

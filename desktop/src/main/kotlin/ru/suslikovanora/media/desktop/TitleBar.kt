@@ -1,6 +1,7 @@
 package ru.suslikovanora.media.desktop
 
 import ru.suslikovanora.media.core.*
+import ru.suslikovanora.media.desktop.ui.Sm
 
 import com.sun.jna.Library
 import com.sun.jna.Native

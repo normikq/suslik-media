@@ -9,7 +9,7 @@
 |---|---|
 | `website/` | Node/Express, API и зеркало файлов `/api/file/proxy/<имя>?link=…&exp=…&sig=…` (HTTP/1.1, nginx без http2) |
 | `android/` | Kotlin, Compose, libVLC 3.6. `PlayerActivity.kt` (~2100 строк), `net/Api.kt`, `Diag.kt`, `AppLog.kt` |
-| `desktop/` | Compose Desktop, vlcj. Запас: `desktop/.../Reserve.kt` |
+| `desktop/` | Compose Desktop, vlcj. Модули: `player/` (плеер и оверлеи), `ui/` (токены и компоненты). Запас: `desktop/.../Reserve.kt` |
 | `shared/` | Общий модуль: `BurstProxy`, `PlaybackSupervisor`, `Versions`, `Changelog`, `Model`, `PlaybackPresets` |
 
 Ядро — `shared/.../core/BurstProxy.kt`: локальный прокси 127.0.0.1 с окнами-запасом в кольцевых файлах.
@@ -102,7 +102,10 @@ VC-1 на Samsung даёт чёрный экран → файл переоткр
   - При нехватке места ($< 880\,\text{dp}$): автоматическое переключение громкости в режим вертикального всплывающего регулятора (`VerticalVolumeSlider` над компактной иконкой звука) с поддержкой drag-жестов и кликов.
   - При сильном сжатии ($< 680\,\text{dp}$): пропорциональное уменьшение кнопок до 34dp (Hero — 40dp), сокращение отступов и скрытие второстепенного текста скорости.
   - Верхняя панель: заголовок фильма плавно обрезается многоточием (`TextOverflow.Ellipsis`), кнопка закрытия `✕` и открепления окна `⧉` всегда остаются на экране.
-- Атомарное автоскрытие за 2.5 с: панели гарантированно уезжают за экран (`translationY = -90dp` / `300dp`) с затуханием, окна скрываются (`isVisible = false`), а системный курсор мыши прячется (`blankCursor`). Мгновенное появление при малейшем движении мыши.
+- Модульная архитектура десктопа: монолитный `Player.kt` (2600+ строк) и `Ui.kt` декомпозированы в пакеты `ru.suslikovanora.media.desktop.player` (`PlayerView`, `PlayerOverlays`, `PlayerControls`, `PlayerIcons`, `PlayerMorePanel`, `PlayerPlaylist`, `PlayerStats`, `VlcEngine`, `PlayRequest`) и `ru.suslikovanora.media.desktop.ui` (`Theme`, `Controls`) по стандарту Android-модуля.
+- Чисто векторная монохромная дизайн-система иконок (100% Vector Canvas): полный отказ от системных Unicode-глифов и эмодзи (`AudioTrackIcon`, `SubtitlesBadgeIcon`, `SettingsGearIcon`, `VolumeSpeakerIcon`, `FullscreenToggleIcon`, `NextEpisodeIcon`). Устранены артефакты шрифтов платформы (синие волны громкости от Segoe UI Emoji, фиолетовый оттенок шестеренки, искажение пропорций бейджа CC).
+- Люминесцентное радиальное свечение (Luminous Radial Glow): мягкий рассеянный белый ореол градиентом (`Brush.radialGradient`, $R \approx 0.72 \times \text{size}$) для состояний Hover ($\alpha = 0.30$), Active ($\alpha = 0.42$) и Pressed ($\alpha = 0.48$) в `GlassIconButton` и `VolumeGlassCapsule` вместо плоских серых кругов.
+- Монохромный таймлайн и люминесцентный таймкод: устранён паразитный янтарно-желтый цвет `Sm.lamp` при перемотке и наведении на таймлайн — время всегда отображается чистым белым (`Color.White`) с мягким световым ореолом, а активная точка `SeekBar` (thumb) получила белое радиальное свечение и светящуюся превью-метку при наведении.
 
 ## Открытое
 
