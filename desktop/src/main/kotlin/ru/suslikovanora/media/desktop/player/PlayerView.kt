@@ -116,6 +116,17 @@ fun PlayerView(
         return withTimeoutOrNull(ms) { job.await() }
     }
 
+    /**
+     * [vlcAwait] for a loop: while the loop's previous call still waits for the VLC thread ([pending]), nothing new is
+     * queued and the tick is skipped (null) — a hung VLC call must not stop the loop or pile up calls behind it.
+     */
+    suspend fun <T> vlcPoll(pending: java.util.concurrent.atomic.AtomicReference<kotlinx.coroutines.Deferred<*>?>, ms: Long, block: () -> T): T? {
+        if (pending.get()?.isActive == true) return null
+        val job = scope.async(vlcThread) { runCatching(block).getOrNull() }
+        pending.set(job)
+        return withTimeoutOrNull(ms) { job.await() }
+    }
+
     var nightMode by remember { mutableStateOf(ui.get("night") == "1") }
     var subScale by remember { mutableStateOf(ui.get("subScale")?.toIntOrNull()?.coerceIn(50, 300) ?: 100) }
     val canvas = remember { java.awt.Canvas().apply { background = java.awt.Color.BLACK; isFocusable = false } }
@@ -242,8 +253,9 @@ fun PlayerView(
     val beforeMini = remember { arrayOfNulls<Any>(4) }
     var videoAspect by remember { mutableStateOf(16.0 / 9.0) }
     LaunchedEffect(Unit) {
+        val pending = java.util.concurrent.atomic.AtomicReference<kotlinx.coroutines.Deferred<*>?>()
         while (true) {
-            val d = withContext(vlcThread) { runCatching { eDim() }.getOrNull() }
+            val d = vlcPoll(pending, 1000) { eDim() }
             if (d != null && d.first > 0 && d.second > 0) {
                 val aspect = d.first.toDouble() / d.second
                 if (videoAspect != aspect) videoAspect = aspect
@@ -525,13 +537,11 @@ fun PlayerView(
         }
         scope.launch {
             val fresh = if (eng != null) {
-                withContext(vlcThread) {
-                    runCatching {
-                        val audio = kind == "audio"
-                        val list = if (audio) eAudioTracks() else listOf(-1 to tr("player.vyklyuchit")) + eSubTracks()
-                        val cur = if (audio) eAudioCur() else eSubCur()
-                        list to cur
-                    }.getOrNull()
+                vlcAwait(700) {
+                    val audio = kind == "audio"
+                    val list = if (audio) eAudioTracks() else listOf(-1 to tr("player.vyklyuchit")) + eSubTracks()
+                    val cur = if (audio) eAudioCur() else eSubCur()
+                    list to cur
                 }
             } else {
                 vlcAwait(700) {
@@ -791,10 +801,11 @@ fun PlayerView(
             var prev: Map<String, Long>? = null
             var prevAt = 0L
             var described = false
+            val pending = java.util.concurrent.atomic.AtomicReference<kotlinx.coroutines.Deferred<*>?>()
             while (true) {
                 delay(5_000)
                 if (closing) continue
-                val line = withContext(vlcThread) { runCatching {
+                val line = vlcPoll(pending, 3000) { runCatching {
                     if (eng != null) return@runCatching eng.statsLine()
                     if (!described && mp.status().isPlaying) {
                         described = true
@@ -872,7 +883,7 @@ fun PlayerView(
                     chaptersJob?.cancel()
                     chaptersJob = scope.launch {
                         delay(1200)
-                        chapters = withContext(vlcThread) { eng?.chapters()?.map { it.timeMs to it.title } ?: readChapters(mp) }
+                        vlcAwait(3000) { eng?.chapters()?.map { it.timeMs to it.title } ?: readChapters(mp) }?.let { chapters = it }
                     }
                 }
                 val v = volume; val m = userMuted
@@ -1098,10 +1109,11 @@ fun PlayerView(
     }
 
     LaunchedEffect(Unit) {
+        val pending = java.util.concurrent.atomic.AtomicReference<kotlinx.coroutines.Deferred<*>?>()
         while (true) {
             delay(2000)
             if (!started || closing) continue
-            val st = withContext(vlcThread) {
+            val st = vlcPoll(pending, 1500) {
                 if (eng != null) {
                     eng.supervisorStats(userMuted || volume == 0)
                 } else {
@@ -1136,8 +1148,11 @@ fun PlayerView(
 
 
     LaunchedEffect(infoOpen) {
+        val pending = java.util.concurrent.atomic.AtomicReference<kotlinx.coroutines.Deferred<*>?>()
         while (infoOpen) {
-            infoText = withContext(vlcThread) { eng?.statsLine() ?: describePlayback(mp) } +
+            val line = vlcPoll(pending, 800) { eng?.statsLine() ?: describePlayback(mp) }
+            if (line == null) { delay(1000); continue }
+            infoText = line +
                 tr("player.skorost_p_zvuk_p", "rate" to fmtRate(rate), "audio" to signed(audioDelay), "subs" to signed(subDelay)) +
                 (if (nightMode) tr("player.nochnoy_rezhim") else "") + tr("player.bufer_p_s", "p" to PlaybackSettings.cacheMs() / 1000.0) +
                 (BurstProxy.aheadMb(currentUrl)?.let { tr("player.zapas_na_diske_f", "p" to PlaybackSettings.burstMb()).format(it) } ?: tr("player.bez_zapasa_napryamuyu")) +
@@ -1306,8 +1321,8 @@ fun PlayerView(
             if (fsFirst[0]) { fsFirst[0] = false; return@LaunchedEffect }
             if (eng != null) return@LaunchedEffect
             val on = WindowMode.isFullscreen
-            var prev: Map<String, Long> = withContext(vlcThread) { vlcStats(mp) }
-            var prevMedia = withContext(vlcThread) { runCatching { mp.status().time() }.getOrDefault(0L) }
+            val pending = java.util.concurrent.atomic.AtomicReference<kotlinx.coroutines.Deferred<*>?>()
+            var (prev, prevMedia) = vlcPoll(pending, 1000) { vlcStats(mp) to runCatching { mp.status().time() }.getOrDefault(0L) } ?: return@LaunchedEffect
             var prevAt = System.nanoTime()
             PlayerLog.write("[ui] fs ${if (on) "on" else "off"}: watching 20 s")
             for (sec in 1..20) {
@@ -1316,7 +1331,7 @@ fun PlayerView(
                 val posted = System.nanoTime()
                 var edtMs = -1L
                 SwingUtilities.invokeLater { edtMs = (System.nanoTime() - posted) / 1_000_000 }
-                val (st, media) = withContext(vlcThread) { vlcStats(mp) to runCatching { mp.status().time() }.getOrDefault(0L) }
+                val (st, media) = vlcPoll(pending, 1000) { vlcStats(mp) to runCatching { mp.status().time() }.getOrDefault(0L) } ?: continue
                 val now = System.nanoTime()
                 val wallMs = (now - prevAt) / 1_000_000
                 fun d(k: String) = (st[k] ?: 0L) - (prev[k] ?: 0L)
