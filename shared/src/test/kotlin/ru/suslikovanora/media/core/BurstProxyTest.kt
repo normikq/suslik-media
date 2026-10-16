@@ -266,9 +266,6 @@ class BurstProxyTest {
     }
 
     @Test fun offlineServesBufferedRangeWithoutNetworkAndResumesOnNetworkChanged() {
-        // a ring that holds the whole file: with 16 MB the burst running on after the first read could overwrite 1–3 MB
-        // before it is read again (CI 16.10: a fast runner got there first and the offline read came back empty)
-        BurstProxy.capBytes = 64L shl 20
         val local = BurstProxy.wrap(url)
         // 1. Pre-buffer first 4 MB
         val (c1, b1) = get(local, "bytes=0-3999999")
@@ -281,20 +278,22 @@ class BurstProxyTest {
         BurstProxy.networkLost()
         assertTrue(!BurstProxy.isNetworkOnline, "isNetworkOnline must be false after networkLost")
 
-        // 3. Read sub-range within the already buffered data
-        val (c2, b2) = get(local, "bytes=1000000-2999999")
+        // 3. Read sub-range within the already buffered data. Not from the very start: the burst keeps going after the
+        // first read (up to 7/8 of the 16 MB ring ahead of 4 MB), so on a fast machine the ring may already have moved
+        // past the first ~1.9 MB (CI 16.10: an empty answer for 1–3 MB).
+        val (c2, b2) = get(local, "bytes=2500000-3999999")
         assertEquals(206, c2)
-        assertContentEquals(data.copyOfRange(1_000_000, 3_000_000), b2)
+        assertContentEquals(data.copyOfRange(2_500_000, 4_000_000), b2)
         assertEquals(reqsBeforeOffline, requests.get(), "no upstream requests should be made when reading buffered data offline")
 
         // 4. Network returns
         BurstProxy.networkChanged()
         assertTrue(BurstProxy.isNetworkOnline, "isNetworkOnline must be true after networkChanged")
 
-        // 5. Read next chunk far beyond what was pre-buffered (e.g. at 15 MB)
-        val (c3, b3) = get(local, "bytes=15000000-15999999")
+        // 5. Read a chunk beyond anything the burst could have fetched before going offline (it stops below ~19 MB)
+        val (c3, b3) = get(local, "bytes=30000000-30999999")
         assertEquals(206, c3)
-        assertContentEquals(data.copyOfRange(15_000_000, 16_000_000), b3)
+        assertContentEquals(data.copyOfRange(30_000_000, 31_000_000), b3)
         assertTrue(requests.get() > reqsBeforeOffline, "upstream requests should resume after networkChanged")
     }
 
