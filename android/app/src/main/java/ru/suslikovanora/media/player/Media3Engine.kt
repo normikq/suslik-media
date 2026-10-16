@@ -112,6 +112,10 @@ class Media3Engine(private val context: Context) : PlayerEngine {
         val load = DefaultLoadControl.Builder()
             .setBufferDurationsMs(MIN_BUFFER_MS, MAX_BUFFER_MS, START_BUFFER_MS, AFTER_REBUFFER_MS)
             .setBackBuffer(BACK_BUFFER_MS, true)
+            // ExoPlayer keeps its buffer on the Java heap: 4K pushed the app to ~207 of 256 MB (16.10 journal). Bytes cap
+            // it before the seconds do on heavy files; what was loaded is on disk anyway (Media3Cache).
+            .setTargetBufferBytes(TARGET_BUFFER_BYTES)
+            .setPrioritizeTimeOverSizeThresholds(false)
             .build()
         val p = ExoPlayer.Builder(context, renderers)
             .setLoadControl(load)
@@ -128,7 +132,7 @@ class Media3Engine(private val context: Context) : PlayerEngine {
     }
 
     private fun dataSourceFactory(): DataSource.Factory {
-        val http = OkHttpDataSource.Factory(Api.reserve).setTransferListener(transfer)
+        val http = OkHttpDataSource.Factory(client).setTransferListener(transfer)
         if (!Media3Cache.enabled) return http
         return CacheDataSource.Factory()
             .setCache(Media3Cache.get(context))
@@ -163,7 +167,8 @@ class Media3Engine(private val context: Context) : PlayerEngine {
         extraAudio.clear()
         opened++
         reported = false; tracksLogged = ""; selectLastAudio = false; lengthSent = 0L; bufferedPct = -1
-        videoDecoder = ""; audioDecoder = ""
+        // A reconnect to the same file reuses the decoders (no new "initialized" event): their names stay.
+        if (MediaKeys.keyOf(media.url) != mainKey) { videoDecoder = ""; audioDecoder = "" }
         bytesRead.set(0L)
         if (MediaKeys.keyOf(media.url) != mainKey) fileSize = -1L
         mainKey = MediaKeys.keyOf(media.url)
@@ -469,6 +474,13 @@ class Media3Engine(private val context: Context) : PlayerEngine {
         private const val AFTER_REBUFFER_MS = 6_000
         private const val BACK_BUFFER_MS = 15_000
         private const val TICK_MS = 250L
+        private const val TARGET_BUFFER_BYTES = 80 shl 20
+
+        /**
+         * The reserve's client with a shorter read timeout: 16.10, after a seek the mirror sent the headers only after
+         * 10.9 s. Six seconds without data and ExoPlayer asks again for the same range on a new connection.
+         */
+        private val client by lazy { Api.reserve.newBuilder().readTimeout(6, java.util.concurrent.TimeUnit.SECONDS).build() }
 
         /** Bytes Media3 fetched from the mirror since the process started (the journal's «MB fetched»). */
         val downloaded = AtomicLong()
