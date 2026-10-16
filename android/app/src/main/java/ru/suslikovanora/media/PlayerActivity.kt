@@ -455,7 +455,9 @@ class PlayerActivity : ComponentActivity() {
                 supervisor.seeked()
                 handler.removeCallbacks(reseekRunnable)
                 handler.postDelayed(reseekRunnable, 120L)
+                watchTrackSwitch("audio")
             }
+            override fun onSubtitleTrackChanged() = watchTrackSwitch("subtitles")
             override fun isPlayerAlive(generation: Int): Boolean = player?.generation == generation
             override fun getCurrentTitle(): String = currentTitle
             override fun getCurrentPlayer(): PlayerEngine? = player
@@ -463,6 +465,36 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private val reseekRunnable = Runnable { reseekHereNow() }
+
+    // After a switch of the sound or subtitles the film could stay at «Буферизация 0%» until the viewer seeked
+    // (16.10, report). A seek is what restarts the decoders, so if the wait does not move for a few seconds after a
+    // switch, the player seeks itself — once per switch, to (almost) the same moment: ExoPlayer ignores a seek to
+    // exactly its current millisecond.
+    private var trackSwitchKind = ""
+    private var trackSwitchAt = 0L
+    private var trackSwitchShown = -1
+    private fun watchTrackSwitch(kind: String) {
+        trackSwitchKind = kind
+        trackSwitchAt = SystemClock.uptimeMillis()
+        trackSwitchShown = -1
+        AppLog.write("[track] $kind switched at ${perceivedPosition() / 1000}s" + (player?.diagLine()?.let { " · $it" } ?: ""))
+        handler.removeCallbacks(trackSwitchRunnable)
+        handler.postDelayed(trackSwitchRunnable, TRACK_SWITCH_CHECK_MS)
+    }
+    private val trackSwitchRunnable = object : Runnable {
+        override fun run() {
+            val p = player ?: return
+            if (userPaused || ended || networkLost || catchingUp || pendingSeekPos != null) return
+            if (SystemClock.uptimeMillis() - trackSwitchAt > TRACK_SWITCH_WATCH_MS) return
+            if (!buffering) { trackSwitchShown = -1; handler.postDelayed(this, TRACK_SWITCH_CHECK_MS); return }
+            if (bufferingShown > trackSwitchShown) { trackSwitchShown = bufferingShown; handler.postDelayed(this, TRACK_SWITCH_CHECK_MS); return }
+            val t = perceivedPosition()
+            AppLog.write("[track] buffering stuck at $bufferingShown% after the $trackSwitchKind switch → seek to ${t / 1000}s" +
+                (p.diagLine()?.let { " · $it" } ?: ""))
+            trackSwitchAt = 0L
+            if (t > 0L) seekTo(t - 1L)
+        }
+    }
 
     private val pipController: PlayerPipController by lazy {
         PlayerPipController(this, videoLayout, object : PlayerPipController.Callback {
@@ -1721,7 +1753,7 @@ class PlayerActivity : ComponentActivity() {
         handler.removeCallbacks(reattachRunnable); surfaceLost = false
         // Nothing may restart playback (or reconnect) behind the lock screen.
         trackSelector.stop()
-        for (r in listOf(watchdogRunnable, stallRunnable, reconnectRunnable, seekWatchdogRunnable, reseekRunnable))
+        for (r in listOf(watchdogRunnable, stallRunnable, reconnectRunnable, seekWatchdogRunnable, reseekRunnable, trackSwitchRunnable))
             handler.removeCallbacks(r)
         networkMonitor.unregister()
         needsReload = false; retryCount = 0; reconnectScheduled = false
@@ -1914,6 +1946,8 @@ class PlayerActivity : ComponentActivity() {
             VideoScale.RATIO_16_9 to "16:9"
         )
         private const val SEEK_CONFIRM_TIMEOUT_MS = 9_000L
+        private const val TRACK_SWITCH_CHECK_MS = 3_000L // the buffering % has not risen for this long: stuck
+        private const val TRACK_SWITCH_WATCH_MS = 20_000L
         private const val SEEK_CONFIRM_TOLERANCE_MS = 12_000L
         private const val TAP_SEEK_APPLY_MS = 350L
         private const val STABLE_PLAYBACK_MS = 30_000L
