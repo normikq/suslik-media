@@ -7,7 +7,6 @@ import android.util.Rational
 import android.view.View
 import androidx.activity.ComponentActivity
 import androidx.annotation.RequiresApi
-import org.videolan.libvlc.MediaPlayer
 
 /**
  * Manages Picture-in-Picture (PiP) mode, aspect ratio calculations,
@@ -19,7 +18,7 @@ class PlayerPipController(
     private val callback: Callback
 ) {
     interface Callback {
-        fun getCurrentPlayer(): MediaPlayer?
+        fun getCurrentPlayer(): PlayerEngine?
         fun onPipModeChanged(inPip: Boolean)
     }
 
@@ -68,7 +67,7 @@ class PlayerPipController(
 
     /** Video's own aspect ratio when known (PiP accepts 1:2.39 … 2.39:1), otherwise 16:9. */
     fun pipAspect(): Rational {
-        val t = runCatching { callback.getCurrentPlayer()?.currentVideoTrack }.getOrNull()
+        val t = callback.getCurrentPlayer()?.videoTrack
         if (t != null && t.width > 0 && t.height > 0) {
             val sar = if (t.sarNum > 0 && t.sarDen > 0) t.sarNum.toDouble() / t.sarDen else 1.0
             val w = (t.width * sar).toInt()

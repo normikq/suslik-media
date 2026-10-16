@@ -10,8 +10,6 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
 import androidx.annotation.RequiresApi
-import org.videolan.libvlc.MediaPlayer
-import org.videolan.libvlc.interfaces.IMedia
 import ru.suslikovanora.media.AppLog
 import ru.suslikovanora.media.Diag
 import ru.suslikovanora.media.core.BurstProxy
@@ -30,8 +28,7 @@ class PlayerDiagnostics(
 ) {
     interface Callback {
         fun getCurrentUrl(): String
-        fun getCurrentPlayer(): MediaPlayer?
-        fun getCurrentMedia(): IMedia?
+        fun getCurrentPlayer(): PlayerEngine?
         fun isUserPaused(): Boolean
         fun isBuffering(): Boolean
         fun isNetworkLost(): Boolean
@@ -45,7 +42,7 @@ class PlayerDiagnostics(
     private var decodeCheckedUrl = ""
     private var lastOpenAtTime = 0L
 
-    private var diagPrev: IMedia.Stats? = null
+    private var diagPrev: EngineStats? = null
     private var diagAt = 0L
 
     private val diagRunnable = object : Runnable {
@@ -87,7 +84,7 @@ class PlayerDiagnostics(
         if (p == null) {
             sb.append("no player${if (kept) " (parked)" else ""}")
         } else {
-            sb.append("%.1f/%ds ".format(p.time / 1000.0, p.length / 1000))
+            sb.append("%.1f/%ds ".format(p.timeMs / 1000.0, p.lengthMs / 1000))
             sb.append(when {
                 kept -> "parked (screen off / hidden)"
                 p.isPlaying -> "playing"
@@ -98,7 +95,7 @@ class PlayerDiagnostics(
             if (callback.isNetworkLost()) sb.append(" NETWORK-LOST")
             if (callback.isCatchingUp()) sb.append(" CATCHING-UP")
             runCatching { p.rate }.getOrNull()?.takeIf { it != 1f }?.let { sb.append(" speed ${it}x") }
-            val st = runCatching { callback.getCurrentMedia()?.stats }.getOrNull()
+            val st = p.stats()
             val q = diagPrev
             if (st != null) {
                 // Counters restart with every new Media (reopen / next episode): then the raw values are shown.
@@ -124,21 +121,21 @@ class PlayerDiagnostics(
      * Safety net for a hardware decoder that takes a format but gives no pictures (sound over a black screen, like
      * VC-1 on Samsung): the film plays for 6 s, pictures are decoded, none is shown -> this file without hardware decoding.
      */
-    fun checkNoPicture(p: MediaPlayer) {
+    fun checkNoPicture(p: PlayerEngine) {
         val currentUrl = callback.getCurrentUrl()
-        val pTime = runCatching { p.time }.getOrDefault(0L)
-        if (currentUrl in softwareVideo || p.videoTracksCount <= 0 || pTime - lastOpenAtTime < 6_000L) return
-        val st = runCatching { callback.getCurrentMedia()?.stats }.getOrNull() ?: return
+        val pTime = runCatching { p.timeMs }.getOrDefault(0L)
+        if (currentUrl in softwareVideo || p.videoTrackCount <= 0 || pTime - lastOpenAtTime < 6_000L) return
+        val st = p.stats() ?: return
         if (st.displayedPictures > 0 || st.decodedVideo < 60) return
         softwareVideo += currentUrl
         AppLog.write("video: ${st.decodedVideo} pictures decoded, none shown — reopening with VLC's own decoder")
         callback.onReopenWithoutHardwareDecoder(callback.getPerceivedPosition())
     }
 
-    fun warnIfSoftwareDecoding(p: MediaPlayer) {
+    fun warnIfSoftwareDecoding(p: PlayerEngine) {
         val currentUrl = callback.getCurrentUrl()
         if (decodeCheckedUrl == currentUrl) return
-        val t = runCatching { p.currentVideoTrack }.getOrNull() ?: return
+        val t = p.videoTrack ?: return
         decodeCheckedUrl = currentUrl
         val codec = t.codec?.lowercase(Locale.ROOT)?.trim()
         // VC-1 (old Blu-rays): the phone's own decoder takes it but gives no pictures — sound over a black screen
@@ -184,9 +181,9 @@ class PlayerDiagnostics(
      * Android 11+: tells the system the video's real frame rate. On 90/120 Hz screens the display can then run
      * at 24/30/60 Hz during playback (a large share of the screen's power), without any visual change.
      */
-    fun applyVideoFrameRate(owner: MediaPlayer, root: View) {
+    fun applyVideoFrameRate(owner: PlayerEngine, root: View) {
         if (Build.VERSION.SDK_INT < 30) return
-        val track = runCatching { owner.currentVideoTrack }.getOrNull() ?: return
+        val track = owner.videoTrack ?: return
         if (track.frameRateNum <= 0 || track.frameRateDen <= 0) return
         val fps = track.frameRateNum.toFloat() / track.frameRateDen
         if (fps < 10f || fps > 121f) return
