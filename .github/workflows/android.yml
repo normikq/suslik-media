@@ -1,8 +1,7 @@
 name: Android APK
 
+# Только вручную (Actions → Run workflow или gh api …/dispatches): пуш больше не запускает сборку.
 on:
-  push:
-    paths: ["android/**", "shared/**", ".github/workflows/android.yml"]
   workflow_dispatch:
     inputs:
       publish:
