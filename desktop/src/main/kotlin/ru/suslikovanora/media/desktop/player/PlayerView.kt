@@ -218,6 +218,8 @@ fun PlayerView(
     var mini by remember { mutableStateOf(false) }
     var lastSeekAt by remember { mutableStateOf(0L) }
     var bufferingSince by remember { mutableStateOf(0L) }
+    var bufferingPct by remember { mutableStateOf(100f) }
+    var trackSwitches by remember { mutableStateOf(0) } // audio / subtitle switches from the menu (see the watch below)
     // Сеть медленнее фильма: прокси держит фильм, пока не накопится запас (как на Android, см. PlayerActivity.maybeCatchUp)
     val catchUp = remember { CatchUp({ PlayerLog.write(it) }) } // the rules are shared with Android
     var catchingUp by remember { mutableStateOf(false) }
@@ -428,6 +430,9 @@ fun PlayerView(
 
     fun applyTrackNow() {
         supRef.get()?.seeked()
+        // VLC only: a seek right here empties its 3–6 s network cache, so the new sound is heard at once. mpv switches the
+        // track itself (its own refresh seek); a second seek right on top of that one is not needed.
+        if (eng != null) return
         scope.launch(vlcThread) {
             delay(120)
             runCatching { reseekHereNow() }
@@ -869,6 +874,7 @@ fun PlayerView(
         fun evStopped() = ui2 { vlcPaused = false }
         fun evBuffering(newCache: Float) = ui2 {
                 status = if (newCache < 100f) tr("player.buferizaciya_p", "p" to newCache.toInt()) else null
+                bufferingPct = newCache
                 supRef.get()?.buffering(newCache)
                 if (newCache < 100f) { if (bufferingSince == 0L) bufferingSince = System.currentTimeMillis() }
                 else if (bufferingSince > 0) {
@@ -1054,6 +1060,28 @@ fun PlayerView(
             if (!started || closing) continue
             val st = vlcPoll(pending, 1500) { engine.supervisorStats(userMuted || volume == 0) } ?: continue
             supervisor.tick(st)
+        }
+    }
+
+    // After a switch of the sound or subtitles the film could stay at «Буферизация 0%» until the viewer seeked (16.10,
+    // report, mpv). If the buffering does not rise for 3 s after a switch, the player makes that seek itself, once.
+    LaunchedEffect(trackSwitches) {
+        if (trackSwitches == 0) return@LaunchedEffect
+        PlayerLog.write("[track] switched at ${time / 1000}s" + (if (bufferingSince > 0L) ", buffering ${bufferingPct.toInt()}%" else ""))
+        val until = System.currentTimeMillis() + 20_000L
+        var shown = -1f
+        while (System.currentTimeMillis() < until) {
+            delay(3_000L)
+            if (closing || pausedAt > 0L || vlcPaused || seeking != null || catchingUp) return@LaunchedEffect
+            if (bufferingSince == 0L) { shown = -1f; continue }
+            if (bufferingPct > shown) { shown = bufferingPct; continue }
+            val t = time
+            PlayerLog.write("[track] buffering stuck at ${bufferingPct.toInt()}% after the switch → seek to ${t / 1000}s")
+            if (t <= 0L) return@LaunchedEffect
+            lastSeekAt = System.currentTimeMillis()
+            supRef.get()?.seeked()
+            vlcSeekTo(t)
+            return@LaunchedEffect
         }
     }
 
@@ -1379,6 +1407,9 @@ fun PlayerView(
             onClosePicker = { closePicker() },
             onOpenPicker = { openPicker(it) },
             onSelectTrack = { kind, id, name ->
+                // Like a seek for the reserve: an active «копим запас» ends, and none starts while the switch refills the buffer.
+                lastSeekAt = System.currentTimeMillis()
+                trackSwitches++
                 if (kind == "audio") {
                     vlc { eSetAudio(id) }
                     applyTrackNow()

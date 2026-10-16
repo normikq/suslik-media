@@ -29,6 +29,7 @@ class PlayerTrackSelector(
 ) {
     interface Callback {
         fun onAudioTrackChanged()
+        fun onSubtitleTrackChanged()
         /** [generation] is still the current player ([PlayerEngine.generation]). */
         fun isPlayerAlive(generation: Int): Boolean
         fun getCurrentTitle(): String
@@ -211,6 +212,7 @@ class PlayerTrackSelector(
                     p?.setSubtitleTrack(track.id)
                     saveTrackPref("spu", track.name, callback.getCurrentTitle())
                 }
+                callback.onSubtitleTrackChanged()
                 onControlsNeeded()
             }.setNegativeButton(tr("player.zakryt"), null).show()
     }
