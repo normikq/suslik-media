@@ -25,6 +25,6 @@ jobs:
           wait $!
           ls -la ../preview
           # Для разбора без скачивания артефакта: снимки в журнале (base64)
-          for f in ../preview/*.png; do echo "=== $(basename "$f")"; base64 -w 0 "$f"; echo; done
+          for f in ../preview/*.jpg; do echo "=== $(basename "$f")"; base64 -w 0 "$f"; echo; done
       - uses: actions/upload-artifact@v4
         with: { name: setup-preview, path: preview/*.png, retention-days: 7 }

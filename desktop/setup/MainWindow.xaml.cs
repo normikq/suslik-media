@@ -409,6 +409,10 @@ namespace SuslikSetup
                 var png = new PngBitmapEncoder();
                 png.Frames.Add(BitmapFrame.Create(bmp));
                 using (var f = File.Create(IOPath.Combine(dir, name + ".png"))) png.Save(f);
+                // Уменьшенная копия для журнала CI
+                var jpg = new JpegBitmapEncoder { QualityLevel = 72 };
+                jpg.Frames.Add(BitmapFrame.Create(new TransformedBitmap(bmp, new ScaleTransform(0.75, 0.75))));
+                using (var f = File.Create(IOPath.Combine(dir, name + ".jpg"))) jpg.Save(f);
             }
 
             var install = new MainWindow(false) { preview = true, Left = -20000, ShowActivated = false };
