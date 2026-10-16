@@ -23,7 +23,7 @@ namespace SuslikSetup
         public static InstallResult Install(string folder, Action<double, string> files, Action<MpvState, double, long, long> mpv, CancellationToken ct)
         {
             var result = new InstallResult();
-            string package = null;
+            string package = null, stash = null;
             try
             {
                 if (Product.IsRunning) { files(0, "Закрываем Suslik Media…"); Product.CloseRunning(); }
@@ -31,6 +31,9 @@ namespace SuslikSetup
                 package = Extract();
                 var (code, version) = Msi.PackageInfo(package);
                 var installed = Msi.RelatedProducts(Product.UpgradeCode);
+                // Видеодвижок не из MSI: на время установки уносим его в сторону, чтобы удаление старой версии его не стёрло
+                // (и чтобы он переехал, если папку сменили). Ставим обратно в finally — даже если установка не удалась.
+                stash = Mpv.Stash(Product.InstalledFolder ?? folder) ? folder : null;
 
                 // Стоит более новая версия: Windows Installer поверх неё не поставит, поэтому сначала убираем её
                 // (данные в %APPDATA% остаются).
@@ -50,6 +53,7 @@ namespace SuslikSetup
                     return result;
                 }
                 files(1, "Файлы скопированы");
+                if (stash != null) { Mpv.Restore(stash); stash = null; }
 
                 var uninstaller = SafeFind(folder, "SuslikUninstall.exe");
                 if (uninstaller != null) Product.Register(uninstaller, Product.Version.Length > 0 && Product.Version != "0.0.0" ? Product.Version : version);
@@ -65,6 +69,7 @@ namespace SuslikSetup
             finally
             {
                 if (package != null) try { File.Delete(package); } catch { }
+                if (stash != null) Mpv.Restore(Product.InstalledFolder ?? stash);
             }
             return result;
         }

@@ -61,6 +61,41 @@ namespace SuslikSetup
             catch { return false; }
         }
 
+        static string Keep => Path.Combine(Path.GetTempPath(), "SuslikSetup", "mpv-keep");
+
+        /// <summary>Уносит готовую библиотеку из папки установки во временную. true — унесли (потом [Restore]).</summary>
+        public static bool Stash(string folder)
+        {
+            if (!Ready(folder)) return false;
+            try
+            {
+                if (Directory.Exists(Keep)) Directory.Delete(Keep, true);
+                Directory.CreateDirectory(Keep);
+                File.Move(Dll(folder), Path.Combine(Keep, "libmpv-2.dll"));
+                File.Copy(Mark(folder), Path.Combine(Keep, "libmpv.version"), true);
+                return true;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>Возвращает унесённую библиотеку в папку установки (если там уже есть своя — оставляет её).</summary>
+        public static void Restore(string folder)
+        {
+            var kept = Path.Combine(Keep, "libmpv-2.dll");
+            if (!File.Exists(kept)) return;
+            try
+            {
+                Directory.CreateDirectory(Dir(folder));
+                if (!File.Exists(Dll(folder)))
+                {
+                    File.Move(kept, Dll(folder));
+                    File.WriteAllText(Mark(folder), Sha256);
+                }
+                Directory.Delete(Keep, true);
+            }
+            catch { }
+        }
+
         /// <summary>Качает с сервера и проверяет; progress(доля, скачано байт, всего байт). Ошибка — понятным текстом.</summary>
         public static void Download(string folder, Action<double, long, long> progress, CancellationToken ct)
         {
