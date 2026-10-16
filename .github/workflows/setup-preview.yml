@@ -18,6 +18,7 @@ jobs:
       - name: Build
         run: dotnet build setup/SuslikSetup.csproj -c Release -o "$RUNNER_TEMP/setup" 2>&1 | tail -5
       - name: Render
+        env: { MSYS_NO_PATHCONV: "1" } # иначе Git Bash превращает /preview в путь
         run: |
           mkdir -p ../preview
           "$RUNNER_TEMP/setup/SuslikSetup.exe" /preview "$(cygpath -w "$GITHUB_WORKSPACE/preview")" &

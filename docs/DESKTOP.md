@@ -78,7 +78,7 @@ desktop/
 
 ### 3.2. Резервный движок: VLC (`VlcEngine.kt`, класс `VlcPlayer`)
 - Классическая интеграция через библиотеку `vlcj` с установленным в системе 64-битным плеером VLC 3.x. `VlcPlayer` реализует тот же `PlayerEngine`, что и mpv: `PlayerView` работает с одним `engine` и одним `EngineListener` для обоих движков (ночной звук, `start-time`, языки, внешние дорожки — в опциях `open()`).
-- `libmpv-2.dll` входит в MSI (`desktop/build.gradle.kts` скачивает зафиксированный релиз с проверкой SHA-256). VLC используется, если библиотеки нет в путях поиска (рядом с приложением, `%APPDATA%\SuslikMedia\mpv\`, `SUSLIK_MPV_DIR`, PATH), либо при явном выборе в «Настройках».
+- `libmpv-2.dll` в MSI не входит: версия (архив сборки mpv и SHA-256 архива и библиотеки) зафиксирована в `src/main/resources/libmpv.properties`. Установщик везёт её сжатой внутри себя и кладёт в `%APPDATA%\SuslikMedia\mpv\` с меткой `libmpv.version`; приложение (`player/MpvInstall.kt`) при совпадении метки ничего не делает, а если библиотеки нет (самообновление со старой версии) — скачивает архив (~30 МБ) и распаковывает его `tar.exe` из Windows. Обновления её не тащат. Пути поиска: рядом с приложением, `%APPDATA%\SuslikMedia\mpv\`, `SUSLIK_MPV_DIR`, PATH; без библиотеки играет VLC.
 
 ---
 
@@ -190,6 +190,12 @@ desktop/
 # Сборка и локальная установка диагностической версии Suslik Debug
 ./install-desktop-debug.ps1
 ```
+
+Установщик и окно удаления — `desktop/setup` (WPF, .NET Framework 4.7.2, одна программа):
+- `Suslik Media Setup-<V>.exe` — с MSI внутри (`dotnet build setup/SuslikSetup.csproj -c Release -p:MsiPath=…`): шаги, выбор папки, тихая установка MSI с ходом в своём окне, загрузка libmpv, запуск.
+- `SuslikUninstall.exe` — без MSI, лежит в `app/resources`. Регистрирует себя в «Установленных приложениях» (`/register`, вызывает и само приложение после самообновления, `Uninstaller.kt`), запись MSI прячется. «Удалить» открывает окно с галочкой «Удалить все сохранённые данные и кэш» (`%APPDATA%\SuslikMedia`, `%TEMP%\SuslikMedia-stream`, `%TEMP%\SuslikMedia-update`). `/uninstall /quiet` — без окна, данные остаются.
+- Самообновление ставит MSI через `msiexec /passive` в ту же папку и перезапускает приложение.
+- `.github/workflows/setup-preview.yml` рисует окна установщика в PNG (`/preview <папка>`) — артефакт `setup-preview`.
 
 Диагностическая сборка Suslik Debug собирается с ключом `-Pdiag`:
 - Ставится рядом с релизной версией (свой `upgradeUuid`).

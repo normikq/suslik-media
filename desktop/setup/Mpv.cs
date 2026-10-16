@@ -2,23 +2,20 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
-using System.Net;
-using System.Net.Http;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Threading;
-using System.Threading.Tasks;
 
 namespace SuslikSetup
 {
     /// <summary>
-    /// libmpv-2.dll (видеодвижок mpv) — отдельно от MSI, один раз, в %APPDATA%\SuslikMedia\mpv. Та же схема, что
-    /// в приложении (MpvInstall.kt): версия — libmpv.properties, метка libmpv.version = SHA-256 библиотеки.
+    /// libmpv-2.dll (видеодвижок mpv) — отдельно от MSI, один раз, в %APPDATA%\SuslikMedia\mpv. Установщик везёт её
+    /// сжатой внутри себя (libmpv-2.dll.gz, кладёт CI). Та же схема, что в приложении (MpvInstall.kt):
+    /// версия — libmpv.properties, метка libmpv.version = SHA-256 библиотеки; если она совпадает, ничего не делаем.
     /// </summary>
     static class Mpv
     {
         static readonly Dictionary<string, string> pin = Load();
-        static string Url => pin.TryGetValue("url", out var v) ? v : "";
         static string Sha256 => (pin.TryGetValue("dllSha256", out var v) ? v : "").ToLowerInvariant();
         static string Dll => Path.Combine(Product.MpvFolder, "libmpv-2.dll");
         static string Mark => Path.Combine(Product.MpvFolder, "libmpv.version");
@@ -51,37 +48,35 @@ namespace SuslikSetup
             }
         }
 
-        /// <summary>Качает и проверяет; progress(доля, скачано, всего).</summary>
-        public static async Task Download(Action<double, long, long> progress, CancellationToken ct)
+        /// <summary>Библиотека есть внутри установщика.</summary>
+        public static bool Bundled => Assembly.GetExecutingAssembly().GetManifestResourceInfo("libmpv-2.dll.gz") != null;
+
+        /// <summary>Распаковывает и проверяет; progress(доля, готово байт, всего байт).</summary>
+        public static void Install(Action<double, long, long> progress, CancellationToken ct)
         {
-            ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
             Directory.CreateDirectory(Product.MpvFolder);
             var part = Dll + ".part";
-            using (var http = new HttpClient { Timeout = TimeSpan.FromMinutes(30) })
-            using (var res = await http.GetAsync(Url, HttpCompletionOption.ResponseHeadersRead, ct))
+            using (var res = Assembly.GetExecutingAssembly().GetManifestResourceStream("libmpv-2.dll.gz"))
+            using (var counting = new CountingStream(res))
+            using (var gz = new GZipStream(counting, CompressionMode.Decompress))
+            using (var sha = SHA256.Create())
             {
-                res.EnsureSuccessStatusCode();
-                long total = res.Content.Headers.ContentLength ?? -1;
-                using (var net = await res.Content.ReadAsStreamAsync())
-                using (var counting = new CountingStream(net))
-                using (var gz = new GZipStream(counting, CompressionMode.Decompress))
-                using (var sha = SHA256.Create())
+                long total = res.Length;
+                using (var file = File.Create(part))
                 {
-                    using (var file = File.Create(part))
+                    var buf = new byte[1 << 16];
+                    int n;
+                    while ((n = gz.Read(buf, 0, buf.Length)) > 0)
                     {
-                        var buf = new byte[1 << 16];
-                        int n;
-                        while ((n = await gz.ReadAsync(buf, 0, buf.Length, ct)) > 0)
-                        {
-                            await file.WriteAsync(buf, 0, n, ct);
-                            sha.TransformBlock(buf, 0, n, null, 0);
-                            progress(total > 0 ? (double)counting.Count / total : 0, counting.Count, total);
-                        }
+                        ct.ThrowIfCancellationRequested();
+                        file.Write(buf, 0, n);
+                        sha.TransformBlock(buf, 0, n, null, 0);
+                        progress((double)counting.Count / total, counting.Count, total);
                     }
-                    sha.TransformFinalBlock(new byte[0], 0, 0);
-                    var hash = BitConverter.ToString(sha.Hash).Replace("-", "").ToLowerInvariant();
-                    if (hash != Sha256) { File.Delete(part); throw new IOException("Файл видеодвижка повреждён при загрузке"); }
                 }
+                sha.TransformFinalBlock(new byte[0], 0, 0);
+                var hash = BitConverter.ToString(sha.Hash).Replace("-", "").ToLowerInvariant();
+                if (hash != Sha256) { File.Delete(part); throw new IOException("Видеодвижок повреждён"); }
             }
             if (File.Exists(Dll)) File.Delete(Dll);
             File.Move(part, Dll);
@@ -94,10 +89,6 @@ namespace SuslikSetup
             public long Count;
             public CountingStream(Stream inner) { this.inner = inner; }
             public override int Read(byte[] buffer, int offset, int count) { int n = inner.Read(buffer, offset, count); Count += n; return n; }
-            public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken ct)
-            {
-                int n = await inner.ReadAsync(buffer, offset, count, ct); Count += n; return n;
-            }
             public override bool CanRead => true;
             public override bool CanSeek => false;
             public override bool CanWrite => false;

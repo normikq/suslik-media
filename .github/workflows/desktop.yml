@@ -60,8 +60,18 @@ jobs:
       - name: Build installer
         run: |
           set -o pipefail
+          # libmpv едет внутри установщика (не в MSI): зафиксированный архив из libmpv.properties, обе суммы сверяются
+          P=src/main/resources/libmpv.properties
+          get() { sed -n "s/^$1=//p" "$P" | tr -d '\r'; }
+          M="$RUNNER_TEMP/mpv" && mkdir -p "$M"
+          curl -fsSL -o "$M/mpv.7z" "$(get archive)"
+          echo "$(get archiveSha256)  $M/mpv.7z" | sha256sum -c
+          7z x -y "-o$(cygpath -w "$M")" "$(cygpath -w "$M/mpv.7z")" libmpv-2.dll > /dev/null
+          echo "$(get dllSha256)  $M/libmpv-2.dll" | sha256sum -c
+          gzip -9 -n -c "$M/libmpv-2.dll" > "$M/libmpv-2.dll.gz"
           dotnet build setup/SuslikSetup.csproj -c Release -p:AppVersion=$V -p:AssemblyName=SuslikMediaSetup \
-            "-p:MsiPath=$(cygpath -w "$GITHUB_WORKSPACE/$MSI")" -o "$RUNNER_TEMP/setup" 2>&1 | tail -5
+            "-p:MsiPath=$(cygpath -w "$GITHUB_WORKSPACE/$MSI")" "-p:LibmpvPath=$(cygpath -w "$M/libmpv-2.dll.gz")" \
+            -o "$RUNNER_TEMP/setup" 2>&1 | tail -5
           cp "$RUNNER_TEMP/setup/SuslikMediaSetup.exe" "../dist/Suslik Media Setup-$V.exe"
           rm -rf setup/obj setup/bin
           ls -la ../dist

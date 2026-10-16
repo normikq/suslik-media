@@ -56,17 +56,18 @@ namespace SuslikSetup
                 result.Ok = true;
 
                 if (Mpv.Ready) mpv(MpvState.Skipped, 1, 0, 0);
+                else if (!Mpv.Bundled) { result.MpvFailed = true; mpv(MpvState.Failed, 0, 0, 0); }
                 else
                 {
                     mpv(MpvState.Loading, 0, 0, 0);
                     try
                     {
-                        Mpv.Download((f, done, total) => mpv(MpvState.Loading, f, done, total), ct).GetAwaiter().GetResult();
+                        Mpv.Install((f, done, total) => mpv(MpvState.Loading, f, done, total), ct);
                         mpv(MpvState.Done, 1, 0, 0);
                     }
                     catch
                     {
-                        // Не страшно: приложение докачает видеодвижок само при запуске.
+                        // Не страшно: приложение скачает видеодвижок само при запуске.
                         result.MpvFailed = true;
                         mpv(MpvState.Failed, 0, 0, 0);
                     }

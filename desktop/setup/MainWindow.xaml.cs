@@ -214,8 +214,8 @@ namespace SuslikSetup
             FreeText.Text = free >= 0 ? Product.Mb(free) : "—";
             FreeText.Foreground = free >= 0 && free < need ? (Brush)FindResource("Bad") : (Brush)FindResource("Text");
             FolderNote.Text = (mpvNeeded
-                    ? "Видеодвижок mpv (≈ 47 МБ) скачается во время установки."
-                    : "Видеодвижок mpv уже установлен — повторно скачиваться не будет.")
+                    ? "Видеодвижок mpv установится вместе с приложением."
+                    : "Видеодвижок mpv уже установлен — повторно ставиться не будет.")
                 + " Приложение ставится только для вас, права администратора не нужны.";
             NextButton.IsEnabled = ValidFolder(FolderBox.Text.Trim());
         }
@@ -245,7 +245,7 @@ namespace SuslikSetup
             var mpv = AddTask("Видеодвижок mpv");
             files.Set(TaskState.Working, "");
             var mpvNeeded = !Mpv.Ready;
-            mpv.Set(mpvNeeded ? TaskState.Waiting : TaskState.Done, mpvNeeded ? "скачается после файлов" : "уже установлен — пропущено");
+            mpv.Set(mpvNeeded ? TaskState.Waiting : TaskState.Done, mpvNeeded ? "установится после файлов" : "уже установлен — пропущено");
             Show(PageProgress, 2);
             StartShimmer();
 
@@ -266,12 +266,12 @@ namespace SuslikSetup
                         case Work.MpvState.Loading:
                             files.Set(TaskState.Done, "");
                             mpvPart = f;
-                            mpv.Set(TaskState.Working, total > 0 ? $"{Product.Mb(done)} из {Product.Mb(total)}" : "загрузка…");
-                            Overall("Загрузка видеодвижка mpv…");
+                            mpv.Set(TaskState.Working, $"{(int)(f * 100)}%");
+                            Overall("Установка видеодвижка mpv…");
                             break;
                         case Work.MpvState.Done: mpvPart = 1; mpv.Set(TaskState.Done, "установлен"); Overall(""); break;
                         case Work.MpvState.Skipped: files.Set(TaskState.Done, ""); break;
-                        case Work.MpvState.Failed: mpv.Set(TaskState.Failed, "не скачался — приложение докачает его само"); break;
+                        case Work.MpvState.Failed: mpv.Set(TaskState.Failed, "приложение скачает его само"); break;
                     }
                 }, important: state != Work.MpvState.Loading),
                 cts.Token)).ContinueWith(t =>
@@ -284,7 +284,7 @@ namespace SuslikSetup
                     files.Set(TaskState.Done, "");
                     SetProgress(1, "");
                     Finish(true, "Готово!", wasInstalled ? "Suslik Media обновлена." : "Suslik Media установлена и готова к работе.",
-                        r.MpvFailed ? "Видеодвижок mpv не удалось скачать сейчас — приложение скачает его само при первом запуске." : null);
+                        r.MpvFailed ? "Видеодвижок mpv приложение скачает само при первом запуске." : null);
                 }
                 else
                 {
@@ -418,12 +418,12 @@ namespace SuslikSetup
             Snap(install, "2-folder");
             install.ProgressTitle.Text = "Установка";
             var a = install.AddTask("Файлы приложения"); a.Set(TaskState.Done, "");
-            var b = install.AddTask("Видеодвижок mpv"); b.Set(TaskState.Working, "20 МБ из 47 МБ");
+            var b = install.AddTask("Видеодвижок mpv"); b.Set(TaskState.Working, "43%");
             install.Show(install.PageProgress, 2, animate: false);
             install.UpdateLayout();
             install.BarFill.Width = install.PageProgress.ActualWidth * 0.72;
             install.PercentText.Text = "72%";
-            install.ActionText.Text = "Загрузка видеодвижка mpv…";
+            install.ActionText.Text = "Установка видеодвижка mpv…";
             Snap(install, "3-progress");
             install.Finish(true, "Готово!", "Suslik Media установлена и готова к работе.", null);
             install.DoneScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
