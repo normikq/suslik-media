@@ -60,6 +60,13 @@ compose.desktop {
             // A native crash (VLC) leaves its report next to the app; CrashReports sends it at the next start.
             "-XX:ErrorFile=\$APPDIR/hs_err_pid%p.log"
         )
+        // Обфускация имён (только release: `./gradlew packageReleaseMsi`). Debug-сборка остаётся читаемой.
+        buildTypes.release.proguard {
+            isEnabled.set(!diag)
+            obfuscate.set(true)
+            optimize.set(false)
+            configurationFiles.from(project.file("proguard-rules.pro"))
+        }
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe)
             // java.net.http: API client, jdk.crypto.ec: HTTPS, jdk.unsupported: JNA (VLC)

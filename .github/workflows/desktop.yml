@@ -27,7 +27,7 @@ jobs:
       - name: Build MSI
         run: |
           set -o pipefail
-          ./gradlew --no-daemon packageMsi 2>&1 | tee "$RUNNER_TEMP/build.log"
+          ./gradlew --no-daemon packageReleaseMsi 2>&1 | tee "$RUNNER_TEMP/build.log"
       - name: Report build errors
         if: failure()
         run: |
@@ -39,7 +39,7 @@ jobs:
         run: |
           # Full version (2.0.0.1) in the file name: the installer itself can only carry three numbers.
           V=$(sed -n 's/^val appVersion = "\([^"]*\)".*/\1/p' build.gradle.kts)
-          mkdir -p ../dist && cp "$(ls build/compose/binaries/main/msi/*.msi | head -1)" "../dist/Suslik Media-$V.msi"
+          mkdir -p ../dist && cp "$(ls build/compose/binaries/main-release/msi/*.msi | head -1)" "../dist/Suslik Media-$V.msi"
           echo "MSI=$(ls ../dist/*.msi | head -1 | sed 's#^\.\./##')" >> "$GITHUB_ENV"
           ls -la ../dist
       - uses: actions/upload-artifact@v4
