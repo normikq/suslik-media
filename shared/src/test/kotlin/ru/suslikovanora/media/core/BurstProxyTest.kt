@@ -73,7 +73,8 @@ class BurstProxyTest {
         }
         BurstProxy.capBytes = 16L shl 20 // smaller than the file: the ring wraps around
     }
-    @AfterTest fun stop() { BurstProxy.dropAll(); origin.stop(0) }
+    // a failed offline test must not leave the next ones without a network (they would download nothing)
+    @AfterTest fun stop() { BurstProxy.dropAll(); if (!BurstProxy.isNetworkOnline) BurstProxy.networkChanged(); origin.stop(0) }
 
     private fun get(local: String, range: String?): Pair<Int, ByteArray> {
         val c = URL(local).openConnection(java.net.Proxy.NO_PROXY) as HttpURLConnection
@@ -265,6 +266,9 @@ class BurstProxyTest {
     }
 
     @Test fun offlineServesBufferedRangeWithoutNetworkAndResumesOnNetworkChanged() {
+        // a ring that holds the whole file: with 16 MB the burst running on after the first read could overwrite 1–3 MB
+        // before it is read again (CI 16.10: a fast runner got there first and the offline read came back empty)
+        BurstProxy.capBytes = 64L shl 20
         val local = BurstProxy.wrap(url)
         // 1. Pre-buffer first 4 MB
         val (c1, b1) = get(local, "bytes=0-3999999")
