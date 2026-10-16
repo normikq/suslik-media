@@ -25,7 +25,7 @@ enum class EngineKind(val tag: String) { VLC("vlc"), MEDIA3("media3") }
 enum class VideoScale { BEST_FIT, FIT_SCREEN, FILL, RATIO_16_9 }
 
 /**
- * Что открыть. У VLC [url] и [audioFiles] уже идут через запас (`BurstProxy.wrap`), у Media3 — адреса зеркала как есть;
+ * Что открыть. [url] и [audioFiles] уже идут через запас (`BurstProxy.wrap`) — у обоих движков (без запаса — адреса зеркала);
  * [subtitleFiles] — как есть.
  * [fastSeek]: перемотка к ближайшему ключевому кадру (без внешней озвучки).
  */

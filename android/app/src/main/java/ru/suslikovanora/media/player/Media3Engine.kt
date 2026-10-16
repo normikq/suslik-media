@@ -22,17 +22,20 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.TransferListener
-import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.decoder.ffmpeg.FfmpegLibrary
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.LoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.exoplayer.analytics.AnalyticsListener
+import androidx.media3.exoplayer.analytics.PlayerId
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
+import androidx.media3.exoplayer.source.TrackGroupArray
+import androidx.media3.exoplayer.trackselection.ExoTrackSelection
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import ru.suslikovanora.media.AppLog
@@ -42,8 +45,9 @@ import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * [PlayerEngine] на Media3 (ExoPlayer) — к зеркалу напрямую (OkHttp, те же соединения, что у остального приложения),
- * без BurstProxy: запас на диске — [Media3Cache]. Внешняя озвучка (`.mka`) — [MergingMediaSource]: один источник
+ * [PlayerEngine] на Media3 (ExoPlayer). Читает через тот же запас, что и VLC (BurstProxy, 127.0.0.1): запас на диске
+ * подстраивается под скорость сети и битрейт фильма, а свой буфер ExoPlayer держит небольшим и ровным ([ReserveLoadControl]).
+ * Если запас выключен, читает зеркало напрямую (OkHttp) с обычным буфером. Внешняя озвучка (`.mka`) — [MergingMediaSource]: один источник
  * времени с видео, без дрейфа. Звук DTS и TrueHD — модуль FFmpeg (`EXTENSION_RENDERER_MODE_ON`: если телефон умеет
  * сам, как AC3/E-AC3 на Samsung, играет телефон).
  *
@@ -85,6 +89,7 @@ class Media3Engine(private val context: Context) : PlayerEngine {
     private val bytesRead = AtomicLong()           // from the network since this open
     @Volatile private var mainKey = ""
     @Volatile private var fileSize = -1L
+    @Volatile private var viaReserve = false     // the film is read from BurstProxy on this phone, not from the mirror
 
     private val transfer = object : TransferListener {
         override fun onTransferInitializing(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) {}
@@ -97,6 +102,7 @@ class Media3Engine(private val context: Context) : PlayerEngine {
         override fun onBytesTransferred(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean, bytesTransferred: Int) {
             if (!isNetwork) return
             bytesRead.addAndGet(bytesTransferred.toLong())
+            if (dataSpec.uri.host == LOCAL_HOST) return // from the reserve: BurstProxy counts what it downloads itself
             downloaded.addAndGet(bytesTransferred.toLong())
             BurstProxy.onBytes(bytesTransferred.toLong()) // «Трафик фильмов» counts Media3's data too (only the hook is called)
         }
@@ -107,18 +113,19 @@ class Media3Engine(private val context: Context) : PlayerEngine {
         val renderers = DefaultRenderersFactory(context)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON) // FFmpeg only where the phone can't
             .setEnableDecoderFallback(true)
-        // Loads in bursts: up to MAX_BUFFER_MS ahead, then the radio rests until only MIN_BUFFER_MS are left.
+        // Straight from the mirror: loads in bursts, up to MAX_BUFFER_MS ahead, then the radio rests until only
+        // MIN_BUFFER_MS are left. Through the reserve: see ReserveLoadControl.
         // After a stall it waits for AFTER_REBUFFER_MS of film (one longer wait instead of a stutter every few seconds).
-        val load = DefaultLoadControl.Builder()
+        val direct = DefaultLoadControl.Builder()
             .setBufferDurationsMs(MIN_BUFFER_MS, MAX_BUFFER_MS, START_BUFFER_MS, AFTER_REBUFFER_MS)
             .setBackBuffer(BACK_BUFFER_MS, true)
             // ExoPlayer keeps its buffer on the Java heap: 4K pushed the app to ~207 of 256 MB (16.10 journal). Bytes cap
-            // it before the seconds do on heavy files; what was loaded is on disk anyway (Media3Cache).
+            // it before the seconds do on heavy files.
             .setTargetBufferBytes(TARGET_BUFFER_BYTES)
             .setPrioritizeTimeOverSizeThresholds(false)
             .build()
         val p = ExoPlayer.Builder(context, renderers)
-            .setLoadControl(load)
+            .setLoadControl(ReserveLoadControl(direct))
             // Audio focus, «becoming noisy» and the media buttons stay with PlayerAudioSession (the same for both engines).
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), false)
             .setHandleAudioBecomingNoisy(false)
@@ -131,14 +138,30 @@ class Media3Engine(private val context: Context) : PlayerEngine {
         return p
     }
 
-    private fun dataSourceFactory(): DataSource.Factory {
-        val http = OkHttpDataSource.Factory(client).setTransferListener(transfer)
-        if (!Media3Cache.enabled) return http
-        return CacheDataSource.Factory()
-            .setCache(Media3Cache.get(context))
-            .setCacheKeyFactory(Media3Cache.keyFactory)
-            .setUpstreamDataSourceFactory(http)
-            .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+    private fun dataSourceFactory(): DataSource.Factory =
+        OkHttpDataSource.Factory(if (viaReserve) localClient else client).setTransferListener(transfer)
+
+    /**
+     * Through the reserve the downloading is BurstProxy's: it fetches in bursts sized to how much faster the network is
+     * than the film, and keeps up to its limit on disk. ExoPlayer then only keeps [RESERVE_AHEAD_US] in memory and takes
+     * the next piece as soon as it plays one — steady reads, as VLC does: BurstProxy measures the film's bitrate by them,
+     * and stops downloading for a reader that has not read for a minute (the direct burst-and-rest would look like that).
+     * Less on the Java heap, too (4K pushed it to ~207 of 256 MB, 16.10 journal).
+     */
+    private inner class ReserveLoadControl(private val d: DefaultLoadControl) : LoadControl {
+        override fun onPrepared(playerId: PlayerId) = d.onPrepared(playerId)
+        override fun onTracksSelected(parameters: LoadControl.Parameters, trackGroups: TrackGroupArray, trackSelections: Array<ExoTrackSelection?>) =
+            d.onTracksSelected(parameters, trackGroups, trackSelections)
+        override fun onStopped(playerId: PlayerId) = d.onStopped(playerId)
+        override fun onReleased(playerId: PlayerId) = d.onReleased(playerId)
+        override fun getAllocator() = d.allocator
+        override fun getBackBufferDurationUs(playerId: PlayerId) = d.getBackBufferDurationUs(playerId)
+        override fun retainBackBufferFromKeyframe(playerId: PlayerId) = d.retainBackBufferFromKeyframe(playerId)
+        override fun shouldContinueLoading(parameters: LoadControl.Parameters): Boolean {
+            val load = d.shouldContinueLoading(parameters) // always asked: it keeps its own state
+            return load && (!viaReserve || parameters.bufferedDurationUs < RESERVE_AHEAD_US)
+        }
+        override fun shouldStartPlayback(parameters: LoadControl.Parameters) = d.shouldStartPlayback(parameters)
     }
 
     private fun buildSource(m: EngineMedia): MediaSource {
@@ -172,6 +195,7 @@ class Media3Engine(private val context: Context) : PlayerEngine {
         bytesRead.set(0L)
         if (MediaKeys.keyOf(media.url) != mainKey) fileSize = -1L
         mainKey = MediaKeys.keyOf(media.url)
+        viaReserve = Uri.parse(media.url).host == LOCAL_HOST
         setScale(scale)
         // Remembered tracks are applied by PlayerTrackSelector once the tracks are known.
         p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
@@ -430,9 +454,10 @@ class Media3Engine(private val context: Context) : PlayerEngine {
     override fun diagLine(): String? {
         val p = exo ?: return null
         val ahead = (p.bufferedPosition - p.currentPosition).coerceAtLeast(0L) / 1000.0
-        val reserve = if (Media3Cache.enabled) " · reserve on disk %.1f MB".format(Media3Cache.usedMb()) else " · no disk reserve"
-        return "[media3] buffered ahead %.1f s · network estimate %.1f Mbit/s%s · decoders video=%s audio=%s".format(
-            ahead, bandwidth / 1e6, reserve, videoDecoder.ifEmpty { "-" }, audioDecoder.ifEmpty { "-" })
+        // through the reserve ExoPlayer's estimate is the phone's own speed: the network is in the [proxy] line
+        val source = if (viaReserve) "through the reserve" else "straight from the mirror, network estimate %.1f Mbit/s".format(bandwidth / 1e6)
+        return "[media3] buffered ahead %.1f s · %s · decoders video=%s audio=%s".format(
+            ahead, source, videoDecoder.ifEmpty { "-" }, audioDecoder.ifEmpty { "-" })
     }
 
     private fun trackName(f: Format, n: Int): String {
@@ -475,12 +500,24 @@ class Media3Engine(private val context: Context) : PlayerEngine {
         private const val BACK_BUFFER_MS = 15_000
         private const val TICK_MS = 250L
         private const val TARGET_BUFFER_BYTES = 80 shl 20
+        private const val RESERVE_AHEAD_US = 15_000_000L
+        private const val LOCAL_HOST = "127.0.0.1"
 
         /**
          * The reserve's client with a shorter read timeout: 16.10, after a seek the mirror sent the headers only after
          * 10.9 s. Six seconds without data and ExoPlayer asks again for the same range on a new connection.
          */
         private val client by lazy { Api.reserve.newBuilder().readTimeout(6, java.util.concurrent.TimeUnit.SECONDS).build() }
+
+        /**
+         * To the reserve on this phone: it answers at once or waits for the network itself (its own stall watcher and
+         * reconnects), and «копим запас» holds the data back up to ~50 s on purpose — no timeout of ours before that.
+         */
+        private val localClient by lazy {
+            okhttp3.OkHttpClient.Builder().proxy(java.net.Proxy.NO_PROXY)
+                .connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(90, java.util.concurrent.TimeUnit.SECONDS).build()
+        }
 
         /** Bytes Media3 fetched from the mirror since the process started (the journal's «MB fetched»). */
         val downloaded = AtomicLong()

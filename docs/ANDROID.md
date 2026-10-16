@@ -50,7 +50,7 @@ android/
 │   │   │   ├── PlayerEngine.kt            Интерфейс видеодвижка (события, дорожки, перемотка, видео, счётчики)
 │   │   │   ├── VlcEngine.kt               Движок на libVLC: LibVLC, MediaPlayer, Media, фоновое закрытие
 │   │   │   ├── Media3Engine.kt            Движок на Media3 (ExoPlayer): зеркало, дорожки, озвучка .mka, FFmpeg, проверка дорожек
-│   │   │   ├── Media3Cache.kt             Запас Media3 на диске (SimpleCache) с общим лимитом; ключ файла как у BurstProxy
+│   │   │   ├── Media3Cache.kt             Ключ файла как у BurstProxy; удаление старой папки cache/media3
 │   │   │   ├── HybridEngine.kt            Оба движка за одним PlayerEngine, переключение для каждого файла
 │   │   │   ├── EngineChoice.kt            Какой движок открывает файл, память выбора для каждого файла
 │   │   │   ├── PlayerAudioSession.kt      MediaSession, AudioFocus, наушники, громкость
@@ -86,14 +86,16 @@ android/
 Движков два, `HybridEngine` выбирает для каждого файла (`EngineChoice`):
 
 - **`VlcEngine`** (libVLC) — через запас `BurstProxy`. Всегда, если в «Настройки → Плеер» выбран VLC (по умолчанию, пока Media3 проверяется).
-- **`Media3Engine`** (ExoPlayer 1.5.1) — к зеркалу напрямую (OkHttp `Api.reserve`), запас на диске `Media3Cache`
-  (`SimpleCache` в `cache/media3`, ключ файла как `keyOf` у `BurstProxy`). Внешняя озвучка — `MergingMediaSource`,
+- **`Media3Engine`** (ExoPlayer 1.5.1) — через тот же запас `BurstProxy`, что и VLC: запас подстраивается под скорость сети
+  и битрейт фильма, работает «копим запас». Свой буфер ExoPlayer ровный и небольшой (`ReserveLoadControl`: до 15 с в памяти,
+  читает понемногу, как VLC, — по этим чтениям `BurstProxy` меряет битрейт и не считает читателя ушедшим). Клиент к 127.0.0.1
+  с таймаутом чтения 90 с (запас ждёт сеть сам). Без запаса («Экономная загрузка» выключена) — к зеркалу напрямую, буфер 30–90 с. Внешняя озвучка — `MergingMediaSource`,
   субтитры — `SubtitleConfiguration`, DTS/TrueHD — модуль FFmpeg (`EXTENSION_RENDERER_MODE_ON`), PiP и MediaSession — общие (`PlayerPipController`, `PlayerAudioSession`).
 - Сразу в VLC: `.m2ts`, `.mts`, `.ts`, `.iso`. Из Media3 в VLC с того же места (`EngineListener.unsupported`): видео или звук без
   декодера (проверка в `onTracksChanged` — неподдерживаемый звук Media3 играет молча), файл без индекса, ошибка не сети,
   декодер не показывает кадров (`checkNoPicture`). Выбор VLC запоминается для файла (`player_engine` в настройках приложения), «Продолжить» сразу открывает VLC.
-- Лимит «Экономной загрузки» общий: файл качает только один движок, при открытии в одном движке запас другого очищается.
-- Сетевые ошибки Media3 (коды 2xxx) — обычное переподключение в Media3; смена сети без потери не переоткрывает фильм (буфер 30–90 с).
+- Запас общий: при переходе файла из Media3 в VLC скачанное остаётся.
+- Сетевые ошибки Media3 (коды 2xxx) — обычное переподключение в Media3; смена сети без потери не переоткрывает фильм.
 
 | Контроллер | Обязанности и особенности реализации |
 |---|---|
