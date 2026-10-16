@@ -25,14 +25,19 @@ namespace SuslikSetup
         readonly bool uninstall;
         readonly List<StepView> steps = new List<StepView>();
         int step;
-        bool busy, finished, failed, wasInstalled;
+        bool busy, finished, failed, wasInstalled, retryMpv;
+        string installFolder;
         FrameworkElement page;
         CancellationTokenSource cts;
         long mpvSize = 121L << 20;
 
-        public MainWindow(bool uninstall)
+        readonly bool update;
+
+        /// <param name="update">Самообновление из приложения: сразу ставим в ту же папку, а если всё прошло гладко — запускаем и закрываемся.</param>
+        public MainWindow(bool uninstall, bool update = false)
         {
             this.uninstall = uninstall;
+            this.update = update && !uninstall;
             InitializeComponent();
             Shell.SizeChanged += (_, e) => ShellClip.Rect = new Rect(e.NewSize);
             Loaded += (_, __) => { if (!preview) StartAmbient(); };
@@ -48,6 +53,7 @@ namespace SuslikSetup
             }
 
             if (uninstall) PrepareUninstall(); else PrepareInstall();
+            if (this.update) Loaded += (_, __) => RunInstall(FolderBox.Text.Trim());
         }
 
         // ---------- подготовка ----------
@@ -126,7 +132,8 @@ namespace SuslikSetup
         void UpdateFooter()
         {
             BackButton.Visibility = !uninstall && page == PageFolder ? Visibility.Visible : Visibility.Collapsed;
-            CancelButton.Visibility = finished || page == PageProgress ? Visibility.Collapsed : Visibility.Visible;
+            CancelButton.Visibility = (finished && !retryMpv) || page == PageProgress ? Visibility.Collapsed : Visibility.Visible;
+            CancelButton.Content = finished && retryMpv ? "Позже" : "Отмена";
             NextButton.Visibility = page == PageProgress ? Visibility.Collapsed : Visibility.Visible;
             CloseButton.IsEnabled = !busy;
             NextButton.IsEnabled = true;
@@ -134,7 +141,7 @@ namespace SuslikSetup
             else if (page == PageWelcome) { NextText.Text = "Далее"; NextArrow.Visibility = Visibility.Visible; }
             else if (finished)
             {
-                NextText.Text = failed ? "Закрыть" : "Готово";
+                NextText.Text = retryMpv ? "Повторить" : failed ? "Закрыть" : "Готово";
                 NextArrow.Visibility = Visibility.Collapsed;
                 NextButton.Style = (Style)FindResource("PrimaryButton");
                 NextButton.IsDefault = true;
@@ -147,9 +154,10 @@ namespace SuslikSetup
         void Next_Click(object sender, RoutedEventArgs e)
         {
             if (busy) return;
+            if (finished && retryMpv) { RetryMpv(); return; }
             if (finished)
             {
-                if (!uninstall && !failed && LaunchCheck.IsChecked == true) try { Product.Launch(FolderBox.Text.Trim()); } catch { }
+                if (!uninstall && !failed && LaunchCheck.IsChecked == true) try { Product.Launch(installFolder ?? FolderBox.Text.Trim()); } catch { }
                 Close();
                 return;
             }
@@ -171,6 +179,8 @@ namespace SuslikSetup
         void Close_Click(object sender, RoutedEventArgs e)
         {
             if (busy) return;
+            // «Позже» после неудачной загрузки видеодвижка: приложение уже стоит, его можно запустить.
+            if (finished && retryMpv && LaunchCheck.IsChecked == true) try { Product.Launch(installFolder); } catch { }
             Close();
         }
 
@@ -201,7 +211,7 @@ namespace SuslikSetup
         void FolderBox_TextChanged(object sender, TextChangedEventArgs e)
         {
             if (NeedText == null) return;
-            var mpvNeeded = !Mpv.Ready;
+            var mpvNeeded = !Mpv.Ready(FolderBox.Text.Trim());
             var need = (long)(Work.PackageSize * 2.4) + (mpvNeeded ? mpvSize : 0);
             NeedText.Text = "≈ " + Product.Mb(need);
             long free = -1;
@@ -214,8 +224,8 @@ namespace SuslikSetup
             FreeText.Text = free >= 0 ? Product.Mb(free) : "—";
             FreeText.Foreground = free >= 0 && free < need ? (Brush)FindResource("Bad") : (Brush)FindResource("Text");
             FolderNote.Text = (mpvNeeded
-                    ? "Видеодвижок mpv установится вместе с приложением."
-                    : "Видеодвижок mpv уже установлен — повторно ставиться не будет.")
+                    ? "Видеодвижок mpv (≈ 120 МБ) скачается с нашего сервера во время установки."
+                    : "Видеодвижок mpv уже есть в этой папке — скачиваться не будет.")
                 + " Приложение ставится только для вас, права администратора не нужны.";
             NextButton.IsEnabled = ValidFolder(FolderBox.Text.Trim());
         }
@@ -238,42 +248,29 @@ namespace SuslikSetup
         void RunInstall(string folder)
         {
             busy = true;
+            installFolder = folder;
             cts = new CancellationTokenSource();
             ProgressTitle.Text = "Установка";
             ProgressLead.Text = "Копирование файлов.";
             var files = AddTask("Файлы приложения");
             var mpv = AddTask("Видеодвижок mpv");
             files.Set(TaskState.Working, "");
-            var mpvNeeded = !Mpv.Ready;
-            mpv.Set(mpvNeeded ? TaskState.Waiting : TaskState.Done, mpvNeeded ? "установится после файлов" : "уже установлен — пропущено");
+            var mpvNeeded = !Mpv.Ready(folder);
+            mpv.Set(mpvNeeded ? TaskState.Waiting : TaskState.Done, mpvNeeded ? "скачается после файлов" : "уже есть — пропущено");
             Show(PageProgress, 2);
             StartShimmer();
 
             double filesPart = 0, mpvPart = 0;
             void Overall(string action)
             {
-                var v = mpvNeeded ? filesPart * 0.55 + mpvPart * 0.45 : filesPart;
+                var v = mpvNeeded ? filesPart * 0.35 + mpvPart * 0.65 : filesPart;
                 SetProgress(v, action);
             }
 
             var throttle = new Throttle(Dispatcher);
             Task.Run(() => Work.Install(folder,
                 (f, action) => throttle.Post(() => { filesPart = f; Overall(action); }),
-                (state, f, done, total) => throttle.Post(() =>
-                {
-                    switch (state)
-                    {
-                        case Work.MpvState.Loading:
-                            files.Set(TaskState.Done, "");
-                            mpvPart = f;
-                            mpv.Set(TaskState.Working, $"{(int)(f * 100)}%");
-                            Overall("Установка видеодвижка mpv…");
-                            break;
-                        case Work.MpvState.Done: mpvPart = 1; mpv.Set(TaskState.Done, "установлен"); Overall(""); break;
-                        case Work.MpvState.Skipped: files.Set(TaskState.Done, ""); break;
-                        case Work.MpvState.Failed: mpv.Set(TaskState.Failed, "приложение скачает его само"); break;
-                    }
-                }, important: state != Work.MpvState.Loading),
+                MpvProgress(mpv, files, f => { mpvPart = f; Overall("Загрузка видеодвижка mpv…"); }, throttle),
                 cts.Token)).ContinueWith(t =>
             {
                 throttle.Flush();
@@ -282,9 +279,10 @@ namespace SuslikSetup
                 if (r.Ok)
                 {
                     files.Set(TaskState.Done, "");
+                    if (r.MpvError != null) { MpvFailed(r.MpvError); return; }
                     SetProgress(1, "");
-                    Finish(true, "Готово!", wasInstalled ? "Suslik Media обновлена." : "Suslik Media установлена и готова к работе.",
-                        r.MpvFailed ? "Видеодвижок mpv приложение скачает само при первом запуске." : null);
+                    if (update) { try { Product.Launch(folder); } catch { } Close(); return; }
+                    Finish(true, "Готово!", wasInstalled ? "Suslik Media обновлена." : "Suslik Media установлена и готова к работе.", null);
                 }
                 else
                 {
@@ -292,6 +290,61 @@ namespace SuslikSetup
                     Finish(false, "Не получилось", r.Error ?? "Установка не завершилась.", $"Подробности — в журнале установки: {App.Log}");
                 }
             }, TaskScheduler.FromCurrentSynchronizationContext());
+        }
+
+        /// <summary>Ход загрузки видеодвижка → строка «Видеодвижок mpv» и общая полоска.</summary>
+        static Action<Work.MpvState, double, long, long> MpvProgress(TaskRow mpv, TaskRow files, Action<double> overall, Throttle throttle) =>
+            (state, f, done, total) => throttle.Post(() =>
+            {
+                switch (state)
+                {
+                    case Work.MpvState.Loading:
+                        files?.Set(TaskState.Done, "");
+                        mpv.Set(TaskState.Working, total > 0 ? $"{(int)(f * 100)}% · {Product.Mb(done)} из {Product.Mb(total)}" : Product.Mb(done));
+                        overall(f);
+                        break;
+                    case Work.MpvState.Done: mpv.Set(TaskState.Done, "скачан"); overall(1); break;
+                    case Work.MpvState.Skipped: files?.Set(TaskState.Done, ""); break;
+                    case Work.MpvState.Failed: mpv.Set(TaskState.Failed, "не скачан"); break;
+                }
+            }, important: state != Work.MpvState.Loading);
+
+        /// <summary>Приложение поставилось, а видеодвижок — нет (обычно недоступен сервер): говорим об этом и даём повторить.</summary>
+        void MpvFailed(string error)
+        {
+            retryMpv = true;
+            Finish(false, "Видеодвижок не скачан", error,
+                "Suslik Media установлена, но без видеодвижка mpv фильмы не откроются (если не установлен VLC). " +
+                "Нажмите «Повторить», когда сервер станет доступен, или просто запустите установщик ещё раз позже.", warn: true);
+        }
+
+        void RetryMpv()
+        {
+            var folder = installFolder;
+            retryMpv = false;
+            finished = false;
+            failed = false;
+            busy = true;
+            cts = new CancellationTokenSource();
+            Tasks.Children.Clear();
+            ProgressTitle.Text = "Видеодвижок";
+            ProgressLead.Text = "Скачиваем видеодвижок mpv с нашего сервера.";
+            var mpv = AddTask("Видеодвижок mpv");
+            mpv.Set(TaskState.Working, "");
+            SetProgress(0, "Подключение к серверу…");
+            Show(PageProgress, 2);
+            var throttle = new Throttle(Dispatcher);
+            Task.Run(() => Work.InstallMpv(folder, MpvProgress(mpv, null, f => SetProgress(f, "Загрузка видеодвижка mpv…"), throttle), cts.Token))
+                .ContinueWith(t =>
+                {
+                    throttle.Flush();
+                    busy = false;
+                    var error = t.Status == TaskStatus.RanToCompletion ? t.Result : t.Exception?.GetBaseException().Message ?? "Загрузка не удалась.";
+                    if (error != null) { MpvFailed(error); return; }
+                    SetProgress(1, "");
+                    if (update) { try { Product.Launch(folder); } catch { } Close(); return; }
+                    Finish(true, "Готово!", "Видеодвижок mpv скачан. Suslik Media готова к работе.", null);
+                }, TaskScheduler.FromCurrentSynchronizationContext());
         }
 
         // ---------- удаление ----------
@@ -350,16 +403,24 @@ namespace SuslikSetup
                 new DoubleAnimation(-140, 680, TimeSpan.FromMilliseconds(1700)) { RepeatBehavior = RepeatBehavior.Forever, EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut } });
         }
 
-        void Finish(bool ok, string title, string lead, string note)
+        void Finish(bool ok, string title, string lead, string note, bool warn = false)
         {
             finished = true;
-            failed = !ok;
+            failed = !ok && !warn;
             DoneTitle.Text = title;
             DoneLead.Text = lead;
             DoneNote.Text = note ?? "";
             DoneNote.Visibility = note == null ? Visibility.Collapsed : Visibility.Visible;
-            LaunchCheck.Visibility = ok && !uninstall ? Visibility.Visible : Visibility.Collapsed;
-            if (!ok)
+            LaunchCheck.Visibility = (ok || warn) && !uninstall ? Visibility.Visible : Visibility.Collapsed;
+            if (warn)
+            {
+                DoneC1.Color = Color.FromRgb(0xFF, 0xD2, 0x8A);
+                DoneC2.Color = Color.FromRgb(0xF5, 0xA6, 0x3C);
+                DoneGlow.Fill = new SolidColorBrush(Color.FromRgb(0xF5, 0xA6, 0x3C));
+                DoneMark.Data = Geometry.Parse("M48,28 L48,52 M48,66 L48,66.5");
+                DoneMark.Stroke = new SolidColorBrush(Color.FromRgb(0x24, 0x14, 0x02));
+            }
+            else if (!ok)
             {
                 DoneC1.Color = Color.FromRgb(0xFF, 0x9C, 0x90);
                 DoneC2.Color = Color.FromRgb(0xF0, 0x64, 0x5A);
@@ -431,12 +492,12 @@ namespace SuslikSetup
             Snap(install, "2-folder");
             install.ProgressTitle.Text = "Установка";
             var a = install.AddTask("Файлы приложения"); a.Set(TaskState.Done, "");
-            var b = install.AddTask("Видеодвижок mpv"); b.Set(TaskState.Working, "43%");
+            var b = install.AddTask("Видеодвижок mpv"); b.Set(TaskState.Working, "57% · 69 МБ из 121 МБ");
             install.Show(install.PageProgress, 2, animate: false);
             install.UpdateLayout();
             install.BarFill.Width = install.PageProgress.ActualWidth * 0.72;
             install.PercentText.Text = "72%";
-            install.ActionText.Text = "Установка видеодвижка mpv…";
+            install.ActionText.Text = "Загрузка видеодвижка mpv…";
             Snap(install, "3-progress");
             install.Finish(true, "Готово!", "Suslik Media установлена и готова к работе.", null);
             install.DoneScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
@@ -445,7 +506,18 @@ namespace SuslikSetup
             install.DoneMark.BeginAnimation(Shape.StrokeDashOffsetProperty, null);
             install.DoneMark.StrokeDashOffset = 0;
             Snap(install, "4-done");
-            install.busy = false; install.Close();
+            install.Close();
+
+            var noMpv = new MainWindow(false) { preview = true, Left = -20000, ShowActivated = false };
+            noMpv.Show();
+            noMpv.MpvFailed("Сервер видеодвижка недоступен. Проверьте интернет или попробуйте позже.");
+            noMpv.DoneScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+            noMpv.DoneScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+            noMpv.DoneScale.ScaleX = noMpv.DoneScale.ScaleY = 1;
+            noMpv.DoneMark.BeginAnimation(Shape.StrokeDashOffsetProperty, null);
+            noMpv.DoneMark.StrokeDashOffset = 0;
+            Snap(noMpv, "6-no-mpv");
+            noMpv.Close();
 
             var remove = new MainWindow(true) { preview = true, Left = -20000, ShowActivated = false };
             remove.Show();

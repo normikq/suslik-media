@@ -13,7 +13,8 @@ namespace SuslikSetup
         {
             public bool Ok;
             public string Error;
-            public bool MpvFailed;
+            /// <summary>Приложение стоит, но видеодвижок не скачался (например, сервер недоступен).</summary>
+            public string MpvError;
         }
 
         public enum MpvState { Waiting, Skipped, Loading, Done, Failed }
@@ -55,23 +56,7 @@ namespace SuslikSetup
                 else Product.Unhide();
                 result.Ok = true;
 
-                if (Mpv.Ready) mpv(MpvState.Skipped, 1, 0, 0);
-                else if (!Mpv.Bundled) { result.MpvFailed = true; mpv(MpvState.Failed, 0, 0, 0); }
-                else
-                {
-                    mpv(MpvState.Loading, 0, 0, 0);
-                    try
-                    {
-                        Mpv.Install((f, done, total) => mpv(MpvState.Loading, f, done, total), ct);
-                        mpv(MpvState.Done, 1, 0, 0);
-                    }
-                    catch
-                    {
-                        // Не страшно: приложение скачает видеодвижок само при запуске.
-                        result.MpvFailed = true;
-                        mpv(MpvState.Failed, 0, 0, 0);
-                    }
-                }
+                result.MpvError = InstallMpv(folder, mpv, ct);
             }
             catch (Exception e)
             {
@@ -82,6 +67,26 @@ namespace SuslikSetup
                 if (package != null) try { File.Delete(package); } catch { }
             }
             return result;
+        }
+
+        /// <summary>Проверяет libmpv в папке установки и, если её нет, качает с сервера. null — всё на месте, иначе текст ошибки.</summary>
+        public static string InstallMpv(string folder, Action<MpvState, double, long, long> mpv, CancellationToken ct)
+        {
+            if (Mpv.Ready(folder)) { mpv(MpvState.Skipped, 1, 0, 0); return null; }
+            mpv(MpvState.Loading, 0, 0, 0);
+            try
+            {
+                Mpv.Download(folder, (f, done, total) => mpv(MpvState.Loading, f, done, total), ct);
+                mpv(MpvState.Done, 1, 0, 0);
+                return null;
+            }
+            catch (Exception e)
+            {
+                try { File.AppendAllText(App.Log, $"{DateTime.Now:s} libmpv {Mpv.Url}: {e}\r\n"); } catch { }
+                var msg = ct.IsCancellationRequested ? "Загрузка видеодвижка отменена." : e.Message;
+                mpv(MpvState.Failed, 0, 0, 0);
+                return msg;
+            }
         }
 
         /// <summary>progress(доля, действие). wipe — удалить и данные приложения.</summary>

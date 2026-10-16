@@ -164,7 +164,10 @@ object Updater {
             // Encoded: the script then needs no quoting on the command line (Windows argument quoting is fragile).
             val encoded = java.util.Base64.getEncoder().encodeToString(script.toByteArray(Charsets.UTF_16LE))
             listOf("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-EncodedCommand", encoded)
-        } else listOf(file.absolutePath)
+        } else {
+            // Установщик «Suslik Media Setup.exe»: сам найдёт папку, поставит туда, проверит видеодвижок и снова запустит приложение.
+            listOf(file.absolutePath, "/update")
+        }
         ProcessBuilder(cmd).start()
         Thread.sleep(400)
         AppExit.finish()

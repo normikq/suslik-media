@@ -1,11 +1,11 @@
-name: Windows MSI
+name: Windows
 
 # Только вручную (Actions → Run workflow или gh api …/dispatches): пуш больше не запускает сборку.
 on:
   workflow_dispatch:
     inputs:
       publish:
-        description: "Выложить MSI на сайт (папка updates/)"
+        description: "Выложить установщик на сайт (папка updates/)"
         type: boolean
         default: false
       debug:
@@ -55,28 +55,17 @@ jobs:
           mkdir -p ../dist && cp "$(ls build/compose/binaries/main-release/msi/*.msi | head -1)" "../dist/Suslik Media-$V.msi"
           echo "MSI=$(ls ../dist/*.msi | head -1 | sed 's#^\.\./##')" >> "$GITHUB_ENV"
           echo "V=$V" >> "$GITHUB_ENV"
-      # Мастер установки «Suslik Media Setup.exe»: то же окно с MSI внутри (первая установка и переустановка).
-      # Обновления по-прежнему идут через MSI (самообновление ставит его молча).
+      # Единственный файл для людей — «Suslik Media Setup.exe»: мастер с MSI внутри. Им же обновляется приложение
+      # (запускает его с /update). Видеодвижок libmpv в нём нет: установщик качает его с нашего сервера (libmpv.properties).
       - name: Build installer
         run: |
           set -o pipefail
-          # libmpv едет внутри установщика (не в MSI): зафиксированный архив из libmpv.properties, обе суммы сверяются
-          P=src/main/resources/libmpv.properties
-          get() { sed -n "s/^$1=//p" "$P" | tr -d '\r'; }
-          M="$RUNNER_TEMP/mpv" && mkdir -p "$M"
-          curl -fsSL -o "$M/mpv.7z" "$(get archive)"
-          echo "$(get archiveSha256)  $M/mpv.7z" | sha256sum -c
-          7z x -y "-o$(cygpath -w "$M")" "$(cygpath -w "$M/mpv.7z")" libmpv-2.dll > /dev/null
-          echo "$(get dllSha256)  $M/libmpv-2.dll" | sha256sum -c
-          gzip -9 -n -c "$M/libmpv-2.dll" > "$M/libmpv-2.dll.gz"
           dotnet build setup/SuslikSetup.csproj -c Release -p:AppVersion=$V -p:AssemblyName=SuslikMediaSetup \
-            "-p:MsiPath=$(cygpath -w "$GITHUB_WORKSPACE/$MSI")" "-p:LibmpvPath=$(cygpath -w "$M/libmpv-2.dll.gz")" \
-            -o "$RUNNER_TEMP/setup" 2>&1 | tail -5
+            "-p:MsiPath=$(cygpath -w "$GITHUB_WORKSPACE/$MSI")" -o "$RUNNER_TEMP/setup" 2>&1 | tail -5
           cp "$RUNNER_TEMP/setup/SuslikMediaSetup.exe" "../dist/Suslik Media Setup-$V.exe"
           rm -rf setup/obj setup/bin
+          echo "SETUP=dist/Suslik Media Setup-$V.exe" >> "$GITHUB_ENV"
           ls -la ../dist
-      - uses: actions/upload-artifact@v4
-        with: { name: windows-msi, path: dist/*.msi, retention-days: 2 }
       - uses: actions/upload-artifact@v4
         with: { name: windows-setup, path: dist/*.exe, retention-days: 7 }
       # «Suslik Debug» (detailed journal, installs next to the normal app, never published): see desktop/DEBUG-BUILD.md
@@ -100,9 +89,9 @@ jobs:
             code=$(curl -s -o /dev/null -w "%{http_code}" -H "X-Update-Token: $UPDATE_TOKEN" "$SITE_URL/api/app/reports?limit=1")
             if [ "$code" != "200" ]; then echo "::error::Сервер ещё без бета-канала (обновите website/server.js) — публикация отменена"; exit 1; fi
           fi
-          curl -fsS -H "X-Update-Token: $UPDATE_TOKEN" -H "X-File-Name: $(basename "$MSI")" \
+          curl -fsS -H "X-Update-Token: $UPDATE_TOKEN" -H "X-File-Name: $(basename "$SETUP")" \
                -H "X-Channel: ${{ inputs.channel || 'beta' }}" \
-               -H "Content-Type: application/octet-stream" --data-binary @"$MSI" "$SITE_URL/api/app/upload"
+               -H "Content-Type: application/octet-stream" --data-binary @"$SETUP" "$SITE_URL/api/app/upload"
           # «Что нового» этой сборки — на сайт (вкладка «Приложения»)
           curl -fsS -H "X-Update-Token: $UPDATE_TOKEN" -H "Content-Type: application/json" \
                --data-binary @desktop/src/main/resources/changelog.json "$SITE_URL/api/app/changelog?platform=desktop"

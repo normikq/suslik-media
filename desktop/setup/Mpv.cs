@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.IO.Compression;
+using System.Net;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Threading;
@@ -9,16 +9,20 @@ using System.Threading;
 namespace SuslikSetup
 {
     /// <summary>
-    /// libmpv-2.dll (видеодвижок mpv) — отдельно от MSI, один раз, в %APPDATA%\SuslikMedia\mpv. Установщик везёт её
-    /// сжатой внутри себя (libmpv-2.dll.gz, кладёт CI). Та же схема, что в приложении (MpvInstall.kt):
-    /// версия — libmpv.properties, метка libmpv.version = SHA-256 библиотеки; если она совпадает, ничего не делаем.
+    /// libmpv-2.dll (видеодвижок mpv) не входит ни в установщик, ни в MSI. Она лежит в папке приложения
+    /// (&lt;папка&gt;\app\resources) и при установке проверяется: есть нужная версия — ничего не делаем, нет — качаем
+    /// с нашего сервера (адрес и SHA-256 — в libmpv.properties, тот же файл читает приложение).
+    /// Метка libmpv.version рядом = SHA-256 библиотеки, чтобы не считать хэш 120 МБ при каждом обновлении.
     /// </summary>
     static class Mpv
     {
         static readonly Dictionary<string, string> pin = Load();
+        public static string Url => pin.TryGetValue("url", out var v) ? v : "";
         static string Sha256 => (pin.TryGetValue("dllSha256", out var v) ? v : "").ToLowerInvariant();
-        static string Dll => Path.Combine(Product.MpvFolder, "libmpv-2.dll");
-        static string Mark => Path.Combine(Product.MpvFolder, "libmpv.version");
+
+        static string Dir(string folder) => Path.Combine(folder, "app", "resources");
+        static string Dll(string folder) => Path.Combine(Dir(folder), "libmpv-2.dll");
+        static string Mark(string folder) => Path.Combine(Dir(folder), "libmpv.version");
 
         static Dictionary<string, string> Load()
         {
@@ -38,67 +42,83 @@ namespace SuslikSetup
             return map;
         }
 
-        /// <summary>Нужная версия уже на месте: при обновлении ничего не качаем.</summary>
-        public static bool Ready
+        /// <summary>Нужная версия уже лежит в папке установки: при обновлении ничего не качаем.</summary>
+        public static bool Ready(string folder)
         {
-            get
+            if (Sha256.Length == 0 || string.IsNullOrEmpty(folder)) return Sha256.Length == 0;
+            try
             {
-                if (Sha256.Length == 0) return true;
-                try { return File.Exists(Dll) && File.ReadAllText(Mark).Trim() == Sha256; } catch { return false; }
+                var dll = Dll(folder);
+                if (!File.Exists(dll)) return false;
+                if (File.Exists(Mark(folder)) && File.ReadAllText(Mark(folder)).Trim() == Sha256) return true;
+                // Положили руками, без метки: проверяем один раз и ставим метку.
+                using (var s = File.OpenRead(dll))
+                using (var sha = SHA256.Create())
+                    if (Hex(sha.ComputeHash(s)) != Sha256) return false;
+                File.WriteAllText(Mark(folder), Sha256);
+                return true;
             }
+            catch { return false; }
         }
 
-        /// <summary>Библиотека есть внутри установщика.</summary>
-        public static bool Bundled => Assembly.GetExecutingAssembly().GetManifestResourceInfo("libmpv-2.dll.gz") != null;
-
-        /// <summary>Распаковывает и проверяет; progress(доля, готово байт, всего байт).</summary>
-        public static void Install(Action<double, long, long> progress, CancellationToken ct)
+        /// <summary>Качает с сервера и проверяет; progress(доля, скачано байт, всего байт). Ошибка — понятным текстом.</summary>
+        public static void Download(string folder, Action<double, long, long> progress, CancellationToken ct)
         {
-            Directory.CreateDirectory(Product.MpvFolder);
-            var part = Dll + ".part";
-            using (var res = Assembly.GetExecutingAssembly().GetManifestResourceStream("libmpv-2.dll.gz"))
-            using (var counting = new CountingStream(res))
-            using (var gz = new GZipStream(counting, CompressionMode.Decompress))
-            using (var sha = SHA256.Create())
+            if (Url.Length == 0) throw new IOException("Не задан адрес видеодвижка.");
+            Directory.CreateDirectory(Dir(folder));
+            var dll = Dll(folder);
+            var part = dll + ".part";
+            ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
+            var req = (HttpWebRequest)WebRequest.Create(Url);
+            req.Timeout = 20000;
+            req.ReadWriteTimeout = 60000;
+            req.UserAgent = "SuslikSetup/" + Product.Version;
+            req.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
+            try
             {
-                long total = res.Length;
-                using (var file = File.Create(part))
+                using (ct.Register(() => { try { req.Abort(); } catch { } }))
+                using (var res = (HttpWebResponse)req.GetResponse())
+                using (var body = res.GetResponseStream())
+                using (var sha = SHA256.Create())
                 {
-                    var buf = new byte[1 << 16];
-                    int n;
-                    while ((n = gz.Read(buf, 0, buf.Length)) > 0)
+                    long total = res.ContentLength;
+                    long got = 0;
+                    using (var file = File.Create(part))
                     {
-                        ct.ThrowIfCancellationRequested();
-                        file.Write(buf, 0, n);
-                        sha.TransformBlock(buf, 0, n, null, 0);
-                        progress((double)counting.Count / total, counting.Count, total);
+                        var buf = new byte[1 << 16];
+                        int n;
+                        while ((n = body.Read(buf, 0, buf.Length)) > 0)
+                        {
+                            ct.ThrowIfCancellationRequested();
+                            file.Write(buf, 0, n);
+                            sha.TransformBlock(buf, 0, n, null, 0);
+                            got += n;
+                            progress(total > 0 ? (double)got / total : 0, got, total);
+                        }
                     }
+                    sha.TransformFinalBlock(new byte[0], 0, 0);
+                    if (Hex(sha.Hash) != Sha256) throw new IOException("Файл видеодвижка с сервера повреждён или другой версии.");
                 }
-                sha.TransformFinalBlock(new byte[0], 0, 0);
-                var hash = BitConverter.ToString(sha.Hash).Replace("-", "").ToLowerInvariant();
-                if (hash != Sha256) { File.Delete(part); throw new IOException("Видеодвижок повреждён"); }
+                if (File.Exists(dll)) File.Delete(dll);
+                File.Move(part, dll);
+                File.WriteAllText(Mark(folder), Sha256);
             }
-            if (File.Exists(Dll)) File.Delete(Dll);
-            File.Move(part, Dll);
-            File.WriteAllText(Mark, Sha256);
+            catch (WebException e) when (!ct.IsCancellationRequested)
+            {
+                TryDelete(part);
+                if (e.Response is HttpWebResponse r)
+                    throw new IOException($"Сервер видеодвижка ответил ошибкой {(int)r.StatusCode}.", e);
+                throw new IOException("Сервер видеодвижка недоступен. Проверьте интернет или попробуйте позже.", e);
+            }
+            catch
+            {
+                TryDelete(part);
+                throw;
+            }
         }
 
-        sealed class CountingStream : Stream
-        {
-            readonly Stream inner;
-            public long Count;
-            public CountingStream(Stream inner) { this.inner = inner; }
-            public override int Read(byte[] buffer, int offset, int count) { int n = inner.Read(buffer, offset, count); Count += n; return n; }
-            public override bool CanRead => true;
-            public override bool CanSeek => false;
-            public override bool CanWrite => false;
-            public override long Length => throw new NotSupportedException();
-            public override long Position { get => Count; set => throw new NotSupportedException(); }
-            public override void Flush() { }
-            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
-            public override void SetLength(long value) => throw new NotSupportedException();
-            public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-            protected override void Dispose(bool disposing) { if (disposing) inner.Dispose(); base.Dispose(disposing); }
-        }
+        static void TryDelete(string f) { try { File.Delete(f); } catch { } }
+
+        static string Hex(byte[] b) => BitConverter.ToString(b).Replace("-", "").ToLowerInvariant();
     }
 }

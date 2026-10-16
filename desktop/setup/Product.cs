@@ -24,9 +24,8 @@ namespace SuslikSetup
         static string LocalAppData => Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         public static string DefaultFolder => Path.Combine(LocalAppData, Name);
 
-        /// <summary>Настройки, вход, прогресс, постеры, журнал и libmpv (mpv\).</summary>
+        /// <summary>Настройки, вход, прогресс, постеры, журнал.</summary>
         public static string DataFolder => Path.Combine(AppData, "SuslikMedia");
-        public static string MpvFolder => Path.Combine(DataFolder, "mpv");
         /// <summary>Запас фильмов и скачанное обновление.</summary>
         static string[] TempFolders => new[] { "SuslikMedia-stream", "SuslikMedia-update" }.Select(n => Path.Combine(Path.GetTempPath(), n)).ToArray();
 
@@ -132,7 +131,7 @@ namespace SuslikSetup
 
         public static long DataSize() => FolderSize(DataFolder) + TempFolders.Sum(FolderSize);
 
-        /// <summary>Всё, что приложение оставляет вне папки установки: настройки, вход, прогресс, кэш, запас, libmpv.</summary>
+        /// <summary>Всё, что приложение оставляет вне папки установки: настройки, вход, прогресс, кэш, запас.</summary>
         public static void DeleteData()
         {
             foreach (var d in TempFolders.Concat(new[] { DataFolder })) DeleteFolder(d);
@@ -144,7 +143,10 @@ namespace SuslikSetup
             if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder)) return;
             // Только если от программы ничего не осталось: чужие файлы в выбранной папке не трогаем.
             if (File.Exists(Path.Combine(folder, ExeName))) return;
+            // Видеодвижок не из MSI (его скачивает установщик), поэтому Windows Installer его не убирает.
+            var res = Path.Combine(folder, "app", "resources");
             foreach (var f in new[] { "suslik.jsa" }.Select(n => Path.Combine(folder, n))
+                         .Concat(new[] { "libmpv-2.dll", "libmpv-2.dll.part", "libmpv.version" }.Select(n => Path.Combine(res, n)))
                          .Concat(SafeFiles(folder, "hs_err_pid*.log")))
                 try { File.Delete(f); } catch { }
             foreach (var sub in new[] { "app", "runtime" }) DeleteFolderIfOnlyEmptyDirs(Path.Combine(folder, sub));

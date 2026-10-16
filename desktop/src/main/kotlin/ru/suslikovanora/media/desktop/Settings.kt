@@ -302,6 +302,7 @@ private fun EngineSection() {
     val statusText = when {
         loading != null -> tr("settings.dvizhok_mpv_zagruzka", "p" to (loading * 100).toInt())
         mpvAvail && libFile != null -> tr("settings.dvizhok_mpv_put", "path" to libFile.absolutePath)
+        MpvInstall.error != null -> tr("settings.dvizhok_mpv_oshibka", "err" to MpvInstall.error!!)
         else -> tr("settings.dvizhok_mpv_otsutstvuet")
     }
     Text(
@@ -312,7 +313,7 @@ private fun EngineSection() {
         lineHeight = 16.sp,
         modifier = Modifier.padding(top = 6.dp)
     )
-    // Не скачалась при запуске (нет сети и т. п.): повторить отсюда.
+    // Не скачалась (сервер недоступен и т. п.): повторить отсюда.
     if (!mpvAvail && loading == null) {
         OutlineButton(tr("settings.dvizhok_mpv_skachat"), Modifier.padding(top = 8.dp)) {
             MpvInstall.start(scope)

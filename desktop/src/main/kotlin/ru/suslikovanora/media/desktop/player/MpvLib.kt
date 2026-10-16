@@ -38,15 +38,13 @@ object Mpv {
     const val END_ERROR = 4
 
     /**
-     * libmpv-2.dll ищем: рядом с приложением (`app/`, `mpv/`), в `%APPDATA%\SuslikMedia\mpv` (туда её кладут
-     * установщик и [MpvInstall]), в PATH.
+     * libmpv-2.dll ищем в папке ресурсов приложения (`app/resources`: туда её кладут установщик и [MpvInstall]),
+     * рядом с рабочей папкой (`mpv/`) и в `SUSLIK_MPV_DIR`.
      */
     fun candidates(): List<File> {
-        MpvInstall.applyPending()
         val dirs = ArrayList<File>()
         System.getProperty("compose.application.resources.dir")?.let { dirs += File(it) }
         System.getProperty("user.dir")?.let { dirs += File(it); dirs += File(it, "mpv") }
-        System.getenv("APPDATA")?.let { dirs += File(it, "SuslikMedia/mpv") }
         System.getenv("SUSLIK_MPV_DIR")?.let { dirs += File(it) }
         return dirs.filter { File(it, "libmpv-2.dll").isFile }
     }

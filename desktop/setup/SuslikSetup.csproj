@@ -3,8 +3,8 @@
     Установщик и окно удаления Suslik Media (WPF, .NET Framework 4.7.2 — есть в Windows 10/11 из коробки).
     Одна программа в двух сборках (см. .github/workflows/desktop.yml):
       SuslikUninstall.exe — без MSI, кладётся в само приложение (app/resources) и открывается из «Установленных приложений»;
-      Suslik Media Setup.exe — с MSI и сжатой libmpv внутри (-p:MsiPath=… -p:LibmpvPath=…\libmpv-2.dll.gz): мастер установки.
-    Сборка: dotnet build -c Release [-p:MsiPath=…] [-p:LibmpvPath=…] [-p:AssemblyName=…] [-p:AppVersion=2.3.1]
+      Suslik Media Setup.exe — с MSI внутри (-p:MsiPath=…): мастер установки. Видеодвижок libmpv он скачивает с нашего сервера.
+    Сборка: dotnet build -c Release [-p:MsiPath=…] [-p:AssemblyName=…] [-p:AppVersion=2.3.1]
   -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -33,6 +33,5 @@
     <Resource Include="..\src\main\resources\icons\icon-256.png" Link="img\icon.png" />
     <EmbeddedResource Include="..\src\main\resources\libmpv.properties" LogicalName="libmpv.properties" />
     <EmbeddedResource Include="$(MsiPath)" LogicalName="package.msi" Condition="'$(MsiPath)' != ''" />
-    <EmbeddedResource Include="$(LibmpvPath)" LogicalName="libmpv-2.dll.gz" Condition="'$(LibmpvPath)' != ''" />
   </ItemGroup>
 </Project>

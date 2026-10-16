@@ -330,7 +330,7 @@
                                     <StackPanel>
                                         <TextBlock Text="Удалить все сохранённые данные и кэш" Foreground="{StaticResource Text}" FontSize="16" FontWeight="SemiBold" />
                                         <TextBlock x:Name="WipeDetails" Style="{StaticResource Small}" Margin="0,6,0,0" LineHeight="21"
-                                                   Text="Настройки, вход, прогресс просмотра, постеры, запас фильмов и видеодвижок mpv." />
+                                                   Text="Настройки, вход, прогресс просмотра, постеры и запас фильмов." />
                                     </StackPanel>
                                 </CheckBox>
                             </Border>

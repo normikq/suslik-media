@@ -156,9 +156,10 @@ VC-1 на Samsung даёт чёрный экран → файл переоткр
 Blu-ray на Android через `TsPlayback`; «копим запас» — общий `CatchUp`; на ПК VLC за `PlayerEngine` (`VlcPlayer`), циклы `vlcPoll`, фокус не отбирается у других программ,
 проверка SHA-256 обновления; Media3 читает через запас. Не сделано: деление `BurstProxy`/`PlayerActivity`/`PlayerView` (риск без локальной сборки).
 
-**2.3.1 (Windows, установщик)** (16.10, ветка `claude/project-thread-kvqh0s`): свой установщик `desktop/setup` (WPF, стиль макета владельца: шаги слева, голубое свечение),
-MSI внутри; `SuslikUninstall.exe` в `app/resources` — окно удаления с галочкой «удалить данные и кэш»; libmpv не в MSI (едет внутри Setup.exe; приложение докачивает архив сборки mpv, если её нет: `libmpv.properties`, `MpvInstall`);
-самообновление — `msiexec /passive` в ту же папку и перезапуск. На сайт по-прежнему идёт только MSI (Setup.exe — артефакт `windows-setup`). Подробно: `docs/DESKTOP.md` §9.
+**2.3.2 (Windows, установщик)** (16.10, ветка `claude/project-thread-kvqh0s`, бета): один установщик `desktop/setup` (WPF, стиль макета владельца: шаги слева, голубое свечение),
+MSI только внутри; на сайт и для самообновления идёт `Suslik Media Setup-<V>.exe` (обновление — `/update`). libmpv ни в Setup, ни в MSI: установщик проверяет `<папка>\app\resources\libmpv-2.dll`
+и, если её нет, качает с сервера владельца (`libmpv.properties`: `url`, `dllSha256`), при недоступности сервера — сообщение и «Повторить»; приложение (`MpvInstall`) докачивает туда же.
+`SuslikUninstall.exe` в `app/resources` — окно удаления с галочкой «удалить данные и кэш». Подробно: `docs/DESKTOP.md` §9.
 
 ## Открытое
 

@@ -9,7 +9,8 @@ namespace SuslikSetup
 {
     /// <summary>
     /// Режимы: с MSI внутри — мастер установки; без него (SuslikUninstall.exe) или с /uninstall — окно удаления;
-    /// /register &lt;версия&gt; — молча обновить запись в «Установленных приложениях» (зовёт само приложение).
+    /// /register &lt;версия&gt; — молча обновить запись в «Установленных приложениях» (зовёт само приложение);
+    /// /update — самообновление из приложения: сразу ставит в ту же папку и снова запускает приложение.
     /// </summary>
     public partial class App : Application
     {
@@ -72,7 +73,7 @@ namespace SuslikSetup
             }
 
             ShutdownMode = ShutdownMode.OnMainWindowClose;
-            var w = new MainWindow(uninstall);
+            var w = new MainWindow(uninstall, update: Has("/update"));
             MainWindow = w;
             w.Show();
         }
