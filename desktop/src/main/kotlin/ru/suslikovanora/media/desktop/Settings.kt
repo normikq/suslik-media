@@ -260,7 +260,7 @@ private fun DiagSection() {
     if (state.isNotEmpty()) Text(state, color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 6.dp))
 }
 
-/** Выбор движка: mpv (OpenGL) vs VLC. */
+/** Выбор движка: mpv (Direct3D 11) vs VLC. */
 @Composable
 private fun EngineSection() {
     var engine by remember { mutableStateOf(PlaybackSettings.playerEngine()) }

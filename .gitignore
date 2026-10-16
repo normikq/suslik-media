@@ -17,3 +17,6 @@ dist/
 *.iml
 *.zip
 android/ffmpeg/work/
+
+# libmpv-2.dll скачивается при сборке (см. desktop/build.gradle.kts), в git не хранится
+desktop/resources/

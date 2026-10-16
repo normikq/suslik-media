@@ -1,3 +1,5 @@
+import java.net.URI
+import java.security.MessageDigest
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 
 plugins {
@@ -47,6 +49,44 @@ val msiVersion = appVersion.split(".").let { parts ->
 // Start menu entry, data folder %APPDATA%\SuslikMediaDebug), a detailed journal, no self-update. See DEBUG-BUILD.md.
 val diag = (findProperty("diag") as String?)?.let { it != "false" } ?: false
 
+// libmpv (движок mpv): 121 МБ, в git не хранится. При сборке скачиваем зафиксированный релиз (проверка SHA-256),
+// достаём libmpv-2.dll в desktop/resources/windows и кладём в приложение (appResourcesRootDir): в MSI она попадает в app/resources.
+val libmpvUrl = "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261016/mpv-dev-x86_64-20261016-git-a2cd83c56d.7z"
+val libmpvSha256 = "0142058a8d20930f1c086d0c16a593f9e27a8b3fe9d1f4bb3b2ee4a2d5ec994b"
+val libmpvDll = layout.projectDirectory.file("resources/windows/libmpv-2.dll").asFile
+val libmpvArchive = layout.buildDirectory.file("libmpv/mpv-dev.7z").get().asFile
+
+val fetchLibmpv by tasks.registering {
+    outputs.file(libmpvDll)
+    onlyIf { org.gradle.internal.os.OperatingSystem.current().isWindows && !libmpvDll.isFile }
+    doLast {
+        fun sha256(f: File) = MessageDigest.getInstance("SHA-256").let { md ->
+            f.inputStream().use { s -> val b = ByteArray(1 shl 16); while (true) { val n = s.read(b); if (n < 0) break; md.update(b, 0, n) } }
+            md.digest().joinToString("") { "%02x".format(it) }
+        }
+        libmpvArchive.parentFile.mkdirs()
+        if (!libmpvArchive.isFile || sha256(libmpvArchive) != libmpvSha256) {
+            logger.lifecycle("libmpv: скачиваем $libmpvUrl")
+            URI(libmpvUrl).toURL().openStream().use { i -> libmpvArchive.outputStream().use { o -> i.copyTo(o) } }
+        }
+        check(sha256(libmpvArchive) == libmpvSha256) { "libmpv: контрольная сумма архива не совпала" }
+        val tmp = libmpvArchive.parentFile.resolve("x").apply { deleteRecursively(); mkdirs() }
+        // Нужен tar с поддержкой 7z (bsdtar из Windows) или 7z; GNU tar из Git Bash 7z не читает
+        val tools = listOf(
+            listOf("${System.getenv("SystemRoot") ?: "C:\\Windows"}\\System32\\tar.exe", "-xf", libmpvArchive.path, "-C", tmp.path, "libmpv-2.dll"),
+            listOf("7z", "x", "-y", "-o${tmp.path}", libmpvArchive.path, "libmpv-2.dll")
+        )
+        val ok = tools.any { cmd ->
+            runCatching { ProcessBuilder(cmd).redirectErrorStream(true).start().also { it.inputStream.readAllBytes() }.waitFor() == 0 }.getOrDefault(false) &&
+                tmp.resolve("libmpv-2.dll").isFile
+        }
+        check(ok) { "libmpv: не удалось распаковать архив (нужен Windows tar.exe или 7z)" }
+        libmpvDll.parentFile.mkdirs()
+        tmp.resolve("libmpv-2.dll").copyTo(libmpvDll, overwrite = true)
+    }
+}
+tasks.matching { it.name == "prepareAppResources" }.configureEach { dependsOn(fetchLibmpv) }
+
 composeCompiler { stabilityConfigurationFile.set(project.layout.projectDirectory.file("compose-stability.conf")) }
 
 compose.desktop {
@@ -81,6 +121,7 @@ compose.desktop {
         }
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe)
+            appResourcesRootDir.set(project.layout.projectDirectory.dir("resources")) // resources/windows/libmpv-2.dll
             // java.net.http: API client, jdk.crypto.ec: HTTPS, jdk.unsupported: JNA (VLC)
             modules("java.net.http", "jdk.crypto.ec", "jdk.unsupported", "java.naming", "jdk.accessibility")
             // debug build: CPU / threads / memory for the [sys] journal lines
