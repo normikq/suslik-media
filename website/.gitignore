@@ -7,3 +7,11 @@ sessions.json
 library-files-cache.json
 media-metadata-cache.json
 *.tmp
+
+# данные сервера (DATA_DIR по умолчанию — эта папка)
+owners.json
+favorites.json
+reports/
+updates/
+changelog/
+poster-cache/

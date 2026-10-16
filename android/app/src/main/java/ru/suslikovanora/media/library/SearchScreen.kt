@@ -113,7 +113,7 @@ class SearchModel(private val scope: CoroutineScope, private val store: LibraryS
         note(h.id, tr("search.dobavlyayu"), true)
         scope.launch {
             try {
-                val r = Api.post("/api/search/add", JSONObject().put("id", h.id))
+                val r = Api.post("/api/search/add", JSONObject().put("id", h.id), repeatable = false)
                 val id = r.optLong("id")
                 if (r.optBoolean("ready")) { note(h.id, tr("search.gotovo_uzhe_v_biblioteke"), true); store.refresh(); return@launch }
                 note(h.id, tr("add.dobavleno_alldebrid_kachaet"), true)

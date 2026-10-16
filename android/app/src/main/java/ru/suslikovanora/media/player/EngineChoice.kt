@@ -1,5 +1,6 @@
 package ru.suslikovanora.media.player
 
+import ru.suslikovanora.media.core.MirrorLink
 import android.content.Context
 import android.net.Uri
 import ru.suslikovanora.media.PlaybackSettings
@@ -26,7 +27,7 @@ class EngineChoice(context: Context) {
     }
 
     fun remembered(url: String): Pick? {
-        val v = prefs.getString(MediaKeys.keyOf(url), null) ?: return null
+        val v = prefs.getString(MirrorLink.fileKey(url), null) ?: return null
         val kind = EngineKind.values().firstOrNull { v.startsWith(it.tag + "|") } ?: return null
         return Pick(kind, v.substringAfter('|').substringAfter('|'))
     }
@@ -38,7 +39,7 @@ class EngineChoice(context: Context) {
         // a few hundred files at most: the oldest go
         if (all.size >= MAX_FILES) all.entries.sortedBy { (it.value as? String)?.split('|')?.getOrNull(1)?.toLongOrNull() ?: 0L }
             .take(all.size - MAX_FILES + 1).forEach { e.remove(it.key) }
-        e.putString(MediaKeys.keyOf(url), "${kind.tag}|${System.currentTimeMillis()}|$reason").apply()
+        e.putString(MirrorLink.fileKey(url), "${kind.tag}|${System.currentTimeMillis()}|$reason").apply()
     }
 
     companion object {

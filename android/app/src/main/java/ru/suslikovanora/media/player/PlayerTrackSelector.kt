@@ -8,7 +8,14 @@ import android.net.Uri
 import android.os.Handler
 import android.os.SystemClock
 import android.widget.Toast
+import java.net.URLEncoder
 import java.util.Locale
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import org.json.JSONArray
+import org.json.JSONObject
+import ru.suslikovanora.media.core.MirrorLink
+import ru.suslikovanora.media.net.Api
 import ru.suslikovanora.media.tr
 
 /**
@@ -30,9 +37,6 @@ class PlayerTrackSelector(
 
     companion object {
         const val SPU_OFF = "__off__"
-        const val EXTRA_SUB_URLS = "media_sub_urls"
-        const val EXTRA_AUDIO_URLS = "media_audio_urls"
-        const val EXTRA_URL = "media_url"
         private const val SIDECAR_NONE = "__none__"
     }
 
@@ -44,9 +48,16 @@ class PlayerTrackSelector(
     private var prefsAppliedForUrl = ""
     private var prefsUntil = 0L // remembered tracks may still be applied until then
 
-    private var subUrls: List<String> = emptyList()
-    private var audioUrls: List<String> = emptyList()
-    private var subsForUrl = ""
+    // External files per episode, by the episode's `link`: signed mirror links (subtitles, voice-overs). The first
+    // episode's come signed from the play sheet; the playlist's following ones are signed when they start
+    // ([signSidecars]) — before, the next episode played without its voice-overs and subtitles.
+    private class EpisodeFiles(val subs: List<String>, val audio: List<String>)
+    private val episodeFiles = HashMap<String, EpisodeFiles>()
+    private var toSign = JSONObject()
+    private var filmUrl = "" // the file being played (names its voice-overs, see [audioLabel])
+    private fun keyOf(url: String) = MirrorLink.param(url, "link") ?: url.substringBefore('?')
+    private fun filesOf(url: String) = episodeFiles[keyOf(url)]
+    private val audioUrls: List<String> get() = filesOf(filmUrl)?.audio.orEmpty()
 
     // Voice-over files beside the film: only ONE is opened with it (the remembered one, else the first). Opening all of them
     // at once made VLC fetch every file's head and tail before the first frame (16.10: 7 files, ~250 MB, 23 s to start).
@@ -65,9 +76,34 @@ class PlayerTrackSelector(
     val selectedSpu: Int? get() = selectedSpuId
 
     fun readSideExtras(i: Intent?) {
-        subUrls = i?.getStringArrayListExtra(EXTRA_SUB_URLS)?.filter { it.startsWith("https://") }.orEmpty()
-        audioUrls = i?.getStringArrayListExtra(EXTRA_AUDIO_URLS)?.filter { it.startsWith("https://") }.orEmpty()
-        subsForUrl = i?.getStringExtra(EXTRA_URL).orEmpty()
+        episodeFiles.clear()
+        val url = i?.getStringExtra(PlayerExtras.URL).orEmpty()
+        val subs = i?.getStringArrayListExtra(PlayerExtras.SUB_URLS)?.filter { it.startsWith("https://") }.orEmpty()
+        val audio = i?.getStringArrayListExtra(PlayerExtras.AUDIO_URLS)?.filter { it.startsWith("https://") }.orEmpty()
+        if (url.isNotEmpty()) episodeFiles[keyOf(url)] = EpisodeFiles(subs, audio)
+        toSign = i?.getStringExtra(PlayerExtras.EPISODE_SIDES)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject()
+    }
+
+    /** [url] is a playlist episode with subtitles / voice-overs that are not signed yet ([signSidecars] first). */
+    fun needsSidecars(url: String): Boolean = filesOf(url) == null && toSign.has(keyOf(url))
+
+    /** Signs [url]'s subtitles and voice-overs on the mirror; the ones that fail are left out. */
+    suspend fun signSidecars(url: String) {
+        val key = keyOf(url)
+        val sides = toSign.optJSONObject(key) ?: return
+        fun links(a: JSONArray?) = (0 until (a?.length() ?: 0)).mapNotNull { a!!.optJSONObject(it) }
+        val enc = { v: String -> URLEncoder.encode(v, "UTF-8") }
+        suspend fun sign(list: List<JSONObject>) = coroutineScope {
+            list.map { f ->
+                async {
+                    runCatching {
+                        Api.get("/api/file/mirror-url?link=${enc(f.getString("link"))}&name=${enc(f.optString("name"))}").optString("url")
+                            .takeIf { it.startsWith("https://") }
+                    }.getOrNull()
+                }
+            }.mapNotNull { it.await() }
+        }
+        episodeFiles[key] = EpisodeFiles(sign(links(sides.optJSONArray("subs"))), sign(links(sides.optJSONArray("audio"))))
     }
 
     fun resetSelectedTracks() {
@@ -179,19 +215,18 @@ class PlayerTrackSelector(
             }.setNegativeButton(tr("player.zakryt"), null).show()
     }
 
-    fun allEpisodeUrls(url: String): List<String> {
-        val sidecars = url == subsForUrl
-        return listOf(url) + if (sidecars) audioUrls + subUrls else emptyList()
-    }
+    fun allEpisodeUrls(url: String): List<String> =
+        listOf(url) + filesOf(url)?.let { it.audio + it.subs }.orEmpty()
 
-    fun hasExternalAudio(url: String): Boolean =
-        url == subsForUrl && audioUrls.isNotEmpty()
+    fun hasExternalAudio(url: String): Boolean = filesOf(url)?.audio?.isNotEmpty() == true
 
     /** The external files to open with [url]: the one voice-over (see [attachedAudio]) and all subtitles. */
     fun sidecarsFor(url: String, wrapUrl: (String) -> String): Sidecars {
-        sidecarsActive = url == subsForUrl && audioUrls.isNotEmpty()
+        filmUrl = url
+        val files = filesOf(url)
+        sidecarsActive = files?.audio?.isNotEmpty() == true
         attachedAudio.clear()
-        if (url != subsForUrl) return Sidecars(emptyList(), emptyList())
+        if (files == null) return Sidecars(emptyList(), emptyList())
         this.wrapUrl = wrapUrl
         val want = activeSidecar ?: prefs.getString("track:sidecar:${seriesKey(callback.getCurrentTitle())}", null)
         val pick = if (want == SIDECAR_NONE) null else audioUrls.firstOrNull { audioLabel(it) == want } ?: audioUrls.firstOrNull()
@@ -200,13 +235,13 @@ class PlayerTrackSelector(
             activeSidecar = audioLabel(pick)
             listOf(wrapUrl(pick))
         } else emptyList()
-        return Sidecars(audio, subUrls)
+        return Sidecars(audio, files.subs)
     }
 
     /** "Film.rus.mka" beside "Film.mkv" gives "rus". */
     private fun audioLabel(u: String): String {
         val name = (Uri.parse(u).lastPathSegment ?: u).substringBeforeLast('.')
-        val film = Uri.parse(subsForUrl).lastPathSegment.orEmpty().substringBeforeLast('.')
+        val film = Uri.parse(filmUrl).lastPathSegment.orEmpty().substringBeforeLast('.')
         val cut = if (film.isNotEmpty() && name.startsWith(film)) name.substring(film.length) else name
         return cut.trim('.', ' ', '_', '-').ifEmpty { name }
     }

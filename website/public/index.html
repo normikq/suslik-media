@@ -1506,8 +1506,9 @@ function openLibraryModal(magnet) {
       quickPlay.disabled=true;quickPlay.textContent="Разблокировка M2TS…";
       try{
         const name=String(mainM2ts.name||String(mainM2ts.path||"main.m2ts").split("/").pop()||"main.m2ts");
-        const result=await api("/api/file/unlock",{method:"POST",body:JSON.stringify({link:mainM2ts.sourceLink})});
+        // the mirror first: it works without a direct link (AllDebrid is blocked in Russia, its direct link is extra)
         const mirror=await api("/api/file/mirror-url?link="+encodeURIComponent(mainM2ts.sourceLink)+"&name="+encodeURIComponent(name));
+        const result=await api("/api/file/unlock",{method:"POST",body:JSON.stringify({link:mainM2ts.sourceLink})}).catch(()=>null);
         const actions=document.createElement("div");actions.className="file-link-actions";
         const directGroup=document.createElement("div");directGroup.className="split-actions";
         const directКопировать=document.createElement("button");directКопировать.type="button";directКопировать.className="secondary split-first";directКопировать.textContent="Прямая ссылка";
@@ -1519,7 +1520,7 @@ function openLibraryModal(magnet) {
         mirrorКопировать.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(mirror.url);mirrorКопировать.textContent="Скопировано";}catch{window.prompt("Скопируйте ссылку-зеркало:",mirror.url);}});
         const mirrorOpen=document.createElement("a");mirrorOpen.className="button secondary split-last";mirrorOpen.href=mirror.url;mirrorOpen.target="_blank";mirrorOpen.rel="noopener noreferrer";mirrorOpen.textContent="Открыть";
         mirrorGroup.append(mirrorКопировать,mirrorOpen);
-        actions.append(directGroup,mirrorGroup);quickWrap.append(actions);quickPlay.remove();
+        actions.append(mirrorGroup);if(result&&result.url)actions.append(directGroup);quickWrap.append(actions);quickPlay.remove();
       }catch(err){quickPlay.disabled=false;quickPlay.textContent="Повторить запуск M2TS";let note=quickWrap.querySelector(".unlock-error");if(!note){note=document.createElement("div");note.className="unlock-error status error";quickWrap.append(note);}note.textContent=err.message;}
     });
     quickWrap.append(quickPlay);target.append(quickWrap);

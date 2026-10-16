@@ -1,5 +1,6 @@
 package ru.suslikovanora.media.player
 
+import ru.suslikovanora.media.core.MirrorLink
 import android.content.Context
 import android.graphics.Color
 import android.net.Uri
@@ -94,7 +95,7 @@ class Media3Engine(private val context: Context) : PlayerEngine {
     private val transfer = object : TransferListener {
         override fun onTransferInitializing(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) {}
         override fun onTransferStart(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) {
-            if (!isNetwork || fileSize > 0 || MediaKeys.keyOf(dataSpec.uri.toString()) != mainKey) return
+            if (!isNetwork || fileSize > 0 || MirrorLink.fileKey(dataSpec.uri.toString()) != mainKey) return
             // "Content-Range: bytes a-b/total" → the file's size → its average bitrate (the heavy-file question)
             val range = runCatching { source.responseHeaders.entries.firstOrNull { it.key.equals("content-range", true) }?.value?.firstOrNull() }.getOrNull()
             range?.substringAfterLast('/')?.toLongOrNull()?.let { fileSize = it }
@@ -191,10 +192,10 @@ class Media3Engine(private val context: Context) : PlayerEngine {
         opened++
         reported = false; tracksLogged = ""; selectLastAudio = false; lengthSent = 0L; bufferedPct = -1
         // A reconnect to the same file reuses the decoders (no new "initialized" event): their names stay.
-        if (MediaKeys.keyOf(media.url) != mainKey) { videoDecoder = ""; audioDecoder = "" }
+        if (MirrorLink.fileKey(media.url) != mainKey) { videoDecoder = ""; audioDecoder = "" }
         bytesRead.set(0L)
-        if (MediaKeys.keyOf(media.url) != mainKey) fileSize = -1L
-        mainKey = MediaKeys.keyOf(media.url)
+        if (MirrorLink.fileKey(media.url) != mainKey) fileSize = -1L
+        mainKey = MirrorLink.fileKey(media.url)
         viaReserve = Uri.parse(media.url).host == LOCAL_HOST
         setScale(scale)
         // Remembered tracks are applied by PlayerTrackSelector once the tracks are known.

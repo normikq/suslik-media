@@ -43,6 +43,17 @@ class BurstProxyTest {
                 else runCatching { ex.responseBody.use { it.write(data, a, z - a + 1) } }
                 ex.close()
             }
+            // the mirror after 12 hours: an old signature gets 401, a renewed one the bytes
+            createContext("/signed.mkv") { ex ->
+                requests.incrementAndGet()
+                if ("sig=fresh" !in (ex.requestURI.rawQuery ?: "")) { ex.sendResponseHeaders(401, -1); ex.close(); return@createContext }
+                val m = Regex("""bytes=(\d*)-(\d*)""").find(ex.requestHeaders.getFirst("Range") ?: "bytes=0-")!!
+                val a = m.groupValues[1].toInt(); val z = if (m.groupValues[2].isNotEmpty()) minOf(m.groupValues[2].toInt(), data.size - 1) else data.size - 1
+                ex.responseHeaders.add("Content-Range", "bytes $a-$z/${data.size}")
+                ex.sendResponseHeaders(206, (z - a + 1).toLong())
+                runCatching { ex.responseBody.use { it.write(data, a, z - a + 1) } }
+                ex.close()
+            }
             executor = java.util.concurrent.Executors.newCachedThreadPool()
             start()
         }
@@ -62,7 +73,8 @@ class BurstProxyTest {
         }
         BurstProxy.capBytes = 16L shl 20 // smaller than the file: the ring wraps around
     }
-    @AfterTest fun stop() { BurstProxy.dropAll(); origin.stop(0) }
+    // a failed offline test must not leave the next ones without a network (they would download nothing)
+    @AfterTest fun stop() { BurstProxy.dropAll(); if (!BurstProxy.isNetworkOnline) BurstProxy.networkChanged(); origin.stop(0) }
 
     private fun get(local: String, range: String?): Pair<Int, ByteArray> {
         val c = URL(local).openConnection(java.net.Proxy.NO_PROXY) as HttpURLConnection
@@ -223,6 +235,31 @@ class BurstProxyTest {
         assertTrue(a != BurstProxy.wrap(addr(gone)))         // the gone one starts from nothing
     }
 
+    @Test fun theLastClosedFilmSurvivesASecondClear() {
+        fun addr(n: Int) = "https://origin.test/film.mkv?link=L1&exp=$n&sig=s$n"
+        val a = BurstProxy.wrap(addr(1))
+        get(a, "bytes=0-99999")
+        BurstProxy.keepOnly(emptyList())                     // the player is closed
+        Thread.sleep(5)
+        BurstProxy.clear()                                   // and closed once more (another screen, onDestroy)
+        assertEquals(a, BurstProxy.wrap(addr(2)))            // still kept on disk
+    }
+
+    @Test fun anExpiredSignatureIsRenewedInsteadOfFailing() {
+        val now = System.currentTimeMillis() / 1000
+        val renewed = AtomicInteger()
+        BurstProxy.refreshUrl = { old ->
+            renewed.incrementAndGet()
+            if ("link=L9" in old) "https://origin.test/signed.mkv?link=L9&exp=${now + 3600}&sig=fresh" else null
+        }
+        try {
+            val local = BurstProxy.wrap("https://origin.test/signed.mkv?link=L9&exp=${now - 10}&sig=old")
+            val (code, b) = get(local, "bytes=0-999999")
+            assertEquals(206, code); assertContentEquals(data.copyOfRange(0, 1_000_000), b)
+            assertEquals(1, renewed.get())
+        } finally { BurstProxy.refreshUrl = { null } }
+    }
+
     @Test fun offWhenReserveIsZero() {
         BurstProxy.capBytes = 0
         assertEquals("https://origin.test/other.mkv", BurstProxy.wrap("https://origin.test/other.mkv"))
@@ -241,20 +278,22 @@ class BurstProxyTest {
         BurstProxy.networkLost()
         assertTrue(!BurstProxy.isNetworkOnline, "isNetworkOnline must be false after networkLost")
 
-        // 3. Read sub-range within the already buffered data
-        val (c2, b2) = get(local, "bytes=1000000-2999999")
+        // 3. Read sub-range within the already buffered data. Not from the very start: the burst keeps going after the
+        // first read (up to 7/8 of the 16 MB ring ahead of 4 MB), so on a fast machine the ring may already have moved
+        // past the first ~1.9 MB (CI 16.10: an empty answer for 1–3 MB).
+        val (c2, b2) = get(local, "bytes=2500000-3999999")
         assertEquals(206, c2)
-        assertContentEquals(data.copyOfRange(1_000_000, 3_000_000), b2)
+        assertContentEquals(data.copyOfRange(2_500_000, 4_000_000), b2)
         assertEquals(reqsBeforeOffline, requests.get(), "no upstream requests should be made when reading buffered data offline")
 
         // 4. Network returns
         BurstProxy.networkChanged()
         assertTrue(BurstProxy.isNetworkOnline, "isNetworkOnline must be true after networkChanged")
 
-        // 5. Read next chunk far beyond what was pre-buffered (e.g. at 15 MB)
-        val (c3, b3) = get(local, "bytes=15000000-15999999")
+        // 5. Read a chunk beyond anything the burst could have fetched before going offline (it stops below ~19 MB)
+        val (c3, b3) = get(local, "bytes=30000000-30999999")
         assertEquals(206, c3)
-        assertContentEquals(data.copyOfRange(15_000_000, 16_000_000), b3)
+        assertContentEquals(data.copyOfRange(30_000_000, 31_000_000), b3)
         assertTrue(requests.get() > reqsBeforeOffline, "upstream requests should resume after networkChanged")
     }
 

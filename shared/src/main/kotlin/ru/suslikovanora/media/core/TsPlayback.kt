@@ -93,6 +93,10 @@ class TsPlayback(val lengthMs: Long, val url: String = "") {
     /** A seek is in flight. */
     val seeking: Boolean get() = target >= 0
 
+    /** VLC's film time when the seek in flight was asked. */
+    val seekFrom: Long
+        @Synchronized get() = from
+
     /** A film time from VLC while [seeking]: false = still the old place (ignore it), true = landed. */
     @Synchronized fun seekLanded(filmMs: Long, vlcPos: Float = 0f): Boolean {
         if (target < 0) return true

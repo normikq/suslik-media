@@ -17,6 +17,9 @@ interface EngineListener {
     fun buffering(percent: Float) {}
     fun buffering(active: Boolean) { buffering(if (active) 0f else 100f) }
     fun timeChanged(ms: Long) {}
+    /** VLC also reports its position (share of the file) with the time, read on its own thread. */
+    fun timeChanged(ms: Long, position: Float) { timeChanged(ms) }
+    fun stopped() {}
     fun lengthChanged(ms: Long) {}
     fun seekDone() {}
     fun tracksChanged() {}
@@ -25,8 +28,7 @@ interface EngineListener {
 }
 
 /**
- * Всё, что [PlayerView] требует от видеодвижка. Реализации: [MpvEngine] (libmpv); VLC (vlcj) пока вызывается
- * из PlayerView напрямую и будет заведён за этот интерфейс при переключении.
+ * Всё, что [PlayerView] требует от видеодвижка. Реализации: [MpvEngine] (libmpv) и [VlcPlayer] (vlcj).
  * Все методы потокобезопасны и могут вызываться с любого потока.
  */
 interface PlayerEngine {
@@ -104,6 +106,8 @@ class EngineBridge : EngineListener {
     override fun buffering(percent: Float) { target?.buffering(percent) }
     override fun buffering(active: Boolean) { target?.buffering(active) }
     override fun timeChanged(ms: Long) { target?.timeChanged(ms) }
+    override fun timeChanged(ms: Long, position: Float) { target?.timeChanged(ms, position) }
+    override fun stopped() { target?.stopped() }
     override fun lengthChanged(ms: Long) { target?.lengthChanged(ms) }
     override fun seekDone() { target?.seekDone() }
     override fun tracksChanged() { target?.tracksChanged() }

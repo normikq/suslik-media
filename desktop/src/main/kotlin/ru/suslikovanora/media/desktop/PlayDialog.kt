@@ -1,0 +1,775 @@
+package ru.suslikovanora.media.desktop
+
+import ru.suslikovanora.media.core.*
+import ru.suslikovanora.media.desktop.player.*
+import ru.suslikovanora.media.desktop.ui.*
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.rememberScrollbarAdapter
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.VerticalScrollbar
+import androidx.compose.foundation.defaultScrollbarStyle
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
+import java.awt.Desktop
+import java.awt.Toolkit
+import java.awt.datatransfer.StringSelection
+import java.net.URI
+import java.net.URLEncoder
+import java.util.Locale
+
+// The play dialog of a library item (source, start place, voice-overs and subtitles); moved out of LibraryView.kt.
+
+private fun filmCountRu(count: Int): String = when {
+    count % 10 == 1 && count % 100 != 11 -> tr("library.count_film", "count" to count)
+    count % 10 in 2..4 && count % 100 !in 12..14 -> tr("library.count_filma", "count" to count)
+    else -> tr("library.count_filmov", "count" to count)
+}
+
+private fun collectionInfo(count: Int): Pair<String, String> = when (count) {
+    2 -> tr("library.dilogiya") to tr("library.dilogii")
+    3 -> tr("library.kinotrilogiya") to tr("library.trilogii")
+    4 -> tr("library.kinotetralogiya") to tr("library.tetralogii")
+    else -> tr("library.kinofranshiza") to tr("library.franshizy")
+}
+
+private fun extractTrilogyFilmInfo(
+    baseTitle: String,
+    ep: Episode,
+    index: Int,
+    magnetId: Long,
+    lib: Library
+): Pair<String, String> {
+    val raw = ep.file.name.ifBlank { ep.file.path.substringAfterLast('/') }
+    val year = Regex("""\b(19\d{2}|20\d{2})\b""").find(raw)?.groupValues?.get(1)
+    val cleaned = cleanTitle(raw)
+    val partTitle = if (baseTitle.isNotBlank() && cleaned.startsWith(baseTitle, ignoreCase = true)) {
+        cleaned.substring(baseTitle.length).trim(' ', '-', ':', '·', '.', '–')
+    } else ""
+    val title = when {
+        partTitle.isNotBlank() -> partTitle
+        !ep.title.isNullOrBlank() -> ep.title!!
+        else -> cleaned.ifBlank { tr("library.film_p", "p" to index + 1) }
+    }
+
+    val watch = lib.watchInfo(watchKey(magnetId, ep.file))
+    val durMs = watch?.len?.takeIf { it > 0 }
+    val durStr = if (durMs != null) clock(durMs) else null
+    val details = listOfNotNull(year, durStr ?: formatBytes(ep.file.size)).joinToString(" • ")
+    return title to details
+}
+
+/** Source choice dialog: mirror or direct AllDebrid link, styled for series and movie trilogies. */
+@Composable
+internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPlay: (PlayRequest) -> Unit) {
+    val item = remember(t) { t.item ?: lib.items.find { it.m.id == t.magnetId } }
+    val magnet = remember(t, item) {
+        item?.m ?: Magnet(t.magnetId, t.label, "", 4, 0L, 0L, listOf(t.file) + t.following, false)
+    }
+    val playable = remember(t, item) {
+        item?.playable ?: (if (t.following.isNotEmpty()) Playable.Series(listOf(Season(1, (listOf(t.file) + t.following).mapIndexed { i, f -> Episode(1, i + 1, f) }))) else Playable.Movie(t.file))
+    }
+    val series = playable as? Playable.Series
+    val isCollection = remember(series, magnet) {
+        series != null && series.seasons.isNotEmpty() && (
+            series.seasons.all { s -> s.items.all { it.title != null } } ||
+            Regex("""(трилоги|дилоги|тетралоги|франшиз|коллекци|trilogy|duology|anthology|collection)""", RegexOption.IGNORE_CASE).containsMatchIn(magnet.name)
+        )
+    }
+
+    // State for Trilogy / Collection mode
+    val films = remember(series) { series?.seasons?.flatMap { it.items } ?: emptyList() }
+    val initFilmIdx = remember(t, films) {
+        val idx = films.indexOfFirst { it.file.path == t.file.path }
+        if (idx >= 0) idx else 0
+    }
+    var selectedFilmIdx by remember(t) { mutableStateOf(initFilmIdx) }
+
+    // State for Series mode
+    val seasons = remember(series) { series?.seasons ?: emptyList() }
+    val (initSIdx, initEIdx) = remember(t, seasons) {
+        var s = 0
+        var e = 0
+        seasons.forEachIndexed { sIdx, season ->
+            val idx = season.items.indexOfFirst { it.file.path == t.file.path }
+            if (idx >= 0) { s = sIdx; e = idx }
+        }
+        s to e
+    }
+    var selectedSeasonIdx by remember(t) { mutableStateOf(initSIdx) }
+    var selectedEpisodeIdx by remember(t) { mutableStateOf(initEIdx) }
+
+    // Active file, title and following playlist files
+    val currentSeason = seasons.getOrNull(selectedSeasonIdx) ?: seasons.firstOrNull()
+    val currentEpisode = currentSeason?.items?.getOrNull(selectedEpisodeIdx) ?: currentSeason?.items?.firstOrNull()
+    val currentFilm = films.getOrNull(selectedFilmIdx) ?: films.firstOrNull()
+
+    val currentFile: MFile = when {
+        isCollection && currentFilm != null -> currentFilm.file
+        series != null && currentEpisode != null -> currentEpisode.file
+        else -> t.file
+    }
+
+    val currentTitle: String = when {
+        isCollection && currentFilm != null -> {
+            val (fTitle, _) = extractTrilogyFilmInfo(item?.baseTitle ?: "", currentFilm, selectedFilmIdx, t.magnetId, lib)
+            (item?.baseTitle ?: t.label) + " • " + fTitle
+        }
+        series != null && currentSeason != null && currentEpisode != null -> {
+            "${item?.baseTitle ?: t.label.substringBefore(" · ")} • S${currentSeason.season.toString().padStart(2, '0')}E${currentEpisode.episode.toString().padStart(2, '0')}"
+        }
+        else -> item?.baseTitle ?: t.label
+    }
+
+    val followingFiles: List<MFile> = when {
+        isCollection -> films.drop(selectedFilmIdx).map { it.file }
+        series != null && currentSeason != null -> currentSeason.items.drop(selectedEpisodeIdx).map { it.file }
+        else -> emptyList()
+    }
+
+    val resumeAt = remember(t.magnetId, currentFile.path, lib.watchVersion) {
+        lib.watchInfo(watchKey(t.magnetId, currentFile))?.takeIf { !it.watched && it.pos >= 5_000L }?.pos
+    }
+    var fromStart by remember(t.magnetId, currentFile.path) { mutableStateOf(false) }
+    var sub by remember(t.magnetId, currentFile.path) { mutableStateOf(tr("library.poluchenie_ssylok")) }
+    var mirror by remember(t.magnetId, currentFile.path) { mutableStateOf<String?>(null) }
+    var direct by remember(t.magnetId, currentFile.path) { mutableStateOf<String?>(null) }
+    var playlist by remember(t.magnetId, currentFile.path) { mutableStateOf<String?>(null) }
+    var subs by remember(t.magnetId, currentFile.path) { mutableStateOf<List<String>>(emptyList()) }
+    var audio by remember(t.magnetId, currentFile.path) { mutableStateOf<List<String>>(emptyList()) }
+
+    var poster by remember(t.magnetId) { mutableStateOf(item?.let { lib.cachedPoster(it.posterQueries) }) }
+    LaunchedEffect(t.magnetId) {
+        if (poster == null && item != null) poster = lib.poster(item.posterQueries)
+    }
+
+    LaunchedEffect(t.magnetId, currentFile.path) {
+        val link = currentFile.link ?: run {
+            sub = tr("library.ssylka_na_fayl_esche")
+            return@LaunchedEffect
+        }
+        val enc = { v: String -> URLEncoder.encode(v, "UTF-8") }
+        val name = currentFile.name.ifBlank { currentFile.path.substringAfterLast('/') }
+        coroutineScope {
+            val d = async { runCatching { Api.post("/api/file/unlock", JSONObject().put("link", link)).optString("url").ifBlank { null } } }
+            val mr = async { runCatching { Api.get("/api/file/mirror-url?link=${enc(link)}&name=${enc(name)}").optString("url").ifBlank { null } } }
+            direct = d.await().getOrNull()
+            mirror = mr.await().getOrNull()
+        }
+        sub = if (mirror != null || direct != null) tr("library.vyberite_istochnik") else tr("library.ne_udalos_poluchit_ssylki")
+        val sideSubs = subtitlesFor(magnet, currentFile)
+        val sideAudio = externalAudioFor(magnet, currentFile)
+        if (sideSubs.isNotEmpty()) subs = mirrorUrls(sideSubs)
+        if (sideAudio.isNotEmpty()) audio = mirrorUrls(sideAudio)
+
+        val validFollowing = followingFiles.filter { it.link != null }
+        if (mirror != null && validFollowing.size > 1) runCatching {
+            val items = JSONArray()
+            validFollowing.forEach { items.put(JSONObject().put("index", it.index).put("link", it.link)) }
+            Api.post("/api/playlist", JSONObject().put("magnetId", t.magnetId).put("title", currentTitle).put("items", items)).optString("url").ifBlank { null }
+        }.onSuccess { playlist = it }
+
+        lib.saveEpisode(t.magnetId, currentFile.path)
+    }
+
+    var shown by remember(t) { mutableStateOf(false) }
+    LaunchedEffect(t) { shown = true }
+    val a by animateFloatAsState(if (shown) 1f else 0f, tween(260, easing = Sm.ease))
+
+    Box(
+        Modifier.fillMaxSize().graphicsLayer { alpha = a }.background(Sm.scrim)
+            .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { onDismiss() },
+        contentAlignment = Alignment.Center
+    ) {
+        val dialogWidth = if (isCollection) 660.dp else 540.dp
+        Column(
+            Modifier.graphicsLayer { translationY = (1f - a) * 24f; scaleX = 0.97f + 0.03f * a; scaleY = 0.97f + 0.03f * a }
+                .widthIn(max = dialogWidth).clip(RoundedCornerShape(22.dp)).background(Color(0xFF0F131D))
+                .border(1.dp, Color(0xFF1E2536), RoundedCornerShape(22.dp))
+                .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {}
+                .padding(22.dp)
+        ) {
+            if (isCollection) {
+                // ---- SCREEN 2: MOVIE TRILOGY / COLLECTION DESIGN ----
+                val filmCount = films.size
+                val (collectionTypeName, collectionGenitive) = collectionInfo(filmCount)
+                val years = films.mapNotNull { ep ->
+                    val raw = ep.file.name.ifBlank { ep.file.path.substringAfterLast('/') }
+                    Regex("""\b(19\d{2}|20\d{2})\b""").find(raw)?.groupValues?.get(1)?.toIntOrNull()
+                }
+                val yearsRange = if (years.isNotEmpty()) {
+                    val min = years.minOrNull()!!
+                    val max = years.maxOrNull()!!
+                    if (min == max) " • $min" else " • $min–$max"
+                } else ""
+                val headerSubtitle = "$collectionTypeName • ${filmCountRu(filmCount)}$yearsRange"
+
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                    // Left: Movie Poster
+                    Box(
+                        Modifier.width(155.dp).height(245.dp).clip(RoundedCornerShape(14.dp))
+                            .background(Color(0xFF131722)).border(1.dp, Color(0xFF242A38), RoundedCornerShape(14.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        val p = poster
+                        if (p != null) {
+                            Image(p, tr("library.poster"), contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                        } else {
+                            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF222838), Color(0xFF10131B)))))
+                        }
+                    }
+
+                    // Right: Title, Subtitle, Info Box, Movie Selection List
+                    Column(Modifier.weight(1f)) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
+                            Column(Modifier.weight(1f)) {
+                                Text(item?.baseTitle ?: t.label, fontFamily = Unbounded, fontWeight = FontWeight.Bold, fontSize = 20.sp, color = Color.White)
+                                Text(headerSubtitle, color = Color(0xFF8E96A8), fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(top = 4.dp))
+                            }
+                            CloseCircleButton(onClick = onDismiss)
+                        }
+
+                        // Info banner
+                        Row(
+                            Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 10.dp).clip(RoundedCornerShape(10.dp))
+                                .background(Color(0xFF141926)).border(1.dp, Color(0xFF1E2638), RoundedCornerShape(10.dp))
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            InfoCircleIcon(color = Color(0xFF60A5FA), size = 15.dp)
+                            Text(tr("library.naydena_p_vyberite_film", "p" to collectionTypeName.lowercase(Locale.ROOT)), color = Color(0xFFC0C7D6), fontFamily = Onest, fontSize = 12.5.sp)
+                        }
+
+                        // Movies list (scrollable)
+                        val filmScrollState = rememberScrollState()
+                        LaunchedEffect(initFilmIdx) {
+                            if (initFilmIdx > 2) {
+                                filmScrollState.scrollTo(initFilmIdx * 60)
+                            }
+                        }
+                        Box(Modifier.fillMaxWidth().heightIn(max = 240.dp)) {
+                            Column(
+                                Modifier.fillMaxWidth()
+                                    .verticalScroll(filmScrollState)
+                                    .padding(end = if (films.size > 3) 10.dp else 0.dp),
+                                verticalArrangement = Arrangement.spacedBy(7.dp)
+                            ) {
+                                films.forEachIndexed { i, ep ->
+                                    val (fTitle, fDetails) = extractTrilogyFilmInfo(item?.baseTitle ?: "", ep, i, t.magnetId, lib)
+                                    val isSelected = i == selectedFilmIdx
+                                    Row(
+                                        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                                            .background(if (isSelected) Color(0xFF182234) else Color(0xFF121622))
+                                            .border(1.dp, if (isSelected) Color(0xFF38507E) else Color(0xFF1E2536), RoundedCornerShape(12.dp))
+                                            .hoverClick(remember { MutableInteractionSource() }) { selectedFilmIdx = i }
+                                            .padding(horizontal = 10.dp, vertical = 7.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        // Mini poster / icon
+                                        Box(
+                                            Modifier.size(width = 34.dp, height = 44.dp).clip(RoundedCornerShape(6.dp))
+                                                .background(Color(0xFF181D2A)).border(1.dp, Color(0xFF262E40), RoundedCornerShape(6.dp)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            val p = poster
+                                            if (p != null) {
+                                                Image(p, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                                            } else {
+                                                PlayTriangle(color = Color(0xFF8E96A8), size = 12.dp)
+                                            }
+                                        }
+
+                                        // Number badge
+                                        Box(
+                                            Modifier.size(24.dp).clip(RoundedCornerShape(6.dp)).background(Color(0xFF1D2638)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text("${i + 1}", color = Color.White, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                        }
+
+                                        // Title & details
+                                        Column(Modifier.weight(1f)) {
+                                            Text(fTitle, color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text(fDetails, color = Color(0xFF7E879B), fontFamily = Onest, fontSize = 12.sp, maxLines = 1)
+                                        }
+
+                                        // Radio button indicator
+                                        Box(
+                                            Modifier.size(20.dp).clip(CircleShape).border(1.5.dp, if (isSelected) Color(0xFF4A80F5) else Color(0xFF384359), CircleShape),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            if (isSelected) {
+                                                Box(Modifier.size(10.dp).clip(CircleShape).background(Color(0xFF4A80F5)))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (films.size > 3) {
+                                VerticalScrollbar(
+                                    adapter = rememberScrollbarAdapter(filmScrollState),
+                                    modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(vertical = 2.dp),
+                                    style = defaultScrollbarStyle().copy(
+                                        unhoverColor = Color(0x338E96A8),
+                                        hoverColor = Color(0x888E96A8),
+                                        shape = RoundedCornerShape(4.dp),
+                                        thickness = 5.dp
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(16.dp))
+
+                resumeAt?.let { at ->
+                    Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        StartOption(tr("library.s_p", "p" to clock(at)), tr("library.prodolzhit_s_proshlogo_mesta"), !fromStart, Modifier.weight(1f)) { fromStart = false }
+                        StartOption(tr("library.s_nachala"), tr("library.smotret_zanovo"), fromStart, Modifier.weight(1f)) { fromStart = true }
+                    }
+                }
+
+                // Cards for Mirror & Direct
+                SourceCard(
+                    title = tr("library.cherez_zerkalo"),
+                    badgeText = tr("library.rekomenduetsya"),
+                    isRecommended = true,
+                    hint = tr("library.cherez_vash_server_dalshe", "collectionGenitive" to collectionGenitive),
+                    url = mirror,
+                    onPlay = { url ->
+                        val list = followingFiles.filter { f -> f.link != null }
+                        val keys = if (playlist != null) list.map { f -> watchKey(t.magnetId, f) } else listOf(watchKey(t.magnetId, currentFile))
+                        val resolve: suspend (Int) -> Pair<List<String>, List<String>> = { i ->
+                            list.getOrNull(i)?.let { f ->
+                                val aud = externalAudioFor(magnet, f)
+                                val sb = subtitlesFor(magnet, f)
+                                mirrorUrls(aud) to mirrorUrls(sb)
+                            } ?: (emptyList<String>() to emptyList())
+                        }
+                        onPlay(PlayRequest(url, currentTitle, playlist, subs, keys, audio, if (playlist != null) resolve else null, fromStart))
+                    },
+                    onCopy = { url -> copy(url) }
+                )
+
+                Spacer(Modifier.height(10.dp))
+
+                SourceCard(
+                    title = tr("library.napryamuyu"),
+                    badgeText = tr("library.stabilnyy_istochnik"),
+                    isRecommended = false,
+                    hint = tr("library.pryamaya_ssylka_alldebrid_otkr"),
+                    url = direct,
+                    onPlay = { url ->
+                        onPlay(PlayRequest(url, currentTitle, null, subs, listOf(watchKey(t.magnetId, currentFile)), audio, fromStart = fromStart))
+                    },
+                    onCopy = { url -> copy(url) }
+                )
+
+                Spacer(Modifier.height(14.dp))
+                CloseBottomButton(onClick = onDismiss)
+
+            } else if (series != null && currentSeason != null && currentEpisode != null) {
+                // ---- SCREEN 1: SERIES DESIGN ----
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
+                    Column(Modifier.weight(1f)) {
+                        Text(currentTitle, fontFamily = Unbounded, fontWeight = FontWeight.Bold, fontSize = 20.sp, color = Color.White)
+                        val extraDetails = (if (audio.isNotEmpty()) tr("library.ozvuchek_size", "size" to audio.size) else "") + (if (subs.isNotEmpty()) tr("library.subtitrov_size", "size" to subs.size) else "")
+                        Text(sub + extraDetails, color = Color(0xFF8E96A8), fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
+                    }
+                    CloseCircleButton(onClick = onDismiss)
+                }
+
+                resumeAt?.let { at ->
+                    Row(Modifier.fillMaxWidth().padding(bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        StartOption(tr("library.s_p", "p" to clock(at)), tr("library.prodolzhit_s_proshlogo_mesta"), !fromStart, Modifier.weight(1f)) { fromStart = false }
+                        StartOption(tr("library.s_nachala"), tr("library.smotret_zanovo"), fromStart, Modifier.weight(1f)) { fromStart = true }
+                    }
+                }
+
+                SourceCard(
+                    title = tr("library.cherez_zerkalo"),
+                    badgeText = tr("library.rekomenduetsya"),
+                    isRecommended = true,
+                    hint = if (playlist != null) tr("library.cherez_vash_server_dalshe_2") else tr("library.trafik_idet_cherez_vash"),
+                    url = mirror,
+                    onPlay = { url ->
+                        val list = followingFiles.filter { f -> f.link != null }
+                        val keys = if (playlist != null) list.map { f -> watchKey(t.magnetId, f) } else listOf(watchKey(t.magnetId, currentFile))
+                        val resolve: suspend (Int) -> Pair<List<String>, List<String>> = { i ->
+                            list.getOrNull(i)?.let { f ->
+                                val aud = externalAudioFor(magnet, f)
+                                val sb = subtitlesFor(magnet, f)
+                                mirrorUrls(aud) to mirrorUrls(sb)
+                            } ?: (emptyList<String>() to emptyList())
+                        }
+                        onPlay(PlayRequest(url, currentTitle, playlist, subs, keys, audio, if (playlist != null) resolve else null, fromStart))
+                    },
+                    onCopy = { url -> copy(url) }
+                )
+
+                Spacer(Modifier.height(10.dp))
+
+                SourceCard(
+                    title = tr("library.napryamuyu"),
+                    badgeText = tr("library.stabilnyy_istochnik"),
+                    isRecommended = false,
+                    hint = tr("library.pryamaya_ssylka_alldebrid"),
+                    url = direct,
+                    onPlay = { url ->
+                        onPlay(PlayRequest(url, currentTitle, null, subs, listOf(watchKey(t.magnetId, currentFile)), audio, fromStart = fromStart))
+                    },
+                    onCopy = { url -> copy(url) }
+                )
+
+                // Selectors for Season and Episode
+                val seasonItems = seasons.mapIndexed { idx, s ->
+                    val sLabel = if (s.season == 0) tr("library.spec_materialy") else tr("library.season_sezon", "season" to s.season)
+                    sLabel to {
+                        selectedSeasonIdx = idx
+                        selectedEpisodeIdx = 0
+                    }
+                }
+                val episodeItems = currentSeason.items.mapIndexed { idx, ep ->
+                    val epLabel = if (ep.title != null) "${ep.episode}. ${ep.title}" else tr("library.episode_seriya", "episode" to ep.episode)
+                    epLabel to {
+                        selectedEpisodeIdx = idx
+                    }
+                }
+
+                Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    val currentSLabel = if (currentSeason.season == 0) tr("library.spec") else tr("library.season_sezon", "season" to currentSeason.season)
+                    val currentELabel = tr("library.episode_seriya", "episode" to currentEpisode.episode)
+                    DropdownSelector(label = tr("library.sezon"), valueText = currentSLabel, modifier = Modifier.weight(1f), items = seasonItems)
+                    DropdownSelector(label = tr("library.seriya"), valueText = currentELabel, modifier = Modifier.weight(1f), items = episodeItems)
+                }
+
+                Spacer(Modifier.height(14.dp))
+                CloseBottomButton(onClick = onDismiss)
+
+            } else {
+                // ---- SINGLE MOVIE DESIGN ----
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
+                    Column(Modifier.weight(1f)) {
+                        Text(currentTitle, fontFamily = Unbounded, fontWeight = FontWeight.Bold, fontSize = 20.sp, color = Color.White)
+                        val extraDetails = (if (audio.isNotEmpty()) tr("library.ozvuchek_size", "size" to audio.size) else "") + (if (subs.isNotEmpty()) tr("library.subtitrov_size", "size" to subs.size) else "")
+                        Text(sub + extraDetails, color = Color(0xFF8E96A8), fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
+                    }
+                    CloseCircleButton(onClick = onDismiss)
+                }
+
+                resumeAt?.let { at ->
+                    Row(Modifier.fillMaxWidth().padding(bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        StartOption(tr("library.s_p", "p" to clock(at)), tr("library.prodolzhit_s_proshlogo_mesta"), !fromStart, Modifier.weight(1f)) { fromStart = false }
+                        StartOption(tr("library.s_nachala"), tr("library.smotret_zanovo"), fromStart, Modifier.weight(1f)) { fromStart = true }
+                    }
+                }
+
+                SourceCard(
+                    title = tr("library.cherez_zerkalo"),
+                    badgeText = tr("library.rekomenduetsya"),
+                    isRecommended = true,
+                    hint = tr("library.trafik_idet_cherez_vash"),
+                    url = mirror,
+                    onPlay = { url ->
+                        onPlay(PlayRequest(url, currentTitle, null, subs, listOf(watchKey(t.magnetId, currentFile)), audio, fromStart = fromStart))
+                    },
+                    onCopy = { url -> copy(url) }
+                )
+
+                Spacer(Modifier.height(10.dp))
+
+                SourceCard(
+                    title = tr("library.napryamuyu"),
+                    badgeText = tr("library.stabilnyy_istochnik"),
+                    isRecommended = false,
+                    hint = tr("library.pryamaya_ssylka_alldebrid"),
+                    url = direct,
+                    onPlay = { url ->
+                        onPlay(PlayRequest(url, currentTitle, null, subs, listOf(watchKey(t.magnetId, currentFile)), audio, fromStart = fromStart))
+                    },
+                    onCopy = { url -> copy(url) }
+                )
+
+                Spacer(Modifier.height(14.dp))
+                CloseBottomButton(onClick = onDismiss)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SourceCard(
+    title: String,
+    badgeText: String,
+    isRecommended: Boolean,
+    hint: String,
+    url: String?,
+    onPlay: (String) -> Unit,
+    onCopy: (String) -> Unit
+) {
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+            .background(Color(0xFF131722)).border(1.dp, Color(0xFF222838), RoundedCornerShape(16.dp))
+            .padding(16.dp)
+    ) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text(title, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color.White)
+            if (isRecommended) {
+                Row(
+                    Modifier.clip(RoundedCornerShape(50)).background(Color(0xFF1A263D))
+                        .border(1.dp, Color(0x3360A5FA), RoundedCornerShape(50))
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    LightningIcon(color = Color(0xFF60A5FA), size = 11.dp)
+                    Text(badgeText, color = Color(0xFF60A5FA), fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                }
+            } else {
+                Row(
+                    Modifier.clip(RoundedCornerShape(50)).background(Color(0xFF1B202D))
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    LinkChainIcon(color = Color(0xFF8E96A8), size = 12.dp)
+                    Text(badgeText, color = Color(0xFF8E96A8), fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 12.sp)
+                }
+            }
+        }
+
+        Text(hint, fontFamily = Onest, fontSize = 13.sp, color = Color(0xFF7E879B), modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
+
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            PlayActionButton(text = tr("library.smotret"), enabled = url != null, modifier = Modifier.weight(1f)) {
+                url?.let(onPlay)
+            }
+            CopyActionButton(text = tr("library.kopirovat_ssylku"), enabled = url != null, modifier = Modifier.weight(1f)) {
+                url?.let(onCopy)
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlayActionButton(
+    text: String,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val src = remember { MutableInteractionSource() }
+    val hovered by src.collectIsHoveredAsState()
+    val bg = if (!enabled) Color(0xFF161C28) else if (hovered) Color(0xFF223556) else Color(0xFF1A2A44)
+    val border = if (!enabled) Color(0xFF202736) else if (hovered) Color(0xFF4D86FF) else Color(0xFF386EE0)
+    val contentColor = if (!enabled) Color(0xFF5A6478) else Color.White
+
+    Row(
+        modifier = modifier.height(44.dp).clip(RoundedCornerShape(12.dp))
+            .background(bg).border(1.dp, border, RoundedCornerShape(12.dp))
+            .hoverClick(src, enabled = enabled, onClick = onClick),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        PlayTriangle(color = contentColor, size = 12.dp)
+        Spacer(Modifier.width(8.dp))
+        Text(text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = contentColor)
+    }
+}
+
+@Composable
+private fun CopyActionButton(
+    text: String,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val src = remember { MutableInteractionSource() }
+    val hovered by src.collectIsHoveredAsState()
+    val bg = if (hovered && enabled) Color(0xFF1C2232) else Color(0xFF151924)
+    val border = if (hovered && enabled) Color(0xFF323B50) else Color(0xFF242B3C)
+    val contentColor = if (!enabled) Color(0xFF5A6478) else Color(0xFFC4CBD8)
+
+    Row(
+        modifier = modifier.height(44.dp).clip(RoundedCornerShape(12.dp))
+            .background(bg).border(1.dp, border, RoundedCornerShape(12.dp))
+            .hoverClick(src, enabled = enabled, onClick = onClick),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        LinkChainIcon(color = contentColor, size = 13.dp)
+        Spacer(Modifier.width(8.dp))
+        Text(text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = if (enabled) Color.White else contentColor)
+    }
+}
+
+@Composable
+private fun DropdownSelector(
+    label: String,
+    valueText: String,
+    modifier: Modifier = Modifier,
+    items: List<Pair<String, () -> Unit>>
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val src = remember { MutableInteractionSource() }
+    val hovered by src.collectIsHoveredAsState()
+
+    Column(modifier) {
+        Text(label, color = Color(0xFF8E96A8), fontFamily = Onest, fontSize = 13.sp, modifier = Modifier.padding(bottom = 6.dp))
+        Box {
+            Row(
+                Modifier.fillMaxWidth().height(46.dp).clip(RoundedCornerShape(12.dp))
+                    .background(if (hovered) Color(0xFF161A26) else Color(0xFF121622))
+                    .border(1.dp, if (hovered) Color(0xFF323B50) else Color(0xFF242B3C), RoundedCornerShape(12.dp))
+                    .hoverClick(src) { expanded = true }
+                    .padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(valueText, color = Color.White, fontFamily = Onest, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                ChevronDownIcon(color = Color(0xFF8E96A8), size = 13.dp)
+            }
+
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+                modifier = Modifier.background(Color(0xFF181D2A)).border(1.dp, Color(0xFF2A3345), RoundedCornerShape(10.dp))
+            ) {
+                items.forEach { (text, onSelect) ->
+                    DropdownMenuItem(
+                        text = { Text(text, color = Color.White, fontFamily = Onest, fontSize = 13.5.sp) },
+                        onClick = {
+                            expanded = false
+                            onSelect()
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CloseCircleButton(onClick: () -> Unit) {
+    val src = remember { MutableInteractionSource() }
+    val hovered by src.collectIsHoveredAsState()
+    Box(
+        Modifier.size(32.dp).clip(CircleShape)
+            .background(if (hovered) Color(0xFF262F42) else Color(0xFF181E2B))
+            .border(1.dp, if (hovered) Color(0xFF3B4863) else Color(0xFF262F40), CircleShape)
+            .hoverClick(src, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        CloseCrossIcon(color = if (hovered) Color.White else Color(0xFFB0B9C9), size = 11.dp)
+    }
+}
+
+@Composable
+private fun CloseBottomButton(onClick: () -> Unit) {
+    val src = remember { MutableInteractionSource() }
+    val hovered by src.collectIsHoveredAsState()
+    Box(
+        Modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(12.dp))
+            .background(if (hovered) Color(0xFF1C2232) else Color(0xFF141824))
+            .border(1.dp, if (hovered) Color(0xFF323B50) else Color(0xFF242A3A), RoundedCornerShape(12.dp))
+            .hoverClick(src, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(tr("library.zakryt"), fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = Color.White)
+    }
+}
+
+@Composable
+private fun StartOption(title: String, hint: String, on: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    val edge by animateColorAsState(if (on) Color(0xFF3E475C) else Color(0xFF242A38), tween(220))
+    val bg by animateColorAsState(if (on) Color(0xFF282E3C) else Color(0xFF191D28), tween(220))
+    Column(
+        modifier.clip(RoundedCornerShape(14.dp)).background(bg).border(1.dp, edge, RoundedCornerShape(14.dp))
+            .hoverClick(remember { MutableInteractionSource() }, onClick = onClick).padding(horizontal = 14.dp, vertical = 10.dp)
+    ) {
+        Text(title, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp, color = Color.White, maxLines = 1)
+        Text(hint, fontFamily = Onest, fontSize = 12.5.sp, color = Color(0xFF8E96A8))
+    }
+}
+

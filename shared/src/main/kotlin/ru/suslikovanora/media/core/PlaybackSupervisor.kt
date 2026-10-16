@@ -80,6 +80,7 @@ class PlaybackSupervisor(
     fun opening(episodeKey: String) {
         if (episodeKey != episode) { episode = episodeKey; videoFixes = 0; soundFixes = 0; reopens = 0; afterBufferFixes = 0 }
         bufferedAt = -1L
+        picturesMoved = 0 // a new stream: a still cover must not pass for a film because the last one moved
         enter(State.Opening, grace = 8_000)
     }
     fun buffering(percent: Float) {

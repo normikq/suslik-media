@@ -85,13 +85,7 @@ class PlayerNetworkMonitor(
         awaitingValidation = false
         kickWhenValidated = false
     }
-    
-    fun resetState() {
-        lastNetwork = null
-        isNetworkLost = false
-        awaitingValidation = false
-        kickWhenValidated = false
-    }
+
 
     private fun handleNetworkAvailable(network: Network) {
         val previous = lastNetwork

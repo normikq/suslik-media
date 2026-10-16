@@ -123,7 +123,7 @@ class TsClockTest {
         clockCacheField.isAccessible = true
         @Suppress("UNCHECKED_CAST")
         val map = clockCacheField.get(TsClock) as java.util.concurrent.ConcurrentHashMap<String, TsClock.ClockInfo>
-        map["interp"] = info
+        map[TsClock.cacheKey(url)] = info
 
         // Seeking to 1000s: midway between 0 (0.0) and 2000s (0.50) -> should be 0.25 (not 1000/5000 = 0.20)
         assertEquals(0.25f, TsClock.posFor(url, 1_000_000L, 5_000_000L), 0.0001f)
@@ -135,5 +135,24 @@ class TsClockTest {
         TsClock.learn(url, 3_000_000L, 0.60f)
         // Now seeking to 2500s: midway between 2000s (0.50) and 3000s (0.60) -> 0.55
         assertEquals(0.55f, TsClock.posFor(url, 2_500_000L, 5_000_000L), 0.0001f)
+    }
+
+    @Test fun aLearnedPointRemovesTheOnesThatContradictIt() {
+        val url = "https://x/api/file/proxy/mono.m2ts?link=mono"
+        TsClock.clearCache()
+        val info = TsClock.ClockInfo(5_000_000L, 10_000_000_000L, 0x1011, 0L)
+        info.checkpoints[0L] = 0.0f
+        info.checkpoints[2_000_000L] = 0.50f  // a bad probe: too far into the file
+        info.checkpoints[5_000_000L] = 1.0f
+        val clockCacheField = TsClock::class.java.getDeclaredField("clockCache")
+        clockCacheField.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        (clockCacheField.get(TsClock) as java.util.concurrent.ConcurrentHashMap<String, TsClock.ClockInfo>)[TsClock.cacheKey(url)] = info
+
+        TsClock.learn(url, 3_000_000L, 0.40f)   // VLC: 3000 s is at 0.40, so 2000 s cannot be at 0.50
+        assertEquals(listOf(0L, 3_000_000L, 5_000_000L), info.checkpoints.keys.toList())
+        // positions grow with time everywhere
+        var prev = -1f
+        for (t in 0L..5_000_000L step 250_000L) { val p = TsClock.posFor(url, t, 5_000_000L); assertTrue(p >= prev, "at $t: $p < $prev"); prev = p }
     }
 }

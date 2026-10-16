@@ -78,6 +78,8 @@ object WindowMode {
         fun GetMonitorInfoW(hMonitor: Pointer, lpmi: MONITORINFO): Boolean
         fun SetWindowPos(hwnd: Pointer, hWndInsertAfter: Pointer?, x: Int, y: Int, cx: Int, cy: Int, uFlags: Int): Boolean
         fun SetForegroundWindow(hwnd: Pointer): Boolean
+        fun GetForegroundWindow(): Pointer?
+        fun GetWindowThreadProcessId(hwnd: Pointer, lpdwProcessId: IntArray?): Int
         fun EnableWindow(hwnd: Pointer, bEnable: Boolean): Boolean
         fun EnumChildWindows(hWndParent: Pointer, lpEnumFunc: WNDENUMPROC, lParam: Pointer?): Boolean
         fun SetFocus(hwnd: Pointer): Pointer?
@@ -476,6 +478,9 @@ object WindowMode {
         val hwnd = if (isWindows) runCatching { Native.getWindowPointer(w) }.getOrNull() else null
 
         javax.swing.SwingUtilities.invokeLater {
+            // Only while the app is in front: a film starting or the panels showing while the user works in another
+            // program must not pull the player over it (or make the taskbar button blink).
+            if (!appInForeground()) return@invokeLater
             if (hwnd != null && user32 != null) {
                 runCatching {
                     user32.SetForegroundWindow(hwnd)
@@ -501,6 +506,17 @@ object WindowMode {
             val target = (w as? javax.swing.RootPaneContainer)?.contentPane?.let { findFocusable(it) }
             (target ?: w).requestFocusInWindow()
         }
+    }
+
+    /** The window in front belongs to this process (or the check is not possible: not Windows). */
+    private fun appInForeground(): Boolean {
+        val user32 = User32.INSTANCE ?: return java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager().activeWindow != null
+        return runCatching {
+            val fg = user32.GetForegroundWindow() ?: return false
+            val pid = IntArray(1)
+            user32.GetWindowThreadProcessId(fg, pid)
+            pid[0].toLong() == ProcessHandle.current().pid()
+        }.getOrDefault(true)
     }
 
     /**

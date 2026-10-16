@@ -55,7 +55,9 @@ data class PlayRequest(
     val watchKeys: List<String>,
     val audioUrls: List<String> = emptyList(),
     /** «С начала» chosen in the sheet: ignore the remembered place this time. */
-    val fromStart: Boolean = false
+    val fromStart: Boolean = false,
+    /** The playlist's other episodes' subtitles and voice-overs (JSON, see [episodeSidesJson]); the player signs them. */
+    val episodeSides: String? = null
 )
 
 /**
@@ -156,7 +158,7 @@ fun PlaySheet(
                 onPlay = {
                     val keys = if (playlist != null) target.following.filter { f -> f.link != null }.map { f -> watchKey(target.magnetId, f) }
                     else listOf(watchKey(target.magnetId, target.file))
-                    onPlay(PlayRequest(it, target.label, playlist, subUrls, keys, audioUrls, fromStart))
+                    onPlay(PlayRequest(it, target.label, playlist, subUrls, keys, audioUrls, fromStart, if (playlist != null) episodeSidesJson(target) else null))
                 }, onCopy = { copy(context, it) }
             )
             Spacer(Modifier.height(10.dp))
@@ -204,15 +206,23 @@ private fun StartOption(title: String, hint: String, on: Boolean, modifier: Modi
     }
 }
 
-private fun clock(ms: Long): String {
-    val s = ms / 1000
-    return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, s % 3600 / 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
-}
+private fun clock(ms: Long): String = ru.suslikovanora.media.core.clockText(ms)
 
 private fun copy(context: Context, text: String) {
     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     cm.setPrimaryClip(ClipData.newPlainText(tr("add.ssylka"), text))
     Toast.makeText(context, tr("add.ssylka_skopirovana"), Toast.LENGTH_SHORT).show()
+}
+
+/** `{"<episode link>": {"subs": [{"link", "name"}], "audio": [...]}}` for the playlist's following episodes; null if none. */
+private fun episodeSidesJson(target: PlayTarget): String? {
+    if (target.episodeSides.isEmpty()) return null
+    fun files(list: List<MFile>) = JSONArray().apply {
+        list.forEach { f -> f.link?.let { put(JSONObject().put("link", it).put("name", f.name.ifBlank { f.path.substringAfterLast('/') })) } }
+    }
+    val out = JSONObject()
+    target.episodeSides.forEach { (link, sides) -> out.put(link, JSONObject().put("subs", files(sides.first)).put("audio", files(sides.second))) }
+    return out.toString()
 }
 
 /** Signed mirror links for the files next to the video (subtitles, voice-overs); the ones that fail are left out. */

@@ -118,6 +118,7 @@ function reserveDownloadSlot(req, res) {
       completed = true;
       state.pending = Math.max(0, state.pending - 1);
       recordOwner(id, dev, ip);
+      libraryChanged(); // a library answer already on its way does not know this torrent: it must not free the slot
       if (!ready && id !== undefined && id !== null) {
         const key = String(id);
         state.ids.add(key);
@@ -245,10 +246,12 @@ try {
   }));
 } catch { console.warn("Модуль compression не установлен (npm install): ответы отдаются без сжатия."); }
 // Something changed through the site/apps (added, deleted, cancelled a torrent…): the short library cache is dropped,
-// so the next library load shows it at once.
+// so the next library load shows it at once. Only the requests that change the library (favorites, playlists, unlocks
+// and metadata leave it as it is).
+const LIBRARY_CHANGES = /^\/api\/(?:magnets|torrents|search\/add)(?:\/|$)/;
 app.use((req, res, next) => {
-  if (req.method !== "GET" && req.method !== "HEAD" && req.path.startsWith("/api/") && !req.path.startsWith("/api/app/"))
-    res.on("finish", () => { if (res.statusCode < 400) libraryFresh = null; });
+  if (req.method !== "GET" && req.method !== "HEAD" && LIBRARY_CHANGES.test(req.path))
+    res.on("finish", () => { if (res.statusCode < 400) libraryChanged(); });
   next();
 });
 // Playlists carry one AllDebrid link per episode and can exceed the default 20 kb.
@@ -329,6 +332,18 @@ const apiLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: "Слишком много запросов. Подождите немного и повторите попытку." },
   handler: (req, res, next, options) => res.status(options.statusCode).json(options.message)
+});
+
+// Separate, looser limits for requests that come in bursts and must not eat the general one: poster images (a library
+// grid asks for 100+ at once; they are cached on disk) and renewed mirror addresses (the reserve and every episode's
+// voice-overs / subtitles — a 429 there stops a film). Phone and PC behind one router share an IP.
+const posterLimiter = rateLimit({
+  windowMs: 60 * 1000, limit: 1000, standardHeaders: "draft-7", legacyHeaders: false,
+  handler: (req, res, next, options) => res.status(options.statusCode).json({ error: "Слишком много запросов." })
+});
+const mirrorUrlLimiter = rateLimit({
+  windowMs: 60 * 1000, limit: 300, standardHeaders: "draft-7", legacyHeaders: false,
+  handler: (req, res, next, options) => res.status(options.statusCode).json({ error: "Слишком много запросов." })
 });
 
 function requireLogin(req, res, next) {
@@ -732,6 +747,25 @@ app.post("/api/favorites", requireLogin, apiLimiter, (req, res) => {
 const UPDATES_DIR = process.env.UPDATES_DIR ? path.resolve(process.env.UPDATES_DIR) : path.join(DATA_DIR, "updates");
 try { fs.mkdirSync(UPDATES_DIR, { recursive: true }); } catch {}
 const UPDATE_KINDS = { android: /\.apk$/i, desktop: /\.(msi|exe)$/i };
+const isUpdatePlatform = p => Object.prototype.hasOwnProperty.call(UPDATE_KINDS, p);
+// A file copied in by hand (scp) is still growing for a while: it is not offered (and older versions are not removed)
+// until it has not changed for a minute. Files that came through /api/app/upload or promote are complete at once.
+const UPDATE_SETTLE_MS = 60_000;
+const completeUpdates = new Set();
+// SHA-256 of an update file, by path + size + mtime (the PC app checks the MSI with it before running msiexec).
+const updateHashes = new Map();
+function updateSha256(full, size, mtimeMs) {
+  const key = `${size}:${mtimeMs}`;
+  const known = updateHashes.get(full);
+  if (known && known.key === key) return known.hash;
+  const hash = new Promise(resolve => {
+    const h = crypto.createHash("sha256");
+    fs.createReadStream(full).on("data", c => h.update(c)).on("end", () => resolve(h.digest("hex"))).on("error", () => resolve(""));
+  });
+  updateHashes.set(full, { key, hash });
+  if (updateHashes.size > 20) updateHashes.delete(updateHashes.keys().next().value);
+  return hash;
+}
 // «2.0.0» или «2.0.0.1» (четвёртое число — промежуточные беты между релизами).
 function versionOf(name) { const m = /(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?/.exec(name); return m ? m.slice(1).filter(x => x !== undefined).map(Number) : null; }
 function cmpVersion(a, b) { for (let i = 0; i < 4; i++) if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) - (b[i] || 0); return 0; }
@@ -745,8 +779,10 @@ function isTester(req) {
   return !!code && given.length === code.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(code));
 }
 function latestUpdate(platform, dir = UPDATES_DIR) {
-  const re = UPDATE_KINDS[platform]; if (!re) return null;
+  if (!isUpdatePlatform(platform)) return null;
+  const re = UPDATE_KINDS[platform];
   let best = null;
+  const now = Date.now();
   let names; try { names = fs.readdirSync(dir); } catch { return null; }
   for (const name of names) {
     if (!re.test(name)) continue;
@@ -754,6 +790,7 @@ function latestUpdate(platform, dir = UPDATES_DIR) {
     const full = path.join(dir, name);
     let st; try { st = fs.statSync(full); } catch { continue; }
     if (!st.isFile() || st.size === 0) continue;
+    if (now - st.mtimeMs < UPDATE_SETTLE_MS && !completeUpdates.has(full)) continue; // still being copied
     // при одинаковой версии msi предпочтительнее exe
     if (!best || cmpVersion(v, best.v) > 0 || (cmpVersion(v, best.v) === 0 && /\.msi$/i.test(name))) best = { v, name, full, size: st.size, at: st.mtimeMs };
   }
@@ -813,7 +850,7 @@ function readChangelog(platform) {
 // Без upto (сайт) — только версии, которые уже выложены в updates/: ещё не вышедшая не показывается.
 app.get("/api/app/changelog", apiLimiter, (req, res) => {
   const platform = String(req.query.platform || "");
-  if (!UPDATE_KINDS[platform]) return res.status(400).json({ error: "platform: android | desktop" });
+  if (!isUpdatePlatform(platform)) return res.status(400).json({ error: "platform: android | desktop" });
   let upto = typeof req.query.upto === "string" && /^\d+(\.\d+){0,3}$/.test(req.query.upto) ? req.query.upto : "";
   if (!upto) { try { upto = latestUpdate(platform)?.version || ""; } catch {} }
   const limit = Math.min(10, Math.max(1, parseInt(req.query.limit, 10) || 3));
@@ -828,7 +865,7 @@ app.post("/api/app/changelog", (req, res) => {
   if (!token || given.length !== token.length || !crypto.timingSafeEqual(Buffer.from(given), Buffer.from(token)))
     return res.status(403).json({ error: "Загрузка выключена или неверный X-Update-Token." });
   const platform = String(req.query.platform || "");
-  if (!UPDATE_KINDS[platform]) return res.status(400).json({ error: "platform: android | desktop" });
+  if (!isUpdatePlatform(platform)) return res.status(400).json({ error: "platform: android | desktop" });
   const list = cleanReleases(req.body);
   if (!list.length) return res.status(400).json({ error: "Ожидается JSON-массив [{ version, title, items: [...] }]" });
   const file = path.join(CHANGELOG_DIR, `${platform}.json`), tmp = file + ".tmp";
@@ -836,16 +873,17 @@ app.post("/api/app/changelog", (req, res) => {
   catch (err) { return res.status(500).json({ error: err.message }); }
   res.json({ ok: true, versions: list.map(r => r.version) });
 });
-app.get("/api/app/update", requireLogin, apiLimiter, (req, res) => {
+app.get("/api/app/update", requireLogin, apiLimiter, async (req, res) => {
   const platform = String(req.query.platform || "");
-  if (!UPDATE_KINDS[platform]) return res.status(400).json({ error: "platform: android | desktop" });
+  if (!isUpdatePlatform(platform)) return res.status(400).json({ error: "platform: android | desktop" });
   const stable = latestUpdate(platform);
   // Тестировщик получает бету, если она новее того, что вышло для всех.
   const beta = isTester(req) ? latestUpdate(platform, BETA_DIR) : null;
   const u = beta && (!stable || cmpVersion(beta.v, stable.v) > 0) ? beta : stable;
   if (!u) return res.json({ available: false });
   const ch = u === beta ? "beta" : "stable";
-  res.json({ available: true, channel: ch, version: u.version, size: u.size, notes: u.notes, file: u.name, publishedAt: Math.round(u.at),
+  const sha256 = await updateSha256(u.full, u.size, u.at);
+  res.json({ available: true, channel: ch, version: u.version, size: u.size, sha256, notes: u.notes, file: u.name, publishedAt: Math.round(u.at),
     url: `/api/app/download/${platform}/${encodeURIComponent(u.name)}${ch === "beta" ? "?ch=beta" : ""}` });
 });
 // Ограничение скорости скачивания релизов приложений: 40 Мбит/с = 5 МБ/с (5 242 880 байт/с).
@@ -894,6 +932,7 @@ app.post("/api/app/upload", (req, res) => {
     if (size === 0 || size > LIMIT) { fs.rm(tmp, { force: true }, () => {}); return res.status(400).json({ error: "Пустой или слишком большой файл." }); }
     fs.rename(tmp, path.join(dir, name), err => {
       if (err) return res.status(500).json({ error: err.message });
+      completeUpdates.add(path.join(dir, name));
       // сразу убрать прошлые версии этой платформы (в своём канале)
       for (const platform of Object.keys(UPDATE_KINDS)) if (UPDATE_KINDS[platform].test(name)) {
         latestUpdate(platform, dir);
@@ -925,7 +964,7 @@ function updateTokenOk(req) {
 }
 // Что сервер видит в папках обновлений (workflow «Update status»): какая версия у релиза и у беты, какие файлы лежат.
 // SERVER_REV меняется вместе с логикой версий — по нему видно, что на VPS действительно запущен новый server.js.
-const SERVER_REV = "2026-10-12 versions-4";
+const SERVER_REV = "2026-10-16 versions-5";
 app.get("/api/app/status", (req, res) => {
   if (!updateTokenOk(req)) return res.status(403).json({ error: "Нужен X-Update-Token." });
   const list = dir => { try { return fs.readdirSync(dir).filter(n => /\.(apk|msi|exe)$/i.test(n)); } catch { return []; } };
@@ -939,12 +978,16 @@ app.get("/api/app/status", (req, res) => {
 app.post("/api/app/promote", (req, res) => {
   if (!updateTokenOk(req)) return res.status(403).json({ error: "Неверный X-Update-Token." });
   const platform = String(req.query.platform || "");
-  if (!UPDATE_KINDS[platform]) return res.status(400).json({ error: "platform: android | desktop" });
+  if (!isUpdatePlatform(platform)) return res.status(400).json({ error: "platform: android | desktop" });
   const b = latestUpdate(platform, BETA_DIR);
   if (!b) return res.status(404).json({ error: "В бета-канале нет версии для " + platform });
+  // A beta older than the release would be moved and deleted at once as an «old version» while answering ok.
+  const st = latestUpdate(platform);
+  if (st && cmpVersion(b.v, st.v) <= 0) return res.status(409).json({ error: `Бета ${b.version} не новее релиза ${st.version}.` });
   const dest = path.join(UPDATES_DIR, b.name);
   try {
     fs.renameSync(b.full, dest);
+    completeUpdates.add(dest);
     const notes = b.full.replace(/\.[^.]+$/, ".txt");
     if (fs.existsSync(notes)) fs.renameSync(notes, dest.replace(/\.[^.]+$/, ".txt"));
   } catch (err) { return res.status(500).json({ error: err.message }); }
@@ -959,16 +1002,24 @@ app.post("/api/app/promote", (req, res) => {
 const REPORTS_DIR = path.join(DATA_DIR, "reports");
 try { fs.mkdirSync(REPORTS_DIR, { recursive: true }); } catch {}
 const reportLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 30, standardHeaders: "draft-7", legacyHeaders: false });
-app.post("/api/app/report", reportLimiter, express.text({ type: () => true, limit: "1mb" }), (req, res) => {
+// A crash before the login screen still reaches us, but without a login only 5 a hour and 64 KB each: strangers
+// cannot push the real reports out (the newest 300 are kept).
+const anonReportLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 5, standardHeaders: "draft-7", legacyHeaders: false,
+  skip: req => !!(req.session && req.session.authenticated) });
+app.post("/api/app/report", reportLimiter, anonReportLimiter, express.text({ type: () => true, limit: "1mb" }), (req, res) => {
   const platform = String(req.get("X-Platform") || "").replace(/[^a-z]/gi, "").slice(0, 12) || "unknown";
   const version = String(req.get("X-App-Version") || "").replace(/[^\w.-]/g, "").slice(0, 20) || "0";
   const kind = String(req.get("X-Report-Kind") || "report").replace(/[^\w-]/g, "").slice(0, 30) || "report";
-  const text = typeof req.body === "string" ? req.body : "";
+  const known = !!(req.session && req.session.authenticated);
+  let text = typeof req.body === "string" ? req.body : "";
   if (!text.trim()) return res.status(400).json({ error: "Пустой отчёт." });
+  if (!known && text.length > 64 * 1024) text = "…" + text.slice(-64 * 1024);
+  // Journals can carry signed mirror addresses (valid for 12 hours): the signature is not kept.
+  text = text.replace(/([?&](?:sig|code)=)[^&\s"']+/g, "$1…");
   const name = `${Date.now()}-${platform}-${version}-${kind}-${crypto.randomBytes(3).toString("hex")}.txt`;
   const device = readCookie(req, "sdev");
   try {
-    fs.writeFileSync(path.join(REPORTS_DIR, name), `platform=${platform} version=${version} kind=${kind} device=${String(device).slice(0, 8)} ` +
+    fs.writeFileSync(path.join(REPORTS_DIR, name), `platform=${platform} version=${version} kind=${kind} device=${String(device).slice(0, 8)}${known ? "" : " anon"} ` +
       `ua="${String(req.get("user-agent") || "").slice(0, 120)}"\n\n${text}`);
     const all = fs.readdirSync(REPORTS_DIR).filter(n => n.endsWith(".txt")).sort();
     for (const old of all.slice(0, Math.max(0, all.length - 300))) fs.rm(path.join(REPORTS_DIR, old), { force: true }, () => {});
@@ -995,7 +1046,11 @@ let libraryInflight = null;
 let libraryLastGood = null;
 let libraryFresh = null; // { at, data } — the last AllDebrid answer, reused for a few seconds
 const LIBRARY_CACHE_MS = Number(process.env.LIBRARY_CACHE_MS || 20000);
-async function buildLibrary() {
+// Bumped on every change: an AllDebrid answer asked for before a change is not kept as fresh (it would hide a torrent
+// that was just added for the next 20 s), and a library load after the change does not wait for that old answer.
+let libraryGen = 0;
+function libraryChanged() { libraryGen++; libraryFresh = null; libraryInflight = null; }
+async function buildLibrary(gen = libraryGen) {
   const statusResponse = await axios.post("https://api.alldebrid.com/v4.1/magnet/status",
     new URLSearchParams(),
     { headers: { ...adAuth(), "Content-Type": "application/x-www-form-urlencoded" }, timeout: 20000, validateStatus: () => true });
@@ -1024,6 +1079,11 @@ async function buildLibrary() {
   const present = new Set(normalized.map(m => m.id));
   for (const id of [...treeCache.keys()]) if (!present.has(id)) { treeCache.delete(id); cacheChanged = true; }
   if (cacheChanged) persistTreeCache();
+  // The «two downloads per IP» slots of torrents that finished, failed or are gone (the app that added them may have
+  // stopped asking for their status long ago: closed, or the PC gives up after ~30 minutes).
+  // Not from an answer asked for before a change: a torrent added meanwhile is missing from it.
+  const states = new Map(normalized.map(m => [String(m.id), m.statusCode]));
+  if (gen === libraryGen) for (const id of [...downloadOwnerById.keys()]) if (!states.has(id) || states.get(id) >= 4) releaseTrackedDownload(id);
   return { ok: true, total: normalized.length, magnets: normalized };
 }
 
@@ -1035,8 +1095,12 @@ app.get("/api/library", requireLogin, apiLimiter, async (req, res) => {
     let data;
     if (libraryFresh && Date.now() - libraryFresh.at < LIBRARY_CACHE_MS) data = libraryFresh.data;
     else {
-      if (!libraryInflight) libraryInflight = buildLibrary().then(d => { libraryFresh = { at: Date.now(), data: d }; return d; })
-        .finally(() => { libraryInflight = null; });
+      if (!libraryInflight) {
+        const gen = libraryGen;
+        const job = buildLibrary(gen).then(d => { if (gen === libraryGen) libraryFresh = { at: Date.now(), data: d }; return d; })
+          .finally(() => { if (libraryInflight === job) libraryInflight = null; });
+        libraryInflight = job;
+      }
       data = await libraryInflight;
     }
     libraryLastGood = data;
@@ -1168,7 +1232,7 @@ function contentDisposition(name) {
   const ascii = clean.replace(/[^\x20-\x7e]/g, "_").replace(/%/g, "_");
   return `inline; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(clean).replace(/['()*]/g, c => "%" + c.charCodeAt(0).toString(16).toUpperCase())}`;
 }
-app.get("/api/file/mirror-url", requireLogin, apiLimiter, (req, res) => {
+app.get("/api/file/mirror-url", requireLogin, mirrorUrlLimiter, (req, res) => {
   const parsed = safeHttpsUrl(typeof req.query.link === "string" ? req.query.link.trim() : "");
   if (!isAllDebridFileLink(parsed)) return res.status(400).json({ error: "Некорректная ссылка на файл AllDebrid." });
   const link = parsed.toString();
@@ -1337,6 +1401,9 @@ async function openUpstream(key, rangeHeaders) {
 // Если файл-хост ответил ошибкой (ссылка устарела), nginx повторяет запрос сюда с X-Mirror-Retry: 1 — тогда ссылка
 // получается заново и поток идёт через Node, как раньше.
 const MIRROR_ACCEL = process.env.MIRROR_ACCEL === "1";
+// A file from a torrent is never a page of this site: an .html / .svg opened from the mirror runs in a sandbox (no
+// scripts, no access to the site's cookies or API). Video and audio are not affected.
+const MIRROR_CSP = "sandbox; default-src 'none'";
 app.get(["/api/file/proxy", "/api/file/proxy/:name"], mirrorAuth, mirrorLimiter, async (req, res, next) => {
   if (!MIRROR_ACCEL || req.get("X-Mirror-Retry")) return next();
   const parsed = safeHttpsUrl(typeof req.query.link === "string" ? req.query.link.trim() : "");
@@ -1352,7 +1419,11 @@ app.get(["/api/file/proxy", "/api/file/proxy/:name"], mirrorAuth, mirrorLimiter,
   const disp = contentDisposition(req.params.name || entry.name);
   if (disp) res.setHeader("Content-Disposition", disp);
   res.setHeader("Cache-Control", "private, no-store");
-  res.setHeader("X-Accel-Redirect", `/_alld/${u.protocol.replace(":", "")}/${u.host}${u.pathname}${u.search}`);
+  res.setHeader("Content-Security-Policy", MIRROR_CSP);
+  // nginx unescapes the path of X-Accel-Redirect once and sends the captured path to the file host as it is: a name
+  // with %20 / Cyrillic / %3F would go out raw (a space in the request line → 400). Escaping «%» once more gives the
+  // host exactly the original path.
+  res.setHeader("X-Accel-Redirect", `/_alld/${u.protocol.replace(":", "")}/${u.host}${u.pathname.replace(/%/g, "%25")}${u.search}`);
   res.end();
 });
 app.get(["/api/file/proxy", "/api/file/proxy/:name"], mirrorAuth, async (req, res) => {
@@ -1395,7 +1466,11 @@ app.get(["/api/file/proxy", "/api/file/proxy/:name"], mirrorAuth, async (req, re
     if (!upstream.headers["accept-ranges"]) res.setHeader("Accept-Ranges", "bytes");
     res.setHeader("Cache-Control", "private, no-store");
     res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Content-Security-Policy", MIRROR_CSP);
     res.setHeader("X-Accel-Buffering", "no"); // nginx: stream, do not buffer video to disk
+    // HEAD (an external player, curl -I): the headers only. Express runs GET routes for HEAD and drops the body, but
+    // the whole file was still pulled from the host.
+    if (req.method === "HEAD") { upstream.data.destroy(); return res.end(); }
     res.flushHeaders();
     const data = upstream.data;
     // Idle watchdog. Not armed while we are waiting for the *client* (backpressure): a player with a full
@@ -1498,6 +1573,18 @@ function persistMediaCache() {
     } catch (err) { console.error("Не удалось сохранить кэш сведений о медиафайлах:", err.message); }
   }, 250);
 }
+// At most two ffprobe processes at once (a season page asks for dozens; each may run 25 s on a one-core VPS), and the
+// same file asked for twice waits for the one analysis already running.
+const FFPROBE_MAX = 2;
+let ffprobeRunning = 0;
+const ffprobeQueue = [];
+const metadataInflight = new Map(); // key -> Promise<metadata>
+async function withFfprobeSlot(fn) {
+  if (ffprobeRunning >= FFPROBE_MAX) await new Promise(resolve => ffprobeQueue.push(resolve));
+  ffprobeRunning++;
+  try { return await fn(); }
+  finally { ffprobeRunning--; const next = ffprobeQueue.shift(); if (next) next(); }
+}
 function runFfprobe(url) {
   return new Promise((resolve, reject) => {
     const args = ["-v", "error", "-rw_timeout", "12000000", "-user_agent", "Mozilla/5.0", "-analyzeduration", "8000000", "-probesize", "8000000", "-select_streams", "v:0", "-show_entries", "format=bit_rate,duration:stream=codec_name,width,height,bit_rate,avg_frame_rate", "-of", "json", url];
@@ -1568,21 +1655,30 @@ app.post("/api/media-metadata", requireLogin, apiLimiter, async (req, res) => {
   const cached = mediaMetadataCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return res.json({ ok: true, metadata: cached.metadata, cached: true });
   try {
-    // Resolve through the official provider API; only inspect the resulting direct URL.
-    const unlocked = await axios.post("https://api.alldebrid.com/v4/link/unlock",
-      new URLSearchParams({ link: parsed.toString() }),
-      { headers: { Authorization: `Bearer ${ALLDEBRID_API_KEY}`, "Content-Type": "application/x-www-form-urlencoded" },
-        timeout: 20000, validateStatus: () => true });
-    if (unlocked.status < 200 || unlocked.status >= 300 || unlocked.data?.status === "error")
-      return res.status(502).json({ error: "AllDebrid не смог получить ссылку на это видео." });
-    const direct = safeHttpsUrl(unlocked.data?.data?.link || "");
-    if (!direct || !["http:", "https:"].includes(direct.protocol))
-      return res.status(502).json({ error: "AllDebrid вернул некорректный URL видео." });
-    const metadata = await runFfprobe(direct.toString());
-    mediaMetadataCache.set(key, { metadata, expiresAt: Date.now() + MEDIA_CACHE_TTL });
-    persistMediaCache();
+    let job = metadataInflight.get(key);
+    if (!job) {
+      job = withFfprobeSlot(async () => {
+        // Resolve through the official provider API; only inspect the resulting direct URL.
+        const unlocked = await axios.post("https://api.alldebrid.com/v4/link/unlock",
+          new URLSearchParams({ link: parsed.toString() }),
+          { headers: { Authorization: `Bearer ${ALLDEBRID_API_KEY}`, "Content-Type": "application/x-www-form-urlencoded" },
+            timeout: 20000, validateStatus: () => true });
+        if (unlocked.status < 200 || unlocked.status >= 300 || unlocked.data?.status === "error")
+          throw Object.assign(new Error("unlock"), { userMessage: "AllDebrid не смог получить ссылку на это видео." });
+        const direct = safeHttpsUrl(unlocked.data?.data?.link || "");
+        if (!direct || !["http:", "https:"].includes(direct.protocol))
+          throw Object.assign(new Error("direct"), { userMessage: "AllDebrid вернул некорректный URL видео." });
+        const metadata = await runFfprobe(direct.toString());
+        mediaMetadataCache.set(key, { metadata, expiresAt: Date.now() + MEDIA_CACHE_TTL });
+        persistMediaCache();
+        return metadata;
+      }).finally(() => metadataInflight.delete(key));
+      metadataInflight.set(key, job);
+    }
+    const metadata = await job;
     res.json({ ok: true, metadata, cached: false });
   } catch (err) {
+    if (err.userMessage) return res.status(502).json({ error: err.userMessage });
     const message = /ENOENT/.test(err.message) ? "На сервере не установлен ffprobe." :
       (/SIGKILL|timed out/i.test(err.message) ? "Media analysis timed out." : "Не удалось прочитать сведения о видео.");
     res.status(502).json({ error: message });
@@ -1624,7 +1720,7 @@ const POSTER_DIR = path.join(DATA_DIR, "poster-cache");
 try { fs.mkdirSync(POSTER_DIR, { recursive: true }); } catch {}
 const POSTER_SIZES = new Set(["w185", "w342", "w500"]);
 const posterInflight = new Map();
-app.get("/api/poster/img/:size/:file", requireLogin, apiLimiter, async (req, res) => {
+app.get("/api/poster/img/:size/:file", requireLogin, posterLimiter, async (req, res) => {
   const { size, file } = req.params;
   if (!POSTER_SIZES.has(size) || !/^[A-Za-z0-9_-]+\.(?:jpg|png|webp)$/.test(file)) return res.status(400).end();
   const cached = path.join(POSTER_DIR, `${size}_${file}`);
@@ -1675,7 +1771,9 @@ app.get("*path", (req, res, next) => {
 });
 
 app.use((err, req, res, next) => {
-  if (err && err.type === "entity.too.large") return res.status(413).json({ error: "Torrent file must be 1 MB or smaller." });
+  if (res.headersSent) { console.error("Ошибка после начала ответа:", err.message); return res.destroy(); }
+  if (err && err.type === "entity.too.large")
+    return res.status(413).json({ error: req.path === "/api/torrents" ? "Торрент-файл должен быть не больше 1 МБ." : "Слишком большой запрос." });
   console.error("Ошибка запроса:", err.message);
   res.status(err.status || 500).json({ error: "Непредвиденная ошибка сервера." });
 });

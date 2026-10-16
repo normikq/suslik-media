@@ -39,12 +39,24 @@ async function request(url, { method = "GET", headers = {}, data, charset = "utf
     cookies: [].concat(res.headers["set-cookie"] || []).map(c => c.split(";")[0]).filter(c => c && !/=\s*(deleted)?$/.test(c))
   };
 }
-// GET with up to 3 same-host redirects (mirrors often redirect http -> https or to a canonical domain).
+// GET with up to 3 redirects (mirrors often redirect http -> https or to a canonical domain).
+// The tracker's cookie (login session) never goes to another site a redirect points to — only within the same domain
+// (www.x.org → x.org, http → https).
+const siteOf = u => new URL(u).hostname.toLowerCase().split(".").slice(-2).join(".");
+function withoutCookie(opts) {
+  const headers = Object.fromEntries(Object.entries(opts.headers || {}).filter(([k]) => k.toLowerCase() !== "cookie"));
+  return { ...opts, headers };
+}
 async function getFollow(url, opts = {}) {
   let cur = url;
   for (let i = 0; i < 4; i++) {
     const r = await request(cur, opts);
-    if (r.status >= 300 && r.status < 400 && r.headers.location) { cur = new URL(String(r.headers.location), cur).toString(); continue; }
+    if (r.status >= 300 && r.status < 400 && r.headers.location) {
+      const next = new URL(String(r.headers.location), cur).toString();
+      if (siteOf(next) !== siteOf(cur)) opts = withoutCookie(opts);
+      cur = next;
+      continue;
+    }
     r.finalUrl = cur;
     return r;
   }

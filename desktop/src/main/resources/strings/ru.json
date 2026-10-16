@@ -194,6 +194,7 @@
   "settings.ochistka": "Очистка…",
   "settings.ochistit_kesh": "Очистить кэш",
   "settings.osvobozhdeno_p": "Освобождено {p}",
+  "update.fayl_povrezhden": "Файл обновления скачался не полностью или повреждён. Попробуйте ещё раз.",
   "update.server_ne_otdal_fayl": "Сервер не отдал файл обновления ({p})",
   "update.f_mb": "%.1f МБ",
   "update.zapusk_ustanovschika": "Запуск установщика…",

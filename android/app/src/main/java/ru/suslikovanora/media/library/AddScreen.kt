@@ -158,7 +158,7 @@ class AddModel(context: Context, private val scope: CoroutineScope, private val 
         history.add(0, e)
         scope.launch {
             try {
-                val r = Api.post("/api/magnets", JSONObject().put("magnet", link))
+                val r = Api.post("/api/magnets", JSONObject().put("magnet", link), repeatable = false)
                 accepted(e, r)
             } catch (ex: Exception) { e.status = Api.describe(ex); e.failed = true; save() }
         }

@@ -54,7 +54,8 @@ class MpvEngine(
         opt("hwdec", "auto-safe")
         val mpvLog = ru.suslikovanora.media.desktop.AppDir.file("mpv.log")
         opt("log-file", mpvLog.absolutePath)
-        opt("msg-level", "all=v")
+        // Every request with its signed address only in Suslik Debug; the normal app keeps warnings and errors.
+        opt("msg-level", if (ru.suslikovanora.media.desktop.Diag.on) "all=v" else "all=warn")
         opt("keep-open", "yes")            // в конце файла остаёмся на последнем кадре, `finished` сообщаем сами
         opt("idle", "yes")
         opt("osc", "no"); opt("osd-level", "0"); opt("input-default-bindings", "no")
@@ -381,22 +382,15 @@ class MpvEngine(
         cmd("seek", "0", "relative", "exact")
     }
 
-    @Volatile private var lastReportedPictures = 0L
-
     override fun supervisorStats(userMutedOrZero: Boolean): ru.suslikovanora.media.core.PlaybackSupervisor.Stats? {
         if (!loaded) return null
         val aTracks = audioTracks()
         val curAudio = aTracks.firstOrNull { it.selected }
         val vCount = if (videoSize != null) 1 else 0
 
-        // Реальный учет кадров: estimated frame number минус потери, с проверкой активности вывода vo-configured
-        val isVoConfigured = str("vo-configured") == "yes"
-        val rawEstimated = str("estimated-frame-number")?.toLongOrNull()
-            ?: (timeSec * (if (fps > 0) fps else 24.0)).toLong()
-        val drops = str("frame-drop-count")?.toLongOrNull() ?: 0L
-        val displayed = (rawEstimated - drops).coerceAtLeast(0L)
-        val picCount = if (isVoConfigured) displayed else lastReportedPictures
-        lastReportedPictures = picCount
+        // mpv has no counter of pictures really shown: `estimated-frame-number` is the clock times fps, so it grew
+        // with a frozen picture too and the check could never fire. Pictures are reported as 0, which turns the
+        // supervisor's frozen / choppy checks off for mpv (sound and a stuck clock are still watched).
 
         // Реальный прогресс аудио: audio-pts перестает расти при зависании аудиовывода
         val aPts = str("audio-pts")?.toDoubleOrNull()
@@ -407,7 +401,7 @@ class MpvEngine(
             timeMs = timeMs,
             audioPlayed = aPlayed,
             audioDecoded = aPlayed,
-            pictures = if (vCount > 0) picCount else 0L,
+            pictures = 0L,
             expectedFps = fps,
             audioTracks = aTracks.size,
             audioSelected = curAudio != null && curAudio.id != -1,

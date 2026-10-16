@@ -53,7 +53,7 @@ import java.net.http.HttpResponse
 object Updater {
     /** [replace] = the release replacing a beta with a higher number (the installer cannot do that by itself). */
     data class Info(val version: String, val size: Long, val notes: String, val url: String, val file: String, val beta: Boolean = false,
-                    val replace: Boolean = false)
+                    val replace: Boolean = false, val sha256: String = "")
 
     /** Shown as the breathing button in the header (null = up to date). */
     var available by mutableStateOf<Info?>(null)
@@ -92,7 +92,8 @@ object Updater {
         if (!j.optBoolean("available")) return null
         val version = j.optString("version")
         return Info(version, j.optLong("size"), j.optString("notes"), j.optString("url"), j.optString("file"), j.optString("channel") == "beta",
-            replace = !PlaybackSettings.betaChannel() && current != "0" && Versions.compare(version, current) < 0)
+            replace = !PlaybackSettings.betaChannel() && current != "0" && Versions.compare(version, current) < 0,
+            sha256 = j.optString("sha256").lowercase())
     }
 
     fun skip(version: String) = prefs.put("skipped", version)
@@ -106,16 +107,23 @@ object Updater {
         if (res.statusCode() != 200) throw Api.HttpError(res.statusCode(), tr("update.server_ne_otdal_fayl", "p" to res.statusCode()))
         val total = res.headers().firstValueAsLong("content-length").orElse(info.size)
         var done = 0L; var lastStep = -1
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
         res.body().use { input ->
             out.outputStream().use { output ->
                 val buf = ByteArray(256 * 1024)
                 while (true) {
                     val n = input.read(buf); if (n < 0) break
-                    output.write(buf, 0, n); done += n
+                    output.write(buf, 0, n); digest.update(buf, 0, n); done += n
                     val step = if (total > 0) (done * 100 / total).toInt() else 0
                     if (step != lastStep) { lastStep = step; withContext(Dispatchers.Main) { onProgress(step / 100f) } }
                 }
             }
+        }
+        // A cut or damaged download must never reach msiexec: the size (and the checksum, when the server gives one) must match.
+        val hash = digest.digest().joinToString("") { "%02x".format(it) }
+        if ((total > 0 && done != total) || (info.sha256.isNotEmpty() && hash != info.sha256)) {
+            out.delete()
+            throw java.io.IOException(tr("update.fayl_povrezhden"))
         }
         out
     }

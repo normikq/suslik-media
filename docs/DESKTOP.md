@@ -24,6 +24,7 @@ desktop/
 │   ├── Main.kt                     Точка входа, главное окно, прогрев движков, перехват горячих клавиш
 │   ├── Api.kt                      Клиент HTTP (java.net.http), кэш в %APPDATA%\SuslikMedia
 │   ├── Library.kt, LibraryView.kt  Данные медиатеки и каталог на Compose Desktop
+│   ├── PlayDialog.kt               Окно «Смотреть»: серия, зеркало, «Продолжить», ссылки для копирования
 │   ├── SearchView.kt, AddView.kt   Поиск по трекерам и добавление magnet/.torrent
 │   ├── Settings.kt                 Настройки: выбор движка (mpv/VLC), буфер, каналы обновлений
 │   ├── Reserve.kt                  Интеграция общего BurstProxy с десктопным клиентом
@@ -40,7 +41,7 @@ desktop/
 │   │   ├── PlayerEngine.kt         Абстрактный интерфейс движка воспроизведения
 │   │   ├── MpvEngine.kt            Реализация движка на базе libmpv-2.dll
 │   │   ├── MpvLib.kt               JNA-маппинг C-API libmpv (структуры, события, типы)
-│   │   ├── VlcEngine.kt            Реализация движка на базе vlcj / VLC 3.x
+│   │   ├── VlcEngine.kt            Движок на vlcj / VLC 3.x (класс VlcPlayer : PlayerEngine) и фабрика vlcj
 │   │   ├── PlayRequest.kt          Модель параметров запуска воспроизведения
 │   │   ├── PlayerView.kt           Главный Compose-контейнер плеера и координация оверлеев
 │   │   ├── PlayerOverlays.kt       Двухоконная схема ComposeDialog (topDialog, bottomDialog)
@@ -75,9 +76,9 @@ desktop/
   - Для событий изменения свойств `onProperty` указатель `name` считывается по 8-байтному смещению с кодировкой UTF-8.
 - **Перезапуск видеовывода без деструкции (`restartVideoOutput`):** программный сброс видеопайплайна (`vid = no` → `vid = auto` с относительным seek 0) для восстановления рендеринга при сбое контекста DirectX без пересоздания окон.
 
-### 3.2. Резервный движок: VLC (`VlcEngine.kt`)
-- Классическая интеграция через библиотеку `vlcj` с установленным в системе 64-битным плеером VLC 3.x.
-- Используется автоматически, если файл `libmpv-2.dll` отсутствует в путях поиска (`%APPDATA%\SuslikMedia\mpv\`, рядом с `.exe` или в `SUSLIK_MPV_DIR`), либо при явном выборе пользователем в «Настройках».
+### 3.2. Резервный движок: VLC (`VlcEngine.kt`, класс `VlcPlayer`)
+- Классическая интеграция через библиотеку `vlcj` с установленным в системе 64-битным плеером VLC 3.x. `VlcPlayer` реализует тот же `PlayerEngine`, что и mpv: `PlayerView` работает с одним `engine` и одним `EngineListener` для обоих движков (ночной звук, `start-time`, языки, внешние дорожки — в опциях `open()`).
+- `libmpv-2.dll` входит в MSI (`desktop/build.gradle.kts` скачивает зафиксированный релиз с проверкой SHA-256). VLC используется, если библиотеки нет в путях поиска (рядом с приложением, `%APPDATA%\SuslikMedia\mpv\`, `SUSLIK_MPV_DIR`, PATH), либо при явном выборе в «Настройках».
 
 ---
 

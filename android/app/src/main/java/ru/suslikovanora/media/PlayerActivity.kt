@@ -1,6 +1,8 @@
 package ru.suslikovanora.media
 
 import ru.suslikovanora.media.core.*
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import ru.suslikovanora.media.player.PlayerAudioSession
 import ru.suslikovanora.media.player.PlayerBluRayController
 import ru.suslikovanora.media.player.PlayerControlsOverlay
@@ -8,6 +10,7 @@ import ru.suslikovanora.media.player.PlayerDiagnostics
 import ru.suslikovanora.media.player.EngineListener
 import ru.suslikovanora.media.player.EngineMedia
 import ru.suslikovanora.media.player.PlayerEngine
+import ru.suslikovanora.media.player.PlayerExtras
 import ru.suslikovanora.media.player.PlayerGestures
 import ru.suslikovanora.media.player.PlayerNetworkMonitor
 import ru.suslikovanora.media.player.PlayerPipController
@@ -106,8 +109,6 @@ class PlayerActivity : ComponentActivity() {
     private var pendingSeekPos: Long? = null            // seek issued but not yet confirmed by TimeChanged
     private var tapSeekTarget: Long? = null             // accumulated double-tap target, applied after a short pause
     private var tapSeekStart = 0L
-    private var lastWatchTime = -1L
-    private var watchStuckTicks = 0
     private lateinit var seekLabel: TextView
 
     // 1.3: gestures, frame mode, media session, sidecar subtitles, remembered tracks, next-episode card, watch progress.
@@ -164,6 +165,8 @@ class PlayerActivity : ComponentActivity() {
         gestures.resetTapState()
         seekTo(t)
     }
+    private var seekRedoneFor = -1L
+    private var seekRedone = 0
     // A seek that VLC never confirms (dead socket after a Wi-Fi <-> mobile switch) is redone on a fresh connection.
     private val seekWatchdogRunnable: Runnable = Runnable {
         val target = pendingSeekPos ?: return@Runnable
@@ -187,7 +190,10 @@ class PlayerActivity : ComponentActivity() {
                 handler.postDelayed(seekWatchdogRunnable, SEEK_CONFIRM_TIMEOUT_MS)
                 return@Runnable
             }
-            if (p.isSeekable && retryCount == 0) {
+            // One repeated seek per target, then a fresh connection: VLC playing on far from the target used to get the
+            // same seek every 9 s for as long as it kept doing that.
+            if (seekRedoneFor != target) { seekRedoneFor = target; seekRedone = 0 }
+            if (p.isSeekable && retryCount == 0 && seekRedone++ == 0) {
                 p.seekTo(target)
                 handler.postDelayed(seekWatchdogRunnable, SEEK_CONFIRM_TIMEOUT_MS)
             } else {
@@ -214,7 +220,6 @@ class PlayerActivity : ComponentActivity() {
         }
     }
 
-    private fun diagSample() = diagnostics.sample()
 
     // ---- playback health: the supervisor shared with the PC app (core.PlaybackSupervisor) ---------------
     // One place decides when playback is broken and what to do — only while the film really plays, never right after
@@ -515,6 +520,9 @@ class PlayerActivity : ComponentActivity() {
         })
     }
 
+    private val scope = kotlinx.coroutines.MainScope()
+    private var sideJob: kotlinx.coroutines.Job? = null
+
     private val playlistQueue: PlayerPlaylistQueue by lazy {
         PlayerPlaylistQueue(handler, object : PlayerPlaylistQueue.Callback {
             override fun isActivityAlive(): Boolean = alive && !isDestroyed && !isFinishing
@@ -535,7 +543,14 @@ class PlayerActivity : ComponentActivity() {
                 retryCount = 0
                 needsReload = false
                 seekBar.progress = 0
-                reconnect(forcePlay = true, startAt = playbackPosition)
+                if (!trackSelector.needsSidecars(entry.url)) { reconnect(forcePlay = true, startAt = playbackPosition); return }
+                // This episode's own voice-overs and subtitles are signed on the mirror first, then it opens with them.
+                showStatus(tr("play.gotovim_dorozhki"))
+                sideJob?.cancel()
+                sideJob = scope.launch {
+                    trackSelector.signSidecars(entry.url)
+                    if (currentUrl == entry.url && alive) reconnect(forcePlay = true, startAt = playbackPosition)
+                }
             }
             override fun onQueueUiUpdated(
                 hasMultiple: Boolean,
@@ -570,14 +585,6 @@ class PlayerActivity : ComponentActivity() {
 
     private fun hideNextCard() = playlistQueue.hideNextCard()
     private fun offerNextEpisode(): Boolean = playlistQueue.offerNextEpisode()
-    private fun playQueueEntry(index: Int) = playlistQueue.playEntry(index)
-    private fun advanceToNext(): Boolean {
-        if (!playlistQueue.hasNext) return false
-        watchProgress.clearPosition()
-        Toast.makeText(this, tr("player.sleduyuschaya_seriya"), Toast.LENGTH_SHORT).show()
-        return playlistQueue.advanceToNext()
-    }
-    private fun updateQueueUi() = playlistQueue.notifyUiUpdated()
     private fun fetchPlaylist(url: String) = playlistQueue.fetchPlaylist(url)
 
     private fun positionKey(): String? = watchProgress.positionKey()
@@ -604,6 +611,12 @@ class PlayerActivity : ComponentActivity() {
             val res = call.execute()
             BurstProxy.UpstreamResponse(res.code, { n -> res.header(n) }, res.body?.byteStream())
         }
+        // The mirror's signature lives 12 hours: a film paused overnight gets a new address instead of 401 forever.
+        BurstProxy.refreshUrl = { old ->
+            MirrorLink.renewPath(old)?.let { path ->
+                kotlinx.coroutines.runBlocking { ru.suslikovanora.media.net.Api.get(path) }.optString("url").ifBlank { null }
+            }
+        }
         // Dead sockets of a network that is gone (or a hung one) must not be reused by the repeated request.
         BurstProxy.resetConnections = {
             ru.suslikovanora.media.net.Api.plain.connectionPool.evictAll()
@@ -622,7 +635,6 @@ class PlayerActivity : ComponentActivity() {
         playWhenReady = savedInstanceState?.getBoolean(KEY_PLAYING) ?: true
         userPaused = !playWhenReady
         readSideExtras(intent)
-        playbackPosition = savedInstanceState?.getLong(KEY_POSITION) ?: startPosition(intent)
         scaleIndex = uiPrefs.getInt("scale", 0).coerceIn(0, SCALES.size - 1)
 
         engine = HybridEngine(this).also { it.listener = engineListener }
@@ -898,7 +910,7 @@ class PlayerActivity : ComponentActivity() {
 
     /** Opens [url] in a new player of the engine (the previous one, if any, is replaced and torn down by it). */
     private fun createPlayer(url: String, positionMs: Long): PlayerEngine {
-        catchUpNotBefore = SystemClock.elapsedRealtime() + 15_000L; catchUpFrom = positionMs + CATCH_UP_AFTER_PLAYED_MS
+        catchUp.quiet(15_000L); catchUpFrom = positionMs + CATCH_UP_AFTER_PLAYED_MS
         diagnostics.onMediaOpened(positionMs)
         // A Blu-ray or regular stream reopened at a saved place: until the jump there the bar shows that place, not
         // VLC's 0:00, and the position is not saved over it (see tsPlaying / tsOpenLanded).
@@ -925,7 +937,6 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun startWatchdog() {
-        lastWatchTime = -1L; watchStuckTicks = 0
         handler.removeCallbacks(watchdogRunnable)
         handler.postDelayed(watchdogRunnable, WATCHDOG_TICK_MS)
     }
@@ -962,7 +973,7 @@ class PlayerActivity : ComponentActivity() {
         val episode = trackSelector.allEpisodeUrls(url)
         // Both engines read through the same reserve (BurstProxy): it downloads in bursts sized to the network and the
         // film. A file switched from Media3 to VLC keeps what was already downloaded.
-        Media3Cache.clearAll(this) // Media3's own disk cache of the first 2.2.1 builds
+        if (!media3Swept) { media3Swept = true; Thread { Media3Cache.clearAll(applicationContext) }.start() } // Media3's own disk cache of the first 2.2.1 builds
         BurstProxy.capBytes = reserveBytes
         val main = burst(url)
         // Only what this episode needs stays in the stream cache (the previous episode's files are dropped).
@@ -992,7 +1003,6 @@ class PlayerActivity : ComponentActivity() {
     private fun viaReserve() = BurstProxy.isActive(currentUrl)
     private fun stallTimeout() = if (viaReserve()) 35_000L else STALL_TIMEOUT_MS
     private fun openTimeout() = if (viaReserve()) 45_000L else OPEN_TIMEOUT_MS
-    private fun stuckTicks() = if (viaReserve()) 15 else WATCHDOG_STUCK_TICKS
 
     private fun checkNoPicture(p: PlayerEngine) = diagnostics.checkNoPicture(p)
     private fun warnIfSoftwareDecoding(p: PlayerEngine) = diagnostics.warnIfSoftwareDecoding(p)
@@ -1039,8 +1049,7 @@ class PlayerActivity : ComponentActivity() {
             val p = createPlayer(url, position)
             audioSession.requestAudioFocus()
             p.play()
-            lastWatchTime = -1L; watchStuckTicks = 0
-            // The new connection may hang in "opening" without any event: arm the stall timer right away.
+                // The new connection may hang in "opening" without any event: arm the stall timer right away.
             handler.postDelayed(stallRunnable, openTimeout())
         } catch (e: Exception) {
             handleError()
@@ -1088,7 +1097,7 @@ class PlayerActivity : ComponentActivity() {
         gestures.resetTapState()
         supervisor.seeked(); AppLog.write("seek to ${target / 1000}s")
         if (catchingUp) endCatchUp() // a jump: the gathered reserve belongs to the old place
-        catchUpNotBefore = SystemClock.elapsedRealtime() + 15_000L; catchUpFrom = target.coerceAtLeast(0L) + CATCH_UP_AFTER_PLAYED_MS
+        catchUp.quiet(15_000L); catchUpFrom = target.coerceAtLeast(0L) + CATCH_UP_AFTER_PLAYED_MS
         hideNextCard()
         val length = lengthOf(p)
         val t = target.coerceAtLeast(0L).let { if (length > 0L) it.coerceAtMost((length - 1_000L).coerceAtLeast(0L)) else it }
@@ -1349,22 +1358,17 @@ class PlayerActivity : ComponentActivity() {
     // (at most 45 s) and then it plays on for minutes. VLC is not paused for this (a pause in the middle of its
     // buffering raised its delay to ~8 s and froze the picture — 12.10 second test): for VLC it is just a longer
     // buffering, and the supervisor sees an ordinary end of buffering afterwards.
-    private var catchingUp = false
-    private var catchUpStartedAt = 0L
-    private var catchUpNotBefore = 0L // not right after an open / seek / unlock: VLC fills its buffer then anyway
+    // The rules are shared with the PC (CatchUp); not right after an open / seek / unlock: VLC fills its buffer then anyway.
+    private val catchUp = CatchUp({ AppLog.write(it) }, { SystemClock.elapsedRealtime() })
+    private val catchingUp: Boolean get() = catchUp.active
     // ...and not before the film has really played a little at the new place: 12.10 fifth test, after a seek on a
     // 2–5 Mbit/s network VLC was still loading the new place 15 s later — the wait for a reserve then held it 45 s more.
     private var catchUpFrom = 0L // film time (ms)
 
     private fun maybeCatchUp(p: PlayerEngine) {
         if (catchingUp || !viaReserve() || networkLost || userPaused || ended || heavyDialog != null) return
-        if (pendingSeekPos != null || timeOf(p) < catchUpFrom || p.timeMs <= 0L || SystemClock.elapsedRealtime() < catchUpNotBefore) return
-        if (!BurstProxy.slowerThanFilm(currentUrl) || (BurstProxy.aheadMb(currentUrl) ?: 99.0) >= 2.0) return
-        catchingUp = true
-        catchUpStartedAt = SystemClock.elapsedRealtime()
-        AppLog.write("network slower than the film, reserve empty: holding the film to gather %.0f MB".format(BurstProxy.catchUpTargetMb(currentUrl)))
+        if (!catchUp.maybeStart(currentUrl, canStart = pendingSeekPos == null && timeOf(p) >= catchUpFrom && p.timeMs > 0L)) return
         handler.removeCallbacks(stallRunnable)
-        BurstProxy.hold(currentUrl, CATCH_UP_MAX_MS + 5_000L)
         handler.removeCallbacks(catchUpRunnable)
         handler.post(catchUpRunnable)
     }
@@ -1373,11 +1377,10 @@ class PlayerActivity : ComponentActivity() {
         override fun run() {
             if (!catchingUp) return
             if (player == null) { endCatchUp(); return }
-            val target = BurstProxy.catchUpTargetMb(currentUrl)
-            val ahead = BurstProxy.aheadMb(currentUrl) ?: 0.0
-            if (ahead >= target || SystemClock.elapsedRealtime() - catchUpStartedAt >= CATCH_UP_MAX_MS) { endCatchUp(restart = true); return }
+            val gathered = catchUp.progress(currentUrl)
+            if (gathered < 0) { endCatchUp(restart = true); return }
             // VLC may still play what it had in its own buffer: the message only while it really waits
-            if (buffering) showStatus(tr("player.set_medlennee_filma_kopim", "p" to (ahead * 100 / target.coerceAtLeast(1.0)).toInt().coerceIn(0, 99)))
+            if (buffering) showStatus(tr("player.set_medlennee_filma_kopim", "p" to gathered))
             handler.postDelayed(this, 1_000L)
         }
     }
@@ -1391,20 +1394,12 @@ class PlayerActivity : ComponentActivity() {
      */
     private fun endCatchUp(restart: Boolean = false) {
         if (!catchingUp) return
-        catchingUp = false
         handler.removeCallbacks(catchUpRunnable)
-        BurstProxy.hold(currentUrl, 0L)
-        catchUpNotBefore = SystemClock.elapsedRealtime() + 20_000L
-        AppLog.write("reserve gathered: %.0f MB in %d s".format(BurstProxy.aheadMb(currentUrl) ?: 0.0,
-            (SystemClock.elapsedRealtime() - catchUpStartedAt) / 1000))
-        if (player == null || userPaused) return
         val t = perceivedPosition()
-        // Only with enough kept just behind: the jump lands on the last keyframe, a few seconds back. 12.10 fourth test,
-        // 4K 57 Mbit/s: 34 MB behind was under 5 s, the keyframe was not on the phone any more — a new window, the
-        // gathered 62 MB thrown away, VLC stepping back through the mirror.
-        val behind = BurstProxy.keptBehindSec(currentUrl)
-        if (restart && t > 0L && behind >= 8.0 && player?.kind == EngineKind.VLC) { seekTo(t); return } // Media3's decoders need no restart
-        if (restart) AppLog.write("restart skipped: only %.1f s kept behind".format(behind))
+        // Media3's decoders need no restart; VLC's do (see CatchUp.end), from what is already on the phone.
+        val restartHere = catchUp.end(currentUrl, restart && player != null && !userPaused && t > 0L && player?.kind == EngineKind.VLC)
+        if (player == null || userPaused) return
+        if (restartHere) { seekTo(t); return }
         // VLC is still buffering: its usual watch over a silent buffering starts again
         if (buffering) {
             handler.removeCallbacks(stallRunnable)
@@ -1561,7 +1556,6 @@ class PlayerActivity : ComponentActivity() {
 
     // ---- screen lock against accidental touches ---------------------------------------------------------------
     private fun lockScreen() = controlsOverlay.lock()
-    private fun unlockScreen() = controlsOverlay.unlock()
     private fun showUnlockBadge() = controlsOverlay.showUnlockBadge()
 
     // ---- frame mode ---------------------------------------------------------------------------
@@ -1741,7 +1735,7 @@ class PlayerActivity : ComponentActivity() {
 
     private fun resumeAfterStop() {
         val p = player ?: return
-        catchUpNotBefore = SystemClock.elapsedRealtime() + 15_000L; catchUpFrom = timeOf(p) + CATCH_UP_AFTER_PLAYED_MS
+        catchUp.quiet(15_000L); catchUpFrom = timeOf(p) + CATCH_UP_AFTER_PLAYED_MS
         keptOnStop = false
         p.attachVideo()
         hookSurfaces()
@@ -1841,6 +1835,7 @@ class PlayerActivity : ComponentActivity() {
 
     override fun onDestroy() {
         alive = false
+        scope.cancel()
         heavyDialog?.let { runCatching { it.dismiss() } }; heavyDialog = null
         AppLog.write("player closed: %.0f MB fetched in this session (%s)".format(
             BurstProxy.downloadedMb() + Media3Engine.downloaded.get() / 1048576.0 - sessionStartMb, if (TrafficMeter.isMetered(this)) "mobile" else "wifi"))
@@ -1891,10 +1886,10 @@ class PlayerActivity : ComponentActivity() {
     companion object {
         /** This screen exists right now (CrashReports tells a crash from a normal close by it). */
         @Volatile var alive = false
-        const val EXTRA_URL = "media_url"
-        const val EXTRA_TITLE = "media_title"
-        const val EXTRA_PLAYLIST = "media_playlist"
-        const val EXTRA_FROM_START = "media_from_start"
+        const val EXTRA_URL = PlayerExtras.URL
+        const val EXTRA_TITLE = PlayerExtras.TITLE
+        const val EXTRA_PLAYLIST = PlayerExtras.PLAYLIST
+        const val EXTRA_FROM_START = PlayerExtras.FROM_START
         private const val KEY_URL = "current_url"
         private val NIGHT = 0xFF090B10.toInt()
         private val LAMP = 0xFFFFB02E.toInt()
@@ -1905,19 +1900,19 @@ class PlayerActivity : ComponentActivity() {
         private const val OPEN_TIMEOUT_MS = 20_000L
         private const val WATCHDOG_TICK_MS = 2_000L
         private const val FAST_RESUME_MS = 20_000L // back within this: just continue the paused player
-        private const val CATCH_UP_MAX_MS = 45_000L // the longest pause to gather a reserve on a slow network
         private const val CATCH_UP_AFTER_PLAYED_MS = 5_000L // film played at a new place before a wait for a reserve
         private const val IDLE_RELEASE_MS = 10 * 60_000L // locked longer than this: free VLC and the connection
-        const val EXTRA_SUB_URLS = "media_sub_urls"
-        const val EXTRA_WATCH_KEYS = "media_watch_keys"
-        const val EXTRA_AUDIO_URLS = "media_audio_urls"
+        const val EXTRA_SUB_URLS = PlayerExtras.SUB_URLS
+        const val EXTRA_WATCH_KEYS = PlayerExtras.WATCH_KEYS
+        const val EXTRA_AUDIO_URLS = PlayerExtras.AUDIO_URLS
+        const val EXTRA_EPISODE_SIDES = PlayerExtras.EPISODE_SIDES
+        @Volatile private var media3Swept = false // the old Media3 cache folder: removed once per process, off the main thread
         private val SCALES = listOf(
             VideoScale.BEST_FIT to tr("player.vpisat"),
             VideoScale.FIT_SCREEN to tr("player.zapolnit"),
             VideoScale.FILL to tr("player.rastyanut"),
             VideoScale.RATIO_16_9 to "16:9"
         )
-        private const val WATCHDOG_STUCK_TICKS = 4 // 4 x 2 s = the same 8 s as before
         private const val SEEK_CONFIRM_TIMEOUT_MS = 9_000L
         private const val SEEK_CONFIRM_TOLERANCE_MS = 12_000L
         private const val TAP_SEEK_APPLY_MS = 350L
