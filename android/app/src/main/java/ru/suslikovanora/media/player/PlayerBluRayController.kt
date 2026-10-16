@@ -257,11 +257,5 @@ class PlayerBluRayController(
         }
     }
 
-    private fun formatTime(ms: Long): String {
-        val sec = ms / 1000
-        val m = sec / 60
-        val s = sec % 60
-        val h = m / 60
-        return if (h > 0) "%d:%02d:%02d".format(h, m % 60, s) else "%d:%02d".format(m, s)
-    }
+    private fun formatTime(ms: Long): String = ru.suslikovanora.media.core.clockText(ms)
 }

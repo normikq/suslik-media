@@ -31,9 +31,6 @@ fun warmUp(url: String, bytes: Long) {
     }
 }
 
-fun fmt(ms: Long): String {
-    val t = (ms / 1000).coerceAtLeast(0); val h = t / 3600; val m = (t % 3600) / 60; val s = t % 60
-    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s)
-}
+fun fmt(ms: Long): String = ru.suslikovanora.media.core.clockText(ms)
 
 fun fmtRate(r: Float): String = (if (r % 1f == 0f) r.toInt().toString() else r.toString().trimEnd('0')) + "×"

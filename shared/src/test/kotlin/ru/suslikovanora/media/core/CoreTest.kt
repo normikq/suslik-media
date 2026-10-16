@@ -191,3 +191,11 @@ class PlaybackPresetsTest {
         assertEquals(listOf(0, 32, 64, 96, 128, 160, 256), presets.map { it.value })
     }
 }
+
+class TimeTextTest {
+    @Test fun clock() {
+        assertEquals("00:00", clockText(-5))
+        assertEquals("05:03", clockText(303_999))
+        assertEquals("1:05:03", clockText(3_903_000))
+    }
+}

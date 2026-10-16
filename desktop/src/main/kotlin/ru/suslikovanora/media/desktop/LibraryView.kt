@@ -130,10 +130,7 @@ private suspend fun mirrorUrls(files: List<MFile>): List<String> = coroutineScop
 
 private fun openSite() = runCatching { Desktop.getDesktop().browse(URI(Api.SITE)) }
 private fun copy(text: String) = Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null)
-private fun clock(ms: Long): String {
-    val t = (ms / 1000).coerceAtLeast(0); val h = t / 3600; val m = (t % 3600) / 60; val s = t % 60
-    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s)
-}
+private fun clock(ms: Long): String = clockText(ms)
 
 fun itemYear(item: LibraryItem): String {
     val match = Regex("""\b(19\d{2}|20\d{2})\b""").find(item.m.name)

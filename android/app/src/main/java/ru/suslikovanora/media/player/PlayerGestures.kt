@@ -7,7 +7,6 @@ import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.ViewConfiguration
-import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.hypot
 
@@ -242,13 +241,6 @@ class PlayerGestures(
         private const val SEEK_SWIPE_RANGE_MS = 180_000L // full screen width = 3 min
         private const val REPEAT_TAP_WINDOW_MS = 650L
 
-        fun formatTime(ms: Long): String {
-            val totalSeconds = ms.coerceAtLeast(0L) / 1000L
-            val h = totalSeconds / 3600
-            val m = (totalSeconds % 3600) / 60
-            val s = totalSeconds % 60
-            return if (h > 0) String.format(Locale.getDefault(), "%d:%02d:%02d", h, m, s)
-            else String.format(Locale.getDefault(), "%02d:%02d", m, s)
-        }
+        fun formatTime(ms: Long): String = ru.suslikovanora.media.core.clockText(ms)
     }
 }
