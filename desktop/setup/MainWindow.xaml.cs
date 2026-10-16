@@ -270,7 +270,7 @@ namespace SuslikSetup
             var throttle = new Throttle(Dispatcher);
             Task.Run(() => Work.Install(folder,
                 (f, action) => throttle.Post(() => { filesPart = f; Overall(action); }),
-                MpvProgress(mpv, files, f => { mpvPart = f; Overall("Загрузка видеодвижка mpv…"); }, throttle),
+                MpvProgress(mpv, files, f => { mpvPart = f; ProgressLead.Text = "Скачиваем видеодвижок mpv с нашего сервера."; Overall("Загрузка видеодвижка mpv…"); }, throttle),
                 cts.Token)).ContinueWith(t =>
             {
                 throttle.Flush();
@@ -498,6 +498,7 @@ namespace SuslikSetup
             install.BarFill.Width = install.PageProgress.ActualWidth * 0.72;
             install.PercentText.Text = "72%";
             install.ActionText.Text = "Загрузка видеодвижка mpv…";
+            install.ProgressLead.Text = "Скачиваем видеодвижок mpv с нашего сервера.";
             Snap(install, "3-progress");
             install.Finish(true, "Готово!", "Suslik Media установлена и готова к работе.", null);
             install.DoneScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
