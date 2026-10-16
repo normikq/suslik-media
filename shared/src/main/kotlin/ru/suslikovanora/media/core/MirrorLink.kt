@@ -8,6 +8,16 @@ import java.net.URLEncoder
  * (`MIRROR_TTL_HOURS` on the server); after that the mirror answers 401 and the app has to ask for a new address.
  */
 object MirrorLink {
+    /**
+     * The file's identity: the same film has a different signed address each time it is opened, so the address itself
+     * cannot recognise it. Path plus the `link` parameter; other addresses are used as they are. One rule for the
+     * reserve (BurstProxy), the Blu-ray clock (TsClock) and the engine choice (Android).
+     */
+    fun fileKey(url: String): String {
+        val link = url.substringAfter('?', "").split('&').firstOrNull { it.startsWith("link=") } ?: return url
+        return url.substringBefore('?') + "?" + link
+    }
+
     /** The parameter [name] of [url], decoded; null when there is none. */
     fun param(url: String, name: String): String? =
         url.substringAfter('?', "").split('&').firstOrNull { it.startsWith("$name=") }

@@ -123,7 +123,7 @@ class TsClockTest {
         clockCacheField.isAccessible = true
         @Suppress("UNCHECKED_CAST")
         val map = clockCacheField.get(TsClock) as java.util.concurrent.ConcurrentHashMap<String, TsClock.ClockInfo>
-        map["interp"] = info
+        map[TsClock.cacheKey(url)] = info
 
         // Seeking to 1000s: midway between 0 (0.0) and 2000s (0.50) -> should be 0.25 (not 1000/5000 = 0.20)
         assertEquals(0.25f, TsClock.posFor(url, 1_000_000L, 5_000_000L), 0.0001f)
@@ -147,7 +147,7 @@ class TsClockTest {
         val clockCacheField = TsClock::class.java.getDeclaredField("clockCache")
         clockCacheField.isAccessible = true
         @Suppress("UNCHECKED_CAST")
-        (clockCacheField.get(TsClock) as java.util.concurrent.ConcurrentHashMap<String, TsClock.ClockInfo>)["mono"] = info
+        (clockCacheField.get(TsClock) as java.util.concurrent.ConcurrentHashMap<String, TsClock.ClockInfo>)[TsClock.cacheKey(url)] = info
 
         TsClock.learn(url, 3_000_000L, 0.40f)   // VLC: 3000 s is at 0.40, so 2000 s cannot be at 0.50
         assertEquals(listOf(0L, 3_000_000L, 5_000_000L), info.checkpoints.keys.toList())

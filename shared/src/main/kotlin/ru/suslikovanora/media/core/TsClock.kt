@@ -30,11 +30,7 @@ object TsClock {
         it.endsWith(".m2ts") || it.endsWith(".mts") || it.endsWith(".ts")
     }
 
-    internal fun cacheKey(url: String): String {
-        val query = url.substringAfter('?', "")
-        val link = if (query.isNotEmpty()) query.split('&').firstOrNull { it.startsWith("link=") }?.substringAfter("link=") else null
-        return if (!link.isNullOrEmpty()) link else url.substringBefore("&sig=").substringBefore("&exp=")
-    }
+    internal fun cacheKey(url: String): String = MirrorLink.fileKey(url)
 
     fun cached(url: String): Pair<Long, Long>? = cache[cacheKey(url)]
     fun clockInfo(url: String): ClockInfo? = clockCache[cacheKey(url)]

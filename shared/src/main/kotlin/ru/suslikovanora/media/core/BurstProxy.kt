@@ -59,15 +59,8 @@ object BurstProxy {
     val downloaded = AtomicLong()
     @Volatile var onBytes: (Long) -> Unit = {}
 
-    /**
-     * The same file has a different signed address (…?link=…&exp=…&sig=…) each time it is opened, so the address itself
-     * cannot recognise it. The file's identity is the path plus the `link` parameter; other addresses are used as they are.
-     */
-    private fun keyOf(url: String): String {
-        val q = url.substringAfter('?', "")
-        val link = q.split('&').firstOrNull { it.startsWith("link=") } ?: return url
-        return url.substringBefore('?') + "?" + link
-    }
+    /** The file behind a signed address ([MirrorLink.fileKey]). */
+    private fun keyOf(url: String): String = MirrorLink.fileKey(url)
     private fun sourceOf(url: String): Source? = byUrl[keyOf(url)]?.let { sources[it] }
     private val ids = AtomicLong()
 
