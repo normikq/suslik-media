@@ -92,7 +92,12 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
     // The very first VLC start scans all its plugins (several seconds): do it now, in the background.
     val vlcWarm = remember { CompletableDeferred<Boolean>() }
     LaunchedEffect(Unit) {
+        // libmpv не в MSI: если её ещё нет (первый запуск после обновления), докачивается здесь же, в фоне.
+        val mpvSetup = ru.suslikovanora.media.desktop.player.MpvInstall.start(appScope)
+        appScope.launch(Dispatchers.IO) { Uninstaller.register() }
         withContext(Dispatchers.IO) {
+            // Без VLC играть больше нечем: ждём libmpv.
+            if (!Vlc.available) mpvSetup.await()
             val mpv = ru.suslikovanora.media.desktop.player.EngineChoice.useMpv
             val ok = Vlc.available || mpv
             if (ok && !mpv) runCatching { VlcFactory.warm() } // the real engine, reused by every player

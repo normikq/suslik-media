@@ -27,6 +27,16 @@ jobs:
       - uses: actions/setup-java@v5
         with: { distribution: temurin, java-version: "21" }
       - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: "8.0.x" }
+      # Окно удаления (desktop/setup без MSI внутри) кладётся в само приложение: app/resources/SuslikUninstall.exe
+      - name: Build uninstaller
+        run: |
+          set -o pipefail
+          V=$(sed -n 's/^val appVersion = "\([^"]*\)".*/\1/p' build.gradle.kts)
+          dotnet build setup/SuslikSetup.csproj -c Release -p:AppVersion=$V -p:AssemblyName=SuslikUninstall -o "$RUNNER_TEMP/uninstall" 2>&1 | tail -5
+          mkdir -p resources/windows && cp "$RUNNER_TEMP/uninstall/SuslikUninstall.exe" resources/windows/
+          rm -rf setup/obj setup/bin
       - name: Build MSI
         run: |
           set -o pipefail
@@ -44,9 +54,21 @@ jobs:
           V=$(sed -n 's/^val appVersion = "\([^"]*\)".*/\1/p' build.gradle.kts)
           mkdir -p ../dist && cp "$(ls build/compose/binaries/main-release/msi/*.msi | head -1)" "../dist/Suslik Media-$V.msi"
           echo "MSI=$(ls ../dist/*.msi | head -1 | sed 's#^\.\./##')" >> "$GITHUB_ENV"
+          echo "V=$V" >> "$GITHUB_ENV"
+      # Мастер установки «Suslik Media Setup.exe»: то же окно с MSI внутри (первая установка и переустановка).
+      # Обновления по-прежнему идут через MSI (самообновление ставит его молча).
+      - name: Build installer
+        run: |
+          set -o pipefail
+          dotnet build setup/SuslikSetup.csproj -c Release -p:AppVersion=$V -p:AssemblyName=SuslikMediaSetup \
+            "-p:MsiPath=$(cygpath -w "$GITHUB_WORKSPACE/$MSI")" -o "$RUNNER_TEMP/setup" 2>&1 | tail -5
+          cp "$RUNNER_TEMP/setup/SuslikMediaSetup.exe" "../dist/Suslik Media Setup-$V.exe"
+          rm -rf setup/obj setup/bin
           ls -la ../dist
       - uses: actions/upload-artifact@v4
         with: { name: windows-msi, path: dist/*.msi, retention-days: 2 }
+      - uses: actions/upload-artifact@v4
+        with: { name: windows-setup, path: dist/*.exe, retention-days: 7 }
       # «Suslik Debug» (detailed journal, installs next to the normal app, never published): see desktop/DEBUG-BUILD.md
       - name: Build debug MSI
         if: ${{ inputs.debug }}

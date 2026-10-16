@@ -281,5 +281,7 @@
   "settings.dvizhok_vlc": "VLC (vlcj)",
   "settings.dvizhok_vlc_hint": "Классический режим холста",
   "settings.dvizhok_mpv_put": "Библиотека: {path}",
-  "settings.dvizhok_mpv_otsutstvuet": "libmpv-2.dll не найдена в %APPDATA%\\SuslikMedia\\mpv"
+  "settings.dvizhok_mpv_otsutstvuet": "Видеодвижок mpv не установлен",
+  "settings.dvizhok_mpv_zagruzka": "Загрузка видеодвижка mpv: {p}%",
+  "settings.dvizhok_mpv_skachat": "Скачать mpv"
 }

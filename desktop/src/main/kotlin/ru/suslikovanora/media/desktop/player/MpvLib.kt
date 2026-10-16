@@ -38,10 +38,11 @@ object Mpv {
     const val END_ERROR = 4
 
     /**
-     * libmpv-2.dll ищем: рядом с приложением (`app/`, `mpv/`), в `%APPDATA%\SuslikMedia\mpv`, в PATH.
-     * Сборки: https://sourceforge.net/projects/mpv-player-windows/files/libmpv/ (x86_64, файл libmpv-2.dll).
+     * libmpv-2.dll ищем: рядом с приложением (`app/`, `mpv/`), в `%APPDATA%\SuslikMedia\mpv` (туда её кладут
+     * установщик и [MpvInstall]), в PATH.
      */
     fun candidates(): List<File> {
+        MpvInstall.applyPending()
         val dirs = ArrayList<File>()
         System.getProperty("compose.application.resources.dir")?.let { dirs += File(it) }
         System.getProperty("user.dir")?.let { dirs += File(it); dirs += File(it, "mpv") }
@@ -50,17 +51,22 @@ object Mpv {
         return dirs.filter { File(it, "libmpv-2.dll").isFile }
     }
 
-    val libraryFile: File? by lazy {
-        candidates().firstOrNull()?.let { File(it, "libmpv-2.dll") }
-    }
+    @Volatile var libraryFile: File? = null
+        private set
 
-    val api: MpvApi? by lazy {
-        runCatching {
-            val dir = candidates().firstOrNull()
-            if (dir != null) System.setProperty("jna.library.path", dir.absolutePath + File.pathSeparator + (System.getProperty("jna.library.path") ?: ""))
-            Native.load("libmpv-2", MpvApi::class.java, mapOf(Library.OPTION_STRING_ENCODING to "UTF-8"))
-        }.getOrNull()
-    }
+    @Volatile private var loaded: MpvApi? = null
+
+    /** Пока библиотеки нет, каждый вызов ищет её снова: [MpvInstall] может докачать её посреди работы. */
+    val api: MpvApi?
+        get() = loaded ?: synchronized(this) {
+            loaded ?: run {
+                val dir = candidates().firstOrNull() ?: return@run null
+                runCatching {
+                    System.setProperty("jna.library.path", dir.absolutePath + File.pathSeparator + (System.getProperty("jna.library.path") ?: ""))
+                    Native.load("libmpv-2", MpvApi::class.java, mapOf(Library.OPTION_STRING_ENCODING to "UTF-8"))
+                }.getOrNull()?.also { loaded = it; libraryFile = File(dir, "libmpv-2.dll") }
+            }
+        }
 
     val available: Boolean get() = api != null
 }

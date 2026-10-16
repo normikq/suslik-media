@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Установщик и окно удаления Suslik Media (WPF, .NET Framework 4.7.2 — есть в Windows 10/11 из коробки).
+    Одна программа в двух сборках (см. .github/workflows/desktop.yml):
+      SuslikUninstall.exe — без MSI, кладётся в само приложение (app/resources) и открывается из «Установленных приложений»;
+      Suslik Media Setup.exe — с MSI внутри (-p:MsiPath=…): мастер установки.
+    Сборка: dotnet build -c Release [-p:MsiPath=путь\к.msi] [-p:AssemblyName=…] [-p:AppVersion=2.3.1]
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net472</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>SuslikSetup</AssemblyName>
+    <RootNamespace>SuslikSetup</RootNamespace>
+    <ApplicationIcon>..\icon.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AppVersion Condition="'$(AppVersion)' == ''">0.0.0</AppVersion>
+    <InformationalVersion>$(AppVersion)</InformationalVersion>
+    <Product>Suslik Media</Product>
+    <Company>Suslik Media</Company>
+    <AssemblyTitle>Установщик Suslik Media</AssemblyTitle>
+    <DebugType>none</DebugType>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <SatelliteResourceLanguages>ru</SatelliteResourceLanguages>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="System.Net.Http" />
+  </ItemGroup>
+  <ItemGroup>
+    <Resource Include="..\src\main\resources\fonts\onest_regular.ttf;..\src\main\resources\fonts\onest_medium.ttf;..\src\main\resources\fonts\onest_semibold.ttf" Link="fonts\%(Filename)%(Extension)" />
+    <Resource Include="..\src\main\resources\icons\icon-256.png" Link="img\icon.png" />
+    <EmbeddedResource Include="..\src\main\resources\libmpv.properties" LogicalName="libmpv.properties" />
+    <EmbeddedResource Include="$(MsiPath)" LogicalName="package.msi" Condition="'$(MsiPath)' != ''" />
+  </ItemGroup>
+</Project>

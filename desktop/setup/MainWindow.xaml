@@ -1,0 +1,362 @@
+<Window x:Class="SuslikSetup.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Suslik Media — установка"
+        Width="1120" Height="680"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent" ResizeMode="CanMinimize"
+        WindowStartupLocation="CenterScreen" FontFamily="{StaticResource Onest}"
+        TextOptions.TextFormattingMode="Ideal" UseLayoutRounding="True"
+        Icon="pack://application:,,,/img/icon.png">
+    <Grid Margin="24">
+        <!-- Тень окна отдельно от содержимого: эффект на всём дереве замедлял бы анимации -->
+        <Border CornerRadius="18" Background="#000000" Margin="2">
+            <Border.Effect><BlurEffect Radius="24" /></Border.Effect>
+        </Border>
+
+        <Grid x:Name="Shell">
+            <Grid.Clip>
+                <RectangleGeometry x:Name="ShellClip" RadiusX="16" RadiusY="16" />
+            </Grid.Clip>
+            <Grid.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                    <GradientStop Color="#0E1424" Offset="0" />
+                    <GradientStop Color="#0A0E18" Offset="0.55" />
+                    <GradientStop Color="#080B13" Offset="1" />
+                </LinearGradientBrush>
+            </Grid.Background>
+
+            <Grid.RowDefinitions>
+                <RowDefinition Height="76" />
+                <RowDefinition Height="1" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- Медленно «дышащее» голубое свечение справа сверху -->
+            <Ellipse x:Name="Aura" Grid.RowSpan="3" Width="760" Height="560" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-200,-220,0" IsHitTestVisible="False" Opacity="0.55">
+                <Ellipse.Fill>
+                    <RadialGradientBrush>
+                        <GradientStop Color="#335AB0FF" Offset="0" />
+                        <GradientStop Color="#145AB0FF" Offset="0.45" />
+                        <GradientStop Color="#005AB0FF" Offset="1" />
+                    </RadialGradientBrush>
+                </Ellipse.Fill>
+                <Ellipse.RenderTransform><TranslateTransform x:Name="AuraMove" /></Ellipse.RenderTransform>
+            </Ellipse>
+
+            <!-- Заголовок -->
+            <Grid x:Name="TitleBar" Background="Transparent" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="24,0,0,0">
+                    <Grid Width="44" Height="44">
+                        <Ellipse Fill="#5AB0FF" Opacity="0.35" Margin="-4">
+                            <Ellipse.Effect><BlurEffect Radius="14" /></Ellipse.Effect>
+                        </Ellipse>
+                        <Border CornerRadius="11" ClipToBounds="True">
+                            <Image Source="pack://application:,,,/img/icon.png" RenderOptions.BitmapScalingMode="HighQuality" />
+                        </Border>
+                    </Grid>
+                    <TextBlock Text="Suslik Media" Foreground="{StaticResource Text}" FontSize="22" FontWeight="SemiBold" VerticalAlignment="Center" Margin="16,0,0,0" />
+                    <Ellipse Width="5" Height="5" Fill="{StaticResource Muted}" VerticalAlignment="Center" Margin="16,2,16,0" />
+                    <TextBlock x:Name="TitleMode" Text="Установщик" Foreground="{StaticResource Sub}" FontSize="19" VerticalAlignment="Center" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,16,0">
+                    <Button Style="{StaticResource TitleButton}" Click="Minimize_Click" ToolTip="Свернуть">
+                        <Rectangle Width="14" Height="1.6" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                    </Button>
+                    <Button x:Name="CloseButton" Style="{StaticResource TitleButton}" Tag="#C9433F" Click="Close_Click" ToolTip="Закрыть" Margin="6,0,0,0">
+                        <Path Data="M0,0 L13,13 M13,0 L0,13" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+                    </Button>
+                </StackPanel>
+            </Grid>
+            <Border Grid.Row="1" Background="{StaticResource Line}" />
+
+            <Grid Grid.Row="2">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="320" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <!-- Шаги слева -->
+                <Border Background="#66070A12" BorderBrush="{StaticResource Line}" BorderThickness="0,0,1,0">
+                    <StackPanel x:Name="Steps" Margin="34,46,20,0" />
+                </Border>
+
+                <Grid Grid.Column="1">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="1" />
+                        <RowDefinition Height="98" />
+                    </Grid.RowDefinitions>
+
+                    <Grid x:Name="Pages" Margin="40,40,0,0">
+
+                        <!-- 1. Добро пожаловать -->
+                        <Grid x:Name="PageWelcome">
+                            <!-- Макет приложения справа: наклонное стеклянное окно с афишами -->
+                            <Border HorizontalAlignment="Right" VerticalAlignment="Top" Width="380" Height="300" Margin="0,64,-150,0"
+                                    CornerRadius="16" BorderThickness="1" BorderBrush="#2F4466" IsHitTestVisible="False" RenderTransformOrigin="0,0.5">
+                                <Border.RenderTransform>
+                                    <TransformGroup>
+                                        <SkewTransform AngleY="-7" />
+                                        <TranslateTransform x:Name="MockFloat" />
+                                    </TransformGroup>
+                                </Border.RenderTransform>
+                                <Border.Background>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                        <GradientStop Color="#EE141D30" Offset="0" />
+                                        <GradientStop Color="#EE0C1220" Offset="1" />
+                                    </LinearGradientBrush>
+                                </Border.Background>
+                                <Border.Effect><DropShadowEffect Color="#5AB0FF" BlurRadius="40" ShadowDepth="0" Opacity="0.28" /></Border.Effect>
+                                <StackPanel Margin="18,16,0,0">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Border CornerRadius="5" Width="20" Height="20" ClipToBounds="True">
+                                            <Image Source="pack://application:,,,/img/icon.png" />
+                                        </Border>
+                                        <TextBlock Text="Suslik Media" Foreground="{StaticResource Text}" FontSize="13" FontWeight="SemiBold" Margin="8,0,0,0" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                                        <Border CornerRadius="8" Background="#1E2B44" Padding="10,5">
+                                            <TextBlock Text="Библиотека" Foreground="{StaticResource Text}" FontSize="11" FontWeight="SemiBold" />
+                                        </Border>
+                                        <TextBlock Text="Поиск раздач" Foreground="{StaticResource Muted}" FontSize="11" Margin="14,5,0,0" />
+                                        <TextBlock Text="Magnet / torrent" Foreground="{StaticResource Muted}" FontSize="11" Margin="14,5,0,0" />
+                                    </StackPanel>
+                                    <TextBlock Text="Популярные" Foreground="{StaticResource Text}" FontSize="12" FontWeight="SemiBold" Margin="0,16,0,8" />
+                                    <StackPanel Orientation="Horizontal">
+                                        <StackPanel Margin="0,0,12,0">
+                                            <Border Width="78" Height="112" CornerRadius="8">
+                                                <Border.Background>
+                                                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                                        <GradientStop Color="#F7A341" Offset="0" />
+                                                        <GradientStop Color="#9B3A12" Offset="0.6" />
+                                                        <GradientStop Color="#2A1208" Offset="1" />
+                                                    </LinearGradientBrush>
+                                                </Border.Background>
+                                            </Border>
+                                            <Border CornerRadius="5" Background="#1A2740" Padding="6,3" Margin="0,8,0,0" HorizontalAlignment="Left">
+                                                <TextBlock Text="Готово · 100%" Foreground="{StaticResource Sub}" FontSize="9.5" />
+                                            </Border>
+                                        </StackPanel>
+                                        <StackPanel Margin="0,0,12,0">
+                                            <Border Width="78" Height="112" CornerRadius="8">
+                                                <Border.Background>
+                                                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                                        <GradientStop Color="#8FA6B8" Offset="0" />
+                                                        <GradientStop Color="#33424F" Offset="0.55" />
+                                                        <GradientStop Color="#10161C" Offset="1" />
+                                                    </LinearGradientBrush>
+                                                </Border.Background>
+                                            </Border>
+                                            <Border CornerRadius="5" Background="#1A2740" Padding="6,3" Margin="0,8,0,0" HorizontalAlignment="Left">
+                                                <TextBlock Text="Готово · 100%" Foreground="{StaticResource Sub}" FontSize="9.5" />
+                                            </Border>
+                                        </StackPanel>
+                                        <StackPanel Margin="0,0,12,0">
+                                            <Border Width="78" Height="112" CornerRadius="8">
+                                                <Border.Background>
+                                                    <RadialGradientBrush GradientOrigin="0.5,0.45" Center="0.5,0.45" RadiusX="0.6" RadiusY="0.5">
+                                                        <GradientStop Color="#F2F6FF" Offset="0" />
+                                                        <GradientStop Color="#5E6E8C" Offset="0.35" />
+                                                        <GradientStop Color="#0B0F18" Offset="1" />
+                                                    </RadialGradientBrush>
+                                                </Border.Background>
+                                            </Border>
+                                            <Border CornerRadius="5" Background="#1A2740" Padding="6,3" Margin="0,8,0,0" HorizontalAlignment="Left">
+                                                <TextBlock Text="Готово · 100%" Foreground="{StaticResource Sub}" FontSize="9.5" />
+                                            </Border>
+                                        </StackPanel>
+                                        <StackPanel>
+                                            <Border Width="78" Height="112" CornerRadius="8">
+                                                <Border.Background>
+                                                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                                        <GradientStop Color="#F06A2B" Offset="0" />
+                                                        <GradientStop Color="#5A1E10" Offset="0.6" />
+                                                        <GradientStop Color="#140806" Offset="1" />
+                                                    </LinearGradientBrush>
+                                                </Border.Background>
+                                            </Border>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <StackPanel MaxWidth="470" HorizontalAlignment="Left">
+                                <TextBlock x:Name="WelcomeTitle" Style="{StaticResource H1}" Text="Добро пожаловать!" />
+                                <TextBlock x:Name="WelcomeLead" Style="{StaticResource Lead}" Text="Вас приветствует мастер установки Suslik Media." />
+                                <TextBlock Style="{StaticResource Body}" Margin="0,24,0,0"
+                                           Text="Suslik Media — современный медиаплеер с поддержкой AllDebrid, торрентов и локальной библиотеки. Смотрите фильмы, сериалы и аниме в высоком качестве." />
+                                <UniformGrid Columns="2" Margin="0,30,0,0">
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,10,18">
+                                        <Border Style="{StaticResource IconTile}">
+                                            <Path Data="M8,5 L19,12 L8,19 Z" Fill="{StaticResource Accent}" Style="{StaticResource IconPath}" />
+                                        </Border>
+                                        <StackPanel VerticalAlignment="Center" Margin="14,0,0,0">
+                                            <TextBlock Text="Онлайн просмотр" Foreground="{StaticResource Text}" FontSize="15" FontWeight="SemiBold" />
+                                            <TextBlock Text="Через AllDebrid" Style="{StaticResource Small}" Margin="0,3,0,0" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,18">
+                                        <Border Style="{StaticResource IconTile}">
+                                            <Path Data="M3,5 H21 V16 H3 Z M8,20 H16 M12,16 V20" Style="{StaticResource IconPath}" />
+                                        </Border>
+                                        <StackPanel VerticalAlignment="Center" Margin="14,0,0,0">
+                                            <TextBlock Text="Высокое качество" Foreground="{StaticResource Text}" FontSize="15" FontWeight="SemiBold" />
+                                            <TextBlock Text="4K · HDR · Dolby Atmos" Style="{StaticResource Small}" Margin="0,3,0,0" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,10,0">
+                                        <Border Style="{StaticResource IconTile}">
+                                            <Path Data="M12,3 V15 M6.5,10 L12,15.5 L17.5,10 M4,20 H20" Style="{StaticResource IconPath}" />
+                                        </Border>
+                                        <StackPanel VerticalAlignment="Center" Margin="14,0,0,0">
+                                            <TextBlock Text="Торренты" Foreground="{StaticResource Text}" FontSize="15" FontWeight="SemiBold" />
+                                            <TextBlock Text="Загрузка в библиотеку" Style="{StaticResource Small}" Margin="0,3,0,0" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Border Style="{StaticResource IconTile}">
+                                            <Path Data="M3,6.5 Q3,5 4.5,5 H9 L11,7.5 H19.5 Q21,7.5 21,9 V17.5 Q21,19 19.5,19 H4.5 Q3,19 3,17.5 Z" Style="{StaticResource IconPath}" />
+                                        </Border>
+                                        <StackPanel VerticalAlignment="Center" Margin="14,0,0,0">
+                                            <TextBlock Text="Удобная библиотека" Foreground="{StaticResource Text}" FontSize="15" FontWeight="SemiBold" />
+                                            <TextBlock Text="Фильмы, сериалы, аниме" Style="{StaticResource Small}" Margin="0,3,0,0" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </UniformGrid>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- 2. Выбор папки -->
+                        <StackPanel x:Name="PageFolder" Visibility="Collapsed" MaxWidth="640" HorizontalAlignment="Left" Width="640">
+                            <TextBlock Style="{StaticResource H1}" Text="Выбор папки" />
+                            <TextBlock Style="{StaticResource Lead}" Text="Куда установить Suslik Media." />
+                            <TextBlock Text="Папка установки" Foreground="{StaticResource Sub}" FontSize="14" Margin="0,34,0,10" />
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="FolderBox" Style="{StaticResource PathBox}" TextChanged="FolderBox_TextChanged" />
+                                <Button Grid.Column="1" Style="{StaticResource GhostButton}" MinWidth="0" Margin="12,0,0,0" Click="Browse_Click">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Path Data="M3,6.5 Q3,5 4.5,5 H9 L11,7.5 H19.5 Q21,7.5 21,9 V17.5 Q21,19 19.5,19 H4.5 Q3,19 3,17.5 Z" Style="{StaticResource IconPath}" Width="22" Height="22" Margin="0,0,8,0" />
+                                        <TextBlock Text="Обзор…" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+                            <UniformGrid Columns="2" Margin="0,22,0,0">
+                                <Border CornerRadius="12" Background="#0E1522" BorderBrush="{StaticResource Line}" BorderThickness="1" Padding="18,14" Margin="0,0,8,0">
+                                    <StackPanel>
+                                        <TextBlock Text="Нужно на диске" Style="{StaticResource Small}" />
+                                        <TextBlock x:Name="NeedText" Text="—" Foreground="{StaticResource Text}" FontSize="18" FontWeight="SemiBold" Margin="0,4,0,0" />
+                                    </StackPanel>
+                                </Border>
+                                <Border CornerRadius="12" Background="#0E1522" BorderBrush="{StaticResource Line}" BorderThickness="1" Padding="18,14" Margin="8,0,0,0">
+                                    <StackPanel>
+                                        <TextBlock Text="Свободно" Style="{StaticResource Small}" />
+                                        <TextBlock x:Name="FreeText" Text="—" Foreground="{StaticResource Text}" FontSize="18" FontWeight="SemiBold" Margin="0,4,0,0" />
+                                    </StackPanel>
+                                </Border>
+                            </UniformGrid>
+                            <TextBlock x:Name="FolderNote" Style="{StaticResource Small}" Margin="0,18,0,0" LineHeight="21" />
+                        </StackPanel>
+
+                        <!-- 3. Установка / удаление: ход работы -->
+                        <StackPanel x:Name="PageProgress" Visibility="Collapsed" MaxWidth="640" HorizontalAlignment="Left" Width="640">
+                            <TextBlock x:Name="ProgressTitle" Style="{StaticResource H1}" Text="Установка" />
+                            <TextBlock x:Name="ProgressLead" Style="{StaticResource Lead}" Text="Копирование файлов." />
+                            <Grid Margin="0,40,0,0">
+                                <TextBlock x:Name="PercentText" Text="0%" Foreground="{StaticResource Text}" FontSize="46" FontWeight="SemiBold" />
+                                <TextBlock x:Name="ActionText" Style="{StaticResource Small}" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,0,10" TextTrimming="CharacterEllipsis" MaxWidth="420" TextWrapping="NoWrap" />
+                            </Grid>
+                            <!-- Полоса: дорожка, голубая заливка со свечением и бегущий блик -->
+                            <Grid Height="12" Margin="0,14,0,0">
+                                <Border CornerRadius="6" Background="#141D2E" />
+                                <Border x:Name="BarFill" CornerRadius="6" HorizontalAlignment="Left" Width="0">
+                                    <Border.Background>
+                                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                            <GradientStop Color="#3E8EF0" Offset="0" />
+                                            <GradientStop Color="#8CCBFF" Offset="1" />
+                                        </LinearGradientBrush>
+                                    </Border.Background>
+                                    <Border.Effect><DropShadowEffect Color="#5AB0FF" BlurRadius="18" ShadowDepth="0" Opacity="0.7" /></Border.Effect>
+                                    <Grid ClipToBounds="True">
+                                        <Rectangle Width="140" HorizontalAlignment="Left" RadiusX="6" RadiusY="6">
+                                            <Rectangle.Fill>
+                                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                                    <GradientStop Color="#00FFFFFF" Offset="0" />
+                                                    <GradientStop Color="#70FFFFFF" Offset="0.5" />
+                                                    <GradientStop Color="#00FFFFFF" Offset="1" />
+                                                </LinearGradientBrush>
+                                            </Rectangle.Fill>
+                                            <Rectangle.RenderTransform><TranslateTransform x:Name="ShimmerMove" X="-140" /></Rectangle.RenderTransform>
+                                        </Rectangle>
+                                    </Grid>
+                                </Border>
+                            </Grid>
+
+                            <StackPanel x:Name="Tasks" Margin="0,36,0,0" />
+                        </StackPanel>
+
+                        <!-- 4. Готово / ошибка -->
+                        <StackPanel x:Name="PageDone" Visibility="Collapsed" MaxWidth="640" HorizontalAlignment="Left" Width="640">
+                            <Grid Width="96" Height="96" HorizontalAlignment="Left" x:Name="DoneBadge" RenderTransformOrigin="0.5,0.5">
+                                <Grid.RenderTransform><ScaleTransform x:Name="DoneScale" ScaleX="0.4" ScaleY="0.4" /></Grid.RenderTransform>
+                                <Ellipse x:Name="DoneGlow" Fill="#5AB0FF" Opacity="0.45" Margin="-10">
+                                    <Ellipse.Effect><BlurEffect Radius="28" /></Ellipse.Effect>
+                                </Ellipse>
+                                <Ellipse x:Name="DoneCircle">
+                                    <Ellipse.Fill>
+                                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                            <GradientStop x:Name="DoneC1" Color="#7DC3FF" Offset="0" />
+                                            <GradientStop x:Name="DoneC2" Color="#4A9DF5" Offset="1" />
+                                        </LinearGradientBrush>
+                                    </Ellipse.Fill>
+                                </Ellipse>
+                                <Path x:Name="DoneMark" Data="M30,49 L42,61 L67,36" Stroke="#06121F" StrokeThickness="6" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                            </Grid>
+                            <TextBlock x:Name="DoneTitle" Style="{StaticResource H1}" Text="Готово!" Margin="0,30,0,0" />
+                            <TextBlock x:Name="DoneLead" Style="{StaticResource Lead}" Text="Suslik Media установлена." />
+                            <TextBlock x:Name="DoneNote" Style="{StaticResource Small}" Margin="0,14,0,0" LineHeight="21" Visibility="Collapsed" />
+                            <CheckBox x:Name="LaunchCheck" Style="{StaticResource Check}" Content="Запустить Suslik Media" IsChecked="True" Margin="0,34,0,0" HorizontalAlignment="Left" />
+                        </StackPanel>
+
+                        <!-- Удаление: подтверждение -->
+                        <StackPanel x:Name="PageUninstall" Visibility="Collapsed" MaxWidth="640" HorizontalAlignment="Left" Width="640">
+                            <TextBlock Style="{StaticResource H1}" Text="Удалить Suslik Media?" />
+                            <TextBlock x:Name="UninstallLead" Style="{StaticResource Lead}" Text="Программа будет удалена с этого компьютера." />
+                            <Border CornerRadius="14" Background="#0E1522" BorderBrush="{StaticResource Line2}" BorderThickness="1" Padding="22,20" Margin="0,36,0,0">
+                                <CheckBox x:Name="WipeCheck" Style="{StaticResource Check}" Checked="WipeCheck_Changed" Unchecked="WipeCheck_Changed">
+                                    <StackPanel>
+                                        <TextBlock Text="Удалить все сохранённые данные и кэш" Foreground="{StaticResource Text}" FontSize="16" FontWeight="SemiBold" />
+                                        <TextBlock x:Name="WipeDetails" Style="{StaticResource Small}" Margin="0,6,0,0" LineHeight="21"
+                                                   Text="Настройки, вход, прогресс просмотра, постеры, запас фильмов и видеодвижок mpv." />
+                                    </StackPanel>
+                                </CheckBox>
+                            </Border>
+                            <TextBlock x:Name="WipeHint" Style="{StaticResource Small}" Margin="2,16,0,0" LineHeight="21"
+                                       Text="Без галочки всё это останется: после повторной установки библиотека, вход и прогресс будут на месте." />
+                        </StackPanel>
+                    </Grid>
+
+                    <Border Grid.Row="1" Background="{StaticResource Line}" />
+
+                    <!-- Нижняя панель -->
+                    <Grid Grid.Row="2" Margin="40,0,32,0">
+                        <TextBlock x:Name="FooterNote" Style="{StaticResource Small}" VerticalAlignment="Center" MaxWidth="360" HorizontalAlignment="Left" />
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <Button x:Name="BackButton" Style="{StaticResource GhostButton}" Content="Назад" Margin="0,0,14,0" Click="Back_Click" Visibility="Collapsed" />
+                            <Button x:Name="CancelButton" Style="{StaticResource GhostButton}" Content="Отмена" Margin="0,0,14,0" Click="Close_Click" />
+                            <Button x:Name="NextButton" Style="{StaticResource PrimaryButton}" Click="Next_Click" IsDefault="True">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock x:Name="NextText" Text="Далее" VerticalAlignment="Center" />
+                                    <Path x:Name="NextArrow" Data="M0,7 H15 M9,1 L15,7 L9,13" Stroke="#06121F" StrokeThickness="2.2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Margin="12,1,0,0" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+            </Grid>
+        </Grid>
+    </Grid>
+</Window>

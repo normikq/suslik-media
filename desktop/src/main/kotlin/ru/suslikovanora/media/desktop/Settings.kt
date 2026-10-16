@@ -3,6 +3,7 @@ package ru.suslikovanora.media.desktop
 import ru.suslikovanora.media.core.*
 import ru.suslikovanora.media.desktop.ui.*
 import ru.suslikovanora.media.desktop.player.Mpv
+import ru.suslikovanora.media.desktop.player.MpvInstall
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
@@ -264,8 +265,10 @@ private fun DiagSection() {
 @Composable
 private fun EngineSection() {
     var engine by remember { mutableStateOf(PlaybackSettings.playerEngine()) }
-    val mpvAvail = Mpv.available
+    val loading = MpvInstall.progress
+    val mpvAvail = loading == null && Mpv.available
     val libFile = Mpv.libraryFile
+    val scope = rememberCoroutineScope()
 
     Section(
         tr("settings.dvizhok_pleera"),
@@ -296,19 +299,25 @@ private fun EngineSection() {
             PlaybackSettings.setPlayerEngine("vlc")
         }
     }
-    val statusText = if (mpvAvail && libFile != null) {
-        tr("settings.dvizhok_mpv_put", "path" to libFile.absolutePath)
-    } else {
-        tr("settings.dvizhok_mpv_otsutstvuet")
+    val statusText = when {
+        loading != null -> tr("settings.dvizhok_mpv_zagruzka", "p" to (loading * 100).toInt())
+        mpvAvail && libFile != null -> tr("settings.dvizhok_mpv_put", "path" to libFile.absolutePath)
+        else -> tr("settings.dvizhok_mpv_otsutstvuet")
     }
     Text(
         statusText,
-        color = if (mpvAvail) Sm.muted else Sm.bad,
+        color = if (mpvAvail || loading != null) Sm.muted else Sm.bad,
         fontFamily = Onest,
         fontSize = 12.sp,
         lineHeight = 16.sp,
         modifier = Modifier.padding(top = 6.dp)
     )
+    // Не скачалась при запуске (нет сети и т. п.): повторить отсюда.
+    if (!mpvAvail && loading == null) {
+        OutlineButton(tr("settings.dvizhok_mpv_skachat"), Modifier.padding(top = 8.dp)) {
+            MpvInstall.start(scope)
+        }
+    }
 }
 
 @Composable
