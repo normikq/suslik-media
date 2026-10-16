@@ -112,11 +112,7 @@ class PlayerDiagnostics(
             }
             diagPrev = st
         }
-        if (p?.kind == EngineKind.MEDIA3) {
-            AppLog.write(sb.toString())
-            p.diagLine()?.let { AppLog.write(it) }
-            return
-        }
+        if (p?.kind == EngineKind.MEDIA3) p.diagLine()?.let { sb.append(" · ").append(it.removePrefix("[media3] ")) }
         BurstProxy.aheadMb(callback.getCurrentUrl())?.let { sb.append(" · reserve ahead %.1f MB".format(it)) }
         AppLog.write(sb.toString())
         AppLog.write("[proxy] " + BurstProxy.snapshot())
