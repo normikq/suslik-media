@@ -166,6 +166,8 @@ class PlayerActivity : ComponentActivity() {
         gestures.resetTapState()
         seekTo(t)
     }
+    private var seekRedoneFor = -1L
+    private var seekRedone = 0
     // A seek that VLC never confirms (dead socket after a Wi-Fi <-> mobile switch) is redone on a fresh connection.
     private val seekWatchdogRunnable: Runnable = Runnable {
         val target = pendingSeekPos ?: return@Runnable
@@ -189,7 +191,10 @@ class PlayerActivity : ComponentActivity() {
                 handler.postDelayed(seekWatchdogRunnable, SEEK_CONFIRM_TIMEOUT_MS)
                 return@Runnable
             }
-            if (p.isSeekable && retryCount == 0) {
+            // One repeated seek per target, then a fresh connection: VLC playing on far from the target used to get the
+            // same seek every 9 s for as long as it kept doing that.
+            if (seekRedoneFor != target) { seekRedoneFor = target; seekRedone = 0 }
+            if (p.isSeekable && retryCount == 0 && seekRedone++ == 0) {
                 p.seekTo(target)
                 handler.postDelayed(seekWatchdogRunnable, SEEK_CONFIRM_TIMEOUT_MS)
             } else {
@@ -980,7 +985,7 @@ class PlayerActivity : ComponentActivity() {
         val episode = trackSelector.allEpisodeUrls(url)
         // Both engines read through the same reserve (BurstProxy): it downloads in bursts sized to the network and the
         // film. A file switched from Media3 to VLC keeps what was already downloaded.
-        Media3Cache.clearAll(this) // Media3's own disk cache of the first 2.2.1 builds
+        if (!media3Swept) { media3Swept = true; Thread { Media3Cache.clearAll(applicationContext) }.start() } // Media3's own disk cache of the first 2.2.1 builds
         BurstProxy.capBytes = reserveBytes
         val main = burst(url)
         // Only what this episode needs stays in the stream cache (the previous episode's files are dropped).
@@ -1931,6 +1936,7 @@ class PlayerActivity : ComponentActivity() {
         const val EXTRA_WATCH_KEYS = "media_watch_keys"
         const val EXTRA_AUDIO_URLS = "media_audio_urls"
         const val EXTRA_EPISODE_SIDES = PlayerTrackSelector.EXTRA_EPISODE_SIDES
+        @Volatile private var media3Swept = false // the old Media3 cache folder: removed once per process, off the main thread
         private val SCALES = listOf(
             VideoScale.BEST_FIT to tr("player.vpisat"),
             VideoScale.FIT_SCREEN to tr("player.zapolnit"),

@@ -103,8 +103,12 @@ object Api {
             .header("X-Torrent-Filename", java.net.URLEncoder.encode(filename, "UTF-8").replace("+", "%20"))
             .post(bytes.toRequestBody("application/x-bittorrent".toMediaType())).build(), hedged = false)
 
-    suspend fun post(path: String, body: JSONObject? = null): JSONObject =
-        call(Request.Builder().url(BASE + path).post((body?.toString() ?: "{}").toRequestBody(jsonType)).build())
+    /**
+     * [repeatable] = false for a request that must not run twice (adds a torrent): a timed-out attempt may still have
+     * reached the server, so it is not repeated on a new connection.
+     */
+    suspend fun post(path: String, body: JSONObject? = null, repeatable: Boolean = true): JSONObject =
+        call(Request.Builder().url(BASE + path).post((body?.toString() ?: "{}").toRequestBody(jsonType)).build(), hedged = repeatable)
 
     private val watchdog by lazy {
         java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "api-watchdog").apply { isDaemon = true } }
