@@ -25,12 +25,23 @@ dependencies {
     implementation("uk.co.caprica:vlcj:4.8.3")
     implementation("net.java.dev.jna:jna:5.14.0") // title bar colours (dwmapi)
     implementation("ru.suslikovanora.media:shared") // ../shared (includeBuild)
+    testImplementation(kotlin("test"))
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
 
 // One place for the version: the installer, and the app itself (update check) via -Dsuslik.version.
-val appVersion = "2.1.6"
-// Windows Installer takes at most three numbers (2.0.0.1 → 2.0.0); the app itself and the file name keep all four.
-val msiVersion = appVersion.split(".").take(3).joinToString(".")
+val appVersion = "2.2"
+// Windows Installer takes at most three numbers (2.0.0.1 → 2.0.0); ensure at least 3 parts for WiX (2.2 → 2.2.0)
+val msiVersion = appVersion.split(".").let { parts ->
+    when (parts.size) {
+        1 -> "${parts[0]}.0.0"
+        2 -> "${parts[0]}.${parts[1]}.0"
+        else -> parts.take(3).joinToString(".")
+    }
+}
 
 // Debug build «Suslik Debug»: `./gradlew packageMsi -Pdiag`. A separate app next to the normal one (own installer id,
 // Start menu entry, data folder %APPDATA%\SuslikMediaDebug), a detailed journal, no self-update. See DEBUG-BUILD.md.

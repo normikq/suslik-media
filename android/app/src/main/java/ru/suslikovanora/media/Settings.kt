@@ -50,7 +50,7 @@ import ru.suslikovanora.media.ui.Unbounded
 /** Playback settings (stored on the phone, read by the player each time a film opens). */
 object PlaybackSettings {
     // Presets and their hints live in core.PlaybackPresets (the same texts in both apps).
-    val burstPresets = PlaybackPresets.burst("на телефоне")
+    val burstPresets = PlaybackPresets.burst(tr("settings.na_telefone"))
     const val BURST_DEFAULT = PlaybackPresets.BURST_DEFAULT
     val cachePresets = PlaybackPresets.cache
     const val CACHE_DEFAULT = PlaybackPresets.CACHE_DEFAULT
@@ -102,19 +102,19 @@ fun SettingsSheet(onClose: () -> Unit) {
                 .clickable(remember { MutableInteractionSource() }, indication = null) {}
                 .padding(start = 18.dp, end = 18.dp, top = 20.dp, bottom = 16.dp)
         ) {
-            Text("Настройки", color = Sm.text, fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 21.sp)
-            Text("Применяются при следующем открытии фильма.", color = Sm.muted, fontFamily = Onest, fontSize = 13.sp,
+            Text(tr("settings.nastroyki"), color = Sm.text, fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 21.sp)
+            Text(tr("settings.primenyayutsya_pri_sleduyusche"), color = Sm.muted, fontFamily = Onest, fontSize = 13.sp,
                 modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
             Column(Modifier.weight(1f, fill = false).heightIn(max = 620.dp).verticalScroll(rememberScrollState())) {
-                Section("Экономная загрузка",
-                    "Фильм скачивается рывками вперёд и хранится на телефоне, а между рывками связь отдыхает — " +
-                        "батарея садится медленнее, обрывы связи не прерывают просмотр. Чем выше качество файла, " +
-                        "тем больше нужен запас. Подсказка: битрейт (Мбит/с) ≈ размер файла в ГБ × 2,2 ÷ длительность в часах.")
+                Section(tr("settings.ekonomnaya_zagruzka"),
+                    tr("settings.film_skachivaetsya_ryvkami_vpe") +
+                        tr("settings.batareya_saditsya_medlennee_ob") +
+                        tr("settings.tem_bolshe_nuzhen_zapas"))
                 PlaybackSettings.burstPresets.forEach { p ->
                     PresetRow(p, p.value == burst) { burst = p.value; PlaybackSettings.setBurstMb(ctx, p.value) }
                 }
-                Section("Буфер плеера",
-                    "Сколько секунд видео плеер набирает перед стартом и после перемотки. Меньше — быстрее отклик, больше — устойчивее к плохой сети.",
+                Section(tr("settings.bufer_pleera"),
+                    tr("settings.skolko_sekund_video_pleer"),
                     top = 18.dp)
                 PlaybackSettings.cachePresets.forEach { p ->
                     PresetRow(p, p.value == cache) { cache = p.value; PlaybackSettings.setCacheMs(ctx, p.value) }
@@ -125,7 +125,7 @@ fun SettingsSheet(onClose: () -> Unit) {
                 JournalSection()
             }
             Row(Modifier.fillMaxWidth().padding(top = 14.dp), horizontalArrangement = Arrangement.End) {
-                LampButton("Готово") { close() }
+                LampButton(tr("settings.gotovo")) { close() }
             }
         }
     }
@@ -145,29 +145,29 @@ private fun ChannelSection() {
     var state by remember { mutableStateOf<String?>(null) }
     var offer by remember { mutableStateOf<Updater.Info?>(null) }
     fun checkUpdates() {
-        state = "Проверяем обновления…"
+        state = tr("settings.proveryaem_obnovleniya")
         scope.launch {
             val installed = Updater.currentVersion(ctx)
             val info = Updater.latest(ctx)
             val v = Updater.verdict(ctx, info, release = !PlaybackSettings.betaChannel(ctx))
             state = if (v == UpdateChannel.Verdict.Replace)
                 // Android itself never installs a lower version code over a higher one (no app can override that).
-                "Релиз ${info?.version} заменит бету $installed, но Android не ставит версию с меньшим номером поверх " +
-                    "большей. Сейчас перейти можно только так: удалить приложение и установить релиз с сайта (вход и прогресс " +
-                    "на телефоне сбросятся). Или дождаться следующего релиза — он установится сам."
+                tr("settings.reliz_p_zamenit_betu", "p" to info?.version, "installed" to installed) +
+                    tr("settings.bolshey_seychas_pereyti_mozhno") +
+                    tr("settings.na_telefone_sbrosyatsya_ili")
             else UpdateChannel.message(v, info?.version, installed, info?.beta == true)
             if (v == UpdateChannel.Verdict.Offer) offer = info
         }
     }
     fun saveCode() {
         PlaybackSettings.setBetaCode(ctx, code)
-        if (code.isBlank()) { state = "Введите код тестировщика."; return }
-        state = "Проверяем код…"
+        if (code.isBlank()) { state = tr("settings.vvedite_kod_testirovschika"); return }
+        state = tr("settings.proveryaem_kod")
         scope.launch {
             when (runCatching { ru.suslikovanora.media.net.Api.get("/api/app/beta").optBoolean("tester") }.getOrNull()) {
                 true -> checkUpdates()
-                false -> state = "Сервер не принял этот код."
-                null -> state = "Не удалось проверить — код сохранён."
+                false -> state = tr("settings.server_ne_prinyal_etot")
+                null -> state = tr("settings.ne_udalos_proverit_kod")
             }
         }
     }
@@ -175,25 +175,25 @@ private fun ChannelSection() {
         if (b == beta) return
         beta = b
         PlaybackSettings.setBetaOn(ctx, b)
-        if (!b) checkUpdates() else if (code.isBlank()) state = "Введите код тестировщика и нажмите «Сохранить»." else saveCode()
+        if (!b) checkUpdates() else if (code.isBlank()) state = tr("settings.vvedite_kod_testirovschika_i") else saveCode()
     }
-    Section("Канал обновлений", "Релиз — проверенные версии для всех. Бета — новые версии раньше всех, " +
-        "для проверки (нужен код тестировщика).", top = 18.dp)
+    Section(tr("settings.kanal_obnovleniy"), tr("settings.reliz_proverennye_versii_dlya") +
+        tr("settings.dlya_proverki_nuzhen_kod"), top = 18.dp)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        ChannelOption("Релиз", !beta, Modifier.weight(1f)) { pick(false) }
-        ChannelOption("Бета", beta, Modifier.weight(1f)) { pick(true) }
+        ChannelOption(tr("settings.reliz"), !beta, Modifier.weight(1f)) { pick(false) }
+        ChannelOption(tr("settings.beta"), beta, Modifier.weight(1f)) { pick(true) }
     }
     androidx.compose.animation.AnimatedVisibility(beta) {
         Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.weight(1f)) { ru.suslikovanora.media.library.SearchField(code, { code = it }, "Код тестировщика", password = true, onDone = { saveCode() }) }
+            Box(Modifier.weight(1f)) { ru.suslikovanora.media.library.SearchField(code, { code = it }, tr("settings.kod_testirovschika"), password = true, onDone = { saveCode() }) }
             androidx.compose.foundation.layout.Spacer(Modifier.size(10.dp))
-            ru.suslikovanora.media.library.OutlineButton("Сохранить") { saveCode() }
+            ru.suslikovanora.media.library.OutlineButton(tr("settings.sohranit")) { saveCode() }
         }
     }
     Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(state ?: "Установлена версия ${Updater.currentVersion(ctx)}.", color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp,
+        Text(state ?: tr("settings.ustanovlena_versiya_p", "p" to Updater.currentVersion(ctx)), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp,
             lineHeight = 17.sp, modifier = Modifier.weight(1f))
-        Text("Проверить", color = Sm.lamp, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.sp,
+        Text(tr("settings.proverit"), color = Sm.lamp, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.sp,
             modifier = Modifier.padding(start = 10.dp).clip(RoundedCornerShape(8.dp))
                 .clickable { checkUpdates() }.padding(horizontal = 8.dp, vertical = 6.dp))
     }
@@ -206,17 +206,17 @@ private fun TrafficSection() {
     val ctx = LocalContext.current
     var usage by remember { mutableStateOf(TrafficMeter.month(ctx)) }
     var limit by remember { mutableStateOf(PlaybackSettings.heavyMbit(ctx)) }
-    Section("Трафик фильмов", "Сколько фильмов скачано через экономную загрузку в этом месяце. " +
-        "Постеры и списки в счёт не входят.", top = 18.dp)
+    Section(tr("settings.trafik_filmov"), tr("settings.skolko_filmov_skachano_cherez") +
+        tr("settings.postery_i_spiski_v"), top = 18.dp)
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text("Мобильная сеть: ${TrafficMeter.format(usage.first)}\nWi-Fi: ${TrafficMeter.format(usage.second)}",
+        Text(tr("settings.mobilnaya_set_p_wi", "mobile" to TrafficMeter.format(usage.first), "wifi" to TrafficMeter.format(usage.second)),
             color = Sm.text, fontFamily = Onest, fontSize = 14.sp, lineHeight = 21.sp, modifier = Modifier.weight(1f))
-        ru.suslikovanora.media.library.OutlineButton("Сбросить") { TrafficMeter.reset(ctx); usage = 0L to 0L }
+        ru.suslikovanora.media.library.OutlineButton(tr("settings.sbrosit")) { TrafficMeter.reset(ctx); usage = 0L to 0L }
     }
-    Section("Тяжёлые файлы на мобильной сети", "Перед просмотром спросим, стоит ли тратить мобильный интернет, если файл " +
-        "тяжелее выбранного. 13 Мбит/с — это около 6 ГБ в час, Remux и 4K — 20–30 ГБ.", top = 14.dp)
+    Section(tr("settings.tyazhelye_fayly_na_mobilnoy"), tr("settings.pered_prosmotrom_sprosim_stoit") +
+        tr("settings.tyazhelee_vybrannogo_mbit_s"), top = 14.dp)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf(0 to "Выкл", 12 to "12 Мбит", 20 to "20 Мбит", 40 to "40 Мбит").forEach { (v, label) ->
+        listOf(0 to tr("settings.vykl"), 12 to tr("settings.mbit"), 20 to tr("settings.mbit_2"), 40 to tr("settings.mbit_3")).forEach { (v, label) ->
             ChannelOption(label, limit == v, Modifier.weight(1f)) { limit = v; PlaybackSettings.setHeavyMbit(ctx, v) }
         }
     }
@@ -231,20 +231,20 @@ private fun StorageSection() {
     var busy by remember { mutableStateOf(false) }
     var state by remember { mutableStateOf("") }
     LaunchedEffect(Unit) { sizes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { Storage.sizes(ctx) } }
-    Section("Память", "Кэш можно очистить: всё нужное скачается снова. Прогресс просмотра, вход и настройки не удаляются. " +
-        "Данные фильмов, которых больше нет в медиатеке, удаляются сами при её обновлении; постеры, которые не показывались 7 дней, тоже.", top = 18.dp)
+    Section(tr("settings.pamyat"), tr("settings.kesh_mozhno_ochistit_vse") +
+        tr("settings.dannye_filmov_kotoryh_bolshe"), top = 18.dp)
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         val s = sizes
-        Text(if (s == null) "Считаем…" else "Запас фильмов: ${formatBytes(s.reserve)}\nПостеры: ${formatBytes(s.posters)}\nПрочее: ${formatBytes(s.other)}",
+        Text(if (s == null) tr("settings.schitaem") else tr("settings.zapas_filmov_p_postery", "reserve" to formatBytes(s.reserve), "posters" to formatBytes(s.posters), "other" to formatBytes(s.other)),
             color = Sm.text, fontFamily = Onest, fontSize = 14.sp, lineHeight = 21.sp, modifier = Modifier.weight(1f))
-        ru.suslikovanora.media.library.OutlineButton(if (busy) "Очистка…" else "Очистить кэш") {
+        ru.suslikovanora.media.library.OutlineButton(if (busy) tr("settings.ochistka") else tr("settings.ochistit_kesh")) {
             if (busy) return@OutlineButton
             busy = true
             scope.launch {
                 val before = sizes
                 val after = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { Storage.clear(ctx); Storage.sizes(ctx) }
                 sizes = after; busy = false
-                state = before?.let { b -> "Освобождено ${formatBytes((b.reserve + b.posters + b.other - after.reserve - after.posters - after.other).coerceAtLeast(0L))}" } ?: "Готово"
+                state = before?.let { b -> tr("settings.osvobozhdeno_p", "p" to formatBytes((b.reserve + b.posters + b.other - after.reserve - after.posters - after.other).coerceAtLeast(0L))) } ?: tr("settings.gotovo")
             }
         }
     }
@@ -258,19 +258,19 @@ private fun JournalSection() {
     val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
-    Section("Журнал плеера", "Если фильм подтормаживал, отправьте журнал разработчику: в нём видно, как грузился фильм " +
-        "и сколько ждали сервер. В нём есть имена файлов, но нет ссылок и паролей. Журнал уходит только на ваш сервер.", top = 18.dp)
+    Section(tr("settings.zhurnal_pleera"), tr("settings.esli_film_podtormazhival_otpra") +
+        tr("settings.i_skolko_zhdali_server"), top = 18.dp)
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(state ?: "Отправляется только по кнопке.", color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp,
+        Text(state ?: tr("settings.otpravlyaetsya_tolko_po_knopke"), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp,
             lineHeight = 17.sp, modifier = Modifier.weight(1f))
         androidx.compose.foundation.layout.Spacer(Modifier.size(10.dp))
-        ru.suslikovanora.media.library.OutlineButton(if (busy) "Отправка…" else "Отправить журнал") {
+        ru.suslikovanora.media.library.OutlineButton(if (busy) tr("settings.otpravka") else tr("settings.otpravit_zhurnal")) {
             if (busy) return@OutlineButton
-            busy = true; state = "Отправляем…"
+            busy = true; state = tr("settings.otpravlyaem")
             scope.launch {
                 val ok = CrashReports.sendJournal(ctx)
                 busy = false
-                state = if (ok) "Журнал отправлен. Спасибо!" else "Не получилось отправить — проверьте интернет и попробуйте ещё раз."
+                state = if (ok) tr("settings.zhurnal_otpravlen_spasibo") else tr("settings.ne_poluchilos_otpravit_provert")
             }
         }
     }
@@ -282,34 +282,34 @@ private fun DiagSection() {
     val ctx = LocalContext.current
     var state by remember { mutableStateOf<String?>(null) }
     var verbose by remember { mutableStateOf(Diag.vlcVerbose(ctx)) }
-    Section("Отладочная сборка", "Подробный журнал: Android/data/${ctx.packageName}/files/diag " +
-        "(с компьютера: adb pull /sdcard/Android/data/${ctx.packageName}/files/diag). Разрешения: ${Diag.permissions(ctx)}. " +
-        "Обновления в этой сборке выключены — новая ставится с компьютера.", top = 18.dp)
+    Section(tr("settings.otladochnaya_sborka"), tr("settings.podrobnyy_zhurnal_android_data", "packageName" to ctx.packageName) +
+        tr("settings.s_kompyutera_adb_pull", "packageName" to ctx.packageName, "p" to Diag.permissions(ctx)) +
+        tr("settings.obnovleniya_v_etoy_sborke"), top = 18.dp)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        ru.suslikovanora.media.library.OutlineButton("Метка", Modifier.weight(1f)) { state = "Метка #${Diag.mark("settings")} записана в журнал" }
-        ru.suslikovanora.media.library.OutlineButton("Батарея", Modifier.weight(1f)) {
-            Diag.batterySnapshot("button"); state = "Снимок батареи пишется в журнал (нужно разрешение DUMP)"
+        ru.suslikovanora.media.library.OutlineButton(tr("settings.metka"), Modifier.weight(1f)) { state = tr("settings.metka_p_zapisana_v", "p" to Diag.mark("settings")) }
+        ru.suslikovanora.media.library.OutlineButton(tr("settings.batareya"), Modifier.weight(1f)) {
+            Diag.batterySnapshot("button"); state = tr("settings.snimok_batarei_pishetsya_v")
         }
     }
     Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        ru.suslikovanora.media.library.OutlineButton("Поделиться", Modifier.weight(1f)) {
+        ru.suslikovanora.media.library.OutlineButton(tr("settings.podelitsya"), Modifier.weight(1f)) {
             val zip = Diag.zipJournal(ctx)
-            if (zip == null) state = "Не получилось собрать архив" else runCatching {
+            if (zip == null) state = tr("settings.ne_poluchilos_sobrat_arhiv") else runCatching {
                 val uri = androidx.core.content.FileProvider.getUriForFile(ctx, ctx.packageName + ".updates", zip)
                 ctx.startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND)
                     .setType("application/zip").putExtra(android.content.Intent.EXTRA_STREAM, uri)
-                    .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION), "Журнал отладки")
+                    .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION), tr("settings.zhurnal_otladki"))
                     .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
-                state = "Архив ${zip.length() / 1024} КБ"
-            }.onFailure { state = "Ошибка: ${it.message}" }
+                state = tr("settings.arhiv_p_kb", "p" to zip.length() / 1024)
+            }.onFailure { state = tr("settings.oshibka_message", "message" to it.message) }
         }
-        ru.suslikovanora.media.library.OutlineButton("Очистить", Modifier.weight(1f)) { Diag.clearJournal(); state = "Старые части удалены" }
+        ru.suslikovanora.media.library.OutlineButton(tr("settings.ochistit"), Modifier.weight(1f)) { Diag.clearJournal(); state = tr("settings.starye_chasti_udaleny") }
     }
-    Section("Журнал VLC", "Подробный (-vv) пишет каждое действие декодера в logcat.log — много мегабайт в минуту. " +
-        "Включайте на время одного опыта. Применяется при следующем открытии фильма.", top = 12.dp)
+    Section(tr("settings.zhurnal_vlc"), tr("settings.podrobnyy_vv_pishet_kazhdoe") +
+        tr("settings.vklyuchayte_na_vremya_odnogo"), top = 12.dp)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        ChannelOption("Обычный", !verbose, Modifier.weight(1f)) { verbose = false; Diag.setVlcVerbose(ctx, false) }
-        ChannelOption("Подробный", verbose, Modifier.weight(1f)) { verbose = true; Diag.setVlcVerbose(ctx, true) }
+        ChannelOption(tr("settings.obychnyy"), !verbose, Modifier.weight(1f)) { verbose = false; Diag.setVlcVerbose(ctx, false) }
+        ChannelOption(tr("settings.podrobnyy"), verbose, Modifier.weight(1f)) { verbose = true; Diag.setVlcVerbose(ctx, true) }
     }
     state?.let { Text(it, color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 6.dp)) }
 }

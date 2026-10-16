@@ -65,22 +65,22 @@ fun PlayerInfoPanel(s: PlayerPanelState) {
             Text(s.title, color = Sm.text, fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 17.sp,
                 lineHeight = 22.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (s.episodes.size > 1 && s.index >= 0)
-                Text("Серия ${s.index + 1} из ${s.episodes.size}", color = Sm.lamp, fontFamily = Onest, fontWeight = FontWeight.Medium,
+                Text(tr("player.seriya_p_iz_size", "p" to s.index + 1, "size" to s.episodes.size), color = Sm.lamp, fontFamily = Onest, fontWeight = FontWeight.Medium,
                     fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
         }
         Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 14.dp, vertical = 14.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            PanelChip("⛶  На весь экран", accent = true, onClick = s.onFull)
-            PanelChip("♫  Аудио", onClick = s.onAudio)
-            PanelChip("CC  Субтитры", onClick = s.onSubs)
-            PanelChip("⤢  Весь экран: ${s.scale}", onClick = s.onScale)
-            PanelChip("🔒  Блокировка", onClick = s.onLock)
+            PanelChip(tr("player.na_ves_ekran_2"), accent = true, onClick = s.onFull)
+            PanelChip(tr("player.audio"), onClick = s.onAudio)
+            PanelChip(tr("player.cc_subtitry"), onClick = s.onSubs)
+            PanelChip(tr("player.ves_ekran_scale", "scale" to s.scale), onClick = s.onScale)
+            PanelChip(tr("player.blokirovka"), onClick = s.onLock)
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(Sm.line))
         if (s.episodes.size > 1) {
-            Text("Серии", color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 15.sp,
+            Text(tr("player.serii"), color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 15.sp,
                 modifier = Modifier.padding(start = 18.dp, top = 14.dp, bottom = 4.dp))
             val list = rememberLazyListState()
             LaunchedEffect(s.index) { if (s.index > 0) list.animateScrollToItem((s.index - 1).coerceAtLeast(0)) }
@@ -90,7 +90,7 @@ fun PlayerInfoPanel(s: PlayerPanelState) {
             }
         } else {
             Spacer(Modifier.weight(1f))
-            Text("Поверните телефон — фильм откроется на весь экран", color = Sm.muted, fontFamily = Onest, fontSize = 13.sp,
+            Text(tr("player.povernite_telefon_film_otkroet"), color = Sm.muted, fontFamily = Onest, fontSize = 13.sp,
                 textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp))
             Spacer(Modifier.weight(1.4f))
         }
@@ -124,7 +124,7 @@ private fun EpisodeRow(i: Int, title: String, current: Boolean, onClick: () -> U
         Text(title, color = if (current) Sm.text else Sm.text.copy(alpha = 0.85f), fontFamily = Onest,
             fontWeight = if (current) FontWeight.SemiBold else FontWeight.Normal, fontSize = 14.sp, maxLines = 2,
             overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(start = 12.dp))
-        if (current) Text("Сейчас", color = Sm.lamp, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 12.sp,
+        if (current) Text(tr("player.seychas"), color = Sm.lamp, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 12.sp,
             modifier = Modifier.padding(start = 8.dp))
     }
 }

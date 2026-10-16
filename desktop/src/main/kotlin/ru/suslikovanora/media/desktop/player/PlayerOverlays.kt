@@ -412,26 +412,16 @@ fun PlayerBottomBar(
 
             AnimatedVisibility(
                 visible = (picker == "more"),
-                enter = fadeIn(tween(200, easing = LinearOutSlowInEasing)) +
-                        scaleIn(
-                            initialScale = 0.25f,
-                            transformOrigin = TransformOrigin(0.82f, 1.0f),
-                            animationSpec = tween(320, easing = CubicBezierEasing(0.16f, 1.0f, 0.30f, 1.0f))
-                        ) +
+                enter = fadeIn(tween(180, easing = LinearOutSlowInEasing)) +
                         slideInVertically(
-                            initialOffsetY = { (it * 0.20f).toInt() },
-                            animationSpec = tween(320, easing = CubicBezierEasing(0.16f, 1.0f, 0.30f, 1.0f))
+                            initialOffsetY = { 24 },
+                            animationSpec = tween(220, easing = CubicBezierEasing(0.16f, 1.0f, 0.30f, 1.0f))
                         ),
-                exit = fadeOut(tween(160, easing = FastOutLinearInEasing)) +
-                       scaleOut(
-                           targetScale = 0.25f,
-                           transformOrigin = TransformOrigin(0.82f, 1.0f),
-                           animationSpec = tween(180, easing = FastOutLinearInEasing)
-                       ) +
-                       slideOutVertically(
-                           targetOffsetY = { (it * 0.20f).toInt() },
-                           animationSpec = tween(180, easing = FastOutLinearInEasing)
-                       )
+                exit = fadeOut(tween(140, easing = FastOutLinearInEasing)) +
+                        slideOutVertically(
+                            targetOffsetY = { 24 },
+                            animationSpec = tween(160, easing = FastOutLinearInEasing)
+                        )
             ) {
                 Box(
                     modifier = Modifier
@@ -476,26 +466,16 @@ fun PlayerBottomBar(
 
             AnimatedVisibility(
                 visible = isTracksPicker,
-                enter = fadeIn(tween(200, easing = LinearOutSlowInEasing)) +
-                        scaleIn(
-                            initialScale = 0.25f,
-                            transformOrigin = TransformOrigin(tracksPivotX, 1.0f),
-                            animationSpec = tween(320, easing = CubicBezierEasing(0.16f, 1.0f, 0.30f, 1.0f))
-                        ) +
+                enter = fadeIn(tween(180, easing = LinearOutSlowInEasing)) +
                         slideInVertically(
-                            initialOffsetY = { (it * 0.20f).toInt() },
-                            animationSpec = tween(320, easing = CubicBezierEasing(0.16f, 1.0f, 0.30f, 1.0f))
+                            initialOffsetY = { 24 },
+                            animationSpec = tween(220, easing = CubicBezierEasing(0.16f, 1.0f, 0.30f, 1.0f))
                         ),
-                exit = fadeOut(tween(160, easing = FastOutLinearInEasing)) +
-                       scaleOut(
-                           targetScale = 0.25f,
-                           transformOrigin = TransformOrigin(tracksPivotX, 1.0f),
-                           animationSpec = tween(180, easing = FastOutLinearInEasing)
-                       ) +
-                       slideOutVertically(
-                           targetOffsetY = { (it * 0.20f).toInt() },
-                           animationSpec = tween(180, easing = FastOutLinearInEasing)
-                       )
+                exit = fadeOut(tween(140, easing = FastOutLinearInEasing)) +
+                        slideOutVertically(
+                            targetOffsetY = { 24 },
+                            animationSpec = tween(160, easing = FastOutLinearInEasing)
+                        )
             ) {
                 val current = pickerCurrent
                 val kind = lastTracksKind

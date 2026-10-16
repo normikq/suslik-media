@@ -4,6 +4,7 @@
     <!-- Updates from the own server: lets the app open the system installer for a downloaded APK. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <application
+        android:name=".SuslikApp"
         android:allowBackup="false"
         android:label="${appLabel}"
         android:icon="@mipmap/ic_launcher"

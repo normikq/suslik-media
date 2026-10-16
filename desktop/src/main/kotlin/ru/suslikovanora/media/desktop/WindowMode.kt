@@ -110,9 +110,53 @@ object WindowMode {
             val w = kotlin.math.ceil(win.width * sx).toInt() + 2
             val h = kotlin.math.ceil(win.height * sy).toInt()
             val vis = kotlin.math.ceil(visibleDip * sy).toInt().coerceIn(0, h)
-            val rgn = gdi.CreateRectRgn(0, h - vis, w, h + 2)
-            user32.SetWindowRgn(hwnd, rgn, true)
+            if (vis >= h) {
+                user32.SetWindowRgn(hwnd, null, true)
+            } else {
+                val rgn = gdi.CreateRectRgn(0, h - vis, w, h + 2)
+                user32.SetWindowRgn(hwnd, rgn, true)
+            }
         }
+    }
+
+    private const val GWL_EXSTYLE = -20
+    private const val WS_EX_NOACTIVATE = 0x08000000
+    private const val WS_EX_TOOLWINDOW = 0x00000080
+
+    /**
+     * Окно-оверлей не активируется кликом (фокус остаётся у главного окна) и не появляется в панели задач / Alt+Tab.
+     * `focusableWindowState = false` в AWT этого не гарантирует. Безопасно вызывать повторно.
+     */
+    fun makeNoActivate(win: Window) {
+        if (!isWindows || !win.isDisplayable) return
+        val user32 = User32.INSTANCE ?: return
+        runCatching {
+            val hwnd = Native.getWindowPointer(win) ?: return
+            val ex = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            val want = ex or WS_EX_NOACTIVATE or WS_EX_TOOLWINDOW
+            if (want != ex) user32.SetWindowLongW(hwnd, GWL_EXSTYLE, want)
+        }
+    }
+
+    /**
+     * Двигает/масштабирует оверлей напрямую через Win32 в тот же момент, когда меняется главное окно
+     * (без очереди событий AWT, из-за которой оверлеи отставали). Размеры в dip, переводятся в пиксели по масштабу экрана.
+     */
+    fun moveNative(win: Window, xDip: Int, yDip: Int, wDip: Int, hDip: Int): Boolean {
+        if (!isWindows || !win.isDisplayable) return false
+        val user32 = User32.INSTANCE ?: return false
+        return runCatching {
+            val hwnd = Native.getWindowPointer(win) ?: return false
+            val tr = win.graphicsConfiguration?.defaultTransform
+            val sx = tr?.scaleX ?: 1.0
+            val sy = tr?.scaleY ?: 1.0
+            user32.SetWindowPos(
+                hwnd, null,
+                kotlin.math.round(xDip * sx).toInt(), kotlin.math.round(yDip * sy).toInt(),
+                kotlin.math.round(wDip * sx).toInt(), kotlin.math.round(hDip * sy).toInt(),
+                SWP_NOZORDER or SWP_NOACTIVATE or SWP_NOOWNERZORDER
+            )
+        }.getOrDefault(false)
     }
 
     private var lastToggleAt = 0L
@@ -158,6 +202,7 @@ object WindowMode {
         val now = System.nanoTime()
         if (now - lastToggleAt < 450_000_000L) return
         lastToggleAt = now
+        val diagStart = now
 
         val user32 = User32.INSTANCE
         val hwnd = if (isWindows) runCatching { Native.getWindowPointer(win) }.getOrNull() else null
@@ -224,7 +269,9 @@ object WindowMode {
                 }
 
                 // Заставляем AWT Peer синхронизировать новые размеры и сбросить старые Insets (шапку и рамки)
+                val nativeMs = (System.nanoTime() - diagStart) / 1_000_000
                 javax.swing.SwingUtilities.invokeLater {
+                    val awtStart = System.nanoTime()
                     win.invalidate()
                     win.validate()
                     (win as? javax.swing.RootPaneContainer)?.apply {
@@ -234,6 +281,8 @@ object WindowMode {
                     }
                     win.repaint()
                     restoreComposeFocus(win)
+                    if (Diag.on) PlayerLog.write("[ui] fullscreen ${if (isFullscreen) "on" else "off"}: native calls $nativeMs ms, " +
+                        "waited for UI thread ${(awtStart - diagStart) / 1_000_000 - nativeMs} ms, AWT revalidate ${(System.nanoTime() - awtStart) / 1_000_000} ms")
                 }
             }
         } else {

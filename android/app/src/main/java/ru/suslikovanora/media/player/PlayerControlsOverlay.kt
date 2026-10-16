@@ -14,6 +14,7 @@ import android.widget.TextView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import ru.suslikovanora.media.tr
 
 /**
  * Manages playback controls overlay visibility, auto-hide timer,
@@ -75,7 +76,7 @@ class PlayerControlsOverlay(
         root.addView(shield, FrameLayout.LayoutParams(-1, -1))
         this.lockShield = shield
 
-        val badge = pillButtonFactory("🔓  Разблокировать").apply {
+        val badge = pillButtonFactory(tr("playercontrols.razblokirovat")).apply {
             textSize = 15f
             setPadding(dp(24), 0, dp(24), 0)
             visibility = View.GONE
@@ -84,7 +85,7 @@ class PlayerControlsOverlay(
                 setColor(0xF011141B.toInt())
                 setStroke(dp(1), 0x88FFB02E.toInt())
             }
-            contentDescription = "Разблокировать экран"
+            contentDescription = tr("playercontrols.razblokirovat_ekran")
             setOnClickListener { unlock() }
         }
         root.addView(badge, FrameLayout.LayoutParams(-2, dp(50), Gravity.CENTER))
@@ -135,7 +136,7 @@ class PlayerControlsOverlay(
         setVisible(false)
         isLocked = true
         lockShield?.visibility = View.VISIBLE
-        showSeekLabel("🔒  Экран заблокирован")
+        showSeekLabel(tr("playercontrols.ekran_zablokirovan"))
         handler.postDelayed({ if (isLocked) showUnlockBadge() }, LOCK_HINT_DELAY_MS)
     }
 

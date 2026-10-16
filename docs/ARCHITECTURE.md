@@ -69,7 +69,10 @@ suslik-media/
 ├── CLAUDE.md            памятка для Claude: правила, выпуск, отладка, история версий
 ├── README.md            общее описание
 ├── docs/
-│   ├── ARCHITECTURE.md  этот файл
+│   ├── ARCHITECTURE.md  общая архитектура проекта (этот файл)
+│   ├── WEBSITE.md       сервер и веб-интерфейс
+│   ├── ANDROID.md       приложение Android
+│   ├── DESKTOP.md       приложение Windows
 │   └── TODO.md          отложенные задачи
 ├── website/             сервер + сайт
 ├── shared/              общий код приложений (+ тесты)
@@ -81,6 +84,8 @@ suslik-media/
 ---
 
 ## 4. Сервер и сайт (`website/`)
+
+> 📖 **Подробная документация:** [docs/WEBSITE.md](file:///c:/Users/nanar/OneDrive/Desktop/suslik-media-mpv/docs/WEBSITE.md)
 
 ### Файлы
 
@@ -148,6 +153,8 @@ suslik-media/
 
 ## 6. Android (`android/`)
 
+> 📖 **Подробная документация:** [docs/ANDROID.md](file:///c:/Users/nanar/OneDrive/Desktop/suslik-media-mpv/docs/ANDROID.md)
+
 ### Главные файлы (`android/app/src/main/java/ru/suslikovanora/media/`)
 
 | Файл | Что делает |
@@ -194,12 +201,14 @@ suslik-media/
 
 ## 7. Windows (`desktop/`)
 
-Использует VLC, **установленный на ПК** (64-битный VLC 3.x), через библиотеку vlcj.
+> 📖 **Подробная документация:** [docs/DESKTOP.md](file:///c:/Users/nanar/OneDrive/Desktop/suslik-media-mpv/docs/DESKTOP.md)
+
+Использует современный движок **mpv** (`libmpv-2.dll`, Direct3D 11) по умолчанию и классический **VLC** (64-битный VLC 3.x через vlcj) в качестве резерва.
 
 | Файл / модуль (`desktop/src/main/kotlin/ru/suslikovanora/media/desktop/`) | Что делает |
 |---|---|
 | `Main.kt` | запуск: одно окно, прогрев VLC, вкладки, плеер поверх медиатеки |
-| `player/` | **модульный плеер**: пакет `ru.suslikovanora.media.desktop.player`, декомпозирован на 9 модулей (`PlayerView.kt`, `PlayerOverlays.kt`, `PlayerControls.kt`, `PlayerIcons.kt`, `PlayerMorePanel.kt`, `PlayerPlaylist.kt`, `PlayerStats.kt`, `VlcEngine.kt`, `PlayRequest.kt`) |
+| `player/` | **модульный плеер**: пакет `ru.suslikovanora.media.desktop.player`, декомпозирован на модули (`PlayerView.kt`, `PlayerOverlays.kt`, `PlayerControls.kt`, `PlayerIcons.kt`, `PlayerMorePanel.kt`, `PlayerPlaylist.kt`, `PlayerStats.kt`, `VlcEngine.kt`, `PlayRequest.kt`, `PlayerEngine.kt`, `MpvEngine.kt`, `MpvLib.kt`) |
 | `ui/` | **дизайн-система и общие компоненты**: пакет `ru.suslikovanora.media.desktop.ui` (`Theme.kt` — токены Sm, шрифты, SuslikTheme; `Controls.kt` — Panel, LampButton, OutlineButton, Chip, Field, hover-модификаторы) |
 | `Library.kt`, `LibraryView.kt` | медиатека: данные и экран |
 | `SearchView.kt`, `AddView.kt` | поиск и добавление |
@@ -293,6 +302,21 @@ suslik-media/
    - **Устранение артефактов границ:** при входе в полноэкранный режим вызывается `TitleBar.setFullscreenDwm(win)`, который отключает 1-пиксельную акцентную рамку Windows 11 (`DWMWA_BORDER_COLOR = DWMWA_COLOR_NONE`) и предотвращает скругление углов (`DWMWA_WINDOW_CORNER_PREFERENCE = DWMWCP_DONOTROUND`).
    - **Поддержка `F11`:** добавлена обработка клавиши `F11` (стандарт Windows / веб-плееров) как в глобальном слушателе окна `Main.kt` (`onPreviewKeyEvent`), так и в плеере `PlayerView.kt` наряду с `F` и `Enter`.
    - **Сохранение Fullscreen при выходе:** при нажатии кнопки «‹» в верхней панели плеер закрывается без принудительного сброса окна в плавающий режим (`WindowPlacement.Floating`), сохраняя полноэкранный режим каталога/приложения.
+
+7. **Двухдвижковая система (mpv и VLC) и стабильность воспроизведения (2.2):**
+   - **Абстракция `PlayerEngine`:** единый интерфейс плеера (`ru.suslikovanora.media.desktop.player.PlayerEngine`), инкапсулирующий работу с позицией, длительностью, дорожками звука/субтитров, фильтрами и громкостью. Основной движок — mpv (`MpvEngine` на базе `libmpv-2.dll`), классический резервный — VLC (`VlcEngine` / `vlcj`). Выбор сохраняется в `settings.properties` и переключается в «Настройках».
+   - **Аппаратный вывод Direct3D 11 через Windows HWND (`wid`):** холст `java.awt.Canvas` передается в mpv (`api.mpv_set_option_string(p, "wid", hwnd.toString())`), вывод настраивается через `--vo=gpu`, `--gpu-api=d3d11`, `--hwdec=auto-safe`. Обеспечивает 0% нагрузки CPU, аппаратный VSync без тиринга, безупречный рендеринг стилизованных ASS/SSA субтитров (`libass`) и нулевой конфликт с DirectX DWM оверлеями Compose.
+   - **Потокобезопасная загрузка внешних дорожек:** в `MpvEngine` списки внешних озвучек и субтитров (`pendingAudio`, `pendingSubs`) объявлены с аннотацией `@Volatile` и защищены мьютексом `trackLock`. Метод `addExternalTracks()` верифицирует, что текущий загруженный в mpv путь (`str("path")`) строго совпадает с `currentOpenUrl`, исключая гонки и затирание внешних дорожек новыми сериями при быстром переключении.
+   - **64-битная раскладка нативных структур libmpv в памяти (JNA):**
+     - В `Mpv.EV_END_FILE` поле указателя `void *data` в 64-битной структуре `mpv_event` расположено по смещению `16` байт. Считывание кода завершения (`reason`, смещение 0) и ошибки (`error`, смещение 4) производится строго после разыменования указателя `dataPtr = ev.getPointer(16)`.
+     - В `onProperty` поле `name` структуры `mpv_event_property` представляет собой 8-байтный указатель `const char *name`, считываемый через `propPtr.getPointer(0)?.getString(0, "UTF-8")`.
+   - **Точная телеметрия декодера и перезапуск видеопотока:**
+     - В `MpvEngine.supervisorStats()` счетчик картинок учитывает состояние VO (`vo-configured == "yes"`) и вычитает число отброшенных кадров (`frame-drop-count`), а аудиопрогресс отслеживается по `audio-pts` вместо времени, что позволяет `PlaybackSupervisor` надежно определять зависания Direct3D 11 поверхности.
+     - Метод `restartVideoOutput()` в `PlayerEngine` и `MpvEngine` программно переинициализирует видеопайплайн (сброс `vid` и синхронизирующий относительный seek 0) без разрушения окна и переоткрытия потока.
+   - **Устранение гонки плейлистов и рассинхронизации буфера:**
+     - Загрузка плейлиста M3U вынесена в единый `playlistDeferred = remember(req.playlist) { scope.async(Dispatchers.IO) { ... } }`, выполняемый параллельно с первичной инициализацией холста (440 мс).
+     - Конкурирующий `LaunchedEffect(req.playlist)` удален. Исключены повторный сетевой запрос и прямая мутация `currentUrl`, приводившая к рассинхронизации адресов между плеером, `PlaybackSupervisor` и `BurstProxy` с последующим зависанием буфера.
+   - **Управление жизненным циклом фоновых задач:** вспомогательные корутины (`ensureAudioJob`, `chaptersJob`, `canvasFocusJob`) в `PlayerView` переведены на отменяемые `Job?` с принудительной отменой предыдущих инстансов при смене серий и гарантированной очисткой в `onDispose`.
 
 Сборка: `desktop/build.gradle.kts` (там `appVersion`), MSI собирается командой `./gradlew packageMsi`,
 отладочная — `./gradlew packageMsi -Pdiag` (подробно `desktop/DEBUG-BUILD.md`). «Что нового»:

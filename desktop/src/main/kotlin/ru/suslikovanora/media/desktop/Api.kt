@@ -143,7 +143,7 @@ object Api {
         Diag.http(req.method(), req.uri().path, code, System.currentTimeMillis() - t0, text.length)
         if (code == 304) return@withContext Fetched(304, JSONObject(), etag)
         val json = runCatching { JSONObject(text) }.getOrElse { JSONObject() }
-        if (code !in 200..299) throw HttpError(code, json.optString("error").ifBlank { "Ошибка сервера ($code)" })
+        if (code !in 200..299) throw HttpError(code, json.optString("error").ifBlank { tr("api.oshibka_servera_code", "code" to code) })
         Fetched(code, json, res.headers().firstValue("etag").orElse(null))
     }
 
@@ -151,10 +151,10 @@ object Api {
     suspend fun getIfChanged(path: String, etag: String?): Fetched = fetch(request(path).GET().build(), etag)
 
     fun describe(e: Throwable): String = when (e) {
-        is HttpError -> e.message ?: "Ошибка сервера"
-        is java.net.ConnectException, is java.nio.channels.UnresolvedAddressException -> "Нет связи с сервером"
-        is java.net.http.HttpTimeoutException -> "Сервер не ответил вовремя"
-        is java.io.IOException -> "Нет связи с сервером"
-        else -> e.message ?: "Неизвестная ошибка"
+        is HttpError -> e.message ?: tr("api.oshibka_servera")
+        is java.net.ConnectException, is java.nio.channels.UnresolvedAddressException -> tr("api.net_svyazi_s_serverom")
+        is java.net.http.HttpTimeoutException -> tr("api.server_ne_otvetil_vovremya")
+        is java.io.IOException -> tr("api.net_svyazi_s_serverom")
+        else -> e.message ?: tr("api.neizvestnaya_oshibka")
     }
 }

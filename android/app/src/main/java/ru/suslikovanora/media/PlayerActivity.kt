@@ -110,7 +110,7 @@ class PlayerActivity : ComponentActivity() {
     private var scaleIndex = 0
     private lateinit var scaleButton: TextView
     private var currentUrl = ""
-    private var currentTitle = "Видео"
+    private var currentTitle = tr("main.video")
     private lateinit var titleView: TextView
     private lateinit var prevButton: android.widget.ImageView
     private lateinit var nextButton: android.widget.ImageView
@@ -137,7 +137,7 @@ class PlayerActivity : ComponentActivity() {
             override fun onNetworkLost() {
                 if (catchingUp) endCatchUp()
                 handler.removeCallbacks(stallRunnable)
-                if (!userPaused && !ended) showStatus("Нет сети — ждём подключение…")
+                if (!userPaused && !ended) showStatus(tr("player.net_seti_zhdem_podklyuchenie"))
             }
             override fun onNetworkRestoredWithoutReconnect() {
                 if (!buffering) bufferingLabel.visibility = View.GONE
@@ -321,8 +321,8 @@ class PlayerActivity : ComponentActivity() {
                     // an automatic reconnect): within one wait the number only goes up instead of falling back to 0.
                     bufferingShown = maxOf(bufferingShown, event.buffering.toInt())
                     showStatus(
-                        if (networkLost) "Нет сети — ждём подключение…"
-                        else "Буферизация $bufferingShown%"
+                        if (networkLost) tr("player.net_seti_zhdem_podklyuchenie")
+                        else tr("player.buferizaciya_bufferingshown", "bufferingShown" to bufferingShown)
                     )
                     // Dead socket after a network switch = no more events: recover if buffering goes silent.
                     handler.removeCallbacks(stallRunnable)
@@ -545,7 +545,7 @@ class PlayerActivity : ComponentActivity() {
     private fun advanceToNext(): Boolean {
         if (!playlistQueue.hasNext) return false
         watchProgress.clearPosition()
-        Toast.makeText(this, "Следующая серия", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, tr("player.sleduyuschaya_seriya"), Toast.LENGTH_SHORT).show()
         return playlistQueue.advanceToNext()
     }
     private fun updateQueueUi() = playlistQueue.notifyUiUpdated()
@@ -588,7 +588,7 @@ class PlayerActivity : ComponentActivity() {
         currentUrl = savedInstanceState?.getString(KEY_URL)?.takeIf { it.isNotBlank() }
             ?: intent.getStringExtra(EXTRA_URL).orEmpty()
         currentTitle = savedInstanceState?.getString(KEY_TITLE)?.takeIf { it.isNotBlank() }
-            ?: intent.getStringExtra(EXTRA_TITLE)?.ifBlank { "Видео" } ?: "Видео"
+            ?: intent.getStringExtra(EXTRA_TITLE)?.ifBlank { tr("main.video") } ?: tr("main.video")
         playbackPosition = savedInstanceState?.getLong(KEY_POSITION) ?: startPosition(intent)
         playWhenReady = savedInstanceState?.getBoolean(KEY_PLAYING) ?: true
         userPaused = !playWhenReady
@@ -611,7 +611,7 @@ class PlayerActivity : ComponentActivity() {
         }
         val back = iconButton(R.drawable.ic_pl_back, 44, 0x99151820.toInt(), 26).apply {
             setOnClickListener { leave() }
-            contentDescription = "Назад"
+            contentDescription = tr("player.nazad")
         }
         topBar.addView(back, LinearLayout.LayoutParams(dp(44), dp(44)))
         val title = TextView(this).apply {
@@ -622,7 +622,7 @@ class PlayerActivity : ComponentActivity() {
         titleView = title
         topBar.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
         fullButton = iconButton(R.drawable.ic_pl_full, 44, 0x99151820.toInt(), 24).apply {
-            contentDescription = "На весь экран"
+            contentDescription = tr("player.na_ves_ekran")
             setOnClickListener { toggleFullscreen() }
         }
         topBar.addView(fullButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginStart = dp(10) })
@@ -655,7 +655,7 @@ class PlayerActivity : ComponentActivity() {
 
         val center = FrameLayout(this)
         playPauseButton = iconButton(if (playWhenReady) R.drawable.ic_pl_pause else R.drawable.ic_pl_play, 64, 0xF2FFFFFF.toInt(), 32, Color.BLACK).apply {
-            contentDescription = "Пауза / воспроизведение"
+            contentDescription = tr("player.pauza_vosproizvedenie")
             elevation = dp(3).toFloat()
             setOnClickListener {
                 if (mediaPlayer?.isPlaying == true && !needsReload) doPause() else doPlay()
@@ -665,12 +665,12 @@ class PlayerActivity : ComponentActivity() {
         center.addView(playPauseButton, FrameLayout.LayoutParams(dp(64), dp(64), Gravity.CENTER))
         prevButton = iconButton(R.drawable.ic_pl_prev, 46, 0x99151820.toInt(), 24).apply {
             visibility = View.GONE
-            contentDescription = "Предыдущая серия"
+            contentDescription = tr("player.predyduschaya_seriya")
             setOnClickListener { playlistQueue.playPrevious() }
         }
         nextButton = iconButton(R.drawable.ic_pl_next, 46, 0x99151820.toInt(), 24).apply {
             visibility = View.GONE
-            contentDescription = "Следующая серия"
+            contentDescription = tr("player.sleduyuschaya_seriya")
             setOnClickListener { playlistQueue.playNext() }
         }
         center.addView(prevButton, FrameLayout.LayoutParams(dp(46), dp(46), Gravity.CENTER).apply { rightMargin = dp(140) })
@@ -714,17 +714,17 @@ class PlayerActivity : ComponentActivity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, dp(8), 0, 0)
         }
-        val audioButton = pillButton("♫  Аудио").apply { setOnClickListener { trackSelector.showAudioTracks(this@PlayerActivity, mediaPlayer) { showControlsTemporarily() } } }
-        val subsButton = pillButton("CC  Субтитры").apply { setOnClickListener { trackSelector.showSubtitleTracks(this@PlayerActivity, mediaPlayer) { showControlsTemporarily() } } }
+        val audioButton = pillButton(tr("player.audio")).apply { setOnClickListener { trackSelector.showAudioTracks(this@PlayerActivity, mediaPlayer) { showControlsTemporarily() } } }
+        val subsButton = pillButton(tr("player.cc_subtitry")).apply { setOnClickListener { trackSelector.showSubtitleTracks(this@PlayerActivity, mediaPlayer) { showControlsTemporarily() } } }
         scaleButton = pillButton("⤢  ${SCALES[scaleIndex].second}").apply { setOnClickListener { cycleScale(); showControlsTemporarily() } }
         options.addView(audioButton, LinearLayout.LayoutParams(-2, dp(42)).apply { marginEnd = dp(8) })
         options.addView(subsButton, LinearLayout.LayoutParams(-2, dp(42)).apply { marginEnd = dp(8) })
         options.addView(scaleButton, LinearLayout.LayoutParams(-2, dp(42)).apply { marginEnd = dp(8) })
-        options.addView(pillButton("🔒").apply { contentDescription = "Блокировка экрана"; setOnClickListener { lockScreen() } },
+        options.addView(pillButton("🔒").apply { contentDescription = tr("player.blokirovka_ekrana"); setOnClickListener { lockScreen() } },
             LinearLayout.LayoutParams(dp(48), dp(42)).apply { marginEnd = dp(14) })
         if (Diag.on) options.addView(pillButton("📍").apply {
-            contentDescription = "Метка в журнале"
-            setOnClickListener { val n = Diag.mark("player at ${perceivedPosition() / 1000}s"); showStatus("Метка #$n"); showControlsTemporarily()
+            contentDescription = tr("player.metka_v_zhurnale")
+            setOnClickListener { val n = Diag.mark("player at ${perceivedPosition() / 1000}s"); showStatus(tr("player.metka_n", "n" to n)); showControlsTemporarily()
                 handler.postDelayed({ if (!buffering && !networkLost) bufferingLabel.visibility = View.GONE }, 1500L) }
         }, LinearLayout.LayoutParams(dp(48), dp(42)).apply { marginEnd = dp(14) })
         options.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
@@ -869,7 +869,7 @@ class PlayerActivity : ComponentActivity() {
             showControlsTemporarily()
         } catch (e: Exception) {
             releasePlayer()
-            Toast.makeText(this, "VLC не смог открыть поток: ${e.localizedMessage ?: "ошибка источника"}", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, tr("player.vlc_ne_smog_otkryt", "p" to (e.localizedMessage ?: tr("player.oshibka_istochnika"))), Toast.LENGTH_LONG).show()
         }
     }
 
@@ -1028,7 +1028,7 @@ class PlayerActivity : ComponentActivity() {
         ended = false
         buffering = false
         trackSelector.prepareForReconnect()
-        showStatus("Переподключение…")
+        showStatus(tr("player.perepodklyuchenie"))
         try {
             // A dead socket makes stop()/setMedia() block, so never reuse the old player: build a fresh
             // MediaPlayer on the same LibVLC/views and tear the old one down in the background (serially).
@@ -1061,7 +1061,7 @@ class PlayerActivity : ComponentActivity() {
     private fun tapSeek(forward: Boolean) {
         val p = mediaPlayer ?: return
         if (!p.isSeekable && lengthOf(p) <= 0L && !hasSeekedOk) {
-            showSeekLabel("Перемотка недоступна для этого потока")
+            showSeekLabel(tr("player.peremotka_nedostupna_dlya_etog"))
             return
         }
         gestures.recordTapSeek()
@@ -1073,7 +1073,7 @@ class PlayerActivity : ComponentActivity() {
         if (length > 0L) target = target.coerceAtMost((length - 1_000L).coerceAtLeast(0L))
         tapSeekTarget = target
         val diff = (target - tapSeekStart) / 1000
-        showSeekLabel("${if (diff >= 0) "+" else "−"}${kotlin.math.abs(diff)} сек  ·  ${formatTime(target)}")
+        showSeekLabel(tr("player.p_p_sek_p", "sign" to (if (diff >= 0) "+" else "−"), "sec" to kotlin.math.abs(diff), "time" to formatTime(target)))
         handler.removeCallbacks(applyTapSeekRunnable)
         handler.postDelayed(applyTapSeekRunnable, TAP_SEEK_APPLY_MS)
         showControlsTemporarily()
@@ -1100,7 +1100,7 @@ class PlayerActivity : ComponentActivity() {
         playbackPosition = t
         lastTime = t
         handler.removeCallbacks(seekWatchdogRunnable)
-        if (networkLost) { needsReload = true; pendingSeekPos = t; showStatus("Нет сети — ждём подключение…"); return }
+        if (networkLost) { needsReload = true; pendingSeekPos = t; showStatus(tr("player.net_seti_zhdem_podklyuchenie")); return }
         if (needsReload || ended) {
             pendingSeekPos = null
             if (!userPaused || ended) reconnect(forcePlay = true, startAt = t) else { playbackPosition = t; lastTime = t }
@@ -1109,7 +1109,7 @@ class PlayerActivity : ComponentActivity() {
         if (!p.isSeekable) {
             // Seekable flag is unreliable right after (re)opening or after a network switch: reload at the target.
             if (length > 0L || hasSeekedOk) { reconnect(forcePlay = !userPaused, startAt = t) }
-            else showSeekLabel("Перемотка недоступна для этого потока")
+            else showSeekLabel(tr("player.peremotka_nedostupna_dlya_etog"))
             return
         }
         pendingSeekPos = t
@@ -1149,13 +1149,13 @@ class PlayerActivity : ComponentActivity() {
         handler.removeCallbacks(stallRunnable)
         if (networkLost) {
             needsReload = true
-            showStatus("Нет сети — ждём подключение…")
+            showStatus(tr("player.net_seti_zhdem_podklyuchenie"))
         } else if (retryCount < MAX_RETRIES || !fromEof) {
             // Keep trying while the user remains on the player. A restored network may need time
             // before the origin/CDN starts serving the stream again; use capped exponential backoff.
             retryCount = (retryCount + 1).coerceAtMost(MAX_RETRIES)
             val delay = minOf(1000L * (1L shl (retryCount - 1).coerceAtLeast(0)), MAX_RETRY_DELAY_MS)
-            showStatus(if (retryCount <= 1) "Переподключение…" else "Повторное подключение…")
+            showStatus(if (retryCount <= 1) tr("player.perepodklyuchenie") else tr("player.povtornoe_podklyuchenie"))
             if (reconnectScheduled) return
             reconnectScheduled = true
             handler.removeCallbacks(reconnectRunnable)
@@ -1171,7 +1171,7 @@ class PlayerActivity : ComponentActivity() {
         } else {
             bufferingLabel.visibility = View.GONE
             needsReload = true
-            Toast.makeText(this, "Ошибка воспроизведения потока. Нажмите ▶ для повтора", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, tr("player.oshibka_vosproizvedeniya_potok"), Toast.LENGTH_LONG).show()
         }
     }
 
@@ -1302,12 +1302,12 @@ class PlayerActivity : ComponentActivity() {
         AppLog.write("heavy file on mobile data: %.1f Mbit/s (limit %d), asking".format(mbit, limit))
         doPause()
         heavyDialog = AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-            .setTitle("Тяжёлый файл на мобильной сети")
-            .setMessage("Этот файл ≈ %.0f Мбит/с — около %.1f ГБ в час. Мобильный интернет и заряд уйдут быстро. ".format(mbit, gbPerHour) +
-                "Лучше дождаться Wi-Fi или выбрать файл полегче.")
-            .setPositiveButton("Всё равно смотреть") { _, _ -> heavyDialog = null; doPlay() }
-            .setNeutralButton("Не спрашивать") { _, _ -> heavyDialog = null; PlaybackSettings.setHeavyMbit(this, 0); doPlay() }
-            .setNegativeButton("Закрыть") { _, _ -> heavyDialog = null; leave() }
+            .setTitle(tr("player.tyazhelyy_fayl_na_mobilnoy"))
+            .setMessage(tr("player.etot_fayl_f_mbit").format(mbit, gbPerHour) +
+                tr("player.luchshe_dozhdatsya_wi_fi"))
+            .setPositiveButton(tr("player.vse_ravno_smotret")) { _, _ -> heavyDialog = null; doPlay() }
+            .setNeutralButton(tr("player.ne_sprashivat")) { _, _ -> heavyDialog = null; PlaybackSettings.setHeavyMbit(this, 0); doPlay() }
+            .setNegativeButton(tr("player.zakryt")) { _, _ -> heavyDialog = null; leave() }
             .setOnCancelListener { heavyDialog = null; leave() }
             .show()
     }
@@ -1365,7 +1365,7 @@ class PlayerActivity : ComponentActivity() {
             val ahead = BurstProxy.aheadMb(currentUrl) ?: 0.0
             if (ahead >= target || SystemClock.elapsedRealtime() - catchUpStartedAt >= CATCH_UP_MAX_MS) { endCatchUp(restart = true); return }
             // VLC may still play what it had in its own buffer: the message only while it really waits
-            if (buffering) showStatus("Сеть медленнее фильма — копим запас ${(ahead * 100 / target.coerceAtLeast(1.0)).toInt().coerceIn(0, 99)}%")
+            if (buffering) showStatus(tr("player.set_medlennee_filma_kopim", "p" to (ahead * 100 / target.coerceAtLeast(1.0)).toInt().coerceIn(0, 99)))
             handler.postDelayed(this, 1_000L)
         }
     }
@@ -1452,7 +1452,7 @@ class PlayerActivity : ComponentActivity() {
             playPauseButton.scaleX = 1f; playPauseButton.scaleY = 1f
             playlistQueue.updateCardMargins(full = true)
             controlsOverlay.updateUnlockBadgeLayout(full = true, topInset = 0, filmHeight = 0)
-            fullButton.setImageResource(R.drawable.ic_pl_full_exit); fullButton.contentDescription = "Выйти из полноэкранного режима"
+            fullButton.setImageResource(R.drawable.ic_pl_full_exit); fullButton.contentDescription = tr("player.vyyti_iz_polnoekrannogo_rezhim")
             hideSystemUi()
         } else {
             val w = root.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
@@ -1473,7 +1473,7 @@ class PlayerActivity : ComponentActivity() {
             playPauseButton.scaleX = 0.82f; playPauseButton.scaleY = 0.82f
             playlistQueue.updateCardMargins(full = false)
             controlsOverlay.updateUnlockBadgeLayout(full = false, topInset = i.top, filmHeight = h)
-            fullButton.setImageResource(R.drawable.ic_pl_full); fullButton.contentDescription = "На весь экран"
+            fullButton.setImageResource(R.drawable.ic_pl_full); fullButton.contentDescription = tr("player.na_ves_ekran")
             controlsOverlay.showSystemUi(window)
         }
         stage.layoutParams = sp; infoPanel.layoutParams = pp
@@ -1561,7 +1561,7 @@ class PlayerActivity : ComponentActivity() {
         runCatching { mediaPlayer?.setVideoScale(shownScale()) }
         scaleButton.text = "⤢  ${SCALES[scaleIndex].second}"
         panel.scale = SCALES[scaleIndex].second
-        showSeekLabel(if (isFull()) "Кадр: ${SCALES[scaleIndex].second}" else "Кадр на весь экран: ${SCALES[scaleIndex].second}")
+        showSeekLabel(if (isFull()) tr("player.kadr_p", "p" to SCALES[scaleIndex].second) else tr("player.kadr_na_ves_ekran", "p" to SCALES[scaleIndex].second))
     }
 
     private fun currentBrightness(): Float {
@@ -1763,7 +1763,7 @@ class PlayerActivity : ComponentActivity() {
         currentUrl = url
         lastKnownLength = 0L
         lastKnownLengthUrl = ""
-        currentTitle = intent.getStringExtra(EXTRA_TITLE)?.ifBlank { "Видео" } ?: "Видео"
+        currentTitle = intent.getStringExtra(EXTRA_TITLE)?.ifBlank { tr("main.video") } ?: tr("main.video")
         playlistQueue.reset()
         readSideExtras(intent)
         titleView.text = currentTitle
@@ -1846,9 +1846,9 @@ class PlayerActivity : ComponentActivity() {
         const val EXTRA_WATCH_KEYS = "media_watch_keys"
         const val EXTRA_AUDIO_URLS = "media_audio_urls"
         private val SCALES = listOf(
-            MediaPlayer.ScaleType.SURFACE_BEST_FIT to "Вписать",
-            MediaPlayer.ScaleType.SURFACE_FIT_SCREEN to "Заполнить",
-            MediaPlayer.ScaleType.SURFACE_FILL to "Растянуть",
+            MediaPlayer.ScaleType.SURFACE_BEST_FIT to tr("player.vpisat"),
+            MediaPlayer.ScaleType.SURFACE_FIT_SCREEN to tr("player.zapolnit"),
+            MediaPlayer.ScaleType.SURFACE_FILL to tr("player.rastyanut"),
             MediaPlayer.ScaleType.SURFACE_16_9 to "16:9"
         )
         private const val WATCHDOG_STUCK_TICKS = 4 // 4 x 2 s = the same 8 s as before

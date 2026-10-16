@@ -104,18 +104,18 @@ data class PlayTarget(
 )
 
 enum class Category(val label: String) {
-    All("Все"),
-    Movies("Фильмы"),
-    Series("Сериалы"),
-    Anime("Аниме"),
-    Other("Другое")
+    All(tr("library.vse")),
+    Movies(tr("library.filmy")),
+    Series(tr("library.serialy")),
+    Anime(tr("library.anime")),
+    Other(tr("library.drugoe"))
 }
 
 enum class SortBy(val label: String) {
-    Name("Название"),
-    Newest("Сначала новые"),
-    Size("Размер"),
-    Favorite("Избранное")
+    Name(tr("library.nazvanie")),
+    Newest(tr("library.snachala_novye")),
+    Size(tr("library.razmer")),
+    Favorite(tr("library.izbrannoe"))
 }
 
 enum class ViewMode { Grid, List }
@@ -164,11 +164,11 @@ fun itemCategory(item: LibraryItem): Category {
 
 fun itemTypeLabel(item: LibraryItem): String {
     return when (itemCategory(item)) {
-        Category.Anime -> "Аниме"
-        Category.Series -> "Сериал"
-        Category.Movies -> "Фильм"
-        Category.Other -> "Другое"
-        Category.All -> "Видео"
+        Category.Anime -> tr("library.anime")
+        Category.Series -> tr("library.serial")
+        Category.Movies -> tr("library.film")
+        Category.Other -> tr("library.drugoe")
+        Category.All -> tr("library.video")
     }
 }
 
@@ -200,9 +200,9 @@ fun itemSpecs(item: LibraryItem, mediaStr: String?): Pair<String, String> {
         brMatch.value
     } else if (item.m.size > 0) {
         val approx = (item.m.size * 8.0) / (7200.0 * 1_000_000.0)
-        String.format(Locale.US, "%.1f Мбит/с", approx.coerceIn(8.0, 75.0))
+        String.format(Locale.US, tr("library.f_mbit_s"), approx.coerceIn(8.0, 75.0))
     } else {
-        "15.6 Мбит/с"
+        tr("library.mbit_s_2")
     }
 
     val sizeStr = formatBytes(item.m.size)
@@ -259,7 +259,7 @@ fun Brand(onLogout: (() -> Unit)?, tabs: (@Composable () -> Unit)? = null) {
             if (Updater.available != null) Spacer(Modifier.width(10.dp))
             GearButton { PlaybackSettings.open = true }
             Spacer(Modifier.width(10.dp))
-            PillButton("Выйти", onClick = onLogout)
+            PillButton(tr("library.vyyti"), onClick = onLogout)
         }
     }
 }
@@ -278,15 +278,15 @@ fun LoginView(lib: Library) {
     Column(Modifier.fillMaxSize().background(Sm.night).padding(32.dp)) {
         Brand(null)
         Column(Modifier.widthIn(max = 640.dp).padding(top = 64.dp)) {
-            Text("Все ваши ссылки в одном месте", color = Sm.muted, fontFamily = Onest, fontSize = 14.sp)
-            Text("Найдите. Разблокируйте.\nСмотрите как удобно.", color = Sm.text, fontFamily = Unbounded, fontWeight = FontWeight.Bold,
+            Text(tr("library.vse_vashi_ssylki_v"), color = Sm.muted, fontFamily = Onest, fontSize = 14.sp)
+            Text(tr("library.naydite_razblokiruyte_smotrite"), color = Sm.text, fontFamily = Unbounded, fontWeight = FontWeight.Bold,
                 fontSize = 40.sp, lineHeight = 46.sp, modifier = Modifier.padding(top = 6.dp, bottom = 28.dp))
             Panel {
-                Text("Войти", fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 20.sp, color = Sm.text)
-                Text("Введите общий пароль доступа.", color = Sm.muted, fontFamily = Onest, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
-                Field(pass, { pass = it }, "Пароль доступа", password = true, onDone = { submit() })
+                Text(tr("library.voyti"), fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 20.sp, color = Sm.text)
+                Text(tr("library.vvedite_obschiy_parol_dostupa"), color = Sm.muted, fontFamily = Onest, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
+                Field(pass, { pass = it }, tr("library.parol_dostupa"), password = true, onDone = { submit() })
                 Spacer(Modifier.height(12.dp))
-                LampButton(if (busy) "Выполняется вход…" else "Войти", enabled = !busy && pass.isNotBlank()) { submit() }
+                LampButton(if (busy) tr("library.vypolnyaetsya_vhod") else tr("library.voyti"), enabled = !busy && pass.isNotBlank()) { submit() }
                 error?.let { Text(it, color = Sm.bad, fontFamily = Onest, fontSize = 14.sp, modifier = Modifier.padding(top = 10.dp)) }
             }
         }
@@ -437,14 +437,14 @@ private fun LibraryHeader(
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(
-                    "Моя библиотека AllDebrid",
+                    tr("library.moya_biblioteka_alldebrid"),
                     fontFamily = Unbounded,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 24.sp,
                     color = Color.White
                 )
                 Text(
-                    "Торренты, папки и файлы из вашего аккаунта.",
+                    tr("library.torrenty_papki_i_fayly"),
                     color = Color(0xFF8E96A8),
                     fontFamily = Onest,
                     fontSize = 13.5.sp,
@@ -452,7 +452,7 @@ private fun LibraryHeader(
                 )
             }
             PillButton(
-                text = if (lib.loading) "Загрузка…" else "Обновить",
+                text = if (lib.loading) tr("library.zagruzka") else tr("library.obnovit"),
                 icon = { RefreshIcon(size = 14.dp) },
                 onClick = onRefresh
             )
@@ -461,7 +461,7 @@ private fun LibraryHeader(
         Field(
             value = query,
             onValue = onQueryChange,
-            placeholder = "Поиск по названию…",
+            placeholder = tr("library.poisk_po_nazvaniyu"),
             leadingIcon = { SearchIcon(size = 16.dp, color = Color(0xFF8E96A8)) }
         )
         Spacer(Modifier.height(8.dp))
@@ -472,7 +472,7 @@ private fun LibraryHeader(
                 else -> Color(0xFF8E96A8)
             }
         )
-        val countLabel = if (lib.statusKind == StatusKind.Error) lib.status else "Загружено $totalCount торрент(ов)."
+        val countLabel = if (lib.statusKind == StatusKind.Error) lib.status else tr("library.zagruzheno_totalcount_torrent", "totalCount" to totalCount)
         Text(countLabel, color = statusColor, fontFamily = Onest, fontSize = 13.sp, modifier = Modifier.padding(start = 2.dp))
     }
 }
@@ -545,7 +545,7 @@ private fun FilterControlsBar(
 
             // Sort Dropdown
             Box {
-                PillButton(text = "Сортировка: ${sortBy.label} ▾", onClick = { onSortOpenChange(true) })
+                PillButton(text = tr("library.sortirovka_label", "label" to sortBy.label), onClick = { onSortOpenChange(true) })
                 DropdownMenu(
                     expanded = sortOpen,
                     onDismissRequest = { onSortOpenChange(false) },
@@ -562,7 +562,7 @@ private fun FilterControlsBar(
 
             // Filters Button
             PillButton(
-                text = "Фильтры",
+                text = tr("library.filtry"),
                 icon = { FunnelIcon(size = 14.dp, color = if (onlyReady) Color.White else Color(0xFF8E96A8)) },
                 active = onlyReady,
                 onClick = onToggleOnlyReady
@@ -631,7 +631,7 @@ private fun Tile(item: LibraryItem, lib: Library, onOpen: (PlayTarget) -> Unit, 
         // Poster Image
         val p = poster
         if (p != null) {
-            Image(p, "Постер", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = zoom; scaleY = zoom })
+            Image(p, tr("library.poster"), contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = zoom; scaleY = zoom })
         } else {
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF222838), Color(0xFF10131B)))))
         }
@@ -654,20 +654,20 @@ private fun Tile(item: LibraryItem, lib: Library, onOpen: (PlayTarget) -> Unit, 
                 modifier = Modifier.background(Color(0xFF181C26)).border(1.dp, Color(0xFF2A3040), RoundedCornerShape(8.dp))
             ) {
                 DropdownMenuItem(
-                    text = { Text(if (m.favorite) "★ Из избранного" else "☆ В избранное", color = Sm.text, fontFamily = Onest) },
+                    text = { Text(if (m.favorite) tr("library.iz_izbrannogo") else tr("library.v_izbrannoe"), color = Sm.text, fontFamily = Onest) },
                     onClick = { menuOpen = false; scope.launch { lib.setFavorite(m, !m.favorite) } }
                 )
                 if (series != null) {
                     series.seasons.forEachIndexed { sIdx, season ->
                         DropdownMenuItem(
-                            text = { Text("Сезон ${season.season} (${season.items.size} сер.)", color = Sm.text, fontFamily = Onest) },
+                            text = { Text(tr("library.sezon_season_size_ser", "season" to season.season, "size" to season.items.size), color = Sm.text, fontFamily = Onest) },
                             onClick = { menuOpen = false; si = sIdx; ei = 0 }
                         )
                     }
                 }
                 if (m.canRemove) {
                     DropdownMenuItem(
-                        text = { Text(if (m.downloading) "✕ Отменить" else "🗑 Удалить", color = Sm.bad, fontFamily = Onest) },
+                        text = { Text(if (m.downloading) tr("library.otmenit") else tr("library.udalit"), color = Sm.bad, fontFamily = Onest) },
                         onClick = { menuOpen = false; scope.launch { lib.remove(m) } }
                     )
                 }
@@ -706,7 +706,7 @@ private fun Tile(item: LibraryItem, lib: Library, onOpen: (PlayTarget) -> Unit, 
                         .padding(horizontal = 7.dp, vertical = 2.dp)
                 ) {
                     Text(
-                        if (m.ready) "Готово • 100%" else if (m.downloading) "${(m.progress * 100).toInt()}% • ${statusRu(m)}" else statusRu(m),
+                        if (m.ready) tr("library.gotovo") else if (m.downloading) "${(m.progress * 100).toInt()}% • ${statusRu(m)}" else statusRu(m),
                         color = Color.White,
                         fontFamily = Onest,
                         fontWeight = FontWeight.Medium,
@@ -848,7 +848,7 @@ private fun ListRow(item: LibraryItem, lib: Library, onOpen: (PlayTarget) -> Uni
             Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0xFF181B24)).border(1.dp, Color(0xFF2A3040), RoundedCornerShape(6.dp))
                 .padding(horizontal = 9.dp, vertical = 4.dp)
         ) {
-            Text(if (m.ready) "Готово • 100%" else statusRu(m), color = Color.White, fontFamily = Onest, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            Text(if (m.ready) tr("library.gotovo") else statusRu(m), color = Color.White, fontFamily = Onest, fontSize = 12.sp, fontWeight = FontWeight.Medium)
         }
 
         Spacer(Modifier.width(16.dp))
@@ -966,14 +966,14 @@ private fun continueEntries(items: List<LibraryItem>, lib: Library): List<Contin
     if (lib.continueHiddenAt(item.m.id) >= w.at) return@mapNotNull null
     if (!w.watched) {
         val t = targetFor(item, file) ?: return@mapNotNull null
-        val sub = t.label.removePrefix(item.baseTitle).removePrefix(" · ").ifBlank { "Фильм" }
+        val sub = t.label.removePrefix(item.baseTitle).removePrefix(" · ").ifBlank { tr("library.film") }
         ContinueEntry(item, t, sub, w.fraction, w.pos, w.len, w.at)
     } else {
         val series = item.playable as? Playable.Series ?: return@mapNotNull null
         val next = nextEpisode(series, file) ?: return@mapNotNull null
         if (lib.watchInfo(watchKey(item.m.id, next))?.watched == true) return@mapNotNull null
         val t = targetFor(item, next) ?: return@mapNotNull null
-        ContinueEntry(item, t, "Дальше: " + t.label.removePrefix(item.baseTitle).removePrefix(" · "), 0f, 0L, 0L, w.at)
+        ContinueEntry(item, t, tr("library.dalshe") + t.label.removePrefix(item.baseTitle).removePrefix(" · "), 0f, 0L, 0L, w.at)
     }
 }.sortedByDescending { it.at }.take(14)
 
@@ -992,7 +992,7 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
         Column(Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 12.dp)) {
             Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "Продолжить просмотр",
+                    tr("library.prodolzhit_prosmotr"),
                     fontFamily = Unbounded,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 17.5.sp,
@@ -1150,16 +1150,16 @@ private fun ContinueCard(e: ContinueEntry, lib: Library, modifier: Modifier, onR
 }
 
 private fun filmCountRu(count: Int): String = when {
-    count % 10 == 1 && count % 100 != 11 -> "$count фильм"
-    count % 10 in 2..4 && count % 100 !in 12..14 -> "$count фильма"
-    else -> "$count фильмов"
+    count % 10 == 1 && count % 100 != 11 -> tr("library.count_film", "count" to count)
+    count % 10 in 2..4 && count % 100 !in 12..14 -> tr("library.count_filma", "count" to count)
+    else -> tr("library.count_filmov", "count" to count)
 }
 
 private fun collectionInfo(count: Int): Pair<String, String> = when (count) {
-    2 -> "Дилогия" to "дилогии"
-    3 -> "Кинотрилогия" to "трилогии"
-    4 -> "Кинотетралогия" to "тетралогии"
-    else -> "Кинофраншиза" to "франшизы"
+    2 -> tr("library.dilogiya") to tr("library.dilogii")
+    3 -> tr("library.kinotrilogiya") to tr("library.trilogii")
+    4 -> tr("library.kinotetralogiya") to tr("library.tetralogii")
+    else -> tr("library.kinofranshiza") to tr("library.franshizy")
 }
 
 private fun extractTrilogyFilmInfo(
@@ -1178,7 +1178,7 @@ private fun extractTrilogyFilmInfo(
     val title = when {
         partTitle.isNotBlank() -> partTitle
         !ep.title.isNullOrBlank() -> ep.title!!
-        else -> cleaned.ifBlank { "Фильм ${index + 1}" }
+        else -> cleaned.ifBlank { tr("library.film_p", "p" to index + 1) }
     }
 
     val watch = lib.watchInfo(watchKey(magnetId, ep.file))
@@ -1260,7 +1260,7 @@ private fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPla
         lib.watchInfo(watchKey(t.magnetId, currentFile))?.takeIf { !it.watched && it.pos >= 5_000L }?.pos
     }
     var fromStart by remember(t.magnetId, currentFile.path) { mutableStateOf(false) }
-    var sub by remember(t.magnetId, currentFile.path) { mutableStateOf("Получение ссылок…") }
+    var sub by remember(t.magnetId, currentFile.path) { mutableStateOf(tr("library.poluchenie_ssylok")) }
     var mirror by remember(t.magnetId, currentFile.path) { mutableStateOf<String?>(null) }
     var direct by remember(t.magnetId, currentFile.path) { mutableStateOf<String?>(null) }
     var playlist by remember(t.magnetId, currentFile.path) { mutableStateOf<String?>(null) }
@@ -1274,7 +1274,7 @@ private fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPla
 
     LaunchedEffect(t.magnetId, currentFile.path) {
         val link = currentFile.link ?: run {
-            sub = "Ссылка на файл ещё не готова — нажмите «Обновить»."
+            sub = tr("library.ssylka_na_fayl_esche")
             return@LaunchedEffect
         }
         val enc = { v: String -> URLEncoder.encode(v, "UTF-8") }
@@ -1285,7 +1285,7 @@ private fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPla
             direct = d.await().getOrNull()
             mirror = mr.await().getOrNull()
         }
-        sub = if (mirror != null || direct != null) "Выберите источник" else "Не удалось получить ссылки"
+        sub = if (mirror != null || direct != null) tr("library.vyberite_istochnik") else tr("library.ne_udalos_poluchit_ssylki")
         val sideSubs = subtitlesFor(magnet, currentFile)
         val sideAudio = externalAudioFor(magnet, currentFile)
         if (sideSubs.isNotEmpty()) subs = mirrorUrls(sideSubs)
@@ -1342,7 +1342,7 @@ private fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPla
                     ) {
                         val p = poster
                         if (p != null) {
-                            Image(p, "Постер", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                            Image(p, tr("library.poster"), contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
                         } else {
                             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF222838), Color(0xFF10131B)))))
                         }
@@ -1367,7 +1367,7 @@ private fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPla
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             InfoCircleIcon(color = Color(0xFF60A5FA), size = 15.dp)
-                            Text("Найдена ${collectionTypeName.lowercase(Locale.ROOT)}. Выберите фильм для просмотра.", color = Color(0xFFC0C7D6), fontFamily = Onest, fontSize = 12.5.sp)
+                            Text(tr("library.naydena_p_vyberite_film", "p" to collectionTypeName.lowercase(Locale.ROOT)), color = Color(0xFFC0C7D6), fontFamily = Onest, fontSize = 12.5.sp)
                         }
 
                         // Movies list (scrollable)
@@ -1457,17 +1457,17 @@ private fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPla
 
                 resumeAt?.let { at ->
                     Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        StartOption("▶  С ${clock(at)}", "продолжить с прошлого места", !fromStart, Modifier.weight(1f)) { fromStart = false }
-                        StartOption("⟲  С начала", "смотреть заново", fromStart, Modifier.weight(1f)) { fromStart = true }
+                        StartOption(tr("library.s_p", "p" to clock(at)), tr("library.prodolzhit_s_proshlogo_mesta"), !fromStart, Modifier.weight(1f)) { fromStart = false }
+                        StartOption(tr("library.s_nachala"), tr("library.smotret_zanovo"), fromStart, Modifier.weight(1f)) { fromStart = true }
                     }
                 }
 
                 // Cards for Mirror & Direct
                 SourceCard(
-                    title = "Через зеркало",
-                    badgeText = "Рекомендуется",
+                    title = tr("library.cherez_zerkalo"),
+                    badgeText = tr("library.rekomenduetsya"),
                     isRecommended = true,
-                    hint = "Через ваш сервер · дальше все части $collectionGenitive",
+                    hint = tr("library.cherez_vash_server_dalshe", "collectionGenitive" to collectionGenitive),
                     url = mirror,
                     onPlay = { url ->
                         val list = followingFiles.filter { f -> f.link != null }
@@ -1487,10 +1487,10 @@ private fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPla
                 Spacer(Modifier.height(10.dp))
 
                 SourceCard(
-                    title = "Напрямую",
-                    badgeText = "Стабильный источник",
+                    title = tr("library.napryamuyu"),
+                    badgeText = tr("library.stabilnyy_istochnik"),
                     isRecommended = false,
-                    hint = "Прямая ссылка AllDebrid · откроется выбранный фильм",
+                    hint = tr("library.pryamaya_ssylka_alldebrid_otkr"),
                     url = direct,
                     onPlay = { url ->
                         onPlay(PlayRequest(url, currentTitle, null, subs, listOf(watchKey(t.magnetId, currentFile)), audio, fromStart = fromStart))
@@ -1506,7 +1506,7 @@ private fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPla
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
                     Column(Modifier.weight(1f)) {
                         Text(currentTitle, fontFamily = Unbounded, fontWeight = FontWeight.Bold, fontSize = 20.sp, color = Color.White)
-                        val extraDetails = (if (audio.isNotEmpty()) " · озвучек: ${audio.size}" else "") + (if (subs.isNotEmpty()) " · субтитров: ${subs.size}" else "")
+                        val extraDetails = (if (audio.isNotEmpty()) tr("library.ozvuchek_size", "size" to audio.size) else "") + (if (subs.isNotEmpty()) tr("library.subtitrov_size", "size" to subs.size) else "")
                         Text(sub + extraDetails, color = Color(0xFF8E96A8), fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
                     }
                     CloseCircleButton(onClick = onDismiss)
@@ -1514,16 +1514,16 @@ private fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPla
 
                 resumeAt?.let { at ->
                     Row(Modifier.fillMaxWidth().padding(bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        StartOption("▶  С ${clock(at)}", "продолжить с прошлого места", !fromStart, Modifier.weight(1f)) { fromStart = false }
-                        StartOption("⟲  С начала", "смотреть заново", fromStart, Modifier.weight(1f)) { fromStart = true }
+                        StartOption(tr("library.s_p", "p" to clock(at)), tr("library.prodolzhit_s_proshlogo_mesta"), !fromStart, Modifier.weight(1f)) { fromStart = false }
+                        StartOption(tr("library.s_nachala"), tr("library.smotret_zanovo"), fromStart, Modifier.weight(1f)) { fromStart = true }
                     }
                 }
 
                 SourceCard(
-                    title = "Через зеркало",
-                    badgeText = "Рекомендуется",
+                    title = tr("library.cherez_zerkalo"),
+                    badgeText = tr("library.rekomenduetsya"),
                     isRecommended = true,
-                    hint = if (playlist != null) "Через ваш сервер · дальше все серии сезона" else "Трафик идёт через ваш сервер",
+                    hint = if (playlist != null) tr("library.cherez_vash_server_dalshe_2") else tr("library.trafik_idet_cherez_vash"),
                     url = mirror,
                     onPlay = { url ->
                         val list = followingFiles.filter { f -> f.link != null }
@@ -1543,10 +1543,10 @@ private fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPla
                 Spacer(Modifier.height(10.dp))
 
                 SourceCard(
-                    title = "Напрямую",
-                    badgeText = "Стабильный источник",
+                    title = tr("library.napryamuyu"),
+                    badgeText = tr("library.stabilnyy_istochnik"),
                     isRecommended = false,
-                    hint = "Прямая ссылка AllDebrid",
+                    hint = tr("library.pryamaya_ssylka_alldebrid"),
                     url = direct,
                     onPlay = { url ->
                         onPlay(PlayRequest(url, currentTitle, null, subs, listOf(watchKey(t.magnetId, currentFile)), audio, fromStart = fromStart))
@@ -1556,24 +1556,24 @@ private fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPla
 
                 // Selectors for Season and Episode
                 val seasonItems = seasons.mapIndexed { idx, s ->
-                    val sLabel = if (s.season == 0) "Спец. материалы" else "${s.season} сезон"
+                    val sLabel = if (s.season == 0) tr("library.spec_materialy") else tr("library.season_sezon", "season" to s.season)
                     sLabel to {
                         selectedSeasonIdx = idx
                         selectedEpisodeIdx = 0
                     }
                 }
                 val episodeItems = currentSeason.items.mapIndexed { idx, ep ->
-                    val epLabel = if (ep.title != null) "${ep.episode}. ${ep.title}" else "${ep.episode} серия"
+                    val epLabel = if (ep.title != null) "${ep.episode}. ${ep.title}" else tr("library.episode_seriya", "episode" to ep.episode)
                     epLabel to {
                         selectedEpisodeIdx = idx
                     }
                 }
 
                 Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    val currentSLabel = if (currentSeason.season == 0) "Спец." else "${currentSeason.season} сезон"
-                    val currentELabel = "${currentEpisode.episode} серия"
-                    DropdownSelector(label = "Сезон", valueText = currentSLabel, modifier = Modifier.weight(1f), items = seasonItems)
-                    DropdownSelector(label = "Серия", valueText = currentELabel, modifier = Modifier.weight(1f), items = episodeItems)
+                    val currentSLabel = if (currentSeason.season == 0) tr("library.spec") else tr("library.season_sezon", "season" to currentSeason.season)
+                    val currentELabel = tr("library.episode_seriya", "episode" to currentEpisode.episode)
+                    DropdownSelector(label = tr("library.sezon"), valueText = currentSLabel, modifier = Modifier.weight(1f), items = seasonItems)
+                    DropdownSelector(label = tr("library.seriya"), valueText = currentELabel, modifier = Modifier.weight(1f), items = episodeItems)
                 }
 
                 Spacer(Modifier.height(14.dp))
@@ -1584,7 +1584,7 @@ private fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPla
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
                     Column(Modifier.weight(1f)) {
                         Text(currentTitle, fontFamily = Unbounded, fontWeight = FontWeight.Bold, fontSize = 20.sp, color = Color.White)
-                        val extraDetails = (if (audio.isNotEmpty()) " · озвучек: ${audio.size}" else "") + (if (subs.isNotEmpty()) " · субтитров: ${subs.size}" else "")
+                        val extraDetails = (if (audio.isNotEmpty()) tr("library.ozvuchek_size", "size" to audio.size) else "") + (if (subs.isNotEmpty()) tr("library.subtitrov_size", "size" to subs.size) else "")
                         Text(sub + extraDetails, color = Color(0xFF8E96A8), fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
                     }
                     CloseCircleButton(onClick = onDismiss)
@@ -1592,16 +1592,16 @@ private fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPla
 
                 resumeAt?.let { at ->
                     Row(Modifier.fillMaxWidth().padding(bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        StartOption("▶  С ${clock(at)}", "продолжить с прошлого места", !fromStart, Modifier.weight(1f)) { fromStart = false }
-                        StartOption("⟲  С начала", "смотреть заново", fromStart, Modifier.weight(1f)) { fromStart = true }
+                        StartOption(tr("library.s_p", "p" to clock(at)), tr("library.prodolzhit_s_proshlogo_mesta"), !fromStart, Modifier.weight(1f)) { fromStart = false }
+                        StartOption(tr("library.s_nachala"), tr("library.smotret_zanovo"), fromStart, Modifier.weight(1f)) { fromStart = true }
                     }
                 }
 
                 SourceCard(
-                    title = "Через зеркало",
-                    badgeText = "Рекомендуется",
+                    title = tr("library.cherez_zerkalo"),
+                    badgeText = tr("library.rekomenduetsya"),
                     isRecommended = true,
-                    hint = "Трафик идёт через ваш сервер",
+                    hint = tr("library.trafik_idet_cherez_vash"),
                     url = mirror,
                     onPlay = { url ->
                         onPlay(PlayRequest(url, currentTitle, null, subs, listOf(watchKey(t.magnetId, currentFile)), audio, fromStart = fromStart))
@@ -1612,10 +1612,10 @@ private fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPla
                 Spacer(Modifier.height(10.dp))
 
                 SourceCard(
-                    title = "Напрямую",
-                    badgeText = "Стабильный источник",
+                    title = tr("library.napryamuyu"),
+                    badgeText = tr("library.stabilnyy_istochnik"),
                     isRecommended = false,
-                    hint = "Прямая ссылка AllDebrid",
+                    hint = tr("library.pryamaya_ssylka_alldebrid"),
                     url = direct,
                     onPlay = { url ->
                         onPlay(PlayRequest(url, currentTitle, null, subs, listOf(watchKey(t.magnetId, currentFile)), audio, fromStart = fromStart))
@@ -1674,10 +1674,10 @@ private fun SourceCard(
         Text(hint, fontFamily = Onest, fontSize = 13.sp, color = Color(0xFF7E879B), modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
 
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            PlayActionButton(text = "Смотреть", enabled = url != null, modifier = Modifier.weight(1f)) {
+            PlayActionButton(text = tr("library.smotret"), enabled = url != null, modifier = Modifier.weight(1f)) {
                 url?.let(onPlay)
             }
-            CopyActionButton(text = "Копировать ссылку", enabled = url != null, modifier = Modifier.weight(1f)) {
+            CopyActionButton(text = tr("library.kopirovat_ssylku"), enabled = url != null, modifier = Modifier.weight(1f)) {
                 url?.let(onCopy)
             }
         }
@@ -1808,7 +1808,7 @@ private fun CloseBottomButton(onClick: () -> Unit) {
             .hoverClick(src, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        Text("Закрыть", fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = Color.White)
+        Text(tr("library.zakryt"), fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = Color.White)
     }
 }
 

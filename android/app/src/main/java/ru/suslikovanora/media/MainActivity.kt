@@ -120,7 +120,7 @@ class MainActivity : ComponentActivity() {
         }?.trim() ?: return
         val link = Regex("""magnet:\?\S+""", RegexOption.IGNORE_CASE).find(text)?.value
             ?: Regex("""https://\S+""").find(text)?.value ?: return
-        add.mode = 0; add.input = link; add.status = "Нажмите «Добавить», чтобы отправить в AllDebrid"; add.statusOk = true
+        add.mode = 0; add.input = link; add.status = tr("main.nazhmite_dobavit_chtoby_otprav"); add.statusOk = true
         tab = Tab.Links
     }
 
@@ -235,7 +235,7 @@ class MainActivity : ComponentActivity() {
     ) {
         val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return
         if (uri.scheme !in listOf("http", "https")) {
-            Toast.makeText(this, "Неподдерживаемая ссылка", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, tr("main.nepodderzhivaemaya_ssylka"), Toast.LENGTH_SHORT).show()
             return
         }
         // A playlist may only come from our own site: it is fetched without any credentials.
@@ -244,7 +244,7 @@ class MainActivity : ComponentActivity() {
         startActivity(Intent(this, PlayerActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP) // a second tap reuses the running player instead of stacking another
             putExtra(PlayerActivity.EXTRA_URL, uri.toString())
-            putExtra(PlayerActivity.EXTRA_TITLE, title ?: "Видео")
+            putExtra(PlayerActivity.EXTRA_TITLE, title ?: tr("main.video"))
             playlistUri?.let { putExtra(PlayerActivity.EXTRA_PLAYLIST, it.toString()) }
             if (subUrls.isNotEmpty()) putStringArrayListExtra(PlayerActivity.EXTRA_SUB_URLS, ArrayList(subUrls))
             if (watchKeys.isNotEmpty()) putStringArrayListExtra(PlayerActivity.EXTRA_WATCH_KEYS, ArrayList(watchKeys))

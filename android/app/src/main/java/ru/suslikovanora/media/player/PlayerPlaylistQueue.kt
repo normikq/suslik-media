@@ -13,6 +13,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import java.net.HttpURLConnection
 import java.net.URL
+import ru.suslikovanora.media.tr
 
 /**
  * Manages video playlist queue (.m3u), episode transitions,
@@ -64,7 +65,7 @@ class PlayerPlaylistQueue(
                 playEntry(queueIndex + 1)
                 return
             }
-            nextCardTimer?.text = "Через $countdown с"
+            nextCardTimer?.text = tr("playerplaylist.cherez_countdown_s", "countdown" to countdown)
             countdown--
             handler.postDelayed(this, 1000L)
         }
@@ -84,7 +85,7 @@ class PlayerPlaylistQueue(
             isClickable = true
         }
         card.addView(TextView(context).apply {
-            text = "Следующая серия"
+            text = tr("player.sleduyuschaya_seriya")
             setTextColor(0xFF8E96A8.toInt())
             textSize = 13f
         })
@@ -109,7 +110,7 @@ class PlayerPlaylistQueue(
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, dp(10), 0, 0)
         }
-        nextRow.addView(pillButtonBuilder("▶  Смотреть сейчас").apply {
+        nextRow.addView(pillButtonBuilder(tr("playerplaylist.smotret_seychas")).apply {
             background = GradientDrawable().apply {
                 cornerRadius = dp(22).toFloat()
                 setColor(0xFFFFB02E.toInt())
@@ -121,7 +122,7 @@ class PlayerPlaylistQueue(
             }
         }, LinearLayout.LayoutParams(-2, dp(42)).apply { marginEnd = dp(8) })
 
-        nextRow.addView(pillButtonBuilder("Отмена").apply {
+        nextRow.addView(pillButtonBuilder(tr("playerplaylist.otmena")).apply {
             setOnClickListener {
                 hideNextCard()
                 callback.showControlsTemporarily()

@@ -103,7 +103,7 @@ object Updater {
         val ext = info.file.substringAfterLast('.', "msi").lowercase().takeIf { it == "msi" || it == "exe" } ?: "msi"
         val out = File(dir, "Suslik-Media-${info.version}.$ext")
         val res = Api.client.send(Api.request(info.url).timeout(java.time.Duration.ofMinutes(30)).GET().build(), HttpResponse.BodyHandlers.ofInputStream())
-        if (res.statusCode() != 200) throw Api.HttpError(res.statusCode(), "Сервер не отдал файл обновления (${res.statusCode()})")
+        if (res.statusCode() != 200) throw Api.HttpError(res.statusCode(), tr("update.server_ne_otdal_fayl", "p" to res.statusCode()))
         val total = res.headers().firstValueAsLong("content-length").orElse(info.size)
         var done = 0L; var lastStep = -1
         res.body().use { input ->
@@ -156,7 +156,7 @@ object Updater {
     }
 }
 
-private fun mb(bytes: Long) = if (bytes > 0) "%.1f МБ".format(bytes / 1048576.0) else ""
+private fun mb(bytes: Long) = if (bytes > 0) tr("update.f_mb").format(bytes / 1048576.0) else ""
 
 /** Checks once at start (after sign-in); a newer version lights up the update button in the header. */
 @Composable
@@ -240,9 +240,9 @@ fun UpdateButton() {
                 }
             }
             val label = when {
-                busy -> if ((progress ?: 0f) >= 1f) "Запуск установщика…" else "${((progress ?: 0f) * 100).toInt()}%"
-                failed && hovered -> "Ошибка: ${Updater.error!!.take(40)} — повторить"
-                hovered -> "Обновить до ${i.version}" + (if (i.beta) " (бета)" else "") + (mb(i.size).takeIf { it.isNotEmpty() }?.let { " · $it" } ?: "")
+                busy -> if ((progress ?: 0f) >= 1f) tr("update.zapusk_ustanovschika") else "${((progress ?: 0f) * 100).toInt()}%"
+                failed && hovered -> tr("update.oshibka_p_povtorit", "p" to Updater.error!!.take(40))
+                hovered -> tr("update.obnovit_do_version", "version" to i.version) + (if (i.beta) tr("update.beta") else "") + (mb(i.size).takeIf { it.isNotEmpty() }?.let { " · $it" } ?: "")
                 else -> null
             }
             if (label != null) Text(label, color = if (failed) Sm.bad else Sm.lampInk, fontFamily = Onest, fontWeight = FontWeight.SemiBold,

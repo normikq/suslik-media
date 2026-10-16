@@ -31,6 +31,7 @@ import kotlinx.coroutines.launch
 import ru.suslikovanora.media.ui.Onest
 import ru.suslikovanora.media.ui.Sm
 import ru.suslikovanora.media.ui.Unbounded
+import ru.suslikovanora.media.tr
 
 /** Native version of the website's login: one shared password; the session cookie is shared with the WebView. */
 @Composable
@@ -60,27 +61,27 @@ fun LoginScreen(store: LibraryStore, onLoggedIn: () -> Unit) {
         BrandHeader(onLogout = null)
         Column(Modifier.graphicsLayer { alpha = reveal.value; translationY = (1f - reveal.value) * 24f }) {
             Spacer(Modifier.height(48.dp))
-            Text("Все ваши ссылки в одном месте", color = Sm.muted, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+            Text(tr("login.vse_vashi_ssylki_v"), color = Sm.muted, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp)
             Text(
-                "Найдите.\nРазблокируйте.\nСмотрите как удобно.",
+                tr("login.naydite_razblokiruyte_smotrite"),
                 color = Sm.text, fontFamily = Unbounded, fontWeight = FontWeight.Bold,
                 fontSize = 30.sp, lineHeight = 34.sp, letterSpacing = (-0.8).sp,
                 modifier = Modifier.padding(top = 4.dp)
             )
             Text(
-                "Приватный портал для ссылок и внешних видеоплееров.", color = Sm.muted, fontFamily = Onest, fontSize = 16.sp,
+                tr("login.privatnyy_portal_dlya_ssylok"), color = Sm.muted, fontFamily = Onest, fontSize = 16.sp,
                 lineHeight = 24.sp, modifier = Modifier.padding(top = 14.dp, bottom = 26.dp)
             )
             Panel {
-                Text("Войти", fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 19.sp, color = Sm.text)
-                Text("Введите общий пароль доступа.", color = Sm.muted, fontFamily = Onest, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
-                SearchField(value = password, onValue = { password = it }, placeholder = "Пароль доступа", password = true, onDone = { submit() })
+                Text(tr("login.voyti"), fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 19.sp, color = Sm.text)
+                Text(tr("login.vvedite_obschiy_parol_dostupa"), color = Sm.muted, fontFamily = Onest, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
+                SearchField(value = password, onValue = { password = it }, placeholder = tr("login.parol_dostupa"), password = true, onDone = { submit() })
                 Spacer(Modifier.height(12.dp))
-                LampButton(if (busy) "Выполняется вход…" else "Войти", enabled = !busy && password.isNotBlank(), modifier = Modifier.fillMaxWidth()) { submit() }
+                LampButton(if (busy) tr("login.vypolnyaetsya_vhod") else tr("login.voyti"), enabled = !busy && password.isNotBlank(), modifier = Modifier.fillMaxWidth()) { submit() }
                 error?.let { Text(it, color = Sm.bad, fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(top = 10.dp)) }
             }
             Text(
-                "Используйте только контент и ссылки, к которым у вас есть разрешённый доступ.",
+                tr("login.ispolzuyte_tolko_kontent_i"),
                 color = Color5f677a, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 16.dp)
             )
         }

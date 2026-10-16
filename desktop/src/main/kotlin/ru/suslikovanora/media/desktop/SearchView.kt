@@ -51,7 +51,7 @@ import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Date
 
-enum class Tab(val label: String) { Library("Библиотека"), Search("Поиск раздач"), Add("Magnet / торрент") }
+enum class Tab(val label: String) { Library(tr("search.biblioteka")), Search(tr("search.poisk_razdach")), Add(tr("search.magnet_torrent")) }
 
 /**
  * The site's sliding amber "lens" tabs. [lens] is the animated tab position (0f..1f), kept by the main window so the
@@ -108,8 +108,8 @@ fun SearchView(lib: Library, header: @Composable () -> Unit) {
 
     fun run() {
         val q = query.trim()
-        if (q.length < 2 || busy) { status = "Введите минимум 2 символа."; statusOk = false; return }
-        busy = true; status = "Опрашиваем трекеры…"; statusOk = true
+        if (q.length < 2 || busy) { status = tr("search.vvedite_minimum_simvola"); statusOk = false; return }
+        busy = true; status = tr("search.oprashivaem_trekery"); statusOk = true
         scope.launch {
             try {
                 val j = Api.get("/api/search?q=" + URLEncoder.encode(q, "UTF-8"))
@@ -124,29 +124,29 @@ fun SearchView(lib: Library, header: @Composable () -> Unit) {
                 val pa = j.optJSONArray("providers")
                 providers = (0 until (pa?.length() ?: 0)).mapNotNull { i -> pa!!.optJSONObject(i)?.let { Provider(it.optString("name"), it.optBoolean("ok"), it.optInt("count"), it.optString("error")) } }
                 val failed = providers.count { !it.ok }
-                status = if (hits.isEmpty()) "Ничего не найдено." else "Найдено ${j.optInt("total", hits.size)} за ${"%.1f".format(j.optLong("tookMs") / 1000.0)} с" + if (failed > 0) " · не ответили: $failed" else ""
+                status = if (hits.isEmpty()) tr("search.nichego_ne_naydeno") else tr("search.naydeno_p_za_p", "total" to j.optInt("total", hits.size), "sec" to "%.1f".format(j.optLong("tookMs") / 1000.0)) + if (failed > 0) tr("search.ne_otvetili_failed", "failed" to failed) else ""
                 statusOk = hits.isNotEmpty()
             } catch (e: Exception) { status = Api.describe(e); statusOk = false } finally { busy = false }
         }
     }
 
     fun add(h: Hit) {
-        notes.value = notes.value + (h.id to ("Добавляю…" to true))
+        notes.value = notes.value + (h.id to (tr("search.dobavlyayu") to true))
         scope.launch {
             try {
                 val r = Api.post("/api/search/add", JSONObject().put("id", h.id))
                 val id = r.optLong("id")
-                if (r.optBoolean("ready")) { notes.value = notes.value + (h.id to ("Готово — уже в библиотеке" to true)); lib.refresh(); return@launch }
-                notes.value = notes.value + (h.id to ("Добавлено, AllDebrid качает…" to true))
+                if (r.optBoolean("ready")) { notes.value = notes.value + (h.id to (tr("add.gotovo_uzhe_v_biblioteke") to true)); lib.refresh(); return@launch }
+                notes.value = notes.value + (h.id to (tr("add.dobavleno_alldebrid_kachaet") to true))
                 val started = System.currentTimeMillis()
                 repeat(60) {
                     delay(if (System.currentTimeMillis() - started < 60_000) 4000 else 15000)
                     val st = runCatching { Api.get("/api/magnets/$id") }.getOrNull() ?: return@repeat
                     val total = st.optLong("size"); val done = st.optLong("downloaded")
                     val code = st.optInt("statusCode")
-                    if (code == 4 || st.optBoolean("ready")) { notes.value = notes.value + (h.id to ("Готово — файлы в библиотеке" to true)); lib.refresh(); return@launch }
-                    if (code >= 5) { notes.value = notes.value + (h.id to ("Ошибка: ${st.optString("status")}" to false)); return@launch }
-                    notes.value = notes.value + (h.id to ("${st.optString("status").ifBlank { "Обработка" }}${if (total > 0) " · ${done * 100 / total}%" else ""}" to true))
+                    if (code == 4 || st.optBoolean("ready")) { notes.value = notes.value + (h.id to (tr("add.gotovo_fayly_v_biblioteke") to true)); lib.refresh(); return@launch }
+                    if (code >= 5) { notes.value = notes.value + (h.id to (tr("add.oshibka_p", "p" to st.optString("status")) to false)); return@launch }
+                    notes.value = notes.value + (h.id to ("${st.optString("status").ifBlank { tr("add.obrabotka") }}${if (total > 0) " · ${done * 100 / total}%" else ""}" to true))
                 }
             } catch (e: Exception) { notes.value = notes.value + (h.id to (Api.describe(e) to false)) }
         }
@@ -164,13 +164,13 @@ fun SearchView(lib: Library, header: @Composable () -> Unit) {
         // The header (logo, tabs, log out) is drawn by the main window above the pages, so it never moves.
         item {
             Panel {
-                Text("Поиск раздач", fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 22.sp, color = Sm.text)
-                Text("Один запрос — сразу по нескольким трекерам. Результат добавляется в вашу библиотеку AllDebrid.", color = Sm.muted,
+                Text(tr("search.poisk_razdach"), fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 22.sp, color = Sm.text)
+                Text(tr("search.odin_zapros_srazu_po"), color = Sm.muted,
                     fontFamily = Onest, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.weight(1f)) { Field(query, { query = it }, "Название фильма или сериала…", onDone = { run() }) }
+                    Box(Modifier.weight(1f)) { Field(query, { query = it }, tr("search.nazvanie_filma_ili_seriala"), onDone = { run() }) }
                     Spacer(Modifier.width(10.dp))
-                    LampButton(if (busy) "Ищем…" else "Найти", enabled = !busy) { run() }
+                    LampButton(if (busy) tr("search.ischem") else tr("search.nayti"), enabled = !busy) { run() }
                 }
                 if (providers.isNotEmpty()) FlowRow(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     providers.forEach { p ->
@@ -182,13 +182,13 @@ fun SearchView(lib: Library, header: @Composable () -> Unit) {
                 }
                 status?.let { Text(it, color = if (statusOk) Sm.ok else Sm.bad, fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(top = 10.dp)) }
                 if (hits.isNotEmpty()) Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    for ((k, label) in listOf("video" to "Фильмы и сериалы", "movie" to "Только фильмы", "series" to "Только сериалы", "all" to "Всё")) {
+                    for ((k, label) in listOf("video" to tr("search.filmy_i_serialy"), "movie" to tr("search.tolko_filmy"), "series" to tr("search.tolko_serialy"), "all" to tr("search.vse"))) {
                         Chip(label, kind == k) { kind = k }
                     }
-                    Chip("Только с сидами", onlySeeded) { onlySeeded = !onlySeeded }
-                    Box(Modifier.weight(1f)) { Field(refine, { refine = it }, "Уточнить: 1080p, 2160p, rus…") }
+                    Chip(tr("search.tolko_s_sidami"), onlySeeded) { onlySeeded = !onlySeeded }
+                    Box(Modifier.weight(1f)) { Field(refine, { refine = it }, tr("search.utochnit_p_p_rus")) }
                 }
-                if (hits.size != shown.size) Text("Скрыто фильтрами: ${hits.size - shown.size}", color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 8.dp))
+                if (hits.size != shown.size) Text(tr("search.skryto_filtrami_p", "p" to hits.size - shown.size), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 8.dp))
             }
             Spacer(Modifier.height(10.dp))
         }
@@ -210,14 +210,14 @@ fun SearchView(lib: Library, header: @Composable () -> Unit) {
                         Text("↓ ${h.leechers}", color = Sm.muted, fontFamily = Onest, fontSize = 13.sp)
                         if (h.ru) Text("RU", color = Color.White, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = 11.sp,
                             modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0xFF282E3C)).border(1.dp, Color(0xFF3A4356), RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 1.dp))
-                        when (h.kind) { "series" -> "сериал"; "movie" -> "фильм"; else -> null }?.let { Text(it, color = Sm.muted, fontFamily = Onest, fontSize = 13.sp) }
+                        when (h.kind) { "series" -> tr("search.serial"); "movie" -> tr("search.film"); else -> null }?.let { Text(it, color = Sm.muted, fontFamily = Onest, fontSize = 13.sp) }
                         Text(h.source, color = Sm.muted, fontFamily = Onest, fontSize = 13.sp)
                         if (h.date.isNotBlank()) Text(h.date, color = Sm.muted, fontFamily = Onest, fontSize = 13.sp)
                     }
                     note?.let { (t, ok) -> Text(t, color = if (ok) Sm.ok else Sm.bad, fontFamily = Onest, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp)) }
                 }
                 Spacer(Modifier.width(12.dp))
-                LampButton("＋ В библиотеку", enabled = note == null || !note.second || note.first.startsWith("Ошибка")) { add(h) }
+                LampButton(tr("search.v_biblioteku"), enabled = note == null || !note.second) { add(h) }
             }
         }
     }

@@ -105,8 +105,8 @@ private fun WhatsNewCard(current: String, releases: List<Changelog.Release>, onD
                 .clickable(remember { MutableInteractionSource() }, indication = null) {}
                 .padding(start = 22.dp, end = 22.dp, top = 22.dp, bottom = 18.dp)
         ) {
-            Text("Что нового", color = Sm.text, fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 21.sp)
-            Text("Suslik Media обновился до версии $current", color = Sm.muted, fontFamily = Onest, fontSize = 13.5.sp,
+            Text(tr("whatsnew.chto_novogo"), color = Sm.text, fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 21.sp)
+            Text(tr("whatsnew.suslik_media_obnovilsya_do", "current" to current), color = Sm.muted, fontFamily = Onest, fontSize = 13.5.sp,
                 modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
             Column(Modifier.weight(1f, fill = false).heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -135,7 +135,7 @@ private fun WhatsNewCard(current: String, releases: List<Changelog.Release>, onD
                 }
             }
             Row(Modifier.fillMaxWidth().padding(top = 18.dp), horizontalArrangement = Arrangement.End) {
-                LampButton("Понятно") { close() }
+                LampButton(tr("whatsnew.ponyatno")) { close() }
             }
         }
     }

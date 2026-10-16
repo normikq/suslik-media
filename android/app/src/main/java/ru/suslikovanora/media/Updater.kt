@@ -121,8 +121,8 @@ object Updater {
         val dir = File(ctx.cacheDir, "updates").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
         val out = File(dir, "suslik-media-${info.version}.apk")
         Api.plain.newCall(Request.Builder().url(Api.BASE + info.url).get().build()).execute().use { res ->
-            if (!res.isSuccessful) throw Api.HttpError(res.code, "Сервер не отдал файл обновления (${res.code})")
-            val body = res.body ?: throw Api.HttpError(res.code, "Пустой ответ")
+            if (!res.isSuccessful) throw Api.HttpError(res.code, tr("updater.server_ne_otdal_fayl", "code" to res.code))
+            val body = res.body ?: throw Api.HttpError(res.code, tr("updater.pustoy_otvet"))
             val total = body.contentLength().takeIf { it > 0 } ?: info.size
             var done = 0L; var lastStep = -1
             body.byteStream().use { input ->
@@ -155,7 +155,7 @@ object Updater {
     }
 }
 
-private fun mb(bytes: Long) = if (bytes > 0) "%.1f МБ".format(bytes / 1048576.0) else ""
+private fun mb(bytes: Long) = if (bytes > 0) tr("updater.f_mb").format(bytes / 1048576.0) else ""
 
 /** "Доступна версия …": what is new, download progress, install. */
 @Composable
@@ -168,15 +168,15 @@ fun UpdateDialog(info: Updater.Info, onDismiss: () -> Unit) {
     var hint by remember { mutableStateOf<String?>(null) }
     fun installNow(f: File) {
         val act = ctx as? Activity ?: return
-        if (!Updater.install(act, f)) hint = "Разрешите установку из этого приложения и нажмите «Установить» ещё раз."
+        if (!Updater.install(act, f)) hint = tr("updater.razreshite_ustanovku_iz_etogo")
     }
     Dialog(onDismissRequest = { if (progress == null || file != null) onDismiss() }) {
         Column(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Sm.booth)
                 .border(1.dp, Sm.line2, RoundedCornerShape(20.dp)).padding(20.dp)
         ) {
-            Text("Доступна версия ${info.version}" + if (info.beta) " (бета)" else "", color = Sm.text, fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 18.sp)
-            Text("Установлена ${Updater.currentVersion(ctx)}" + (mb(info.size).takeIf { it.isNotEmpty() }?.let { " · $it" } ?: ""),
+            Text(tr("updater.dostupna_versiya_version", "version" to info.version) + if (info.beta) tr("updater.beta") else "", color = Sm.text, fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 18.sp)
+            Text(tr("updater.ustanovlena_p", "p" to Updater.currentVersion(ctx)) + (mb(info.size).takeIf { it.isNotEmpty() }?.let { " · $it" } ?: ""),
                 color = Sm.muted, fontFamily = Onest, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
             if (info.notes.isNotBlank()) {
                 Box(Modifier.fillMaxWidth().heightIn(max = 220.dp).clip(RoundedCornerShape(12.dp)).background(Sm.film).padding(12.dp)) {
@@ -190,15 +190,15 @@ fun UpdateDialog(info: Updater.Info, onDismiss: () -> Unit) {
                     Box(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(6.dp)).background(Sm.line)) {
                         Box(Modifier.fillMaxWidth(p.coerceIn(0f, 1f)).height(6.dp).background(Sm.lamp))
                     }
-                    Text("Загрузка… ${(p * 100).toInt()}%", color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 6.dp, bottom = 10.dp))
+                    Text(tr("updater.zagruzka_p", "p" to (p * 100).toInt()), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 6.dp, bottom = 10.dp))
                 }
             }
             (error ?: hint)?.let { Text(it, color = if (error != null) Sm.bad else Sm.lamp, fontFamily = Onest, fontSize = 13.sp, modifier = Modifier.padding(bottom = 10.dp)) }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 when {
-                    file != null -> LampButton("Установить", modifier = Modifier.weight(1f)) { installNow(file!!) }
-                    progress != null -> LampButton("Загрузка…", enabled = false, modifier = Modifier.weight(1f)) {}
-                    else -> LampButton("Обновить", modifier = Modifier.weight(1f)) {
+                    file != null -> LampButton(tr("updater.ustanovit"), modifier = Modifier.weight(1f)) { installNow(file!!) }
+                    progress != null -> LampButton(tr("updater.zagruzka"), enabled = false, modifier = Modifier.weight(1f)) {}
+                    else -> LampButton(tr("updater.obnovit"), modifier = Modifier.weight(1f)) {
                         error = null; progress = 0f
                         scope.launch {
                             try { val f = Updater.download(ctx, info) { progress = it }; file = f; installNow(f) }
@@ -206,9 +206,9 @@ fun UpdateDialog(info: Updater.Info, onDismiss: () -> Unit) {
                         }
                     }
                 }
-                if (progress == null || file != null) OutlineButton("Позже") { onDismiss() }
+                if (progress == null || file != null) OutlineButton(tr("updater.pozzhe")) { onDismiss() }
             }
-            if (progress == null && file == null) Text("Пропустить эту версию", color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp,
+            if (progress == null && file == null) Text(tr("updater.propustit_etu_versiyu"), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp,
                 modifier = Modifier.padding(top = 12.dp).clip(RoundedCornerShape(6.dp))
                     .clickableNoIndication { Updater.skip(ctx, info.version); onDismiss() }.padding(4.dp))
         }

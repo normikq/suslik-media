@@ -60,8 +60,8 @@ const val MIN_W = 1005
 const val MIN_H = 685
 
 fun main() {
-    // Compose's DirectX renderer crashes on some new GPUs/drivers (seen on RTX 50xx); OpenGL is stable.
-    if (System.getProperty("skiko.renderApi") == null) System.setProperty("skiko.renderApi", "OPENGL")
+    // Compose's DirectX renderer crashes on some new GPUs/drivers (seen on RTX 50xx); OpenGL is required for mpv OpenGL FBO.
+    System.setProperty("skiko.renderApi", "OPENGL")
     // VLC hands over every text (track names, chapters, titles) as UTF-8. Without this JNA decoded it with the
     // Windows code page — Russian voice-over / subtitle names came out as «РЎСѓР±С‚РёС‚СЂС‹».
     System.setProperty("jna.encoding", "UTF-8")
@@ -93,8 +93,9 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
     val vlcWarm = remember { CompletableDeferred<Boolean>() }
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
-            val ok = Vlc.available
-            if (ok) runCatching { VlcFactory.warm() } // the real engine, reused by every player
+            val mpv = ru.suslikovanora.media.desktop.player.EngineChoice.useMpv
+            val ok = Vlc.available || mpv
+            if (ok && !mpv) runCatching { VlcFactory.warm() } // the real engine, reused by every player
             vlcWarm.complete(ok)
         }
     }
@@ -132,7 +133,7 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
 
     Window(
         onCloseRequest = ::exitApplication,
-        title = (if (Diag.on) "Suslik Debug" else "Suslik Media").let { app -> playing?.let { "${it.title} — $app" } ?: "$app — медиатека" },
+        title = (if (Diag.on) "Suslik Debug" else "Suslik Media").let { app -> playing?.let { "${it.title} — $app" } ?: tr("app.app_mediateka", "app" to app) },
         icon = painterResource("icons/icon-256.png"),
         state = win,
         alwaysOnTop = onTop.value,
@@ -255,16 +256,16 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
           }
             if (preparing) AlertDialog(
                 onDismissRequest = {},
-                title = { Text("Запускаем VLC…") },
-                text = { Text("Первый запуск плеера занимает несколько секунд.") },
+                title = { Text(tr("app.zapuskaem_vlc")) },
+                text = { Text(tr("app.pervyy_zapusk_pleera_zanimaet")) },
                 confirmButton = {}
             )
             if (noVlc) AlertDialog(
                 onDismissRequest = { noVlc = false },
-                title = { Text("Нужен VLC") },
-                text = { Text("Для воспроизведения установите VLC 3.x для Windows (64-bit) и перезапустите приложение.") },
-                confirmButton = { TextButton({ noVlc = false; runCatching { Desktop.getDesktop().browse(URI("https://www.videolan.org/vlc/")) } }) { Text("Скачать VLC") } },
-                dismissButton = { TextButton({ noVlc = false }) { Text("Закрыть") } }
+                title = { Text(tr("app.nuzhen_vlc")) },
+                text = { Text(tr("app.dlya_vosproizvedeniya_ustanovi")) },
+                confirmButton = { TextButton({ noVlc = false; runCatching { Desktop.getDesktop().browse(URI("https://www.videolan.org/vlc/")) } }) { Text(tr("app.skachat_vlc")) } },
+                dismissButton = { TextButton({ noVlc = false }) { Text(tr("library.zakryt")) } }
             )
         }
     }

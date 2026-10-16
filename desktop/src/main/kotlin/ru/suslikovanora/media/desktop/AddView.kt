@@ -66,7 +66,7 @@ import java.io.File
 
 /** One thing the user added in this session, with its live AllDebrid status. */
 private class Added(val key: Long, val name: String) {
-    var note by mutableStateOf("Отправляю…")
+    var note by mutableStateOf(tr("add.otpravlyayu"))
     var ok by mutableStateOf(true)
     var progress by mutableStateOf(-1f) // 0..1 while downloading, -1 unknown
     var done by mutableStateOf(false)
@@ -74,18 +74,18 @@ private class Added(val key: Long, val name: String) {
 
 /** Polls AllDebrid's status of a magnet until it is ready (then refreshes the library) or fails. */
 private suspend fun follow(a: Added, id: Long, readyNow: Boolean, lib: Library) {
-    if (readyNow) { a.note = "Готово — уже в библиотеке"; a.done = true; lib.refresh(); return }
-    a.note = "Добавлено, AllDebrid качает…"
+    if (readyNow) { a.note = tr("add.gotovo_uzhe_v_biblioteke"); a.done = true; lib.refresh(); return }
+    a.note = tr("add.dobavleno_alldebrid_kachaet")
     val started = System.currentTimeMillis()
     repeat(120) {
         delay(if (System.currentTimeMillis() - started < 60_000) 4000 else 15000)
         val st = runCatching { Api.get("/api/magnets/$id") }.getOrNull() ?: return@repeat
         val total = st.optLong("size"); val got = st.optLong("downloaded")
         val code = st.optInt("statusCode")
-        if (code == 4 || st.optBoolean("ready")) { a.note = "Готово — файлы в библиотеке"; a.progress = 1f; a.done = true; lib.refresh(); return }
-        if (code >= 5) { a.note = "Ошибка: ${st.optString("status")}"; a.ok = false; return }
+        if (code == 4 || st.optBoolean("ready")) { a.note = tr("add.gotovo_fayly_v_biblioteke"); a.progress = 1f; a.done = true; lib.refresh(); return }
+        if (code >= 5) { a.note = tr("add.oshibka_p", "p" to st.optString("status")); a.ok = false; return }
         a.progress = if (total > 0) (got.toFloat() / total).coerceIn(0f, 1f) else -1f
-        a.note = st.optString("status").ifBlank { "Обработка" } + if (total > 0) " · ${got * 100 / total}%" else ""
+        a.note = st.optString("status").ifBlank { tr("add.obrabotka") } + if (total > 0) " · ${got * 100 / total}%" else ""
     }
 }
 
@@ -101,11 +101,11 @@ fun AddView(lib: Library, header: @Composable () -> Unit) {
 
     fun submitMagnet() {
         val links = magnet.split(Regex("\\s+")).map { it.trim() }.filter { it.startsWith("magnet:?") }
-        if (links.isEmpty()) { status = "Вставьте ссылку, которая начинается с magnet:?"; statusOk = false; return }
+        if (links.isEmpty()) { status = tr("add.vstavte_ssylku_kotoraya_nachin"); statusOk = false; return }
         magnet = ""; status = null
         for (link in links) {
             val dn = Regex("[?&]dn=([^&]+)").find(link)?.groupValues?.get(1)
-                ?.let { runCatching { java.net.URLDecoder.decode(it, "UTF-8") }.getOrNull() } ?: "Magnet-ссылка"
+                ?.let { runCatching { java.net.URLDecoder.decode(it, "UTF-8") }.getOrNull() } ?: tr("add.magnet_ssylka")
             val a = Added(System.nanoTime(), dn).also { added.add(0, it) }
             scope.launch {
                 try {
@@ -118,14 +118,14 @@ fun AddView(lib: Library, header: @Composable () -> Unit) {
 
     fun uploadFiles(files: List<File>) {
         val torrents = files.filter { it.isFile && it.name.endsWith(".torrent", ignoreCase = true) }
-        if (torrents.isEmpty()) { status = "Выберите файл .torrent"; statusOk = false; return }
+        if (torrents.isEmpty()) { status = tr("add.vyberite_fayl_torrent"); statusOk = false; return }
         status = null
         for (f in torrents) {
             val a = Added(System.nanoTime(), f.name.removeSuffix(".torrent")).also { added.add(0, it) }
             scope.launch {
                 try {
                     val bytes = withContext(Dispatchers.IO) { f.readBytes() }
-                    if (bytes.size > 1024 * 1024) { a.note = "Файл больше 1 МБ"; a.ok = false; return@launch }
+                    if (bytes.size > 1024 * 1024) { a.note = tr("add.fayl_bolshe_mb"); a.ok = false; return@launch }
                     val r = Api.postTorrent(bytes, f.name)
                     follow(a, r.optLong("id"), r.optBoolean("ready"), lib)
                 } catch (e: Exception) { a.note = Api.describe(e); a.ok = false }
@@ -134,7 +134,7 @@ fun AddView(lib: Library, header: @Composable () -> Unit) {
     }
 
     fun pickTorrent() {
-        val d = FileDialog(null as Frame?, "Выберите .torrent", FileDialog.LOAD).apply {
+        val d = FileDialog(null as Frame?, tr("add.vyberite_torrent"), FileDialog.LOAD).apply {
             isMultipleMode = true
             file = "*.torrent"
             setFilenameFilter { _, name -> name.endsWith(".torrent", ignoreCase = true) }
@@ -142,13 +142,13 @@ fun AddView(lib: Library, header: @Composable () -> Unit) {
         d.isVisible = true // native Windows dialog; returns when closed
         val picked = d.files.filter { it.name.endsWith(".torrent", ignoreCase = true) }
         val tooBig = picked.filter { it.length() > 1024 * 1024 }
-        if (tooBig.isNotEmpty()) { status = "Больше 1 МБ: ${tooBig.joinToString { it.name }}"; statusOk = false } else status = null
+        if (tooBig.isNotEmpty()) { status = tr("add.bolshe_mb_p", "p" to tooBig.joinToString { it.name }); statusOk = false } else status = null
         picked.filter { it.length() <= 1024 * 1024 && chosen.none { c -> c.absolutePath == it.absolutePath } }.forEach { chosen.add(it) }
     }
 
     fun pasteFromClipboard() {
         val text = runCatching { Toolkit.getDefaultToolkit().systemClipboard.getData(DataFlavor.stringFlavor) as String }.getOrNull()
-        if (text.isNullOrBlank()) { status = "В буфере обмена нет текста"; statusOk = false; return }
+        if (text.isNullOrBlank()) { status = tr("add.v_bufere_obmena_net"); statusOk = false; return }
         magnet = text.trim(); status = null
     }
 
@@ -156,13 +156,13 @@ fun AddView(lib: Library, header: @Composable () -> Unit) {
         // The header (logo, tabs, log out) is drawn by the main window above the pages, so it never moves.
         item {
             Panel {
-                Text("Добавить раздачу", fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 22.sp, color = Sm.text)
-                Text("Magnet-ссылка или файл .torrent — AllDebrid скачает, файлы появятся в библиотеке.", color = Sm.muted,
+                Text(tr("add.dobavit_razdachu"), fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 22.sp, color = Sm.text)
+                Text(tr("add.magnet_ssylka_ili_fayl"), color = Sm.muted,
                     fontFamily = Onest, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp, bottom = 16.dp))
-                Text("Выберите тип ввода", color = Sm.muted, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp, modifier = Modifier.padding(bottom = 8.dp))
+                Text(tr("add.vyberite_tip_vvoda"), color = Sm.muted, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp, modifier = Modifier.padding(bottom = 8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    ModeCard("↗", "Magnet-ссылка", "Вставьте magnet-ссылку", mode == 0, Modifier.weight(1f)) { mode = 0; status = null }
-                    ModeCard("⇧", "Torrent-файл", "Выберите файл .torrent", mode == 1, Modifier.weight(1f)) { mode = 1; status = null }
+                    ModeCard("↗", tr("add.magnet_ssylka"), tr("add.vstavte_magnet_ssylku"), mode == 0, Modifier.weight(1f)) { mode = 0; status = null }
+                    ModeCard("⇧", tr("add.torrent_fayl"), tr("add.vyberite_fayl_torrent"), mode == 1, Modifier.weight(1f)) { mode = 1; status = null }
                 }
                 Spacer(Modifier.height(16.dp))
                 // Same feel as the site: the input area glides in the direction of the chosen card, height follows smoothly.
@@ -176,18 +176,18 @@ fun AddView(lib: Library, header: @Composable () -> Unit) {
                     }
                 ) { m ->
                     if (m == 0) Column {
-                        Text("Magnet-ссылка", color = Sm.muted, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp, modifier = Modifier.padding(bottom = 6.dp))
+                        Text(tr("add.magnet_ssylka"), color = Sm.muted, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp, modifier = Modifier.padding(bottom = 6.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Box(Modifier.weight(1f)) { Field(magnet, { magnet = it }, "magnet:?xt=urn:btih:…", onDone = { submitMagnet() }) }
                             Spacer(Modifier.width(10.dp))
-                            LampButton("Добавить magnet", enabled = magnet.isNotBlank()) { submitMagnet() }
+                            LampButton(tr("add.dobavit_magnet"), enabled = magnet.isNotBlank()) { submitMagnet() }
                         }
                         Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            OutlineButton("Вставить из буфера") { pasteFromClipboard() }
-                            Text("Можно несколько ссылок через пробел.", color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(start = 12.dp))
+                            OutlineButton(tr("add.vstavit_iz_bufera")) { pasteFromClipboard() }
+                            Text(tr("add.mozhno_neskolko_ssylok_cherez"), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(start = 12.dp))
                         }
                     } else Column {
-                        Text("Torrent-файл  (до 1 МБ)", color = Sm.muted, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp, modifier = Modifier.padding(bottom = 6.dp))
+                        Text(tr("add.torrent_fayl_do_mb"), color = Sm.muted, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp, modifier = Modifier.padding(bottom = 6.dp))
                         DropZone(hasFiles = chosen.isNotEmpty()) { pickTorrent() }
                         chosen.forEach { f ->
                             Row(Modifier.padding(top = 10.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color(0xFF11141D))
@@ -204,7 +204,7 @@ fun AddView(lib: Library, header: @Composable () -> Unit) {
                         }
                         if (chosen.isNotEmpty()) {
                             Spacer(Modifier.height(12.dp))
-                            LampButton(if (chosen.size > 1) "Загрузить торренты (${chosen.size})" else "Загрузить торрент", modifier = Modifier.fillMaxWidth()) {
+                            LampButton(if (chosen.size > 1) tr("add.zagruzit_torrenty_size", "size" to chosen.size) else tr("add.zagruzit_torrent"), modifier = Modifier.fillMaxWidth()) {
                                 val list = chosen.toList(); chosen.clear(); uploadFiles(list)
                             }
                         }
@@ -212,12 +212,12 @@ fun AddView(lib: Library, header: @Composable () -> Unit) {
                 }
                 status?.let { Text(it, color = if (statusOk) Sm.ok else Sm.bad, fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(top = 12.dp)) }
             }
-            if (added.isNotEmpty()) Text("Добавлено сейчас", fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 16.sp, color = Sm.text,
+            if (added.isNotEmpty()) Text(tr("add.dobavleno_seychas"), fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 16.sp, color = Sm.text,
                 modifier = Modifier.padding(top = 26.dp, bottom = 10.dp))
         }
         items(added, key = { it.key }) { a -> AddedRow(a, Modifier.animateItem(fadeInSpec = tween(300), fadeOutSpec = tween(200))) }
         if (added.isEmpty()) item {
-            Text("Скачанное появится во вкладке «Библиотека». Лимит — две загрузки одновременно, как на сайте.",
+            Text(tr("add.skachannoe_poyavitsya_vo_vklad"),
                 color = Sm.muted, fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(top = 22.dp).widthIn(max = 640.dp))
         }
     }
@@ -293,9 +293,9 @@ private fun DropZone(hasFiles: Boolean, onPick: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
     ) {
         Text("⇧", color = if (hovered) Color.White else Color(0xFF8E96A8), fontSize = 28.sp, modifier = Modifier.graphicsLayer { translationY = iconLift })
-        Text(if (hasFiles) "Добавить ещё файл" else "Выберите файл .torrent", color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
+        Text(if (hasFiles) tr("add.dobavit_esche_fayl") else tr("add.vyberite_fayl_torrent"), color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
             modifier = Modifier.padding(top = 6.dp))
-        if (!hasFiles) Text("Нажмите, чтобы открыть файл на компьютере — можно выбрать несколько", color = Sm.muted, fontFamily = Onest, fontSize = 13.sp,
+        if (!hasFiles) Text(tr("add.nazhmite_chtoby_otkryt_fayl"), color = Sm.muted, fontFamily = Onest, fontSize = 13.sp,
             modifier = Modifier.padding(top = 4.dp))
     }
 }

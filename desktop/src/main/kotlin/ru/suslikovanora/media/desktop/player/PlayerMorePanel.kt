@@ -17,6 +17,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ru.suslikovanora.media.desktop.ui.Onest
+import ru.suslikovanora.media.desktop.tr
+import ru.suslikovanora.media.desktop.signed
 
 /** "⚙ Ещё": speed, subtitles, night mode, window modes, info and chapters — inline in the bar (popups would hide behind the video). */
 @OptIn(ExperimentalLayoutApi::class)
@@ -55,7 +57,7 @@ fun MorePanel(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Label("Скорость")
+            Label(tr("player.skorost"))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 rates.forEach { r ->
                     PlayerChip(fmtRate(r), kotlin.math.abs(r - rate) < 0.01f) { onRate(r) }
@@ -63,7 +65,7 @@ fun MorePanel(
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Label("Субтитры")
+            Label(tr("player.subtitry"))
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -72,43 +74,43 @@ fun MorePanel(
                     PlayerChip("$v%", v == subScale) { if (v != subScale) onSubScale(v) }
                 }
                 Spacer(Modifier.width(10.dp))
-                PlayerChip("−0.1 с", false) { onSubDelay(-100L) }
+                PlayerChip(tr("player.s"), false) { onSubDelay(-100L) }
                 Text(
-                    "${if (subDelay > 0) "+" else ""}${subDelay} мс",
+                    tr("player.p_subdelay_ms", "ms" to signed(subDelay)),
                     color = Color.White,
                     fontFamily = Onest,
                     fontSize = 13.sp,
                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 7.dp)
                 )
-                PlayerChip("+0.1 с", false) { onSubDelay(100L) }
-                if (subDelay != 0L) PlayerChip("Сброс", false) { onSubDelay(-subDelay) }
+                PlayerChip(tr("player.s_2"), false) { onSubDelay(100L) }
+                if (subDelay != 0L) PlayerChip(tr("player.sbros"), false) { onSubDelay(-subDelay) }
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Label("Режимы")
+            Label(tr("player.rezhimy"))
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                PlayerChip("🌙 Ночной звук", night) { onNight() }
-                PlayerChip("📌 Поверх окон (T)", onTop) { onOnTop() }
-                PlayerChip("▣ Мини-плеер (O)", mini) { onMini() }
-                PlayerChip("ⓘ Информация (I)", info) { onInfo() }
+                PlayerChip(tr("player.nochnoy_zvuk"), night) { onNight() }
+                PlayerChip(tr("player.poverh_okon_t"), onTop) { onOnTop() }
+                PlayerChip(tr("player.mini_pleer_o"), mini) { onMini() }
+                PlayerChip(tr("player.informaciya_i"), info) { onInfo() }
             }
         }
         if (chapters.size > 1) Row(verticalAlignment = Alignment.Top) {
-            Label("Главы")
+            Label(tr("player.glavy"))
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 chapters.take(40).forEachIndexed { i, (_, name) ->
-                    PlayerChip("${i + 1}. ${name.ifBlank { "Глава" }.take(28)}", i == current) { onChapter(i) }
+                    PlayerChip("${i + 1}. ${name.ifBlank { tr("player.glava") }.take(28)}", i == current) { onChapter(i) }
                 }
             }
         }
         Text(
-            "Размер субтитров и ночной звук применяются перезапуском потока с того же места.  Клавиши: < > скорость · Shift+[ ] субтитры · PgUp/PgDn главы",
+            tr("player.razmer_subtitrov_i_nochnoy"),
             color = Color.White.copy(alpha = 0.45f),
             fontFamily = Onest,
             fontSize = 11.5.sp

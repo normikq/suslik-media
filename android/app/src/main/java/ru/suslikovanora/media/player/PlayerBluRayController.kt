@@ -5,6 +5,7 @@ import org.videolan.libvlc.MediaPlayer
 import ru.suslikovanora.media.AppLog
 import ru.suslikovanora.media.core.BurstProxy
 import ru.suslikovanora.media.core.TsClock
+import ru.suslikovanora.media.tr
 
 /**
  * Controller for Blu-ray (.m2ts) and MPEG transport streams over HTTP.
@@ -85,7 +86,7 @@ class PlayerBluRayController(
         }
         if (tsProbed == currentUrl) return false
         tsProbed = currentUrl
-        callback.showStatus("Открываем…")
+        callback.showStatus(tr("playerbluray.otkryvaem"))
         Thread({
             val r = TsClock.probe(currentUrl)
             handler.post {

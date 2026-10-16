@@ -15,6 +15,7 @@ import org.videolan.libvlc.interfaces.IMedia
 import ru.suslikovanora.media.AppLog
 import ru.suslikovanora.media.Diag
 import ru.suslikovanora.media.core.BurstProxy
+import ru.suslikovanora.media.tr
 import java.util.Locale
 
 /**
@@ -147,6 +148,14 @@ class PlayerDiagnostics(
             softwareVideo += currentUrl
             AppLog.write("video: $codec ${t.width}x${t.height} — the hardware decoder gives no picture for VC-1, reopening with VLC's own decoder")
             callback.onReopenWithoutHardwareDecoder(callback.getPerceivedPosition())
+            return
+        }
+        // VLC names the codec by description ("aomedia's av1 video"), so AV1 never matched below and no warning was shown (16.10).
+        // libVLC 3.6.0's own MediaCodec module has no AV1 at all (no "video/av01" in libvlc.so): it always goes to software
+        // dav1d, even where the phone has an AV1 hardware decoder.
+        if (codec != null && (codec.contains("av1") || codec.contains("av01"))) {
+            AppLog.write("video: ${t.codec} ${t.width}x${t.height}, VLC has no hardware AV1 decoder (processor will decode)")
+            Toast.makeText(context, tr("player.av1_processorom", "w" to t.width, "h" to t.height), Toast.LENGTH_LONG).show()
             return
         }
         val mime = when (codec) {

@@ -4,6 +4,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Text
@@ -68,6 +70,8 @@ import uk.co.caprica.vlcj.media.MediaSlaveType
 import uk.co.caprica.vlcj.player.base.MediaPlayer
 import uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter
 import javax.swing.SwingUtilities
+import ru.suslikovanora.media.desktop.tr
+import ru.suslikovanora.media.desktop.signed
 
 /** Дольше всего прокси держит фильм, копя запас на сети медленнее фильма (как на Android). */
 private const val CATCH_UP_MAX_MS = 45_000L
@@ -113,16 +117,44 @@ fun PlayerView(
     }
 
     var nightMode by remember { mutableStateOf(ui.get("night") == "1") }
-    val subScale = remember { ui.get("subScale")?.toIntOrNull()?.coerceIn(50, 300) ?: 100 }
-    val factory = remember { VlcFactory.get(subScale) }
+    var subScale by remember { mutableStateOf(ui.get("subScale")?.toIntOrNull()?.coerceIn(50, 300) ?: 100) }
     val canvas = remember { java.awt.Canvas().apply { background = java.awt.Color.BLACK; isFocusable = false } }
-    val mp = remember {
-        factory.mediaPlayers().newEmbeddedMediaPlayer().also {
-            it.videoSurface().set(factory.videoSurfaces().newVideoSurface(canvas))
-            it.input().enableMouseInputHandling(false)
-            it.input().enableKeyInputHandling(false)
+    // libmpv включается флагом (см. EngineChoice). VLC создаётся лениво: в режиме mpv к нему не прикасаются.
+    val engBridge = remember { EngineBridge() }
+    val eng: PlayerEngine? = remember { if (EngineChoice.useMpv) MpvEngine(engBridge, PlaybackSettings.cacheMs(), subScale) else null }
+    val mp by remember {
+        lazy {
+            val factory = VlcFactory.get(subScale)
+            factory.mediaPlayers().newEmbeddedMediaPlayer().also {
+                it.videoSurface().set(factory.videoSurfaces().newVideoSurface(canvas))
+                it.input().enableMouseInputHandling(false)
+                it.input().enableKeyInputHandling(false)
+            }
         }
     }
+    // Вызовы движка в одном месте: mpv или VLC. Любой из них можно звать с потока управления.
+    fun eTime(): Long = eng?.timeMs ?: mp.status().time()
+    fun eSetTime(t: Long) { if (eng != null) eng.seekTo(t) else mp.controls().setTime(t) }
+    fun ePause(b: Boolean) { if (eng != null) eng.setPaused(b) else mp.controls().setPause(b) }
+    fun eMute(b: Boolean) { if (eng != null) eng.setMute(b) else mp.audio().setMute(b) }
+    fun eVolume(v: Int) { if (eng != null) eng.setVolume(v) else mp.audio().setVolume(v) }
+    fun eAudioDelay(ms: Long) { if (eng != null) eng.setAudioDelayMs(ms) else mp.audio().setDelay(ms * 1000L) }
+    fun eSubDelay(ms: Long) { if (eng != null) eng.setSubDelayMs(ms) else mp.subpictures().setDelay(ms * 1000L) }
+    fun eRate(r: Float) { if (eng != null) eng.setRate(r) else mp.controls().setRate(r) }
+    fun eStop() { if (eng != null) eng.stop() else mp.controls().stop() }
+    fun ePlayable(): Boolean = if (eng != null) eng.isPlayable else mp.status().isPlayable
+    fun eAudioTracks(): List<Pair<Int, String>> =
+        if (eng != null) eng.audioTracks().map { it.id to it.description }
+        else mp.audio().trackDescriptions().filter { it.id() != -1 }.map { it.id() to it.description() }
+    fun eSubTracks(): List<Pair<Int, String>> =
+        if (eng != null) eng.subtitleTracks().map { it.id to it.description }
+        else mp.subpictures().trackDescriptions().filter { it.id() != -1 }.map { it.id() to it.description() }
+    fun eAudioCur(): Int = if (eng != null) eng.audioTracks().firstOrNull { it.selected }?.id ?: -1 else mp.audio().track()
+    fun eSubCur(): Int = if (eng != null) eng.subtitleTracks().firstOrNull { it.selected }?.id ?: -1 else mp.subpictures().track()
+    fun eSetAudio(id: Int) { if (eng != null) eng.setAudioTrack(id) else mp.audio().setTrack(id) }
+    fun eSetSub(id: Int) { if (eng != null) eng.setSubtitleTrack(id) else mp.subpictures().setTrack(id) }
+    fun eDim(): Pair<Int, Int>? =
+        if (eng != null) eng.videoSize else mp.video().videoDimension()?.let { it.width to it.height }
 
     var index by remember { mutableStateOf(startIndex) }
     fun watchKey(i: Int = index) = req.watchKeys.getOrNull(i)
@@ -148,7 +180,7 @@ fun PlayerView(
     var tsStartAt by remember { mutableStateOf(0L) }
     var tsOpenDone by remember { mutableStateOf(true) }
     var tsAbsolute by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf<String?>("Открываем…") }
+    var status by remember { mutableStateOf<String?>(tr("player.otkryvaem")) }
     var volume by remember { mutableStateOf(ui.get("volume")?.toIntOrNull() ?: 100) }
     var lastVolumeWheelAt by remember { mutableStateOf(0L) }
     var queue by remember { mutableStateOf(listOf(Entry(req.title, req.url))) }
@@ -184,6 +216,7 @@ fun PlayerView(
     var bufferingSince by remember { mutableStateOf(0L) }
     // Сеть медленнее фильма: прокси держит фильм, пока не накопится запас (как на Android, см. PlayerActivity.maybeCatchUp)
     var catchingUp by remember { mutableStateOf(false) }
+    var catchUpStatus by remember { mutableStateOf<String?>(null) }
     var catchUpStartedAt by remember { mutableStateOf(0L) }
     var openedAt by remember { mutableStateOf(0L) }
     var catchUpEndedAt by remember { mutableStateOf(0L) }
@@ -210,9 +243,10 @@ fun PlayerView(
     var videoAspect by remember { mutableStateOf(16.0 / 9.0) }
     LaunchedEffect(Unit) {
         while (true) {
-            vlc {
-                val d = mp.video().videoDimension()
-                if (d != null && d.width > 0 && d.height > 0) videoAspect = d.width.toDouble() / d.height
+            val d = withContext(vlcThread) { runCatching { eDim() }.getOrNull() }
+            if (d != null && d.first > 0 && d.second > 0) {
+                val aspect = d.first.toDouble() / d.second
+                if (videoAspect != aspect) videoAspect = aspect
             }
             delay(1500)
         }
@@ -248,13 +282,32 @@ fun PlayerView(
         }
     }
 
+    fun applyDialogBounds(d: ComposeDialog?, r: java.awt.Rectangle) {
+        if (d == null || !d.isDisplayable) return
+        WindowMode.makeNoActivate(d)
+        if (d.bounds != r) {
+            val resized = d.width != r.width || d.height != r.height
+            // Сначала напрямую через Win32 (без отставания от главного окна); AWT подхватит новые границы сам
+            if (!WindowMode.moveNative(d, r.x, r.y, r.width, r.height)) {
+                if (resized) d.bounds = r else d.setLocation(r.x, r.y)
+            }
+            if (resized) d.revalidate()
+        }
+    }
+
     fun syncOverlayBounds() {
         if (parked || WindowMode.miniAnimating || owner?.isShowing != true) return
-        // Берем экранные координаты напрямую у canvas (если он показан), иначе у окна
-        val target = if (canvas.isShowing && canvas.width > 0 && canvas.height > 0) {
+        val topVis = topDialog?.isVisible == true
+        val botVis = bottomDialog?.isVisible == true
+        if (!barVisible && !topVis && !botVis && !mini) return
+
+        val root = (owner as? javax.swing.RootPaneContainer)?.contentPane
+        val target = if (root != null && root.isShowing && root.width > 0 && root.height > 0) {
+            root
+        } else if (canvas.isShowing && canvas.width > 0 && canvas.height > 0) {
             canvas
         } else {
-            (owner as? javax.swing.RootPaneContainer)?.contentPane ?: owner ?: return
+            owner ?: return
         }
 
         val loc = runCatching { target.locationOnScreen }.getOrNull() ?: return
@@ -265,7 +318,7 @@ fun PlayerView(
         if (mini) {
             topDialog?.isVisible = false
             val fullRect = java.awt.Rectangle(loc.x, loc.y, w, h)
-            bottomDialog?.takeIf { it.bounds != fullRect }?.let { it.bounds = fullRect; it.revalidate() }
+            applyDialogBounds(bottomDialog, fullRect)
             val d = bottomDialog ?: return
             val key = Triple(w, h, h)
             if (d.isDisplayable && key != lastClip) { lastClip = key; WindowMode.clipToBottom(d, h) }
@@ -277,8 +330,9 @@ fun PlayerView(
 
         val topRect = java.awt.Rectangle(loc.x, loc.y, w, topH)
         val bottomRect = java.awt.Rectangle(loc.x, loc.y + h - bottomH, w, bottomH)
-        topDialog?.takeIf { it.bounds != topRect }?.let { it.bounds = topRect; it.revalidate() }
-        bottomDialog?.takeIf { it.bounds != bottomRect }?.let { it.bounds = bottomRect; it.revalidate() }
+        applyDialogBounds(topDialog, topRect)
+        applyDialogBounds(bottomDialog, bottomRect)
+
         // Окно всегда высотой под меню (без перестройки и подёргиваний), но клики ловит только его нужная часть
         bottomDialog?.let { d ->
             val visible = if (tallBottom) bottomH else 220.coerceAtMost(bottomH)
@@ -289,7 +343,8 @@ fun PlayerView(
 
     fun grabFrame(): androidx.compose.ui.graphics.ImageBitmap? {
         val img = runCatching {
-            if (mp.status().isPlayable && mp.video().videoDimension() != null) {
+            if (eng != null) eng.snapshot(canvas.width.coerceIn(320, 1920))
+            else if (mp.status().isPlayable && mp.video().videoDimension() != null) {
                 mp.snapshots().get(canvas.width.coerceIn(320, 1920), 0)
             } else null
         }.getOrNull() ?: return null
@@ -299,9 +354,15 @@ fun PlayerView(
     }
 
     var openJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var ensureAudioJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var chaptersJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var canvasFocusJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
     fun open(url: String, startAt: Long, extras: Pair<List<String>, List<String>>) {
-        status = "Открываем…"
+        ensureAudioJob?.cancel()
+        chaptersJob?.cancel()
+        canvasFocusJob?.cancel()
+        status = tr("player.otkryvaem")
         prefsApplied = false
         chapters = emptyList()
         lastGood = startAt
@@ -331,7 +392,7 @@ fun PlayerView(
         PlayerLog.write("open ${url.substringBefore('?').substringAfterLast('/')} at ${startAt / 1000}s, voice-overs=${extras.first.size}, " +
             "buffer=${PlaybackSettings.cacheMs()}ms, reserve=${PlaybackSettings.burstMb()}MB")
         val playUrl = BurstProxy.wrap(url)
-        val isTs = TsClock.isTs(url)
+        val isTs = eng == null && TsClock.isTs(url)
         if (startAt > 0 && !isTs) opts += ":start-time=${startAt / 1000.0}"
         tsStartAt = startAt; tsOpenDone = !isTs; if (!isTs) { ts = null; tsAbsolute = false }
         prefLanguage("audio")?.let { opts += ":audio-language=$it" }
@@ -349,9 +410,14 @@ fun PlayerView(
                 withContext(Dispatchers.Main) { ts = if (tsLen > 0) TsPlayback(tsLen, url) else null; if (tsLen > 0) length = tsLen }
                 if (closing) return@launch
             }
-            if (mp.status().isPlayable) {
+            if (ePlayable()) {
                 grabFrame()
-                runCatching { mp.controls().stop() }
+                runCatching { eStop() }
+            }
+            if (eng != null) {
+                eng.open(playUrl, startAt, nightMode, prefLanguage("audio"), prefLanguage("spu"),
+                    extras.first.map { BurstProxy.wrap(it) }, extras.second)
+                return@launch
             }
             mp.media().prepare(playUrl, *opts.toTypedArray())
             extras.first.forEach { u -> runCatching { mp.media().slaves().add(MediaSlaveType.AUDIO, MediaSlavePriority.HIGHEST, BurstProxy.wrap(u)) } }
@@ -365,7 +431,7 @@ fun PlayerView(
     fun vlcSeekTo(t: Long) {
         lastGood = t
         val s = ts
-        if (s == null) { vlc { mp.controls().setTime(t) }; return }
+        if (s == null) { vlc { eSetTime(t) }; return }
         if (s.offset > 0 && t < s.offset + 2_000L) {
             PlayerLog.write("[ts] seek to ${t / 1000}s is before VLC's clock (starts at ${s.offset / 1000}s): reopening with the real clock")
             tsAbsolute = true; reopen(t); return
@@ -380,7 +446,7 @@ fun PlayerView(
 
     fun reseekHereNow() {
         if (ts != null) mp.controls().setPosition(mp.status().position())
-        else { val t = mp.status().time(); if (t > 0) mp.controls().setTime(t) }
+        else { val t = eTime(); if (t > 0) eSetTime(t) }
     }
 
     fun applyTrackNow() {
@@ -395,9 +461,9 @@ fun PlayerView(
         val audio = ui.get("audio:${seriesKey()}") ?: ui.get("audio:*")
         val spu = ui.get("spu:${seriesKey()}") ?: ui.get("spu:*")
         vlc {
-            if (audio != null) mp.audio().trackDescriptions().firstOrNull { it.description() == audio }?.let { if (mp.audio().track() != it.id()) { mp.audio().setTrack(it.id()); applyTrackNow() } }
-            if (spu == "__off__") { if (mp.subpictures().track() != -1) mp.subpictures().setTrack(-1) }
-            else if (spu != null) mp.subpictures().trackDescriptions().firstOrNull { it.description() == spu }?.let { if (mp.subpictures().track() != it.id()) mp.subpictures().setTrack(it.id()) }
+            if (audio != null) eAudioTracks().firstOrNull { it.second == audio }?.let { if (eAudioCur() != it.first) { eSetAudio(it.first); applyTrackNow() } }
+            if (spu == "__off__") { if (eSubCur() != -1) eSetSub(-1) }
+            else if (spu != null) eSubTracks().firstOrNull { it.second == spu }?.let { if (eSubCur() != it.first) eSetSub(it.first) }
         }
     }
 
@@ -406,7 +472,7 @@ fun PlayerView(
         savePos(time, length)
         index = i; nextIn = -1; currentUrl = queue[i].url; title = queue[i].title; retries = 0
         val url = currentUrl; val start = savedPos(i)
-        playing = false; started = false; time = start; lastGood = start; length = 0L; status = "Следующая серия…"
+        playing = false; started = false; time = start; lastGood = start; length = 0L; status = tr("player.sleduyuschaya_seriya")
         scope.launch {
             val extras = withTimeoutOrNull(4000) { sidecars(i).await() } ?: (emptyList<String>() to emptyList())
             if (index == i && !closing) open(url, start, extras)
@@ -415,6 +481,7 @@ fun PlayerView(
 
     fun trackList(audio: Boolean): List<Pair<Int, String>> {
         val map = LinkedHashMap<Int, String>()
+        if (eng != null) return runCatching { if (audio) eAudioTracks() else eSubTracks() }.getOrDefault(emptyList())
         runCatching {
             val desc = if (audio) mp.audio().trackDescriptions() else mp.subpictures().trackDescriptions()
             desc.filter { it.id() != -1 }.forEach { map[it.id()] = it.description() }
@@ -429,7 +496,7 @@ fun PlayerView(
                         t.description()?.takeIf { it.isNotBlank() },
                         t.language()?.takeIf { it.isNotBlank() }?.let { "[$it]" },
                         t.codecDescription()?.takeIf { it.isNotBlank() }
-                    ).joinToString(" ").ifBlank { "Дорожка ${t.id()}" }
+                    ).joinToString(" ").ifBlank { tr("player.dorozhka_p", "p" to t.id()) }
                     if (TsClock.isTs(currentUrl)) extra += name else map[t.id()] = name
                 }
             }
@@ -444,14 +511,36 @@ fun PlayerView(
     val trackMenuCache = remember { mutableMapOf<String, Pair<List<Pair<Int, String>>, Int>>() }
 
     fun openPicker(kind: String) {
+        tallBottom = true
+        syncOverlayBounds()
+        if (kind == "more") {
+            picker = "more"
+            return
+        }
+        val cached = trackMenuCache[kind]
+        if (cached != null) {
+            pickerItems = cached.first
+            pickerCurrent = cached.second
+            picker = kind
+        }
         scope.launch {
-            val fresh = vlcAwait(700) {
-                val audio = kind == "audio"
-                val list = trackList(audio)
-                (if (audio) list else listOf(-1 to "Выключить") + list) to
-                    runCatching { if (audio) mp.audio().track() else mp.subpictures().track() }.getOrDefault(-2)
+            val fresh = if (eng != null) {
+                withContext(vlcThread) {
+                    runCatching {
+                        val audio = kind == "audio"
+                        val list = if (audio) eAudioTracks() else listOf(-1 to tr("player.vyklyuchit")) + eSubTracks()
+                        val cur = if (audio) eAudioCur() else eSubCur()
+                        list to cur
+                    }.getOrNull()
+                }
+            } else {
+                vlcAwait(700) {
+                    val audio = kind == "audio"
+                    val list = trackList(audio)
+                    (if (audio) list else listOf(-1 to tr("player.vyklyuchit")) + list) to
+                        runCatching { if (audio) eAudioCur() else eSubCur() }.getOrDefault(-2)
+                }
             }
-            // VLC занят (сеть встала) — открываем меню с прошлым списком, а не оставляем кнопку мёртвой
             if (fresh != null) trackMenuCache[kind] = fresh
             val (items, cur) = fresh ?: trackMenuCache[kind] ?: (emptyList<Pair<Int, String>>() to -2)
             pickerItems = items; pickerCurrent = cur; picker = kind
@@ -472,7 +561,7 @@ fun PlayerView(
         if (!wasPaused) {
             playing = false; pausedAt = System.currentTimeMillis()
             supRef.get()?.paused()
-            vlc { mp.controls().setPause(true) }
+            vlc { ePause(true) }
         } else {
             val paused = if (pausedAt > 0) System.currentTimeMillis() - pausedAt else 0L
             val longPause = paused > 8_000L && !BurstProxy.isActive(currentUrl)
@@ -481,24 +570,29 @@ fun PlayerView(
             playing = true; pausedAt = 0L; vlcPaused = false
             val m = userMuted
             vlc {
-                mp.audio().setMute(m)
-                mp.controls().setPause(false)
+                eMute(m)
+                ePause(false)
                 if (longPause) reseekHereNow()
             }
         }
     }
 
-    fun flash(text: String, prefix: String) {
+    var flashJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    fun flash(text: String) {
         status = text
-        javax.swing.Timer(2000) { if (status?.startsWith(prefix) == true) status = null }.apply { isRepeats = false; start() }
+        flashJob?.cancel()
+        flashJob = scope.launch {
+            delay(2000)
+            if (status == text) status = null
+        }
     }
 
     fun ensureAudio() {
         vlc {
-            if (mp.audio().track() != -1) return@vlc
-            val first = mp.audio().trackDescriptions().firstOrNull { it.id() != -1 } ?: return@vlc
-            mp.audio().setTrack(first.id()); applyTrackNow()
-            SwingUtilities.invokeLater { flash("Звук: ${first.description()}", "Звук:") }
+            if (eAudioCur() != -1) return@vlc
+            val first = eAudioTracks().firstOrNull() ?: return@vlc
+            eSetAudio(first.first); applyTrackNow()
+            SwingUtilities.invokeLater { flash(tr("player.zvuk_p", "p" to first.second)) }
         }
     }
 
@@ -506,15 +600,15 @@ fun PlayerView(
         subDelay = (subDelay + ms).coerceIn(-10_000L, 10_000L)
         val d = subDelay
         ui.put("sdelay:${seriesKey()}", if (d == 0L) null else d.toString())
-        vlcExecutor.execute { runCatching { mp.subpictures().setDelay(d * 1000L) } }
-        flash("Субтитры: ${if (d > 0) "+" else ""}$d мс", "Субтитры:")
+        vlcExecutor.execute { runCatching { eSubDelay(d) } }
+        flash(tr("player.subtitry_p_d_ms", "ms" to signed(d)))
     }
 
     val rates = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
     fun setSpeed(r: Float) {
         rate = r; ui.put("rate", if (r == 1f) null else r.toString())
-        vlcExecutor.execute { runCatching { mp.controls().setRate(r) } }
-        flash("Скорость ${fmtRate(r)}", "Скорость")
+        vlcExecutor.execute { runCatching { eRate(r) } }
+        flash(tr("player.skorost_p", "p" to fmtRate(r)))
     }
     fun stepSpeed(d: Int) { val i = rates.indexOfFirst { it >= rate - 0.01f }.coerceAtLeast(0); setSpeed(rates[(i + d).coerceIn(0, rates.size - 1)]) }
 
@@ -524,7 +618,7 @@ fun PlayerView(
         val i = (chapterAt(time) + d).coerceIn(0, chapters.size - 1)
         val t = chapters[i].first; time = t; lastSeekAt = System.currentTimeMillis(); supRef.get()?.seeked()
         vlcSeekTo(t)
-        flash("Глава ${i + 1}: ${chapters[i].second.ifBlank { "без названия" }}", "Глава")
+        flash(tr("player.glava_p_p", "n" to i + 1, "name" to chapters[i].second.ifBlank { tr("player.bez_nazvaniya") }))
     }
 
     val introRe = Regex("""(?i)(intro|opening|заставк|опенинг|вступлен|начальн|^op\b|\bop\s?\d*$)""")
@@ -537,7 +631,7 @@ fun PlayerView(
         savePos(time, length)
         library.bumpWatch()
         scope.launch {
-            vlcAwait(800) { grabFrame(); runCatching { mp.controls().stop() } }
+            vlcAwait(800) { grabFrame(); runCatching { eStop() } }
             showCanvas = false
             onRestart(index)
         }
@@ -581,9 +675,8 @@ fun PlayerView(
         audioDelay = (audioDelay + ms).coerceIn(-5_000L, 5_000L)
         val d = audioDelay
         ui.put("adelay:${seriesKey()}", if (d == 0L) null else d.toString())
-        vlcExecutor.execute { runCatching { mp.audio().setDelay(d * 1000L) } }
-        status = "Задержка звука: ${if (d > 0) "+" else ""}$d мс"
-        javax.swing.Timer(2000) { if (status?.startsWith("Задержка звука") == true) status = null }.apply { isRepeats = false; start() }
+        vlcExecutor.execute { runCatching { eAudioDelay(d) } }
+        flash(tr("player.zaderzhka_zvuka_p_d", "ms" to signed(d)))
     }
 
     fun seekBy(d: Long) {
@@ -624,7 +717,7 @@ fun PlayerView(
             parked = true
             if (mini) setMini(false)
             onClose()
-            vlcExecutor.execute { runCatching { mp.controls().stop() } }
+            vlcExecutor.execute { runCatching { eStop() } }
         }
     }
 
@@ -644,24 +737,24 @@ fun PlayerView(
                 Key.DirectionUp -> {
                     volume = (volume + 5).coerceAtMost(150)
                     val v = volume
-                    vlc { mp.audio().setVolume(v) }
+                    vlc { eVolume(v) }
                     if (userMuted) {
                         userMuted = false
-                        vlc { mp.audio().setMute(false) }
+                        vlc { eMute(false) }
                     }
                     lastVolumeWheelAt = System.currentTimeMillis()
-                    flash("Громкость: $v%", "Громкость:")
+                    flash(tr("player.gromkost_v", "v" to v))
                 }
                 Key.DirectionDown -> {
                     volume = (volume - 5).coerceAtLeast(0)
                     val v = volume
-                    vlc { mp.audio().setVolume(v) }
+                    vlc { eVolume(v) }
                     if (userMuted) {
                         userMuted = false
-                        vlc { mp.audio().setMute(false) }
+                        vlc { eMute(false) }
                     }
                     lastVolumeWheelAt = System.currentTimeMillis()
-                    flash("Громкость: $v%", "Громкость:")
+                    flash(tr("player.gromkost_v", "v" to v))
                 }
                 Key.F, Key.Enter, Key.F11 -> toggleFullscreen()
                 Key.Escape -> if (WindowMode.isFullscreen) {
@@ -672,7 +765,7 @@ fun PlayerView(
                 Key.Backspace -> close()
                 Key.N -> playEntry(index + 1)
                 Key.P -> playEntry(index - 1)
-                Key.M -> { userMuted = !userMuted; val m = userMuted; vlc { mp.audio().setMute(m) } }
+                Key.M -> { userMuted = !userMuted; val m = userMuted; vlc { eMute(m) } }
                 Key.LeftBracket -> if (e.isShiftPressed) shiftSubs(-100L) else shiftAudio(-100L)
                 Key.RightBracket -> if (e.isShiftPressed) shiftSubs(100L) else shiftAudio(100L)
                 Key.Backslash -> if (e.isShiftPressed) shiftSubs(-subDelay) else shiftAudio(-audioDelay)
@@ -684,7 +777,7 @@ fun PlayerView(
                 Key.I -> toggleInfo("key")
                 Key.O -> setMini(!mini)
                 Key.T -> if (!mini) onTop.value = !onTop.value
-                Key.F8 -> if (Diag.on) flash("📍 Метка #${Diag.mark("player at ${time / 1000}s")}", "mark") else return@handler false
+                Key.F8 -> if (Diag.on) flash(tr("player.metka_p", "p" to Diag.mark("player at ${time / 1000}s"))) else return@handler false
                 else -> return@handler false
             }
             true
@@ -697,10 +790,16 @@ fun PlayerView(
         LaunchedEffect(Unit) {
             var prev: Map<String, Long>? = null
             var prevAt = 0L
+            var described = false
             while (true) {
                 delay(5_000)
                 if (closing) continue
                 val line = withContext(vlcThread) { runCatching {
+                    if (eng != null) return@runCatching eng.statsLine()
+                    if (!described && mp.status().isPlaying) {
+                        described = true
+                        PlayerLog.write("[vlc] video: " + describePlayback(mp))
+                    }
                     val now = System.currentTimeMillis()
                     val st = vlcStats(mp)
                     val p = prev
@@ -725,19 +824,29 @@ fun PlayerView(
         }
     }
 
-    val prefsTimer = remember { javax.swing.Timer(300) { applyPrefs(); ensureAudio() }.apply { isRepeats = false } }
+    var prefsJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    fun schedulePrefs(delayMs: Long) {
+        prefsJob?.cancel()
+        prefsJob = scope.launch {
+            delay(delayMs)
+            applyPrefs()
+            ensureAudio()
+        }
+    }
     DisposableEffect(Unit) {
         val ui2 = { block: () -> Unit -> SwingUtilities.invokeLater(block) }
-        val oneShots = mutableListOf<javax.swing.Timer>()
-        fun oneShot(ms: Int, action: () -> Unit) {
-            oneShots.removeAll { !it.isRunning }
-            oneShots += javax.swing.Timer(ms) { action() }.apply { isRepeats = false; start() }
+        fun oneShot(ms: Long, action: () -> Unit) {
+            scope.launch {
+                delay(ms)
+                action()
+            }
         }
-        mp.events().addMediaPlayerEventListener(object : MediaPlayerEventAdapter() {
-            override fun playing(p: MediaPlayer) = ui2 {
+        fun evPlaying() = ui2 {
                 WindowMode.disableNativeCanvasInput(canvas)
                 WindowMode.restoreComposeFocus(owner)
-                oneShot(250) {
+                canvasFocusJob?.cancel()
+                canvasFocusJob = scope.launch {
+                    delay(250)
                     WindowMode.disableNativeCanvasInput(canvas)
                     WindowMode.restoreComposeFocus(owner)
                 }
@@ -751,31 +860,39 @@ fun PlayerView(
                 if (!prefsApplied) {
                     prefsApplied = true
                     prefsUntil = System.currentTimeMillis() + 8_000L
-                    prefsTimer.initialDelay = 300; prefsTimer.restart()
-                    oneShot(4500) { ensureAudio() }
-                    if (audioDelay != 0L) { val d = audioDelay; vlcExecutor.execute { runCatching { mp.audio().setDelay(d * 1000L) } } }
-                    if (subDelay != 0L) { val d = subDelay; vlcExecutor.execute { runCatching { mp.subpictures().setDelay(d * 1000L) } } }
-                    if (rate != 1f) { val r = rate; vlcExecutor.execute { runCatching { mp.controls().setRate(r) } } }
-                    scope.launch { delay(1200); chapters = withContext(vlcThread) { readChapters(mp) } }
+                    schedulePrefs(300)
+                    ensureAudioJob?.cancel()
+                    ensureAudioJob = scope.launch {
+                        delay(4500)
+                        ensureAudio()
+                    }
+                    if (audioDelay != 0L) { val d = audioDelay; vlcExecutor.execute { runCatching { eAudioDelay(d) } } }
+                    if (subDelay != 0L) { val d = subDelay; vlcExecutor.execute { runCatching { eSubDelay(d) } } }
+                    if (rate != 1f) { val r = rate; vlcExecutor.execute { runCatching { eRate(r) } } }
+                    chaptersJob?.cancel()
+                    chaptersJob = scope.launch {
+                        delay(1200)
+                        chapters = withContext(vlcThread) { eng?.chapters()?.map { it.timeMs to it.title } ?: readChapters(mp) }
+                    }
                 }
                 val v = volume; val m = userMuted
                 if (pausedAt > 0) {
                     playing = false
-                    vlc { mp.audio().setMute(true); mp.controls().setPause(true) }
+                    vlc { eMute(true); ePause(true) }
                 } else {
                     vlc {
-                        mp.audio().setMute(m)
-                        if (!wasStarted) mp.audio().setVolume(v)
+                        eMute(m)
+                        if (!wasStarted) eVolume(v)
                     }
                 }
             }
-            override fun elementaryStreamAdded(p: MediaPlayer, type: uk.co.caprica.vlcj.media.TrackType, id: Int) = ui2 {
-                if (System.currentTimeMillis() < prefsUntil) { prefsTimer.initialDelay = 400; prefsTimer.restart() }
+        fun evStream() = ui2 {
+                if (System.currentTimeMillis() < prefsUntil) { schedulePrefs(400) }
             }
-            override fun paused(p: MediaPlayer) = ui2 { playing = false; vlcPaused = true; savePos(time, length) }
-            override fun stopped(p: MediaPlayer) = ui2 { vlcPaused = false }
-            override fun buffering(p: MediaPlayer, newCache: Float) = ui2 {
-                status = if (newCache < 100f) "Буферизация ${newCache.toInt()}%" else null
+        fun evPaused() = ui2 { playing = false; vlcPaused = true; savePos(time, length) }
+        fun evStopped() = ui2 { vlcPaused = false }
+        fun evBuffering(newCache: Float) = ui2 {
+                status = if (newCache < 100f) tr("player.buferizaciya_p", "p" to newCache.toInt()) else null
                 supRef.get()?.buffering(newCache)
                 if (newCache < 100f) { if (bufferingSince == 0L) bufferingSince = System.currentTimeMillis() }
                 else if (bufferingSince > 0) {
@@ -783,12 +900,14 @@ fun PlayerView(
                     if (ms > 1500) PlayerLog.write("buffering took $ms ms at ${time / 1000}s")
                 }
             }
-            override fun lengthChanged(p: MediaPlayer, newLength: Long) = ui2 {
+        fun evLength(newLength: Long) = ui2 {
                 if (newLength > 0 || ts == null) { length = newLength; BurstProxy.setDuration(currentUrl, newLength) }
             }
-            override fun timeChanged(p: MediaPlayer, vlcTime: Long) {
-                val pos = runCatching { p.status().position() }.getOrDefault(0f)
+        fun evTime(vlcTime: Long, pos: Float) {
                 ui2 tick@{
+                    if (!started && vlcTime > 0) {
+                        evPlaying()
+                    }
                     ts?.let { s0 -> if (tsAbsolute && !tsOpenDone && vlcTime > 0) { tsAbsolute = false; tsOpenDone = true; s0.openJump(tsStartAt)?.let { jumpPos -> vlc { mp.controls().setPosition(jumpPos) } } } }
                     val s = ts
                     val newTime = if (s == null) vlcTime else {
@@ -802,38 +921,70 @@ fun PlayerView(
                     if (newTime / 10_000 != (newTime - 300) / 10_000) savePos(newTime, length)
                 }
             }
-            override fun finished(p: MediaPlayer) = ui2 {
+        fun evFinished() = ui2 {
                 if (!closing) {
                     supRef.get()?.ended()
                     playing = false
                     val end = length > 0 && lastGood >= length - 5_000L
                     if (end) {
                         savePos(length, length)
-                        if (index < queue.size - 1) nextIn = 10 else status = "Конец"
-                    } else if (retries < 6) { retries++; status = "Переподключение…"; reopen(lastGood) }
+                        if (index < queue.size - 1) nextIn = 10 else status = tr("player.konec")
+                    } else if (retries < 6) { retries++; status = tr("player.perepodklyuchenie"); reopen(lastGood) }
                 }
             }
-            override fun error(p: MediaPlayer) = ui2 {
+        fun evError() = ui2 {
                 if (!closing) {
-                    if (retries < 6) { retries++; status = "Переподключение…"; reopen(lastGood) }
-                    else status = "Не удалось воспроизвести поток"
+                    if (retries < 6) { retries++; status = tr("player.perepodklyuchenie"); reopen(lastGood) }
+                    else status = tr("player.ne_udalos_vosproizvesti_potok")
                 }
             }
+        if (eng != null) {
+            engBridge.target = object : EngineListener {
+                override fun playing() = evPlaying()
+                override fun paused() = evPaused()
+                override fun buffering(percent: Float) = evBuffering(percent)
+                override fun buffering(active: Boolean) = evBuffering(if (active) 0f else 100f)
+                override fun timeChanged(ms: Long) = evTime(ms, 0f)
+                override fun lengthChanged(ms: Long) = evLength(ms)
+                override fun tracksChanged() = evStream()
+                override fun finished() = evFinished()
+                override fun failed(message: String) { PlayerLog.write("[mpv] $message"); evError() }
+            }
+        } else mp.events().addMediaPlayerEventListener(object : MediaPlayerEventAdapter() {
+            override fun playing(p: MediaPlayer) = evPlaying()
+            override fun elementaryStreamAdded(p: MediaPlayer, type: uk.co.caprica.vlcj.media.TrackType, id: Int) = evStream()
+            override fun paused(p: MediaPlayer) = evPaused()
+            override fun stopped(p: MediaPlayer) = evStopped()
+            override fun buffering(p: MediaPlayer, newCache: Float) = evBuffering(newCache)
+            override fun lengthChanged(p: MediaPlayer, newLength: Long) = evLength(newLength)
+            override fun timeChanged(p: MediaPlayer, vlcTime: Long) = evTime(vlcTime, runCatching { p.status().position() }.getOrDefault(0f))
+            override fun finished(p: MediaPlayer) = evFinished()
+            override fun error(p: MediaPlayer) = evError()
         })
         onDispose {
-            prefsTimer.stop()
-            oneShots.forEach { it.stop() }
+            canvasFocusJob?.cancel()
+            ensureAudioJob?.cancel()
+            chaptersJob?.cancel()
+            prefsJob?.cancel()
             Thread({ runCatching { BurstProxy.clear() } }, "reserve-clear").apply { isDaemon = true; start() }
             if (!closing) { savePos(time, length); library.bumpWatch() }
             if (mini) setMini(false)
             ui.put("volume", volume.toString())
             vlcExecutor.execute {
-                runCatching { mp.controls().stop() }
-                runCatching { mp.release() }
+                runCatching { eStop() }
+                runCatching { if (eng != null) eng.release() else mp.release() }
             }
             vlcExecutor.shutdown()
             Thread({ runCatching { vlcExecutor.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS) }; AppExit.untrack(vlcExecutor) }, "vlc-untrack")
                 .apply { isDaemon = true; start() }
+        }
+    }
+
+    val playlistDeferred = remember(req.playlist) {
+        req.playlist?.let { url ->
+            scope.async(Dispatchers.IO) {
+                runCatching { Api.text(url)?.let { parseM3u(it) } }.getOrNull().orEmpty()
+            }
         }
     }
 
@@ -843,12 +994,22 @@ fun PlayerView(
         var waited = 0
         while ((!canvas.isDisplayable || canvas.width <= 0) && waited < 8000) { delay(50); waited += 50 }
 
-        // Запрещаем нативному окну VLC красть фокус клавиатуры у главного окна!
+        if (eng != null) {
+            val hwnd = com.sun.jna.Native.getComponentID(canvas)
+            eng.attach(hwnd)
+        }
+
+        // Запрещаем нативному окну красть фокус клавиатуры у главного окна!
         WindowMode.disableNativeCanvasInput(canvas)
         WindowMode.restoreComposeFocus(owner)
-        if (startIndex > 0 && req.playlist != null) {
-            val entries = Api.text(req.playlist)?.let { parseM3u(it) }.orEmpty()
-            if (entries.size > startIndex) { queue = entries; playEntry(startIndex); return@LaunchedEffect }
+
+        val entries = playlistDeferred?.await().orEmpty()
+        if (entries.size > 1) {
+            queue = entries
+        }
+        if (startIndex > 0 && entries.size > startIndex) {
+            playEntry(startIndex)
+            return@LaunchedEffect
         }
         open(req.url, if (req.fromStart) 0L else savedPos(), req.audioUrls to req.subUrls)
     }
@@ -857,10 +1018,14 @@ fun PlayerView(
 
     fun restartVideo() {
         PlayerLog.write("restart video output at ${time / 1000}s")
-        vlc {
-            val id = mp.video().track()
-            if (id >= 0) { mp.video().setTrack(-1); mp.video().setTrack(id) }
-            reseekHereNow()
+        if (eng != null) {
+            eng.restartVideoOutput()
+        } else {
+            vlc {
+                val id = mp.video().track()
+                if (id >= 0) { mp.video().setTrack(-1); mp.video().setTrack(id) }
+                reseekHereNow()
+            }
         }
     }
 
@@ -871,7 +1036,7 @@ fun PlayerView(
             override fun restartVideo() = restartOutput()
             override fun fixSound() {
                 val v = volume
-                vlc { mp.audio().setMute(userMuted); mp.audio().setVolume(v) }
+                vlc { eMute(userMuted); eVolume(v) }
                 ensureAudio()
             }
             override fun reopen(fresh: Boolean) {
@@ -880,7 +1045,7 @@ fun PlayerView(
                 if (fresh) BurstProxy.dropAll()
                 reopenAt(time)
             }
-            override fun notice(text: String) = flash(text, text.take(10))
+            override fun notice(text: String) = flash(text)
             override fun log(message: String) = PlayerLog.write(message)
         }, stuckLimitMs = { if (catchingUp) CATCH_UP_MAX_MS + 15_000L else if (BurstProxy.isActive(currentUrl)) 30_000L else 12_000L })
     }
@@ -897,7 +1062,7 @@ fun PlayerView(
             BurstProxy.hold(currentUrl, 0L)
             val ahead = BurstProxy.aheadMb(currentUrl) ?: 0.0
             PlayerLog.write("reserve gathered: %.0f MB in %d s".format(ahead, (System.currentTimeMillis() - catchUpStartedAt) / 1000))
-            if (status?.startsWith("Сеть медленнее") == true) status = null
+            if (status == catchUpStatus) status = null
             if (!restart || closing) return
             // С запасом позади: прыжок попадает на ближайший ключевой кадр из того, что уже на диске. Так VLC запускает
             // декодеры заново, а не показывает картинку после долгого простоя.
@@ -917,7 +1082,7 @@ fun PlayerView(
                 when {
                     closing || pausedAt > 0L || vlcPaused || seeking != null || lastSeekAt > catchUpStartedAt -> endCatchUp(false)
                     ahead >= target || now - catchUpStartedAt >= CATCH_UP_MAX_MS -> endCatchUp(true)
-                    bufferingSince > 0L -> status = "Сеть медленнее фильма — копим запас ${(ahead * 100 / target.coerceAtLeast(1.0)).toInt().coerceIn(0, 99)}%"
+                    bufferingSince > 0L -> { catchUpStatus = tr("player.set_medlennee_filma_kopim", "p" to (ahead * 100 / target.coerceAtLeast(1.0)).toInt().coerceIn(0, 99)); status = catchUpStatus }
                 }
                 continue
             }
@@ -937,14 +1102,18 @@ fun PlayerView(
             delay(2000)
             if (!started || closing) continue
             val st = withContext(vlcThread) {
-                val stats = soundStats(mp)
-                val fps = (call(mp.video(), "fps") as? Number)?.toDouble() ?: 0.0
-                val audioTrack = runCatching { mp.audio().track() }.getOrDefault(-1)
-                val audioTracks = runCatching { mp.audio().trackDescriptions().count { it.id() != -1 } }.getOrDefault(0)
-                val videoTracks = runCatching { mp.video().trackCount() }.getOrDefault(0)
-                val clock = runCatching { mp.status().time() }.getOrDefault(0L)
-                stats?.let {
-                    PlaybackSupervisor.Stats(clock, it.second, it.first, it.third, fps, audioTracks, audioTrack != -1, videoTracks, userMuted || volume == 0)
+                if (eng != null) {
+                    eng.supervisorStats(userMuted || volume == 0)
+                } else {
+                    val stats = soundStats(mp)
+                    val fps = (call(mp.video(), "fps") as? Number)?.toDouble() ?: 0.0
+                    val audioTrack = runCatching { mp.audio().track() }.getOrDefault(-1)
+                    val audioTracks = runCatching { mp.audio().trackDescriptions().count { it.id() != -1 } }.getOrDefault(0)
+                    val videoTracks = runCatching { mp.video().trackCount() }.getOrDefault(0)
+                    val clock = runCatching { mp.status().time() }.getOrDefault(0L)
+                    stats?.let {
+                        PlaybackSupervisor.Stats(clock, it.second, it.first, it.third, fps, audioTracks, audioTrack != -1, videoTracks, userMuted || volume == 0)
+                    }
                 }
             } ?: continue
             supervisor.tick(st)
@@ -965,25 +1134,14 @@ fun PlayerView(
         }
     }
 
-    LaunchedEffect(req.playlist) {
-        val text = req.playlist?.let { Api.text(it) } ?: return@LaunchedEffect
-        val entries = parseM3u(text)
-        if (entries.size > 1) {
-            queue = entries
-            if (startIndex in entries.indices && startIndex > 0 && title == req.title) {
-                title = entries[startIndex].title
-                currentUrl = entries[startIndex].url
-            }
-        }
-    }
 
     LaunchedEffect(infoOpen) {
         while (infoOpen) {
-            infoText = withContext(vlcThread) { describePlayback(mp) } +
-                "  ·  скорость ${fmtRate(rate)}  ·  звук ${if (audioDelay > 0) "+" else ""}$audioDelay мс  ·  субтитры ${if (subDelay > 0) "+" else ""}$subDelay мс" +
-                (if (nightMode) "  ·  ночной режим" else "") + "  ·  буфер ${PlaybackSettings.cacheMs() / 1000.0} с" +
-                (BurstProxy.aheadMb(currentUrl)?.let { "  ·  запас на диске: %.0f МБ вперёд (из ${PlaybackSettings.burstMb()})".format(it) } ?: "  ·  без запаса (напрямую)") +
-                "  ·  журнал: ${PlayerLog.file.absolutePath}"
+            infoText = withContext(vlcThread) { eng?.statsLine() ?: describePlayback(mp) } +
+                tr("player.skorost_p_zvuk_p", "rate" to fmtRate(rate), "audio" to signed(audioDelay), "subs" to signed(subDelay)) +
+                (if (nightMode) tr("player.nochnoy_rezhim") else "") + tr("player.bufer_p_s", "p" to PlaybackSettings.cacheMs() / 1000.0) +
+                (BurstProxy.aheadMb(currentUrl)?.let { tr("player.zapas_na_diske_f", "p" to PlaybackSettings.burstMb()).format(it) } ?: tr("player.bez_zapasa_napryamuyu")) +
+                tr("player.zhurnal_absolutepath", "absolutePath" to PlayerLog.file.absolutePath)
             delay(1000)
         }
     }
@@ -1000,7 +1158,7 @@ fun PlayerView(
             val pos = runCatching { java.awt.MouseInfo.getPointerInfo()?.location }.getOrNull()
             if (pos != null && pos != last) {
                 if (last != null) {
-                    val w = javax.swing.SwingUtilities.getWindowAncestor(canvas)
+                    val w = owner ?: javax.swing.SwingUtilities.getWindowAncestor(canvas)
                     val b = w?.bounds
                     val inside = (w?.mousePosition != null) || (canvas.mousePosition != null) || (b != null && b.contains(pos))
                     if (inside) poke()
@@ -1041,9 +1199,11 @@ fun PlayerView(
     }
 
     DisposableEffect(owner, canvas) {
-        val root = (owner as? javax.swing.RootPaneContainer)?.contentPane
-        val compListener = object : java.awt.event.ComponentAdapter() {
+        val ownerListener = object : java.awt.event.ComponentAdapter() {
             override fun componentMoved(e: java.awt.event.ComponentEvent) { syncOverlayBounds() }
+            override fun componentResized(e: java.awt.event.ComponentEvent) { syncOverlayBounds() }
+        }
+        val canvasListener = object : java.awt.event.ComponentAdapter() {
             override fun componentResized(e: java.awt.event.ComponentEvent) { syncOverlayBounds() }
         }
         val winListener = object : java.awt.event.WindowAdapter() {
@@ -1059,15 +1219,13 @@ fun PlayerView(
                 }
             }
         }
-        owner?.addComponentListener(compListener)
-        root?.addComponentListener(compListener)
+        owner?.addComponentListener(ownerListener)
         owner?.addWindowListener(winListener)
-        canvas.addComponentListener(compListener)
+        canvas.addComponentListener(canvasListener)
         onDispose {
-            owner?.removeComponentListener(compListener)
-            root?.removeComponentListener(compListener)
+            owner?.removeComponentListener(ownerListener)
             owner?.removeWindowListener(winListener)
-            canvas.removeComponentListener(compListener)
+            canvas.removeComponentListener(canvasListener)
             topDialog?.isVisible = false
             bottomDialog?.isVisible = false
             topDialog?.dispose()
@@ -1106,47 +1264,6 @@ fun PlayerView(
         syncOverlayBounds()
     }
 
-    // Window dragging in mini-mode
-    DisposableEffect(owner, bottomDialog, mini) {
-        if (!mini || owner == null) return@DisposableEffect onDispose {}
-        var startX = 0
-        var startY = 0
-        var isMouseDragging = false
-        val dragListener = object : java.awt.event.MouseAdapter() {
-            override fun mousePressed(e: java.awt.event.MouseEvent) {
-                if (e.button == java.awt.event.MouseEvent.BUTTON1) {
-                    startX = e.xOnScreen - owner.x
-                    startY = e.yOnScreen - owner.y
-                    isMouseDragging = true
-                }
-            }
-            override fun mouseDragged(e: java.awt.event.MouseEvent) {
-                if (isMouseDragging && (e.modifiersEx and java.awt.event.MouseEvent.BUTTON1_DOWN_MASK) != 0) {
-                    val nx = e.xOnScreen - startX
-                    val ny = e.yOnScreen - startY
-                    owner.setLocation(nx, ny)
-                    bottomDialog?.setLocation(nx, ny)
-                }
-            }
-            override fun mouseReleased(e: java.awt.event.MouseEvent) {
-                if (isMouseDragging) {
-                    isMouseDragging = false
-                    syncOverlayBounds()
-                }
-            }
-        }
-        owner.addMouseListener(dragListener)
-        owner.addMouseMotionListener(dragListener)
-        bottomDialog?.addMouseListener(dragListener)
-        bottomDialog?.addMouseMotionListener(dragListener)
-        onDispose {
-            owner.removeMouseListener(dragListener)
-            owner.removeMouseMotionListener(dragListener)
-            bottomDialog?.removeMouseListener(dragListener)
-            bottomDialog?.removeMouseMotionListener(dragListener)
-        }
-    }
-
     fun revealOverlays() {
         var changed = false
         if (topDialog?.isVisible == false && !mini) { topDialog.isVisible = true; changed = true }
@@ -1178,6 +1295,35 @@ fun PlayerView(
             barSlide.animateTo(1f, tween(260, easing = Sm.ease))
             topDialog?.isVisible = false
             bottomDialog?.isVisible = false
+        }
+    }
+
+    // Debug build: every second for 20 s after F11 — dropped pictures, playback speed and UI-thread delay,
+    // to tell a decoder that cannot keep up (AV1 on the CPU) from a window rebuild that stalls the picture.
+    if (Diag.on) {
+        val fsFirst = remember { booleanArrayOf(true) }
+        LaunchedEffect(WindowMode.isFullscreen) {
+            if (fsFirst[0]) { fsFirst[0] = false; return@LaunchedEffect }
+            if (eng != null) return@LaunchedEffect
+            val on = WindowMode.isFullscreen
+            var prev: Map<String, Long> = withContext(vlcThread) { vlcStats(mp) }
+            var prevMedia = withContext(vlcThread) { runCatching { mp.status().time() }.getOrDefault(0L) }
+            var prevAt = System.nanoTime()
+            PlayerLog.write("[ui] fs ${if (on) "on" else "off"}: watching 20 s")
+            for (sec in 1..20) {
+                delay(1_000)
+                if (closing) break
+                val posted = System.nanoTime()
+                var edtMs = -1L
+                SwingUtilities.invokeLater { edtMs = (System.nanoTime() - posted) / 1_000_000 }
+                val (st, media) = withContext(vlcThread) { vlcStats(mp) to runCatching { mp.status().time() }.getOrDefault(0L) }
+                val now = System.nanoTime()
+                val wallMs = (now - prevAt) / 1_000_000
+                fun d(k: String) = (st[k] ?: 0L) - (prev[k] ?: 0L)
+                PlayerLog.write("[vlc] fs ${if (on) "on" else "off"} +${sec}s · pictures shown +${d("shown")} lost +${d("lost")} · decoded video +${d("video")}" +
+                    " · film ${media - prevMedia} ms per ${wallMs} ms · ui thread delay ${edtMs} ms")
+                prev = st; prevMedia = media; prevAt = now
+            }
         }
     }
 
@@ -1223,8 +1369,158 @@ fun PlayerView(
         }
     }
 
-    val singleClickTimer = remember { javax.swing.Timer(260) { togglePause() }.apply { isRepeats = false } }
-    DisposableEffect(Unit) { onDispose { singleClickTimer.stop() } }
+    var singleClickJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+
+    @Composable
+    fun RenderTopBar() {
+        PlayerTopBar(
+            title = title,
+            queueSize = queue.size,
+            index = index,
+            onTop = onTop.value,
+            onToggleOnTop = { onTop.value = !onTop.value },
+            closing = closing,
+            barSlide = barSlide.value,
+            onClose = { close() },
+            onPoke = { poke() }
+        )
+    }
+
+    @Composable
+    fun RenderBottomBar() {
+        PlayerBottomBar(
+            title = title,
+            queue = queue,
+            index = index,
+            playing = playing,
+            time = time,
+            length = length,
+            bufferedMs = bufferedMs,
+            status = status,
+            closing = closing,
+            barSlide = barSlide.value,
+            rate = rate,
+            rates = rates,
+            subScale = subScale,
+            subDelay = subDelay,
+            nightMode = nightMode,
+            onTop = onTop.value,
+            mini = mini,
+            infoOpen = infoOpen,
+            infoSource = infoSource,
+            infoText = infoText,
+            chapters = chapters,
+            chapterAtTime = chapterAt(time),
+            picker = picker,
+            pickerItems = pickerItems,
+            pickerCurrent = pickerCurrent,
+            volume = volume,
+            userMuted = userMuted,
+            fullscreen = fullscreen,
+            lastVolumeWheelAt = lastVolumeWheelAt,
+            nextIn = nextIn,
+            inIntro = inIntro(),
+            seeking = seeking,
+            onScrubChange = { seeking = it },
+            onPoke = { poke() },
+            onTogglePause = { togglePause() },
+            onSeekBy = { seekBy(it) },
+            onSeekTo = { t ->
+                seeking = null
+                time = t
+                lastGood = t
+                lastSeekAt = System.currentTimeMillis()
+                supRef.get()?.seeked()
+                PlayerLog.write("seek to ${t / 1000}s")
+                vlcSeekTo(t)
+            },
+            onPlayEntry = { playEntry(it) },
+            onSkipIntro = { skipIntro() },
+            onClosePicker = { closePicker() },
+            onOpenPicker = { openPicker(it) },
+            onSelectTrack = { kind, id, name ->
+                if (kind == "audio") {
+                    vlc { eSetAudio(id) }
+                    applyTrackNow()
+                    ui.put("audio:${seriesKey()}", name)
+                    ui.put("audio:*", name)
+                } else {
+                    vlc { eSetSub(id) }
+                    val v = if (id == -1) "__off__" else name
+                    ui.put("spu:${seriesKey()}", v)
+                    ui.put("spu:*", v)
+                }
+                closePicker()
+            },
+            onVolumeChange = {
+                volume = it
+                val unmute = userMuted && it > 0
+                if (unmute) userMuted = false
+                vlc {
+                    eVolume(it)
+                    if (unmute) eMute(false)
+                }
+                poke()
+            },
+            onMuteToggle = {
+                userMuted = !userMuted
+                vlc { eMute(userMuted) }
+                poke()
+                flash(if (userMuted) tr("player.bez_zvuka") else tr("player.zvuk_volume", "volume" to volume))
+            },
+            onFullscreenToggle = { toggleFullscreen() },
+            onMoreRate = { setSpeed(it) },
+            onMoreSubScale = { v ->
+                subScale = v
+                ui.put("subScale", if (v == 100) null else v.toString())
+                if (eng != null) {
+                    eng.setSubScale(v)
+                    poke()
+                    flash("${tr("player.subtitry")}: $v%")
+                } else {
+                    restartPlayer()
+                }
+            },
+            onMoreSubDelay = { shiftSubs(it) },
+            onMoreNight = {
+                nightMode = !nightMode
+                ui.put("night", if (nightMode) "1" else null)
+                poke()
+                flash(if (nightMode) tr("player.nochnoy_zvuk_vklyuchen") else tr("player.nochnoy_zvuk_vyklyuchen"))
+                if (eng != null) {
+                    eng.setNightMode(nightMode)
+                } else {
+                    reopen(time)
+                }
+            },
+            onMoreOnTop = { onTop.value = !onTop.value },
+            onMoreMini = {
+                setMini(!mini)
+                closePicker()
+            },
+            onMoreInfo = { toggleInfo("button") },
+            onMoreChapter = { i -> jumpChapter(i - chapterAt(time)) },
+            onCancelNextIn = { nextIn = -1 },
+            onMiniToggle = { setMini(false) },
+            onClose = { close() },
+            onWindowDragStart = onWindowDragStart,
+            onWindowDragMove = onWindowDragMove,
+            onWindowDragEnd = onWindowDragEnd,
+            onVolumeWheel = { delta ->
+                val step = if (delta < 0) 5 else -5
+                volume = (volume + step).coerceIn(0, 150)
+                val v = volume
+                vlc { eVolume(v) }
+                if (userMuted) {
+                    userMuted = false
+                    vlc { eMute(false) }
+                }
+                lastVolumeWheelAt = System.currentTimeMillis()
+                poke()
+                flash(tr("player.gromkost_v", "v" to v))
+            }
+        )
+    }
 
     // Video layer in main window
     Box(
@@ -1239,10 +1535,11 @@ fun PlayerView(
                         when (event.type) {
                             PointerEventType.Press -> {
                                 poke()
+                                if (picker != null) closePicker()
                                 WindowMode.restoreComposeFocus(owner)
                                 val now = System.currentTimeMillis()
                                 if (now - lastClickTime < 300L) {
-                                    singleClickTimer.stop()
+                                    singleClickJob?.cancel()
                                     if (mini) {
                                         setMini(false)
                                     } else {
@@ -1250,9 +1547,16 @@ fun PlayerView(
                                     }
                                     lastClickTime = 0L
                                 } else {
-                                    singleClickTimer.restart()
+                                    singleClickJob?.cancel()
+                                    singleClickJob = scope.launch {
+                                        delay(260)
+                                        togglePause()
+                                    }
                                     lastClickTime = now
                                 }
+                            }
+                            PointerEventType.Move -> {
+                                poke()
                             }
                             PointerEventType.Scroll -> {
                                 val delta = event.changes.firstOrNull()?.scrollDelta?.y ?: 0f
@@ -1260,11 +1564,11 @@ fun PlayerView(
                                     val step = if (delta < 0f) 5 else -5
                                     volume = (volume + step).coerceIn(0, 150)
                                     val v = volume
-                                    vlc { mp.audio().setVolume(v) }
-                                    if (userMuted) { userMuted = false; vlc { mp.audio().setMute(false) } }
+                                    vlc { eVolume(v) }
+                                    if (userMuted) { userMuted = false; vlc { eMute(false) } }
                                     lastVolumeWheelAt = System.currentTimeMillis()
                                     poke()
-                                    flash("Громкость: $v%", "Громкость:")
+                                    flash(tr("player.gromkost_v", "v" to v))
                                 }
                             }
                         }
@@ -1274,151 +1578,41 @@ fun PlayerView(
     ) {
         if (showCanvas) SwingPanel(factory = { canvas }, modifier = if (parked) Modifier.offset(x = (-8000).dp).size(320.dp, 180.dp) else Modifier.fillMaxSize(), background = Color.Black)
         if (!showCanvas || parked) lastFrame?.let { androidx.compose.foundation.Image(it, null, contentScale = androidx.compose.ui.layout.ContentScale.Fit, modifier = Modifier.fillMaxSize()) }
-            ?: Text(if (closing) "" else "Открываем…", color = Sm.muted, fontFamily = Onest, fontSize = 15.sp, modifier = Modifier.align(Alignment.Center))
+            ?: Text(if (closing) "" else tr("player.otkryvaem"), color = Sm.muted, fontFamily = Onest, fontSize = 15.sp, modifier = Modifier.align(Alignment.Center))
     }
 
-    DisposableEffect(topDialog, bottomDialog) {
-        topDialog?.setContent {
-            SuslikTheme {
-                PlayerTopBar(
-                    title = title,
-                    queueSize = queue.size,
-                    index = index,
-                    onTop = onTop.value,
-                    onToggleOnTop = { onTop.value = !onTop.value },
-                    closing = closing,
-                    barSlide = barSlide.value,
-                    onClose = { close() },
-                    onPoke = { poke() }
-                )
+    if (topDialog != null && bottomDialog != null) {
+        DisposableEffect(topDialog, bottomDialog) {
+            topDialog.setContent {
+                SuslikTheme { RenderTopBar() }
+            }
+            bottomDialog.setContent {
+                SuslikTheme { RenderBottomBar() }
+            }
+            // Любой клик/фокус на оверлее сразу возвращает фокус главному окну (клавиши и колесо работают как раньше)
+            fun giveBack() {
+                if (owner != null) javax.swing.SwingUtilities.invokeLater { WindowMode.restoreComposeFocus(owner) }
+            }
+            val focusBack = object : java.awt.event.WindowAdapter() {
+                override fun windowGainedFocus(e: java.awt.event.WindowEvent) = giveBack()
+                override fun windowActivated(e: java.awt.event.WindowEvent) = giveBack()
+            }
+            topDialog.addWindowFocusListener(focusBack)
+            bottomDialog.addWindowFocusListener(focusBack)
+            topDialog.addWindowListener(focusBack)
+            bottomDialog.addWindowListener(focusBack)
+            val mouseBack = java.awt.event.AWTEventListener { ev ->
+                if (ev is java.awt.event.MouseEvent && (ev.id == java.awt.event.MouseEvent.MOUSE_PRESSED || ev.id == java.awt.event.MouseEvent.MOUSE_RELEASED)) {
+                    val w = javax.swing.SwingUtilities.getWindowAncestor(ev.component) ?: ev.component as? java.awt.Window
+                    if (w === topDialog || w === bottomDialog) giveBack()
+                }
+            }
+            java.awt.Toolkit.getDefaultToolkit().addAWTEventListener(mouseBack, java.awt.AWTEvent.MOUSE_EVENT_MASK)
+            onDispose {
+                java.awt.Toolkit.getDefaultToolkit().removeAWTEventListener(mouseBack)
+                topDialog.dispose()
+                bottomDialog.dispose()
             }
         }
-
-        bottomDialog?.setContent {
-            SuslikTheme {
-                PlayerBottomBar(
-                    title = title,
-                    queue = queue,
-                    index = index,
-                    playing = playing,
-                    time = time,
-                    length = length,
-                    bufferedMs = bufferedMs,
-                    status = status,
-                    closing = closing,
-                    barSlide = barSlide.value,
-                    rate = rate,
-                    rates = rates,
-                    subScale = subScale,
-                    subDelay = subDelay,
-                    nightMode = nightMode,
-                    onTop = onTop.value,
-                    mini = mini,
-                    infoOpen = infoOpen,
-                    infoSource = infoSource,
-                    infoText = infoText,
-                    chapters = chapters,
-                    chapterAtTime = chapterAt(time),
-                    picker = picker,
-                    pickerItems = pickerItems,
-                    pickerCurrent = pickerCurrent,
-                    volume = volume,
-                    userMuted = userMuted,
-                    fullscreen = fullscreen,
-                    lastVolumeWheelAt = lastVolumeWheelAt,
-                    nextIn = nextIn,
-                    inIntro = inIntro(),
-                    seeking = seeking,
-                    onScrubChange = { seeking = it },
-                    onPoke = { poke() },
-                    onTogglePause = { togglePause() },
-                    onSeekBy = { seekBy(it) },
-                    onSeekTo = { t ->
-                        seeking = null
-                        time = t
-                        lastGood = t
-                        lastSeekAt = System.currentTimeMillis()
-                        supRef.get()?.seeked()
-                        PlayerLog.write("seek to ${t / 1000}s")
-                        vlcSeekTo(t)
-                    },
-                    onPlayEntry = { playEntry(it) },
-                    onSkipIntro = { skipIntro() },
-                    onClosePicker = { closePicker() },
-                    onOpenPicker = { openPicker(it) },
-                    onSelectTrack = { kind, id, name ->
-                        if (kind == "audio") {
-                            vlc { mp.audio().setTrack(id) }
-                            applyTrackNow()
-                            ui.put("audio:${seriesKey()}", name)
-                            ui.put("audio:*", name)
-                        } else {
-                            vlc { mp.subpictures().setTrack(id) }
-                            val v = if (id == -1) "__off__" else name
-                            ui.put("spu:${seriesKey()}", v)
-                            ui.put("spu:*", v)
-                        }
-                        closePicker()
-                    },
-                    onVolumeChange = {
-                        volume = it
-                        val unmute = userMuted && it > 0
-                        if (unmute) userMuted = false
-                        vlc {
-                            mp.audio().setVolume(it)
-                            if (unmute) mp.audio().setMute(false)
-                        }
-                        poke()
-                    },
-                    onMuteToggle = {
-                        userMuted = !userMuted
-                        vlc { mp.audio().setMute(userMuted) }
-                        poke()
-                        flash(if (userMuted) "Без звука" else "Звук: $volume%", if (userMuted) "Без звука" else "Звук:")
-                    },
-                    onFullscreenToggle = { toggleFullscreen() },
-                    onMoreRate = { setSpeed(it) },
-                    onMoreSubScale = { v ->
-                        ui.put("subScale", if (v == 100) null else v.toString())
-                        restartPlayer()
-                    },
-                    onMoreSubDelay = { shiftSubs(it) },
-                    onMoreNight = {
-                        nightMode = !nightMode
-                        ui.put("night", if (nightMode) "1" else null)
-                        poke()
-                        flash(if (nightMode) "Ночной звук включен" else "Ночной звук выключен", "Ночной звук")
-                        reopen(time)
-                    },
-                    onMoreOnTop = { onTop.value = !onTop.value },
-                    onMoreMini = {
-                        setMini(!mini)
-                        closePicker()
-                    },
-                    onMoreInfo = { toggleInfo("button") },
-                    onMoreChapter = { i -> jumpChapter(i - chapterAt(time)) },
-                    onCancelNextIn = { nextIn = -1 },
-                    onMiniToggle = { setMini(false) },
-                    onClose = { close() },
-                    onWindowDragStart = onWindowDragStart,
-                    onWindowDragMove = onWindowDragMove,
-                    onWindowDragEnd = onWindowDragEnd,
-                    onVolumeWheel = { delta ->
-                        val step = if (delta < 0) 5 else -5
-                        volume = (volume + step).coerceIn(0, 150)
-                        val v = volume
-                        vlc { mp.audio().setVolume(v) }
-                        if (userMuted) {
-                            userMuted = false
-                            vlc { mp.audio().setMute(false) }
-                        }
-                        lastVolumeWheelAt = System.currentTimeMillis()
-                        poke()
-                        flash("Громкость: $v%", "Громкость:")
-                    }
-                )
-            }
-        }
-        onDispose { }
     }
 }

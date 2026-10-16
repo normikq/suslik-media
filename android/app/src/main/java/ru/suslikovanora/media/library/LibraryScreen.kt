@@ -74,6 +74,7 @@ import ru.suslikovanora.media.net.Api
 import ru.suslikovanora.media.ui.Onest
 import ru.suslikovanora.media.ui.Sm
 import ru.suslikovanora.media.ui.Unbounded
+import ru.suslikovanora.media.tr
 
 /** What the play sheet needs: one file, its display title and (for series) the rest of the season. */
 data class PlayTarget(val magnetId: Long, val file: MFile, val label: String, val following: List<MFile>, val subs: List<MFile> = emptyList(), val audio: List<MFile> = emptyList())
@@ -128,8 +129,8 @@ fun LibraryScreen(
             item(key = "empty", span = { GridItemSpan(maxLineSpan) }) {
                 Panel {
                     Text(
-                        if (store.magnets.isEmpty()) "Сохранённой медиатеки пока нет. Нажмите «Обновить», чтобы загрузить данные из AllDebrid."
-                        else "Совпадений не найдено.",
+                        if (store.magnets.isEmpty()) tr("library.sohranennoy_mediateki_poka_net")
+                        else tr("library.sovpadeniy_ne_naydeno"),
                         color = Sm.muted, fontFamily = Onest, fontSize = 14.sp
                     )
                 }
@@ -162,11 +163,11 @@ fun BrandHeader(onLogout: (() -> Unit)?, onSettings: (() -> Unit)? = null) {
             contentAlignment = Alignment.Center
         ) { Text("▶", color = Sm.lampInk, fontSize = 15.sp, modifier = Modifier.padding(start = 2.dp)) }
         Column(Modifier.padding(start = 12.dp).weight(1f)) {
-            Text("Приватная медиатека", color = Sm.muted, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+            Text(tr("library.privatnaya_mediateka"), color = Sm.muted, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp)
             Text("Suslik Media", color = Sm.text, fontFamily = Unbounded, fontWeight = FontWeight.Bold, fontSize = 15.sp)
         }
         if (onSettings != null) { SettingsButton(onSettings); Spacer(Modifier.width(8.dp)) }
-        if (onLogout != null) OutlineButton("Выйти", onClick = onLogout)
+        if (onLogout != null) OutlineButton(tr("library.vyyti"), onClick = onLogout)
     }
 }
 
@@ -212,13 +213,13 @@ private fun LibraryPanel(
     Panel {
         Row(verticalAlignment = Alignment.Top) {
             Column(Modifier.weight(1f).padding(end = 10.dp)) {
-                Text("Моя библиотека AllDebrid", fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 19.sp, lineHeight = 24.sp, color = Sm.text)
-                Text("Торренты, папки и файлы из вашего аккаунта.", color = Sm.muted, fontFamily = Onest, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+                Text(tr("library.moya_biblioteka_alldebrid"), fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 19.sp, lineHeight = 24.sp, color = Sm.text)
+                Text(tr("library.torrenty_papki_i_fayly"), color = Sm.muted, fontFamily = Onest, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
             }
-            LampButton(if (loading) "Загрузка…" else "Обновить", enabled = !loading, onClick = onRefresh)
+            LampButton(if (loading) tr("updater.zagruzka") else tr("updater.obnovit"), enabled = !loading, onClick = onRefresh)
         }
         Spacer(Modifier.height(14.dp))
-        SearchField(value = query, onValue = onQuery, placeholder = "Поиск по названию…")
+        SearchField(value = query, onValue = onQuery, placeholder = tr("library.poisk_po_nazvaniyu"))
         Spacer(Modifier.height(10.dp))
         val color by animateColorAsState(
             when (kind) { StatusKind.Ok -> Sm.ok; StatusKind.Error -> Sm.bad; StatusKind.Info -> Sm.muted }, label = "status"
@@ -370,7 +371,7 @@ private fun PosterTile(item: LibraryItem, store: LibraryStore, onPlay: (PlayTarg
                     // (coming back to the tab no longer flashes an empty tile before the image).
                     model = ImageRequest.Builder(context).data(url).memoryCacheKey(url).placeholderMemoryCacheKey(url).crossfade(350).build(),
                     imageLoader = Posters.loader(context),
-                    contentDescription = "Постер: $baseTitle",
+                    contentDescription = tr("library.poster_basetitle", "baseTitle" to baseTitle),
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
                 )
@@ -399,7 +400,7 @@ private fun PosterTile(item: LibraryItem, store: LibraryStore, onPlay: (PlayTarg
                     Spacer(Modifier.height(8.dp))
                 }
                 val label = when {
-                    m.ready -> "Готово · 100%"
+                    m.ready -> tr("library.gotovo")
                     m.downloading -> "${(m.progress * 100).toInt()}% · ${statusRu(m)}"
                     else -> statusRu(m)
                 }
@@ -424,19 +425,19 @@ private fun PosterTile(item: LibraryItem, store: LibraryStore, onPlay: (PlayTarg
             if (m.ready && last != null) {
                 val (lf, lw) = last
                 val ep = (playable as? Playable.Series)?.seasons?.firstNotNullOfOrNull { s ->
-                    s.items.firstOrNull { it.file.path == lf.path }?.let { e -> (if (s.season == 0) "Спец." else "S" + s.season.toString().padStart(2, '0')) + "E" + e.episode.toString().padStart(2, '0') }
+                    s.items.firstOrNull { it.file.path == lf.path }?.let { e -> (if (s.season == 0) tr("library.spec") else "S" + s.season.toString().padStart(2, '0')) + "E" + e.episode.toString().padStart(2, '0') }
                 }
                 val text = when {
-                    lw.watched && ep != null -> "✓ Просмотрено до $ep"
-                    lw.watched -> "✓ Просмотрено"
-                    ep != null -> "▶ Продолжить $ep · ${formatClock(lw.pos)}"
-                    else -> "▶ Продолжить с ${formatClock(lw.pos)}"
+                    lw.watched && ep != null -> tr("library.prosmotreno_do_ep", "ep" to ep)
+                    lw.watched -> tr("library.prosmotreno")
+                    ep != null -> tr("library.prodolzhit_ep_p", "ep" to ep, "p" to formatClock(lw.pos))
+                    else -> tr("library.prodolzhit_s_p", "p" to formatClock(lw.pos))
                 }
                 Text(text, color = Sm.lamp, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, modifier = Modifier.padding(top = 4.dp))
             }
             if (m.ready && currentFile != null) {
                 Text(
-                    "🎞 " + (media ?: "анализ видео…"),
+                    "🎞 " + (media ?: tr("library.analiz_video")),
                     color = if (media == null) Sm.muted else Color(0xFFFFD791),
                     fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 17.sp,
                     modifier = Modifier.padding(top = 4.dp)
@@ -446,16 +447,16 @@ private fun PosterTile(item: LibraryItem, store: LibraryStore, onPlay: (PlayTarg
                 Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     if (series.seasons.size > 1) {
                         SelectChip(
-                            label = series.seasons.getOrNull(seasonIdx)?.let { if (it.season == 0) "Спец." else "Сезон ${it.season}" } ?: "",
-                            options = series.seasons.map { if (it.season == 0) "Спецвыпуски" else "Сезон ${it.season}" },
+                            label = series.seasons.getOrNull(seasonIdx)?.let { if (it.season == 0) tr("library.spec") else tr("library.sezon_season", "season" to it.season) } ?: "",
+                            options = series.seasons.map { if (it.season == 0) tr("library.specvypuski") else tr("library.sezon_season", "season" to it.season) },
                             onPick = { seasonIdx = it; episodeIdx = 0 },
                             modifier = Modifier.weight(1f)
                         )
                     }
                     val season = series.seasons.getOrNull(seasonIdx) ?: series.seasons.first()
                     SelectChip(
-                        label = season.items.getOrNull(episodeIdx)?.let { it.title ?: "Серия ${it.episode}" } ?: "",
-                        options = season.items.map { it.title ?: "Серия ${it.episode}" },
+                        label = season.items.getOrNull(episodeIdx)?.let { it.title ?: tr("library.seriya_episode", "episode" to it.episode) } ?: "",
+                        options = season.items.map { it.title ?: tr("library.seriya_episode", "episode" to it.episode) },
                         onPick = { episodeIdx = it },
                         modifier = Modifier.weight(1f)
                     )
@@ -500,11 +501,11 @@ private fun RemoveButton(downloading: Boolean, onConfirm: suspend () -> String?)
     LaunchedEffect(armed) { if (armed) { delay(4000); armed = false } }
     LaunchedEffect(error) { if (error != null) { delay(4000); error = null } }
     val label = when {
-        error != null -> "Ошибка: ${error!!.take(60)}"
-        busy -> if (downloading) "Отмена…" else "Удаление…"
-        armed -> "Точно? Нажмите ещё раз"
-        downloading -> "✕ Отменить"
-        else -> "🗑 Удалить"
+        error != null -> tr("add.oshibka_p", "p" to error!!.take(60))
+        busy -> if (downloading) tr("library.otmena") else tr("library.udalenie")
+        armed -> tr("library.tochno_nazhmite_esche_raz")
+        downloading -> tr("library.otmenit")
+        else -> tr("library.udalit")
     }
     val bg by animateColorAsState(if (armed) Color(0xFFFF4D4D) else if (downloading) Color(0x1AFFB86B) else Color(0x1AFF6B6B), label = "rmbg")
     val fg = if (armed) Color.White else if (downloading) Sm.warn else Color(0xFFFFB3B3)

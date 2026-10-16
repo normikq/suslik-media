@@ -1,5 +1,7 @@
 # Suslik Media — Android-приложение
 
+> 📖 **Полная архитектурная документация:** [docs/ANDROID.md](../docs/ANDROID.md)
+
 Исходный проект Android-приложения для частного медиапортала:
 `https://short.suslikovanora.ru/media/`
 

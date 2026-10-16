@@ -76,6 +76,7 @@ import ru.suslikovanora.media.net.Api
 import ru.suslikovanora.media.ui.Onest
 import ru.suslikovanora.media.ui.Sm
 import ru.suslikovanora.media.ui.Unbounded
+import ru.suslikovanora.media.tr
 
 /** One thing added from this device: a magnet, a .torrent or a file-host link. Kept between app starts. */
 class AddEntry(val key: String, title: String, val magnetId: Long, status: String, percent: Int, ready: Boolean, failed: Boolean, val at: Long) {
@@ -135,7 +136,7 @@ class AddModel(context: Context, private val scope: CoroutineScope, private val 
 
     fun submitInput() {
         val v = input.trim()
-        if (v.isEmpty()) { say("Вставьте magnet-ссылку или ссылку на файл (https://…)", false); return }
+        if (v.isEmpty()) { say(tr("add.vstavte_magnet_ssylku_ili"), false); return }
         unlocked = null
         when {
             v.startsWith("magnet:?", ignoreCase = true) -> {
@@ -143,16 +144,16 @@ class AddModel(context: Context, private val scope: CoroutineScope, private val 
                 input = ""; links.forEach { addMagnet(it) }
             }
             v.startsWith("https://", ignoreCase = true) -> unlock(v)
-            else -> say("Поддерживаются magnet:? и ссылки https://", false)
+            else -> say(tr("add.podderzhivayutsya_magnet_i_ssy"), false)
         }
     }
 
     private fun magnetName(link: String): String =
         Regex("[?&]dn=([^&]+)").find(link)?.groupValues?.get(1)?.let { runCatching { java.net.URLDecoder.decode(it, "UTF-8") }.getOrNull() }
-            ?: "Загрузка по magnet-ссылке"
+            ?: tr("add.zagruzka_po_magnet_ssylke")
 
     private fun addMagnet(link: String) {
-        val e = AddEntry("m:" + System.nanoTime(), magnetName(link), 0, "Отправляю…", -1, false, false, System.currentTimeMillis())
+        val e = AddEntry("m:" + System.nanoTime(), magnetName(link), 0, tr("add.otpravlyayu"), -1, false, false, System.currentTimeMillis())
         history.add(0, e)
         scope.launch {
             try {
@@ -165,13 +166,13 @@ class AddModel(context: Context, private val scope: CoroutineScope, private val 
     fun uploadChosen(context: Context) {
         val list = chosen.toList(); chosen.clear()
         for (t in list) {
-            val e = AddEntry("t:" + System.nanoTime(), t.name.removeSuffix(".torrent"), 0, "Отправляю…", -1, false, false, System.currentTimeMillis())
+            val e = AddEntry("t:" + System.nanoTime(), t.name.removeSuffix(".torrent"), 0, tr("add.otpravlyayu"), -1, false, false, System.currentTimeMillis())
             history.add(0, e)
             scope.launch {
                 try {
                     val bytes = withContext(Dispatchers.IO) { context.contentResolver.openInputStream(t.uri)?.use { it.readBytes() } }
-                        ?: throw IllegalStateException("Не удалось прочитать файл")
-                    if (bytes.size > 1024 * 1024) throw IllegalStateException("Файл больше 1 МБ")
+                        ?: throw IllegalStateException(tr("add.ne_udalos_prochitat_fayl"))
+                    if (bytes.size > 1024 * 1024) throw IllegalStateException(tr("add.fayl_bolshe_mb"))
                     accepted(e, Api.postTorrent(bytes, t.name))
                 } catch (ex: Exception) { e.status = Api.describe(ex); e.failed = true; save() }
             }
@@ -183,7 +184,7 @@ class AddModel(context: Context, private val scope: CoroutineScope, private val 
         val id = r.optLong("id")
         val ready = r.optBoolean("ready")
         val e = AddEntry(placeholder.key, r.optString("name").ifBlank { placeholder.title }, id,
-            if (ready) "Готово" else "Добавлено, AllDebrid качает…", if (ready) 100 else -1, ready, false, placeholder.at)
+            if (ready) tr("settings.gotovo") else tr("add.dobavleno_alldebrid_kachaet"), if (ready) 100 else -1, ready, false, placeholder.at)
         // the same torrent added again: keep one row
         history.removeAll { it !== placeholder && it.magnetId == id && id > 0 }
         val i = history.indexOf(placeholder)
@@ -204,10 +205,10 @@ class AddModel(context: Context, private val scope: CoroutineScope, private val 
                 val before = Triple(e.title, e.status, e.percent)
                 st.optString("filename").takeIf { it.isNotBlank() }?.let { e.title = it }
                 when {
-                    code == 4 || st.optBoolean("ready") -> { e.ready = true; e.percent = 100; e.status = "Готово — в библиотеке"; save(); store.refresh() }
-                    code >= 5 -> { e.failed = true; e.status = "Ошибка: ${st.optString("status")}"; save() }
+                    code == 4 || st.optBoolean("ready") -> { e.ready = true; e.percent = 100; e.status = tr("add.gotovo_v_biblioteke"); save(); store.refresh() }
+                    code >= 5 -> { e.failed = true; e.status = tr("add.oshibka_p", "p" to st.optString("status")); save() }
                     else -> {
-                        e.status = st.optString("status").ifBlank { "Обработка" }; e.percent = if (total > 0) (done * 100 / total).toInt() else -1
+                        e.status = st.optString("status").ifBlank { tr("add.obrabotka") }; e.percent = if (total > 0) (done * 100 / total).toInt() else -1
                         if (Triple(e.title, e.status, e.percent) != before) save() // the phone's storage only when something changed
                     }
                 }
@@ -221,7 +222,7 @@ class AddModel(context: Context, private val scope: CoroutineScope, private val 
             try {
                 Api.post("/api/magnets/${e.magnetId}/cancel")
                 polling.remove(e.magnetId)?.cancel()
-                e.failed = true; e.status = "Отменено"; save(); store.refresh()
+                e.failed = true; e.status = tr("add.otmeneno"); save(); store.refresh()
             } catch (ex: Exception) { say(Api.describe(ex), false) }
         }
     }
@@ -230,12 +231,12 @@ class AddModel(context: Context, private val scope: CoroutineScope, private val 
     fun clearFinished() { history.removeAll { !it.active }; save() }
 
     private fun unlock(url: String) {
-        busy = true; say("Получаем ссылку через AllDebrid…", true)
+        busy = true; say(tr("add.poluchaem_ssylku_cherez_alldeb"), true)
         scope.launch {
             try {
                 val r = Api.post("/api/unlock", JSONObject().put("url", url))
-                unlocked = UnlockedLink(r.optString("filename").ifBlank { "Видео" }, r.optLong("filesize"), r.optString("url"))
-                say("Ссылка готова", true); input = ""
+                unlocked = UnlockedLink(r.optString("filename").ifBlank { tr("main.video") }, r.optLong("filesize"), r.optString("url"))
+                say(tr("add.ssylka_gotova"), true); input = ""
             } catch (ex: Exception) { say(Api.describe(ex), false) } finally { busy = false }
         }
     }
@@ -260,8 +261,8 @@ fun AddScreen(m: AddModel, listState: LazyListState, onPlay: (String, String) ->
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         for (u in uris) {
             val (name, size) = displayName(context, u)
-            if (!name.endsWith(".torrent", true)) { m.status = "Не .torrent: $name"; m.statusOk = false; continue }
-            if (size > 1024 * 1024) { m.status = "Больше 1 МБ: $name"; m.statusOk = false; continue }
+            if (!name.endsWith(".torrent", true)) { m.status = tr("add.ne_torrent_name", "name" to name); m.statusOk = false; continue }
+            if (size > 1024 * 1024) { m.status = tr("add.bolshe_mb_name", "name" to name); m.statusOk = false; continue }
             if (m.chosen.none { it.uri == u }) m.chosen += PickedTorrent(u, name, size)
         }
     }
@@ -272,12 +273,12 @@ fun AddScreen(m: AddModel, listState: LazyListState, onPlay: (String, String) ->
         item(key = "header") { HeaderSlot(); Spacer(Modifier.height(16.dp)) }
         item(key = "panel") {
             Panel(Modifier.animateContentSize(tween(280, easing = Sm.ease))) {
-                Text("Добавить раздачу", fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 19.sp, color = Sm.text)
-                Text("Magnet, ссылка на файл или .torrent — AllDebrid скачает, файлы появятся в библиотеке.",
+                Text(tr("add.dobavit_razdachu"), fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 19.sp, color = Sm.text)
+                Text(tr("add.magnet_ssylka_na_fayl"),
                     color = Sm.muted, fontFamily = Onest, fontSize = 14.sp, lineHeight = 19.sp, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    ModeCard("↗", "Ссылка", "magnet или https", m.mode == 0, Modifier.weight(1f)) { m.mode = 0; m.status = null }
-                    ModeCard("⇧", "Torrent-файл", "файл .torrent", m.mode == 1, Modifier.weight(1f)) { m.mode = 1; m.status = null }
+                    ModeCard("↗", tr("add.ssylka"), tr("add.magnet_ili_https"), m.mode == 0, Modifier.weight(1f)) { m.mode = 0; m.status = null }
+                    ModeCard("⇧", tr("add.torrent_fayl"), tr("add.fayl_torrent"), m.mode == 1, Modifier.weight(1f)) { m.mode = 1; m.status = null }
                 }
                 Spacer(Modifier.height(14.dp))
                 AnimatedContent(
@@ -290,14 +291,14 @@ fun AddScreen(m: AddModel, listState: LazyListState, onPlay: (String, String) ->
                     }, label = "mode"
                 ) { mode ->
                     if (mode == 0) Column {
-                        SearchField(m.input, { m.input = it }, "magnet:?xt=… или https://…", onDone = { m.submitInput() })
+                        SearchField(m.input, { m.input = it }, tr("add.magnet_xt_ili_https"), onDone = { m.submitInput() })
                         Spacer(Modifier.height(10.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            LampButton(if (m.busy) "Выполняется…" else "Добавить", enabled = !m.busy && m.input.isNotBlank(), modifier = Modifier.weight(1f)) { m.submitInput() }
-                            OutlineButton("Вставить") {
+                            LampButton(if (m.busy) tr("add.vypolnyaetsya") else tr("add.dobavit"), enabled = !m.busy && m.input.isNotBlank(), modifier = Modifier.weight(1f)) { m.submitInput() }
+                            OutlineButton(tr("add.vstavit")) {
                                 val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                 val t = cm.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()?.trim()
-                                if (t.isNullOrBlank()) { m.status = "В буфере обмена нет текста"; m.statusOk = false } else m.input = t
+                                if (t.isNullOrBlank()) { m.status = tr("add.v_bufere_obmena_net"); m.statusOk = false } else m.input = t
                             }
                         }
                     } else Column {
@@ -317,7 +318,7 @@ fun AddScreen(m: AddModel, listState: LazyListState, onPlay: (String, String) ->
                         }
                         if (m.chosen.isNotEmpty()) {
                             Spacer(Modifier.height(12.dp))
-                            LampButton(if (m.chosen.size > 1) "Загрузить торренты (${m.chosen.size})" else "Загрузить торрент", modifier = Modifier.fillMaxWidth()) { m.uploadChosen(context) }
+                            LampButton(if (m.chosen.size > 1) tr("add.zagruzit_torrenty_size", "size" to m.chosen.size) else tr("add.zagruzit_torrent"), modifier = Modifier.fillMaxWidth()) { m.uploadChosen(context) }
                         }
                     }
                 }
@@ -328,10 +329,10 @@ fun AddScreen(m: AddModel, listState: LazyListState, onPlay: (String, String) ->
                         Text(u.name, color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
                         if (u.size > 0) Text(formatBytes(u.size), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 2.dp))
                         Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            LampButton("▶ Смотреть", modifier = Modifier.weight(1f)) { onPlay(u.url, u.name) }
-                            OutlineButton("Копировать") {
+                            LampButton(tr("add.smotret"), modifier = Modifier.weight(1f)) { onPlay(u.url, u.name) }
+                            OutlineButton(tr("add.kopirovat")) {
                                 (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("link", u.url))
-                                Toast.makeText(context, "Ссылка скопирована", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, tr("add.ssylka_skopirovana"), Toast.LENGTH_SHORT).show()
                             }
                         }
                     }
@@ -340,13 +341,13 @@ fun AddScreen(m: AddModel, listState: LazyListState, onPlay: (String, String) ->
         }
         if (m.history.isNotEmpty()) item(key = "historyHead") {
             Row(Modifier.fillMaxWidth().padding(top = 22.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("История", fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 16.sp, color = Sm.text, modifier = Modifier.weight(1f))
-                if (m.history.any { !it.active }) OutlineButton("Очистить") { m.clearFinished() }
+                Text(tr("add.istoriya"), fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 16.sp, color = Sm.text, modifier = Modifier.weight(1f))
+                if (m.history.any { !it.active }) OutlineButton(tr("settings.ochistit")) { m.clearFinished() }
             }
         }
         items(m.history, key = { it.key }) { e -> HistoryRow(e, Modifier.animateItem(fadeInSpec = tween(260), fadeOutSpec = tween(180)), { m.cancel(e) }, { m.forget(e) }) }
         if (m.history.isEmpty()) item(key = "hint") {
-            Text("Скачанное появится во вкладке «Библиотека». Magnet-ссылки из браузера и других приложений тоже открываются здесь.",
+            Text(tr("add.skachannoe_poyavitsya_vo_vklad"),
                 color = Sm.muted, fontFamily = Onest, fontSize = 13.5.sp, lineHeight = 19.sp, modifier = Modifier.padding(top = 18.dp))
         }
     }
@@ -364,7 +365,7 @@ private fun HistoryRow(e: AddEntry, modifier: Modifier, onCancel: () -> Unit, on
                     color = when { e.failed -> Sm.bad; e.ready -> Sm.ok; else -> Sm.lamp }, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 3.dp))
             }
             Spacer(Modifier.width(8.dp))
-            if (e.active) OutlineButton("Отменить", color = Color(0xFFFFB3B3), border = Color(0x66FF6B6B), onClick = onCancel)
+            if (e.active) OutlineButton(tr("add.otmenit"), color = Color(0xFFFFB3B3), border = Color(0x66FF6B6B), onClick = onCancel)
             else OutlineButton("×", onClick = onForget)
         }
         if (e.active) Box(Modifier.padding(top = 10.dp).fillMaxWidth().height(5.dp).clip(RoundedCornerShape(5.dp)).background(Sm.line)) {
@@ -415,8 +416,8 @@ private fun DropZone(hasFiles: Boolean, onPick: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
     ) {
         Text("⇧", color = Sm.lamp, fontSize = 26.sp)
-        Text(if (hasFiles) "Добавить ещё файл" else "Выбрать файл .torrent", color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold,
+        Text(if (hasFiles) tr("add.dobavit_esche_fayl") else tr("add.vybrat_fayl_torrent"), color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold,
             fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
-        if (!hasFiles) Text("до 1 МБ, можно несколько", color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 2.dp))
+        if (!hasFiles) Text(tr("add.do_mb_mozhno_neskolko"), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 2.dp))
     }
 }

@@ -2,6 +2,7 @@ package ru.suslikovanora.media.desktop
 
 import ru.suslikovanora.media.core.*
 import ru.suslikovanora.media.desktop.ui.*
+import ru.suslikovanora.media.desktop.player.Mpv
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
@@ -52,7 +53,7 @@ import kotlinx.coroutines.launch
 /** Playback settings (stored on the phone, read by the player each time a film opens). */
 object PlaybackSettings {
     // Presets and their hints live in core.PlaybackPresets (the same texts in both apps).
-    val burstPresets = PlaybackPresets.burst("на диске")
+    val burstPresets = PlaybackPresets.burst(tr("settings.na_diske"))
     const val BURST_DEFAULT = PlaybackPresets.BURST_DEFAULT
     val cachePresets = PlaybackPresets.cache
     const val CACHE_DEFAULT = PlaybackPresets.CACHE_DEFAULT
@@ -62,6 +63,15 @@ object PlaybackSettings {
     fun setBurstMb(v: Int) = store.put("burst_mb", v.toString())
     fun cacheMs() = store.get("vlc_cache_ms")?.toIntOrNull() ?: CACHE_DEFAULT
     fun setCacheMs(v: Int) = store.put("vlc_cache_ms", v.toString())
+
+    /** Движок плеера: "mpv" (OpenGL) или "vlc" (vlcj). */
+    fun playerEngine(): String {
+        val saved = store.get("player_engine")
+            ?: runCatching { Store("player_ui").get("engine") }.getOrNull()
+        if (saved != null) return saved
+        return if (Mpv.available) "mpv" else "vlc"
+    }
+    fun setPlayerEngine(v: String) = store.put("player_engine", v)
 
     /** Tester code (BETA_CODE on the server): with it, update checks also offer versions from the beta channel. */
     fun betaCode() = store.get("beta_code").orEmpty()
@@ -104,29 +114,30 @@ fun SettingsSheet(onClose: () -> Unit) {
                 .hoverClick(remember { MutableInteractionSource() }) {}
                 .padding(start = 18.dp, end = 18.dp, top = 20.dp, bottom = 16.dp)
         ) {
-            Text("Настройки", color = Sm.text, fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 21.sp)
-            Text("Применяются при следующем открытии фильма.", color = Sm.muted, fontFamily = Onest, fontSize = 13.sp,
+            Text(tr("settings.nastroyki"), color = Sm.text, fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 21.sp)
+            Text(tr("settings.primenyayutsya_pri_sleduyusche"), color = Sm.muted, fontFamily = Onest, fontSize = 13.sp,
                 modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
             Column(Modifier.weight(1f, fill = false).heightIn(max = 620.dp).verticalScroll(rememberScrollState())) {
-                Section("Запас фильма на диске",
-                    "Фильм скачивается рывками вперёд и хранится во временной папке: обрывы связи с зеркалом не " +
-                        "прерывают просмотр, внешняя озвучка не расходится с картинкой после перемотки, перемотка в пределах " +
-                        "запаса — мгновенная, а Wi-Fi ноутбука отдыхает между рывками. Чем выше качество файла, " +
-                        "тем больше нужен запас. Подсказка: битрейт (Мбит/с) ≈ размер файла в ГБ × 2,2 ÷ длительность в часах.")
+                Section(tr("settings.zapas_filma_na_diske"),
+                    tr("settings.film_skachivaetsya_ryvkami_vpe") +
+                        tr("settings.preryvayut_prosmotr_vneshnyaya") +
+                        tr("settings.zapasa_mgnovennaya_a_wi") +
+                        tr("settings.tem_bolshe_nuzhen_zapas"))
                 PlaybackSettings.burstPresets.forEach { p ->
                     PresetRow(p, p.value == burst) { burst = p.value; PlaybackSettings.setBurstMb(p.value) }
                 }
-                Section("Буфер плеера",
-                    "Сколько секунд видео плеер набирает перед стартом и после перемотки. Меньше — быстрее отклик, больше — устойчивее к плохой сети.",
+                Section(tr("settings.bufer_pleera"),
+                    tr("settings.skolko_sekund_video_pleer"),
                     top = 18.dp)
                 PlaybackSettings.cachePresets.forEach { p ->
                     PresetRow(p, p.value == cache) { cache = p.value; PlaybackSettings.setCacheMs(p.value) }
                 }
+                EngineSection()
                 StorageSection()
                 if (Diag.on) DiagSection() else ChannelSection()
             }
             Row(Modifier.fillMaxWidth().padding(top = 14.dp), horizontalArrangement = Arrangement.End) {
-                LampButton("Готово") { close() }
+                LampButton(tr("settings.gotovo")) { close() }
             }
         }
     }
@@ -144,14 +155,14 @@ private fun ChannelSection() {
     var code by remember { mutableStateOf(PlaybackSettings.betaCode()) }
     var state by remember { mutableStateOf<String?>(null) }
     fun checkUpdates() {
-        state = "Проверяем обновления…"
+        state = tr("settings.proveryaem_obnovleniya")
         scope.launch {
             val installed = Updater.current
             val info = Updater.latest()
             val v = UpdateChannel.verdict(info?.version, installed, release = !PlaybackSettings.betaChannel())
             state = UpdateChannel.message(v, info?.version, installed, info?.beta == true) + when (v) {
-                UpdateChannel.Verdict.Offer -> " Кнопка «Обновить» — в шапке, рядом с настройками."
-                UpdateChannel.Verdict.Replace -> " Кнопка «Обновить» — в шапке: бета удалится, настройки, вход и прогресс просмотра останутся."
+                UpdateChannel.Verdict.Offer -> tr("settings.knopka_obnovit_v_shapke")
+                UpdateChannel.Verdict.Replace -> tr("settings.knopka_obnovit_v_shapke_2")
                 else -> ""
             }
             Updater.available = if (UpdateChannel.offers(v)) info else null
@@ -159,13 +170,13 @@ private fun ChannelSection() {
     }
     fun saveCode() {
         PlaybackSettings.setBetaCode(code)
-        if (code.isBlank()) { state = "Введите код тестировщика."; return }
-        state = "Проверяем код…"
+        if (code.isBlank()) { state = tr("settings.vvedite_kod_testirovschika"); return }
+        state = tr("settings.proveryaem_kod")
         scope.launch {
             when (runCatching { Api.get("/api/app/beta").optBoolean("tester") }.getOrNull()) {
                 true -> checkUpdates()
-                false -> state = "Сервер не принял этот код."
-                null -> state = "Не удалось проверить — код сохранён."
+                false -> state = tr("settings.server_ne_prinyal_etot")
+                null -> state = tr("settings.ne_udalos_proverit_kod")
             }
         }
     }
@@ -173,25 +184,25 @@ private fun ChannelSection() {
         if (b == beta) return
         beta = b
         PlaybackSettings.setBetaOn(b)
-        if (!b) checkUpdates() else if (code.isBlank()) state = "Введите код тестировщика и нажмите «Сохранить»." else saveCode()
+        if (!b) checkUpdates() else if (code.isBlank()) state = tr("settings.vvedite_kod_testirovschika_i") else saveCode()
     }
-    Section("Канал обновлений", "Релиз — проверенные версии для всех. Бета — новые версии раньше всех, " +
-        "для проверки (нужен код тестировщика).", top = 18.dp)
+    Section(tr("settings.kanal_obnovleniy"), tr("settings.reliz_proverennye_versii_dlya") +
+        tr("settings.dlya_proverki_nuzhen_kod"), top = 18.dp)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        ChannelOption("Релиз", !beta, Modifier.weight(1f)) { pick(false) }
-        ChannelOption("Бета", beta, Modifier.weight(1f)) { pick(true) }
+        ChannelOption(tr("settings.reliz"), !beta, Modifier.weight(1f)) { pick(false) }
+        ChannelOption(tr("settings.beta"), beta, Modifier.weight(1f)) { pick(true) }
     }
     androidx.compose.animation.AnimatedVisibility(beta) {
         Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.weight(1f)) { Field(code, { code = it }, "Код тестировщика", password = true, onDone = { saveCode() }) }
+            Box(Modifier.weight(1f)) { Field(code, { code = it }, tr("settings.kod_testirovschika"), password = true, onDone = { saveCode() }) }
             Spacer(Modifier.width(10.dp))
-            OutlineButton("Сохранить") { saveCode() }
+            OutlineButton(tr("settings.sohranit")) { saveCode() }
         }
     }
     Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(state ?: "Установлена версия ${Updater.current}.", color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp,
+        Text(state ?: tr("settings.ustanovlena_versiya_current", "current" to Updater.current), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp,
             lineHeight = 17.sp, modifier = Modifier.weight(1f))
-        Text("Проверить", color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.sp,
+        Text(tr("settings.proverit"), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.sp,
             modifier = Modifier.padding(start = 10.dp).clip(RoundedCornerShape(8.dp))
                 .hoverClick(remember { MutableInteractionSource() }) { checkUpdates() }.padding(horizontal = 8.dp, vertical = 6.dp))
     }
@@ -235,18 +246,149 @@ private fun ChannelOption(title: String, on: Boolean, modifier: Modifier, onClic
 @Composable
 private fun DiagSection() {
     var state by remember { mutableStateOf("") }
-    Section("Отладочная сборка", "Подробный журнал: ${PlayerLog.file.absolutePath}. В плеере F8 ставит метку в момент " +
-        "проблемы. Эта сборка не обновляется сама — новая ставится с компьютера.", top = 18.dp)
+    Section(tr("settings.otladochnaya_sborka"), tr("settings.podrobnyy_zhurnal_absolutepath", "absolutePath" to PlayerLog.file.absolutePath) +
+        tr("settings.problemy_eta_sborka_ne"), top = 18.dp)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlineButton("Метка", Modifier.weight(1f)) { state = "Метка #${Diag.mark("settings")} записана в журнал" }
-        OutlineButton("Папка журнала", Modifier.weight(1f)) {
-            state = runCatching { java.awt.Desktop.getDesktop().open(AppDir.dir); "" }.getOrElse { "Не открылась: ${it.message}" }
+        OutlineButton(tr("settings.metka"), Modifier.weight(1f)) { state = tr("settings.metka_p_zapisana_v", "p" to Diag.mark("settings")) }
+        OutlineButton(tr("settings.papka_zhurnala"), Modifier.weight(1f)) {
+            state = runCatching { java.awt.Desktop.getDesktop().open(AppDir.dir); "" }.getOrElse { tr("settings.ne_otkrylas_message", "message" to it.message) }
         }
-        OutlineButton("Архив", Modifier.weight(1f)) {
-            state = Diag.zipJournal()?.let { "На рабочем столе: ${it.name}" } ?: "Не получилось собрать архив"
+        OutlineButton(tr("settings.arhiv"), Modifier.weight(1f)) {
+            state = Diag.zipJournal()?.let { tr("settings.na_rabochem_stole_name", "name" to it.name) } ?: tr("settings.ne_poluchilos_sobrat_arhiv")
         }
     }
     if (state.isNotEmpty()) Text(state, color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 6.dp))
+}
+
+/** Выбор движка: mpv (OpenGL) vs VLC. */
+@Composable
+private fun EngineSection() {
+    var engine by remember { mutableStateOf(PlaybackSettings.playerEngine()) }
+    val mpvAvail = Mpv.available
+    val libFile = Mpv.libraryFile
+
+    Section(
+        tr("settings.dvizhok_pleera"),
+        tr("settings.dvizhok_opisanie"),
+        top = 18.dp
+    )
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        EngineOption(
+            title = tr("settings.dvizhok_mpv"),
+            subtitle = if (mpvAvail) tr("settings.dvizhok_mpv_hint") else tr("settings.dvizhok_mpv_nedostupen"),
+            selected = engine == "mpv" && mpvAvail,
+            enabled = mpvAvail,
+            modifier = Modifier.weight(1f)
+        ) {
+            if (mpvAvail) {
+                engine = "mpv"
+                PlaybackSettings.setPlayerEngine("mpv")
+            }
+        }
+        EngineOption(
+            title = tr("settings.dvizhok_vlc"),
+            subtitle = tr("settings.dvizhok_vlc_hint"),
+            selected = engine == "vlc" || !mpvAvail,
+            enabled = true,
+            modifier = Modifier.weight(1f)
+        ) {
+            engine = "vlc"
+            PlaybackSettings.setPlayerEngine("vlc")
+        }
+    }
+    val statusText = if (mpvAvail && libFile != null) {
+        tr("settings.dvizhok_mpv_put", "path" to libFile.absolutePath)
+    } else {
+        tr("settings.dvizhok_mpv_otsutstvuet")
+    }
+    Text(
+        statusText,
+        color = if (mpvAvail) Sm.muted else Sm.bad,
+        fontFamily = Onest,
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
+        modifier = Modifier.padding(top = 6.dp)
+    )
+}
+
+@Composable
+private fun EngineOption(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val edge by animateColorAsState(if (selected) Color.White.copy(alpha = 0.85f) else Sm.line, tween(220), label = "edge")
+    val bg by animateColorAsState(if (selected) Color(0xFF1E2332) else if (enabled) Sm.film else Sm.film.copy(alpha = 0.5f), tween(220), label = "bg")
+    val glowAlpha by animateFloatAsState(if (selected) 0.35f else 0f, tween(220), label = "glow")
+    Box(
+        modifier
+            .drawBehind {
+                if (glowAlpha > 0.001f) {
+                    val pad = 3.dp.toPx()
+                    drawRoundRect(
+                        brush = Brush.radialGradient(
+                            colorStops = arrayOf(
+                                0.0f to Color.White.copy(alpha = glowAlpha * 0.16f),
+                                0.5f to Color.White.copy(alpha = glowAlpha * 0.05f),
+                                1.0f to Color.Transparent
+                            ),
+                            center = center,
+                            radius = size.maxDimension * 0.65f
+                        ),
+                        topLeft = Offset(-pad, -pad),
+                        size = Size(size.width + pad * 2, size.height + pad * 2),
+                        cornerRadius = CornerRadius(16.dp.toPx(), 16.dp.toPx())
+                    )
+                }
+            }
+            .clip(RoundedCornerShape(14.dp))
+            .background(bg)
+            .border(1.dp, edge, RoundedCornerShape(14.dp))
+            .let { if (enabled) it.hoverClick(remember { MutableInteractionSource() }, onClick = onClick) else it }
+            .padding(horizontal = 14.dp, vertical = 12.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(18.dp)
+                    .drawBehind {
+                        if (selected) {
+                            drawCircle(
+                                brush = Brush.radialGradient(
+                                    listOf(Color.White.copy(alpha = 0.35f), Color.Transparent),
+                                    center = center,
+                                    radius = 12.dp.toPx()
+                                ),
+                                radius = 12.dp.toPx()
+                            )
+                        }
+                    }
+                    .clip(CircleShape).border(2.dp, if (selected) Color.White else Sm.line2, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                if (selected) Box(Modifier.size(8.dp).clip(CircleShape).background(Color.White))
+            }
+            Column(Modifier.padding(start = 10.dp)) {
+                Text(
+                    title,
+                    color = if (selected) Color.White else if (enabled) Sm.text else Sm.muted,
+                    fontFamily = Onest,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp
+                )
+                Text(
+                    subtitle,
+                    color = if (enabled) Sm.muted else Sm.bad,
+                    fontFamily = Onest,
+                    fontSize = 11.5.sp,
+                    lineHeight = 15.sp,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
+        }
+    }
 }
 
 /** «Память»: how much the reserve, the posters and the rest take; «Очистить кэш». */
@@ -257,20 +399,20 @@ private fun StorageSection() {
     var busy by remember { mutableStateOf(false) }
     var state by remember { mutableStateOf("") }
     LaunchedEffect(Unit) { sizes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { Storage.sizes() } }
-    Section("Память", "Кэш можно очистить: всё нужное скачается снова. Прогресс просмотра, вход и настройки не удаляются. " +
-        "Данные фильмов, которых больше нет в медиатеке, удаляются сами при её обновлении; постеры, которые не показывались 7 дней, удаляются, и их хранится не больше 100 МБ.", top = 18.dp)
+    Section(tr("settings.pamyat"), tr("settings.kesh_mozhno_ochistit_vse") +
+        tr("settings.dannye_filmov_kotoryh_bolshe"), top = 18.dp)
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         val s = sizes
-        Text(if (s == null) "Считаем…" else "Запас фильмов: ${formatBytes(s.reserve)}\nПостеры: ${formatBytes(s.posters)}\nПрочее: ${formatBytes(s.other)}",
+        Text(if (s == null) tr("settings.schitaem") else tr("settings.zapas_filmov_p_postery", "reserve" to formatBytes(s.reserve), "posters" to formatBytes(s.posters), "other" to formatBytes(s.other)),
             color = Sm.text, fontFamily = Onest, fontSize = 14.sp, lineHeight = 21.sp, modifier = Modifier.weight(1f))
-        OutlineButton(if (busy) "Очистка…" else "Очистить кэш") {
+        OutlineButton(if (busy) tr("settings.ochistka") else tr("settings.ochistit_kesh")) {
             if (busy) return@OutlineButton
             busy = true
             scope.launch {
                 val before = sizes
                 val after = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { Storage.clear(); Storage.sizes() }
                 sizes = after; busy = false
-                state = before?.let { b -> "Освобождено ${formatBytes((b.reserve + b.posters + b.other - after.reserve - after.posters - after.other).coerceAtLeast(0L))}" } ?: "Готово"
+                state = before?.let { b -> tr("settings.osvobozhdeno_p", "p" to formatBytes((b.reserve + b.posters + b.other - after.reserve - after.posters - after.other).coerceAtLeast(0L))) } ?: tr("settings.gotovo")
             }
         }
     }

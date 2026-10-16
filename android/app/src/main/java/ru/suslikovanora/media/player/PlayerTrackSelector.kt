@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Handler
 import android.os.SystemClock
 import android.widget.Toast
@@ -11,6 +12,7 @@ import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
 import org.videolan.libvlc.interfaces.IMedia
 import java.util.Locale
+import ru.suslikovanora.media.tr
 
 /**
  * Manages audio tracks, subtitles (internal and external sidecars),
@@ -33,6 +35,7 @@ class PlayerTrackSelector(
         const val EXTRA_SUB_URLS = "media_sub_urls"
         const val EXTRA_AUDIO_URLS = "media_audio_urls"
         const val EXTRA_URL = "media_url"
+        private const val SIDECAR_NONE = "__none__"
     }
 
     private val prefs by lazy { context.getSharedPreferences("player_ui", Context.MODE_PRIVATE) }
@@ -46,6 +49,14 @@ class PlayerTrackSelector(
     private var subUrls: List<String> = emptyList()
     private var audioUrls: List<String> = emptyList()
     private var subsForUrl = ""
+
+    // Voice-over files beside the film: only ONE is opened with it (the remembered one, else the first). Opening all of them
+    // at once made VLC fetch every file's head and tail before the first frame (16.10: 7 files, ~250 MB, 23 s to start).
+    // The rest are added when picked in the audio menu.
+    private var wrapUrl: ((String) -> String)? = null
+    private val attachedAudio = HashSet<String>()
+    private var activeSidecar: String? = null // label of the picked file; SIDECAR_NONE = an internal track
+    private var sidecarsActive = false
 
     private val prefsRunnable = Runnable {
         val p = callback.getCurrentPlayer() ?: return@Runnable
@@ -116,25 +127,41 @@ class PlayerTrackSelector(
 
     fun showAudioTracks(activity: Activity, p: MediaPlayer?, onControlsNeeded: () -> Unit) {
         val tracks = p?.audioTracks.orEmpty()
-        if (tracks.isEmpty()) {
-            Toast.makeText(activity, "Аудиодорожки пока не определены", Toast.LENGTH_SHORT).show()
+        val extra = if (sidecarsActive) audioUrls.filter { it !in attachedAudio } else emptyList()
+        if (tracks.isEmpty() && extra.isEmpty()) {
+            Toast.makeText(activity, tr("playertrack.audiodorozhki_poka_ne_opredele"), Toast.LENGTH_SHORT).show()
             return
         }
-        AlertDialog.Builder(activity).setTitle("Аудиодорожка")
-            .setItems(tracks.map { it.name }.toTypedArray()) { _, which ->
+        AlertDialog.Builder(activity).setTitle(tr("playertrack.audiodorozhka"))
+            .setItems((tracks.map { it.name } + extra.map { "＋ " + audioLabel(it) }).toTypedArray()) { _, which ->
+                if (which >= tracks.size) {
+                    val u = extra[which - tracks.size]
+                    attachedAudio += u
+                    activeSidecar = audioLabel(u)
+                    selectedAudioId = null
+                    runCatching { p?.addSlave(IMedia.Slave.Type.Audio, Uri.parse(wrapUrl?.invoke(u) ?: u), true) }
+                    val key = seriesKey(callback.getCurrentTitle())
+                    prefs.edit().putString("track:sidecar:$key", activeSidecar)
+                        .remove("track:audio:$key").remove("track:audio:*").apply()
+                    callback.onAudioTrackChanged()
+                    onControlsNeeded()
+                    return@setItems
+                }
                 val track = tracks[which]
                 selectedAudioId = track.id
                 p?.setAudioTrack(track.id)
+                activeSidecar = SIDECAR_NONE
+                prefs.edit().putString("track:sidecar:${seriesKey(callback.getCurrentTitle())}", SIDECAR_NONE).apply()
                 callback.onAudioTrackChanged()
                 saveTrackPref("audio", track.name, callback.getCurrentTitle())
                 onControlsNeeded()
-            }.setNegativeButton("Закрыть", null).show()
+            }.setNegativeButton(tr("player.zakryt"), null).show()
     }
 
     fun showSubtitleTracks(activity: Activity, p: MediaPlayer?, onControlsNeeded: () -> Unit) {
         val tracks = p?.spuTracks.orEmpty()
-        val labels = listOf("Выключить субтитры") + tracks.map { it.name }
-        AlertDialog.Builder(activity).setTitle("Субтитры")
+        val labels = listOf(tr("playertrack.vyklyuchit_subtitry")) + tracks.map { it.name }
+        AlertDialog.Builder(activity).setTitle(tr("playertrack.subtitry"))
             .setItems(labels.toTypedArray()) { _, which ->
                 if (which == 0) {
                     selectedSpuId = -1
@@ -147,7 +174,7 @@ class PlayerTrackSelector(
                     saveTrackPref("spu", track.name, callback.getCurrentTitle())
                 }
                 onControlsNeeded()
-            }.setNegativeButton("Закрыть", null).show()
+            }.setNegativeButton(tr("player.zakryt"), null).show()
     }
 
     fun allEpisodeUrls(url: String): List<String> {
@@ -159,10 +186,17 @@ class PlayerTrackSelector(
         url == subsForUrl && audioUrls.isNotEmpty()
 
     fun attachSidecars(media: Media, url: String, wrapUrl: (String) -> String) {
+        sidecarsActive = url == subsForUrl && audioUrls.isNotEmpty()
+        attachedAudio.clear()
         if (url != subsForUrl) return
-        for (u in audioUrls) {
+        this.wrapUrl = wrapUrl
+        val want = activeSidecar ?: prefs.getString("track:sidecar:${seriesKey(callback.getCurrentTitle())}", null)
+        val pick = if (want == SIDECAR_NONE) null else audioUrls.firstOrNull { audioLabel(it) == want } ?: audioUrls.firstOrNull()
+        if (pick != null) {
             runCatching {
-                media.addSlave(IMedia.Slave(IMedia.Slave.Type.Audio, 4, wrapUrl(u)))
+                media.addSlave(IMedia.Slave(IMedia.Slave.Type.Audio, 4, wrapUrl(pick)))
+                attachedAudio += pick
+                activeSidecar = audioLabel(pick)
             }
         }
         for (u in subUrls) {
@@ -170,6 +204,14 @@ class PlayerTrackSelector(
                 media.addSlave(IMedia.Slave(IMedia.Slave.Type.Subtitle, 4, u))
             }
         }
+    }
+
+    /** "Film.rus.mka" beside "Film.mkv" gives "rus". */
+    private fun audioLabel(u: String): String {
+        val name = (Uri.parse(u).lastPathSegment ?: u).substringBeforeLast('.')
+        val film = Uri.parse(subsForUrl).lastPathSegment.orEmpty().substringBeforeLast('.')
+        val cut = if (film.isNotEmpty() && name.startsWith(film)) name.substring(film.length) else name
+        return cut.trim('.', ' ', '_', '-').ifEmpty { name }
     }
 
     private fun seriesKey(title: String) = title.substringBefore(" · ").trim().lowercase(Locale.ROOT)

@@ -1,6 +1,7 @@
 package ru.suslikovanora.media.desktop.player
 
 import uk.co.caprica.vlcj.player.base.MediaPlayer
+import ru.suslikovanora.media.desktop.tr
 
 /** Reflection keeps this independent of the exact vlcj method signatures. */
 fun call(o: Any?, name: String): Any? =
@@ -48,19 +49,19 @@ fun describePlayback(mp: MediaPlayer): String {
     val info = runCatching { mp.media().info() }.getOrNull()
     (call(info, "videoTracks") as? List<*>)?.firstOrNull()?.let { t -> (call(t, "codecDescription") as? String)?.takeIf { it.isNotBlank() }?.let { parts += it } }
     val audioId = runCatching { mp.audio().track() }.getOrDefault(-1)
-    runCatching { mp.audio().trackDescriptions().firstOrNull { it.id() == audioId }?.description() }.getOrNull()?.let { parts += "звук: $it" }
+    runCatching { mp.audio().trackDescriptions().firstOrNull { it.id() == audioId }?.description() }.getOrNull()?.let { parts += tr("player.zvuk_it", "it" to it) }
     runCatching {
         val cls = Class.forName("uk.co.caprica.vlcj.media.MediaStatistics")
         val st = cls.getDeclaredConstructor().newInstance()
         info!!.javaClass.getMethod("statistics", cls).invoke(info, st)
         fun n(vararg names: String): Number? = names.firstNotNullOfOrNull { call(st, it) as? Number }
-        n("inputBitrate")?.toDouble()?.let { if (it > 0) parts += "поток %.1f Мбит/с".format(it * 8000 / 1000) }
-        n("demuxBitrate")?.toDouble()?.let { if (it > 0) parts += "видео %.1f Мбит/с".format(it * 8000 / 1000) }
+        n("inputBitrate")?.toDouble()?.let { if (it > 0) parts += tr("player.potok_f_mbit_s").format(it * 8000 / 1000) }
+        n("demuxBitrate")?.toDouble()?.let { if (it > 0) parts += tr("player.video_f_mbit_s").format(it * 8000 / 1000) }
         val shown = n("picturesDisplayed", "displayedPictures")?.toLong() ?: 0L
         val lost = n("picturesLost", "lostPictures")?.toLong() ?: 0L
-        if (shown + lost > 0) parts += "кадров показано $shown, потеряно $lost"
+        if (shown + lost > 0) parts += tr("player.kadrov_pokazano_shown_poteryan", "shown" to shown, "lost" to lost)
         val aLost = n("audioBuffersLost", "lostAudioBuffers")?.toLong() ?: 0L
-        if (aLost > 0) parts += "потеряно звука: $aLost"
+        if (aLost > 0) parts += tr("player.poteryano_zvuka_alost", "aLost" to aLost)
     }
-    return parts.joinToString("  ·  ").ifBlank { "Нет данных" }
+    return parts.joinToString("  ·  ").ifBlank { tr("player.net_dannyh") }
 }

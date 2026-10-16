@@ -129,7 +129,8 @@ try {
     if ($outText) { Write-Host $outText.Trim() }
     if ($errText) { Write-Host $errText.Trim() -ForegroundColor Yellow }
 
-    if ($installProc.ExitCode -ne 0 -or ($outText -notmatch "Success" -and $outText -match "Failure|INSTALL_FAILED")) {
+    $installProc.WaitForExit()
+    if (($outText -notmatch "Success") -and ($installProc.ExitCode -ne 0 -or $outText -match "Failure|INSTALL_FAILED")) {
         Write-Host "ERROR: APK installation failed (exit code $($installProc.ExitCode))!" -ForegroundColor Red
         exit 1
     }

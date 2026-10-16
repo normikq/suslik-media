@@ -70,6 +70,7 @@ import ru.suslikovanora.media.desktop.ui.Onest
 import ru.suslikovanora.media.desktop.ui.Sm
 import ru.suslikovanora.media.desktop.ui.hoverClick
 import ru.suslikovanora.media.desktop.ui.hoverScale
+import ru.suslikovanora.media.desktop.tr
 
 @Composable
 fun GlassIconButton(
@@ -137,7 +138,7 @@ fun HeroPlayButton(
     GlassIconButton(
         onClick = onClick,
         size = size,
-        tooltip = if (playing) "Пауза (Пробел)" else "Воспроизведение (Пробел)"
+        tooltip = if (playing) tr("player.pauza_probel") else tr("player.vosproizvedenie_probel")
     ) {
         if (playing) {
             Row(

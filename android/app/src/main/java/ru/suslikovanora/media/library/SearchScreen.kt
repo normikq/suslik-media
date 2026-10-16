@@ -50,6 +50,7 @@ import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import ru.suslikovanora.media.tr
 
 data class Hit(
     val id: String, val title: String, val size: Long, val seeders: Int, val leechers: Int,
@@ -78,8 +79,8 @@ class SearchModel(private val scope: CoroutineScope, private val store: LibraryS
 
     fun run() {
         val q = query.trim()
-        if (q.length < 2 || busy) { status = "Введите минимум 2 символа."; statusOk = false; return }
-        busy = true; status = "Опрашиваем трекеры…"; statusOk = true
+        if (q.length < 2 || busy) { status = tr("search.vvedite_minimum_simvola"); statusOk = false; return }
+        busy = true; status = tr("search.oprashivaem_trekery"); statusOk = true
         scope.launch {
             try {
                 val j = Api.get("/api/search?q=" + URLEncoder.encode(q, "UTF-8"))
@@ -99,8 +100,8 @@ class SearchModel(private val scope: CoroutineScope, private val store: LibraryS
                     pa!!.optJSONObject(i)?.let { SearchProvider(it.optString("name"), it.optBoolean("ok"), it.optInt("count"), it.optString("error")) }
                 }
                 val failed = providers.count { !it.ok }
-                status = if (hits.isEmpty()) "Ничего не найдено."
-                else "Найдено ${j.optInt("total", hits.size)} за ${"%.1f".format(j.optLong("tookMs") / 1000.0)} с" + if (failed > 0) " · не ответили: $failed" else ""
+                status = if (hits.isEmpty()) tr("search.nichego_ne_naydeno")
+                else tr("search.naydeno_p_za_p", "total" to j.optInt("total", hits.size), "sec" to "%.1f".format(j.optLong("tookMs") / 1000.0)) + if (failed > 0) tr("search.ne_otvetili_failed", "failed" to failed) else ""
                 statusOk = hits.isNotEmpty()
             } catch (e: Exception) { status = Api.describe(e); statusOk = false } finally { busy = false }
         }
@@ -109,22 +110,22 @@ class SearchModel(private val scope: CoroutineScope, private val store: LibraryS
     private fun note(id: String, text: String, ok: Boolean) { notes = notes + (id to (text to ok)) }
 
     fun add(h: Hit) {
-        note(h.id, "Добавляю…", true)
+        note(h.id, tr("search.dobavlyayu"), true)
         scope.launch {
             try {
                 val r = Api.post("/api/search/add", JSONObject().put("id", h.id))
                 val id = r.optLong("id")
-                if (r.optBoolean("ready")) { note(h.id, "Готово — уже в библиотеке", true); store.refresh(); return@launch }
-                note(h.id, "Добавлено, AllDebrid качает…", true)
+                if (r.optBoolean("ready")) { note(h.id, tr("search.gotovo_uzhe_v_biblioteke"), true); store.refresh(); return@launch }
+                note(h.id, tr("add.dobavleno_alldebrid_kachaet"), true)
                 val started = System.currentTimeMillis()
                 repeat(60) {
                     ru.suslikovanora.media.Foreground.pause(if (System.currentTimeMillis() - started < 60_000) 4000 else 15000)
                     val st = runCatching { Api.get("/api/magnets/$id") }.getOrNull() ?: return@repeat
                     val total = st.optLong("size"); val done = st.optLong("downloaded")
                     val code = st.optInt("statusCode")
-                    if (code == 4 || st.optBoolean("ready")) { note(h.id, "Готово — файлы в библиотеке", true); store.refresh(); return@launch }
-                    if (code >= 5) { note(h.id, "Ошибка: ${st.optString("status")}", false); return@launch }
-                    note(h.id, st.optString("status").ifBlank { "Обработка" } + if (total > 0) " · ${done * 100 / total}%" else "", true)
+                    if (code == 4 || st.optBoolean("ready")) { note(h.id, tr("search.gotovo_fayly_v_biblioteke"), true); store.refresh(); return@launch }
+                    if (code >= 5) { note(h.id, tr("add.oshibka_p", "p" to st.optString("status")), false); return@launch }
+                    note(h.id, st.optString("status").ifBlank { tr("add.obrabotka") } + if (total > 0) " · ${done * 100 / total}%" else "", true)
                 }
             } catch (e: Exception) { note(h.id, Api.describe(e), false) }
         }
@@ -150,12 +151,12 @@ fun SearchScreen(m: SearchModel, listState: LazyListState, onLogout: () -> Unit,
         item(key = "header") { HeaderSlot(); Spacer(Modifier.height(16.dp)) }
         item(key = "panel") {
             Panel(Modifier.animateContentSize(tween(260))) {
-                Text("Поиск раздач", fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 19.sp, color = Sm.text)
-                Text("Один запрос — сразу по нескольким трекерам. Результат добавляется в вашу библиотеку AllDebrid.",
+                Text(tr("search.poisk_razdach"), fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 19.sp, color = Sm.text)
+                Text(tr("search.odin_zapros_srazu_po"),
                     color = Sm.muted, fontFamily = Onest, fontSize = 14.sp, lineHeight = 19.sp, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
-                SearchField(m.query, { m.query = it }, "Название фильма или сериала…", onDone = { m.run() })
+                SearchField(m.query, { m.query = it }, tr("search.nazvanie_filma_ili_seriala"), onDone = { m.run() })
                 Spacer(Modifier.height(10.dp))
-                LampButton(if (m.busy) "Ищем…" else "Найти", enabled = !m.busy, modifier = Modifier.fillMaxWidth()) { m.run() }
+                LampButton(if (m.busy) tr("search.ischem") else tr("search.nayti"), enabled = !m.busy, modifier = Modifier.fillMaxWidth()) { m.run() }
                 if (m.providers.isNotEmpty()) FlowRow(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     m.providers.forEach { p ->
                         Text((if (p.ok) "✓ ${p.name} · ${p.count}" else "✕ ${p.name}") + if (!p.ok && p.error.isNotBlank()) ": ${p.error.take(70)}" else "",
@@ -167,14 +168,14 @@ fun SearchScreen(m: SearchModel, listState: LazyListState, onLogout: () -> Unit,
                 m.status?.let { Text(it, color = if (m.statusOk) Sm.ok else Sm.bad, fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(top = 10.dp)) }
                 if (m.hits.isNotEmpty()) {
                     Row(Modifier.padding(top = 12.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        for ((k, label) in listOf("video" to "Фильмы и сериалы", "movie" to "Фильмы", "series" to "Сериалы", "all" to "Всё")) {
+                        for ((k, label) in listOf("video" to tr("search.filmy_i_serialy"), "movie" to tr("search.filmy"), "series" to tr("search.serialy"), "all" to tr("search.vse"))) {
                             Chip(label, m.kind == k) { m.kind = k }
                         }
-                        Chip("Только с сидами", m.onlySeeded) { m.onlySeeded = !m.onlySeeded }
+                        Chip(tr("search.tolko_s_sidami"), m.onlySeeded) { m.onlySeeded = !m.onlySeeded }
                     }
                     Spacer(Modifier.height(10.dp))
-                    SearchField(m.refine, { m.refine = it }, "Уточнить: 1080p, 2160p, rus…")
-                    if (m.hits.size != shown.size) Text("Скрыто фильтрами: ${m.hits.size - shown.size}", color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 8.dp))
+                    SearchField(m.refine, { m.refine = it }, tr("search.utochnit_p_p_rus"))
+                    if (m.hits.size != shown.size) Text(tr("search.skryto_filtrami_p", "p" to m.hits.size - shown.size), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 8.dp))
                 }
             }
             Spacer(Modifier.height(10.dp))
@@ -201,14 +202,14 @@ private fun HitRow(h: Hit, note: Pair<String, Boolean>?, modifier: Modifier, onA
                 Text("↓ ${h.leechers}", color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp)
                 if (h.ru) Text("RU", color = Sm.lamp, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = 11.sp,
                     modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0x24FFB02E)).padding(horizontal = 6.dp, vertical = 1.dp))
-                when (h.kind) { "series" -> "сериал"; "movie" -> "фильм"; else -> null }?.let { Text(it, color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp) }
+                when (h.kind) { "series" -> tr("search.serial"); "movie" -> tr("search.film"); else -> null }?.let { Text(it, color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp) }
                 Text(h.source, color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp)
                 if (h.date.isNotBlank()) Text(h.date, color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp)
             }
             note?.let { (t, ok) -> Text(t, color = if (ok) Sm.ok else Sm.bad, fontFamily = Onest, fontSize = 13.sp, modifier = Modifier.padding(top = 5.dp)) }
         }
         Spacer(Modifier.width(10.dp))
-        val canAdd = note == null || !note.second || note.first.startsWith("Ошибка")
+        val canAdd = note == null || !note.second
         LampButton("＋", enabled = canAdd, onClick = onAdd)
     }
 }

@@ -18,10 +18,11 @@ import org.json.JSONObject
 import ru.suslikovanora.media.net.Api
 import java.io.File
 import java.net.URLEncoder
+import ru.suslikovanora.media.tr
 
 enum class StatusKind { Info, Ok, Error }
 
-const val MEDIA_UNKNOWN = "разрешение: н/д"
+val MEDIA_UNKNOWN: String get() = tr("library.razreshenie_n_d")
 
 /** Same text as the site's formatMediaInfo(). */
 fun formatMediaInfo(m: JSONObject): String {
@@ -29,7 +30,7 @@ fun formatMediaInfo(m: JSONObject): String {
     val w = m.optInt("width", 0); val h = m.optInt("height", 0)
     if (w > 0 && h > 0) parts += "$w×$h"
     val br = m.optDouble("bitrateMbps", 0.0)
-    parts += if (br > 0) java.math.BigDecimal(br).setScale(1, java.math.RoundingMode.HALF_UP).stripTrailingZeros().toPlainString() + " Мбит/с" else "битрейт н/д"
+    parts += if (br > 0) java.math.BigDecimal(br).setScale(1, java.math.RoundingMode.HALF_UP).stripTrailingZeros().toPlainString() + tr("library.mbit_s") else tr("library.bitreyt_n_d")
     m.optString("codec").takeIf { it.isNotBlank() }?.let { parts += it.uppercase() }
     val fr = m.optString("frameRate")
     Regex("""^(\d+)/(\d+)$""").find(fr)?.let { mt ->
@@ -65,7 +66,7 @@ class LibraryStore(context: Context) {
     }
     var loading by mutableStateOf(false)
         private set
-    var status by mutableStateOf("Нажмите «Обновить», чтобы загрузить медиатеку.")
+    var status by mutableStateOf(tr("library.nazhmite_obnovit_chtoby_zagruz"))
         private set
     var statusKind by mutableStateOf(StatusKind.Info)
         private set
@@ -105,7 +106,7 @@ class LibraryStore(context: Context) {
             runCatching { parseLibrary(JSONObject(snapshotFile.readText())) }.getOrNull()
         } ?: return
         publish(list)
-        status = "Показана сохранённая копия — обновляем…"
+        status = tr("library.pokazana_sohranennaya_kopiya_o")
         statusKind = StatusKind.Info
     }
 
@@ -135,7 +136,7 @@ class LibraryStore(context: Context) {
     suspend fun refresh() {
         if (loading) return
         loading = true
-        status = "Загрузка торрентов и файлов из AllDebrid…"; statusKind = StatusKind.Info
+        status = tr("library.zagruzka_torrentov_i_faylov"); statusKind = StatusKind.Info
         try {
             val json = Api.get("/api/library")
             val list = withContext(Dispatchers.Default) { parseLibrary(json) }
@@ -145,8 +146,8 @@ class LibraryStore(context: Context) {
             loadedOnce = true
             lastRefreshAt = System.currentTimeMillis()
             withContext(Dispatchers.IO) { runCatching { snapshotFile.writeText(json.toString()) } }
-            status = if (json.optBoolean("stale")) "AllDebrid не ответил — показана последняя копия (${list.size})."
-            else "Загружено ${list.size} торрент(ов)."
+            status = if (json.optBoolean("stale")) tr("library.alldebrid_ne_otvetil_pokazana", "size" to list.size)
+            else tr("library.zagruzheno_size_torrent_ov", "size" to list.size)
             statusKind = if (json.optBoolean("stale")) StatusKind.Info else StatusKind.Ok
         } catch (e: Exception) {
             if (e is Api.HttpError && e.code == 401) authenticated = false

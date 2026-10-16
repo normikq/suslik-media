@@ -43,6 +43,7 @@ import ru.suslikovanora.media.ui.Onest
 import ru.suslikovanora.media.ui.Sm
 import ru.suslikovanora.media.ui.Unbounded
 import java.net.URLEncoder
+import ru.suslikovanora.media.tr
 
 /** Everything the player needs: stream, title, optional season playlist, sidecar subtitles, progress keys. */
 data class PlayRequest(
@@ -69,7 +70,7 @@ fun PlaySheet(
 ) {
     val context = LocalContext.current
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var sub by remember(target) { mutableStateOf("Получение ссылок…") }
+    var sub by remember(target) { mutableStateOf(tr("play.poluchenie_ssylok")) }
     var mirror by remember(target) { mutableStateOf<String?>(null) }
     var direct by remember(target) { mutableStateOf<String?>(null) }
     var playlist by remember(target) { mutableStateOf<String?>(null) }
@@ -86,7 +87,7 @@ fun PlaySheet(
 
     LaunchedEffect(target) {
         val link = target.file.link
-        if (link == null) { sub = "Ссылка на файл ещё не готова — нажмите «Обновить» в библиотеке."; return@LaunchedEffect }
+        if (link == null) { sub = tr("play.ssylka_na_fayl_esche"); return@LaunchedEffect }
         val name = target.file.name.ifBlank { target.file.path.substringAfterLast('/') }
         val enc = { v: String -> URLEncoder.encode(v, "UTF-8") }
         // The mirror does not wait for the direct link. Both used to be awaited together, and the direct one goes to
@@ -98,17 +99,17 @@ fun PlaySheet(
             val mr = runCatching { Api.get("/api/file/mirror-url?link=${enc(link)}&name=${enc(name)}").optString("url").ifBlank { null } }
             mirror = mr.getOrNull()
             if (mirror != null) {
-                sub = "Выберите источник"
+                sub = tr("play.vyberite_istochnik")
                 // Subtitle files and voice-overs next to the video: the player adds them as extra tracks (signed mirror
                 // links, no login needed). «Смотреть» waits for them so the film does not start without them.
                 preparingExtras = target.subs.isNotEmpty() || target.audio.isNotEmpty()
                 if (target.subs.isNotEmpty()) {
                     subUrls = mirrorUrls(target.subs, enc)
-                    if (subUrls.isNotEmpty()) sub = "Выберите источник · субтитров из раздачи: ${subUrls.size}"
+                    if (subUrls.isNotEmpty()) sub = tr("play.vyberite_istochnik_subtitrov_i", "size" to subUrls.size)
                 }
                 if (target.audio.isNotEmpty()) {
                     audioUrls = mirrorUrls(target.audio, enc)
-                    if (audioUrls.isNotEmpty()) sub = "$sub · озвучек из раздачи: ${audioUrls.size}"
+                    if (audioUrls.isNotEmpty()) sub = tr("play.sub_ozvuchek_iz_razdachi", "sub" to sub, "size" to audioUrls.size)
                 }
                 preparingExtras = false
                 // Series via the mirror: this episode plus every following one to the end of the season.
@@ -126,8 +127,8 @@ fun PlaySheet(
             }
             val dr = d.await()
             direct = dr.getOrNull()
-            if (mirror == null) sub = if (direct != null) "Выберите источник"
-                else ((mr.exceptionOrNull() ?: dr.exceptionOrNull())?.let { Api.describe(it) } ?: "Не удалось получить ссылки")
+            if (mirror == null) sub = if (direct != null) tr("play.vyberite_istochnik")
+                else ((mr.exceptionOrNull() ?: dr.exceptionOrNull())?.let { Api.describe(it) } ?: tr("play.ne_udalos_poluchit_ssylki"))
         }
     }
 
@@ -144,13 +145,13 @@ fun PlaySheet(
             Text(sub, fontFamily = Onest, fontSize = 13.5.sp, color = Sm.muted, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
             resumeAt?.let { at ->
                 Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    StartOption("▶  С ${clock(at)}", "продолжить", !fromStart, Modifier.weight(1f)) { fromStart = false }
-                    StartOption("⟲  С начала", "заново", fromStart, Modifier.weight(1f)) { fromStart = true }
+                    StartOption(tr("play.s_p", "p" to clock(at)), tr("play.prodolzhit"), !fromStart, Modifier.weight(1f)) { fromStart = false }
+                    StartOption(tr("play.s_nachala"), tr("play.zanovo"), fromStart, Modifier.weight(1f)) { fromStart = true }
                 }
             }
             SourceGroup(
-                title = "Через зеркало", hint = if (playlist != null) "Через ваш сервер · дальше все серии сезона" else "Трафик идёт через ваш сервер",
-                url = mirror, busy = preparingPlaylist || preparingExtras, busyText = if (preparingPlaylist) "Готовим плейлист…" else "Готовим дорожки…",
+                title = tr("play.cherez_zerkalo"), hint = if (playlist != null) tr("play.cherez_vash_server_dalshe") else tr("play.trafik_idet_cherez_vash"),
+                url = mirror, busy = preparingPlaylist || preparingExtras, busyText = if (preparingPlaylist) tr("play.gotovim_pleylist") else tr("play.gotovim_dorozhki"),
                 onPlay = {
                     val keys = if (playlist != null) target.following.filter { f -> f.link != null }.map { f -> watchKey(target.magnetId, f) }
                     else listOf(watchKey(target.magnetId, target.file))
@@ -159,19 +160,19 @@ fun PlaySheet(
             )
             Spacer(Modifier.height(10.dp))
             SourceGroup(
-                title = "Напрямую", hint = "Прямая ссылка AllDebrid",
+                title = tr("play.napryamuyu"), hint = tr("play.pryamaya_ssylka_alldebrid"),
                 url = direct, busy = false,
                 onPlay = { onPlay(PlayRequest(it, target.label, null, subUrls, listOf(watchKey(target.magnetId, target.file)), audioUrls, fromStart)) },
                 onCopy = { copy(context, it) }
             )
             Spacer(Modifier.height(12.dp))
-            OutlineButton("Закрыть", modifier = Modifier.fillMaxWidth(), onClick = onDismiss)
+            OutlineButton(tr("player.zakryt"), modifier = Modifier.fillMaxWidth(), onClick = onDismiss)
         }
     }
 }
 
 @Composable
-private fun SourceGroup(title: String, hint: String, url: String?, busy: Boolean, busyText: String = "Готовим плейлист…", onPlay: (String) -> Unit, onCopy: (String) -> Unit) {
+private fun SourceGroup(title: String, hint: String, url: String?, busy: Boolean, busyText: String = tr("play.gotovim_pleylist"), onPlay: (String) -> Unit, onCopy: (String) -> Unit) {
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Sm.film)
             .border(1.dp, Sm.line, RoundedCornerShape(14.dp)).padding(12.dp)
@@ -180,10 +181,10 @@ private fun SourceGroup(title: String, hint: String, url: String?, busy: Boolean
         Text(hint, fontFamily = Onest, fontSize = 12.5.sp, color = Sm.muted, modifier = Modifier.padding(top = 2.dp, bottom = 10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             LampButton(
-                if (busy) busyText else "▶ Смотреть", enabled = url != null && !busy,
+                if (busy) busyText else tr("add.smotret"), enabled = url != null && !busy,
                 modifier = Modifier.weight(1f)
             ) { url?.let(onPlay) }
-            OutlineButton("Копировать", color = if (url != null) Sm.text else Sm.muted) { url?.let(onCopy) }
+            OutlineButton(tr("add.kopirovat"), color = if (url != null) Sm.text else Sm.muted) { url?.let(onCopy) }
         }
     }
 }
@@ -208,8 +209,8 @@ private fun clock(ms: Long): String {
 
 private fun copy(context: Context, text: String) {
     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-    cm.setPrimaryClip(ClipData.newPlainText("Ссылка", text))
-    Toast.makeText(context, "Ссылка скопирована", Toast.LENGTH_SHORT).show()
+    cm.setPrimaryClip(ClipData.newPlainText(tr("add.ssylka"), text))
+    Toast.makeText(context, tr("add.ssylka_skopirovana"), Toast.LENGTH_SHORT).show()
 }
 
 /** Signed mirror links for the files next to the video (subtitles, voice-overs); the ones that fail are left out. */

@@ -13,6 +13,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
+import ru.suslikovanora.media.tr
 
 /**
  * The site's JSON API. Login state is the WebView's own session cookie (CookieManager), so the native
@@ -125,7 +126,7 @@ object Api {
                 val text = res.body?.string().orEmpty()
                 val json = runCatching { JSONObject(text) }.getOrElse { JSONObject() }
                 if (!res.isSuccessful) {
-                    throw HttpError(res.code, json.optString("error").ifBlank { "Ошибка сервера (${res.code})" })
+                    throw HttpError(res.code, json.optString("error").ifBlank { tr("api.oshibka_servera_code", "code" to res.code) })
                 }
                 return json
             }
@@ -156,10 +157,10 @@ object Api {
 
     /** Human-readable message for any failure (no network, timeout, server error). */
     fun describe(e: Throwable): String = when (e) {
-        is HttpError -> e.message ?: "Ошибка сервера"
-        is java.net.UnknownHostException -> "Нет подключения к интернету"
-        is java.net.SocketTimeoutException -> "Сервер не ответил вовремя"
-        is java.io.IOException -> "Нет связи с сервером"
-        else -> e.message ?: "Неизвестная ошибка"
+        is HttpError -> e.message ?: tr("api.oshibka_servera")
+        is java.net.UnknownHostException -> tr("api.net_podklyucheniya_k_internetu")
+        is java.net.SocketTimeoutException -> tr("api.server_ne_otvetil_vovremya")
+        is java.io.IOException -> tr("api.net_svyazi_s_serverom")
+        else -> e.message ?: tr("api.neizvestnaya_oshibka")
     }
 }

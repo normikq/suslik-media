@@ -42,11 +42,12 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ru.suslikovanora.media.tr
 
 enum class Tab(val label: String) {
-    Links("Ссылка"),
-    Library("Библиотека"),
-    Search("Поиск")
+    Links(tr("add.ssylka")),
+    Library(tr("navbar.biblioteka")),
+    Search(tr("navbar.poisk"))
 }
 
 /** Floating bottom bar (same look as the website's) with the amber "lens" that slides under the active tab. */
