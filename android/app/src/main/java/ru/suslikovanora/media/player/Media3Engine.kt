@@ -160,6 +160,10 @@ class Media3Engine(private val context: Context) : PlayerEngine {
         override fun retainBackBufferFromKeyframe(playerId: PlayerId) = d.retainBackBufferFromKeyframe(playerId)
         override fun shouldContinueLoading(parameters: LoadControl.Parameters): Boolean {
             val load = d.shouldContinueLoading(parameters) // always asked: it keeps its own state
+            // Nothing loaded ahead of one of the sources (a voice-over file or subtitles switched back on start again
+            // from the current moment) while the byte cap is reached by the film's own buffer: without this ExoPlayer
+            // waited at «Буферизация 0%» until a seek emptied the buffer.
+            if (!load && parameters.bufferedDurationUs < STARVING_US) return true
             return load && (!viaReserve || parameters.bufferedDurationUs < RESERVE_AHEAD_US)
         }
         override fun shouldStartPlayback(parameters: LoadControl.Parameters) = d.shouldStartPlayback(parameters)
@@ -502,6 +506,7 @@ class Media3Engine(private val context: Context) : PlayerEngine {
         private const val TICK_MS = 250L
         private const val TARGET_BUFFER_BYTES = 80 shl 20
         private const val RESERVE_AHEAD_US = 15_000_000L
+        private const val STARVING_US = 2_000_000L
         private const val LOCAL_HOST = "127.0.0.1"
 
         /**
