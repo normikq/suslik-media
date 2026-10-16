@@ -100,7 +100,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
 
-    // Media3 + FFmpeg audio decoder (DTS, TrueHD, AC3, E-AC3) for the future Media3 player. The decoder is not on
+    // Media3 + FFmpeg audio decoder (DTS, TrueHD, AC3, E-AC3; ~0.6 MB, arm64) for the future Media3 player. Not on
     // Maven: android/ffmpeg/build.sh (CI: media3-ffmpeg.yml) builds it into libs/. Until the AAR is there, nothing
     // is added and the app builds as before. Version must match MEDIA3_VERSION in build.sh.
     val media3 = "1.5.1"
