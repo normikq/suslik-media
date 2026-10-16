@@ -1,7 +1,6 @@
 package ru.suslikovanora.media.player
 
 import android.os.Handler
-import org.videolan.libvlc.MediaPlayer
 import ru.suslikovanora.media.AppLog
 import ru.suslikovanora.media.core.BurstProxy
 import ru.suslikovanora.media.core.TsClock
@@ -58,15 +57,15 @@ class PlayerBluRayController(
     }
 
     /** The film's length: VLC's length, or for a transport stream the one read from its clock (0 = unknown). */
-    fun lengthOf(p: MediaPlayer?, currentUrl: String): Long =
-        p?.length?.takeIf { it > 0L } ?: if (tsLengthUrl == currentUrl) tsLength else 0L
+    fun lengthOf(p: PlayerEngine?, currentUrl: String): Long =
+        p?.lengthMs?.takeIf { it > 0L } ?: if (tsLengthUrl == currentUrl) tsLength else 0L
 
     /** The film's time: VLC's time, plus offset when VLC counts a continued Blu-ray from 0. */
-    fun timeOf(p: MediaPlayer?, currentUrl: String): Long =
-        (p?.time ?: 0L).let { if (it > 0L && tsLengthUrl == currentUrl) it + tsOffset else it }
+    fun timeOf(p: PlayerEngine?, currentUrl: String): Long =
+        (p?.timeMs ?: 0L).let { if (it > 0L && tsLengthUrl == currentUrl) it + tsOffset else it }
 
-    fun isTsMode(p: MediaPlayer, currentUrl: String): Boolean =
-        p.length <= 0L && tsLengthUrl == currentUrl && tsLength > 0L
+    fun isTsMode(p: PlayerEngine, currentUrl: String): Boolean =
+        p.lengthMs <= 0L && tsLengthUrl == currentUrl && tsLength > 0L
 
     private var lastLearnedTime = 0L
 
@@ -124,7 +123,7 @@ class PlayerBluRayController(
     /**
      * VLC started playing: give duration to reserve proxy; if opened at saved position, jump there immediately.
      */
-    fun onPlaying(p: MediaPlayer, currentUrl: String) {
+    fun onPlaying(p: PlayerEngine, currentUrl: String) {
         if (tsLengthUrl != currentUrl) return
         BurstProxy.setDuration(currentUrl, tsLength)
         if (tsOpenFixed || !isTsMode(p, currentUrl) || tsOpenAt <= 10_000L) return
@@ -133,20 +132,20 @@ class PlayerBluRayController(
     }
 
     /**
-     * Processes time/length updates from MediaPlayer.
+     * Processes time/length updates from the engine.
      * Handles landing after jump and returns film time (or 0L while initial jump is pending).
      */
-    fun handleTimeUpdate(p: MediaPlayer, currentUrl: String): Long {
-        if (tsAbsolute && p.time > 0L) {
+    fun handleTimeUpdate(p: PlayerEngine, currentUrl: String): Long {
+        if (tsAbsolute && p.timeMs > 0L) {
             tsAbsoluteJump(p, currentUrl)
             return 0L
         }
-        if (tsOpenJump && p.time > 0L) tsOpenLanded(p)
+        if (tsOpenJump && p.timeMs > 0L) tsOpenLanded(p)
         val t = if (tsOpenJump) 0L else timeOf(p, currentUrl)
-        if (!tsOpenJump && tsSeekTarget < 0 && p.isPlaying && t > 5_000L && p.position > 0.005f && tsOffset == 0L) {
+        if (!tsOpenJump && tsSeekTarget < 0 && p.isPlaying && t > 5_000L && p.fraction > 0.005f && tsOffset == 0L) {
             if (kotlin.math.abs(t - lastLearnedTime) >= 5_000L) {
                 lastLearnedTime = t
-                TsClock.learn(currentUrl, t, p.position)
+                TsClock.learn(currentUrl, t, p.fraction)
             }
         }
         return t
@@ -159,7 +158,7 @@ class PlayerBluRayController(
     /**
      * Seeks in a transport stream by position.
      */
-    fun seek(p: MediaPlayer, currentUrl: String, targetMs: Long, userPaused: Boolean): SeekResult {
+    fun seek(p: PlayerEngine, currentUrl: String, targetMs: Long, userPaused: Boolean): SeekResult {
         if (!isTsMode(p, currentUrl)) {
             tsSeekTarget = -1L
             return SeekResult.NOT_TS
@@ -169,7 +168,7 @@ class PlayerBluRayController(
         }
         val inFlight = tsSeekTarget >= 0 || tsOpenJump
         val nowT = if (tsSeekTarget >= 0) tsSeekTarget else if (tsOpenJump) tsOpenAt else timeOf(p, currentUrl)
-        val nowPos = if (inFlight) tsLastPos else p.position
+        val nowPos = if (inFlight) tsLastPos else p.fraction
         if (!inFlight && nowT > 10_000L && nowPos > 0.01f && tsOffset == 0L) {
             TsClock.learn(currentUrl, nowT, nowPos)
         }
@@ -179,7 +178,7 @@ class PlayerBluRayController(
         val pos = TsClock.posFor(currentUrl, targetMs, tsLength)
         tsLastPos = pos
         AppLog.write("[ts] seek %ds → position %.4f (from %ds at %.4f)".format(targetMs / 1000, pos, nowT / 1000, nowPos))
-        p.position = pos
+        p.seekToFraction(pos)
         return SeekResult.HANDLED
     }
 
@@ -187,11 +186,11 @@ class PlayerBluRayController(
      * Watchdog check for a position seek.
      * Returns true if handled here (settled or retry scheduled).
      */
-    fun onWatchdog(p: MediaPlayer, currentUrl: String, userPaused: Boolean, target: Long): Boolean {
+    fun onWatchdog(p: PlayerEngine, currentUrl: String, userPaused: Boolean, target: Long): Boolean {
         if (tsSeekTarget < 0) return false
         val t = timeOf(p, currentUrl)
         if (userPaused || !p.isPlaying || kotlin.math.abs(t - tsSeekFrom) > 1_500L) {
-            val landedPos = p.position
+            val landedPos = p.fraction
             tsSeekTarget = -1L
             callback.onSeekSettled(target)
             if (p.isPlaying && t > 1_000L && landedPos > 0.005f && tsOffset == 0L) {
@@ -213,13 +212,13 @@ class PlayerBluRayController(
         }
     }
 
-    private fun jumpToOpenPlace(p: MediaPlayer) {
+    private fun jumpToOpenPlace(p: PlayerEngine) {
         tsOpenFixed = true
         tsOpenJump = true
         tsOpenPos = TsClock.posFor(tsLengthUrl, tsOpenAt, tsLength)
         tsLastPos = tsOpenPos
         AppLog.write("[ts] continue at ${tsOpenAt / 1000}s → position %.4f".format(tsOpenPos))
-        p.position = tsOpenPos
+        p.seekToFraction(tsOpenPos)
     }
 
     private fun seekBeforeClock(t: Long, userPaused: Boolean): Boolean {
@@ -230,7 +229,7 @@ class PlayerBluRayController(
         return true
     }
 
-    private fun tsAbsoluteJump(p: MediaPlayer, currentUrl: String) {
+    private fun tsAbsoluteJump(p: PlayerEngine, currentUrl: String) {
         val wasAbsolute = tsAbsolute
         tsAbsolute = false
         if (tsOpenFixed || !isTsMode(p, currentUrl)) return
@@ -244,17 +243,17 @@ class PlayerBluRayController(
         }
     }
 
-    private fun tsOpenLanded(p: MediaPlayer) {
-        val raw = p.time
+    private fun tsOpenLanded(p: PlayerEngine) {
+        val raw = p.timeMs
         // Must be genuinely playing at the target position and not still reporting 0 at stream start
-        if (raw <= 0L || p.position < tsOpenPos * 0.5f) return
+        if (raw <= 0L || p.fraction < tsOpenPos * 0.5f) return
         tsOpenJump = false
         // Reopened with real clock (tsAbsolute) or VLC reports stream PTS (raw >= tsOpenAt / 2): no offset needed
         tsOffset = if (tsAbsolute) 0L else if (raw < tsOpenAt / 2) tsOpenAt - raw else 0L
         callback.clearPendingSeekIfMatches(tsOpenAt)
         AppLog.write("[ts] landed: VLC time ${raw / 1000}s" + if (tsOffset > 0) ", counts from 0 here → +${tsOffset / 1000}s" else "")
-        if (tsOffset == 0L && raw > 1_000L && p.position > 0.005f) {
-            TsClock.learn(tsLengthUrl, raw, p.position)
+        if (tsOffset == 0L && raw > 1_000L && p.fraction > 0.005f) {
+            TsClock.learn(tsLengthUrl, raw, p.fraction)
         }
     }
 

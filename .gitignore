@@ -16,3 +16,4 @@ dist/
 .idea/
 *.iml
 *.zip
+android/ffmpeg/work/
