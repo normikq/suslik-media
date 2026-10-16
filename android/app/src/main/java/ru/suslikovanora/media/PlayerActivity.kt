@@ -910,7 +910,7 @@ class PlayerActivity : ComponentActivity() {
 
     /** Opens [url] in a new player of the engine (the previous one, if any, is replaced and torn down by it). */
     private fun createPlayer(url: String, positionMs: Long): PlayerEngine {
-        catchUpNotBefore = SystemClock.elapsedRealtime() + 15_000L; catchUpFrom = positionMs + CATCH_UP_AFTER_PLAYED_MS
+        catchUp.quiet(15_000L); catchUpFrom = positionMs + CATCH_UP_AFTER_PLAYED_MS
         diagnostics.onMediaOpened(positionMs)
         // A Blu-ray or regular stream reopened at a saved place: until the jump there the bar shows that place, not
         // VLC's 0:00, and the position is not saved over it (see tsPlaying / tsOpenLanded).
@@ -1097,7 +1097,7 @@ class PlayerActivity : ComponentActivity() {
         gestures.resetTapState()
         supervisor.seeked(); AppLog.write("seek to ${target / 1000}s")
         if (catchingUp) endCatchUp() // a jump: the gathered reserve belongs to the old place
-        catchUpNotBefore = SystemClock.elapsedRealtime() + 15_000L; catchUpFrom = target.coerceAtLeast(0L) + CATCH_UP_AFTER_PLAYED_MS
+        catchUp.quiet(15_000L); catchUpFrom = target.coerceAtLeast(0L) + CATCH_UP_AFTER_PLAYED_MS
         hideNextCard()
         val length = lengthOf(p)
         val t = target.coerceAtLeast(0L).let { if (length > 0L) it.coerceAtMost((length - 1_000L).coerceAtLeast(0L)) else it }
@@ -1358,22 +1358,17 @@ class PlayerActivity : ComponentActivity() {
     // (at most 45 s) and then it plays on for minutes. VLC is not paused for this (a pause in the middle of its
     // buffering raised its delay to ~8 s and froze the picture — 12.10 second test): for VLC it is just a longer
     // buffering, and the supervisor sees an ordinary end of buffering afterwards.
-    private var catchingUp = false
-    private var catchUpStartedAt = 0L
-    private var catchUpNotBefore = 0L // not right after an open / seek / unlock: VLC fills its buffer then anyway
+    // The rules are shared with the PC (CatchUp); not right after an open / seek / unlock: VLC fills its buffer then anyway.
+    private val catchUp = CatchUp({ AppLog.write(it) }, { SystemClock.elapsedRealtime() })
+    private val catchingUp: Boolean get() = catchUp.active
     // ...and not before the film has really played a little at the new place: 12.10 fifth test, after a seek on a
     // 2–5 Mbit/s network VLC was still loading the new place 15 s later — the wait for a reserve then held it 45 s more.
     private var catchUpFrom = 0L // film time (ms)
 
     private fun maybeCatchUp(p: PlayerEngine) {
         if (catchingUp || !viaReserve() || networkLost || userPaused || ended || heavyDialog != null) return
-        if (pendingSeekPos != null || timeOf(p) < catchUpFrom || p.timeMs <= 0L || SystemClock.elapsedRealtime() < catchUpNotBefore) return
-        if (!BurstProxy.slowerThanFilm(currentUrl) || (BurstProxy.aheadMb(currentUrl) ?: 99.0) >= 2.0) return
-        catchingUp = true
-        catchUpStartedAt = SystemClock.elapsedRealtime()
-        AppLog.write("network slower than the film, reserve empty: holding the film to gather %.0f MB".format(BurstProxy.catchUpTargetMb(currentUrl)))
+        if (!catchUp.maybeStart(currentUrl, canStart = pendingSeekPos == null && timeOf(p) >= catchUpFrom && p.timeMs > 0L)) return
         handler.removeCallbacks(stallRunnable)
-        BurstProxy.hold(currentUrl, CATCH_UP_MAX_MS + 5_000L)
         handler.removeCallbacks(catchUpRunnable)
         handler.post(catchUpRunnable)
     }
@@ -1382,11 +1377,10 @@ class PlayerActivity : ComponentActivity() {
         override fun run() {
             if (!catchingUp) return
             if (player == null) { endCatchUp(); return }
-            val target = BurstProxy.catchUpTargetMb(currentUrl)
-            val ahead = BurstProxy.aheadMb(currentUrl) ?: 0.0
-            if (ahead >= target || SystemClock.elapsedRealtime() - catchUpStartedAt >= CATCH_UP_MAX_MS) { endCatchUp(restart = true); return }
+            val gathered = catchUp.progress(currentUrl)
+            if (gathered < 0) { endCatchUp(restart = true); return }
             // VLC may still play what it had in its own buffer: the message only while it really waits
-            if (buffering) showStatus(tr("player.set_medlennee_filma_kopim", "p" to (ahead * 100 / target.coerceAtLeast(1.0)).toInt().coerceIn(0, 99)))
+            if (buffering) showStatus(tr("player.set_medlennee_filma_kopim", "p" to gathered))
             handler.postDelayed(this, 1_000L)
         }
     }
@@ -1400,20 +1394,12 @@ class PlayerActivity : ComponentActivity() {
      */
     private fun endCatchUp(restart: Boolean = false) {
         if (!catchingUp) return
-        catchingUp = false
         handler.removeCallbacks(catchUpRunnable)
-        BurstProxy.hold(currentUrl, 0L)
-        catchUpNotBefore = SystemClock.elapsedRealtime() + 20_000L
-        AppLog.write("reserve gathered: %.0f MB in %d s".format(BurstProxy.aheadMb(currentUrl) ?: 0.0,
-            (SystemClock.elapsedRealtime() - catchUpStartedAt) / 1000))
-        if (player == null || userPaused) return
         val t = perceivedPosition()
-        // Only with enough kept just behind: the jump lands on the last keyframe, a few seconds back. 12.10 fourth test,
-        // 4K 57 Mbit/s: 34 MB behind was under 5 s, the keyframe was not on the phone any more — a new window, the
-        // gathered 62 MB thrown away, VLC stepping back through the mirror.
-        val behind = BurstProxy.keptBehindSec(currentUrl)
-        if (restart && t > 0L && behind >= 8.0 && player?.kind == EngineKind.VLC) { seekTo(t); return } // Media3's decoders need no restart
-        if (restart) AppLog.write("restart skipped: only %.1f s kept behind".format(behind))
+        // Media3's decoders need no restart; VLC's do (see CatchUp.end), from what is already on the phone.
+        val restartHere = catchUp.end(currentUrl, restart && player != null && !userPaused && t > 0L && player?.kind == EngineKind.VLC)
+        if (player == null || userPaused) return
+        if (restartHere) { seekTo(t); return }
         // VLC is still buffering: its usual watch over a silent buffering starts again
         if (buffering) {
             handler.removeCallbacks(stallRunnable)
@@ -1749,7 +1735,7 @@ class PlayerActivity : ComponentActivity() {
 
     private fun resumeAfterStop() {
         val p = player ?: return
-        catchUpNotBefore = SystemClock.elapsedRealtime() + 15_000L; catchUpFrom = timeOf(p) + CATCH_UP_AFTER_PLAYED_MS
+        catchUp.quiet(15_000L); catchUpFrom = timeOf(p) + CATCH_UP_AFTER_PLAYED_MS
         keptOnStop = false
         p.attachVideo()
         hookSurfaces()
@@ -1914,7 +1900,6 @@ class PlayerActivity : ComponentActivity() {
         private const val OPEN_TIMEOUT_MS = 20_000L
         private const val WATCHDOG_TICK_MS = 2_000L
         private const val FAST_RESUME_MS = 20_000L // back within this: just continue the paused player
-        private const val CATCH_UP_MAX_MS = 45_000L // the longest pause to gather a reserve on a slow network
         private const val CATCH_UP_AFTER_PLAYED_MS = 5_000L // film played at a new place before a wait for a reserve
         private const val IDLE_RELEASE_MS = 10 * 60_000L // locked longer than this: free VLC and the connection
         const val EXTRA_SUB_URLS = PlayerExtras.SUB_URLS

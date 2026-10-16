@@ -199,3 +199,14 @@ class TimeTextTest {
         assertEquals("1:05:03", clockText(3_903_000))
     }
 }
+
+class CatchUpTest {
+    private var clock = 1_000_000L
+    private val c = CatchUp({}, { clock })
+
+    @Test fun nothingWithoutAReserve() {
+        assertFalse(c.maybeStart("https://x/not-in-the-reserve.mkv", canStart = true))
+        assertFalse(c.active)
+        assertFalse(c.end("https://x/not-in-the-reserve.mkv", restart = true)) // not active: nothing to end
+    }
+}

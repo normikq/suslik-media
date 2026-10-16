@@ -46,6 +46,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import ru.suslikovanora.media.core.BurstProxy
+import ru.suslikovanora.media.core.CatchUp
 import ru.suslikovanora.media.core.PlaybackSupervisor
 import ru.suslikovanora.media.desktop.Store
 import ru.suslikovanora.media.core.TsClock
@@ -74,7 +75,6 @@ import ru.suslikovanora.media.desktop.tr
 import ru.suslikovanora.media.desktop.signed
 
 /** Дольше всего прокси держит фильм, копя запас на сети медленнее фильма (как на Android). */
-private const val CATCH_UP_MAX_MS = 45_000L
 
 /**
  * Player inside the main window. VLC draws straight into a native canvas (original resolution, hardware decoding,
@@ -226,11 +226,10 @@ fun PlayerView(
     var lastSeekAt by remember { mutableStateOf(0L) }
     var bufferingSince by remember { mutableStateOf(0L) }
     // Сеть медленнее фильма: прокси держит фильм, пока не накопится запас (как на Android, см. PlayerActivity.maybeCatchUp)
+    val catchUp = remember { CatchUp({ PlayerLog.write(it) }) } // the rules are shared with Android
     var catchingUp by remember { mutableStateOf(false) }
     var catchUpStatus by remember { mutableStateOf<String?>(null) }
-    var catchUpStartedAt by remember { mutableStateOf(0L) }
     var openedAt by remember { mutableStateOf(0L) }
-    var catchUpEndedAt by remember { mutableStateOf(0L) }
     val supRef = remember { java.util.concurrent.atomic.AtomicReference<PlaybackSupervisor?>(null) }
     var bufferedMs by remember { mutableStateOf(0L) }
     // Высокое нижнее окно нужно только под всплывающие меню; иначе его прозрачная верхняя часть перехватывает клики по видео
@@ -1058,53 +1057,43 @@ fun PlayerView(
             }
             override fun notice(text: String) = flash(text)
             override fun log(message: String) = PlayerLog.write(message)
-        }, stuckLimitMs = { if (catchingUp) CATCH_UP_MAX_MS + 15_000L else if (BurstProxy.isActive(currentUrl)) 30_000L else 12_000L })
+        }, stuckLimitMs = { if (catchingUp) CatchUp.MAX_MS + 15_000L else if (BurstProxy.isActive(currentUrl)) 30_000L else 12_000L })
     }
     DisposableEffect(supervisor) { supRef.set(supervisor); onDispose { supRef.set(null) } }
 
     // Сеть медленнее фильма: когда запас кончился, прокси не отдаёт VLC данные, пока не накопится ~30 с фильма (не дольше
-    // CATCH_UP_MAX_MS). Для VLC это одна долгая буферизация вместо остановок каждые 15–30 с, после которых аппаратный
+    // CatchUp.MAX_MS). Для VLC это одна долгая буферизация вместо остановок каждые 15–30 с, после которых аппаратный
     // декодер показывает рассыпанную картинку (журнал 15.10: запас 0 МБ, сеть ≈ битрейт фильма). VLC на паузу не ставим.
     LaunchedEffect(Unit) {
         fun endCatchUp(restart: Boolean) {
             if (!catchingUp) return
             catchingUp = false
-            catchUpEndedAt = System.currentTimeMillis()
-            BurstProxy.hold(currentUrl, 0L)
-            val ahead = BurstProxy.aheadMb(currentUrl) ?: 0.0
-            PlayerLog.write("reserve gathered: %.0f MB in %d s".format(ahead, (System.currentTimeMillis() - catchUpStartedAt) / 1000))
-            if (status == catchUpStatus) status = null
-            if (!restart || closing) return
             // С запасом позади: прыжок попадает на ближайший ключевой кадр из того, что уже на диске. Так VLC запускает
             // декодеры заново, а не показывает картинку после долгого простоя.
-            val behind = BurstProxy.keptBehindSec(currentUrl)
-            if (time > 0L && behind >= 8.0) {
+            val restartHere = catchUp.end(currentUrl, restart && !closing && time > 0L)
+            if (status == catchUpStatus) status = null
+            if (restartHere) {
                 lastSeekAt = System.currentTimeMillis()
                 supRef.get()?.seeked()
                 vlcSeekTo(time)
-            } else PlayerLog.write("restart skipped: only %.1f s kept behind".format(behind))
+            }
         }
         while (true) {
             delay(1_000L)
             val now = System.currentTimeMillis()
             if (catchingUp) {
-                val ahead = BurstProxy.aheadMb(currentUrl) ?: 0.0
-                val target = BurstProxy.catchUpTargetMb(currentUrl)
+                val gathered = catchUp.progress(currentUrl)
                 when {
-                    closing || pausedAt > 0L || vlcPaused || seeking != null || lastSeekAt > catchUpStartedAt -> endCatchUp(false)
-                    ahead >= target || now - catchUpStartedAt >= CATCH_UP_MAX_MS -> endCatchUp(true)
-                    bufferingSince > 0L -> { catchUpStatus = tr("player.set_medlennee_filma_kopim", "p" to (ahead * 100 / target.coerceAtLeast(1.0)).toInt().coerceIn(0, 99)); status = catchUpStatus }
+                    closing || pausedAt > 0L || vlcPaused || seeking != null || lastSeekAt > catchUp.startedAt -> endCatchUp(false)
+                    gathered < 0 -> endCatchUp(true)
+                    bufferingSince > 0L -> { catchUpStatus = tr("player.set_medlennee_filma_kopim", "p" to gathered); status = catchUpStatus }
                 }
                 continue
             }
             if (closing || !started || pausedAt > 0L || vlcPaused || seeking != null || time <= 0L) continue
             // не сразу после открытия или перемотки: VLC тогда и так наполняет свой буфер
-            if (now - openedAt < 20_000L || now - lastSeekAt < 20_000L || now - catchUpEndedAt < 20_000L) continue
-            if (!BurstProxy.isActive(currentUrl) || !BurstProxy.slowerThanFilm(currentUrl) || (BurstProxy.aheadMb(currentUrl) ?: 99.0) >= 2.0) continue
-            catchingUp = true
-            catchUpStartedAt = now
-            PlayerLog.write("network slower than the film, reserve empty: holding the film to gather %.0f MB".format(BurstProxy.catchUpTargetMb(currentUrl)))
-            BurstProxy.hold(currentUrl, CATCH_UP_MAX_MS + 5_000L)
+            if (now - openedAt < 20_000L || now - lastSeekAt < 20_000L) continue
+            catchingUp = catchUp.maybeStart(currentUrl, canStart = true)
         }
     }
 
