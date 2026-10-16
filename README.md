@@ -2,11 +2,11 @@
 
 | Папка | Что | Документация |
 |---|---|---|
-| `docs/` | Архитектура и документация проекта | [Общая архитектура](file:///c:/Users/nanar/OneDrive/Desktop/suslik-media-mpv/docs/ARCHITECTURE.md) |
-| `website/` | Сайт и API (Node/Express) | [docs/WEBSITE.md](file:///c:/Users/nanar/OneDrive/Desktop/suslik-media-mpv/docs/WEBSITE.md), [website/README.md](file:///c:/Users/nanar/OneDrive/Desktop/suslik-media-mpv/website/README.md) |
-| `android/` | Android-приложение (Kotlin, Compose, libVLC) | [docs/ANDROID.md](file:///c:/Users/nanar/OneDrive/Desktop/suslik-media-mpv/docs/ANDROID.md), [android/DEBUG-BUILD.md](file:///c:/Users/nanar/OneDrive/Desktop/suslik-media-mpv/android/DEBUG-BUILD.md) |
-| `desktop/` | Windows-приложение (Compose Desktop, mpv / VLC) | [docs/DESKTOP.md](file:///c:/Users/nanar/OneDrive/Desktop/suslik-media-mpv/docs/DESKTOP.md), [desktop/README.md](file:///c:/Users/nanar/OneDrive/Desktop/suslik-media-mpv/desktop/README.md) |
-| `shared/` | Общий модуль (BurstProxy, Supervisor, TsClock) | [В общей архитектуре](file:///c:/Users/nanar/OneDrive/Desktop/suslik-media-mpv/docs/ARCHITECTURE.md#5-общий-модуль-shared) |
+| `docs/` | Архитектура и документация проекта | [Общая архитектура](docs/ARCHITECTURE.md) |
+| `website/` | Сайт и API (Node/Express) | [docs/WEBSITE.md](docs/WEBSITE.md), [website/README.md](website/README.md) |
+| `android/` | Android-приложение (Kotlin, Compose, libVLC) | [docs/ANDROID.md](docs/ANDROID.md), [android/DEBUG-BUILD.md](android/DEBUG-BUILD.md) |
+| `desktop/` | Windows-приложение (Compose Desktop, mpv / VLC) | [docs/DESKTOP.md](docs/DESKTOP.md), [desktop/README.md](desktop/README.md) |
+| `shared/` | Общий модуль (BurstProxy, Supervisor, TsClock) | [В общей архитектуре](docs/ARCHITECTURE.md#5-общий-модуль-shared) |
 
 ## Сборка (GitHub Actions)
 

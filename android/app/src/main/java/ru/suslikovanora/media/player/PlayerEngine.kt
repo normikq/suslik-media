@@ -18,7 +18,7 @@ data class EngineStats(
     val demuxCorrupted: Int, val demuxDiscontinuity: Int
 )
 
-/** Какой движок играет: libVLC (через запас BurstProxy) или Media3 (ExoPlayer, свой кэш на диске). */
+/** Какой движок играет: libVLC (через запас BurstProxy) или Media3 (ExoPlayer, тоже через запас BurstProxy). */
 enum class EngineKind(val tag: String) { VLC("vlc"), MEDIA3("media3") }
 
 /** Режим кадра (кнопка «⤢» и щипок). */

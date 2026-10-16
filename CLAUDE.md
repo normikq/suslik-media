@@ -8,15 +8,15 @@
 | Папка | Что |
 |---|---|
 | `website/` | Node/Express, API и зеркало файлов `/api/file/proxy/<имя>?link=…&exp=…&sig=…` (HTTP/1.1, nginx без http2) |
-| `android/` | Kotlin, Compose, libVLC 3.6. `PlayerActivity.kt` (~2100 строк), `net/Api.kt`, `Diag.kt`, `AppLog.kt` |
-| `desktop/` | Compose Desktop, vlcj. Модули: `player/` (плеер и оверлеи), `ui/` (токены и компоненты). Запас: `desktop/.../Reserve.kt` |
-| `shared/` | Общий модуль: `BurstProxy`, `PlaybackSupervisor`, `Versions`, `Changelog`, `Model`, `PlaybackPresets` |
+| `android/` | Kotlin, Compose, libVLC 3.6 и Media3 (оба через `BurstProxy`, выбор — `player/EngineChoice`), Android TV. `PlayerActivity.kt` (~1900 строк), `player/PlayerExtras.kt` (ключи Intent), `net/Api.kt`, `Diag.kt`, `AppLog.kt` |
+| `desktop/` | Compose Desktop, mpv (`libmpv-2.dll` в MSI) и vlcj (`VlcPlayer`), оба за `PlayerEngine`. Модули: `player/` (плеер и оверлеи), `ui/` (токены и компоненты). Запас: `desktop/.../Reserve.kt` |
+| `shared/` | Общий модуль: `BurstProxy`, `PlaybackSupervisor`, `TsClock`/`TsPlayback`, `MirrorLink` (ключ файла и подпись адреса зеркала), `CatchUp` («копим запас»), `clockText`, `Versions`, `Changelog`, `Model`, `PlaybackPresets`, `LibraryKeep` |
 
 Ядро — `shared/.../core/BurstProxy.kt`: локальный прокси 127.0.0.1 с окнами-запасом в кольцевых файлах.
 Качает «рывками» между low/high в зависимости от битрейта фильма, `MAX_WINDOWS=3` (основное окно фильма не вытесняется), `tailCache` 512 КБ в памяти для конца файла, запас не больше 256 МБ,
 короткий разгон (~45 с фильма), хранение закрытого фильма 10 мин, сторож зависаний (`headerStallMs`, `bodyStallMs`),
 `networkChanged()`/`kick()`, ограниченные `bytes=a-b` для переиспользования соединения.
-Ошибки «нет сети» не расходуют лимит попыток (2.0.3).
+Ошибки «нет сети» не расходуют лимит попыток (2.0.3). Подпись адреса зеркала живёт 12 ч: на 401/403 с истёкшей подписью прокси берёт новую через `refreshUrl` (`/api/file/mirror-url`).
 
 ## Постоянные правила
 
@@ -36,7 +36,7 @@ Changelog (русский) — `android/app/src/main/assets/changelog.json` и `
 
 ## Сборка и выпуск
 
-- Тесты общего модуля (`shared.yml`) идут на каждый пуш: `shared/src/test/...` (`ModelTest`, `BurstProxyTest`, `TsClockTest`, `CoreTest`). Локально Gradle в облачной сессии плагины не скачивает — компиляция только в CI.
+- Тесты общего модуля (`shared.yml`) идут на пуш с изменениями в `shared/`: `shared/src/test/...` (`ModelTest`, `BurstProxyTest`, `TsClockTest`, `CoreTest`, `MirrorLinkTest`). Логи заданий CI читаются через `mcp__github__get_job_logs`. Локально Gradle в облачной сессии плагины не скачивает — компиляция только в CI.
 - Серверные модульные тесты: `website/test/classify.test.js` (`node --test test/classify.test.js`).
 - Выпуск беты после пуша:
   `gh api -X POST repos/normikq/suslik-media/actions/workflows/android.yml/dispatches -f ref=main -f 'inputs[publish]=true' -f 'inputs[channel]=beta'`
@@ -149,6 +149,11 @@ VC-1 на Samsung даёт чёрный экран → файл переоткр
 - **Исправление нативной работы с 64-битной памятью libmpv:** для `Mpv.EV_END_FILE` исправлено смещение поля `data` в `mpv_event` на 64-битной платформе (смещение 16 байт) с корректным разыменованием структуры `mpv_event_end_file` (`reason` по смещению 0, `error` по смещению 4); для `mpv_event_property` извлечение имени свойства выполняется через разыменование указателя `const char *name` (`propPtr.getPointer(0)?.getString(0, "UTF-8")`).
 - **Оптимизация загрузки плейлистов и устранение рассинхрона URL:** загрузка плейлиста переведена на единый параллельный `playlistDeferred` на этапе ожидания холста (440 мс) с удалением конкурирующего `LaunchedEffect(req.playlist)`. Исключены дублирующий HTTP-запрос и мутация `currentUrl` в обход методов плеера, приводившая к зависанию буфера `BurstProxy`.
 - **Изоляция и отмена корутин:** вспомогательные фоновые таймеры внутри `PlayerView` (`ensureAudioJob`, `chaptersJob`, `canvasFocusJob`) переведены на управляемые `Job?` с гарантированной отменой предыдущих задач при смене эпизода и в блоке `onDispose`.
+
+**Аудит и исправления (16.10, PR из ветки `claude/project-thread-w62vtq`)**: Android 2.2.3 (versionCode 54), Windows 2.2.1 — пока не выпущены.
+Отчёт: `/mnt/project-files/audit/Аудит Suslik Media.md`. Подпись истекает → новая (`MirrorLink`, `refreshUrl`); внешние дорожки у каждой серии свои;
+Blu-ray на Android через `TsPlayback`; «копим запас» — общий `CatchUp`; на ПК VLC за `PlayerEngine` (`VlcPlayer`), циклы `vlcPoll`, фокус не отбирается у других программ,
+проверка SHA-256 обновления; Media3 читает через запас. Не сделано: деление `BurstProxy`/`PlayerActivity`/`PlayerView` (риск без локальной сборки).
 
 ## Открытое
 
