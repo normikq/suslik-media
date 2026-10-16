@@ -1,5 +1,6 @@
 package ru.suslikovanora.media.library
 
+import ru.suslikovanora.media.ui.focusRing
 import ru.suslikovanora.media.core.*
 
 import android.content.ClipData
@@ -386,7 +387,7 @@ private fun ModeCard(icon: String, title: String, hint: String, selected: Boolea
     val ink by animateColorAsState(if (selected) Sm.lampInk else Sm.text, tween(240), label = "mci")
     Row(
         modifier.graphicsLayer { scaleX = scale; scaleY = scale }.clip(RoundedCornerShape(14.dp)).background(bg)
-            .border(1.dp, edge, RoundedCornerShape(14.dp)).clickable(interactionSource = src, indication = null, onClick = onClick)
+            .border(1.dp, edge, RoundedCornerShape(14.dp)).focusRing(RoundedCornerShape(14.dp)).clickable(interactionSource = src, indication = null, onClick = onClick)
             .heightIn(min = 64.dp).padding(12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -411,6 +412,7 @@ private fun DropZone(hasFiles: Boolean, onPick: () -> Unit) {
                 drawRoundRect(edge, cornerRadius = CornerRadius(16.dp.toPx()),
                     style = Stroke(width = 1.5.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f))))
             }
+            .focusRing(RoundedCornerShape(16.dp))
             .clickable(interactionSource = src, indication = null, onClick = onPick)
             .heightIn(min = if (hasFiles) 88.dp else 130.dp).padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center

@@ -127,6 +127,13 @@ class PlayerControlsOverlay(
 
     fun showTemporarily() = setVisible(true)
 
+    /** A remote key while the panel is up: keep it up (the hide timer starts again), without re-running the entrance. */
+    fun keepShown() {
+        if (!isVisible || callback.isPip()) return
+        handler.removeCallbacks(hideControlsRunnable)
+        handler.postDelayed(hideControlsRunnable, CONTROLS_TIMEOUT_MS)
+    }
+
     fun toggle() {
         if (isVisible) setVisible(false) else showTemporarily()
     }
@@ -159,6 +166,7 @@ class PlayerControlsOverlay(
             badge.visibility = View.VISIBLE
         }
         badge.animate().alpha(1f).setDuration(180).start()
+        badge.requestFocus() // remote control: OK unlocks (touch mode ignores this)
         handler.postDelayed(hideBadgeRunnable, UNLOCK_BADGE_TIMEOUT_MS)
     }
 

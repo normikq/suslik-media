@@ -1,5 +1,6 @@
 package ru.suslikovanora.media
 
+import ru.suslikovanora.media.ui.focusRing
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -103,7 +104,7 @@ private fun PanelChip(text: String, accent: Boolean = false, onClick: () -> Unit
         Modifier.height(40.dp).clip(RoundedCornerShape(20.dp))
             .background(if (accent) Sm.lampSoft else Sm.film)
             .border(1.dp, if (accent) Color(0x88FFB02E) else Sm.line2, RoundedCornerShape(20.dp))
-            .clickable(onClick = onClick).padding(horizontal = 14.dp),
+            .focusRing(RoundedCornerShape(20.dp)).clickable(onClick = onClick).padding(horizontal = 14.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(text, color = if (accent) Sm.lamp else Sm.text, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.5.sp, maxLines = 1)
@@ -115,7 +116,7 @@ private fun EpisodeRow(i: Int, title: String, current: Boolean, onClick: () -> U
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(if (current) Sm.lampSoft else Sm.booth)
             .border(1.dp, if (current) Color(0x88FFB02E) else Sm.line, RoundedCornerShape(14.dp))
-            .clickable(enabled = !current, onClick = onClick).padding(horizontal = 12.dp, vertical = 11.dp),
+            .focusRing(RoundedCornerShape(14.dp)).clickable(enabled = !current, onClick = onClick).padding(horizontal = 12.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(Modifier.size(30.dp).clip(RoundedCornerShape(9.dp)).background(if (current) Sm.lamp else Sm.film), contentAlignment = Alignment.Center) {

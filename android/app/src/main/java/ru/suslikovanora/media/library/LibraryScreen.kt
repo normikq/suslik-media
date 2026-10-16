@@ -50,6 +50,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
@@ -74,6 +75,8 @@ import ru.suslikovanora.media.net.Api
 import ru.suslikovanora.media.ui.Onest
 import ru.suslikovanora.media.ui.Sm
 import ru.suslikovanora.media.ui.Unbounded
+import ru.suslikovanora.media.ui.focusRing
+import ru.suslikovanora.media.Tv
 import ru.suslikovanora.media.tr
 
 /** What the play sheet needs: one file, its display title and (for series) the rest of the season. */
@@ -179,6 +182,7 @@ private fun SettingsButton(onClick: () -> Unit) {
     val turn by animateFloatAsState(if (pressed) 30f else 0f, tween(260, easing = Sm.ease), label = "gear")
     Box(
         Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).border(1.dp, Sm.line2, RoundedCornerShape(12.dp))
+            .focusRing(RoundedCornerShape(12.dp))
             .clickable(interactionSource = source, indication = null, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
@@ -231,6 +235,7 @@ private fun LibraryPanel(
 @Composable
 fun SearchField(value: String, onValue: (String) -> Unit, placeholder: String, password: Boolean = false, onDone: (() -> Unit)? = null) {
     val focus = LocalFocusManager.current
+    val tv = Tv.isTv(LocalContext.current)
     var focused by remember { mutableStateOf(false) }
     val border by animateColorAsState(if (focused) Sm.lamp else Sm.line2, label = "border")
     BasicTextField(
@@ -240,13 +245,15 @@ fun SearchField(value: String, onValue: (String) -> Unit, placeholder: String, p
         visualTransformation = if (password) androidx.compose.ui.text.input.PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
         keyboardOptions = KeyboardOptions(
             imeAction = if (onDone != null) ImeAction.Go else ImeAction.Search,
-            keyboardType = if (password) androidx.compose.ui.text.input.KeyboardType.Password else androidx.compose.ui.text.input.KeyboardType.Text
+            keyboardType = if (password) androidx.compose.ui.text.input.KeyboardType.Password else androidx.compose.ui.text.input.KeyboardType.Text,
+            // TV: the keyboard opens on OK, not each time the remote just passes over the field
+            showKeyboardOnFocus = if (tv) false else null
         ),
         keyboardActions = androidx.compose.foundation.text.KeyboardActions(onAny = { focus.clearFocus(); onDone?.invoke() }),
         modifier = Modifier.fillMaxWidth()
             .onFocusChanged { focused = it.isFocused }
             .clip(RoundedCornerShape(12.dp)).background(Sm.night)
-            .border(1.dp, border, RoundedCornerShape(12.dp)),
+            .border(if (focused && tv) 2.5.dp else 1.dp, border, RoundedCornerShape(12.dp)),
         decorationBox = { inner ->
             Box(Modifier.padding(horizontal = 14.dp, vertical = 13.dp)) {
                 if (value.isEmpty()) Text(placeholder, color = Sm.muted, fontFamily = Onest, fontSize = 16.sp)
@@ -265,6 +272,7 @@ fun LampButton(text: String, enabled: Boolean = true, modifier: Modifier = Modif
         modifier.graphicsLayer { scaleX = scale; scaleY = scale; alpha = if (enabled) 1f else 0.6f }
             .shadow(10.dp, RoundedCornerShape(12.dp), ambientColor = Sm.lamp, spotColor = Sm.lamp)
             .clip(RoundedCornerShape(12.dp)).background(Sm.lamp)
+            .focusRing(RoundedCornerShape(12.dp), color = Color.White)
             .clickable(interactionSource = source, indication = null, enabled = enabled, onClick = onClick)
             .heightIn(min = 44.dp).padding(horizontal = 18.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center
@@ -279,6 +287,7 @@ fun OutlineButton(text: String, modifier: Modifier = Modifier, color: Color = Sm
     Box(
         modifier.graphicsLayer { scaleX = scale; scaleY = scale }
             .clip(RoundedCornerShape(12.dp)).border(1.dp, border, RoundedCornerShape(12.dp))
+            .focusRing(RoundedCornerShape(12.dp))
             .clickable(interactionSource = source, indication = null, onClick = onClick)
             .heightIn(min = 40.dp).padding(horizontal = 14.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center
@@ -362,6 +371,7 @@ private fun PosterTile(item: LibraryItem, store: LibraryStore, onPlay: (PlayTarg
                 .clip(RoundedCornerShape(14.dp))
                 .background(Brush.linearGradient(listOf(Color(0xFF242A3A), Color(0xFF10131A))))
                 .border(1.dp, Sm.line, RoundedCornerShape(14.dp))
+                .focusRing(RoundedCornerShape(14.dp), width = 3.dp)
                 .clickable(interactionSource = source, indication = null, enabled = canPlay) { target()?.let(onPlay) }
         ) {
             val url = poster
@@ -414,6 +424,7 @@ private fun PosterTile(item: LibraryItem, store: LibraryStore, onPlay: (PlayTarg
                     Modifier.align(Alignment.Center).padding(bottom = 24.dp).size(56.dp)
                         .clip(CircleShape).background(Color(0xB3090B10))
                         .border(1.dp, Color(0x44FFFFFF), CircleShape)
+                        .focusProperties { canFocus = false } // the remote opens it from the poster itself (OK)
                         .clickable { target()?.let(onPlay) },
                     contentAlignment = Alignment.Center
                 ) { Text("▶", color = Color.White, fontSize = 22.sp, modifier = Modifier.padding(start = 3.dp)) }
@@ -473,7 +484,7 @@ private fun SelectChip(label: String, options: List<String>, onPick: (Int) -> Un
     Box(modifier) {
         Row(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Sm.film)
-                .border(1.dp, Sm.line2, RoundedCornerShape(10.dp)).clickable { open = true }
+                .border(1.dp, Sm.line2, RoundedCornerShape(10.dp)).focusRing(RoundedCornerShape(10.dp)).clickable { open = true }
                 .heightIn(min = 36.dp).padding(horizontal = 10.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -512,6 +523,7 @@ private fun RemoveButton(downloading: Boolean, onConfirm: suspend () -> String?)
     val br = if (armed) Color(0xFFFF4D4D) else if (downloading) Color(0x66FFB86B) else Color(0x66FF6B6B)
     Box(
         Modifier.padding(top = 8.dp).clip(RoundedCornerShape(8.dp)).background(bg).border(BorderStroke(1.dp, br), RoundedCornerShape(8.dp))
+            .focusRing(RoundedCornerShape(8.dp))
             .clickable(enabled = !busy) {
                 if (!armed) { armed = true; error = null }
                 else {
@@ -541,6 +553,7 @@ private fun FavStar(on: Boolean, modifier: Modifier, onToggle: suspend (Boolean)
     Box(
         modifier.graphicsLayer { scaleX = pop.value; scaleY = pop.value }.size(34.dp).clip(CircleShape).background(bg)
             .border(1.dp, if (on) Color.Transparent else Color(0x33FFFFFF), CircleShape)
+            .focusRing(CircleShape, color = if (on) Color.White else Sm.lamp)
             .clickable(enabled = !busy, interactionSource = remember { MutableInteractionSource() }, indication = null) {
                 busy = true
                 scope.launch {
