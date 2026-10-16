@@ -37,10 +37,6 @@ class PlayerTrackSelector(
 
     companion object {
         const val SPU_OFF = "__off__"
-        const val EXTRA_SUB_URLS = "media_sub_urls"
-        const val EXTRA_AUDIO_URLS = "media_audio_urls"
-        const val EXTRA_URL = "media_url"
-        const val EXTRA_EPISODE_SIDES = "media_episode_sides"
         private const val SIDECAR_NONE = "__none__"
     }
 
@@ -81,11 +77,11 @@ class PlayerTrackSelector(
 
     fun readSideExtras(i: Intent?) {
         episodeFiles.clear()
-        val url = i?.getStringExtra(EXTRA_URL).orEmpty()
-        val subs = i?.getStringArrayListExtra(EXTRA_SUB_URLS)?.filter { it.startsWith("https://") }.orEmpty()
-        val audio = i?.getStringArrayListExtra(EXTRA_AUDIO_URLS)?.filter { it.startsWith("https://") }.orEmpty()
+        val url = i?.getStringExtra(PlayerExtras.URL).orEmpty()
+        val subs = i?.getStringArrayListExtra(PlayerExtras.SUB_URLS)?.filter { it.startsWith("https://") }.orEmpty()
+        val audio = i?.getStringArrayListExtra(PlayerExtras.AUDIO_URLS)?.filter { it.startsWith("https://") }.orEmpty()
         if (url.isNotEmpty()) episodeFiles[keyOf(url)] = EpisodeFiles(subs, audio)
-        toSign = i?.getStringExtra(EXTRA_EPISODE_SIDES)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject()
+        toSign = i?.getStringExtra(PlayerExtras.EPISODE_SIDES)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject()
     }
 
     /** [url] is a playlist episode with subtitles / voice-overs that are not signed yet ([signSidecars] first). */

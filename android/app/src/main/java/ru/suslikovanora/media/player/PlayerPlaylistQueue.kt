@@ -37,7 +37,6 @@ class PlayerPlaylistQueue(
     }
 
     companion object {
-        const val EXTRA_PLAYLIST = "media_playlist"
         private const val NEXT_COUNTDOWN_S = 10
     }
 
@@ -200,12 +199,6 @@ class PlayerPlaylistQueue(
 
     fun playPrevious() {
         if (hasPrevious) playEntry(queueIndex - 1)
-    }
-
-    fun advanceToNext(): Boolean {
-        if (!hasNext) return false
-        playEntry(queueIndex + 1)
-        return true
     }
 
     fun offerNextEpisode(): Boolean {

@@ -10,6 +10,7 @@ import ru.suslikovanora.media.player.PlayerDiagnostics
 import ru.suslikovanora.media.player.EngineListener
 import ru.suslikovanora.media.player.EngineMedia
 import ru.suslikovanora.media.player.PlayerEngine
+import ru.suslikovanora.media.player.PlayerExtras
 import ru.suslikovanora.media.player.PlayerGestures
 import ru.suslikovanora.media.player.PlayerNetworkMonitor
 import ru.suslikovanora.media.player.PlayerPipController
@@ -108,8 +109,6 @@ class PlayerActivity : ComponentActivity() {
     private var pendingSeekPos: Long? = null            // seek issued but not yet confirmed by TimeChanged
     private var tapSeekTarget: Long? = null             // accumulated double-tap target, applied after a short pause
     private var tapSeekStart = 0L
-    private var lastWatchTime = -1L
-    private var watchStuckTicks = 0
     private lateinit var seekLabel: TextView
 
     // 1.3: gestures, frame mode, media session, sidecar subtitles, remembered tracks, next-episode card, watch progress.
@@ -221,7 +220,6 @@ class PlayerActivity : ComponentActivity() {
         }
     }
 
-    private fun diagSample() = diagnostics.sample()
 
     // ---- playback health: the supervisor shared with the PC app (core.PlaybackSupervisor) ---------------
     // One place decides when playback is broken and what to do — only while the film really plays, never right after
@@ -587,14 +585,6 @@ class PlayerActivity : ComponentActivity() {
 
     private fun hideNextCard() = playlistQueue.hideNextCard()
     private fun offerNextEpisode(): Boolean = playlistQueue.offerNextEpisode()
-    private fun playQueueEntry(index: Int) = playlistQueue.playEntry(index)
-    private fun advanceToNext(): Boolean {
-        if (!playlistQueue.hasNext) return false
-        watchProgress.clearPosition()
-        Toast.makeText(this, tr("player.sleduyuschaya_seriya"), Toast.LENGTH_SHORT).show()
-        return playlistQueue.advanceToNext()
-    }
-    private fun updateQueueUi() = playlistQueue.notifyUiUpdated()
     private fun fetchPlaylist(url: String) = playlistQueue.fetchPlaylist(url)
 
     private fun positionKey(): String? = watchProgress.positionKey()
@@ -645,7 +635,6 @@ class PlayerActivity : ComponentActivity() {
         playWhenReady = savedInstanceState?.getBoolean(KEY_PLAYING) ?: true
         userPaused = !playWhenReady
         readSideExtras(intent)
-        playbackPosition = savedInstanceState?.getLong(KEY_POSITION) ?: startPosition(intent)
         scaleIndex = uiPrefs.getInt("scale", 0).coerceIn(0, SCALES.size - 1)
 
         engine = HybridEngine(this).also { it.listener = engineListener }
@@ -948,7 +937,6 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun startWatchdog() {
-        lastWatchTime = -1L; watchStuckTicks = 0
         handler.removeCallbacks(watchdogRunnable)
         handler.postDelayed(watchdogRunnable, WATCHDOG_TICK_MS)
     }
@@ -1015,7 +1003,6 @@ class PlayerActivity : ComponentActivity() {
     private fun viaReserve() = BurstProxy.isActive(currentUrl)
     private fun stallTimeout() = if (viaReserve()) 35_000L else STALL_TIMEOUT_MS
     private fun openTimeout() = if (viaReserve()) 45_000L else OPEN_TIMEOUT_MS
-    private fun stuckTicks() = if (viaReserve()) 15 else WATCHDOG_STUCK_TICKS
 
     private fun checkNoPicture(p: PlayerEngine) = diagnostics.checkNoPicture(p)
     private fun warnIfSoftwareDecoding(p: PlayerEngine) = diagnostics.warnIfSoftwareDecoding(p)
@@ -1062,8 +1049,7 @@ class PlayerActivity : ComponentActivity() {
             val p = createPlayer(url, position)
             audioSession.requestAudioFocus()
             p.play()
-            lastWatchTime = -1L; watchStuckTicks = 0
-            // The new connection may hang in "opening" without any event: arm the stall timer right away.
+                // The new connection may hang in "opening" without any event: arm the stall timer right away.
             handler.postDelayed(stallRunnable, openTimeout())
         } catch (e: Exception) {
             handleError()
@@ -1584,7 +1570,6 @@ class PlayerActivity : ComponentActivity() {
 
     // ---- screen lock against accidental touches ---------------------------------------------------------------
     private fun lockScreen() = controlsOverlay.lock()
-    private fun unlockScreen() = controlsOverlay.unlock()
     private fun showUnlockBadge() = controlsOverlay.showUnlockBadge()
 
     // ---- frame mode ---------------------------------------------------------------------------
@@ -1915,10 +1900,10 @@ class PlayerActivity : ComponentActivity() {
     companion object {
         /** This screen exists right now (CrashReports tells a crash from a normal close by it). */
         @Volatile var alive = false
-        const val EXTRA_URL = "media_url"
-        const val EXTRA_TITLE = "media_title"
-        const val EXTRA_PLAYLIST = "media_playlist"
-        const val EXTRA_FROM_START = "media_from_start"
+        const val EXTRA_URL = PlayerExtras.URL
+        const val EXTRA_TITLE = PlayerExtras.TITLE
+        const val EXTRA_PLAYLIST = PlayerExtras.PLAYLIST
+        const val EXTRA_FROM_START = PlayerExtras.FROM_START
         private const val KEY_URL = "current_url"
         private val NIGHT = 0xFF090B10.toInt()
         private val LAMP = 0xFFFFB02E.toInt()
@@ -1932,10 +1917,10 @@ class PlayerActivity : ComponentActivity() {
         private const val CATCH_UP_MAX_MS = 45_000L // the longest pause to gather a reserve on a slow network
         private const val CATCH_UP_AFTER_PLAYED_MS = 5_000L // film played at a new place before a wait for a reserve
         private const val IDLE_RELEASE_MS = 10 * 60_000L // locked longer than this: free VLC and the connection
-        const val EXTRA_SUB_URLS = "media_sub_urls"
-        const val EXTRA_WATCH_KEYS = "media_watch_keys"
-        const val EXTRA_AUDIO_URLS = "media_audio_urls"
-        const val EXTRA_EPISODE_SIDES = PlayerTrackSelector.EXTRA_EPISODE_SIDES
+        const val EXTRA_SUB_URLS = PlayerExtras.SUB_URLS
+        const val EXTRA_WATCH_KEYS = PlayerExtras.WATCH_KEYS
+        const val EXTRA_AUDIO_URLS = PlayerExtras.AUDIO_URLS
+        const val EXTRA_EPISODE_SIDES = PlayerExtras.EPISODE_SIDES
         @Volatile private var media3Swept = false // the old Media3 cache folder: removed once per process, off the main thread
         private val SCALES = listOf(
             VideoScale.BEST_FIT to tr("player.vpisat"),
@@ -1943,7 +1928,6 @@ class PlayerActivity : ComponentActivity() {
             VideoScale.FILL to tr("player.rastyanut"),
             VideoScale.RATIO_16_9 to "16:9"
         )
-        private const val WATCHDOG_STUCK_TICKS = 4 // 4 x 2 s = the same 8 s as before
         private const val SEEK_CONFIRM_TIMEOUT_MS = 9_000L
         private const val SEEK_CONFIRM_TOLERANCE_MS = 12_000L
         private const val TAP_SEEK_APPLY_MS = 350L

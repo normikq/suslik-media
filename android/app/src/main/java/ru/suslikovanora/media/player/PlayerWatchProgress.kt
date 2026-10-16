@@ -22,8 +22,6 @@ class PlayerWatchProgress(
     }
 
     companion object {
-        const val EXTRA_FROM_START = "media_from_start"
-        const val EXTRA_WATCH_KEYS = "media_watch_keys"
     }
 
     private val prefs by lazy { context.getSharedPreferences("positions", Context.MODE_PRIVATE) }
@@ -37,7 +35,7 @@ class PlayerWatchProgress(
     }
 
     fun readIntent(intent: Intent?) {
-        watchKeys = intent?.getStringArrayListExtra(EXTRA_WATCH_KEYS).orEmpty()
+        watchKeys = intent?.getStringArrayListExtra(PlayerExtras.WATCH_KEYS).orEmpty()
     }
 
     /** "magnetId|path" of what is playing (the playlist starts with current episode, like watchKeys). */
@@ -60,7 +58,7 @@ class PlayerWatchProgress(
 
     /** Where a film opened from library starts: remembered place, or 0 when «С начала» was chosen. */
     fun startPosition(intent: Intent, url: String = callback.getCurrentUrl()): Long =
-        if (intent.getBooleanExtra(EXTRA_FROM_START, false)) 0L else savedPosition(url)
+        if (intent.getBooleanExtra(PlayerExtras.FROM_START, false)) 0L else savedPosition(url)
 
     fun persistPosition(time: Long, length: Long, isEnded: Boolean, url: String = callback.getCurrentUrl()) {
         val key = positionKey(url) ?: return
