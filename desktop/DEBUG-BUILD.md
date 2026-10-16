@@ -10,7 +10,7 @@
 
 ## Где взять
 
-- GitHub → Actions → «Windows MSI» → последний зелёный запуск → артефакт **windows-debug-msi**
+- GitHub → Actions → «Windows MSI» → Run workflow с галочкой **debug** → артефакт **windows-debug-msi**
   (`Suslik Debug-<версия>.msi` внутри zip).
 - Или собрать самому: в папке `desktop` выполнить `./gradlew packageMsi -Pdiag` →
   `build/compose/binaries/main/msi/Suslik Debug-<версия>.msi`.

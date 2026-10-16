@@ -8,6 +8,10 @@ on:
         description: "Выложить APK на сайт (папка updates/)"
         type: boolean
         default: false
+      debug:
+        description: "Собрать и отладочную «Suslik Debug» (артефакт, на сайт не идёт)"
+        type: boolean
+        default: false
       channel:
         description: "Кому: beta — только тестировщику (по коду), stable — всем"
         type: choice
@@ -52,8 +56,9 @@ jobs:
         run: |
           set -o pipefail
           T=assembleDebug; [ "$HAS_KEY" = "1" ] && T=assembleRelease
-          # + the debug build «Suslik Debug» (detailed journal, own package; DEBUG-BUILD.md) as a separate artifact.
-          gradle --no-daemon $T assembleDiag 2>&1 | tee "$RUNNER_TEMP/build.log"
+          # + the debug build «Suslik Debug» (detailed journal, own package; DEBUG-BUILD.md) only when asked (input debug).
+          D=; [ "${{ inputs.debug }}" = "true" ] && D=assembleDiag
+          gradle --no-daemon $T $D 2>&1 | tee "$RUNNER_TEMP/build.log"
       - name: Report build errors
         if: failure()
         run: |
@@ -70,11 +75,12 @@ jobs:
           # -b<versionCode>: Android installs by this number, not by the name — the app reads it from the file name.
           mkdir -p ../dist && cp "$F" "../dist/suslik-media-$V-b$C.apk"
           echo "APK=dist/suslik-media-$V-b$C.apk" >> "$GITHUB_ENV"
-          mkdir -p ../dist-diag && cp app/build/outputs/apk/diag/*.apk "../dist-diag/suslik-debug-$V-b$C.apk"
-          ls -la ../dist ../dist-diag
+          if [ "${{ inputs.debug }}" = "true" ]; then mkdir -p ../dist-diag && cp app/build/outputs/apk/diag/*.apk "../dist-diag/suslik-debug-$V-b$C.apk"; fi
+          ls -la ../dist ../dist-diag 2>/dev/null || true
       - uses: actions/upload-artifact@v4
         with: { name: android-apk, path: dist/*.apk, retention-days: 2 }
       - uses: actions/upload-artifact@v4
+        if: ${{ inputs.debug }}
         with: { name: android-debug-apk, path: dist-diag/*.apk, retention-days: 2 }
       - name: Publish to the site
         if: ${{ inputs.publish && env.HAS_KEY == '1' }}

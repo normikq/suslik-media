@@ -12,7 +12,7 @@ Android Studio или Perfetto (`profileable`). На сайт она не пуб
 
 ## Где взять
 
-GitHub → Actions → «Android APK» → последний зелёный запуск → артефакт **android-debug-apk**
+GitHub → Actions → «Android APK» → Run workflow с галочкой **debug** → артефакт **android-debug-apk**
 (`suslik-debug-<версия>-b<код>.apk` внутри zip).
 
 ## Установка и разрешения (с компьютера, adb)

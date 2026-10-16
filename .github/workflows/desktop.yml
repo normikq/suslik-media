@@ -8,6 +8,10 @@ on:
         description: "Выложить MSI на сайт (папка updates/)"
         type: boolean
         default: false
+      debug:
+        description: "Собрать и отладочную «Suslik Debug» (артефакт, на сайт не идёт)"
+        type: boolean
+        default: false
       channel:
         description: "Кому: beta — только тестировщику (по коду), stable — всем"
         type: choice
@@ -45,12 +49,14 @@ jobs:
         with: { name: windows-msi, path: dist/*.msi, retention-days: 2 }
       # «Suslik Debug» (detailed journal, installs next to the normal app, never published): see desktop/DEBUG-BUILD.md
       - name: Build debug MSI
+        if: ${{ inputs.debug }}
         run: |
           set -o pipefail
           ./gradlew --no-daemon packageMsi -Pdiag 2>&1 | tail -5
           V=$(sed -n 's/^val appVersion = "\([^"]*\)".*/\1/p' build.gradle.kts)
           mkdir -p ../dist-diag && cp "$(ls build/compose/binaries/main/msi/Suslik\ Debug*.msi | head -1)" "../dist-diag/Suslik Debug-$V.msi"
       - uses: actions/upload-artifact@v4
+        if: ${{ inputs.debug }}
         with: { name: windows-debug-msi, path: dist-diag/*.msi, retention-days: 2 }
       - name: Publish to the site
         if: ${{ inputs.publish }}
