@@ -1,5 +1,9 @@
 package ru.suslikovanora.media
 
+import androidx.compose.ui.focus.focusRequester
+import ru.suslikovanora.media.ui.rememberTvStartFocus
+import ru.suslikovanora.media.ui.keepFocusInside
+import ru.suslikovanora.media.ui.noFocus
 import ru.suslikovanora.media.core.*
 
 import android.content.Context
@@ -90,9 +94,10 @@ private fun WhatsNewCard(current: String, releases: List<Changelog.Release>, onD
         scope.launch { shown.animateTo(0f, tween(240, easing = Sm.ease)); onDone() }
     }
     BackHandler { close() }
+    val start = rememberTvStartFocus()
     Box(
         Modifier.fillMaxSize().graphicsLayer { alpha = shown.value }.background(Sm.scrim)
-            .clickable(remember { MutableInteractionSource() }, indication = null) { close() },
+            .noFocus().clickable(remember { MutableInteractionSource() }, indication = null) { close() },
         contentAlignment = Alignment.Center
     ) {
         Column(
@@ -102,7 +107,8 @@ private fun WhatsNewCard(current: String, releases: List<Changelog.Release>, onD
             }
                 .widthIn(max = 520.dp).padding(18.dp).clip(RoundedCornerShape(22.dp)).background(Sm.booth)
                 .border(1.dp, Sm.line2, RoundedCornerShape(22.dp))
-                .clickable(remember { MutableInteractionSource() }, indication = null) {}
+                .keepFocusInside()
+                .noFocus().clickable(remember { MutableInteractionSource() }, indication = null) {}
                 .padding(start = 22.dp, end = 22.dp, top = 22.dp, bottom = 18.dp)
         ) {
             Text(tr("whatsnew.chto_novogo"), color = Sm.text, fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 21.sp)
@@ -135,7 +141,7 @@ private fun WhatsNewCard(current: String, releases: List<Changelog.Release>, onD
                 }
             }
             Row(Modifier.fillMaxWidth().padding(top = 18.dp), horizontalArrangement = Arrangement.End) {
-                LampButton(tr("whatsnew.ponyatno")) { close() }
+                LampButton(tr("whatsnew.ponyatno"), modifier = Modifier.focusRequester(start)) { close() }
             }
         }
     }

@@ -1,5 +1,6 @@
 package ru.suslikovanora.media
 
+import ru.suslikovanora.media.ui.focusRing
 import ru.suslikovanora.media.core.*
 
 import android.app.Activity
@@ -210,6 +211,7 @@ fun UpdateDialog(info: Updater.Info, onDismiss: () -> Unit) {
             }
             if (progress == null && file == null) Text(tr("updater.propustit_etu_versiyu"), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp,
                 modifier = Modifier.padding(top = 12.dp).clip(RoundedCornerShape(6.dp))
+                    .focusRing(RoundedCornerShape(6.dp))
                     .clickableNoIndication { Updater.skip(ctx, info.version); onDismiss() }.padding(4.dp))
         }
     }

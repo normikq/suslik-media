@@ -1,5 +1,6 @@
 package ru.suslikovanora.media.library
 
+import ru.suslikovanora.media.ui.focusRing
 import ru.suslikovanora.media.core.*
 
 import android.content.ClipData
@@ -195,6 +196,7 @@ private fun StartOption(title: String, hint: String, on: Boolean, modifier: Modi
     Column(
         modifier.clip(RoundedCornerShape(14.dp)).background(if (on) Sm.lampSoft else Sm.film)
             .border(1.dp, if (on) Sm.lamp else Sm.line, RoundedCornerShape(14.dp))
+            .focusRing(RoundedCornerShape(14.dp), color = Sm.text)
             .clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 10.dp)
     ) {
         Text(title, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = if (on) Sm.lamp else Sm.text, maxLines = 1)

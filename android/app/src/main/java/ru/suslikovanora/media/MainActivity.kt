@@ -39,6 +39,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.animation.core.Animatable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -80,6 +81,10 @@ class MainActivity : ComponentActivity() {
     private var playTarget by mutableStateOf<PlayTarget?>(null)
     private val uiScope = MainScope() // outlives tab switches: searches and download tracking keep going
     private val siteHost = "short.suslikovanora.ru"
+    // Remote control (Android TV): Back first brings focus to the tabs below, only then leaves the app.
+    private val navFocus = FocusRequester()
+    private var navFocused = false
+    private var settingsOpen by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -97,6 +102,8 @@ class MainActivity : ComponentActivity() {
             override fun handleOnBackPressed() {
                 when {
                     playTarget != null -> playTarget = null
+                    Tv.isTv(this@MainActivity) && !navFocused && !settingsOpen && store.authenticated == true &&
+                        runCatching { navFocus.requestFocus() }.isSuccess -> {}
                     tab != Tab.Library -> selectTab(Tab.Library)
                     else -> { isEnabled = false; onBackPressedDispatcher.onBackPressed(); isEnabled = true }
                 }
@@ -145,7 +152,10 @@ class MainActivity : ComponentActivity() {
         val logout: () -> Unit = { scope.launch { store.logout() } }
         val density = LocalDensity.current
         var headerHeight by remember { mutableStateOf(46.dp) }
-        var settingsOpen by remember { mutableStateOf(false) }
+        LaunchedEffect(store.authenticated) {
+            // TV: the remote starts on the tabs (from there «up» goes into the open tab)
+            if (store.authenticated == true && Tv.isTv(this@MainActivity)) runCatching { navFocus.requestFocus() }
+        }
         CompositionLocalProvider(LocalHeaderHeight provides headerHeight) {
         Box(Modifier.fillMaxSize().background(Sm.night).windowInsetsPadding(WindowInsets.safeDrawing)) {
             Column(Modifier.fillMaxSize()) {
@@ -196,7 +206,7 @@ class MainActivity : ComponentActivity() {
                     ) { BrandHeader(onLogout = logout, onSettings = { settingsOpen = true }) }
                 }
               }
-                if (!imeVisible && store.authenticated != false) NavBar(current = tab, onSelect = ::selectTab)
+                if (!imeVisible && store.authenticated != false) NavBar(current = tab, onSelect = ::selectTab, focus = navFocus, onFocused = { navFocused = it })
             }
             if (store.authenticated == false) {
                 LoginScreen(store) {

@@ -33,6 +33,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -50,9 +53,12 @@ enum class Tab(val label: String) {
     Search(tr("navbar.poisk"))
 }
 
-/** Floating bottom bar (same look as the website's) with the amber "lens" that slides under the active tab. */
+/**
+ * Floating bottom bar (same look as the website's) with the amber "lens" that slides under the active tab.
+ * Remote control: [focus] lands on the active tab, [onFocused] tells whether one of the tabs has focus.
+ */
 @Composable
-fun NavBar(current: Tab, onSelect: (Tab) -> Unit, modifier: Modifier = Modifier) {
+fun NavBar(current: Tab, onSelect: (Tab) -> Unit, modifier: Modifier = Modifier, focus: FocusRequester? = null, onFocused: (Boolean) -> Unit = {}) {
     Box(modifier.fillMaxWidth().padding(top = 6.dp, bottom = 8.dp), contentAlignment = Alignment.Center) {
         BoxWithConstraints(
             Modifier.widthIn(max = 340.dp).fillMaxWidth().padding(horizontal = 14.dp)
@@ -68,11 +74,13 @@ fun NavBar(current: Tab, onSelect: (Tab) -> Unit, modifier: Modifier = Modifier)
                     .shadow(10.dp, RoundedCornerShape(22.dp), ambientColor = Sm.lamp, spotColor = Sm.lamp)
                     .clip(RoundedCornerShape(22.dp)).background(Sm.lamp)
             )
-            Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.SpaceEvenly) {
+            Row(Modifier.fillMaxSize().onFocusChanged { onFocused(it.hasFocus) }, horizontalArrangement = Arrangement.SpaceEvenly) {
                 for (t in Tab.entries) {
                     val color by animateColorAsState(if (t == current) Sm.lampInk else Sm.muted, tween(250), label = "tab")
                     Column(
                         Modifier.weight(1f).fillMaxHeight()
+                            .then(if (t == current && focus != null) Modifier.focusRequester(focus) else Modifier)
+                            .focusRing(RoundedCornerShape(22.dp), color = Sm.text)
                             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onSelect(t) },
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center

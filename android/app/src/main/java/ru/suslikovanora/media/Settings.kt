@@ -1,5 +1,10 @@
 package ru.suslikovanora.media
 
+import androidx.compose.ui.focus.focusRequester
+import ru.suslikovanora.media.ui.rememberTvStartFocus
+import ru.suslikovanora.media.ui.keepFocusInside
+import ru.suslikovanora.media.ui.noFocus
+import ru.suslikovanora.media.ui.focusRing
 import ru.suslikovanora.media.core.*
 
 import android.content.Context
@@ -98,16 +103,18 @@ fun SettingsSheet(onClose: () -> Unit) {
         scope.launch { shown.animateTo(0f, tween(220, easing = Sm.ease)); onClose() }
     }
     BackHandler { close() }
+    val start = rememberTvStartFocus()
     Box(
         Modifier.fillMaxSize().graphicsLayer { alpha = shown.value }.background(Sm.scrim)
-            .clickable(remember { MutableInteractionSource() }, indication = null) { close() },
+            .noFocus().clickable(remember { MutableInteractionSource() }, indication = null) { close() },
         contentAlignment = Alignment.Center
     ) {
         Column(
             Modifier.graphicsLayer { val v = shown.value; translationY = (1f - v) * 60f; scaleX = 0.96f + 0.04f * v; scaleY = scaleX }
                 .widthIn(max = 560.dp).padding(14.dp).clip(RoundedCornerShape(22.dp)).background(Sm.booth)
                 .border(1.dp, Sm.line2, RoundedCornerShape(22.dp))
-                .clickable(remember { MutableInteractionSource() }, indication = null) {}
+                .keepFocusInside()
+                .noFocus().clickable(remember { MutableInteractionSource() }, indication = null) {}
                 .padding(start = 18.dp, end = 18.dp, top = 20.dp, bottom = 16.dp)
         ) {
             Text(tr("settings.nastroyki"), color = Sm.text, fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 21.sp)
@@ -134,7 +141,7 @@ fun SettingsSheet(onClose: () -> Unit) {
                 JournalSection()
             }
             Row(Modifier.fillMaxWidth().padding(top = 14.dp), horizontalArrangement = Arrangement.End) {
-                LampButton(tr("settings.gotovo")) { close() }
+                LampButton(tr("settings.gotovo"), modifier = Modifier.focusRequester(start)) { close() }
             }
         }
     }
@@ -204,7 +211,7 @@ private fun ChannelSection() {
             lineHeight = 17.sp, modifier = Modifier.weight(1f))
         Text(tr("settings.proverit"), color = Sm.lamp, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.sp,
             modifier = Modifier.padding(start = 10.dp).clip(RoundedCornerShape(8.dp))
-                .clickable { checkUpdates() }.padding(horizontal = 8.dp, vertical = 6.dp))
+                .focusRing(RoundedCornerShape(8.dp)).clickable { checkUpdates() }.padding(horizontal = 8.dp, vertical = 6.dp))
     }
     offer?.let { UpdateDialog(it) { offer = null } }
 }
@@ -342,6 +349,7 @@ private fun ChannelOption(title: String, on: Boolean, modifier: Modifier, onClic
     val bg by animateColorAsState(if (on) Sm.lampSoft else Sm.film, tween(220), label = "bg")
     Box(
         modifier.clip(RoundedCornerShape(14.dp)).background(bg).border(1.dp, edge, RoundedCornerShape(14.dp))
+            .focusRing(RoundedCornerShape(14.dp), color = Sm.text)
             .clickable(remember { MutableInteractionSource() }, indication = null, onClick = onClick).padding(vertical = 12.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -362,6 +370,7 @@ private fun PresetRow(p: PlaybackPresets.Preset, on: Boolean, onClick: () -> Uni
     Row(
         Modifier.fillMaxWidth().padding(vertical = 3.dp).clip(RoundedCornerShape(14.dp)).background(bg)
             .border(1.dp, edge, RoundedCornerShape(14.dp))
+            .focusRing(RoundedCornerShape(14.dp), color = Sm.text)
             .clickable(remember { MutableInteractionSource() }, indication = null, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically

@@ -40,6 +40,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Rational
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.graphics.Rect
 import android.view.Surface
@@ -655,6 +656,7 @@ class PlayerActivity : ComponentActivity() {
             setOnClickListener { toggleFullscreen() }
         }
         topBar.addView(fullButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginStart = dp(10) })
+        if (tv) fullButton.visibility = View.GONE // a TV is always «full screen»: the button would only turn it upright
         stage.addView(topBar, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
 
         bufferingLabel = TextView(this).apply {
@@ -718,6 +720,7 @@ class PlayerActivity : ComponentActivity() {
             thumbTintList = ColorStateList.valueOf(Color.WHITE)
             secondaryProgressTintList = ColorStateList.valueOf(0x80B4B8C4.toInt())
             progressBackgroundTintList = ColorStateList.valueOf(0x33FFFFFF)
+            lightThumbOnFocus()
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onStartTrackingTouch(seekBar: SeekBar) { userSeeking = true; showControlsTemporarily() }
                 override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
@@ -749,8 +752,8 @@ class PlayerActivity : ComponentActivity() {
         options.addView(audioButton, LinearLayout.LayoutParams(-2, dp(42)).apply { marginEnd = dp(8) })
         options.addView(subsButton, LinearLayout.LayoutParams(-2, dp(42)).apply { marginEnd = dp(8) })
         options.addView(scaleButton, LinearLayout.LayoutParams(-2, dp(42)).apply { marginEnd = dp(8) })
-        options.addView(pillButton("🔒").apply { contentDescription = tr("player.blokirovka_ekrana"); setOnClickListener { lockScreen() } },
-            LinearLayout.LayoutParams(dp(48), dp(42)).apply { marginEnd = dp(14) })
+        if (!tv) options.addView(pillButton("🔒").apply { contentDescription = tr("player.blokirovka_ekrana"); setOnClickListener { lockScreen() } },
+            LinearLayout.LayoutParams(dp(48), dp(42)).apply { marginEnd = dp(14) }) // the lock is against touches: nothing to lock on a TV
         if (Diag.on) options.addView(pillButton("📍").apply {
             contentDescription = tr("player.metka_v_zhurnale")
             setOnClickListener { val n = Diag.mark("player at ${perceivedPosition() / 1000}s"); showStatus(tr("player.metka_n", "n" to n)); showControlsTemporarily()
@@ -765,6 +768,7 @@ class PlayerActivity : ComponentActivity() {
             progress = audioSession.getStreamVolume()
             progressTintList = ColorStateList.valueOf(0xFFE6B94A.toInt())
             thumbTintList = ColorStateList.valueOf(Color.WHITE)
+            lightThumbOnFocus()
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onStartTrackingTouch(seekBar: SeekBar) { showControlsTemporarily() }
                 override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
@@ -808,7 +812,13 @@ class PlayerActivity : ComponentActivity() {
         setContentView(root)
         applyMode()
         onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() { if (locked) showUnlockBadge() else leave() }
+            override fun handleOnBackPressed() {
+                when {
+                    locked -> showUnlockBadge()
+                    tv && controlsOverlay.isVisible -> setControlsVisible(false) // TV: Back first hides the panel
+                    else -> leave()
+                }
+            }
         })
         if (Build.VERSION.SDK_INT >= 34) {
             overrideActivityTransition(android.app.Activity.OVERRIDE_TRANSITION_OPEN, R.anim.player_in, 0)
@@ -1260,8 +1270,11 @@ class PlayerActivity : ComponentActivity() {
         setPadding(pad, pad, pad, pad)
         background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(bg); if (bg ushr 24 < 0xF0) setStroke(dp(1), 0x26FFFFFF) }
         isClickable = true; isFocusable = true
-        foreground = android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), null,
-            GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE) })
+        foreground = android.graphics.drawable.LayerDrawable(arrayOf(
+            android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), null,
+                GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE) }),
+            focusRing { shape = GradientDrawable.OVAL }
+        ))
     }
 
     private fun setPlayIcon(playing: Boolean) {
@@ -1273,6 +1286,16 @@ class PlayerActivity : ComponentActivity() {
         setTextColor(Color.WHITE); setPadding(dp(14), 0, dp(14), 0)
         background = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; cornerRadius = dp(22).toFloat(); setColor(0xB8222228.toInt()); setStroke(dp(1), 0x44FFFFFF) }
         isClickable = true; isFocusable = true
+        foreground = focusRing { cornerRadius = dp(22).toFloat() }
+    }
+
+    /** Remote control: an amber ring on the button that has focus (touch never focuses these buttons). */
+    private fun focusRing(outline: GradientDrawable.() -> Unit) = android.graphics.drawable.StateListDrawable().apply {
+        addState(intArrayOf(android.R.attr.state_focused), GradientDrawable().apply { outline(); setStroke(dp(3), LAMP) })
+    }
+
+    private fun SeekBar.lightThumbOnFocus() {
+        setOnFocusChangeListener { _, focused -> thumbTintList = ColorStateList.valueOf(if (focused) LAMP else Color.WHITE) }
     }
 
     private fun gradient(colors: IntArray, radius: Int) = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, colors).apply {
@@ -1751,6 +1774,58 @@ class PlayerActivity : ComponentActivity() {
         showControlsTemporarily()
     }
 
+    // ---- remote control (Android TV) ---------------------------------------------------------------------------------
+    private val tv by lazy { Tv.isTv(this) }
+    /** A key whose press was taken here: its release is taken too (it must not click the button that got focus). */
+    private var takenKey = KeyEvent.KEYCODE_UNKNOWN
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_UP && event.keyCode == takenKey) { takenKey = KeyEvent.KEYCODE_UNKNOWN; return true }
+        if (event.action == KeyEvent.ACTION_DOWN && remoteKey(event)) { takenKey = event.keyCode; return true }
+        return super.dispatchKeyEvent(event)
+    }
+
+    /**
+     * Panel hidden: OK — pause / play, ←/→ — 10 s back / forward (held — faster), ↑/↓ — the panel.
+     * Panel shown: the arrows walk over its buttons, ←/→ on the timeline seek, every key keeps the panel up.
+     * Media keys of the remote work either way.
+     */
+    private fun remoteKey(e: KeyEvent): Boolean {
+        if (!::controls.isInitialized || inPip) return false
+        val code = e.keyCode
+        val first = e.repeatCount == 0
+        when (code) {
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_HEADSETHOOK -> { if (first) playPauseButton.performClick(); return true }
+            KeyEvent.KEYCODE_MEDIA_PLAY -> { if (first) { doPlay(); showControlsTemporarily() }; return true }
+            KeyEvent.KEYCODE_MEDIA_PAUSE -> { if (first) { doPause(); showControlsTemporarily() }; return true }
+            KeyEvent.KEYCODE_MEDIA_FAST_FORWARD, KeyEvent.KEYCODE_MEDIA_REWIND -> { tapSeek(code == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD); return true }
+            KeyEvent.KEYCODE_MEDIA_NEXT -> { if (first && nextButton.visibility == View.VISIBLE) playlistQueue.playNext(); return true }
+            KeyEvent.KEYCODE_MEDIA_PREVIOUS -> { if (first && prevButton.visibility == View.VISIBLE) playlistQueue.playPrevious(); return true }
+        }
+        if (locked) return false
+        val center = code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER
+        val leftRight = code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT
+        val upDown = code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_DPAD_DOWN
+        if (!center && !leftRight && !upDown && code != KeyEvent.KEYCODE_MENU && code != KeyEvent.KEYCODE_INFO) return false
+        if (!controlsOverlay.isVisible) {
+            when {
+                center -> { if (first) { playPauseButton.performClick(); playPauseButton.requestFocus() } }
+                leftRight -> { tapSeek(code == KeyEvent.KEYCODE_DPAD_RIGHT); seekBar.requestFocus() }
+                else -> { showControlsTemporarily(); playPauseButton.requestFocus() }
+            }
+            return true
+        }
+        controlsOverlay.keepShown()
+        val focused = currentFocus
+        // The panel is up but nothing on it has focus yet (it was shown by a touch or on opening): start on play / pause.
+        if (focused == null || !focused.isShown) {
+            playPauseButton.requestFocus()
+            return true
+        }
+        if (focused === seekBar && leftRight) { tapSeek(code == KeyEvent.KEYCODE_DPAD_RIGHT); return true }
+        return false
+    }
+
     // Tapping "play" twice must not stack two players: the running one switches to the new stream.
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -1833,6 +1908,7 @@ class PlayerActivity : ComponentActivity() {
         const val EXTRA_FROM_START = "media_from_start"
         private const val KEY_URL = "current_url"
         private val NIGHT = 0xFF090B10.toInt()
+        private val LAMP = 0xFFFFB02E.toInt()
         private const val KEY_TITLE = "current_title"
         private const val KEY_POSITION = "playback_position"
         private const val KEY_PLAYING = "play_when_ready"
