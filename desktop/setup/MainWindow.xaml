@@ -90,7 +90,7 @@
                     <Grid x:Name="Pages" Margin="40,40,0,0">
 
                         <!-- 1. Добро пожаловать -->
-                        <Grid x:Name="PageWelcome">
+                        <Grid x:Name="PageWelcome" Visibility="Collapsed">
                             <!-- Макет приложения справа: наклонное стеклянное окно с афишами -->
                             <Border HorizontalAlignment="Right" VerticalAlignment="Top" Width="380" Height="300" Margin="0,64,-150,0"
                                     CornerRadius="16" BorderThickness="1" BorderBrush="#2F4466" IsHitTestVisible="False" RenderTransformOrigin="0,0.5">
@@ -227,7 +227,7 @@
                         </Grid>
 
                         <!-- 2. Выбор папки -->
-                        <StackPanel x:Name="PageFolder" Visibility="Collapsed" MaxWidth="640" HorizontalAlignment="Left" Width="640">
+                        <StackPanel x:Name="PageFolder" Visibility="Collapsed" MaxWidth="640" HorizontalAlignment="Stretch" Margin="0,0,40,0">
                             <TextBlock Style="{StaticResource H1}" Text="Выбор папки" />
                             <TextBlock Style="{StaticResource Lead}" Text="Куда установить Suslik Media." />
                             <TextBlock Text="Папка установки" Foreground="{StaticResource Sub}" FontSize="14" Margin="0,34,0,10" />
@@ -262,12 +262,12 @@
                         </StackPanel>
 
                         <!-- 3. Установка / удаление: ход работы -->
-                        <StackPanel x:Name="PageProgress" Visibility="Collapsed" MaxWidth="640" HorizontalAlignment="Left" Width="640">
+                        <StackPanel x:Name="PageProgress" Visibility="Collapsed" MaxWidth="640" HorizontalAlignment="Stretch" Margin="0,0,40,0">
                             <TextBlock x:Name="ProgressTitle" Style="{StaticResource H1}" Text="Установка" />
                             <TextBlock x:Name="ProgressLead" Style="{StaticResource Lead}" Text="Копирование файлов." />
                             <Grid Margin="0,40,0,0">
                                 <TextBlock x:Name="PercentText" Text="0%" Foreground="{StaticResource Text}" FontSize="46" FontWeight="SemiBold" />
-                                <TextBlock x:Name="ActionText" Style="{StaticResource Small}" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,0,10" TextTrimming="CharacterEllipsis" MaxWidth="420" TextWrapping="NoWrap" />
+                                <TextBlock x:Name="ActionText" Style="{StaticResource Small}" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,0,10" TextTrimming="CharacterEllipsis" MaxWidth="380" TextWrapping="NoWrap" />
                             </Grid>
                             <!-- Полоса: дорожка, голубая заливка со свечением и бегущий блик -->
                             <Grid Height="12" Margin="0,14,0,0">
@@ -299,7 +299,7 @@
                         </StackPanel>
 
                         <!-- 4. Готово / ошибка -->
-                        <StackPanel x:Name="PageDone" Visibility="Collapsed" MaxWidth="640" HorizontalAlignment="Left" Width="640">
+                        <StackPanel x:Name="PageDone" Visibility="Collapsed" MaxWidth="640" HorizontalAlignment="Stretch" Margin="0,0,40,0">
                             <Grid Width="96" Height="96" HorizontalAlignment="Left" x:Name="DoneBadge" RenderTransformOrigin="0.5,0.5">
                                 <Grid.RenderTransform><ScaleTransform x:Name="DoneScale" ScaleX="0.4" ScaleY="0.4" /></Grid.RenderTransform>
                                 <Ellipse x:Name="DoneGlow" Fill="#5AB0FF" Opacity="0.45" Margin="-10">
@@ -322,7 +322,7 @@
                         </StackPanel>
 
                         <!-- Удаление: подтверждение -->
-                        <StackPanel x:Name="PageUninstall" Visibility="Collapsed" MaxWidth="640" HorizontalAlignment="Left" Width="640">
+                        <StackPanel x:Name="PageUninstall" Visibility="Collapsed" MaxWidth="640" HorizontalAlignment="Stretch" Margin="0,0,40,0">
                             <TextBlock Style="{StaticResource H1}" Text="Удалить Suslik Media?" />
                             <TextBlock x:Name="UninstallLead" Style="{StaticResource Lead}" Text="Программа будет удалена с этого компьютера." />
                             <Border CornerRadius="14" Background="#0E1522" BorderBrush="{StaticResource Line2}" BorderThickness="1" Padding="22,20" Margin="0,36,0,0">

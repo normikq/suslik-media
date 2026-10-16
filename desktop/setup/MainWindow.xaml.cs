@@ -402,6 +402,15 @@ namespace SuslikSetup
         {
             void Snap(MainWindow w, string name)
             {
+                // Даём анимациям доиграть: крутим очередь окна ~0,9 с
+                var until = DateTime.UtcNow.AddMilliseconds(900);
+                while (DateTime.UtcNow < until)
+                {
+                    var frame = new System.Windows.Threading.DispatcherFrame();
+                    w.Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, new Action(() => frame.Continue = false));
+                    System.Windows.Threading.Dispatcher.PushFrame(frame);
+                    System.Threading.Thread.Sleep(15);
+                }
                 w.UpdateLayout();
                 var size = new Size(w.Shell.ActualWidth, w.Shell.ActualHeight);
                 var bmp = new RenderTargetBitmap((int)size.Width, (int)size.Height, 96, 96, PixelFormats.Pbgra32);
