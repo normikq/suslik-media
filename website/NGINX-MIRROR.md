@@ -28,6 +28,9 @@
         proxy_set_header Authorization "";
         proxy_ssl_server_name on;
         proxy_ssl_name $alld_host;
+        proxy_ssl_verify on;                        # проверять сертификат файл-хоста
+        proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+        proxy_ssl_verify_depth 3;
         # Читать файл-хост крупными кусками в память (до 4 МБ на поток), без записи на диск: меньше системных вызовов
         # на одном ядре, файл-хост не ждёт медленного клиента. (С proxy_buffering off nginx читает по 4–8 КБ.)
         proxy_buffering on;
@@ -39,9 +42,10 @@
         proxy_connect_timeout 10s;
         proxy_hide_header Set-Cookie;
         add_header X-Content-Type-Options nosniff always;
+        add_header Content-Security-Policy "sandbox; default-src 'none'" always;   # .html из раздачи не выполняется как страница сайта
         # Ссылка устарела / хост ответил ошибкой — Node получит её заново и отдаст поток сам
         proxy_intercept_errors on;
-        error_page 403 404 410 500 502 503 504 = @suslik_mirror_retry;
+        error_page 400 403 404 410 500 502 503 504 = @suslik_mirror_retry;
     }
     location @suslik_mirror_retry {
         proxy_pass http://127.0.0.1:3000$request_uri;   # порт Node (PORT в .env), обычно 3000
@@ -56,6 +60,10 @@
 ```
 
 Если Node у вас на другом порту, замените `3000` на свой.
+
+> Обновление 16.10: если блок уже стоит, добавьте в него три строки `proxy_ssl_verify…`, строку
+> `add_header Content-Security-Policy…` и `400` в `error_page`. Путь к сертификатам `/etc/ssl/certs/ca-certificates.crt` —
+> для Debian/Ubuntu. Проверка: фильм с пробелом или кириллицей в имени файла должен играть.
 
 > Если сайт открыт по пути `/media/` и nginx отдаёт Node весь сайт через `location /media/ { proxy_pass ...; }`,
 > ничего больше менять не нужно: адрес `/_alld/...` внутренний, его вызывает сам nginx.
