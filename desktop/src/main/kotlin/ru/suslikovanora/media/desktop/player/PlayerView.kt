@@ -66,10 +66,6 @@ import ru.suslikovanora.media.desktop.WindowMode
 import ru.suslikovanora.media.desktop.ui.Onest
 import ru.suslikovanora.media.desktop.ui.Sm
 import ru.suslikovanora.media.desktop.ui.SuslikTheme
-import uk.co.caprica.vlcj.media.MediaSlavePriority
-import uk.co.caprica.vlcj.media.MediaSlaveType
-import uk.co.caprica.vlcj.player.base.MediaPlayer
-import uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter
 import javax.swing.SwingUtilities
 import ru.suslikovanora.media.desktop.tr
 import ru.suslikovanora.media.desktop.signed
@@ -143,29 +139,26 @@ fun PlayerView(
             }
         }
     }
-    // Вызовы движка в одном месте: mpv или VLC. Любой из них можно звать с потока управления.
-    fun eTime(): Long = eng?.timeMs ?: mp.status().time()
-    fun eSetTime(t: Long) { if (eng != null) eng.seekTo(t) else mp.controls().setTime(t) }
-    fun ePause(b: Boolean) { if (eng != null) eng.setPaused(b) else mp.controls().setPause(b) }
-    fun eMute(b: Boolean) { if (eng != null) eng.setMute(b) else mp.audio().setMute(b) }
-    fun eVolume(v: Int) { if (eng != null) eng.setVolume(v) else mp.audio().setVolume(v) }
-    fun eAudioDelay(ms: Long) { if (eng != null) eng.setAudioDelayMs(ms) else mp.audio().setDelay(ms * 1000L) }
-    fun eSubDelay(ms: Long) { if (eng != null) eng.setSubDelayMs(ms) else mp.subpictures().setDelay(ms * 1000L) }
-    fun eRate(r: Float) { if (eng != null) eng.setRate(r) else mp.controls().setRate(r) }
-    fun eStop() { if (eng != null) eng.stop() else mp.controls().stop() }
-    fun ePlayable(): Boolean = if (eng != null) eng.isPlayable else mp.status().isPlayable
-    fun eAudioTracks(): List<Pair<Int, String>> =
-        if (eng != null) eng.audioTracks().map { it.id to it.description }
-        else mp.audio().trackDescriptions().filter { it.id() != -1 }.map { it.id() to it.description() }
-    fun eSubTracks(): List<Pair<Int, String>> =
-        if (eng != null) eng.subtitleTracks().map { it.id to it.description }
-        else mp.subpictures().trackDescriptions().filter { it.id() != -1 }.map { it.id() to it.description() }
-    fun eAudioCur(): Int = if (eng != null) eng.audioTracks().firstOrNull { it.selected }?.id ?: -1 else mp.audio().track()
-    fun eSubCur(): Int = if (eng != null) eng.subtitleTracks().firstOrNull { it.selected }?.id ?: -1 else mp.subpictures().track()
-    fun eSetAudio(id: Int) { if (eng != null) eng.setAudioTrack(id) else mp.audio().setTrack(id) }
-    fun eSetSub(id: Int) { if (eng != null) eng.setSubtitleTrack(id) else mp.subpictures().setTrack(id) }
-    fun eDim(): Pair<Int, Int>? =
-        if (eng != null) eng.videoSize else mp.video().videoDimension()?.let { it.width to it.height }
+    // One engine for everything below: mpv or VLC (VlcPlayer, created with the first call — in mpv mode never).
+    // [eng] stays the mpv engine (null with VLC) for what only one of them does. Any call may come from the control thread.
+    val engine: PlayerEngine by remember { lazy { eng ?: VlcPlayer(mp, engBridge) } }
+    fun eTime(): Long = engine.timeMs
+    fun eSetTime(t: Long) = engine.seekTo(t)
+    fun ePause(b: Boolean) = engine.setPaused(b)
+    fun eMute(b: Boolean) = engine.setMute(b)
+    fun eVolume(v: Int) = engine.setVolume(v)
+    fun eAudioDelay(ms: Long) = engine.setAudioDelayMs(ms)
+    fun eSubDelay(ms: Long) = engine.setSubDelayMs(ms)
+    fun eRate(r: Float) = engine.setRate(r)
+    fun eStop() = engine.stop()
+    fun ePlayable(): Boolean = engine.isPlayable
+    fun eAudioTracks(): List<Pair<Int, String>> = engine.audioTracks().map { it.id to it.description }
+    fun eSubTracks(): List<Pair<Int, String>> = engine.subtitleTracks().map { it.id to it.description }
+    fun eAudioCur(): Int = engine.audioTracks().firstOrNull { it.selected }?.id ?: -1
+    fun eSubCur(): Int = engine.subtitleTracks().firstOrNull { it.selected }?.id ?: -1
+    fun eSetAudio(id: Int) = engine.setAudioTrack(id)
+    fun eSetSub(id: Int) = engine.setSubtitleTrack(id)
+    fun eDim(): Pair<Int, Int>? = engine.videoSize
 
     var index by remember { mutableStateOf(startIndex) }
     fun watchKey(i: Int = index) = req.watchKeys.getOrNull(i)
@@ -353,12 +346,7 @@ fun PlayerView(
     }
 
     fun grabFrame(): androidx.compose.ui.graphics.ImageBitmap? {
-        val img = runCatching {
-            if (eng != null) eng.snapshot(canvas.width.coerceIn(320, 1920))
-            else if (mp.status().isPlayable && mp.video().videoDimension() != null) {
-                mp.snapshots().get(canvas.width.coerceIn(320, 1920), 0)
-            } else null
-        }.getOrNull() ?: return null
+        val img = runCatching { engine.snapshot(canvas.width.coerceIn(320, 1920)) }.getOrNull() ?: return null
         val bmp = img.toComposeImageBitmap()
         SwingUtilities.invokeLater { lastFrame = bmp }
         return bmp
@@ -382,19 +370,6 @@ fun PlayerView(
         subDelay = ui.get("sdelay:${seriesKey()}")?.toLongOrNull() ?: 0L
         pausedAt = 0L
 
-        val opts = ArrayList(listOf(":http-reconnect", ":network-caching=${PlaybackSettings.cacheMs()}"))
-        if (nightMode) {
-            opts += listOf(
-                ":audio-filter=compressor",
-                ":compressor-rms-peak=0.2",
-                ":compressor-attack=25",
-                ":compressor-release=100",
-                ":compressor-threshold=-24",
-                ":compressor-ratio=6",
-                ":compressor-knee=4.5",
-                ":compressor-makeup-gain=10"
-            )
-        }
         Reserve.init()
         BurstProxy.capBytes = PlaybackSettings.burstMb().toLong() shl 20
         BurstProxy.keepOnly(listOf(url) + extras.first)
@@ -404,10 +379,7 @@ fun PlayerView(
             "buffer=${PlaybackSettings.cacheMs()}ms, reserve=${PlaybackSettings.burstMb()}MB")
         val playUrl = BurstProxy.wrap(url)
         val isTs = eng == null && TsClock.isTs(url)
-        if (startAt > 0 && !isTs) opts += ":start-time=${startAt / 1000.0}"
         tsStartAt = startAt; tsOpenDone = !isTs; if (!isTs) { ts = null; tsAbsolute = false }
-        prefLanguage("audio")?.let { opts += ":audio-language=$it" }
-        prefLanguage("spu")?.let { opts += ":sub-language=$it" }
         val prev = openJob
         openJob = scope.launch(vlcThread) {
             prev?.join()
@@ -425,15 +397,9 @@ fun PlayerView(
                 grabFrame()
                 runCatching { eStop() }
             }
-            if (eng != null) {
-                eng.open(playUrl, startAt, nightMode, prefLanguage("audio"), prefLanguage("spu"),
-                    extras.first.map { BurstProxy.wrap(it) }, extras.second)
-                return@launch
-            }
-            mp.media().prepare(playUrl, *opts.toTypedArray())
-            extras.first.forEach { u -> runCatching { mp.media().slaves().add(MediaSlaveType.AUDIO, MediaSlavePriority.HIGHEST, BurstProxy.wrap(u)) } }
-            extras.second.forEach { u -> runCatching { mp.media().slaves().add(MediaSlaveType.SUBTITLE, MediaSlavePriority.HIGHEST, u) } }
-            mp.controls().play()
+            // A Blu-ray starts from the beginning: VLC ignores :start-time there, TsPlayback jumps by position instead
+            engine.open(playUrl, if (isTs) 0L else startAt, nightMode, prefLanguage("audio"), prefLanguage("spu"),
+                extras.first.map { BurstProxy.wrap(it) }, extras.second)
         }
     }
 
@@ -448,15 +414,15 @@ fun PlayerView(
             tsAbsolute = true; reopen(t); return
         }
         vlc {
-            val now = s.filmTime(mp.status().time()); val nowPos = mp.status().position()
+            val now = s.filmTime(engine.timeMs); val nowPos = engine.fraction
             val pos = s.seek(t, now, nowPos)
             PlayerLog.write("[ts] seek %ds → position %.4f (now %ds at %.4f)".format(t / 1000, pos, now / 1000, nowPos))
-            mp.controls().setPosition(pos)
+            engine.seekToFraction(pos)
         }
     }
 
     fun reseekHereNow() {
-        if (ts != null) mp.controls().setPosition(mp.status().position())
+        if (ts != null) engine.seekToFraction(engine.fraction)
         else { val t = eTime(); if (t > 0) eSetTime(t) }
     }
 
@@ -864,7 +830,7 @@ fun PlayerView(
                 playing = true; status = null; retries = 0; started = true; vlcPaused = false
                 ts?.let { s ->
                     BurstProxy.setDuration(currentUrl, s.lengthMs)
-                    if (!tsOpenDone && !tsAbsolute) { tsOpenDone = true; s.openJump(tsStartAt)?.let { pos -> PlayerLog.write("[ts] continue at ${tsStartAt / 1000}s → position %.4f".format(pos)); vlc { mp.controls().setPosition(pos) } } }
+                    if (!tsOpenDone && !tsAbsolute) { tsOpenDone = true; s.openJump(tsStartAt)?.let { pos -> PlayerLog.write("[ts] continue at ${tsStartAt / 1000}s → position %.4f".format(pos)); vlc { engine.seekToFraction(pos) } } }
                 }
                 if (pausedAt == 0L) supRef.get()?.playing()
                 if (!prefsApplied) {
@@ -882,7 +848,7 @@ fun PlayerView(
                     chaptersJob?.cancel()
                     chaptersJob = scope.launch {
                         delay(1200)
-                        vlcAwait(3000) { eng?.chapters()?.map { it.timeMs to it.title } ?: readChapters(mp) }?.let { chapters = it }
+                        vlcAwait(3000) { engine.chapters().map { it.timeMs to it.title } }?.let { chapters = it }
                     }
                 }
                 val v = volume; val m = userMuted
@@ -918,7 +884,7 @@ fun PlayerView(
                     if (!started && vlcTime > 0) {
                         evPlaying()
                     }
-                    ts?.let { s0 -> if (tsAbsolute && !tsOpenDone && vlcTime > 0) { tsAbsolute = false; tsOpenDone = true; s0.openJump(tsStartAt)?.let { jumpPos -> vlc { mp.controls().setPosition(jumpPos) } } } }
+                    ts?.let { s0 -> if (tsAbsolute && !tsOpenDone && vlcTime > 0) { tsAbsolute = false; tsOpenDone = true; s0.openJump(tsStartAt)?.let { jumpPos -> vlc { engine.seekToFraction(jumpPos) } } } }
                     val s = ts
                     val newTime = if (s == null) vlcTime else {
                         val f = if (s.opening) s.openLanded(vlcTime, pos) else s.filmTime(vlcTime)
@@ -948,29 +914,20 @@ fun PlayerView(
                     else status = tr("player.ne_udalos_vosproizvesti_potok")
                 }
             }
-        if (eng != null) {
-            engBridge.target = object : EngineListener {
-                override fun playing() = evPlaying()
-                override fun paused() = evPaused()
-                override fun buffering(percent: Float) = evBuffering(percent)
-                override fun buffering(active: Boolean) = evBuffering(if (active) 0f else 100f)
-                override fun timeChanged(ms: Long) = evTime(ms, 0f)
-                override fun lengthChanged(ms: Long) = evLength(ms)
-                override fun tracksChanged() = evStream()
-                override fun finished() = evFinished()
-                override fun failed(message: String) { PlayerLog.write("[mpv] $message"); evError() }
-            }
-        } else mp.events().addMediaPlayerEventListener(object : MediaPlayerEventAdapter() {
-            override fun playing(p: MediaPlayer) = evPlaying()
-            override fun elementaryStreamAdded(p: MediaPlayer, type: uk.co.caprica.vlcj.media.TrackType, id: Int) = evStream()
-            override fun paused(p: MediaPlayer) = evPaused()
-            override fun stopped(p: MediaPlayer) = evStopped()
-            override fun buffering(p: MediaPlayer, newCache: Float) = evBuffering(newCache)
-            override fun lengthChanged(p: MediaPlayer, newLength: Long) = evLength(newLength)
-            override fun timeChanged(p: MediaPlayer, vlcTime: Long) = evTime(vlcTime, runCatching { p.status().position() }.getOrDefault(0f))
-            override fun finished(p: MediaPlayer) = evFinished()
-            override fun error(p: MediaPlayer) = evError()
-        })
+        engine // VLC's player is created here, on the window's thread, before anything plays (as before VlcPlayer)
+        engBridge.target = object : EngineListener {
+            override fun playing() = evPlaying()
+            override fun paused() = evPaused()
+            override fun stopped() = evStopped()
+            override fun buffering(percent: Float) = evBuffering(percent)
+            override fun buffering(active: Boolean) = evBuffering(if (active) 0f else 100f)
+            override fun timeChanged(ms: Long) = evTime(ms, 0f)
+            override fun timeChanged(ms: Long, position: Float) = evTime(ms, position)
+            override fun lengthChanged(ms: Long) = evLength(ms)
+            override fun tracksChanged() = evStream()
+            override fun finished() = evFinished()
+            override fun failed(message: String) { PlayerLog.write(if (eng != null) "[mpv] $message" else "[vlc] $message"); evError() }
+        }
         onDispose {
             canvasFocusJob?.cancel()
             ensureAudioJob?.cancel()
@@ -982,7 +939,7 @@ fun PlayerView(
             ui.put("volume", volume.toString())
             vlcExecutor.execute {
                 runCatching { eStop() }
-                runCatching { if (eng != null) eng.release() else mp.release() }
+                runCatching { engine.release() }
             }
             vlcExecutor.shutdown()
             Thread({ runCatching { vlcExecutor.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS) }; AppExit.untrack(vlcExecutor) }, "vlc-untrack")
@@ -1028,15 +985,8 @@ fun PlayerView(
 
     fun restartVideo() {
         PlayerLog.write("restart video output at ${time / 1000}s")
-        if (eng != null) {
-            eng.restartVideoOutput()
-        } else {
-            vlc {
-                val id = mp.video().track()
-                if (id >= 0) { mp.video().setTrack(-1); mp.video().setTrack(id) }
-                reseekHereNow()
-            }
-        }
+        if (eng != null) eng.restartVideoOutput() // mpv seeks to the current place itself
+        else vlc { engine.restartVideoOutput(); reseekHereNow() }
     }
 
     val restartOutput: () -> Unit = { restartVideo() }
@@ -1102,21 +1052,7 @@ fun PlayerView(
         while (true) {
             delay(2000)
             if (!started || closing) continue
-            val st = vlcPoll(pending, 1500) {
-                if (eng != null) {
-                    eng.supervisorStats(userMuted || volume == 0)
-                } else {
-                    val stats = soundStats(mp)
-                    val fps = (call(mp.video(), "fps") as? Number)?.toDouble() ?: 0.0
-                    val audioTrack = runCatching { mp.audio().track() }.getOrDefault(-1)
-                    val audioTracks = runCatching { mp.audio().trackDescriptions().count { it.id() != -1 } }.getOrDefault(0)
-                    val videoTracks = runCatching { mp.video().trackCount() }.getOrDefault(0)
-                    val clock = runCatching { mp.status().time() }.getOrDefault(0L)
-                    stats?.let {
-                        PlaybackSupervisor.Stats(clock, it.second, it.first, it.third, fps, audioTracks, audioTrack != -1, videoTracks, userMuted || volume == 0)
-                    }
-                }
-            } ?: continue
+            val st = vlcPoll(pending, 1500) { engine.supervisorStats(userMuted || volume == 0) } ?: continue
             supervisor.tick(st)
         }
     }
@@ -1139,7 +1075,7 @@ fun PlayerView(
     LaunchedEffect(infoOpen) {
         val pending = java.util.concurrent.atomic.AtomicReference<kotlinx.coroutines.Deferred<*>?>()
         while (infoOpen) {
-            val line = vlcPoll(pending, 800) { eng?.statsLine() ?: describePlayback(mp) }
+            val line = vlcPoll(pending, 800) { engine.statsLine() }
             if (line == null) { delay(1000); continue }
             infoText = line +
                 tr("player.skorost_p_zvuk_p", "rate" to fmtRate(rate), "audio" to signed(audioDelay), "subs" to signed(subDelay)) +
