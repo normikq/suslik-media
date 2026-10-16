@@ -1,0 +1,55 @@
+name: Media3 FFmpeg decoder
+
+# Builds android/app/libs/media3-decoder-ffmpeg-<v>.aar (DTS, TrueHD, AC3, E-AC3) with android/ffmpeg/build.sh.
+# The AAR is committed back to the branch only when it is not there yet (or on request), because every build
+# differs byte-wise (timestamps) and would otherwise add a new binary on each run.
+on:
+  push:
+    branches-ignore: [main]
+    paths: ["android/ffmpeg/**", ".github/workflows/media3-ffmpeg.yml"]
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: "Закоммитить AAR в ветку, даже если он уже есть (после смены версий)"
+        type: boolean
+        default: false
+
+permissions: { contents: write }
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with: { distribution: temurin, java-version: "17" }
+      - name: NDK
+        run: |
+          NDK=$(grep -oP '^NDK_VERSION="\K[^"]+' android/ffmpeg/build.sh)
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK" > /dev/null
+      - name: Build
+        run: |
+          set -o pipefail
+          android/ffmpeg/build.sh 2>&1 | tee "$RUNNER_TEMP/build.log"
+      - name: Report build errors
+        if: failure()
+        run: |
+          # Errors as annotations: readable through the GitHub API (job logs are not always reachable).
+          grep -E "error:|ERROR|What went wrong|Caused by|> .*|not found|missing" "$RUNNER_TEMP/build.log" | grep -v "^> Task" | head -40 |
+            while IFS= read -r l; do echo "::error::$(echo "$l" | cut -c1-900)"; done
+          echo "::error::--- tail ---"
+          tail -25 "$RUNNER_TEMP/build.log" | while IFS= read -r l; do echo "::error::$(echo "$l" | cut -c1-900)"; done
+      - uses: actions/upload-artifact@v4
+        with: { name: media3-decoder-ffmpeg, path: android/app/libs/*.aar, retention-days: 7 }
+      - name: Commit the AAR
+        run: |
+          AAR=$(ls android/app/libs/media3-decoder-ffmpeg-*.aar)
+          echo "::notice::$(basename "$AAR"): $(du -h "$AAR" | cut -f1)"
+          if git ls-files --error-unmatch "$AAR" >/dev/null 2>&1 && [ "${{ inputs.commit }}" != "true" ]; then
+            echo "::notice::AAR уже в ветке — не коммичу"; exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898732+github-actions[bot]@users.noreply.github.com"
+          git add -f "$AAR"
+          git commit -m "Media3 FFmpeg decoder: $(basename "$AAR") (built by media3-ffmpeg.yml)"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
