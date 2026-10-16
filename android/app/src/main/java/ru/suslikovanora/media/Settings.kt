@@ -70,6 +70,14 @@ object PlaybackSettings {
     const val HEAVY_DEFAULT = 20
     fun heavyMbit(ctx: Context) = prefs(ctx).getInt("heavy_mbit", HEAVY_DEFAULT)
     fun setHeavyMbit(ctx: Context, v: Int) = prefs(ctx).edit().putInt("heavy_mbit", v).apply()
+    /**
+     * «Плеер» (for testing the new engine): VLC — every film in VLC, as before; Media3 — films in Media3, and in VLC
+     * only what Media3 cannot play (player/EngineChoice). VLC by default until Media3 is checked.
+     */
+    fun engine(ctx: Context): ru.suslikovanora.media.player.EngineKind =
+        if (prefs(ctx).getString("player_engine", "vlc") == "media3") ru.suslikovanora.media.player.EngineKind.MEDIA3
+        else ru.suslikovanora.media.player.EngineKind.VLC
+    fun setEngine(ctx: Context, kind: ru.suslikovanora.media.player.EngineKind) = prefs(ctx).edit().putString("player_engine", kind.tag).apply()
     /** The beta channel is really in use (chosen and a code saved); otherwise — the release channel. */
     fun betaChannel(ctx: Context) = betaOn(ctx) && betaCode(ctx).isNotBlank()
 }
@@ -119,6 +127,7 @@ fun SettingsSheet(onClose: () -> Unit) {
                 PlaybackSettings.cachePresets.forEach { p ->
                     PresetRow(p, p.value == cache) { cache = p.value; PlaybackSettings.setCacheMs(ctx, p.value) }
                 }
+                EngineSection()
                 TrafficSection()
                 StorageSection()
                 if (Diag.on) DiagSection() else ChannelSection()
@@ -198,6 +207,19 @@ private fun ChannelSection() {
                 .clickable { checkUpdates() }.padding(horizontal = 8.dp, vertical = 6.dp))
     }
     offer?.let { UpdateDialog(it) { offer = null } }
+}
+
+/** «Плеер»: VLC or Media3 (VLC stays the fallback for what Media3 cannot play). */
+@Composable
+private fun EngineSection() {
+    val ctx = LocalContext.current
+    var engine by remember { mutableStateOf(PlaybackSettings.engine(ctx)) }
+    Section(tr("settings.pleer"), tr("settings.pleer_opisanie"), top = 18.dp)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf(ru.suslikovanora.media.player.EngineKind.VLC to "VLC", ru.suslikovanora.media.player.EngineKind.MEDIA3 to "Media3").forEach { (k, label) ->
+            ChannelOption(label, engine == k, Modifier.weight(1f)) { engine = k; PlaybackSettings.setEngine(ctx, k) }
+        }
+    }
 }
 
 /** «Трафик фильмов» and the question before a heavy film on mobile data. */
