@@ -477,6 +477,9 @@ class PlayerActivity : ComponentActivity() {
         trackSwitchKind = kind
         trackSwitchAt = SystemClock.uptimeMillis()
         trackSwitchShown = -1
+        // Like a seek for the reserve: an active «копим запас» ends, and none starts while the switch refills the buffer.
+        if (catchingUp) endCatchUp()
+        catchUp.quiet(15_000L); catchUpFrom = perceivedPosition() + CATCH_UP_AFTER_PLAYED_MS
         AppLog.write("[track] $kind switched at ${perceivedPosition() / 1000}s" + (player?.diagLine()?.let { " · $it" } ?: ""))
         handler.removeCallbacks(trackSwitchRunnable)
         handler.postDelayed(trackSwitchRunnable, TRACK_SWITCH_CHECK_MS)
