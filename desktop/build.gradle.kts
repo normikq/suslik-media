@@ -62,6 +62,7 @@ compose.desktop {
         )
         // Обфускация имён (только release: `./gradlew packageReleaseMsi`). Debug-сборка остаётся читаемой.
         buildTypes.release.proguard {
+            version.set("7.6.0") // встроенный 7.2 не читает классы JDK 21
             isEnabled.set(!diag)
             obfuscate.set(true)
             optimize.set(false)
