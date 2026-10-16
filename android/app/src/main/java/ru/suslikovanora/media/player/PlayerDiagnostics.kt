@@ -79,7 +79,7 @@ class PlayerDiagnostics(
         val span = if (diagAt == 0L) 0L else now - diagAt
         diagAt = now
         val p = callback.getCurrentPlayer()
-        val sb = StringBuilder("[vlc] ")
+        val sb = StringBuilder("[${p?.kind?.tag ?: "player"}] ")
         val kept = callback.isKeptOnStop()
         if (p == null) {
             sb.append("no player${if (kept) " (parked)" else ""}")
@@ -112,6 +112,11 @@ class PlayerDiagnostics(
             }
             diagPrev = st
         }
+        if (p?.kind == EngineKind.MEDIA3) {
+            AppLog.write(sb.toString())
+            p.diagLine()?.let { AppLog.write(it) }
+            return
+        }
         BurstProxy.aheadMb(callback.getCurrentUrl())?.let { sb.append(" · reserve ahead %.1f MB".format(it)) }
         AppLog.write(sb.toString())
         AppLog.write("[proxy] " + BurstProxy.snapshot())
@@ -127,6 +132,12 @@ class PlayerDiagnostics(
         if (currentUrl in softwareVideo || p.videoTrackCount <= 0 || pTime - lastOpenAtTime < 6_000L) return
         val st = p.stats() ?: return
         if (st.displayedPictures > 0 || st.decodedVideo < 60) return
+        if (p.kind == EngineKind.MEDIA3) {
+            // VLC gets the file with its usual hardware-first start (and the same check there).
+            AppLog.write("video: ${st.decodedVideo} pictures decoded by Media3, none shown — the file goes to VLC")
+            callback.onReopenWithoutHardwareDecoder(callback.getPerceivedPosition())
+            return
+        }
         softwareVideo += currentUrl
         AppLog.write("video: ${st.decodedVideo} pictures decoded, none shown — reopening with VLC's own decoder")
         callback.onReopenWithoutHardwareDecoder(callback.getPerceivedPosition())
@@ -137,6 +148,12 @@ class PlayerDiagnostics(
         if (decodeCheckedUrl == currentUrl) return
         val t = p.videoTrack ?: return
         decodeCheckedUrl = currentUrl
+        if (p.kind == EngineKind.MEDIA3) {
+            // Media3 plays only what a decoder takes (the decoder's name is in the journal): VC-1 is tried on the phone's
+            // decoder too, and checkNoPicture sends the file to VLC if it shows nothing. AV1 is hardware here.
+            AppLog.write("video: ${t.codec} ${t.width}x${t.height}")
+            return
+        }
         val codec = t.codec?.lowercase(Locale.ROOT)?.trim()
         // VC-1 (old Blu-rays): the phone's own decoder takes it but gives no pictures — sound over a black screen
         // (12.10, Samsung c2.sec.vc1.decoder: «Unsupported mime video/wvc1», dequeueOutputBuffer failed). VLC's own

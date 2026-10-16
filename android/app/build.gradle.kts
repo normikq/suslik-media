@@ -63,8 +63,8 @@ android {
         applicationId = "ru.suslikovanora.media"
         minSdk = 24
         targetSdk = 35
-        versionCode = 51
-        versionName = "2.2.0"
+        versionCode = 52
+        versionName = "2.2.1"
         buildConfigField("boolean", "DIAG", "false")
         manifestPlaceholders["appLabel"] = "Suslik Media — медиатека"
 
@@ -100,15 +100,14 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
 
-    // Media3 + FFmpeg audio decoder (DTS, TrueHD, AC3, E-AC3; ~0.6 MB, arm64) for the future Media3 player. Not on
-    // Maven: android/ffmpeg/build.sh (CI: media3-ffmpeg.yml) builds it into libs/. Until the AAR is there, nothing
-    // is added and the app builds as before. Version must match MEDIA3_VERSION in build.sh.
+    // Media3 (ExoPlayer) — the second player engine next to VLC (player/Media3Engine.kt), with the FFmpeg audio decoder
+    // (DTS, TrueHD, AC3, E-AC3; ~0.6 MB, arm64). The decoder is not on Maven: android/ffmpeg/build.sh (CI:
+    // media3-ffmpeg.yml) builds it into libs/. Its version must match MEDIA3_VERSION in build.sh.
     val media3 = "1.5.1"
-    val ffmpegAar = file("libs/media3-decoder-ffmpeg-$media3.aar")
-    if (ffmpegAar.exists()) {
-        implementation(files(ffmpegAar))
-        // A local AAR brings no transitive dependencies: the ones the decoder module declares.
-        implementation("androidx.media3:media3-exoplayer:$media3")
-        implementation("androidx.media3:media3-decoder:$media3")
-    }
+    implementation(files("libs/media3-decoder-ffmpeg-$media3.aar"))
+    implementation("androidx.media3:media3-exoplayer:$media3")
+    implementation("androidx.media3:media3-decoder:$media3") // the local AAR brings no transitive dependencies
+    implementation("androidx.media3:media3-datasource-okhttp:$media3")
+    implementation("androidx.media3:media3-database:$media3")
+    implementation("androidx.media3:media3-ui:$media3")
 }

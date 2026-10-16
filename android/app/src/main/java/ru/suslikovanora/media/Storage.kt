@@ -11,7 +11,7 @@ import java.io.File
  * «Очистить кэш» in the settings: what the app keeps that can be downloaded again, and clearing it. Watch progress,
  * the sign-in, the settings and the saved library list are data, not cache — they stay.
  *
- *  - reserve: the film reserve (BurstProxy) in cache/stream;
+ *  - reserve: the film reserve — VLC's (BurstProxy, cache/stream) and Media3's (cache/media3);
  *  - posters: Coil's picture cache (cache/image_cache);
  *  - other: everything else in the cache folder — answers of the server (HTTP cache), a downloaded update,
  *    shared journal archives.
@@ -25,7 +25,7 @@ object Storage {
 
     /** Blocking (walks the folders): call off the main thread. */
     fun sizes(ctx: Context): Sizes {
-        val reserve = size(reserveDir(ctx))
+        val reserve = size(reserveDir(ctx)) + size(ru.suslikovanora.media.player.Media3Cache.directory(ctx))
         val posters = size(postersDir(ctx))
         return Sizes(reserve, posters, (size(ctx.cacheDir) - reserve - posters).coerceAtLeast(0L))
     }
@@ -35,10 +35,11 @@ object Storage {
         BurstProxy.dropRetired()
         // No player in this process (or none open): the folder holds only leftovers — all of it can go.
         if (!BurstProxy.initialized || !PlayerActivity.alive) reserveDir(ctx).listFiles()?.forEach { it.deleteRecursively() }
+        if (!PlayerActivity.alive) runCatching { ru.suslikovanora.media.player.Media3Cache.clearAll(ctx) }
         runCatching { Posters.loader(ctx).let { it.diskCache?.clear(); it.memoryCache?.clear() } }
         runCatching { Api.client.cache?.evictAll() }
         ctx.cacheDir.listFiles()?.forEach { f ->
-            if (f.name != "stream" && f.name != "image_cache" && f.name != "http") runCatching { f.deleteRecursively() }
+            if (f.name != "stream" && f.name != "media3" && f.name != "image_cache" && f.name != "http") runCatching { f.deleteRecursively() }
         }
         AppLog.write("storage: cache cleared")
     }

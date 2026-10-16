@@ -18,11 +18,15 @@ data class EngineStats(
     val demuxCorrupted: Int, val demuxDiscontinuity: Int
 )
 
+/** Какой движок играет: libVLC (через запас BurstProxy) или Media3 (ExoPlayer, свой кэш на диске). */
+enum class EngineKind(val tag: String) { VLC("vlc"), MEDIA3("media3") }
+
 /** Режим кадра (кнопка «⤢» и щипок). */
 enum class VideoScale { BEST_FIT, FIT_SCREEN, FILL, RATIO_16_9 }
 
 /**
- * Что открыть. [url] уже идёт через запас (`BurstProxy.wrap`), как и [audioFiles]; [subtitleFiles] — как есть.
+ * Что открыть. У VLC [url] и [audioFiles] уже идут через запас (`BurstProxy.wrap`), у Media3 — адреса зеркала как есть;
+ * [subtitleFiles] — как есть.
  * [fastSeek]: перемотка к ближайшему ключевому кадру (без внешней озвучки).
  */
 data class EngineMedia(
@@ -52,17 +56,23 @@ interface EngineListener {
     fun buffering(percent: Float) {}
     fun timeChanged() {}
     fun lengthChanged() {}
+    /**
+     * Этот движок не может сыграть файл (кодек, контейнер, ошибка декодера; Media3 при неподдерживаемом звуке играет
+     * молча, поэтому это видно только по дорожкам). Плеер переоткрывает файл в другом движке с того же места.
+     */
+    fun unsupported(reason: String) {}
 }
 
 /**
  * Всё, что [ru.suslikovanora.media.PlayerActivity] требует от видеодвижка (как `PlayerEngine` на ПК).
- * Реализация: [VlcEngine] (libVLC). Один объект на экран плеера; вызывается только из главного потока.
+ * Реализации: [VlcEngine] (libVLC), [Media3Engine] (ExoPlayer); [HybridEngine] переключает их для каждого файла. Один объект на экран плеера; вызывается только из главного потока.
  * Пока плеера нет ([hasPlayer] = false), чтение возвращает нули, а команды ничего не делают.
  */
 interface PlayerEngine {
     /** Где рисуется видео: кладётся в разметку один раз, движок сам подключает к нему каждый новый плеер. */
     val videoView: View
     var listener: EngineListener?
+    val kind: EngineKind
 
     /** Плеер открыт (между первым [open] и [release]). */
     val hasPlayer: Boolean
@@ -112,4 +122,13 @@ interface PlayerEngine {
     fun setScale(scale: VideoScale)
 
     fun stats(): EngineStats?
+
+    /** Сколько файла уже загружено вперёд (мс позиции), если движок знает это сам; -1 — нет (VLC: см. BurstProxy). */
+    val bufferedPositionMs: Long get() = -1L
+    /** Средний битрейт файла (размер ÷ длительность), если движок знает размер; null — нет (VLC: BurstProxy). */
+    val bitrateMbit: Double? get() = null
+    /** Движок сам переживает смену поверхности (PiP, блокировка): плееру не нужно переподключать видео. */
+    val handlesSurfaceItself: Boolean get() = false
+    /** Строка для журнала Suslik Debug (запас, оценка сети, декодеры). */
+    fun diagLine(): String? = null
 }

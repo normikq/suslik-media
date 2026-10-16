@@ -15,7 +15,11 @@ import ru.suslikovanora.media.player.PlayerPlaylistQueue
 import ru.suslikovanora.media.player.PlayerTrackSelector
 import ru.suslikovanora.media.player.PlayerWatchProgress
 import ru.suslikovanora.media.player.VideoScale
-import ru.suslikovanora.media.player.VlcEngine
+import ru.suslikovanora.media.player.EngineChoice
+import ru.suslikovanora.media.player.EngineKind
+import ru.suslikovanora.media.player.HybridEngine
+import ru.suslikovanora.media.player.Media3Cache
+import ru.suslikovanora.media.player.Media3Engine
 
 import android.animation.ValueAnimator
 import android.app.AlertDialog
@@ -62,8 +66,10 @@ import java.net.URL
 import java.util.Locale
 
 class PlayerActivity : ComponentActivity() {
-    /** The video engine (libVLC now), made in onCreate; [player] is it while a film is open. */
-    private lateinit var engine: PlayerEngine
+    /** The video engine (VLC or Media3, chosen per file — see [EngineChoice]), made in onCreate; [player] is it while a film is open. */
+    private lateinit var engine: HybridEngine
+    private val engineChoice by lazy { EngineChoice(this) }
+    private var engineLoggedFor = "" // "<engine> <file>" last written to the journal (reconnects do not repeat it)
     private val player: PlayerEngine? get() = if (::engine.isInitialized) engine.takeIf { it.hasPlayer } else null
     private lateinit var root: FrameLayout
     private lateinit var stage: FrameLayout            // the film + everything over it
@@ -123,7 +129,9 @@ class PlayerActivity : ComponentActivity() {
     private val networkMonitor by lazy {
         PlayerNetworkMonitor(this, object : PlayerNetworkMonitor.Callback {
             override fun hasPlayer(): Boolean = player != null
-            override fun isViaReserve(): Boolean = viaReserve()
+            // Media3 keeps 30–90 s loaded and retries its own requests on a new connection: like the reserve, a network
+            // switch alone does not reopen the film (it would throw that buffer away).
+            override fun isViaReserve(): Boolean = viaReserve() || player?.kind == EngineKind.MEDIA3
             override fun shouldReconnectViaReserve(wasLost: Boolean): Boolean =
                 wasLost && (needsReload || (!ended && player?.isPlaying != true && !userPaused))
             override fun onScheduleReconnect(delayMs: Long) {
@@ -338,6 +346,22 @@ class PlayerActivity : ComponentActivity() {
         }
         override fun timeChanged() = timeOrLengthChanged(lengthChanged = false)
         override fun lengthChanged() = timeOrLengthChanged(lengthChanged = true)
+        override fun unsupported(reason: String) = fallBackToVlc(reason)
+    }
+
+    /**
+     * Media3 cannot play this file (codec, container, no index, decoder error): it goes to VLC + BurstProxy at the same
+     * moment, and stays there next time (EngineChoice remembers). Media3's reserve of the file is dropped — one file,
+     * one engine.
+     */
+    private fun fallBackToVlc(reason: String) {
+        if (engine.kind != EngineKind.MEDIA3 || player == null || currentUrl.isBlank()) return
+        val at = perceivedPosition()
+        AppLog.write("[engine] media3 → vlc at ${at / 1000}s: $reason")
+        engineChoice.remember(currentUrl, EngineKind.VLC, reason)
+        Media3Cache.remove(currentUrl)
+        showStatus(tr("player.pereklyuchaem_na_vlc"))
+        restartClean(play = !userPaused)
     }
 
     private fun timeOrLengthChanged(lengthChanged: Boolean) {
@@ -476,7 +500,9 @@ class PlayerActivity : ComponentActivity() {
             override fun isKeptOnStop(): Boolean = keptOnStop
             override fun getPerceivedPosition(): Long = perceivedPosition()
             override fun onReopenWithoutHardwareDecoder(startAt: Long) {
-                reconnect(forcePlay = !userPaused, startAt = startAt)
+                // Media3 has no software video decoder: a picture the phone's decoder does not give is VLC's job.
+                if (engine.kind == EngineKind.MEDIA3) fallBackToVlc("decoder gives no picture")
+                else reconnect(forcePlay = !userPaused, startAt = startAt)
             }
         })
     }
@@ -569,7 +595,7 @@ class PlayerActivity : ComponentActivity() {
         BurstProxy.log = { AppLog.write(it) }
         diagnostics.onResume()
         TrafficMeter.init(this)
-        sessionStartMb = BurstProxy.downloadedMb()
+        sessionStartMb = BurstProxy.downloadedMb() + Media3Engine.downloaded.get() / 1048576.0
         BurstProxy.init(java.io.File(cacheDir, "stream")) { url, from, to, cancel ->
             // The shared reserve downloads through OkHttp here (same connection pool as the rest of the app).
             val call = ru.suslikovanora.media.net.Api.reserve.newCall(okhttp3.Request.Builder().url(url)
@@ -599,7 +625,7 @@ class PlayerActivity : ComponentActivity() {
         playbackPosition = savedInstanceState?.getLong(KEY_POSITION) ?: startPosition(intent)
         scaleIndex = uiPrefs.getInt("scale", 0).coerceIn(0, SCALES.size - 1)
 
-        engine = VlcEngine(this).also { it.listener = engineListener }
+        engine = HybridEngine(this).also { it.listener = engineListener }
         root = FrameLayout(this).apply { setBackgroundColor(NIGHT) }
         // The film and everything drawn over it; below it (phone held upright) the info panel.
         stage = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
@@ -875,9 +901,16 @@ class PlayerActivity : ComponentActivity() {
             handler.postDelayed(seekWatchdogRunnable, SEEK_CONFIRM_TIMEOUT_MS)
         }
         supervisor.opening(url)
-        AppLog.write("open ${Uri.parse(url).lastPathSegment ?: "?"} at ${positionMs / 1000}s, reserve=${PlaybackSettings.burstMb(this)}MB, buffer=${PlaybackSettings.cacheMs(this)}ms, " +
+        val pick = engineChoice.choose(url)
+        val name = Uri.parse(url).lastPathSegment ?: "?"
+        if (engineLoggedFor != "${pick.kind} $url") {
+            engineLoggedFor = "${pick.kind} $url"
+            AppLog.write("[engine] ${pick.kind.tag} for $name: ${pick.reason}")
+        }
+        engine.use(pick.kind)
+        AppLog.write("open $name in ${pick.kind.tag} at ${positionMs / 1000}s, reserve=${PlaybackSettings.burstMb(this)}MB, buffer=${PlaybackSettings.cacheMs(this)}ms, " +
             "network=${if (TrafficMeter.isMetered(this)) "mobile" else "wifi"}")
-        engine.open(buildMedia(url, positionMs), shownScale())
+        engine.open(buildMedia(url, positionMs, pick.kind), shownScale())
         hookSurfaces()
         return engine
     }
@@ -910,16 +943,34 @@ class PlayerActivity : ComponentActivity() {
         if (::engine.isInitialized) engine.release()
     }
 
-    // Every stream goes through BurstProxy (see there): downloaded in bursts so the radio can sleep between them.
-    private fun buildMedia(url: String, positionMs: Long): EngineMedia {
+    /**
+     * VLC: every stream goes through BurstProxy (see there), downloaded in bursts so the radio can sleep between them.
+     * Media3: straight to the mirror, its own reserve on disk (Media3Cache). The reserve limit («Экономная загрузка»)
+     * is shared: a file is downloaded by one engine only, the other engine's reserve is dropped.
+     */
+    private fun buildMedia(url: String, positionMs: Long, kind: EngineKind): EngineMedia {
         // «Настройки» on the main screen: reserve size (0 = off) and the player's own buffer.
-        BurstProxy.capBytes = PlaybackSettings.burstMb(this).toLong() shl 20
-        val wrapped = burst(url)
-        // Only what this episode needs stays in the stream cache (the previous episode's files are dropped).
-        BurstProxy.keepOnly(trackSelector.allEpisodeUrls(url))
-        val sidecars = trackSelector.sidecarsFor(url) { burst(it) }
+        val reserveBytes = PlaybackSettings.burstMb(this).toLong() shl 20
+        val episode = trackSelector.allEpisodeUrls(url)
+        val sidecars: PlayerTrackSelector.Sidecars
+        val main: String
+        if (kind == EngineKind.VLC) {
+            Media3Cache.clearAll(this) // one limit for both reserves: Media3's goes when VLC plays
+            BurstProxy.capBytes = reserveBytes
+            main = burst(url)
+            // Only what this episode needs stays in the stream cache (the previous episode's files are dropped).
+            BurstProxy.keepOnly(episode)
+            sidecars = trackSelector.sidecarsFor(url) { burst(it) }
+        } else {
+            BurstProxy.clear()
+            BurstProxy.dropRetired()
+            Media3Cache.setLimit(this, reserveBytes)
+            if (reserveBytes > 0L) Media3Cache.keepOnly(this, episode)
+            main = url
+            sidecars = trackSelector.sidecarsFor(url) { it }
+        }
         return EngineMedia(
-            url = wrapped,
+            url = main,
             startMs = positionMs,
             hardwareDecoding = diagnostics.isHardwareDecoderAllowed(url),
             cacheMs = PlaybackSettings.cacheMs(this),
@@ -1079,6 +1130,7 @@ class PlayerActivity : ComponentActivity() {
      */
     private fun reseekHereNow() {
         val p = player ?: return
+        if (p.kind == EngineKind.MEDIA3) return // Media3 switches the sound itself, without VLC's read-ahead to flush
         if (userPaused || !p.isPlaying || buffering) return
         supervisor.seeked()
         if (bluRayController.isTsMode(p, currentUrl)) {
@@ -1150,9 +1202,12 @@ class PlayerActivity : ComponentActivity() {
             if (!seekBar.isEnabled) seekBar.isEnabled = true
 
             // Preloaded buffer: VLC network caching (time buffer ~6s) + BurstProxy disk buffer
-            val vlcTimeBufferMs = if (p.isPlaying || buffering) 6_000L else 0L
-            val diskBufferMs = BurstProxy.aheadMs(currentUrl, length)
-            val targetBuffered = (time + vlcTimeBufferMs + diskBufferMs).coerceIn(time, length).toInt()
+            // Media3 knows what it has loaded itself.
+            val targetBuffered = p.bufferedPositionMs.takeIf { it >= 0L }?.coerceIn(time, length)?.toInt() ?: run {
+                val vlcTimeBufferMs = if (p.isPlaying || buffering) 6_000L else 0L
+                val diskBufferMs = BurstProxy.aheadMs(currentUrl, length)
+                (time + vlcTimeBufferMs + diskBufferMs).coerceIn(time, length).toInt()
+            }
             updateSecondaryProgress(targetBuffered, force)
         } else {
             if (seekBar.max != 1000) seekBar.max = 1000
@@ -1239,7 +1294,7 @@ class PlayerActivity : ComponentActivity() {
     private fun checkHeavy() {
         val limit = PlaybackSettings.heavyMbit(this)
         if (limit <= 0 || heavyDialog != null || isFinishing) return
-        val mbit = BurstProxy.bitrateMbit(currentUrl) ?: bluRayController.getBitrateMbit(currentUrl) ?: return
+        val mbit = BurstProxy.bitrateMbit(currentUrl) ?: bluRayController.getBitrateMbit(currentUrl) ?: player?.bitrateMbit ?: return
         val name = Uri.parse(currentUrl).lastPathSegment ?: return
         if (mbit < limit || name in heavyOk || !TrafficMeter.isMetered(this)) return
         heavyOk += name
@@ -1571,6 +1626,7 @@ class PlayerActivity : ComponentActivity() {
 
     private fun reattachVideo() {
         val p = player ?: return
+        if (p.handlesSurfaceItself) return // Media3 moves to the new surface by itself
         supervisor.surfaceChanged()
         p.detachVideo()
         p.attachVideo()
@@ -1723,7 +1779,7 @@ class PlayerActivity : ComponentActivity() {
         alive = false
         heavyDialog?.let { runCatching { it.dismiss() } }; heavyDialog = null
         AppLog.write("player closed: %.0f MB fetched in this session (%s)".format(
-            BurstProxy.downloadedMb() - sessionStartMb, if (TrafficMeter.isMetered(this)) "mobile" else "wifi"))
+            BurstProxy.downloadedMb() + Media3Engine.downloaded.get() / 1048576.0 - sessionStartMb, if (TrafficMeter.isMetered(this)) "mobile" else "wifi"))
         TrafficMeter.flush(this)
         diagnostics.onDestroy()
         orientationWatch?.disable(); orientationWatch = null

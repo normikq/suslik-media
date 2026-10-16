@@ -15,7 +15,7 @@
   "player.metka_v_zhurnale": "Метка в журнале",
   "player.metka_n": "Метка #{n}",
   "player.oshibka_istochnika": "ошибка источника",
-  "player.vlc_ne_smog_otkryt": "VLC не смог открыть поток: {p}",
+  "player.vlc_ne_smog_otkryt": "Плеер не смог открыть поток: {p}",
   "player.perepodklyuchenie": "Переподключение…",
   "player.peremotka_nedostupna_dlya_etog": "Перемотка недоступна для этого потока",
   "player.p_p_sek_p": "{sign}{sec} сек  ·  {time}",
@@ -269,5 +269,8 @@
   "playertrack.subtitry": "Субтитры",
   "navbar.biblioteka": "Библиотека",
   "navbar.poisk": "Поиск",
-  "library.razreshenie_n_d": "разрешение: н/д"
+  "library.razreshenie_n_d": "разрешение: н/д",
+  "player.pereklyuchaem_na_vlc": "Этот файл откроется в VLC",
+  "settings.pleer": "Плеер",
+  "settings.pleer_opisanie": "VLC — как раньше. Media3 — новый плеер: меньше расход батареи, аппаратный AV1, озвучка без рассинхрона. Что Media3 не умеет (Blu-ray, VC-1 и т. п.), само откроется в VLC с того же места."
 }

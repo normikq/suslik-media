@@ -21,6 +21,7 @@ class VlcEngine(private val context: Context) : PlayerEngine {
     private val layout = VLCVideoLayout(context)
     override val videoView: View get() = layout
     override var listener: EngineListener? = null
+    override val kind = EngineKind.VLC
 
     private var libVlc: LibVLC? = null
     private var player: MediaPlayer? = null
