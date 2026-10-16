@@ -99,4 +99,16 @@ dependencies {
     // HTTP (shares the WebView's login cookie) and poster loading with memory + disk cache
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
+
+    // Media3 + FFmpeg audio decoder (DTS, TrueHD, AC3, E-AC3) for the future Media3 player. The decoder is not on
+    // Maven: android/ffmpeg/build.sh (CI: media3-ffmpeg.yml) builds it into libs/. Until the AAR is there, nothing
+    // is added and the app builds as before. Version must match MEDIA3_VERSION in build.sh.
+    val media3 = "1.5.1"
+    val ffmpegAar = file("libs/media3-decoder-ffmpeg-$media3.aar")
+    if (ffmpegAar.exists()) {
+        implementation(files(ffmpegAar))
+        // A local AAR brings no transitive dependencies: the ones the decoder module declares.
+        implementation("androidx.media3:media3-exoplayer:$media3")
+        implementation("androidx.media3:media3-decoder:$media3")
+    }
 }
