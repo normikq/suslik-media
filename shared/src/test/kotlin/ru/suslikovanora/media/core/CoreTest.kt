@@ -144,6 +144,13 @@ class SupervisorTest {
         assertEquals(emptyList(), log)
     }
 
+    @Test fun stillCoverAfterAMovingEpisodeIsNotFrozen() {
+        startPlaying()                           // a film whose picture moves
+        sup.opening("ep2"); sup.playing()        // next: an audio file with a still cover
+        repeat(20) { step(picturesPerSec = 0.0) }
+        assertEquals(emptyList(), log)
+    }
+
     @Test fun budgetsStopLoops() {
         startPlaying()
         repeat(200) { step(picturesPerSec = 0.0) }

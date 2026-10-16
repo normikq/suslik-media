@@ -89,6 +89,12 @@ object BurstProxy {
     }
 
     @Volatile private var upstream: Upstream? = null
+    /**
+     * A fresh signed address for the same file (the app asks the server, blocking; null = could not). Used once the
+     * old signature has run out (the mirror answers 401 after 12 hours: a film paused overnight), instead of failing
+     * the stream and reconnecting with the same dead address again and again.
+     */
+    @Volatile var refreshUrl: (String) -> String? = { null }
     /** Drops pooled connections (they belong to a network that is gone, or hang): set by the app. */
     @Volatile var resetConnections: () -> Unit = {}
     /** A request with no answer / no data for this long is cancelled and repeated on a fresh connection. */
@@ -211,10 +217,12 @@ object BurstProxy {
             val src = sources[token] ?: continue
             if (src.retiredAt == 0L) { src.retiredAt = stamp; retired = true; src.windows.forEach { it.kick() } } // a closed film stops downloading at once
         }
-        // Older closed films go now: one is enough, the disk is the phone's.
+        // Older closed films go now: one is enough, the disk is the phone's. The last one closed stays, also when
+        // keepOnly is called again with nothing new to close (clear() right after keepOnly() used to drop it).
+        val newest = byUrl.values.mapNotNull { sources[it]?.retiredAt }.maxOrNull() ?: 0L
         for ((key, token) in byUrl.entries.toList()) {
             val src = sources[token] ?: continue
-            if (src.retiredAt != 0L && src.retiredAt != stamp) { byUrl.remove(key); sources.remove(token)?.close() }
+            if (src.retiredAt != 0L && src.retiredAt < newest) { byUrl.remove(key); sources.remove(token)?.close() }
         }
         if (retired) runCatching { sweeper.schedule({ sweep() }, KEEP_MS + 1000, TimeUnit.MILLISECONDS) }
     }
@@ -647,6 +655,7 @@ object BurstProxy {
                 } catch (e: IOException) {
                     if (closed) return
                     if (stopped()) { kicked = false; stalledWhy = null; continue } // stopped on purpose, not a failure
+                    if (e is Renewed) { log("reserve: signature expired → new address, repeating"); continue }
                     val stalled = stalledWhy; stalledWhy = null
                     val netChange = kicked; kicked = false
                     val isConnError = stalled != null || e is SocketTimeoutException
@@ -754,6 +763,14 @@ object BurstProxy {
                 when {
                     code == 416 -> { synchronized(lock) { eof = true; lock.notifyAll() }; return }
                     code == 200 && from > 0 -> { src.broken = true; throw FatalUpstream("no ranges") }
+                    (code == 401 || code == 403) && MirrorLink.isExpired(src.url) -> {
+                        val old = src.url
+                        // No new address (no network, logged out): an ordinary failed attempt, so it ends after a few.
+                        val fresh = runCatching { refreshUrl(old) }.getOrNull()?.takeIf { keyOf(it) == keyOf(old) && !MirrorLink.isExpired(it) }
+                            ?: throw IOException("HTTP $code, signature expired")
+                        if (src.url == old) src.url = fresh
+                        throw Renewed()
+                    }
                     code in 400..499 -> throw FatalUpstream("HTTP $code")
                     code !in 200..299 -> throw IOException("HTTP $code")
                 }
@@ -880,6 +897,8 @@ object BurstProxy {
     }
 
     private class FatalUpstream(msg: String) : IOException(msg)
+    /** The signed address was renewed ([refreshUrl]): repeat at once, not a failure. */
+    private class Renewed : IOException("signature renewed")
 
     private fun isOffline(e: Throwable): Boolean {
         var t: Throwable? = e

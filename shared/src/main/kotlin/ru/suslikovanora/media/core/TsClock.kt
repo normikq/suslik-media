@@ -92,7 +92,12 @@ object TsClock {
         if (timeMs <= 1_000L || pos <= 0.001f || pos >= 0.999f) return
         val info = clockCache[cacheKey(url)] ?: return
         if (timeMs >= info.durationMs - 1_000L) return
-        info.checkpoints[timeMs] = pos
+        val pts = info.checkpoints
+        // Time and position grow together. A point that contradicts the new one (earlier but further in the file, or
+        // later but nearer) was a bad sample: it goes, or a seek between them would jump backwards.
+        pts.headMap(timeMs, false).entries.filter { it.key > 0L && it.value >= pos }.forEach { pts.remove(it.key) }
+        pts.tailMap(timeMs, false).entries.filter { it.key < info.durationMs && it.value <= pos }.forEach { pts.remove(it.key) }
+        pts[timeMs] = pos
     }
 
     /**

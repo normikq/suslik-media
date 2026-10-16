@@ -229,6 +229,13 @@ fun prepareItems(list: List<Magnet>): List<LibraryItem> = list.map { m ->
     )
 }
 
+/**
+ * [name] (lower case, no folder) is [base] plus a suffix: "show.s01e01.rus.srt" for "show.s01e01", but not
+ * "show.s01e10.srt" — the base must end where a word ends, or episode 1 would take episode 10's files.
+ */
+private fun sameBase(name: String, base: String): Boolean =
+    name.startsWith(base) && (name.length == base.length || !name[base.length].isLetterOrDigit())
+
 private val SUB_EXT = Regex("""\.(srt|ass|ssa|vtt|sub)$""", RegexOption.IGNORE_CASE)
 
 /**
@@ -242,7 +249,7 @@ fun subtitlesFor(m: Magnet, video: MFile): List<MFile> {
     val vPath = norm(video.path)
     val vDir = vPath.substringBeforeLast('/', "")
     val vBase = vPath.substringAfterLast('/').substringBeforeLast('.').lowercase(Locale.ROOT)
-    val byName = subs.filter { norm(it.path).substringAfterLast('/').lowercase(Locale.ROOT).startsWith(vBase) }
+    val byName = subs.filter { sameBase(norm(it.path).substringAfterLast('/').lowercase(Locale.ROOT), vBase) }
     if (byName.isNotEmpty()) return byName.take(8)
     val videos = m.files.count { !it.isFolder && VIDEO_EXT.containsMatchIn(it.path) && !SAMPLE.containsMatchIn(it.path) }
     if (videos <= 1) return subs.take(8)
@@ -271,7 +278,7 @@ fun externalAudioFor(m: Magnet, video: MFile): List<MFile> {
     val audio = m.files.filter { !it.isFolder && it.link != null && AUDIO_EXT.containsMatchIn(it.path) }
     if (audio.isEmpty()) return emptyList()
     val vBase = video.path.replace('\\', '/').substringAfterLast('/').substringBeforeLast('.').lowercase(Locale.ROOT)
-    val byName = audio.filter { it.path.replace('\\', '/').substringAfterLast('/').lowercase(Locale.ROOT).startsWith(vBase) }
+    val byName = audio.filter { sameBase(it.path.replace('\\', '/').substringAfterLast('/').lowercase(Locale.ROOT), vBase) }
     if (byName.isNotEmpty()) return byName.take(8)
     val videos = m.files.count { !it.isFolder && VIDEO_EXT.containsMatchIn(it.path) && !SAMPLE.containsMatchIn(it.path) }
     return if (videos <= 1) audio.take(8) else emptyList()

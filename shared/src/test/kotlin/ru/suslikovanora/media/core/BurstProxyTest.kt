@@ -43,6 +43,17 @@ class BurstProxyTest {
                 else runCatching { ex.responseBody.use { it.write(data, a, z - a + 1) } }
                 ex.close()
             }
+            // the mirror after 12 hours: an old signature gets 401, a renewed one the bytes
+            createContext("/signed.mkv") { ex ->
+                requests.incrementAndGet()
+                if ("sig=fresh" !in (ex.requestURI.rawQuery ?: "")) { ex.sendResponseHeaders(401, -1); ex.close(); return@createContext }
+                val m = Regex("""bytes=(\d*)-(\d*)""").find(ex.requestHeaders.getFirst("Range") ?: "bytes=0-")!!
+                val a = m.groupValues[1].toInt(); val z = if (m.groupValues[2].isNotEmpty()) minOf(m.groupValues[2].toInt(), data.size - 1) else data.size - 1
+                ex.responseHeaders.add("Content-Range", "bytes $a-$z/${data.size}")
+                ex.sendResponseHeaders(206, (z - a + 1).toLong())
+                runCatching { ex.responseBody.use { it.write(data, a, z - a + 1) } }
+                ex.close()
+            }
             executor = java.util.concurrent.Executors.newCachedThreadPool()
             start()
         }
@@ -221,6 +232,31 @@ class BurstProxyTest {
         assertEquals(1, BurstProxy.forgetRetired { it == kept })
         assertEquals(b, BurstProxy.wrap(addr(kept)))         // the one still in the library is still here
         assertTrue(a != BurstProxy.wrap(addr(gone)))         // the gone one starts from nothing
+    }
+
+    @Test fun theLastClosedFilmSurvivesASecondClear() {
+        fun addr(n: Int) = "https://origin.test/film.mkv?link=L1&exp=$n&sig=s$n"
+        val a = BurstProxy.wrap(addr(1))
+        get(a, "bytes=0-99999")
+        BurstProxy.keepOnly(emptyList())                     // the player is closed
+        Thread.sleep(5)
+        BurstProxy.clear()                                   // and closed once more (another screen, onDestroy)
+        assertEquals(a, BurstProxy.wrap(addr(2)))            // still kept on disk
+    }
+
+    @Test fun anExpiredSignatureIsRenewedInsteadOfFailing() {
+        val now = System.currentTimeMillis() / 1000
+        val renewed = AtomicInteger()
+        BurstProxy.refreshUrl = { old ->
+            renewed.incrementAndGet()
+            if ("link=L9" in old) "https://origin.test/signed.mkv?link=L9&exp=${now + 3600}&sig=fresh" else null
+        }
+        try {
+            val local = BurstProxy.wrap("https://origin.test/signed.mkv?link=L9&exp=${now - 10}&sig=old")
+            val (code, b) = get(local, "bytes=0-999999")
+            assertEquals(206, code); assertContentEquals(data.copyOfRange(0, 1_000_000), b)
+            assertEquals(1, renewed.get())
+        } finally { BurstProxy.refreshUrl = { null } }
     }
 
     @Test fun offWhenReserveIsZero() {

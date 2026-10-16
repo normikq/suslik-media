@@ -404,6 +404,22 @@ class ModelTest {
     }
 
     @Test
+    fun episodeOneDoesNotTakeEpisodeTensFiles() {
+        val e1 = file(0, "Show/Show.S01E1.mkv")
+        val e10 = file(1, "Show/Show.S01E10.mkv")
+        val sub1 = file(2, "Show/Show.S01E1.rus.srt")
+        val sub10 = file(3, "Show/Show.S01E10.rus.srt")
+        val aud1 = file(4, "Show/Show.S01E1_rus.mka")
+        val aud10 = file(5, "Show/Show.S01E10.mka")
+        val m = Magnet(1, "Show", "Готово", 4, 0, 0, listOf(e1, e10, sub1, sub10, aud1, aud10), true)
+
+        assertEquals(listOf(sub1), subtitlesFor(m, e1))
+        assertEquals(listOf(sub10), subtitlesFor(m, e10))
+        assertEquals(listOf(aud1), externalAudioFor(m, e1))
+        assertEquals(listOf(aud10), externalAudioFor(m, e10))
+    }
+
+    @Test
     fun externalAudioSingleVideoFallback() {
         val vid = file(0, "Film/Film.mkv")
         val dub = file(1, "Film/Dub.ac3")

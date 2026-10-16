@@ -22,5 +22,9 @@ object Reserve {
                 catch (e: java.util.concurrent.CancellationException) { throw java.io.IOException("cancelled") }
             BurstProxy.UpstreamResponse(res.statusCode(), { n -> res.headers().firstValue(n).orElse(null) }, res.body())
         }
+        // The mirror's signature lives 12 hours: a film paused overnight gets a new address instead of 401 forever.
+        BurstProxy.refreshUrl = { old ->
+            MirrorLink.renewPath(old)?.let { path -> kotlinx.coroutines.runBlocking { Api.get(path) }.optString("url").ifBlank { null } }
+        }
     }
 }

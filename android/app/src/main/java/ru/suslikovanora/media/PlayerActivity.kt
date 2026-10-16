@@ -1,6 +1,8 @@
 package ru.suslikovanora.media
 
 import ru.suslikovanora.media.core.*
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import ru.suslikovanora.media.player.PlayerAudioSession
 import ru.suslikovanora.media.player.PlayerBluRayController
 import ru.suslikovanora.media.player.PlayerControlsOverlay
@@ -515,6 +517,9 @@ class PlayerActivity : ComponentActivity() {
         })
     }
 
+    private val scope = kotlinx.coroutines.MainScope()
+    private var sideJob: kotlinx.coroutines.Job? = null
+
     private val playlistQueue: PlayerPlaylistQueue by lazy {
         PlayerPlaylistQueue(handler, object : PlayerPlaylistQueue.Callback {
             override fun isActivityAlive(): Boolean = alive && !isDestroyed && !isFinishing
@@ -535,7 +540,14 @@ class PlayerActivity : ComponentActivity() {
                 retryCount = 0
                 needsReload = false
                 seekBar.progress = 0
-                reconnect(forcePlay = true, startAt = playbackPosition)
+                if (!trackSelector.needsSidecars(entry.url)) { reconnect(forcePlay = true, startAt = playbackPosition); return }
+                // This episode's own voice-overs and subtitles are signed on the mirror first, then it opens with them.
+                showStatus(tr("play.gotovim_dorozhki"))
+                sideJob?.cancel()
+                sideJob = scope.launch {
+                    trackSelector.signSidecars(entry.url)
+                    if (currentUrl == entry.url && alive) reconnect(forcePlay = true, startAt = playbackPosition)
+                }
             }
             override fun onQueueUiUpdated(
                 hasMultiple: Boolean,
@@ -603,6 +615,12 @@ class PlayerActivity : ComponentActivity() {
             cancel.attach { call.cancel() } // a request stuck in connect / TLS can be aborted from outside
             val res = call.execute()
             BurstProxy.UpstreamResponse(res.code, { n -> res.header(n) }, res.body?.byteStream())
+        }
+        // The mirror's signature lives 12 hours: a film paused overnight gets a new address instead of 401 forever.
+        BurstProxy.refreshUrl = { old ->
+            MirrorLink.renewPath(old)?.let { path ->
+                kotlinx.coroutines.runBlocking { ru.suslikovanora.media.net.Api.get(path) }.optString("url").ifBlank { null }
+            }
         }
         // Dead sockets of a network that is gone (or a hung one) must not be reused by the repeated request.
         BurstProxy.resetConnections = {
@@ -1841,6 +1859,7 @@ class PlayerActivity : ComponentActivity() {
 
     override fun onDestroy() {
         alive = false
+        scope.cancel()
         heavyDialog?.let { runCatching { it.dismiss() } }; heavyDialog = null
         AppLog.write("player closed: %.0f MB fetched in this session (%s)".format(
             BurstProxy.downloadedMb() + Media3Engine.downloaded.get() / 1048576.0 - sessionStartMb, if (TrafficMeter.isMetered(this)) "mobile" else "wifi"))
@@ -1911,6 +1930,7 @@ class PlayerActivity : ComponentActivity() {
         const val EXTRA_SUB_URLS = "media_sub_urls"
         const val EXTRA_WATCH_KEYS = "media_watch_keys"
         const val EXTRA_AUDIO_URLS = "media_audio_urls"
+        const val EXTRA_EPISODE_SIDES = PlayerTrackSelector.EXTRA_EPISODE_SIDES
         private val SCALES = listOf(
             VideoScale.BEST_FIT to tr("player.vpisat"),
             VideoScale.FIT_SCREEN to tr("player.zapolnit"),
