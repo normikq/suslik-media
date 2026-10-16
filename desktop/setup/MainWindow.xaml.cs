@@ -110,7 +110,9 @@ namespace SuslikSetup
                     var slide = new TranslateTransform();
                     prev.RenderTransform = slide;
                     var fade = new DoubleAnimation(0, TimeSpan.FromMilliseconds(160));
-                    fade.Completed += (_, __) => { if (page != prev) prev.Visibility = Visibility.Collapsed; prev.BeginAnimation(OpacityProperty, null); };
+                    // Если за время исчезновения страницу успели показать снова (быстрая ошибка после «Повторить»),
+                    // её не трогаем: снятие анимации здесь отменило бы её появление и оставило пустое окно.
+                    fade.Completed += (_, __) => { if (page != prev) { prev.Visibility = Visibility.Collapsed; prev.BeginAnimation(OpacityProperty, null); } };
                     prev.BeginAnimation(OpacityProperty, fade);
                     slide.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(-18, TimeSpan.FromMilliseconds(160)));
                 }
@@ -334,7 +336,15 @@ namespace SuslikSetup
             SetProgress(0, "Подключение к серверу…");
             Show(PageProgress, 2);
             var throttle = new Throttle(Dispatcher);
-            Task.Run(() => Work.InstallMpv(folder, MpvProgress(mpv, null, f => SetProgress(f, "Загрузка видеодвижка mpv…"), throttle), cts.Token))
+            Task.Run(() =>
+                {
+                    // Быстрый отказ сервера не должен мелькать: показываем ход хотя бы долю секунды.
+                    var started = DateTime.UtcNow;
+                    var error = Work.InstallMpv(folder, MpvProgress(mpv, null, f => SetProgress(f, "Загрузка видеодвижка mpv…"), throttle), cts.Token);
+                    var left = TimeSpan.FromMilliseconds(900) - (DateTime.UtcNow - started);
+                    if (left > TimeSpan.Zero) Thread.Sleep(left);
+                    return error;
+                })
                 .ContinueWith(t =>
                 {
                     throttle.Flush();
