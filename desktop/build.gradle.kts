@@ -32,6 +32,14 @@ tasks.test {
     useJUnitPlatform()
 }
 
+// Адрес сайта не хранится в репозитории: секрет SITE_URL в CI или suslik.siteUrl в ~/.gradle/gradle.properties.
+val siteHost: String = (System.getenv("SITE_URL")?.takeIf { it.isNotBlank() } ?: findProperty("suslik.siteUrl") as String? ?: "")
+    .trim().removePrefix("https://").removePrefix("http://").substringBefore('/')
+gradle.taskGraph.whenReady {
+    if (siteHost.isEmpty() && allTasks.any { t -> listOf("package", "assemble", "run", "bundle").any { t.name.startsWith(it) } })
+        throw GradleException("Не задан адрес сайта: переменная окружения SITE_URL или suslik.siteUrl в ~/.gradle/gradle.properties")
+}
+
 // One place for the version: the installer, and the app itself (update check) via -Dsuslik.version.
 val appVersion = "2.3.2"
 // Windows Installer takes at most three numbers (2.0.0.1 → 2.0.0); ensure at least 3 parts for WiX (2.2 → 2.2.0)
@@ -66,6 +74,7 @@ compose.desktop {
             // the connection instead of a new TLS handshake (nginx keepalive_timeout 180s, see NGINX-MIRROR.md).
             "-Djdk.httpclient.keepalive.timeout=180",
             "-Dsuslik.version=$appVersion",
+            "-Dsuslik.host=$siteHost",
             "-Dsuslik.diag=$diag",
             // AppCDS (Java 19+): on the first exit the JVM saves the classes it loaded into an archive next to the app;
             // from then on they are mapped from it instead of being read and verified again — the window opens noticeably

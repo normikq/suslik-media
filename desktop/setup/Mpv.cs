@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Reflection;
 using System.Security.Cryptography;
@@ -17,7 +18,16 @@ namespace SuslikSetup
     static class Mpv
     {
         static readonly Dictionary<string, string> pin = Load();
-        public static string Url => pin.TryGetValue("url", out var v) ? v : "";
+        /// <summary>Домен сайта вшивается при сборке (-p:SiteHost=…, секрет SITE_URL), путь — из libmpv.properties.</summary>
+        public static string Url
+        {
+            get
+            {
+                var host = Assembly.GetExecutingAssembly().GetCustomAttributes<AssemblyMetadataAttribute>()
+                    .FirstOrDefault(a => a.Key == "SiteHost")?.Value ?? "";
+                return host.Length > 0 && pin.TryGetValue("path", out var p) ? "https://" + host + p : "";
+            }
+        }
         static string Sha256 => (pin.TryGetValue("dllSha256", out var v) ? v : "").ToLowerInvariant();
 
         static string Dir(string folder) => Path.Combine(folder, "app", "resources");

@@ -80,7 +80,7 @@ class MainActivity : ComponentActivity() {
     private var tab by mutableStateOf(Tab.Library)
     private var playTarget by mutableStateOf<PlayTarget?>(null)
     private val uiScope = MainScope() // outlives tab switches: searches and download tracking keep going
-    private val siteHost = "short.suslikovanora.ru"
+    private val siteHost = ru.suslikovanora.media.net.Api.HOST
     // Remote control (Android TV): Back first brings focus to the tabs below, only then leaves the app.
     private val navFocus = FocusRequester()
     private var navFocused = false

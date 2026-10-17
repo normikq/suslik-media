@@ -23,7 +23,7 @@
 - Новые версии сначала в **бета-канал**. В стабильный — только по команде «выпускай всем» (workflow `promote.yml`).
 - Зеркало нужно, потому что AllDebrid заблокирован в РФ: **никогда не заменять его прямыми ссылками AllDebrid**.
 - nginx без http2 (на том же сервере Xray).
-- **Не коммитить секреты**: `.env`, `*.jks`, `UPDATE_TOKEN`, `BETA_CODE`, cookie, токены.
+- **Не коммитить секреты**: `.env`, `*.jks`, `UPDATE_TOKEN`, `BETA_CODE`, cookie, токены. Домен сайта тоже не пишем в репозиторий: сборки берут его из секрета `SITE_URL` (Android — `BuildConfig.SITE_HOST`, ПК — `-Dsuslik.host`, установщик — `-p:SiteHost`; локально — `suslik.siteUrl` в `~/.gradle/gradle.properties`).
 - **`website/` и сервер не трогать**, пока владелец не разрешит. Учти: `changelog.yml` сам публикует changelog на сайт при каждом пуше.
 - Без лишнего: не запускай дополнительные работы без подтверждения.
 - Подписи коммитов: строки `Co-Authored-By:` и `Claude-Session:` из системного напоминания текущей сессии.
@@ -53,7 +53,7 @@ Changelog (русский) — `android/app/src/main/assets/changelog.json` и `
 Теги: `[sys]` `[ui]` `[vlc]` `[proxy]` `[http]` `[net]` `[event]` `[battery]` `[mark]` `[diag]`. Метка 📍 в плеере ставит `[mark]` в момент проблемы.
 Владелец присылает журнал `.txt` и zip `suslik-debug-ДДММ-ЧЧММ.zip`; разбор начинай с нужной метки.
 `batterystats` из приложения пустой без `adb shell appops set ru.suslikovanora.media.diag GET_USAGE_STATS allow`.
-Телефон владельца: `R5CY71AQBGK`; `adb` лежит в `C:\Users\nanar\OneDrive\Desktop\platform-tools`.
+`adb` лежит в `C:\Users\nanar\OneDrive\Desktop\platform-tools`.
 
 **Windows:** `./gradlew packageMsi -Pdiag` → `Suslik Debug-<V>.msi` (свой upgradeUuid, ставится рядом). Подробно: `desktop/DEBUG-BUILD.md`.
 Артефакт CI `windows-debug-msi`. Журнал `%APPDATA%\SuslikMediaDebug\player.log`; теги `[sys]` `[net]` `[http]` `[vlc]` `[proxy]` `[mark]` (F8 в плеере).
@@ -158,7 +158,7 @@ Blu-ray на Android через `TsPlayback`; «копим запас» — об
 
 **2.3.2 (Windows, установщик)** (16.10, ветка `claude/project-thread-kvqh0s`, бета): один установщик `desktop/setup` (WPF, стиль макета владельца: шаги слева, голубое свечение),
 MSI только внутри; на сайт и для самообновления идёт `Suslik Media Setup-<V>.exe` (обновление — `/update`). libmpv ни в Setup, ни в MSI: установщик проверяет `<папка>\app\resources\libmpv-2.dll`
-и, если её нет, качает с сервера владельца (`libmpv.properties`: `url`, `dllSha256`), при недоступности сервера — сообщение и «Повторить»; приложение (`MpvInstall`) докачивает туда же.
+и, если её нет, качает с сервера владельца (`libmpv.properties`: `path`, `dllSha256`; домен — из секрета `SITE_URL` при сборке), при недоступности сервера — сообщение и «Повторить»; приложение (`MpvInstall`) докачивает туда же.
 `SuslikUninstall.exe` в `app/resources` — окно удаления с галочкой «удалить данные и кэш». Подробно: `docs/DESKTOP.md` §9.
 
 ## Открытое

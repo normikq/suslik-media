@@ -4,7 +4,7 @@
     Одна программа в двух сборках (см. .github/workflows/desktop.yml):
       SuslikUninstall.exe — без MSI, кладётся в само приложение (app/resources) и открывается из «Установленных приложений»;
       Suslik Media Setup.exe — с MSI внутри (-p:MsiPath=…): мастер установки. Видеодвижок libmpv он скачивает с нашего сервера.
-    Сборка: dotnet build -c Release [-p:MsiPath=…] [-p:AssemblyName=…] [-p:AppVersion=2.3.1]
+    Сборка: dotnet build -c Release [-p:MsiPath=…] [-p:SiteHost=домен] [-p:AssemblyName=…] [-p:AppVersion=2.3.1]
   -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -32,6 +32,8 @@
     <Resource Include="..\src\main\resources\fonts\onest_regular.ttf;..\src\main\resources\fonts\onest_medium.ttf;..\src\main\resources\fonts\onest_semibold.ttf" Link="fonts\%(Filename)%(Extension)" />
     <Resource Include="..\src\main\resources\icons\icon-256.png" Link="img\icon.png" />
     <EmbeddedResource Include="..\src\main\resources\libmpv.properties" LogicalName="libmpv.properties" />
+    <!-- Домен сайта (-p:SiteHost=…, из секрета SITE_URL): в репозитории его нет. -->
+    <AssemblyMetadata Include="SiteHost" Value="$(SiteHost)" />
     <EmbeddedResource Include="$(MsiPath)" LogicalName="package.msi" Condition="'$(MsiPath)' != ''" />
   </ItemGroup>
 </Project>

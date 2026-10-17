@@ -35,7 +35,7 @@ scp suslik-media-1.4.1.apk suslik-media-1.4.1.txt root@ВАШ_VPS:~/medialibrary
 ```bash
 curl -H "X-Update-Token: ТОКЕН" -H "X-File-Name: suslik-media-1.4.1.apk" \
      -H "Content-Type: application/octet-stream" \
-     --data-binary @app-release.apk https://short.suslikovanora.ru/api/app/upload
+     --data-binary @app-release.apk https://<сайт>/api/app/upload
 ```
 
 Без `UPDATE_TOKEN` загрузка по сети выключена.

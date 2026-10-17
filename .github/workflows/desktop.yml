@@ -22,6 +22,8 @@ jobs:
   build:
     runs-on: windows-latest
     defaults: { run: { working-directory: desktop, shell: bash } }
+    # Домен сайта в сборку — только из секрета, в репозитории его нет (Gradle и установщик читают SITE_URL).
+    env: { SITE_URL: "${{ secrets.SITE_URL }}" }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -60,7 +62,9 @@ jobs:
       - name: Build installer
         run: |
           set -o pipefail
-          dotnet build setup/SuslikSetup.csproj -c Release -p:AppVersion=$V -p:AssemblyName=SuslikMediaSetup \
+          HOST=$(echo "$SITE_URL" | sed -E 's#^https?://##; s#/.*##')
+          [ -n "$HOST" ] || { echo "::error::Нет секрета SITE_URL"; exit 1; }
+          dotnet build setup/SuslikSetup.csproj -c Release -p:AppVersion=$V -p:AssemblyName=SuslikMediaSetup "-p:SiteHost=$HOST" \
             "-p:MsiPath=$(cygpath -w "$GITHUB_WORKSPACE/$MSI")" -o "$RUNNER_TEMP/setup" 2>&1 | tail -5
           cp "$RUNNER_TEMP/setup/SuslikMediaSetup.exe" "../dist/Suslik Media Setup-$V.exe"
           rm -rf setup/obj setup/bin

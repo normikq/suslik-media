@@ -21,6 +21,6 @@
 | `ANDROID_KEYSTORE_B64` | release-ключ в base64 (`base64 -w0 release.jks`) |
 | `ANDROID_STORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` | пароли/алиас ключа |
 | `UPDATE_TOKEN` | тот же, что `UPDATE_TOKEN` в `.env` сайта |
-| `SITE_URL` | `https://short.suslikovanora.ru` |
+| `SITE_URL` | адрес сайта (`https://<домен>`): сборки берут из него домен, в коде его нет. Для сборки на своём ПК — `suslik.siteUrl=https://<домен>` в `~/.gradle/gradle.properties` |
 
 Без ключа собирается debug-APK (для проверки компиляции; ставить как обновление нельзя).
