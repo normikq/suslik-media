@@ -51,6 +51,21 @@ class VlcEngine(private val context: Context) : PlayerEngine {
         return vlc
     }
 
+    private var subsWatched = false
+
+    /** VLC sizes its subtitles surface like the picture — cut off with it in «Заполнить» / «16:9»: see [fitSubtitles]. */
+    private fun watchSubtitles() {
+        if (subsWatched) return
+        val video = layout.findViewById<View>(org.videolan.R.id.surface_video) ?: return
+        val subs = layout.findViewById<View>(org.videolan.R.id.surface_subtitles) ?: return
+        subsWatched = true
+        val fit = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            layout.post { if (video.width > 0 && video.height > 0) fitSubtitles(subs, video.width.toFloat() / video.height) }
+        }
+        video.addOnLayoutChangeListener(fit)
+        subs.addOnLayoutChangeListener(fit)
+    }
+
     override fun open(media: EngineMedia, scale: VideoScale) {
         val vlc = libVlc ?: createLibVlc()
         retireReplaced()
@@ -63,6 +78,7 @@ class VlcEngine(private val context: Context) : PlayerEngine {
         p.setEventListener(listenerFor(p))
         // enableSubtitles = true so selected subtitle tracks are rendered; SurfaceView is cheaper than TextureView.
         p.attachViews(layout, null, true, false)
+        watchSubtitles()
         runCatching { p.setVideoScale(scale.vlc) }
         val item = Media(vlc, Uri.parse(media.url)).apply { configure(media) }
         val oldMedia = this.media

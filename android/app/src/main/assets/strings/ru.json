@@ -272,5 +272,14 @@
   "library.razreshenie_n_d": "разрешение: н/д",
   "player.pereklyuchaem_na_vlc": "Этот файл откроется в VLC",
   "settings.pleer": "Плеер",
-  "settings.pleer_opisanie": "VLC — как раньше. Media3 — новый плеер: меньше расход батареи, аппаратный AV1, озвучка без рассинхрона. Что Media3 не умеет (Blu-ray, VC-1 и т. п.), само откроется в VLC с того же места."
+  "settings.pleer_opisanie": "VLC — как раньше. Media3 — новый плеер: меньше расход батареи, аппаратный AV1, озвучка без рассинхрона. Что Media3 не умеет (Blu-ray, VC-1 и т. п.), само откроется в VLC с того же места.",
+  "overlay.nazad_10": "Назад на 10 секунд",
+  "overlay.vpered_10": "Вперёд на 10 секунд",
+  "overlay.nastroyki": "Настройки",
+  "overlay.nastroyki_vosproizvedeniya": "Настройки воспроизведения",
+  "overlay.kadr": "Кадр",
+  "overlay.ekran": "Экран",
+  "overlay.dorozhki_esche_ne_opredeleny": "Дорожки ещё не определены",
+  "overlay.sleduyuschaya_title": "Следующая: {title}",
+  "overlay.gromkost": "Громкость"
 }
