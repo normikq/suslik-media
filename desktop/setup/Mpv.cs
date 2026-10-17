@@ -103,7 +103,8 @@ namespace SuslikSetup
             Directory.CreateDirectory(Dir(folder));
             var dll = Dll(folder);
             var part = dll + ".part";
-            ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
+            // Не трогаем ServicePointManager.SecurityProtocol: в .NET 4.7+ он «как в системе» (TLS 1.2 и 1.3 на Windows 11),
+            // а «|= Tls12» превращал его в один TLS 1.2, и сервер, принимающий только TLS 1.3, был «недоступен».
             var req = (HttpWebRequest)WebRequest.Create(Url);
             req.Timeout = 20000;
             req.ReadWriteTimeout = 60000;
@@ -143,7 +144,7 @@ namespace SuslikSetup
                 TryDelete(part);
                 if (e.Response is HttpWebResponse r)
                     throw new IOException($"Сервер видеодвижка ответил ошибкой {(int)r.StatusCode}.", e);
-                throw new IOException("Сервер видеодвижка недоступен. Проверьте интернет или попробуйте позже.", e);
+                throw new IOException($"Сервер видеодвижка недоступен ({e.Status}). Проверьте интернет или попробуйте позже.", e);
             }
             catch
             {
