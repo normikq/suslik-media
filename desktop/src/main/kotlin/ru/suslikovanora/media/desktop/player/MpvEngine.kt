@@ -69,7 +69,13 @@ class MpvEngine(
         opt("cache-pause", "yes")
         opt("cache-pause-initial", "yes")
         opt("cache-pause-wait", "1")
-        opt("demuxer-max-bytes", "64MiB"); opt("demuxer-max-back-bytes", "32MiB")
+        // No preroll backward seeks on subtitle switch/seek: prevents huge backward range seeks over HTTP
+        opt("demuxer-mkv-subtitle-preroll", "no")
+        opt("demuxer-mkv-subtitle-preroll-secs", "1")
+        // Keep previous keyframes and clusters in memory so track switching and short seeks do not hit network
+        opt("demuxer-max-bytes", "256MiB"); opt("demuxer-max-back-bytes", "128MiB")
+        opt("gapless-audio", "yes")
+        opt("audio-stream-silence", "yes")
         opt("network-timeout", "30")
         opt("stream-lavf-o", "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5")
         opt("sub-scale", (subScale / 100.0).toString())
@@ -182,9 +188,8 @@ class MpvEngine(
             "cache-buffering-state" -> if (int64 != null) {
                 val pct = int64.toFloat().coerceIn(0f, 100f)
                 cacheBufferingPercent = pct
-                listener.buffering(pct)
-                if (pct >= 100f && !cacheWait) {
-                    maybePlaying()
+                if (cacheWait) {
+                    listener.buffering(pct)
                 }
             }
             "track-list" -> listener.tracksChanged()

@@ -219,6 +219,7 @@ fun PlayerView(
     var lastSeekAt by remember { mutableStateOf(0L) }
     var bufferingSince by remember { mutableStateOf(0L) }
     var bufferingPct by remember { mutableStateOf(100f) }
+    var bufferingShown by remember { mutableStateOf(0) } // highest buffering % during the current wait (monotonic)
     var trackSwitches by remember { mutableStateOf(0) } // audio / subtitle switches from the menu (see the watch below)
     // Сеть медленнее фильма: прокси держит фильм, пока не накопится запас (как на Android, см. PlayerActivity.maybeCatchUp)
     val catchUp = remember { CatchUp({ PlayerLog.write(it) }) } // the rules are shared with Android
@@ -833,6 +834,13 @@ fun PlayerView(
                 }
                 val wasStarted = started
                 playing = true; status = null; retries = 0; started = true; vlcPaused = false
+                bufferingShown = 0
+                bufferingPct = 100f
+                if (bufferingSince > 0L) {
+                    val ms = System.currentTimeMillis() - bufferingSince
+                    bufferingSince = 0L
+                    if (ms > 1500) PlayerLog.write("buffering took $ms ms at ${time / 1000}s")
+                }
                 ts?.let { s ->
                     BurstProxy.setDuration(currentUrl, s.lengthMs)
                     if (!tsOpenDone && !tsAbsolute) { tsOpenDone = true; s.openJump(tsStartAt)?.let { pos -> PlayerLog.write("[ts] continue at ${tsStartAt / 1000}s → position %.4f".format(pos)); vlc { engine.seekToFraction(pos) } } }
@@ -873,13 +881,22 @@ fun PlayerView(
         fun evPaused() = ui2 { playing = false; vlcPaused = true; savePos(time, length) }
         fun evStopped() = ui2 { vlcPaused = false }
         fun evBuffering(newCache: Float) = ui2 {
-                status = if (newCache < 100f) tr("player.buferizaciya_p", "p" to newCache.toInt()) else null
-                bufferingPct = newCache
-                supRef.get()?.buffering(newCache)
-                if (newCache < 100f) { if (bufferingSince == 0L) bufferingSince = System.currentTimeMillis() }
-                else if (bufferingSince > 0) {
-                    val ms = System.currentTimeMillis() - bufferingSince; bufferingSince = 0L
-                    if (ms > 1500) PlayerLog.write("buffering took $ms ms at ${time / 1000}s")
+                if (newCache < 100f) {
+                    bufferingShown = maxOf(bufferingShown, newCache.toInt())
+                    status = tr("player.buferizaciya_p", "p" to bufferingShown)
+                    bufferingPct = bufferingShown.toFloat()
+                    supRef.get()?.buffering(bufferingPct)
+                    if (bufferingSince == 0L) bufferingSince = System.currentTimeMillis()
+                } else {
+                    bufferingShown = 0
+                    bufferingPct = 100f
+                    status = null
+                    supRef.get()?.buffering(100f)
+                    if (bufferingSince > 0L) {
+                        val ms = System.currentTimeMillis() - bufferingSince
+                        bufferingSince = 0L
+                        if (ms > 1500) PlayerLog.write("buffering took $ms ms at ${time / 1000}s")
+                    }
                 }
             }
         fun evLength(newLength: Long) = ui2 {
@@ -1067,13 +1084,14 @@ fun PlayerView(
     // report, mpv). If the buffering does not rise for 3 s after a switch, the player makes that seek itself, once.
     LaunchedEffect(trackSwitches) {
         if (trackSwitches == 0) return@LaunchedEffect
+        bufferingShown = 0
         PlayerLog.write("[track] switched at ${time / 1000}s" + (if (bufferingSince > 0L) ", buffering ${bufferingPct.toInt()}%" else ""))
         val until = System.currentTimeMillis() + 20_000L
-        var shown = -1f
+        var shown = 0f
         while (System.currentTimeMillis() < until) {
             delay(3_000L)
             if (closing || pausedAt > 0L || vlcPaused || seeking != null || catchingUp) return@LaunchedEffect
-            if (bufferingSince == 0L) { shown = -1f; continue }
+            if (bufferingSince == 0L) { shown = 0f; continue }
             if (bufferingPct > shown) { shown = bufferingPct; continue }
             val t = time
             PlayerLog.write("[track] buffering stuck at ${bufferingPct.toInt()}% after the switch → seek to ${t / 1000}s")
@@ -1395,6 +1413,7 @@ fun PlayerView(
             onSeekBy = { seekBy(it) },
             onSeekTo = { t ->
                 seeking = null
+                bufferingShown = 0
                 time = t
                 lastGood = t
                 lastSeekAt = System.currentTimeMillis()
@@ -1409,6 +1428,7 @@ fun PlayerView(
             onSelectTrack = { kind, id, name ->
                 // Like a seek for the reserve: an active «копим запас» ends, and none starts while the switch refills the buffer.
                 lastSeekAt = System.currentTimeMillis()
+                bufferingShown = 0
                 trackSwitches++
                 if (kind == "audio") {
                     vlc { eSetAudio(id) }
