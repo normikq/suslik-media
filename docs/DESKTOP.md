@@ -43,6 +43,7 @@ desktop/
 │   │   ├── MpvLib.kt               JNA-маппинг C-API libmpv (структуры, события, типы)
 │   │   ├── VlcEngine.kt            Движок на vlcj / VLC 3.x (класс VlcPlayer : PlayerEngine) и фабрика vlcj
 │   │   ├── PlayRequest.kt          Модель параметров запуска воспроизведения
+│   │   ├── MediaControls.kt        Системные медиа-контролы Windows (SMTC): Flyout, клавиши мультимедиа (§10)
 │   │   ├── PlayerView.kt           Главный Compose-контейнер плеера и координация оверлеев
 │   │   ├── PlayerOverlays.kt       Двухоконная схема ComposeDialog (topDialog, bottomDialog)
 │   │   ├── PlayerControls.kt       Панели управления, таймлайн SeekBar, интерактивные контролы
@@ -203,3 +204,33 @@ desktop/
 - Ставится рядом с релизной версией (свой `upgradeUuid`).
 - Пишет подробный лог в `%APPDATA%\SuslikMediaDebug\player.log`.
 - Поддерживает горячую клавишу `F8` для установки временной метки `[mark]` при воспроизведении.
+
+---
+
+## 10. Системные медиа-контролы Windows (SMTC)
+
+`player/MediaControls.kt` — чистый JNA COM/WinRT (без сторонних библиотек): `RoGetActivationFactory` →
+`ISystemMediaTransportControlsInterop::GetForWindow(HWND главного окна)`. Плеер виден в окне громкости Windows,
+Media Flyout, ModernFlyouts; работают клавиши мультимедиа.
+
+- **Что отдаём:** название (фильм или серия + сериал) в `VideoProperties` и `MusicProperties`, статус Playing/Paused
+  (по настоящей паузе: `pausedAt > 0 || vlcPaused`, буферизация — «играет»), полоса времени (`ISystemMediaTransportControls2`),
+  доступность «следующая/предыдущая».
+- **Кнопки:** `add_ButtonPressed` (Play и Pause — оба `togglePause()`: Flyout с одной кнопкой шлёт противоположное тому,
+  что видел), Next/Previous — серии, перемотка по полосе — `add_PlaybackPositionChangeRequested`. Колбэки JNA держатся
+  полями объекта (иначе GC — `0xc0000005` в `Windows.Media.MediaControl.dll`) и передаются в EDT через `invokeLater`.
+- **Поток `smtc`:** весь COM — на отдельном STA-потоке, который сам качает сообщения (`PeekMessageW` +
+  `MsgWaitForMultipleObjects` на событии, в простое не просыпается). На EDT (STA без насоса сообщений) оболочка ждала нас,
+  и курсор замирал; в MTA постер до Flyout не доходил. Публичные методы только ставят задачу.
+- **Подключение позже первого состояния:** окно-владелец может появиться после первых вызовов плеера, поэтому
+  последнее состояние (`wantMeta`, `wantPlaying`, `wantCaps`) применяется в `attach`. Иначе на первом фильме пауза была серой.
+- **Закрытие плеера:** `detach` — статус Stopped, `ClearAll`, `put_IsEnabled(false)` (в Flyout не остаётся пустой записи).
+- **Постер:** `Library.posterFileFor(posterQueries)` берёт постер карточки с диска и уменьшает до 320 px (JPEG);
+  без постера — кадр из видео раз на серию (через поток плеера). Картинка — `StorageFile.GetFileFromPathAsync` →
+  `RandomAccessStreamReference.CreateFromFile` (запасной путь — поток `SHCreateStreamOnFileW` →
+  `CreateRandomAccessStreamOverStream`; `CreateFromUri` с `file:///` вне Store не работает).
+  `put_Thumbnail` — **только когда картинка сменилась**: повторная передача при каждом `Update()` (смена серии) подвешивала
+  оболочку Windows, и курсор замирал на ~0,5 с.
+- **Файлы:** `%APPDATA%\SuslikMedia\smtc\` — хранится только последняя картинка (`MediaControls.thumbFile`), входит в «Очистить кэш».
+- **Журнал:** строки `[smtc]` (`attached`, `button event`, `poster`, `thumbnail … set`, `updateMetadataNow: Update() … ms`).
+- Свой `AppUserModelID` не задаём: ярлыки jpackage его не несут, и закреплённый значок на панели задач раздваивался.

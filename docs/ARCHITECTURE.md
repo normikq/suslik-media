@@ -213,7 +213,7 @@ suslik-media/
 | Файл / модуль (`desktop/src/main/kotlin/ru/suslikovanora/media/desktop/`) | Что делает |
 |---|---|
 | `Main.kt` | запуск: одно окно, прогрев VLC, вкладки, плеер поверх медиатеки |
-| `player/` | **модульный плеер**: пакет `ru.suslikovanora.media.desktop.player` (`PlayerView.kt`, `PlayerOverlays.kt`, `PlayerControls.kt`, `PlayerIcons.kt`, `PlayerMorePanel.kt`, `PlayerPlaylist.kt`, `PlayerStats.kt`, `PlayRequest.kt`, `PlayerEngine.kt`; движки `MpvEngine.kt` + `MpvLib.kt` и `VlcEngine.kt` — класс `VlcPlayer` и фабрика vlcj) |
+| `player/` | **модульный плеер**: пакет `ru.suslikovanora.media.desktop.player` (`PlayerView.kt`, `PlayerOverlays.kt`, `PlayerControls.kt`, `PlayerIcons.kt`, `PlayerMorePanel.kt`, `PlayerPlaylist.kt`, `PlayerStats.kt`, `PlayRequest.kt`, `PlayerEngine.kt`, `MediaControls.kt` — системные медиа-контролы Windows; движки `MpvEngine.kt` + `MpvLib.kt` и `VlcEngine.kt` — класс `VlcPlayer` и фабрика vlcj) |
 | `ui/` | **дизайн-система и общие компоненты**: пакет `ru.suslikovanora.media.desktop.ui` (`Theme.kt` — токены Sm, шрифты, SuslikTheme; `Controls.kt` — Panel, LampButton, OutlineButton, Chip, Field, hover-модификаторы) |
 | `Library.kt`, `LibraryView.kt`, `PlayDialog.kt` | медиатека: данные, экран и окно «Смотреть» |
 | `SearchView.kt`, `AddView.kt` | поиск и добавление |
@@ -386,6 +386,7 @@ suslik-media/
 | сам сайт | `website/public/index.html` (+ `redesign.css/js`) |
 | обновления и каналы | сервер `server.js` (раздел `/api/app/...`), приложения `Updater.kt`, workflows |
 | тексты «Что нового» | `android/app/src/main/assets/changelog.json`, `desktop/src/main/resources/changelog.json` |
+| плеер в окне громкости Windows и клавиши мультимедиа на ПК | `desktop/.../player/MediaControls.kt`, подключение — `PlayerView.kt` (см. `docs/DESKTOP.md` §10) |
 
 ---
 
