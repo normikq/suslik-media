@@ -195,6 +195,48 @@ class Library {
         return null
     }
 
+    /**
+     * The poster picture as a file with a proper extension (for Windows media controls, which need a file URI and
+     * guess the format by name), fetched first if needed. Null when the film has no poster.
+     * The image is downscaled to thumbnail size (max 320px) to prevent heavy IPC and UI freezes in Windows Shell.
+     */
+    suspend fun posterFileFor(queries: List<String>): java.io.File? {
+        if (queries.isEmpty() || poster(queries) == null) return null
+        val path = queries.firstNotNullOfOrNull { posterIndex.get(it.lowercase())?.substringAfter('|', "")?.ifBlank { null } } ?: return null
+        return withContext(Dispatchers.IO) {
+            val src = posterFile(path).takeIf { it.exists() } ?: return@withContext null
+            val out = ru.suslikovanora.media.desktop.player.MediaControls.thumbFile(src.nameWithoutExtension + ".jpg")
+            if (!out.exists() || out.lastModified() < src.lastModified() || out.length() == 0L) {
+                val resized = runCatching {
+                    val img = javax.imageio.ImageIO.read(src) ?: return@runCatching false
+                    val maxDim = 320
+                    val w = img.width
+                    val h = img.height
+                    val (nw, nh) = if (w > h) {
+                        if (w > maxDim) maxDim to (h * maxDim / w).coerceAtLeast(1) else w to h
+                    } else {
+                        if (h > maxDim) (w * maxDim / h).coerceAtLeast(1) to maxDim else w to h
+                    }
+                    val dst = java.awt.image.BufferedImage(nw, nh, java.awt.image.BufferedImage.TYPE_INT_RGB)
+                    val g = dst.createGraphics()
+                    g.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR)
+                    g.setRenderingHint(java.awt.RenderingHints.KEY_RENDERING, java.awt.RenderingHints.VALUE_RENDER_QUALITY)
+                    g.drawImage(img, 0, 0, nw, nh, null)
+                    g.dispose()
+                    javax.imageio.ImageIO.write(dst, "jpg", out)
+                }.getOrDefault(false)
+                if (!resized) {
+                    val head = src.inputStream().use { s -> ByteArray(4).also { s.read(it) } }
+                    val ext = if (head[0] == 0x89.toByte() && head[1] == 'P'.code.toByte()) "png" else "jpg"
+                    val rawOut = if (ext == "jpg") out else ru.suslikovanora.media.desktop.player.MediaControls.thumbFile(src.nameWithoutExtension + "." + ext)
+                    runCatching { src.copyTo(rawOut, overwrite = true) }
+                    if (rawOut.exists() && rawOut.length() > 0L) return@withContext rawOut
+                }
+            }
+            out.takeIf { it.exists() && it.length() > 0L }
+        }
+    }
+
     private suspend fun posterFor(query: String): ImageBitmap? {
         val key = query.lowercase()
         if (images.containsKey(key)) return images[key]

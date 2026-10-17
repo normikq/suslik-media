@@ -427,7 +427,7 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                                 mirrorUrls(aud) to mirrorUrls(sb)
                             } ?: (emptyList<String>() to emptyList())
                         }
-                        onPlay(PlayRequest(url, currentTitle, playlist, subs, keys, audio, if (playlist != null) resolve else null, fromStart))
+                        onPlay(PlayRequest(url, currentTitle, playlist, subs, keys, audio, if (playlist != null) resolve else null, fromStart, posterQueries = item?.posterQueries.orEmpty()))
                     },
                     onCopy = { url -> copy(url) }
                 )
@@ -441,7 +441,7 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                     hint = tr("library.pryamaya_ssylka_alldebrid_otkr"),
                     url = direct,
                     onPlay = { url ->
-                        onPlay(PlayRequest(url, currentTitle, null, subs, listOf(watchKey(t.magnetId, currentFile)), audio, fromStart = fromStart))
+                        onPlay(PlayRequest(url, currentTitle, null, subs, listOf(watchKey(t.magnetId, currentFile)), audio, fromStart = fromStart, posterQueries = item?.posterQueries.orEmpty()))
                     },
                     onCopy = { url -> copy(url) }
                 )
@@ -483,7 +483,7 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                                 mirrorUrls(aud) to mirrorUrls(sb)
                             } ?: (emptyList<String>() to emptyList())
                         }
-                        onPlay(PlayRequest(url, currentTitle, playlist, subs, keys, audio, if (playlist != null) resolve else null, fromStart))
+                        onPlay(PlayRequest(url, currentTitle, playlist, subs, keys, audio, if (playlist != null) resolve else null, fromStart, posterQueries = item?.posterQueries.orEmpty()))
                     },
                     onCopy = { url -> copy(url) }
                 )
@@ -497,7 +497,7 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                     hint = tr("library.pryamaya_ssylka_alldebrid"),
                     url = direct,
                     onPlay = { url ->
-                        onPlay(PlayRequest(url, currentTitle, null, subs, listOf(watchKey(t.magnetId, currentFile)), audio, fromStart = fromStart))
+                        onPlay(PlayRequest(url, currentTitle, null, subs, listOf(watchKey(t.magnetId, currentFile)), audio, fromStart = fromStart, posterQueries = item?.posterQueries.orEmpty()))
                     },
                     onCopy = { url -> copy(url) }
                 )
@@ -552,7 +552,7 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                     hint = tr("library.trafik_idet_cherez_vash"),
                     url = mirror,
                     onPlay = { url ->
-                        onPlay(PlayRequest(url, currentTitle, null, subs, listOf(watchKey(t.magnetId, currentFile)), audio, fromStart = fromStart))
+                        onPlay(PlayRequest(url, currentTitle, null, subs, listOf(watchKey(t.magnetId, currentFile)), audio, fromStart = fromStart, posterQueries = item?.posterQueries.orEmpty()))
                     },
                     onCopy = { url -> copy(url) }
                 )
@@ -566,7 +566,7 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                     hint = tr("library.pryamaya_ssylka_alldebrid"),
                     url = direct,
                     onPlay = { url ->
-                        onPlay(PlayRequest(url, currentTitle, null, subs, listOf(watchKey(t.magnetId, currentFile)), audio, fromStart = fromStart))
+                        onPlay(PlayRequest(url, currentTitle, null, subs, listOf(watchKey(t.magnetId, currentFile)), audio, fromStart = fromStart, posterQueries = item?.posterQueries.orEmpty()))
                     },
                     onCopy = { url -> copy(url) }
                 )

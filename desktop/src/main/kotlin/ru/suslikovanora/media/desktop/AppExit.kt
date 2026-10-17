@@ -40,6 +40,7 @@ object AppExit {
             val deadline = System.currentTimeMillis() + 1_500
             for (e in players) runCatching { e.awaitTermination((deadline - System.currentTimeMillis()).coerceAtLeast(0), TimeUnit.MILLISECONDS) }
             Thread({ runCatching { VlcFactory.releaseAll() } }, "vlc-release").apply { isDaemon = true; start(); join(1_000) }
+            runCatching { ru.suslikovanora.media.desktop.player.MediaControls.release() }
             Store.flushAll()
             CrashReports.stop() // clean exit: nothing to report next time
             runCatching { BurstProxy.dropAll() } // the films' temporary reserve on disk

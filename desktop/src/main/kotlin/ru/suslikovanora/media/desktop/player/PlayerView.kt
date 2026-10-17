@@ -19,6 +19,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.first
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.ComposeDialog
@@ -410,6 +412,7 @@ fun PlayerView(
 
     fun vlcSeekTo(t: Long) {
         lastGood = t
+        MediaControls.updateTimeline(t, length, force = true)
         val s = ts
         if (s == null) { vlc { eSetTime(t) }; return }
         if (s.offset > 0 && t < s.offset + 2_000L) {
@@ -697,6 +700,7 @@ fun PlayerView(
             }
             parked = true
             if (mini) setMini(false)
+            MediaControls.stop()
             onClose()
             vlcExecutor.execute { runCatching { eStop() } }
         }
@@ -764,6 +768,83 @@ fun PlayerView(
             true
         }
         onDispose { keys.value = null }
+    }
+
+    // Windows System Media Transport Controls (SMTC) integration (Media Flyout, ModernFlyouts, Windows volume popup)
+    DisposableEffect(owner) {
+        val callbacks = MediaControls.Callbacks(
+            // Both just toggle: `playing` stays false while buffering or right after the start, and a check
+            // on it dropped Pause. Flyouts with one Play/Pause button send the opposite of what they last
+            // saw, so a Pause while already paused resumes (and Play while playing pauses).
+            onPlay = {
+                PlayerLog.write("[smtc] play (playing=$playing pausedAt=$pausedAt vlcPaused=$vlcPaused)")
+                togglePause()
+            },
+            onPause = {
+                PlayerLog.write("[smtc] pause (playing=$playing pausedAt=$pausedAt vlcPaused=$vlcPaused)")
+                togglePause()
+            },
+            onNext = { if (index + 1 < queue.size) playEntry(index + 1) },
+            onPrevious = {
+                if (time > 5_000L) vlcSeekTo(0L)
+                else if (index > 0) playEntry(index - 1)
+                else vlcSeekTo(0L)
+            },
+            onSeek = { targetMs -> vlcSeekTo(targetMs) }
+        )
+        if (owner != null) MediaControls.attach(owner, callbacks)
+        onDispose {
+            MediaControls.detach(callbacks)
+        }
+    }
+
+    fun smtcTitles(): Pair<String, String> {
+        val episodeTitle = queue.getOrNull(index)?.title ?: title
+        return if (queue.size > 1) episodeTitle to req.title else req.title to "Suslik Media"
+    }
+
+    // The film's poster from the library (the same picture as on its tile); a frame of the video only without one.
+    var smtcPoster by remember { mutableStateOf<java.io.File?>(null) }
+    var posterLooked by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        smtcPoster = runCatching { library.posterFileFor(req.posterQueries) }.getOrNull()
+        posterLooked = true
+        PlayerLog.write("[smtc] poster ${smtcPoster?.name ?: "none"}")
+    }
+
+    LaunchedEffect(title, index, queue.size, smtcPoster) {
+        val (displayTitle, displaySubtitle) = smtcTitles()
+        MediaControls.updateMetadata(displayTitle, displaySubtitle, smtcPoster)
+        MediaControls.updateCapabilities(hasNext = index + 1 < queue.size, hasPrev = index > 0 || time > 5_000L)
+    }
+
+    // Paused only when the user paused: buffering is still "playing" for Windows, so its toggle sends Pause.
+    val userPaused = pausedAt > 0L || vlcPaused
+    LaunchedEffect(userPaused) {
+        MediaControls.updatePlayback(!userPaused)
+    }
+
+    LaunchedEffect(time, length) {
+        if (length > 0L) {
+            MediaControls.updateTimeline(time, length)
+        }
+    }
+
+    // Once per episode, 2.5 s into playing (not after every resume), on the player's thread: mpv's screenshot blocked
+    // the window's thread. A new file name each time, or the flyout kept the first episode's frame.
+    LaunchedEffect(index, posterLooked, smtcPoster) {
+        if (!posterLooked || smtcPoster != null) return@LaunchedEffect
+        snapshotFlow { playing }.first { it }
+        delay(2500L)
+        if (!playing) return@LaunchedEffect
+        val bmp = vlcAwait(3000) { engine.snapshot(320) } ?: return@LaunchedEffect
+        val thumbFile = withContext(Dispatchers.IO) {
+            MediaControls.thumbFile("frame-${System.currentTimeMillis()}.jpg").takeIf { f ->
+                runCatching { javax.imageio.ImageIO.write(bmp, "jpg", f) }.getOrDefault(false) && f.length() > 0L
+            }
+        } ?: return@LaunchedEffect
+        val (displayTitle, displaySubtitle) = smtcTitles()
+        MediaControls.updateMetadata(displayTitle, displaySubtitle, thumbFile)
     }
 
     if (Diag.on) {
@@ -952,6 +1033,7 @@ fun PlayerView(
             override fun failed(message: String) { PlayerLog.write(if (eng != null) "[mpv] $message" else "[vlc] $message"); evError() }
         }
         onDispose {
+            MediaControls.stop()
             canvasFocusJob?.cancel()
             ensureAudioJob?.cancel()
             chaptersJob?.cancel()

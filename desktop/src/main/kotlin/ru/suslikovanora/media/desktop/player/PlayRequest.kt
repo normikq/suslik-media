@@ -11,5 +11,7 @@ data class PlayRequest(
     /** Playlist episode index -> (voice-overs, subtitles) of that episode. */
     val sidecars: (suspend (Int) -> Pair<List<String>, List<String>>)? = null,
     /** «С начала» chosen in the play dialog: ignore the remembered place this time. */
-    val fromStart: Boolean = false
+    val fromStart: Boolean = false,
+    /** Poster lookups of the film (LibraryItem.posterQueries): its poster goes to the Windows media controls. */
+    val posterQueries: List<String> = emptyList()
 )
