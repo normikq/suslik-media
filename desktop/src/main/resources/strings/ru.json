@@ -122,6 +122,9 @@
   "app.zapuskaem_vlc": "Запускаем VLC…",
   "app.pervyy_zapusk_pleera_zanimaet": "Первый запуск плеера занимает несколько секунд.",
   "app.nuzhen_vlc": "Нужен VLC",
+  "app.mpv_ne_skachan": "Видеодвижок не скачан",
+  "app.mpv_ne_skachan_tekst": "Не удалось скачать видеодвижок mpv с нашего сервера: {err}. Попробуйте ещё раз чуть позже.",
+  "app.povtorit": "Повторить",
   "app.dlya_vosproizvedeniya_ustanovi": "Для воспроизведения установите VLC 3.x для Windows (64-bit) и перезапустите приложение.",
   "app.skachat_vlc": "Скачать VLC",
   "search.biblioteka": "Библиотека",
@@ -281,5 +284,8 @@
   "settings.dvizhok_vlc": "VLC (vlcj)",
   "settings.dvizhok_vlc_hint": "Классический режим холста",
   "settings.dvizhok_mpv_put": "Библиотека: {path}",
-  "settings.dvizhok_mpv_otsutstvuet": "libmpv-2.dll не найдена в %APPDATA%\\SuslikMedia\\mpv"
+  "settings.dvizhok_mpv_otsutstvuet": "Видеодвижок mpv не установлен",
+  "settings.dvizhok_mpv_zagruzka": "Загрузка видеодвижка mpv: {p}%",
+  "settings.dvizhok_mpv_oshibka": "Не удалось скачать видеодвижок mpv: {err}",
+  "settings.dvizhok_mpv_skachat": "Скачать mpv"
 }

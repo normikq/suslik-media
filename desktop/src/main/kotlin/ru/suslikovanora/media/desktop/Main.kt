@@ -92,7 +92,12 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
     // The very first VLC start scans all its plugins (several seconds): do it now, in the background.
     val vlcWarm = remember { CompletableDeferred<Boolean>() }
     LaunchedEffect(Unit) {
+        // libmpv ставит установщик; если её нет (сервер был недоступен), докачивается здесь же, в фоне.
+        val mpvSetup = ru.suslikovanora.media.desktop.player.MpvInstall.start(appScope)
+        appScope.launch(Dispatchers.IO) { Uninstaller.register() }
         withContext(Dispatchers.IO) {
+            // Без VLC играть больше нечем: ждём libmpv.
+            if (!Vlc.available) mpvSetup.await()
             val mpv = ru.suslikovanora.media.desktop.player.EngineChoice.useMpv
             val ok = Vlc.available || mpv
             if (ok && !mpv) runCatching { VlcFactory.warm() } // the real engine, reused by every player
@@ -260,7 +265,16 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
                 text = { Text(tr("app.pervyy_zapusk_pleera_zanimaet")) },
                 confirmButton = {}
             )
-            if (noVlc) AlertDialog(
+            // Ни mpv, ни VLC: если mpv не скачался с сервера — говорим об этом и даём повторить.
+            val mpvError = ru.suslikovanora.media.desktop.player.MpvInstall.error
+            if (noVlc && mpvError != null) AlertDialog(
+                onDismissRequest = { noVlc = false },
+                title = { Text(tr("app.mpv_ne_skachan")) },
+                text = { Text(tr("app.mpv_ne_skachan_tekst", "err" to mpvError)) },
+                confirmButton = { TextButton({ noVlc = false; ru.suslikovanora.media.desktop.player.MpvInstall.start(appScope) }) { Text(tr("app.povtorit")) } },
+                dismissButton = { TextButton({ noVlc = false }) { Text(tr("library.zakryt")) } }
+            )
+            else if (noVlc) AlertDialog(
                 onDismissRequest = { noVlc = false },
                 title = { Text(tr("app.nuzhen_vlc")) },
                 text = { Text(tr("app.dlya_vosproizvedeniya_ustanovi")) },

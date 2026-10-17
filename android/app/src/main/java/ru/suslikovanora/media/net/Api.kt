@@ -21,7 +21,8 @@ import ru.suslikovanora.media.tr
  * device cookie ("sdev") for ownership checks.
  */
 object Api {
-    const val HOST = "short.suslikovanora.ru"
+    /** Домен сайта приходит из сборки (BuildConfig, секрет SITE_URL), в репозитории его нет. */
+    const val HOST = ru.suslikovanora.media.BuildConfig.SITE_HOST
     const val BASE = "https://$HOST"
 
     class HttpError(val code: Int, message: String) : Exception(message)

@@ -140,23 +140,33 @@ object Updater {
 
     fun installAndExit(file: File, replace: Boolean = false) {
         val msi = file.name.endsWith(".msi", true)
-        val cmd = when {
-            // Windows Installer refuses to put a lower (or, by its first three numbers, equal) version over the installed
-            // one: the installed copy is removed first
-            // (settings, sign-in and progress live in %APPDATA% and stay), then the release is installed. Runs after the
-            // app has closed.
-            replace && msi -> {
-                val script = "Start-Sleep -Seconds 2\n" +
-                    "Get-ChildItem 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall' | Get-ItemProperty | " +
-                    "Where-Object { \$_.DisplayName -eq 'Suslik Media' } | ForEach-Object { " +
-                    "Start-Process msiexec -ArgumentList ('/x ' + \$_.PSChildName + ' /passive /norestart') -Wait }\n" +
-                    "Start-Process msiexec -ArgumentList ('/i \"' + '${file.absolutePath.replace("'", "''")}' + '\"')\n"
-                // Encoded: the script then needs no quoting on the command line (Windows argument quoting is fragile).
-                val encoded = java.util.Base64.getEncoder().encodeToString(script.toByteArray(Charsets.UTF_16LE))
-                listOf("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-EncodedCommand", encoded)
+        val cmd = if (msi) {
+            fun q(v: String) = v.replace("'", "''")
+            // Ставим в ту же папку, где стоит приложение (её мог выбрать установщик), без мастера: только полоска
+            // прогресса (/passive). Свою запись в «Установленных приложениях» ведёт SuslikUninstall.exe (окно удаления
+            // с очисткой данных), поэтому запись самого MSI скрыта (ARPSYSTEMCOMPONENT). После установки — снова запуск.
+            val exe = System.getProperty("jpackage.app-path")?.let(::File)?.takeIf { it.isFile }
+            val props = buildString {
+                if (Uninstaller.available) append(" ARPSYSTEMCOMPONENT=1")
+                exe?.parentFile?.let { append(" INSTALLDIR=\"${it.absolutePath}\"") }
             }
-            msi -> listOf("msiexec", "/i", file.absolutePath)
-            else -> listOf(file.absolutePath)
+            val script = buildString {
+                append("Wait-Process -Id ${ProcessHandle.current().pid()} -Timeout 30 -ErrorAction SilentlyContinue\n")
+                // Windows Installer refuses to put a lower (or, by its first three numbers, equal) version over the installed
+                // one: the installed copy is removed first (settings, sign-in and progress live in %APPDATA% and stay).
+                if (replace) append(
+                    "Get-ChildItem 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall' | Get-ItemProperty | " +
+                    "Where-Object { \$_.DisplayName -eq 'Suslik Media' -and \$_.WindowsInstaller -eq 1 } | ForEach-Object { " +
+                    "Start-Process msiexec -ArgumentList ('/x ' + \$_.PSChildName + ' /passive /norestart') -Wait }\n")
+                append("\$p = Start-Process msiexec -ArgumentList '/i \"${q(file.absolutePath)}\" /passive /norestart${q(props)}' -Wait -PassThru\n")
+                if (exe != null) append("if (\$p.ExitCode -eq 0 -or \$p.ExitCode -eq 3010) { Start-Process '${q(exe.absolutePath)}' }\n")
+            }
+            // Encoded: the script then needs no quoting on the command line (Windows argument quoting is fragile).
+            val encoded = java.util.Base64.getEncoder().encodeToString(script.toByteArray(Charsets.UTF_16LE))
+            listOf("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-EncodedCommand", encoded)
+        } else {
+            // Установщик «Suslik Media Setup.exe»: сам найдёт папку, поставит туда, проверит видеодвижок и снова запустит приложение.
+            listOf(file.absolutePath, "/update")
         }
         ProcessBuilder(cmd).start()
         Thread.sleep(400)

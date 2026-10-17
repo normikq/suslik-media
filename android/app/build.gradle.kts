@@ -4,6 +4,14 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Адрес сайта не хранится в репозитории: секрет SITE_URL в CI или suslik.siteUrl в ~/.gradle/gradle.properties.
+val siteHost: String = (System.getenv("SITE_URL")?.takeIf { it.isNotBlank() } ?: findProperty("suslik.siteUrl") as String? ?: "")
+    .trim().removePrefix("https://").removePrefix("http://").substringBefore('/')
+gradle.taskGraph.whenReady {
+    if (siteHost.isEmpty() && allTasks.any { t -> listOf("package", "assemble", "run", "bundle").any { t.name.startsWith(it) } })
+        throw GradleException("Не задан адрес сайта: переменная окружения SITE_URL или suslik.siteUrl в ~/.gradle/gradle.properties")
+}
+
 android {
     namespace = "ru.suslikovanora.media"
     compileSdk = 35
@@ -66,6 +74,7 @@ android {
         versionCode = 56
         versionName = "2.3.1"
         buildConfigField("boolean", "DIAG", "false")
+        buildConfigField("String", "SITE_HOST", "\"$siteHost\"")
         manifestPlaceholders["appLabel"] = "Suslik Media — медиатека"
 
         // Package native VLC libraries only for 64-bit ARM Android devices.

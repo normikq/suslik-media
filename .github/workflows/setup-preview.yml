@@ -1,0 +1,30 @@
+name: Installer preview
+
+# Снимки окон установщика (desktop/setup) после каждой правки: артефакт setup-preview с PNG.
+# Ничего не ставит — программа запускается с /preview и рисует окна в файлы.
+on:
+  push:
+    paths: ["desktop/setup/**", ".github/workflows/setup-preview.yml"]
+  workflow_dispatch:
+
+jobs:
+  preview:
+    runs-on: windows-latest
+    defaults: { run: { working-directory: desktop, shell: bash } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: "8.0.x" }
+      - name: Build
+        run: dotnet build setup/SuslikSetup.csproj -c Release -o "$RUNNER_TEMP/setup" 2>&1 | tail -5
+      - name: Render
+        env: { MSYS_NO_PATHCONV: "1" } # иначе Git Bash превращает /preview в путь
+        run: |
+          mkdir -p ../preview
+          "$RUNNER_TEMP/setup/SuslikSetup.exe" /preview "$(cygpath -w "$GITHUB_WORKSPACE/preview")" &
+          wait $!
+          ls -la ../preview
+          # Для разбора без скачивания артефакта: снимки в журнале (base64)
+          for f in ../preview/*.jpg; do echo "=== $(basename "$f")"; base64 -w 0 "$f"; echo; done
+      - uses: actions/upload-artifact@v4
+        with: { name: setup-preview, path: preview/*.png, retention-days: 7 }

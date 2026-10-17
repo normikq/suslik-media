@@ -62,9 +62,10 @@ class Store(name: String) {
 
 /** The site's JSON API with its own cookie jar (session + device cookie), kept between runs. */
 object Api {
-    const val HOST = "short.suslikovanora.ru"
-    const val BASE = "https://$HOST"
-    const val SITE = "$BASE/media/"
+    /** Домен сайта приходит из сборки (-Dsuslik.host, секрет SITE_URL), в репозитории его нет. */
+    val HOST: String = System.getProperty("suslik.host").orEmpty()
+    val BASE = "https://$HOST"
+    val SITE = "$BASE/media/"
 
     class HttpError(val code: Int, message: String) : Exception(message)
 

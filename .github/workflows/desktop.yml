@@ -1,11 +1,11 @@
-name: Windows MSI
+name: Windows
 
 # Только вручную (Actions → Run workflow или gh api …/dispatches): пуш больше не запускает сборку.
 on:
   workflow_dispatch:
     inputs:
       publish:
-        description: "Выложить MSI на сайт (папка updates/)"
+        description: "Выложить установщик на сайт (папка updates/)"
         type: boolean
         default: false
       debug:
@@ -22,11 +22,23 @@ jobs:
   build:
     runs-on: windows-latest
     defaults: { run: { working-directory: desktop, shell: bash } }
+    # Домен сайта в сборку — только из секрета, в репозитории его нет (Gradle и установщик читают SITE_URL).
+    env: { SITE_URL: "${{ secrets.SITE_URL }}" }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
         with: { distribution: temurin, java-version: "21" }
       - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: "8.0.x" }
+      # Окно удаления (desktop/setup без MSI внутри) кладётся в само приложение: app/resources/SuslikUninstall.exe
+      - name: Build uninstaller
+        run: |
+          set -o pipefail
+          V=$(sed -n 's/^val appVersion = "\([^"]*\)".*/\1/p' build.gradle.kts)
+          dotnet build setup/SuslikSetup.csproj -c Release -p:AppVersion=$V -p:AssemblyName=SuslikUninstall -o "$RUNNER_TEMP/uninstall" 2>&1 | tail -5
+          mkdir -p resources/windows && cp "$RUNNER_TEMP/uninstall/SuslikUninstall.exe" resources/windows/
+          rm -rf setup/obj setup/bin
       - name: Build MSI
         run: |
           set -o pipefail
@@ -44,9 +56,22 @@ jobs:
           V=$(sed -n 's/^val appVersion = "\([^"]*\)".*/\1/p' build.gradle.kts)
           mkdir -p ../dist && cp "$(ls build/compose/binaries/main-release/msi/*.msi | head -1)" "../dist/Suslik Media-$V.msi"
           echo "MSI=$(ls ../dist/*.msi | head -1 | sed 's#^\.\./##')" >> "$GITHUB_ENV"
+          echo "V=$V" >> "$GITHUB_ENV"
+      # Единственный файл для людей — «Suslik Media Setup.exe»: мастер с MSI внутри. Им же обновляется приложение
+      # (запускает его с /update). Видеодвижок libmpv в нём нет: установщик качает его с нашего сервера (libmpv.properties).
+      - name: Build installer
+        run: |
+          set -o pipefail
+          HOST=$(echo "$SITE_URL" | sed -E 's#^https?://##; s#/.*##')
+          [ -n "$HOST" ] || { echo "::error::Нет секрета SITE_URL"; exit 1; }
+          dotnet build setup/SuslikSetup.csproj -c Release -p:AppVersion=$V -p:AssemblyName=SuslikMediaSetup "-p:SiteHost=$HOST" \
+            "-p:MsiPath=$(cygpath -w "$GITHUB_WORKSPACE/$MSI")" -o "$RUNNER_TEMP/setup" 2>&1 | tail -5
+          cp "$RUNNER_TEMP/setup/SuslikMediaSetup.exe" "../dist/Suslik Media Setup-$V.exe"
+          rm -rf setup/obj setup/bin
+          echo "SETUP=dist/Suslik Media Setup-$V.exe" >> "$GITHUB_ENV"
           ls -la ../dist
       - uses: actions/upload-artifact@v4
-        with: { name: windows-msi, path: dist/*.msi, retention-days: 2 }
+        with: { name: windows-setup, path: dist/*.exe, retention-days: 7 }
       # «Suslik Debug» (detailed journal, installs next to the normal app, never published): see desktop/DEBUG-BUILD.md
       - name: Build debug MSI
         if: ${{ inputs.debug }}
@@ -68,9 +93,9 @@ jobs:
             code=$(curl -s -o /dev/null -w "%{http_code}" -H "X-Update-Token: $UPDATE_TOKEN" "$SITE_URL/api/app/reports?limit=1")
             if [ "$code" != "200" ]; then echo "::error::Сервер ещё без бета-канала (обновите website/server.js) — публикация отменена"; exit 1; fi
           fi
-          curl -fsS -H "X-Update-Token: $UPDATE_TOKEN" -H "X-File-Name: $(basename "$MSI")" \
+          curl -fsS -H "X-Update-Token: $UPDATE_TOKEN" -H "X-File-Name: $(basename "$SETUP")" \
                -H "X-Channel: ${{ inputs.channel || 'beta' }}" \
-               -H "Content-Type: application/octet-stream" --data-binary @"$MSI" "$SITE_URL/api/app/upload"
+               -H "Content-Type: application/octet-stream" --data-binary @"$SETUP" "$SITE_URL/api/app/upload"
           # «Что нового» этой сборки — на сайт (вкладка «Приложения»)
           curl -fsS -H "X-Update-Token: $UPDATE_TOKEN" -H "Content-Type: application/json" \
                --data-binary @desktop/src/main/resources/changelog.json "$SITE_URL/api/app/changelog?platform=desktop"

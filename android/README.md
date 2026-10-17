@@ -3,7 +3,7 @@
 > 📖 **Полная архитектурная документация:** [docs/ANDROID.md](../docs/ANDROID.md)
 
 Исходный проект Android-приложения для частного медиапортала:
-`https://short.suslikovanora.ru/media/`
+`https://<домен>/media/` (домен подставляется при сборке из секрета `SITE_URL`)
 
 ## Возможности
 - Оболочка Android на Kotlin с WebView для входа на сайт, каталога, действий AllDebrid и серверного API.

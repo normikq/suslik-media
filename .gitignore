@@ -20,3 +20,7 @@ android/ffmpeg/work/
 
 # libmpv-2.dll скачивается при сборке (см. desktop/build.gradle.kts), в git не хранится
 desktop/resources/
+
+# Установщик (desktop/setup): промежуточные файлы dotnet
+desktop/setup/obj/
+desktop/setup/bin/
