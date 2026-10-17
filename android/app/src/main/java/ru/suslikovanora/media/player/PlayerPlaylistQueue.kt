@@ -1,19 +1,9 @@
 package ru.suslikovanora.media.player
 
-import android.content.Context
-import android.graphics.Color
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Handler
-import android.view.Gravity
-import android.view.View
-import android.widget.FrameLayout
-import android.widget.LinearLayout
-import android.widget.TextView
 import java.net.HttpURLConnection
 import java.net.URL
-import ru.suslikovanora.media.tr
 
 /**
  * Manages video playlist queue (.m3u), episode transitions,
@@ -32,6 +22,8 @@ class PlayerPlaylistQueue(
         fun onPlayEntry(entry: Entry, index: Int)
         fun onQueueUiUpdated(hasMultiple: Boolean, hasPrevious: Boolean, hasNext: Boolean, displayText: String?, episodes: List<String>, index: Int)
         fun onNextEpisodeOffered()
+        /** The card «Следующая: …» shows [title], starting in [seconds]. */
+        fun onNextCountdown(title: String, seconds: Int)
         fun onNextCardDismissed()
         fun showControlsTemporarily()
     }
@@ -43,12 +35,7 @@ class PlayerPlaylistQueue(
     private var queue: List<Entry> = emptyList()
     private var queueIndex: Int = -1
 
-    private var nextCard: LinearLayout? = null
-    private var nextCardTitle: TextView? = null
-    private var nextCardTimer: TextView? = null
     private var countdown = 0
-
-    private var dpFunc: (Int) -> Int = { it }
 
     val size: Int get() = queue.size
     val currentIndex: Int get() = queueIndex
@@ -64,86 +51,10 @@ class PlayerPlaylistQueue(
                 playEntry(queueIndex + 1)
                 return
             }
-            nextCardTimer?.text = tr("playerplaylist.cherez_countdown_s", "countdown" to countdown)
+            queue.getOrNull(queueIndex + 1)?.let { callback.onNextCountdown(it.title, countdown) }
             countdown--
             handler.postDelayed(this, 1000L)
         }
-    }
-
-    fun buildNextCard(context: Context, dp: (Int) -> Int, pillButtonBuilder: (String) -> TextView): View {
-        dpFunc = dp
-        val card = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(14), dp(18), dp(14))
-            background = GradientDrawable().apply {
-                cornerRadius = dp(18).toFloat()
-                setColor(0xEB11141B.toInt())
-                setStroke(dp(1), 0x55FFB02E.toInt())
-            }
-            visibility = View.GONE
-            isClickable = true
-        }
-        card.addView(TextView(context).apply {
-            text = tr("player.sleduyuschaya_seriya")
-            setTextColor(0xFF8E96A8.toInt())
-            textSize = 13f
-        })
-        val titleView = TextView(context).apply {
-            setTextColor(Color.WHITE)
-            textSize = 16f
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            maxLines = 2
-            setPadding(0, dp(2), 0, dp(2))
-        }
-        card.addView(titleView)
-        nextCardTitle = titleView
-
-        val timerView = TextView(context).apply {
-            setTextColor(0xFFFFB02E.toInt())
-            textSize = 13f
-        }
-        card.addView(timerView)
-        nextCardTimer = timerView
-
-        val nextRow = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(10), 0, 0)
-        }
-        nextRow.addView(pillButtonBuilder(tr("playerplaylist.smotret_seychas")).apply {
-            background = GradientDrawable().apply {
-                cornerRadius = dp(22).toFloat()
-                setColor(0xFFFFB02E.toInt())
-            }
-            setTextColor(0xFF1C1200.toInt())
-            setOnClickListener {
-                hideNextCard()
-                playEntry(queueIndex + 1)
-            }
-        }, LinearLayout.LayoutParams(-2, dp(42)).apply { marginEnd = dp(8) })
-
-        nextRow.addView(pillButtonBuilder(tr("playerplaylist.otmena")).apply {
-            setOnClickListener {
-                hideNextCard()
-                callback.showControlsTemporarily()
-            }
-        }, LinearLayout.LayoutParams(-2, dp(42)))
-
-        card.addView(nextRow)
-        nextCard = card
-        return card
-    }
-
-    fun updateCardMargins(full: Boolean) {
-        val card = nextCard ?: return
-        val lp = card.layoutParams as? FrameLayout.LayoutParams ?: return
-        if (full) {
-            lp.rightMargin = dpFunc(24)
-            lp.bottomMargin = dpFunc(110)
-        } else {
-            lp.rightMargin = dpFunc(10)
-            lp.bottomMargin = dpFunc(10)
-        }
-        card.layoutParams = lp
     }
 
     fun fetchPlaylist(playlistUrl: String) {
@@ -203,14 +114,7 @@ class PlayerPlaylistQueue(
 
     fun offerNextEpisode(): Boolean {
         if (queueIndex < 0 || queueIndex >= queue.size - 1) return false
-        nextCardTitle?.text = queue[queueIndex + 1].title
         countdown = NEXT_COUNTDOWN_S
-        nextCard?.let { card ->
-            card.alpha = 0f
-            card.translationY = dpFunc(16).toFloat()
-            card.visibility = View.VISIBLE
-            card.animate().alpha(1f).translationY(0f).setDuration(260).start()
-        }
         handler.removeCallbacks(countdownRunnable)
         handler.post(countdownRunnable)
         callback.onNextEpisodeOffered()
@@ -220,13 +124,6 @@ class PlayerPlaylistQueue(
     fun hideNextCard() {
         handler.removeCallbacks(countdownRunnable)
         callback.onNextCardDismissed()
-        nextCard?.let { card ->
-            if (card.visibility == View.VISIBLE) {
-                card.animate().alpha(0f).setDuration(180).withEndAction {
-                    card.visibility = View.GONE
-                }.start()
-            }
-        }
     }
 
     fun stop() {

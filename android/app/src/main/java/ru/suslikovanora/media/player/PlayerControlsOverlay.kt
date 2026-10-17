@@ -29,6 +29,10 @@ class PlayerControlsOverlay(
         fun isPip(): Boolean
         fun onControlsShown()
         fun onControlsHidden()
+        /** The Compose panel ([PlayerOverlay]) shows / hides itself with its own animation. */
+        fun onPanelShown(shown: Boolean)
+        /** False while a sheet (tracks, settings) is open: the panel stays until it is closed. */
+        fun canAutoHide(): Boolean
     }
 
     var isVisible: Boolean = true
@@ -37,13 +41,15 @@ class PlayerControlsOverlay(
     var isLocked: Boolean = false
         private set
 
-    private var topBar: View? = null
-    private var controls: View? = null
     private var seekLabel: TextView? = null
     private var lockShield: View? = null
     private var unlockBadge: TextView? = null
 
-    private val hideControlsRunnable = Runnable { setVisible(false) }
+    private val hideControlsRunnable = object : Runnable {
+        override fun run() {
+            if (callback.canAutoHide()) setVisible(false) else handler.postDelayed(this, CONTROLS_TIMEOUT_MS)
+        }
+    }
     private val hideBadgeRunnable = Runnable {
         unlockBadge?.animate()?.alpha(0f)?.setDuration(200)?.withEndAction {
             unlockBadge?.visibility = View.GONE
@@ -57,13 +63,9 @@ class PlayerControlsOverlay(
 
     fun attachViews(
         root: ViewGroup,
-        topBar: View,
-        controls: View,
         seekLabel: TextView,
         pillButtonFactory: (String) -> TextView
     ) {
-        this.topBar = topBar
-        this.controls = controls
         this.seekLabel = seekLabel
 
         val shield = View(context).apply {
@@ -82,8 +84,8 @@ class PlayerControlsOverlay(
             visibility = View.GONE
             background = GradientDrawable().apply {
                 cornerRadius = dp(25).toFloat()
-                setColor(0xF011141B.toInt())
-                setStroke(dp(1), 0x88FFB02E.toInt())
+                setColor(0xE6161B26.toInt())
+                setStroke(dp(1), 0x4DFFFFFF)
             }
             contentDescription = tr("playercontrols.razblokirovat_ekran")
             setOnClickListener { unlock() }
@@ -95,35 +97,15 @@ class PlayerControlsOverlay(
     fun setVisible(visible: Boolean) {
         if (visible && isLocked) return // locked: the panel comes back only after unlock
         isVisible = visible
-        topBar?.animate()?.cancel()
-        controls?.animate()?.cancel()
         handler.removeCallbacks(hideControlsRunnable)
+        callback.onPanelShown(visible)
         if (visible) {
-            controls?.visibility = View.VISIBLE
-            topBar?.visibility = View.VISIBLE
-            controls?.isClickable = true
-            topBar?.isClickable = true
             callback.onControlsShown()
             if (!callback.isPip()) handler.postDelayed(hideControlsRunnable, CONTROLS_TIMEOUT_MS)
-            topBar?.animate()?.alpha(1f)?.translationY(0f)?.setDuration(220)?.start()
-            controls?.animate()?.alpha(1f)?.translationY(0f)?.setDuration(220)?.start()
         } else {
             callback.onControlsHidden()
-            controls?.isClickable = false
-            topBar?.isClickable = false
-            val hideAction = Runnable {
-                if (!isVisible) {
-                    controls?.visibility = View.GONE
-                    topBar?.visibility = View.GONE
-                }
-            }
-            topBar?.animate()?.alpha(0f)?.translationY(-dp(14).toFloat())?.setDuration(220)?.withEndAction(hideAction)?.start()
-            controls?.animate()?.alpha(0f)?.translationY(dp(18).toFloat())?.setDuration(220)?.withEndAction(hideAction)?.start()
         }
     }
-
-    val isVisuallyShowing: Boolean
-        get() = isVisible && (controls?.visibility == View.VISIBLE) && ((controls?.alpha ?: 0f) > 0.05f)
 
     fun showTemporarily() = setVisible(true)
 
@@ -214,8 +196,6 @@ class PlayerControlsOverlay(
         handler.removeCallbacks(hideBadgeRunnable)
         handler.removeCallbacks(seekLabelHideRunnable)
         unlockBadge?.animate()?.cancel()
-        topBar?.animate()?.cancel()
-        controls?.animate()?.cancel()
         callback.onControlsHidden()
     }
 

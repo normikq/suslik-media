@@ -14,8 +14,10 @@ import ru.suslikovanora.media.player.PlayerExtras
 import ru.suslikovanora.media.player.PlayerGestures
 import ru.suslikovanora.media.player.PlayerNetworkMonitor
 import ru.suslikovanora.media.player.PlayerPipController
+import ru.suslikovanora.media.player.PlayerOverlay
 import ru.suslikovanora.media.player.PlayerPlaylistQueue
 import ru.suslikovanora.media.player.PlayerTrackSelector
+import ru.suslikovanora.media.player.PlayerUiState
 import ru.suslikovanora.media.player.PlayerWatchProgress
 import ru.suslikovanora.media.player.VideoScale
 import ru.suslikovanora.media.player.EngineChoice
@@ -24,15 +26,12 @@ import ru.suslikovanora.media.player.HybridEngine
 import ru.suslikovanora.media.player.Media3Cache
 import ru.suslikovanora.media.player.Media3Engine
 
-import android.animation.ValueAnimator
 import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
-import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Color
-import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Network
 import android.net.Uri
@@ -52,10 +51,7 @@ import android.view.SurfaceView
 import android.view.ViewGroup
 import android.view.View
 import android.view.WindowManager
-import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
-import android.widget.LinearLayout
-import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -78,19 +74,11 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var root: FrameLayout
     private lateinit var stage: FrameLayout            // the film + everything over it
     private lateinit var infoPanel: android.view.View   // below the film while the phone is upright
-    private lateinit var fullButton: android.widget.ImageView
-    private lateinit var optionsRow: LinearLayout
-    private lateinit var centerRow: FrameLayout
     private var lastInsets = androidx.core.graphics.Insets.NONE
     private val panel = PlayerPanelState()
     private val videoLayout: View get() = engine.videoView
-    private lateinit var controls: LinearLayout
-    private lateinit var topBar: LinearLayout
-    private lateinit var playPauseButton: android.widget.ImageView
-    private lateinit var seekBar: SeekBar
-    private lateinit var timeLabel: TextView
-    private lateinit var volumeBar: SeekBar
-    private lateinit var volumeLabel: TextView
+    private val ui = PlayerUiState()                    // the glass panel over the film (PlayerOverlay)
+    private lateinit var overlay: androidx.compose.ui.platform.ComposeView
     private lateinit var bufferingLabel: TextView
     private lateinit var gestures: PlayerGestures
 
@@ -114,12 +102,9 @@ class PlayerActivity : ComponentActivity() {
     // 1.3: gestures, frame mode, media session, sidecar subtitles, remembered tracks, next-episode card, watch progress.
     private val uiPrefs by lazy { getSharedPreferences("player_ui", MODE_PRIVATE) }
     private var scaleIndex = 0
-    private lateinit var scaleButton: TextView
     private var currentUrl = ""
     private var currentTitle = tr("main.video")
-    private lateinit var titleView: TextView
-    private lateinit var prevButton: android.widget.ImageView
-    private lateinit var nextButton: android.widget.ImageView
+    private var shownTitle = currentTitle // with «· 2/10» of a playlist
 
     // Network handling: reload the stream in place (same LibVLC/activity) when the network changes.
     private var needsReload = false
@@ -517,15 +502,18 @@ class PlayerActivity : ComponentActivity() {
             override fun isPip(): Boolean = inPip
             override fun onControlsShown() {
                 updateProgress(force = true)
-                volumeBar.progress = audioSession.getStreamVolume()
+                ui.volume = audioSession.getStreamVolume()
                 handler.removeCallbacks(progressTicker)
                 handler.post(progressTicker)
             }
             override fun onControlsHidden() {
                 handler.removeCallbacks(progressTicker)
-                bufferAnimator?.cancel()
-                bufferAnimator = null
             }
+            override fun onPanelShown(shown: Boolean) {
+                ui.shown = shown
+                if (!shown) ui.picker = null
+            }
+            override fun canAutoHide(): Boolean = ui.picker == null
         })
     }
 
@@ -577,7 +565,7 @@ class PlayerActivity : ComponentActivity() {
                 playWhenReady = true
                 retryCount = 0
                 needsReload = false
-                seekBar.progress = 0
+                ui.time = 0L
                 if (!trackSelector.needsSidecars(entry.url)) { reconnect(forcePlay = true, startAt = playbackPosition); return }
                 // This episode's own voice-overs and subtitles are signed on the mirror first, then it opens with them.
                 showStatus(tr("play.gotovim_dorozhki"))
@@ -595,9 +583,10 @@ class PlayerActivity : ComponentActivity() {
                 episodes: List<String>,
                 index: Int
             ) {
-                prevButton.visibility = if (hasPrevious) View.VISIBLE else View.GONE
-                nextButton.visibility = if (hasNext) View.VISIBLE else View.GONE
-                titleView.text = if (displayText != null) "$currentTitle  ·  $displayText" else currentTitle
+                ui.hasPrev = hasPrevious
+                ui.hasNext = hasNext
+                shownTitle = if (displayText != null) "$currentTitle  ·  $displayText" else currentTitle
+                ui.title = shownTitle
                 panel.title = currentTitle
                 panel.episodes = episodes
                 panel.index = index
@@ -609,7 +598,12 @@ class PlayerActivity : ComponentActivity() {
                 setPlayIcon(false)
                 showControlsTemporarily()
             }
+            override fun onNextCountdown(title: String, seconds: Int) {
+                ui.nextTitle = title
+                ui.nextIn = seconds
+            }
             override fun onNextCardDismissed() {
+                ui.nextTitle = null
                 if (ended) root.keepScreenOn = false
             }
             override fun showControlsTemporarily() {
@@ -666,10 +660,12 @@ class PlayerActivity : ComponentActivity() {
             ?: intent.getStringExtra(EXTRA_URL).orEmpty()
         currentTitle = savedInstanceState?.getString(KEY_TITLE)?.takeIf { it.isNotBlank() }
             ?: intent.getStringExtra(EXTRA_TITLE)?.ifBlank { tr("main.video") } ?: tr("main.video")
+        // The library's watch keys first: the saved place is kept under them (read before, it was looked up by the
+        // mirror address — nothing there — and every film started from 0).
+        readSideExtras(intent)
         playbackPosition = savedInstanceState?.getLong(KEY_POSITION) ?: startPosition(intent)
         playWhenReady = savedInstanceState?.getBoolean(KEY_PLAYING) ?: true
         userPaused = !playWhenReady
-        readSideExtras(intent)
         scaleIndex = uiPrefs.getInt("scale", 0).coerceIn(0, SCALES.size - 1)
 
         engine = HybridEngine(this).also { it.listener = engineListener }
@@ -679,160 +675,63 @@ class PlayerActivity : ComponentActivity() {
         root.addView(stage, FrameLayout.LayoutParams(-1, -1))
         stage.addView(videoLayout, FrameLayout.LayoutParams(-1, -1))
 
-        topBar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(18), dp(12), dp(18), dp(12))
-            background = gradient(intArrayOf(0xB8000000.toInt(), 0x00000000), 0)
-        }
-        val back = iconButton(R.drawable.ic_pl_back, 44, 0x99151820.toInt(), 26).apply {
-            setOnClickListener { leave() }
-            contentDescription = tr("player.nazad")
-        }
-        topBar.addView(back, LinearLayout.LayoutParams(dp(44), dp(44)))
-        val title = TextView(this).apply {
-            text = currentTitle
-            setTextColor(Color.WHITE); textSize = 16f; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            maxLines = 1; setPadding(dp(14), 0, 0, 0)
-        }
-        titleView = title
-        topBar.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
-        fullButton = iconButton(R.drawable.ic_pl_full, 44, 0x99151820.toInt(), 24).apply {
-            contentDescription = tr("player.na_ves_ekran")
-            setOnClickListener { toggleFullscreen() }
-        }
-        topBar.addView(fullButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginStart = dp(10) })
-        if (tv) fullButton.visibility = View.GONE // a TV is always «full screen»: the button would only turn it upright
-        stage.addView(topBar, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
-
-        bufferingLabel = TextView(this).apply {
-            setTextColor(Color.WHITE); textSize = 13f; gravity = Gravity.CENTER
-            setPadding(dp(16), dp(8), dp(16), dp(8))
-            background = GradientDrawable().apply { cornerRadius = dp(18).toFloat(); setColor(0xB8222228.toInt()) }
-            visibility = View.GONE
-        }
+        bufferingLabel = glassLabel(13f).apply { setPadding(dp(16), dp(8), dp(16), dp(8)) }
         stage.addView(bufferingLabel, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
-        seekLabel = TextView(this).apply {
-            setTextColor(Color.WHITE); textSize = 18f; gravity = Gravity.CENTER
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            setPadding(dp(18), dp(10), dp(18), dp(10))
-            background = GradientDrawable().apply { cornerRadius = dp(24).toFloat(); setColor(0xB8222228.toInt()) }
-            visibility = View.GONE
-        }
+        seekLabel = glassLabel(17f).apply { setPadding(dp(18), dp(10), dp(18), dp(10)) }
         stage.addView(seekLabel, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_HORIZONTAL or Gravity.TOP).apply { topMargin = dp(72) })
 
-        val nextCard = playlistQueue.buildNextCard(this, ::dp, ::pillButton)
-        stage.addView(nextCard, FrameLayout.LayoutParams(dp(320), -2, Gravity.END or Gravity.BOTTOM).apply { rightMargin = dp(24); bottomMargin = dp(110) })
-
-        controls = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(12), dp(20), dp(18))
-            background = gradient(intArrayOf(0x00000000, 0xD9000000.toInt()), 0)
+        // The buttons over the film: one Compose layer in the Windows player's look. Where it has no button the
+        // touch is not taken and falls through to the stage (taps, double taps, swipes — PlayerGestures).
+        ui.title = currentTitle
+        ui.playing = playWhenReady
+        ui.tv = tv
+        ui.showLock = !tv // the lock is against touches: nothing to lock on a TV
+        ui.showMark = Diag.on
+        ui.scales = SCALES.map { it.second }
+        ui.scaleIndex = scaleIndex
+        ui.volumeMax = audioSession.getStreamMaxVolume()
+        ui.volume = audioSession.getStreamVolume()
+        ui.onBack = { leave() }
+        ui.onPlayPause = { togglePlay() }
+        ui.onSeekBy = { d -> tapSeek(d > 0) }
+        ui.onScrub = { t -> userSeeking = t != null; showControlsTemporarily() }
+        ui.onSeekTo = { t ->
+            userSeeking = false
+            gestures.resetTapState()
+            ui.time = t
+            seekTo(t)
+            showControlsTemporarily()
         }
-
-        val center = FrameLayout(this)
-        playPauseButton = iconButton(if (playWhenReady) R.drawable.ic_pl_pause else R.drawable.ic_pl_play, 64, 0xF2FFFFFF.toInt(), 32, Color.BLACK).apply {
-            contentDescription = tr("player.pauza_vosproizvedenie")
-            elevation = dp(3).toFloat()
-            setOnClickListener {
-                if (player?.isPlaying == true && !needsReload) doPause() else doPlay()
-                showControlsTemporarily()
-            }
+        ui.onPrev = { playlistQueue.playPrevious() }
+        ui.onNext = { playlistQueue.playNext() }
+        ui.onFull = { toggleFullscreen() }
+        ui.onLock = { ui.picker = null; lockScreen() }
+        ui.onMark = {
+            val n = Diag.mark("player at ${perceivedPosition() / 1000}s"); showStatus(tr("player.metka_n", "n" to n)); showControlsTemporarily()
+            handler.postDelayed({ if (!buffering && !networkLost) bufferingLabel.visibility = View.GONE }, 1500L)
         }
-        center.addView(playPauseButton, FrameLayout.LayoutParams(dp(64), dp(64), Gravity.CENTER))
-        prevButton = iconButton(R.drawable.ic_pl_prev, 46, 0x99151820.toInt(), 24).apply {
-            visibility = View.GONE
-            contentDescription = tr("player.predyduschaya_seriya")
-            setOnClickListener { playlistQueue.playPrevious() }
+        ui.onPicker = { kind -> openPicker(kind) }
+        ui.onPick = { kind, i ->
+            if (kind == "audio") trackSelector.pickAudio(player, i) else trackSelector.pickSubtitle(player, i)
+            refreshPicker()
+            showControlsTemporarily()
         }
-        nextButton = iconButton(R.drawable.ic_pl_next, 46, 0x99151820.toInt(), 24).apply {
-            visibility = View.GONE
-            contentDescription = tr("player.sleduyuschaya_seriya")
-            setOnClickListener { playlistQueue.playNext() }
+        ui.onScale = { i -> setScale(i); showControlsTemporarily() }
+        ui.onVolume = { v -> setSystemVolume(v); ui.volume = v; controlsOverlay.keepShown() }
+        ui.onNextNow = { playlistQueue.hideNextCard(); playlistQueue.playNext() }
+        ui.onNextCancel = { playlistQueue.hideNextCard(); showControlsTemporarily() }
+        ui.onPoke = { controlsOverlay.keepShown() }
+        overlay = androidx.compose.ui.platform.ComposeView(this).apply {
+            setContent { PlayerOverlay(ui) }
         }
-        center.addView(prevButton, FrameLayout.LayoutParams(dp(46), dp(46), Gravity.CENTER).apply { rightMargin = dp(140) })
-        center.addView(nextButton, FrameLayout.LayoutParams(dp(46), dp(46), Gravity.CENTER).apply { leftMargin = dp(140) })
-        controls.addView(center, LinearLayout.LayoutParams(-1, dp(82)))
-        centerRow = center
-
-        val seekRow = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        timeLabel = TextView(this).apply {
-            text = "00:00  /  --:--"; setTextColor(0xFFECECF0.toInt()); textSize = 12f
-            setPadding(dp(2), 0, 0, dp(2))
-        }
-        seekRow.addView(timeLabel)
-        seekBar = SeekBar(this).apply {
-            progressTintList = ColorStateList.valueOf(0xFFE6B94A.toInt())
-            thumbTintList = ColorStateList.valueOf(Color.WHITE)
-            secondaryProgressTintList = ColorStateList.valueOf(0x80B4B8C4.toInt())
-            progressBackgroundTintList = ColorStateList.valueOf(0x33FFFFFF)
-            lightThumbOnFocus()
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onStartTrackingTouch(seekBar: SeekBar) { userSeeking = true; showControlsTemporarily() }
-                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
-                    if (fromUser) {
-                        val length = lengthOf(player)
-                        val durationText = if (length > 0L) formatTime(length) else "--:--"
-                        timeLabel.text = "${formatTime(progress.toLong())}  /  $durationText"
-                    }
-                }
-                override fun onStopTrackingTouch(seekBar: SeekBar) {
-                    userSeeking = false
-                    gestures.resetTapState()
-                    seekTo(seekBar.progress.toLong())
-                    showControlsTemporarily()
-                }
-            })
-        }
-        seekRow.addView(seekBar)
-        controls.addView(seekRow)
-
-        val options = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(8), 0, 0)
-        }
-        val audioButton = pillButton(tr("player.audio")).apply { setOnClickListener { trackSelector.showAudioTracks(this@PlayerActivity, player) { showControlsTemporarily() } } }
-        val subsButton = pillButton(tr("player.cc_subtitry")).apply { setOnClickListener { trackSelector.showSubtitleTracks(this@PlayerActivity, player) { showControlsTemporarily() } } }
-        scaleButton = pillButton("⤢  ${SCALES[scaleIndex].second}").apply { setOnClickListener { cycleScale(); showControlsTemporarily() } }
-        options.addView(audioButton, LinearLayout.LayoutParams(-2, dp(42)).apply { marginEnd = dp(8) })
-        options.addView(subsButton, LinearLayout.LayoutParams(-2, dp(42)).apply { marginEnd = dp(8) })
-        options.addView(scaleButton, LinearLayout.LayoutParams(-2, dp(42)).apply { marginEnd = dp(8) })
-        if (!tv) options.addView(pillButton("🔒").apply { contentDescription = tr("player.blokirovka_ekrana"); setOnClickListener { lockScreen() } },
-            LinearLayout.LayoutParams(dp(48), dp(42)).apply { marginEnd = dp(14) }) // the lock is against touches: nothing to lock on a TV
-        if (Diag.on) options.addView(pillButton("📍").apply {
-            contentDescription = tr("player.metka_v_zhurnale")
-            setOnClickListener { val n = Diag.mark("player at ${perceivedPosition() / 1000}s"); showStatus(tr("player.metka_n", "n" to n)); showControlsTemporarily()
-                handler.postDelayed({ if (!buffering && !networkLost) bufferingLabel.visibility = View.GONE }, 1500L) }
-        }, LinearLayout.LayoutParams(dp(48), dp(42)).apply { marginEnd = dp(14) })
-        options.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        volumeLabel = TextView(this).apply { text = "🔊"; textSize = 16f; setTextColor(Color.WHITE) }
-        options.addView(volumeLabel, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(4) })
-        // System media volume (the same as the hardware buttons and the right-edge swipe).
-        volumeBar = SeekBar(this).apply {
-            max = audioSession.getStreamMaxVolume()
-            progress = audioSession.getStreamVolume()
-            progressTintList = ColorStateList.valueOf(0xFFE6B94A.toInt())
-            thumbTintList = ColorStateList.valueOf(Color.WHITE)
-            lightThumbOnFocus()
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onStartTrackingTouch(seekBar: SeekBar) { showControlsTemporarily() }
-                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
-                    if (fromUser) { setSystemVolume(progress); volumeLabel.text = if (progress == 0) "🔇" else "🔊" }
-                }
-                override fun onStopTrackingTouch(seekBar: SeekBar) { showControlsTemporarily() }
-            })
-        }
-        options.addView(volumeBar, LinearLayout.LayoutParams(dp(92), dp(36)))
-        controls.addView(options)
-        optionsRow = options
-        stage.addView(controls, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+        stage.addView(overlay, FrameLayout.LayoutParams(-1, -1))
 
         // The panel under the film (phone upright) does the same as the buttons over it.
         panel.title = currentTitle
         panel.scale = SCALES[scaleIndex].second
-        panel.onAudio = { trackSelector.showAudioTracks(this, player) { showControlsTemporarily() } }
-        panel.onSubs = { trackSelector.showSubtitleTracks(this, player) { showControlsTemporarily() } }
+        panel.ui = ui
+        panel.onAudio = { openPicker(if (ui.picker == "audio") null else "audio") }
+        panel.onSubs = { openPicker(if (ui.picker == "spu") null else "spu") }
         panel.onScale = { cycleScale() }
         panel.onFull = { toggleFullscreen() }
         panel.onLock = { lockScreen() }
@@ -847,7 +746,7 @@ class PlayerActivity : ComponentActivity() {
             setContent { PlayerInfoPanel(panel) }
         }
         root.addView(infoPanel, FrameLayout.LayoutParams(-1, -1))
-        controlsOverlay.attachViews(root, topBar, controls, seekLabel, ::pillButton)
+        controlsOverlay.attachViews(root, seekLabel, ::pillButton)
         // Keep controls out of the camera cutout / system bars while the video stays full-bleed.
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val i = insets.getInsets(WindowInsetsCompat.Type.displayCutout() or WindowInsetsCompat.Type.systemBars())
@@ -861,6 +760,7 @@ class PlayerActivity : ComponentActivity() {
             override fun handleOnBackPressed() {
                 when {
                     locked -> showUnlockBadge()
+                    ui.picker != null -> openPicker(null)
                     tv && controlsOverlay.isVisible -> setControlsVisible(false) // TV: Back first hides the panel
                     else -> leave()
                 }
@@ -900,15 +800,13 @@ class PlayerActivity : ComponentActivity() {
             override fun getStreamMaxVolume(): Int = audioSession.getStreamMaxVolume()
             override fun setStreamVolume(volume: Int) { audioSession.setStreamVolume(volume) }
             override fun onVolumeChanged(current: Int, max: Int) {
-                volumeBar.progress = current
+                ui.volume = current
             }
             override fun dp(value: Int): Int = this@PlayerActivity.dp(value)
         })
         val touchListener = View.OnTouchListener { _, event -> gestures.onTouch(event) }
         stage.setOnTouchListener(touchListener)
         videoLayout.setOnTouchListener(touchListener)
-        controls.setOnTouchListener(touchListener)
-        topBar.setOnTouchListener(touchListener)
         audioSession.setup()
 
         pipController.setup()
@@ -1215,7 +1113,6 @@ class PlayerActivity : ComponentActivity() {
         }
     }
 
-    private var bufferAnimator: ValueAnimator? = null
 
     private val progressTicker = object : Runnable {
         override fun run() {
@@ -1237,102 +1134,64 @@ class PlayerActivity : ComponentActivity() {
         // A seek in flight shows where it goes (VLC still reports the old place, or 0 while a Blu-ray reloads).
         val time = pendingSeekPos ?: timeOf(p).takeIf { it > 0L } ?: playbackPosition.coerceAtLeast(0L)
         // M2TS often has no duration: show --:-- and disable the duration-based seek bar.
+        ui.time = time
         if (length > 0L) {
-            val max = length.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-            if (seekBar.max != max) seekBar.max = max
-            seekBar.progress = time.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-            timeLabel.text = "${formatTime(time)}  /  ${formatTime(length)}"
-            if (!seekBar.isEnabled) seekBar.isEnabled = true
-
+            ui.length = length
             // Preloaded buffer: VLC network caching (time buffer ~6s) + BurstProxy disk buffer
             // Media3 knows what it has in memory itself; the reserve on disk comes after that.
             val diskBufferMs = BurstProxy.aheadMs(currentUrl, length)
-            val targetBuffered = p.bufferedPositionMs.takeIf { it >= 0L }?.let { (it + diskBufferMs).coerceIn(time, length).toInt() } ?: run {
+            ui.buffered = p.bufferedPositionMs.takeIf { it >= 0L }?.let { (it + diskBufferMs).coerceIn(time, length) } ?: run {
                 val vlcTimeBufferMs = if (p.isPlaying || buffering) 6_000L else 0L
-                (time + vlcTimeBufferMs + diskBufferMs).coerceIn(time, length).toInt()
+                (time + vlcTimeBufferMs + diskBufferMs).coerceIn(time, length)
             }
-            updateSecondaryProgress(targetBuffered, force)
         } else {
-            if (seekBar.max != 1000) seekBar.max = 1000
-            seekBar.progress = 0
-            seekBar.secondaryProgress = 0
-            timeLabel.text = "${formatTime(time)}  /  --:--"
-            if (seekBar.isEnabled) seekBar.isEnabled = false
+            ui.length = 0L
+            ui.buffered = 0L
         }
     }
-
-    private fun updateSecondaryProgress(target: Int, force: Boolean) {
-        val current = seekBar.secondaryProgress
-        if (force) {
-            bufferAnimator?.cancel()
-            bufferAnimator = null
-            seekBar.secondaryProgress = target
-            return
-        }
-        val diff = target - current
-        if (diff > 500) {
-            bufferAnimator?.cancel()
-            bufferAnimator = ValueAnimator.ofInt(current, target).apply {
-                duration = 260L
-                interpolator = DecelerateInterpolator()
-                addUpdateListener { anim ->
-                    if (controlsVisible) seekBar.secondaryProgress = anim.animatedValue as Int
-                }
-                start()
-            }
-        } else if (diff < -5_000) {
-            bufferAnimator?.cancel()
-            bufferAnimator = null
-            seekBar.secondaryProgress = target
-        } else if (bufferAnimator == null || !bufferAnimator!!.isRunning) {
-            seekBar.secondaryProgress = target
-        }
-    }
-
-
 
     private fun setControlsVisible(visible: Boolean) = controlsOverlay.setVisible(visible)
     private fun showControlsTemporarily() = controlsOverlay.showTemporarily()
 
-    /** Round button with a vector icon, centred exactly (text glyphs like ‹ Ⅱ ▶ sat off-centre and differed per phone font). */
-    private fun iconButton(icon: Int, size: Int, bg: Int, iconSize: Int, tint: Int = Color.WHITE) = android.widget.ImageView(this).apply {
-        setImageResource(icon)
-        imageTintList = ColorStateList.valueOf(tint)
-        scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
-        val pad = dp((size - iconSize) / 2)
-        setPadding(pad, pad, pad, pad)
-        background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(bg); if (bg ushr 24 < 0xF0) setStroke(dp(1), 0x26FFFFFF) }
-        isClickable = true; isFocusable = true
-        foreground = android.graphics.drawable.LayerDrawable(arrayOf(
-            android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), null,
-                GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE) }),
-            focusRing { shape = GradientDrawable.OVAL }
-        ))
-    }
-
-    private fun setPlayIcon(playing: Boolean) {
-        if (::playPauseButton.isInitialized) playPauseButton.setImageResource(if (playing) R.drawable.ic_pl_pause else R.drawable.ic_pl_play)
-    }
+    private fun setPlayIcon(playing: Boolean) { ui.playing = playing }
 
     private fun pillButton(label: String) = TextView(this).apply {
         text = label; textSize = 13f; gravity = Gravity.CENTER
         setTextColor(Color.WHITE); setPadding(dp(14), 0, dp(14), 0)
         background = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; cornerRadius = dp(22).toFloat(); setColor(0xB8222228.toInt()); setStroke(dp(1), 0x44FFFFFF) }
         isClickable = true; isFocusable = true
-        foreground = focusRing { cornerRadius = dp(22).toFloat() }
+        // remote control: a white ring on the focused button
+        foreground = android.graphics.drawable.StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_focused), GradientDrawable().apply { cornerRadius = dp(22).toFloat(); setStroke(dp(2), Color.WHITE) })
+        }
     }
 
-    /** Remote control: an amber ring on the button that has focus (touch never focuses these buttons). */
-    private fun focusRing(outline: GradientDrawable.() -> Unit) = android.graphics.drawable.StateListDrawable().apply {
-        addState(intArrayOf(android.R.attr.state_focused), GradientDrawable().apply { outline(); setStroke(dp(3), LAMP) })
+    /** Status / seek text over the film: the panel's glass capsule. */
+    private fun glassLabel(size: Float) = TextView(this).apply {
+        setTextColor(Color.WHITE); textSize = size; gravity = Gravity.CENTER
+        typeface = runCatching { androidx.core.content.res.ResourcesCompat.getFont(this@PlayerActivity, R.font.onest_medium) }.getOrNull()
+        background = GradientDrawable().apply { cornerRadius = dp(22).toFloat(); setColor(0xD9161B26.toInt()); setStroke(dp(1), 0x33FFFFFF) }
+        visibility = View.GONE
     }
 
-    private fun SeekBar.lightThumbOnFocus() {
-        setOnFocusChangeListener { _, focused -> thumbTintList = ColorStateList.valueOf(if (focused) LAMP else Color.WHITE) }
+    /** «Аудио», «Субтитры», «⚙» (or null: close). The sheet is over the bar sideways, at the top of the panel below upright. */
+    private fun openPicker(kind: String?) {
+        ui.picker = kind
+        refreshPicker()
+        if (kind != null) showControlsTemporarily() else controlsOverlay.keepShown()
     }
 
-    private fun gradient(colors: IntArray, radius: Int) = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, colors).apply {
-        cornerRadius = dp(radius).toFloat()
+    private fun refreshPicker() {
+        ui.pickerItems = when (ui.picker) {
+            "audio" -> trackSelector.audioChoices(player)
+            "spu" -> trackSelector.subtitleChoices(player)
+            else -> emptyList()
+        }
+    }
+
+    private fun togglePlay() {
+        if (player?.isPlaying == true && !needsReload) doPause() else doPlay()
+        showControlsTemporarily()
     }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
@@ -1487,14 +1346,9 @@ class PlayerActivity : ComponentActivity() {
             sp.height = -1; sp.topMargin = 0
             videoLayout.layoutParams = (videoLayout.layoutParams as FrameLayout.LayoutParams).apply { width = -1; height = -1; gravity = Gravity.CENTER }
             infoPanel.visibility = View.GONE
-            topBar.setPadding(dp(18) + i.left, dp(12) + i.top, dp(18) + i.right, dp(12))
-            controls.setPadding(dp(20) + i.left, dp(12), dp(20) + i.right, dp(18) + i.bottom)
-            optionsRow.visibility = View.VISIBLE
-            centerRow.layoutParams = centerRow.layoutParams.apply { height = dp(82) }
-            playPauseButton.scaleX = 1f; playPauseButton.scaleY = 1f
-            playlistQueue.updateCardMargins(full = true)
+            ui.full = true
+            ui.insets = intArrayOf(i.left, i.top, i.right, i.bottom)
             controlsOverlay.updateUnlockBadgeLayout(full = true, topInset = 0, filmHeight = 0)
-            fullButton.setImageResource(R.drawable.ic_pl_full_exit); fullButton.contentDescription = tr("player.vyyti_iz_polnoekrannogo_rezhim")
             hideSystemUi()
         } else {
             val w = root.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
@@ -1508,14 +1362,9 @@ class PlayerActivity : ComponentActivity() {
             pp.topMargin = i.top + h
             panel.bottomInsetPx = i.bottom
             infoPanel.visibility = View.VISIBLE
-            topBar.setPadding(dp(10) + i.left, dp(6), dp(10) + i.right, dp(6))
-            controls.setPadding(dp(14) + i.left, dp(2), dp(14) + i.right, dp(6))
-            optionsRow.visibility = View.GONE // the same buttons are in the panel below
-            centerRow.layoutParams = centerRow.layoutParams.apply { height = dp(60) }
-            playPauseButton.scaleX = 0.82f; playPauseButton.scaleY = 0.82f
-            playlistQueue.updateCardMargins(full = false)
+            ui.full = false // tracks, frame, lock: in the panel below
+            ui.insets = intArrayOf(i.left, 0, i.right, 0)
             controlsOverlay.updateUnlockBadgeLayout(full = false, topInset = i.top, filmHeight = h)
-            fullButton.setImageResource(R.drawable.ic_pl_full); fullButton.contentDescription = tr("player.na_ves_ekran")
             controlsOverlay.showSystemUi(window)
         }
         stage.layoutParams = sp; infoPanel.layoutParams = pp
@@ -1600,7 +1449,7 @@ class PlayerActivity : ComponentActivity() {
         scaleIndex = index.coerceIn(0, SCALES.size - 1)
         uiPrefs.edit().putInt("scale", scaleIndex).apply()
         runCatching { player?.setScale(shownScale()) }
-        scaleButton.text = "⤢  ${SCALES[scaleIndex].second}"
+        ui.scaleIndex = scaleIndex
         panel.scale = SCALES[scaleIndex].second
         showSeekLabel(if (isFull()) tr("player.kadr_p", "p" to SCALES[scaleIndex].second) else tr("player.kadr_na_ves_ekran", "p" to SCALES[scaleIndex].second))
     }
@@ -1622,7 +1471,7 @@ class PlayerActivity : ComponentActivity() {
     private fun updateSession() {
         val p = player
         audioSession.update(
-            title = titleView.text?.toString() ?: currentTitle,
+            title = shownTitle,
             duration = lengthOf(p),
             position = perceivedPosition(),
             isPlaying = p?.isPlaying == true,
@@ -1809,16 +1658,16 @@ class PlayerActivity : ComponentActivity() {
      * Media keys of the remote work either way.
      */
     private fun remoteKey(e: KeyEvent): Boolean {
-        if (!::controls.isInitialized || inPip) return false
+        if (!::overlay.isInitialized || inPip) return false
         val code = e.keyCode
         val first = e.repeatCount == 0
         when (code) {
-            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_HEADSETHOOK -> { if (first) playPauseButton.performClick(); return true }
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_HEADSETHOOK -> { if (first) togglePlay(); return true }
             KeyEvent.KEYCODE_MEDIA_PLAY -> { if (first) { doPlay(); showControlsTemporarily() }; return true }
             KeyEvent.KEYCODE_MEDIA_PAUSE -> { if (first) { doPause(); showControlsTemporarily() }; return true }
             KeyEvent.KEYCODE_MEDIA_FAST_FORWARD, KeyEvent.KEYCODE_MEDIA_REWIND -> { tapSeek(code == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD); return true }
-            KeyEvent.KEYCODE_MEDIA_NEXT -> { if (first && nextButton.visibility == View.VISIBLE) playlistQueue.playNext(); return true }
-            KeyEvent.KEYCODE_MEDIA_PREVIOUS -> { if (first && prevButton.visibility == View.VISIBLE) playlistQueue.playPrevious(); return true }
+            KeyEvent.KEYCODE_MEDIA_NEXT -> { if (first) playlistQueue.playNext(); return true }
+            KeyEvent.KEYCODE_MEDIA_PREVIOUS -> { if (first) playlistQueue.playPrevious(); return true }
         }
         if (locked) return false
         val center = code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER
@@ -1827,20 +1676,19 @@ class PlayerActivity : ComponentActivity() {
         if (!center && !leftRight && !upDown && code != KeyEvent.KEYCODE_MENU && code != KeyEvent.KEYCODE_INFO) return false
         if (!controlsOverlay.isVisible) {
             when {
-                center -> { if (first) { playPauseButton.performClick(); playPauseButton.requestFocus() } }
-                leftRight -> { tapSeek(code == KeyEvent.KEYCODE_DPAD_RIGHT); seekBar.requestFocus() }
-                else -> { showControlsTemporarily(); playPauseButton.requestFocus() }
+                center -> { if (first) { togglePlay(); ui.focusWant = "play" } }
+                leftRight -> { tapSeek(code == KeyEvent.KEYCODE_DPAD_RIGHT); ui.focusWant = "seek" }
+                else -> { showControlsTemporarily(); ui.focusWant = "play" }
             }
             return true
         }
         controlsOverlay.keepShown()
-        val focused = currentFocus
         // The panel is up but nothing on it has focus yet (it was shown by a touch or on opening): start on play / pause.
-        if (focused == null || !focused.isShown) {
-            playPauseButton.requestFocus()
+        if (!ui.hasFocus) {
+            ui.focusWant = "play"
             return true
         }
-        if (focused === seekBar && leftRight) { tapSeek(code == KeyEvent.KEYCODE_DPAD_RIGHT); return true }
+        if (ui.seekFocused && leftRight) { tapSeek(code == KeyEvent.KEYCODE_DPAD_RIGHT); return true }
         return false
     }
 
@@ -1860,7 +1708,9 @@ class PlayerActivity : ComponentActivity() {
         currentTitle = intent.getStringExtra(EXTRA_TITLE)?.ifBlank { tr("main.video") } ?: tr("main.video")
         playlistQueue.reset()
         readSideExtras(intent)
-        titleView.text = currentTitle
+        shownTitle = currentTitle
+        ui.title = currentTitle
+        ui.picker = null
         trackSelector.resetSelectedTracks()
         playbackPosition = startPosition(intent); lastTime = playbackPosition
         pendingSeekPos = null; ended = false; userPaused = false; playWhenReady = true; retryCount = 0; needsReload = false
@@ -1927,7 +1777,6 @@ class PlayerActivity : ComponentActivity() {
         const val EXTRA_FROM_START = PlayerExtras.FROM_START
         private const val KEY_URL = "current_url"
         private val NIGHT = 0xFF090B10.toInt()
-        private val LAMP = 0xFFFFB02E.toInt()
         private const val KEY_TITLE = "current_title"
         private const val KEY_POSITION = "playback_position"
         private const val KEY_PLAYING = "play_when_ready"

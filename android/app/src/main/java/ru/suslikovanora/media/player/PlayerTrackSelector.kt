@@ -1,13 +1,10 @@
 package ru.suslikovanora.media.player
 
-import android.app.Activity
-import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Handler
 import android.os.SystemClock
-import android.widget.Toast
 import java.net.URLEncoder
 import java.util.Locale
 import kotlinx.coroutines.async
@@ -164,57 +161,60 @@ class PlayerTrackSelector(
         }
     }
 
-    fun showAudioTracks(activity: Activity, p: PlayerEngine?, onControlsNeeded: () -> Unit) {
+    private fun extraAudio(): List<String> = if (sidecarsActive) audioUrls.filter { it !in attachedAudio } else emptyList()
+
+    /** The audio sheet: the film's tracks, then the voice-over files not opened yet («＋ rus»). */
+    fun audioChoices(p: PlayerEngine?): List<TrackChoice> {
         val tracks = p?.audioTracks().orEmpty()
-        val extra = if (sidecarsActive) audioUrls.filter { it !in attachedAudio } else emptyList()
-        if (tracks.isEmpty() && extra.isEmpty()) {
-            Toast.makeText(activity, tr("playertrack.audiodorozhki_poka_ne_opredele"), Toast.LENGTH_SHORT).show()
-            return
-        }
-        AlertDialog.Builder(activity).setTitle(tr("playertrack.audiodorozhka"))
-            .setItems((tracks.map { it.name } + extra.map { "＋ " + audioLabel(it) }).toTypedArray()) { _, which ->
-                if (which >= tracks.size) {
-                    val u = extra[which - tracks.size]
-                    attachedAudio += u
-                    activeSidecar = audioLabel(u)
-                    selectedAudioId = null
-                    p?.addAudioFile(wrapUrl?.invoke(u) ?: u)
-                    val key = seriesKey(callback.getCurrentTitle())
-                    prefs.edit().putString("track:sidecar:$key", activeSidecar)
-                        .remove("track:audio:$key").remove("track:audio:*").apply()
-                    callback.onAudioTrackChanged()
-                    onControlsNeeded()
-                    return@setItems
-                }
-                val track = tracks[which]
-                selectedAudioId = track.id
-                p?.setAudioTrack(track.id)
-                activeSidecar = SIDECAR_NONE
-                prefs.edit().putString("track:sidecar:${seriesKey(callback.getCurrentTitle())}", SIDECAR_NONE).apply()
-                callback.onAudioTrackChanged()
-                saveTrackPref("audio", track.name, callback.getCurrentTitle())
-                onControlsNeeded()
-            }.setNegativeButton(tr("player.zakryt"), null).show()
+        val current = p?.audioTrack ?: -1
+        return tracks.map { TrackChoice(it.name, it.id == current) } + extraAudio().map { TrackChoice("＋ " + audioLabel(it), false) }
     }
 
-    fun showSubtitleTracks(activity: Activity, p: PlayerEngine?, onControlsNeeded: () -> Unit) {
-        val tracks = p?.subtitleTracks().orEmpty()
-        val labels = listOf(tr("playertrack.vyklyuchit_subtitry")) + tracks.map { it.name }
-        AlertDialog.Builder(activity).setTitle(tr("playertrack.subtitry"))
-            .setItems(labels.toTypedArray()) { _, which ->
-                if (which == 0) {
-                    selectedSpuId = -1
-                    p?.setSubtitleTrack(-1)
-                    saveTrackPref("spu", SPU_OFF, callback.getCurrentTitle())
-                } else {
-                    val track = tracks[which - 1]
-                    selectedSpuId = track.id
-                    p?.setSubtitleTrack(track.id)
-                    saveTrackPref("spu", track.name, callback.getCurrentTitle())
-                }
-                callback.onSubtitleTrackChanged()
-                onControlsNeeded()
-            }.setNegativeButton(tr("player.zakryt"), null).show()
+    /** [which] is a line of [audioChoices]. */
+    fun pickAudio(p: PlayerEngine?, which: Int) {
+        val tracks = p?.audioTracks().orEmpty()
+        val extra = extraAudio()
+        if (which >= tracks.size) {
+            val u = extra.getOrNull(which - tracks.size) ?: return
+            attachedAudio += u
+            activeSidecar = audioLabel(u)
+            selectedAudioId = null
+            p?.addAudioFile(wrapUrl?.invoke(u) ?: u)
+            val key = seriesKey(callback.getCurrentTitle())
+            prefs.edit().putString("track:sidecar:$key", activeSidecar)
+                .remove("track:audio:$key").remove("track:audio:*").apply()
+            callback.onAudioTrackChanged()
+            return
+        }
+        val track = tracks.getOrNull(which) ?: return
+        selectedAudioId = track.id
+        p?.setAudioTrack(track.id)
+        activeSidecar = SIDECAR_NONE
+        prefs.edit().putString("track:sidecar:${seriesKey(callback.getCurrentTitle())}", SIDECAR_NONE).apply()
+        callback.onAudioTrackChanged()
+        saveTrackPref("audio", track.name, callback.getCurrentTitle())
+    }
+
+    /** The subtitles sheet: «off» first, then the tracks. */
+    fun subtitleChoices(p: PlayerEngine?): List<TrackChoice> {
+        val tracks = p?.subtitleTracks().orEmpty().filter { it.id != -1 }
+        val current = p?.subtitleTrack ?: -1
+        return listOf(TrackChoice(tr("playertrack.vyklyuchit_subtitry"), current == -1)) + tracks.map { TrackChoice(it.name, it.id == current) }
+    }
+
+    /** [which] is a line of [subtitleChoices]. */
+    fun pickSubtitle(p: PlayerEngine?, which: Int) {
+        if (which == 0) {
+            selectedSpuId = -1
+            p?.setSubtitleTrack(-1)
+            saveTrackPref("spu", SPU_OFF, callback.getCurrentTitle())
+        } else {
+            val track = p?.subtitleTracks().orEmpty().filter { it.id != -1 }.getOrNull(which - 1) ?: return
+            selectedSpuId = track.id
+            p?.setSubtitleTrack(track.id)
+            saveTrackPref("spu", track.name, callback.getCurrentTitle())
+        }
+        callback.onSubtitleTrackChanged()
     }
 
     fun allEpisodeUrls(url: String): List<String> =

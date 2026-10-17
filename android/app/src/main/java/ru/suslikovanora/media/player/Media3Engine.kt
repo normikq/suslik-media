@@ -67,6 +67,25 @@ class Media3Engine(private val context: Context) : PlayerEngine {
         resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
     }
     override val videoView: View get() = view
+
+    // Subtitles out of the content frame (it is bigger than the screen in «Заполнить»): over the whole view, in the
+    // place of the fitted frame ([fitSubtitles]) — never cut off with the cropped picture.
+    private val subs = view.subtitleView?.also { s ->
+        (s.parent as? android.view.ViewGroup)?.removeView(s)
+        view.addView(s, 1, android.widget.FrameLayout.LayoutParams(-1, -1, android.view.Gravity.CENTER))
+        view.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> view.post { fitSubs() } }
+    }
+
+    private fun fitSubs() {
+        val s = subs ?: return
+        val v = exo?.videoSize
+        val aspect = when {
+            forced169 -> 16f / 9f
+            v != null && v.width > 0 && v.height > 0 -> v.width * v.pixelWidthHeightRatio / v.height
+            else -> 0f
+        }
+        fitSubtitles(s, aspect)
+    }
     override var listener: EngineListener? = null
     override val kind = EngineKind.MEDIA3
 
@@ -254,6 +273,7 @@ class Media3Engine(private val context: Context) : PlayerEngine {
         }
         override fun onVideoSizeChanged(videoSize: VideoSize) {
             if (forced169) view.post { applyForcedAspect() }
+            view.post { fitSubs() }
         }
         override fun onPlayerError(error: PlaybackException) {
             val cause = error.cause?.let { "${it.javaClass.simpleName}: ${it.message}" } ?: error.message
@@ -438,6 +458,7 @@ class Media3Engine(private val context: Context) : PlayerEngine {
         }
         if (forced169) applyForcedAspect()
         else exo?.videoSize?.let { s -> if (s.width > 0 && s.height > 0) contentFrame()?.setAspectRatio(s.width * s.pixelWidthHeightRatio / s.height) }
+        fitSubs()
     }
 
     private fun contentFrame(): AspectRatioFrameLayout? = view.findViewById(androidx.media3.ui.R.id.exo_content_frame)
