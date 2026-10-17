@@ -167,6 +167,8 @@ STA-потоке `smtc` с насосом сообщений (на EDT курс�
 подвешивал оболочку); картинка — `StorageFile` → `CreateFromFile`; состояние до подключения окна повторяется в `attach`. Подробно: `docs/DESKTOP.md` §10.
 Живой журнал ПК из консоли Claude — только через `//localhost/C$/Users/nanar/AppData/Roaming/...` (`%APPDATA%` у пакета Claude — старая копия).
 
+**2.3.5 (Android)** (18.10, ветка `claude/android-glass-player`, PR #10): плеер в дизайне Windows — панель над фильмом одним Compose-слоем (`player/PlayerOverlay.kt`, состояние `PlayerUiState`; иконки с ПК — `PlayerIcons.kt`), стеклянные шторки дорожек/субтитров/«⚙» вместо `AlertDialog`, капсула «Следующая серия», без янтаря в плеере; касания мимо кнопок проходят в `PlayerGestures` (ComposeView не забирает событие без pointerInput). Субтитры в «Заполнить»/«16:9» — `SubtitleFit.kt` (VLC: своя `LayoutParams` для `surface_subtitles`, общий объект с видео не трогать; Media3: `SubtitleView` вынесен из `exo_content_frame`). «Продолжить» с 16.10 (fdbc2cb) открывало с 0: `startPosition` читался до `readSideExtras` (ключи медиатеки) — порядок возвращён. Библиотеку в стиль ПК — следующим шагом.
+
 ## Открытое
 
 - Проверить в 2.0.4 на телефоне: «мосты» (в журнале `bridge at`) — пока ни разу не сработали в реальном просмотре;
