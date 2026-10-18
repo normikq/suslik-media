@@ -22,21 +22,33 @@ import java.util.concurrent.TimeUnit
 object AppExit {
     private val players = CopyOnWriteArrayList<ExecutorService>()
     @Volatile private var started = false
+    @Volatile private var armed = false
 
     /** A player's VLC thread: on exit we wait (briefly) for its stop/release to finish. */
     fun track(executor: ExecutorService) { players += executor }
     fun untrack(executor: ExecutorService) { players -= executor }
 
+    /**
+     * Last resort: whatever happens after this call, the process is gone after 8 s (time enough for the JVM to save its
+     * start-up archive on the way out). Called as soon as the window is asked to close: tearing down the Compose scene
+     * can hang the UI thread itself (a Skia finalizer spun at 100 % for minutes after the mpv video was freed), and then
+     * [finish] is never reached.
+     */
+    fun armWatchdog(code: Int = 0) {
+        if (armed) return
+        armed = true
+        Thread({
+            runCatching { Thread.sleep(8_000) }
+            Thread({ runCatching { Store.flushAll() } }, "exit-flush").apply { isDaemon = true; start(); runCatching { join(1_000) } }
+            terminateNow(code)
+        }, "exit-watchdog").apply { isDaemon = true; start() }
+    }
+
     /** After the Compose application has ended (window disposed). Never returns. */
     fun finish(code: Int = 0): Nothing {
         if (!started) {
             started = true
-            // Last resort: whatever happens below, the process is gone after 8 s (time enough for the JVM to save
-            // its start-up archive on the way out).
-            Thread({
-                runCatching { Thread.sleep(8_000) }
-                terminateNow(code)
-            }, "exit-watchdog").apply { isDaemon = true; start() }
+            armWatchdog(code)
             val deadline = System.currentTimeMillis() + 1_500
             for (e in players) runCatching { e.awaitTermination((deadline - System.currentTimeMillis()).coerceAtLeast(0), TimeUnit.MILLISECONDS) }
             Thread({ runCatching { VlcFactory.releaseAll() } }, "vlc-release").apply { isDaemon = true; start(); join(1_000) }

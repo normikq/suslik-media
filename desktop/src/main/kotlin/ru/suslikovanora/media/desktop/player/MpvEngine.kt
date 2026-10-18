@@ -24,6 +24,7 @@ class MpvEngine(
     @Volatile private var pauseFlag = false
     @Volatile private var coreIdle = true
     @Volatile private var cacheWait = false
+    @Volatile private var playingSent = false // `playing` was reported for the file being opened (see time-pos)
     @Volatile private var cacheBufferingPercent = 100f
     @Volatile private var lastTimeEvent = 0L
     @Volatile private var timeSec = 0.0
@@ -67,8 +68,9 @@ class MpvEngine(
         // No preroll backward seeks on subtitle switch/seek: prevents huge backward range seeks over HTTP
         opt("demuxer-mkv-subtitle-preroll", "no")
         opt("demuxer-mkv-subtitle-preroll-secs", "1")
-        // Keep previous keyframes and clusters in memory so track switching and short seeks do not hit network
-        opt("demuxer-max-bytes", "256MiB"); opt("demuxer-max-back-bytes", "128MiB")
+        // Keep previous keyframes and clusters in memory so track switching and short seeks do not hit network.
+        // Native memory outside -Xmx; the long reserve already lives on disk (BurstProxy), so this is kept small.
+        opt("demuxer-max-bytes", "96MiB"); opt("demuxer-max-back-bytes", "24MiB")
         opt("gapless-audio", "yes")
         opt("audio-stream-silence", "yes")
         opt("network-timeout", "30")
@@ -151,6 +153,9 @@ class MpvEngine(
         when (name) {
             "time-pos" -> if (dbl != null) {
                 timeSec = dbl
+                // The picture is moving but `playing` never came (a stale event from the previous file during a quick
+                // switch of episodes): the panel stayed at «Открываем…» with the play icon. Report it from the clock.
+                if (!playingSent && dbl > 0.0) maybePlaying()
                 val now = System.currentTimeMillis()
                 if (now - lastTimeEvent >= 200L) {
                     lastTimeEvent = now
@@ -192,7 +197,7 @@ class MpvEngine(
     }
 
     /** `playing` — когда ядро действительно крутит кадры: не пауза, не ожидание кэша. */
-    private fun maybePlaying() { if (loaded && !pauseFlag && !cacheWait) listener.playing() }
+    private fun maybePlaying() { if (loaded && !pauseFlag && !cacheWait) { playingSent = true; listener.playing() } }
 
     private fun str(name: String): String? {
         val p = h ?: return null
@@ -222,29 +227,37 @@ class MpvEngine(
                       audioUrls: List<String>, subUrls: List<String>) {
         this.nightMode = nightMode
         handle()
-        loaded = false; timeSec = 0.0; lengthSec = 0.0
+        loaded = false; playingSent = false; timeSec = 0.0; lengthSec = 0.0
         cacheWait = false; cacheBufferingPercent = 0f
         set("pause", "no")
         set("start", if (startMs > 0) "%.3f".format(java.util.Locale.ROOT, startMs / 1000.0) else "0")
         set("alang", audioLang ?: "")
         set("slang", subLang ?: "")
         set("af", if (nightMode) "lavfi=[acompressor=threshold=0.063:ratio=6:attack=25:release=100:knee=2:makeup=3]" else "")
+        // Subtitle files are fetched now, all at once, while mpv opens the video (see SideFiles.kt).
+        val subs = if (subUrls.isEmpty()) null else java.util.concurrent.CompletableFuture.supplyAsync { fetchSubtitles(subUrls, url) }
         synchronized(trackLock) {
+            openGen++
             currentOpenUrl = url
             pendingAudio = audioUrls
-            pendingSubs = subUrls
+            pendingSubs = subs
         }
         cmd("loadfile", url, "replace")
     }
 
     private val trackLock = Any()
+    @Volatile private var openGen = 0
     @Volatile private var currentOpenUrl: String? = null
     @Volatile private var pendingAudio: List<String> = emptyList()
-    @Volatile private var pendingSubs: List<String> = emptyList()
+    @Volatile private var pendingSubs: java.util.concurrent.Future<List<SideSub>>? = null
+    @Volatile private var sideThread: Thread? = null
 
-    /** По событию file-loaded добавляет внешние дорожки (озвучки и субтитры). */
+    /**
+     * По событию file-loaded добавляет внешние дорожки: сначала субтитры (уже скачаны, мгновенно), потом озвучки.
+     * Отдельным потоком: mpv открывает каждый файл, пока команда не вернётся, и поток событий раньше стоял всё это время.
+     */
     private fun addExternalTracks() {
-        val (audio, subs) = synchronized(trackLock) {
+        val (gen, audio, subs) = synchronized(trackLock) {
             val cur = str("path")
             val target = currentOpenUrl
             val matches = cur == null || target == null || cur == target || cur.trimEnd('/') == target.trimEnd('/') ||
@@ -253,14 +266,25 @@ class MpvEngine(
                 val a = pendingAudio
                 val s = pendingSubs
                 pendingAudio = emptyList()
-                pendingSubs = emptyList()
-                a to s
+                pendingSubs = null
+                Triple(openGen, a, s)
             } else {
-                emptyList<String>() to emptyList<String>()
+                Triple(openGen, emptyList<String>(), null)
             }
         }
-        audio.forEach { cmd("audio-add", it, "auto") }
-        subs.forEach { cmd("sub-add", it, "auto") }
+        if (audio.isEmpty() && subs == null) return
+        sideThread = Thread({
+            val current = { !dead && openGen == gen }
+            val list = runCatching { subs?.get(20, java.util.concurrent.TimeUnit.SECONDS) }.getOrNull().orEmpty()
+            for (s in list) {
+                if (!current()) return@Thread
+                if (s.lang != null) cmd("sub-add", s.target, "auto", s.title, s.lang) else cmd("sub-add", s.target, "auto", s.title)
+            }
+            for (a in audio) {
+                if (!current()) return@Thread
+                cmd("audio-add", a, "auto")
+            }
+        }, "mpv-sidecars").apply { isDaemon = true; start() }
     }
 
     override fun setPaused(paused: Boolean) {
@@ -438,10 +462,14 @@ class MpvEngine(
                 runCatching { evThread.join(500) }
             }
         }
+        // A track being added holds a call into the core: it must return before the core is destroyed.
+        val side = sideThread
+        if (side != null && side != Thread.currentThread()) runCatching { side.join(1500) }
         if (!canDestroy) return
-        if (evThread?.isAlive == true) {
+        if (evThread?.isAlive == true || side?.isAlive == true) {
             Thread({
-                runCatching { evThread.join() }
+                runCatching { evThread?.join() }
+                runCatching { side?.join() }
                 runCatching { api.mpv_terminate_destroy(p) }
             }, "mpv-destroy-deferred").apply { isDaemon = true; start() }
         } else {

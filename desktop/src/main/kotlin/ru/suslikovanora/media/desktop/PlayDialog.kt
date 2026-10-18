@@ -198,11 +198,14 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
         else -> item?.baseTitle ?: t.label
     }
 
+    // The player's queue: the whole season (or collection) with links, so «previous» works from the episode it started
+    // with (it used to be this episode and the following ones only: back from the first one just went to 00:00).
     val followingFiles: List<MFile> = when {
-        isCollection -> films.drop(selectedFilmIdx).map { it.file }
-        series != null && currentSeason != null -> currentSeason.items.drop(selectedEpisodeIdx).map { it.file }
+        isCollection -> films.map { it.file }
+        series != null && currentSeason != null -> currentSeason.items.map { it.file }
         else -> emptyList()
-    }
+    }.filter { it.link != null }
+    val queueStart = followingFiles.indexOfFirst { it.path == currentFile.path }.coerceAtLeast(0)
 
     val resumeAt = remember(t.magnetId, currentFile.path, lib.watchVersion) {
         lib.watchInfo(watchKey(t.magnetId, currentFile))?.takeIf { !it.watched && it.pos >= 5_000L }?.pos
@@ -227,24 +230,27 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
         }
         val enc = { v: String -> URLEncoder.encode(v, "UTF-8") }
         val name = currentFile.name.ifBlank { currentFile.path.substringAfterLast('/') }
+        // Everything is fetched before the "Watch" buttons turn on: a click while side voice-overs, subtitles
+        // or the playlist were still on their way opened the film without them.
         coroutineScope {
             val d = async { runCatching { Api.post("/api/file/unlock", JSONObject().put("link", link)).optString("url").ifBlank { null } } }
             val mr = async { runCatching { Api.get("/api/file/mirror-url?link=${enc(link)}&name=${enc(name)}").optString("url").ifBlank { null } } }
+            val sb = async { mirrorUrls(subtitlesFor(magnet, currentFile)) }
+            val au = async { mirrorUrls(externalAudioFor(magnet, currentFile)) }
+            val m = mr.await().getOrNull()
+            val validFollowing = followingFiles.filter { it.link != null }
+            val pl = if (m != null && validFollowing.size > 1) runCatching {
+                val items = JSONArray()
+                validFollowing.forEach { items.put(JSONObject().put("index", it.index).put("link", it.link)) }
+                Api.post("/api/playlist", JSONObject().put("magnetId", t.magnetId).put("title", currentTitle).put("items", items)).optString("url").ifBlank { null }
+            }.getOrNull() else null
+            subs = sb.await()
+            audio = au.await()
+            playlist = pl
+            mirror = m
             direct = d.await().getOrNull()
-            mirror = mr.await().getOrNull()
         }
         sub = if (mirror != null || direct != null) tr("library.vyberite_istochnik") else tr("library.ne_udalos_poluchit_ssylki")
-        val sideSubs = subtitlesFor(magnet, currentFile)
-        val sideAudio = externalAudioFor(magnet, currentFile)
-        if (sideSubs.isNotEmpty()) subs = mirrorUrls(sideSubs)
-        if (sideAudio.isNotEmpty()) audio = mirrorUrls(sideAudio)
-
-        val validFollowing = followingFiles.filter { it.link != null }
-        if (mirror != null && validFollowing.size > 1) runCatching {
-            val items = JSONArray()
-            validFollowing.forEach { items.put(JSONObject().put("index", it.index).put("link", it.link)) }
-            Api.post("/api/playlist", JSONObject().put("magnetId", t.magnetId).put("title", currentTitle).put("items", items)).optString("url").ifBlank { null }
-        }.onSuccess { playlist = it }
 
         lib.saveEpisode(t.magnetId, currentFile.path)
     }
@@ -427,7 +433,8 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                                 mirrorUrls(aud) to mirrorUrls(sb)
                             } ?: (emptyList<String>() to emptyList())
                         }
-                        onPlay(PlayRequest(url, currentTitle, playlist, subs, keys, audio, if (playlist != null) resolve else null, fromStart, posterQueries = item?.posterQueries.orEmpty()))
+                        onPlay(PlayRequest(url, currentTitle, playlist, subs, keys, audio, if (playlist != null) resolve else null, fromStart,
+                            posterQueries = item?.posterQueries.orEmpty(), startIndex = if (playlist != null) queueStart else 0))
                     },
                     onCopy = { url -> copy(url) }
                 )
@@ -483,7 +490,8 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                                 mirrorUrls(aud) to mirrorUrls(sb)
                             } ?: (emptyList<String>() to emptyList())
                         }
-                        onPlay(PlayRequest(url, currentTitle, playlist, subs, keys, audio, if (playlist != null) resolve else null, fromStart, posterQueries = item?.posterQueries.orEmpty()))
+                        onPlay(PlayRequest(url, currentTitle, playlist, subs, keys, audio, if (playlist != null) resolve else null, fromStart,
+                            posterQueries = item?.posterQueries.orEmpty(), startIndex = if (playlist != null) queueStart else 0))
                     },
                     onCopy = { url -> copy(url) }
                 )

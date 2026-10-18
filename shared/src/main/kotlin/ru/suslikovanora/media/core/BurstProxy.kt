@@ -39,6 +39,7 @@ object BurstProxy {
     @Volatile var capBytes = 96L shl 20
     private const val PROBE_AHEAD = 4L shl 20      // before a window proves to be real playback
     private const val PROBE_LIMIT = 6L shl 20      // read sequentially this far = playback → bursts
+    private const val PROBE_IDLE_MS = 500L         // a probe the player has not read for this long stops at PROBE_AHEAD (a fast network fills the ring in 3 s)
     private const val CHUNK = 256 * 1024
     private const val KEEP_MS = 10 * 60_000L       // a closed film's downloaded part stays on disk this long (back in via «Продолжить»)
     private const val NEAR = 8L shl 20             // a request this close to a window's end joins it (the downloader gets there in a moment)
@@ -788,6 +789,12 @@ object BurstProxy {
                     // Not proven yet (start-up / just after a seek): keep the one open request streaming — reopening it
                     // costs a full round trip through the mirror each time; it stops when VLC leaves or the ring is full.
                     if (ahead >= CAP * 7 / 8) { why = "ring full"; return }
+                    // ...unless the player has stopped taking data here: an external voice-over that is not playing (mpv
+                    // read its header and index and keeps the connection open). 18.10 journal: 8 voice-overs of one episode
+                    // pulled 3–32 MB each in the first 10 s next to the video, only one of them played.
+                    if (!burst() && !held() && ahead >= PROBE_AHEAD && System.currentTimeMillis() - lastReadAt > PROBE_IDLE_MS) {
+                        why = "player idle"; return
+                    }
                     val n = input.read(buf)
                     if (n < 0) {
                         // The answer ended. Real end of the file only when everything up to the size arrived; a bounded answer

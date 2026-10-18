@@ -13,5 +13,7 @@ data class PlayRequest(
     /** «С начала» chosen in the play dialog: ignore the remembered place this time. */
     val fromStart: Boolean = false,
     /** Poster lookups of the film (LibraryItem.posterQueries): its poster goes to the Windows media controls. */
-    val posterQueries: List<String> = emptyList()
+    val posterQueries: List<String> = emptyList(),
+    /** This episode's place in [playlist] (the whole season is there, so «previous» works); [url] and the side files are its. */
+    val startIndex: Int = 0
 )

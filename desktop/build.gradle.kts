@@ -41,7 +41,7 @@ gradle.taskGraph.whenReady {
 }
 
 // One place for the version: the installer, and the app itself (update check) via -Dsuslik.version.
-val appVersion = "2.4.0"
+val appVersion = "2.4.1"
 // Windows Installer takes at most three numbers (2.0.0.1 → 2.0.0); ensure at least 3 parts for WiX (2.2 → 2.2.0)
 val msiVersion = appVersion.split(".").let { parts ->
     when (parts.size) {
@@ -69,6 +69,7 @@ compose.desktop {
             "-Xms32m", "-Xmx384m", "-XX:+UseSerialGC",
             "-XX:MinHeapFreeRatio=10", "-XX:MaxHeapFreeRatio=30",
             "-XX:MaxMetaspaceSize=128m", "-XX:ReservedCodeCacheSize=48m",
+            "-XX:CICompilerCount=2", // fewer JIT threads at start: they compete with the UI thread
             "-Dfile.encoding=UTF-8",
             // Keep idle connections to the site for 3 min (default 30 s): the next reserve burst ~1.5 min later reuses
             // the connection instead of a new TLS handshake (nginx keepalive_timeout 180s, see NGINX-MIRROR.md).

@@ -49,6 +49,7 @@ internal object Gl {
         fun wglGetProcAddress(name: String): Pointer?
         fun wglMakeCurrent(hdc: Pointer?, hglrc: Pointer?): Boolean
         fun wglGetCurrentContext(): Pointer?
+        fun wglGetCurrentDC(): Pointer?
         fun glGenTextures(n: Int, textures: IntArray)
         fun glDeleteTextures(n: Int, textures: IntArray)
         fun glBindTexture(target: Int, texture: Int)
@@ -129,7 +130,27 @@ internal object Gl {
         // SCISSOR, STENCIL, DEPTH, CULL_FACE, BLEND, FRAMEBUFFER_SRGB, DITHER, MULTISAMPLE
         for (c in intArrayOf(0x0C11, 0x0B90, 0x0B71, 0x0B44, 0x0BE2, 0x8DB9, 0x0BD0, 0x809D)) g.glDisable(c)
         g.glColorMask(1, 1, 1, 1)
+        if (ru.suslikovanora.media.desktop.Diag.on) { errors().takeIf { it.isNotEmpty() }?.let { logErrors("before mpv frame", it) }; return }
         for (i in 0 until 16) if (g.glGetError() == 0) break // чужие ошибки mpv иначе припишет себе
+    }
+
+    /**
+     * Suslik Debug: выбрать накопившиеся ошибки GL (не больше [limit]). Skia чистит их циклом «пока не GL_NO_ERROR»;
+     * если драйвер отвечает ошибкой всегда, этот цикл не кончается — так зависало закрытие плеера и окна.
+     */
+    fun errors(limit: Int = 20): String {
+        val g = lib ?: return "no opengl32"
+        val codes = ArrayList<Int>()
+        while (codes.size < limit) { val e = g.glGetError(); if (e == 0) break; codes += e }
+        if (codes.isEmpty()) return ""
+        val text = codes.groupBy { it }.entries.joinToString(" ") { (c, l) -> "0x${c.toString(16)}" + if (l.size > 1) "×${l.size}" else "" }
+        return if (codes.size >= limit) "$text … endless" else text
+    }
+
+    private var errorLines = 0
+    /** Не больше 100 строк за запуск: бесконечные ошибки иначе забьют журнал. */
+    fun logErrors(where: String, text: String) {
+        if (errorLines++ < 100) PlayerLog.write("[gl] errors $where: $text")
     }
 }
 
@@ -153,6 +174,16 @@ class SkikoGl private constructor(
         val gl = Gl.lib ?: return false
         if (gl.wglGetCurrentContext() == hglrc) return true
         return gl.wglMakeCurrent(hdc, hglrc)
+    }
+
+    /** Suslik Debug: какой GL-контекст сейчас текущий на этом потоке и какие ошибки GL в нём накопились. */
+    fun probe(): String {
+        val g = Gl.lib ?: return "no opengl32"
+        val cur = g.wglGetCurrentContext()
+        val who = when (cur) { null -> "none"; hglrc -> "ours"; else -> "other $cur" }
+        val dc = g.wglGetCurrentDC().let { if (it == null) "none" else if (it == hdc) "ours" else "other $it" }
+        val errors = Gl.errors().ifEmpty { "none" } // и без контекста: ровно это видит Skia в зависшем цикле
+        return "context=$who dc=$dc skikoSame=$valid errors=$errors"
     }
 
     companion object {
@@ -272,6 +303,7 @@ class MpvVideoOut(private val gl: SkikoGl) {
         Native.setCallbackThreadInitializer(onUpdate, CallbackThreadInitializer(true, false, "mpv-video-update"))
         api.mpv_render_context_set_update_callback(ref.value, onUpdate, null)
         live += this
+        lastGl = gl
         PlayerLog.write("[video] mpv draws inside the window (OpenGL, one surface)")
         if (watchOn) stallWatch.start()
         return true
@@ -362,6 +394,7 @@ class MpvVideoOut(private val gl: SkikoGl) {
         gl.context.resetGLAll()
         Gl.defaultsForMpv()
         val rc = a.mpv_render_context_render(c, renderParams)
+        if (ru.suslikovanora.media.desktop.Diag.on) Gl.errors().takeIf { it.isNotEmpty() }?.let { Gl.logErrors("after mpv frame $frames", it) }
         leaveGl() // mpv менял состояние GL, которое Skia держит у себя в кеше
         if (rc < 0) { PlayerLog.write("[video] render: ${a.mpv_error_string(rc)}"); return }
         if (targetZeroCopy) {
@@ -491,6 +524,7 @@ class MpvVideoOut(private val gl: SkikoGl) {
         val wasValid = !disposed || gl.valid
         disposed = true
         var ctxFreed = ctx == null
+        probe("dispose: start")
         try {
             val c = ctx
             val a = api
@@ -500,10 +534,15 @@ class MpvVideoOut(private val gl: SkikoGl) {
                     a.mpv_render_context_set_update_callback(c, null, null)
                     a.mpv_render_context_free(c)
                     ctxFreed = true
+                    probe("dispose: render context freed")
                 }
                 releaseTarget() // и буфер окна снова привязан
             }
             image?.close(); image = null
+            // Слой с видео ещё держит свою запись кадра (ссылку на ту же текстуру). Перерисовка без кадра отпускает
+            // её, пока GL-контекст окна жив; иначе текстуру освобождает закрытие окна уже без контекста (см. [disposeAll]).
+            frame.value = frames + 1
+            probe("dispose: done")
         } catch (e: Throwable) {
             PlayerLog.write("[video] dispose: $e")
         } finally {
@@ -522,14 +561,41 @@ class MpvVideoOut(private val gl: SkikoGl) {
      */
     fun awaitFreed(ms: Long): Boolean = freed.await(ms, TimeUnit.MILLISECONDS) && !leftAlive
 
+    /** Suslik Debug, поток интерфейса: состояние GL-контекста в журнал ([gl]). */
+    private fun probe(where: String) {
+        if (!ru.suslikovanora.media.desktop.Diag.on) return
+        runCatching { PlayerLog.write("[gl] $where: ${gl.probe()} · frames=$frames noCopy=$targetZeroCopy") }
+            .onFailure { PlayerLog.write("[gl] $where: probe failed: $it") }
+    }
+
     companion object {
         private val live = java.util.concurrent.CopyOnWriteArraySet<MpvVideoOut>()
+        /** Контекст последнего вывода: проба после того, как вывод уже освобождён (закрытие плеера и окна). */
+        @Volatile private var lastGl: SkikoGl? = null
+
+        /**
+         * Suslik Debug, поток интерфейса: состояние GL-контекста окна в журнал. Зовётся перед тем, как Compose убирает
+         * слой с видео: в этот момент Skia освобождает ресурсы видео и может зависнуть в цикле glGetError.
+         */
+        fun probeGl(where: String) {
+            if (!ru.suslikovanora.media.desktop.Diag.on) return
+            val g = lastGl ?: run { PlayerLog.write("[gl] $where: no mpv video this run"); return }
+            runCatching { PlayerLog.write("[gl] $where: ${g.probe()} · outputs=${live.size}") }
+                .onFailure { PlayerLog.write("[gl] $where: probe failed: $it") }
+        }
 
         /**
          * Поток интерфейса, перед закрытием окна. Compose при закрытии сначала снимает SkiaLayer с окна (Skiko тут же
          * удаляет свой GL-контекст) и только потом разбирает композицию, так что dispose из onDispose опаздывает.
          */
         fun disposeAll() = live.forEach { it.dispose() }
+
+        /**
+         * Видео в окне есть. Тогда закрывать окно можно только после кадра без видео: Compose снимает слой Skiko
+         * (и его GL-контекст) раньше, чем освобождает записи слоёв, а запись с кадром mpv держит текстуру на видеокарте.
+         * Освобождение её без контекста — Skia бесконечно чистит ошибки GL (glGetError), окно не закрывается.
+         */
+        val anyLive: Boolean get() = live.isNotEmpty()
     }
 }
 

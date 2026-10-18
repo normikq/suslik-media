@@ -45,7 +45,30 @@ object Diag {
             "${System.getProperty("os.name")} ${System.getProperty("os.version")} · Java ${System.getProperty("java.version")} · " +
             "${Runtime.getRuntime().availableProcessors()} CPU")
         exec.scheduleWithFixedDelay({ runCatching { tick() }.onFailure { e -> if (!tickFailed) { tickFailed = true; PlayerLog.write("[diag] journal tick failed: $e") } } }, 2, 1, TimeUnit.SECONDS)
+        uiHangWatch.start()
     }
+
+    /**
+     * Поток интерфейса не отвечает дольше 3 с — в журнал, где он стоит (раз за зависание), и сколько уже длится.
+     * Так видно зависания и без снимка потоков (Skia в цикле glGetError при закрытии плеера и окна).
+     */
+    private val uiHangWatch = Thread({
+        var edt: Thread? = null
+        javax.swing.SwingUtilities.invokeLater { edt = Thread.currentThread() }
+        while (true) {
+            val t0 = System.nanoTime()
+            val done = java.util.concurrent.CountDownLatch(1)
+            javax.swing.SwingUtilities.invokeLater { done.countDown() }
+            if (!done.await(3, TimeUnit.SECONDS)) {
+                val where = edt?.stackTrace?.take(30)?.joinToString(" < ") { "${it.className.substringAfterLast('.')}.${it.methodName}:${it.lineNumber}" }
+                PlayerLog.write("[ui] UI thread stuck > 3 s (${edt?.state}) at $where")
+                var waited = 3
+                while (!done.await(30, TimeUnit.SECONDS)) { waited += 30; PlayerLog.write("[ui] UI thread still stuck after $waited s") }
+                PlayerLog.write("[ui] UI thread free again after ${(System.nanoTime() - t0) / 1_000_000} ms")
+            }
+            Thread.sleep(1000)
+        }
+    }, "ui-hang-watch").apply { isDaemon = true }
 
     fun mark(where: String): Int {
         val n = synchronized(this) { ++marks }
