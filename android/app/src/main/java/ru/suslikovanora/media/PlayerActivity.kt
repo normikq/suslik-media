@@ -119,8 +119,11 @@ class PlayerActivity : ComponentActivity() {
             // Media3 keeps 30–90 s loaded and retries its own requests on a new connection: like the reserve, a network
             // switch alone does not reopen the film (it would throw that buffer away).
             override fun isViaReserve(): Boolean = viaReserve() || player?.kind == EngineKind.MEDIA3
+            // VLC that ran dry while offline stays stopped until reopened. Media3 only waits for data (its loader
+            // retries, the reserve resumes by itself): reopening it re-reads the file's header from the start and
+            // throws its buffer away (journal 18.10) — only after a real Media3 error (needsReload).
             override fun shouldReconnectViaReserve(wasLost: Boolean): Boolean =
-                wasLost && (needsReload || (!ended && player?.isPlaying != true && !userPaused))
+                wasLost && (needsReload || (player?.kind != EngineKind.MEDIA3 && !ended && player?.isPlaying != true && !userPaused))
             override fun onScheduleReconnect(delayMs: Long) {
                 retryCount = 0
                 reconnectScheduled = true
@@ -1535,11 +1538,12 @@ class PlayerActivity : ComponentActivity() {
         handler.removeCallbacks(idleReleaseRunnable)
         val away = SystemClock.elapsedRealtime() - stoppedAt // elapsedRealtime: the phone sleeps while locked, uptime stops then
         when {
-            keptOnStop && player != null && away < FAST_RESUME_MS && networkMonitor.activeNetwork() == networkAtStop -> resumeAfterStop()
+            keptOnStop && player != null && (player?.kind == EngineKind.MEDIA3 ||
+                away < FAST_RESUME_MS && networkMonitor.activeNetwork() == networkAtStop) -> resumeAfterStop()
             keptOnStop && player != null -> {
                 // Away longer: the server / the phone's network has most likely dropped the paused connection, and
                 // VLC waits on such a dead socket forever (the endless "0 %" / "Переподключение" loop). Start clean
-                // from the same moment instead.
+                // from the same moment instead. Media3 reconnects by itself: it always just continues (above).
                 keptOnStop = false; videoParked = false
                 restartClean(play = playOnStart)
             }
