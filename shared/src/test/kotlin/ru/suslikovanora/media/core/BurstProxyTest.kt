@@ -74,7 +74,7 @@ class BurstProxyTest {
         BurstProxy.capBytes = 16L shl 20 // smaller than the file: the ring wraps around
     }
     // a failed offline test must not leave the next ones without a network (they would download nothing)
-    @AfterTest fun stop() { BurstProxy.dropAll(); if (!BurstProxy.isNetworkOnline) BurstProxy.networkChanged(); origin.stop(0) }
+    @AfterTest fun stop() { BurstProxy.dropAll(); BurstProxy.recentMs = 10_000L;if (!BurstProxy.isNetworkOnline) BurstProxy.networkChanged(); origin.stop(0) }
 
     private fun get(local: String, range: String?): Pair<Int, ByteArray> {
         val c = URL(local).openConnection(java.net.Proxy.NO_PROXY) as HttpURLConnection
@@ -264,6 +264,30 @@ class BurstProxyTest {
         Thread.sleep(5)
         BurstProxy.clear()                                   // and closed once more (another screen, onDestroy)
         assertEquals(a, BurstProxy.wrap(addr(2)))            // still kept on disk
+    }
+
+    @Test fun openingAnotherFilmDropsTheClosedOne() {
+        fun addr(link: String) = "https://origin.test/film.mkv?link=$link&exp=1&sig=s"
+        val a = BurstProxy.wrap(addr("L1"))
+        get(a, "bytes=0-99999")
+        BurstProxy.clear()                                   // the player is closed: kept on disk
+        assertTrue(BurstProxy.diskBytes() > 0)
+        BurstProxy.keepOnly(listOf(addr("L2")))              // another film is opened
+        assertEquals(0L, BurstProxy.diskBytes())
+        assertTrue(a != BurstProxy.wrap(addr("L1")))         // the closed one starts from nothing
+    }
+
+    @Test fun theFilmStaysWithinTheReserveSetting() {
+        BurstProxy.recentMs = 0                              // no grace period after a seek
+        slowOrigin = true                                    // ~2 MB/s: the first window does not reach the seek by itself
+        val local = BurstProxy.wrap(url)
+        get(local, "bytes=0-7999999")                        // playback from the start
+        get(local, "bytes=30000000-38999999")                // a seek far ahead: a second window, 8 + 9 MB > 16 MB
+        Thread.sleep(500)
+        slowOrigin = false
+        val snap = BurstProxy.snapshot()
+        assertTrue("@0MB" !in snap, snap)                    // the place the player left went
+        assertTrue(BurstProxy.diskBytes() <= 16L shl 20, "disk ${BurstProxy.diskBytes()}: $snap")
     }
 
     @Test fun anExpiredSignatureIsRenewedInsteadOfFailing() {

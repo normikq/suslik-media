@@ -31,17 +31,17 @@ import java.util.concurrent.atomic.AtomicLong
  * are both read from disk at the same speed, so after a seek or pause they start together instead of drifting.
  *
  * Seeks are cheap: a request far from what is already downloaded opens a new "window" at that place (short probe
- * reads, e.g. MKV indexes at the end of a file, are served without bursting). Disk use is capped per window.
+ * reads, e.g. MKV indexes at the end of a file, are served without bursting). Disk use is capped per film: all its
+ * windows and voice-overs together stay within [capBytes] (see [trimToBudget]).
  */
 object BurstProxy {
     private const val MAX_WINDOWS = 3              // per stream (the film + a far seek / index read; the film's window is never evicted)
-    /** Reserve per window (ring file), from «Настройки → Экономная загрузка»; 0 = off (VLC reads directly). */
+    /** Disk the playing film may take (all windows and voice-overs together), from «Настройки»; 0 = off (the player reads directly). */
     @Volatile var capBytes = 96L shl 20
     private const val PROBE_AHEAD = 4L shl 20      // before a window proves to be real playback
     private const val PROBE_LIMIT = 6L shl 20      // read sequentially this far = playback → bursts
     private const val PROBE_IDLE_MS = 500L         // a probe the player has not read for this long stops at PROBE_AHEAD (a fast network fills the ring in 3 s)
     private const val CHUNK = 256 * 1024
-    private const val KEEP_MS = 10 * 60_000L       // a closed film's downloaded part stays on disk this long (back in via «Продолжить»)
     private const val NEAR = 8L shl 20             // a request this close to a window's end joins it (the downloader gets there in a moment)
     private const val NEAR_MIN = 1L shl 20         // ...but at most what the network brings in NEAR_SEC (see Source.near)
     private const val NEAR_SEC = 1.5
@@ -56,7 +56,11 @@ object BurstProxy {
     private val pool = Executors.newCachedThreadPool { r -> Thread(r, "burst-proxy").apply { isDaemon = true; priority = Thread.NORM_PRIORITY - 1 } }
     private val sources = ConcurrentHashMap<String, Source>()   // token -> source
     private val byUrl = ConcurrentHashMap<String, String>()     // stable key of the url (see keyOf) -> token
-    private val sweeper by lazy { java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "burst-sweep").apply { isDaemon = true } } }
+    // The film's own files besides the video (voice-overs, subtitles; see keepOnly): a small ring each, cut from capBytes.
+    @Volatile private var sideKeys: Set<String> = emptySet()
+    /** Over the limit, a window the player read this recently (counted from the film's last read) still stays. */
+    @Volatile internal var recentMs = 10_000L
+    private val trimLock = Any()
 
     /** Bytes fetched from the mirror since the process started (all windows), and a hook for the apps' traffic meter. */
     val downloaded = AtomicLong()
@@ -183,7 +187,8 @@ object BurstProxy {
         if (!url.startsWith("https://")) return url
         val cap = capBytes
         if (cap <= 0) return url
-        if (runCatching { d.usableSpace }.getOrDefault(0L) < (cap * MAX_WINDOWS + (300L shl 20))) return url
+        // The reserve's own files (the film closed before) make room for the new one: see keepOnly.
+        if (runCatching { d.usableSpace }.getOrDefault(0L) + diskBytes(d) < cap + (300L shl 20)) return url
         val s = ensureServer() ?: return url
         val key = keyOf(url)
         val token = byUrl.getOrPut(key) {
@@ -201,17 +206,25 @@ object BurstProxy {
     }
 
     /**
-     * Streams that are no longer needed (another episode, player closed). Their downloaded part is not thrown away at
-     * once: it stays on disk for [KEEP_MS] (nothing is downloaded meanwhile), so «Продолжить» right after leaving the player
-     * reads it from disk instead of fetching the same place again. Only the last closed film is kept.
+     * The files of the film being opened now ([urls]: the video first, then its voice-overs and subtitles): every other
+     * stream goes at once, also the closed film still kept on disk. The disk holds one film, within [capBytes].
+     *
+     * Empty [urls] (the player is closed, see [clear]): the film's downloaded part stays on disk (nothing is downloaded
+     * meanwhile), so «Продолжить» reads it from disk instead of fetching the same place again. It stays until another
+     * film is opened, «Очистить кэш» or the app exits. Only the last closed film is kept.
      */
     fun keepOnly(urls: Collection<String>) {
-        val keep = urls.map { keyOf(it) }.toSet()
+        if (urls.isNotEmpty()) {
+            val keys = urls.map { keyOf(it) }
+            sideKeys = keys.drop(1).toSet() - keys.first()
+            val keep = keys.toSet()
+            for ((key, token) in byUrl.entries.toList()) if (key !in keep) { byUrl.remove(key); sources.remove(token)?.close() }
+            return
+        }
         val stamp = System.currentTimeMillis()
-        var retired = false
-        for ((key, token) in byUrl.entries.toList()) if (key !in keep) {
+        for (token in byUrl.values.toList()) {
             val src = sources[token] ?: continue
-            if (src.retiredAt == 0L) { src.retiredAt = stamp; retired = true; src.windows.forEach { it.kick() } } // a closed film stops downloading at once
+            if (src.retiredAt == 0L) { src.retiredAt = stamp; src.windows.forEach { it.kick() } } // a closed film stops downloading at once
         }
         // Older closed films go now: one is enough, the disk is the phone's. The last one closed stays, also when
         // keepOnly is called again with nothing new to close (clear() right after keepOnly() used to drop it).
@@ -220,18 +233,37 @@ object BurstProxy {
             val src = sources[token] ?: continue
             if (src.retiredAt != 0L && src.retiredAt < newest) { byUrl.remove(key); sources.remove(token)?.close() }
         }
-        if (retired) runCatching { sweeper.schedule({ sweep() }, KEEP_MS + 1000, TimeUnit.MILLISECONDS) }
     }
 
-    private fun sweep() {
-        val now = System.currentTimeMillis()
-        for ((key, token) in byUrl.entries.toList()) {
-            val src = sources[token] ?: continue
-            if (src.retiredAt != 0L && now - src.retiredAt >= KEEP_MS) { byUrl.remove(key); sources.remove(token)?.close() }
+    /**
+     * Keeps the disk within [capBytes]: over it, the windows read longest ago go whole (a place the player left: an
+     * earlier part of the film before a seek, a voice-over switched off, the closed film). Never the window being read,
+     * the video's current one (its reserve, also while paused) or one read within [recentMs] of the film's last read
+     * (seeks back and forth right after a jump still find their data). 18.10 journal: three windows of 256 + 171 +
+     * 162 MB with «256 MB» set.
+     */
+    private fun trimToBudget() {
+        val budget = capBytes
+        if (budget <= 0) return
+        synchronized(trimLock) {
+            val all = sources.values.flatMap { s -> s.windows.map { s to it } }
+            var used = all.sumOf { it.second.diskBytes() }
+            if (used <= budget) return
+            val filmLast = all.filter { it.first.retiredAt == 0L }.maxOfOrNull { it.second.lastReadAt } ?: 0L
+            fun stays(s: Source, w: Window) =
+                s.retiredAt == 0L && (w.readers > 0 || filmLast - w.lastReadAt < recentMs || (!s.side() && w === s.current()))
+            for ((s, w) in all.filterNot { (s, w) -> stays(s, w) }.sortedBy { it.second.lastReadAt }) {
+                if (used <= budget) break
+                val freed = w.diskBytes()
+                synchronized(s) { s.windows.remove(w) }
+                w.close()
+                used -= freed
+                log("reserve: window at ${w.start shr 20} MB dropped (${freed shr 20} MB): the film's reserve is limited to ${budget shr 20} MB")
+            }
         }
     }
 
-    /** The player is closed: keep what was downloaded for a while (see [keepOnly]). */
+    /** The player is closed: keep what was downloaded until another film is opened (see [keepOnly]). */
     fun clear() = keepOnly(emptyList())
 
     /**
@@ -262,6 +294,7 @@ object BurstProxy {
     /** Throw everything away now (a clean restart after a problem, the app exits). */
     fun dropAll() {
         for ((key, token) in byUrl.entries.toList()) { byUrl.remove(key); sources.remove(token)?.close() }
+        sideKeys = emptySet()
     }
 
     /**
@@ -405,6 +438,17 @@ object BurstProxy {
 
     // ---- one stream (one original URL) ----------------------------------------------------------
     private class Source(val token: String, @Volatile var url: String) {
+        val key = keyOf(url) // the same across new signatures
+        /** A voice-over / subtitles of the film, not its video (see keepOnly): a small ring. */
+        fun side() = key in sideKeys
+        /** Ring size of a new window: the video gets [capBytes] minus what one side file may take. */
+        fun ringCap(): Long {
+            val cap = capBytes
+            val sides = sideKeys
+            if (sides.isEmpty()) return cap.coerceAtLeast(16L shl 20)
+            val side = (cap / 8).coerceIn(8L shl 20, 32L shl 20)
+            return if (key in sides) side else (cap - side).coerceAtLeast(16L shl 20)
+        }
         @Volatile var total = -1L
         @Volatile var type = "application/octet-stream"
         @Volatile var broken = false
@@ -419,7 +463,7 @@ object BurstProxy {
         // how fast the network delivered the last bursts (bytes/s): a slow one never gets the short start-up reserve
         @Volatile var netRate = 0.0
         fun addNetSample(v: Double) { netRate = if (netRate <= 0) v else netRate * 0.5 + v * 0.5 }
-        @Volatile var retiredAt = 0L // the player left; kept on disk until then + KEEP_MS (0 = in use)
+        @Volatile var retiredAt = 0L // the player left; kept on disk until another film is opened (0 = in use)
         fun keptMb(): Long = windows.sumOf { it.written.coerceAtMost(it.cap()) } shr 20
 
         // The last TAIL_CACHE bytes of the file, kept as one run that was really received in order ([tailRunStart] until [tailRunEnd]).
@@ -465,7 +509,7 @@ object BurstProxy {
         }
 
         @Synchronized fun windowFor(pos: Long): Window {
-            windowAt(pos)?.let { return it }
+            windowAt(pos)?.let { it.lastReadAt = System.currentTimeMillis(); return it } // read at once: trimToBudget leaves it
             // A little before data that is already here: VLC looking for a keyframe after a seek back steps ~1.5 MB
             // backwards again and again. Each step used to open a whole new window — a new request to the mirror that
             // pulled 6–11 MB forward (data already on the phone) before VLC stepped back again: 12.10, 31 requests and
@@ -484,7 +528,7 @@ object BurstProxy {
                 full.filter { it !== main }.minByOrNull { it.lastReadAt }?.let { windows.remove(it); it.close() }
             }
             log("reserve: new window at ${pos / 1048576} MB of ${url.substringBefore('?').substringAfterLast('/')}")
-            return Window(this, pos).also { windows += it; pool.execute { it.download() } }
+            return Window(this, pos).also { windows += it; pool.execute { trimToBudget(); it.download() } }
         }
 
         /** The window that already holds [pos] (or gets there in a moment); a bridge only below its end. */
@@ -513,7 +557,7 @@ object BurstProxy {
     /** [limit] ≥ 0: a bridge — fetches only [start] until [limit] (where another window's data begins), then stops. */
     private class Window(val src: Source, val start: Long, val limit: Long = -1L) {
         fun usable() = error == null && !closed
-        private val CAP = capBytes.coerceAtLeast(16L shl 20) // fixed for this window's life
+        private val CAP = src.ringCap() // fixed for this window's life
         private val file = File(dir, "${ids.incrementAndGet()}.bin")
         private val raf = RandomAccessFile(file, "rw")
         var written = 0L            // bytes from [start] available (contiguous)
@@ -566,6 +610,7 @@ object BurstProxy {
 
         fun end() = start + written
         fun cap() = CAP
+        fun diskBytes() = written.coerceAtMost(CAP)
         fun describe(now: Long): String {
             val state = when {
                 closed -> "closed"; error != null -> "error($error)"; eof -> "eof"
@@ -836,6 +881,7 @@ object BurstProxy {
                         written += n
                         lock.notifyAll()
                     }
+                    trimToBudget()
                 }
                 why = "closed"
             } } finally {
