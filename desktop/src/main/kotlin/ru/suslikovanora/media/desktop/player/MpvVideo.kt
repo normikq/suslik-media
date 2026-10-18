@@ -59,6 +59,7 @@ internal object Gl {
         fun glPixelStorei(pname: Int, param: Int)
         fun glDisable(cap: Int)
         fun glColorMask(r: Byte, g: Byte, b: Byte, a: Byte)
+        fun glGetTexLevelParameteriv(target: Int, level: Int, pname: Int, out: IntArray)
     }
 
     const val TEXTURE_2D = 0x0DE1
@@ -97,6 +98,13 @@ internal object Gl {
     fun bindFramebuffer(id: Int) = fn("glBindFramebuffer").invokeVoid(arrayOf(FRAMEBUFFER, id))
     fun framebufferTexture(tex: Int) = fn("glFramebufferTexture2D").invokeVoid(arrayOf(FRAMEBUFFER, COLOR_ATTACHMENT0, TEXTURE_2D, tex, 0))
     fun framebufferStatus(): Int = fn("glCheckFramebufferStatus").invokeInt(arrayOf(FRAMEBUFFER))
+    /** Текстура на COLOR_ATTACHMENT0 привязанного кадрового буфера (0 — не текстура). */
+    fun attachedTexture(): Int {
+        val f = fn("glGetFramebufferAttachmentParameteriv")
+        val type = IntArray(1).also { f.invokeVoid(arrayOf(FRAMEBUFFER, COLOR_ATTACHMENT0, 0x8CD0 /* OBJECT_TYPE */, it)) }[0]
+        if (type != 0x1702 /* TEXTURE */) return 0
+        return IntArray(1).also { f.invokeVoid(arrayOf(FRAMEBUFFER, COLOR_ATTACHMENT0, 0x8CD1 /* OBJECT_NAME */, it)) }[0]
+    }
 
     /**
      * Состояние GL по умолчанию перед кадром mpv. Skia оставляет свои объекты-сэмплеры на текстурных блоках, буфер
@@ -198,10 +206,14 @@ class MpvVideoOut(private val gl: SkikoGl) {
 
     private var api: MpvApi? = null
     private var ctx: Pointer? = null
-    private var tex = 0
-    private var fbo = 0
+    private var tex = 0          // своя текстура (только путь с копией)
+    private var fbo = 0          // кадровый буфер, в который рисует mpv
     private var texW = 0
     private var texH = 0
+    // Без копии: mpv рисует прямо в текстуру поверхности Skia, а [image] — её снимок, который делит с ней текстуру.
+    // Не вышло (другой драйвер или версия Skia) — прежний путь: своя текстура и копия кадра в картинку Skia.
+    private var zeroCopy = System.getenv("SUSLIK_VIDEO_COPY") == null
+    private var targetZeroCopy = false
     private var surface: Surface? = null
     private var wantW = 0
     private var wantH = 0
@@ -342,14 +354,21 @@ class MpvVideoOut(private val gl: SkikoGl) {
         val h = wantH.coerceAtLeast(16)
         if (!ensureTarget(w, h)) { leaveGl(); return }
         fboParam.setInt(0, fbo); fboParam.setInt(4, w); fboParam.setInt(8, h); fboParam.setInt(12, Gl.RGBA8)
-        // mpv пишет в буфер мимо Skia: без этого Skia считает его неизменным и отдаёт прошлый снимок
-        // (был один и тот же кадр — первый после изменения размера, часто чёрный)
-        surface?.notifyContentWillChange(ContentChangeMode.RETAIN)
+        // Путь с копией: mpv пишет в буфер мимо Skia — без этого Skia считает его неизменным и отдаёт прошлый снимок.
+        // Без копии этого не нужно: снимок и есть та же текстура, а Skia в неё сама не пишет.
+        if (!targetZeroCopy) surface?.notifyContentWillChange(ContentChangeMode.RETAIN)
         gl.context.resetGLAll()
         Gl.defaultsForMpv()
         val rc = a.mpv_render_context_render(c, renderParams)
         leaveGl() // mpv менял состояние GL, которое Skia держит у себя в кеше
         if (rc < 0) { PlayerLog.write("[video] render: ${a.mpv_error_string(rc)}"); return }
+        if (targetZeroCopy) {
+            frames++
+            frame.value = frames
+            if (frames == 1L || frames == 300L) PlayerLog.write("[video] frame $frames shown (${w}x$h, no copy)")
+            image?.let { if (dumpDir != null) dump(it) }
+            return
+        }
         val snap = runCatching { surface?.makeImageSnapshot() }
             .onFailure { if (frames == 0L) PlayerLog.write("[video] snapshot failed: $it") }.getOrNull()
         gl.context.flush()
@@ -364,9 +383,15 @@ class MpvVideoOut(private val gl: SkikoGl) {
     }
 
     private fun ensureTarget(w: Int, h: Int): Boolean {
-        if (tex != 0 && texW == w && texH == h) return true
+        if (fbo != 0 && texW == w && texH == h) return true
         releaseTarget()
         reallocs++
+        if (zeroCopy) {
+            if (ensureSkiaTarget(w, h)) return true
+            zeroCopy = false
+            releaseTarget()
+            PlayerLog.write("[video] no-copy output unavailable: copying frames")
+        }
         val g = Gl.lib ?: return false
         return runCatching {
             val ids = IntArray(1)
@@ -393,11 +418,45 @@ class MpvVideoOut(private val gl: SkikoGl) {
         }.onFailure { PlayerLog.write("[video] target ${w}x$h: $it"); releaseTarget() }.getOrDefault(false)
     }
 
+    /**
+     * Поверхность Skia с собственной текстурой; mpv рисует в её кадровый буфер. Skia его номер не сообщает: очищаем
+     * поверхность и берём буфер, который Skia для этого привязала, и проверяем, что к нему прикреплена текстура
+     * нашего размера. Снимок поверхности (картинка для Compose) делит с ней ту же текстуру — копии нет.
+     */
+    private fun ensureSkiaTarget(w: Int, h: Int): Boolean = runCatching {
+        val g = Gl.lib ?: error("no opengl32")
+        val info = org.jetbrains.skia.ImageInfo(w, h, org.jetbrains.skia.ColorType.RGBA_8888, org.jetbrains.skia.ColorAlphaType.PREMUL, ColorSpace.sRGB)
+        val s = Surface.makeRenderTarget(gl.context, false, info, 0, SurfaceOrigin.TOP_LEFT, null)
+        surface = s
+        s.canvas.clear(0xFF000000.toInt())
+        gl.context.flush()
+        val fb = IntArray(1).also { g.glGetIntegerv(0x8CA6 /* DRAW_FRAMEBUFFER_BINDING */, it) }[0]
+        if (fb == 0) error("Skia left no framebuffer bound")
+        val t = Gl.attachedTexture()
+        if (t == 0) error("framebuffer $fb has no texture")
+        g.glBindTexture(Gl.TEXTURE_2D, t)
+        val tw = IntArray(1).also { g.glGetTexLevelParameteriv(Gl.TEXTURE_2D, 0, 0x1000 /* WIDTH */, it) }[0]
+        val th = IntArray(1).also { g.glGetTexLevelParameteriv(Gl.TEXTURE_2D, 0, 0x1001 /* HEIGHT */, it) }[0]
+        if (tw != w || th != h) error("texture $t is ${tw}x$th, want ${w}x$h")
+        leaveGl()
+        val snap = s.makeImageSnapshot()
+        image?.close()
+        image = snap
+        fbo = fb; texW = w; texH = h
+        targetZeroCopy = true
+        if (frames == 0L) PlayerLog.write("[video] no-copy output: mpv draws into Skia's texture (framebuffer $fb)")
+        true
+    }.onFailure { PlayerLog.write("[video] no-copy target ${w}x$h: $it"); leaveGl() }.getOrDefault(false)
+
     private fun releaseTarget() {
         surface?.close(); surface = null
-        if (fbo != 0) runCatching { Gl.deleteFramebuffer(fbo) }
-        if (tex != 0) runCatching { Gl.lib?.glDeleteTextures(1, intArrayOf(tex)) }
+        // Без копии буфер и текстура принадлежат Skia — она удалит их вместе с поверхностью
+        if (!targetZeroCopy) {
+            if (fbo != 0) runCatching { Gl.deleteFramebuffer(fbo) }
+            if (tex != 0) runCatching { Gl.lib?.glDeleteTextures(1, intArrayOf(tex)) }
+        }
         fbo = 0; tex = 0; texW = 0; texH = 0
+        targetZeroCopy = false
         leaveGl()
     }
 
@@ -405,6 +464,7 @@ class MpvVideoOut(private val gl: SkikoGl) {
     private val dumpDir: java.io.File? = System.getenv("SUSLIK_VIDEO_DUMP")?.takeIf { it.isNotBlank() && it != "0" }
         ?.let { java.io.File(System.getProperty("java.io.tmpdir"), "suslik-video").apply { mkdirs() } }
     private var lastDump = 0L
+    private val dumpTag = java.text.SimpleDateFormat("HHmmss").format(java.util.Date())
 
     private fun dump(img: Image) {
         val now = System.currentTimeMillis()
@@ -415,7 +475,7 @@ class MpvVideoOut(private val gl: SkikoGl) {
             bmp.allocPixels(org.jetbrains.skia.ImageInfo.makeN32Premul(img.width, img.height))
             val ok = img.readPixels(gl.context, bmp, 0, 0)
             leaveGl()
-            val f = java.io.File(dumpDir, "frame-%06d.png".format(frames))
+            val f = java.io.File(dumpDir, "%s-frame-%06d.png".format(dumpTag, frames))
             Thread({ // сжатие PNG — не на потоке интерфейса (иначе окно замирает)
                 runCatching { f.writeBytes((Image.makeFromBitmap(bmp).encodeToData() ?: error("encode")).bytes) }
                 PlayerLog.write("[video] dump ${f.name} ${img.width}x${img.height} read=$ok")

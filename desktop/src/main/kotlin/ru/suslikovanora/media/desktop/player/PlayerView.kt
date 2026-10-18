@@ -946,6 +946,8 @@ fun PlayerView(
                 if (pausedAt == 0L) supRef.get()?.playing()
                 if (!prefsApplied) {
                     prefsApplied = true
+                    // mpv: кодек, декодер и формат кадра каждого файла — в журнал (через 2 с, когда декодер выбран)
+                    if (eng != null) scope.launch { delay(2000); vlcAwait(1500) { eng.statsLine() }?.let { PlayerLog.write(it) } }
                     prefsUntil = System.currentTimeMillis() + 8_000L
                     schedulePrefs(300)
                     ensureAudioJob?.cancel()

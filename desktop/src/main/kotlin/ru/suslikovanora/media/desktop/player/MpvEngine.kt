@@ -371,6 +371,7 @@ class MpvEngine(
         fun g(n: String) = str(n) ?: "?"
         return "[mpv] ${"%.1f".format(java.util.Locale.ROOT, timeSec)}/${lengthSec.toInt()}s " +
             "video=${g("video-codec")} hw=${g("hwdec-current")} vo=${g("current-vo")} ${g("video-params/w")}x${g("video-params/h")} " +
+            "fmt=${g("video-params/hw-pixelformat").takeIf { it != "?" } ?: g("video-params/pixelformat")} ${g("video-params/gamma")}/${g("video-params/primaries")} " +
             "audio=${g("audio-codec-name")} drop=${g("frame-drop-count")} vo-drop=${g("vo-delayed-frame-count")} " +
             "cache=${g("demuxer-cache-duration")}s"
     }
