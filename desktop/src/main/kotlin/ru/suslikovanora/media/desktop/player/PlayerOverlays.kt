@@ -189,7 +189,10 @@ fun PlayerBottomBar(
     onWindowDragStart: () -> Unit = {},
     onWindowDragMove: () -> Unit = {},
     onWindowDragEnd: () -> Unit = {},
-    onVolumeWheel: (Float) -> Unit
+    onVolumeWheel: (Float) -> Unit,
+    // Высота нижней полосы, которая ловит клики мимо кнопок; null — вся панель (окно-оверлей VLC и мини-плеер).
+    // В сцене mpv клики выше полосы уходят к видео (пауза, двойной клик, колесо громкости).
+    inputHeight: androidx.compose.ui.unit.Dp? = null
 ) {
     val controlsAlpha = if (closing) 0f else (1f - barSlide).coerceIn(0f, 1f)
     var hoverAt by remember { mutableStateOf<Long?>(null) }
@@ -218,17 +221,7 @@ fun PlayerBottomBar(
             isCompact -> 44.dp
             else -> 48.dp
         }
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .then(
-                    if (!mini) {
-                        Modifier.graphicsLayer {
-                            translationY = barSlide * 300.dp.toPx()
-                            alpha = controlsAlpha
-                        }
-                    } else Modifier
-                )
+        val input = Modifier
                 .pointerHoverIcon(PointerIcon.Default)
                 .pointerInput(mini) {
                     awaitPointerEventScope {
@@ -297,7 +290,20 @@ fun PlayerBottomBar(
                         }
                     }
                 }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .then(
+                    if (!mini) {
+                        Modifier.graphicsLayer {
+                            translationY = barSlide * 300.dp.toPx()
+                            alpha = controlsAlpha
+                        }
+                    } else Modifier
+                )
+                .then(if (inputHeight == null) input else Modifier)
         ) {
+            if (inputHeight != null) Box(Modifier.fillMaxWidth().height(inputHeight).align(Alignment.BottomCenter).then(input))
             Box(
                 modifier = Modifier
                     .fillMaxWidth()

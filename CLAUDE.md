@@ -9,7 +9,7 @@
 |---|---|
 | `website/` | Node/Express, API и зеркало файлов `/api/file/proxy/<имя>?link=…&exp=…&sig=…` (HTTP/1.1, nginx без http2) |
 | `android/` | Kotlin, Compose, libVLC 3.6 и Media3 (оба через `BurstProxy`, выбор — `player/EngineChoice`), Android TV. `PlayerActivity.kt` (~1900 строк), `player/PlayerExtras.kt` (ключи Intent), `net/Api.kt`, `Diag.kt`, `AppLog.kt` |
-| `desktop/` | Compose Desktop, mpv (`libmpv-2.dll` в MSI) и vlcj (`VlcPlayer`), оба за `PlayerEngine`. Модули: `player/` (плеер и оверлеи), `ui/` (токены и компоненты). Запас: `desktop/.../Reserve.kt` |
+| `desktop/` | Compose Desktop, mpv (`libmpv-2.dll` в MSI) и vlcj (`VlcPlayer`), оба за `PlayerEngine`. mpv рисует в сцене окна: `vo=libmpv` + render API в GL-контексте Skiko (`player/MpvVideo.kt`), панели — слои того же `Box`; VLC — по-старому, нативный холст + окна-оверлеи `topDialog`/`bottomDialog`. Модули: `player/` (плеер и оверлеи), `ui/` (токены и компоненты). Запас: `desktop/.../Reserve.kt` |
 | `shared/` | Общий модуль: `BurstProxy`, `PlaybackSupervisor`, `TsClock`/`TsPlayback`, `MirrorLink` (ключ файла и подпись адреса зеркала), `CatchUp` («копим запас»), `clockText`, `Versions`, `Changelog`, `Model`, `PlaybackPresets`, `LibraryKeep` |
 
 Ядро — `shared/.../core/BurstProxy.kt`: локальный прокси 127.0.0.1 с окнами-запасом в кольцевых файлах.
@@ -74,6 +74,7 @@ Changelog (русский) — `android/app/src/main/assets/changelog.json` и `
 Коротко о текущем состоянии:
 - Стабильные: 2.0.4, 2.0.6, 2.0.8, 2.0.9, 2.1.x; ПК 2.2 — mpv (`libmpv`) основной движок, VLC (`vlcj`) запасной, оба за `PlayerEngine`.
 - Бета: Windows 2.3.5 (SMTC, единый установщик `desktop/setup`, libmpv качается отдельно), Android 2.3.5/2.3.6 (плеер в стиле ПК: `PlayerOverlay.kt`; Media3 не переоткрывается при возврате сети и включении экрана).
+- ПК, PR #15 (не выпущено, версия не поднята): mpv рисует в сцене окна — `vo=libmpv` + render API в GL-контексте Skiko, кадр без копии (рисует прямо в текстуру Skia), панели — слои Compose; пока открыт плеер mpv, `Toolkit.setDynamicLayout(false)` (иначе ресайз держит поток интерфейса по 1–5 с). PR #16 (в ветку PR #15): render context освобождать до закрытия окна — иначе mpv роняет процесс (`0xC0000409`). Подробно: `docs/DESKTOP.md` §4.1.
 - Аудит 16.10 (отчёт `/mnt/project-files/audit/Аудит Suslik Media.md`): подпись зеркала обновляется (`MirrorLink`, `refreshUrl`), Blu-ray на Android через `TsPlayback`, «копим запас» общий (`CatchUp`). Не сделано: деление `BurstProxy`/`PlayerActivity`/`PlayerView`.
 - Журнал ПК из консоли Claude читать только через `//localhost/C$/Users/nanar/AppData/Roaming/...` (`%APPDATA%` у пакета Claude — старая копия).
 

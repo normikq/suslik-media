@@ -32,8 +32,6 @@ interface EngineListener {
  * Все методы потокобезопасны и могут вызываться с любого потока.
  */
 interface PlayerEngine {
-    /** Виндовый HWND холста (для движков со встраиванием окна: VLC и mpv). */
-    fun attach(hwnd: Long) {}
     /**
      * Открыть [url] с позиции [startMs]. [opts] — опции файла (см. [MpvEngine]); [audioUrls]/[subUrls] — внешние
      * дорожки. Пауза после открытия выключена.

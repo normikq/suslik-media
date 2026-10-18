@@ -6,9 +6,8 @@ import java.io.File
 import javax.imageio.ImageIO
 
 /**
- * [PlayerEngine] на libmpv. Видео выводится аппаратно через Direct3D 11 / Windows HWND (wid).
- * Не конфликтует со Skia/OpenGL, поддерживает аппаратное декодирование (NVDEC/D3D11VA),
- * нативное отображение субтитров ASS/SRT и регулировку масштаба на лету.
+ * [PlayerEngine] на libmpv. Кадры рисует сам mpv (vo=libmpv, render API) в OpenGL-контексте окна — см. [MpvVideoOut]:
+ * видео и панели в одной сцене Compose. Аппаратное декодирование, субтитры ASS/SRT и их масштаб — средствами mpv.
  */
 class MpvEngine(
     private val listener: EngineListener,
@@ -17,7 +16,7 @@ class MpvEngine(
 ) : PlayerEngine {
     private val api = Mpv.api ?: error("libmpv-2.dll не найден")
     private var h: Pointer? = null
-    @Volatile private var hwnd: Long = 0L
+    @Volatile private var video: MpvVideoOut? = null
     @Volatile private var dead = false
     private var events: Thread? = null
 
@@ -33,12 +32,11 @@ class MpvEngine(
     private val pendingProperties = java.util.concurrent.ConcurrentHashMap<String, String>()
     private var nightMode = false
 
-    override fun attach(hwnd: Long) {
-        this.hwnd = hwnd
-        val p = h
-        if (p != null && hwnd != 0L) {
-            api.mpv_set_property_string(p, "wid", hwnd.toString())
-        }
+    /** Поток интерфейса, до первого [open]: создаёт ядро и подключает к нему вывод кадров в окно. */
+    fun startVideo(out: MpvVideoOut): Boolean {
+        val ok = out.start(api, handle())
+        if (ok) video = out
+        return ok
     }
 
     @Synchronized private fun handle(): Pointer {
@@ -46,12 +44,9 @@ class MpvEngine(
         val p = api.mpv_create() ?: error("mpv_create")
         fun opt(n: String, v: String) { api.mpv_set_option_string(p, n, v) }
 
-        if (hwnd != 0L) {
-            opt("wid", hwnd.toString())
-        }
-        opt("vo", "gpu")
-        opt("gpu-api", "d3d11")
-        opt("hwdec", "auto-safe")
+        opt("vo", "libmpv")
+        // SUSLIK_MPV_HWDEC — только для проверки (например, no или nvdec-copy), по умолчанию auto-safe
+        opt("hwdec", System.getenv("SUSLIK_MPV_HWDEC")?.takeIf { it.isNotBlank() } ?: "auto-safe")
         val mpvLog = ru.suslikovanora.media.desktop.AppDir.file("mpv.log")
         opt("log-file", mpvLog.absolutePath)
         // Every request with its signed address only in Suslik Debug; the normal app keeps warnings and errors.
@@ -375,7 +370,8 @@ class MpvEngine(
     override fun statsLine(): String {
         fun g(n: String) = str(n) ?: "?"
         return "[mpv] ${"%.1f".format(java.util.Locale.ROOT, timeSec)}/${lengthSec.toInt()}s " +
-            "video=${g("video-codec")} hw=${g("hwdec-current")} ${g("video-params/w")}x${g("video-params/h")} " +
+            "video=${g("video-codec")} hw=${g("hwdec-current")} vo=${g("current-vo")} ${g("video-params/w")}x${g("video-params/h")} " +
+            "fmt=${g("video-params/hw-pixelformat").takeIf { it != "?" } ?: g("video-params/pixelformat")} ${g("video-params/gamma")}/${g("video-params/primaries")} " +
             "audio=${g("audio-codec-name")} drop=${g("frame-drop-count")} vo-drop=${g("vo-delayed-frame-count")} " +
             "cache=${g("demuxer-cache-duration")}s"
     }
@@ -420,6 +416,11 @@ class MpvEngine(
         dead = true
 
         val p = h ?: return
+        // Render context освобождается на потоке интерфейса (там его GL-контекст) и обязательно до уничтожения ядра
+        video?.let { v ->
+            if (javax.swing.SwingUtilities.isEventDispatchThread()) v.dispose()
+            else if (!v.awaitFreed(3000)) ru.suslikovanora.media.desktop.PlayerLog.write("[video] render context not freed in 3 s")
+        }
         h = null
         runCatching { api.mpv_command(p, arrayOf("quit", "0", null)) }
         runCatching { api.mpv_wakeup(p) }

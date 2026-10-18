@@ -1,6 +1,6 @@
 # Suslik Media — Windows-приложение (`desktop/`)
 
-Документация по настольному клиенту Suslik Media для Windows: архитектура плеера, двухдвижковая система (mpv / VLC), преодоление Airspace Problem, дизайн-система «Жидкое стекло», Win32-интеграция и сборка.
+Документация по настольному клиенту Suslik Media для Windows: архитектура плеера, двухдвижковая система (mpv / VLC), вывод mpv в сцене Compose и окна-оверлеи VLC (Airspace Problem), дизайн-система «Жидкое стекло», Win32-интеграция и сборка.
 
 ---
 
@@ -9,7 +9,7 @@
 - **Язык и платформа:** Kotlin 2.0+ (JVM 17 или 21).
 - **UI-фреймворк:** Compose Desktop (Jetpack Compose for Desktop / Skiko / DirectX DWM).
 - **Двухдвижковая система воспроизведения:**
-  - **mpv (основной движок):** нативная библиотека `libmpv-2.dll` (x86_64) через JNA, аппаратный вывод Direct3D 11 (`vo=gpu`, `gpu-api=d3d11`, `hwdec=auto-safe`).
+  - **mpv (основной движок):** нативная библиотека `libmpv-2.dll` (x86_64) через JNA; кадры рисуются в OpenGL-контексте окна (Skiko) через render API (`vo=libmpv`), аппаратное декодирование `hwdec=auto-safe`.
   - **VLC (резервный движок):** связка `vlcj` + установленный 64-битный плеер VLC 3.x для Windows.
 - **Интеграция с Win32 API:** JNA (`User32`, `Gdi32`, `Dwmapi`) для Borderless Fullscreen, масок окон `SetWindowRgn`, блокировки DirectFlip и анимаций окна.
 - **Общий модуль:** прямая зависимость от `:shared` (`BurstProxy`, `PlaybackSupervisor`, `TsClock`, `Model`, `Versions`).
@@ -40,12 +40,13 @@ desktop/
 │   ├── player/                     Модульный плеер (пакет player)
 │   │   ├── PlayerEngine.kt         Абстрактный интерфейс движка воспроизведения
 │   │   ├── MpvEngine.kt            Реализация движка на базе libmpv-2.dll
-│   │   ├── MpvLib.kt               JNA-маппинг C-API libmpv (структуры, события, типы)
+│   │   ├── MpvLib.kt               JNA-маппинг C-API libmpv (client.h и render.h)
+│   │   ├── MpvVideo.kt             Вывод mpv в сцене Compose: GL-контекст Skiko, render context, MpvVideoSurface (§4.1)
 │   │   ├── VlcEngine.kt            Движок на vlcj / VLC 3.x (класс VlcPlayer : PlayerEngine) и фабрика vlcj
 │   │   ├── PlayRequest.kt          Модель параметров запуска воспроизведения
 │   │   ├── MediaControls.kt        Системные медиа-контролы Windows (SMTC): Flyout, клавиши мультимедиа (§10)
-│   │   ├── PlayerView.kt           Главный Compose-контейнер плеера и координация оверлеев
-│   │   ├── PlayerOverlays.kt       Двухоконная схема ComposeDialog (topDialog, bottomDialog)
+│   │   ├── PlayerView.kt           Главный Compose-контейнер плеера: видео и панели (mpv), окна-оверлеи (VLC)
+│   │   ├── PlayerOverlays.kt       Верхняя и нижняя панели (PlayerTopBar, PlayerBottomBar)
 │   │   ├── PlayerControls.kt       Панели управления, таймлайн SeekBar, интерактивные контролы
 │   │   ├── PlayerIcons.kt          100% векторная дизайн-система иконок на Canvas
 │   │   ├── PlayerMorePanel.kt      Выпадающие шторки выбора дорожек звука, субтитров и настроек
@@ -68,14 +69,14 @@ desktop/
 Начиная с версии 2.2, плеер поддерживает два независимых видеодвижка, объединённых контрактом `PlayerEngine`:
 
 ### 3.1. Основной движок: mpv (`MpvEngine.kt`)
-- **Аппаратный рендеринг Direct3D 11:** mpv внедряется в нативный системный Win32 Canvas окна через опцию `wid = hwnd`. Рендеринг выполняется через пайплайн `--vo=gpu`, `--gpu-api=d3d11`, `--hwdec=auto-safe`. Обеспечивает 0% загрузки CPU при воспроизведении 4K HEVC/HDR Remux с битрейтами свыше 100 Мбит/с.
+- **Вывод в сцене окна (render API):** `vo=libmpv`, кадры рисует сам mpv в OpenGL-контексте, которым Skiko рисует окно; видео — обычный слой Compose под панелями (подробно — §4.1). Аппаратное декодирование `hwdec=auto-safe` сохраняется (на NVIDIA — `nvdec`, кадр в память процессора не копируется). До PR #15 было `wid` + `vo=gpu`/`gpu-api=d3d11` в нативный холст с окнами-оверлеями поверх.
 - **Стилизованные субтитры (libass):** безупречный рендеринг сложной верстки ASS/SSA субтитров. Изменение масштаба (`sub-scale`) выполняется на лету через вызов C-API `mpv_set_property_string` без остановки потока и без артефактов перерисовки.
 - **Индикация буферизации в процентах:** отслеживание нативного свойства mpv `cache-buffering-state` (`demuxer-readahead-secs`, `cache-pause=yes`), плавно транслирующее процент заполнения буфера в интерфейс плеера.
 - **Потокобезопасная синхронизация дорожек:** списки внешних звуковых дорожек и субтитров защищены мьютексом `trackLock` с аннотацией `@Volatile`, а метод добавления дорожек верифицирует совпадение URL потока с текущим `path` в mpv по событию `EV_FILE_LOADED`, исключая гонки при быстром переключении серий.
 - **Безопасная 64-битная работа с нативной памятью (JNA):**
   - Для события `EV_END_FILE` поле `void *data` в 64-битной структуре `mpv_event` считывается со смещением **16 байт**.
   - Для событий изменения свойств `onProperty` указатель `name` считывается по 8-байтному смещению с кодировкой UTF-8.
-- **Перезапуск видеовывода без деструкции (`restartVideoOutput`):** программный сброс видеопайплайна (`vid = no` → `vid = auto` с относительным seek 0) для восстановления рендеринга при сбое контекста DirectX без пересоздания окон.
+- **Перезапуск видеовывода без деструкции (`restartVideoOutput`):** программный сброс видеопайплайна (`vid = no` → `vid = auto` с относительным seek 0) для восстановления рендеринга без пересоздания окон; render context при этом остаётся.
 
 ### 3.2. Резервный движок: VLC (`VlcEngine.kt`, класс `VlcPlayer`)
 - Классическая интеграция через библиотеку `vlcj` с установленным в системе 64-битным плеером VLC 3.x. `VlcPlayer` реализует тот же `PlayerEngine`, что и mpv: `PlayerView` работает с одним `engine` и одним `EngineListener` для обоих движков (ночной звук, `start-time`, языки, внешние дорожки — в опциях `open()`).
@@ -83,7 +84,28 @@ desktop/
 
 ---
 
-## 4. Решение проблемы наложения компонентов (Airspace Problem)
+## 4. Видео и панели: mpv — одна сцена, VLC — окна-оверлеи
+
+### 4.1. mpv: видео в сцене Compose (PR #15)
+
+Видео и панели рисуются в одной поверхности окна — нет окон-оверлеев и Win32-обходов (`syncOverlayBounds`, `clipToBottom`, `WS_DISABLED`, `restoreComposeFocus`, скрытия на 80 мс).
+
+- **Контекст.** Skiko рисует окно через OpenGL (`-Dskiko.renderApi=OPENGL`) на потоке интерфейса и не отпускает свой контекст. `SkikoGl.find(window)` берёт из внутренних полей Skiko 0.8.x HDC, HGLRC и `DirectContext` Skia (`SkiaLayer.getRedrawer$skiko`, `WindowsOpenGLRedrawer.device/context/contextHandler`). Не нашлись (другая версия Skiko, не OpenGL) — плеер играет через VLC.
+- **Render context.** `MpvEngine.startVideo` → `MpvVideoOut.start`: `mpv_render_context_create` (API `opengl`, `get_proc_address` — `wglGetProcAddress`, для GL 1.1 — экспорт `opengl32.dll`) до первого `loadfile`. Колбэк update из потоков mpv только ставит `invokeLater`; на потоке интерфейса — `mpv_render_context_update` (заодно выполняет запросы ядра: снимок кадра и т. п.) и, если есть кадр, `mpv_render_context_render` (`BLOCK_FOR_TARGET_TIME=0`, `FLIP_Y=0`).
+- **Кадр без копии.** Текстуру создаёт Skia (`Surface.makeRenderTarget`, `TOP_LEFT`, RGBA8); mpv рисует прямо в её кадровый буфер, а картинка для Compose — снимок этой поверхности, который делит с ней текстуру. Skia номер буфера не сообщает: после `canvas.clear` + `flush` берётся привязанный `GL_DRAW_FRAMEBUFFER_BINDING` и проверяется, что к нему прикреплена текстура нужного размера. Не вышло — запасной путь: своя текстура + `Surface.makeFromBackendRenderTarget` + `makeImageSnapshot` (копия на видеокарте) с `notifyContentWillChange` перед каждым кадром. `SUSLIK_VIDEO_COPY=1` включает его принудительно.
+- **Состояние GL — главная ловушка общего контекста:**
+  - перед каждым вызовом mpv (`Gl.defaultsForMpv`) — сэмплеры Skia сняты со всех текстурных блоков, буферы (`PIXEL_UNPACK` и др.) и VAO отвязаны, `glPixelStore` и `glEnable`-флаги по умолчанию. Без этого у HEVC/AV1 (10 бит, HDR) был мусор и чёрный кадр с точками;
+  - после работы — `glBindFramebuffer(0)` и `DirectContext.resetGLAll()` (`leaveGl`). Skiko при изменении размера окна оборачивает под окно тот буфер, что привязан сейчас: оставленный буфер mpv уводил всё окно в текстуру видео (чёрный экран после ресайза).
+- **Слой Compose.** `MpvVideoSurface` — `Canvas`, который рисует картинку; новый кадр меняет `frame` (перерисовка без перекомпоновки), размер области (`onSizeChanged`) уходит в mpv — он сам вписывает кадр и рисует субтитры по всей области.
+- **Панели.** `PlayerTopBar` (75 dp) и `PlayerBottomBar` (460 dp) — слои того же `Box` (`SceneBars`, своя область перекомпоновки). У нижней панели `inputHeight`: клики мимо кнопок ловит только полоса 220 dp (с открытым меню — вся высота), выше — видео (пауза, двойной клик, колесо громкости). Движения мыши над всем плеером видит один `pointerInput` в проходе `Initial`. Курсор прячется `pointerHoverIcon` (пустой курсор), фокус клавиатуры не теряется — окно одно.
+- **Ресайз.** Пока тянут край окна, AWT на каждом шаге перекладывает окно (`WComponentPeer.reshape`, `setBounds`) и держит поток интерфейса по 1–5 с. Пока открыт плеер mpv, `Toolkit.setDynamicLayout(false)`: окно перестраивается один раз после отпускания края, видео идёт; новый участок окна до отпускания чёрный (решение владельца: лучше, чем замирание).
+- **Закрытие.** Render context освобождается на потоке интерфейса до `mpv_terminate_destroy`, иначе mpv роняет процесс (`Broken API use: mpv_render_context_free() not called`, `0xC0000409`). Compose при закрытии окна удаляет GL-контекст Skiko раньше `onDispose`, поэтому `onCloseRequest` сначала зовёт `MpvVideoOut.disposeAll()` (PR #16).
+- **Ограничения.** HDR на HDR-мониторе тональнокомпрессируется в SDR (окно Skiko 8-битное). Скорость кадров зависит от потока интерфейса: длинная перекомпоновка задерживает кадр.
+- **Замер** (RTX 5070 Ti, Spider-Man 4K HDR, ~2 мин, против 2.3.5 с `vo=gpu`): процессор плеера 11→18 % одного ядра (медиана), видеокарта 2→3 %, 43→45 Вт — в пределах шума; `drop=0`, `vo-drop=0`.
+
+### 4.2. VLC: окна-оверлеи над нативным холстом
+
+VLC рисует в нативный холст, поэтому для него сохраняется прежняя схема ниже.
 
 ### Проблема:
 В Java/Compose при выводе аппаратно ускоренного видео (Direct3D/DirectX) нативный HWND (Canvas) полностью перекрывает легковесные Compose-компоненты, расположенные в том же окне в обычном `Box`. Флаг `compose.interop.blending` работает только для стандартных Swing `JPanel`, но не спасает от нативных DirectX HWND.
@@ -123,7 +145,7 @@ desktop/
 
 ## 5. Защита клавиатурного фокуса и горячие клавиши
 
-Из-за наличия нативного HWND холста и дочерних окон `ComposeDialog` стандартный фокус ввода Windows часто терялся. Для 100% стабильности реализован комплекс мер:
+С mpv (одна сцена) фокус не теряется, и меры ниже не нужны. Для VLC из-за нативного HWND холста и дочерних окон `ComposeDialog` стандартный фокус ввода Windows часто терялся, поэтому для него реализован комплекс мер:
 - **`WS_DISABLED` на нативном Canvas:** метод `WindowMode.disableNativeCanvasInput(canvas)` рекурсивно находит дочерние окна вывода Direct3D через `EnumChildWindows` и отключает их для мыши и клавиатуры через стиль `WS_DISABLED`. Видеовывод работает аппаратно, но Windows физически не даёт Canvas перехватывать системный клавиатурный фокус.
 - **`focusableWindowState = false`:** окна оверлеев не забирают фокус операционной системы при кликах на кнопки управления.
 - **Глобальный перехват:** в `Main.kt` обработка горячих клавиш продублирована на уровне `KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(...)` и `Window(onPreviewKeyEvent = { ... })`.
