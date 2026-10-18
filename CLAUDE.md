@@ -9,7 +9,7 @@
 |---|---|
 | `website/` | Node/Express, API и зеркало файлов `/api/file/proxy/<имя>?link=…&exp=…&sig=…` (HTTP/1.1, nginx без http2) |
 | `android/` | Kotlin, Compose, libVLC 3.6 и Media3 (оба через `BurstProxy`, выбор — `player/EngineChoice`), Android TV. `PlayerActivity.kt` (~1900 строк), `player/PlayerExtras.kt` (ключи Intent), `net/Api.kt`, `Diag.kt`, `AppLog.kt` |
-| `desktop/` | Compose Desktop, mpv (`libmpv-2.dll` в MSI) и vlcj (`VlcPlayer`), оба за `PlayerEngine`. mpv рисует в сцене окна: `vo=libmpv` + render API в GL-контексте Skiko (`player/MpvVideo.kt`), панели — слои того же `Box`; VLC — по-старому, нативный холст + окна-оверлеи `topDialog`/`bottomDialog`. Модули: `player/` (плеер и оверлеи), `ui/` (токены и компоненты). Запас: `desktop/.../Reserve.kt` |
+| `desktop/` | Compose Desktop, mpv (`libmpv-2.dll` загружается автоматически) за `PlayerEngine`. mpv рисует в сцене окна: `vo=libmpv` + render API в GL-контексте Skiko (`player/MpvVideo.kt`), панели — слои того же `Box`. Модули: `player/` (плеер и оверлеи), `ui/` (токены и компоненты). Запас: `desktop/.../Reserve.kt` |
 | `shared/` | Общий модуль: `BurstProxy`, `PlaybackSupervisor`, `TsClock`/`TsPlayback`, `MirrorLink` (ключ файла и подпись адреса зеркала), `CatchUp` («копим запас»), `clockText`, `Versions`, `Changelog`, `Model`, `PlaybackPresets`, `LibraryKeep` |
 
 Ядро — `shared/.../core/BurstProxy.kt`: локальный прокси 127.0.0.1 с окнами-запасом в кольцевых файлах.
