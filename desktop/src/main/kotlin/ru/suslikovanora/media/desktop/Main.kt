@@ -24,12 +24,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.key
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -176,10 +178,23 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
                 window.requestFocus()
             }
         }
+        DisposableEffect(window) { // [resize] journal (Suslik Debug): the window's size is the reference the surfaces are compared with
+            val cp = window.contentPane
+            val l = object : java.awt.event.ComponentAdapter() {
+                override fun componentResized(e: java.awt.event.ComponentEvent) {
+                    if (cp.width > 0 && cp.height > 0) {
+                        ResizeLog.surface("window", cp.width, cp.height)
+                        ResizeLog.watchSkia(cp)
+                    }
+                }
+            }
+            window.addComponentListener(l)
+            onDispose { window.removeComponentListener(l) }
+        }
         val lens by androidx.compose.animation.core.animateFloatAsState(tab.ordinal.toFloat(), tween(420, easing = Sm.ease))
         focus[0] = androidx.compose.ui.platform.LocalFocusManager.current
         SuslikTheme {
-          Box(Modifier.fillMaxSize().background(Sm.night)) {
+          Box(Modifier.fillMaxSize().background(Sm.night).onSizeChanged { ResizeLog.surface("compose", it.width, it.height) }) {
             // Library and player share the window. The library stays composed underneath (instant, hitch-free return);
             // [presence] drives both layers: 0 = library, 1 = player.
             Box(Modifier.fillMaxSize().graphicsLayer {

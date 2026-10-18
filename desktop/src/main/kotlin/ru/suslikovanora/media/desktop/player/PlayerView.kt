@@ -57,6 +57,7 @@ import ru.suslikovanora.media.desktop.Api
 import ru.suslikovanora.media.desktop.AppExit
 import ru.suslikovanora.media.desktop.CrashReports
 import ru.suslikovanora.media.desktop.Diag
+import ru.suslikovanora.media.desktop.ResizeLog
 import ru.suslikovanora.media.desktop.Library
 import ru.suslikovanora.media.desktop.MIN_H
 import ru.suslikovanora.media.desktop.MIN_W
@@ -293,6 +294,7 @@ fun PlayerView(
 
     fun applyDialogBounds(d: ComposeDialog?, r: java.awt.Rectangle) {
         if (d == null || !d.isDisplayable) return
+        ResizeLog.watch(d, if (d === topDialog) "top" else "bottom")
         WindowMode.makeNoActivate(d)
         if (d.bounds != r) {
             val resized = d.width != r.width || d.height != r.height
@@ -1269,7 +1271,7 @@ fun PlayerView(
     DisposableEffect(owner, canvas) {
         val ownerListener = object : java.awt.event.ComponentAdapter() {
             override fun componentMoved(e: java.awt.event.ComponentEvent) { syncOverlayBounds() }
-            override fun componentResized(e: java.awt.event.ComponentEvent) { syncOverlayBounds() }
+            override fun componentResized(e: java.awt.event.ComponentEvent) { ResizeLog.surface("canvas", canvas.width, canvas.height); syncOverlayBounds() }
         }
         val canvasListener = object : java.awt.event.ComponentAdapter() {
             override fun componentResized(e: java.awt.event.ComponentEvent) { syncOverlayBounds() }
