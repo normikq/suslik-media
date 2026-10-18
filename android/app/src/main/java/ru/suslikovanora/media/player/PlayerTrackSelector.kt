@@ -11,6 +11,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import org.json.JSONArray
 import org.json.JSONObject
+import ru.suslikovanora.media.AppLog
 import ru.suslikovanora.media.core.MirrorLink
 import ru.suslikovanora.media.net.Api
 import ru.suslikovanora.media.tr
@@ -36,6 +37,7 @@ class PlayerTrackSelector(
     companion object {
         const val SPU_OFF = "__off__"
         private const val SIDECAR_NONE = "__none__"
+        private const val PENDING_MS = 30_000L // a picked voice-over file not open by then: «＋» works again
     }
 
     private val prefs by lazy { context.getSharedPreferences("player_ui", Context.MODE_PRIVATE) }
@@ -135,6 +137,11 @@ class PlayerTrackSelector(
     }
 
     fun onESAdded() {
+        // The file picked as «＋ …» is open once the player lists one track more than before the pick.
+        if (pendingAudio != null && (callback.getCurrentPlayer()?.audioTracks()?.size ?: 0) > pendingBase) {
+            AppLog.write("[track] voice-over file «$pendingAudio» is open")
+            pendingAudio = null
+        }
         if (SystemClock.uptimeMillis() < prefsUntil) {
             handler.removeCallbacks(prefsRunnable)
             handler.postDelayed(prefsRunnable, 400L)
@@ -163,11 +170,20 @@ class PlayerTrackSelector(
 
     private fun extraAudio(): List<String> = if (sidecarsActive) audioUrls.filter { it !in attachedAudio } else emptyList()
 
-    /** The audio sheet: the film's tracks, then the voice-over files not opened yet («＋ rus»). */
+    // A voice-over file picked as «＋ …» that the player is still opening (Media3 reopens the film with it: meanwhile it
+    // lists no tracks at all). 18.10 journal: each «＋» vanished at once, so all seven were tapped in 3 s — seven reopens
+    // of the film, and the sound came back after 16 s on a track nobody picked last.
+    private var pendingAudio: String? = null
+    private var pendingAt = 0L
+    private var pendingBase = 0
+    private fun pending(): String? = pendingAudio?.takeIf { SystemClock.uptimeMillis() - pendingAt < PENDING_MS }
+
+    /** The audio sheet: the film's tracks, the file being opened («⏳ rus»), then the files not opened yet («＋ rus»). */
     fun audioChoices(p: PlayerEngine?): List<TrackChoice> {
         val tracks = p?.audioTracks().orEmpty()
         val current = p?.audioTrack ?: -1
-        return tracks.map { TrackChoice(it.name, it.id == current) } + extraAudio().map { TrackChoice("＋ " + audioLabel(it), false) }
+        return tracks.map { TrackChoice(it.name, it.id == current) } + listOfNotNull(pending()?.let { TrackChoice("⏳ $it", false) }) +
+            extraAudio().map { TrackChoice("＋ " + audioLabel(it), false) }
     }
 
     /** [which] is a line of [audioChoices]. */
@@ -175,9 +191,18 @@ class PlayerTrackSelector(
         val tracks = p?.audioTracks().orEmpty()
         val extra = extraAudio()
         if (which >= tracks.size) {
-            val u = extra.getOrNull(which - tracks.size) ?: return
+            val busy = pending()
+            if (busy != null) {
+                AppLog.write("[track] voice-over line $which ignored: «$busy» is still opening")
+                return
+            }
+            val u = extra.getOrNull(which - tracks.size)
+            if (u == null) { AppLog.write("[track] voice-over line $which of ${tracks.size}+${extra.size}: no such file"); return }
             attachedAudio += u
             activeSidecar = audioLabel(u)
+            pendingAudio = activeSidecar; pendingAt = SystemClock.uptimeMillis(); pendingBase = tracks.size
+            AppLog.write("[track] voice-over file «${audioLabel(u)}» added from the menu · film tracks before: " +
+                tracks.joinToString { it.name }.ifEmpty { "none" } + " · files left: ${extra.size - 1}")
             selectedAudioId = null
             p?.addAudioFile(wrapUrl?.invoke(u) ?: u)
             val key = seriesKey(callback.getCurrentTitle())
@@ -231,7 +256,9 @@ class PlayerTrackSelector(
         if (files == null) return Sidecars(emptyList(), emptyList())
         this.wrapUrl = wrapUrl
         val want = activeSidecar ?: prefs.getString("track:sidecar:${seriesKey(callback.getCurrentTitle())}", null)
-        val pick = if (want == SIDECAR_NONE) null else audioUrls.firstOrNull { audioLabel(it) == want } ?: audioUrls.firstOrNull()
+        pendingAudio = null
+        val pick = if (want == SIDECAR_NONE) null
+            else audioUrls.firstOrNull { audioLabel(it) == want } ?: audioUrls.firstOrNull { fileLabel(it) == want } ?: audioUrls.firstOrNull()
         val audio = if (pick != null) {
             attachedAudio += pick
             activeSidecar = audioLabel(pick)
@@ -240,8 +267,17 @@ class PlayerTrackSelector(
         return Sidecars(audio, files.subs)
     }
 
-    /** "Film.rus.mka" beside "Film.mkv" gives "rus". */
+    /**
+     * "Film.rus.mka" beside "Film.mkv" gives "rus"; several files with the same name (one per studio, each in its own
+     * folder) are numbered: "rus 1", "rus 2" — 18.10, four «＋ rus» in a row.
+     */
     private fun audioLabel(u: String): String {
+        val name = fileLabel(u)
+        val same = audioUrls.filter { fileLabel(it) == name }
+        return if (same.size > 1) "$name ${same.indexOf(u) + 1}" else name
+    }
+
+    private fun fileLabel(u: String): String {
         val name = (Uri.parse(u).lastPathSegment ?: u).substringBeforeLast('.')
         val film = Uri.parse(filmUrl).lastPathSegment.orEmpty().substringBeforeLast('.')
         val cut = if (film.isNotEmpty() && name.startsWith(film)) name.substring(film.length) else name

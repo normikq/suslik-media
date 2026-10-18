@@ -420,11 +420,19 @@ class Media3Engine(private val context: Context) : PlayerEngine {
         p.trackSelectionParameters = b.build()
     }
 
-    /** The voice-over file added from the menu is the last audio group (MergingMediaSource keeps the sources' order). */
+    /**
+     * The voice-over file added from the menu: its source is the last one of [buildSource], and MergingMediaSource names
+     * its track groups "<source index>:…". Not «the last audio group»: the groups are not in the sources' order (18.10
+     * journal: with 9 sources the last group was the film's own DTS, so a picked «rus» played in Japanese).
+     */
     private fun pickLastAudio(tracks: Tracks) {
-        val gi = tracks.groups.indexOfLast { it.type == C.TRACK_TYPE_AUDIO && it.isSupported(true) }
+        val n = (media?.audioFiles?.size ?: 0) + extraAudio.size
+        fun audio(g: Tracks.Group) = g.type == C.TRACK_TYPE_AUDIO && g.isSupported(true)
+        val gi = tracks.groups.indexOfFirst { audio(it) && it.mediaTrackGroup.id.startsWith("$n:") }
+            .takeIf { it >= 0 } ?: tracks.groups.indexOfLast { audio(it) }
         if (gi < 0) return
         selectLastAudio = false
+        AppLog.write("[media3] voice-over file picked: source $n, group ${tracks.groups[gi].mediaTrackGroup.id} (${tracks.groups[gi].getTrackFormat(0).sampleMimeType})")
         select(C.TRACK_TYPE_AUDIO, gi * 100)
     }
 
@@ -441,6 +449,7 @@ class Media3Engine(private val context: Context) : PlayerEngine {
         if (url in extraAudio || url in m.audioFiles) return
         extraAudio += url
         selectLastAudio = true
+        AppLog.write("[media3] voice-over file added: the film reopens at ${p.currentPosition / 1000}s with ${1 + m.audioFiles.size + extraAudio.size} sources")
         // Media3 cannot add a source to a prepared one: the same file again with the new voice-over, at the same moment.
         p.setMediaSource(buildSource(m), p.currentPosition)
         p.prepare()
