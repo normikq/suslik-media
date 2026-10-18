@@ -103,7 +103,7 @@ STA-потоке `smtc` с насосом сообщений (на EDT курс�
 
 **2.3.5 (Android)** (18.10, ветка `claude/android-glass-player`, PR #10): плеер в дизайне Windows — панель над фильмом одним Compose-слоем (`player/PlayerOverlay.kt`, состояние `PlayerUiState`; иконки с ПК — `PlayerIcons.kt`), стеклянные шторки дорожек/субтитров/«⚙» вместо `AlertDialog`, капсула «Следующая серия», без янтаря в плеере; касания мимо кнопок проходят в `PlayerGestures` (ComposeView не забирает событие без pointerInput). Субтитры в «Заполнить»/«16:9» — `SubtitleFit.kt` (VLC: своя `LayoutParams` для `surface_subtitles`, общий объект с видео не трогать; Media3: `SubtitleView` вынесен из `exo_content_frame`). «Продолжить» с 16.10 (fdbc2cb) открывало с 0: `startPosition` читался до `readSideExtras` (ключи медиатеки) — порядок возвращён. Библиотеку в стиль ПК — следующим шагом.
 
-**ПК: mpv и панели в одном окне** (18.10, PR #15 — ветка `claude/desktop-mpv-one-surface`, и PR #16 — `claude/mpv-exit-abort`; не выпущено, версия не поднята).
+**2.4.0 (Windows) — mpv и панели в одном окне** (18.10, stable сразу всем по команде владельца; PR #15 — ветка `claude/desktop-mpv-one-surface`, PR #16 — `claude/mpv-exit-abort`, PR #17 — догнал main после раннего слияния #15).
 По ТЗ владельца: убрать схему «нативный холст + окна-оверлеи `topDialog`/`bottomDialog`» с её Win32-обходами. Этап 0 — вариант A (общий GL-контекст со Skiko):
 в Skiko 0.8.18 нет обёртки чужой GL-текстуры в `Image`, поэтому mpv (`vo=libmpv`, render API) рисует на потоке интерфейса в кадровый буфер текстуры, которую создала сама Skia;
 снимок поверхности делит с ней текстуру — кадр не копируется. VLC остался на старой схеме (нативный холст нельзя перекрыть слоем Compose).

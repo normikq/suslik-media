@@ -72,9 +72,9 @@ Changelog (русский) — `android/app/src/main/assets/changelog.json` и `
 
 Полный журнал версий (2.0.0.4 → 2.3.6, причины и замеры) — `docs/HISTORY.md`. Читай его, когда нужна причина конкретного решения.
 Коротко о текущем состоянии:
-- Стабильные: 2.0.4, 2.0.6, 2.0.8, 2.0.9, 2.1.x; ПК 2.2 — mpv (`libmpv`) основной движок, VLC (`vlcj`) запасной, оба за `PlayerEngine`.
+- Стабильные: 2.0.4, 2.0.6, 2.0.8, 2.0.9, 2.1.x; ПК 2.4.0 (mpv в сцене окна); ПК 2.2 — mpv (`libmpv`) основной движок, VLC (`vlcj`) запасной, оба за `PlayerEngine`.
 - Бета: Windows 2.3.5 (SMTC, единый установщик `desktop/setup`, libmpv качается отдельно), Android 2.3.5/2.3.6 (плеер в стиле ПК: `PlayerOverlay.kt`; Media3 не переоткрывается при возврате сети и включении экрана).
-- ПК, PR #15 (не выпущено, версия не поднята): mpv рисует в сцене окна — `vo=libmpv` + render API в GL-контексте Skiko, кадр без копии (рисует прямо в текстуру Skia), панели — слои Compose; пока открыт плеер mpv, `Toolkit.setDynamicLayout(false)` (иначе ресайз держит поток интерфейса по 1–5 с). PR #16 (в ветку PR #15): render context освобождать до закрытия окна — иначе mpv роняет процесс (`0xC0000409`). Подробно: `docs/DESKTOP.md` §4.1.
+- **ПК 2.4.0 — стабильная** (18.10, сразу всем по команде владельца; PR #15, #16, #17): mpv рисует в сцене окна — `vo=libmpv` + render API в GL-контексте Skiko, кадр без копии (рисует прямо в текстуру Skia), панели — слои Compose; пока открыт плеер mpv, `Toolkit.setDynamicLayout(false)` (иначе ресайз держит поток интерфейса по 1–5 с). PR #16 (в ветку PR #15): render context освобождать до закрытия окна — иначе mpv роняет процесс (`0xC0000409`). Подробно: `docs/DESKTOP.md` §4.1.
 - Аудит 16.10 (отчёт `/mnt/project-files/audit/Аудит Suslik Media.md`): подпись зеркала обновляется (`MirrorLink`, `refreshUrl`), Blu-ray на Android через `TsPlayback`, «копим запас» общий (`CatchUp`). Не сделано: деление `BurstProxy`/`PlayerActivity`/`PlayerView`.
 - Журнал ПК из консоли Claude читать только через `//localhost/C$/Users/nanar/AppData/Roaming/...` (`%APPDATA%` у пакета Claude — старая копия).
 
