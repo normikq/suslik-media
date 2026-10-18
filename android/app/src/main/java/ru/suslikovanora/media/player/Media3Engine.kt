@@ -366,7 +366,19 @@ class Media3Engine(private val context: Context) : PlayerEngine {
     override val fraction: Float get() = lengthMs.let { d -> if (d > 0L) timeMs.toFloat() / d else -1f }
     override val rate: Float get() = exo?.playbackParameters?.speed ?: 1f
     override val volume: Int get() = ((exo?.volume ?: 0f) * 100).toInt()
-    override fun seekTo(ms: Long) { exo?.seekTo(ms.coerceAtLeast(0L)) }
+    /**
+     * A far jump lands on the nearest keyframe: an exact one first fetched and decoded the film from the keyframe before
+     * the target without showing it (18.10 journal, BDRip 16.9 Mbit/s on LTE at ~10: 131 such pictures ≈ 5.5 s of film,
+     * ~9 of the 22 s of «Буферизации»; with DTS the sound ran meanwhile while the picture stood). Short jumps (the
+     * double tap) stay exact, and so does a film with an external voice-over: that one lands on the exact moment.
+     */
+    override fun seekTo(ms: Long) {
+        val p = exo ?: return
+        val t = ms.coerceAtLeast(0L)
+        val fast = media?.fastSeek == true && extraAudio.isEmpty() && kotlin.math.abs(t - p.currentPosition) > FAR_SEEK_MS
+        p.setSeekParameters(if (fast) SeekParameters.CLOSEST_SYNC else SeekParameters.EXACT)
+        p.seekTo(t)
+    }
     override fun seekToFraction(fraction: Float) { lengthMs.takeIf { it > 0L }?.let { seekTo((it * fraction).toLong()) } }
     override val bufferedPositionMs: Long get() = exo?.bufferedPosition ?: -1L
     override val bitrateMbit: Double?
@@ -472,6 +484,7 @@ class Media3Engine(private val context: Context) : PlayerEngine {
             readBytes = bytesRead.get().coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
             decodedVideo = v?.queuedInputBufferCount ?: 0, decodedAudio = a?.queuedInputBufferCount ?: 0,
             displayedPictures = v?.renderedOutputBufferCount ?: 0, lostPictures = v?.droppedBufferCount ?: 0,
+            skippedPictures = v?.skippedOutputBufferCount ?: 0,
             playedAbuffers = a?.renderedOutputBufferCount ?: 0, lostAbuffers = a?.droppedBufferCount ?: 0,
             demuxCorrupted = 0, demuxDiscontinuity = 0
         )
@@ -524,6 +537,7 @@ class Media3Engine(private val context: Context) : PlayerEngine {
         private const val START_BUFFER_MS = 2_500
         private const val AFTER_REBUFFER_MS = 6_000
         private const val BACK_BUFFER_MS = 15_000
+        private const val FAR_SEEK_MS = 30_000L // a jump further than this goes to the nearest keyframe (see seekTo)
         private const val TICK_MS = 250L
         private const val TARGET_BUFFER_BYTES = 80 shl 20
         private const val RESERVE_AHEAD_US = 15_000_000L

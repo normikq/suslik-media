@@ -100,11 +100,13 @@ class PlayerDiagnostics(
             if (st != null) {
                 // Counters restart with every new Media (reopen / next episode): then the raw values are shown.
                 val fresh = q == null || st.readBytes < q.readBytes || st.displayedPictures < q.displayedPictures
-                fun d(a: Int, b: Int?) = if (fresh || b == null) a else a - b
+                // One counter alone restarts too: a switch between FFmpeg and the phone's audio decoder makes a new audio renderer.
+                fun d(a: Int, b: Int?) = if (fresh || b == null || a < b) a else a - b
                 val read = if (fresh) st.readBytes.toLong() else (st.readBytes - q!!.readBytes).toLong()
                 sb.append(" · read +%.2f MB%s".format(read / 1048576.0,
                     if (span > 0 && !fresh) " (%.1f Mbit/s)".format(read * 8.0 / 1000 / span) else ""))
-                sb.append(" · pictures shown +${d(st.displayedPictures, q?.displayedPictures)} lost +${d(st.lostPictures, q?.lostPictures)}")
+                sb.append(" · pictures shown +${d(st.displayedPictures, q?.displayedPictures)} lost +${d(st.lostPictures, q?.lostPictures)}" +
+                    if (p.kind == EngineKind.MEDIA3) " skipped +${d(st.skippedPictures, q?.skippedPictures)}" else "")
                 sb.append(" · decoded video +${d(st.decodedVideo, q?.decodedVideo)} audio +${d(st.decodedAudio, q?.decodedAudio)}")
                 sb.append(" · audio played +${d(st.playedAbuffers, q?.playedAbuffers)} lost +${d(st.lostAbuffers, q?.lostAbuffers)}")
                 if (st.demuxCorrupted > 0 || st.demuxDiscontinuity > 0) sb.append(" · demux corrupted ${st.demuxCorrupted} discontinuities ${st.demuxDiscontinuity}")
