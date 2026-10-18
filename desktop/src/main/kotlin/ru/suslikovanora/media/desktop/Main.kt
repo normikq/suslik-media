@@ -53,6 +53,8 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import androidx.compose.runtime.withFrameNanos
 import uk.co.caprica.vlcj.factory.MediaPlayerFactory
 import java.awt.Desktop
 import java.net.URI
@@ -109,6 +111,9 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
     val presence = remember { Animatable(0f) }
     var leaving by remember { mutableStateOf(false) }
     val focus = remember { arrayOfNulls<androidx.compose.ui.focus.FocusManager>(1) } // plain holder, not state
+    // The window's own scope: its frames are the window's frames (closing waits for one without the video).
+    val windowScope = remember { arrayOfNulls<kotlinx.coroutines.CoroutineScope>(1) }
+    val closing = remember { booleanArrayOf(false) }
     LaunchedEffect(playing) {
         if (playing != null) { leaving = false; presence.animateTo(1f, tween(440, easing = Sm.ease)) }
     }
@@ -118,7 +123,10 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
             leaving = true
             // (The player already told the library about the new progress, before this animation started.)
             presence.animateTo(0f, tween(620, easing = Sm.ease))
+            // Suslik Debug: Compose сейчас уберёт слой с видео — здесь зависала Skia (цикл glGetError)
+            if (Diag.on) { PlayerLog.write("[ui] player close: removing the player"); MpvVideoOut.probeGl("player close: before removal") }
             playing = null; leaving = false; onTop.value = false
+            if (Diag.on) javax.swing.SwingUtilities.invokeLater { MpvVideoOut.probeGl("player close: after removal") }
         }
     }
     fun requestPlay(req: PlayRequest) {
@@ -146,7 +154,29 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
     Window(
         // mpv's video output is freed while the window's OpenGL context still exists: on close Compose removes the
         // Skia layer (and its GL context) before the player's onDispose runs, and mpv aborts the process over it
-        onCloseRequest = { AppExit.armWatchdog(); MpvVideoOut.disposeAll(); exitApplication() },
+        onCloseRequest = {
+            AppExit.armWatchdog()
+            if (Diag.on) {
+                PlayerLog.write("[ui] window close request (${java.awt.EventQueue.getCurrentEvent()?.javaClass?.simpleName}), minimized=${win.isMinimized}, player=${playing != null}")
+                MpvVideoOut.probeGl("window close: start")
+            }
+            val scope = windowScope[0]
+            if (scope == null || !MpvVideoOut.anyLive) {
+                MpvVideoOut.disposeAll()
+                exitApplication()
+            } else if (!closing[0]) {
+                closing[0] = true
+                // Сначала кадр без видео, пока GL-контекст окна жив (см. MpvVideoOut.anyLive), потом закрытие.
+                // Свёрнутое окно не рисует: тогда не ждём дольше 0,7 с (дальше страхует сторож AppExit).
+                scope.launch {
+                    MpvVideoOut.disposeAll()
+                    if (Diag.on) MpvVideoOut.probeGl("window close: video freed")
+                    val drawn = withTimeoutOrNull(700) { withFrameNanos { }; withFrameNanos { } } != null
+                    if (Diag.on) PlayerLog.write("[ui] window close: frame without video drawn=$drawn")
+                    exitApplication()
+                }
+            }
+        },
         title = (if (Diag.on) "Suslik Debug" else "Suslik Media").let { app -> playing?.let { "${it.title} — $app" } ?: tr("app.app_mediateka", "app" to app) },
         icon = painterResource("icons/icon-256.png"),
         state = win,
@@ -162,6 +192,7 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
             }
         }
     ) {
+        windowScope[0] = rememberCoroutineScope()
 
         // Dark title bar in the app's colours, and a dark window behind Compose (no white flash while animating/resizing).
         LaunchedEffect(Unit) {
