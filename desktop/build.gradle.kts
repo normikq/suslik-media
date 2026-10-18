@@ -21,9 +21,7 @@ dependencies {
     implementation(compose.material3)
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.9.0")
     implementation("org.json:json:20240303")
-    // VLC engine (uses the VLC installed on the PC: 64-bit VLC 3.x)
-    implementation("uk.co.caprica:vlcj:4.8.3")
-    implementation("net.java.dev.jna:jna:5.14.0") // title bar colours (dwmapi)
+    implementation("net.java.dev.jna:jna:5.14.0") // libmpv / dwmapi / Win32
     implementation("ru.suslikovanora.media:shared") // ../shared (includeBuild)
     testImplementation(kotlin("test"))
 }
@@ -41,7 +39,7 @@ gradle.taskGraph.whenReady {
 }
 
 // One place for the version: the installer, and the app itself (update check) via -Dsuslik.version.
-val appVersion = "2.4.1"
+val appVersion = "2.4.0"
 // Windows Installer takes at most three numbers (2.0.0.1 → 2.0.0); ensure at least 3 parts for WiX (2.2 → 2.2.0)
 val msiVersion = appVersion.split(".").let { parts ->
     when (parts.size) {
@@ -81,7 +79,7 @@ compose.desktop {
             // from then on they are mapped from it instead of being read and verified again — the window opens noticeably
             // sooner and takes less memory. A new version makes the archive outdated: the JVM rebuilds it by itself.
             "-XX:+AutoCreateSharedArchive", "-XX:SharedArchiveFile=\$APPDIR/suslik.jsa",
-            // A native crash (VLC) leaves its report next to the app; CrashReports sends it at the next start.
+            // A native crash (mpv) leaves its report next to the app; CrashReports sends it at the next start.
             "-XX:ErrorFile=\$APPDIR/hs_err_pid%p.log"
         )
         // Обфускация имён (только release: `./gradlew packageReleaseMsi`). Debug-сборка остаётся читаемой.
@@ -95,7 +93,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe)
             appResourcesRootDir.set(project.layout.projectDirectory.dir("resources")) // resources/windows/SuslikUninstall.exe (собирает CI)
-            // java.net.http: API client, jdk.crypto.ec: HTTPS, jdk.unsupported: JNA (VLC)
+            // java.net.http: API client, jdk.crypto.ec: HTTPS, jdk.unsupported: JNA (mpv/Win32)
             modules("java.net.http", "jdk.crypto.ec", "jdk.unsupported", "java.naming", "jdk.accessibility")
             // debug build: CPU / threads / memory for the [sys] journal lines
             if (diag) modules("java.management", "jdk.management")

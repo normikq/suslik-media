@@ -6,7 +6,7 @@ import java.io.File
 /**
  * Reports that send themselves to the server (POST /api/app/report), so a problem is seen without anyone having to
  * describe it:
- *  - the app ended abnormally last time (crash of VLC / the JVM — nothing could be sent then): at the next start,
+ *  - the app ended abnormally last time (crash of mpv / the JVM — nothing could be sent then): at the next start,
  *    with the end of the player journal and the JVM's crash file, if any;
  *  - an exception nobody caught: right away;
  *  - the playback supervisor had to reopen a film: the journal around it (at most once per 10 minutes).

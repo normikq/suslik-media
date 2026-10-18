@@ -1,7 +1,6 @@
 package ru.suslikovanora.media.desktop
 
 import ru.suslikovanora.media.core.*
-import ru.suslikovanora.media.desktop.player.VlcFactory
 
 import com.sun.jna.Library
 import com.sun.jna.Native
@@ -11,11 +10,11 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.TimeUnit
 
 /**
- * A guaranteed, clean exit. The app used to just close its window and let the JVM end by itself. If VLC was still
+ * A guaranteed, clean exit. The app used to just close its window and let the JVM end by itself. If the player was still
  * stopping a stream (a slow network read) or its audio thread was busy, the process could stay in Task Manager
  * with no window. Now:
  *  1. the window closes at once;
- *  2. players get up to 1.5 s to stop and release VLC, then the VLC engine is released (1 s at most);
+ *  2. players get up to 1.5 s to stop and release;
  *  3. settings are written and the process ends;
  *  4. a watchdog kills the process outright if anything above still hangs.
  */
@@ -24,7 +23,7 @@ object AppExit {
     @Volatile private var started = false
     @Volatile private var armed = false
 
-    /** A player's VLC thread: on exit we wait (briefly) for its stop/release to finish. */
+    /** A player's control thread: on exit we wait (briefly) for its stop/release to finish. */
     fun track(executor: ExecutorService) { players += executor }
     fun untrack(executor: ExecutorService) { players -= executor }
 
@@ -51,7 +50,6 @@ object AppExit {
             armWatchdog(code)
             val deadline = System.currentTimeMillis() + 1_500
             for (e in players) runCatching { e.awaitTermination((deadline - System.currentTimeMillis()).coerceAtLeast(0), TimeUnit.MILLISECONDS) }
-            Thread({ runCatching { VlcFactory.releaseAll() } }, "vlc-release").apply { isDaemon = true; start(); join(1_000) }
             runCatching { ru.suslikovanora.media.desktop.player.MediaControls.release() }
             Store.flushAll()
             CrashReports.stop() // clean exit: nothing to report next time

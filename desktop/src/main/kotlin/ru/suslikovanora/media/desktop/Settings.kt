@@ -62,17 +62,14 @@ object PlaybackSettings {
     private val store = Store("settings")
     fun burstMb() = PlaybackPresets.clampBurst(store.get("burst_mb")?.toIntOrNull() ?: BURST_DEFAULT)
     fun setBurstMb(v: Int) = store.put("burst_mb", v.toString())
-    fun cacheMs() = store.get("vlc_cache_ms")?.toIntOrNull() ?: CACHE_DEFAULT
-    fun setCacheMs(v: Int) = store.put("vlc_cache_ms", v.toString())
+    fun cacheMs() = store.get("cache_ms")?.toIntOrNull()
+        ?: store.get("vlc_cache_ms")?.toIntOrNull()
+        ?: CACHE_DEFAULT
+    fun setCacheMs(v: Int) = store.put("cache_ms", v.toString())
 
-    /** Движок плеера: "mpv" (OpenGL) или "vlc" (vlcj). */
-    fun playerEngine(): String {
-        val saved = store.get("player_engine")
-            ?: runCatching { Store("player_ui").get("engine") }.getOrNull()
-        if (saved != null) return saved
-        return if (Mpv.available) "mpv" else "vlc"
-    }
-    fun setPlayerEngine(v: String) = store.put("player_engine", v)
+    /** Движок плеера: mpv. */
+    fun playerEngine(): String = "mpv"
+    fun setPlayerEngine(v: String) = store.put("player_engine", "mpv")
 
     /** Tester code (BETA_CODE on the server): with it, update checks also offer versions from the beta channel. */
     fun betaCode() = store.get("beta_code").orEmpty()
@@ -261,10 +258,9 @@ private fun DiagSection() {
     if (state.isNotEmpty()) Text(state, color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 6.dp))
 }
 
-/** Выбор движка: mpv (Direct3D 11) vs VLC. */
+/** Видеодвижок mpv. */
 @Composable
 private fun EngineSection() {
-    var engine by remember { mutableStateOf(PlaybackSettings.playerEngine()) }
     val loading = MpvInstall.progress
     val mpvAvail = loading == null && Mpv.available
     val libFile = Mpv.libraryFile
@@ -275,30 +271,13 @@ private fun EngineSection() {
         tr("settings.dvizhok_opisanie"),
         top = 18.dp
     )
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        EngineOption(
-            title = tr("settings.dvizhok_mpv"),
-            subtitle = if (mpvAvail) tr("settings.dvizhok_mpv_hint") else tr("settings.dvizhok_mpv_nedostupen"),
-            selected = engine == "mpv" && mpvAvail,
-            enabled = mpvAvail,
-            modifier = Modifier.weight(1f)
-        ) {
-            if (mpvAvail) {
-                engine = "mpv"
-                PlaybackSettings.setPlayerEngine("mpv")
-            }
-        }
-        EngineOption(
-            title = tr("settings.dvizhok_vlc"),
-            subtitle = tr("settings.dvizhok_vlc_hint"),
-            selected = engine == "vlc" || !mpvAvail,
-            enabled = true,
-            modifier = Modifier.weight(1f)
-        ) {
-            engine = "vlc"
-            PlaybackSettings.setPlayerEngine("vlc")
-        }
-    }
+    EngineOption(
+        title = tr("settings.dvizhok_mpv"),
+        subtitle = if (mpvAvail) tr("settings.dvizhok_mpv_hint") else tr("settings.dvizhok_mpv_nedostupen"),
+        selected = true,
+        enabled = true,
+        modifier = Modifier.fillMaxWidth()
+    ) {}
     val statusText = when {
         loading != null -> tr("settings.dvizhok_mpv_zagruzka", "p" to (loading * 100).toInt())
         mpvAvail && libFile != null -> tr("settings.dvizhok_mpv_put", "path" to libFile.absolutePath)

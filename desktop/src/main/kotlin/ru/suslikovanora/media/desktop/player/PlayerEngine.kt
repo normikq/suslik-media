@@ -17,7 +17,6 @@ interface EngineListener {
     fun buffering(percent: Float) {}
     fun buffering(active: Boolean) { buffering(if (active) 0f else 100f) }
     fun timeChanged(ms: Long) {}
-    /** VLC also reports its position (share of the file) with the time, read on its own thread. */
     fun timeChanged(ms: Long, position: Float) { timeChanged(ms) }
     fun stopped() {}
     fun lengthChanged(ms: Long) {}
@@ -28,13 +27,13 @@ interface EngineListener {
 }
 
 /**
- * Всё, что [PlayerView] требует от видеодвижка. Реализации: [MpvEngine] (libmpv) и [VlcPlayer] (vlcj).
+ * Всё, что [PlayerView] требует от видеодвижка. Реализация: [MpvEngine] (libmpv).
  * Все методы потокобезопасны и могут вызываться с любого потока.
  */
 interface PlayerEngine {
     /**
-     * Открыть [url] с позиции [startMs]. [opts] — опции файла (см. [MpvEngine]); [audioUrls]/[subUrls] — внешние
-     * дорожки. Пауза после открытия выключена.
+     * Открыть [url] с позиции [startMs]. [audioUrls]/[subUrls] — внешние дорожки.
+     * Пауза после открытия выключена.
      */
     fun open(url: String, startMs: Long, nightMode: Boolean, audioLang: String?, subLang: String?,
              audioUrls: List<String>, subUrls: List<String>)
@@ -82,17 +81,9 @@ interface PlayerEngine {
     fun release()
 }
 
-/**
- * Какой движок играет. По умолчанию VLC. mpv включается одним из способов (и только если найден libmpv-2.dll):
- * переменная среды `SUSLIK_ENGINE=mpv`, ключ JVM `-Dsuslik.engine=mpv` или `engine=mpv` в player_ui.properties.
- */
+/** Единственный движок воспроизведения на ПК — mpv. */
 object EngineChoice {
-    val useMpv: Boolean
-        get() {
-            val want = System.getenv("SUSLIK_ENGINE") ?: System.getProperty("suslik.engine")
-                ?: ru.suslikovanora.media.desktop.PlaybackSettings.playerEngine()
-            return want.equals("mpv", ignoreCase = true) && Mpv.available
-        }
+    val useMpv: Boolean get() = true
 }
 
 /** Перекладывает события движка в обработчики плеера, которые появляются позже самого движка. */
