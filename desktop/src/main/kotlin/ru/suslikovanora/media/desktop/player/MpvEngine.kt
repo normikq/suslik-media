@@ -234,22 +234,30 @@ class MpvEngine(
         set("alang", audioLang ?: "")
         set("slang", subLang ?: "")
         set("af", if (nightMode) "lavfi=[acompressor=threshold=0.063:ratio=6:attack=25:release=100:knee=2:makeup=3]" else "")
+        // Subtitle files are fetched now, all at once, while mpv opens the video (see SideFiles.kt).
+        val subs = if (subUrls.isEmpty()) null else java.util.concurrent.CompletableFuture.supplyAsync { fetchSubtitles(subUrls, url) }
         synchronized(trackLock) {
+            openGen++
             currentOpenUrl = url
             pendingAudio = audioUrls
-            pendingSubs = subUrls
+            pendingSubs = subs
         }
         cmd("loadfile", url, "replace")
     }
 
     private val trackLock = Any()
+    @Volatile private var openGen = 0
     @Volatile private var currentOpenUrl: String? = null
     @Volatile private var pendingAudio: List<String> = emptyList()
-    @Volatile private var pendingSubs: List<String> = emptyList()
+    @Volatile private var pendingSubs: java.util.concurrent.Future<List<SideSub>>? = null
+    @Volatile private var sideThread: Thread? = null
 
-    /** По событию file-loaded добавляет внешние дорожки (озвучки и субтитры). */
+    /**
+     * По событию file-loaded добавляет внешние дорожки: сначала субтитры (уже скачаны, мгновенно), потом озвучки.
+     * Отдельным потоком: mpv открывает каждый файл, пока команда не вернётся, и поток событий раньше стоял всё это время.
+     */
     private fun addExternalTracks() {
-        val (audio, subs) = synchronized(trackLock) {
+        val (gen, audio, subs) = synchronized(trackLock) {
             val cur = str("path")
             val target = currentOpenUrl
             val matches = cur == null || target == null || cur == target || cur.trimEnd('/') == target.trimEnd('/') ||
@@ -258,14 +266,25 @@ class MpvEngine(
                 val a = pendingAudio
                 val s = pendingSubs
                 pendingAudio = emptyList()
-                pendingSubs = emptyList()
-                a to s
+                pendingSubs = null
+                Triple(openGen, a, s)
             } else {
-                emptyList<String>() to emptyList<String>()
+                Triple(openGen, emptyList<String>(), null)
             }
         }
-        audio.forEach { cmd("audio-add", it, "auto") }
-        subs.forEach { cmd("sub-add", it, "auto") }
+        if (audio.isEmpty() && subs == null) return
+        sideThread = Thread({
+            val current = { !dead && openGen == gen }
+            val list = runCatching { subs?.get(20, java.util.concurrent.TimeUnit.SECONDS) }.getOrNull().orEmpty()
+            for (s in list) {
+                if (!current()) return@Thread
+                if (s.lang != null) cmd("sub-add", s.target, "auto", s.title, s.lang) else cmd("sub-add", s.target, "auto", s.title)
+            }
+            for (a in audio) {
+                if (!current()) return@Thread
+                cmd("audio-add", a, "auto")
+            }
+        }, "mpv-sidecars").apply { isDaemon = true; start() }
     }
 
     override fun setPaused(paused: Boolean) {
@@ -443,10 +462,14 @@ class MpvEngine(
                 runCatching { evThread.join(500) }
             }
         }
+        // A track being added holds a call into the core: it must return before the core is destroyed.
+        val side = sideThread
+        if (side != null && side != Thread.currentThread()) runCatching { side.join(1500) }
         if (!canDestroy) return
-        if (evThread?.isAlive == true) {
+        if (evThread?.isAlive == true || side?.isAlive == true) {
             Thread({
-                runCatching { evThread.join() }
+                runCatching { evThread?.join() }
+                runCatching { side?.join() }
                 runCatching { api.mpv_terminate_destroy(p) }
             }, "mpv-destroy-deferred").apply { isDaemon = true; start() }
         } else {

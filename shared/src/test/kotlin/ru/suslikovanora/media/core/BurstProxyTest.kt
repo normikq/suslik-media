@@ -112,6 +112,27 @@ class BurstProxyTest {
         assertTrue(ranges.any { Regex("""bytes=\d+-\d+""").matches(it) }, "ranges: $ranges")
     }
 
+    @Test fun anOpenButUnreadStreamStopsAtTheProbeReserve() {
+        // An external voice-over that is not playing: mpv reads its header and keeps the connection open, reading nothing.
+        slowOrigin = true // ~2 MB/s: the old code fills the ring (14 MB ahead) in these 7 s
+        val local = URL(BurstProxy.wrap(url))
+        val before = BurstProxy.downloaded.get()
+        java.net.Socket().use { s ->
+            s.receiveBufferSize = 64 * 1024
+            s.connect(InetSocketAddress(local.host, local.port))
+            s.getOutputStream().write("GET ${local.path} HTTP/1.1\r\nHost: 127.0.0.1\r\nRange: bytes=0-\r\n\r\n".toByteArray())
+            val inp = s.getInputStream()
+            val buf = ByteArray(64 * 1024)
+            var got = 0
+            while (got < 256 * 1024) { val n = inp.read(buf); if (n < 0) break; got += n }
+            Thread.sleep(7_000) // the connection stays open, nobody reads
+            val fetched = BurstProxy.downloaded.get() - before
+            // the probe reserve is 4 MB past what the socket took
+            assertTrue(fetched < (9L shl 20), "fetched ${fetched shr 20} MB for an unread stream")
+        }
+        slowOrigin = false
+    }
+
     @Test fun stalledAnswerIsRepeatedOnANewConnection() {
         BurstProxy.headerStallMs = 700; BurstProxy.bodyStallMs = 700
         try {

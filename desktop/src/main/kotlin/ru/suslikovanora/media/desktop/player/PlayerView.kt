@@ -276,13 +276,18 @@ fun PlayerView(
             delay(1500)
         }
     }
-    fun seriesKey() = title.substringBefore(" · ").lowercase()
+    // Choices (voice-over, subtitles, delays) belong to the torrent: every episode and season of it shares them. They used
+    // to be kept by the title, and an episode's title is "… • S01E09" or the file name — so each episode had its own
+    // and the next one fell back to the last choice of any film («audio:*»).
+    fun titleKey() = title.substringBefore(" · ").lowercase() // the old key: still read, so earlier choices are not lost
+    fun seriesKey() = req.watchKeys.firstOrNull()?.substringBefore('|')?.takeIf { it.isNotBlank() }?.let { "m$it" } ?: titleKey()
+    fun pref(kind: String): String? = ui.get("$kind:${seriesKey()}") ?: ui.get("$kind:${titleKey()}")
     fun prefLanguage(kind: String): String? =
-        (ui.get("$kind:${seriesKey()}") ?: ui.get("$kind:*"))?.let { Regex("""\[([^\]]+)]""").find(it)?.groupValues?.get(1) }
+        (pref(kind) ?: ui.get("$kind:*"))?.let { Regex("""\[([^\]]+)]""").find(it)?.groupValues?.get(1) }
 
     val sidecarCache = remember { java.util.concurrent.ConcurrentHashMap<Int, kotlinx.coroutines.Deferred<Pair<List<String>, List<String>>>>() }
     fun sidecars(i: Int): kotlinx.coroutines.Deferred<Pair<List<String>, List<String>>> = sidecarCache.getOrPut(i) {
-        if (i == 0 || req.sidecars == null) kotlinx.coroutines.CompletableDeferred(if (i == 0) req.audioUrls to req.subUrls else emptyList<String>() to emptyList())
+        if (i == req.startIndex || req.sidecars == null) kotlinx.coroutines.CompletableDeferred(if (i == req.startIndex) req.audioUrls to req.subUrls else emptyList<String>() to emptyList())
         else scope.async(Dispatchers.IO) { runCatching { req.sidecars?.invoke(i) }.getOrNull() ?: (emptyList<String>() to emptyList()) }
     }
 
@@ -377,7 +382,12 @@ fun PlayerView(
     var chaptersJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var canvasFocusJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
-    fun open(url: String, startAt: Long, extras: Pair<List<String>, List<String>>) {
+    fun open(url: String, startAt: Long, sides: Pair<List<String>, List<String>>) {
+        // The voice-over and subtitles chosen before go first: they are warmed up and added before the others.
+        val extras = preferFirst(sides.first, pref("audio") ?: ui.get("audio:*"), url) to
+            preferFirst(sides.second, pref("spu") ?: ui.get("spu:*"), url)
+        fun firstOf(l: List<String>) = l.firstOrNull()?.let { SidePaths.of(it) ?: sideFileName(it) }
+        if (extras != sides) PlayerLog.write("[track] chosen before goes first: voice-over ${firstOf(extras.first)}, subtitles ${firstOf(extras.second)}")
         ensureAudioJob?.cancel()
         chaptersJob?.cancel()
         canvasFocusJob?.cancel()
@@ -386,8 +396,8 @@ fun PlayerView(
         chapters = emptyList()
         lastGood = startAt
         time = startAt
-        audioDelay = ui.get("adelay:${seriesKey()}")?.toLongOrNull() ?: 0L
-        subDelay = ui.get("sdelay:${seriesKey()}")?.toLongOrNull() ?: 0L
+        audioDelay = pref("adelay")?.toLongOrNull() ?: 0L
+        subDelay = pref("sdelay")?.toLongOrNull() ?: 0L
         pausedAt = 0L
 
         Reserve.init()
@@ -398,6 +408,9 @@ fun PlayerView(
         PlayerLog.write("open ${url.substringBefore('?').substringAfterLast('/')} at ${startAt / 1000}s, voice-overs=${extras.first.size}, " +
             "buffer=${PlaybackSettings.cacheMs()}ms, reserve=${PlaybackSettings.burstMb()}MB")
         val playUrl = BurstProxy.wrap(url)
+        // Voice-overs: their start and index into the reserve now, all at once, while the video opens (SideFiles.kt).
+        extras.first.map { BurstProxy.wrap(it) }.filter { it.startsWith("http://127.0.0.1") }
+            .forEach { u -> scope.launch(Dispatchers.IO) { warmSidecar(u) } }
         val isTs = eng == null && TsClock.isTs(url)
         tsStartAt = startAt; tsOpenDone = !isTs; if (!isTs) { ts = null; tsAbsolute = false }
         val prev = openJob
@@ -459,8 +472,8 @@ fun PlayerView(
     }
 
     fun applyPrefs() {
-        val audio = ui.get("audio:${seriesKey()}") ?: ui.get("audio:*")
-        val spu = ui.get("spu:${seriesKey()}") ?: ui.get("spu:*")
+        val audio = pref("audio") ?: ui.get("audio:*")
+        val spu = pref("spu") ?: ui.get("spu:*")
         vlc {
             if (audio != null) eAudioTracks().firstOrNull { it.second == audio }?.let { if (eAudioCur() != it.first) { eSetAudio(it.first); applyTrackNow() } }
             if (spu == "__off__") { if (eSubCur() != -1) eSetSub(-1) }
@@ -814,10 +827,10 @@ fun PlayerView(
                 togglePause()
             },
             onNext = { if (index + 1 < queue.size) playEntry(index + 1) },
+            // The previous episode at once (it used to restart this one first when past 5 s); the first one goes to 00:00.
             onPrevious = {
-                if (time > 5_000L) vlcSeekTo(0L)
-                else if (index > 0) playEntry(index - 1)
-                else vlcSeekTo(0L)
+                PlayerLog.write("[smtc] previous (episode ${index + 1} of ${queue.size})")
+                if (index > 0) playEntry(index - 1) else vlcSeekTo(0L)
             },
             onSeek = { targetMs -> vlcSeekTo(targetMs) }
         )
@@ -1125,7 +1138,8 @@ fun PlayerView(
         if (entries.size > 1) {
             queue = entries
         }
-        if (startIndex > 0 && entries.size > startIndex) {
+        // A settings restart in another episode; the episode of the request opens below with its own address and side files.
+        if (startIndex != req.startIndex && entries.size > startIndex) {
             playEntry(startIndex)
             return@LaunchedEffect
         }

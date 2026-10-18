@@ -27,7 +27,28 @@ object AppDir {
 /** Tiny key-value store on disk (posters, watch progress, settings). Writes are debounced by the caller's rhythm. */
 class Store(name: String) {
     private val f = AppDir.file("$name.properties")
-    private val p = Properties().apply { runCatching { f.inputStream().use { load(it) } } }
+    private val bak = AppDir.file("$name.properties.bak")
+    private val p = load()
+
+    /**
+     * The file, or the copy before the last write when the file is damaged. 18.10: after a hard power-off cookies, watch
+     * and player_ui were all zero bytes (the new name was on disk, its data not yet) — the zeros went into the Cookie
+     * header and every request failed with «invalid header value». An entry with control characters is dropped.
+     */
+    private fun load(): Properties {
+        for (src in listOf(f, bak)) {
+            val bytes = runCatching { src.readBytes() }.getOrNull() ?: continue
+            if (bytes.isEmpty() || bytes.any { it == 0.toByte() }) {
+                runCatching { PlayerLog.write("[store] ${src.name} is damaged (${bytes.size} bytes), trying the copy") }
+                continue
+            }
+            val props = Properties()
+            if (runCatching { bytes.inputStream().use { props.load(it) } }.isFailure) continue
+            props.stringPropertyNames().filter { k -> (k + props.getProperty(k)).any { it < ' ' } }.forEach { props.remove(it) }
+            return props
+        }
+        return Properties()
+    }
     @Synchronized fun get(k: String): String? = p.getProperty(k)
     @Synchronized fun put(k: String, v: String?) {
         if (v == null) p.remove(k) else p.setProperty(k, v)
@@ -45,9 +66,11 @@ class Store(name: String) {
         if (!pending) return
         pending = false
         runCatching {
+            // The data is on disk (sync) before the new file takes the name; the previous one stays as .bak.
             val tmp = java.io.File(f.parentFile, f.name + ".tmp")
-            tmp.outputStream().use { p.store(it, null) }
-            if (!tmp.renameTo(f)) { f.delete(); tmp.renameTo(f) }
+            java.io.FileOutputStream(tmp).use { out -> p.store(out, null); out.fd.sync() }
+            if (f.exists()) java.nio.file.Files.move(f.toPath(), bak.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            java.nio.file.Files.move(tmp.toPath(), f.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE)
         }
     }
     init { all += this }

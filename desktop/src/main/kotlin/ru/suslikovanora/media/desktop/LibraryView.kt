@@ -124,7 +124,10 @@ enum class ViewMode { Grid, List }
 internal suspend fun mirrorUrls(files: List<MFile>): List<String> = coroutineScope {
     val enc = { v: String -> URLEncoder.encode(v, "UTF-8") }
     files.filter { it.link != null }.map { f ->
-        async { runCatching { Api.get("/api/file/mirror-url?link=${enc(f.link!!)}&name=${enc(f.name)}").optString("url").ifBlank { null } }.getOrNull() }
+        async {
+            runCatching { Api.get("/api/file/mirror-url?link=${enc(f.link!!)}&name=${enc(f.name)}").optString("url").ifBlank { null } }.getOrNull()
+                ?.also { ru.suslikovanora.media.desktop.player.SidePaths.remember(it, f.path) }
+        }
     }.mapNotNull { it.await() }
 }
 

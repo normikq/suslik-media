@@ -134,7 +134,7 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
             if (!vlcWarm.isCompleted) preparing = true
             val ok = vlcWarm.await()
             preparing = false
-            if (ok) { playerStart = 0; playing = req } else noVlc = true
+            if (ok) { playerStart = req.startIndex; playing = req } else noVlc = true
         }
     }
 
