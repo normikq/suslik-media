@@ -220,6 +220,7 @@ class MpvVideoOut(private val gl: SkikoGl) {
     private var forceNext = false
     private var frames = 0L
     @Volatile private var disposed = false
+    @Volatile private var leftAlive = false
     private val posted = AtomicBoolean(false)
     private val freed = CountDownLatch(1)
 
@@ -270,6 +271,7 @@ class MpvVideoOut(private val gl: SkikoGl) {
         ctx = ref.value
         Native.setCallbackThreadInitializer(onUpdate, CallbackThreadInitializer(true, false, "mpv-video-update"))
         api.mpv_render_context_set_update_callback(ref.value, onUpdate, null)
+        live += this
         PlayerLog.write("[video] mpv draws inside the window (OpenGL, one surface)")
         if (watchOn) stallWatch.start()
         return true
@@ -488,6 +490,7 @@ class MpvVideoOut(private val gl: SkikoGl) {
         if (freed.count == 0L) return
         val wasValid = !disposed || gl.valid
         disposed = true
+        var ctxFreed = ctx == null
         try {
             val c = ctx
             val a = api
@@ -496,6 +499,7 @@ class MpvVideoOut(private val gl: SkikoGl) {
                 if (c != null && a != null) {
                     a.mpv_render_context_set_update_callback(c, null, null)
                     a.mpv_render_context_free(c)
+                    ctxFreed = true
                 }
                 releaseTarget() // и буфер окна снова привязан
             }
@@ -503,12 +507,30 @@ class MpvVideoOut(private val gl: SkikoGl) {
         } catch (e: Throwable) {
             PlayerLog.write("[video] dispose: $e")
         } finally {
+            if (!ctxFreed) {
+                leftAlive = true
+                PlayerLog.write("[video] OpenGL context already gone: render context not freed, mpv core is left alive")
+            }
+            live -= this
             freed.countDown()
         }
     }
 
-    /** Из потока движка: дождаться [dispose]. */
-    fun awaitFreed(ms: Long): Boolean = freed.await(ms, TimeUnit.MILLISECONDS)
+    /**
+     * Из потока движка: дождаться [dispose]. false — render context не освобождён (не успели или GL-контекста уже нет):
+     * тогда mpv_terminate_destroy звать нельзя, mpv сам роняет приложение («Broken API use: mpv_render_context_free() not called», abort).
+     */
+    fun awaitFreed(ms: Long): Boolean = freed.await(ms, TimeUnit.MILLISECONDS) && !leftAlive
+
+    companion object {
+        private val live = java.util.concurrent.CopyOnWriteArraySet<MpvVideoOut>()
+
+        /**
+         * Поток интерфейса, перед закрытием окна. Compose при закрытии сначала снимает SkiaLayer с окна (Skiko тут же
+         * удаляет свой GL-контекст) и только потом разбирает композицию, так что dispose из onDispose опаздывает.
+         */
+        fun disposeAll() = live.forEach { it.dispose() }
+    }
 }
 
 /** Видео mpv как обычный слой Compose: панели рисуются поверх него в той же сцене. */
