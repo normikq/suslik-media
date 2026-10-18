@@ -139,7 +139,9 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
     LaunchedEffect(lib.authenticated) { if (lib.authenticated == true) lib.refresh() }
 
     Window(
-        onCloseRequest = ::exitApplication,
+        // mpv's video output is freed while the window's OpenGL context still exists: on close Compose removes the
+        // Skia layer (and its GL context) before the player's onDispose runs, and mpv aborts the process over it
+        onCloseRequest = { MpvVideoOut.disposeAll(); exitApplication() },
         title = (if (Diag.on) "Suslik Debug" else "Suslik Media").let { app -> playing?.let { "${it.title} — $app" } ?: tr("app.app_mediateka", "app" to app) },
         icon = painterResource("icons/icon-256.png"),
         state = win,

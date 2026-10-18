@@ -417,10 +417,15 @@ class MpvEngine(
 
         val p = h ?: return
         // Render context освобождается на потоке интерфейса (там его GL-контекст) и обязательно до уничтожения ядра
-        video?.let { v ->
-            if (javax.swing.SwingUtilities.isEventDispatchThread()) v.dispose()
-            else if (!v.awaitFreed(3000)) ru.suslikovanora.media.desktop.PlayerLog.write("[video] render context not freed in 3 s")
-        }
+        // Живой render context при mpv_terminate_destroy — mpv роняет весь процесс (abort, 0xC0000409): тогда ядро
+        // только останавливаем и оставляем как есть (при выходе процесс всё равно завершится)
+        val canDestroy = video?.let { v ->
+            val edt = javax.swing.SwingUtilities.isEventDispatchThread()
+            if (edt) v.dispose()
+            v.awaitFreed(if (edt) 0 else 3000).also {
+                if (!it) ru.suslikovanora.media.desktop.PlayerLog.write("[video] render context not freed: mpv core is not destroyed")
+            }
+        } ?: true
         h = null
         runCatching { api.mpv_command(p, arrayOf("quit", "0", null)) }
         runCatching { api.mpv_wakeup(p) }
@@ -433,6 +438,7 @@ class MpvEngine(
                 runCatching { evThread.join(500) }
             }
         }
+        if (!canDestroy) return
         if (evThread?.isAlive == true) {
             Thread({
                 runCatching { evThread.join() }
