@@ -1040,6 +1040,9 @@ class PlayerActivity : ComponentActivity() {
         playbackPosition = t
         lastTime = t
         handler.removeCallbacks(seekWatchdogRunnable)
+        // A seek restarts the decoders itself: the wait after it is the new place loading, not a stuck track switch
+        // (18.10 journal: a far seek 5 s after switching to DTS got a second seek of its own while the data came in).
+        handler.removeCallbacks(trackSwitchRunnable); trackSwitchAt = 0L
         if (networkLost) { needsReload = true; pendingSeekPos = t; showStatus(tr("player.net_seti_zhdem_podklyuchenie")); return }
         if (needsReload || ended) {
             pendingSeekPos = null
