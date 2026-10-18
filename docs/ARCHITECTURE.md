@@ -211,12 +211,12 @@ suslik-media/
 
 > 📖 **Подробная документация:** [docs/DESKTOP.md](DESKTOP.md)
 
-Использует современный движок **mpv** (`libmpv-2.dll`, Direct3D 11) по умолчанию и классический **VLC** (64-битный VLC 3.x через vlcj) в качестве резерва.
+Использует современный движок **mpv** (`libmpv-2.dll`, вывод в сцене Compose через OpenGL, см. `docs/DESKTOP.md` §4.1) по умолчанию и классический **VLC** (64-битный VLC 3.x через vlcj) в качестве резерва.
 
 | Файл / модуль (`desktop/src/main/kotlin/ru/suslikovanora/media/desktop/`) | Что делает |
 |---|---|
 | `Main.kt` | запуск: одно окно, прогрев VLC, вкладки, плеер поверх медиатеки |
-| `player/` | **модульный плеер**: пакет `ru.suslikovanora.media.desktop.player` (`PlayerView.kt`, `PlayerOverlays.kt`, `PlayerControls.kt`, `PlayerIcons.kt`, `PlayerMorePanel.kt`, `PlayerPlaylist.kt`, `PlayerStats.kt`, `PlayRequest.kt`, `PlayerEngine.kt`, `MediaControls.kt` — системные медиа-контролы Windows; движки `MpvEngine.kt` + `MpvLib.kt` и `VlcEngine.kt` — класс `VlcPlayer` и фабрика vlcj) |
+| `player/` | **модульный плеер**: пакет `ru.suslikovanora.media.desktop.player` (`PlayerView.kt`, `PlayerOverlays.kt`, `PlayerControls.kt`, `PlayerIcons.kt`, `PlayerMorePanel.kt`, `PlayerPlaylist.kt`, `PlayerStats.kt`, `PlayRequest.kt`, `PlayerEngine.kt`, `MediaControls.kt` — системные медиа-контролы Windows; движки `MpvEngine.kt` + `MpvLib.kt` + `MpvVideo.kt` (вывод в сцене) и `VlcEngine.kt` — класс `VlcPlayer` и фабрика vlcj) |
 | `ui/` | **дизайн-система и общие компоненты**: пакет `ru.suslikovanora.media.desktop.ui` (`Theme.kt` — токены Sm, шрифты, SuslikTheme; `Controls.kt` — Panel, LampButton, OutlineButton, Chip, Field, hover-модификаторы) |
 | `Library.kt`, `LibraryView.kt`, `PlayDialog.kt` | медиатека: данные, экран и окно «Смотреть» |
 | `SearchView.kt`, `AddView.kt` | поиск и добавление |
@@ -232,7 +232,9 @@ suslik-media/
 
 Плеер на Windows совмещает **прямой аппаратный вывод 4K HDR видео** через mpv или libVLC с **современным полупрозрачным UI на Compose Desktop**:
 
-1. **Решение проблемы наложения тяжелых компонентов (Airspace Problem):**
+0. **mpv: видео и панели в одной сцене (PR #15).** mpv рисует кадры (`vo=libmpv`, render API) в OpenGL-контексте, которым Skiko рисует окно, прямо в текстуру Skia; видео — слой Compose, панели — слои того же `Box`. Окон-оверлеев, `syncOverlayBounds`, `clipToBottom`, `WS_DISABLED` и `restoreComposeFocus` у mpv нет. Подробно, с ловушками общего GL-контекста, — `docs/DESKTOP.md` §4.1. Пункты 1, 3 (скрытие окон-оверлеев) и 6 (фокус, холст) ниже относятся к **VLC**.
+
+1. **Решение проблемы наложения тяжелых компонентов (Airspace Problem) — VLC:**
    - Библиотека libVLC рисует видео через DirectX/Direct3D напрямую в нативный системный Win32 HWND (`java.awt.Canvas`), заполняющий главное окно приложения. Это даёт 0% нагрузки на CPU при воспроизведении тяжелых 4K Remux файлов.
    - Любые стандартные легковесные Compose-компоненты, расположенные в том же окне в `Box` поверх `Canvas`, перекрываются видеокартой (флаг `compose.interop.blending` работает только для обычных Swing `JPanel`, но не для нативных DirectX HWND).
    - **Двухоконная схема (`topDialog` и `bottomDialog`):** интерфейс управления вынесен в два независимых дочерних окна `ComposeDialog(owner)` с `isUndecorated = true` и `isTransparent = true`. Это активирует нативную попиксельную альфа-прозрачность Skiko/DirectX на уровне Windows DWM.
@@ -313,7 +315,7 @@ suslik-media/
 
 7. **Двухдвижковая система (mpv и VLC) и стабильность воспроизведения (2.2):**
    - **Абстракция `PlayerEngine`:** единый интерфейс плеера (`ru.suslikovanora.media.desktop.player.PlayerEngine`), инкапсулирующий работу с позицией, длительностью, дорожками звука/субтитров, фильтрами и громкостью. Основной движок — mpv (`MpvEngine` на базе `libmpv-2.dll`, библиотека входит в MSI), резервный — VLC (`VlcPlayer` в `VlcEngine.kt`, vlcj). `PlayerView` говорит с одним `engine` и одним `EngineListener` для обоих. Выбор сохраняется в `settings.properties` и переключается в «Настройках».
-   - **Аппаратный вывод Direct3D 11 через Windows HWND (`wid`):** холст `java.awt.Canvas` передается в mpv (`api.mpv_set_option_string(p, "wid", hwnd.toString())`), вывод настраивается через `--vo=gpu`, `--gpu-api=d3d11`, `--hwdec=auto-safe`. Обеспечивает 0% нагрузки CPU, аппаратный VSync без тиринга, безупречный рендеринг стилизованных ASS/SSA субтитров (`libass`) и нулевой конфликт с DirectX DWM оверлеями Compose.
+   - **Вывод mpv в сцене (render API, PR #15):** `vo=libmpv`, `mpv_render_context` в OpenGL-контексте Skiko, кадр рисуется прямо в текстуру Skia (без копии), `hwdec=auto-safe`. До PR #15 было `wid` + `--vo=gpu`, `--gpu-api=d3d11` в нативный холст. Подробно — `docs/DESKTOP.md` §4.1.
    - **Потокобезопасная загрузка внешних дорожек:** в `MpvEngine` списки внешних озвучек и субтитров (`pendingAudio`, `pendingSubs`) объявлены с аннотацией `@Volatile` и защищены мьютексом `trackLock`. Метод `addExternalTracks()` верифицирует, что текущий загруженный в mpv путь (`str("path")`) строго совпадает с `currentOpenUrl`, исключая гонки и затирание внешних дорожек новыми сериями при быстром переключении.
    - **64-битная раскладка нативных структур libmpv в памяти (JNA):**
      - В `Mpv.EV_END_FILE` поле указателя `void *data` в 64-битной структуре `mpv_event` расположено по смещению `16` байт. Считывание кода завершения (`reason`, смещение 0) и ошибки (`error`, смещение 4) производится строго после разыменования указателя `dataPtr = ev.getPointer(16)`.
