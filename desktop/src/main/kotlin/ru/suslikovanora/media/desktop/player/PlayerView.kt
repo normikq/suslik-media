@@ -1079,6 +1079,16 @@ fun PlayerView(
 
     DisposableEffect(videoOut) { onDispose { videoOut?.dispose() } }
 
+    // mpv: пока тянут край окна, AWT на каждом шаге перекладывает окно и держит поток интерфейса по 1–5 с (журнал
+    // 18.10: WComponentPeer.reshape / setBounds) — стоят и видео, и панели. Без «динамической» перекладки окно
+    // перестраивается один раз, когда край отпустили, а видео тем временем идёт.
+    if (inScene) DisposableEffect(Unit) {
+        val tk = java.awt.Toolkit.getDefaultToolkit()
+        val was = runCatching { tk.isDynamicLayoutActive }.getOrDefault(true)
+        runCatching { tk.setDynamicLayout(false) }
+        onDispose { runCatching { tk.setDynamicLayout(was) } }
+    }
+
     LaunchedEffect(Unit) {
         if (inScene) {
             // Render context mpv — до первого открытия файла (без него у vo=libmpv нет вывода)

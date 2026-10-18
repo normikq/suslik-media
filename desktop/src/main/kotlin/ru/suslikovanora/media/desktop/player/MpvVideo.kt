@@ -259,23 +259,48 @@ class MpvVideoOut(private val gl: SkikoGl) {
         Native.setCallbackThreadInitializer(onUpdate, CallbackThreadInitializer(true, false, "mpv-video-update"))
         api.mpv_render_context_set_update_callback(ref.value, onUpdate, null)
         PlayerLog.write("[video] mpv draws inside the window (OpenGL, one surface)")
-        if (ru.suslikovanora.media.desktop.Diag.on) stallWatch.start()
+        if (watchOn) stallWatch.start()
         return true
     }
 
     // Suslik Debug: сторож потока интерфейса — пока идёт видео, замирания окна дольше 100 мс пишутся в журнал
     private val stallWatch = Thread({
         var logged = 0
+        var edt: Thread? = null
+        SwingUtilities.invokeLater { edt = Thread.currentThread() }
         while (!disposed) {
             val posted = System.nanoTime()
             val done = CountDownLatch(1)
             SwingUtilities.invokeLater { done.countDown() }
-            done.await(5, TimeUnit.SECONDS)
+            // Если поток интерфейса не ответил за 150 мс — запомнить, где он сейчас (раз в замирание)
+            var where: String? = null
+            if (!done.await(150, TimeUnit.MILLISECONDS)) {
+                where = edt?.stackTrace?.take(14)?.joinToString(" < ") { "${it.className.substringAfterLast('.')}.${it.methodName}:${it.lineNumber}" }
+                done.await(5, TimeUnit.SECONDS)
+            }
             val ms = (System.nanoTime() - posted) / 1_000_000
-            if (ms > 100 && !disposed && logged++ < 200) PlayerLog.write("[video] UI thread stalled $ms ms (frame $frames)")
+            if (ms > 100 && !disposed && logged++ < 200)
+                PlayerLog.write("[video] UI thread stalled $ms ms (frame $frames)" + (where?.let { " at $it" } ?: ""))
             Thread.sleep(50)
         }
     }, "video-ui-watch").apply { isDaemon = true }
+
+    /** Сколько раз за последнюю секунду вызывался render и сколько из них — пересоздание буфера (для журнала сторожа). */
+    private var renders = 0
+    private var reallocs = 0
+    private var renderMs = 0L
+    private var statAt = 0L
+    private fun stat(start: Long) {
+        renders++
+        renderMs += (System.nanoTime() - start) / 1_000_000
+        val now = System.currentTimeMillis()
+        if (statAt == 0L) statAt = now
+        if (now - statAt >= 1000) {
+            if (watchOn && (reallocs > 0 || renderMs > 200)) PlayerLog.write("[video] 1 s: renders=$renders reallocs=$reallocs render time=${renderMs} ms")
+            renders = 0; reallocs = 0; renderMs = 0; statAt = now
+        }
+    }
+    private val watchOn = ru.suslikovanora.media.desktop.Diag.on || System.getenv("SUSLIK_UI_WATCH") != null
 
     /** Из любого потока: отрисовать на потоке интерфейса (несколько вызовов подряд сливаются в один). */
     fun schedule() {
@@ -292,6 +317,12 @@ class MpvVideoOut(private val gl: SkikoGl) {
     }
 
     private fun render() {
+        val t0 = System.nanoTime()
+        renderInner()
+        if (watchOn) stat(t0)
+    }
+
+    private fun renderInner() {
         val c = ctx ?: return
         val a = api ?: return
         if (disposed) return
@@ -335,6 +366,7 @@ class MpvVideoOut(private val gl: SkikoGl) {
     private fun ensureTarget(w: Int, h: Int): Boolean {
         if (tex != 0 && texW == w && texH == h) return true
         releaseTarget()
+        reallocs++
         val g = Gl.lib ?: return false
         return runCatching {
             val ids = IntArray(1)
