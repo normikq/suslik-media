@@ -697,9 +697,23 @@ fun PlayerView(
         javax.swing.SwingUtilities.invokeLater { syncOverlayBounds() }
     }
 
+    var leaveJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+
     fun poke() {
+        leaveJob?.cancel(); leaveJob = null
         lastMove = System.currentTimeMillis()
         if (!barVisible) barVisible = true
+    }
+
+    // The cursor left the window: the panels (also the mini player's) go away after 0.5 s, unless something holds them
+    // (pause, menu, opening…) or the cursor comes back before that.
+    fun hideBarSoon() {
+        leaveJob?.cancel()
+        leaveJob = scope.launch {
+            delay(500)
+            val hold = !started || vlcPaused || nextIn >= 0 || picker != null || seeking != null || infoOpen || inIntro()
+            if (!hold) barVisible = false
+        }
     }
 
     fun close() {
@@ -1064,6 +1078,7 @@ fun PlayerView(
             vlcExecutor.execute {
                 runCatching { eStop() }
                 runCatching { engine.release() }
+                System.gc() // SerialGC: shrinks the heap back after the player's spike
             }
             vlcExecutor.shutdown()
             Thread({ runCatching { vlcExecutor.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS) }; AppExit.untrack(vlcExecutor) }, "vlc-untrack")
@@ -1648,10 +1663,19 @@ fun PlayerView(
             .fillMaxSize()
             .then(if (!inScene) Modifier else Modifier.pointerInput(Unit) {
                 // Любое движение над плеером (и над панелями) показывает панели; события не забираем
+                // Only a real movement counts: when a panel slides under a still cursor Compose sends a Move/Enter with the
+                // same position, and that used to bring the panel back right after it started to leave.
                 awaitPointerEventScope {
+                    var lastPos: androidx.compose.ui.geometry.Offset? = null
                     while (true) {
                         val e = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
-                        if (e.type == PointerEventType.Move || e.type == PointerEventType.Enter) poke()
+                        when (e.type) {
+                            PointerEventType.Move, PointerEventType.Enter -> {
+                                val p = e.changes.firstOrNull()?.position
+                                if (p != lastPos) { lastPos = p; poke() }
+                            }
+                            PointerEventType.Exit -> { lastPos = null; hideBarSoon() }
+                        }
                     }
                 }
             })
@@ -1691,7 +1715,8 @@ fun PlayerView(
                                 }
                             }
                             PointerEventType.Move -> {
-                                poke()
+                                // in the scene the check above already does it (and only for a real movement)
+                                if (!inScene) poke()
                             }
                             PointerEventType.Scroll -> {
                                 val delta = event.changes.firstOrNull()?.scrollDelta?.y ?: 0f

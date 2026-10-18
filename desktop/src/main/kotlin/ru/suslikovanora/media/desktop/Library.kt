@@ -70,7 +70,6 @@ class Library {
 
     suspend fun restoreSnapshot() {
         if (items.isNotEmpty()) return
-        withContext(Dispatchers.IO) { runCatching { prunePosterFiles() } } // once at start: limits of the poster folder
         val list = withContext(Dispatchers.IO) { runCatching { parseLibrary(JSONObject(snapshot.readText())) }.getOrNull() } ?: return
         publish(list)
         status = tr("library.pokazana_sohranennaya_kopiya_o")
@@ -184,7 +183,7 @@ class Library {
     private val posterGate = Semaphore(4)
     // Decoded posters are kept small (tile size) and only the last ~80 stay in memory.
     private val images = object : LinkedHashMap<String, ImageBitmap?>(96, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ImageBitmap?>?) = size > 80
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ImageBitmap?>?) = size > 40
     }
     private val inflight = HashMap<String, CompletableDeferred<ImageBitmap?>>()
 

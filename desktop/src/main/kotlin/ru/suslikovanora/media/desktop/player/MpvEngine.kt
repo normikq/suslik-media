@@ -24,6 +24,7 @@ class MpvEngine(
     @Volatile private var pauseFlag = false
     @Volatile private var coreIdle = true
     @Volatile private var cacheWait = false
+    @Volatile private var playingSent = false // `playing` was reported for the file being opened (see time-pos)
     @Volatile private var cacheBufferingPercent = 100f
     @Volatile private var lastTimeEvent = 0L
     @Volatile private var timeSec = 0.0
@@ -67,8 +68,9 @@ class MpvEngine(
         // No preroll backward seeks on subtitle switch/seek: prevents huge backward range seeks over HTTP
         opt("demuxer-mkv-subtitle-preroll", "no")
         opt("demuxer-mkv-subtitle-preroll-secs", "1")
-        // Keep previous keyframes and clusters in memory so track switching and short seeks do not hit network
-        opt("demuxer-max-bytes", "256MiB"); opt("demuxer-max-back-bytes", "128MiB")
+        // Keep previous keyframes and clusters in memory so track switching and short seeks do not hit network.
+        // Native memory outside -Xmx; the long reserve already lives on disk (BurstProxy), so this is kept small.
+        opt("demuxer-max-bytes", "96MiB"); opt("demuxer-max-back-bytes", "24MiB")
         opt("gapless-audio", "yes")
         opt("audio-stream-silence", "yes")
         opt("network-timeout", "30")
@@ -151,6 +153,9 @@ class MpvEngine(
         when (name) {
             "time-pos" -> if (dbl != null) {
                 timeSec = dbl
+                // The picture is moving but `playing` never came (a stale event from the previous file during a quick
+                // switch of episodes): the panel stayed at «Открываем…» with the play icon. Report it from the clock.
+                if (!playingSent && dbl > 0.0) maybePlaying()
                 val now = System.currentTimeMillis()
                 if (now - lastTimeEvent >= 200L) {
                     lastTimeEvent = now
@@ -192,7 +197,7 @@ class MpvEngine(
     }
 
     /** `playing` — когда ядро действительно крутит кадры: не пауза, не ожидание кэша. */
-    private fun maybePlaying() { if (loaded && !pauseFlag && !cacheWait) listener.playing() }
+    private fun maybePlaying() { if (loaded && !pauseFlag && !cacheWait) { playingSent = true; listener.playing() } }
 
     private fun str(name: String): String? {
         val p = h ?: return null
@@ -222,7 +227,7 @@ class MpvEngine(
                       audioUrls: List<String>, subUrls: List<String>) {
         this.nightMode = nightMode
         handle()
-        loaded = false; timeSec = 0.0; lengthSec = 0.0
+        loaded = false; playingSent = false; timeSec = 0.0; lengthSec = 0.0
         cacheWait = false; cacheBufferingPercent = 0f
         set("pause", "no")
         set("start", if (startMs > 0) "%.3f".format(java.util.Locale.ROOT, startMs / 1000.0) else "0")

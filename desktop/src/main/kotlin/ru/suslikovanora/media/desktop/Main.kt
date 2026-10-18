@@ -135,13 +135,18 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
         val ok = lib.checkSession()
         if (ok == null && lib.items.isNotEmpty()) lib.refresh() // offline check failed: still try with the saved copy
     }
+    // Once after start, off the critical path: limits of the poster folder.
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(4000)
+        withContext(Dispatchers.IO) { runCatching { lib.prunePosterFiles() } }
+    }
     // Signed in (at start or after the login screen): load the library in the app-wide scope.
     LaunchedEffect(lib.authenticated) { if (lib.authenticated == true) lib.refresh() }
 
     Window(
         // mpv's video output is freed while the window's OpenGL context still exists: on close Compose removes the
         // Skia layer (and its GL context) before the player's onDispose runs, and mpv aborts the process over it
-        onCloseRequest = { MpvVideoOut.disposeAll(); exitApplication() },
+        onCloseRequest = { AppExit.armWatchdog(); MpvVideoOut.disposeAll(); exitApplication() },
         title = (if (Diag.on) "Suslik Debug" else "Suslik Media").let { app -> playing?.let { "${it.title} — $app" } ?: tr("app.app_mediateka", "app" to app) },
         icon = painterResource("icons/icon-256.png"),
         state = win,
