@@ -21,6 +21,25 @@ interface MpvApi : Library {
     fun mpv_wait_event(h: Pointer, timeout: Double): Pointer
     fun mpv_wakeup(h: Pointer)
     fun mpv_error_string(error: Int): String
+
+    // render.h: кадры рисуем сами, в GL-контексте окна (vo=libmpv), см. [MpvVideoOut]
+    /** params — массив mpv_render_param {int type; void *data}, последний type = 0. */
+    fun mpv_render_context_create(res: com.sun.jna.ptr.PointerByReference, mpv: Pointer, params: Pointer): Int
+    fun mpv_render_context_set_update_callback(ctx: Pointer, callback: MpvUpdateCallback?, data: Pointer?)
+    /** Битовая маска MPV_RENDER_UPDATE_*; заодно выполняет запросы ядра к выводу (снимок кадра и т. п.). */
+    fun mpv_render_context_update(ctx: Pointer): Long
+    fun mpv_render_context_render(ctx: Pointer, params: Pointer): Int
+    fun mpv_render_context_free(ctx: Pointer)
+}
+
+/** Колбэк mpv «есть что рисовать». Зовётся из потоков mpv: только будит отрисовку, mpv из него не вызываем. */
+fun interface MpvUpdateCallback : com.sun.jna.Callback {
+    fun invoke(data: Pointer?)
+}
+
+/** get_proc_address для mpv_opengl_init_params. */
+fun interface MpvGetProcAddress : com.sun.jna.Callback {
+    fun invoke(ctx: Pointer?, name: Pointer?): Pointer?
 }
 
 object Mpv {
@@ -36,6 +55,13 @@ object Mpv {
 
     const val END_EOF = 0
     const val END_ERROR = 4
+
+    const val RENDER_PARAM_API_TYPE = 1
+    const val RENDER_PARAM_OPENGL_INIT_PARAMS = 2
+    const val RENDER_PARAM_OPENGL_FBO = 3
+    const val RENDER_PARAM_FLIP_Y = 4
+    const val RENDER_PARAM_BLOCK_FOR_TARGET_TIME = 12
+    const val RENDER_UPDATE_FRAME = 1L
 
     /**
      * libmpv-2.dll ищем в папке ресурсов приложения (`app/resources`: туда её кладут установщик и [MpvInstall]),

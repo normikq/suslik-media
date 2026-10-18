@@ -35,6 +35,7 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -73,11 +74,15 @@ import javax.swing.SwingUtilities
 import ru.suslikovanora.media.desktop.tr
 import ru.suslikovanora.media.desktop.signed
 
-/** Дольше всего прокси держит фильм, копя запас на сети медленнее фильма (как на Android). */
+// Панели плеера, dp: верхняя, нижняя (с местом под всплывающие меню) и её полоса с кнопками
+private const val TOP_BAR_H = 75
+private const val BOTTOM_BAR_H = 460
+private const val BOTTOM_INPUT_H = 220
 
 /**
- * Player inside the main window. VLC draws straight into a native canvas (original resolution, hardware decoding,
- * DirectX output, no frame copying); the controls are Compose bars layered over the picture.
+ * Player inside the main window. mpv draws its frames into the window's own OpenGL scene ([MpvVideoSurface]), so the
+ * picture and the Compose bars are layers of one surface. VLC draws straight into a native canvas; its bars live in two
+ * transparent overlay windows (topDialog / bottomDialog) kept over the canvas.
  *
  * [keys] is the main window's key hook: the player installs its shortcuts there while it is on screen.
  */
@@ -129,9 +134,19 @@ fun PlayerView(
     var nightMode by remember { mutableStateOf(ui.get("night") == "1") }
     var subScale by remember { mutableStateOf(ui.get("subScale")?.toIntOrNull()?.coerceIn(50, 300) ?: 100) }
     val canvas = remember { java.awt.Canvas().apply { background = java.awt.Color.BLACK; isFocusable = false } }
-    // libmpv включается флагом (см. EngineChoice). VLC создаётся лениво: в режиме mpv к нему не прикасаются.
+    val owner = parentWindow ?: runCatching { java.awt.Frame.getFrames().firstOrNull { it.isShowing } }.getOrNull()
+    // libmpv включается флагом (см. EngineChoice) и рисует прямо в сцене окна — для этого нужен OpenGL-контекст Skiko.
+    // Без него остаётся VLC. VLC создаётся лениво: в режиме mpv к нему не прикасаются.
+    val skikoGl = remember { if (EngineChoice.useMpv) SkikoGl.find(owner) else null }
     val engBridge = remember { EngineBridge() }
-    val eng: PlayerEngine? = remember { if (EngineChoice.useMpv) MpvEngine(engBridge, PlaybackSettings.cacheMs(), subScale) else null }
+    val eng: MpvEngine? = remember {
+        if (skikoGl != null) MpvEngine(engBridge, PlaybackSettings.cacheMs(), subScale)
+        else { if (EngineChoice.useMpv) PlayerLog.write("[video] mpv needs Skiko's OpenGL context: playing with VLC"); null }
+    }
+    val videoOut = remember { skikoGl?.let { MpvVideoOut(it) } }
+    // mpv: видео и панели в одной сцене Compose. VLC рисует в нативный холст, поэтому его панели — в окнах-оверлеях.
+    val inScene = eng != null && videoOut != null
+    var sceneWidthPx by remember { mutableStateOf(0) }
     val mp by remember {
         lazy {
             val factory = VlcFactory.get(subScale)
@@ -271,10 +286,8 @@ fun PlayerView(
         else scope.async(Dispatchers.IO) { runCatching { req.sidecars?.invoke(i) }.getOrNull() ?: (emptyList<String>() to emptyList()) }
     }
 
-    val owner = parentWindow ?: runCatching { java.awt.Frame.getFrames().firstOrNull { it.isShowing } }.getOrNull()
-
     val topDialog = remember(owner) {
-        if (owner == null) null else ComposeDialog(owner).apply {
+        if (owner == null || inScene) null else ComposeDialog(owner).apply {
             isUndecorated = true
             isTransparent = true
             isResizable = false
@@ -283,7 +296,7 @@ fun PlayerView(
         }
     }
     val bottomDialog = remember(owner) {
-        if (owner == null) null else ComposeDialog(owner).apply {
+        if (owner == null || inScene) null else ComposeDialog(owner).apply {
             isUndecorated = true
             isTransparent = true
             isResizable = false
@@ -307,7 +320,7 @@ fun PlayerView(
     }
 
     fun syncOverlayBounds() {
-        if (parked || WindowMode.miniAnimating || owner?.isShowing != true) return
+        if (inScene || parked || WindowMode.miniAnimating || owner?.isShowing != true) return
         val topVis = topDialog?.isVisible == true
         val botVis = bottomDialog?.isVisible == true
         if (!barVisible && !topVis && !botVis && !mini) return
@@ -336,8 +349,8 @@ fun PlayerView(
             return
         }
 
-        val topH = 75
-        val bottomH = 460.coerceAtMost(h - topH)
+        val topH = TOP_BAR_H
+        val bottomH = BOTTOM_BAR_H.coerceAtMost(h - topH)
 
         val topRect = java.awt.Rectangle(loc.x, loc.y, w, topH)
         val bottomRect = java.awt.Rectangle(loc.x, loc.y + h - bottomH, w, bottomH)
@@ -346,14 +359,14 @@ fun PlayerView(
 
         // Окно всегда высотой под меню (без перестройки и подёргиваний), но клики ловит только его нужная часть
         bottomDialog?.let { d ->
-            val visible = if (tallBottom) bottomH else 220.coerceAtMost(bottomH)
+            val visible = if (tallBottom) bottomH else BOTTOM_INPUT_H.coerceAtMost(bottomH)
             val key = Triple(d.width, d.height, visible)
             if (d.isDisplayable && key != lastClip) { lastClip = key; WindowMode.clipToBottom(d, visible) }
         }
     }
 
     fun grabFrame(): androidx.compose.ui.graphics.ImageBitmap? {
-        val img = runCatching { engine.snapshot(canvas.width.coerceIn(320, 1920)) }.getOrNull() ?: return null
+        val img = runCatching { engine.snapshot((if (inScene) sceneWidthPx else canvas.width).coerceIn(320, 1920)) }.getOrNull() ?: return null
         val bmp = img.toComposeImageBitmap()
         SwingUtilities.invokeLater { lastFrame = bmp }
         return bmp
@@ -708,7 +721,7 @@ fun PlayerView(
         }
     }
 
-    LaunchedEffect(Unit) {
+    if (!inScene) LaunchedEffect(Unit) {
         WindowMode.restoreComposeFocus(owner)
     }
 
@@ -907,13 +920,15 @@ fun PlayerView(
             }
         }
         fun evPlaying() = ui2 {
-                WindowMode.disableNativeCanvasInput(canvas)
-                WindowMode.restoreComposeFocus(owner)
-                canvasFocusJob?.cancel()
-                canvasFocusJob = scope.launch {
-                    delay(250)
+                if (!inScene) {
                     WindowMode.disableNativeCanvasInput(canvas)
                     WindowMode.restoreComposeFocus(owner)
+                    canvasFocusJob?.cancel()
+                    canvasFocusJob = scope.launch {
+                        delay(250)
+                        WindowMode.disableNativeCanvasInput(canvas)
+                        WindowMode.restoreComposeFocus(owner)
+                    }
                 }
                 val wasStarted = started
                 playing = true; status = null; retries = 0; started = true; vlcPaused = false
@@ -1062,20 +1077,22 @@ fun PlayerView(
         }
     }
 
+    DisposableEffect(videoOut) { onDispose { videoOut?.dispose() } }
+
     LaunchedEffect(Unit) {
-        delay(440)
-        showCanvas = true
-        var waited = 0
-        while ((!canvas.isDisplayable || canvas.width <= 0) && waited < 8000) { delay(50); waited += 50 }
-
-        if (eng != null) {
-            val hwnd = com.sun.jna.Native.getComponentID(canvas)
-            eng.attach(hwnd)
+        if (inScene) {
+            // Render context mpv — до первого открытия файла (без него у vo=libmpv нет вывода)
+            showCanvas = true
+            if (!eng!!.startVideo(videoOut!!)) PlayerLog.write("[video] mpv could not attach to the window's OpenGL: sound only")
+        } else {
+            delay(440)
+            showCanvas = true
+            var waited = 0
+            while ((!canvas.isDisplayable || canvas.width <= 0) && waited < 8000) { delay(50); waited += 50 }
+            // Запрещаем нативному окну красть фокус клавиатуры у главного окна!
+            WindowMode.disableNativeCanvasInput(canvas)
+            WindowMode.restoreComposeFocus(owner)
         }
-
-        // Запрещаем нативному окну красть фокус клавиатуры у главного окна!
-        WindowMode.disableNativeCanvasInput(canvas)
-        WindowMode.restoreComposeFocus(owner)
 
         val entries = playlistDeferred?.await().orEmpty()
         if (entries.size > 1) {
@@ -1222,7 +1239,8 @@ fun PlayerView(
 
     val fullscreen = WindowMode.isFullscreen
 
-    LaunchedEffect(Unit) {
+    // VLC: нативный холст съедает движения мыши, поэтому опрашиваем курсор. mpv: движения видит сама сцена.
+    if (!inScene) LaunchedEffect(Unit) {
         var last: java.awt.Point? = null
         while (true) {
             val pos = runCatching { java.awt.MouseInfo.getPointerInfo()?.location }.getOrNull()
@@ -1257,7 +1275,8 @@ fun PlayerView(
     val blankCursor = remember {
         java.awt.Toolkit.getDefaultToolkit().createCustomCursor(java.awt.image.BufferedImage(1, 1, java.awt.image.BufferedImage.TYPE_INT_ARGB), java.awt.Point(0, 0), "blank")
     }
-    LaunchedEffect(barVisible, mini) {
+    val hiddenPointer = remember { androidx.compose.ui.input.pointer.PointerIcon(blankCursor) }
+    if (!inScene) LaunchedEffect(barVisible, mini) {
         val targetCursor = if (mini || barVisible) java.awt.Cursor.getDefaultCursor() else blankCursor
         canvas.cursor = targetCursor
         owner?.cursor = targetCursor
@@ -1268,7 +1287,7 @@ fun PlayerView(
         }
     }
 
-    DisposableEffect(owner, canvas) {
+    if (!inScene) DisposableEffect(owner, canvas) {
         val ownerListener = object : java.awt.event.ComponentAdapter() {
             override fun componentMoved(e: java.awt.event.ComponentEvent) { syncOverlayBounds() }
             override fun componentResized(e: java.awt.event.ComponentEvent) { ResizeLog.surface("canvas", canvas.width, canvas.height); syncOverlayBounds() }
@@ -1397,7 +1416,7 @@ fun PlayerView(
         }
     }
 
-    LaunchedEffect(WindowMode.isFullscreen) {
+    if (!inScene) LaunchedEffect(WindowMode.isFullscreen) {
         if (!closing) {
             // Прячем оверлеи на время перестройки нативного окна Windows
             topDialog?.isVisible = false
@@ -1431,7 +1450,7 @@ fun PlayerView(
     // Выход из полного экрана: Windows и Compose донастраивают размеры окна и холста с задержкой, и события
     // изменения размера могут прийти раньше, чем окно встанет на место, — нижняя панель оставалась за краем экрана.
     // Пока панели видны, раз в 300 мс сверяем их положение с холстом (setBounds вызывается только при расхождении).
-    LaunchedEffect(barVisible, closing) {
+    if (!inScene) LaunchedEffect(barVisible, closing) {
         if (closing || !barVisible) return@LaunchedEffect
         while (true) {
             delay(300)
@@ -1457,8 +1476,9 @@ fun PlayerView(
     }
 
     @Composable
-    fun RenderBottomBar() {
+    fun RenderBottomBar(inputHeight: androidx.compose.ui.unit.Dp? = null) {
         PlayerBottomBar(
+            inputHeight = inputHeight,
             title = title,
             queue = queue,
             index = index,
@@ -1597,11 +1617,39 @@ fun PlayerView(
         )
     }
 
+    // Панели в сцене (mpv): своя область перекомпоновки, чтобы анимация панелей не перестраивала весь плеер.
+    @Composable
+    fun SceneBars(maxHeight: androidx.compose.ui.unit.Dp) {
+        if (closing || !(mini || barVisible || barSlide.value < 1f)) return
+        Box(Modifier.fillMaxSize()) {
+            if (!mini) Box(Modifier.fillMaxWidth().height(TOP_BAR_H.dp).align(Alignment.TopCenter)) { RenderTopBar() }
+            val bottomH = if (mini) maxHeight else minOf(BOTTOM_BAR_H.dp, maxHeight - TOP_BAR_H.dp)
+            // Клики ловит только нижняя полоса с кнопками (с открытым меню — вся высота меню), остальное — видео
+            val input = if (mini) null else if (tallBottom) bottomH else minOf(BOTTOM_INPUT_H.dp, bottomH)
+            Box(Modifier.fillMaxWidth().height(bottomH).align(Alignment.BottomCenter)) { RenderBottomBar(input) }
+        }
+    }
+
     // Video layer in main window
+    androidx.compose.foundation.layout.BoxWithConstraints(
+        Modifier
+            .fillMaxSize()
+            .then(if (!inScene) Modifier else Modifier.pointerInput(Unit) {
+                // Любое движение над плеером (и над панелями) показывает панели; события не забираем
+                awaitPointerEventScope {
+                    while (true) {
+                        val e = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                        if (e.type == PointerEventType.Move || e.type == PointerEventType.Enter) poke()
+                    }
+                }
+            })
+    ) {
+    val sceneMaxHeight = maxHeight
     Box(
         Modifier
             .fillMaxSize()
             .background(Color.Black)
+            .then(if (inScene) Modifier.pointerHoverIcon(if (mini || barVisible) androidx.compose.ui.input.pointer.PointerIcon.Default else hiddenPointer) else Modifier)
             .pointerInput(Unit) {
                 var lastClickTime = 0L
                 awaitPointerEventScope {
@@ -1611,7 +1659,7 @@ fun PlayerView(
                             PointerEventType.Press -> {
                                 poke()
                                 if (picker != null) closePicker()
-                                WindowMode.restoreComposeFocus(owner)
+                                if (!inScene) WindowMode.restoreComposeFocus(owner)
                                 val now = System.currentTimeMillis()
                                 if (now - lastClickTime < 300L) {
                                     singleClickJob?.cancel()
@@ -1651,9 +1699,18 @@ fun PlayerView(
                 }
             }
     ) {
-        if (showCanvas) SwingPanel(factory = { canvas }, modifier = if (parked) Modifier.offset(x = (-8000).dp).size(320.dp, 180.dp) else Modifier.fillMaxSize(), background = Color.Black)
-        if (!showCanvas || parked) lastFrame?.let { androidx.compose.foundation.Image(it, null, contentScale = androidx.compose.ui.layout.ContentScale.Fit, modifier = Modifier.fillMaxSize()) }
-            ?: Text(if (closing) "" else tr("player.otkryvaem"), color = Sm.muted, fontFamily = Onest, fontSize = 15.sp, modifier = Modifier.align(Alignment.Center))
+        if (inScene) {
+            val hasFrame by remember { androidx.compose.runtime.derivedStateOf { videoOut!!.frame.value > 0L } }
+            if (!parked) MpvVideoSurface(videoOut!!, Modifier.fillMaxSize().onSizeChanged { sceneWidthPx = it.width })
+            if (parked || !hasFrame) lastFrame?.let { androidx.compose.foundation.Image(it, null, contentScale = androidx.compose.ui.layout.ContentScale.Fit, modifier = Modifier.fillMaxSize()) }
+                ?: Text(if (closing) "" else tr("player.otkryvaem"), color = Sm.muted, fontFamily = Onest, fontSize = 15.sp, modifier = Modifier.align(Alignment.Center))
+        } else {
+            if (showCanvas) SwingPanel(factory = { canvas }, modifier = if (parked) Modifier.offset(x = (-8000).dp).size(320.dp, 180.dp) else Modifier.fillMaxSize(), background = Color.Black)
+            if (!showCanvas || parked) lastFrame?.let { androidx.compose.foundation.Image(it, null, contentScale = androidx.compose.ui.layout.ContentScale.Fit, modifier = Modifier.fillMaxSize()) }
+                ?: Text(if (closing) "" else tr("player.otkryvaem"), color = Sm.muted, fontFamily = Onest, fontSize = 15.sp, modifier = Modifier.align(Alignment.Center))
+        }
+    }
+    if (inScene) SceneBars(sceneMaxHeight)
     }
 
     if (topDialog != null && bottomDialog != null) {
