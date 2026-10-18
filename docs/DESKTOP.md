@@ -44,6 +44,7 @@ desktop/
 │   │   ├── MpvInstall.kt           Проверка и автоматическая загрузка libmpv-2.dll
 │   │   ├── PlayRequest.kt          Модель параметров запуска воспроизведения
 │   │   ├── MediaControls.kt        Системные медиа-контролы Windows (SMTC): Flyout, клавиши мультимедиа (§10)
+│   │   ├── DisplayAwake.kt         Предотвращение сна и гашения экрана Windows (§11)
 │   │   ├── PlayerView.kt           Главный Compose-контейнер плеера: видео и панели в единой сцене
 │   │   ├── PlayerOverlays.kt       Верхняя и нижняя панели (PlayerTopBar, PlayerBottomBar)
 │   │   ├── PlayerControls.kt       Панели управления, таймлайн SeekBar, интерактивные контролы
@@ -208,3 +209,17 @@ Media Flyout, ModernFlyouts; работают клавиши мультимед�
 - **Файлы:** `%APPDATA%\SuslikMedia\smtc\` — хранится только последняя картинка (`MediaControls.thumbFile`), входит в «Очистить кэш».
 - **Журнал:** строки `[smtc]` (`attached`, `button event`, `poster`, `thumbnail … set`, `updateMetadataNow: Update() … ms`).
 - Свой `AppUserModelID` не задаём: ярлыки jpackage его не несут, и закреплённый значок на панели задач раздваивался.
+
+---
+
+## 11. Предотвращение сна и гашения экрана (`DisplayAwake`)
+
+При просмотре видео экран не должен гаснуть по таймеру неактивности, а ноутбук — уходить в спящий режим. Поскольку `vo=libmpv` рисует в окне Compose без собственного окна mpv, стандартный механизм плеера не работает.
+
+Реализация в `player/DisplayAwake.kt`:
+- **Power Requests API (Windows 7–11):** через `PowerCreateRequest` создаётся объект запроса с описанием `«Suslik Media: воспроизведение видео»`. При активном воспроизведении выставляются `PowerRequestDisplayRequired` (экран не гаснет) и `PowerRequestSystemRequired` (система не засыпает). Запрос виден в `powercfg /requests`.
+- **`SetThreadExecutionState`:** на долгоживущем фоновом потоке `power-awake` выставляется `ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED`.
+- **Периодический пульс (каждые 30 с):** периодический вызов `SetThreadExecutionState(ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED)` сбрасывает таймеры неактивности дисплея и системы, гарантируя защиту от сна даже при агрессивных профилях питания ноутбуков и в Windows Modern Standby (S0 Low Power Idle).
+- **Управление состоянием:** флаг `isPlaybackActive = playing && !userPaused && !closing`. При паузе, окончании фильма или закрытии плеера запросы немедленно снимаются, позволяя системе засыпать штатно. При выходе из приложения вызывается `DisplayAwake.release()`.
+- **Журнал:** строки `[power]` (`display awake: ON` / `OFF`).
+

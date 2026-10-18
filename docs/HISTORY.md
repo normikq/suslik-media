@@ -142,6 +142,7 @@ STA-потоке `smtc` с насосом сообщений (на EDT курс�
 - Видео и панели Liquid Glass рендерятся исключительно в единой сцене Compose (Skiko OpenGL direct render).
 - Удалён костыль `TsPlayback` для перемотки транспортных потоков (mpv нативно поддерживает TS и Blu-ray).
 - Настройки переведены на mpv с отображением статуса библиотеки и кнопкой загрузки.
+- Экран ноутбука не гаснет при воспроизведении (`DisplayAwake`): связка Win32 Power Requests API (`PowerCreateRequest` / `PowerSetRequest`, виден в `powercfg /requests`) и `SetThreadExecutionState` с периодическим пульсом каждые 30 с на постоянном потоке. Гарантирует бодрствование дисплея на ноутбуках с Modern Standby (S0) и агрессивными профилями питания.
 - Плюс исправления `BurstProxy`, общие с Android 2.4.3 (ниже).
 
 **2.4.3 (Android)** (18.10, код 60, ветка `vlc-remove-desktop`): от 2.4.1 отличается только `BurstProxy`. Журнал Suslik Debug 2.3.6 (18.10, 15:06–15:31, LTE).

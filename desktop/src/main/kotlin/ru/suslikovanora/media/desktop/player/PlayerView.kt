@@ -505,6 +505,7 @@ fun PlayerView(
     fun close() {
         if (closing) return
         closing = true
+        DisplayAwake.setAwake(false)
         savePos(time, length)
         library.bumpWatch()
         nextIn = -1
@@ -625,6 +626,11 @@ fun PlayerView(
     val userPaused = pausedAt > 0L || enginePaused
     LaunchedEffect(userPaused) {
         MediaControls.updatePlayback(!userPaused)
+    }
+
+    val isPlaybackActive = playing && !userPaused && !closing
+    LaunchedEffect(isPlaybackActive) {
+        DisplayAwake.setAwake(isPlaybackActive)
     }
 
     LaunchedEffect(time, length) {
@@ -783,6 +789,7 @@ fun PlayerView(
             override fun failed(message: String) { PlayerLog.write("[mpv] $message"); evError() }
         }
         onDispose {
+            DisplayAwake.setAwake(false)
             MediaControls.stop()
             ensureAudioJob?.cancel()
             chaptersJob?.cancel()
