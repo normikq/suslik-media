@@ -43,6 +43,8 @@ object BurstProxy {
     private const val CHUNK = 256 * 1024
     private const val KEEP_MS = 10 * 60_000L       // a closed film's downloaded part stays on disk this long (back in via «Продолжить»)
     private const val NEAR = 8L shl 20             // a request this close to a window's end joins it (the downloader gets there in a moment)
+    private const val NEAR_MIN = 1L shl 20         // ...but at most what the network brings in NEAR_SEC (see Source.near)
+    private const val NEAR_SEC = 1.5
     private const val BRIDGE = 16L shl 20          // a request this close before a window's data only fetches the gap (see windowFor)
     private const val TAIL_CACHE = 512 * 1024      // the end of the file (MKV index, end-of-file probes) is kept in RAM and served without a window
     private const val BURST_MARGIN = 1.25          // a bounded request asks for at least 25 % more than is missing: the player eats the buffer while it downloads
@@ -486,8 +488,20 @@ object BurstProxy {
         }
 
         /** The window that already holds [pos] (or gets there in a moment); a bridge only below its end. */
-        fun windowAt(pos: Long): Window? =
-            windows.firstOrNull { it.usable() && pos >= it.validFrom() && (if (it.limit >= 0) pos < it.limit else pos <= it.end() + NEAR) }
+        fun windowAt(pos: Long): Window? {
+            val near = near()
+            return windows.firstOrNull { it.usable() && pos >= it.validFrom() && (if (it.limit >= 0) pos < it.limit else pos <= it.end() + near) }
+        }
+
+        /**
+         * How far past a window's end a request still joins it: what the network brings in ~1.5 s (1–8 MB; 8 MB while
+         * its speed is unknown). Further on a new request at that place is quicker. 18.10 journal: LTE at 7–9 Mbit/s, a
+         * jump 44 s forward landed a few MB past the reserve, joined the window and waited 12.6 s for the gap to come in.
+         */
+        fun near(): Long {
+            val net = netRate
+            return if (net <= 0) NEAR else (net * NEAR_SEC).toLong().coerceIn(NEAR_MIN, NEAR)
+        }
 
         @Synchronized fun close() { windows.forEach { it.close() }; windows.clear() }
 
@@ -855,20 +869,28 @@ object BurstProxy {
             }
         }
 
-        /** Copies up to [max] bytes at [abs] into [buf]; waits for the downloader when needed. -1 = nothing more. */
-        fun read(abs: Long, buf: ByteArray, max: Int): Int {
+        /**
+         * Copies up to [max] bytes at [abs] into [buf]; waits for the downloader when needed. -1 = nothing more.
+         * [alive] = the player still holds its connection. While it waits here the window counts as read (readers,
+         * lastReadAt), so a player that has gone must end the wait: 18.10 journal, the player closed while waiting at
+         * 4515 MB, and on «Смотреть с начала» 2 s later that window started downloading again for nobody.
+         */
+        fun read(abs: Long, buf: ByteArray, max: Int, alive: () -> Boolean = { true }): Int {
             if (limit in 0..abs) return -1 // past a bridge: the reader moves on to the next window
             synchronized(lock) {
                 var waitStart = System.currentTimeMillis()
                 while (!closed && error == null) {
+                    if (src.retiredAt != 0L) return -1 // the film was closed
                     if (held() && abs >= gateAt) {
                         // gathering a reserve: the player waits (this wait is not the 45 s "nothing comes" limit)
+                        if (!alive()) return -1
                         readPos = abs; lastReadAt = System.currentTimeMillis()
                         lock.wait(minOf(500L, (heldUntil - System.currentTimeMillis()).coerceAtLeast(1L)))
                         waitStart = System.currentTimeMillis()
                         continue
                     }
                     if (abs < end() || eof) break
+                    if (!alive()) return -1
                     readPos = abs; lastReadAt = System.currentTimeMillis(); lock.notifyAll()
                     if (System.currentTimeMillis() - waitStart > 45_000) return -1
                     lock.wait(500)
@@ -968,8 +990,15 @@ object BurstProxy {
                 var pos = from
                 val t0 = System.currentTimeMillis()
                 var tm = 0L; var pm = 0L // base of the bitrate measurement, set once the player's start-up read-ahead is over
+                // Looked at while waiting for data, at most every 0.4 s (each look waits up to 1 ms on the socket).
+                var checkedAt = 0L; var gone = false
+                val alive = {
+                    val now = System.currentTimeMillis()
+                    if (!gone && now - checkedAt >= 400) { checkedAt = now; gone = peerGone(s) }
+                    !gone
+                }
                 while (pos <= last) {
-                    val n = w.read(pos, buf, minOf(CHUNK.toLong(), last - pos + 1).toInt())
+                    val n = w.read(pos, buf, minOf(CHUNK.toLong(), last - pos + 1).toInt(), alive)
                     if (n <= 0) {
                         // the end of a bridge: on into the window whose data starts here (or a new one if it is gone)
                         if (w.limit < 0 || pos < w.limit) break
@@ -996,6 +1025,24 @@ object BurstProxy {
                 }
                 out.flush()
             }
+    }
+
+    /**
+     * The player closed its connection. It sends nothing after its request, so a read gives end of stream (or an
+     * error) only once it has gone; until then it times out at once. Writing would not tell: a waiting reader writes nothing.
+     */
+    private fun peerGone(s: Socket): Boolean {
+        val old = runCatching { s.soTimeout }.getOrDefault(60_000)
+        return try {
+            s.soTimeout = 1
+            s.getInputStream().read() < 0
+        } catch (_: SocketTimeoutException) {
+            false
+        } catch (_: IOException) {
+            true
+        } finally {
+            runCatching { s.soTimeout = old }
+        }
     }
 
     private fun status(out: OutputStream, s: String) { out.write("HTTP/1.1 $s\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray()) }

@@ -338,6 +338,46 @@ class BurstProxyTest {
         }
     }
 
+    @Test fun aPlayerThatLeftWhileWaitingNoLongerCountsAsReading() {
+        val local = URL(BurstProxy.wrap(url))
+        get(local.toString(), "bytes=0-99")
+        BurstProxy.hold(url, 15_000) // the player gets nothing: its connection waits inside the proxy
+        try {
+            java.net.Socket().use { s ->
+                s.connect(InetSocketAddress(local.host, local.port))
+                s.getOutputStream().write("GET ${local.path} HTTP/1.1\r\nHost: 127.0.0.1\r\nRange: bytes=0-\r\n\r\n".toByteArray())
+                Thread.sleep(800)
+                assertTrue("readers 1" in BurstProxy.snapshot(), BurstProxy.snapshot())
+            } // the player closes its connection while waiting
+            Thread.sleep(1_200)
+            assertTrue("readers 0" in BurstProxy.snapshot(), "the gone player still counts: ${BurstProxy.snapshot()}")
+        } finally { BurstProxy.hold(url, 0) }
+    }
+
+    @Test fun aJumpJustPastTheReserveOnASlowNetworkOpensItsOwnRequest() {
+        slowOrigin = true // ~2 MB/s: a jump of 1.5 s of that network or more is quicker with a new request
+        try {
+            val local = BurstProxy.wrap(url)
+            val before = BurstProxy.downloaded.get()
+            val reader = Thread {
+                runCatching {
+                    val c = URL(local).openConnection(java.net.Proxy.NO_PROXY) as HttpURLConnection
+                    c.setRequestProperty("Range", "bytes=0-")
+                    c.inputStream.use { inp -> val buf = ByteArray(64 * 1024); val t0 = System.currentTimeMillis(); while (System.currentTimeMillis() - t0 < 6_500 && inp.read(buf) >= 0) {} }
+                    c.disconnect()
+                }
+            }.apply { isDaemon = true; start() }
+            reader.join(10_000)
+            Thread.sleep(800) // nobody reads: the window stops downloading
+            val end = BurstProxy.downloaded.get() - before // one window from 0: where its data ends
+            val pos = end + 5_500_000 // within the old 8 MB «near», but well past 1.5 s of this network
+            val (code, chunk) = get(local, "bytes=$pos-${pos + 99_999}")
+            assertEquals(206, code)
+            assertContentEquals(data.copyOfRange(pos.toInt(), pos.toInt() + 100_000), chunk)
+            assertTrue(ranges.any { it.startsWith("bytes=$pos-") }, "a new request at the jump: ranges $ranges, ${BurstProxy.snapshot()}")
+        } finally { slowOrigin = false }
+    }
+
     @Test fun fastScrubbingDoesNotExceedMaxWindows() {
         val local = BurstProxy.wrap(url)
         val positions = listOf(1_000_000, 10_000_000, 20_000_000, 28_000_000, 35_000_000)
