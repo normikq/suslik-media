@@ -33,4 +33,27 @@ object Storage {
         flyoutPictures.listFiles()?.forEach { runCatching { it.delete() } }
         PlayerLog.write("storage: cache cleared")
     }
+
+    /**
+     * After an update every local cache is dropped, so nothing old (a poster found by the previous version, the saved
+     * library list, probed media info) outlives the version that wrote it. Kept: watch progress and what goes with it
+     * (last episode, hidden "continue" entries), the sign-in and the settings. Runs once per version, before the
+     * stores are opened (a [Store] reads its file when it is created).
+     */
+    fun clearOnUpdate() {
+        val marker = AppDir.file("cache_version.txt")
+        val now = Updater.current
+        if (now == "0" || runCatching { marker.readText().trim() }.getOrNull() == now) return
+        runCatching {
+            Reserve.dir.listFiles()?.forEach { runCatching { it.deleteRecursively() } }
+            posters.listFiles()?.forEach { runCatching { it.delete() } }
+            flyoutPictures.listFiles()?.forEach { runCatching { it.delete() } }
+            for (n in listOf("posters", "poster_anim", "media_info", "library_etag"))
+                for (ext in listOf(".properties", ".properties.bak")) AppDir.file(n + ext).delete()
+            AppDir.file("library.json").delete()
+            Updater.cleanup()
+            marker.writeText(now)
+        }
+        PlayerLog.write("storage: caches cleared after update to $now")
+    }
 }

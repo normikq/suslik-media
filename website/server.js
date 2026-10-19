@@ -1685,6 +1685,24 @@ app.post("/api/media-metadata", requireLogin, apiLimiter, async (req, res) => {
   }
 });
 
+function posterQueryVariants(query) {
+  const out = [query];
+  const clean = query
+    .replace(/^(?:\[[^\]]*\]\s*)+/, "")
+    .replace(/^[\w.]+-raws?\b[\s-]*/i, "").replace(/^[^\s]*-\s+(?:RAWS?\s+)?/i, "")
+    .replace(/\b(?:TrueHD|Atmos|DTS(?:-HD)?|DDP?\d?(?:\.\d)?|AAC|AC3|FLAC|HDR10?\+?|Dolby|Vision|REMUX|10bit|8bit)\b/gi, " ")
+    .replace(/\s[-~]\s*\d{1,3}\s*[-~]\s*\d{1,3}\b.*$/, "")
+    .replace(/\bS\d{1,2}(?:\s*[-–]\s*S?\d{1,2})?\b.*$/i, "")
+    .replace(/\b(?:Season|Seasons|Сезон)\s*\d+.*$/i, "")
+    .replace(/\s+[-–]\s*$/, "").replace(/\s+/g, " ").trim();
+  if (clean.length >= 2 && clean !== query) out.push(clean);
+  const nodash = (clean || query).replace(/[-–_:]+/g, " ").replace(/\s+/g, " ").trim();
+  if (nodash.length >= 2 && !out.includes(nodash)) out.push(nodash);
+  // В TMDB «WALL·E» записан с точкой посередине: дефис между буквами пробуем заменить на «·» и убрать совсем.
+  const base = clean || query;
+  if (/\p{L}-\p{L}/u.test(base)) for (const v of [base.replace(/(\p{L})-(\p{L})/gu, "$1·$2"), base.replace(/(\p{L})-(\p{L})/gu, "$1$2")]) if (!out.includes(v)) out.push(v);
+  return out;
+}
 // Ответы TMDB на поиск постера кэшируются в памяти на сутки (до 3000 названий): одно и то же название не ищется повторно.
 const posterLookupCache = new Map(); // query -> { at, body }
 app.get("/api/poster", requireLogin, apiLimiter, async (req, res) => {
@@ -1703,15 +1721,22 @@ app.get("/api/poster", requireLogin, apiLimiter, async (req, res) => {
     return origJson(body);
   };
   try {
-    const response = await axios.get("https://api.themoviedb.org/3/search/multi", {
-      params: { api_key: TMDB_API_KEY, query, include_adult: false }, timeout: 10000
-    });
-    const results = Array.isArray(response.data?.results) ? response.data.results : [];
-    const match = results.find(item => item.poster_path && (item.media_type === "movie" || item.media_type === "tv"));
+    // Название из библиотеки — имя раздачи: «Severance Season 1», «Show - S01-10», «Фильм TrueHD Atmos», «Erai-raws Show - 01 ~ 10».
+    // Если по самому названию постера нет, пробуем очищенное и без дефисов.
+    let match = null;
+    for (const q of posterQueryVariants(query)) {
+      const response = await axios.get("https://api.themoviedb.org/3/search/multi", {
+        params: { api_key: TMDB_API_KEY, query: q, include_adult: false }, timeout: 10000
+      });
+      const results = Array.isArray(response.data?.results) ? response.data.results : [];
+      match = results.find(item => item.poster_path && (item.media_type === "movie" || item.media_type === "tv"));
+      if (match) break;
+    }
     res.set("Cache-Control", "private, max-age=604800");
     // Картинку браузер берёт у нашего сайта (/api/poster/img/...), а не напрямую у TMDB: так работает и там, где image.tmdb.org недоступен.
     const file = match ? String(match.poster_path).replace(/^\//, "") : "";
-    res.json({ poster: /^[A-Za-z0-9_-]+\.(?:jpg|png|webp)$/.test(file) ? `/api/poster/img/w500/${file}` : null, title: match?.title || match?.name || null });
+    res.json({ poster: /^[A-Za-z0-9_-]+\.(?:jpg|png|webp)$/.test(file) ? `/api/poster/img/w500/${file}` : null, title: match?.title || match?.name || null,
+      type: match ? match.media_type : null, animation: !!match && Array.isArray(match.genre_ids) && match.genre_ids.includes(16) }); // 16 = Animation в TMDB
   } catch { res.status(502).json({ error: "Не удалось найти постер." }); }
 });
 

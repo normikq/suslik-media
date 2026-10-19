@@ -467,11 +467,14 @@ function make(h) {
       const mg = /href="(magnet:\?xt=urn:btih:[^"]+)"/i.exec(row);
       const magnet = mg ? decodeHtml(mg[1]) : "";
       const cells = [...row.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map(c => c[1]);
-      const sizeCell = cells.map(text).find(c => /^\d[\d.,]*\s*(?:[KMGT]B|[КМГТ]Б)$/i.test(c)) || "";
+      // ячейка размера: «<u>байты</u> 2.36 GB» — в тексте оба числа, поэтому ищем единицу внутри ячейки, затем байты из <u>
+      const sizeM = cells.map(c => /(\d[\d.,]*)\s*([KMGT]i?B|[КМГТ]Б)(?![A-Za-zА-Яа-я])/i.exec(text(c))).find(Boolean);
+      const sizeBytes = /<u>\s*(\d{5,})\s*<\/u>/i.exec(row);
+      const size = sizeM ? parseSize(`${sizeM[1]} ${sizeM[2]}`) : (sizeBytes ? Number(sizeBytes[1]) : 0);
       const seed = /class="[^"]*\bseedmed\b[^"]*"[^>]*>([\s\S]*?)<\/td>/i.exec(row);
       const leech = /class="[^"]*\bleechmed\b[^"]*"[^>]*>([\s\S]*?)<\/td>/i.exec(row);
       out.push({
-        title: text(a[2]), size: parseSize(sizeCell), seeders: int(text(seed ? seed[1] : "")), leechers: int(text(leech ? leech[1] : "")),
+        title: text(a[2]), size, seeders: int(text(seed ? seed[1] : "")), leechers: int(text(leech ? leech[1] : "")),
         date: ruDate(text(cells[cells.length - 1] || "")),
         infoHash: magnet ? normHash((/btih:([0-9a-f]{40})/i.exec(magnet) || [])[1]) : "", magnet, lazy: { topic: a[1] }
       });

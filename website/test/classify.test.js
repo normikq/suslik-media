@@ -170,3 +170,10 @@ test("classify edge cases and fallbacks", async (t) => {
     assert.equal(classify(12345), "unknown");
   });
 });
+
+test("cartoons", () => {
+  assert.equal(classify("Король Лев / The Lion King (Мультфильм) BDRip 1080p"), "cartoon");
+  assert.equal(classify("Cartoon Movie", [2000]), "cartoon");
+  assert.equal(classify("Мультсериал Симпсоны S01 1080p"), "series");
+  assert.equal(classify("Фильм 1080p"), "movie");
+});

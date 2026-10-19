@@ -69,6 +69,7 @@ fun main() {
     System.setProperty("jna.encoding", "UTF-8")
     // Already open: that window comes to the front, this start ends here (no second window).
     if (!SingleInstance.acquire()) return
+    Storage.clearOnUpdate() // new version: local caches go, watch history stays
     CrashReports.start() // last run crashed? → report; from now on uncaught errors report themselves
     Diag.start() // debug build only: the detailed journal
     app()
