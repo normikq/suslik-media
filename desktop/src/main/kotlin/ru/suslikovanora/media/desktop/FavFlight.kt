@@ -74,20 +74,24 @@ private fun OneFlight(f: FlyHub.Flight) {
         FlyHub.arrive(f)
     }
     val d = LocalDensity.current
-    val icon = with(d) { 26.dp.toPx() }
     // Lands on the tab's icon (left side of the item); if the item is not on screen the poster just shrinks in place.
-    val to = FlyHub.target(f.to)?.let { Offset(it.left + with(d) { 24.dp.toPx() }, it.center.y) } ?: f.from.center
-    val t = p.value
-    val w = f.from.width + (icon - f.from.width) * t
-    val h = f.from.height + (icon - f.from.height) * t
-    val cx = f.from.center.x + (to.x - f.from.center.x) * t
-    val cy = f.from.center.y + (to.y - f.from.center.y) * t - sin(PI.toFloat() * t) * with(d) { 70.dp.toPx() } // a small arc upwards
-    val fade = ((t - 0.78f) / 0.22f).coerceIn(0f, 1f)
+    val to = remember { FlyHub.target(f.to)?.let { Offset(it.left + with(d) { 24.dp.toPx() }, it.center.y) } ?: f.from.center }
+    val end = with(d) { 26.dp.toPx() } / maxOf(f.from.width, f.from.height) // the poster shrinks to icon size, same proportions
+    val arc = with(d) { 70.dp.toPx() }
+    // Laid out once at the poster's own place; the flight is only a transform (scale + shift) in the graphics layer,
+    // so no frame needs a new layout: it stays smooth on weak machines.
     Box(
-        Modifier.offset { IntOffset((cx - w / 2).roundToInt(), (cy - h / 2).roundToInt()) }
-            .size(with(d) { w.toDp() }, with(d) { h.toDp() })
-            .graphicsLayer { alpha = 1f - fade; shadowElevation = 18f * (1f - t) }
-            .clip(RoundedCornerShape((14f - 6f * t).dp))
+        Modifier.offset { IntOffset(f.from.left.roundToInt(), f.from.top.roundToInt()) }
+            .size(with(d) { f.from.width.toDp() }, with(d) { f.from.height.toDp() })
+            .graphicsLayer {
+                val t = p.value
+                val s = 1f + (end - 1f) * t
+                scaleX = s; scaleY = s
+                translationX = (to.x - f.from.center.x) * t
+                translationY = (to.y - f.from.center.y) * t - sin(PI.toFloat() * t) * arc // a small arc upwards
+                alpha = 1f - ((t - 0.78f) / 0.22f).coerceIn(0f, 1f)
+                shape = RoundedCornerShape(14.dp); clip = true
+            }
             .background(Brush.verticalGradient(listOf(Color(0xFF222838), Color(0xFF10131B))))
     ) {
         f.poster?.let { Image(it, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }

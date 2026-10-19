@@ -90,13 +90,7 @@ private val ui = Store("ui")
 /** The logo (the groundhog in the play button, resources/icons/brand-mark.png) with a slowly breathing glow behind it. */
 @Composable
 private fun BrandMark() {
-    val breath = androidx.compose.animation.core.rememberInfiniteTransition(label = "logo")
-    val b by breath.animateFloat(
-        0f, 1f,
-        androidx.compose.animation.core.infiniteRepeatable(
-            tween(2600, easing = androidx.compose.animation.core.FastOutSlowInEasing), androidx.compose.animation.core.RepeatMode.Reverse
-        ), label = "b"
-    )
+    val b by breathing(2600)
     Box(
         Modifier.size(46.dp).drawBehind {
             val r = size.maxDimension * (0.62f + 0.12f * b)

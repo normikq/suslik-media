@@ -204,14 +204,7 @@ fun UpdateButton() {
         val busy = progress != null
         val failed = Updater.error != null && !busy
         // breathing: slow in-out pulse of the glow and a hair of scale; calm while hovered / downloading
-        val breath = androidx.compose.animation.core.rememberInfiniteTransition(label = "breath")
-        val b by breath.animateFloat(
-            0f, 1f,
-            androidx.compose.animation.core.infiniteRepeatable(
-                androidx.compose.animation.core.tween(1700, easing = androidx.compose.animation.core.FastOutSlowInEasing),
-                androidx.compose.animation.core.RepeatMode.Reverse
-            ), label = "b"
-        )
+        val b by breathing(1700, active = !(hovered || busy))
         val calm = hovered || busy
         val glow = if (calm) 0.55f else 0.18f + 0.5f * b
         val scale = if (calm) 1f else 1f + 0.035f * b

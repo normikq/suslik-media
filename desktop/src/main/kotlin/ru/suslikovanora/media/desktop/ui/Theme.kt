@@ -92,3 +92,20 @@ fun SuslikTheme(content: @Composable () -> Unit) = MaterialTheme(
     ),
     content = content
 )
+
+/**
+ * A slow 0 → 1 → 0 pulse for decorations. Unlike an infinite transition it stands still while the window is not in
+ * focus (or [active] is false): nothing is redrawn 60 times a second for a window nobody is looking at.
+ */
+@Composable
+fun breathing(periodMs: Int, active: Boolean = true): androidx.compose.runtime.State<Float> {
+    val a = androidx.compose.runtime.remember { androidx.compose.animation.core.Animatable(0f) }
+    val focused = androidx.compose.ui.platform.LocalWindowInfo.current.isWindowFocused
+    androidx.compose.runtime.LaunchedEffect(active, focused) {
+        if (active && focused) while (true) {
+            a.animateTo(1f, androidx.compose.animation.core.tween(periodMs, easing = androidx.compose.animation.core.FastOutSlowInEasing))
+            a.animateTo(0f, androidx.compose.animation.core.tween(periodMs, easing = androidx.compose.animation.core.FastOutSlowInEasing))
+        }
+    }
+    return a.asState()
+}
