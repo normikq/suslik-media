@@ -595,6 +595,19 @@ private fun Tile(item: LibraryItem, lib: Library, onOpen: (PlayTarget) -> Unit, 
 
         // Top Gradient & Three Dots Menu
         Box(Modifier.fillMaxWidth().height(60.dp).background(Brush.verticalGradient(listOf(Color(0x99000000), Color.Transparent))))
+        // Favourite: a heart in the opposite corner; always visible when set, appears on hover otherwise.
+        run {
+            val favSrc = remember { MutableInteractionSource() }
+            val favHover by favSrc.collectIsHoveredAsState()
+            val favAlpha by animateFloatAsState(if (m.favorite || hovered) 1f else 0f, tween(200))
+            val favScale by animateFloatAsState(if (favHover) 1.12f else 1f, tween(180, easing = Sm.ease))
+            Box(
+                Modifier.align(Alignment.TopStart).padding(8.dp).graphicsLayer { alpha = favAlpha; scaleX = favScale; scaleY = favScale }
+                    .size(30.dp).clip(CircleShape).background(if (favHover) Color(0x99000000) else Color(0x55000000))
+                    .hoverClick(favSrc, enabled = favAlpha > 0.05f) { scope.launch { lib.setFavorite(m, !m.favorite) } },
+                contentAlignment = Alignment.Center
+            ) { HeartIcon(filled = m.favorite, color = if (m.favorite) Color(0xFFFF6B8A) else Color.White, size = 16.dp) }
+        }
         Box(Modifier.align(Alignment.TopEnd).padding(8.dp)) {
             val menuSrc = remember { MutableInteractionSource() }
             val menuHover by menuSrc.collectIsHoveredAsState()

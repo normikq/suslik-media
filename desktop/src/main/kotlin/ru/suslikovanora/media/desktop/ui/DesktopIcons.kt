@@ -293,3 +293,20 @@ fun InfoCircleIcon(modifier: Modifier = Modifier, color: Color = Color(0xFF8E96A
 }
 
 
+
+@Composable
+fun HeartIcon(modifier: Modifier = Modifier, filled: Boolean, color: Color = Color.White, size: Dp = 16.dp) {
+    Canvas(modifier = modifier.size(size)) {
+        val w = this.size.width
+        val h = this.size.height
+        val path = androidx.compose.ui.graphics.Path().apply {
+            moveTo(w * 0.5f, h * 0.88f)
+            cubicTo(w * 0.08f, h * 0.58f, w * 0.06f, h * 0.30f, w * 0.26f, h * 0.18f)
+            cubicTo(w * 0.40f, h * 0.10f, w * 0.50f, h * 0.20f, w * 0.5f, h * 0.30f)
+            cubicTo(w * 0.50f, h * 0.20f, w * 0.60f, h * 0.10f, w * 0.74f, h * 0.18f)
+            cubicTo(w * 0.94f, h * 0.30f, w * 0.92f, h * 0.58f, w * 0.5f, h * 0.88f)
+            close()
+        }
+        if (filled) drawPath(path, color) else drawPath(path, color, style = Stroke(1.6.dp.toPx(), join = androidx.compose.ui.graphics.StrokeJoin.Round))
+    }
+}
