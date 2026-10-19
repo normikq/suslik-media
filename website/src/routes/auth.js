@@ -9,7 +9,7 @@ const { alldebridRequest } = require("../services/alldebrid");
 const router = express.Router();
 
 router.post("/api/login", loginLimiter, (req, res) => {
-  if (!config.SITE_PASSWORD) return res.status(503).json({ error: "Set SITE_PASSWORD in .env first." });
+  if (!config.SITE_PASSWORD) return res.status(503).json({ error: "На сервере не задан SITE_PASSWORD." });
   const password = typeof req.body?.password === "string" ? req.body.password : "";
   if (!password || password.length > 256) {
     return res.status(401).json({ error: "Неверный пароль." });

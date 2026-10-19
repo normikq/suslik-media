@@ -43,10 +43,18 @@ function recordOwner(id, dev, ip) {
   persistOwners();
 }
 
+// Проверка для всех раздач одного запроса: cookie устройства читается один раз, а не для каждой раздачи медиатеки.
+function removeChecker(req) {
+  if (!config.OWNER_LOCK) return () => true;
+  const dev = deviceId(req, null); // только cookie устройства, IP не учитывается
+  return id => {
+    const o = magnetOwners.get(String(id));
+    return !o || o.dev === dev;
+  };
+}
+
 function canRemove(id, req) {
-  if (!config.OWNER_LOCK) return true;
-  const o = magnetOwners.get(String(id));
-  return !o || o.dev === deviceId(req, null); // только cookie устройства, IP не учитывается
+  return removeChecker(req)(id);
 }
 
 function deleteOwner(id) {
@@ -120,6 +128,7 @@ function cleanupFinishedDownloads(states) {
 module.exports = {
   MAX_ACTIVE_DOWNLOADS_PER_IP,
   canRemove,
+  removeChecker,
   recordOwner,
   deleteOwner,
   releaseTrackedDownload,

@@ -83,6 +83,16 @@ const anonReportLimiter = rateLimit({
   skip: req => !!(req.session && req.session.authenticated)
 });
 
+// Служебные запросы по X-Update-Token (выпуск, статус, отчёты) и первая загрузка беты по коду: CI и владелец шлют их
+// единицами, а подбор токена или кода упирается в этот лимит.
+const serviceLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 60,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  handler: (req, res, next, options) => res.status(options.statusCode).json({ error: "Слишком много запросов. Подождите немного." })
+});
+
 module.exports = {
   loginLimiter,
   apiLimiter,
@@ -92,5 +102,6 @@ module.exports = {
   searchLimiter,
   mirrorLimiter,
   reportLimiter,
-  anonReportLimiter
+  anonReportLimiter,
+  serviceLimiter
 };

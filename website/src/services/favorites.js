@@ -4,7 +4,7 @@ const fs = require("fs");
 const config = require("../config");
 const { makeJsonWriter } = require("../utils/json-writer");
 const { readCookie } = require("../utils/helpers");
-const { canRemove } = require("./downloads");
+const { removeChecker } = require("./downloads");
 
 // ---- Избранное -------------------------------------------------------------------------------
 // У каждого устройства (cookie "sdev") своё избранное: отмеченные раздачи показываются в библиотеке первыми.
@@ -31,11 +31,12 @@ function favoritesOf(req) {
 // Для каждого устройства свои права: кнопка «Отменить/Удалить» показывается только владельцу раздачи.
 function withRemovable(data, req) {
   const fav = favoritesOf(req);
+  const canRemove = removeChecker(req);
   return {
     ...data,
     magnets: (data.magnets || []).map(m => ({
       ...m,
-      canRemove: canRemove(m.id, req),
+      canRemove: canRemove(m.id),
       favorite: Boolean(fav && fav.has(String(m.id)))
     }))
   };

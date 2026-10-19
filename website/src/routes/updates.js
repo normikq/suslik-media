@@ -5,7 +5,7 @@ const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 const config = require("../config");
-const { apiLimiter, reportLimiter, anonReportLimiter } = require("../middleware/rate-limit");
+const { apiLimiter, reportLimiter, anonReportLimiter, serviceLimiter } = require("../middleware/rate-limit");
 const { requireLogin, isTester, updateTokenOk } = require("../middleware/auth");
 const { readCookie } = require("../utils/helpers");
 const {
@@ -44,7 +44,7 @@ router.get("/api/app/changelog", apiLimiter, (req, res) => {
   res.json({ releases });
 });
 
-router.post("/api/app/changelog", (req, res) => {
+router.post("/api/app/changelog", serviceLimiter, (req, res) => {
   if (!updateTokenOk(req)) {
     return res.status(403).json({ error: "Загрузка выключена или неверный X-Update-Token." });
   }
@@ -87,7 +87,7 @@ router.get("/api/app/update", requireLogin, apiLimiter, async (req, res) => {
 router.get("/api/app/beta", requireLogin, apiLimiter, (req, res) => res.json({ tester: isTester(req) }));
 
 // Первая установка беты на устройство, где ещё нет поля для кода
-router.get("/api/app/beta-download/:platform", requireLogin, (req, res) => {
+router.get("/api/app/beta-download/:platform", requireLogin, serviceLimiter, (req, res) => {
   const code = config.BETA_CODE || "";
   const given = String(req.query.code || "");
   if (!code || given.length !== code.length || !crypto.timingSafeEqual(Buffer.from(given), Buffer.from(code))) {
@@ -112,7 +112,7 @@ router.get("/api/app/download/:platform/:name", requireLogin, (req, res) => {
   res.download(u.full, u.name, { dotfiles: "deny" }); // поддерживает Range: прерванная загрузка докачивается
 });
 
-router.post("/api/app/upload", (req, res) => {
+router.post("/api/app/upload", serviceLimiter, (req, res) => {
   if (req.body && Object.keys(req.body).length) {
     return res.status(400).json({ error: 'Укажите -H "Content-Type: application/octet-stream"' });
   }
@@ -168,7 +168,7 @@ router.post("/api/app/upload", (req, res) => {
   });
 });
 
-router.get("/api/app/status", (req, res) => {
+router.get("/api/app/status", serviceLimiter, (req, res) => {
   if (!updateTokenOk(req)) return res.status(403).json({ error: "Нужен X-Update-Token." });
   const list = dir => {
     try {
@@ -193,7 +193,7 @@ router.get("/api/app/status", (req, res) => {
   res.json(out);
 });
 
-router.post("/api/app/promote", (req, res) => {
+router.post("/api/app/promote", serviceLimiter, (req, res) => {
   if (!updateTokenOk(req)) return res.status(403).json({ error: "Неверный X-Update-Token." });
   const platform = String(req.query.platform || "");
   if (!isUpdatePlatform(platform)) return res.status(400).json({ error: "platform: android | desktop" });
@@ -244,7 +244,7 @@ router.post(
   }
 );
 
-router.get("/api/app/reports", (req, res) => {
+router.get("/api/app/reports", serviceLimiter, (req, res) => {
   if (!updateTokenOk(req)) return res.status(403).json({ error: "Неверный X-Update-Token." });
   const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 10));
   const tail = Math.min(200_000, Math.max(500, parseInt(req.query.tail, 10) || 6000));
