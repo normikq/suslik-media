@@ -11,13 +11,22 @@ const precompressedCache = new Map(); // name -> { mtime, raw, gz, br, etag, typ
 
 // CSP страницы: встроенные <script> разрешены только такими, какие они есть в файле (sha256), — внедрённый скрипт
 // (XSS через название торрента и т. п.) не выполнится. Хеши пересчитываются при замене index.html.
+// По стандарту HTML5 (Preprocessing the input stream) браузеры всегда нормализуют переводы строк CRLF (\r\n)
+// и одиночные \r в единый LF (\n) перед построением DOM и вычислением хеша для CSP.
+// Поэтому для CSP обязателен хеш с нормализацией в \n (плюс исходный, если файл на диске имел CRLF).
 function pageCsp(html) {
-  const hashes = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)].map(
-    m => `'sha256-${crypto.createHash("sha256").update(m[1], "utf8").digest("base64")}'`
-  );
+  const hashSet = new Set();
+  for (const m of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) {
+    const raw = m[1];
+    const normalized = raw.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    hashSet.add(`'sha256-${crypto.createHash("sha256").update(normalized, "utf8").digest("base64")}'`);
+    if (raw !== normalized) {
+      hashSet.add(`'sha256-${crypto.createHash("sha256").update(raw, "utf8").digest("base64")}'`);
+    }
+  }
   return [
     "default-src 'self'",
-    `script-src 'self' ${hashes.join(" ")}`,
+    `script-src 'self' ${[...hashSet].join(" ")}`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",
     "font-src 'self' data:",

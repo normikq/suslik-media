@@ -76,3 +76,22 @@ test("app: createApp initializes express app without throwing", () => {
   const app = createApp();
   assert.equal(typeof app.listen, "function");
 });
+
+test("precompressed: pageCsp includes normalized LF hashes regardless of CRLF input", () => {
+  const { pageCsp } = require("../src/services/precompressed");
+  const htmlCrlf = "<html><script>\r\nconsole.log(1);\r\n</script></html>";
+  const htmlLf = "<html><script>\nconsole.log(1);\n</script></html>";
+
+  const cspFromCrlf = pageCsp(htmlCrlf);
+  const cspFromLf = pageCsp(htmlLf);
+
+  // Both must contain the normalized LF hash
+  assert.ok(cspFromLf.includes("script-src 'self' 'sha256-"));
+  assert.ok(cspFromCrlf.includes("script-src 'self' 'sha256-"));
+
+  // The LF hash must be present in the CSP generated from CRLF
+  const lfHashMatch = cspFromLf.match(/'sha256-[^']+'/);
+  assert.ok(lfHashMatch, "LF hash must be present");
+  assert.ok(cspFromCrlf.includes(lfHashMatch[0]), "CRLF-generated CSP must contain LF hash");
+});
+
