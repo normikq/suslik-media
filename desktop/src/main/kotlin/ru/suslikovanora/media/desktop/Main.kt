@@ -305,6 +305,8 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
                     }
                 }
             }
+            // A poster flying into the sidebar tab it was just moved to (favourites).
+            FavoriteFlight()
             // New version on the server: card over the library (never over a playing film).
             UpdateCheck(authenticated = lib.authenticated == true, show = playing == null)
             // Once after an update: what changed, in plain words.

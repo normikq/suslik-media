@@ -36,6 +36,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -116,16 +119,21 @@ private fun Label(visible: Boolean, content: @Composable () -> Unit) = AnimatedV
 @Composable
 private fun NavItem(
     label: String, active: Boolean, expanded: Boolean, icon: @Composable (Color) -> Unit,
-    enabled: Boolean = true, soon: String? = null, onClick: () -> Unit = {}
+    enabled: Boolean = true, soon: String? = null, tab: Tab? = null, onClick: () -> Unit = {}
 ) {
     val src = remember { MutableInteractionSource() }
+    // A poster has just landed here: a short glow.
+    LaunchedEffect(FlyHub.glowStamp) { if (tab != null && FlyHub.glowTab == tab) { kotlinx.coroutines.delay(650); if (FlyHub.glowTab == tab) FlyHub.glowTab = null } }
+    val glow by androidx.compose.animation.core.animateFloatAsState(if (tab != null && FlyHub.glowTab == tab) 1f else 0f, tween(260))
     val hovered by src.collectIsHoveredAsState()
     val on = hovered && enabled
     val bg by animateColorAsState(when { active -> Sm.accent.copy(alpha = 0.78f); on -> Color(0x0FFFFFFF); else -> Color.Transparent }, tween(200))
     val edge by animateColorAsState(if (active) Sm.accentEdge else Color.Transparent, tween(200))
     val fg by animateColorAsState(when { !enabled -> Color(0xFF5B6272); active || on -> Color.White; else -> Color(0xFFCBD2E0) }, tween(200))
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(bg).border(1.dp, edge, RoundedCornerShape(12.dp))
+        Modifier.fillMaxWidth().graphicsLayer { scaleX = 1f + 0.05f * glow; scaleY = scaleX }
+            .onGloballyPositioned { if (tab != null) FlyHub.navBounds[tab] = it }
+            .clip(RoundedCornerShape(12.dp)).background(bg).background(Sm.accent.copy(alpha = 0.55f * glow)).border(1.dp, edge, RoundedCornerShape(12.dp))
             .let { if (enabled) it.hoverClick(src, onClick = onClick) else it.hoverable(src) }
             // Fixed height, and the icon at the same x in both states (centred in the collapsed 48 dp): nothing moves or shrinks.
             .height(42.dp).padding(start = 15.dp, end = 8.dp),
@@ -164,8 +172,8 @@ fun Sidebar(tab: Tab, profile: Profile, onSelect: (Tab) -> Unit, onSettings: () 
         }
         Spacer(Modifier.height(22.dp))
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            NavItem(Tab.Library.label, tab == Tab.Library, expanded, { GridIcon(color = it, size = 16.dp) }) { onSelect(Tab.Library) }
-            NavItem(Tab.Favorites.label, tab == Tab.Favorites, expanded, { HeartIcon(filled = false, color = it, size = 16.dp) }) { onSelect(Tab.Favorites) }
+            NavItem(Tab.Library.label, tab == Tab.Library, expanded, { GridIcon(color = it, size = 16.dp) }, tab = Tab.Library) { onSelect(Tab.Library) }
+            NavItem(Tab.Favorites.label, tab == Tab.Favorites, expanded, { HeartIcon(filled = false, color = it, size = 16.dp) }, tab = Tab.Favorites) { onSelect(Tab.Favorites) }
             NavItem(Tab.Search.label, tab == Tab.Search, expanded, { SearchIcon(color = it, size = 16.dp) }) { onSelect(Tab.Search) }
             NavItem(Tab.Add.label, tab == Tab.Add, expanded, { LinkChainIcon(color = it, size = 16.dp) }) { onSelect(Tab.Add) }
             // Not available yet: greyed out, no click.

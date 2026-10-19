@@ -32,6 +32,9 @@ object TileBounds {
         return Rect(a, b).takeIf { it.width > 1f && it.height > 1f }
     }
 
+    /** The poster tile of film [id] in the window (px), wherever it is (even partly off screen). */
+    fun posterRect(id: Long): Rect? = rectOf(poster[id])
+
     /** The visible place of film [id] in the window (px), or null (another tab, scrolled away, not in the list). */
     fun target(id: Long?): Rect? {
         if (id == null) return null

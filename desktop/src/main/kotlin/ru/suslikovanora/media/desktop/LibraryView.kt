@@ -156,10 +156,10 @@ fun isAnime(item: LibraryItem): Boolean {
         text.contains("[anilibria]") || text.contains("anilibria")
 }
 
-fun isCartoon(item: LibraryItem): Boolean {
-    val text = (item.m.name + " " + item.baseTitle).lowercase()
-    return text.contains("мульт") || text.contains("cartoon") || text.contains("animated") || text.contains("анимац")
-}
+// The same rule the site uses to tell cartoons from films (website/classify.js).
+private val CARTOON = Regex("""мульт(?!сериал)|анимаци|cartoons?|animation|Pixar|DreamWorks|Disney""", RegexOption.IGNORE_CASE)
+
+fun isCartoon(item: LibraryItem): Boolean = CARTOON.containsMatchIn(item.m.name) || CARTOON.containsMatchIn(item.baseTitle)
 
 fun itemCategory(item: LibraryItem): Category {
     if (isAnime(item)) return Category.Anime
@@ -398,7 +398,7 @@ fun LibraryView(
                 }
                 // 4. Catalog grid of poster cards
                 items(shown, key = { it.m.id }, contentType = { "tile" }) { item ->
-                    Tile(item, lib, versions = versionsOf[item.m.id].orEmpty(), onOpen = open, modifier = Modifier.animateItem(fadeInSpec = tween(300), fadeOutSpec = tween(200)))
+                    Tile(item, lib, versions = versionsOf[item.m.id].orEmpty(), inFavorites = favoritesOnly, onOpen = open, modifier = Modifier.animateItem(fadeInSpec = tween(300), fadeOutSpec = tween(200)))
                 }
             }
         } else {
@@ -589,7 +589,7 @@ private fun EmptyFavorites() {
 
 /** The sleek poster tile matching the concept image. */
 @Composable
-private fun Tile(item: LibraryItem, lib: Library, versions: List<LibraryItem>, onOpen: (PlayTarget) -> Unit, modifier: Modifier) {
+private fun Tile(item: LibraryItem, lib: Library, versions: List<LibraryItem>, inFavorites: Boolean, onOpen: (PlayTarget) -> Unit, modifier: Modifier) {
     val scope = rememberCoroutineScope()
     val m = item.m
     val playable = item.playable
@@ -672,7 +672,11 @@ private fun Tile(item: LibraryItem, lib: Library, versions: List<LibraryItem>, o
             Box(
                 Modifier.align(Alignment.TopStart).padding(8.dp).graphicsLayer { alpha = favAlpha; scaleX = favScale; scaleY = favScale }
                     .size(30.dp).clip(CircleShape).background(if (favHover) Color(0x99000000) else Color(0x55000000))
-                    .hoverClick(favSrc, enabled = favAlpha > 0.05f) { scope.launch { (versions.ifEmpty { listOf(item) }).forEach { lib.setFavorite(it.m, !isFav) } } },
+                    .hoverClick(favSrc, enabled = favAlpha > 0.05f) {
+                        // Added: the poster flies into «Избранное»; taken out while viewing the favourites: back into «Библиотека».
+                        val to = if (!isFav) Tab.Favorites else if (inFavorites) Tab.Library else null
+                        if (to != null) TileBounds.posterRect(m.id)?.let { FlyHub.launch(poster, it, to) }
+                        scope.launch { (versions.ifEmpty { listOf(item) }).forEach { lib.setFavorite(it.m, !isFav) } } },
                 contentAlignment = Alignment.Center
             ) { HeartIcon(filled = isFav, color = if (isFav) Color(0xFFFF6B8A) else Color.White, size = 16.dp) }
         }
