@@ -334,8 +334,8 @@ fun LibraryView(
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(180.dp), state = grid,
                 modifier = Modifier.onGloballyPositioned { TileBounds.viewport = it },
-                contentPadding = PaddingValues(start = 32.dp, end = 32.dp, top = 20.dp, bottom = 36.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                contentPadding = PaddingValues(start = 36.dp, end = 36.dp, top = 28.dp, bottom = 40.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp)
             ) {
                 // 1. Header (Title, Subtitle, Refresh button, Search bar, Count)
@@ -381,7 +381,7 @@ fun LibraryView(
             // List View Mode
             LazyColumn(
                 modifier = Modifier.onGloballyPositioned { TileBounds.viewport = it },
-                contentPadding = PaddingValues(start = 32.dp, end = 32.dp, top = 20.dp, bottom = 36.dp),
+                contentPadding = PaddingValues(start = 36.dp, end = 36.dp, top = 28.dp, bottom = 40.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 item(key = "header") {
@@ -433,7 +433,7 @@ private fun LibraryHeader(
     lib: Library,
     onRefresh: () -> Unit
 ) {
-    Column(Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
+    Column(Modifier.fillMaxWidth().padding(bottom = 18.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(tr("library.moya_biblioteka_alldebrid"), fontFamily = Unbounded, fontWeight = FontWeight.SemiBold, fontSize = 24.sp, color = Color.White)
             Text(totalCount.toString(), color = Sm.muted, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp, modifier = Modifier.padding(start = 12.dp, top = 6.dp))
@@ -958,7 +958,7 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
         val rowSrc = remember { MutableInteractionSource() }
         val rowHover by rowSrc.collectIsHoveredAsState()
         val arrows by animateFloatAsState(if (rowHover) 1f else 0f, tween(220))
-        Column(Modifier.fillMaxWidth().hoverable(rowSrc).padding(top = 2.dp, bottom = 12.dp)) {
+        Column(Modifier.fillMaxWidth().hoverable(rowSrc).padding(top = 6.dp, bottom = 22.dp)) {
             Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     tr("library.prodolzhit_prosmotr"),
