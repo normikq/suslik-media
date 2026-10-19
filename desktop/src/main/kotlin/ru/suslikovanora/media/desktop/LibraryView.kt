@@ -648,44 +648,53 @@ private fun Tile(item: LibraryItem, lib: Library, onOpen: (PlayTarget) -> Unit, 
                     overflow = TextOverflow.Ellipsis,
                     lineHeight = 17.sp
                 )
-                Text(
-                    "${itemYear(item)} • ${itemTypeLabel(item)}",
-                    color = Color(0xFF9BA4B5),
-                    fontFamily = Onest,
-                    fontSize = 11.5.sp,
-                    modifier = Modifier.padding(top = 2.dp, bottom = 5.dp)
-                )
-                // Status Badge
-                Box(
-                    Modifier.clip(RoundedCornerShape(6.dp))
-                        .background(Color(0xFF181B24))
-                        .border(1.dp, Color(0xFF2A3040), RoundedCornerShape(6.dp))
-                        .padding(horizontal = 7.dp, vertical = 2.dp)
+                // Details only on hover (and always for what is not ready yet: its progress matters).
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = hovered || !m.ready,
+                    enter = fadeIn(tween(200)) + expandVertically(tween(240, easing = Sm.ease)),
+                    exit = fadeOut(tween(140)) + shrinkVertically(tween(200, easing = Sm.ease))
                 ) {
+                    Column {
                     Text(
-                        if (m.ready) tr("library.gotovo") else if (m.downloading) "${(m.progress * 100).toInt()}% • ${statusRu(m)}" else statusRu(m),
-                        color = Color.White,
+                        "${itemYear(item)} • ${itemTypeLabel(item)}",
+                        color = Color(0xFF9BA4B5),
                         fontFamily = Onest,
-                        fontWeight = FontWeight.Medium,
-                        fontSize = 10.5.sp
+                        fontSize = 11.5.sp,
+                        modifier = Modifier.padding(top = 2.dp, bottom = 5.dp)
                     )
+                    // Status Badge
+                    Box(
+                        Modifier.clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF181B24))
+                            .border(1.dp, Color(0xFF2A3040), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 7.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            if (m.ready) tr("library.gotovo") else if (m.downloading) "${(m.progress * 100).toInt()}% • ${statusRu(m)}" else statusRu(m),
+                            color = Color.White,
+                            fontFamily = Onest,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 10.5.sp
+                        )
+                    }
+                    // Media Specs
+                    val specs = itemSpecs(item, media)
+                    Text(
+                        specs.first,
+                        color = Color(0xFFC0C7D5),
+                        fontFamily = Onest,
+                        fontSize = 11.sp,
+                        modifier = Modifier.padding(top = 5.dp)
+                    )
+                    Text(
+                        specs.second,
+                        color = Color(0xFF7A8294),
+                        fontFamily = Onest,
+                        fontSize = 10.5.sp,
+                        modifier = Modifier.padding(top = 1.dp)
+                    )
+                    }
                 }
-                // Media Specs
-                val specs = itemSpecs(item, media)
-                Text(
-                    specs.first,
-                    color = Color(0xFFC0C7D5),
-                    fontFamily = Onest,
-                    fontSize = 11.sp,
-                    modifier = Modifier.padding(top = 5.dp)
-                )
-                Text(
-                    specs.second,
-                    color = Color(0xFF7A8294),
-                    fontFamily = Onest,
-                    fontSize = 10.5.sp,
-                    modifier = Modifier.padding(top = 1.dp)
-                )
             }
         }
 
