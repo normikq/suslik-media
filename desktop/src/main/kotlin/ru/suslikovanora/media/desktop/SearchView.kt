@@ -182,7 +182,7 @@ fun SearchView(lib: Library, header: @Composable () -> Unit) {
                 }
                 status?.let { Text(it, color = if (statusOk) Sm.ok else Sm.bad, fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(top = 10.dp)) }
                 if (hits.isNotEmpty()) Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    for ((k, label) in listOf("video" to tr("search.filmy_i_serialy"), "movie" to tr("search.tolko_filmy"), "series" to tr("search.tolko_serialy"), "all" to tr("search.vse"))) {
+                    for ((k, label) in listOf("video" to tr("search.filmy_i_serialy"), "movie" to tr("search.tolko_filmy"), "cartoon" to tr("search.tolko_multfilmy"), "series" to tr("search.tolko_serialy"), "all" to tr("search.vse"))) {
                         Chip(label, kind == k) { kind = k }
                     }
                     Chip(tr("search.tolko_s_sidami"), onlySeeded) { onlySeeded = !onlySeeded }
@@ -210,7 +210,7 @@ fun SearchView(lib: Library, header: @Composable () -> Unit) {
                         Text("↓ ${h.leechers}", color = Sm.muted, fontFamily = Onest, fontSize = 13.sp)
                         if (h.ru) Text("RU", color = Color.White, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = 11.sp,
                             modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0xFF282E3C)).border(1.dp, Color(0xFF3A4356), RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 1.dp))
-                        when (h.kind) { "series" -> tr("search.serial"); "movie" -> tr("search.film"); else -> null }?.let { Text(it, color = Sm.muted, fontFamily = Onest, fontSize = 13.sp) }
+                        when (h.kind) { "series" -> tr("search.serial"); "movie" -> tr("search.film"); "cartoon" -> tr("search.multfilm"); else -> null }?.let { Text(it, color = Sm.muted, fontFamily = Onest, fontSize = 13.sp) }
                         Text(h.source, color = Sm.muted, fontFamily = Onest, fontSize = 13.sp)
                         if (h.date.isNotBlank()) Text(h.date, color = Sm.muted, fontFamily = Onest, fontSize = 13.sp)
                     }

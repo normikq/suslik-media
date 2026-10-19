@@ -142,6 +142,8 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
         kotlinx.coroutines.delay(4000)
         withContext(Dispatchers.IO) { runCatching { lib.prunePosterFiles() } }
     }
+    // Which films TMDB calls animation (for the «Мультфильмы» category): in the background, whenever the list changes.
+    LaunchedEffect(lib.items.size, lib.authenticated) { if (lib.authenticated == true && lib.items.isNotEmpty()) lib.classifyAnimation() }
     // Signed in (at start or after the login screen): load the library in the app-wide scope.
     LaunchedEffect(lib.authenticated) { if (lib.authenticated == true) lib.refresh() }
 

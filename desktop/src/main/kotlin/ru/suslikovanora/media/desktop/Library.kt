@@ -47,6 +47,7 @@ class Library {
     private val snapshot = AppDir.file("library.json")
     private val libraryEtag = Store("library_etag") // version of the list above, for "not modified" answers
     private val posterIndex = Store("posters")
+    private val animIndex = Store("poster_anim") // query -> "time|1" (TMDB genre Animation) or "time|0"
     private val mediaIndex = Store("media_info")
     private val episodes = Store("last_episode")
     val watch = Store("watch")
@@ -236,6 +237,46 @@ class Library {
         }
     }
 
+    /** The server tells in the poster answer whether TMDB files the film under Animation; an old server just omits the field. */
+    private fun recordAnimation(key: String, j: JSONObject) {
+        if (!j.has("animation")) return
+        val a = j.optBoolean("animation")
+        animIndex.put(key, "${System.currentTimeMillis()}|${if (a) 1 else 0}")
+        Animation.flags[key] = a
+    }
+
+    /**
+     * Fills [Animation] for the whole library, not only for the tiles on screen: first from the saved answers, then asks
+     * the server (slowly, a limited number per run) about the films it has not seen. Films whose release name already
+     * says "мульт" / Pixar / anime need no question.
+     */
+    suspend fun classifyAnimation() {
+        val todo = ArrayList<String>()
+        for (item in items) {
+            if (isCartoon(item) || isAnime(item)) continue
+            var known = false
+            for (q in item.posterQueries) {
+                val key = q.lowercase()
+                val v = animIndex.get(key) ?: continue
+                val at = v.substringBefore('|').toLongOrNull() ?: 0L
+                if (System.currentTimeMillis() - at < 60L * 86_400_000L) { Animation.flags[key] = v.substringAfter('|') == "1"; known = true }
+            }
+            if (!known) item.posterQueries.firstOrNull()?.let { todo += it }
+        }
+        Animation.version++
+        var asked = 0
+        for (q in todo.distinct().take(80)) {
+            try {
+                val j = posterGate.withPermit { Api.get("/api/poster?q=" + URLEncoder.encode(q, "UTF-8")) }
+                if (!j.has("animation")) break // the server does not send the genre yet: nothing to wait for
+                recordAnimation(q.lowercase(), j)
+            } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+            if (++asked % 5 == 0) Animation.version++
+            kotlinx.coroutines.delay(120)
+        }
+        Animation.version++
+    }
+
     private suspend fun posterFor(query: String): ImageBitmap? {
         val key = query.lowercase()
         if (images.containsKey(key)) return images[key]
@@ -251,7 +292,9 @@ class Library {
                 val fresh = stored != null && System.currentTimeMillis() - at < (if (known.isNullOrBlank()) 3L else 30L) * 86_400_000L
                 if (fresh) path = known?.ifBlank { null }
                 else {
-                    path = Api.get("/api/poster?q=" + URLEncoder.encode(query, "UTF-8")).optString("poster").takeIf { it.startsWith("/api/poster/img/") }
+                    val j = Api.get("/api/poster?q=" + URLEncoder.encode(query, "UTF-8"))
+                    path = j.optString("poster").takeIf { it.startsWith("/api/poster/img/") }
+                    recordAnimation(key, j)
                     posterIndex.put(key, "${System.currentTimeMillis()}|${path.orEmpty()}")
                 }
                 path?.let { loadImage(it) }

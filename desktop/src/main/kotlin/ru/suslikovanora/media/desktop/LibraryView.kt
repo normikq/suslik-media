@@ -159,7 +159,7 @@ fun isAnime(item: LibraryItem): Boolean {
 // The same rule the site uses to tell cartoons from films (website/classify.js).
 private val CARTOON = Regex("""мульт(?!сериал)|анимаци|\bcartoons?\b|\banimation\b|\bPixar\b|\bDreamWorks\b|\bDisney\b""", RegexOption.IGNORE_CASE)
 
-fun isCartoon(item: LibraryItem): Boolean = CARTOON.containsMatchIn(item.m.name) || CARTOON.containsMatchIn(item.baseTitle)
+fun isCartoon(item: LibraryItem): Boolean = CARTOON.containsMatchIn(item.m.name) || CARTOON.containsMatchIn(item.baseTitle) || Animation.of(item)
 
 fun itemCategory(item: LibraryItem): Category {
     if (isAnime(item)) return Category.Anime
@@ -322,7 +322,7 @@ fun LibraryView(
 
     val all = lib.items
     val source = if (favoritesOnly) all.filter { it.m.favorite } else all
-    val filtered = remember(source, query, category, sortBy, onlyReady) {
+    val filtered = remember(source, query, category, sortBy, onlyReady, Animation.version) {
         val q = query.trim().lowercase()
         var list = if (q.isEmpty()) source else source.filter { it.searchText.contains(q) }
 
