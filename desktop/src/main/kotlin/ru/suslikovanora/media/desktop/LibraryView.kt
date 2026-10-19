@@ -343,7 +343,7 @@ fun LibraryView(
     }
 
     // One tile for the same film added several times; a tile with versions asks which one to play.
-    val (shown, versionsOf) = remember(filtered) { groupVersions(filtered) }
+    val (shown, versionsOf) = remember(filtered, lib.posterVersion) { groupVersions(filtered) { lib.posterPathOf(it) } }
     val open: (PlayTarget) -> Unit = { t ->
         val vs = t.item?.let { versionsOf[it.m.id] }
         if (vs != null) pick = vs else target = t

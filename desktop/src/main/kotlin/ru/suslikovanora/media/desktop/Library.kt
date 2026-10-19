@@ -246,31 +246,48 @@ class Library {
         Animation.flags[key] = a
     }
 
+    // The poster file a film resolved to. Two releases of one film under different names ("Новый Человек-паук…" and
+    // "The Amazing Spider-Man 2") get the same TMDB poster: that is how they are recognised as one film.
+    private val posterPaths = androidx.compose.runtime.mutableStateMapOf<String, String>()
+    var posterVersion by mutableStateOf(0)
+        private set
+
+    fun posterPathOf(item: LibraryItem): String? = item.posterQueries.firstNotNullOfOrNull { posterPaths[it.lowercase()] }
+
+    private fun notePoster(key: String, path: String) {
+        if (posterPaths[key] != path) { posterPaths[key] = path; posterVersion++ }
+    }
+
     /**
-     * Fills [Animation] for the whole library, not only for the tiles on screen: first from the saved answers, then asks
-     * the server (slowly, a limited number per run) about the films it has not seen. Films whose release name already
-     * says "мульт" / Pixar / anime need no question.
+     * Fills what needs the server's idea of every film, not only of the tiles on screen: [Animation] (TMDB genre) and the
+     * poster path used to merge versions. First from the saved answers, then asks about the films it has not seen
+     * (slowly, a limited number per run). Films whose release name already says "мульт" / Pixar / anime need no genre.
      */
     suspend fun classifyAnimation() {
+        var serverSendsGenre = true
         val todo = ArrayList<String>()
         for (item in items) {
-            if (isCartoon(item) || isAnime(item)) continue
-            var known = false
+            val needGenre = !(isCartoon(item) || isAnime(item))
+            var genreKnown = !needGenre
+            var posterKnown = false
             for (q in item.posterQueries) {
                 val key = q.lowercase()
-                val v = animIndex.get(key) ?: continue
-                val at = v.substringBefore('|').toLongOrNull() ?: 0L
-                if (System.currentTimeMillis() - at < 60L * 86_400_000L) { Animation.flags[key] = v.substringAfter('|') == "1"; known = true }
+                animIndex.get(key)?.let { v ->
+                    val at = v.substringBefore('|').toLongOrNull() ?: 0L
+                    if (System.currentTimeMillis() - at < 60L * 86_400_000L) { Animation.flags[key] = v.substringAfter('|') == "1"; genreKnown = true }
+                }
+                posterIndex.get(key)?.substringAfter('|', "")?.takeIf { it.startsWith("/api/poster/img/") }?.let { notePoster(key, it); posterKnown = true }
             }
-            if (!known) item.posterQueries.firstOrNull()?.let { todo += it }
+            if (!genreKnown || !posterKnown) item.posterQueries.firstOrNull()?.let { todo += it }
         }
         Animation.version++
         var asked = 0
         for (q in todo.distinct().take(80)) {
             try {
                 val j = posterGate.withPermit { Api.get("/api/poster?q=" + URLEncoder.encode(q, "UTF-8")) }
-                if (!j.has("animation")) break // the server does not send the genre yet: nothing to wait for
-                recordAnimation(q.lowercase(), j)
+                val key = q.lowercase()
+                j.optString("poster").takeIf { it.startsWith("/api/poster/img/") }?.let { notePoster(key, it) }
+                if (j.has("animation")) recordAnimation(key, j) else serverSendsGenre = false
             } catch (e: CancellationException) { throw e } catch (_: Exception) { }
             if (++asked % 5 == 0) Animation.version++
             kotlinx.coroutines.delay(120)
@@ -298,7 +315,7 @@ class Library {
                     recordAnimation(key, j)
                     posterIndex.put(key, "${System.currentTimeMillis()}|${path.orEmpty()}")
                 }
-                path?.let { loadImage(it) }
+                path?.let { notePoster(key, it); loadImage(it) }
             }
             images[key] = img
         } catch (e: CancellationException) { throw e } catch (_: Exception) {

@@ -44,16 +44,17 @@ import androidx.compose.ui.unit.sp
 private val YEAR = Regex("""\b(19\d{2}|20\d{2})\b""")
 
 /**
- * Same film added more than once (different releases: 720p / 1080p / 4K, other voice-overs): one tile for all of them.
+ * Same film added more than once (different releases: 720p / 1080p / 4K, other voice-overs, other titles): one tile for all of them.
  * Only ready single films are merged — series and collections keep their own tiles. The first one in the list order
  * stays on screen; [Pair.second] maps its id to every version (itself included).
  */
-fun groupVersions(list: List<LibraryItem>): Pair<List<LibraryItem>, Map<Long, List<LibraryItem>>> {
+fun groupVersions(list: List<LibraryItem>, posterOf: (LibraryItem) -> String? = { null }): Pair<List<LibraryItem>, Map<Long, List<LibraryItem>>> {
     val byKey = LinkedHashMap<String, MutableList<LibraryItem>>()
     val shown = ArrayList<LibraryItem>(list.size)
     for (it in list) {
         if (it.playable !is Playable.Movie || !it.m.ready || it.baseTitle.isBlank()) { shown += it; continue }
-        val key = it.baseTitle.lowercase() + "|" + (YEAR.find(it.m.name)?.value ?: "")
+        // Same poster = same film, whatever the releases are called; without a poster yet, the title and year decide.
+        val key = posterOf(it)?.let { p -> "poster|$p" } ?: (it.baseTitle.lowercase() + "|" + (YEAR.find(it.m.name)?.value ?: ""))
         val group = byKey[key]
         if (group == null) { byKey[key] = mutableListOf(it); shown += it } else group += it
     }
