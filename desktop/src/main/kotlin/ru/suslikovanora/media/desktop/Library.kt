@@ -189,7 +189,9 @@ class Library {
     }
     // An access-ordered map rewires its links even on get(): every touch goes under its lock (tiles read it on the
     // window's thread, posterFileFor for the media controls from elsewhere).
-    private val inflight = java.util.concurrent.ConcurrentHashMap<String, CompletableDeferred<ImageBitmap?>>()
+    private val inflight = java.util.concurrent.ConcurrentHashMap<String, CompletableDeferred<PosterAnswer>>()
+    /** [known] = the server's answer (with or without a picture); false = the asking tile went away or the network failed. */
+    private class PosterAnswer(val img: ImageBitmap?, val known: Boolean)
 
     fun cachedPoster(queries: List<String>): ImageBitmap? = synchronized(images) { queries.firstNotNullOfOrNull { images[it.lowercase()] } }
 
@@ -299,30 +301,42 @@ class Library {
 
     private suspend fun posterFor(query: String): ImageBitmap? {
         val key = query.lowercase()
-        synchronized(images) { if (images.containsKey(key)) return images[key] }
-        val own = CompletableDeferred<ImageBitmap?>()
-        inflight.putIfAbsent(key, own)?.let { return it.await() }
-        var img: ImageBitmap? = null
-        try {
-            img = posterGate.withPermit {
-                var path: String? = null
-                val stored = posterIndex.get(key)
-                val at = stored?.substringBefore('|')?.toLongOrNull() ?: 0L
-                val known = stored?.substringAfter('|', "")
-                val fresh = stored != null && System.currentTimeMillis() - at < (if (known.isNullOrBlank()) 3L else 30L) * 86_400_000L
-                if (fresh) path = known?.ifBlank { null }
-                else {
-                    val j = Api.get("/api/poster?q=" + URLEncoder.encode(query, "UTF-8"))
-                    path = j.optString("poster").takeIf { it.startsWith("/api/poster/img/") }
-                    recordAnimation(key, j)
-                    posterIndex.put(key, "${System.currentTimeMillis()}|${path.orEmpty()}")
-                }
-                path?.let { notePoster(key, it); loadImage(it) }
+        while (true) {
+            synchronized(images) { if (images.containsKey(key)) return images[key] }
+            val own = CompletableDeferred<PosterAnswer>()
+            val other = inflight.putIfAbsent(key, own)
+            if (other != null) {
+                // Another tile of the same film is loading it. If that tile was scrolled away (its loading cancelled)
+                // or the network failed, this one asks by itself instead of staying without a poster.
+                val a = other.await()
+                if (a.known) return a.img
+                continue
             }
-            synchronized(images) { images[key] = img }
-        } catch (e: CancellationException) { throw e } catch (_: Exception) {
-        } finally { inflight.remove(key); own.complete(img) }
-        return img
+            var img: ImageBitmap? = null
+            var known = false
+            try {
+                img = posterGate.withPermit {
+                    var path: String? = null
+                    val stored = posterIndex.get(key)
+                    val at = stored?.substringBefore('|')?.toLongOrNull() ?: 0L
+                    val storedPath = stored?.substringAfter('|', "")
+                    val fresh = stored != null && System.currentTimeMillis() - at < (if (storedPath.isNullOrBlank()) 3L else 30L) * 86_400_000L
+                    if (fresh) path = storedPath?.ifBlank { null }
+                    else {
+                        val j = Api.get("/api/poster?q=" + URLEncoder.encode(query, "UTF-8"))
+                        path = j.optString("poster").takeIf { it.startsWith("/api/poster/img/") }
+                        recordAnimation(key, j)
+                        posterIndex.put(key, "${System.currentTimeMillis()}|${path.orEmpty()}")
+                    }
+                    path?.let { notePoster(key, it); loadImage(it) }
+                }
+                known = true
+                // Only a real answer is remembered: a network failure is asked again next time.
+                synchronized(images) { images[key] = img }
+            } catch (e: CancellationException) { throw e } catch (_: Exception) {
+            } finally { inflight.remove(key, own); own.complete(PosterAnswer(img, known)) }
+            return img
+        }
     }
 
     private suspend fun loadImage(path: String): ImageBitmap? = withContext(Dispatchers.IO) {

@@ -66,17 +66,23 @@ class Store private constructor(name: String) {
         pending = true
         writer.schedule({ flush() }, 400, java.util.concurrent.TimeUnit.MILLISECONDS)
     }
-    @Synchronized fun flush() {
-        if (!pending) return
-        pending = false
+    // Writing (with fsync) holds only [fileLock]: get/put from the window's thread no longer wait for the disk.
+    // The copy is taken inside it, so two flushes (the writer and the exit hook) never put an older copy over a newer one.
+    private val fileLock = Any()
+    fun flush() { synchronized(fileLock) {
+        val copy = synchronized(this) {
+            if (!pending) return
+            pending = false
+            Properties().also { it.putAll(p) }
+        }
         runCatching {
             // The data is on disk (sync) before the new file takes the name; the previous one stays as .bak.
             val tmp = java.io.File(f.parentFile, f.name + ".tmp")
-            java.io.FileOutputStream(tmp).use { out -> p.store(out, null); out.fd.sync() }
+            java.io.FileOutputStream(tmp).use { out -> copy.store(out, null); out.fd.sync() }
             if (f.exists()) java.nio.file.Files.move(f.toPath(), bak.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
             java.nio.file.Files.move(tmp.toPath(), f.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE)
         }
-    }
+    } }
     companion object {
         private val all = java.util.concurrent.ConcurrentHashMap<String, Store>()
         fun of(name: String): Store = all.computeIfAbsent(name) { Store(it) }
@@ -134,12 +140,15 @@ object Api {
             .header("X-Torrent-Filename", java.net.URLEncoder.encode(filename, "UTF-8").replace("+", "%20"))
             .POST(HttpRequest.BodyPublishers.ofByteArray(bytes)).build())
 
+    /** The file, or null when the server has none (404). No network or a server error throws: worth asking again later. */
     suspend fun bytes(path: String): ByteArray? = withContext(Dispatchers.IO) {
-        runCatching {
-            val res = client.send(request(path).GET().build(), HttpResponse.BodyHandlers.ofByteArray())
-            storeCookies(res)
-            if (res.statusCode() == 200) res.body() else null
-        }.getOrNull()
+        val res = client.send(request(path).GET().build(), HttpResponse.BodyHandlers.ofByteArray())
+        storeCookies(res)
+        when (res.statusCode()) {
+            200 -> res.body()
+            404, 410 -> null
+            else -> throw HttpError(res.statusCode(), tr("api.oshibka_servera_code", "code" to res.statusCode()))
+        }
     }
 
     suspend fun text(url: String): String? = withContext(Dispatchers.IO) {
