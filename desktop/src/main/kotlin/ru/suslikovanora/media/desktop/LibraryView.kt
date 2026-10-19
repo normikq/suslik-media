@@ -295,7 +295,7 @@ fun LoginView(lib: Library) {
 
 @Composable
 fun LibraryView(
-    lib: Library, tabs: @Composable () -> Unit,
+    lib: Library,
     grid: androidx.compose.foundation.lazy.grid.LazyGridState = rememberLazyGridState(),
     onPlay: (PlayRequest) -> Unit
 ) {
@@ -329,7 +329,7 @@ fun LibraryView(
         }
     }
 
-    Box(Modifier.fillMaxSize().background(Sm.night)) {
+    Box(Modifier.fillMaxSize()) {
         if (viewMode == ViewMode.Grid) {
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(180.dp), state = grid,
@@ -501,8 +501,8 @@ private fun FilterControlsBar(
                 val active = cat == selectedCategory
                 val src = remember { MutableInteractionSource() }
                 val hovered by src.collectIsHoveredAsState()
-                val bg by animateColorAsState(when { active -> Color(0xFF282E3C); hovered -> Color(0xFF1C202B); else -> Color.Transparent }, tween(200))
-                val edge by animateColorAsState(when { active -> Color(0xFF3A4356); hovered -> Color(0xFF2C3344); else -> Color(0xFF1F2430) }, tween(200))
+                val bg by animateColorAsState(when { active -> Sm.accent.copy(alpha = 0.85f); hovered -> Color(0x14FFFFFF); else -> Color.Transparent }, tween(200))
+                val edge by animateColorAsState(when { active -> Sm.accentEdge; hovered -> Color(0x26FFFFFF); else -> Sm.glassEdge }, tween(200))
                 val fg by animateColorAsState(when { active -> Color.White; hovered -> Color(0xFFD6DBE4); else -> Color(0xFF8E96A8) }, tween(200))
 
                 Box(
@@ -997,8 +997,16 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 17.5.sp,
                     color = Color.White,
-                    modifier = Modifier.weight(1f)
                 )
+                Text(
+                    entries.size.toString(), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 12.sp,
+                    modifier = Modifier.padding(start = 10.dp).clip(RoundedCornerShape(10.dp)).background(Sm.accent).padding(horizontal = 8.dp, vertical = 2.dp)
+                )
+                Spacer(Modifier.weight(1f))
+
+                // Clear the whole row (each card also has its own ×). Brings back anything watched again later.
+                ClearAllButton { lib.hideContinue(entries.map { it.item.m.id }) }
+                Spacer(Modifier.width(14.dp))
 
                 // Carousel Chevrons
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1044,12 +1052,27 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
 }
 
 @Composable
+private fun ClearAllButton(onClick: () -> Unit) {
+    val src = remember { MutableInteractionSource() }
+    val hovered by src.collectIsHoveredAsState()
+    val fg by animateColorAsState(if (hovered) Color.White else Sm.muted, tween(200))
+    val bg by animateColorAsState(if (hovered) Color(0x1AFFFFFF) else Color.Transparent, tween(200))
+    Row(
+        Modifier.clip(RoundedCornerShape(10.dp)).background(bg).hoverClick(src, onClick = onClick).padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        CloseCrossIcon(color = fg, size = 10.dp)
+        Text(tr("library.ochistit"), color = fg, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 12.5.sp)
+    }
+}
+
+@Composable
 private fun ContinueCard(e: ContinueEntry, lib: Library, modifier: Modifier, onRemove: () -> Unit, onClick: () -> Unit) {
     val src = remember { MutableInteractionSource() }
     val hovered by src.collectIsHoveredAsState()
     val lift by animateFloatAsState(if (hovered) -3f else 0f, tween(260, easing = Sm.ease))
-    val edge by animateColorAsState(if (hovered) Color(0xFF3E475C) else Color(0xFF242A38), tween(220))
-    val bg by animateColorAsState(if (hovered) Color(0xFF191D28) else Color(0xFF141720), tween(220))
+    val edge by animateColorAsState(if (hovered) Sm.glassEdgeHover else Sm.glassEdge, tween(220))
+    val bg by animateColorAsState(if (hovered) Sm.glassFillHover else Sm.glassFill, tween(220))
     var poster by remember(e.item.m.id) { mutableStateOf(lib.cachedPoster(e.item.posterQueries)) }
     LaunchedEffect(e.item.m.id) { if (poster == null) poster = lib.poster(e.item.posterQueries) }
     val xSrc = remember { MutableInteractionSource() }

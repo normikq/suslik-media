@@ -222,7 +222,6 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
             window.addComponentListener(l)
             onDispose { window.removeComponentListener(l) }
         }
-        val lens by androidx.compose.animation.core.animateFloatAsState(tab.ordinal.toFloat(), tween(420, easing = Sm.ease))
         focus[0] = androidx.compose.ui.platform.LocalFocusManager.current
         SuslikTheme {
           Box(Modifier.fillMaxSize().background(Sm.night).onSizeChanged { ResizeLog.surface("compose", it.width, it.height) }) {
@@ -237,14 +236,14 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
                   if (needLogin) {
                     LoginView(lib)
                   } else {
-                    val tabs: @Composable () -> Unit = {
-                        NavTabs(tab, lens) { tab = it; if (it == Tab.Library) appScope.launch { lib.refresh() } }
-                    }
-                  androidx.compose.foundation.layout.Column(Modifier.fillMaxSize().background(Sm.night)) {
-                    // Fixed header: stays put while the pages below change.
-                    Box(Modifier.fillMaxWidth().padding(start = 28.dp, end = 28.dp, top = 24.dp, bottom = 4.dp)) {
-                        Brand({ appScope.launch { lib.logout() } }, tabs)
-                    }
+                  androidx.compose.foundation.layout.Row(Modifier.fillMaxSize().ambientBackdrop()) {
+                    // Fixed side panel: stays put while the pages change.
+                    Sidebar(
+                        tab, Profile.Shared,
+                        onSelect = { tab = it; if (it == Tab.Library) appScope.launch { lib.refresh() } },
+                        onSettings = { PlaybackSettings.open = true },
+                        onLogout = { appScope.launch { lib.logout() } }
+                    )
                     // Pages glide sideways in the direction of the tab, old one fading out first (no flash, no jump).
                     AnimatedContent(
                         targetState = tab,
@@ -254,10 +253,10 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
                                 slideInHorizontally(tween(460, easing = Sm.ease)) { dir * it / 14 }) togetherWith
                                 (fadeOut(tween(180)) + slideOutHorizontally(tween(460, easing = Sm.ease)) { -dir * it / 14 })
                         },
-                        modifier = Modifier.fillMaxSize().background(Sm.night)
+                        modifier = Modifier.weight(1f).fillMaxSize()
                     ) { t ->
                         when (t) {
-                            Tab.Library -> LibraryView(lib, tabs, grid) { r -> requestPlay(r) }
+                            Tab.Library -> LibraryView(lib, grid) { r -> requestPlay(r) }
                             Tab.Search -> SearchView(lib) {}
                             Tab.Add -> AddView(lib) {}
                         }

@@ -152,7 +152,7 @@ fun AddView(lib: Library, header: @Composable () -> Unit) {
         magnet = text.trim(); status = null
     }
 
-    LazyColumn(Modifier.fillMaxSize().background(Sm.night), contentPadding = PaddingValues(28.dp)) {
+    LazyColumn(Modifier.fillMaxSize(),contentPadding = PaddingValues(28.dp)) {
         // The header (logo, tabs, log out) is drawn by the main window above the pages, so it never moves.
         item {
             Panel {

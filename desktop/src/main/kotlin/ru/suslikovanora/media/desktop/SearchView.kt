@@ -160,7 +160,7 @@ fun SearchView(lib: Library, header: @Composable () -> Unit) {
         }
     }
 
-    LazyColumn(Modifier.fillMaxSize().background(Sm.night), contentPadding = PaddingValues(28.dp), verticalArrangement = Arrangement.spacedBy(0.dp)) {
+    LazyColumn(Modifier.fillMaxSize(),contentPadding = PaddingValues(28.dp), verticalArrangement = Arrangement.spacedBy(0.dp)) {
         // The header (logo, tabs, log out) is drawn by the main window above the pages, so it never moves.
         item {
             Panel {
