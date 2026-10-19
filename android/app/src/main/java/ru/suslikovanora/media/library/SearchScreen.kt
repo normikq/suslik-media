@@ -145,13 +145,13 @@ class SearchModel(private val scope: CoroutineScope, private val store: LibraryS
 fun SearchScreen(m: SearchModel, listState: LazyListState, onLogout: () -> Unit, modifier: Modifier = Modifier) {
     val shown = m.shown()
     LazyColumn(
-        modifier.fillMaxSize().background(Sm.night), state = listState,
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 24.dp)
+        modifier.fillMaxSize(), state = listState,
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 80.dp)
     ) {
         item(key = "header") { HeaderSlot(); Spacer(Modifier.height(16.dp)) }
         item(key = "panel") {
             Panel(Modifier.animateContentSize(tween(260))) {
-                Text(tr("search.poisk_razdach"), fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 19.sp, color = Sm.text)
+                Text(tr("search.poisk_razdach"), fontFamily = Unbounded, fontWeight = FontWeight.SemiBold, fontSize = 20.sp, color = Color.White)
                 Text(tr("search.odin_zapros_srazu_po"),
                     color = Sm.muted, fontFamily = Onest, fontSize = 14.sp, lineHeight = 19.sp, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
                 SearchField(m.query, { m.query = it }, tr("search.nazvanie_filma_ili_seriala"), onDone = { m.run() })
@@ -188,11 +188,11 @@ fun SearchScreen(m: SearchModel, listState: LazyListState, onLogout: () -> Unit,
 @Composable
 private fun HitRow(h: Hit, note: Pair<String, Boolean>?, modifier: Modifier, onAdd: () -> Unit) {
     Row(
-        modifier.fillMaxWidth().padding(vertical = 4.dp).clip(RoundedCornerShape(14.dp)).background(Sm.booth)
-            .border(1.dp, Sm.line, RoundedCornerShape(14.dp)).padding(14.dp),
+        modifier.fillMaxWidth().padding(vertical = 4.dp).clip(RoundedCornerShape(14.dp)).background(Sm.glassFill)
+            .border(1.dp, Sm.glassEdge, RoundedCornerShape(14.dp)).padding(14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        if (h.ru) Box(Modifier.width(3.dp).height(48.dp).clip(RoundedCornerShape(3.dp)).background(Sm.lamp))
+        if (h.ru) Box(Modifier.width(3.dp).height(48.dp).clip(RoundedCornerShape(3.dp)).background(Sm.accent))
         Column(Modifier.weight(1f).padding(start = if (h.ru) 12.dp else 0.dp)) {
             Text(h.title, color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, lineHeight = 19.sp,
                 maxLines = 3, overflow = TextOverflow.Ellipsis)
@@ -200,8 +200,8 @@ private fun HitRow(h: Hit, note: Pair<String, Boolean>?, modifier: Modifier, onA
                 if (h.size > 0) Text(formatBytes(h.size), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp)
                 Text("↑ ${h.seeders}", color = if (h.seeders > 0) Sm.ok else Sm.muted, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp)
                 Text("↓ ${h.leechers}", color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp)
-                if (h.ru) Text("RU", color = Sm.lamp, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = 11.sp,
-                    modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0x24FFB02E)).padding(horizontal = 6.dp, vertical = 1.dp))
+                if (h.ru) Text("RU", color = Color.White, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = 11.sp,
+                    modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Sm.accent).padding(horizontal = 6.dp, vertical = 1.dp))
                 when (h.kind) { "series" -> tr("search.serial"); "movie" -> tr("search.film"); "cartoon" -> tr("search.multfilm"); else -> null }?.let { Text(it, color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp) }
                 Text(h.source, color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp)
                 if (h.date.isNotBlank()) Text(h.date, color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp)

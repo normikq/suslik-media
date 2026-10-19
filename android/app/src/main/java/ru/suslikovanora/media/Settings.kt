@@ -47,10 +47,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import androidx.compose.ui.graphics.Color
 import ru.suslikovanora.media.library.LampButton
 import ru.suslikovanora.media.ui.Onest
 import ru.suslikovanora.media.ui.Sm
 import ru.suslikovanora.media.ui.Unbounded
+import ru.suslikovanora.media.ui.glassSheet
 
 /** Playback settings (stored on the phone, read by the player each time a film opens). */
 object PlaybackSettings {
@@ -111,8 +113,7 @@ fun SettingsSheet(onClose: () -> Unit) {
     ) {
         Column(
             Modifier.graphicsLayer { val v = shown.value; translationY = (1f - v) * 60f; scaleX = 0.96f + 0.04f * v; scaleY = scaleX }
-                .widthIn(max = 560.dp).padding(14.dp).clip(RoundedCornerShape(22.dp)).background(Sm.booth)
-                .border(1.dp, Sm.line2, RoundedCornerShape(22.dp))
+                .widthIn(max = 560.dp).padding(14.dp).glassSheet(RoundedCornerShape(22.dp))
                 .keepFocusInside()
                 .noFocus().clickable(remember { MutableInteractionSource() }, indication = null) {}
                 .padding(start = 18.dp, end = 18.dp, top = 20.dp, bottom = 16.dp)
@@ -209,7 +210,7 @@ private fun ChannelSection() {
     Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(state ?: tr("settings.ustanovlena_versiya_p", "p" to Updater.currentVersion(ctx)), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp,
             lineHeight = 17.sp, modifier = Modifier.weight(1f))
-        Text(tr("settings.proverit"), color = Sm.lamp, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.sp,
+        Text(tr("settings.proverit"), color = Color(0xFF60A5FA), fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.sp,
             modifier = Modifier.padding(start = 10.dp).clip(RoundedCornerShape(8.dp))
                 .focusRing(RoundedCornerShape(8.dp)).clickable { checkUpdates() }.padding(horizontal = 8.dp, vertical = 6.dp))
     }
@@ -345,15 +346,15 @@ private fun DiagSection() {
 
 @Composable
 private fun ChannelOption(title: String, on: Boolean, modifier: Modifier, onClick: () -> Unit) {
-    val edge by animateColorAsState(if (on) Sm.lamp else Sm.line, tween(220), label = "edge")
-    val bg by animateColorAsState(if (on) Sm.lampSoft else Sm.film, tween(220), label = "bg")
+    val edge by animateColorAsState(if (on) Sm.accentEdge else Sm.glassEdge, tween(220), label = "edge")
+    val bg by animateColorAsState(if (on) Sm.accentSoft else Sm.glassFill, tween(220), label = "bg")
     Box(
         modifier.clip(RoundedCornerShape(14.dp)).background(bg).border(1.dp, edge, RoundedCornerShape(14.dp))
-            .focusRing(RoundedCornerShape(14.dp), color = Sm.text)
+            .focusRing(RoundedCornerShape(14.dp), color = Sm.accent)
             .clickable(remember { MutableInteractionSource() }, indication = null, onClick = onClick).padding(vertical = 12.dp),
         contentAlignment = Alignment.Center
     ) {
-        Text(title, color = if (on) Sm.lamp else Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp)
+        Text(title, color = if (on) Color.White else Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp)
     }
 }
 
@@ -365,21 +366,21 @@ private fun Section(title: String, text: String, top: androidx.compose.ui.unit.D
 
 @Composable
 private fun PresetRow(p: PlaybackPresets.Preset, on: Boolean, onClick: () -> Unit) {
-    val edge by animateColorAsState(if (on) Sm.lamp else Sm.line, tween(220), label = "edge")
-    val bg by animateColorAsState(if (on) Sm.lampSoft else Sm.film, tween(220), label = "bg")
+    val edge by animateColorAsState(if (on) Sm.accentEdge else Sm.glassEdge, tween(220), label = "edge")
+    val bg by animateColorAsState(if (on) Sm.accentSoft else Sm.glassFill, tween(220), label = "bg")
     Row(
         Modifier.fillMaxWidth().padding(vertical = 3.dp).clip(RoundedCornerShape(14.dp)).background(bg)
             .border(1.dp, edge, RoundedCornerShape(14.dp))
-            .focusRing(RoundedCornerShape(14.dp), color = Sm.text)
+            .focusRing(RoundedCornerShape(14.dp), color = Sm.accent)
             .clickable(remember { MutableInteractionSource() }, indication = null, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(Modifier.size(18.dp).clip(CircleShape).border(2.dp, if (on) Sm.lamp else Sm.line2, CircleShape), contentAlignment = Alignment.Center) {
-            if (on) Box(Modifier.size(8.dp).clip(CircleShape).background(Sm.lamp))
+        Box(Modifier.size(18.dp).clip(CircleShape).border(2.dp, if (on) Sm.accent else Sm.glassEdge, CircleShape), contentAlignment = Alignment.Center) {
+            if (on) Box(Modifier.size(8.dp).clip(CircleShape).background(Sm.accent))
         }
         Column(Modifier.padding(start = 12.dp)) {
-            Text(p.title, color = if (on) Sm.lamp else Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+            Text(p.title, color = if (on) Color.White else Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
             Text(p.hint, color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, lineHeight = 17.sp)
         }
     }

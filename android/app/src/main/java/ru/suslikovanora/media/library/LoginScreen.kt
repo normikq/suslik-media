@@ -55,7 +55,7 @@ fun LoginScreen(store: LibraryStore, onLoggedIn: () -> Unit) {
     }
 
     Column(
-        Modifier.fillMaxSize().background(Sm.night).verticalScroll(rememberScrollState())
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState())
             .imePadding().padding(horizontal = 16.dp, vertical = 14.dp)
     ) {
         BrandHeader(onLogout = null)

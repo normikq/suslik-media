@@ -143,6 +143,15 @@ Write-Host "Granting permissions for $pkg..." -ForegroundColor Yellow
 & $adb -s $deviceId shell pm grant $pkg android.permission.DUMP 2>$null
 & $adb -s $deviceId shell pm grant $pkg android.permission.READ_PHONE_STATE 2>$null
 & $adb -s $deviceId shell appops set $pkg GET_USAGE_STATS allow 2>$null
+
+Write-Host "Cleaning old diag logs on device..." -ForegroundColor Yellow
+& $adb -s $deviceId shell "rm -rf /sdcard/Android/data/$pkg/files/diag/*" 2>$null
+
+Write-Host "Resetting battery stats on device..." -ForegroundColor Yellow
+& $adb -s $deviceId shell dumpsys batterystats --reset 2>$null
+& $adb -s $deviceId shell dumpsys battery reset 2>$null
+
+Write-Host "Stopping application..." -ForegroundColor Yellow
 & $adb -s $deviceId shell am force-stop $pkg 2>$null
 
 Write-Host "`n[SUCCESS] Suslik Debug APK successfully installed and configured on your phone!" -ForegroundColor Green

@@ -109,6 +109,7 @@ class Media3Engine(private val context: Context) : PlayerEngine {
     private val bytesRead = AtomicLong()           // from the network since this open
     @Volatile private var mainKey = ""
     @Volatile private var fileSize = -1L
+    private var builtViaReserve = false            // what the current ExoPlayer's back buffer was chosen for
     @Volatile private var viaReserve = false     // the film is read from BurstProxy on this phone, not from the mirror
 
     private val transfer = object : TransferListener {
@@ -129,7 +130,7 @@ class Media3Engine(private val context: Context) : PlayerEngine {
         override fun onTransferEnd(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) {}
     }
 
-    private fun build(): ExoPlayer {
+    private fun build(reserve: Boolean): ExoPlayer {
         val renderers = DefaultRenderersFactory(context)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON) // FFmpeg only where the phone can't
             .setEnableDecoderFallback(true)
@@ -138,7 +139,10 @@ class Media3Engine(private val context: Context) : PlayerEngine {
         // After a stall it waits for AFTER_REBUFFER_MS of film (one longer wait instead of a stutter every few seconds).
         val direct = DefaultLoadControl.Builder()
             .setBufferDurationsMs(MIN_BUFFER_MS, MAX_BUFFER_MS, START_BUFFER_MS, AFTER_REBUFFER_MS)
-            .setBackBuffer(BACK_BUFFER_MS, true)
+            // The back buffer counts against the byte cap: 15 s of a 51 Mbit/s remux took all of it, ExoPlayer then
+            // stopped loading with 0.2 s ahead («Target buffer size reached with less than 500ms», heap 154 MB,
+            // 19.10 journal). Through the reserve the film behind is on this phone's disk anyway: no back buffer.
+            .setBackBuffer(if (reserve) 0 else BACK_BUFFER_MS, true)
             // ExoPlayer keeps its buffer on the Java heap: 4K pushed the app to ~207 of 256 MB (16.10 journal). Bytes cap
             // it before the seconds do on heavy files.
             .setTargetBufferBytes(TARGET_BUFFER_BYTES)
@@ -155,6 +159,7 @@ class Media3Engine(private val context: Context) : PlayerEngine {
         p.addListener(events)
         p.addAnalyticsListener(analytics)
         logFfmpegOnce()
+        builtViaReserve = reserve
         return p
     }
 
@@ -209,7 +214,9 @@ class Media3Engine(private val context: Context) : PlayerEngine {
     }
 
     override fun open(media: EngineMedia, scale: VideoScale) {
-        val p = exo ?: build().also { exo = it; view.player = it }
+        val reserve = Uri.parse(media.url).host == LOCAL_HOST
+        if (exo != null && builtViaReserve != reserve) release() // the back buffer is fixed when the player is built
+        val p = exo ?: build(reserve).also { exo = it; view.player = it }
         this.media = media
         extraAudio.clear()
         opened++
@@ -219,7 +226,7 @@ class Media3Engine(private val context: Context) : PlayerEngine {
         bytesRead.set(0L)
         if (MirrorLink.fileKey(media.url) != mainKey) fileSize = -1L
         mainKey = MirrorLink.fileKey(media.url)
-        viaReserve = Uri.parse(media.url).host == LOCAL_HOST
+        viaReserve = reserve
         setScale(scale)
         // Remembered tracks are applied by PlayerTrackSelector once the tracks are known.
         p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()

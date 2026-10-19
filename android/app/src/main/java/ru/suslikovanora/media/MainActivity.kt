@@ -65,6 +65,7 @@ import ru.suslikovanora.media.library.SearchModel
 import ru.suslikovanora.media.library.SearchScreen
 import ru.suslikovanora.media.ui.NavBar
 import ru.suslikovanora.media.ui.Sm
+import ru.suslikovanora.media.ui.ambientBackdrop
 import ru.suslikovanora.media.ui.SuslikTheme
 import ru.suslikovanora.media.ui.Tab
 
@@ -91,7 +92,7 @@ class MainActivity : ComponentActivity() {
         ru.suslikovanora.media.net.Api.init(this)
         CrashReports.init(this)
         CrashReports.sendPending() // a crash or a player that died last time → report
-        val bg = android.graphics.Color.rgb(8, 9, 11)
+        val bg = android.graphics.Color.rgb(6, 9, 17)
         enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(bg), navigationBarStyle = SystemBarStyle.dark(bg))
         CookieManager.getInstance().setAcceptCookie(true)
         store = LibraryStore(this)
@@ -157,61 +158,60 @@ class MainActivity : ComponentActivity() {
             if (store.authenticated == true && Tv.isTv(this@MainActivity)) runCatching { navFocus.requestFocus() }
         }
         CompositionLocalProvider(LocalHeaderHeight provides headerHeight) {
-        Box(Modifier.fillMaxSize().background(Sm.night).windowInsetsPadding(WindowInsets.safeDrawing)) {
-            Column(Modifier.fillMaxSize()) {
-              Box(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
-                // Tabs glide sideways in the direction of the chosen tab (no flash: every page has the same dark background).
-                AnimatedContent(
-                    targetState = tab,
-                    transitionSpec = {
-                        val dir = if (targetState.ordinal > initialState.ordinal) 1 else -1
-                        (fadeIn(tween(260, delayMillis = 50)) + slideInHorizontally(tween(380, easing = Sm.ease)) { dir * it / 12 }) togetherWith
-                            (fadeOut(tween(150)) + slideOutHorizontally(tween(380, easing = Sm.ease)) { -dir * it / 12 })
-                    },
-                    modifier = Modifier.fillMaxSize().background(Sm.night),
-                    label = "tabs"
-                ) { t ->
-                    when (t) {
-                        Tab.Links -> AddScreen(add, addList, onPlay = { url, title -> handlePlay(url, title) }, onLogout = logout)
-                        Tab.Library -> LibraryScreen(
-                            store = store, onPlay = { playTarget = it },
-                            query = query, onQuery = { query = it }, gridState = gridState, onLogout = logout
-                        )
-                        Tab.Search -> SearchScreen(search, searchList, onLogout = logout)
-                    }
-                }
-                // The brand header is drawn once, over the tabs: it does not slide with them. It follows the open tab's
-                // scrolling exactly like a first list item would (each tab keeps an empty slot of the same height).
-                if (store.authenticated != false) {
-                    val headerY = remember { Animatable(0f) }
-                    val headerHidePx = with(LocalDensity.current) { (headerHeight + 14.dp).toPx() }
-                    fun offsetOf(t: Tab): Float {
-                        val (i, o) = when (t) {
-                            Tab.Links -> addList.firstVisibleItemIndex to addList.firstVisibleItemScrollOffset
-                            Tab.Library -> gridState.firstVisibleItemIndex to gridState.firstVisibleItemScrollOffset
-                            Tab.Search -> searchList.firstVisibleItemIndex to searchList.firstVisibleItemScrollOffset
-                        }
-                        return if (i == 0) o.toFloat().coerceAtMost(headerHidePx) else headerHidePx
-                    }
-                    LaunchedEffect(tab) {
-                        // Another tab scrolled to another place: glide there together with the tab change, then follow.
-                        val target = offsetOf(tab)
-                        if (kotlin.math.abs(headerY.value - target) > 1f) headerY.animateTo(target, tween(380, easing = Sm.ease))
-                        snapshotFlow { offsetOf(tab) }.collect { headerY.snapTo(it) }
-                    }
-                    Box(
-                        Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 14.dp)
-                            .graphicsLayer { translationY = -headerY.value; alpha = 1f - (headerY.value / headerHidePx).coerceIn(0f, 1f) * 0.15f }
-                            .onSizeChanged { sz -> val h = with(density) { sz.height.toDp() }; if (h != headerHeight && h > 0.dp) headerHeight = h }
-                    ) { BrandHeader(onLogout = logout, onSettings = { settingsOpen = true }) }
-                }
-              }
-                if (!imeVisible && store.authenticated != false) NavBar(current = tab, onSelect = ::selectTab, focus = navFocus, onFocused = { navFocused = it })
-            }
+        Box(Modifier.fillMaxSize().ambientBackdrop().windowInsetsPadding(WindowInsets.safeDrawing)) {
             if (store.authenticated == false) {
                 LoginScreen(store) {
                     scope.launch { store.refresh() }
                     add.resume()
+                }
+            } else {
+                Column(Modifier.fillMaxSize()) {
+                    Box(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
+                        // Tabs glide sideways in the direction of the chosen tab (no flash: every page has the same dark background).
+                        AnimatedContent(
+                            targetState = tab,
+                            transitionSpec = {
+                                val dir = if (targetState.ordinal > initialState.ordinal) 1 else -1
+                                (fadeIn(tween(260, delayMillis = 50)) + slideInHorizontally(tween(380, easing = Sm.ease)) { dir * it / 12 }) togetherWith
+                                    (fadeOut(tween(150)) + slideOutHorizontally(tween(380, easing = Sm.ease)) { -dir * it / 12 })
+                            },
+                            modifier = Modifier.fillMaxSize(),
+                            label = "tabs"
+                        ) { t ->
+                            when (t) {
+                                Tab.Links -> AddScreen(add, addList, onPlay = { url, title -> handlePlay(url, title) }, onLogout = logout)
+                                Tab.Library -> LibraryScreen(
+                                    store = store, onPlay = { playTarget = it },
+                                    query = query, onQuery = { query = it }, gridState = gridState, onLogout = logout
+                                )
+                                Tab.Search -> SearchScreen(search, searchList, onLogout = logout)
+                            }
+                        }
+                        // The brand header is drawn once, over the tabs: it does not slide with them. It follows the open tab's
+                        // scrolling exactly like a first list item would (each tab keeps an empty slot of the same height).
+                        val headerY = remember { Animatable(0f) }
+                        val headerHidePx = with(LocalDensity.current) { (headerHeight + 14.dp).toPx() }
+                        fun offsetOf(t: Tab): Float {
+                            val (i, o) = when (t) {
+                                Tab.Links -> addList.firstVisibleItemIndex to addList.firstVisibleItemScrollOffset
+                                Tab.Library -> gridState.firstVisibleItemIndex to gridState.firstVisibleItemScrollOffset
+                                Tab.Search -> searchList.firstVisibleItemIndex to searchList.firstVisibleItemScrollOffset
+                            }
+                            return if (i == 0) o.toFloat().coerceAtMost(headerHidePx) else headerHidePx
+                        }
+                        LaunchedEffect(tab) {
+                            // Another tab scrolled to another place: glide there together with the tab change, then follow.
+                            val target = offsetOf(tab)
+                            if (kotlin.math.abs(headerY.value - target) > 1f) headerY.animateTo(target, tween(380, easing = Sm.ease))
+                            snapshotFlow { offsetOf(tab) }.collect { headerY.snapTo(it) }
+                        }
+                        Box(
+                            Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 14.dp)
+                                .graphicsLayer { translationY = -headerY.value; alpha = 1f - (headerY.value / headerHidePx).coerceIn(0f, 1f) * 0.15f }
+                                .onSizeChanged { sz -> val h = with(density) { sz.height.toDp() }; if (h != headerHeight && h > 0.dp) headerHeight = h }
+                        ) { BrandHeader(onLogout = logout, onSettings = { settingsOpen = true }) }
+                    }
+                    if (!imeVisible) NavBar(current = tab, onSelect = ::selectTab, focus = navFocus, onFocused = { navFocused = it })
                 }
             }
             // Once after an update: what changed, in plain words (not on top of the update offer).

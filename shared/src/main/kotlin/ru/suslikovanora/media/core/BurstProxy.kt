@@ -97,6 +97,13 @@ object BurstProxy {
     @Volatile var refreshUrl: (String) -> String? = { null }
     /** Drops pooled connections (they belong to a network that is gone, or hang): set by the app. */
     @Volatile var resetConnections: () -> Unit = {}
+    /**
+     * [resetConnections] off the caller's thread, then [after]. Closing a TLS socket sends close_notify over the
+     * network: from the network callback / screen events that is the UI thread (StrictMode NetworkViolation, 19.10).
+     */
+    private fun resetConnectionsAsync(after: () -> Unit = {}) {
+        runCatching { pool.execute { runCatching { resetConnections() }; after() } }.onFailure { runCatching { resetConnections() }; after() }
+    }
     /** A request with no answer / no data for this long is cancelled and repeated on a fresh connection. */
     @Volatile var headerStallMs = 8_000L
     @Volatile var bodyStallMs = 6_000L
@@ -116,7 +123,7 @@ object BurstProxy {
     fun networkChanged() {
         isNetworkOnline = true
         log("reserve: network changed → restarting the requests")
-        runCatching { resetConnections() }
+        resetConnectionsAsync() // a kicked window drops them itself on its own thread before repeating
         sources.values.forEach { s -> s.windows.forEach { it.kick() } }
     }
 
@@ -139,7 +146,7 @@ object BurstProxy {
         isScreenOff = true
         log("reserve: screen off → downloads stopped")
         sources.values.forEach { s -> s.windows.forEach { it.kick() } }
-        runCatching { resetConnections() }
+        resetConnectionsAsync()
     }
 
     /** Screen on / app shown: the downloaders wake up at once (no waiting for a retry pause) on fresh connections. */
@@ -147,19 +154,32 @@ object BurstProxy {
         if (!isScreenOff) return
         isScreenOff = false
         log("reserve: screen on → downloads resume")
-        runCatching { resetConnections() }
-        sources.values.forEach { s -> s.windows.forEach { it.wake() } }
+        // Woken only after the pool is empty: otherwise they would take the dead sockets again.
+        resetConnectionsAsync { sources.values.forEach { s -> s.windows.forEach { it.wake() } } }
     }
 
     /** Journal hook (the app's player log). */
     @Volatile var log: (String) -> Unit = {}
 
-    /** Once per process: where the reserve files go (leftovers of a previous run are removed) and how to download. */
+    /**
+     * Once per process: where the reserve files go (leftovers of a previous run are removed) and how to download.
+     * Called from the player screen's onCreate: the old folder is only renamed there and deleted in the background
+     * (the previous film's rings, up to the whole reserve, took ~30 ms of the UI thread, 19.10 journal).
+     */
     @Synchronized fun init(directory: File, up: Upstream) {
         upstream = up
         watchdog // starts the stall watcher (once)
         if (dir != null) return
-        runCatching { directory.deleteRecursively(); directory.mkdirs() }
+        runCatching {
+            val parent = directory.absoluteFile.parentFile
+            val trash = File(parent, directory.name + ".old-" + System.nanoTime())
+            if (directory.exists() && !directory.renameTo(trash)) directory.deleteRecursively()
+            directory.mkdirs()
+            pool.execute {
+                // This run's leftover plus those of runs killed before their own cleanup finished.
+                parent?.listFiles { f -> f.name.startsWith(directory.name + ".old-") }?.forEach { runCatching { it.deleteRecursively() } }
+            }
+        }
         dir = directory
     }
 

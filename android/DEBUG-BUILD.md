@@ -27,6 +27,10 @@ adb shell pm grant $P android.permission.READ_LOGS
 adb shell pm grant $P android.permission.DUMP
 # Поколение мобильной сети (LTE / 5G / 3G) в строках [sys]
 adb shell pm grant $P android.permission.READ_PHONE_STATE
+# Доступ к статистике использования (нужно для снимка batterystats-*.txt на новых Android / Samsung)
+adb shell appops set $P GET_USAGE_STATS allow
+# Очистить старые логи перед опытом (опционально)
+adb shell "rm -rf /sdcard/Android/data/$P/files/diag/*"
 ```
 
 После выдачи разрешений перезапустите приложение: `adb shell am force-stop $P`. Что выдано, видно в
@@ -39,6 +43,8 @@ adb shell dumpsys batterystats --reset   # обнулить счётчики б�
 # … смотрите фильм как обычно; в момент проблемы нажмите 📍 в плеере (метка в журнале) …
 adb pull /sdcard/Android/data/ru.suslikovanora.media.diag/files/diag
 ```
+
+Либо запустите скрипт `pull-android-logs.bat` из корня проекта — он автоматически скачает все файлы журнала и дамп batterystats в отдельную папку `log_ЧЧ_ММ_СС`.
 
 Снимок батареи из приложения на новых Samsung (Android 17) отвечает «нужно PACKAGE_USAGE_STATS». Тогда выдайте
 `adb shell appops set $P GET_USAGE_STATS allow` или снимайте с компьютера после опыта:
