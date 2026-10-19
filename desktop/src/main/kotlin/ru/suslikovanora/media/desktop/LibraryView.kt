@@ -955,7 +955,10 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
         enter = fadeIn(tween(300)) + expandVertically(tween(320, easing = Sm.ease)),
         exit = fadeOut(tween(200)) + shrinkVertically(tween(260, easing = Sm.ease))
     ) {
-        Column(Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 12.dp)) {
+        val rowSrc = remember { MutableInteractionSource() }
+        val rowHover by rowSrc.collectIsHoveredAsState()
+        val arrows by animateFloatAsState(if (rowHover) 1f else 0f, tween(220))
+        Column(Modifier.fillMaxWidth().hoverable(rowSrc).padding(top = 2.dp, bottom = 12.dp)) {
             Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     tr("library.prodolzhit_prosmotr"),
@@ -975,7 +978,7 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
                 Spacer(Modifier.width(14.dp))
 
                 // Carousel Chevrons
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.graphicsLayer { alpha = arrows }, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     val prevSrc = remember { MutableInteractionSource() }
                     val prevHover by prevSrc.collectIsHoveredAsState()
                     Box(
@@ -1047,14 +1050,14 @@ private fun ContinueCard(e: ContinueEntry, lib: Library, modifier: Modifier, onR
 
     Box(modifier.graphicsLayer { translationY = lift }.hoverable(src)) {
         Row(
-            Modifier.width(304.dp).height(108.dp).clip(RoundedCornerShape(12.dp)).background(bg)
+            Modifier.width(268.dp).height(96.dp).clip(RoundedCornerShape(12.dp)).background(bg)
                 .border(1.dp, edge, RoundedCornerShape(12.dp)).hoverClick(src, onClick = onClick)
                 .padding(11.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Left Poster Thumbnail
             Box(
-                Modifier.width(62.dp).fillMaxHeight()
+                Modifier.width(54.dp).fillMaxHeight()
                     .onGloballyPositioned { TileBounds.cont[e.item.m.id] = it }
                     .clip(RoundedCornerShape(8.dp))
                     .background(Color(0xFF222736))
