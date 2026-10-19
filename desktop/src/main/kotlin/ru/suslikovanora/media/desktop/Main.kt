@@ -108,14 +108,14 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
     val windowScope = remember { arrayOfNulls<kotlinx.coroutines.CoroutineScope>(1) }
     val closing = remember { booleanArrayOf(false) }
     LaunchedEffect(playing) {
-        if (playing != null) { leaving = false; presence.animateTo(1f, tween(440, easing = Sm.ease)) }
+        if (playing != null) { leaving = false; presence.animateTo(1f, tween(560, easing = Sm.fly)) }
     }
     fun closePlayer() {
         if (leaving) return
         appScope.launch {
             leaving = true
             // (The player already told the library about the new progress, before this animation started.)
-            presence.animateTo(0f, tween(620, easing = Sm.ease))
+            presence.animateTo(0f, tween(600, easing = Sm.fly))
             // Suslik Debug: Compose сейчас уберёт слой с видео — здесь зависала Skia (цикл glGetError)
             if (Diag.on) { PlayerLog.write("[ui] player close: removing the player"); MpvVideoOut.probeGl("player close: before removal") }
             playing = null; leaving = false; onTop.value = false
@@ -268,6 +268,8 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
             playing?.let { req ->
                 val filmId = remember(req) { req.watchKeys.firstOrNull()?.substringBefore('|')?.toLongOrNull() }
                 val lastHome = remember(req) { arrayOfNulls<androidx.compose.ui.geometry.Rect>(1) } // plain holder, not state
+                // Where the poster was at the moment of the click (the library has not started to recede yet): the player flies out of it.
+                val openFrom = remember(req) { TileBounds.target(filmId) }
                 Box(Modifier.fillMaxSize()
                     .graphicsLayer {
                         val p = presence.value
@@ -277,6 +279,9 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
                         if (home != null) {
                             // Exit: the frame flies back into its own poster in the library.
                             flyInto(home, 1f - p)
+                        } else if (!leaving && openFrom != null) {
+                            // Entrance: the frame grows out of the poster to the full window (the exit played backwards).
+                            flyInto(openFrom, 1f - p)
                         } else if (leaving) {
                             // Exit when the poster is not on screen: the picture shrinks into a rounded card and fades.
                             val s = 0.86f + 0.14f * p

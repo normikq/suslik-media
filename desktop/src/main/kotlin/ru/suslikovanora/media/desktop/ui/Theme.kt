@@ -33,6 +33,8 @@ object Sm {
     val bad = Color(0xFFFF9B8F)
     val scrim = Color(0xCC090B10)
     val ease = CubicBezierEasing(0.22f, 0.8f, 0.24f, 1f)
+    /** Poster ↔ full-screen flight: soft start and soft landing (no jerk at either end). */
+    val fly = CubicBezierEasing(0.45f, 0.05f, 0.2f, 1f)
 
     // «Матовое стекло»: полупрозрачные слои поверх мягкого свечения фона (redesign).
     val backdrop = Color(0xFF060911)
