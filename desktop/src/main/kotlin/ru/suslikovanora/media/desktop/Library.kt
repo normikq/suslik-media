@@ -189,7 +189,9 @@ class Library {
     }
     // An access-ordered map rewires its links even on get(): every touch goes under its lock (tiles read it on the
     // window's thread, posterFileFor for the media controls from elsewhere).
-    private val inflight = java.util.concurrent.ConcurrentHashMap<String, CompletableDeferred<ImageBitmap?>>()
+    private val inflight = java.util.concurrent.ConcurrentHashMap<String, CompletableDeferred<PosterAnswer>>()
+    /** [known] = the server's answer (with or without a picture); false = the asking tile went away or the network failed. */
+    private class PosterAnswer(val img: ImageBitmap?, val known: Boolean)
 
     fun cachedPoster(queries: List<String>): ImageBitmap? = synchronized(images) { queries.firstNotNullOfOrNull { images[it.lowercase()] } }
 
@@ -299,30 +301,42 @@ class Library {
 
     private suspend fun posterFor(query: String): ImageBitmap? {
         val key = query.lowercase()
-        synchronized(images) { if (images.containsKey(key)) return images[key] }
-        val own = CompletableDeferred<ImageBitmap?>()
-        inflight.putIfAbsent(key, own)?.let { return it.await() }
-        var img: ImageBitmap? = null
-        try {
-            img = posterGate.withPermit {
-                var path: String? = null
-                val stored = posterIndex.get(key)
-                val at = stored?.substringBefore('|')?.toLongOrNull() ?: 0L
-                val known = stored?.substringAfter('|', "")
-                val fresh = stored != null && System.currentTimeMillis() - at < (if (known.isNullOrBlank()) 3L else 30L) * 86_400_000L
-                if (fresh) path = known?.ifBlank { null }
-                else {
-                    val j = Api.get("/api/poster?q=" + URLEncoder.encode(query, "UTF-8"))
-                    path = j.optString("poster").takeIf { it.startsWith("/api/poster/img/") }
-                    recordAnimation(key, j)
-                    posterIndex.put(key, "${System.currentTimeMillis()}|${path.orEmpty()}")
-                }
-                path?.let { notePoster(key, it); loadImage(it) }
+        while (true) {
+            synchronized(images) { if (images.containsKey(key)) return images[key] }
+            val own = CompletableDeferred<PosterAnswer>()
+            val other = inflight.putIfAbsent(key, own)
+            if (other != null) {
+                // Another tile of the same film is loading it. If that tile was scrolled away (its loading cancelled)
+                // or the network failed, this one asks by itself instead of staying without a poster.
+                val a = other.await()
+                if (a.known) return a.img
+                continue
             }
-            synchronized(images) { images[key] = img }
-        } catch (e: CancellationException) { throw e } catch (_: Exception) {
-        } finally { inflight.remove(key); own.complete(img) }
-        return img
+            var img: ImageBitmap? = null
+            var known = false
+            try {
+                img = posterGate.withPermit {
+                    var path: String? = null
+                    val stored = posterIndex.get(key)
+                    val at = stored?.substringBefore('|')?.toLongOrNull() ?: 0L
+                    val storedPath = stored?.substringAfter('|', "")
+                    val fresh = stored != null && System.currentTimeMillis() - at < (if (storedPath.isNullOrBlank()) 3L else 30L) * 86_400_000L
+                    if (fresh) path = storedPath?.ifBlank { null }
+                    else {
+                        val j = Api.get("/api/poster?q=" + URLEncoder.encode(query, "UTF-8"))
+                        path = j.optString("poster").takeIf { it.startsWith("/api/poster/img/") }
+                        recordAnimation(key, j)
+                        posterIndex.put(key, "${System.currentTimeMillis()}|${path.orEmpty()}")
+                    }
+                    path?.let { notePoster(key, it); loadImage(it) }
+                }
+                known = true
+                // Only a real answer is remembered: a network failure is asked again next time.
+                synchronized(images) { images[key] = img }
+            } catch (e: CancellationException) { throw e } catch (_: Exception) {
+            } finally { inflight.remove(key, own); own.complete(PosterAnswer(img, known)) }
+            return img
+        }
     }
 
     private suspend fun loadImage(path: String): ImageBitmap? = withContext(Dispatchers.IO) {
@@ -330,6 +344,25 @@ class Library {
         // shown now: its file counts as recently used (prunePosterFiles deletes the least recently used first)
         val bytes = if (f.exists()) f.also { it.setLastModified(System.currentTimeMillis()) }.readBytes() else Api.bytes(path)?.also { runCatching { f.writeBytes(it) } }
         bytes?.let { runCatching { downscale(org.jetbrains.skia.Image.makeFromEncoded(it), 320) }.getOrNull() }
+    }
+
+    /**
+     * The poster at the size it was downloaded (TMDB 500 px), decoded right away, for the player's first moments (the
+     * tiles keep a 320 px copy, too soft at the window's height). Null when the film has no poster on disk yet.
+     */
+    suspend fun posterLarge(queries: List<String>): ImageBitmap? = withContext(Dispatchers.IO) {
+        val path = queries.firstNotNullOfOrNull { posterIndex.get(it.lowercase())?.substringAfter('|', "")?.ifBlank { null } }
+            ?: return@withContext null
+        val f = posterFile(path).takeIf { it.exists() } ?: return@withContext null
+        runCatching {
+            val src = org.jetbrains.skia.Image.makeFromEncoded(f.readBytes())
+            // drawn into a raster picture here, so the window does not decode the file on its first frame
+            val surface = org.jetbrains.skia.Surface.makeRasterN32Premul(src.width, src.height)
+            surface.canvas.drawImage(src, 0f, 0f)
+            val out = surface.makeImageSnapshot().toComposeImageBitmap()
+            surface.close(); src.close()
+            out
+        }.getOrNull()
     }
 
     /** A 500 px TMDB poster is 1.5 MB decoded; at tile size (320 px) it is ~0.6 MB. */

@@ -14,6 +14,7 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -30,6 +31,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -58,6 +60,12 @@ import androidx.compose.ui.unit.sp
 import ru.suslikovanora.media.desktop.ui.Onest
 import ru.suslikovanora.media.desktop.ui.Sm
 import ru.suslikovanora.media.desktop.ui.CloseCrossIcon
+
+enum class ResizeDirection {
+    NONE,
+    LEFT, RIGHT, TOP, BOTTOM,
+    TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT, BOTTOM_RIGHT
+}
 
 @Composable
 fun PlayerTopBar(
@@ -192,6 +200,10 @@ fun PlayerBottomBar(
     onWindowDragStart: () -> Unit = {},
     onWindowDragMove: () -> Unit = {},
     onWindowDragEnd: () -> Unit = {},
+    onWindowResizeStart: (ResizeDirection) -> Unit = {},
+    onWindowResizeMove: (ResizeDirection) -> Unit = {},
+    onWindowResizeEnd: () -> Unit = {},
+    onSetCursor: (java.awt.Cursor) -> Unit = {},
     onVolumeWheel: (Float) -> Unit,
     // Высота нижней полосы, которая ловит клики мимо кнопок; null — вся панель (мини-плеер).
     // Клики выше полосы уходят к видео (пауза, двойной клик, колесо громкости).
@@ -225,14 +237,54 @@ fun PlayerBottomBar(
             else -> 48.dp
         }
         val input = Modifier
-                .pointerHoverIcon(PointerIcon.Default)
+                .then(if (!mini) Modifier.pointerHoverIcon(PointerIcon.Default) else Modifier)
                 .pointerInput(mini) {
                     awaitPointerEventScope {
                         var isDragging = false
+                        var isResizing = false
+                        var activeResizeDir = ResizeDirection.NONE
                         var startPressTime = 0L
                         var lastTapTime = 0L
                         var startX = 0f
                         var startY = 0f
+
+                        fun detectDir(x: Float, y: Float, w: Float, h: Float): ResizeDirection {
+                            if (w <= 0f || h <= 0f) return ResizeDirection.NONE
+                            val edgePx = (8.dp).toPx()
+                            val cornerPx = (20.dp).toPx()
+                            val inLeftCorner = x in 0f..cornerPx
+                            val inRightCorner = x in (w - cornerPx)..w
+                            val inTopCorner = y in 0f..cornerPx
+                            val inBottomCorner = y in (h - cornerPx)..h
+
+                            return when {
+                                inLeftCorner && inTopCorner -> ResizeDirection.TOP_LEFT
+                                inRightCorner && inTopCorner -> ResizeDirection.TOP_RIGHT
+                                inLeftCorner && inBottomCorner -> ResizeDirection.BOTTOM_LEFT
+                                inRightCorner && inBottomCorner -> ResizeDirection.BOTTOM_RIGHT
+                                y in 0f..edgePx -> ResizeDirection.TOP
+                                y in (h - edgePx)..h -> ResizeDirection.BOTTOM
+                                x in 0f..edgePx -> ResizeDirection.LEFT
+                                x in (w - edgePx)..w -> ResizeDirection.RIGHT
+                                else -> ResizeDirection.NONE
+                            }
+                        }
+
+                        fun cursorForDir(dir: ResizeDirection): java.awt.Cursor {
+                            return when (dir) {
+                                ResizeDirection.TOP_LEFT, ResizeDirection.BOTTOM_RIGHT ->
+                                    java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.NW_RESIZE_CURSOR)
+                                ResizeDirection.TOP_RIGHT, ResizeDirection.BOTTOM_LEFT ->
+                                    java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.NE_RESIZE_CURSOR)
+                                ResizeDirection.TOP, ResizeDirection.BOTTOM ->
+                                    java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.N_RESIZE_CURSOR)
+                                ResizeDirection.LEFT, ResizeDirection.RIGHT ->
+                                    java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.W_RESIZE_CURSOR)
+                                ResizeDirection.NONE ->
+                                    java.awt.Cursor.getDefaultCursor()
+                            }
+                        }
+
                         while (true) {
                             val e = awaitPointerEvent()
                             when (e.type) {
@@ -247,40 +299,76 @@ fun PlayerBottomBar(
                                             startPressTime = System.currentTimeMillis()
                                             startX = change.position.x
                                             startY = change.position.y
-                                            isDragging = false
-                                            onWindowDragStart()
+                                            val w = size.width.toFloat()
+                                            val h = size.height.toFloat()
+                                            val dir = detectDir(startX, startY, w, h)
+                                            if (dir != ResizeDirection.NONE) {
+                                                isResizing = true
+                                                activeResizeDir = dir
+                                                isDragging = false
+                                                onSetCursor(cursorForDir(dir))
+                                                onWindowResizeStart(dir)
+                                            } else {
+                                                isResizing = false
+                                                activeResizeDir = ResizeDirection.NONE
+                                                isDragging = false
+                                                onWindowDragStart()
+                                            }
                                         }
                                     }
                                 }
                                 PointerEventType.Move -> {
-                                    if (mini && startPressTime > 0L) {
+                                    if (mini) {
                                         val change = e.changes.firstOrNull()
                                         if (change != null) {
-                                            val dist = kotlin.math.hypot(change.position.x - startX, change.position.y - startY)
-                                            if (dist > 4f) {
-                                                isDragging = true
-                                                onWindowDragMove()
+                                            if (isResizing) {
+                                                onSetCursor(cursorForDir(activeResizeDir))
+                                                onWindowResizeMove(activeResizeDir)
+                                            } else if (startPressTime > 0L) {
+                                                val dist = kotlin.math.hypot(change.position.x - startX, change.position.y - startY)
+                                                if (dist > 4f) {
+                                                    isDragging = true
+                                                    onWindowDragMove()
+                                                }
+                                            } else {
+                                                val w = size.width.toFloat()
+                                                val h = size.height.toFloat()
+                                                val hoverDir = detectDir(change.position.x, change.position.y, w, h)
+                                                onSetCursor(cursorForDir(hoverDir))
                                             }
                                         }
                                     }
                                 }
                                 PointerEventType.Release -> {
-                                    if (mini && startPressTime > 0L) {
-                                        val pressDuration = System.currentTimeMillis() - startPressTime
-                                        startPressTime = 0L
-                                        if (isDragging) {
-                                            isDragging = false
-                                            onWindowDragEnd()
-                                        } else if (pressDuration < 300L) {
-                                            val now = System.currentTimeMillis()
-                                            if (now - lastTapTime < 300L) {
-                                                lastTapTime = 0L
-                                                onMiniToggle()
-                                            } else {
-                                                lastTapTime = now
-                                                onTogglePause()
+                                    if (mini) {
+                                        if (isResizing) {
+                                            isResizing = false
+                                            activeResizeDir = ResizeDirection.NONE
+                                            startPressTime = 0L
+                                            onWindowResizeEnd()
+                                            onSetCursor(java.awt.Cursor.getDefaultCursor())
+                                        } else if (startPressTime > 0L) {
+                                            val pressDuration = System.currentTimeMillis() - startPressTime
+                                            startPressTime = 0L
+                                            if (isDragging) {
+                                                isDragging = false
+                                                onWindowDragEnd()
+                                            } else if (pressDuration < 300L) {
+                                                val now = System.currentTimeMillis()
+                                                if (now - lastTapTime < 300L) {
+                                                    lastTapTime = 0L
+                                                    onMiniToggle()
+                                                } else {
+                                                    lastTapTime = now
+                                                    onTogglePause()
+                                                }
                                             }
                                         }
+                                    }
+                                }
+                                PointerEventType.Exit -> {
+                                    if (mini && !isResizing && !isDragging) {
+                                        onSetCursor(java.awt.Cursor.getDefaultCursor())
                                     }
                                 }
                                 PointerEventType.Scroll -> {
@@ -811,6 +899,22 @@ fun PlayerBottomBar(
                         }
                     }
                 }
+            }
+        }
+        if (mini && controlsAlpha > 0.05f) {
+            Canvas(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .size(16.dp)
+                    .padding(end = 4.dp, bottom = 4.dp)
+                    .graphicsLayer { alpha = controlsAlpha }
+            ) {
+                val w = size.width
+                val h = size.height
+                val color = Color.White.copy(alpha = 0.45f)
+                val stroke = 1.5f
+                drawLine(color, androidx.compose.ui.geometry.Offset(w, h - 9f), androidx.compose.ui.geometry.Offset(w - 9f, h), strokeWidth = stroke)
+                drawLine(color, androidx.compose.ui.geometry.Offset(w, h - 5f), androidx.compose.ui.geometry.Offset(w - 5f, h), strokeWidth = stroke)
             }
         }
     }

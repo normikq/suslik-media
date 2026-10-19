@@ -240,7 +240,9 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
                     scaleX = s; scaleY = s; alpha = (1f - p * 1.15f).coerceIn(0f, 1f)
                 }
             }) {
-                androidx.compose.animation.Crossfade(lib.authenticated == false, animationSpec = tween(420, easing = Sm.ease), modifier = Modifier.fillMaxSize().background(Sm.night)) { needLogin ->
+                // Its own layer: the scale and fade above change on every frame of the flight, and without it each change
+                // drew the whole library again (backdrop, side panel, texts); now the recorded picture is just reused.
+                androidx.compose.animation.Crossfade(lib.authenticated == false, animationSpec = tween(420, easing = Sm.ease), modifier = Modifier.fillMaxSize().graphicsLayer().background(Sm.night)) { needLogin ->
                   if (needLogin) {
                     LoginView(lib)
                   } else {
@@ -307,10 +309,13 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
                     // Swallows pointer events so the hidden library underneath never reacts.
                     .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }
                 ) {
-                    key(req, playerGen) {
-                        PlayerView(req, lib, win, keys, onTop, startIndex = playerStart,
-                            parentWindow = window,
-                            onRestart = { i -> playerStart = i; playerGen++ }) { closePlayer() }
+                    // (own layer, as the library's: the flight moves the picture without drawing the player again)
+                    Box(Modifier.fillMaxSize().graphicsLayer()) {
+                        key(req, playerGen) {
+                            PlayerView(req, lib, win, keys, onTop, startIndex = playerStart,
+                                parentWindow = window,
+                                onRestart = { i -> playerStart = i; playerGen++ }) { closePlayer() }
+                        }
                     }
                 }
             }

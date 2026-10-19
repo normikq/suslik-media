@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -22,6 +23,7 @@ import kotlinx.coroutines.flow.first
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.input.key.Key
@@ -176,6 +178,10 @@ fun PlayerView(
     var parked by remember { mutableStateOf(false) }
     var picker by remember { mutableStateOf<String?>(null) }
     var lastFrame by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+    // The film's poster while the player opens: the tile's copy at once (in memory), the sharper one from disk a moment later.
+    val openPoster = remember { library.cachedPoster(req.posterQueries) }
+    var bigPoster by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+    LaunchedEffect(Unit) { bigPoster = library.posterLarge(req.posterQueries) }
     var pickerItems by remember { mutableStateOf(emptyList<Pair<Int, String>>()) }
     var pickerCurrent by remember { mutableStateOf(-2) }
     var pickerLoading by remember { mutableStateOf(false) }
@@ -221,7 +227,17 @@ fun PlayerView(
             val d = playerPoll(pending, 1000) { eDim() }
             if (d != null && d.first > 0 && d.second > 0) {
                 val aspect = d.first.toDouble() / d.second
-                if (videoAspect != aspect) videoAspect = aspect
+                if (videoAspect != aspect) {
+                    videoAspect = aspect
+                    if (mini && !WindowMode.miniAnimating && owner != null) {
+                        val a = aspect.coerceIn(1.2, 2.4)
+                        val curW = owner.width
+                        val newH = kotlin.math.round(curW / a).toInt()
+                        if (newH > 0 && kotlin.math.abs(owner.height - newH) > 2) {
+                            owner.setSize(curW, newH)
+                        }
+                    }
+                }
             }
             delay(1500)
         }
@@ -336,8 +352,11 @@ fun PlayerView(
     fun refreshPicker(kind: String) {
         scope.launch {
             val audio = kind == "audio"
-            val list = if (audio) eAudioTracks() else listOf(-1 to tr("player.vyklyuchit")) + eSubTracks()
-            val cur = if (audio) eAudioCur() else eSubCur()
+            // Off the window's thread: a property waits for mpv's core, busy right after opening or a seek
+            // (journal 19.10: the window stood 224 ms in mpv_get_property_string).
+            val (list, cur) = withContext(Dispatchers.IO) {
+                (if (audio) eAudioTracks() else listOf(-1 to tr("player.vyklyuchit")) + eSubTracks()) to (if (audio) eAudioCur() else eSubCur())
+            }
             val pending = engine.pendingTracksCount(kind)
             val loading = engine.isTracksLoading(kind)
             val fresh = list to cur
@@ -459,15 +478,18 @@ fun PlayerView(
         }
     }
 
+    var userMiniWidth by remember { mutableStateOf<Int?>(null) }
+
     fun setMini(on: Boolean) {
         if (on == mini || WindowMode.miniAnimating) return
         val target = owner ?: return
         if (on) {
             beforeMini[3] = onTop.value
-            target.minimumSize = java.awt.Dimension(200, 150)
+            target.minimumSize = java.awt.Dimension(160, 100)
             val aspect = videoAspect.coerceIn(1.2, 2.4)
-            val mw = Math.sqrt(590.0 * 330.0 * aspect).toInt().coerceIn(400, 620)
-            val mh = (mw / aspect).toInt()
+            val defaultMw = Math.sqrt(590.0 * 330.0 * aspect).toInt().coerceIn(400, 620)
+            val mw = (userMiniWidth ?: defaultMw).coerceIn(280, 960)
+            val mh = kotlin.math.round(mw / aspect).toInt()
             WindowMode.setMiniMode(target, true, mw, mh) {
                 mini = true
                 onTop.value = true
@@ -477,6 +499,7 @@ fun PlayerView(
             WindowMode.setMiniMode(target, false)
             onTop.value = beforeMini[3] as? Boolean ?: false
             target.minimumSize = java.awt.Dimension(MIN_W, MIN_H)
+            target.cursor = java.awt.Cursor.getDefaultCursor()
         }
     }
 
@@ -531,13 +554,16 @@ fun PlayerView(
         nextIn = -1
         supRef.get()?.closed()
         scope.launch {
-            if (lastFrame == null) {
-                playerAwait(180) { grabFrame() }?.let { lastFrame = it }
-            }
-            parked = true
+            // The flight back starts at once: the picture stops (pause, the sound too) and the live frame flies; the still
+            // copy takes its place as soon as it is ready (before, the flight waited up to 180 ms for it). The video layer
+            // still goes well before the player is removed (the flight is 600 ms).
+            runOnPlayer { ePause(true) }
             if (mini) setMini(false)
             MediaControls.stop()
             onClose()
+            // Always a fresh frame: one kept from the previous episode would fly back instead of this one.
+            playerAwait(250) { grabFrame() }?.let { lastFrame = it }
+            parked = true
             playerExecutor.execute { runCatching { eStop() } }
         }
     }
@@ -645,7 +671,8 @@ fun PlayerView(
 
     val userPaused = pausedAt > 0L || enginePaused
     LaunchedEffect(userPaused) {
-        MediaControls.updatePlayback(!userPaused)
+        // (closing pauses the film for the flight back: the media controls are already stopped by then)
+        if (!closing) MediaControls.updatePlayback(!userPaused)
     }
 
     val isPlaybackActive = playing && !userPaused && !closing
@@ -996,7 +1023,8 @@ fun PlayerView(
 
     val fullscreen = WindowMode.isFullscreen
 
-    LaunchedEffect(barVisible, lastMove, started, enginePaused, nextIn, picker, seeking, infoOpen) {
+    LaunchedEffect(barVisible, lastMove, started, enginePaused, nextIn, picker, seeking, infoOpen, closing) {
+        if (closing) return@LaunchedEffect // the pause for the flight back must not bring the panels up
         val hold = !started || enginePaused || nextIn >= 0 || picker != null || seeking != null || infoOpen || inIntro()
         if (hold) {
             barVisible = true
@@ -1049,6 +1077,209 @@ fun PlayerView(
     }
 
     val onWindowDragEnd: () -> Unit = {}
+
+    var resizeStartMouseX = 0
+    var resizeStartMouseY = 0
+    var resizeStartWinX = 0
+    var resizeStartWinY = 0
+    var resizeStartWinW = 0
+    var resizeStartWinH = 0
+    var resizeAspect = 16.0 / 9.0
+
+    val onSetCursor: (java.awt.Cursor) -> Unit = { c ->
+        if (owner?.cursor != c) owner?.cursor = c
+    }
+
+    val onWindowResizeStart: (ResizeDirection) -> Unit = { _ ->
+        val p = java.awt.MouseInfo.getPointerInfo()?.location
+        val w = owner
+        if (p != null && w != null) {
+            resizeStartMouseX = p.x
+            resizeStartMouseY = p.y
+            resizeStartWinX = w.x
+            resizeStartWinY = w.y
+            resizeStartWinW = w.width
+            resizeStartWinH = w.height
+            resizeAspect = videoAspect.coerceIn(1.2, 2.4)
+        }
+    }
+
+    val onWindowResizeMove: (ResizeDirection) -> Unit = { dir ->
+        val p = java.awt.MouseInfo.getPointerInfo()?.location
+        val w = owner
+        if (p != null && w != null && resizeStartWinW > 0 && resizeStartWinH > 0) {
+            val dx = p.x - resizeStartMouseX
+            val dy = p.y - resizeStartMouseY
+            val a = resizeAspect
+            val w0 = resizeStartWinW
+            val h0 = resizeStartWinH
+            val x0 = resizeStartWinX
+            val y0 = resizeStartWinY
+
+            val gc = w.graphicsConfiguration
+            val scrBounds = gc?.bounds ?: java.awt.Rectangle(0, 0, 1920, 1080)
+            val insets = runCatching { java.awt.Toolkit.getDefaultToolkit().getScreenInsets(gc) }.getOrNull()
+                ?: java.awt.Insets(0, 0, 0, 0)
+            val workLeft = scrBounds.x + insets.left
+            val workTop = scrBounds.y + insets.top
+            val workRight = scrBounds.x + scrBounds.width - insets.right
+            val workBottom = scrBounds.y + scrBounds.height - insets.bottom
+            val maxW = minOf(1200, ((workRight - workLeft) * 0.85).toInt()).coerceAtLeast(400)
+            val minW = 280.coerceAtMost(maxW)
+
+            var newW = w0
+            var newH = h0
+            var newX = x0
+            var newY = y0
+
+            when (dir) {
+                ResizeDirection.BOTTOM_RIGHT -> {
+                    val proj = (dx * a + dy) / (a * a + 1.0)
+                    newW = (w0 + proj * a).toInt().coerceIn(minW, maxW)
+                    newH = kotlin.math.round(newW / a).toInt()
+                    newX = x0
+                    newY = y0
+                    if (newX + newW > workRight) {
+                        newW = (workRight - newX).coerceAtLeast(minW)
+                        newH = kotlin.math.round(newW / a).toInt()
+                    }
+                    if (newY + newH > workBottom) {
+                        newH = (workBottom - newY).coerceAtLeast(kotlin.math.round(minW / a).toInt())
+                        newW = kotlin.math.round(newH * a).toInt().coerceIn(minW, maxW)
+                        newH = kotlin.math.round(newW / a).toInt()
+                    }
+                }
+                ResizeDirection.RIGHT -> {
+                    newW = (w0 + dx).coerceIn(minW, maxW)
+                    newH = kotlin.math.round(newW / a).toInt()
+                    newX = x0
+                    newY = y0
+                    if (newX + newW > workRight) {
+                        newW = (workRight - newX).coerceAtLeast(minW)
+                        newH = kotlin.math.round(newW / a).toInt()
+                    }
+                    if (newY + newH > workBottom) {
+                        newY = (workBottom - newH).coerceAtLeast(workTop)
+                    }
+                }
+                ResizeDirection.BOTTOM -> {
+                    newH = (h0 + dy).coerceIn(kotlin.math.round(minW / a).toInt(), kotlin.math.round(maxW / a).toInt())
+                    newW = kotlin.math.round(newH * a).toInt().coerceIn(minW, maxW)
+                    newH = kotlin.math.round(newW / a).toInt()
+                    newX = x0
+                    newY = y0
+                    if (newY + newH > workBottom) {
+                        newH = (workBottom - newY).coerceAtLeast(kotlin.math.round(minW / a).toInt())
+                        newW = kotlin.math.round(newH * a).toInt().coerceIn(minW, maxW)
+                        newH = kotlin.math.round(newW / a).toInt()
+                    }
+                    if (newX + newW > workRight) {
+                        newX = (workRight - newW).coerceAtLeast(workLeft)
+                    }
+                }
+                ResizeDirection.TOP_LEFT -> {
+                    val proj = (-dx * a - dy) / (a * a + 1.0)
+                    newW = (w0 + proj * a).toInt().coerceIn(minW, maxW)
+                    newH = kotlin.math.round(newW / a).toInt()
+                    newX = (x0 + w0) - newW
+                    newY = (y0 + h0) - newH
+                    if (newX < workLeft) {
+                        newX = workLeft
+                        newW = (x0 + w0 - newX).coerceAtMost(maxW)
+                        newH = kotlin.math.round(newW / a).toInt()
+                        newY = (y0 + h0) - newH
+                    }
+                    if (newY < workTop) {
+                        newY = workTop
+                        newH = (y0 + h0 - newY).coerceAtMost(kotlin.math.round(maxW / a).toInt())
+                        newW = kotlin.math.round(newH * a).toInt().coerceIn(minW, maxW)
+                        newH = kotlin.math.round(newW / a).toInt()
+                        newX = (x0 + w0) - newW
+                    }
+                }
+                ResizeDirection.TOP -> {
+                    newH = (h0 - dy).coerceIn(kotlin.math.round(minW / a).toInt(), kotlin.math.round(maxW / a).toInt())
+                    newW = kotlin.math.round(newH * a).toInt().coerceIn(minW, maxW)
+                    newH = kotlin.math.round(newW / a).toInt()
+                    newY = (y0 + h0) - newH
+                    newX = (x0 + w0) - newW
+                    if (newY < workTop) {
+                        newY = workTop
+                        newH = (y0 + h0 - newY).coerceAtMost(kotlin.math.round(maxW / a).toInt())
+                        newW = kotlin.math.round(newH * a).toInt().coerceIn(minW, maxW)
+                        newH = kotlin.math.round(newW / a).toInt()
+                        newX = (x0 + w0) - newW
+                    }
+                    if (newX < workLeft) {
+                        newX = workLeft
+                    }
+                }
+                ResizeDirection.LEFT -> {
+                    newW = (w0 - dx).coerceIn(minW, maxW)
+                    newH = kotlin.math.round(newW / a).toInt()
+                    newX = (x0 + w0) - newW
+                    newY = (y0 + h0) - newH
+                    if (newX < workLeft) {
+                        newX = workLeft
+                        newW = (x0 + w0 - newX).coerceAtMost(maxW)
+                        newH = kotlin.math.round(newW / a).toInt()
+                        newY = (y0 + h0) - newH
+                    }
+                    if (newY < workTop) {
+                        newY = workTop
+                    }
+                }
+                ResizeDirection.TOP_RIGHT -> {
+                    val proj = (dx * a - dy) / (a * a + 1.0)
+                    newW = (w0 + proj * a).toInt().coerceIn(minW, maxW)
+                    newH = kotlin.math.round(newW / a).toInt()
+                    newX = x0
+                    newY = (y0 + h0) - newH
+                    if (newX + newW > workRight) {
+                        newW = (workRight - newX).coerceAtLeast(minW)
+                        newH = kotlin.math.round(newW / a).toInt()
+                        newY = (y0 + h0) - newH
+                    }
+                    if (newY < workTop) {
+                        newY = workTop
+                        newH = (y0 + h0 - newY).coerceAtMost(kotlin.math.round(maxW / a).toInt())
+                        newW = kotlin.math.round(newH * a).toInt().coerceIn(minW, maxW)
+                        newH = kotlin.math.round(newW / a).toInt()
+                    }
+                }
+                ResizeDirection.BOTTOM_LEFT -> {
+                    val proj = (-dx * a + dy) / (a * a + 1.0)
+                    newW = (w0 + proj * a).toInt().coerceIn(minW, maxW)
+                    newH = kotlin.math.round(newW / a).toInt()
+                    newX = (x0 + w0) - newW
+                    newY = y0
+                    if (newX < workLeft) {
+                        newX = workLeft
+                        newW = (x0 + w0 - newX).coerceAtMost(maxW)
+                        newH = kotlin.math.round(newW / a).toInt()
+                    }
+                    if (newY + newH > workBottom) {
+                        newH = (workBottom - newY).coerceAtLeast(kotlin.math.round(minW / a).toInt())
+                        newW = kotlin.math.round(newH * a).toInt().coerceIn(minW, maxW)
+                        newH = kotlin.math.round(newW / a).toInt()
+                        newX = (x0 + w0) - newW
+                    }
+                }
+                ResizeDirection.NONE -> {}
+            }
+
+            if (newW > 0 && newH > 0) {
+                userMiniWidth = newW
+                w.setBounds(newX, newY, newW, newH)
+            }
+        }
+    }
+
+    val onWindowResizeEnd: () -> Unit = {
+        owner?.let { w ->
+            userMiniWidth = w.width
+        }
+    }
 
     LaunchedEffect(barVisible, closing, mini) {
         if (closing) return@LaunchedEffect
@@ -1212,6 +1443,10 @@ fun PlayerView(
             onWindowDragStart = onWindowDragStart,
             onWindowDragMove = onWindowDragMove,
             onWindowDragEnd = onWindowDragEnd,
+            onWindowResizeStart = onWindowResizeStart,
+            onWindowResizeMove = onWindowResizeMove,
+            onWindowResizeEnd = onWindowResizeEnd,
+            onSetCursor = onSetCursor,
             onVolumeWheel = { delta ->
                 val step = if (delta < 0) 5 else -5
                 volume = (volume + step).coerceIn(0, 150)
@@ -1263,7 +1498,7 @@ fun PlayerView(
             Modifier
                 .fillMaxSize()
                 .background(Color.Black)
-                .pointerHoverIcon(if (mini || barVisible) androidx.compose.ui.input.pointer.PointerIcon.Default else hiddenPointer)
+                .then(if (mini) Modifier else Modifier.pointerHoverIcon(if (barVisible) androidx.compose.ui.input.pointer.PointerIcon.Default else hiddenPointer))
                 .pointerInput(Unit) {
                     var lastClickTime = 0L
                     awaitPointerEventScope {
@@ -1312,8 +1547,23 @@ fun PlayerView(
         ) {
             val hasFrame by remember { androidx.compose.runtime.derivedStateOf { (videoOut?.frame?.value ?: 0L) > 0L } }
             if (!parked && videoOut != null) MpvVideoSurface(videoOut, Modifier.fillMaxSize().onSizeChanged { sceneWidthPx = it.width })
+            // Until the first frame of the film: its poster, as large as the window's height. The flight out of the tile
+            // shows just the middle of the frame in the tile's shape, so it starts as exactly the poster that was clicked;
+            // once the video is there the poster fades out over it. Closed before the first frame: the poster flies back.
+            val showPoster = !hasFrame && lastFrame == null
+            val posterAlpha by androidx.compose.animation.core.animateFloatAsState(if (showPoster) 1f else 0f, tween(if (showPoster) 0 else 380, easing = Sm.ease))
+            val poster = bigPoster ?: openPoster
             if (parked || !hasFrame) lastFrame?.let { androidx.compose.foundation.Image(it, null, contentScale = androidx.compose.ui.layout.ContentScale.Fit, modifier = Modifier.fillMaxSize()) }
-                ?: Text(if (closing) "" else tr("player.otkryvaem"), color = Sm.muted, fontFamily = Onest, fontSize = 15.sp, modifier = Modifier.align(Alignment.Center))
+            if (poster != null && posterAlpha > 0f) {
+                androidx.compose.foundation.Image(poster, null, contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                    filterQuality = androidx.compose.ui.graphics.FilterQuality.Medium,
+                    modifier = Modifier.fillMaxSize().graphicsLayer { alpha = posterAlpha })
+            }
+            if ((parked || !hasFrame) && lastFrame == null && !closing) {
+                Text(tr("player.otkryvaem"), color = if (poster != null) Color.White.copy(alpha = 0.85f) else Sm.muted, fontFamily = Onest, fontSize = 15.sp,
+                    style = if (poster != null) androidx.compose.ui.text.TextStyle(shadow = androidx.compose.ui.graphics.Shadow(Color.Black, blurRadius = 12f)) else androidx.compose.ui.text.TextStyle.Default,
+                    modifier = Modifier.align(if (poster != null) Alignment.BottomCenter else Alignment.Center).padding(bottom = if (poster != null) 36.dp else 0.dp))
+            }
         }
         SceneBars(sceneMaxHeight)
     }
