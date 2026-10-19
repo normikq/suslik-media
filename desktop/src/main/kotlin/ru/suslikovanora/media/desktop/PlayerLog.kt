@@ -28,7 +28,4 @@ object PlayerLog {
             }
         }
     }
-
-    // VLC's own log is NOT attached: its native callback (vlcj NativeLog) crashed the whole app on Windows at the
-    // first message VLC wrote — that is why 1.9.4 closed as soon as a film opened.
 }

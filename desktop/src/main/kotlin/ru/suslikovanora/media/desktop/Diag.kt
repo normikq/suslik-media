@@ -1,7 +1,6 @@
 package ru.suslikovanora.media.desktop
 
 import ru.suslikovanora.media.core.*
-import ru.suslikovanora.media.desktop.player.Vlc
 
 import com.sun.jna.Library
 import com.sun.jna.Native
@@ -25,7 +24,7 @@ import java.util.zip.ZipOutputStream
  *          since the last line and the busiest threads, the whole PC's CPU load, memory, the reserve's traffic;
  *  [net]   network adapters coming and going (Wi-Fi ↔ Ethernet, VPN up / down);
  *  [http]  every request to the server: time to the answer, code, size;
- *  [vlc] / [proxy]  from the player: playback statistics and the reserve's windows every 5 s;
+ *  [mpv] / [proxy]  from the player: playback statistics and the reserve's windows every 5 s;
  *  [mark]  F8 in the player or «Метка» in the settings: the moment something went wrong.
  */
 object Diag {
@@ -109,7 +108,7 @@ object Diag {
         PlayerLog.write(sb.toString())
     }
 
-    /** The five threads that used the most CPU since the last line (VLC's own threads are native and not seen here). */
+    /** The five threads that used the most CPU since the last line (mpv's own threads are native and not seen here). */
     private fun topThreads(span: Long): String? = runCatching {
         val tm = ManagementFactory.getThreadMXBean()
         if (!tm.isThreadCpuTimeSupported) return null

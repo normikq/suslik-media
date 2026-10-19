@@ -77,11 +77,11 @@ object PlaybackSettings {
     fun setHeavyMbit(ctx: Context, v: Int) = prefs(ctx).edit().putInt("heavy_mbit", v).apply()
     /**
      * «Плеер» (for testing the new engine): VLC — every film in VLC, as before; Media3 — films in Media3, and in VLC
-     * only what Media3 cannot play (player/EngineChoice). VLC by default until Media3 is checked.
+     * only what Media3 cannot play (player/EngineChoice). Media3 by default (2.4.3); VLC only for whoever picked it.
      */
     fun engine(ctx: Context): ru.suslikovanora.media.player.EngineKind =
-        if (prefs(ctx).getString("player_engine", "vlc") == "media3") ru.suslikovanora.media.player.EngineKind.MEDIA3
-        else ru.suslikovanora.media.player.EngineKind.VLC
+        if (prefs(ctx).getString("player_engine", "media3") == "vlc") ru.suslikovanora.media.player.EngineKind.VLC
+        else ru.suslikovanora.media.player.EngineKind.MEDIA3
     fun setEngine(ctx: Context, kind: ru.suslikovanora.media.player.EngineKind) = prefs(ctx).edit().putString("player_engine", kind.tag).apply()
     /** The beta channel is really in use (chosen and a code saved); otherwise — the release channel. */
     fun betaChannel(ctx: Context) = betaOn(ctx) && betaCode(ctx).isNotBlank()

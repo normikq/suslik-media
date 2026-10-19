@@ -9,7 +9,7 @@ import java.nio.channels.FileLock
 
 /**
  * Only one Suslik Media at a time. A second start (double click on the shortcut, the installer's "launch" while the
- * app is open) does not open a second window with a second VLC: it asks the running app to come to the front and quits.
+ * app is open) does not open a second window: it asks the running app to come to the front and quits.
  *
  *  - an OS file lock in the app's folder says "one is running" (released by the OS even after a crash);
  *  - the running app listens on a local port (127.0.0.1 only) written next to the lock; the second start sends "show".

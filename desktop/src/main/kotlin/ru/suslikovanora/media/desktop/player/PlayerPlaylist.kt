@@ -4,7 +4,7 @@ import ru.suslikovanora.media.desktop.Api
 
 data class Entry(val title: String, val url: String)
 
-/** VLC's name for a track without a name of its own (Blu-ray streams): «Track 1», «Дорожка 2». */
+/** Generic name for a track without a name of its own: «Track 1», «Дорожка 2». */
 val GENERIC_TRACK = Regex("""(?i)(track|дорожка)\s*\d+""")
 
 fun parseM3u(text: String): List<Entry> {

@@ -285,7 +285,12 @@ class PlayerActivity : ComponentActivity() {
             updateSession()
         }
         override fun stopped() { root.keepScreenOn = false }
-        override fun tracksChanged() = trackSelector.onESAdded()
+        override fun tracksChanged() {
+            trackSelector.onESAdded()
+            // An open «Аудио» / «Субтитры» sheet shows the new list: a voice-over file picked as «＋ …» used to vanish
+            // from it (the sheet was refreshed right after the tap, before Media3 had opened the file).
+            handler.post { if (ui.picker == "audio" || ui.picker == "spu") refreshPicker() }
+        }
         override fun endReached() {
             val owner = player ?: return
             // A dead network connection also shows up as EOF, so only a position near the known
@@ -359,6 +364,9 @@ class PlayerActivity : ComponentActivity() {
 
     private fun timeOrLengthChanged(lengthChanged: Boolean) {
         val owner = player ?: return
+        // The previous episode still plays while the next one's voice-overs are signed (onPlayEntry): its clock is not
+        // the new episode's. 18.10 journal: «next» at 18 s of Ep.01 opened Ep.02 at 21 s and saved that as its place.
+        if (sideJob?.isActive == true) return
         if (lengthChanged) { BurstProxy.setDuration(currentUrl, owner.lengthMs); checkHeavy() }
         // Blu-ray continued at a saved place: VLC may count from 0 there — timeOf() adds the known offset.
         val t = bluRayController.handleTimeUpdate(owner, currentUrl)
@@ -1040,6 +1048,9 @@ class PlayerActivity : ComponentActivity() {
         playbackPosition = t
         lastTime = t
         handler.removeCallbacks(seekWatchdogRunnable)
+        // A seek restarts the decoders itself: the wait after it is the new place loading, not a stuck track switch
+        // (18.10 journal: a far seek 5 s after switching to DTS got a second seek of its own while the data came in).
+        handler.removeCallbacks(trackSwitchRunnable); trackSwitchAt = 0L
         if (networkLost) { needsReload = true; pendingSeekPos = t; showStatus(tr("player.net_seti_zhdem_podklyuchenie")); return }
         if (needsReload || ended) {
             pendingSeekPos = null

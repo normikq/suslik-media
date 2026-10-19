@@ -74,7 +74,7 @@ class BurstProxyTest {
         BurstProxy.capBytes = 16L shl 20 // smaller than the file: the ring wraps around
     }
     // a failed offline test must not leave the next ones without a network (they would download nothing)
-    @AfterTest fun stop() { BurstProxy.dropAll(); if (!BurstProxy.isNetworkOnline) BurstProxy.networkChanged(); origin.stop(0) }
+    @AfterTest fun stop() { BurstProxy.dropAll(); BurstProxy.recentMs = 10_000L;if (!BurstProxy.isNetworkOnline) BurstProxy.networkChanged(); origin.stop(0) }
 
     private fun get(local: String, range: String?): Pair<Int, ByteArray> {
         val c = URL(local).openConnection(java.net.Proxy.NO_PROXY) as HttpURLConnection
@@ -266,6 +266,30 @@ class BurstProxyTest {
         assertEquals(a, BurstProxy.wrap(addr(2)))            // still kept on disk
     }
 
+    @Test fun openingAnotherFilmDropsTheClosedOne() {
+        fun addr(link: String) = "https://origin.test/film.mkv?link=$link&exp=1&sig=s"
+        val a = BurstProxy.wrap(addr("L1"))
+        get(a, "bytes=0-99999")
+        BurstProxy.clear()                                   // the player is closed: kept on disk
+        assertTrue(BurstProxy.diskBytes() > 0)
+        BurstProxy.keepOnly(listOf(addr("L2")))              // another film is opened
+        assertEquals(0L, BurstProxy.diskBytes())
+        assertTrue(a != BurstProxy.wrap(addr("L1")))         // the closed one starts from nothing
+    }
+
+    @Test fun theFilmStaysWithinTheReserveSetting() {
+        BurstProxy.recentMs = 0                              // no grace period after a seek
+        slowOrigin = true                                    // ~2 MB/s: the first window does not reach the seek by itself
+        val local = BurstProxy.wrap(url)
+        get(local, "bytes=0-7999999")                        // playback from the start
+        get(local, "bytes=30000000-38999999")                // a seek far ahead: a second window, 8 + 9 MB > 16 MB
+        Thread.sleep(500)
+        slowOrigin = false
+        val snap = BurstProxy.snapshot()
+        assertTrue("@0MB" !in snap, snap)                    // the place the player left went
+        assertTrue(BurstProxy.diskBytes() <= 16L shl 20, "disk ${BurstProxy.diskBytes()}: $snap")
+    }
+
     @Test fun anExpiredSignatureIsRenewedInsteadOfFailing() {
         val now = System.currentTimeMillis() / 1000
         val renewed = AtomicInteger()
@@ -336,6 +360,46 @@ class BurstProxyTest {
         } finally {
             slowOrigin = false
         }
+    }
+
+    @Test fun aPlayerThatLeftWhileWaitingNoLongerCountsAsReading() {
+        val local = URL(BurstProxy.wrap(url))
+        get(local.toString(), "bytes=0-99")
+        BurstProxy.hold(url, 15_000) // the player gets nothing: its connection waits inside the proxy
+        try {
+            java.net.Socket().use { s ->
+                s.connect(InetSocketAddress(local.host, local.port))
+                s.getOutputStream().write("GET ${local.path} HTTP/1.1\r\nHost: 127.0.0.1\r\nRange: bytes=0-\r\n\r\n".toByteArray())
+                Thread.sleep(800)
+                assertTrue("readers 1" in BurstProxy.snapshot(), BurstProxy.snapshot())
+            } // the player closes its connection while waiting
+            Thread.sleep(1_200)
+            assertTrue("readers 0" in BurstProxy.snapshot(), "the gone player still counts: ${BurstProxy.snapshot()}")
+        } finally { BurstProxy.hold(url, 0) }
+    }
+
+    @Test fun aJumpJustPastTheReserveOnASlowNetworkOpensItsOwnRequest() {
+        slowOrigin = true // ~2 MB/s: a jump of 1.5 s of that network or more is quicker with a new request
+        try {
+            val local = BurstProxy.wrap(url)
+            val before = BurstProxy.downloaded.get()
+            val reader = Thread {
+                runCatching {
+                    val c = URL(local).openConnection(java.net.Proxy.NO_PROXY) as HttpURLConnection
+                    c.setRequestProperty("Range", "bytes=0-")
+                    c.inputStream.use { inp -> val buf = ByteArray(64 * 1024); val t0 = System.currentTimeMillis(); while (System.currentTimeMillis() - t0 < 6_500 && inp.read(buf) >= 0) {} }
+                    c.disconnect()
+                }
+            }.apply { isDaemon = true; start() }
+            reader.join(10_000)
+            Thread.sleep(800) // nobody reads: the window stops downloading
+            val end = BurstProxy.downloaded.get() - before // one window from 0: where its data ends
+            val pos = end + 5_500_000 // within the old 8 MB «near», but well past 1.5 s of this network
+            val (code, chunk) = get(local, "bytes=$pos-${pos + 99_999}")
+            assertEquals(206, code)
+            assertContentEquals(data.copyOfRange(pos.toInt(), pos.toInt() + 100_000), chunk)
+            assertTrue(ranges.any { it.startsWith("bytes=$pos-") }, "a new request at the jump: ranges $ranges, ${BurstProxy.snapshot()}")
+        } finally { slowOrigin = false }
     }
 
     @Test fun fastScrubbingDoesNotExceedMaxWindows() {

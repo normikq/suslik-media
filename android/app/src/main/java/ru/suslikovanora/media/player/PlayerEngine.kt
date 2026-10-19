@@ -15,7 +15,9 @@ data class EngineVideoTrack(
 data class EngineStats(
     val readBytes: Int, val decodedVideo: Int, val decodedAudio: Int,
     val displayedPictures: Int, val lostPictures: Int, val playedAbuffers: Int, val lostAbuffers: Int,
-    val demuxCorrupted: Int, val demuxDiscontinuity: Int
+    val demuxCorrupted: Int, val demuxDiscontinuity: Int,
+    /** Media3: pictures decoded but not shown on purpose (before the target of an exact seek, or too late to show). */
+    val skippedPictures: Int = 0
 )
 
 /** Какой движок играет: libVLC (через запас BurstProxy) или Media3 (ExoPlayer, тоже через запас BurstProxy). */

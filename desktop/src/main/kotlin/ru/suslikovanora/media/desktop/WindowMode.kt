@@ -396,7 +396,7 @@ object WindowMode {
                             val p = ((now - t0) / dur).coerceIn(0.0, 1.0)
                             val e = 1 - (1 - p) * (1 - p) * (1 - p)
                             fun lerp(a: Int, b: Int) = (a + (b - a) * e).toInt()
-                            // Размер меняем только когда он сдвинулся заметно: каждая смена размера — перестройка Compose и холста VLC
+                            // Размер меняем только когда он сдвинулся заметно: каждая смена размера — перестройка Compose
                             val cw = lerp(sw, w)
                             val ch = lerp(sh, h)
                             val resize = p >= 1.0 || lastW < 0 || kotlin.math.abs(cw - lastW) >= 24 || kotlin.math.abs(ch - lastH) >= 24
@@ -470,7 +470,7 @@ object WindowMode {
 
     /**
      * Возвращает фокус окну и внутреннему слою Compose (SkiaLayer),
-     * игнорируя нативный java.awt.Canvas (VLC), чтобы гарантировать работу hotkeys.
+     * чтобы гарантировать работу hotkeys.
      */
     fun restoreComposeFocus(win: Window? = null) {
         val w = win ?: currentWindow ?: runCatching { Frame.getFrames().firstOrNull { it.isShowing } }.getOrNull() ?: return
@@ -484,13 +484,12 @@ object WindowMode {
             if (hwnd != null && user32 != null) {
                 runCatching {
                     user32.SetForegroundWindow(hwnd)
-                    user32.SetFocus(hwnd) // Принудительно возвращаем Win32 фокус с HWND плеера на главное окно
+                    user32.SetFocus(hwnd)
                 }
             }
             w.requestFocus()
 
-            // Ищем именно слой Skia, который получает клавиши Compose. «Первый фокусируемый» тут нельзя:
-            // им оказывалась обёртка SwingPanel с холстом VLC, фокус уходил к ней, и горячие клавиши в плеере молчали.
+            // Ищем именно слой Skia, который получает клавиши Compose.
             fun isSkiaLayer(c: java.awt.Component): Boolean {
                 var k: Class<*>? = c.javaClass
                 while (k != null) { if (k.name == "org.jetbrains.skiko.SkiaLayer") return true; k = k.superclass }
@@ -517,27 +516,5 @@ object WindowMode {
             user32.GetWindowThreadProcessId(fg, pid)
             pid[0].toLong() == ProcessHandle.current().pid()
         }.getOrDefault(true)
-    }
-
-    /**
-     * Запрещает холсту VLC и всем его внутренним дочерним окнам (Direct3D/Vout)
-     * перехватывать системный фокус клавиатуры и мыши.
-     */
-    fun disableNativeCanvasInput(canvas: java.awt.Canvas) {
-        if (!isWindows) return
-        val user32 = User32.INSTANCE ?: return
-        runCatching {
-            val canvasHwnd = Native.getComponentPointer(canvas) ?: return
-            fun disableHwnd(h: Pointer) {
-                val style = user32.GetWindowLongW(h, GWL_STYLE)
-                user32.SetWindowLongW(h, GWL_STYLE, style or WS_DISABLED)
-                user32.EnableWindow(h, false)
-            }
-            disableHwnd(canvasHwnd)
-            user32.EnumChildWindows(canvasHwnd, { child, _ ->
-                disableHwnd(child)
-                true
-            }, null)
-        }
     }
 }

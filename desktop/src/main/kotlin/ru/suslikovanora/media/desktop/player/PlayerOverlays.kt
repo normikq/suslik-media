@@ -190,8 +190,8 @@ fun PlayerBottomBar(
     onWindowDragMove: () -> Unit = {},
     onWindowDragEnd: () -> Unit = {},
     onVolumeWheel: (Float) -> Unit,
-    // Высота нижней полосы, которая ловит клики мимо кнопок; null — вся панель (окно-оверлей VLC и мини-плеер).
-    // В сцене mpv клики выше полосы уходят к видео (пауза, двойной клик, колесо громкости).
+    // Высота нижней полосы, которая ловит клики мимо кнопок; null — вся панель (мини-плеер).
+    // Клики выше полосы уходят к видео (пауза, двойной клик, колесо громкости).
     inputHeight: androidx.compose.ui.unit.Dp? = null
 ) {
     val controlsAlpha = if (closing) 0f else (1f - barSlide).coerceIn(0f, 1f)

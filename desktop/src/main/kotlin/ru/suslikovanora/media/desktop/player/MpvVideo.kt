@@ -157,7 +157,7 @@ internal object Gl {
 /**
  * OpenGL-контекст, которым Skiko рисует окно: устройство (HDC), контекст (HGLRC) и DirectContext Skia.
  * Skiko их не публикует, берём из его внутренних полей (Skiko 0.8.x, WindowsOpenGLRedrawer); при другой версии
- * или другом способе отрисовки [find] вернёт null, и плеер останется на VLC.
+ * или другом способе отрисовки [find] вернёт null.
  */
 class SkikoGl private constructor(
     private val layer: SkiaLayer,

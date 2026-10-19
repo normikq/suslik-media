@@ -55,7 +55,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.runtime.withFrameNanos
-import uk.co.caprica.vlcj.factory.MediaPlayerFactory
 import java.awt.Desktop
 import java.net.URI
 
@@ -66,10 +65,9 @@ const val MIN_H = 685
 fun main() {
     // Compose's DirectX renderer crashes on some new GPUs/drivers (seen on RTX 50xx); OpenGL is required for mpv OpenGL FBO.
     System.setProperty("skiko.renderApi", "OPENGL")
-    // VLC hands over every text (track names, chapters, titles) as UTF-8. Without this JNA decoded it with the
-    // Windows code page — Russian voice-over / subtitle names came out as «РЎСѓР±С‚РёС‚СЂС‹».
+    // Without this JNA decodes UTF-8 text with the Windows code page - Russian names come out garbled.
     System.setProperty("jna.encoding", "UTF-8")
-    // Already open: that window comes to the front, this start ends here (no second window, no second VLC).
+    // Already open: that window comes to the front, this start ends here (no second window).
     if (!SingleInstance.acquire()) return
     CrashReports.start() // last run crashed? → report; from now on uncaught errors report themselves
     Diag.start() // debug build only: the detailed journal
@@ -82,7 +80,7 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
     val lib = remember { Library() }
     val win = rememberWindowState(width = 1280.dp, height = 860.dp)
     var playing by remember { mutableStateOf<PlayRequest?>(null) }
-    var noVlc by remember { mutableStateOf(false) }
+    var noMpv by remember { mutableStateOf(false) }
     var tab by remember { mutableStateOf(Tab.Library) }
     var preparing by remember { mutableStateOf(false) }
     val keys = remember { mutableStateOf<((KeyEvent) -> Boolean)?>(null) }
@@ -93,19 +91,14 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
     // Kept here so the library comes back scrolled to where it was after watching something.
     val grid = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
 
-    // The very first VLC start scans all its plugins (several seconds): do it now, in the background.
-    val vlcWarm = remember { CompletableDeferred<Boolean>() }
+    // libmpv ставит установщик; если её нет (сервер был недоступен), докачивается в фоне.
+    val mpvWarm = remember { CompletableDeferred<Boolean>() }
     LaunchedEffect(Unit) {
-        // libmpv ставит установщик; если её нет (сервер был недоступен), докачивается здесь же, в фоне.
         val mpvSetup = ru.suslikovanora.media.desktop.player.MpvInstall.start(appScope)
         appScope.launch(Dispatchers.IO) { Uninstaller.register() }
         withContext(Dispatchers.IO) {
-            // Без VLC играть больше нечем: ждём libmpv.
-            if (!Vlc.available) mpvSetup.await()
-            val mpv = ru.suslikovanora.media.desktop.player.EngineChoice.useMpv
-            val ok = Vlc.available || mpv
-            if (ok && !mpv) runCatching { VlcFactory.warm() } // the real engine, reused by every player
-            vlcWarm.complete(ok)
+            mpvSetup.await()
+            mpvWarm.complete(ru.suslikovanora.media.desktop.player.Mpv.available)
         }
     }
     val presence = remember { Animatable(0f) }
@@ -131,10 +124,10 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
     }
     fun requestPlay(req: PlayRequest) {
         appScope.launch {
-            if (!vlcWarm.isCompleted) preparing = true
-            val ok = vlcWarm.await()
+            if (!mpvWarm.isCompleted) preparing = true
+            val ok = mpvWarm.await()
             preparing = false
-            if (ok) { playerStart = req.startIndex; playing = req } else noVlc = true
+            if (ok) { playerStart = req.startIndex; playing = req } else noMpv = true
         }
     }
 
@@ -314,25 +307,17 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
           }
             if (preparing) AlertDialog(
                 onDismissRequest = {},
-                title = { Text(tr("app.zapuskaem_vlc")) },
+                title = { Text(tr("app.podgotovka_pleera")) },
                 text = { Text(tr("app.pervyy_zapusk_pleera_zanimaet")) },
                 confirmButton = {}
             )
-            // Ни mpv, ни VLC: если mpv не скачался с сервера — говорим об этом и даём повторить.
             val mpvError = ru.suslikovanora.media.desktop.player.MpvInstall.error
-            if (noVlc && mpvError != null) AlertDialog(
-                onDismissRequest = { noVlc = false },
+            if (noMpv) AlertDialog(
+                onDismissRequest = { noMpv = false },
                 title = { Text(tr("app.mpv_ne_skachan")) },
-                text = { Text(tr("app.mpv_ne_skachan_tekst", "err" to mpvError)) },
-                confirmButton = { TextButton({ noVlc = false; ru.suslikovanora.media.desktop.player.MpvInstall.start(appScope) }) { Text(tr("app.povtorit")) } },
-                dismissButton = { TextButton({ noVlc = false }) { Text(tr("library.zakryt")) } }
-            )
-            else if (noVlc) AlertDialog(
-                onDismissRequest = { noVlc = false },
-                title = { Text(tr("app.nuzhen_vlc")) },
-                text = { Text(tr("app.dlya_vosproizvedeniya_ustanovi")) },
-                confirmButton = { TextButton({ noVlc = false; runCatching { Desktop.getDesktop().browse(URI("https://www.videolan.org/vlc/")) } }) { Text(tr("app.skachat_vlc")) } },
-                dismissButton = { TextButton({ noVlc = false }) { Text(tr("library.zakryt")) } }
+                text = { Text(if (mpvError != null) tr("app.mpv_ne_skachan_tekst", "err" to mpvError) else tr("settings.dvizhok_mpv_otsutstvuet")) },
+                confirmButton = { TextButton({ noMpv = false; ru.suslikovanora.media.desktop.player.MpvInstall.start(appScope) }) { Text(tr("app.povtorit")) } },
+                dismissButton = { TextButton({ noMpv = false }) { Text(tr("library.zakryt")) } }
             )
         }
     }
