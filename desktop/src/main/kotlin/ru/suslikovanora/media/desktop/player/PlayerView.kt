@@ -221,7 +221,17 @@ fun PlayerView(
             val d = playerPoll(pending, 1000) { eDim() }
             if (d != null && d.first > 0 && d.second > 0) {
                 val aspect = d.first.toDouble() / d.second
-                if (videoAspect != aspect) videoAspect = aspect
+                if (videoAspect != aspect) {
+                    videoAspect = aspect
+                    if (mini && !WindowMode.miniAnimating && owner != null) {
+                        val a = aspect.coerceIn(1.2, 2.4)
+                        val curW = owner.width
+                        val newH = kotlin.math.round(curW / a).toInt()
+                        if (newH > 0 && kotlin.math.abs(owner.height - newH) > 2) {
+                            owner.setSize(curW, newH)
+                        }
+                    }
+                }
             }
             delay(1500)
         }
@@ -459,15 +469,18 @@ fun PlayerView(
         }
     }
 
+    var userMiniWidth by remember { mutableStateOf<Int?>(null) }
+
     fun setMini(on: Boolean) {
         if (on == mini || WindowMode.miniAnimating) return
         val target = owner ?: return
         if (on) {
             beforeMini[3] = onTop.value
-            target.minimumSize = java.awt.Dimension(200, 150)
+            target.minimumSize = java.awt.Dimension(160, 100)
             val aspect = videoAspect.coerceIn(1.2, 2.4)
-            val mw = Math.sqrt(590.0 * 330.0 * aspect).toInt().coerceIn(400, 620)
-            val mh = (mw / aspect).toInt()
+            val defaultMw = Math.sqrt(590.0 * 330.0 * aspect).toInt().coerceIn(400, 620)
+            val mw = (userMiniWidth ?: defaultMw).coerceIn(280, 960)
+            val mh = kotlin.math.round(mw / aspect).toInt()
             WindowMode.setMiniMode(target, true, mw, mh) {
                 mini = true
                 onTop.value = true
@@ -477,6 +490,7 @@ fun PlayerView(
             WindowMode.setMiniMode(target, false)
             onTop.value = beforeMini[3] as? Boolean ?: false
             target.minimumSize = java.awt.Dimension(MIN_W, MIN_H)
+            target.cursor = java.awt.Cursor.getDefaultCursor()
         }
     }
 
@@ -1050,6 +1064,209 @@ fun PlayerView(
 
     val onWindowDragEnd: () -> Unit = {}
 
+    var resizeStartMouseX = 0
+    var resizeStartMouseY = 0
+    var resizeStartWinX = 0
+    var resizeStartWinY = 0
+    var resizeStartWinW = 0
+    var resizeStartWinH = 0
+    var resizeAspect = 16.0 / 9.0
+
+    val onSetCursor: (java.awt.Cursor) -> Unit = { c ->
+        if (owner?.cursor != c) owner?.cursor = c
+    }
+
+    val onWindowResizeStart: (ResizeDirection) -> Unit = { _ ->
+        val p = java.awt.MouseInfo.getPointerInfo()?.location
+        val w = owner
+        if (p != null && w != null) {
+            resizeStartMouseX = p.x
+            resizeStartMouseY = p.y
+            resizeStartWinX = w.x
+            resizeStartWinY = w.y
+            resizeStartWinW = w.width
+            resizeStartWinH = w.height
+            resizeAspect = videoAspect.coerceIn(1.2, 2.4)
+        }
+    }
+
+    val onWindowResizeMove: (ResizeDirection) -> Unit = { dir ->
+        val p = java.awt.MouseInfo.getPointerInfo()?.location
+        val w = owner
+        if (p != null && w != null && resizeStartWinW > 0 && resizeStartWinH > 0) {
+            val dx = p.x - resizeStartMouseX
+            val dy = p.y - resizeStartMouseY
+            val a = resizeAspect
+            val w0 = resizeStartWinW
+            val h0 = resizeStartWinH
+            val x0 = resizeStartWinX
+            val y0 = resizeStartWinY
+
+            val gc = w.graphicsConfiguration
+            val scrBounds = gc?.bounds ?: java.awt.Rectangle(0, 0, 1920, 1080)
+            val insets = runCatching { java.awt.Toolkit.getDefaultToolkit().getScreenInsets(gc) }.getOrNull()
+                ?: java.awt.Insets(0, 0, 0, 0)
+            val workLeft = scrBounds.x + insets.left
+            val workTop = scrBounds.y + insets.top
+            val workRight = scrBounds.x + scrBounds.width - insets.right
+            val workBottom = scrBounds.y + scrBounds.height - insets.bottom
+            val maxW = minOf(1200, ((workRight - workLeft) * 0.85).toInt()).coerceAtLeast(400)
+            val minW = 280.coerceAtMost(maxW)
+
+            var newW = w0
+            var newH = h0
+            var newX = x0
+            var newY = y0
+
+            when (dir) {
+                ResizeDirection.BOTTOM_RIGHT -> {
+                    val proj = (dx * a + dy) / (a * a + 1.0)
+                    newW = (w0 + proj * a).toInt().coerceIn(minW, maxW)
+                    newH = kotlin.math.round(newW / a).toInt()
+                    newX = x0
+                    newY = y0
+                    if (newX + newW > workRight) {
+                        newW = (workRight - newX).coerceAtLeast(minW)
+                        newH = kotlin.math.round(newW / a).toInt()
+                    }
+                    if (newY + newH > workBottom) {
+                        newH = (workBottom - newY).coerceAtLeast(kotlin.math.round(minW / a).toInt())
+                        newW = kotlin.math.round(newH * a).toInt().coerceIn(minW, maxW)
+                        newH = kotlin.math.round(newW / a).toInt()
+                    }
+                }
+                ResizeDirection.RIGHT -> {
+                    newW = (w0 + dx).coerceIn(minW, maxW)
+                    newH = kotlin.math.round(newW / a).toInt()
+                    newX = x0
+                    newY = y0
+                    if (newX + newW > workRight) {
+                        newW = (workRight - newX).coerceAtLeast(minW)
+                        newH = kotlin.math.round(newW / a).toInt()
+                    }
+                    if (newY + newH > workBottom) {
+                        newY = (workBottom - newH).coerceAtLeast(workTop)
+                    }
+                }
+                ResizeDirection.BOTTOM -> {
+                    newH = (h0 + dy).coerceIn(kotlin.math.round(minW / a).toInt(), kotlin.math.round(maxW / a).toInt())
+                    newW = kotlin.math.round(newH * a).toInt().coerceIn(minW, maxW)
+                    newH = kotlin.math.round(newW / a).toInt()
+                    newX = x0
+                    newY = y0
+                    if (newY + newH > workBottom) {
+                        newH = (workBottom - newY).coerceAtLeast(kotlin.math.round(minW / a).toInt())
+                        newW = kotlin.math.round(newH * a).toInt().coerceIn(minW, maxW)
+                        newH = kotlin.math.round(newW / a).toInt()
+                    }
+                    if (newX + newW > workRight) {
+                        newX = (workRight - newW).coerceAtLeast(workLeft)
+                    }
+                }
+                ResizeDirection.TOP_LEFT -> {
+                    val proj = (-dx * a - dy) / (a * a + 1.0)
+                    newW = (w0 + proj * a).toInt().coerceIn(minW, maxW)
+                    newH = kotlin.math.round(newW / a).toInt()
+                    newX = (x0 + w0) - newW
+                    newY = (y0 + h0) - newH
+                    if (newX < workLeft) {
+                        newX = workLeft
+                        newW = (x0 + w0 - newX).coerceAtMost(maxW)
+                        newH = kotlin.math.round(newW / a).toInt()
+                        newY = (y0 + h0) - newH
+                    }
+                    if (newY < workTop) {
+                        newY = workTop
+                        newH = (y0 + h0 - newY).coerceAtMost(kotlin.math.round(maxW / a).toInt())
+                        newW = kotlin.math.round(newH * a).toInt().coerceIn(minW, maxW)
+                        newH = kotlin.math.round(newW / a).toInt()
+                        newX = (x0 + w0) - newW
+                    }
+                }
+                ResizeDirection.TOP -> {
+                    newH = (h0 - dy).coerceIn(kotlin.math.round(minW / a).toInt(), kotlin.math.round(maxW / a).toInt())
+                    newW = kotlin.math.round(newH * a).toInt().coerceIn(minW, maxW)
+                    newH = kotlin.math.round(newW / a).toInt()
+                    newY = (y0 + h0) - newH
+                    newX = (x0 + w0) - newW
+                    if (newY < workTop) {
+                        newY = workTop
+                        newH = (y0 + h0 - newY).coerceAtMost(kotlin.math.round(maxW / a).toInt())
+                        newW = kotlin.math.round(newH * a).toInt().coerceIn(minW, maxW)
+                        newH = kotlin.math.round(newW / a).toInt()
+                        newX = (x0 + w0) - newW
+                    }
+                    if (newX < workLeft) {
+                        newX = workLeft
+                    }
+                }
+                ResizeDirection.LEFT -> {
+                    newW = (w0 - dx).coerceIn(minW, maxW)
+                    newH = kotlin.math.round(newW / a).toInt()
+                    newX = (x0 + w0) - newW
+                    newY = (y0 + h0) - newH
+                    if (newX < workLeft) {
+                        newX = workLeft
+                        newW = (x0 + w0 - newX).coerceAtMost(maxW)
+                        newH = kotlin.math.round(newW / a).toInt()
+                        newY = (y0 + h0) - newH
+                    }
+                    if (newY < workTop) {
+                        newY = workTop
+                    }
+                }
+                ResizeDirection.TOP_RIGHT -> {
+                    val proj = (dx * a - dy) / (a * a + 1.0)
+                    newW = (w0 + proj * a).toInt().coerceIn(minW, maxW)
+                    newH = kotlin.math.round(newW / a).toInt()
+                    newX = x0
+                    newY = (y0 + h0) - newH
+                    if (newX + newW > workRight) {
+                        newW = (workRight - newX).coerceAtLeast(minW)
+                        newH = kotlin.math.round(newW / a).toInt()
+                        newY = (y0 + h0) - newH
+                    }
+                    if (newY < workTop) {
+                        newY = workTop
+                        newH = (y0 + h0 - newY).coerceAtMost(kotlin.math.round(maxW / a).toInt())
+                        newW = kotlin.math.round(newH * a).toInt().coerceIn(minW, maxW)
+                        newH = kotlin.math.round(newW / a).toInt()
+                    }
+                }
+                ResizeDirection.BOTTOM_LEFT -> {
+                    val proj = (-dx * a + dy) / (a * a + 1.0)
+                    newW = (w0 + proj * a).toInt().coerceIn(minW, maxW)
+                    newH = kotlin.math.round(newW / a).toInt()
+                    newX = (x0 + w0) - newW
+                    newY = y0
+                    if (newX < workLeft) {
+                        newX = workLeft
+                        newW = (x0 + w0 - newX).coerceAtMost(maxW)
+                        newH = kotlin.math.round(newW / a).toInt()
+                    }
+                    if (newY + newH > workBottom) {
+                        newH = (workBottom - newY).coerceAtLeast(kotlin.math.round(minW / a).toInt())
+                        newW = kotlin.math.round(newH * a).toInt().coerceIn(minW, maxW)
+                        newH = kotlin.math.round(newW / a).toInt()
+                        newX = (x0 + w0) - newW
+                    }
+                }
+                ResizeDirection.NONE -> {}
+            }
+
+            if (newW > 0 && newH > 0) {
+                userMiniWidth = newW
+                w.setBounds(newX, newY, newW, newH)
+            }
+        }
+    }
+
+    val onWindowResizeEnd: () -> Unit = {
+        owner?.let { w ->
+            userMiniWidth = w.width
+        }
+    }
+
     LaunchedEffect(barVisible, closing, mini) {
         if (closing) return@LaunchedEffect
         if (mini) {
@@ -1212,6 +1429,10 @@ fun PlayerView(
             onWindowDragStart = onWindowDragStart,
             onWindowDragMove = onWindowDragMove,
             onWindowDragEnd = onWindowDragEnd,
+            onWindowResizeStart = onWindowResizeStart,
+            onWindowResizeMove = onWindowResizeMove,
+            onWindowResizeEnd = onWindowResizeEnd,
+            onSetCursor = onSetCursor,
             onVolumeWheel = { delta ->
                 val step = if (delta < 0) 5 else -5
                 volume = (volume + step).coerceIn(0, 150)
@@ -1263,7 +1484,7 @@ fun PlayerView(
             Modifier
                 .fillMaxSize()
                 .background(Color.Black)
-                .pointerHoverIcon(if (mini || barVisible) androidx.compose.ui.input.pointer.PointerIcon.Default else hiddenPointer)
+                .then(if (mini) Modifier else Modifier.pointerHoverIcon(if (barVisible) androidx.compose.ui.input.pointer.PointerIcon.Default else hiddenPointer))
                 .pointerInput(Unit) {
                     var lastClickTime = 0L
                     awaitPointerEventScope {
