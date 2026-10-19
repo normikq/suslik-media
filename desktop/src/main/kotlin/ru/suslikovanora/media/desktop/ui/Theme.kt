@@ -10,6 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -92,9 +93,18 @@ private fun androidx.compose.ui.draw.CacheDrawScope.glows(): androidx.compose.ui
 fun Modifier.ambientBackdrop(): Modifier = this.background(Sm.backdrop).drawWithCache {
     val paint = glows()
     if (Motion.simple && size.width >= 1f && size.height >= 1f) {
-        val bmp = androidx.compose.ui.graphics.ImageBitmap(size.width.toInt(), size.height.toInt())
-        androidx.compose.ui.graphics.drawscope.CanvasDrawScope().draw(this, layoutDirection, androidx.compose.ui.graphics.Canvas(bmp), size) { paint() }
-        onDrawBehind { drawImage(bmp) }
+        // Painted on the CPU at a quarter of the size (16× fewer pixels; the glows are soft, stretching does not show).
+        // At full size a 2560×1440 window took ~0.5 s each time it changed size: the window froze at the end of
+        // closing a full-screen player (Suslik Debug journal 19.10, «UI thread stalled 566 ms» in drawCircle).
+        val k = 4
+        val bw = (size.width / k).toInt().coerceAtLeast(1); val bh = (size.height / k).toInt().coerceAtLeast(1)
+        val bmp = androidx.compose.ui.graphics.ImageBitmap(bw, bh)
+        androidx.compose.ui.graphics.drawscope.CanvasDrawScope().draw(this, layoutDirection, androidx.compose.ui.graphics.Canvas(bmp),
+            androidx.compose.ui.geometry.Size(bw.toFloat(), bh.toFloat())) {
+            scale(1f / k, 1f / k, pivot = Offset.Zero) { paint() }
+        }
+        val dst = androidx.compose.ui.unit.IntSize(size.width.toInt(), size.height.toInt())
+        onDrawBehind { drawImage(bmp, dstSize = dst, filterQuality = androidx.compose.ui.graphics.FilterQuality.Low) }
     } else onDrawBehind { paint() }
 }
 

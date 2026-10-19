@@ -346,8 +346,11 @@ fun PlayerView(
     fun refreshPicker(kind: String) {
         scope.launch {
             val audio = kind == "audio"
-            val list = if (audio) eAudioTracks() else listOf(-1 to tr("player.vyklyuchit")) + eSubTracks()
-            val cur = if (audio) eAudioCur() else eSubCur()
+            // Off the window's thread: a property waits for mpv's core, busy right after opening or a seek
+            // (journal 19.10: the window stood 224 ms in mpv_get_property_string).
+            val (list, cur) = withContext(Dispatchers.IO) {
+                (if (audio) eAudioTracks() else listOf(-1 to tr("player.vyklyuchit")) + eSubTracks()) to (if (audio) eAudioCur() else eSubCur())
+            }
             val pending = engine.pendingTracksCount(kind)
             val loading = engine.isTracksLoading(kind)
             val fresh = list to cur
@@ -545,13 +548,16 @@ fun PlayerView(
         nextIn = -1
         supRef.get()?.closed()
         scope.launch {
-            if (lastFrame == null) {
-                playerAwait(180) { grabFrame() }?.let { lastFrame = it }
-            }
-            parked = true
+            // The flight back starts at once: the picture stops (pause, the sound too) and the live frame flies; the still
+            // copy takes its place as soon as it is ready (before, the flight waited up to 180 ms for it). The video layer
+            // still goes well before the player is removed (the flight is 600 ms).
+            runOnPlayer { ePause(true) }
             if (mini) setMini(false)
             MediaControls.stop()
             onClose()
+            // Always a fresh frame: one kept from the previous episode would fly back instead of this one.
+            playerAwait(250) { grabFrame() }?.let { lastFrame = it }
+            parked = true
             playerExecutor.execute { runCatching { eStop() } }
         }
     }
@@ -659,7 +665,8 @@ fun PlayerView(
 
     val userPaused = pausedAt > 0L || enginePaused
     LaunchedEffect(userPaused) {
-        MediaControls.updatePlayback(!userPaused)
+        // (closing pauses the film for the flight back: the media controls are already stopped by then)
+        if (!closing) MediaControls.updatePlayback(!userPaused)
     }
 
     val isPlaybackActive = playing && !userPaused && !closing
@@ -1010,7 +1017,8 @@ fun PlayerView(
 
     val fullscreen = WindowMode.isFullscreen
 
-    LaunchedEffect(barVisible, lastMove, started, enginePaused, nextIn, picker, seeking, infoOpen) {
+    LaunchedEffect(barVisible, lastMove, started, enginePaused, nextIn, picker, seeking, infoOpen, closing) {
+        if (closing) return@LaunchedEffect // the pause for the flight back must not bring the panels up
         val hold = !started || enginePaused || nextIn >= 0 || picker != null || seeking != null || infoOpen || inIntro()
         if (hold) {
             barVisible = true
