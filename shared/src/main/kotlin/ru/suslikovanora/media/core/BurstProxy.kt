@@ -275,7 +275,7 @@ object BurstProxy {
         for ((key, token) in byUrl.entries.toList()) {
             val src = sources[token] ?: continue
             if (src.retiredAt == 0L) continue // playing now
-            val link = key.substringAfter("?link=", "").let { runCatching { java.net.URLDecoder.decode(it, "UTF-8") }.getOrDefault(it) }
+            val link = MirrorLink.param(key, "link").orEmpty()
             if (link.isNotEmpty() && !keep(link)) { byUrl.remove(key); sources.remove(token)?.close(); n++ }
         }
         return n
@@ -322,7 +322,7 @@ object BurstProxy {
     fun aheadMb(url: String): Double? {
         val src = sourceOf(url) ?: return null
         val w = synchronized(src) { src.windows.maxByOrNull { it.lastReadAt } } ?: return 0.0
-        return (w.end() - w.readPos).coerceAtLeast(0L) / 1048576.0
+        return synchronized(w.lock) { (w.end() - w.readPos).coerceAtLeast(0L) } / 1048576.0
     }
 
     /**
@@ -358,7 +358,8 @@ object BurstProxy {
     fun readRange(url: String, from: Long, len: Int): Pair<ByteArray, Long>? = runCatching {
         val up = upstream ?: return null
         val c = Cancel()
-        val timer = watchdog.schedule({ c.cancel() }, 7, TimeUnit.SECONDS)
+        // off the watcher thread, as in checkStall: closing an answer can wait for the reader on some HTTP stacks
+        val timer = watchdog.schedule({ pool.execute { c.cancel() } }, 7, TimeUnit.SECONDS)
         try {
             up.open(url, from, from + len - 1, c).use { r ->
                 if (r.code !in 200..299) return null
@@ -560,13 +561,14 @@ object BurstProxy {
         private val CAP = src.ringCap() // fixed for this window's life
         private val file = File(dir, "${ids.incrementAndGet()}.bin")
         private val raf = RandomAccessFile(file, "rw")
-        var written = 0L            // bytes from [start] available (contiguous)
-        var readPos = start         // where the player reads now
+        // Changed under [lock]; volatile because some readers look without it (windowAt, keptMb, the info panel).
+        @Volatile var written = 0L  // bytes from [start] available (contiguous)
+        @Volatile var readPos = start // where the player reads now
         var sequential = 0L         // bytes read in order (decides probe → burst)
         var consumedTotal = 0L      // bytes the player has taken from this window (decides when the short start-up reserve ends)
-        var lastReadAt = System.currentTimeMillis()
-        var eof = false
-        var error: String? = null
+        @Volatile var lastReadAt = System.currentTimeMillis()
+        @Volatile var eof = false
+        @Volatile var error: String? = null
         @Volatile var closed = false
         @Volatile var response: UpstreamResponse? = null
         val lock = java.lang.Object()
@@ -682,8 +684,11 @@ object BurstProxy {
             closed = true
             cancel?.cancel()
             runCatching { response?.close() }
-            synchronized(lock) { lock.notifyAll() }
-            runCatching { raf.close() }; runCatching { file.delete() }
+            // Under the lock: a read or a write that already passed its «closed» check finishes before the file goes.
+            synchronized(lock) {
+                lock.notifyAll()
+                runCatching { raf.close() }; runCatching { file.delete() }
+            }
         }
 
         fun download() {
@@ -1021,7 +1026,9 @@ object BurstProxy {
             run {
                 // The length is known after the first upstream answer.
                 val waitStart = System.currentTimeMillis()
-                while (src.total < 0 && w.error == null && !src.broken && System.currentTimeMillis() - waitStart < 30_000) Thread.sleep(50)
+                // The window wakes its readers once the answer's headers are in (fetch notifies after setting total).
+                while (src.total < 0 && w.usable() && !src.broken && System.currentTimeMillis() - waitStart < 30_000)
+                    synchronized(w.lock) { if (src.total < 0 && w.usable()) w.lock.wait(200) }
                 if (src.total < 0) { status(out, "502 Bad Gateway"); return }
                 if (from >= src.total) { out.write("HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */${src.total}\r\nConnection: close\r\n\r\n".toByteArray()); return }
                 val last = if (to in from until src.total) to else src.total - 1
