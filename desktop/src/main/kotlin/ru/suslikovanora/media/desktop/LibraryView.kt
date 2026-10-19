@@ -398,7 +398,7 @@ fun LibraryView(
                 }
                 // 4. Catalog grid of poster cards
                 items(shown, key = { it.m.id }, contentType = { "tile" }) { item ->
-                    Tile(item, lib, versions = versionsOf[item.m.id].orEmpty(), inFavorites = favoritesOnly, onOpen = open, modifier = Modifier.animateItem(fadeInSpec = tween(300), fadeOutSpec = if (favoritesOnly) null else tween(200)))
+                    Tile(item, lib, versions = versionsOf[item.m.id].orEmpty(), inFavorites = favoritesOnly, onOpen = open, modifier = Modifier.animateItem(fadeInSpec = tween(300), fadeOutSpec = tween(320, easing = Sm.ease)))
                 }
             }
         } else {

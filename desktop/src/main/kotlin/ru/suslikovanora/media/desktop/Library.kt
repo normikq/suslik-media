@@ -170,8 +170,9 @@ class Library {
         val before = items
         items = items.map { if (it.m.id == m.id) it.copy(m = it.m.copy(favorite = on)) else it }
         return try {
-            Api.post("/api/favorites", JSONObject().put("id", m.id).put("favorite", on)); null
-        } catch (e: Exception) { items = before; Api.describe(e) }
+            // The tile may leave the screen (and its scope end) right after the click: the request still has to go out.
+            withContext(kotlinx.coroutines.NonCancellable) { Api.post("/api/favorites", JSONObject().put("id", m.id).put("favorite", on)) }; null
+        } catch (e: CancellationException) { throw e } catch (e: Exception) { items = before; Api.describe(e) }
     }
 
     suspend fun remove(m: Magnet): String? = try {
