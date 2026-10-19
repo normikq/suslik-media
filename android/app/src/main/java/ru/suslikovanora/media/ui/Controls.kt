@@ -39,17 +39,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ru.suslikovanora.media.Tv
 
-/** Small toggle chip (filters, sources) — amber when on, slight sink when pressed. */
+/** Small toggle chip (filters, sources) — accent blue when on, glass when off. */
 @Composable
 fun Chip(label: String, on: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val src = remember { MutableInteractionSource() }
     val pressed by src.collectIsPressedAsState()
     val scale by animateFloatAsState(if (pressed) 0.95f else 1f, tween(160, easing = Sm.ease), label = "chip")
-    val bg by animateColorAsState(if (on) Sm.lamp else Sm.film, tween(220), label = "chipbg")
-    val fg by animateColorAsState(if (on) Sm.lampInk else Sm.text, tween(220), label = "chipfg")
-    val edge by animateColorAsState(if (on) Sm.lamp else Sm.line2, tween(220), label = "chipedge")
+    val bg by animateColorAsState(if (on) Sm.accent.copy(alpha = 0.85f) else Sm.glassFill, tween(200), label = "chipbg")
+    val fg by animateColorAsState(if (on) Color.White else Color(0xFF8E96A8), tween(200), label = "chipfg")
+    val edge by animateColorAsState(if (on) Sm.accentEdge else Sm.glassEdge, tween(200), label = "chipedge")
     Text(
-        label, color = fg, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp, maxLines = 1,
+        label, color = fg, fontFamily = Onest, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium, fontSize = 13.sp, maxLines = 1,
         modifier = modifier.graphicsLayer { scaleX = scale; scaleY = scale }
             .clip(RoundedCornerShape(10.dp)).background(bg).border(1.dp, edge, RoundedCornerShape(10.dp))
             .focusRing(RoundedCornerShape(10.dp))
@@ -62,7 +62,7 @@ fun Chip(label: String, on: Boolean, modifier: Modifier = Modifier, onClick: () 
  * Remote control (Android TV, D-pad): a ring around the control that has focus. Put it right before `clickable`.
  * Only while keys drive the screen — touch never shows it.
  */
-fun Modifier.focusRing(shape: Shape, color: Color = Sm.lamp, width: Dp = 2.5.dp): Modifier = composed {
+fun Modifier.focusRing(shape: Shape, color: Color = Sm.accent, width: Dp = 2.5.dp): Modifier = composed {
     var focused by remember { mutableStateOf(false) }
     val keys = LocalInputModeManager.current.inputMode == InputMode.Keyboard
     onFocusChanged { focused = it.isFocused }.then(if (focused && keys) Modifier.border(width, color, shape) else Modifier)

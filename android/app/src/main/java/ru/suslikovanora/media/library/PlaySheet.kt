@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
@@ -138,13 +139,13 @@ fun PlaySheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheet,
-        containerColor = Sm.booth,
+        containerColor = Sm.sheet,
         contentColor = Sm.text,
         scrimColor = Sm.scrim,
-        shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp)
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
     ) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(bottom = 18.dp).navigationBarsPadding()) {
-            Text(target.label, fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 17.sp, lineHeight = 22.sp, color = Sm.text)
+            Text(target.label, fontFamily = Unbounded, fontWeight = FontWeight.SemiBold, fontSize = 17.5.sp, lineHeight = 23.sp, color = Color.White)
             Text(sub, fontFamily = Onest, fontSize = 13.5.sp, color = Sm.muted, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
             resumeAt?.let { at ->
                 Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -177,17 +178,17 @@ fun PlaySheet(
 @Composable
 private fun SourceGroup(title: String, hint: String, url: String?, busy: Boolean, busyText: String = tr("play.gotovim_pleylist"), onPlay: (String) -> Unit, onCopy: (String) -> Unit) {
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Sm.film)
-            .border(1.dp, Sm.line, RoundedCornerShape(14.dp)).padding(12.dp)
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Sm.glassFill)
+            .border(1.dp, Sm.glassEdge, RoundedCornerShape(14.dp)).padding(12.dp)
     ) {
-        Text(title, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = Sm.text)
+        Text(title, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp, color = Color.White)
         Text(hint, fontFamily = Onest, fontSize = 12.5.sp, color = Sm.muted, modifier = Modifier.padding(top = 2.dp, bottom = 10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             LampButton(
                 if (busy) busyText else tr("add.smotret"), enabled = url != null && !busy,
                 modifier = Modifier.weight(1f)
             ) { url?.let(onPlay) }
-            OutlineButton(tr("add.kopirovat"), color = if (url != null) Sm.text else Sm.muted) { url?.let(onCopy) }
+            OutlineButton(tr("add.kopirovat"), color = if (url != null) Color.White else Sm.muted) { url?.let(onCopy) }
         }
     }
 }
@@ -196,13 +197,13 @@ private fun SourceGroup(title: String, hint: String, url: String?, busy: Boolean
 @Composable
 private fun StartOption(title: String, hint: String, on: Boolean, modifier: Modifier, onClick: () -> Unit) {
     Column(
-        modifier.clip(RoundedCornerShape(14.dp)).background(if (on) Sm.lampSoft else Sm.film)
-            .border(1.dp, if (on) Sm.lamp else Sm.line, RoundedCornerShape(14.dp))
-            .focusRing(RoundedCornerShape(14.dp), color = Sm.text)
+        modifier.clip(RoundedCornerShape(14.dp)).background(if (on) Sm.accentSoft else Sm.glassFill)
+            .border(1.dp, if (on) Sm.accentEdge else Sm.glassEdge, RoundedCornerShape(14.dp))
+            .focusRing(RoundedCornerShape(14.dp), color = Color.White)
             .clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 10.dp)
     ) {
-        Text(title, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = if (on) Sm.lamp else Sm.text, maxLines = 1)
-        Text(hint, fontFamily = Onest, fontSize = 12.sp, color = Sm.muted)
+        Text(title, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = if (on) Color.White else Color(0xFFD6DBE4), maxLines = 1)
+        Text(hint, fontFamily = Onest, fontSize = 12.sp, color = if (on) Color(0xFF93C5FD) else Sm.muted)
     }
 }
 

@@ -332,6 +332,15 @@ class LibraryStore(context: Context) {
         return best
     }
 
+    // ---- continue watching hidden entries ----
+    private val continueHiddenPrefs = app.getSharedPreferences("continue_hidden", Context.MODE_PRIVATE)
+    fun hideContinue(ids: List<Long>) {
+        val now = System.currentTimeMillis()
+        continueHiddenPrefs.edit().apply { ids.forEach { putLong(it.toString(), now) } }.apply()
+        watchVersion++
+    }
+    fun continueHiddenAt(id: Long): Long = continueHiddenPrefs.getLong(id.toString(), 0L)
+
     // ---- cleaning up after films that left the library (after every successful refresh) ----
     /**
      * Posters (and their picture files, unless another tile shows the same one), the video info line, watch

@@ -54,7 +54,7 @@ enum class Tab(val label: String) {
 }
 
 /**
- * Floating bottom bar (same look as the website's) with the amber "lens" that slides under the active tab.
+ * Floating bottom bar styled with frosted glass and an electric blue sliding lens (ported from PC redesign).
  * Remote control: [focus] lands on the active tab, [onFocused] tells whether one of the tabs has focus.
  */
 @Composable
@@ -62,31 +62,33 @@ fun NavBar(current: Tab, onSelect: (Tab) -> Unit, modifier: Modifier = Modifier,
     Box(modifier.fillMaxWidth().padding(top = 6.dp, bottom = 8.dp), contentAlignment = Alignment.Center) {
         BoxWithConstraints(
             Modifier.widthIn(max = 340.dp).fillMaxWidth().padding(horizontal = 14.dp)
-                .shadow(18.dp, RoundedCornerShape(26.dp))
-                .clip(RoundedCornerShape(26.dp)).background(Color(0xFF0D1017))
-                .border(1.dp, Sm.line2, RoundedCornerShape(26.dp))
-                .padding(4.dp).height(48.dp)
+                .shadow(20.dp, RoundedCornerShape(26.dp), ambientColor = Color.Black.copy(alpha = 0.6f))
+                .clip(RoundedCornerShape(26.dp)).background(Sm.glassSide)
+                .border(1.dp, Sm.glassEdge, RoundedCornerShape(26.dp))
+                .padding(4.dp).height(50.dp)
         ) {
             val itemW = maxWidth / Tab.entries.size
             val x by animateDpAsState(itemW * current.ordinal, tween(420, easing = Sm.ease), label = "lens")
             Box(
                 Modifier.offset(x = x).width(itemW).fillMaxHeight()
-                    .shadow(10.dp, RoundedCornerShape(22.dp), ambientColor = Sm.lamp, spotColor = Sm.lamp)
-                    .clip(RoundedCornerShape(22.dp)).background(Sm.lamp)
+                    .shadow(12.dp, RoundedCornerShape(22.dp), ambientColor = Sm.accent, spotColor = Sm.accent)
+                    .clip(RoundedCornerShape(22.dp)).background(Sm.accent)
+                    .border(1.dp, Sm.accentEdge, RoundedCornerShape(22.dp))
             )
             Row(Modifier.fillMaxSize().onFocusChanged { onFocused(it.hasFocus) }, horizontalArrangement = Arrangement.SpaceEvenly) {
                 for (t in Tab.entries) {
-                    val color by animateColorAsState(if (t == current) Sm.lampInk else Sm.muted, tween(250), label = "tab")
+                    val active = t == current
+                    val color by animateColorAsState(if (active) Color.White else Color(0xFF8E96A8), tween(200), label = "tab")
                     Column(
                         Modifier.weight(1f).fillMaxHeight()
-                            .then(if (t == current && focus != null) Modifier.focusRequester(focus) else Modifier)
-                            .focusRing(RoundedCornerShape(22.dp), color = Sm.text)
+                            .then(if (active && focus != null) Modifier.focusRequester(focus) else Modifier)
+                            .focusRing(RoundedCornerShape(22.dp), color = Color.White)
                             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onSelect(t) },
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
                         TabIcon(t, color)
-                        Text(t.label, color = color, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 10.5.sp, maxLines = 1, modifier = Modifier.padding(top = 2.dp))
+                        Text(t.label, color = color, fontFamily = Onest, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium, fontSize = 11.sp, maxLines = 1, modifier = Modifier.padding(top = 2.dp))
                     }
                 }
             }
@@ -94,26 +96,12 @@ fun NavBar(current: Tab, onSelect: (Tab) -> Unit, modifier: Modifier = Modifier,
     }
 }
 
-/** Line icons drawn in code (no icon font needed): link arrow, library list, search loupe. */
+/** Crisp line icons drawn with Canvas, matching the desktop application. */
 @Composable
 private fun TabIcon(tab: Tab, color: Color) {
-    Canvas(Modifier.size(18.dp)) {
-        val w = size.width; val s = w / 18f
-        val stroke = Stroke(width = 1.8f * s, cap = StrokeCap.Round)
-        when (tab) {
-            Tab.Links -> {
-                drawLine(color, Offset(4f * s, 14f * s), Offset(14f * s, 4f * s), 1.8f * s, StrokeCap.Round)
-                drawLine(color, Offset(7f * s, 4f * s), Offset(14f * s, 4f * s), 1.8f * s, StrokeCap.Round)
-                drawLine(color, Offset(14f * s, 4f * s), Offset(14f * s, 11f * s), 1.8f * s, StrokeCap.Round)
-            }
-            Tab.Library -> {
-                drawRoundRect(color, Offset(3f * s, 3f * s), Size(12f * s, 12f * s), CornerRadius(2f * s), style = stroke)
-                for (y in listOf(7f, 10f, 13f)) drawLine(color, Offset(6f * s, (y - 0.5f) * s), Offset(12f * s, (y - 0.5f) * s), 1.4f * s, StrokeCap.Round)
-            }
-            Tab.Search -> {
-                drawCircle(color, 5f * s, Offset(8f * s, 8f * s), style = stroke)
-                drawLine(color, Offset(11.8f * s, 11.8f * s), Offset(15.5f * s, 15.5f * s), 2f * s, StrokeCap.Round)
-            }
-        }
+    when (tab) {
+        Tab.Links -> LinkChainIcon(color = color, size = 18.dp)
+        Tab.Library -> GridIcon(color = color, size = 17.dp)
+        Tab.Search -> SearchIcon(color = color, size = 18.dp)
     }
 }

@@ -46,10 +46,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import androidx.compose.ui.graphics.Color
 import ru.suslikovanora.media.library.LampButton
 import ru.suslikovanora.media.ui.Onest
 import ru.suslikovanora.media.ui.Sm
 import ru.suslikovanora.media.ui.Unbounded
+import ru.suslikovanora.media.ui.glassSheet
 
 /** The notes this build carries (assets/changelog.json); parsing and choosing are shared (core.Changelog). */
 private fun bundledNotes(ctx: Context, current: String): List<Changelog.Release> = runCatching {
@@ -105,8 +107,7 @@ private fun WhatsNewCard(current: String, releases: List<Changelog.Release>, onD
                 val v = shown.value
                 translationY = (1f - v) * 60f; scaleX = 0.96f + 0.04f * v; scaleY = scaleX
             }
-                .widthIn(max = 520.dp).padding(18.dp).clip(RoundedCornerShape(22.dp)).background(Sm.booth)
-                .border(1.dp, Sm.line2, RoundedCornerShape(22.dp))
+                .widthIn(max = 520.dp).padding(18.dp).glassSheet(RoundedCornerShape(22.dp))
                 .keepFocusInside()
                 .noFocus().clickable(remember { MutableInteractionSource() }, indication = null) {}
                 .padding(start = 22.dp, end = 22.dp, top = 22.dp, bottom = 18.dp)
@@ -120,9 +121,9 @@ private fun WhatsNewCard(current: String, releases: List<Changelog.Release>, onD
                     val a = items[i]
                     Column(Modifier.graphicsLayer { alpha = a.value; translationY = (1f - a.value) * 40f }) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.clip(RoundedCornerShape(8.dp)).background(if (i == 0) Sm.lamp else Sm.film)
+                            Box(Modifier.clip(RoundedCornerShape(8.dp)).background(if (i == 0) Sm.accent else Sm.glassFill)
                                 .padding(horizontal = 9.dp, vertical = 3.dp)) {
-                                Text(r.version, color = if (i == 0) Sm.lampInk else Sm.muted, fontFamily = Onest,
+                                Text(r.version, color = if (i == 0) Color.White else Sm.muted, fontFamily = Onest,
                                     fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
                             }
                             Text(r.title, color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 15.sp,
@@ -132,7 +133,7 @@ private fun WhatsNewCard(current: String, releases: List<Changelog.Release>, onD
                             r.items.forEach { line ->
                                 Row {
                                     Box(Modifier.padding(top = 7.dp, end = 10.dp).size(5.dp).clip(CircleShape)
-                                        .background(if (i == 0) Sm.lamp else Sm.line2))
+                                        .background(if (i == 0) Sm.accent else Sm.glassEdge))
                                     Text(line, color = if (i == 0) Sm.text else Sm.muted, fontFamily = Onest, fontSize = 14.sp, lineHeight = 20.sp)
                                 }
                             }

@@ -268,13 +268,13 @@ fun AddScreen(m: AddModel, listState: LazyListState, onPlay: (String, String) ->
         }
     }
     LazyColumn(
-        modifier.fillMaxSize().background(Sm.night), state = listState,
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 24.dp)
+        modifier.fillMaxSize(), state = listState,
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 80.dp)
     ) {
         item(key = "header") { HeaderSlot(); Spacer(Modifier.height(16.dp)) }
         item(key = "panel") {
             Panel(Modifier.animateContentSize(tween(280, easing = Sm.ease))) {
-                Text(tr("add.dobavit_razdachu"), fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 19.sp, color = Sm.text)
+                Text(tr("add.dobavit_razdachu"), fontFamily = Unbounded, fontWeight = FontWeight.SemiBold, fontSize = 20.sp, color = Color.White)
                 Text(tr("add.magnet_ssylka_na_fayl"),
                     color = Sm.muted, fontFamily = Onest, fontSize = 14.sp, lineHeight = 19.sp, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -305,11 +305,11 @@ fun AddScreen(m: AddModel, listState: LazyListState, onPlay: (String, String) ->
                     } else Column {
                         DropZone(hasFiles = m.chosen.isNotEmpty()) { runCatching { picker.launch(arrayOf("application/x-bittorrent", "application/octet-stream", "*/*")) } }
                         m.chosen.forEach { f ->
-                            Row(Modifier.padding(top = 10.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color(0xFF11141D))
-                                .border(1.dp, Sm.line2, RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 8.dp),
+                            Row(Modifier.padding(top = 10.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Sm.glassFill)
+                                .border(1.dp, Sm.glassEdge, RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically) {
-                                Text("TORRENT", color = Sm.lamp, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = 10.sp,
-                                    modifier = Modifier.clip(RoundedCornerShape(7.dp)).background(Color(0x24FFB02E)).padding(horizontal = 7.dp, vertical = 5.dp))
+                                Text("TORRENT", color = Color.White, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = 10.sp,
+                                    modifier = Modifier.clip(RoundedCornerShape(7.dp)).background(Sm.accent).padding(horizontal = 7.dp, vertical = 5.dp))
                                 Text(f.name, color = Sm.text, fontFamily = Onest, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f).padding(horizontal = 10.dp))
                                 if (f.size > 0) Text("${(f.size / 1024).coerceAtLeast(1)} KB", color = Sm.muted, fontFamily = Onest, fontSize = 12.sp)
@@ -325,8 +325,8 @@ fun AddScreen(m: AddModel, listState: LazyListState, onPlay: (String, String) ->
                 }
                 m.status?.let { Text(it, color = if (m.statusOk) Sm.ok else Sm.bad, fontFamily = Onest, fontSize = 13.5.sp, lineHeight = 19.sp, modifier = Modifier.padding(top = 12.dp)) }
                 m.unlocked?.let { u ->
-                    Column(Modifier.padding(top = 12.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Sm.film)
-                        .border(1.dp, Color(0x66FFB02E), RoundedCornerShape(14.dp)).padding(14.dp)) {
+                    Column(Modifier.padding(top = 12.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Sm.glassFill)
+                        .border(1.dp, Sm.accentEdge, RoundedCornerShape(14.dp)).padding(14.dp)) {
                         Text(u.name, color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
                         if (u.size > 0) Text(formatBytes(u.size), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 2.dp))
                         Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -342,7 +342,7 @@ fun AddScreen(m: AddModel, listState: LazyListState, onPlay: (String, String) ->
         }
         if (m.history.isNotEmpty()) item(key = "historyHead") {
             Row(Modifier.fillMaxWidth().padding(top = 22.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(tr("add.istoriya"), fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 16.sp, color = Sm.text, modifier = Modifier.weight(1f))
+                Text(tr("add.istoriya"), fontFamily = Unbounded, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = Color.White, modifier = Modifier.weight(1f))
                 if (m.history.any { !it.active }) OutlineButton(tr("settings.ochistit")) { m.clearFinished() }
             }
         }
@@ -357,34 +357,34 @@ fun AddScreen(m: AddModel, listState: LazyListState, onPlay: (String, String) ->
 @Composable
 private fun HistoryRow(e: AddEntry, modifier: Modifier, onCancel: () -> Unit, onForget: () -> Unit) {
     val bar by animateFloatAsState(e.percent.coerceAtLeast(0) / 100f, tween(600), label = "bar")
-    Column(modifier.fillMaxWidth().padding(vertical = 4.dp).clip(RoundedCornerShape(14.dp)).background(Sm.booth)
-        .border(1.dp, Sm.line, RoundedCornerShape(14.dp)).padding(14.dp)) {
+    Column(modifier.fillMaxWidth().padding(vertical = 4.dp).clip(RoundedCornerShape(14.dp)).background(Sm.glassFill)
+        .border(1.dp, Sm.glassEdge, RoundedCornerShape(14.dp)).padding(14.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(e.title, color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(e.status + if (e.active && e.percent >= 0) " · ${e.percent}%" else "",
-                    color = when { e.failed -> Sm.bad; e.ready -> Sm.ok; else -> Sm.lamp }, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 3.dp))
+                    color = when { e.failed -> Sm.bad; e.ready -> Sm.ok; else -> Color(0xFF60A5FA) }, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 3.dp))
             }
             Spacer(Modifier.width(8.dp))
             if (e.active) OutlineButton(tr("add.otmenit"), color = Color(0xFFFFB3B3), border = Color(0x66FF6B6B), onClick = onCancel)
             else OutlineButton("×", onClick = onForget)
         }
         if (e.active) Box(Modifier.padding(top = 10.dp).fillMaxWidth().height(5.dp).clip(RoundedCornerShape(5.dp)).background(Sm.line)) {
-            Box(Modifier.fillMaxWidth(bar).height(5.dp).background(Sm.lamp))
+            Box(Modifier.fillMaxWidth(bar).height(5.dp).background(Sm.accent))
         }
     }
 }
 
-/** The site's input-type card: the chosen one gets the amber edge, tinted background and a lit icon. */
+/** The site's input-type card: sleek frosted glass with electric blue highlight when selected. */
 @Composable
 private fun ModeCard(icon: String, title: String, hint: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
     val src = remember { MutableInteractionSource() }
     val pressed by src.collectIsPressedAsState()
     val scale by animateFloatAsState(if (pressed) 0.97f else 1f, tween(160, easing = Sm.ease), label = "mc")
-    val edge by animateColorAsState(if (selected) Sm.lamp else Sm.line, tween(240), label = "mce")
-    val bg by animateColorAsState(if (selected) Color(0x1AFFB02E) else Sm.film, tween(240), label = "mcb")
-    val disc by animateColorAsState(if (selected) Sm.lamp else Color(0xFF252A37), tween(240), label = "mcd")
-    val ink by animateColorAsState(if (selected) Sm.lampInk else Sm.text, tween(240), label = "mci")
+    val edge by animateColorAsState(if (selected) Sm.accentEdge else Sm.glassEdge, tween(240), label = "mce")
+    val bg by animateColorAsState(if (selected) Sm.accentSoft else Sm.glassFill, tween(240), label = "mcb")
+    val disc by animateColorAsState(if (selected) Sm.accent else Color(0xFF1E222D), tween(240), label = "mcd")
+    val ink by animateColorAsState(if (selected) Color.White else Color(0xFF8E96A8), tween(240), label = "mci")
     Row(
         modifier.graphicsLayer { scaleX = scale; scaleY = scale }.clip(RoundedCornerShape(14.dp)).background(bg)
             .border(1.dp, edge, RoundedCornerShape(14.dp)).focusRing(RoundedCornerShape(14.dp)).clickable(interactionSource = src, indication = null, onClick = onClick)
@@ -395,7 +395,7 @@ private fun ModeCard(icon: String, title: String, hint: String, selected: Boolea
             Text(icon, color = ink, fontSize = 16.sp, fontWeight = FontWeight.Bold)
         }
         Column(Modifier.padding(start = 10.dp)) {
-            Text(title, color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp, maxLines = 1)
+            Text(title, color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp, maxLines = 1)
             Text(hint, color = Sm.muted, fontFamily = Onest, fontSize = 11.5.sp, maxLines = 1, modifier = Modifier.padding(top = 2.dp))
         }
     }
@@ -405,9 +405,9 @@ private fun ModeCard(icon: String, title: String, hint: String, selected: Boolea
 private fun DropZone(hasFiles: Boolean, onPick: () -> Unit) {
     val src = remember { MutableInteractionSource() }
     val pressed by src.collectIsPressedAsState()
-    val edge by animateColorAsState(if (pressed) Sm.lamp else Color(0xFF4A4E62), tween(160), label = "dz")
+    val edge by animateColorAsState(if (pressed) Sm.accent else Sm.glassEdgeHover, tween(160), label = "dz")
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color(0xFF10131B))
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Sm.glassFill)
             .drawBehind {
                 drawRoundRect(edge, cornerRadius = CornerRadius(16.dp.toPx()),
                     style = Stroke(width = 1.5.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f))))
@@ -417,8 +417,8 @@ private fun DropZone(hasFiles: Boolean, onPick: () -> Unit) {
             .heightIn(min = if (hasFiles) 88.dp else 130.dp).padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
     ) {
-        Text("⇧", color = Sm.lamp, fontSize = 26.sp)
-        Text(if (hasFiles) tr("add.dobavit_esche_fayl") else tr("add.vybrat_fayl_torrent"), color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold,
+        Text("⇧", color = Sm.accent, fontSize = 26.sp)
+        Text(if (hasFiles) tr("add.dobavit_esche_fayl") else tr("add.vybrat_fayl_torrent"), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold,
             fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
         if (!hasFiles) Text(tr("add.do_mb_mozhno_neskolko"), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 2.dp))
     }

@@ -1,15 +1,18 @@
 package ru.suslikovanora.media.library
 
 import ru.suslikovanora.media.core.*
+import ru.suslikovanora.media.ui.*
 
 import android.content.Context
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -26,13 +29,14 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
-import androidx.compose.animation.core.Animatable
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -50,9 +54,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -72,12 +77,9 @@ import coil.request.ImageRequest
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import ru.suslikovanora.media.net.Api
-import ru.suslikovanora.media.ui.Onest
-import ru.suslikovanora.media.ui.Sm
-import ru.suslikovanora.media.ui.Unbounded
-import ru.suslikovanora.media.ui.focusRing
 import ru.suslikovanora.media.Tv
 import ru.suslikovanora.media.tr
+import java.util.Locale
 
 /** What the play sheet needs: one file, its display title and (for series) the rest of the season. */
 /** [episodeSides]: subtitles and voice-overs of the following episodes, by each episode's link (signed when it starts). */
@@ -98,6 +100,146 @@ object Posters {
     }
 }
 
+enum class Category(val label: String) {
+    All(tr("library.vse")),
+    Movies(tr("library.filmy")),
+    Series(tr("library.serialy")),
+    Anime(tr("library.anime")),
+    Cartoons(tr("library.multfilmy")),
+    Other(tr("library.drugoe"))
+}
+
+fun itemYear(item: LibraryItem): String {
+    val match = Regex("""\b(19\d{2}|20\d{2})\b""").find(item.m.name)
+    if (match != null) return match.value
+    for (f in item.m.files) {
+        val fMatch = Regex("""\b(19\d{2}|20\d{2})\b""").find(f.name)
+        if (fMatch != null) return fMatch.value
+    }
+    return "2024"
+}
+
+fun isAnime(item: LibraryItem): Boolean {
+    val text = (item.m.name + " " + item.baseTitle).lowercase()
+    return text.contains("anime") || text.contains("аниме") ||
+        text.contains("[horriblesubs]") || text.contains("[erai-raws]") ||
+        text.contains("[subsplease]") || text.contains("[judas]") ||
+        text.contains("[anilibria]") || text.contains("anilibria")
+}
+
+private val CARTOON = Regex("""мульт(?!сериал)|анимаци|\bcartoons?\b|\banimation\b|\bPixar\b|\bDreamWorks\b|\bDisney\b""", RegexOption.IGNORE_CASE)
+
+fun isCartoon(item: LibraryItem): Boolean = CARTOON.containsMatchIn(item.m.name) || CARTOON.containsMatchIn(item.baseTitle)
+
+fun itemCategory(item: LibraryItem): Category {
+    if (isAnime(item)) return Category.Anime
+    if (isCartoon(item)) return Category.Cartoons
+    return when (item.playable) {
+        is Playable.Series -> Category.Series
+        is Playable.Movie -> Category.Movies
+        else -> Category.Other
+    }
+}
+
+fun itemTypeLabel(item: LibraryItem): String = when (itemCategory(item)) {
+    Category.Anime -> tr("library.anime")
+    Category.Cartoons -> tr("library.multfilm")
+    Category.Series -> tr("library.serial")
+    Category.Movies -> tr("library.film")
+    Category.Other -> tr("library.drugoe")
+    Category.All -> tr("library.video")
+}
+
+fun itemSpecs(item: LibraryItem, mediaStr: String?): Pair<String, String> {
+    val name = item.m.name.lowercase()
+    val str = mediaStr?.lowercase().orEmpty()
+
+    val quality = when {
+        str.contains("3840") || str.contains("2160") || name.contains("2160p") || name.contains("4k") -> "4K"
+        str.contains("1920") || str.contains("1080") || name.contains("1080p") -> "1080p"
+        str.contains("1280") || str.contains("720") || name.contains("720p") -> "720p"
+        else -> "1080p"
+    }
+
+    val codec = when {
+        str.contains("hevc") || str.contains("h.265") || str.contains("h265") || name.contains("x265") || name.contains("hevc") || name.contains("h265") || name.contains("h.265") -> "H265"
+        str.contains("avc") || str.contains("h.264") || str.contains("h264") || name.contains("x264") || name.contains("h264") || name.contains("h.264") -> "H264"
+        str.contains("av1") || name.contains("av1") -> "AV1"
+        quality == "4K" -> "H265"
+        else -> "H264"
+    }
+
+    val fpsMatch = Regex("""(\d+(\.\d+)?)\s*fps""").find(str) ?: Regex("""(\d+(\.\d+)?)\s*fps""").find(name)
+    val fps = fpsMatch?.value ?: "23.98 fps"
+
+    val brMatch = Regex("""(\d+(\.\d+)?)\s*мбит/с""").find(str)
+    val bitrate = if (brMatch != null) {
+        brMatch.value
+    } else {
+        val durH = 1.5
+        val mbps = if (item.m.size > 0) (item.m.size * 8.0) / (durH * 3600.0 * 1_000_000.0) else 0.0
+        if (mbps > 0) "%.1f Мбит/с".format(Locale.ROOT, mbps) else "12 Мбит/с"
+    }
+
+    val sz = formatBytes(item.m.size)
+    return Pair("$quality • $codec • $fps", "$bitrate • $sz")
+}
+
+data class ContinueEntry(
+    val item: LibraryItem,
+    val target: PlayTarget,
+    val sub: String,
+    val progress: Float,
+    val pos: Long,
+    val len: Long,
+    val at: Long
+)
+
+private fun nextEpisode(p: Playable.Series, file: MFile): MFile? {
+    val all = p.seasons.flatMap { it.items }
+    val i = all.indexOfFirst { it.file.path == file.path }
+    return if (i in 0 until all.size - 1) all[i + 1].file else null
+}
+
+private fun targetFor(item: LibraryItem, file: MFile): PlayTarget? {
+    val m = item.m
+    val baseTitle = item.baseTitle
+    return when (val p = item.playable) {
+        is Playable.Movie -> if (p.file.path == file.path) PlayTarget(m.id, p.file, baseTitle, emptyList(), subtitlesFor(m, p.file), externalAudioFor(m, p.file)) else null
+        is Playable.Series -> {
+            for (s in p.seasons) {
+                val i = s.items.indexOfFirst { it.file.path == file.path }
+                if (i < 0) continue
+                val e = s.items[i]
+                val following = s.items.drop(i).map { it.file }
+                val sides = following.drop(1).mapNotNull { f -> f.link?.let { it to (subtitlesFor(m, f) to externalAudioFor(m, f)) } }
+                    .filter { (_, v) -> v.first.isNotEmpty() || v.second.isNotEmpty() }.toMap()
+                return PlayTarget(m.id, e.file, episodeLabel(baseTitle, s, e), following, subtitlesFor(m, e.file), externalAudioFor(m, e.file), sides)
+            }
+            null
+        }
+        Playable.None -> null
+    }
+}
+
+private fun continueEntries(items: List<LibraryItem>, store: LibraryStore): List<ContinueEntry> = items.mapNotNull { item ->
+    if (!item.m.ready) return@mapNotNull null
+    val (file, w) = store.lastWatched(item.m) ?: return@mapNotNull null
+    if (System.currentTimeMillis() - w.at > 60L * 24 * 3600 * 1000) return@mapNotNull null
+    if (store.continueHiddenAt(item.m.id) >= w.at) return@mapNotNull null
+    if (!w.watched) {
+        val t = targetFor(item, file) ?: return@mapNotNull null
+        val sub = t.label.removePrefix(item.baseTitle).removePrefix(" · ").ifBlank { tr("library.film") }
+        ContinueEntry(item, t, sub, w.fraction, w.pos, w.len, w.at)
+    } else {
+        val series = item.playable as? Playable.Series ?: return@mapNotNull null
+        val next = nextEpisode(series, file) ?: return@mapNotNull null
+        if (store.watchInfo(watchKey(item.m.id, next))?.watched == true) return@mapNotNull null
+        val t = targetFor(item, next) ?: return@mapNotNull null
+        ContinueEntry(item, t, tr("library.dalshe") + t.label.removePrefix(item.baseTitle).removePrefix(" · "), 0f, 0L, 0L, w.at)
+    }
+}.sortedByDescending { it.at }.take(10)
+
 @Composable
 fun LibraryScreen(
     store: LibraryStore,
@@ -109,18 +251,22 @@ fun LibraryScreen(
     modifier: Modifier = Modifier
 ) {
     val scope = rememberCoroutineScope()
+    var category by remember { mutableStateOf(Category.All) }
     val all = store.items
-    val filtered = remember(all, query) {
+    val filtered = remember(all, query, category) {
         val q = query.trim().lowercase()
-        // Favourites first; otherwise the server's order (stable sort).
-        (if (q.isEmpty()) all else all.filter { it.searchText.contains(q) }).sortedByDescending { it.m.favorite }
+        var list = if (q.isEmpty()) all else all.filter { it.searchText.contains(q) }
+        if (category != Category.All) {
+            list = list.filter { itemCategory(it) == category }
+        }
+        list.sortedByDescending { it.m.favorite }
     }
 
     LazyVerticalGrid(
         columns = GridCells.Adaptive(minSize = 152.dp),
         state = gridState,
-        modifier = modifier.fillMaxSize().background(Sm.night),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 24.dp),
+        modifier = modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 80.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
@@ -129,10 +275,21 @@ fun LibraryScreen(
             LibraryPanel(
                 query = query, onQuery = onQuery,
                 loading = store.loading, status = store.status, kind = store.statusKind,
+                totalCount = filtered.size,
+                selectedCategory = category,
+                onCategorySelect = { category = it },
                 onRefresh = { scope.launch { store.refresh() } }
             )
         }
-        // Only once something is known: at start (before the saved copy is read) this would flash "nothing here".
+
+        // Continue watching section
+        if (query.isBlank() && category == Category.All) {
+            item(key = "continue", span = { GridItemSpan(maxLineSpan) }) {
+                ContinueRow(all, store, onPlay)
+            }
+        }
+
+        // Empty state
         if (filtered.isEmpty() && !store.loading && (store.loadedOnce || store.magnets.isNotEmpty())) {
             item(key = "empty", span = { GridItemSpan(maxLineSpan) }) {
                 Panel {
@@ -153,10 +310,138 @@ fun LibraryScreen(
     }
 }
 
-/**
- * Height of the brand header. The header itself is drawn once above the tabs (MainActivity) and follows the open
- * tab's scrolling, so it stays put while the tabs slide; each tab keeps this empty slot where it used to be.
- */
+@Composable
+private fun ContinueRow(
+    items: List<LibraryItem>,
+    store: LibraryStore,
+    onOpen: (PlayTarget) -> Unit
+) {
+    val wv = store.watchVersion
+    val entries = remember(items, wv) { continueEntries(items, store) }
+    if (entries.isEmpty()) return
+
+    Column(Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 4.dp)) {
+        Row(
+            Modifier.fillMaxWidth().padding(bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    tr("library.prodolzhit_prosmotr"),
+                    fontFamily = Unbounded,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 15.sp,
+                    color = Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    entries.size.toString(),
+                    color = Color.White,
+                    fontFamily = Onest,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(start = 6.dp).clip(RoundedCornerShape(10.dp))
+                        .background(Sm.accent).padding(horizontal = 6.dp, vertical = 2.dp)
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Row(
+                Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0x14FFFFFF))
+                    .focusRing(RoundedCornerShape(8.dp))
+                    .clickable { store.hideContinue(entries.map { it.item.m.id }) }
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                CloseCrossIcon(color = Sm.muted, size = 9.dp)
+                Text(
+                    tr("library.ochistit"),
+                    color = Sm.muted,
+                    fontFamily = Onest,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 11.5.sp,
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
+        }
+        LazyRow(
+            contentPadding = PaddingValues(bottom = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            items(entries, key = { it.item.m.id }) { e ->
+                ContinueCard(e, store, onRemove = { store.hideContinue(listOf(e.item.m.id)) }) { onOpen(e.target) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ContinueCard(
+    e: ContinueEntry,
+    store: LibraryStore,
+    onRemove: () -> Unit,
+    onClick: () -> Unit
+) {
+    val context = LocalContext.current
+    var poster by remember(e.item.m.id) { mutableStateOf(store.cachedPoster(e.item.posterQueries)) }
+    LaunchedEffect(e.item.m.id) { if (poster == null) poster = store.poster(e.item.posterQueries) }
+
+    Column(
+        Modifier.width(170.dp).clip(RoundedCornerShape(14.dp))
+            .background(Sm.glassFill).border(1.dp, Sm.glassEdge, RoundedCornerShape(14.dp))
+            .focusRing(RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick).padding(8.dp)
+    ) {
+        Box(
+            Modifier.fillMaxWidth().height(100.dp).clip(RoundedCornerShape(10.dp))
+                .background(Color(0xFF13161F))
+        ) {
+            val url = poster
+            if (url != null) {
+                AsyncImage(
+                    model = ImageRequest.Builder(context).data(url).memoryCacheKey(url).crossfade(350).build(),
+                    imageLoader = Posters.loader(context),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+            Box(
+                Modifier.align(Alignment.TopEnd).padding(4.dp).size(24.dp).clip(CircleShape)
+                    .background(Color(0x99000000)).clickable(onClick = onRemove),
+                contentAlignment = Alignment.Center
+            ) { CloseCrossIcon(color = Color.White, size = 9.dp) }
+
+            Box(
+                Modifier.align(Alignment.Center).size(36.dp).clip(CircleShape)
+                    .background(Color(0xB3000000)).border(1.dp, Color(0x33FFFFFF), CircleShape),
+                contentAlignment = Alignment.Center
+            ) { Text("▶", color = Color.White, fontSize = 14.sp, modifier = Modifier.padding(start = 2.dp)) }
+
+            if (e.progress > 0.01f) {
+                Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(3.5.dp).background(Color(0x66000000))) {
+                    Box(Modifier.fillMaxWidth(e.progress).height(3.5.dp).background(Sm.accent))
+                }
+            }
+        }
+        Text(
+            e.item.baseTitle,
+            color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.sp,
+            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp)
+        )
+        Text(
+            e.sub,
+            color = Color(0xFF60A5FA), fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 11.5.sp,
+            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp)
+        )
+    }
+}
+
 val LocalHeaderHeight = androidx.compose.runtime.compositionLocalOf { 46.dp }
 
 @Composable
@@ -165,28 +450,36 @@ fun HeaderSlot() = Spacer(Modifier.fillMaxWidth().height(LocalHeaderHeight.curre
 @Composable
 fun BrandHeader(onLogout: (() -> Unit)?, onSettings: (() -> Unit)? = null) {
     Row(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        val b by breathing(2600)
         Box(
-            Modifier.size(40.dp).shadow(14.dp, CircleShape, ambientColor = Sm.lamp, spotColor = Sm.lamp)
-                .background(Brush.radialGradient(listOf(Color(0xFFFFD27A), Sm.lamp, Color(0xFFC97800))), CircleShape),
+            Modifier.size(42.dp).drawBehind {
+                val r = size.maxDimension * (0.62f + 0.12f * b)
+                drawCircle(Brush.radialGradient(listOf(Color(0xFF6D5BF0).copy(alpha = 0.25f + 0.22f * b), Color.Transparent)), r)
+            },
             contentAlignment = Alignment.Center
-        ) { Text("▶", color = Sm.lampInk, fontSize = 15.sp, modifier = Modifier.padding(start = 2.dp)) }
+        ) {
+            androidx.compose.foundation.Image(
+                androidx.compose.ui.res.painterResource(ru.suslikovanora.media.R.drawable.brand_mark),
+                null,
+                Modifier.size(42.dp)
+            )
+        }
         Column(Modifier.padding(start = 12.dp).weight(1f)) {
-            Text(tr("library.privatnaya_mediateka"), color = Sm.muted, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp)
-            Text("Suslik Media", color = Sm.text, fontFamily = Unbounded, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            Text(tr("library.privatnaya_mediateka"), color = Sm.muted, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 12.5.sp)
+            Text("Suslik Media", color = Color.White, fontFamily = Unbounded, fontWeight = FontWeight.Bold, fontSize = 15.sp)
         }
         if (onSettings != null) { SettingsButton(onSettings); Spacer(Modifier.width(8.dp)) }
         if (onLogout != null) OutlineButton(tr("library.vyyti"), onClick = onLogout)
     }
 }
 
-/** Square outline button with a gear drawn in code (no icon font). */
 @Composable
 private fun SettingsButton(onClick: () -> Unit) {
     val source = remember { MutableInteractionSource() }
     val pressed by source.collectIsPressedAsState()
     val turn by animateFloatAsState(if (pressed) 30f else 0f, tween(260, easing = Sm.ease), label = "gear")
     Box(
-        Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).border(1.dp, Sm.line2, RoundedCornerShape(12.dp))
+        Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(Sm.glassFill).border(1.dp, Sm.glassEdge, RoundedCornerShape(12.dp))
             .focusRing(RoundedCornerShape(12.dp))
             .clickable(interactionSource = source, indication = null, onClick = onClick),
         contentAlignment = Alignment.Center
@@ -208,8 +501,8 @@ private fun SettingsButton(onClick: () -> Unit) {
 @Composable
 fun Panel(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     Column(
-        modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Sm.booth)
-            .border(1.dp, Sm.line, RoundedCornerShape(16.dp)).padding(16.dp)
+        modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Sm.glassFill)
+            .border(1.dp, Sm.glassEdge, RoundedCornerShape(16.dp)).padding(16.dp)
     ) { content() }
 }
 
@@ -217,23 +510,76 @@ fun Panel(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
 private fun LibraryPanel(
     query: String, onQuery: (String) -> Unit,
     loading: Boolean, status: String, kind: StatusKind,
+    totalCount: Int,
+    selectedCategory: Category,
+    onCategorySelect: (Category) -> Unit,
     onRefresh: () -> Unit
 ) {
     Panel {
-        Row(verticalAlignment = Alignment.Top) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f).padding(end = 10.dp)) {
-                Text(tr("library.moya_biblioteka_alldebrid"), fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 19.sp, lineHeight = 24.sp, color = Sm.text)
-                Text(tr("library.torrenty_papki_i_fayly"), color = Sm.muted, fontFamily = Onest, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(tr("library.moya_biblioteka_alldebrid"), fontFamily = Unbounded, fontWeight = FontWeight.SemiBold, fontSize = 20.sp, color = Color.White)
+                    Text(totalCount.toString(), color = Sm.muted, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp, modifier = Modifier.padding(start = 8.dp, top = 2.dp))
+                }
+                Text(tr("library.torrenty_papki_i_fayly"), color = Sm.muted, fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(top = 2.dp))
             }
-            LampButton(if (loading) tr("updater.zagruzka") else tr("updater.obnovit"), enabled = !loading, onClick = onRefresh)
+            RefreshButton(loading = loading, onClick = onRefresh)
         }
         Spacer(Modifier.height(14.dp))
         SearchField(value = query, onValue = onQuery, placeholder = tr("library.poisk_po_nazvaniyu"))
         Spacer(Modifier.height(10.dp))
-        val color by animateColorAsState(
-            when (kind) { StatusKind.Ok -> Sm.ok; StatusKind.Error -> Sm.bad; StatusKind.Info -> Sm.muted }, label = "status"
-        )
-        Text(status, color = color, fontFamily = Onest, fontSize = 13.5.sp, lineHeight = 19.sp)
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            for (cat in Category.entries) {
+                val active = cat == selectedCategory
+                Box(
+                    Modifier.clip(RoundedCornerShape(14.dp))
+                        .background(if (active) Sm.accent.copy(alpha = 0.85f) else Color(0x14FFFFFF))
+                        .border(1.dp, if (active) Sm.accentEdge else Sm.glassEdge, RoundedCornerShape(14.dp))
+                        .focusRing(RoundedCornerShape(14.dp))
+                        .clickable { onCategorySelect(cat) }
+                        .padding(horizontal = 13.dp, vertical = 7.dp)
+                ) {
+                    Text(cat.label, color = if (active) Color.White else Color(0xFF8E96A8), fontFamily = Onest,
+                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium, fontSize = 12.5.sp)
+                }
+            }
+        }
+        if (status.isNotBlank()) {
+            val color by animateColorAsState(
+                when (kind) { StatusKind.Ok -> Sm.ok; StatusKind.Error -> Sm.bad; StatusKind.Info -> Sm.muted }, label = "status"
+            )
+            Text(status, color = color, fontFamily = Onest, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(top = 10.dp))
+        }
+    }
+}
+
+@Composable
+private fun RefreshButton(loading: Boolean, onClick: () -> Unit) {
+    val src = remember { MutableInteractionSource() }
+    val pressed by src.collectIsPressedAsState()
+    val rot = remember { Animatable(0f) }
+    LaunchedEffect(loading) {
+        if (loading) {
+            while (true) rot.animateTo(rot.value + 360f, tween(900, easing = androidx.compose.animation.core.LinearEasing))
+        } else if (rot.value != 0f) {
+            val end = kotlin.math.ceil(rot.value / 360f) * 360f
+            rot.animateTo(end, tween(520, easing = Sm.ease))
+            rot.snapTo(0f)
+        }
+    }
+    val scale by animateFloatAsState(if (pressed) 0.94f else 1f, tween(180, easing = Sm.ease))
+    Box(
+        Modifier.graphicsLayer { scaleX = scale; scaleY = scale }.size(42.dp)
+            .glass(RoundedCornerShape(12.dp), loading)
+            .focusRing(RoundedCornerShape(12.dp))
+            .clickable(interactionSource = src, indication = null, enabled = !loading, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        RefreshIcon(Modifier.graphicsLayer { rotationZ = rot.value }, color = if (loading) Color(0xFF60A5FA) else Color.White, size = 16.dp)
     }
 }
 
@@ -242,27 +588,29 @@ fun SearchField(value: String, onValue: (String) -> Unit, placeholder: String, p
     val focus = LocalFocusManager.current
     val tv = Tv.isTv(LocalContext.current)
     var focused by remember { mutableStateOf(false) }
-    val border by animateColorAsState(if (focused) Sm.lamp else Sm.line2, label = "border")
+    val border by animateColorAsState(if (focused) Sm.accentEdge else Sm.glassEdge, label = "border")
     BasicTextField(
         value = value, onValueChange = onValue, singleLine = true,
-        textStyle = TextStyle(color = Sm.text, fontFamily = Onest, fontSize = 16.sp),
-        cursorBrush = SolidColor(Sm.lamp),
+        textStyle = TextStyle(color = Sm.text, fontFamily = Onest, fontSize = 15.sp),
+        cursorBrush = SolidColor(Color.White),
         visualTransformation = if (password) androidx.compose.ui.text.input.PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
         keyboardOptions = KeyboardOptions(
             imeAction = if (onDone != null) ImeAction.Go else ImeAction.Search,
             keyboardType = if (password) androidx.compose.ui.text.input.KeyboardType.Password else androidx.compose.ui.text.input.KeyboardType.Text,
-            // TV: the keyboard opens on OK, not each time the remote just passes over the field
             showKeyboardOnFocus = if (tv) false else null
         ),
         keyboardActions = androidx.compose.foundation.text.KeyboardActions(onAny = { focus.clearFocus(); onDone?.invoke() }),
         modifier = Modifier.fillMaxWidth()
             .onFocusChanged { focused = it.isFocused }
-            .clip(RoundedCornerShape(12.dp)).background(Sm.night)
+            .clip(RoundedCornerShape(12.dp)).background(Color(0xFF12151D))
             .border(if (focused && tv) 2.5.dp else 1.dp, border, RoundedCornerShape(12.dp)),
         decorationBox = { inner ->
-            Box(Modifier.padding(horizontal = 14.dp, vertical = 13.dp)) {
-                if (value.isEmpty()) Text(placeholder, color = Sm.muted, fontFamily = Onest, fontSize = 16.sp)
-                inner()
+            Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                SearchIcon(modifier = Modifier.padding(end = 10.dp), color = Color(0xFF8E96A8), size = 16.dp)
+                Box(Modifier.weight(1f)) {
+                    if (value.isEmpty()) Text(placeholder, color = Sm.muted, fontFamily = Onest, fontSize = 14.5.sp)
+                    inner()
+                }
             }
         }
     )
@@ -272,31 +620,33 @@ fun SearchField(value: String, onValue: (String) -> Unit, placeholder: String, p
 fun LampButton(text: String, enabled: Boolean = true, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val source = remember { MutableInteractionSource() }
     val pressed by source.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed) 0.965f else 1f, tween(180, easing = Sm.ease), label = "press")
+    val scale by animateFloatAsState(if (pressed && enabled) 0.96f else 1f, tween(180, easing = Sm.ease), label = "press")
+    val bg by animateColorAsState(if (enabled) Sm.accent else Sm.accent.copy(alpha = 0.5f), tween(200))
+    val edge by animateColorAsState(if (enabled) Sm.accentEdge else Color.Transparent, tween(240))
     Box(
-        modifier.graphicsLayer { scaleX = scale; scaleY = scale; alpha = if (enabled) 1f else 0.6f }
-            .shadow(10.dp, RoundedCornerShape(12.dp), ambientColor = Sm.lamp, spotColor = Sm.lamp)
-            .clip(RoundedCornerShape(12.dp)).background(Sm.lamp)
+        modifier.graphicsLayer { scaleX = scale; scaleY = scale; alpha = if (enabled) 1f else 0.55f }
+            .shadow(10.dp, RoundedCornerShape(12.dp), ambientColor = Sm.accent, spotColor = Sm.accent)
+            .clip(RoundedCornerShape(12.dp)).background(bg).border(1.dp, edge, RoundedCornerShape(12.dp))
             .focusRing(RoundedCornerShape(12.dp), color = Color.White)
             .clickable(interactionSource = source, indication = null, enabled = enabled, onClick = onClick)
-            .heightIn(min = 44.dp).padding(horizontal = 18.dp, vertical = 12.dp),
+            .heightIn(min = 40.dp).padding(horizontal = 16.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center
-    ) { Text(text, color = Sm.lampInk, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp) }
+    ) { Text(text, color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp) }
 }
 
 @Composable
-fun OutlineButton(text: String, modifier: Modifier = Modifier, color: Color = Sm.text, border: Color = Sm.line2, onClick: () -> Unit) {
+fun OutlineButton(text: String, modifier: Modifier = Modifier, color: Color = Color.White, border: Color = Sm.glassEdge, onClick: () -> Unit) {
     val source = remember { MutableInteractionSource() }
     val pressed by source.collectIsPressedAsState()
     val scale by animateFloatAsState(if (pressed) 0.965f else 1f, tween(180, easing = Sm.ease), label = "press")
     Box(
         modifier.graphicsLayer { scaleX = scale; scaleY = scale }
-            .clip(RoundedCornerShape(12.dp)).border(1.dp, border, RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(12.dp)).background(Sm.glassFill).border(1.dp, border, RoundedCornerShape(12.dp))
             .focusRing(RoundedCornerShape(12.dp))
             .clickable(interactionSource = source, indication = null, onClick = onClick)
             .heightIn(min = 40.dp).padding(horizontal = 14.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center
-    ) { Text(text, color = color, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp) }
+    ) { Text(text, color = color, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.5.sp) }
 }
 
 // ---- tile ------------------------------------------------------------------------------------
@@ -304,16 +654,13 @@ fun OutlineButton(text: String, modifier: Modifier = Modifier, color: Color = Sm
 @Composable
 private fun PosterTile(item: LibraryItem, store: LibraryStore, onPlay: (PlayTarget) -> Unit, index: Int = 0, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    // Heavy work (playlist, titles) was done once in the store; scrolling only reads it.
     val m = item.m
     val playable = item.playable
     val baseTitle = item.baseTitle
     val queries = item.posterQueries
     var poster by remember(m.id) { mutableStateOf(store.cachedPoster(queries)) }
-    // Only tiles that are actually composed (on or near the screen) ask for a poster.
     LaunchedEffect(m.id) { if (poster == null) poster = store.poster(queries) }
 
-    // Series: chosen season/episode (remembered per torrent, like on the website).
     val series = playable as? Playable.Series
     var seasonIdx by remember(m.id) { mutableStateOf(0) }
     var episodeIdx by remember(m.id) { mutableStateOf(0) }
@@ -321,7 +668,6 @@ private fun PosterTile(item: LibraryItem, store: LibraryStore, onPlay: (PlayTarg
     val last = remember(m.id, watchVersion) { store.lastWatched(m) }
     LaunchedEffect(m.id, watchVersion) {
         if (series != null) {
-            // The episode watched last (also when the player moved on by itself), otherwise the one picked by hand.
             val saved = last?.first?.path ?: store.lastEpisode(m.id)
             series.seasons.forEachIndexed { si, s ->
                 val ei = s.items.indexOfFirst { it.file.path == saved }
@@ -330,7 +676,6 @@ private fun PosterTile(item: LibraryItem, store: LibraryStore, onPlay: (PlayTarg
         }
     }
 
-    // The file the ▶ button would play right now (follows the chosen episode).
     val currentFile: MFile? = when (playable) {
         is Playable.Movie -> playable.file
         is Playable.Series -> (playable.seasons.getOrNull(seasonIdx) ?: playable.seasons.first()).let { s -> (s.items.getOrNull(episodeIdx) ?: s.items.first()).file }
@@ -355,7 +700,6 @@ private fun PosterTile(item: LibraryItem, store: LibraryStore, onPlay: (PlayTarg
         Playable.None -> null
     }
 
-    // Entrance: first time a tile is shown it rises in (staggered), never again when coming back to the tab.
     val appear = remember(m.id) { Animatable(if (store.seen(m.id)) 1f else 0f) }
     LaunchedEffect(m.id) {
         if (appear.value < 1f) {
@@ -377,16 +721,14 @@ private fun PosterTile(item: LibraryItem, store: LibraryStore, onPlay: (PlayTarg
         Box(
             Modifier.fillMaxWidth().aspectRatio(2f / 3f)
                 .clip(RoundedCornerShape(14.dp))
-                .background(Brush.linearGradient(listOf(Color(0xFF242A3A), Color(0xFF10131A))))
-                .border(1.dp, Sm.line, RoundedCornerShape(14.dp))
+                .background(Color(0xFF13161F))
+                .border(1.dp, Sm.glassEdge, RoundedCornerShape(14.dp))
                 .focusRing(RoundedCornerShape(14.dp), width = 3.dp)
                 .clickable(interactionSource = source, indication = null, enabled = canPlay) { target()?.let(onPlay) }
         ) {
             val url = poster
             if (url != null) {
                 AsyncImage(
-                    // Same key for the placeholder: an already decoded poster shows on the very first frame
-                    // (coming back to the tab no longer flashes an empty tile before the image).
                     model = ImageRequest.Builder(context).data(url).memoryCacheKey(url).placeholderMemoryCacheKey(url).crossfade(350).build(),
                     imageLoader = Posters.loader(context),
                     contentDescription = tr("library.poster_basetitle", "baseTitle" to baseTitle),
@@ -401,19 +743,20 @@ private fun PosterTile(item: LibraryItem, store: LibraryStore, onPlay: (PlayTarg
                 )
             }
             FavStar(m.favorite, Modifier.align(Alignment.TopEnd).padding(8.dp)) { on -> store.setFavorite(m, on) }
-            // watched part of the current file: thin amber line along the poster's bottom edge
+
+            // watched progress: electric blue line along the poster's bottom edge
             val watch = remember(m.id, currentFile?.path, watchVersion) { currentFile?.let { store.watchInfo(watchKey(m.id, it)) } }
             if (m.ready && watch != null && watch.fraction > 0.01f) {
                 Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(4.dp).background(Color(0x66000000))) {
-                    Box(Modifier.fillMaxWidth(if (watch.watched) 1f else watch.fraction).height(4.dp).background(Sm.lamp))
+                    Box(Modifier.fillMaxWidth(if (watch.watched) 1f else watch.fraction).height(4.dp).background(Sm.accent))
                 }
             }
-            // bottom: progress + label
-            Column(Modifier.align(Alignment.BottomStart).padding(12.dp)) {
+            // bottom: progress + status badge
+            Column(Modifier.align(Alignment.BottomStart).padding(10.dp)) {
                 if (m.downloading && m.size > 0) {
                     Box(Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(5.dp)).background(Color(0x50FFFFFF))) {
                         Box(Modifier.fillMaxWidth(m.progress).height(5.dp).clip(RoundedCornerShape(5.dp))
-                            .background(Brush.horizontalGradient(listOf(Color(0xFFFFCF70), Sm.lamp))))
+                            .background(Brush.horizontalGradient(listOf(Color(0xFF60A5FA), Sm.accent))))
                     }
                     Spacer(Modifier.height(8.dp))
                 }
@@ -423,24 +766,28 @@ private fun PosterTile(item: LibraryItem, store: LibraryStore, onPlay: (PlayTarg
                     else -> statusRu(m)
                 }
                 Text(
-                    label, color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 12.sp,
-                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Sm.scrim).padding(horizontal = 8.dp, vertical = 4.dp)
+                    label, color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 11.5.sp,
+                    modifier = Modifier.clip(RoundedCornerShape(7.dp)).background(Color(0xD910131B)).border(1.dp, Sm.glassEdge, RoundedCornerShape(7.dp)).padding(horizontal = 8.dp, vertical = 3.dp)
                 )
             }
             if (canPlay) {
                 Box(
-                    Modifier.align(Alignment.Center).padding(bottom = 24.dp).size(56.dp)
-                        .clip(CircleShape).background(Color(0xB3090B10))
-                        .border(1.dp, Color(0x44FFFFFF), CircleShape)
-                        .focusProperties { canFocus = false } // the remote opens it from the poster itself (OK)
+                    Modifier.align(Alignment.Center).padding(bottom = 20.dp).size(50.dp)
+                        .clip(CircleShape).background(Color(0xCC0B1020))
+                        .border(1.dp, Color(0x40FFFFFF), CircleShape)
+                        .focusProperties { canFocus = false }
                         .clickable { target()?.let(onPlay) },
                     contentAlignment = Alignment.Center
-                ) { Text("▶", color = Color.White, fontSize = 22.sp, modifier = Modifier.padding(start = 3.dp)) }
+                ) { Text("▶", color = Color.White, fontSize = 20.sp, modifier = Modifier.padding(start = 3.dp)) }
             }
         }
-        Column(Modifier.padding(start = 2.dp, end = 2.dp, top = 10.dp)) {
-            Text(m.name, color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, lineHeight = 18.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text("${statusRu(m)} · ${formatBytes(m.size)}", color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 3.dp))
+        Column(Modifier.padding(start = 2.dp, end = 2.dp, top = 8.dp)) {
+            Text(m.name, color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp, lineHeight = 18.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text("${itemYear(item)} • ${itemTypeLabel(item)} · ${formatBytes(m.size)}", color = Sm.muted, fontFamily = Onest, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
+            if (m.ready && media != null) {
+                val specs = itemSpecs(item, media)
+                Text(specs.first, color = Color(0xFFB0B7C6), fontFamily = Onest, fontSize = 11.5.sp, modifier = Modifier.padding(top = 2.dp))
+            }
             if (m.ready && last != null) {
                 val (lf, lw) = last
                 val ep = (playable as? Playable.Series)?.seasons?.firstNotNullOfOrNull { s ->
@@ -452,15 +799,7 @@ private fun PosterTile(item: LibraryItem, store: LibraryStore, onPlay: (PlayTarg
                     ep != null -> tr("library.prodolzhit_ep_p", "ep" to ep, "p" to formatClock(lw.pos))
                     else -> tr("library.prodolzhit_s_p", "p" to formatClock(lw.pos))
                 }
-                Text(text, color = Sm.lamp, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, modifier = Modifier.padding(top = 4.dp))
-            }
-            if (m.ready && currentFile != null) {
-                Text(
-                    "🎞 " + (media ?: tr("library.analiz_video")),
-                    color = if (media == null) Sm.muted else Color(0xFFFFD791),
-                    fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 17.sp,
-                    modifier = Modifier.padding(top = 4.dp)
-                )
+                Text(text, color = Color(0xFF60A5FA), fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, modifier = Modifier.padding(top = 3.dp))
             }
             if (series != null && m.ready) {
                 Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -491,15 +830,18 @@ private fun SelectChip(label: String, options: List<String>, onPick: (Int) -> Un
     var open by remember { mutableStateOf(false) }
     Box(modifier) {
         Row(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Sm.film)
-                .border(1.dp, Sm.line2, RoundedCornerShape(10.dp)).focusRing(RoundedCornerShape(10.dp)).clickable { open = true }
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Sm.glassFill)
+                .border(1.dp, Sm.glassEdge, RoundedCornerShape(10.dp)).focusRing(RoundedCornerShape(10.dp)).clickable { open = true }
                 .heightIn(min = 36.dp).padding(horizontal = 10.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(label, color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             Text("▾", color = Sm.muted, fontSize = 12.sp)
         }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }, modifier = Modifier.background(Sm.film).heightIn(max = 360.dp)) {
+        DropdownMenu(
+            expanded = open, onDismissRequest = { open = false },
+            modifier = Modifier.background(Sm.sheet).border(1.dp, Sm.sheetEdge, RoundedCornerShape(10.dp)).heightIn(max = 360.dp)
+        ) {
             options.forEachIndexed { i, o ->
                 DropdownMenuItem(
                     text = { Text(o, color = Sm.text, fontFamily = Onest, fontSize = 14.sp) },
@@ -550,18 +892,17 @@ private fun formatClock(ms: Long): String {
     return if (h > 0) "%d:%02d:%02d".format(h, mm, ss) else "%02d:%02d".format(mm, ss)
 }
 
-/** Favourite star in the poster's corner (touch: always visible; amber when on, pops when toggled). */
+/** Favourite heart in the poster's corner (touch: always visible; pink when on, pops when toggled). */
 @Composable
 private fun FavStar(on: Boolean, modifier: Modifier, onToggle: suspend (Boolean) -> String?) {
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
     val pop = remember { Animatable(1f) }
-    val bg by animateColorAsState(if (on) Sm.lamp else Color(0x99090B10), tween(220), label = "favbg")
-    val fg by animateColorAsState(if (on) Sm.lampInk else Color.White, tween(220), label = "favfg")
+    val bg by animateColorAsState(if (on) Color(0x99000000) else Color(0x55000000), tween(220), label = "favbg")
     Box(
         modifier.graphicsLayer { scaleX = pop.value; scaleY = pop.value }.size(34.dp).clip(CircleShape).background(bg)
-            .border(1.dp, if (on) Color.Transparent else Color(0x33FFFFFF), CircleShape)
-            .focusRing(CircleShape, color = if (on) Color.White else Sm.lamp)
+            .border(1.dp, if (on) Color(0x33FFFFFF) else Color(0x22FFFFFF), CircleShape)
+            .focusRing(CircleShape, color = Color.White)
             .clickable(enabled = !busy, interactionSource = remember { MutableInteractionSource() }, indication = null) {
                 busy = true
                 scope.launch {
@@ -570,5 +911,5 @@ private fun FavStar(on: Boolean, modifier: Modifier, onToggle: suspend (Boolean)
                 }
             },
         contentAlignment = Alignment.Center
-    ) { Text(if (on) "★" else "☆", color = fg, fontSize = 17.sp) }
+    ) { HeartIcon(filled = on, color = if (on) Color(0xFFFF6B8A) else Color.White, size = 16.dp) }
 }

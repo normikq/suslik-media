@@ -49,6 +49,8 @@ import ru.suslikovanora.media.net.Api
 import ru.suslikovanora.media.ui.Onest
 import ru.suslikovanora.media.ui.Sm
 import ru.suslikovanora.media.ui.Unbounded
+import ru.suslikovanora.media.ui.glass
+import ru.suslikovanora.media.ui.glassSheet
 import java.io.File
 
 /**
@@ -173,14 +175,13 @@ fun UpdateDialog(info: Updater.Info, onDismiss: () -> Unit) {
     }
     Dialog(onDismissRequest = { if (progress == null || file != null) onDismiss() }) {
         Column(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Sm.booth)
-                .border(1.dp, Sm.line2, RoundedCornerShape(20.dp)).padding(20.dp)
+            Modifier.fillMaxWidth().glassSheet(RoundedCornerShape(20.dp)).padding(20.dp)
         ) {
             Text(tr("updater.dostupna_versiya_version", "version" to info.version) + if (info.beta) tr("updater.beta") else "", color = Sm.text, fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 18.sp)
             Text(tr("updater.ustanovlena_p", "p" to Updater.currentVersion(ctx)) + (mb(info.size).takeIf { it.isNotEmpty() }?.let { " · $it" } ?: ""),
                 color = Sm.muted, fontFamily = Onest, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
             if (info.notes.isNotBlank()) {
-                Box(Modifier.fillMaxWidth().heightIn(max = 220.dp).clip(RoundedCornerShape(12.dp)).background(Sm.film).padding(12.dp)) {
+                Box(Modifier.fillMaxWidth().heightIn(max = 220.dp).glass(RoundedCornerShape(12.dp)).padding(12.dp)) {
                     Text(info.notes, color = Sm.text, fontFamily = Onest, fontSize = 13.5.sp, lineHeight = 19.sp,
                         modifier = Modifier.verticalScroll(rememberScrollState()))
                 }
@@ -188,13 +189,13 @@ fun UpdateDialog(info: Updater.Info, onDismiss: () -> Unit) {
             }
             progress?.let { p ->
                 if (file == null) {
-                    Box(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(6.dp)).background(Sm.line)) {
-                        Box(Modifier.fillMaxWidth(p.coerceIn(0f, 1f)).height(6.dp).background(Sm.lamp))
+                    Box(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(6.dp)).background(Sm.glassFill)) {
+                        Box(Modifier.fillMaxWidth(p.coerceIn(0f, 1f)).height(6.dp).background(Sm.accent))
                     }
                     Text(tr("updater.zagruzka_p", "p" to (p * 100).toInt()), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 6.dp, bottom = 10.dp))
                 }
             }
-            (error ?: hint)?.let { Text(it, color = if (error != null) Sm.bad else Sm.lamp, fontFamily = Onest, fontSize = 13.sp, modifier = Modifier.padding(bottom = 10.dp)) }
+            (error ?: hint)?.let { Text(it, color = if (error != null) Sm.bad else Sm.accent, fontFamily = Onest, fontSize = 13.sp, modifier = Modifier.padding(bottom = 10.dp)) }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 when {
                     file != null -> LampButton(tr("updater.ustanovit"), modifier = Modifier.weight(1f)) { installNow(file!!) }
