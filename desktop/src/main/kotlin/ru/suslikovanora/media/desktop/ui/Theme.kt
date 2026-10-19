@@ -45,11 +45,17 @@ object Sm {
     val glassFillHover = Color(0xAD1C2844)
     val glassEdge = Color(0x17FFFFFF)
     val glassEdgeHover = Color(0x6660A5FA)
+    val sheet = Color(0xF00B1020)
+    val sheetEdge = Color(0x2EFFFFFF)
+    val accentSoft = Color(0x402563EB)
 }
 
 /** Glass surface: translucent fill, hairline light edge. Compose has no backdrop blur, so the glow behind does the work. */
 fun Modifier.glass(shape: Shape, hovered: Boolean = false): Modifier =
     this.clip(shape).background(if (hovered) Sm.glassFillHover else Sm.glassFill).border(1.dp, if (hovered) Sm.glassEdgeHover else Sm.glassEdge, shape)
+
+/** Dialog card: nearly opaque dark glass with a light hairline edge. */
+fun Modifier.glassSheet(shape: Shape): Modifier = this.clip(shape).background(Sm.sheet).border(1.dp, Sm.sheetEdge, shape)
 
 /** Right-hand hairline of a side panel. */
 fun Modifier.drawEdge(): Modifier = this.drawBehind {

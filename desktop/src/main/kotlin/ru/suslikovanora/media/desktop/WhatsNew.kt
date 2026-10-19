@@ -33,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -92,8 +93,7 @@ private fun WhatsNewCard(current: String, releases: List<Changelog.Release>, onD
                 val v = shown.value
                 translationY = (1f - v) * 36f; scaleX = 0.96f + 0.04f * v; scaleY = scaleX
             }
-                .widthIn(max = 560.dp).padding(24.dp).clip(RoundedCornerShape(22.dp)).background(Sm.booth)
-                .border(1.dp, Sm.line2, RoundedCornerShape(22.dp))
+                .widthIn(max = 560.dp).padding(24.dp).glassSheet(RoundedCornerShape(22.dp))
                 .hoverClick(remember { MutableInteractionSource() }) {}
                 .padding(start = 26.dp, end = 26.dp, top = 24.dp, bottom = 20.dp)
         ) {
@@ -105,9 +105,9 @@ private fun WhatsNewCard(current: String, releases: List<Changelog.Release>, onD
                     val a = items[i]
                     Column(Modifier.graphicsLayer { alpha = a.value; translationY = (1f - a.value) * 22f }) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.clip(RoundedCornerShape(8.dp)).background(if (i == 0) Sm.lamp else Sm.film)
+                            Box(Modifier.clip(RoundedCornerShape(8.dp)).background(if (i == 0) Sm.accent else Sm.glassFill)
                                 .padding(horizontal = 9.dp, vertical = 3.dp)) {
-                                Text(r.version, color = if (i == 0) Sm.lampInk else Sm.muted, fontFamily = Onest,
+                                Text(r.version, color = if (i == 0) Color.White else Sm.muted, fontFamily = Onest,
                                     fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
                             }
                             Text(r.title, color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 15.5.sp,
@@ -117,7 +117,7 @@ private fun WhatsNewCard(current: String, releases: List<Changelog.Release>, onD
                             r.items.forEach { line ->
                                 Row {
                                     Box(Modifier.padding(top = 7.dp, end = 10.dp).size(5.dp).clip(CircleShape)
-                                        .background(if (i == 0) Sm.lamp else Sm.line2))
+                                        .background(if (i == 0) Color(0xFF60A5FA) else Sm.line2))
                                     Text(line, color = if (i == 0) Sm.text else Sm.muted, fontFamily = Onest, fontSize = 14.sp, lineHeight = 20.sp)
                                 }
                             }

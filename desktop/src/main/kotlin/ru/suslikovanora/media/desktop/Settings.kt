@@ -107,8 +107,7 @@ fun SettingsSheet(onClose: () -> Unit) {
     ) {
         Column(
             Modifier.graphicsLayer { val v = shown.value; translationY = (1f - v) * 60f; scaleX = 0.96f + 0.04f * v; scaleY = scaleX }
-                .widthIn(max = 620.dp).padding(24.dp).clip(RoundedCornerShape(22.dp)).background(Sm.booth)
-                .border(1.dp, Sm.line2, RoundedCornerShape(22.dp))
+                .widthIn(max = 620.dp).padding(24.dp).glassSheet(RoundedCornerShape(22.dp))
                 .hoverClick(remember { MutableInteractionSource() }) {}
                 .padding(start = 18.dp, end = 18.dp, top = 20.dp, bottom = 16.dp)
         ) {
@@ -208,8 +207,8 @@ private fun ChannelSection() {
 
 @Composable
 private fun ChannelOption(title: String, on: Boolean, modifier: Modifier, onClick: () -> Unit) {
-    val edge by animateColorAsState(if (on) Color.White.copy(alpha = 0.85f) else Sm.line, tween(220), label = "edge")
-    val bg by animateColorAsState(if (on) Color(0xFF1E2332) else Sm.film, tween(220), label = "bg")
+    val edge by animateColorAsState(if (on) Sm.accent else Sm.glassEdge, tween(220), label = "edge")
+    val bg by animateColorAsState(if (on) Sm.accentSoft else Sm.glassFill, tween(220), label = "bg")
     val glowAlpha by animateFloatAsState(if (on) 0.35f else 0f, tween(220), label = "glow")
     Box(
         modifier
@@ -309,8 +308,8 @@ private fun EngineOption(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
-    val edge by animateColorAsState(if (selected) Color.White.copy(alpha = 0.85f) else Sm.line, tween(220), label = "edge")
-    val bg by animateColorAsState(if (selected) Color(0xFF1E2332) else if (enabled) Sm.film else Sm.film.copy(alpha = 0.5f), tween(220), label = "bg")
+    val edge by animateColorAsState(if (selected) Sm.accent else Sm.glassEdge, tween(220), label = "edge")
+    val bg by animateColorAsState(if (selected) Sm.accentSoft else if (enabled) Sm.film else Sm.glassFill.copy(alpha = 0.2f), tween(220), label = "bg")
     val glowAlpha by animateFloatAsState(if (selected) 0.35f else 0f, tween(220), label = "glow")
     Box(
         modifier
@@ -416,8 +415,8 @@ private fun Section(title: String, text: String, top: androidx.compose.ui.unit.D
 
 @Composable
 private fun PresetRow(p: PlaybackPresets.Preset, on: Boolean, onClick: () -> Unit) {
-    val edge by animateColorAsState(if (on) Color.White.copy(alpha = 0.85f) else Sm.line, tween(220), label = "edge")
-    val bg by animateColorAsState(if (on) Color(0xFF1E2332) else Sm.film, tween(220), label = "bg")
+    val edge by animateColorAsState(if (on) Sm.accent else Sm.glassEdge, tween(220), label = "edge")
+    val bg by animateColorAsState(if (on) Sm.accentSoft else Sm.glassFill, tween(220), label = "bg")
     val glowAlpha by animateFloatAsState(if (on) 0.35f else 0f, tween(220), label = "glow")
     Row(
         Modifier.fillMaxWidth().padding(vertical = 3.dp)

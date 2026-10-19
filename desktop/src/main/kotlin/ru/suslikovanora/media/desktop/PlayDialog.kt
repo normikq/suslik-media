@@ -267,8 +267,7 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
         val dialogWidth = if (isCollection) 660.dp else 540.dp
         Column(
             Modifier.graphicsLayer { translationY = (1f - a) * 24f; scaleX = 0.97f + 0.03f * a; scaleY = 0.97f + 0.03f * a }
-                .widthIn(max = dialogWidth).clip(RoundedCornerShape(22.dp)).background(Color(0xFF0F131D))
-                .border(1.dp, Color(0xFF1E2536), RoundedCornerShape(22.dp))
+                .widthIn(max = dialogWidth).glassSheet(RoundedCornerShape(22.dp))
                 .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {}
                 .padding(22.dp)
         ) {
@@ -291,14 +290,14 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                     // Left: Movie Poster
                     Box(
                         Modifier.width(155.dp).height(245.dp).clip(RoundedCornerShape(14.dp))
-                            .background(Color(0xFF131722)).border(1.dp, Color(0xFF242A38), RoundedCornerShape(14.dp)),
+                            .background(Sm.glassFill).border(1.dp, Sm.glassEdge, RoundedCornerShape(14.dp)),
                         contentAlignment = Alignment.Center
                     ) {
                         val p = poster
                         if (p != null) {
                             Image(p, tr("library.poster"), contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
                         } else {
-                            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF222838), Color(0xFF10131B)))))
+                            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Sm.glassEdge, Color(0xFF10131B)))))
                         }
                     }
 
@@ -315,7 +314,7 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                         // Info banner
                         Row(
                             Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 10.dp).clip(RoundedCornerShape(10.dp))
-                                .background(Color(0xFF141926)).border(1.dp, Color(0xFF1E2638), RoundedCornerShape(10.dp))
+                                .background(Sm.glassFill).border(1.dp, Sm.glassEdge, RoundedCornerShape(10.dp))
                                 .padding(horizontal = 12.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -343,8 +342,8 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                                     val isSelected = i == selectedFilmIdx
                                     Row(
                                         Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-                                            .background(if (isSelected) Color(0xFF182234) else Color(0xFF121622))
-                                            .border(1.dp, if (isSelected) Color(0xFF38507E) else Color(0xFF1E2536), RoundedCornerShape(12.dp))
+                                            .background(if (isSelected) Sm.accentSoft else Sm.glassFill)
+                                            .border(1.dp, if (isSelected) Sm.accentEdge else Sm.glassEdge, RoundedCornerShape(12.dp))
                                             .hoverClick(remember { MutableInteractionSource() }) { selectedFilmIdx = i }
                                             .padding(horizontal = 10.dp, vertical = 7.dp),
                                         verticalAlignment = Alignment.CenterVertically,
@@ -598,7 +597,7 @@ private fun SourceCard(
 ) {
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
-            .background(Color(0xFF131722)).border(1.dp, Color(0xFF222838), RoundedCornerShape(16.dp))
+            .background(Sm.glassFill).border(1.dp, Sm.glassEdge, RoundedCornerShape(16.dp))
             .padding(16.dp)
     ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -649,8 +648,8 @@ private fun PlayActionButton(
 ) {
     val src = remember { MutableInteractionSource() }
     val hovered by src.collectIsHoveredAsState()
-    val bg = if (!enabled) Color(0xFF161C28) else if (hovered) Color(0xFF223556) else Color(0xFF1A2A44)
-    val border = if (!enabled) Color(0xFF202736) else if (hovered) Color(0xFF4D86FF) else Color(0xFF386EE0)
+    val bg = if (!enabled) Color(0xFF161C28) else if (hovered) Color(0xFF3B74F0) else Sm.accent
+    val border = if (!enabled) Color(0xFF202736) else if (hovered) Color(0xFF4D86FF) else Sm.accentEdge
     val contentColor = if (!enabled) Color(0xFF5A6478) else Color.White
 
     Row(
@@ -675,8 +674,8 @@ private fun CopyActionButton(
 ) {
     val src = remember { MutableInteractionSource() }
     val hovered by src.collectIsHoveredAsState()
-    val bg = if (hovered && enabled) Color(0xFF1C2232) else Color(0xFF151924)
-    val border = if (hovered && enabled) Color(0xFF323B50) else Color(0xFF242B3C)
+    val bg = if (hovered && enabled) Color(0xFF1C2232) else Sm.glassFill
+    val border = if (hovered && enabled) Color(0xFF323B50) else Sm.glassEdge
     val contentColor = if (!enabled) Color(0xFF5A6478) else Color(0xFFC4CBD8)
 
     Row(
@@ -708,8 +707,8 @@ private fun DropdownSelector(
         Box {
             Row(
                 Modifier.fillMaxWidth().height(46.dp).clip(RoundedCornerShape(12.dp))
-                    .background(if (hovered) Color(0xFF161A26) else Color(0xFF121622))
-                    .border(1.dp, if (hovered) Color(0xFF323B50) else Color(0xFF242B3C), RoundedCornerShape(12.dp))
+                    .background(if (hovered) Color(0xFF161A26) else Sm.glassFill)
+                    .border(1.dp, if (hovered) Color(0xFF323B50) else Sm.glassEdge, RoundedCornerShape(12.dp))
                     .hoverClick(src) { expanded = true }
                     .padding(horizontal = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -770,8 +769,8 @@ private fun CloseBottomButton(onClick: () -> Unit) {
 
 @Composable
 private fun StartOption(title: String, hint: String, on: Boolean, modifier: Modifier, onClick: () -> Unit) {
-    val edge by animateColorAsState(if (on) Color(0xFF3E475C) else Color(0xFF242A38), tween(220))
-    val bg by animateColorAsState(if (on) Color(0xFF282E3C) else Color(0xFF191D28), tween(220))
+    val edge by animateColorAsState(if (on) Color(0xFF3E475C) else Sm.glassEdge, tween(220))
+    val bg by animateColorAsState(if (on) Color(0xFF282E3C) else Sm.glassFill, tween(220))
     Column(
         modifier.clip(RoundedCornerShape(14.dp)).background(bg).border(1.dp, edge, RoundedCornerShape(14.dp))
             .hoverClick(remember { MutableInteractionSource() }, onClick = onClick).padding(horizontal = 14.dp, vertical = 10.dp)
