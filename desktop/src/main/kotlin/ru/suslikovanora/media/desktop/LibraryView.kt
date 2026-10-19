@@ -157,7 +157,7 @@ fun isAnime(item: LibraryItem): Boolean {
 }
 
 // The same rule the site uses to tell cartoons from films (website/classify.js).
-private val CARTOON = Regex("""мульт(?!сериал)|анимаци|cartoons?|animation|Pixar|DreamWorks|Disney""", RegexOption.IGNORE_CASE)
+private val CARTOON = Regex("""мульт(?!сериал)|анимаци|\bcartoons?\b|\banimation\b|\bPixar\b|\bDreamWorks\b|\bDisney\b""", RegexOption.IGNORE_CASE)
 
 fun isCartoon(item: LibraryItem): Boolean = CARTOON.containsMatchIn(item.m.name) || CARTOON.containsMatchIn(item.baseTitle)
 
