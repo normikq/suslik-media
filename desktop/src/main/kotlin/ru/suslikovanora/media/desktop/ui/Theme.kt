@@ -66,11 +66,11 @@ fun Modifier.drawEdge(): Modifier = this.drawBehind {
 fun Modifier.ambientBackdrop(): Modifier = this.background(Sm.backdrop).drawBehind {
     fun glow(c: Color, cx: Float, cy: Float, r: Float) =
         drawCircle(Brush.radialGradient(listOf(c, Color.Transparent), Offset(cx, cy), r), r, Offset(cx, cy))
-    glow(Color(0x382563EB), size.width * 0.22f, 0f, size.minDimension * 0.85f)
+    glow(Color(0x302563EB), size.width * 0.25f, size.height * 0.22f, size.minDimension * 0.8f)
     glow(Color(0x2E8B5CF6), size.width * 0.95f, size.height * 0.95f, size.minDimension * 0.75f)
     glow(Color(0x2406B6D4), size.width * 0.55f, size.height * 0.45f, size.minDimension * 0.6f)
     // fades into the title bar's colour at the very top, so the system bar and the window read as one
-    drawRect(Brush.verticalGradient(listOf(Sm.backdrop, Color.Transparent), 0f, 72.dp.toPx()), size = androidx.compose.ui.geometry.Size(size.width, 72.dp.toPx()))
+    drawRect(Brush.verticalGradient(listOf(Sm.backdrop, Color.Transparent), 0f, 150.dp.toPx()), size = androidx.compose.ui.geometry.Size(size.width, 150.dp.toPx()))
 }
 
 val Unbounded = FontFamily(

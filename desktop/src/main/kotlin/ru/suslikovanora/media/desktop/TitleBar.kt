@@ -34,7 +34,7 @@ object TitleBar {
             set(20, 1)                // DWMWA_USE_IMMERSIVE_DARK_MODE
             set(35, ref(0x060911))    // DWMWA_CAPTION_COLOR  = Sm.backdrop (flows into the window)
             set(36, ref(0x8E96A8))    // DWMWA_TEXT_COLOR     = Sm.muted (title stays quiet)
-            set(34, ref(0x0F1420))    // DWMWA_BORDER_COLOR   = barely lighter than the backdrop
+            set(34, 0xFFFFFFFE.toInt()) // DWMWA_BORDER_COLOR   = none: no line between the bar and the window
             set(33, 0)                // DWMWA_WINDOW_CORNER_PREFERENCE = DWMWCP_DEFAULT
         }
     }

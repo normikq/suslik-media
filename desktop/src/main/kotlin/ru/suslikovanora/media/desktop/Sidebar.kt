@@ -29,6 +29,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
@@ -83,7 +84,7 @@ private val PeopleIcon: @Composable (Color) -> Unit = { col ->
 
 private val ui = Store("ui")
 
-/** The logo: a gradient tile with a play mark and a slowly breathing blue glow behind it. */
+/** The logo (the groundhog in the play button, resources/icons/brand-mark.png) with a slowly breathing glow behind it. */
 @Composable
 private fun BrandMark() {
     val breath = androidx.compose.animation.core.rememberInfiniteTransition(label = "logo")
@@ -94,19 +95,13 @@ private fun BrandMark() {
         ), label = "b"
     )
     Box(
-        Modifier.size(36.dp)
-            .drawBehind {
-                val r = size.maxDimension * (0.85f + 0.2f * b)
-                drawCircle(Brush.radialGradient(listOf(Color(0xFF3B82F6).copy(alpha = 0.30f + 0.25f * b), Color.Transparent)), r)
-            }
-            .clip(RoundedCornerShape(11.dp))
-            .background(Brush.linearGradient(listOf(Color(0xFF3B82F6), Color(0xFF6D5BF0), Color(0xFF8B5CF6))))
-            .border(1.dp, Color(0x59FFFFFF), RoundedCornerShape(11.dp)),
+        Modifier.size(46.dp).drawBehind {
+            val r = size.maxDimension * (0.62f + 0.12f * b)
+            drawCircle(Brush.radialGradient(listOf(Color(0xFF6D5BF0).copy(alpha = 0.22f + 0.22f * b), Color.Transparent)), r)
+        },
         contentAlignment = Alignment.Center
     ) {
-        // glassy highlight on the upper half
-        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0x40FFFFFF), Color.Transparent), endY = 60f)))
-        PlayTriangle(color = Color.White, size = 16.dp, modifier = Modifier.padding(start = 2.dp))
+        androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource("icons/brand-mark.png"), null, Modifier.size(46.dp))
     }
 }
 
@@ -132,16 +127,16 @@ private fun NavItem(
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(bg).border(1.dp, edge, RoundedCornerShape(12.dp))
             .let { if (enabled) it.hoverClick(src, onClick = onClick) else it.hoverable(src) }
-            // The icon sits at the same x in both states (16 dp = centred in the collapsed 48 dp), so it never jumps.
-            .padding(start = 15.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
+            // Fixed height, and the icon at the same x in both states (centred in the collapsed 48 dp): nothing moves or shrinks.
+            .height(42.dp).padding(start = 15.dp, end = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        icon(fg)
+        Box(Modifier.requiredSize(18.dp), contentAlignment = Alignment.Center) { icon(fg) }
         Label(expanded) {
             Column(Modifier.padding(start = 12.dp)) {
                 Text(label, color = fg, fontFamily = Onest, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium, fontSize = 14.sp,
                     maxLines = 1, softWrap = false)
-                if (soon != null) Text(soon, color = Color(0xFF5B6272), fontFamily = Onest, fontSize = 11.sp, maxLines = 1, softWrap = false)
+                if (soon != null) Text(soon, color = Color(0xFF5B6272), fontFamily = Onest, fontSize = 10.5.sp, maxLines = 1, softWrap = false, lineHeight = 11.sp)
             }
         }
     }
@@ -156,13 +151,14 @@ fun Sidebar(tab: Tab, profile: Profile, onSelect: (Tab) -> Unit, onSettings: () 
         Modifier.width(width).fillMaxHeight().background(Sm.glassSide).drawEdge()
             .padding(horizontal = 14.dp, vertical = 18.dp)
     ) {
-        Row(Modifier.fillMaxWidth().padding(start = 6.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().height(52.dp).padding(start = 1.dp), verticalAlignment = Alignment.CenterVertically) {
             BrandMark()
             Label(expanded) {
-                Column(Modifier.padding(start = 12.dp)) {
-                    Text("Suslik", color = Color.White, fontFamily = Unbounded, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 1, softWrap = false)
-                    Text("MEDIA", color = Color(0xFF60A5FA), fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 10.sp,
-                        letterSpacing = 4.sp, maxLines = 1, softWrap = false, modifier = Modifier.padding(top = 1.dp))
+                Column(Modifier.padding(start = 10.dp)) {
+                    Text("Suslik", color = Color.White, fontFamily = Unbounded, fontWeight = FontWeight.Bold, fontSize = 17.sp, maxLines = 1, softWrap = false)
+                    Text("MEDIA", fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 10.5.sp, letterSpacing = 5.sp, maxLines = 1, softWrap = false,
+                        style = androidx.compose.ui.text.TextStyle(brush = Brush.horizontalGradient(listOf(Color(0xFF22D3EE), Color(0xFF6D8CF5), Color(0xFF9B6BFF)))),
+                        modifier = Modifier.padding(top = 1.dp))
                 }
             }
         }
