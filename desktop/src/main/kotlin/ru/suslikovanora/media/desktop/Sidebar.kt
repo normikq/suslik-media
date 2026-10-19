@@ -87,6 +87,7 @@ fun Sidebar(tab: Tab, profile: Profile, onSelect: (Tab) -> Unit, onSettings: () 
         Spacer(Modifier.height(22.dp))
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             NavItem(Tab.Library.label, tab == Tab.Library, { GridIcon(color = it, size = 16.dp) }) { onSelect(Tab.Library) }
+            NavItem(Tab.Favorites.label, tab == Tab.Favorites, { HeartIcon(filled = false, color = it, size = 16.dp) }) { onSelect(Tab.Favorites) }
             NavItem(Tab.Search.label, tab == Tab.Search, { SearchIcon(color = it, size = 16.dp) }) { onSelect(Tab.Search) }
             NavItem(Tab.Add.label, tab == Tab.Add, { LinkChainIcon(color = it, size = 16.dp) }) { onSelect(Tab.Add) }
             Box(Modifier.padding(vertical = 8.dp).fillMaxWidth().height(1.dp).background(Color(0x1AFFFFFF)))

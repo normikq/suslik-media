@@ -51,7 +51,7 @@ import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Date
 
-enum class Tab(val label: String) { Library(tr("search.biblioteka")), Search(tr("search.poisk_razdach")), Add(tr("search.magnet_torrent")) }
+enum class Tab(val label: String) { Library(tr("search.biblioteka")), Favorites(tr("library.izbrannoe")), Search(tr("search.poisk_razdach")), Add(tr("search.magnet_torrent")) }
 
 /**
  * The site's sliding amber "lens" tabs. [lens] is the animated tab position (0f..1f), kept by the main window so the

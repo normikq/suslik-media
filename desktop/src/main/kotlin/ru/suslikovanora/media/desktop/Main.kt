@@ -90,6 +90,7 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
     val appScope = rememberCoroutineScope()
     // Kept here so the library comes back scrolled to where it was after watching something.
     val grid = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+    val favGrid = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
 
     // libmpv ставит установщик; если её нет (сервер был недоступен), докачивается в фоне.
     val mpvWarm = remember { CompletableDeferred<Boolean>() }
@@ -240,7 +241,7 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
                     // Fixed side panel: stays put while the pages change.
                     Sidebar(
                         tab, Profile.Shared,
-                        onSelect = { tab = it; if (it == Tab.Library) appScope.launch { lib.refresh() } },
+                        onSelect = { tab = it; if (it == Tab.Library || it == Tab.Favorites) appScope.launch { lib.refresh() } },
                         onSettings = { PlaybackSettings.open = true },
                         onLogout = { appScope.launch { lib.logout() } }
                     )
@@ -257,6 +258,7 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
                     ) { t ->
                         when (t) {
                             Tab.Library -> LibraryView(lib, grid) { r -> requestPlay(r) }
+                            Tab.Favorites -> LibraryView(lib, favGrid, favoritesOnly = true) { r -> requestPlay(r) }
                             Tab.Search -> SearchView(lib) {}
                             Tab.Add -> AddView(lib) {}
                         }

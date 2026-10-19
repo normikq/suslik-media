@@ -297,6 +297,7 @@ fun LoginView(lib: Library) {
 fun LibraryView(
     lib: Library,
     grid: androidx.compose.foundation.lazy.grid.LazyGridState = rememberLazyGridState(),
+    favoritesOnly: Boolean = false,
     onPlay: (PlayRequest) -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -309,9 +310,10 @@ fun LibraryView(
     var sortOpen by remember { mutableStateOf(false) }
 
     val all = lib.items
-    val filtered = remember(all, query, category, sortBy, onlyReady) {
+    val source = if (favoritesOnly) all.filter { it.m.favorite } else all
+    val filtered = remember(source, query, category, sortBy, onlyReady) {
         val q = query.trim().lowercase()
-        var list = if (q.isEmpty()) all else all.filter { it.searchText.contains(q) }
+        var list = if (q.isEmpty()) source else source.filter { it.searchText.contains(q) }
 
         if (onlyReady) {
             list = list.filter { it.m.ready }
@@ -344,13 +346,14 @@ fun LibraryView(
                         query = query,
                         onQueryChange = { query = it },
                         totalCount = filtered.size,
+                        title = if (favoritesOnly) tr("library.izbrannoe") else tr("library.moya_biblioteka_alldebrid"),
                         lib = lib,
                         onRefresh = { scope.launch { lib.refresh() } }
                     )
                 }
 
                 // 2. Continue watching section
-                if (query.isBlank()) {
+                if (query.isBlank() && !favoritesOnly) {
                     item(span = { GridItemSpan(maxLineSpan) }, key = "continue", contentType = "continue") {
                         ContinueRow(all, lib) { t -> target = t }
                     }
@@ -372,6 +375,9 @@ fun LibraryView(
                     )
                 }
 
+                if (favoritesOnly && filtered.isEmpty()) {
+                    item(span = { GridItemSpan(maxLineSpan) }, key = "empty") { EmptyFavorites() }
+                }
                 // 4. Catalog grid of poster cards
                 items(filtered, key = { it.m.id }, contentType = { "tile" }) { item ->
                     Tile(item, lib, onOpen = { target = it }, modifier = Modifier.animateItem(fadeInSpec = tween(300), fadeOutSpec = tween(200)))
@@ -389,12 +395,13 @@ fun LibraryView(
                         query = query,
                         onQueryChange = { query = it },
                         totalCount = filtered.size,
+                        title = if (favoritesOnly) tr("library.izbrannoe") else tr("library.moya_biblioteka_alldebrid"),
                         lib = lib,
                         onRefresh = { scope.launch { lib.refresh() } }
                     )
                 }
 
-                if (query.isBlank()) {
+                if (query.isBlank() && !favoritesOnly) {
                     item(key = "continue", contentType = "continue") {
                         ContinueRow(all, lib) { t -> target = t }
                     }
@@ -430,12 +437,13 @@ private fun LibraryHeader(
     query: String,
     onQueryChange: (String) -> Unit,
     totalCount: Int,
+    title: String,
     lib: Library,
     onRefresh: () -> Unit
 ) {
     Column(Modifier.fillMaxWidth().padding(bottom = 18.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(tr("library.moya_biblioteka_alldebrid"), fontFamily = Unbounded, fontWeight = FontWeight.SemiBold, fontSize = 24.sp, color = Color.White)
+            Text(title, fontFamily = Unbounded, fontWeight = FontWeight.SemiBold, fontSize = 24.sp, color = Color.White)
             Text(totalCount.toString(), color = Sm.muted, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp, modifier = Modifier.padding(start = 12.dp, top = 6.dp))
             Spacer(Modifier.weight(1f))
             Field(
@@ -525,6 +533,15 @@ private fun FilterControlsBar(
                 item(tr("library.tolko_gotovye"), onlyReady) { onToggleOnlyReady(); onSortOpenChange(false) }
             }
         }
+    }
+}
+
+@Composable
+private fun EmptyFavorites() {
+    Column(Modifier.fillMaxWidth().padding(vertical = 64.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        HeartIcon(filled = false, color = Sm.muted, size = 40.dp)
+        Text(tr("library.izbrannoe_pusto"), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, modifier = Modifier.padding(top = 14.dp))
+        Text(tr("library.izbrannoe_pusto_podskazka"), color = Sm.muted, fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(top = 4.dp))
     }
 }
 

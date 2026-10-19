@@ -79,6 +79,8 @@
   "library.prodolzhit_prosmotr": "Продолжить просмотр",
   "library.ochistit": "Очистить",
   "library.vid": "Вид",
+  "library.izbrannoe_pusto": "Здесь пока пусто",
+  "library.izbrannoe_pusto_podskazka": "Нажмите сердечко на постере, чтобы добавить фильм в избранное.",
   "library.setka": "Сетка",
   "library.spisok": "Список",
   "library.tolko_gotovye": "Только готовые",
