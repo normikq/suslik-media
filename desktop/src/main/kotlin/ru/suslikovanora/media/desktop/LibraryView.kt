@@ -313,6 +313,7 @@ fun LibraryView(
     val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
     var target by remember { mutableStateOf<PlayTarget?>(null) }
+    var pick by remember { mutableStateOf<List<LibraryItem>?>(null) } // versions of one film to choose from
     var category by remember { mutableStateOf(Category.All) }
     var viewMode by remember { mutableStateOf(ViewMode.Grid) }
     var sortBy by remember { mutableStateOf(SortBy.Name) }
@@ -341,6 +342,13 @@ fun LibraryView(
         }
     }
 
+    // One tile for the same film added several times; a tile with versions asks which one to play.
+    val (shown, versionsOf) = remember(filtered) { groupVersions(filtered) }
+    val open: (PlayTarget) -> Unit = { t ->
+        val vs = t.item?.let { versionsOf[it.m.id] }
+        if (vs != null) pick = vs else target = t
+    }
+
     Box(Modifier.fillMaxSize()) {
         if (viewMode == ViewMode.Grid) {
             LazyVerticalGrid(
@@ -355,7 +363,7 @@ fun LibraryView(
                     LibraryHeader(
                         query = query,
                         onQueryChange = { query = it },
-                        totalCount = filtered.size,
+                        totalCount = shown.size,
                         title = if (favoritesOnly) tr("library.izbrannoe") else tr("library.moya_biblioteka_alldebrid"),
                         lib = lib,
                         onRefresh = { scope.launch { lib.refresh() } }
@@ -389,8 +397,8 @@ fun LibraryView(
                     item(span = { GridItemSpan(maxLineSpan) }, key = "empty") { EmptyFavorites() }
                 }
                 // 4. Catalog grid of poster cards
-                items(filtered, key = { it.m.id }, contentType = { "tile" }) { item ->
-                    Tile(item, lib, onOpen = { target = it }, modifier = Modifier.animateItem(fadeInSpec = tween(300), fadeOutSpec = tween(200)))
+                items(shown, key = { it.m.id }, contentType = { "tile" }) { item ->
+                    Tile(item, lib, versions = versionsOf[item.m.id].orEmpty(), onOpen = open, modifier = Modifier.animateItem(fadeInSpec = tween(300), fadeOutSpec = tween(200)))
                 }
             }
         } else {
@@ -404,7 +412,7 @@ fun LibraryView(
                     LibraryHeader(
                         query = query,
                         onQueryChange = { query = it },
-                        totalCount = filtered.size,
+                        totalCount = shown.size,
                         title = if (favoritesOnly) tr("library.izbrannoe") else tr("library.moya_biblioteka_alldebrid"),
                         lib = lib,
                         onRefresh = { scope.launch { lib.refresh() } }
@@ -432,12 +440,15 @@ fun LibraryView(
                     )
                 }
 
-                items(filtered, key = { it.m.id }, contentType = { "list_row" }) { item ->
-                    ListRow(item, lib, onOpen = { target = it }, modifier = Modifier.animateItem(fadeInSpec = tween(300), fadeOutSpec = tween(200)))
+                items(shown, key = { it.m.id }, contentType = { "list_row" }) { item ->
+                    ListRow(item, lib, onOpen = open, modifier = Modifier.animateItem(fadeInSpec = tween(300), fadeOutSpec = tween(200)))
                 }
             }
         }
 
+        pick?.let { vs ->
+            VersionPicker(vs.first().baseTitle, vs, lib, onDismiss = { pick = null }) { v -> pick = null; movieTarget(v)?.let { target = it } }
+        }
         target?.let { t -> PlayDialog(t, lib, onDismiss = { target = null }, onPlay = { target = null; onPlay(it) }) }
     }
 }
@@ -578,7 +589,7 @@ private fun EmptyFavorites() {
 
 /** The sleek poster tile matching the concept image. */
 @Composable
-private fun Tile(item: LibraryItem, lib: Library, onOpen: (PlayTarget) -> Unit, modifier: Modifier) {
+private fun Tile(item: LibraryItem, lib: Library, versions: List<LibraryItem>, onOpen: (PlayTarget) -> Unit, modifier: Modifier) {
     val scope = rememberCoroutineScope()
     val m = item.m
     val playable = item.playable
@@ -655,14 +666,22 @@ private fun Tile(item: LibraryItem, lib: Library, onOpen: (PlayTarget) -> Unit, 
         run {
             val favSrc = remember { MutableInteractionSource() }
             val favHover by favSrc.collectIsHoveredAsState()
-            val favAlpha by animateFloatAsState(if (m.favorite || hovered) 1f else 0f, tween(200))
+            val isFav = m.favorite || versions.any { it.m.favorite }
+            val favAlpha by animateFloatAsState(if (isFav || hovered) 1f else 0f, tween(200))
             val favScale by animateFloatAsState(if (favHover) 1.12f else 1f, tween(180, easing = Sm.ease))
             Box(
                 Modifier.align(Alignment.TopStart).padding(8.dp).graphicsLayer { alpha = favAlpha; scaleX = favScale; scaleY = favScale }
                     .size(30.dp).clip(CircleShape).background(if (favHover) Color(0x99000000) else Color(0x55000000))
-                    .hoverClick(favSrc, enabled = favAlpha > 0.05f) { scope.launch { lib.setFavorite(m, !m.favorite) } },
+                    .hoverClick(favSrc, enabled = favAlpha > 0.05f) { scope.launch { (versions.ifEmpty { listOf(item) }).forEach { lib.setFavorite(it.m, !isFav) } } },
                 contentAlignment = Alignment.Center
-            ) { HeartIcon(filled = m.favorite, color = if (m.favorite) Color(0xFFFF6B8A) else Color.White, size = 16.dp) }
+            ) { HeartIcon(filled = isFav, color = if (isFav) Color(0xFFFF6B8A) else Color.White, size = 16.dp) }
+        }
+        if (versions.size > 1) {
+            Text(
+                versionsWord(versions.size), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 11.sp,
+                modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000))
+                    .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(10.dp)).padding(horizontal = 8.dp, vertical = 4.dp)
+            )
         }
         // Right click: seasons of a series and delete / cancel (the corner button with dots is gone).
         Box(Modifier.align(Alignment.Center)) {
