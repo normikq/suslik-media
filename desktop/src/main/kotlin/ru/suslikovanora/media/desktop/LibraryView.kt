@@ -500,57 +500,30 @@ private fun FilterControlsBar(
             }
         }
 
-        // Right: View Mode Toggle, Sort Dropdown, Filters Button
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            // View Mode Icons
-            Row(
-                Modifier.clip(RoundedCornerShape(10.dp)).background(Color(0xFF141720)).border(1.dp, Color(0xFF242A38), RoundedCornerShape(10.dp)).padding(2.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val gridSrc = remember { MutableInteractionSource() }
-                Box(
-                    Modifier.size(30.dp).clip(RoundedCornerShape(8.dp))
-                        .background(if (viewMode == ViewMode.Grid) Color(0xFF282E3C) else Color.Transparent)
-                        .hoverClick(gridSrc) { onViewModeSelect(ViewMode.Grid) },
-                    contentAlignment = Alignment.Center
-                ) {
-                    GridIcon(color = if (viewMode == ViewMode.Grid) Color.White else Color(0xFF8E96A8), size = 15.dp)
-                }
-                val listSrc = remember { MutableInteractionSource() }
-                Box(
-                    Modifier.size(30.dp).clip(RoundedCornerShape(8.dp))
-                        .background(if (viewMode == ViewMode.List) Color(0xFF282E3C) else Color.Transparent)
-                        .hoverClick(listSrc) { onViewModeSelect(ViewMode.List) },
-                    contentAlignment = Alignment.Center
-                ) {
-                    ListIcon(color = if (viewMode == ViewMode.List) Color.White else Color(0xFF8E96A8), size = 15.dp)
-                }
-            }
-
-            // Sort Dropdown
-            Box {
-                PillButton(text = tr("library.sortirovka_label", "label" to sortBy.label), onClick = { onSortOpenChange(true) })
-                DropdownMenu(
-                    expanded = sortOpen,
-                    onDismissRequest = { onSortOpenChange(false) },
-                    modifier = Modifier.background(Color(0xFF181C26)).border(1.dp, Color(0xFF2A3040), RoundedCornerShape(8.dp))
-                ) {
-                    for (s in SortBy.entries) {
-                        DropdownMenuItem(
-                            text = { Text(s.label, color = if (s == sortBy) Color.White else Sm.text, fontFamily = Onest, fontSize = 13.5.sp) },
-                            onClick = { onSortSelect(s); onSortOpenChange(false) }
-                        )
-                    }
-                }
-            }
-
-            // Filters Button
+        // Right: one menu for view mode, sorting and the "ready only" filter.
+        Box {
             PillButton(
-                text = tr("library.filtry"),
+                text = tr("library.vid"),
                 icon = { FunnelIcon(size = 14.dp, color = if (onlyReady) Color.White else Color(0xFF8E96A8)) },
-                active = onlyReady,
-                onClick = onToggleOnlyReady
+                active = onlyReady || sortOpen,
+                onClick = { onSortOpenChange(true) }
             )
+            DropdownMenu(
+                expanded = sortOpen,
+                onDismissRequest = { onSortOpenChange(false) },
+                modifier = Modifier.background(Color(0xFF181C26)).border(1.dp, Color(0xFF2A3040), RoundedCornerShape(8.dp))
+            ) {
+                @Composable fun item(label: String, on: Boolean, action: () -> Unit) = DropdownMenuItem(
+                    text = { Text((if (on) "✓  " else "     ") + label, color = if (on) Color.White else Sm.text, fontFamily = Onest, fontSize = 13.5.sp) },
+                    onClick = action
+                )
+                item(tr("library.setka"), viewMode == ViewMode.Grid) { onViewModeSelect(ViewMode.Grid); onSortOpenChange(false) }
+                item(tr("library.spisok"), viewMode == ViewMode.List) { onViewModeSelect(ViewMode.List); onSortOpenChange(false) }
+                Box(Modifier.padding(vertical = 4.dp).fillMaxWidth().height(1.dp).background(Color(0xFF2A3040)))
+                for (s in SortBy.entries) item(s.label, s == sortBy) { onSortSelect(s); onSortOpenChange(false) }
+                Box(Modifier.padding(vertical = 4.dp).fillMaxWidth().height(1.dp).background(Color(0xFF2A3040)))
+                item(tr("library.tolko_gotovye"), onlyReady) { onToggleOnlyReady(); onSortOpenChange(false) }
+            }
         }
     }
 }
