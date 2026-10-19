@@ -76,6 +76,8 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -108,6 +110,7 @@ enum class Category(val label: String) {
     Movies(tr("library.filmy")),
     Series(tr("library.serialy")),
     Anime(tr("library.anime")),
+    Cartoons(tr("library.multfilmy")),
     Other(tr("library.drugoe"))
 }
 
@@ -153,8 +156,14 @@ fun isAnime(item: LibraryItem): Boolean {
         text.contains("[anilibria]") || text.contains("anilibria")
 }
 
+fun isCartoon(item: LibraryItem): Boolean {
+    val text = (item.m.name + " " + item.baseTitle).lowercase()
+    return text.contains("мульт") || text.contains("cartoon") || text.contains("animated") || text.contains("анимац")
+}
+
 fun itemCategory(item: LibraryItem): Category {
     if (isAnime(item)) return Category.Anime
+    if (isCartoon(item)) return Category.Cartoons
     return when (item.playable) {
         is Playable.Series -> Category.Series
         is Playable.Movie -> Category.Movies
@@ -165,6 +174,7 @@ fun itemCategory(item: LibraryItem): Category {
 fun itemTypeLabel(item: LibraryItem): String {
     return when (itemCategory(item)) {
         Category.Anime -> tr("library.anime")
+        Category.Cartoons -> tr("library.multfilm")
         Category.Series -> tr("library.serial")
         Category.Movies -> tr("library.film")
         Category.Other -> tr("library.drugoe")
@@ -432,6 +442,33 @@ fun LibraryView(
     }
 }
 
+/** Spins while the library loads (a full turn at a time, then settles with an ease), tilts and glows on hover, sinks on press. */
+@Composable
+private fun RefreshButton(loading: Boolean, onClick: () -> Unit) {
+    val src = remember { MutableInteractionSource() }
+    val hovered by src.collectIsHoveredAsState()
+    val pressed by src.collectIsPressedAsState()
+    val rot = remember { androidx.compose.animation.core.Animatable(0f) }
+    LaunchedEffect(loading) {
+        if (loading) {
+            while (true) rot.animateTo(rot.value + 360f, tween(900, easing = androidx.compose.animation.core.LinearEasing))
+        } else if (rot.value != 0f) {
+            val end = kotlin.math.ceil(rot.value / 360f) * 360f
+            rot.animateTo(end, tween(520, easing = Sm.ease))
+            rot.snapTo(0f)
+        }
+    }
+    val tilt by animateFloatAsState(if (hovered && !loading) 90f else 0f, tween(380, easing = Sm.ease))
+    val scale = hoverScale(hovered, pressed, 1.06f)
+    val glow by animateFloatAsState(if (loading) 1f else 0f, tween(300))
+    Box(
+        Modifier.graphicsLayer { scaleX = scale; scaleY = scale }.size(42.dp)
+            .drawBehind { if (glow > 0.01f) drawCircle(Brush.radialGradient(listOf(Sm.accent.copy(alpha = 0.45f * glow), Color.Transparent)), size.maxDimension * 0.85f) }
+            .glass(RoundedCornerShape(12.dp), hovered || loading).hoverClick(src, enabled = !loading, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) { RefreshIcon(Modifier.graphicsLayer { rotationZ = rot.value + tilt }, color = if (loading) Color(0xFF60A5FA) else Color.White, size = 16.dp) }
+}
+
 @Composable
 private fun LibraryHeader(
     query: String,
@@ -454,13 +491,7 @@ private fun LibraryHeader(
                 modifier = Modifier.width(280.dp)
             )
             Spacer(Modifier.width(10.dp))
-            val src = remember { MutableInteractionSource() }
-            val hovered by src.collectIsHoveredAsState()
-            val turn by animateFloatAsState(if (lib.loading) 360f else 0f, tween(600, easing = Sm.ease))
-            Box(
-                Modifier.size(42.dp).glass(RoundedCornerShape(12.dp), hovered).hoverClick(src, onClick = onRefresh),
-                contentAlignment = Alignment.Center
-            ) { RefreshIcon(Modifier.graphicsLayer { rotationZ = turn }, color = if (lib.loading) Sm.muted else Color.White, size = 16.dp) }
+            RefreshButton(loading = lib.loading, onClick = onRefresh)
         }
         // A line of its own only when something is wrong.
         if (lib.statusKind == StatusKind.Error) {
@@ -601,6 +632,14 @@ private fun Tile(item: LibraryItem, lib: Library, onOpen: (PlayTarget) -> Unit, 
             .border(1.dp, edge, RoundedCornerShape(14.dp))
             .clickable(enabled = canPlay) { TileBounds.fromContinue = false; target()?.let(onOpen) }
             .then(if (canPlay) Modifier.pointerHoverIcon(PointerIcon.Hand) else Modifier)
+            .pointerInput(m.id) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val e = awaitPointerEvent()
+                        if (e.type == androidx.compose.ui.input.pointer.PointerEventType.Press && e.buttons.isSecondaryPressed) menuOpen = true
+                    }
+                }
+            }
     ) {
         // Poster Image
         val p = poster
@@ -610,7 +649,7 @@ private fun Tile(item: LibraryItem, lib: Library, onOpen: (PlayTarget) -> Unit, 
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF222838), Color(0xFF10131B)))))
         }
 
-        // Top Gradient & Three Dots Menu
+        // Top gradient under the heart
         Box(Modifier.fillMaxWidth().height(60.dp).background(Brush.verticalGradient(listOf(Color(0x99000000), Color.Transparent))))
         // Favourite: a heart in the opposite corner; always visible when set, appears on hover otherwise.
         run {
@@ -625,25 +664,13 @@ private fun Tile(item: LibraryItem, lib: Library, onOpen: (PlayTarget) -> Unit, 
                 contentAlignment = Alignment.Center
             ) { HeartIcon(filled = m.favorite, color = if (m.favorite) Color(0xFFFF6B8A) else Color.White, size = 16.dp) }
         }
-        Box(Modifier.align(Alignment.TopEnd).padding(8.dp)) {
-            val menuSrc = remember { MutableInteractionSource() }
-            val menuHover by menuSrc.collectIsHoveredAsState()
-            Box(
-                Modifier.size(30.dp).clip(CircleShape).background(if (menuHover) Color(0x99000000) else Color(0x55000000))
-                    .hoverClick(menuSrc) { menuOpen = true },
-                contentAlignment = Alignment.Center
-            ) {
-                ThreeDotsIcon(color = Color.White, size = 16.dp)
-            }
+        // Right click: seasons of a series and delete / cancel (the corner button with dots is gone).
+        Box(Modifier.align(Alignment.Center)) {
             DropdownMenu(
                 expanded = menuOpen,
                 onDismissRequest = { menuOpen = false },
                 modifier = Modifier.background(Color(0xFF181C26)).border(1.dp, Color(0xFF2A3040), RoundedCornerShape(8.dp))
             ) {
-                DropdownMenuItem(
-                    text = { Text(if (m.favorite) tr("library.iz_izbrannogo") else tr("library.v_izbrannoe"), color = Sm.text, fontFamily = Onest) },
-                    onClick = { menuOpen = false; scope.launch { lib.setFavorite(m, !m.favorite) } }
-                )
                 if (series != null) {
                     series.seasons.forEachIndexed { sIdx, season ->
                         DropdownMenuItem(
