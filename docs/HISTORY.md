@@ -137,6 +137,12 @@ STA-потоке `smtc` с насосом сообщений (на EDT курс�
 
 **2.4.1 (Android)** (18.10, код 59, бета): номер выровнен с ПК; от 2.3.6 отличается только `BurstProxy` (`PROBE_IDLE_MS`, см. 2.4.1 Windows): пауза в первые 6 МБ после открытия или перемотки останавливает пробу на 4 МБ, после 6 МБ рывки до полного запаса как раньше. Media3 сам закрывает невыбранную озвучку, VLC читает все slave-файлы — экономии на озвучках, как на ПК, тут не ждём. Не проверено на телефоне.
 
+**2.4.9 (Windows)** (19.10, ветка `proxy-2.4.9` от `redesign-glass`): `BurstProxy` по аудиту (общий модуль — попадёт и в Android).
+- `Window.written/readPos/lastReadAt/eof/error` — `@Volatile` (их читают без `lock`: `windowAt`, `keptMb`, `aheadMb`); `aheadMb` — под `w.lock`.
+- `Window.close()`: `raf.close()` и удаление файла под `lock` — чтение/запись, прошедшие проверку `closed`, успевают закончиться.
+- `serveWindow`: размер файла ждёт на `w.lock.wait(200)` вместо `sleep(50)` и выходит, если окно закрыто; `readRange`: отмена по таймеру — в `pool`, как в `checkStall`; `forgetRetired` — `MirrorLink.param`.
+- Не делали: «перезапись кольца при двух читателях» — отстающий читатель получает −1 (`abs < validFrom()` под тем же `lock`), не битые данные; плеер переоткрывает соединение.
+
 **2.4.8 (Windows)** (19.10, ветка `redesign-glass`): исправления по аудиту ПК, только ПК.
 - Кэш постеров (`Library.images`, LinkedHashMap с accessOrder) — только под `synchronized`, `inflight` — `ConcurrentHashMap`/`putIfAbsent`.
 - `Store.of(name)` — один экземпляр на файл: два `Store("ui")` (Sidebar, Motion) затирали ключи друг друга, `player_ui` создавался на каждое открытие плеера и оставался в `Store.all`.
