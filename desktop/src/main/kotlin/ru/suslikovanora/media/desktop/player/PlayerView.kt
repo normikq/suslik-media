@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -22,6 +23,7 @@ import kotlinx.coroutines.flow.first
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.input.key.Key
@@ -176,6 +178,10 @@ fun PlayerView(
     var parked by remember { mutableStateOf(false) }
     var picker by remember { mutableStateOf<String?>(null) }
     var lastFrame by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+    // The film's poster while the player opens: the tile's copy at once (in memory), the sharper one from disk a moment later.
+    val openPoster = remember { library.cachedPoster(req.posterQueries) }
+    var bigPoster by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+    LaunchedEffect(Unit) { bigPoster = library.posterLarge(req.posterQueries) }
     var pickerItems by remember { mutableStateOf(emptyList<Pair<Int, String>>()) }
     var pickerCurrent by remember { mutableStateOf(-2) }
     var pickerLoading by remember { mutableStateOf(false) }
@@ -1541,8 +1547,23 @@ fun PlayerView(
         ) {
             val hasFrame by remember { androidx.compose.runtime.derivedStateOf { (videoOut?.frame?.value ?: 0L) > 0L } }
             if (!parked && videoOut != null) MpvVideoSurface(videoOut, Modifier.fillMaxSize().onSizeChanged { sceneWidthPx = it.width })
+            // Until the first frame of the film: its poster, as large as the window's height. The flight out of the tile
+            // shows just the middle of the frame in the tile's shape, so it starts as exactly the poster that was clicked;
+            // once the video is there the poster fades out over it. Closed before the first frame: the poster flies back.
+            val showPoster = !hasFrame && lastFrame == null
+            val posterAlpha by androidx.compose.animation.core.animateFloatAsState(if (showPoster) 1f else 0f, tween(if (showPoster) 0 else 380, easing = Sm.ease))
+            val poster = bigPoster ?: openPoster
             if (parked || !hasFrame) lastFrame?.let { androidx.compose.foundation.Image(it, null, contentScale = androidx.compose.ui.layout.ContentScale.Fit, modifier = Modifier.fillMaxSize()) }
-                ?: Text(if (closing) "" else tr("player.otkryvaem"), color = Sm.muted, fontFamily = Onest, fontSize = 15.sp, modifier = Modifier.align(Alignment.Center))
+            if (poster != null && posterAlpha > 0f) {
+                androidx.compose.foundation.Image(poster, null, contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                    filterQuality = androidx.compose.ui.graphics.FilterQuality.Medium,
+                    modifier = Modifier.fillMaxSize().graphicsLayer { alpha = posterAlpha })
+            }
+            if ((parked || !hasFrame) && lastFrame == null && !closing) {
+                Text(tr("player.otkryvaem"), color = if (poster != null) Color.White.copy(alpha = 0.85f) else Sm.muted, fontFamily = Onest, fontSize = 15.sp,
+                    style = if (poster != null) androidx.compose.ui.text.TextStyle(shadow = androidx.compose.ui.graphics.Shadow(Color.Black, blurRadius = 12f)) else androidx.compose.ui.text.TextStyle.Default,
+                    modifier = Modifier.align(if (poster != null) Alignment.BottomCenter else Alignment.Center).padding(bottom = if (poster != null) 36.dp else 0.dp))
+            }
         }
         SceneBars(sceneMaxHeight)
     }

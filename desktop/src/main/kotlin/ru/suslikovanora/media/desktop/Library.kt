@@ -346,6 +346,25 @@ class Library {
         bytes?.let { runCatching { downscale(org.jetbrains.skia.Image.makeFromEncoded(it), 320) }.getOrNull() }
     }
 
+    /**
+     * The poster at the size it was downloaded (TMDB 500 px), decoded right away, for the player's first moments (the
+     * tiles keep a 320 px copy, too soft at the window's height). Null when the film has no poster on disk yet.
+     */
+    suspend fun posterLarge(queries: List<String>): ImageBitmap? = withContext(Dispatchers.IO) {
+        val path = queries.firstNotNullOfOrNull { posterIndex.get(it.lowercase())?.substringAfter('|', "")?.ifBlank { null } }
+            ?: return@withContext null
+        val f = posterFile(path).takeIf { it.exists() } ?: return@withContext null
+        runCatching {
+            val src = org.jetbrains.skia.Image.makeFromEncoded(f.readBytes())
+            // drawn into a raster picture here, so the window does not decode the file on its first frame
+            val surface = org.jetbrains.skia.Surface.makeRasterN32Premul(src.width, src.height)
+            surface.canvas.drawImage(src, 0f, 0f)
+            val out = surface.makeImageSnapshot().toComposeImageBitmap()
+            surface.close(); src.close()
+            out
+        }.getOrNull()
+    }
+
     /** A 500 px TMDB poster is 1.5 MB decoded; at tile size (320 px) it is ~0.6 MB. */
     private fun downscale(src: org.jetbrains.skia.Image, maxW: Int): ImageBitmap {
         if (src.width <= maxW) return src.toComposeImageBitmap()
