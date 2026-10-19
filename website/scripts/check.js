@@ -3,7 +3,31 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const root = path.resolve(__dirname, "..");
-const files = ["server.js", "search.js", "search-ru.js", "classify.js", "tmdb-kind.js", "poster-query.js", path.join("public", "redesign.js")];
+function findJsFiles(dir) {
+  let results = [];
+  try {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        results = results.concat(findJsFiles(full));
+      } else if (entry.isFile() && entry.name.endsWith(".js")) {
+        results.push(path.relative(root, full));
+      }
+    }
+  } catch {}
+  return results;
+}
+
+const files = [
+  "server.js",
+  ...findJsFiles(path.join(root, "src")),
+  "search.js",
+  "search-ru.js",
+  "classify.js",
+  "tmdb-kind.js",
+  "poster-query.js",
+  path.join("public", "redesign.js")
+];
 let failed = false;
 
 function checkJavaScript(label, source) {

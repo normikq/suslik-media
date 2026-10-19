@@ -14,7 +14,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: "20" }
       - run: npm ci --omit=dev || npm install --omit=dev
-      - run: for f in server.js search.js search-ru.js classify.js; do node --check "$f"; done
+      - run: for f in server.js search.js search-ru.js classify.js $(find src -name "*.js"); do node --check "$f"; done
       - name: Inline scripts of index.html
         run: |
           node -e 'const s=require("fs").readFileSync("public/index.html","utf8");const m=[...s.matchAll(/<script(?![^>]*src)[^>]*>([\s\S]*?)<\/script>/g)].map(x=>x[1]).join("\n;\n");require("fs").writeFileSync("/tmp/inline.js",m)'
