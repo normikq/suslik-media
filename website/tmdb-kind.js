@@ -1,7 +1,7 @@
 "use strict";
 // Тип раздачи по TMDB: фильм / сериал / мультфильм (жанр Animation, id 16). Ключ берётся из TMDB_API_KEY;
 // без ключа или при сбое TMDB остаётся определение по названию (classify.js).
-const axios = require("axios");
+
 
 const TTL = 7 * 24 * 3600 * 1000;
 const cache = new Map(); // запрос -> { at, kind }
@@ -21,6 +21,7 @@ function cleanTitle(title) {
 }
 
 async function lookup(apiKey, title) {
+  const axios = require("axios"); // лениво: модульные тесты cleanTitle/refineKinds идут без зависимостей
   const { query, year } = cleanTitle(title);
   if (query.length < 2) return null;
   const ck = `${query.toLowerCase()}|${year}`;
@@ -41,20 +42,27 @@ async function lookup(apiKey, title) {
   } catch { return null; }
 }
 
-// Уточняет `kind` у результатов (кроме «other»), правит массив на месте.
-async function refineKinds(results, apiKey = process.env.TMDB_API_KEY) {
+const BUDGET_MS = 2500; // поиск не ждёт TMDB дольше: что не успело, остаётся с типом по названию (ответ попадёт в кэш для следующего раза)
+
+const keyOf = c => `${c.query.toLowerCase()}|${c.year}`;
+
+// Уточняет `kind` у результатов (кроме «other» и «series»: тег сезона/серии в названии надёжнее первого совпадения TMDB), правит массив на месте.
+async function refineKinds(results, apiKey = process.env.TMDB_API_KEY, budgetMs = BUDGET_MS) {
   if (!apiKey) return;
-  const todo = results.filter(r => r.kind !== "other");
+  const todo = results.filter(r => r.kind !== "other" && r.kind !== "series").map(r => ({ r, c: cleanTitle(r.title) })).filter(x => x.c.query);
   const titles = new Map(); // ключ запроса -> название
-  for (const r of todo) { const c = cleanTitle(r.title); const k = `${c.query.toLowerCase()}|${c.year}`; if (c.query && !titles.has(k) && titles.size < MAX_LOOKUPS) titles.set(k, r.title); }
+  for (const { r, c } of todo) if (titles.size < MAX_LOOKUPS) titles.set(keyOf(c), r.title);
   const kinds = new Map();
   const queue = [...titles];
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
+  const workers = Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
     for (let e; (e = queue.shift());) kinds.set(e[0], await lookup(apiKey, e[1]));
-  }));
-  for (const r of todo) {
-    const c = cleanTitle(r.title);
-    const kind = kinds.get(`${c.query.toLowerCase()}|${c.year}`);
+  });
+  let timer;
+  await Promise.race([Promise.all(workers), new Promise(res => { timer = setTimeout(res, budgetMs); })]);
+  clearTimeout(timer);
+  queue.length = 0; // опоздавшие запросы больше не стартуют
+  for (const { r, c } of todo) {
+    const kind = kinds.get(keyOf(c));
     if (!kind) continue;
     if (kind === "series" && r.kind === "movie") continue; // «фильм» в названии надёжнее случайного сериала с тем же именем
     r.kind = kind;

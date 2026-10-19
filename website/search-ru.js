@@ -467,10 +467,11 @@ function make(h) {
       const mg = /href="(magnet:\?xt=urn:btih:[^"]+)"/i.exec(row);
       const magnet = mg ? decodeHtml(mg[1]) : "";
       const cells = [...row.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map(c => c[1]);
-      // ячейка размера: «<u>байты</u> 2.36 GB» — в тексте оба числа, поэтому ищем единицу внутри ячейки, затем байты из <u>
-      const sizeM = cells.map(c => /(\d[\d.,]*)\s*([KMGT]i?B|[КМГТ]Б)(?![A-Za-zА-Яа-я])/i.exec(text(c))).find(Boolean);
+      // ячейка размера: «<u>байты</u> 2.36 GB». Единицу ищем только в ячейке целиком (перед ней допустимы байты),
+      // чтобы не поймать «700MB» из названия; точные байты из <u> надёжнее округлённого текста.
+      const sizeM = cells.map(c => /^(?:\d{5,}\s+)?(\d[\d.,]*)\s*([KMGT]i?B|[КМГТ]Б)$/i.exec(text(c).trim())).find(Boolean);
       const sizeBytes = /<u>\s*(\d{5,})\s*<\/u>/i.exec(row);
-      const size = sizeM ? parseSize(`${sizeM[1]} ${sizeM[2]}`) : (sizeBytes ? Number(sizeBytes[1]) : 0);
+      const size = sizeBytes ? Number(sizeBytes[1]) : (sizeM ? parseSize(`${sizeM[1]} ${sizeM[2]}`) : 0);
       const seed = /class="[^"]*\bseedmed\b[^"]*"[^>]*>([\s\S]*?)<\/td>/i.exec(row);
       const leech = /class="[^"]*\bleechmed\b[^"]*"[^>]*>([\s\S]*?)<\/td>/i.exec(row);
       out.push({
