@@ -6,6 +6,7 @@
 const axios = require("axios");
 const crypto = require("crypto");
 const { classify } = require("./classify");
+const { refineKinds } = require("./tmdb-kind");
 
 const UA = "Mozilla/5.0 (compatible; SuslikMedia/1.0)";
 const PROVIDER_TIMEOUT_MS = Number(process.env.SEARCH_TIMEOUT_MS || 10000);
@@ -274,6 +275,7 @@ async function search(rawQuery) {
     return { id, title: r.title, size: r.size, seeders: r.seeders, leechers: r.leechers, date: r.date,
       provider: r.provider, ru: !!r.ru, kind: classify(r.title, r.cats), sources: r.sources, infoHash: r.infoHash || null, hasMagnet: !!magnet, magnet: magnet || null };
   });
+  await refineKinds(results).catch(() => {}); // тип по TMDB (мультфильмы и т. п.)
   const out = {
     query: q, total: results.length, tookMs: Date.now() - started, results,
     providers: settled.map(s => ({ name: providers[s.name].label, ok: s.ok, count: s.rows.length, ms: s.ms, error: s.error || null }))

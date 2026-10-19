@@ -45,11 +45,12 @@ private const val POSTER_UNUSED_DAYS = 7L
 /** Same behaviour as the Android LibraryStore, with files in %APPDATA%\SuslikMedia instead of SharedPreferences. */
 class Library {
     private val snapshot = AppDir.file("library.json")
-    private val libraryEtag = Store("library_etag") // version of the list above, for "not modified" answers
-    private val posterIndex = Store("posters")
-    private val mediaIndex = Store("media_info")
-    private val episodes = Store("last_episode")
-    val watch = Store("watch")
+    private val libraryEtag = Store.of("library_etag") // version of the list above, for "not modified" answers
+    private val posterIndex = Store.of("posters")
+    private val animIndex = Store.of("poster_anim") // query -> "time|1" (TMDB genre Animation) or "time|0"
+    private val mediaIndex = Store.of("media_info")
+    private val episodes = Store.of("last_episode")
+    val watch = Store.of("watch")
 
     var items by mutableStateOf<List<LibraryItem>>(emptyList())
         private set
@@ -169,8 +170,9 @@ class Library {
         val before = items
         items = items.map { if (it.m.id == m.id) it.copy(m = it.m.copy(favorite = on)) else it }
         return try {
-            Api.post("/api/favorites", JSONObject().put("id", m.id).put("favorite", on)); null
-        } catch (e: Exception) { items = before; Api.describe(e) }
+            // The tile may leave the screen (and its scope end) right after the click: the request still has to go out.
+            withContext(kotlinx.coroutines.NonCancellable) { Api.post("/api/favorites", JSONObject().put("id", m.id).put("favorite", on)) }; null
+        } catch (e: CancellationException) { throw e } catch (e: Exception) { items = before; Api.describe(e) }
     }
 
     suspend fun remove(m: Magnet): String? = try {
@@ -185,9 +187,11 @@ class Library {
     private val images = object : LinkedHashMap<String, ImageBitmap?>(96, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ImageBitmap?>?) = size > 40
     }
-    private val inflight = HashMap<String, CompletableDeferred<ImageBitmap?>>()
+    // An access-ordered map rewires its links even on get(): every touch goes under its lock (tiles read it on the
+    // window's thread, posterFileFor for the media controls from elsewhere).
+    private val inflight = java.util.concurrent.ConcurrentHashMap<String, CompletableDeferred<ImageBitmap?>>()
 
-    fun cachedPoster(queries: List<String>): ImageBitmap? = queries.firstNotNullOfOrNull { images[it.lowercase()] }
+    fun cachedPoster(queries: List<String>): ImageBitmap? = synchronized(images) { queries.firstNotNullOfOrNull { images[it.lowercase()] } }
 
     suspend fun poster(queries: List<String>): ImageBitmap? {
         for (q in queries) posterFor(q)?.let { return it }
@@ -236,11 +240,68 @@ class Library {
         }
     }
 
+    /** The server tells in the poster answer whether TMDB files the film under Animation; an old server just omits the field. */
+    private fun recordAnimation(key: String, j: JSONObject) {
+        if (!j.has("animation")) return
+        val a = j.optBoolean("animation")
+        animIndex.put(key, "${System.currentTimeMillis()}|${if (a) 1 else 0}")
+        Animation.flags[key] = a
+    }
+
+    // The poster file a film resolved to. Two releases of one film under different names ("Новый Человек-паук…" and
+    // "The Amazing Spider-Man 2") get the same TMDB poster: that is how they are recognised as one film.
+    private val posterPaths = androidx.compose.runtime.mutableStateMapOf<String, String>()
+    var posterVersion by mutableStateOf(0)
+        private set
+
+    fun posterPathOf(item: LibraryItem): String? = item.posterQueries.firstNotNullOfOrNull { posterPaths[it.lowercase()] }
+
+    private fun notePoster(key: String, path: String) {
+        if (posterPaths[key] != path) { posterPaths[key] = path; posterVersion++ }
+    }
+
+    /**
+     * Fills what needs the server's idea of every film, not only of the tiles on screen: [Animation] (TMDB genre) and the
+     * poster path used to merge versions. First from the saved answers, then asks about the films it has not seen
+     * (slowly, a limited number per run). Films whose release name already says "мульт" / Pixar / anime need no genre.
+     */
+    suspend fun classifyAnimation() {
+        var serverSendsGenre = true
+        val todo = ArrayList<String>()
+        for (item in items) {
+            val needGenre = !(isCartoon(item) || isAnime(item))
+            var genreKnown = !needGenre
+            var posterKnown = false
+            for (q in item.posterQueries) {
+                val key = q.lowercase()
+                animIndex.get(key)?.let { v ->
+                    val at = v.substringBefore('|').toLongOrNull() ?: 0L
+                    if (System.currentTimeMillis() - at < 60L * 86_400_000L) { Animation.flags[key] = v.substringAfter('|') == "1"; genreKnown = true }
+                }
+                posterIndex.get(key)?.substringAfter('|', "")?.takeIf { it.startsWith("/api/poster/img/") }?.let { notePoster(key, it); posterKnown = true }
+            }
+            if (!genreKnown || !posterKnown) item.posterQueries.firstOrNull()?.let { todo += it }
+        }
+        Animation.version++
+        var asked = 0
+        for (q in todo.distinct().take(80)) {
+            try {
+                val j = posterGate.withPermit { Api.get("/api/poster?q=" + URLEncoder.encode(q, "UTF-8")) }
+                val key = q.lowercase()
+                j.optString("poster").takeIf { it.startsWith("/api/poster/img/") }?.let { notePoster(key, it) }
+                if (j.has("animation")) recordAnimation(key, j) else serverSendsGenre = false
+            } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+            if (++asked % 5 == 0) Animation.version++
+            kotlinx.coroutines.delay(120)
+        }
+        Animation.version++
+    }
+
     private suspend fun posterFor(query: String): ImageBitmap? {
         val key = query.lowercase()
-        if (images.containsKey(key)) return images[key]
-        inflight[key]?.let { return it.await() }
-        val own = CompletableDeferred<ImageBitmap?>(); inflight[key] = own
+        synchronized(images) { if (images.containsKey(key)) return images[key] }
+        val own = CompletableDeferred<ImageBitmap?>()
+        inflight.putIfAbsent(key, own)?.let { return it.await() }
         var img: ImageBitmap? = null
         try {
             img = posterGate.withPermit {
@@ -251,12 +312,14 @@ class Library {
                 val fresh = stored != null && System.currentTimeMillis() - at < (if (known.isNullOrBlank()) 3L else 30L) * 86_400_000L
                 if (fresh) path = known?.ifBlank { null }
                 else {
-                    path = Api.get("/api/poster?q=" + URLEncoder.encode(query, "UTF-8")).optString("poster").takeIf { it.startsWith("/api/poster/img/") }
+                    val j = Api.get("/api/poster?q=" + URLEncoder.encode(query, "UTF-8"))
+                    path = j.optString("poster").takeIf { it.startsWith("/api/poster/img/") }
+                    recordAnimation(key, j)
                     posterIndex.put(key, "${System.currentTimeMillis()}|${path.orEmpty()}")
                 }
-                path?.let { loadImage(it) }
+                path?.let { notePoster(key, it); loadImage(it) }
             }
-            images[key] = img
+            synchronized(images) { images[key] = img }
         } catch (e: CancellationException) { throw e } catch (_: Exception) {
         } finally { inflight.remove(key); own.complete(img) }
         return img
@@ -326,7 +389,7 @@ class Library {
     }
 
     // «Продолжить просмотр»: hidden entries. A hidden item comes back by itself once it is watched again (newer time).
-    private val continueHidden = Store("continue_hidden")
+    private val continueHidden = Store.of("continue_hidden")
     fun continueHiddenAt(id: Long): Long = continueHidden.get(id.toString())?.toLongOrNull() ?: 0L
     fun hideContinue(ids: List<Long>) {
         val now = System.currentTimeMillis().toString()

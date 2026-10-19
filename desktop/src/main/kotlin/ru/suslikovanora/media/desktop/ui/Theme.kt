@@ -3,8 +3,18 @@ package ru.suslikovanora.media.desktop.ui
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.platform.Font
@@ -24,6 +34,68 @@ object Sm {
     val bad = Color(0xFFFF9B8F)
     val scrim = Color(0xCC090B10)
     val ease = CubicBezierEasing(0.22f, 0.8f, 0.24f, 1f)
+    /** Poster ↔ full-screen flight: soft start and soft landing (no jerk at either end). */
+    val fly = CubicBezierEasing(0.45f, 0.05f, 0.2f, 1f)
+
+    // «Матовое стекло»: полупрозрачные слои поверх мягкого свечения фона (redesign).
+    val backdrop = Color(0xFF060911)
+    val accent = Color(0xFF2563EB)
+    val accentEdge = Color(0x4D60A5FA)
+    val glassSide = Color(0x94080C16)
+    val glassFill = Color(0x4D2A3A5C)
+    val glassFillHover = Color(0xAD1C2844)
+    val glassEdge = Color(0x17FFFFFF)
+    val glassEdgeHover = Color(0x6660A5FA)
+    val sheet = Color(0xF00B1020)
+    val sheetEdge = Color(0x2EFFFFFF)
+    val accentSoft = Color(0x402563EB)
+}
+
+/** Glass surface: translucent fill, hairline light edge. Compose has no backdrop blur, so the glow behind does the work. */
+fun Modifier.glass(shape: Shape, hovered: Boolean = false): Modifier =
+    // The simple mode paints opaque panels: no blending of translucent layers on every frame.
+    this.clip(shape)
+        .background(if (Motion.simple) (if (hovered) Color(0xFF1B2640) else Color(0xFF141B2C)) else if (hovered) Sm.glassFillHover else Sm.glassFill)
+        .border(1.dp, if (hovered) Sm.glassEdgeHover else Sm.glassEdge, shape)
+
+/** Dialog card: nearly opaque dark glass with a light hairline edge. */
+fun Modifier.glassSheet(shape: Shape): Modifier = this.clip(shape).background(Sm.sheet).border(1.dp, Sm.sheetEdge, shape)
+
+/** Right-hand hairline of a side panel. */
+fun Modifier.drawEdge(): Modifier = this.drawBehind {
+    drawLine(Color(0x14FFFFFF), Offset(size.width - 0.5f, 0f), Offset(size.width - 0.5f, size.height), 1f)
+}
+
+/** The glows for the current size; the brushes are made once per size, not on every frame. */
+private fun androidx.compose.ui.draw.CacheDrawScope.glows(): androidx.compose.ui.graphics.drawscope.DrawScope.() -> Unit {
+    fun glow(c: Color, cx: Float, cy: Float, r: Float): androidx.compose.ui.graphics.drawscope.DrawScope.() -> Unit {
+        val at = Offset(cx, cy)
+        val brush = Brush.radialGradient(listOf(c, Color.Transparent), at, r)
+        return { drawCircle(brush, r, at) }
+    }
+    val spots = listOf(
+        glow(Color(0x302563EB), size.width * 0.25f, size.height * 0.22f, size.minDimension * 0.8f),
+        glow(Color(0x2E8B5CF6), size.width * 0.95f, size.height * 0.95f, size.minDimension * 0.75f),
+        glow(Color(0x2406B6D4), size.width * 0.55f, size.height * 0.45f, size.minDimension * 0.6f),
+    )
+    // fades into the title bar's colour at the very top, so the system bar and the window read as one
+    val topH = 150.dp.toPx()
+    val top = Brush.verticalGradient(listOf(Sm.backdrop, Color.Transparent), 0f, topH)
+    val topSize = androidx.compose.ui.geometry.Size(size.width, topH)
+    return { spots.forEach { it() }; drawRect(top, size = topSize) }
+}
+
+/**
+ * Soft blue / violet / cyan glows behind everything, as in the concept. In the simple mode they are painted once per
+ * window size into a picture and the picture is just drawn from then on.
+ */
+fun Modifier.ambientBackdrop(): Modifier = this.background(Sm.backdrop).drawWithCache {
+    val paint = glows()
+    if (Motion.simple && size.width >= 1f && size.height >= 1f) {
+        val bmp = androidx.compose.ui.graphics.ImageBitmap(size.width.toInt(), size.height.toInt())
+        androidx.compose.ui.graphics.drawscope.CanvasDrawScope().draw(this, layoutDirection, androidx.compose.ui.graphics.Canvas(bmp), size) { paint() }
+        onDrawBehind { drawImage(bmp) }
+    } else onDrawBehind { paint() }
 }
 
 val Unbounded = FontFamily(
@@ -45,3 +117,20 @@ fun SuslikTheme(content: @Composable () -> Unit) = MaterialTheme(
     ),
     content = content
 )
+
+/**
+ * A slow 0 → 1 → 0 pulse for decorations. Unlike an infinite transition it stands still while the window is not in
+ * focus (or [active] is false): nothing is redrawn 60 times a second for a window nobody is looking at.
+ */
+@Composable
+fun breathing(periodMs: Int, active: Boolean = true): androidx.compose.runtime.State<Float> {
+    val a = androidx.compose.runtime.remember { androidx.compose.animation.core.Animatable(0f) }
+    val focused = androidx.compose.ui.platform.LocalWindowInfo.current.isWindowFocused
+    androidx.compose.runtime.LaunchedEffect(active, focused) {
+        if (active && focused) while (true) {
+            a.animateTo(1f, androidx.compose.animation.core.tween(periodMs, easing = androidx.compose.animation.core.FastOutSlowInEasing))
+            a.animateTo(0f, androidx.compose.animation.core.tween(periodMs, easing = androidx.compose.animation.core.FastOutSlowInEasing))
+        }
+    }
+    return a.asState()
+}

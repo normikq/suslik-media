@@ -69,6 +69,7 @@ fun main() {
     System.setProperty("jna.encoding", "UTF-8")
     // Already open: that window comes to the front, this start ends here (no second window).
     if (!SingleInstance.acquire()) return
+    Storage.clearOnUpdate() // new version: local caches go, watch history stays
     CrashReports.start() // last run crashed? → report; from now on uncaught errors report themselves
     Diag.start() // debug build only: the detailed journal
     app()
@@ -90,6 +91,7 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
     val appScope = rememberCoroutineScope()
     // Kept here so the library comes back scrolled to where it was after watching something.
     val grid = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+    val favGrid = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
 
     // libmpv ставит установщик; если её нет (сервер был недоступен), докачивается в фоне.
     val mpvWarm = remember { CompletableDeferred<Boolean>() }
@@ -108,14 +110,14 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
     val windowScope = remember { arrayOfNulls<kotlinx.coroutines.CoroutineScope>(1) }
     val closing = remember { booleanArrayOf(false) }
     LaunchedEffect(playing) {
-        if (playing != null) { leaving = false; presence.animateTo(1f, tween(440, easing = Sm.ease)) }
+        if (playing != null) { leaving = false; presence.animateTo(1f, tween(560, easing = Sm.fly)) }
     }
     fun closePlayer() {
         if (leaving) return
         appScope.launch {
             leaving = true
             // (The player already told the library about the new progress, before this animation started.)
-            presence.animateTo(0f, tween(620, easing = Sm.ease))
+            presence.animateTo(0f, tween(600, easing = Sm.fly))
             // Suslik Debug: Compose сейчас уберёт слой с видео — здесь зависала Skia (цикл glGetError)
             if (Diag.on) { PlayerLog.write("[ui] player close: removing the player"); MpvVideoOut.probeGl("player close: before removal") }
             playing = null; leaving = false; onTop.value = false
@@ -141,6 +143,8 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
         kotlinx.coroutines.delay(4000)
         withContext(Dispatchers.IO) { runCatching { lib.prunePosterFiles() } }
     }
+    // Which films TMDB calls animation (for the «Мультфильмы» category): in the background, whenever the list changes.
+    LaunchedEffect(lib.items.size, lib.authenticated) { if (lib.authenticated == true && lib.items.isNotEmpty()) lib.classifyAnimation() }
     // Signed in (at start or after the login screen): load the library in the app-wide scope.
     LaunchedEffect(lib.authenticated) { if (lib.authenticated == true) lib.refresh() }
 
@@ -190,8 +194,8 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
         // Dark title bar in the app's colours, and a dark window behind Compose (no white flash while animating/resizing).
         LaunchedEffect(Unit) {
             WindowMode.currentWindow = window
-            window.background = java.awt.Color(0x09, 0x0B, 0x10)
-            window.contentPane.background = java.awt.Color(0x09, 0x0B, 0x10)
+            window.background = java.awt.Color(0x06, 0x09, 0x11)
+            window.contentPane.background = java.awt.Color(0x06, 0x09, 0x11)
             TitleBar.style(window)
             // Window / taskbar / Alt+Tab icon: ready-made sizes, so Windows picks a crisp one instead of shrinking 1024 px.
             runCatching {
@@ -222,7 +226,6 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
             window.addComponentListener(l)
             onDispose { window.removeComponentListener(l) }
         }
-        val lens by androidx.compose.animation.core.animateFloatAsState(tab.ordinal.toFloat(), tween(420, easing = Sm.ease))
         focus[0] = androidx.compose.ui.platform.LocalFocusManager.current
         SuslikTheme {
           Box(Modifier.fillMaxSize().background(Sm.night).onSizeChanged { ResizeLog.surface("compose", it.width, it.height) }) {
@@ -230,34 +233,41 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
             // [presence] drives both layers: 0 = library, 1 = player.
             Box(Modifier.fillMaxSize().graphicsLayer {
                 val p = presence.value
-                val s = 0.93f + 0.07f * (1f - p)          // recedes while the player is up, comes forward on return
-                scaleX = s; scaleY = s; alpha = (1f - p * 1.15f).coerceIn(0f, 1f)
+                if (Motion.simple) {
+                    alpha = if (p >= 1f) 0f else 1f       // no scaling / fading of the whole library: it just stays until the player covers it
+                } else {
+                    val s = 0.93f + 0.07f * (1f - p)      // recedes while the player is up, comes forward on return
+                    scaleX = s; scaleY = s; alpha = (1f - p * 1.15f).coerceIn(0f, 1f)
+                }
             }) {
                 androidx.compose.animation.Crossfade(lib.authenticated == false, animationSpec = tween(420, easing = Sm.ease), modifier = Modifier.fillMaxSize().background(Sm.night)) { needLogin ->
                   if (needLogin) {
                     LoginView(lib)
                   } else {
-                    val tabs: @Composable () -> Unit = {
-                        NavTabs(tab, lens) { tab = it; if (it == Tab.Library) appScope.launch { lib.refresh() } }
-                    }
-                  androidx.compose.foundation.layout.Column(Modifier.fillMaxSize().background(Sm.night)) {
-                    // Fixed header: stays put while the pages below change.
-                    Box(Modifier.fillMaxWidth().padding(start = 28.dp, end = 28.dp, top = 24.dp, bottom = 4.dp)) {
-                        Brand({ appScope.launch { lib.logout() } }, tabs)
-                    }
+                  androidx.compose.foundation.layout.Row(Modifier.fillMaxSize().ambientBackdrop()) {
+                    // Fixed side panel: stays put while the pages change.
+                    Sidebar(
+                        tab, Profile.Shared,
+                        onSelect = { tab = it; if (it == Tab.Library || it == Tab.Favorites) appScope.launch { lib.refresh() } },
+                        onSettings = { PlaybackSettings.open = true },
+                        onLogout = { appScope.launch { lib.logout() } }
+                    )
                     // Pages glide sideways in the direction of the tab, old one fading out first (no flash, no jump).
                     AnimatedContent(
                         targetState = tab,
                         transitionSpec = {
+                          if (Motion.simple) androidx.compose.animation.EnterTransition.None togetherWith androidx.compose.animation.ExitTransition.None else {
                             val dir = if (targetState.ordinal > initialState.ordinal) 1 else -1
                             (fadeIn(tween(320, delayMillis = 70, easing = Sm.ease)) +
                                 slideInHorizontally(tween(460, easing = Sm.ease)) { dir * it / 14 }) togetherWith
                                 (fadeOut(tween(180)) + slideOutHorizontally(tween(460, easing = Sm.ease)) { -dir * it / 14 })
+                          }
                         },
-                        modifier = Modifier.fillMaxSize().background(Sm.night)
+                        modifier = Modifier.weight(1f).fillMaxSize()
                     ) { t ->
                         when (t) {
-                            Tab.Library -> LibraryView(lib, tabs, grid) { r -> requestPlay(r) }
+                            Tab.Library -> LibraryView(lib, grid) { r -> requestPlay(r) }
+                            Tab.Favorites -> LibraryView(lib, favGrid, favoritesOnly = true) { r -> requestPlay(r) }
                             Tab.Search -> SearchView(lib) {}
                             Tab.Add -> AddView(lib) {}
                         }
@@ -269,6 +279,8 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
             playing?.let { req ->
                 val filmId = remember(req) { req.watchKeys.firstOrNull()?.substringBefore('|')?.toLongOrNull() }
                 val lastHome = remember(req) { arrayOfNulls<androidx.compose.ui.geometry.Rect>(1) } // plain holder, not state
+                // Where the poster was at the moment of the click (the library has not started to recede yet): the player flies out of it.
+                val openFrom = remember(req) { TileBounds.target(filmId) }
                 Box(Modifier.fillMaxSize()
                     .graphicsLayer {
                         val p = presence.value
@@ -278,6 +290,9 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
                         if (home != null) {
                             // Exit: the frame flies back into its own poster in the library.
                             flyInto(home, 1f - p)
+                        } else if (!leaving && openFrom != null) {
+                            // Entrance: the frame grows out of the poster to the full window (the exit played backwards).
+                            flyInto(openFrom, 1f - p)
                         } else if (leaving) {
                             // Exit when the poster is not on screen: the picture shrinks into a rounded card and fades.
                             val s = 0.86f + 0.14f * p
@@ -299,6 +314,8 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
                     }
                 }
             }
+            // A poster flying into the sidebar tab it was just moved to (favourites).
+            FavoriteFlight()
             // New version on the server: card over the library (never over a playing film).
             UpdateCheck(authenticated = lib.authenticated == true, show = playing == null)
             // Once after an update: what changed, in plain words.

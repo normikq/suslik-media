@@ -1,5 +1,9 @@
 package ru.suslikovanora.media.desktop
 
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -10,6 +14,7 @@ import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 
@@ -32,6 +37,9 @@ object TileBounds {
         return Rect(a, b).takeIf { it.width > 1f && it.height > 1f }
     }
 
+    /** The poster tile of film [id] in the window (px), wherever it is (even partly off screen). */
+    fun posterRect(id: Long): Rect? = rectOf(poster[id])
+
     /** The visible place of film [id] in the window (px), or null (another tab, scrolled away, not in the list). */
     fun target(id: Long?): Rect? {
         if (id == null) return null
@@ -43,6 +51,17 @@ object TileBounds {
         val a = visible(cont[id]); val b = visible(poster[id])
         return if (fromContinue) a ?: b else b ?: a
     }
+}
+
+/**
+ * Keeps this element's place in [map] under film [id] while it is on screen. A tile scrolled away or gone takes its
+ * entry with it (the coordinates hold the whole layout node); a newer tile of the same film keeps its own.
+ */
+@Composable
+fun Modifier.trackBounds(map: HashMap<Long, LayoutCoordinates>, id: Long): Modifier {
+    val mine = remember(map, id) { arrayOfNulls<LayoutCoordinates>(1) }
+    DisposableEffect(map, id) { onDispose { mine[0]?.let { map.remove(id, it) }; mine[0] = null } }
+    return onGloballyPositioned { mine[0] = it; map[id] = it }
 }
 
 /** A rounded window [x, y, w, h] into the layer (in the layer's own, unscaled coordinates). */

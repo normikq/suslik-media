@@ -74,8 +74,8 @@ fun LampButton(text: String, enabled: Boolean = true, modifier: Modifier = Modif
     val hovered by src.collectIsHoveredAsState()
     val on = hovered && enabled
     val scale = hoverScale(on, pressed && enabled)
-    val bg by animateColorAsState(if (on) Color(0xFF353D4F) else Color(0xFF282E3C), tween(200))
-    val edge by animateColorAsState(if (on) Color(0xFF525D77) else Color(0xFF3E475C), tween(240))
+    val bg by animateColorAsState(if (on) Color(0xFF3B74F0) else Sm.accent, tween(200))
+    val edge by animateColorAsState(if (on) Color(0xFF8DB6FF) else Sm.accentEdge, tween(240))
     Box(
         modifier.graphicsLayer { scaleX = scale; scaleY = scale; alpha = if (enabled) 1f else 0.55f }
             .clip(RoundedCornerShape(12.dp)).background(bg).border(1.dp, edge, RoundedCornerShape(12.dp))

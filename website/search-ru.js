@@ -467,11 +467,15 @@ function make(h) {
       const mg = /href="(magnet:\?xt=urn:btih:[^"]+)"/i.exec(row);
       const magnet = mg ? decodeHtml(mg[1]) : "";
       const cells = [...row.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map(c => c[1]);
-      const sizeCell = cells.map(text).find(c => /^\d[\d.,]*\s*(?:[KMGT]B|[КМГТ]Б)$/i.test(c)) || "";
+      // ячейка размера: «<u>байты</u> 2.36 GB». Единицу ищем только в ячейке целиком (перед ней допустимы байты),
+      // чтобы не поймать «700MB» из названия; точные байты из <u> надёжнее округлённого текста.
+      const sizeM = cells.map(c => /^(?:\d{5,}\s+)?(\d[\d.,]*)\s*([KMGT]i?B|[КМГТ]Б)$/i.exec(text(c).trim())).find(Boolean);
+      const sizeBytes = /<u>\s*(\d{5,})\s*<\/u>/i.exec(row);
+      const size = sizeBytes ? Number(sizeBytes[1]) : (sizeM ? parseSize(`${sizeM[1]} ${sizeM[2]}`) : 0);
       const seed = /class="[^"]*\bseedmed\b[^"]*"[^>]*>([\s\S]*?)<\/td>/i.exec(row);
       const leech = /class="[^"]*\bleechmed\b[^"]*"[^>]*>([\s\S]*?)<\/td>/i.exec(row);
       out.push({
-        title: text(a[2]), size: parseSize(sizeCell), seeders: int(text(seed ? seed[1] : "")), leechers: int(text(leech ? leech[1] : "")),
+        title: text(a[2]), size, seeders: int(text(seed ? seed[1] : "")), leechers: int(text(leech ? leech[1] : "")),
         date: ruDate(text(cells[cells.length - 1] || "")),
         infoHash: magnet ? normHash((/btih:([0-9a-f]{40})/i.exec(magnet) || [])[1]) : "", magnet, lazy: { topic: a[1] }
       });

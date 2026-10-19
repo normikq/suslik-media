@@ -76,6 +76,8 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -108,6 +110,7 @@ enum class Category(val label: String) {
     Movies(tr("library.filmy")),
     Series(tr("library.serialy")),
     Anime(tr("library.anime")),
+    Cartoons(tr("library.multfilmy")),
     Other(tr("library.drugoe"))
 }
 
@@ -153,8 +156,14 @@ fun isAnime(item: LibraryItem): Boolean {
         text.contains("[anilibria]") || text.contains("anilibria")
 }
 
+// The same rule the site uses to tell cartoons from films (website/classify.js).
+private val CARTOON = Regex("""мульт(?!сериал)|анимаци|\bcartoons?\b|\banimation\b|\bPixar\b|\bDreamWorks\b|\bDisney\b""", RegexOption.IGNORE_CASE)
+
+fun isCartoon(item: LibraryItem): Boolean = CARTOON.containsMatchIn(item.m.name) || CARTOON.containsMatchIn(item.baseTitle) || Animation.of(item)
+
 fun itemCategory(item: LibraryItem): Category {
     if (isAnime(item)) return Category.Anime
+    if (isCartoon(item)) return Category.Cartoons
     return when (item.playable) {
         is Playable.Series -> Category.Series
         is Playable.Movie -> Category.Movies
@@ -165,6 +174,7 @@ fun itemCategory(item: LibraryItem): Category {
 fun itemTypeLabel(item: LibraryItem): String {
     return when (itemCategory(item)) {
         Category.Anime -> tr("library.anime")
+        Category.Cartoons -> tr("library.multfilm")
         Category.Series -> tr("library.serial")
         Category.Movies -> tr("library.film")
         Category.Other -> tr("library.drugoe")
@@ -295,13 +305,15 @@ fun LoginView(lib: Library) {
 
 @Composable
 fun LibraryView(
-    lib: Library, tabs: @Composable () -> Unit,
+    lib: Library,
     grid: androidx.compose.foundation.lazy.grid.LazyGridState = rememberLazyGridState(),
+    favoritesOnly: Boolean = false,
     onPlay: (PlayRequest) -> Unit
 ) {
     val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
     var target by remember { mutableStateOf<PlayTarget?>(null) }
+    var pick by remember { mutableStateOf<List<LibraryItem>?>(null) } // versions of one film to choose from
     var category by remember { mutableStateOf(Category.All) }
     var viewMode by remember { mutableStateOf(ViewMode.Grid) }
     var sortBy by remember { mutableStateOf(SortBy.Name) }
@@ -309,9 +321,10 @@ fun LibraryView(
     var sortOpen by remember { mutableStateOf(false) }
 
     val all = lib.items
-    val filtered = remember(all, query, category, sortBy, onlyReady) {
+    val source = if (favoritesOnly) all.filter { it.m.favorite } else all
+    val filtered = remember(source, query, category, sortBy, onlyReady, Animation.version) {
         val q = query.trim().lowercase()
-        var list = if (q.isEmpty()) all else all.filter { it.searchText.contains(q) }
+        var list = if (q.isEmpty()) source else source.filter { it.searchText.contains(q) }
 
         if (onlyReady) {
             list = list.filter { it.m.ready }
@@ -329,13 +342,20 @@ fun LibraryView(
         }
     }
 
-    Box(Modifier.fillMaxSize().background(Sm.night)) {
+    // One tile for the same film added several times; a tile with versions asks which one to play.
+    val (shown, versionsOf) = remember(filtered, lib.posterVersion) { groupVersions(filtered) { lib.posterPathOf(it) } }
+    val open: (PlayTarget) -> Unit = { t ->
+        val vs = t.item?.let { versionsOf[it.m.id] }
+        if (vs != null) pick = vs else target = t
+    }
+
+    Box(Modifier.fillMaxSize()) {
         if (viewMode == ViewMode.Grid) {
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(180.dp), state = grid,
                 modifier = Modifier.onGloballyPositioned { TileBounds.viewport = it },
-                contentPadding = PaddingValues(start = 32.dp, end = 32.dp, top = 20.dp, bottom = 36.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                contentPadding = PaddingValues(start = 36.dp, end = 36.dp, top = 28.dp, bottom = 40.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp)
             ) {
                 // 1. Header (Title, Subtitle, Refresh button, Search bar, Count)
@@ -343,14 +363,15 @@ fun LibraryView(
                     LibraryHeader(
                         query = query,
                         onQueryChange = { query = it },
-                        totalCount = filtered.size,
+                        totalCount = shown.size,
+                        title = if (favoritesOnly) tr("library.izbrannoe") else tr("library.moya_biblioteka_alldebrid"),
                         lib = lib,
                         onRefresh = { scope.launch { lib.refresh() } }
                     )
                 }
 
                 // 2. Continue watching section
-                if (query.isBlank()) {
+                if (query.isBlank() && !favoritesOnly) {
                     item(span = { GridItemSpan(maxLineSpan) }, key = "continue", contentType = "continue") {
                         ContinueRow(all, lib) { t -> target = t }
                     }
@@ -372,29 +393,33 @@ fun LibraryView(
                     )
                 }
 
+                if (favoritesOnly && filtered.isEmpty()) {
+                    item(span = { GridItemSpan(maxLineSpan) }, key = "empty") { EmptyFavorites() }
+                }
                 // 4. Catalog grid of poster cards
-                items(filtered, key = { it.m.id }, contentType = { "tile" }) { item ->
-                    Tile(item, lib, onOpen = { target = it }, modifier = Modifier.animateItem(fadeInSpec = tween(300), fadeOutSpec = tween(200)))
+                items(shown, key = { it.m.id }, contentType = { "tile" }) { item ->
+                    Tile(item, lib, versions = versionsOf[item.m.id].orEmpty(), inFavorites = favoritesOnly, onOpen = open, modifier = if (Motion.simple) Modifier else Modifier.animateItem(fadeInSpec = tween(300), fadeOutSpec = tween(320, easing = Sm.ease)))
                 }
             }
         } else {
             // List View Mode
             LazyColumn(
                 modifier = Modifier.onGloballyPositioned { TileBounds.viewport = it },
-                contentPadding = PaddingValues(start = 32.dp, end = 32.dp, top = 20.dp, bottom = 36.dp),
+                contentPadding = PaddingValues(start = 36.dp, end = 36.dp, top = 28.dp, bottom = 40.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 item(key = "header") {
                     LibraryHeader(
                         query = query,
                         onQueryChange = { query = it },
-                        totalCount = filtered.size,
+                        totalCount = shown.size,
+                        title = if (favoritesOnly) tr("library.izbrannoe") else tr("library.moya_biblioteka_alldebrid"),
                         lib = lib,
                         onRefresh = { scope.launch { lib.refresh() } }
                     )
                 }
 
-                if (query.isBlank()) {
+                if (query.isBlank() && !favoritesOnly) {
                     item(key = "continue", contentType = "continue") {
                         ContinueRow(all, lib) { t -> target = t }
                     }
@@ -415,14 +440,44 @@ fun LibraryView(
                     )
                 }
 
-                items(filtered, key = { it.m.id }, contentType = { "list_row" }) { item ->
-                    ListRow(item, lib, onOpen = { target = it }, modifier = Modifier.animateItem(fadeInSpec = tween(300), fadeOutSpec = tween(200)))
+                items(shown, key = { it.m.id }, contentType = { "list_row" }) { item ->
+                    ListRow(item, lib, onOpen = open, modifier = if (Motion.simple) Modifier else Modifier.animateItem(fadeInSpec = tween(300), fadeOutSpec = tween(200)))
                 }
             }
         }
 
+        pick?.let { vs ->
+            VersionPicker(vs.first().baseTitle, vs, lib, onDismiss = { pick = null }) { v -> pick = null; movieTarget(v)?.let { target = it } }
+        }
         target?.let { t -> PlayDialog(t, lib, onDismiss = { target = null }, onPlay = { target = null; onPlay(it) }) }
     }
+}
+
+/** Spins while the library loads (a full turn at a time, then settles with an ease), tilts and glows on hover, sinks on press. */
+@Composable
+private fun RefreshButton(loading: Boolean, onClick: () -> Unit) {
+    val src = remember { MutableInteractionSource() }
+    val hovered by src.collectIsHoveredAsState()
+    val pressed by src.collectIsPressedAsState()
+    val rot = remember { androidx.compose.animation.core.Animatable(0f) }
+    LaunchedEffect(loading) {
+        if (loading) {
+            while (true) rot.animateTo(rot.value + 360f, tween(900, easing = androidx.compose.animation.core.LinearEasing))
+        } else if (rot.value != 0f) {
+            val end = kotlin.math.ceil(rot.value / 360f) * 360f
+            rot.animateTo(end, tween(520, easing = Sm.ease))
+            rot.snapTo(0f)
+        }
+    }
+    val tilt by animateFloatAsState(if (hovered && !loading) 90f else 0f, tween(380, easing = Sm.ease))
+    val scale = hoverScale(hovered, pressed, 1.06f)
+    val glow by animateFloatAsState(if (loading) 1f else 0f, tween(300))
+    Box(
+        Modifier.graphicsLayer { scaleX = scale; scaleY = scale }.size(42.dp)
+            .drawBehind { if (glow > 0.01f) drawCircle(Brush.radialGradient(listOf(Sm.accent.copy(alpha = 0.45f * glow), Color.Transparent)), size.maxDimension * 0.85f) }
+            .glass(RoundedCornerShape(12.dp), hovered || loading).hoverClick(src, enabled = !loading, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) { RefreshIcon(Modifier.graphicsLayer { rotationZ = rot.value + tilt }, color = if (loading) Color(0xFF60A5FA) else Color.White, size = 16.dp) }
 }
 
 @Composable
@@ -430,50 +485,29 @@ private fun LibraryHeader(
     query: String,
     onQueryChange: (String) -> Unit,
     totalCount: Int,
+    title: String,
     lib: Library,
     onRefresh: () -> Unit
 ) {
-    Column(Modifier.fillMaxWidth().padding(bottom = 14.dp)) {
+    Column(Modifier.fillMaxWidth().padding(bottom = 18.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    tr("library.moya_biblioteka_alldebrid"),
-                    fontFamily = Unbounded,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 24.sp,
-                    color = Color.White
-                )
-                Text(
-                    tr("library.torrenty_papki_i_fayly"),
-                    color = Color(0xFF8E96A8),
-                    fontFamily = Onest,
-                    fontSize = 13.5.sp,
-                    modifier = Modifier.padding(top = 4.dp)
-                )
-            }
-            PillButton(
-                text = if (lib.loading) tr("library.zagruzka") else tr("library.obnovit"),
-                icon = { RefreshIcon(size = 14.dp) },
-                onClick = onRefresh
+            Text(title, fontFamily = Unbounded, fontWeight = FontWeight.SemiBold, fontSize = 24.sp, color = Color.White)
+            Text(totalCount.toString(), color = Sm.muted, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp, modifier = Modifier.padding(start = 12.dp, top = 6.dp))
+            Spacer(Modifier.weight(1f))
+            Field(
+                value = query,
+                onValue = onQueryChange,
+                placeholder = tr("library.poisk_po_nazvaniyu"),
+                leadingIcon = { SearchIcon(size = 16.dp, color = Color(0xFF8E96A8)) },
+                modifier = Modifier.width(280.dp)
             )
+            Spacer(Modifier.width(10.dp))
+            RefreshButton(loading = lib.loading, onClick = onRefresh)
         }
-        Spacer(Modifier.height(14.dp))
-        Field(
-            value = query,
-            onValue = onQueryChange,
-            placeholder = tr("library.poisk_po_nazvaniyu"),
-            leadingIcon = { SearchIcon(size = 16.dp, color = Color(0xFF8E96A8)) }
-        )
-        Spacer(Modifier.height(8.dp))
-        val statusColor by animateColorAsState(
-            when (lib.statusKind) {
-                StatusKind.Ok -> Color(0xFF8E96A8)
-                StatusKind.Error -> Sm.bad
-                else -> Color(0xFF8E96A8)
-            }
-        )
-        val countLabel = if (lib.statusKind == StatusKind.Error) lib.status else tr("library.zagruzheno_totalcount_torrent", "totalCount" to totalCount)
-        Text(countLabel, color = statusColor, fontFamily = Onest, fontSize = 13.sp, modifier = Modifier.padding(start = 2.dp))
+        // A line of its own only when something is wrong.
+        if (lib.statusKind == StatusKind.Error) {
+            Text(lib.status, color = Sm.bad, fontFamily = Onest, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp, start = 2.dp))
+        }
     }
 }
 
@@ -501,8 +535,8 @@ private fun FilterControlsBar(
                 val active = cat == selectedCategory
                 val src = remember { MutableInteractionSource() }
                 val hovered by src.collectIsHoveredAsState()
-                val bg by animateColorAsState(when { active -> Color(0xFF282E3C); hovered -> Color(0xFF1C202B); else -> Color.Transparent }, tween(200))
-                val edge by animateColorAsState(when { active -> Color(0xFF3A4356); hovered -> Color(0xFF2C3344); else -> Color(0xFF1F2430) }, tween(200))
+                val bg by animateColorAsState(when { active -> Sm.accent.copy(alpha = 0.85f); hovered -> Color(0x14FFFFFF); else -> Color.Transparent }, tween(200))
+                val edge by animateColorAsState(when { active -> Sm.accentEdge; hovered -> Color(0x26FFFFFF); else -> Sm.glassEdge }, tween(200))
                 val fg by animateColorAsState(when { active -> Color.White; hovered -> Color(0xFFD6DBE4); else -> Color(0xFF8E96A8) }, tween(200))
 
                 Box(
@@ -516,64 +550,46 @@ private fun FilterControlsBar(
             }
         }
 
-        // Right: View Mode Toggle, Sort Dropdown, Filters Button
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            // View Mode Icons
-            Row(
-                Modifier.clip(RoundedCornerShape(10.dp)).background(Color(0xFF141720)).border(1.dp, Color(0xFF242A38), RoundedCornerShape(10.dp)).padding(2.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val gridSrc = remember { MutableInteractionSource() }
-                Box(
-                    Modifier.size(30.dp).clip(RoundedCornerShape(8.dp))
-                        .background(if (viewMode == ViewMode.Grid) Color(0xFF282E3C) else Color.Transparent)
-                        .hoverClick(gridSrc) { onViewModeSelect(ViewMode.Grid) },
-                    contentAlignment = Alignment.Center
-                ) {
-                    GridIcon(color = if (viewMode == ViewMode.Grid) Color.White else Color(0xFF8E96A8), size = 15.dp)
-                }
-                val listSrc = remember { MutableInteractionSource() }
-                Box(
-                    Modifier.size(30.dp).clip(RoundedCornerShape(8.dp))
-                        .background(if (viewMode == ViewMode.List) Color(0xFF282E3C) else Color.Transparent)
-                        .hoverClick(listSrc) { onViewModeSelect(ViewMode.List) },
-                    contentAlignment = Alignment.Center
-                ) {
-                    ListIcon(color = if (viewMode == ViewMode.List) Color.White else Color(0xFF8E96A8), size = 15.dp)
-                }
-            }
-
-            // Sort Dropdown
-            Box {
-                PillButton(text = tr("library.sortirovka_label", "label" to sortBy.label), onClick = { onSortOpenChange(true) })
-                DropdownMenu(
-                    expanded = sortOpen,
-                    onDismissRequest = { onSortOpenChange(false) },
-                    modifier = Modifier.background(Color(0xFF181C26)).border(1.dp, Color(0xFF2A3040), RoundedCornerShape(8.dp))
-                ) {
-                    for (s in SortBy.entries) {
-                        DropdownMenuItem(
-                            text = { Text(s.label, color = if (s == sortBy) Color.White else Sm.text, fontFamily = Onest, fontSize = 13.5.sp) },
-                            onClick = { onSortSelect(s); onSortOpenChange(false) }
-                        )
-                    }
-                }
-            }
-
-            // Filters Button
+        // Right: one menu for view mode, sorting and the "ready only" filter.
+        Box {
             PillButton(
-                text = tr("library.filtry"),
+                text = tr("library.vid"),
                 icon = { FunnelIcon(size = 14.dp, color = if (onlyReady) Color.White else Color(0xFF8E96A8)) },
-                active = onlyReady,
-                onClick = onToggleOnlyReady
+                active = onlyReady || sortOpen,
+                onClick = { onSortOpenChange(true) }
             )
+            DropdownMenu(
+                expanded = sortOpen,
+                onDismissRequest = { onSortOpenChange(false) },
+                modifier = Modifier.background(Color(0xFF181C26)).border(1.dp, Color(0xFF2A3040), RoundedCornerShape(8.dp))
+            ) {
+                @Composable fun item(label: String, on: Boolean, action: () -> Unit) = DropdownMenuItem(
+                    text = { Text((if (on) "✓  " else "     ") + label, color = if (on) Color.White else Sm.text, fontFamily = Onest, fontSize = 13.5.sp) },
+                    onClick = action
+                )
+                item(tr("library.setka"), viewMode == ViewMode.Grid) { onViewModeSelect(ViewMode.Grid); onSortOpenChange(false) }
+                item(tr("library.spisok"), viewMode == ViewMode.List) { onViewModeSelect(ViewMode.List); onSortOpenChange(false) }
+                Box(Modifier.padding(vertical = 4.dp).fillMaxWidth().height(1.dp).background(Color(0xFF2A3040)))
+                for (s in SortBy.entries) item(s.label, s == sortBy) { onSortSelect(s); onSortOpenChange(false) }
+                Box(Modifier.padding(vertical = 4.dp).fillMaxWidth().height(1.dp).background(Color(0xFF2A3040)))
+                item(tr("library.tolko_gotovye"), onlyReady) { onToggleOnlyReady(); onSortOpenChange(false) }
+            }
         }
+    }
+}
+
+@Composable
+private fun EmptyFavorites() {
+    Column(Modifier.fillMaxWidth().padding(vertical = 64.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        HeartIcon(filled = false, color = Sm.muted, size = 40.dp)
+        Text(tr("library.izbrannoe_pusto"), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, modifier = Modifier.padding(top = 14.dp))
+        Text(tr("library.izbrannoe_pusto_podskazka"), color = Sm.muted, fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(top = 4.dp))
     }
 }
 
 /** The sleek poster tile matching the concept image. */
 @Composable
-private fun Tile(item: LibraryItem, lib: Library, onOpen: (PlayTarget) -> Unit, modifier: Modifier) {
+private fun Tile(item: LibraryItem, lib: Library, versions: List<LibraryItem>, inFavorites: Boolean, onOpen: (PlayTarget) -> Unit, modifier: Modifier) {
     val scope = rememberCoroutineScope()
     val m = item.m
     val playable = item.playable
@@ -621,12 +637,20 @@ private fun Tile(item: LibraryItem, lib: Library, onOpen: (PlayTarget) -> Unit, 
     Box(
         modifier.graphicsLayer { translationY = lift; scaleX = cardScale; scaleY = cardScale }.hoverable(src)
             .fillMaxWidth().aspectRatio(2f / 3f)
-            .onGloballyPositioned { TileBounds.poster[m.id] = it }
+            .trackBounds(TileBounds.poster, m.id)
             .clip(RoundedCornerShape(14.dp))
             .background(Color(0xFF13161F))
             .border(1.dp, edge, RoundedCornerShape(14.dp))
             .clickable(enabled = canPlay) { TileBounds.fromContinue = false; target()?.let(onOpen) }
             .then(if (canPlay) Modifier.pointerHoverIcon(PointerIcon.Hand) else Modifier)
+            .pointerInput(m.id) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val e = awaitPointerEvent()
+                        if (e.type == androidx.compose.ui.input.pointer.PointerEventType.Press && e.buttons.isSecondaryPressed) menuOpen = true
+                    }
+                }
+            }
     ) {
         // Poster Image
         val p = poster
@@ -636,27 +660,40 @@ private fun Tile(item: LibraryItem, lib: Library, onOpen: (PlayTarget) -> Unit, 
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF222838), Color(0xFF10131B)))))
         }
 
-        // Top Gradient & Three Dots Menu
+        // Top gradient under the heart
         Box(Modifier.fillMaxWidth().height(60.dp).background(Brush.verticalGradient(listOf(Color(0x99000000), Color.Transparent))))
-        Box(Modifier.align(Alignment.TopEnd).padding(8.dp)) {
-            val menuSrc = remember { MutableInteractionSource() }
-            val menuHover by menuSrc.collectIsHoveredAsState()
+        // Favourite: a heart in the opposite corner; always visible when set, appears on hover otherwise.
+        run {
+            val favSrc = remember { MutableInteractionSource() }
+            val favHover by favSrc.collectIsHoveredAsState()
+            val isFav = m.favorite || versions.any { it.m.favorite }
+            val favAlpha by animateFloatAsState(if (isFav || hovered) 1f else 0f, tween(200))
+            val favScale by animateFloatAsState(if (favHover) 1.12f else 1f, tween(180, easing = Sm.ease))
             Box(
-                Modifier.size(30.dp).clip(CircleShape).background(if (menuHover) Color(0x99000000) else Color(0x55000000))
-                    .hoverClick(menuSrc) { menuOpen = true },
+                Modifier.align(Alignment.TopStart).padding(8.dp).graphicsLayer { alpha = favAlpha; scaleX = favScale; scaleY = favScale }
+                    .size(30.dp).clip(CircleShape).background(if (favHover) Color(0x99000000) else Color(0x55000000))
+                    .hoverClick(favSrc, enabled = favAlpha > 0.05f) {
+                        // Added: the poster flies into «Избранное»; taken out while viewing the favourites: back into «Библиотека».
+                        val to = if (!isFav) Tab.Favorites else if (inFavorites) Tab.Library else null
+                        if (to != null) TileBounds.posterRect(m.id)?.let { FlyHub.launch(poster, it, to) }
+                        scope.launch { (versions.ifEmpty { listOf(item) }).forEach { lib.setFavorite(it.m, !isFav) } } },
                 contentAlignment = Alignment.Center
-            ) {
-                ThreeDotsIcon(color = Color.White, size = 16.dp)
-            }
+            ) { HeartIcon(filled = isFav, color = if (isFav) Color(0xFFFF6B8A) else Color.White, size = 16.dp) }
+        }
+        if (versions.size > 1) {
+            Text(
+                versionsWord(versions.size), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 11.sp,
+                modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000))
+                    .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(10.dp)).padding(horizontal = 8.dp, vertical = 4.dp)
+            )
+        }
+        // Right click: seasons of a series and delete / cancel (the corner button with dots is gone).
+        Box(Modifier.align(Alignment.Center)) {
             DropdownMenu(
                 expanded = menuOpen,
                 onDismissRequest = { menuOpen = false },
                 modifier = Modifier.background(Color(0xFF181C26)).border(1.dp, Color(0xFF2A3040), RoundedCornerShape(8.dp))
             ) {
-                DropdownMenuItem(
-                    text = { Text(if (m.favorite) tr("library.iz_izbrannogo") else tr("library.v_izbrannoe"), color = Sm.text, fontFamily = Onest) },
-                    onClick = { menuOpen = false; scope.launch { lib.setFavorite(m, !m.favorite) } }
-                )
                 if (series != null) {
                     series.seasons.forEachIndexed { sIdx, season ->
                         DropdownMenuItem(
@@ -691,44 +728,53 @@ private fun Tile(item: LibraryItem, lib: Library, onOpen: (PlayTarget) -> Unit, 
                     overflow = TextOverflow.Ellipsis,
                     lineHeight = 17.sp
                 )
-                Text(
-                    "${itemYear(item)} • ${itemTypeLabel(item)}",
-                    color = Color(0xFF9BA4B5),
-                    fontFamily = Onest,
-                    fontSize = 11.5.sp,
-                    modifier = Modifier.padding(top = 2.dp, bottom = 5.dp)
-                )
-                // Status Badge
-                Box(
-                    Modifier.clip(RoundedCornerShape(6.dp))
-                        .background(Color(0xFF181B24))
-                        .border(1.dp, Color(0xFF2A3040), RoundedCornerShape(6.dp))
-                        .padding(horizontal = 7.dp, vertical = 2.dp)
+                // Details only on hover (and always for what is not ready yet: its progress matters).
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = hovered || !m.ready,
+                    enter = fadeIn(tween(200)) + expandVertically(tween(240, easing = Sm.ease)),
+                    exit = fadeOut(tween(140)) + shrinkVertically(tween(200, easing = Sm.ease))
                 ) {
+                    Column {
                     Text(
-                        if (m.ready) tr("library.gotovo") else if (m.downloading) "${(m.progress * 100).toInt()}% • ${statusRu(m)}" else statusRu(m),
-                        color = Color.White,
+                        "${itemYear(item)} • ${itemTypeLabel(item)}",
+                        color = Color(0xFF9BA4B5),
                         fontFamily = Onest,
-                        fontWeight = FontWeight.Medium,
-                        fontSize = 10.5.sp
+                        fontSize = 11.5.sp,
+                        modifier = Modifier.padding(top = 2.dp, bottom = 5.dp)
                     )
+                    // Status Badge
+                    Box(
+                        Modifier.clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF181B24))
+                            .border(1.dp, Color(0xFF2A3040), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 7.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            if (m.ready) tr("library.gotovo") else if (m.downloading) "${(m.progress * 100).toInt()}% • ${statusRu(m)}" else statusRu(m),
+                            color = Color.White,
+                            fontFamily = Onest,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 10.5.sp
+                        )
+                    }
+                    // Media Specs
+                    val specs = itemSpecs(item, media)
+                    Text(
+                        specs.first,
+                        color = Color(0xFFC0C7D5),
+                        fontFamily = Onest,
+                        fontSize = 11.sp,
+                        modifier = Modifier.padding(top = 5.dp)
+                    )
+                    Text(
+                        specs.second,
+                        color = Color(0xFF7A8294),
+                        fontFamily = Onest,
+                        fontSize = 10.5.sp,
+                        modifier = Modifier.padding(top = 1.dp)
+                    )
+                    }
                 }
-                // Media Specs
-                val specs = itemSpecs(item, media)
-                Text(
-                    specs.first,
-                    color = Color(0xFFC0C7D5),
-                    fontFamily = Onest,
-                    fontSize = 11.sp,
-                    modifier = Modifier.padding(top = 5.dp)
-                )
-                Text(
-                    specs.second,
-                    color = Color(0xFF7A8294),
-                    fontFamily = Onest,
-                    fontSize = 10.5.sp,
-                    modifier = Modifier.padding(top = 1.dp)
-                )
             }
         }
 
@@ -989,7 +1035,10 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
         enter = fadeIn(tween(300)) + expandVertically(tween(320, easing = Sm.ease)),
         exit = fadeOut(tween(200)) + shrinkVertically(tween(260, easing = Sm.ease))
     ) {
-        Column(Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 12.dp)) {
+        val rowSrc = remember { MutableInteractionSource() }
+        val rowHover by rowSrc.collectIsHoveredAsState()
+        val arrows by animateFloatAsState(if (rowHover) 1f else 0f, tween(220))
+        Column(Modifier.fillMaxWidth().hoverable(rowSrc).padding(top = 6.dp, bottom = 22.dp)) {
             Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     tr("library.prodolzhit_prosmotr"),
@@ -997,11 +1046,19 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 17.5.sp,
                     color = Color.White,
-                    modifier = Modifier.weight(1f)
                 )
+                Text(
+                    entries.size.toString(), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 12.sp,
+                    modifier = Modifier.padding(start = 10.dp).clip(RoundedCornerShape(10.dp)).background(Sm.accent).padding(horizontal = 8.dp, vertical = 2.dp)
+                )
+                Spacer(Modifier.weight(1f))
+
+                // Clear the whole row (each card also has its own ×). Brings back anything watched again later.
+                ClearAllButton { lib.hideContinue(entries.map { it.item.m.id }) }
+                Spacer(Modifier.width(14.dp))
 
                 // Carousel Chevrons
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.graphicsLayer { alpha = arrows }, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     val prevSrc = remember { MutableInteractionSource() }
                     val prevHover by prevSrc.collectIsHoveredAsState()
                     Box(
@@ -1030,7 +1087,7 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
                 items(entries.size, key = { entries[it].item.m.id }) { i ->
                     val e = entries[i]
                     ContinueCard(
-                        e, lib, Modifier.animateItem(fadeInSpec = tween(250), fadeOutSpec = tween(200)),
+                        e, lib, if (Motion.simple) Modifier else Modifier.animateItem(fadeInSpec = tween(250), fadeOutSpec = tween(200)),
                         onRemove = { lib.hideContinue(listOf(e.item.m.id)) }
                     ) {
                         TileBounds.fromContinue = true
@@ -1044,12 +1101,27 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
 }
 
 @Composable
+private fun ClearAllButton(onClick: () -> Unit) {
+    val src = remember { MutableInteractionSource() }
+    val hovered by src.collectIsHoveredAsState()
+    val fg by animateColorAsState(if (hovered) Color.White else Sm.muted, tween(200))
+    val bg by animateColorAsState(if (hovered) Color(0x1AFFFFFF) else Color.Transparent, tween(200))
+    Row(
+        Modifier.clip(RoundedCornerShape(10.dp)).background(bg).hoverClick(src, onClick = onClick).padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        CloseCrossIcon(color = fg, size = 10.dp)
+        Text(tr("library.ochistit"), color = fg, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 12.5.sp)
+    }
+}
+
+@Composable
 private fun ContinueCard(e: ContinueEntry, lib: Library, modifier: Modifier, onRemove: () -> Unit, onClick: () -> Unit) {
     val src = remember { MutableInteractionSource() }
     val hovered by src.collectIsHoveredAsState()
     val lift by animateFloatAsState(if (hovered) -3f else 0f, tween(260, easing = Sm.ease))
-    val edge by animateColorAsState(if (hovered) Color(0xFF3E475C) else Color(0xFF242A38), tween(220))
-    val bg by animateColorAsState(if (hovered) Color(0xFF191D28) else Color(0xFF141720), tween(220))
+    val edge by animateColorAsState(if (hovered) Sm.glassEdgeHover else Sm.glassEdge, tween(220))
+    val bg by animateColorAsState(if (hovered) Sm.glassFillHover else Sm.glassFill, tween(220))
     var poster by remember(e.item.m.id) { mutableStateOf(lib.cachedPoster(e.item.posterQueries)) }
     LaunchedEffect(e.item.m.id) { if (poster == null) poster = lib.poster(e.item.posterQueries) }
     val xSrc = remember { MutableInteractionSource() }
@@ -1058,15 +1130,15 @@ private fun ContinueCard(e: ContinueEntry, lib: Library, modifier: Modifier, onR
 
     Box(modifier.graphicsLayer { translationY = lift }.hoverable(src)) {
         Row(
-            Modifier.width(304.dp).height(108.dp).clip(RoundedCornerShape(12.dp)).background(bg)
+            Modifier.width(268.dp).height(96.dp).clip(RoundedCornerShape(12.dp)).background(bg)
                 .border(1.dp, edge, RoundedCornerShape(12.dp)).hoverClick(src, onClick = onClick)
                 .padding(11.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Left Poster Thumbnail
             Box(
-                Modifier.width(62.dp).fillMaxHeight()
-                    .onGloballyPositioned { TileBounds.cont[e.item.m.id] = it }
+                Modifier.width(54.dp).fillMaxHeight()
+                    .trackBounds(TileBounds.cont, e.item.m.id)
                     .clip(RoundedCornerShape(8.dp))
                     .background(Color(0xFF222736))
             ) {

@@ -32,9 +32,9 @@ object TitleBar {
             val hwnd = Native.getWindowPointer(window) ?: return
             fun set(attr: Int, v: Int) = api.DwmSetWindowAttribute(hwnd, attr, IntByReference(v), 4)
             set(20, 1)                // DWMWA_USE_IMMERSIVE_DARK_MODE
-            set(35, ref(0x090B10))    // DWMWA_CAPTION_COLOR  = Sm.night
-            set(36, ref(0xEEF0F5))    // DWMWA_TEXT_COLOR     = Sm.text
-            set(34, ref(0x252A37))    // DWMWA_BORDER_COLOR   = Sm.line
+            set(35, ref(0x060911))    // DWMWA_CAPTION_COLOR  = Sm.backdrop (flows into the window)
+            set(36, ref(0x8E96A8))    // DWMWA_TEXT_COLOR     = Sm.muted (title stays quiet)
+            set(34, 0xFFFFFFFE.toInt()) // DWMWA_BORDER_COLOR   = none: no line between the bar and the window
             set(33, 0)                // DWMWA_WINDOW_CORNER_PREFERENCE = DWMWCP_DEFAULT
         }
     }

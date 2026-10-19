@@ -3,7 +3,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const root = path.resolve(__dirname, "..");
-const files = ["server.js", "search.js", "search-ru.js", "classify.js", "client-check.js", "client-inline-check.js"];
+const files = ["server.js", "search.js", "search-ru.js", "classify.js", "tmdb-kind.js", "client-check.js", "client-inline-check.js"];
 let failed = false;
 
 function checkJavaScript(label, source) {

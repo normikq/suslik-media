@@ -24,8 +24,12 @@ object AppDir {
     fun file(name: String) = File(dir, name)
 }
 
-/** Tiny key-value store on disk (posters, watch progress, settings). Writes are debounced by the caller's rhythm. */
-class Store(name: String) {
+/**
+ * Tiny key-value store on disk (posters, watch progress, settings). Writes are debounced by the caller's rhythm.
+ * One instance per file ([of]): two copies of "ui" each rewrote the whole file with only their own keys, and the
+ * player made a new "player_ui" on every opening (each stayed in [all] for good).
+ */
+class Store private constructor(name: String) {
     private val f = AppDir.file("$name.properties")
     private val bak = AppDir.file("$name.properties.bak")
     private val p = load()
@@ -73,12 +77,12 @@ class Store(name: String) {
             java.nio.file.Files.move(tmp.toPath(), f.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE)
         }
     }
-    init { all += this }
     companion object {
-        private val all = java.util.concurrent.CopyOnWriteArrayList<Store>()
+        private val all = java.util.concurrent.ConcurrentHashMap<String, Store>()
+        fun of(name: String): Store = all.computeIfAbsent(name) { Store(it) }
         private val writer = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "store-writer").apply { isDaemon = true } }
         init { Runtime.getRuntime().addShutdownHook(Thread { flushAll() }) } // nothing lost on exit
-        fun flushAll() = all.forEach { runCatching { it.flush() } }
+        fun flushAll() = all.values.forEach { runCatching { it.flush() } }
     }
     @Synchronized fun keys(): Set<String> = p.stringPropertyNames()
 }
@@ -92,7 +96,7 @@ object Api {
 
     class HttpError(val code: Int, message: String) : Exception(message)
 
-    private val cookies = Store("cookies")
+    private val cookies = Store.of("cookies")
     val client: HttpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(15))
         .followRedirects(HttpClient.Redirect.NORMAL)

@@ -83,61 +83,6 @@ object WindowMode {
         fun EnableWindow(hwnd: Pointer, bEnable: Boolean): Boolean
         fun EnumChildWindows(hWndParent: Pointer, lpEnumFunc: WNDENUMPROC, lParam: Pointer?): Boolean
         fun SetFocus(hwnd: Pointer): Pointer?
-        fun SetWindowRgn(hwnd: Pointer, hRgn: Pointer?, bRedraw: Boolean): Int
-    }
-
-    private interface Gdi32 : JnaLibrary {
-        companion object {
-            val INSTANCE: Gdi32? = if (!isWindows) null else runCatching {
-                Native.load("gdi32", Gdi32::class.java)
-            }.getOrNull()
-        }
-
-        fun CreateRectRgn(x1: Int, y1: Int, x2: Int, y2: Int): Pointer?
-    }
-
-    /**
-     * Оставляет у окна «живой» (рисуемый и принимающий мышь) только нижний прямоугольник высотой [visibleDip];
-     * остальное окно не перехватывает клики. Размер окна не меняется, поэтому Compose ничего не перестраивает.
-     */
-    fun clipToBottom(win: Window, visibleDip: Int) {
-        if (!isWindows || !win.isDisplayable) return
-        val user32 = User32.INSTANCE ?: return
-        val gdi = Gdi32.INSTANCE ?: return
-        runCatching {
-            val hwnd = Native.getWindowPointer(win) ?: return
-            val tr = win.graphicsConfiguration?.defaultTransform
-            val sx = tr?.scaleX ?: 1.0
-            val sy = tr?.scaleY ?: 1.0
-            val w = kotlin.math.ceil(win.width * sx).toInt() + 2
-            val h = kotlin.math.ceil(win.height * sy).toInt()
-            val vis = kotlin.math.ceil(visibleDip * sy).toInt().coerceIn(0, h)
-            if (vis >= h) {
-                user32.SetWindowRgn(hwnd, null, true)
-            } else {
-                val rgn = gdi.CreateRectRgn(0, h - vis, w, h + 2)
-                user32.SetWindowRgn(hwnd, rgn, true)
-            }
-        }
-    }
-
-    private const val GWL_EXSTYLE = -20
-    private const val WS_EX_NOACTIVATE = 0x08000000
-    private const val WS_EX_TOOLWINDOW = 0x00000080
-
-    /**
-     * Окно-оверлей не активируется кликом (фокус остаётся у главного окна) и не появляется в панели задач / Alt+Tab.
-     * `focusableWindowState = false` в AWT этого не гарантирует. Безопасно вызывать повторно.
-     */
-    fun makeNoActivate(win: Window) {
-        if (!isWindows || !win.isDisplayable) return
-        val user32 = User32.INSTANCE ?: return
-        runCatching {
-            val hwnd = Native.getWindowPointer(win) ?: return
-            val ex = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-            val want = ex or WS_EX_NOACTIVATE or WS_EX_TOOLWINDOW
-            if (want != ex) user32.SetWindowLongW(hwnd, GWL_EXSTYLE, want)
-        }
     }
 
     /**
@@ -449,6 +394,23 @@ object WindowMode {
                     isMini = false
                     miniAnimating = false
                     javax.swing.SwingUtilities.invokeLater {
+                        // As on the way in: AWT may still hold the mini player's size until the first manual resize.
+                        // A maximized window is left alone (setBounds would un-maximize it).
+                        runCatching {
+                            val wp = User32.WINDOWPLACEMENT()
+                            if (user32.GetWindowPlacement(hwnd, wp) && wp.showCmd != 3) {
+                                val r = User32.RECT()
+                                if (user32.GetWindowRect(hwnd, r)) {
+                                    val scale = win.graphicsConfiguration?.defaultTransform?.scaleX ?: 1.0
+                                    val want = java.awt.Rectangle(Math.round(r.left / scale).toInt(), Math.round(r.top / scale).toInt(),
+                                        Math.round((r.right - r.left) / scale).toInt(), Math.round((r.bottom - r.top) / scale).toInt())
+                                    if (want.width > 0 && want.height > 0 && win.bounds != want) {
+                                        PlayerLog.write("[ui] mini off: awt=${win.bounds} native=$want")
+                                        win.bounds = want
+                                    }
+                                }
+                            }
+                        }
                         win.invalidate()
                         win.validate()
                         (win as? javax.swing.RootPaneContainer)?.apply {

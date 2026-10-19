@@ -24,9 +24,12 @@ fun sideFileName(url: String): String =
  * the folder — Cyberpunk has 40 subtitle files all named like the video, in "Int Sub/Arabic/", "Int Sub/English/[Netflix]/"…
  */
 object SidePaths {
-    private val paths = java.util.concurrent.ConcurrentHashMap<String, String>()
-    fun remember(url: String, path: String) { paths[url] = path }
-    fun of(url: String): String? = paths[url]
+    // Addresses carry a signature that changes every 12 h, so old ones are never asked again: only the latest stay.
+    private val paths = object : LinkedHashMap<String, String>(256, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?) = size > 2000
+    }
+    fun remember(url: String, path: String) { synchronized(paths) { paths[url] = path } }
+    fun of(url: String): String? = synchronized(paths) { paths[url] }
 }
 
 private val GENERIC_DIR = Regex("""(?i)^(int\.?\s*subs?|subs?|subtitles?|субтитры|сабы)$""")

@@ -445,7 +445,7 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
         <div id="searchStatus" class="status" role="status"></div>
         <div id="searchTools" class="search-tools hidden">
           <select id="searchSort" aria-label="Сортировка"><option value="ru">RU сначала</option><option value="seeders">По сидам</option><option value="size">По размеру</option><option value="date">По дате</option></select>
-          <select id="searchKind" aria-label="Тип раздачи"><option value="video">Фильмы и сериалы</option><option value="movie">Только фильмы</option><option value="series">Только сериалы</option><option value="all">Всё подряд</option></select>
+          <select id="searchKind" aria-label="Тип раздачи"><option value="video">Фильмы и сериалы</option><option value="movie">Только фильмы</option><option value="cartoon">Только мультфильмы</option><option value="series">Только сериалы</option><option value="all">Всё подряд</option></select>
           <label><input id="searchHideDead" type="checkbox"> Только с сидами</label>
           <input id="searchFilter" type="search" placeholder="Уточнить: 1080p, 2160p, rus…" autocomplete="off">
         </div>
@@ -896,7 +896,7 @@ function filteredSearchItems() {
   const sort = $("searchSort").value, dead = $("searchHideDead").checked;
   const words = $("searchFilter").value.toLowerCase().split(/\s+/).filter(Boolean);
   const kind = $("searchKind").value;
-  const kindOk = r => kind === "all" || (kind === "video" ? r.kind !== "other" : kind === "movie" ? (r.kind === "movie" || r.kind === "unknown") : r.kind === "series");
+  const kindOk = r => kind === "all" || (kind === "video" ? r.kind !== "other" : kind === "movie" ? (r.kind === "movie" || r.kind === "unknown") : kind === "cartoon" ? r.kind === "cartoon" : r.kind === "series");
   searchState.hiddenKind = searchState.items.filter(r => !kindOk(r)).length;
   let items = searchState.items.filter(r => kindOk(r) && (!dead || r.seeders > 0) && words.every(w => r.title.toLowerCase().includes(w)));
   if (sort === "ru") { // живые RU, живые остальные, мёртвые RU, мёртвые остальные
@@ -924,7 +924,7 @@ function searchRow(r) {
   if (r.size) meta.append(srEl("span", "", formatBytes(r.size)));
   meta.append(srEl("span", "seed" + (r.seeders ? "" : " zero"), `↑ ${r.seeders}`), srEl("span", "", `↓ ${r.leechers}`));
   if (r.ru) meta.append(srEl("span", "ru-badge", "RU"));
-  if (r.kind === "series") meta.append(srEl("span", "", "сериал")); else if (r.kind === "movie") meta.append(srEl("span", "", "фильм"));
+  if (r.kind === "series") meta.append(srEl("span", "", "сериал")); else if (r.kind === "movie") meta.append(srEl("span", "", "фильм")); else if (r.kind === "cartoon") meta.append(srEl("span", "", "мультфильм"));
   meta.append(srEl("span", "", r.sources && r.sources.length > 1 ? r.sources.join(" + ") : r.provider));
   const d = fmtDate(r.date); if (d) meta.append(srEl("span", "", d));
   row.append(meta);

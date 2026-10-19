@@ -2,6 +2,7 @@ require("dotenv").config();
 
 const express = require("express");
 const axios = require("axios");
+const { posterQueryVariants } = require("./poster-query");
 const session = require("express-session");
 const rateLimit = require("express-rate-limit");
 const path = require("path");
@@ -1703,15 +1704,26 @@ app.get("/api/poster", requireLogin, apiLimiter, async (req, res) => {
     return origJson(body);
   };
   try {
-    const response = await axios.get("https://api.themoviedb.org/3/search/multi", {
-      params: { api_key: TMDB_API_KEY, query, include_adult: false }, timeout: 10000
-    });
-    const results = Array.isArray(response.data?.results) ? response.data.results : [];
-    const match = results.find(item => item.poster_path && (item.media_type === "movie" || item.media_type === "tv"));
+    // Название из библиотеки — имя раздачи: «Severance Season 1», «Show - S01-10», «Фильм TrueHD Atmos», «Erai-raws Show - 01 ~ 10».
+    // Если по самому названию постера нет, пробуем очищенное и без дефисов.
+    let match = null, failed = 0;
+    const variants = posterQueryVariants(query);
+    for (const q of variants) {
+      try {
+        const response = await axios.get("https://api.themoviedb.org/3/search/multi", {
+          params: { api_key: TMDB_API_KEY, query: q, include_adult: false }, timeout: 5000
+        });
+        const results = Array.isArray(response.data?.results) ? response.data.results : [];
+        match = results.find(item => item.poster_path && (item.media_type === "movie" || item.media_type === "tv"));
+      } catch { failed++; }
+      if (match) break;
+    }
+    if (!match && failed === variants.length) throw new Error("tmdb unavailable"); // TMDB недоступен: 502 и без кэширования, а не «постера нет»
     res.set("Cache-Control", "private, max-age=604800");
     // Картинку браузер берёт у нашего сайта (/api/poster/img/...), а не напрямую у TMDB: так работает и там, где image.tmdb.org недоступен.
     const file = match ? String(match.poster_path).replace(/^\//, "") : "";
-    res.json({ poster: /^[A-Za-z0-9_-]+\.(?:jpg|png|webp)$/.test(file) ? `/api/poster/img/w500/${file}` : null, title: match?.title || match?.name || null });
+    res.json({ poster: /^[A-Za-z0-9_-]+\.(?:jpg|png|webp)$/.test(file) ? `/api/poster/img/w500/${file}` : null, title: match?.title || match?.name || null,
+      type: match ? match.media_type : null, animation: !!match && Array.isArray(match.genre_ids) && match.genre_ids.includes(16) }); // 16 = Animation в TMDB
   } catch { res.status(502).json({ error: "Не удалось найти постер." }); }
 });
 
