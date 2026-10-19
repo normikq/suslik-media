@@ -70,7 +70,7 @@
 @media(max-width:620px){.file-link-actions{gap:7px}.split-actions button,.split-actions a{white-space:normal}}
 
 
-/* Smooth motion system */\n
+/* Smooth motion system */
 /* Stable mosaic reveal: cards stay still while images load, then fade from blur to sharp. */
 .library-tile.mosaic-pending{opacity:1;animation:none;transform:none;filter:none;pointer-events:none}
 .library-tile:not(.mosaic-pending){opacity:1;animation:mosaic-clear .48s ease-out both;animation-delay:calc(min(var(--tile-index,0),18)*32ms)}
@@ -116,7 +116,7 @@ input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px #b99cff25}
 .file-row[data-file-type="folder"] .file-path>span:last-child{font-weight:700}
 .file-depth{display:inline-flex;align-items:center;justify-content:center;min-width:24px;padding:2px 5px;border:1px solid #3b4154;border-radius:6px;background:#202536;color:#aeb8d5;font-size:10px;font-weight:700;white-space:nowrap}
 .file-row[data-depth="0"] .file-depth{display:none}
-\n
+
 /* SUSLIK — smooth woodland redesign */
 :root {
   --bg: #100d19; --panel: rgba(29,24,45,.84); --line: rgba(218,184,255,.16);
@@ -445,7 +445,7 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
         <div id="searchStatus" class="status" role="status"></div>
         <div id="searchTools" class="search-tools hidden">
           <select id="searchSort" aria-label="Сортировка"><option value="ru">RU сначала</option><option value="seeders">По сидам</option><option value="size">По размеру</option><option value="date">По дате</option></select>
-          <select id="searchKind" aria-label="Тип раздачи"><option value="video">Фильмы и сериалы</option><option value="movie">Только фильмы</option><option value="series">Только сериалы</option><option value="all">Всё подряд</option></select>
+          <select id="searchKind" aria-label="Тип раздачи"><option value="video">Фильмы и сериалы</option><option value="movie">Только фильмы</option><option value="cartoon">Только мультфильмы</option><option value="series">Только сериалы</option><option value="all">Всё подряд</option></select>
           <label><input id="searchHideDead" type="checkbox"> Только с сидами</label>
           <input id="searchFilter" type="search" placeholder="Уточнить: 1080p, 2160p, rus…" autocomplete="off">
         </div>
@@ -787,7 +787,7 @@ async function loadAppHistory() {
   await Promise.all(["desktop", "android"].map(async p => {
     try {
       const j = await api(`/api/app/changelog?platform=${p}&limit=3`);
-      APP_HISTORY[p] = (j.releases || []).slice().reverse().map(r => ({ v: r.version, t: r.title, items: r.items || [] }));
+      APP_HISTORY[p] = (j.releases || []).slice(0, 3).reverse().map(r => ({ v: r.version, t: r.title, items: r.items || [] }));
     } catch { /* остаётся прошлый список */ }
   }));
   return true;
@@ -896,7 +896,7 @@ function filteredSearchItems() {
   const sort = $("searchSort").value, dead = $("searchHideDead").checked;
   const words = $("searchFilter").value.toLowerCase().split(/\s+/).filter(Boolean);
   const kind = $("searchKind").value;
-  const kindOk = r => kind === "all" || (kind === "video" ? r.kind !== "other" : kind === "movie" ? (r.kind === "movie" || r.kind === "unknown") : r.kind === "series");
+  const kindOk = r => kind === "all" || (kind === "video" ? r.kind !== "other" : kind === "movie" ? (r.kind === "movie" || r.kind === "unknown") : kind === "cartoon" ? r.kind === "cartoon" : r.kind === "series");
   searchState.hiddenKind = searchState.items.filter(r => !kindOk(r)).length;
   let items = searchState.items.filter(r => kindOk(r) && (!dead || r.seeders > 0) && words.every(w => r.title.toLowerCase().includes(w)));
   if (sort === "ru") { // живые RU, живые остальные, мёртвые RU, мёртвые остальные
@@ -924,7 +924,7 @@ function searchRow(r) {
   if (r.size) meta.append(srEl("span", "", formatBytes(r.size)));
   meta.append(srEl("span", "seed" + (r.seeders ? "" : " zero"), `↑ ${r.seeders}`), srEl("span", "", `↓ ${r.leechers}`));
   if (r.ru) meta.append(srEl("span", "ru-badge", "RU"));
-  if (r.kind === "series") meta.append(srEl("span", "", "сериал")); else if (r.kind === "movie") meta.append(srEl("span", "", "фильм"));
+  if (r.kind === "series") meta.append(srEl("span", "", "сериал")); else if (r.kind === "movie") meta.append(srEl("span", "", "фильм")); else if (r.kind === "cartoon") meta.append(srEl("span", "", "мультфильм"));
   meta.append(srEl("span", "", r.sources && r.sources.length > 1 ? r.sources.join(" + ") : r.provider));
   const d = fmtDate(r.date); if (d) meta.append(srEl("span", "", d));
   row.append(meta);
@@ -1034,9 +1034,12 @@ function escapeTitle(value) {
 }
 const MEDIA_INFO_KEY="mediaInfoCacheV1";
 const mediaInfoInflight=new Map();
-let mediaInfoQueue=Promise.resolve();
 function readMediaInfoCache(){try{return JSON.parse(localStorage.getItem(MEDIA_INFO_KEY)||"{}")||{};}catch{return {};}}
-function writeMediaInfoCache(key,value){try{const c=readMediaInfoCache();c[key]=value;localStorage.setItem(MEDIA_INFO_KEY,JSON.stringify(c));}catch{}}
+// Не больше 600 записей: новые в конце, старые и ошибки старше 6 ч вытесняются (иначе localStorage рано или поздно переполнится).
+function writeMediaInfoCache(key,value){try{const c=readMediaInfoCache();delete c[key];c[key]=value;const now=Date.now();let keys=Object.keys(c);for(const k of keys)if(c[k]&&c[k].__failedAt&&now-c[k].__failedAt>6*3600e3)delete c[k];keys=Object.keys(c);for(const k of keys.slice(0,Math.max(0,keys.length-600)))delete c[k];localStorage.setItem(MEDIA_INFO_KEY,JSON.stringify(c));}catch{}}
+// Два анализа одновременно (столько ffprobe держит сервер): один зависший файл не задерживает остальные плитки.
+const MEDIA_INFO_PARALLEL=2;let mediaInfoRunning=0;const mediaInfoWaiting=[];
+function withMediaInfoSlot(task){return new Promise((resolve,reject)=>{const run=()=>{mediaInfoRunning++;Promise.resolve().then(task).then(resolve,reject).finally(()=>{mediaInfoRunning--;const next=mediaInfoWaiting.shift();if(next)next();});};if(mediaInfoRunning<MEDIA_INFO_PARALLEL)run();else mediaInfoWaiting.push(run);});}
 function pickMainВидео(magnet){
   const vids=(magnet.files||[]).filter(f=>f.type!=="folder" && /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso)$/i.test(f.path||""));
   const real=vids.filter(f=>!/\.iso$/i.test(f.path));
@@ -1054,14 +1057,9 @@ function loadTileMediaInfo(magnet,line,fileArg){
   line.textContent="🎞 анализ видео…";line.title="";line.classList.add("media-pending");
   let p=mediaInfoInflight.get(key);
   if(!p){
-    // One ffprobe at a time: each analysis can take several seconds and reads the remote file.
-    p=new Promise((resolve,reject)=>{
-      mediaInfoQueue=mediaInfoQueue.then(async()=>{
-        try{
-          const r=await api("/api/media-metadata",{method:"POST",body:JSON.stringify({link:file.sourceLink||"",magnetId:magnet.id,path:file.path})});
-          writeMediaInfoCache(key,r.metadata);resolve(r.metadata);
-        }catch(err){reject(err);}
-      });
+    p=withMediaInfoSlot(async()=>{
+      const r=await api("/api/media-metadata",{method:"POST",body:JSON.stringify({link:file.sourceLink||"",magnetId:magnet.id,path:file.path})});
+      writeMediaInfoCache(key,r.metadata);return r.metadata;
     }).finally(()=>mediaInfoInflight.delete(key));
     mediaInfoInflight.set(key,p);
   }
@@ -1106,8 +1104,12 @@ function buildPlaylist(magnet){
   if(bySeason.size>=2 || (bySeason.size===1 && vids.length>1)){
     const seasons=[...bySeason.entries()].sort((a,b)=>a[0]-b[0]).map(([season,files])=>({
       season,
-      items:files.sort((a,b)=>basename(a.path).localeCompare(basename(b.path),undefined,{numeric:true,sensitivity:"base"}))
-        .map((file,index)=>({season,episode:index+1,file}))
+      items:(()=>{
+        const sorted=files.sort((a,b)=>basename(a.path).localeCompare(basename(b.path),undefined,{numeric:true,sensitivity:"base"}));
+        const nums=sorted.map(file=>{const e=parseEpisode(file.path);return e?e.episode:null;});
+        const own=nums.every(n=>n!==null)&&new Set(nums).size===nums.length&&nums.every((n,i)=>!i||n>nums[i-1]);
+        return sorted.map((file,index)=>({season,episode:own?nums[index]:index+1,file}));
+      })()
     }));
     return {type:"series",seasons};
   }
@@ -1315,6 +1317,7 @@ function renderLibrary(animate=true) {
         if(pm){ img.srcset=`/api/poster/img/w342/${pm[1]} 342w, ${url} 500w`; img.sizes="(max-width:600px) 48vw, 260px"; }
         img.src=url;
         try { if (img.decode) await img.decode(); else if (!img.complete) await new Promise(resolve=>{img.onload=resolve;img.onerror=resolve;}); } catch {}
+        if (!img.complete || !img.naturalWidth) { img.remove(); art.classList.add("poster-missing"); return; }
         if (art.isConnected) { art.prepend(img); requestAnimationFrame(()=>{ if(img.isConnected) img.classList.add("poster-loaded"); }); }
       }
     })().catch(()=>{}).finally(()=>{
@@ -1520,6 +1523,7 @@ function openLibraryModal(magnet) {
         mirrorКопировать.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(mirror.url);mirrorКопировать.textContent="Скопировано";}catch{window.prompt("Скопируйте ссылку-зеркало:",mirror.url);}});
         const mirrorOpen=document.createElement("a");mirrorOpen.className="button secondary split-last";mirrorOpen.href=mirror.url;mirrorOpen.target="_blank";mirrorOpen.rel="noopener noreferrer";mirrorOpen.textContent="Открыть";
         mirrorGroup.append(mirrorКопировать,mirrorOpen);
+        if(IS_DESKTOP){const pot=document.createElement("button");pot.type="button";pot.className="button";pot.textContent="▶ PotPlayer · зеркало";pot.addEventListener("click",()=>launchPotPlayer(mirror.url));actions.append(pot);}
         actions.append(mirrorGroup);if(result&&result.url)actions.append(directGroup);quickWrap.append(actions);quickPlay.remove();
       }catch(err){quickPlay.disabled=false;quickPlay.textContent="Повторить запуск M2TS";let note=quickWrap.querySelector(".unlock-error");if(!note){note=document.createElement("div");note.className="unlock-error status error";quickWrap.append(note);}note.textContent=err.message;}
     });
@@ -1527,7 +1531,7 @@ function openLibraryModal(magnet) {
   }
   const query=$("libraryПоиск").value.trim().toLowerCase();
   const files=magnet.files.filter(f=>!query||f.path.toLowerCase().includes(query));
-  if(!files.length){const empty=document.createElement("p");empty.className="file-meta";empty.textContent="No files returned for this magnet yet.";target.append(empty);}
+  if(!files.length){const empty=document.createElement("p");empty.className="file-meta";empty.textContent="AllDebrid пока не вернул файлы этой раздачи.";target.append(empty);}
   const folderState = new Map();
   const rows = [];
   const folderPaths = files.filter(f=>f.type==="folder").map(f=>String(f.path||"").replace(/\/+$/,"")).sort((a,b)=>a.length-b.length);
@@ -1541,7 +1545,7 @@ function openLibraryModal(magnet) {
     row.dataset.parentПапкаs=JSON.stringify(parentПапкаs);
     const left=document.createElement("div");left.className="file-path";left.style.paddingLeft=`${depth*18}px`;
     if(depth>0){const level=document.createElement("span");level.className="file-depth";level.textContent=`L${depth}`;level.title=`Уровень вложенности: ${depth}`;left.append(level);}
-    const icon=document.createElement("span");icon.textContent=file.type==="folder"?"📁 ":(/\\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso)$/i.test(filePath)?"🎬 ":"📄 ");
+    const icon=document.createElement("span");icon.textContent=file.type==="folder"?"📁 ":(VIDEO_EXT.test(filePath)?"🎬 ":"📄 ");
     if(file.type==="folder"){
       const toggle=document.createElement("button");toggle.type="button";toggle.className="folder-toggle secondary";toggle.setAttribute("aria-expanded","false");toggle.textContent="▸";
       toggle.title="Раскрыть папку";
@@ -1557,7 +1561,7 @@ function openLibraryModal(magnet) {
     rows.push(row);    const right=document.createElement("div");right.style.cssText="display:flex;align-items:center;gap:8px;flex-wrap:wrap";
     if(file.size){const size=document.createElement("span");size.className="file-meta";size.textContent=formatBytes(file.size);right.append(size);}
     // Offer a season playlist when a folder contains video files with AllDebrid source links.
-    if(file.type==="folder" && /(?:season|сезон)\\s*0*\\d+/i.test(filePath)){
+    if(file.type==="folder" && /(?:season|сезон)[ ._-]*0*\d+/i.test(filePath)){
       const seasonFiles=(magnet.files||[])
         .filter(f=>f.type!=="folder" && String(f.path||"").startsWith(filePath.replace(/\/+$/,"")+"/") && f.sourceLink && /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts)$/i.test(String(f.path||"")))
         .sort((a,b)=>String(a.path||a.name||"").localeCompare(String(b.path||b.name||""),"ru",{numeric:true,sensitivity:"base"}));
@@ -1577,8 +1581,8 @@ function openLibraryModal(magnet) {
               playlistBtn.textContent=`Подготовка ${i+1}/${seasonFiles.length}…`;
             }
             const safeName=String(filePath.split("/").pop()||"Season").replace(/[\\/:*?"<>|]+/g,"_");
-            const m3u=["#EXTM3U",...entries.flatMap(item=>["#EXTINF:-1,"+item.name,item.url])].join("\\r\\n")+"\\r\\n";
-            const blob=new Blob(["\\uFEFF"+m3u],{type:"audio/x-mpegurl;charset=utf-8"});
+            const m3u=["#EXTM3U",...entries.flatMap(item=>["#EXTINF:-1,"+item.name,item.url])].join("\r\n")+"\r\n";
+            const blob=new Blob(["\uFEFF"+m3u],{type:"audio/x-mpegurl;charset=utf-8"});
             const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=safeName+".m3u";document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
             playlistBtn.textContent="✓ Плейлист готов";
             let note=row.querySelector(".season-playlist-note");if(!note){note=document.createElement("div");note.className="file-meta season-playlist-note";row.append(note);}
@@ -1634,7 +1638,7 @@ async function refreshActiveHistory() {
         const failed = Number(status.statusCode) >= 5;
         updateHistory(item.value, {
           title: status.filename || item.title || "Загрузка по magnet-ссылке",
-          status: ready ? "Готово" : (failed ? (status.status || "Ошибка") : (status.status || "Скачатьing")),
+          status: ready ? "Готово" : (failed ? (status.status || "Ошибка") : (status.status || "Загружается")),
           percent: ready ? 100 : (size > 0 ? Math.floor(Math.min(100, downloaded / size * 100)) : null),
           ready,
           failed,

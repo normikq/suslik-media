@@ -30,9 +30,6 @@ website/
 │   ├── redesign.css        Стили оформления «Проекторная»
 │   ├── redesign.js         Логика интерфейса и анимации сайта
 │   └── fonts/              Шрифты Onest и Unbounded
-├── index.html              Копия public/index.html (проверяется синтаксическим чекером)
-├── client-check.js         Скрипты для синтаксической валидации клиентского кода
-├── client-inline-check.js  Валидация инлайн-скриптов HTML
 ├── scripts/
 │   └── check.js            Комплексная проверка синтаксиса (npm run check)
 ├── test/

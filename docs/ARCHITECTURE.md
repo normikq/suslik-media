@@ -97,8 +97,6 @@ suslik-media/
 | `classify.js` | определяет тип раздачи по названию/категориям: сериал, фильм, «другое» |
 | `public/index.html` | сам сайт: одна страница с HTML, CSS и JS внутри |
 | `public/redesign.css`, `redesign.js` | оформление и анимации сайта |
-| `index.html` | копия `public/index.html` (проверяется скриптом проверки) |
-| `client-check.js`, `client-inline-check.js` | копии клиентского скрипта, нужны только для проверки синтаксиса |
 | `scripts/check.js` | проверка синтаксиса всего JS и встроенных скриптов страницы (`npm run check`) |
 | `test/classify.test.js` | модульные тесты классификатора раздач (`npm test` или `node --test`) |
 | `NGINX-MIRROR.md` | как настроить nginx, чтобы он сам отдавал видео |

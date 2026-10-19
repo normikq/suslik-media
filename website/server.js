@@ -192,7 +192,7 @@ function precompressed(name) {
     mtime: st.mtimeMs, raw,
     csp: name.endsWith(".html") ? pageCsp(raw.toString("utf8")) : null,
     gz: zlib.gzipSync(raw, { level: 9 }),
-    br: zlib.brotliCompressSync(raw, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 11 } }),
+    br: zlib.brotliCompressSync(raw, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 9 } }),
     etag: `"${crypto.createHash("sha1").update(raw).digest("base64url").slice(0, 22)}"`,
     type: name.endsWith(".css") ? "text/css; charset=utf-8" : "text/html; charset=utf-8"
   };
@@ -340,6 +340,11 @@ const apiLimiter = rateLimit({
 // voice-overs / subtitles — a 429 there stops a film). Phone and PC behind one router share an IP.
 const posterLimiter = rateLimit({
   windowMs: 60 * 1000, limit: 1000, standardHeaders: "draft-7", legacyHeaders: false,
+  handler: (req, res, next, options) => res.status(options.statusCode).json({ error: "Слишком много запросов." })
+});
+// Сведения о видео: плитки медиатеки спрашивают их пачкой (ffprobe на сервере всё равно не больше двух сразу).
+const mediaInfoLimiter = rateLimit({
+  windowMs: 60 * 1000, limit: 300, standardHeaders: "draft-7", legacyHeaders: false,
   handler: (req, res, next, options) => res.status(options.statusCode).json({ error: "Слишком много запросов." })
 });
 const mirrorUrlLimiter = rateLimit({
@@ -1555,6 +1560,7 @@ app.get("/api/magnets/:id/files", requireLogin, apiLimiter, async (req, res) => 
 // direct URLs themselves are never written to disk.
 const MEDIA_CACHE_FILE = path.join(DATA_DIR, "media-metadata-cache.json");
 const MEDIA_CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
+const MEDIA_CACHE_MAX = 5000; // записей; при переполнении вытесняются самые старые
 const mediaMetadataCache = new Map();
 try {
   const saved = JSON.parse(fs.readFileSync(MEDIA_CACHE_FILE, "utf8"));
@@ -1610,7 +1616,7 @@ function runFfprobe(url) {
     });
   });
 }
-app.post("/api/media-metadata", requireLogin, apiLimiter, async (req, res) => {
+app.post("/api/media-metadata", requireLogin, mediaInfoLimiter, async (req, res) => {
   let raw = typeof req.body.link === "string" ? req.body.link.trim() : "";
   let parsed = safeHttpsUrl(raw);
   // Library snapshots may not contain file links; resolve the requested file from AllDebrid by magnet ID + path.
@@ -1670,7 +1676,10 @@ app.post("/api/media-metadata", requireLogin, apiLimiter, async (req, res) => {
         if (!direct || !["http:", "https:"].includes(direct.protocol))
           throw Object.assign(new Error("direct"), { userMessage: "AllDebrid вернул некорректный URL видео." });
         const metadata = await runFfprobe(direct.toString());
+        for (const [k, v] of mediaMetadataCache) if (!(v.expiresAt > Date.now())) mediaMetadataCache.delete(k);
+        mediaMetadataCache.delete(key);
         mediaMetadataCache.set(key, { metadata, expiresAt: Date.now() + MEDIA_CACHE_TTL });
+        while (mediaMetadataCache.size > MEDIA_CACHE_MAX) mediaMetadataCache.delete(mediaMetadataCache.keys().next().value);
         persistMediaCache();
         return metadata;
       }).finally(() => metadataInflight.delete(key));
@@ -1688,7 +1697,7 @@ app.post("/api/media-metadata", requireLogin, apiLimiter, async (req, res) => {
 
 // Ответы TMDB на поиск постера кэшируются в памяти на сутки (до 3000 названий): одно и то же название не ищется повторно.
 const posterLookupCache = new Map(); // query -> { at, body }
-app.get("/api/poster", requireLogin, apiLimiter, async (req, res) => {
+app.get("/api/poster", requireLogin, posterLimiter, async (req, res) => {
   const query = typeof req.query.q === "string" ? req.query.q.trim().slice(0, 160) : "";
   if (!query) return res.status(400).json({ error: "Не указано название." });
   if (!TMDB_API_KEY) return res.status(503).json({ error: "TMDB_API_KEY is not configured." });
