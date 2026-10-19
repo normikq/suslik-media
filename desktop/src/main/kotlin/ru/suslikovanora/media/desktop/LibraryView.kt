@@ -433,47 +433,31 @@ private fun LibraryHeader(
     lib: Library,
     onRefresh: () -> Unit
 ) {
-    Column(Modifier.fillMaxWidth().padding(bottom = 14.dp)) {
+    Column(Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    tr("library.moya_biblioteka_alldebrid"),
-                    fontFamily = Unbounded,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 24.sp,
-                    color = Color.White
-                )
-                Text(
-                    tr("library.torrenty_papki_i_fayly"),
-                    color = Color(0xFF8E96A8),
-                    fontFamily = Onest,
-                    fontSize = 13.5.sp,
-                    modifier = Modifier.padding(top = 4.dp)
-                )
-            }
-            PillButton(
-                text = if (lib.loading) tr("library.zagruzka") else tr("library.obnovit"),
-                icon = { RefreshIcon(size = 14.dp) },
-                onClick = onRefresh
+            Text(tr("library.moya_biblioteka_alldebrid"), fontFamily = Unbounded, fontWeight = FontWeight.SemiBold, fontSize = 24.sp, color = Color.White)
+            Text(totalCount.toString(), color = Sm.muted, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp, modifier = Modifier.padding(start = 12.dp, top = 6.dp))
+            Spacer(Modifier.weight(1f))
+            Field(
+                value = query,
+                onValue = onQueryChange,
+                placeholder = tr("library.poisk_po_nazvaniyu"),
+                leadingIcon = { SearchIcon(size = 16.dp, color = Color(0xFF8E96A8)) },
+                modifier = Modifier.width(280.dp)
             )
+            Spacer(Modifier.width(10.dp))
+            val src = remember { MutableInteractionSource() }
+            val hovered by src.collectIsHoveredAsState()
+            val turn by animateFloatAsState(if (lib.loading) 360f else 0f, tween(600, easing = Sm.ease))
+            Box(
+                Modifier.size(42.dp).glass(RoundedCornerShape(12.dp), hovered).hoverClick(src, onClick = onRefresh),
+                contentAlignment = Alignment.Center
+            ) { RefreshIcon(Modifier.graphicsLayer { rotationZ = turn }, color = if (lib.loading) Sm.muted else Color.White, size = 16.dp) }
         }
-        Spacer(Modifier.height(14.dp))
-        Field(
-            value = query,
-            onValue = onQueryChange,
-            placeholder = tr("library.poisk_po_nazvaniyu"),
-            leadingIcon = { SearchIcon(size = 16.dp, color = Color(0xFF8E96A8)) }
-        )
-        Spacer(Modifier.height(8.dp))
-        val statusColor by animateColorAsState(
-            when (lib.statusKind) {
-                StatusKind.Ok -> Color(0xFF8E96A8)
-                StatusKind.Error -> Sm.bad
-                else -> Color(0xFF8E96A8)
-            }
-        )
-        val countLabel = if (lib.statusKind == StatusKind.Error) lib.status else tr("library.zagruzheno_totalcount_torrent", "totalCount" to totalCount)
-        Text(countLabel, color = statusColor, fontFamily = Onest, fontSize = 13.sp, modifier = Modifier.padding(start = 2.dp))
+        // A line of its own only when something is wrong.
+        if (lib.statusKind == StatusKind.Error) {
+            Text(lib.status, color = Sm.bad, fontFamily = Onest, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp, start = 2.dp))
+        }
     }
 }
 
