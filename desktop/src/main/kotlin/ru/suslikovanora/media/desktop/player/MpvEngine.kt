@@ -241,6 +241,8 @@ class MpvEngine(
             currentOpenUrl = url
             pendingAudio = audioUrls
             pendingSubs = subs
+            pendingAudioCount = audioUrls.size
+            pendingSubCount = subUrls.size
         }
         cmd("loadfile", url, "replace")
     }
@@ -250,6 +252,8 @@ class MpvEngine(
     @Volatile private var currentOpenUrl: String? = null
     @Volatile private var pendingAudio: List<String> = emptyList()
     @Volatile private var pendingSubs: java.util.concurrent.Future<List<SideSub>>? = null
+    @Volatile private var pendingAudioCount = 0
+    @Volatile private var pendingSubCount = 0
     @Volatile private var sideThread: Thread? = null
 
     /**
@@ -269,20 +273,40 @@ class MpvEngine(
                 pendingSubs = null
                 Triple(openGen, a, s)
             } else {
+                pendingAudioCount = 0
+                pendingSubCount = 0
                 Triple(openGen, emptyList<String>(), null)
             }
         }
-        if (audio.isEmpty() && subs == null) return
+        if (audio.isEmpty() && subs == null) {
+            pendingAudioCount = 0
+            pendingSubCount = 0
+            return
+        }
         sideThread = Thread({
             val current = { !dead && openGen == gen }
-            val list = runCatching { subs?.get(20, java.util.concurrent.TimeUnit.SECONDS) }.getOrNull().orEmpty()
-            for (s in list) {
-                if (!current()) return@Thread
-                if (s.lang != null) cmd("sub-add", s.target, "auto", s.title, s.lang) else cmd("sub-add", s.target, "auto", s.title)
-            }
-            for (a in audio) {
-                if (!current()) return@Thread
-                cmd("audio-add", a, "auto")
+            try {
+                val list = runCatching { subs?.get(20, java.util.concurrent.TimeUnit.SECONDS) }.getOrNull().orEmpty()
+                pendingSubCount = list.size
+                for (s in list) {
+                    if (!current()) return@Thread
+                    if (s.lang != null) cmd("sub-add", s.target, "auto", s.title, s.lang) else cmd("sub-add", s.target, "auto", s.title)
+                    pendingSubCount = (pendingSubCount - 1).coerceAtLeast(0)
+                }
+                pendingSubCount = 0
+                pendingAudioCount = audio.size
+                for (a in audio) {
+                    if (!current()) return@Thread
+                    cmd("audio-add", a, "auto")
+                    pendingAudioCount = (pendingAudioCount - 1).coerceAtLeast(0)
+                }
+                pendingAudioCount = 0
+            } finally {
+                pendingSubCount = 0
+                pendingAudioCount = 0
+                if (!dead && openGen == gen) {
+                    listener.tracksChanged()
+                }
             }
         }, "mpv-sidecars").apply { isDaemon = true; start() }
     }
@@ -326,6 +350,27 @@ class MpvEngine(
 
     override fun audioTracks(): List<EngineTrack> = tracks("audio")
     override fun subtitleTracks(): List<EngineTrack> = tracks("sub")
+
+    override fun isTracksLoading(kind: String): Boolean = when (kind) {
+        "audio" -> pendingAudioCount > 0 || (!loaded && (pendingAudio.isNotEmpty() || currentOpenUrl != null))
+        "spu" -> pendingSubCount > 0 || (!loaded && (pendingSubs != null || currentOpenUrl != null))
+        else -> false
+    }
+
+    override fun pendingTracksCount(kind: String): Int = when (kind) {
+        "audio" -> {
+            if (pendingAudioCount > 0) pendingAudioCount
+            else if (!loaded) {
+                if (pendingAudio.isNotEmpty()) pendingAudio.size + 1 else 6
+            } else 0
+        }
+        "spu" -> {
+            if (pendingSubCount > 0) pendingSubCount
+            else if (!loaded) 5
+            else 0
+        }
+        else -> 0
+    }
 
     private fun tracks(type: String): List<EngineTrack> {
         val p = h ?: return emptyList()

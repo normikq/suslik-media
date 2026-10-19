@@ -1,6 +1,7 @@
 package ru.suslikovanora.media.desktop.player
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
@@ -155,6 +156,8 @@ fun PlayerBottomBar(
     picker: String?,
     pickerItems: List<Pair<Int, String>>,
     pickerCurrent: Int,
+    pickerLoading: Boolean = false,
+    pickerPendingCount: Int = 0,
     volume: Int,
     userMuted: Boolean,
     fullscreen: Boolean,
@@ -513,17 +516,37 @@ fun PlayerBottomBar(
                             }
                         }
                         FlowRow(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().animateContentSize(animationSpec = tween(220)),
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            if (pickerItems.none { it.first != -1 })
-                                Text("Дорожки ещё не определены", color = Color.White.copy(alpha = 0.5f), fontFamily = Onest, fontSize = 13.sp)
-                            pickerItems.forEach { (id, name) ->
+                            val hasLoadedTracks = pickerItems.any { it.first != -1 }
+                            val isAudio = (kind == "audio")
+                            val skeletonCount = when {
+                                pickerPendingCount > 0 -> pickerPendingCount
+                                pickerLoading && !hasLoadedTracks -> if (isAudio) 6 else 5
+                                else -> 0
+                            }
+
+                            if (!hasLoadedTracks && !pickerLoading && skeletonCount == 0) {
+                                Text(
+                                    "Дорожки ещё не определены",
+                                    color = Color.White.copy(alpha = 0.5f),
+                                    fontFamily = Onest,
+                                    fontSize = 13.sp,
+                                    modifier = Modifier.padding(vertical = 4.dp)
+                                )
+                            }
+
+                            pickerItems.forEachIndexed { idx, (id, name) ->
                                 val on = id == current
-                                PlayerChip(name, on) {
+                                PlayerChipAnimated(name, on, idx) {
                                     onSelectTrack(kind, id, name)
                                 }
+                            }
+
+                            repeat(skeletonCount) { i ->
+                                PlayerChipSkeleton(index = pickerItems.size + i)
                             }
                         }
                     }
