@@ -178,6 +178,9 @@ fun PlayerView(
     var lastFrame by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
     var pickerItems by remember { mutableStateOf(emptyList<Pair<Int, String>>()) }
     var pickerCurrent by remember { mutableStateOf(-2) }
+    var pickerLoading by remember { mutableStateOf(false) }
+    var pickerPendingCount by remember { mutableStateOf(0) }
+    val trackMenuCache = remember { mutableMapOf<String, Pair<List<Pair<Int, String>>, Int>>() }
     var prefsUntil by remember { mutableStateOf(0L) }
     var rate by remember { mutableStateOf(ui.get("rate")?.toFloatOrNull()?.coerceIn(0.25f, 4f) ?: 1f) }
     var subDelay by remember { mutableStateOf(0L) }
@@ -262,6 +265,12 @@ fun PlayerView(
         audioDelay = pref("adelay")?.toLongOrNull() ?: 0L
         subDelay = pref("sdelay")?.toLongOrNull() ?: 0L
         pausedAt = 0L
+        trackMenuCache.clear()
+        if (picker == "audio" || picker == "spu") {
+            pickerItems = emptyList()
+            pickerPendingCount = if (picker == "audio") extras.first.size + 1 else extras.second.size
+            pickerLoading = true
+        }
 
         Reserve.init()
         BurstProxy.capBytes = PlaybackSettings.burstMb().toLong() shl 20
@@ -324,7 +333,23 @@ fun PlayerView(
         }
     }
 
-    val trackMenuCache = remember { mutableMapOf<String, Pair<List<Pair<Int, String>>, Int>>() }
+    fun refreshPicker(kind: String) {
+        scope.launch {
+            val audio = kind == "audio"
+            val list = if (audio) eAudioTracks() else listOf(-1 to tr("player.vyklyuchit")) + eSubTracks()
+            val cur = if (audio) eAudioCur() else eSubCur()
+            val pending = engine.pendingTracksCount(kind)
+            val loading = engine.isTracksLoading(kind)
+            val fresh = list to cur
+            trackMenuCache[kind] = fresh
+            if (picker == kind) {
+                pickerItems = list
+                pickerCurrent = cur
+                pickerPendingCount = pending
+                pickerLoading = loading
+            }
+        }
+    }
 
     fun openPicker(kind: String) {
         tallBottom = true
@@ -332,22 +357,17 @@ fun PlayerView(
             picker = "more"
             return
         }
+        picker = kind
         val cached = trackMenuCache[kind]
         if (cached != null) {
             pickerItems = cached.first
             pickerCurrent = cached.second
-            picker = kind
+        } else {
+            pickerItems = emptyList()
         }
-        scope.launch {
-            val audio = kind == "audio"
-            val list = if (audio) eAudioTracks() else listOf(-1 to tr("player.vyklyuchit")) + eSubTracks()
-            val cur = if (audio) eAudioCur() else eSubCur()
-            val fresh = list to cur
-            trackMenuCache[kind] = fresh
-            pickerItems = list
-            pickerCurrent = cur
-            picker = kind
-        }
+        pickerPendingCount = engine.pendingTracksCount(kind)
+        pickerLoading = engine.isTracksLoading(kind)
+        refreshPicker(kind)
     }
 
     fun closePicker() {
@@ -775,7 +795,15 @@ fun PlayerView(
             }
         }
 
+        fun evTracksChanged() = ui2 {
+            val p = picker
+            if (p == "audio" || p == "spu") {
+                refreshPicker(p)
+            }
+        }
+
         engBridge.target = object : EngineListener {
+            override fun opened() = evTracksChanged()
             override fun playing() = evPlaying()
             override fun paused() = evPaused()
             override fun stopped() = evStopped()
@@ -784,7 +812,10 @@ fun PlayerView(
             override fun timeChanged(ms: Long) = evTime(ms)
             override fun timeChanged(ms: Long, position: Float) = evTime(ms)
             override fun lengthChanged(ms: Long) = evLength(ms)
-            override fun tracksChanged() = evStream()
+            override fun tracksChanged() {
+                evStream()
+                evTracksChanged()
+            }
             override fun finished() = evFinished()
             override fun failed(message: String) { PlayerLog.write("[mpv] $message"); evError() }
         }
@@ -1092,6 +1123,8 @@ fun PlayerView(
             picker = picker,
             pickerItems = pickerItems,
             pickerCurrent = pickerCurrent,
+            pickerLoading = pickerLoading,
+            pickerPendingCount = pickerPendingCount,
             volume = volume,
             userMuted = userMuted,
             fullscreen = fullscreen,

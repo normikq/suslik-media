@@ -1,11 +1,23 @@
 package ru.suslikovanora.media.desktop.player
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -469,6 +481,107 @@ fun PlayerChip(label: String, on: Boolean, onClick: () -> Unit) {
         contentAlignment = Alignment.Center
     ) {
         Text(text = label, color = fg, fontFamily = Onest, fontWeight = weight, fontSize = 12.5.sp, maxLines = 1)
+    }
+}
+
+/**
+ * Скелетон дорожки (кружочек-индикатор + полоса названия) с мерцающей анимацией шиммера.
+ */
+@Composable
+fun PlayerChipSkeleton(
+    index: Int = 0,
+    modifier: Modifier = Modifier
+) {
+    val skeletonWidths = remember { listOf(48.dp, 62.dp, 44.dp, 56.dp, 52.dp, 64.dp, 50.dp) }
+    val barWidth = skeletonWidths[index % skeletonWidths.size]
+
+    val transition = rememberInfiniteTransition()
+    val translateAnim by transition.animateFloat(
+        initialValue = -120f,
+        targetValue = 900f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1450, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        )
+    )
+    val pulseAlpha by transition.animateFloat(
+        initialValue = 0.72f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1050, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        )
+    )
+
+    val shimmerBrush = Brush.linearGradient(
+        colors = listOf(
+            Color(0x38788C9E),
+            Color(0x8CB8D2EA),
+            Color(0x38788C9E)
+        ),
+        start = Offset(translateAnim - 160f, 0f),
+        end = Offset(translateAnim, 0f)
+    )
+
+    Box(
+        modifier = modifier
+            .graphicsLayer { alpha = pulseAlpha }
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color(0x1F161B26))
+            .border(1.dp, Color(0x2EFFFFFF), RoundedCornerShape(8.dp))
+            .padding(horizontal = 11.dp, vertical = 7.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(shimmerBrush)
+            )
+            Box(
+                modifier = Modifier
+                    .width(barWidth)
+                    .height(7.dp)
+                    .clip(RoundedCornerShape(3.5.dp))
+                    .background(shimmerBrush)
+            )
+        }
+    }
+}
+
+/**
+ * Дорожка с плавной анимацией появления (scale + fade-in со ступенчатой задержкой).
+ */
+@Composable
+fun PlayerChipAnimated(
+    label: String,
+    on: Boolean,
+    index: Int = 0,
+    onClick: () -> Unit
+) {
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        val delayMs = (index * 30L).coerceAtMost(250L)
+        if (delayMs > 0) delay(delayMs)
+        visible = true
+    }
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(animationSpec = tween(220, easing = LinearOutSlowInEasing)) +
+                scaleIn(
+                    initialScale = 0.86f,
+                    animationSpec = spring(
+                        dampingRatio = 0.72f,
+                        stiffness = Spring.StiffnessMediumLow
+                    )
+                ),
+        exit = fadeOut(animationSpec = tween(140))
+    ) {
+        PlayerChip(label = label, on = on, onClick = onClick)
     }
 }
 

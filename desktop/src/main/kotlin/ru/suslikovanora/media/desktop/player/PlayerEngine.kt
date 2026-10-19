@@ -69,6 +69,12 @@ interface PlayerEngine {
     fun setSubtitleTrack(id: Int)
     fun chapters(): List<EngineChapter>
 
+    /** Загружаются ли ещё дорожки (внешние файлы добавляются через sub-add / audio-add). */
+    fun isTracksLoading(kind: String): Boolean = false
+
+    /** Число оставшихся внешних дорожек (аудио или субтитры), которые ещё добавляются в фоновом потоке. */
+    fun pendingTracksCount(kind: String): Int = 0
+
     /** Кадр для заставки при переоткрытии; null, если видео нет. */
     fun snapshot(maxWidth: Int): BufferedImage?
 
