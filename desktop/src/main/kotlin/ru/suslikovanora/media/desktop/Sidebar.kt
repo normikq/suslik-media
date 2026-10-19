@@ -6,6 +6,7 @@ import ru.suslikovanora.media.desktop.ui.*
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
@@ -23,6 +24,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -80,6 +83,33 @@ private val PeopleIcon: @Composable (Color) -> Unit = { col ->
 
 private val ui = Store("ui")
 
+/** The logo: a gradient tile with a play mark and a slowly breathing blue glow behind it. */
+@Composable
+private fun BrandMark() {
+    val breath = androidx.compose.animation.core.rememberInfiniteTransition(label = "logo")
+    val b by breath.animateFloat(
+        0f, 1f,
+        androidx.compose.animation.core.infiniteRepeatable(
+            tween(2600, easing = androidx.compose.animation.core.FastOutSlowInEasing), androidx.compose.animation.core.RepeatMode.Reverse
+        ), label = "b"
+    )
+    Box(
+        Modifier.size(36.dp)
+            .drawBehind {
+                val r = size.maxDimension * (0.85f + 0.2f * b)
+                drawCircle(Brush.radialGradient(listOf(Color(0xFF3B82F6).copy(alpha = 0.30f + 0.25f * b), Color.Transparent)), r)
+            }
+            .clip(RoundedCornerShape(11.dp))
+            .background(Brush.linearGradient(listOf(Color(0xFF3B82F6), Color(0xFF6D5BF0), Color(0xFF8B5CF6))))
+            .border(1.dp, Color(0x59FFFFFF), RoundedCornerShape(11.dp)),
+        contentAlignment = Alignment.Center
+    ) {
+        // glassy highlight on the upper half
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0x40FFFFFF), Color.Transparent), endY = 60f)))
+        PlayTriangle(color = Color.White, size = 16.dp, modifier = Modifier.padding(start = 2.dp))
+    }
+}
+
 /** Text that slides in / out next to an icon when the panel is expanded / collapsed. */
 @Composable
 private fun Label(visible: Boolean, content: @Composable () -> Unit) = AnimatedVisibility(
@@ -102,18 +132,16 @@ private fun NavItem(
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(bg).border(1.dp, edge, RoundedCornerShape(12.dp))
             .let { if (enabled) it.hoverClick(src, onClick = onClick) else it.hoverable(src) }
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = if (expanded) Arrangement.Start else Arrangement.Center
+            // The icon sits at the same x in both states (16 dp = centred in the collapsed 48 dp), so it never jumps.
+            .padding(start = 15.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
         icon(fg)
         Label(expanded) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.padding(start = 12.dp)) {
                 Text(label, color = fg, fontFamily = Onest, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium, fontSize = 14.sp,
-                    maxLines = 1, softWrap = false, modifier = Modifier.padding(start = 12.dp))
-                if (soon != null) Text(soon, color = Color(0xFF5B6272), fontFamily = Onest, fontSize = 10.5.sp, maxLines = 1, softWrap = false,
-                    modifier = Modifier.padding(start = 8.dp).clip(RoundedCornerShape(6.dp)).border(1.dp, Color(0x1FFFFFFF), RoundedCornerShape(6.dp))
-                        .padding(horizontal = 5.dp, vertical = 1.dp))
+                    maxLines = 1, softWrap = false)
+                if (soon != null) Text(soon, color = Color(0xFF5B6272), fontFamily = Onest, fontSize = 11.sp, maxLines = 1, softWrap = false)
             }
         }
     }
@@ -122,20 +150,20 @@ private fun NavItem(
 @Composable
 fun Sidebar(tab: Tab, profile: Profile, onSelect: (Tab) -> Unit, onSettings: () -> Unit, onLogout: () -> Unit) {
     var collapsed by remember { mutableStateOf(ui.get("sidebar_collapsed") == "1") }
-    val width by animateDpAsState(if (collapsed) 76.dp else 236.dp, tween(300, easing = Sm.ease))
+    val width by animateDpAsState(if (collapsed) 76.dp else 244.dp, tween(300, easing = Sm.ease))
     val expanded = !collapsed
     Column(
         Modifier.width(width).fillMaxHeight().background(Sm.glassSide).drawEdge()
             .padding(horizontal = 14.dp, vertical = 18.dp)
     ) {
-        Row(
-            Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = if (expanded) Arrangement.Start else Arrangement.Center
-        ) {
-            LogoPlayIcon(size = 34.dp)
+        Row(Modifier.fillMaxWidth().padding(start = 6.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            BrandMark()
             Label(expanded) {
-                Text("Suslik Media", color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 16.sp,
-                    maxLines = 1, softWrap = false, modifier = Modifier.padding(start = 11.dp))
+                Column(Modifier.padding(start = 12.dp)) {
+                    Text("Suslik", color = Color.White, fontFamily = Unbounded, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 1, softWrap = false)
+                    Text("MEDIA", color = Color(0xFF60A5FA), fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 10.sp,
+                        letterSpacing = 4.sp, maxLines = 1, softWrap = false, modifier = Modifier.padding(top = 1.dp))
+                }
             }
         }
         Spacer(Modifier.height(22.dp))

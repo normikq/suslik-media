@@ -191,8 +191,8 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
         // Dark title bar in the app's colours, and a dark window behind Compose (no white flash while animating/resizing).
         LaunchedEffect(Unit) {
             WindowMode.currentWindow = window
-            window.background = java.awt.Color(0x09, 0x0B, 0x10)
-            window.contentPane.background = java.awt.Color(0x09, 0x0B, 0x10)
+            window.background = java.awt.Color(0x06, 0x09, 0x11)
+            window.contentPane.background = java.awt.Color(0x06, 0x09, 0x11)
             TitleBar.style(window)
             // Window / taskbar / Alt+Tab icon: ready-made sizes, so Windows picks a crisp one instead of shrinking 1024 px.
             runCatching {

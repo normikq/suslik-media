@@ -69,6 +69,8 @@ fun Modifier.ambientBackdrop(): Modifier = this.background(Sm.backdrop).drawBehi
     glow(Color(0x382563EB), size.width * 0.22f, 0f, size.minDimension * 0.85f)
     glow(Color(0x2E8B5CF6), size.width * 0.95f, size.height * 0.95f, size.minDimension * 0.75f)
     glow(Color(0x2406B6D4), size.width * 0.55f, size.height * 0.45f, size.minDimension * 0.6f)
+    // fades into the title bar's colour at the very top, so the system bar and the window read as one
+    drawRect(Brush.verticalGradient(listOf(Sm.backdrop, Color.Transparent), 0f, 72.dp.toPx()), size = androidx.compose.ui.geometry.Size(size.width, 72.dp.toPx()))
 }
 
 val Unbounded = FontFamily(
