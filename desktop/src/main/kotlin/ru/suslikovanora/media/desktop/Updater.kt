@@ -204,7 +204,7 @@ fun UpdateButton() {
         val busy = progress != null
         val failed = Updater.error != null && !busy
         // breathing: slow in-out pulse of the glow and a hair of scale; calm while hovered / downloading
-        val b by breathing(1700, active = !(hovered || busy))
+        val b by breathing(1700, active = !(hovered || busy || Motion.simple))
         val calm = hovered || busy
         val glow = if (calm) 0.55f else 0.18f + 0.5f * b
         val scale = if (calm) 1f else 1f + 0.035f * b

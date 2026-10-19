@@ -9,6 +9,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -52,7 +53,10 @@ object Sm {
 
 /** Glass surface: translucent fill, hairline light edge. Compose has no backdrop blur, so the glow behind does the work. */
 fun Modifier.glass(shape: Shape, hovered: Boolean = false): Modifier =
-    this.clip(shape).background(if (hovered) Sm.glassFillHover else Sm.glassFill).border(1.dp, if (hovered) Sm.glassEdgeHover else Sm.glassEdge, shape)
+    // The simple mode paints opaque panels: no blending of translucent layers on every frame.
+    this.clip(shape)
+        .background(if (Motion.simple) (if (hovered) Color(0xFF1B2640) else Color(0xFF141B2C)) else if (hovered) Sm.glassFillHover else Sm.glassFill)
+        .border(1.dp, if (hovered) Sm.glassEdgeHover else Sm.glassEdge, shape)
 
 /** Dialog card: nearly opaque dark glass with a light hairline edge. */
 fun Modifier.glassSheet(shape: Shape): Modifier = this.clip(shape).background(Sm.sheet).border(1.dp, Sm.sheetEdge, shape)
@@ -62,8 +66,7 @@ fun Modifier.drawEdge(): Modifier = this.drawBehind {
     drawLine(Color(0x14FFFFFF), Offset(size.width - 0.5f, 0f), Offset(size.width - 0.5f, size.height), 1f)
 }
 
-/** Soft blue / violet / cyan glows behind everything, as in the concept. Static: no per-frame cost. */
-fun Modifier.ambientBackdrop(): Modifier = this.background(Sm.backdrop).drawBehind {
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.paintGlows() {
     fun glow(c: Color, cx: Float, cy: Float, r: Float) =
         drawCircle(Brush.radialGradient(listOf(c, Color.Transparent), Offset(cx, cy), r), r, Offset(cx, cy))
     glow(Color(0x302563EB), size.width * 0.25f, size.height * 0.22f, size.minDimension * 0.8f)
@@ -71,6 +74,18 @@ fun Modifier.ambientBackdrop(): Modifier = this.background(Sm.backdrop).drawBehi
     glow(Color(0x2406B6D4), size.width * 0.55f, size.height * 0.45f, size.minDimension * 0.6f)
     // fades into the title bar's colour at the very top, so the system bar and the window read as one
     drawRect(Brush.verticalGradient(listOf(Sm.backdrop, Color.Transparent), 0f, 150.dp.toPx()), size = androidx.compose.ui.geometry.Size(size.width, 150.dp.toPx()))
+}
+
+/**
+ * Soft blue / violet / cyan glows behind everything, as in the concept. In the simple mode they are painted once per
+ * window size into a picture and the picture is just drawn from then on.
+ */
+fun Modifier.ambientBackdrop(): Modifier = this.background(Sm.backdrop).drawWithCache {
+    if (Motion.simple && size.width >= 1f && size.height >= 1f) {
+        val bmp = androidx.compose.ui.graphics.ImageBitmap(size.width.toInt(), size.height.toInt())
+        androidx.compose.ui.graphics.drawscope.CanvasDrawScope().draw(this, layoutDirection, androidx.compose.ui.graphics.Canvas(bmp), size) { paintGlows() }
+        onDrawBehind { drawImage(bmp) }
+    } else onDrawBehind { paintGlows() }
 }
 
 val Unbounded = FontFamily(

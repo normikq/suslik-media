@@ -233,8 +233,12 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
             // [presence] drives both layers: 0 = library, 1 = player.
             Box(Modifier.fillMaxSize().graphicsLayer {
                 val p = presence.value
-                val s = 0.93f + 0.07f * (1f - p)          // recedes while the player is up, comes forward on return
-                scaleX = s; scaleY = s; alpha = (1f - p * 1.15f).coerceIn(0f, 1f)
+                if (Motion.simple) {
+                    alpha = if (p >= 1f) 0f else 1f       // no scaling / fading of the whole library: it just stays until the player covers it
+                } else {
+                    val s = 0.93f + 0.07f * (1f - p)      // recedes while the player is up, comes forward on return
+                    scaleX = s; scaleY = s; alpha = (1f - p * 1.15f).coerceIn(0f, 1f)
+                }
             }) {
                 androidx.compose.animation.Crossfade(lib.authenticated == false, animationSpec = tween(420, easing = Sm.ease), modifier = Modifier.fillMaxSize().background(Sm.night)) { needLogin ->
                   if (needLogin) {
@@ -252,10 +256,12 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
                     AnimatedContent(
                         targetState = tab,
                         transitionSpec = {
+                          if (Motion.simple) androidx.compose.animation.EnterTransition.None togetherWith androidx.compose.animation.ExitTransition.None else {
                             val dir = if (targetState.ordinal > initialState.ordinal) 1 else -1
                             (fadeIn(tween(320, delayMillis = 70, easing = Sm.ease)) +
                                 slideInHorizontally(tween(460, easing = Sm.ease)) { dir * it / 14 }) togetherWith
                                 (fadeOut(tween(180)) + slideOutHorizontally(tween(460, easing = Sm.ease)) { -dir * it / 14 })
+                          }
                         },
                         modifier = Modifier.weight(1f).fillMaxSize()
                     ) { t ->

@@ -90,7 +90,7 @@ private val ui = Store("ui")
 /** The logo (the groundhog in the play button, resources/icons/brand-mark.png) with a slowly breathing glow behind it. */
 @Composable
 private fun BrandMark() {
-    val b by breathing(2600)
+    val b by breathing(2600, active = !Motion.simple)
     Box(
         Modifier.size(46.dp).drawBehind {
             val r = size.maxDimension * (0.62f + 0.12f * b)

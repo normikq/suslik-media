@@ -129,6 +129,7 @@ fun SettingsSheet(onClose: () -> Unit) {
                 PlaybackSettings.cachePresets.forEach { p ->
                     PresetRow(p, p.value == cache) { cache = p.value; PlaybackSettings.setCacheMs(p.value) }
                 }
+                MotionSection()
                 EngineSection()
                 StorageSection()
                 if (Diag.on) DiagSection() else ChannelSection()
@@ -376,6 +377,16 @@ private fun EngineOption(
                 )
             }
         }
+    }
+}
+
+/** «Анимации»: full or simplified (for weak machines, see ui/Motion.kt). */
+@Composable
+private fun MotionSection() {
+    Section(tr("settings.animatsii"), tr("settings.animatsii_tekst"), top = 18.dp)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ChannelOption(tr("settings.animatsii_polnye"), !Motion.simple, Modifier.weight(1f)) { Motion.set(false) }
+        ChannelOption(tr("settings.animatsii_prostye"), Motion.simple, Modifier.weight(1f)) { Motion.set(true) }
     }
 }
 

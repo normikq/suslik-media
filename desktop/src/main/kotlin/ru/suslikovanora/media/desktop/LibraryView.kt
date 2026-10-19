@@ -398,7 +398,7 @@ fun LibraryView(
                 }
                 // 4. Catalog grid of poster cards
                 items(shown, key = { it.m.id }, contentType = { "tile" }) { item ->
-                    Tile(item, lib, versions = versionsOf[item.m.id].orEmpty(), inFavorites = favoritesOnly, onOpen = open, modifier = Modifier.animateItem(fadeInSpec = tween(300), fadeOutSpec = tween(320, easing = Sm.ease)))
+                    Tile(item, lib, versions = versionsOf[item.m.id].orEmpty(), inFavorites = favoritesOnly, onOpen = open, modifier = if (Motion.simple) Modifier else Modifier.animateItem(fadeInSpec = tween(300), fadeOutSpec = tween(320, easing = Sm.ease)))
                 }
             }
         } else {
@@ -441,7 +441,7 @@ fun LibraryView(
                 }
 
                 items(shown, key = { it.m.id }, contentType = { "list_row" }) { item ->
-                    ListRow(item, lib, onOpen = open, modifier = Modifier.animateItem(fadeInSpec = tween(300), fadeOutSpec = tween(200)))
+                    ListRow(item, lib, onOpen = open, modifier = if (Motion.simple) Modifier else Modifier.animateItem(fadeInSpec = tween(300), fadeOutSpec = tween(200)))
                 }
             }
         }
@@ -1087,7 +1087,7 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
                 items(entries.size, key = { entries[it].item.m.id }) { i ->
                     val e = entries[i]
                     ContinueCard(
-                        e, lib, Modifier.animateItem(fadeInSpec = tween(250), fadeOutSpec = tween(200)),
+                        e, lib, if (Motion.simple) Modifier else Modifier.animateItem(fadeInSpec = tween(250), fadeOutSpec = tween(200)),
                         onRemove = { lib.hideContinue(listOf(e.item.m.id)) }
                     ) {
                         TileBounds.fromContinue = true
