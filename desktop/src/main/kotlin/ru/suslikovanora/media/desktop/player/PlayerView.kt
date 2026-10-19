@@ -87,7 +87,7 @@ fun PlayerView(
     onRestart: (Int) -> Unit = {},          // re-create the player at this episode (subtitle size)
     onClose: () -> Unit
 ) {
-    val ui = remember { Store("player_ui") }
+    val ui = Store.of("player_ui")
     val scope = rememberCoroutineScope()
     val playerExecutor = remember {
         java.util.concurrent.Executors.newSingleThreadExecutor { r ->
@@ -653,10 +653,9 @@ fun PlayerView(
         DisplayAwake.setAwake(isPlaybackActive)
     }
 
-    LaunchedEffect(time, length) {
-        if (length > 0L) {
-            MediaControls.updateTimeline(time, length)
-        }
+    // Once per whole second of the film: the media controls skip anything more often anyway (seeks go at once, with force).
+    LaunchedEffect(length) {
+        if (length > 0L) snapshotFlow { time / 1000L }.collect { MediaControls.updateTimeline(time, length) }
     }
 
     LaunchedEffect(index, posterLooked, smtcPoster) {

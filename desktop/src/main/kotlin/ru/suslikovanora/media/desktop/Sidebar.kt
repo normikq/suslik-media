@@ -85,7 +85,7 @@ private val PeopleIcon: @Composable (Color) -> Unit = { col ->
     }
 }
 
-private val ui = Store("ui")
+private val ui = Store.of("ui")
 
 /** The logo (the groundhog in the play button, resources/icons/brand-mark.png) with a slowly breathing glow behind it. */
 @Composable

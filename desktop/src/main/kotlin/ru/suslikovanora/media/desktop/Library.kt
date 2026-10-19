@@ -45,12 +45,12 @@ private const val POSTER_UNUSED_DAYS = 7L
 /** Same behaviour as the Android LibraryStore, with files in %APPDATA%\SuslikMedia instead of SharedPreferences. */
 class Library {
     private val snapshot = AppDir.file("library.json")
-    private val libraryEtag = Store("library_etag") // version of the list above, for "not modified" answers
-    private val posterIndex = Store("posters")
-    private val animIndex = Store("poster_anim") // query -> "time|1" (TMDB genre Animation) or "time|0"
-    private val mediaIndex = Store("media_info")
-    private val episodes = Store("last_episode")
-    val watch = Store("watch")
+    private val libraryEtag = Store.of("library_etag") // version of the list above, for "not modified" answers
+    private val posterIndex = Store.of("posters")
+    private val animIndex = Store.of("poster_anim") // query -> "time|1" (TMDB genre Animation) or "time|0"
+    private val mediaIndex = Store.of("media_info")
+    private val episodes = Store.of("last_episode")
+    val watch = Store.of("watch")
 
     var items by mutableStateOf<List<LibraryItem>>(emptyList())
         private set
@@ -187,9 +187,11 @@ class Library {
     private val images = object : LinkedHashMap<String, ImageBitmap?>(96, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ImageBitmap?>?) = size > 40
     }
-    private val inflight = HashMap<String, CompletableDeferred<ImageBitmap?>>()
+    // An access-ordered map rewires its links even on get(): every touch goes under its lock (tiles read it on the
+    // window's thread, posterFileFor for the media controls from elsewhere).
+    private val inflight = java.util.concurrent.ConcurrentHashMap<String, CompletableDeferred<ImageBitmap?>>()
 
-    fun cachedPoster(queries: List<String>): ImageBitmap? = queries.firstNotNullOfOrNull { images[it.lowercase()] }
+    fun cachedPoster(queries: List<String>): ImageBitmap? = synchronized(images) { queries.firstNotNullOfOrNull { images[it.lowercase()] } }
 
     suspend fun poster(queries: List<String>): ImageBitmap? {
         for (q in queries) posterFor(q)?.let { return it }
@@ -297,9 +299,9 @@ class Library {
 
     private suspend fun posterFor(query: String): ImageBitmap? {
         val key = query.lowercase()
-        if (images.containsKey(key)) return images[key]
-        inflight[key]?.let { return it.await() }
-        val own = CompletableDeferred<ImageBitmap?>(); inflight[key] = own
+        synchronized(images) { if (images.containsKey(key)) return images[key] }
+        val own = CompletableDeferred<ImageBitmap?>()
+        inflight.putIfAbsent(key, own)?.let { return it.await() }
         var img: ImageBitmap? = null
         try {
             img = posterGate.withPermit {
@@ -317,7 +319,7 @@ class Library {
                 }
                 path?.let { notePoster(key, it); loadImage(it) }
             }
-            images[key] = img
+            synchronized(images) { images[key] = img }
         } catch (e: CancellationException) { throw e } catch (_: Exception) {
         } finally { inflight.remove(key); own.complete(img) }
         return img
@@ -387,7 +389,7 @@ class Library {
     }
 
     // «Продолжить просмотр»: hidden entries. A hidden item comes back by itself once it is watched again (newer time).
-    private val continueHidden = Store("continue_hidden")
+    private val continueHidden = Store.of("continue_hidden")
     fun continueHiddenAt(id: Long): Long = continueHidden.get(id.toString())?.toLongOrNull() ?: 0L
     fun hideContinue(ids: List<Long>) {
         val now = System.currentTimeMillis().toString()

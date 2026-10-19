@@ -12,7 +12,7 @@ import androidx.compose.runtime.setValue
  * player, pages switch without sliding, the logo does not pulse.
  */
 object Motion {
-    private val store = Store("ui")
+    private val store = Store.of("ui")
 
     var simple by mutableStateOf(store.get("simple_motion") == "1")
         private set

@@ -59,7 +59,7 @@ object PlaybackSettings {
     val cachePresets = PlaybackPresets.cache
     const val CACHE_DEFAULT = PlaybackPresets.CACHE_DEFAULT
 
-    private val store = Store("settings")
+    private val store = Store.of("settings")
     fun burstMb() = PlaybackPresets.clampBurst(store.get("burst_mb")?.toIntOrNull() ?: BURST_DEFAULT)
     fun setBurstMb(v: Int) = store.put("burst_mb", v.toString())
     fun cacheMs() = store.get("cache_ms")?.toIntOrNull()

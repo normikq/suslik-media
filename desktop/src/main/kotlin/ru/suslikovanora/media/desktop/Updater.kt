@@ -61,7 +61,7 @@ object Updater {
     var progress by mutableStateOf<Float?>(null)
     var error by mutableStateOf<String?>(null)
 
-    private val prefs = Store("updates")
+    private val prefs = Store.of("updates")
 
     /** Set by the build (-Dsuslik.version); "0" when unknown (then any server version counts as newer). */
     val current: String get() = System.getProperty("suslik.version") ?: System.getProperty("jpackage.app-version") ?: "0"

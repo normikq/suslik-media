@@ -48,7 +48,7 @@ private fun bundledNotes(current: String): List<Changelog.Release> = runCatching
 }.getOrDefault(emptyList())
 private object WhatsNewRes
 
-private val seen = Store("whatsnew")
+private val seen = Store.of("whatsnew")
 
 /** «Что нового» over the library, once per installed version. */
 @Composable

@@ -637,7 +637,7 @@ private fun Tile(item: LibraryItem, lib: Library, versions: List<LibraryItem>, i
     Box(
         modifier.graphicsLayer { translationY = lift; scaleX = cardScale; scaleY = cardScale }.hoverable(src)
             .fillMaxWidth().aspectRatio(2f / 3f)
-            .onGloballyPositioned { TileBounds.poster[m.id] = it }
+            .trackBounds(TileBounds.poster, m.id)
             .clip(RoundedCornerShape(14.dp))
             .background(Color(0xFF13161F))
             .border(1.dp, edge, RoundedCornerShape(14.dp))
@@ -1138,7 +1138,7 @@ private fun ContinueCard(e: ContinueEntry, lib: Library, modifier: Modifier, onR
             // Left Poster Thumbnail
             Box(
                 Modifier.width(54.dp).fillMaxHeight()
-                    .onGloballyPositioned { TileBounds.cont[e.item.m.id] = it }
+                    .trackBounds(TileBounds.cont, e.item.m.id)
                     .clip(RoundedCornerShape(8.dp))
                     .background(Color(0xFF222736))
             ) {

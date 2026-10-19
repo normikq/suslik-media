@@ -15,7 +15,7 @@ object Uninstaller {
 
     val available: Boolean get() = !Diag.on && exe != null
 
-    private val prefs by lazy { Store("setup") }
+    private val prefs by lazy { Store.of("setup") }
 
     /** Блокирующий (до 20 с): вызывать не из потока окна. */
     fun register() {

@@ -66,14 +66,23 @@ fun Modifier.drawEdge(): Modifier = this.drawBehind {
     drawLine(Color(0x14FFFFFF), Offset(size.width - 0.5f, 0f), Offset(size.width - 0.5f, size.height), 1f)
 }
 
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.paintGlows() {
-    fun glow(c: Color, cx: Float, cy: Float, r: Float) =
-        drawCircle(Brush.radialGradient(listOf(c, Color.Transparent), Offset(cx, cy), r), r, Offset(cx, cy))
-    glow(Color(0x302563EB), size.width * 0.25f, size.height * 0.22f, size.minDimension * 0.8f)
-    glow(Color(0x2E8B5CF6), size.width * 0.95f, size.height * 0.95f, size.minDimension * 0.75f)
-    glow(Color(0x2406B6D4), size.width * 0.55f, size.height * 0.45f, size.minDimension * 0.6f)
+/** The glows for the current size; the brushes are made once per size, not on every frame. */
+private fun androidx.compose.ui.draw.CacheDrawScope.glows(): androidx.compose.ui.graphics.drawscope.DrawScope.() -> Unit {
+    fun glow(c: Color, cx: Float, cy: Float, r: Float): androidx.compose.ui.graphics.drawscope.DrawScope.() -> Unit {
+        val at = Offset(cx, cy)
+        val brush = Brush.radialGradient(listOf(c, Color.Transparent), at, r)
+        return { drawCircle(brush, r, at) }
+    }
+    val spots = listOf(
+        glow(Color(0x302563EB), size.width * 0.25f, size.height * 0.22f, size.minDimension * 0.8f),
+        glow(Color(0x2E8B5CF6), size.width * 0.95f, size.height * 0.95f, size.minDimension * 0.75f),
+        glow(Color(0x2406B6D4), size.width * 0.55f, size.height * 0.45f, size.minDimension * 0.6f),
+    )
     // fades into the title bar's colour at the very top, so the system bar and the window read as one
-    drawRect(Brush.verticalGradient(listOf(Sm.backdrop, Color.Transparent), 0f, 150.dp.toPx()), size = androidx.compose.ui.geometry.Size(size.width, 150.dp.toPx()))
+    val topH = 150.dp.toPx()
+    val top = Brush.verticalGradient(listOf(Sm.backdrop, Color.Transparent), 0f, topH)
+    val topSize = androidx.compose.ui.geometry.Size(size.width, topH)
+    return { spots.forEach { it() }; drawRect(top, size = topSize) }
 }
 
 /**
@@ -81,11 +90,12 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.paintGlows() {
  * window size into a picture and the picture is just drawn from then on.
  */
 fun Modifier.ambientBackdrop(): Modifier = this.background(Sm.backdrop).drawWithCache {
+    val paint = glows()
     if (Motion.simple && size.width >= 1f && size.height >= 1f) {
         val bmp = androidx.compose.ui.graphics.ImageBitmap(size.width.toInt(), size.height.toInt())
-        androidx.compose.ui.graphics.drawscope.CanvasDrawScope().draw(this, layoutDirection, androidx.compose.ui.graphics.Canvas(bmp), size) { paintGlows() }
+        androidx.compose.ui.graphics.drawscope.CanvasDrawScope().draw(this, layoutDirection, androidx.compose.ui.graphics.Canvas(bmp), size) { paint() }
         onDrawBehind { drawImage(bmp) }
-    } else onDrawBehind { paintGlows() }
+    } else onDrawBehind { paint() }
 }
 
 val Unbounded = FontFamily(
