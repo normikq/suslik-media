@@ -132,12 +132,16 @@ function decodeHtml(s) {
 }
 function text(html) { return decodeHtml(String(html || "").replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim(); }
 const MONTHS = { янв: 0, фев: 1, мар: 2, апр: 3, май: 4, мая: 4, июн: 5, июл: 6, авг: 7, сен: 8, окт: 9, ноя: 10, дек: 11 };
-function ruDate(s) { // "10 Окт 26" | "10.10.2026"
+function ruDate(s, now = Date.now()) { // "10 Окт 26" | "10-Окт-26" | "10.10.2026" | "10.10.26" | "Сегодня 12:00" | "Вчера 15:30"
   const t = text(s).toLowerCase();
-  let m = /(\d{1,2})\s+([а-я]{3})[а-я]*\.?\s+(\d{2,4})/.exec(t);
-  if (m && MONTHS[m[2]] !== undefined) { const y = Number(m[3]) < 100 ? 2000 + Number(m[3]) : Number(m[3]); return Date.UTC(y, MONTHS[m[2]], Number(m[1])); }
-  m = /(\d{2})[.-](\d{2})[.-](\d{4})/.exec(t);
-  return m ? Date.UTC(Number(m[3]), Number(m[2]) - 1, Number(m[1])) : 0;
+  const year = y => (Number(y) < 100 ? 2000 + Number(y) : Number(y));
+  let m = /(?<!\d)(\d{1,2})[\s-]+([а-я]{3})[а-я]*\.?[\s-]+(\d{4}|\d{2})(?!\d)/.exec(t);
+  if (m && MONTHS[m[2]] !== undefined) return Date.UTC(year(m[3]), MONTHS[m[2]], Number(m[1]));
+  m = /(?<!\d)(\d{1,2})[.-](\d{1,2})[.-](\d{4}|\d{2})(?!\d)/.exec(t);
+  if (m && Number(m[2]) >= 1 && Number(m[2]) <= 12) return Date.UTC(year(m[3]), Number(m[2]) - 1, Number(m[1]));
+  m = /(?:^|[^а-я])(сегодня|вчера)(?![а-я])/.exec(t);
+  if (m) { const d = new Date(now - (m[1] === "вчера" ? 86_400_000 : 0)); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()); }
+  return 0;
 }
 function debugEmpty(name, html, url) {
   if (!DEBUG) return;

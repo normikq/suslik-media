@@ -4,6 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Suslik Media — медиатека</title>
+  <link rel="icon" href="favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" sizes="128x128" href="brand-mark.png">
+  <link rel="apple-touch-icon" href="icon.png">
   <style>
     :root{color-scheme:dark;--bg:#0b0c10;--panel:#141720;--line:#292d3a;--text:#f3f4f8;--muted:#9da4b5;--accent:#b7a0ff;--accent2:#8b70ed}
     *{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at top,#19152a 0,#0b0c10 55%);color:var(--text);font:16px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh}
@@ -70,7 +73,7 @@
 @media(max-width:620px){.file-link-actions{gap:7px}.split-actions button,.split-actions a{white-space:normal}}
 
 
-/* Smooth motion system */\n
+/* Smooth motion system */
 /* Stable mosaic reveal: cards stay still while images load, then fade from blur to sharp. */
 .library-tile.mosaic-pending{opacity:1;animation:none;transform:none;filter:none;pointer-events:none}
 .library-tile:not(.mosaic-pending){opacity:1;animation:mosaic-clear .48s ease-out both;animation-delay:calc(min(var(--tile-index,0),18)*32ms)}
@@ -116,7 +119,7 @@ input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px #b99cff25}
 .file-row[data-file-type="folder"] .file-path>span:last-child{font-weight:700}
 .file-depth{display:inline-flex;align-items:center;justify-content:center;min-width:24px;padding:2px 5px;border:1px solid #3b4154;border-radius:6px;background:#202536;color:#aeb8d5;font-size:10px;font-weight:700;white-space:nowrap}
 .file-row[data-depth="0"] .file-depth{display:none}
-\n
+
 /* SUSLIK — smooth woodland redesign */
 :root {
   --bg: #100d19; --panel: rgba(29,24,45,.84); --line: rgba(218,184,255,.16);
@@ -396,11 +399,19 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
 @media (max-width:340px){.navrow button{font-size:10px!important}.navrow button::before{font-size:15px!important}}
 </style>
 <script>/* App 1.2+: native library and bottom bar */try{if(Number(window.__suslikApp||0)>=3)document.documentElement.classList.add("suslik-native");}catch(e){}</script>
-<link rel="stylesheet" href="redesign.css?v=10">
+<link rel="stylesheet" href="redesign.css?v=13">
 </head>
 <body>
 <main>
-  <div class="brand"><div class="logo">▶</div><div><div class="eyebrow">Приватная медиатека</div><strong>Suslik Media</strong></div></div>
+  <div class="brand">
+    <div class="brand-mark-wrap">
+      <img class="brand-logo" src="brand-mark.png" alt="Suslik Media" width="46" height="46">
+    </div>
+    <div>
+      <div class="eyebrow">Приватная медиатека</div>
+      <strong>Suslik Media</strong>
+    </div>
+  </div>
   <section class="hero"><div class="eyebrow">Все ваши ссылки в одном месте</div><h1>Найдите. Разблокируйте.<br>Смотрите как удобно.</h1><p>Приватный портал для ссылок и внешних видеоплееров.</p>
 <div class="mascot-orbit" role="img" aria-label="Мультяшный суслик">🐿️</div></section>
 
@@ -411,137 +422,225 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
   </section>
 
   <section id="appPanel" class="hidden">
-    <div class="topline"><div><h2>Suslik Media</h2><p>Ссылки и ваша библиотека AllDebrid.</p></div><button id="logout" class="secondary">Выйти</button></div>
-    <div class="row navrow"><button id="showLinkTab"><span class="nav-long">Открыть ссылку</span><span class="nav-short">Ссылка</span></button><button id="showLibraryTab" class="secondary"><span class="nav-long">Моя библиотека</span><span class="nav-short">Библиотека</span></button><button id="showSearchTab" class="secondary"><span class="nav-long">Поиск раздач</span><span class="nav-short">Поиск</span></button><button id="showAppsTab" class="secondary"><span class="nav-long">Приложения</span><span class="nav-short">Скачать</span></button></div>
-    <section id="linkTab">
-    <div class="panel">
-      <form id="linkForm">
-        <label>Выберите тип ввода</label>
-        <div class="input-modes" role="group" aria-label="Input type">
-          <button id="magnetModeBtn" class="mode-card selected" type="button" aria-pressed="true"><span class="mode-icon">↗</span><span><strong>Magnet-ссылка</strong><small>Вставьте magnet-ссылку</small></span></button>
-          <button id="torrentModeBtn" class="mode-card" type="button" aria-pressed="false"><span class="mode-icon">⇧</span><span><strong>Torrent-файл</strong><small>Выберите файл .torrent</small></span></button>
+    <aside class="app-sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-mark-wrap">
+          <img class="sidebar-brand-logo" src="brand-mark.png" alt="Suslik Media" width="42" height="42">
         </div>
-        <div id="magnetInputArea" class="input-area"><label for="url">Magnet-ссылка</label><div class="row"><input id="url" type="text" placeholder="magnet:?xt=urn:btih:…" maxlength="5000" autocomplete="off"><button id="submitBtn" type="submit">Добавить magnet</button></div></div>
-        <div id="torrentInputArea" class="input-area hidden"><label>Torrent-файл <span class="file-meta">(max 1 MB)</span></label><input id="torrentФайл" class="hidden" type="file" accept=".torrent,application/x-bittorrent"><div id="torrentDropzone" class="torrent-dropzone" role="button" tabindex="0"><div class="drop-icon">⇧</div><strong id="torrentDropTitle">Перетащите сюда файл .torrent</strong><p id="torrentDropHint">или нажмите, чтобы выбрать файл на устройстве</p><button id="chooseTorrentBtn" class="secondary" type="button">Выбрать файл</button></div><div id="torrentChosen" class="torrent-chosen hidden"><span class="torrent-file-icon">TORRENT</span><span id="torrentChosenName" class="torrent-chosen-name"></span><span id="torrentChosenSize" class="file-meta"></span><button id="removeTorrentBtn" class="secondary detach-btn" type="button" aria-label="Detach file" title="Detach file">×</button></div><button id="submitTorrentBtn" type="submit" class="submit-torrent hidden">Загрузить торрент</button></div>
-      </form>
-      <div id="linkStatus" class="status" role="status"></div>
-      <section id="historyPanel" class="history-panel"><div class="topline"><h3>История поиска</h3><button id="clearHistory" class="secondary" type="button">Очистить</button></div><p class="file-meta">Сохраняется в этом браузере, в том числе после обновления страницы.</p><div id="searchHistory"></div></section>
-    </div>
-    <div id="magnetPanel" class="panel hidden"><div id="magnetStatus" class="status"></div><div id="magnetФайлы" class="actions"></div></div>
-    <div id="resultPanel" class="panel hidden">
-      <div id="filename" class="result-title"></div><div id="metadata" class="meta"></div>
-      <div class="actions"><button id="copyBtn">Копировать ссылку для воспроизведения</button><a id="openBtn" class="button secondary" href="#" target="_blank" rel="noopener noreferrer">Открыть ссылку</a></div>
-      <p class="foot">Для VLC/PotPlayer скопируйте ссылку и откройте сетевой поток в плеере. Браузер не может напрямую запускать настольные плееры без специального помощника.</p>
-    </div>
-    </section>
-    <section id="searchTab" class="hidden">
-      <div class="panel">
-        <div class="topline"><div><h2>Поиск раздач</h2><p>Один запрос — сразу по нескольким трекерам. Результат добавляется в вашу библиотеку AllDebrid.</p></div></div>
-        <form id="searchForm" class="search-form" role="search">
-          <input id="searchInput" type="search" placeholder="Название фильма или сериала…" maxlength="120" autocomplete="off" enterkeyhint="search" aria-label="Название для поиска">
-          <button id="searchBtn" type="submit">Найти</button>
-        </form>
-        <div id="searchProviders" class="search-providers"></div>
-        <div id="searchStatus" class="status" role="status"></div>
-        <div id="searchTools" class="search-tools hidden">
-          <select id="searchSort" aria-label="Сортировка"><option value="ru">RU сначала</option><option value="seeders">По сидам</option><option value="size">По размеру</option><option value="date">По дате</option></select>
-          <select id="searchKind" aria-label="Тип раздачи"><option value="video">Фильмы и сериалы</option><option value="movie">Только фильмы</option><option value="series">Только сериалы</option><option value="all">Всё подряд</option></select>
-          <label><input id="searchHideDead" type="checkbox"> Только с сидами</label>
-          <input id="searchFilter" type="search" placeholder="Уточнить: 1080p, 2160p, rus…" autocomplete="off">
+        <div class="sidebar-brand-text">
+          <strong>Suslik</strong>
+          <span>MEDIA</span>
         </div>
-        <div id="searchHidden" class="file-meta"></div>
-        <div id="searchResults"></div>
-        <div class="actions"><button id="searchMore" class="secondary hidden" type="button">Показать ещё</button></div>
       </div>
-    </section>
-    <section id="libraryTab" class="hidden">
-      <div class="panel">
-        <div class="topline"><div><h2>Моя библиотека AllDebrid</h2><p>Торренты, папки и файлы из вашего аккаунта.</p></div><button id="refreshLibrary">Обновить</button></div>
-        <label for="libraryПоиск">Поиск торрентов и файлов</label><input id="libraryПоиск" type="search" placeholder="Поиск по названию…" autocomplete="off">
-        <div id="libraryStatus" class="status" role="status">Нажмите «Обновить», чтобы загрузить медиатеку.</div>
+      <div class="row navrow">
+        <button id="showLibraryTab" class="secondary"><span class="nav-icon" aria-hidden="true">▤</span><span class="nav-long">Моя библиотека</span><span class="nav-short">Библиотека</span></button>
+        <button id="showSearchTab" class="secondary"><span class="nav-icon" aria-hidden="true">⌕</span><span class="nav-long">Поиск раздач</span><span class="nav-short">Поиск</span></button>
+        <button id="showLinkTab"><span class="nav-icon" aria-hidden="true">↗</span><span class="nav-long">Открыть ссылку</span><span class="nav-short">Ссылка</span></button>
+        <button id="showAppsTab" class="secondary"><span class="nav-icon" aria-hidden="true">⇩</span><span class="nav-long">Приложения</span><span class="nav-short">Скачать</span></button>
       </div>
-      <div id="libraryResults" class="library-grid"></div>
-    </section>
-    <section id="appsTab" class="hidden">
-      <div class="apps-hero">
-        <div class="apps-hero-clip" aria-hidden="true"><div class="apps-hero-glow"></div></div>
-        <div class="apps-hero-text">
-          <span class="apps-kicker">Приложения</span>
-          <h2>Suslik Media на ваших устройствах</h2>
-          <p>Нативная библиотека, плеер VLC с аппаратным декодированием, озвучки и субтитры из раздачи, прогресс просмотра.
-             Приложения сами проверяют обновления при каждом запуске.</p>
+      <div class="sidebar-profile">
+        <div class="sidebar-profile-info">
+          <div class="profile-avatar">S</div>
+          <div class="profile-meta">
+            <strong>Suslik Media</strong>
+            <span class="profile-sub">AllDebrid подключён</span>
+          </div>
         </div>
-        <div class="growth" id="appsGrowth">
-          <div class="growth-head">
-            <span class="growth-title">Как росли приложения</span>
-            <div class="growth-switch" role="tablist" aria-label="Платформа">
-              <span role="tab" tabindex="0" data-p="desktop" class="on">Windows</span>
-              <span role="tab" tabindex="0" data-p="android">Android</span>
-              <i class="growth-lens" aria-hidden="true"></i>
+        <button id="logout" class="secondary btn-logout" type="button">Выйти</button>
+      </div>
+    </aside>
+
+    <div class="app-viewport">
+      <div class="mobile-topline topline">
+        <div class="mobile-brand">
+          <div class="brand-mark-wrap">
+            <img class="mobile-brand-logo" src="brand-mark.png" alt="Suslik Media" width="34" height="34">
+          </div>
+          <div><h2>Suslik Media</h2><p>Ссылки и ваша библиотека AllDebrid.</p></div>
+        </div>
+        <button id="mobileLogout" class="secondary btn-logout-mobile" type="button">Выйти</button>
+      </div>
+
+      <section id="linkTab">
+        <div class="panel">
+          <form id="linkForm">
+            <label>Выберите тип ввода</label>
+            <div class="input-modes" role="group" aria-label="Input type">
+              <button id="magnetModeBtn" class="mode-card selected" type="button" aria-pressed="true"><span class="mode-icon">↗</span><span><strong>Magnet-ссылка</strong><small>Вставьте magnet-ссылку</small></span></button>
+              <button id="torrentModeBtn" class="mode-card" type="button" aria-pressed="false"><span class="mode-icon">⇧</span><span><strong>Torrent-файл</strong><small>Выберите файл .torrent</small></span></button>
+            </div>
+            <div id="magnetInputArea" class="input-area"><label for="url">Magnet-ссылка</label><div class="row"><input id="url" type="text" placeholder="magnet:?xt=urn:btih:…" maxlength="5000" autocomplete="off"><button id="submitBtn" type="submit">Добавить magnet</button></div></div>
+            <div id="torrentInputArea" class="input-area hidden"><label>Torrent-файл <span class="file-meta">(max 1 MB)</span></label><input id="torrentФайл" class="hidden" type="file" accept=".torrent,application/x-bittorrent"><div id="torrentDropzone" class="torrent-dropzone" role="button" tabindex="0"><div class="drop-icon">⇧</div><strong id="torrentDropTitle">Перетащите сюда файл .torrent</strong><p id="torrentDropHint">или нажмите, чтобы выбрать файл на устройстве</p><button id="chooseTorrentBtn" class="secondary" type="button">Выбрать файл</button></div><div id="torrentChosen" class="torrent-chosen hidden"><span class="torrent-file-icon">TORRENT</span><span id="torrentChosenName" class="torrent-chosen-name"></span><span id="torrentChosenSize" class="file-meta"></span><button id="removeTorrentBtn" class="secondary detach-btn" type="button" aria-label="Detach file" title="Detach file">×</button></div><button id="submitTorrentBtn" type="submit" class="submit-torrent hidden">Загрузить торрент</button></div>
+          </form>
+          <div id="linkStatus" class="status" role="status"></div>
+          <section id="historyPanel" class="history-panel"><div class="topline"><h3>История поиска и загрузок</h3><button id="clearHistory" class="secondary" type="button">Очистить</button></div><p class="file-meta">Сохраняется в этом браузере, в том числе после обновления страницы.</p><div id="searchHistory"></div></section>
+        </div>
+        <div id="magnetPanel" class="panel hidden"><div id="magnetStatus" class="status"></div><div id="magnetФайлы" class="actions"></div></div>
+        <div id="resultPanel" class="panel hidden">
+          <div id="filename" class="result-title"></div><div id="metadata" class="meta"></div>
+          <div class="actions"><button id="copyBtn">Копировать ссылку для воспроизведения</button><a id="openBtn" class="button secondary" href="#" target="_blank" rel="noopener noreferrer">Открыть ссылку</a></div>
+          <p class="foot">Для VLC/PotPlayer скопируйте ссылку и откройте сетевой поток в плеере. Браузер не может напрямую запускать настольные плееры без специального помощника.</p>
+        </div>
+      </section>
+
+      <section id="searchTab" class="hidden">
+        <div class="panel">
+          <div class="topline"><div><h2>Поиск раздач</h2><p>Один запрос — сразу по нескольким трекерам. Результат добавляется в вашу библиотеку AllDebrid.</p></div></div>
+          <form id="searchForm" class="search-form" role="search">
+            <input id="searchInput" type="search" placeholder="Название фильма или сериала…" maxlength="120" autocomplete="off" enterkeyhint="search" aria-label="Название для поиска">
+            <button id="searchBtn" type="submit">Найти</button>
+          </form>
+          <div id="searchProviders" class="search-providers"></div>
+          <div id="searchStatus" class="status" role="status"></div>
+          <div id="searchTools" class="search-tools hidden">
+            <select id="searchSort" aria-label="Сортировка"><option value="ru">RU сначала</option><option value="seeders">По сидам</option><option value="size">По размеру</option><option value="date">По дате</option></select>
+            <select id="searchKind" aria-label="Тип раздачи"><option value="video">Фильмы и сериалы</option><option value="movie">Только фильмы</option><option value="cartoon">Только мультфильмы</option><option value="series">Только сериалы</option><option value="all">Всё подряд</option></select>
+            <label><input id="searchHideDead" type="checkbox"> Только с сидами</label>
+            <input id="searchFilter" type="search" placeholder="Уточнить: 1080p, 2160p, rus…" autocomplete="off">
+          </div>
+          <div id="searchHidden" class="file-meta"></div>
+          <div id="searchResults"></div>
+          <div class="actions"><button id="searchMore" class="secondary hidden" type="button">Показать ещё</button></div>
+        </div>
+      </section>
+
+      <section id="libraryTab" class="hidden">
+        <div class="panel library-header-panel">
+          <div class="library-header-top topline">
+            <div class="library-title-area">
+              <div class="library-heading-row">
+                <h2>Моя библиотека AllDebrid</h2>
+                <span id="libraryCountBadge" class="count-badge">0</span>
+              </div>
+              <p>Торренты, папки и файлы из вашего аккаунта.</p>
+            </div>
+            <button id="refreshLibrary" type="button" class="btn-refresh">
+              <span class="refresh-spinner" aria-hidden="true">↻</span>
+              <span>Обновить</span>
+            </button>
+          </div>
+
+          <div class="library-search-bar">
+            <span class="search-lens" aria-hidden="true">⌕</span>
+            <input id="libraryПоиск" type="search" placeholder="Поиск по названию или файлу…" autocomplete="off" aria-label="Поиск по названию">
+            <button id="clearLibrarySearch" type="button" class="clear-search-btn hidden" aria-label="Очистить поиск" title="Очистить">×</button>
+          </div>
+
+          <div class="library-toolbar">
+            <div class="category-chips" id="libraryCategoryChips" role="tablist" aria-label="Категории">
+              <button type="button" class="cat-chip active" data-cat="all">Все</button>
+              <button type="button" class="cat-chip" data-cat="movie">Фильмы</button>
+              <button type="button" class="cat-chip" data-cat="series">Сериалы</button>
+              <button type="button" class="cat-chip" data-cat="cartoon">Мультфильмы</button>
+              <button type="button" class="cat-chip" data-cat="anime">Аниме</button>
+              <button type="button" class="cat-chip" data-cat="other">Другое</button>
+            </div>
+            <div class="library-tools-right">
+              <select id="librarySort" class="library-select" aria-label="Сортировка">
+                <option value="newest">Сначала новые</option>
+                <option value="name">По названию</option>
+                <option value="size">По размеру</option>
+                <option value="fav">Сначала избранное</option>
+              </select>
+              <label class="library-toggle-label">
+                <input id="libraryOnlyReady" type="checkbox">
+                <span>Только готовые</span>
+              </label>
+              <div class="view-switch" role="group" aria-label="Вид отображения">
+                <button id="viewGridBtn" type="button" class="view-btn active" title="Сетка постеров" aria-label="Сетка">▦</button>
+                <button id="viewListBtn" type="button" class="view-btn" title="Список" aria-label="Список">☰</button>
+              </div>
             </div>
           </div>
-          <div class="growth-plot">
-            <svg viewBox="0 0 400 200" aria-hidden="true">
-              <defs>
-                <linearGradient id="growthFill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0" stop-color="#ffb02e" stop-opacity=".28"/><stop offset="1" stop-color="#ffb02e" stop-opacity="0"/>
-                </linearGradient>
-                <linearGradient id="growthStroke" x1="0" y1="0" x2="1" y2="0">
-                  <stop offset="0" stop-color="#ffb02e" stop-opacity=".35"/><stop offset=".55" stop-color="#ffb02e"/><stop offset="1" stop-color="#ffd27a"/>
-                </linearGradient>
-                <filter id="growthGlow" x="-20%" y="-40%" width="140%" height="180%"><feGaussianBlur stdDeviation="4"/></filter>
-              </defs>
-              <g class="growth-grid"><line x1="0" y1="50" x2="400" y2="50"/><line x1="0" y1="100" x2="400" y2="100"/><line x1="0" y1="150" x2="400" y2="150"/></g>
-              <path class="growth-area" d=""/>
-              <path class="growth-line-glow" d="" pathLength="1"/>
-              <path class="growth-line" d="" pathLength="1"/>
-            </svg>
-            <div class="growth-points"></div>
-            <div class="growth-tip" role="tooltip" aria-hidden="true"></div>
-          </div>
-          <div class="growth-hint">Наведите на точку, чтобы узнать, что изменилось</div>
+
+          <div id="libraryStatus" class="status" role="status">Нажмите «Обновить», чтобы загрузить медиатеку.</div>
         </div>
-      </div>
-      <div id="appsGrid" class="apps-grid">
-        <article class="app-card" data-platform="desktop">
-          <div class="app-card-head">
-            <span class="app-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3.5" width="19" height="13" rx="2.2"/><path d="M8 20.5h8M12 16.5v4"/></svg></span>
-            <div><h3>Windows</h3><p class="app-req">Windows 10 / 11 · 64-bit</p></div>
-            <span class="app-badge hidden">Для этого устройства</span>
+        <div id="libraryResults" class="library-grid"></div>
+      </section>
+
+      <section id="appsTab" class="hidden">
+        <div class="apps-hero">
+          <div class="apps-hero-clip" aria-hidden="true"><div class="apps-hero-glow"></div></div>
+          <div class="apps-hero-text">
+            <span class="apps-kicker">Приложения</span>
+            <h2>Suslik Media на ваших устройствах</h2>
+            <p>Нативная библиотека, плеер с аппаратным декодированием, озвучки и субтитры из раздачи, прогресс просмотра.
+               Приложения сами проверяют обновления при каждом запуске.</p>
           </div>
-          <div class="app-meta"><span class="app-version">Проверяем…</span><span class="app-size"></span><span class="app-date"></span></div>
-          <ul class="app-features">
-            <li>Плеер прямо в окне библиотеки, оригинальное разрешение</li>
-            <li>Мини-плеер поверх окон, главы, скорость, ночной звук</li>
-            <li>Нужен установленный <a href="https://www.videolan.org/vlc/" target="_blank" rel="noopener">VLC 3.x (64-bit)</a></li>
-          </ul>
-          <details class="app-notes hidden"><summary>Что нового</summary><div class="app-notes-text"></div></details>
-          <a class="app-download disabled" aria-disabled="true">Скачать .msi</a>
-        </article>
-        <article class="app-card" data-platform="android">
-          <div class="app-card-head">
-            <span class="app-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2.5" width="12" height="19" rx="2.6"/><path d="M10.5 18.5h3"/></svg></span>
-            <div><h3>Android</h3><p class="app-req">Android 7.0 и новее</p></div>
-            <span class="app-badge hidden">Для этого устройства</span>
+          <div class="growth" id="appsGrowth">
+            <div class="growth-head">
+              <span class="growth-title">Как росли приложения</span>
+              <div class="growth-switch" role="tablist" aria-label="Платформа">
+                <span role="tab" tabindex="0" data-p="desktop" class="on">Windows</span>
+                <span role="tab" tabindex="0" data-p="android">Android</span>
+                <i class="growth-lens" aria-hidden="true"></i>
+              </div>
+            </div>
+            <div class="growth-plot">
+              <svg viewBox="0 0 400 200" aria-hidden="true">
+                <defs>
+                  <linearGradient id="growthFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#ffb02e" stop-opacity=".28"/><stop offset="1" stop-color="#ffb02e" stop-opacity="0"/>
+                  </linearGradient>
+                  <linearGradient id="growthStroke" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0" stop-color="#ffb02e" stop-opacity=".35"/><stop offset=".55" stop-color="#ffb02e"/><stop offset="1" stop-color="#ffd27a"/>
+                  </linearGradient>
+                  <filter id="growthGlow" x="-20%" y="-40%" width="140%" height="180%"><feGaussianBlur stdDeviation="4"/></filter>
+                </defs>
+                <g class="growth-grid"><line x1="0" y1="50" x2="400" y2="50"/><line x1="0" y1="100" x2="400" y2="100"/><line x1="0" y1="150" x2="400" y2="150"/></g>
+                <path class="growth-area" d=""/>
+                <path class="growth-line-glow" d="" pathLength="1"/>
+                <path class="growth-line" d="" pathLength="1"/>
+              </svg>
+              <div class="growth-points"></div>
+              <div class="growth-tip" role="tooltip" aria-hidden="true"></div>
+            </div>
+            <div class="growth-hint">Наведите на точку, чтобы узнать, что изменилось</div>
           </div>
-          <div class="app-meta"><span class="app-version">Проверяем…</span><span class="app-size"></span><span class="app-date"></span></div>
-          <ul class="app-features">
-            <li>Плеер VLC: жесты, картинка в картинке, фоновый звук</li>
-            <li>Библиотека, поиск и загрузки — как на сайте</li>
-            <li>При установке разрешите «установку из этого источника»</li>
-          </ul>
-          <details class="app-notes hidden"><summary>Что нового</summary><div class="app-notes-text"></div></details>
-          <a class="app-download disabled" aria-disabled="true">Скачать .apk</a>
-        </article>
-      </div>
-      <div class="apps-steps">
-        <div class="apps-step"><b>1</b><div><strong>Скачайте</strong><span>файл для своей платформы — он всегда последней версии.</span></div></div>
-        <div class="apps-step"><b>2</b><div><strong>Установите</strong><span>Windows: запустите .msi. Android: откройте .apk и разрешите установку.</span></div></div>
-        <div class="apps-step"><b>3</b><div><strong>Войдите</strong><span>тем же паролем, что и на сайте. Дальше обновления приходят сами.</span></div></div>
-      </div>
-    </section>
+        </div>
+        <div id="appsGrid" class="apps-grid">
+          <article class="app-card" data-platform="desktop">
+            <div class="app-card-head">
+              <span class="app-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3.5" width="19" height="13" rx="2.2"/><path d="M8 20.5h8M12 16.5v4"/></svg></span>
+              <div><h3>Windows</h3><p class="app-req">Windows 10 / 11 · 64-bit</p></div>
+              <span class="app-badge hidden">Для этого устройства</span>
+            </div>
+            <div class="app-meta"><span class="app-version">Проверяем…</span><span class="app-size"></span><span class="app-date"></span></div>
+            <ul class="app-features">
+              <li>Плеер прямо в окне библиотеки, оригинальное разрешение</li>
+              <li>Мини-плеер поверх окон, главы, скорость, ночной звук</li>
+              <li>Встроенный плеер mpv с аппаратным ускорением</li>
+            </ul>
+            <details class="app-notes hidden"><summary>Что нового</summary><div class="app-notes-text"></div></details>
+            <a class="app-download disabled" aria-disabled="true">Скачать .msi</a>
+          </article>
+          <article class="app-card" data-platform="android">
+            <div class="app-card-head">
+              <span class="app-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2.5" width="12" height="19" rx="2.6"/><path d="M10.5 18.5h3"/></svg></span>
+              <div><h3>Android</h3><p class="app-req">Android 7.0 и новее</p></div>
+              <span class="app-badge hidden">Для этого устройства</span>
+            </div>
+            <div class="app-meta"><span class="app-version">Проверяем…</span><span class="app-size"></span><span class="app-date"></span></div>
+            <ul class="app-features">
+              <li>Плеер VLC: жесты, картинка в картинке, фоновый звук</li>
+              <li>Библиотека, поиск и загрузки — как на сайте</li>
+              <li>При установке разрешите «установку из этого источника»</li>
+            </ul>
+            <details class="app-notes hidden"><summary>Что нового</summary><div class="app-notes-text"></div></details>
+            <a class="app-download disabled" aria-disabled="true">Скачать .apk</a>
+          </article>
+        </div>
+        <div class="apps-steps">
+          <div class="apps-step"><b>1</b><div><strong>Скачайте</strong><span>файл для своей платформы — он всегда последней версии.</span></div></div>
+          <div class="apps-step"><b>2</b><div><strong>Установите</strong><span>Windows: запустите .msi. Android: откройте .apk и разрешите установку.</span></div></div>
+          <div class="apps-step"><b>3</b><div><strong>Войдите</strong><span>тем же паролем, что и на сайте. Дальше обновления приходят сами.</span></div></div>
+        </div>
+      </section>
+
+      <div class="foot">Данные API хранятся на сервере. Запросы AllDebrid выполняются сервером. При прямом воспроизведении видеотрафик может идти с вашего устройства к AllDebrid.</div>
+    </div>
+
     <div id="libraryModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="library-modal"><div class="modal-head"><div><h2 id="modalTitle">Файлы</h2><p id="modalMeta"></p></div><div class="actions"><button id="closeLibraryModal" class="secondary" type="button">Закрыть</button></div></div><div id="modalФайлы" class="modal-files"></div></div></div>
-    <div class="foot">Данные API хранятся на сервере. Запросы AllDebrid выполняются сервером. При прямом воспроизведении видеотрафик может идти с вашего устройства к AllDebrid.</div>
   </section>
   <div class="foot">Используйте только контент и ссылки, к которым у вас есть разрешённый доступ.</div>
 </main>
@@ -570,13 +669,31 @@ async function api(path, options={}) {
   if (!response.ok) throw new Error(data.error || `Не удалось выполнить запрос (${response.status})`);
   return data;
 }
-function showApp(authenticated) { $("loginPanel").classList.toggle("hidden", authenticated); $("appPanel").classList.toggle("hidden", !authenticated); }
+function showApp(authenticated) { $("loginPanel").classList.toggle("hidden", authenticated); $("appPanel").classList.toggle("hidden", !authenticated); document.body.classList.toggle("authenticated", !!authenticated); }
 // In the app (1.2+) the library is native: the hidden web copy is not loaded at all.
 function webLibraryNeeded(){ return !document.documentElement.classList.contains("suslik-native"); }
-async function checkSession() { try { const data=await api("/api/session"); showApp(data.authenticated); if(data.authenticated && webLibraryNeeded()) loadLibrary(); } catch { showApp(false); } }
+async function checkSession() {
+  try {
+    const data = await api("/api/session");
+    showApp(data.authenticated);
+    if (data.authenticated && webLibraryNeeded()) {
+      loadLibrary();
+      const savedTab = (function(){ try { return sessionStorage.getItem("suslik.activeTab"); } catch { return null; } })() || "library";
+      setTab(savedTab);
+    }
+  } catch {
+    showApp(false);
+  }
+}
 $("loginForm").addEventListener("submit", async e => {
   e.preventDefault(); $("loginStatus").textContent="Выполняется вход…"; $("loginStatus").className="status";
-  try { await api("/api/login",{method:"POST",body:JSON.stringify({password:$("password").value})}); $("password").value=""; showApp(true); if(webLibraryNeeded()) loadLibrary(); }
+  try {
+    await api("/api/login",{method:"POST",body:JSON.stringify({password:$("password").value})});
+    $("password").value="";
+    showApp(true);
+    setTab("library");
+    if(webLibraryNeeded()) loadLibrary();
+  }
   catch(err) { $("loginStatus").textContent=err.message; $("loginStatus").className="status error"; }
 });
 $("logout").addEventListener("click", async()=>{try{await api("/api/logout",{method:"POST"});}catch{} showApp(false);});
@@ -740,6 +857,7 @@ function setTab(tab) {
   $("showLibraryTab").classList.toggle("secondary", !library);
   $("showSearchTab").classList.toggle("secondary", !search);
   $("showAppsTab").classList.toggle("secondary", !apps);
+  try { sessionStorage.setItem("suslik.activeTab", tab); } catch {}
   if (apps) { loadAppVersions(); growth.show(); }
   if (library && (!cachedLibrary.length || libraryDirty)) { libraryDirty = false; loadLibrary(); }
   if (search) setTimeout(() => { try { $("searchInput").focus(); } catch {} }, 50);
@@ -787,7 +905,7 @@ async function loadAppHistory() {
   await Promise.all(["desktop", "android"].map(async p => {
     try {
       const j = await api(`/api/app/changelog?platform=${p}&limit=3`);
-      APP_HISTORY[p] = (j.releases || []).slice().reverse().map(r => ({ v: r.version, t: r.title, items: r.items || [] }));
+      APP_HISTORY[p] = (j.releases || []).slice(0, 3).reverse().map(r => ({ v: r.version, t: r.title, items: r.items || [] }));
     } catch { /* остаётся прошлый список */ }
   }));
   return true;
@@ -896,7 +1014,7 @@ function filteredSearchItems() {
   const sort = $("searchSort").value, dead = $("searchHideDead").checked;
   const words = $("searchFilter").value.toLowerCase().split(/\s+/).filter(Boolean);
   const kind = $("searchKind").value;
-  const kindOk = r => kind === "all" || (kind === "video" ? r.kind !== "other" : kind === "movie" ? (r.kind === "movie" || r.kind === "unknown") : r.kind === "series");
+  const kindOk = r => kind === "all" || (kind === "video" ? r.kind !== "other" : kind === "movie" ? (r.kind === "movie" || r.kind === "unknown") : kind === "cartoon" ? r.kind === "cartoon" : r.kind === "series");
   searchState.hiddenKind = searchState.items.filter(r => !kindOk(r)).length;
   let items = searchState.items.filter(r => kindOk(r) && (!dead || r.seeders > 0) && words.every(w => r.title.toLowerCase().includes(w)));
   if (sort === "ru") { // живые RU, живые остальные, мёртвые RU, мёртвые остальные
@@ -924,7 +1042,7 @@ function searchRow(r) {
   if (r.size) meta.append(srEl("span", "", formatBytes(r.size)));
   meta.append(srEl("span", "seed" + (r.seeders ? "" : " zero"), `↑ ${r.seeders}`), srEl("span", "", `↓ ${r.leechers}`));
   if (r.ru) meta.append(srEl("span", "ru-badge", "RU"));
-  if (r.kind === "series") meta.append(srEl("span", "", "сериал")); else if (r.kind === "movie") meta.append(srEl("span", "", "фильм"));
+  if (r.kind === "series") meta.append(srEl("span", "", "сериал")); else if (r.kind === "movie") meta.append(srEl("span", "", "фильм")); else if (r.kind === "cartoon") meta.append(srEl("span", "", "мультфильм"));
   meta.append(srEl("span", "", r.sources && r.sources.length > 1 ? r.sources.join(" + ") : r.provider));
   const d = fmtDate(r.date); if (d) meta.append(srEl("span", "", d));
   row.append(meta);
@@ -1005,8 +1123,58 @@ try { const k = localStorage.getItem("searchKind"); if (k && [...$("searchKind")
 $("searchKind").addEventListener("change", () => { try { localStorage.setItem("searchKind", $("searchKind").value); } catch {} renderSearchResults(true); });
 $("searchFilter").addEventListener("input", () => renderSearchResults(true));
 $("searchMore").addEventListener("click", () => renderSearchResults(false));
-$("refreshLibrary").addEventListener("click", loadLibrary);
-$("libraryПоиск").addEventListener("input", () => renderLibrary(false));
+$("refreshLibrary").addEventListener("click", () => {
+  $("refreshLibrary").classList.add("loading");
+  loadLibrary().finally(() => $("refreshLibrary").classList.remove("loading"));
+});
+$("libraryПоиск").addEventListener("input", () => {
+  if ($("clearLibrarySearch")) $("clearLibrarySearch").classList.toggle("hidden", !$("libraryПоиск").value.trim());
+  renderLibrary(false);
+});
+if ($("clearLibrarySearch")) {
+  $("clearLibrarySearch").addEventListener("click", () => {
+    $("libraryПоиск").value = "";
+    $("clearLibrarySearch").classList.add("hidden");
+    $("libraryПоиск").focus();
+    renderLibrary(false);
+  });
+}
+const catChipsWrap = $("libraryCategoryChips");
+if (catChipsWrap) {
+  catChipsWrap.addEventListener("click", e => {
+    const chip = e.target.closest(".cat-chip");
+    if (!chip) return;
+    catChipsWrap.querySelectorAll(".cat-chip").forEach(c => c.classList.remove("active"));
+    chip.classList.add("active");
+    libraryCategory = chip.dataset.cat || "all";
+    renderLibrary(false);
+  });
+}
+if ($("librarySort")) {
+  $("librarySort").addEventListener("change", () => renderLibrary(false));
+}
+if ($("libraryOnlyReady")) {
+  $("libraryOnlyReady").addEventListener("change", () => renderLibrary(false));
+}
+if ($("viewGridBtn") && $("viewListBtn")) {
+  $("viewGridBtn").addEventListener("click", () => {
+    libraryViewMode = "grid";
+    libraryTiles.clear();
+    $("viewGridBtn").classList.add("active");
+    $("viewListBtn").classList.remove("active");
+    renderLibrary(false);
+  });
+  $("viewListBtn").addEventListener("click", () => {
+    libraryViewMode = "list";
+    libraryTiles.clear();
+    $("viewListBtn").classList.add("active");
+    $("viewGridBtn").classList.remove("active");
+    renderLibrary(false);
+  });
+}
+if ($("mobileLogout")) {
+  $("mobileLogout").addEventListener("click", () => $("logout").click());
+}
 function formatBytes(value) {
   if (!value) return "";
   const units=["B","KB","MB","GB","TB"]; let n=value, i=0;
@@ -1034,9 +1202,12 @@ function escapeTitle(value) {
 }
 const MEDIA_INFO_KEY="mediaInfoCacheV1";
 const mediaInfoInflight=new Map();
-let mediaInfoQueue=Promise.resolve();
 function readMediaInfoCache(){try{return JSON.parse(localStorage.getItem(MEDIA_INFO_KEY)||"{}")||{};}catch{return {};}}
-function writeMediaInfoCache(key,value){try{const c=readMediaInfoCache();c[key]=value;localStorage.setItem(MEDIA_INFO_KEY,JSON.stringify(c));}catch{}}
+// Не больше 600 записей: новые в конце, старые и ошибки старше 6 ч вытесняются (иначе localStorage рано или поздно переполнится).
+function writeMediaInfoCache(key,value){try{const c=readMediaInfoCache();delete c[key];c[key]=value;const now=Date.now();let keys=Object.keys(c);for(const k of keys)if(c[k]&&c[k].__failedAt&&now-c[k].__failedAt>6*3600e3)delete c[k];keys=Object.keys(c);for(const k of keys.slice(0,Math.max(0,keys.length-600)))delete c[k];localStorage.setItem(MEDIA_INFO_KEY,JSON.stringify(c));}catch{}}
+// Два анализа одновременно (столько ffprobe держит сервер): один зависший файл не задерживает остальные плитки.
+const MEDIA_INFO_PARALLEL=2;let mediaInfoRunning=0;const mediaInfoWaiting=[];
+function withMediaInfoSlot(task){return new Promise((resolve,reject)=>{const run=()=>{mediaInfoRunning++;Promise.resolve().then(task).then(resolve,reject).finally(()=>{mediaInfoRunning--;const next=mediaInfoWaiting.shift();if(next)next();});};if(mediaInfoRunning<MEDIA_INFO_PARALLEL)run();else mediaInfoWaiting.push(run);});}
 function pickMainВидео(magnet){
   const vids=(magnet.files||[]).filter(f=>f.type!=="folder" && /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso)$/i.test(f.path||""));
   const real=vids.filter(f=>!/\.iso$/i.test(f.path));
@@ -1054,14 +1225,9 @@ function loadTileMediaInfo(magnet,line,fileArg){
   line.textContent="🎞 анализ видео…";line.title="";line.classList.add("media-pending");
   let p=mediaInfoInflight.get(key);
   if(!p){
-    // One ffprobe at a time: each analysis can take several seconds and reads the remote file.
-    p=new Promise((resolve,reject)=>{
-      mediaInfoQueue=mediaInfoQueue.then(async()=>{
-        try{
-          const r=await api("/api/media-metadata",{method:"POST",body:JSON.stringify({link:file.sourceLink||"",magnetId:magnet.id,path:file.path})});
-          writeMediaInfoCache(key,r.metadata);resolve(r.metadata);
-        }catch(err){reject(err);}
-      });
+    p=withMediaInfoSlot(async()=>{
+      const r=await api("/api/media-metadata",{method:"POST",body:JSON.stringify({link:file.sourceLink||"",magnetId:magnet.id,path:file.path})});
+      writeMediaInfoCache(key,r.metadata);return r.metadata;
     }).finally(()=>mediaInfoInflight.delete(key));
     mediaInfoInflight.set(key,p);
   }
@@ -1106,8 +1272,12 @@ function buildPlaylist(magnet){
   if(bySeason.size>=2 || (bySeason.size===1 && vids.length>1)){
     const seasons=[...bySeason.entries()].sort((a,b)=>a[0]-b[0]).map(([season,files])=>({
       season,
-      items:files.sort((a,b)=>basename(a.path).localeCompare(basename(b.path),undefined,{numeric:true,sensitivity:"base"}))
-        .map((file,index)=>({season,episode:index+1,file}))
+      items:(()=>{
+        const sorted=files.sort((a,b)=>basename(a.path).localeCompare(basename(b.path),undefined,{numeric:true,sensitivity:"base"}));
+        const nums=sorted.map(file=>{const e=parseEpisode(file.path);return e?e.episode:null;});
+        const own=nums.every(n=>n!==null)&&new Set(nums).size===nums.length&&nums.every((n,i)=>!i||n>nums[i-1]);
+        return sorted.map((file,index)=>({season,episode:own?nums[index]:index+1,file}));
+      })()
     }));
     return {type:"series",seasons};
   }
@@ -1280,14 +1450,85 @@ function setupTilePlayback(magnet,tile,art,info){
 // пересоздаёт их и не перезапускает анимацию — ничего не моргает. Новые плитки плавно выезжают по очереди,
 // переставленные (избранное наверх) плавно переезжают на новое место.
 let libraryTiles=new Map();
-function tileSig(m){ return JSON.stringify([m.name,m.status,m.statusCode,m.size,m.downloaded,Boolean(m.favorite),m.canRemove!==false,(m.files||[]).length]); }
+let libraryCategory = "all";
+let librarySortMode = "newest";
+let libraryOnlyReadyMode = false;
+let libraryViewMode = "grid";
+
+const CARTOON_REGEX = /мульт(?!сериал)|анимаци|\bcartoons?\b|\banimation\b|\bpixar\b|\bdreamworks\b|\bdisney\b/i;
+const ANIME_REGEX = /\b(?:anime|аниме|\[anilibria\]|anilibria|\[subsplease\]|\[erai-raws\]|\[horriblesubs\]|\[judas\])\b/i;
+const SERIES_REGEX = /\b(?:s\d{1,2}e\d{1,3}|s\d{2}|season\s*\d|seasons?|episodes?|сезон|сериал|эпизод)\b/i;
+
+function getItemCategory(m) {
+  const name = m.name || "";
+  const filePaths = (m.files || []).map(f => f.path || f.name || "").join(" ");
+  const text = name + " " + filePaths;
+  if (ANIME_REGEX.test(text)) return "anime";
+  if (CARTOON_REGEX.test(text)) return "cartoon";
+  if (SERIES_REGEX.test(text) || /(?:^|[^а-яa-z0-9])сери[яи](?:[^а-яa-z0-9]|$)/i.test(text)) return "series";
+  const videoFiles = (m.files || []).filter(f => /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso)$/i.test(f.path || ""));
+  if (videoFiles.length > 2) return "series";
+  if (videoFiles.length > 0) return "movie";
+  return "other";
+}
+
+function getItemSpecs(m) {
+  const text = (m.name + " " + (m.files || []).map(f => f.path || f.name || "").join(" ")).toLowerCase();
+  let quality = "";
+  if (/\b(?:2160p|4k|uhd)\b/i.test(text)) quality = "4K";
+  else if (/\b1080[pi]\b/i.test(text)) quality = "1080p";
+  else if (/\b720p\b/i.test(text)) quality = "720p";
+
+  let codec = "";
+  if (/\b(?:hevc|x265|h\.?265)\b/i.test(text)) codec = "H265";
+  else if (/\b(?:avc|x264|h\.?264)\b/i.test(text)) codec = "H264";
+  else if (/\bav1\b/i.test(text)) codec = "AV1";
+
+  const cat = getItemCategory(m);
+  let type = "";
+  if (cat === "series") type = "Сериал";
+  else if (cat === "cartoon") type = "Мультфильм";
+  else if (cat === "anime") type = "Аниме";
+  else if (cat === "movie") type = "Фильм";
+  else type = "";
+
+  return { quality, codec, type, cat };
+}
+
+function tileSig(m){ return JSON.stringify([m.name,m.status,m.statusCode,m.size,m.downloaded,Boolean(m.favorite),m.canRemove!==false,(m.files||[]).length,libraryViewMode]); }
+
 function renderLibrary(animate=true) {
-  const target=$("libraryResults"), query=$("libraryПоиск").value.trim().toLowerCase();
+  const target=$("libraryResults"), query=$("libraryПоиск") ? $("libraryПоиск").value.trim().toLowerCase() : "";
   const before=new Map(); for(const [id,t] of libraryTiles) if(t.tile.isConnected){ const r=t.tile.getBoundingClientRect(); before.set(id,{x:r.left,y:r.top}); }
   const prevTiles=libraryTiles, nodes=[]; libraryTiles=new Map();
-  // Избранное (своё у каждого устройства) — первым, остальной порядок не меняется.
-  const magnets=cachedLibrary.filter(m => !query || m.name.toLowerCase().includes(query) || m.files.some(f => f.path.toLowerCase().includes(query)))
-    .map((m,i)=>[m,i]).sort((a,b)=>(Number(Boolean(b[0].favorite))-Number(Boolean(a[0].favorite)))||(a[1]-b[1])).map(x=>x[0]);
+
+  if ($("clearLibrarySearch")) {
+    $("clearLibrarySearch").classList.toggle("hidden", !query);
+  }
+
+  const activeCategory = libraryCategory;
+  const onlyReady = Boolean($("libraryOnlyReady") && $("libraryOnlyReady").checked);
+  const sort = $("librarySort") ? $("librarySort").value : "newest";
+
+  let filtered = cachedLibrary.filter(m => {
+    if (query && !m.name.toLowerCase().includes(query) && !m.files.some(f => f.path.toLowerCase().includes(query))) return false;
+    if (onlyReady && Number(m.statusCode) !== 4) return false;
+    if (activeCategory !== "all" && getItemCategory(m) !== activeCategory) return false;
+    return true;
+  });
+
+  if ($("libraryCountBadge")) {
+    $("libraryCountBadge").textContent = cachedLibrary.length ? (filtered.length === cachedLibrary.length ? String(cachedLibrary.length) : `${filtered.length} / ${cachedLibrary.length}`) : "0";
+  }
+
+  const magnets = filtered.map((m, i) => ({ m, i })).sort((a, b) => {
+    if (sort === "name") return a.m.name.localeCompare(b.m.name, "ru");
+    if (sort === "size") return (Number(b.m.size) || 0) - (Number(a.m.size) || 0);
+    return (Number(Boolean(b.m.favorite)) - Number(Boolean(a.m.favorite))) || (a.i - b.i);
+  }).map(x => x.m);
+
+  target.className = libraryViewMode === "list" ? "library-results library-list" : "library-grid";
+
   if (!magnets.length) {
     target.replaceChildren();
     const empty=document.createElement("div"); empty.className="panel"; empty.textContent=cachedLibrary.length ? "Совпадений не найдено." : "Сохранённой медиатеки пока нет. Нажмите «Обновить», чтобы загрузить данные из AllDebrid."; target.append(empty); return;
@@ -1302,6 +1543,12 @@ function renderLibrary(animate=true) {
     tile.addEventListener("animationend",e=>{ if(e.target===tile) tile.classList.remove("tile-enter"); });
     const art=document.createElement("div"); art.className="tile-art";
     const title=document.createElement("div"); title.className="tile-title"; title.textContent=escapeTitle(magnet.name); art.append(title);
+
+    const specs = getItemSpecs(magnet);
+    const badges = document.createElement("div"); badges.className = "tile-badges";
+    if (specs.quality) { const q = document.createElement("span"); q.className = "tile-badge badge-quality"; q.textContent = specs.quality; badges.append(q); }
+    if (specs.type) { const tp = document.createElement("span"); tp.className = "tile-badge badge-type"; tp.textContent = specs.type; badges.append(tp); }
+    art.append(badges);
     const videoФайл = (magnet.files || []).find(f => /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso)$/i.test(f.path || ""));
     const posterQueries = [...new Set([escapeTitle(magnet.name), videoФайл ? escapeTitle(videoФайл.name || videoФайл.path.split("/").pop()) : ""].filter(Boolean))];
     whenVisible(tile, ()=>(async()=>{
@@ -1315,6 +1562,7 @@ function renderLibrary(animate=true) {
         if(pm){ img.srcset=`/api/poster/img/w342/${pm[1]} 342w, ${url} 500w`; img.sizes="(max-width:600px) 48vw, 260px"; }
         img.src=url;
         try { if (img.decode) await img.decode(); else if (!img.complete) await new Promise(resolve=>{img.onload=resolve;img.onerror=resolve;}); } catch {}
+        if (!img.complete || !img.naturalWidth) { img.remove(); art.classList.add("poster-missing"); return; }
         if (art.isConnected) { art.prepend(img); requestAnimationFrame(()=>{ if(img.isConnected) img.classList.add("poster-loaded"); }); }
       }
     })().catch(()=>{}).finally(()=>{
@@ -1520,6 +1768,7 @@ function openLibraryModal(magnet) {
         mirrorКопировать.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(mirror.url);mirrorКопировать.textContent="Скопировано";}catch{window.prompt("Скопируйте ссылку-зеркало:",mirror.url);}});
         const mirrorOpen=document.createElement("a");mirrorOpen.className="button secondary split-last";mirrorOpen.href=mirror.url;mirrorOpen.target="_blank";mirrorOpen.rel="noopener noreferrer";mirrorOpen.textContent="Открыть";
         mirrorGroup.append(mirrorКопировать,mirrorOpen);
+        if(IS_DESKTOP){const pot=document.createElement("button");pot.type="button";pot.className="button";pot.textContent="▶ PotPlayer · зеркало";pot.addEventListener("click",()=>launchPotPlayer(mirror.url));actions.append(pot);}
         actions.append(mirrorGroup);if(result&&result.url)actions.append(directGroup);quickWrap.append(actions);quickPlay.remove();
       }catch(err){quickPlay.disabled=false;quickPlay.textContent="Повторить запуск M2TS";let note=quickWrap.querySelector(".unlock-error");if(!note){note=document.createElement("div");note.className="unlock-error status error";quickWrap.append(note);}note.textContent=err.message;}
     });
@@ -1527,7 +1776,7 @@ function openLibraryModal(magnet) {
   }
   const query=$("libraryПоиск").value.trim().toLowerCase();
   const files=magnet.files.filter(f=>!query||f.path.toLowerCase().includes(query));
-  if(!files.length){const empty=document.createElement("p");empty.className="file-meta";empty.textContent="No files returned for this magnet yet.";target.append(empty);}
+  if(!files.length){const empty=document.createElement("p");empty.className="file-meta";empty.textContent="AllDebrid пока не вернул файлы этой раздачи.";target.append(empty);}
   const folderState = new Map();
   const rows = [];
   const folderPaths = files.filter(f=>f.type==="folder").map(f=>String(f.path||"").replace(/\/+$/,"")).sort((a,b)=>a.length-b.length);
@@ -1541,7 +1790,7 @@ function openLibraryModal(magnet) {
     row.dataset.parentПапкаs=JSON.stringify(parentПапкаs);
     const left=document.createElement("div");left.className="file-path";left.style.paddingLeft=`${depth*18}px`;
     if(depth>0){const level=document.createElement("span");level.className="file-depth";level.textContent=`L${depth}`;level.title=`Уровень вложенности: ${depth}`;left.append(level);}
-    const icon=document.createElement("span");icon.textContent=file.type==="folder"?"📁 ":(/\\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso)$/i.test(filePath)?"🎬 ":"📄 ");
+    const icon=document.createElement("span");icon.textContent=file.type==="folder"?"📁 ":(VIDEO_EXT.test(filePath)?"🎬 ":"📄 ");
     if(file.type==="folder"){
       const toggle=document.createElement("button");toggle.type="button";toggle.className="folder-toggle secondary";toggle.setAttribute("aria-expanded","false");toggle.textContent="▸";
       toggle.title="Раскрыть папку";
@@ -1557,7 +1806,7 @@ function openLibraryModal(magnet) {
     rows.push(row);    const right=document.createElement("div");right.style.cssText="display:flex;align-items:center;gap:8px;flex-wrap:wrap";
     if(file.size){const size=document.createElement("span");size.className="file-meta";size.textContent=formatBytes(file.size);right.append(size);}
     // Offer a season playlist when a folder contains video files with AllDebrid source links.
-    if(file.type==="folder" && /(?:season|сезон)\\s*0*\\d+/i.test(filePath)){
+    if(file.type==="folder" && /(?:season|сезон)[ ._-]*0*\d+/i.test(filePath)){
       const seasonFiles=(magnet.files||[])
         .filter(f=>f.type!=="folder" && String(f.path||"").startsWith(filePath.replace(/\/+$/,"")+"/") && f.sourceLink && /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts)$/i.test(String(f.path||"")))
         .sort((a,b)=>String(a.path||a.name||"").localeCompare(String(b.path||b.name||""),"ru",{numeric:true,sensitivity:"base"}));
@@ -1577,8 +1826,8 @@ function openLibraryModal(magnet) {
               playlistBtn.textContent=`Подготовка ${i+1}/${seasonFiles.length}…`;
             }
             const safeName=String(filePath.split("/").pop()||"Season").replace(/[\\/:*?"<>|]+/g,"_");
-            const m3u=["#EXTM3U",...entries.flatMap(item=>["#EXTINF:-1,"+item.name,item.url])].join("\\r\\n")+"\\r\\n";
-            const blob=new Blob(["\\uFEFF"+m3u],{type:"audio/x-mpegurl;charset=utf-8"});
+            const m3u=["#EXTM3U",...entries.flatMap(item=>["#EXTINF:-1,"+item.name,item.url])].join("\r\n")+"\r\n";
+            const blob=new Blob(["\uFEFF"+m3u],{type:"audio/x-mpegurl;charset=utf-8"});
             const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=safeName+".m3u";document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
             playlistBtn.textContent="✓ Плейлист готов";
             let note=row.querySelector(".season-playlist-note");if(!note){note=document.createElement("div");note.className="file-meta season-playlist-note";row.append(note);}
@@ -1634,7 +1883,7 @@ async function refreshActiveHistory() {
         const failed = Number(status.statusCode) >= 5;
         updateHistory(item.value, {
           title: status.filename || item.title || "Загрузка по magnet-ссылке",
-          status: ready ? "Готово" : (failed ? (status.status || "Ошибка") : (status.status || "Скачатьing")),
+          status: ready ? "Готово" : (failed ? (status.status || "Ошибка") : (status.status || "Загружается")),
           percent: ready ? 100 : (size > 0 ? Math.floor(Math.min(100, downloaded / size * 100)) : null),
           ready,
           failed,
@@ -1690,6 +1939,6 @@ checkSession();
 })();
 </script>
 
-<script src="redesign.js?v=5" defer></script>
+<script src="redesign.js?v=6" defer></script>
 </body>
 </html>

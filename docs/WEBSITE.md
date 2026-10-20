@@ -21,22 +21,52 @@
 
 ```
 website/
-├── server.js               Основной сервер Express (~1660 строк): маршрутизация, AllDebrid API, зеркало
+├── server.js               Точка входа: запуск Express-сервера и таймауты сокетов (~25 строк)
+├── src/                    Модульная архитектура сервера
+│   ├── app.js              Фабрика Express-приложения createApp(), middleware и сборка маршрутов
+│   ├── config.js           Конфигурация, переменные окружения (.env), пути к данным
+│   ├── middleware/         Промежуточные обработчики
+│   │   ├── auth.js         Сессии (FileSessionStore), requireLogin, deviceId, verifyPassword
+│   │   ├── rate-limit.js   Ограничители частоты запросов (rate limiters)
+│   │   └── security.js     Заголовки безопасности (HSTS, CSP, X-Frame) и trust proxy
+│   ├── routes/             Маршруты API Express
+│   │   ├── auth.js         /api/login, /api/logout, /api/session, /api/status
+│   │   ├── library.js      /api/library
+│   │   ├── favorites.js    /api/favorites
+│   │   ├── magnets.js      /api/magnets, /api/torrents, /api/unlock, файлы и отмена
+│   │   ├── search.js       /api/search, /api/search/add
+│   │   ├── mirror.js       /api/file/mirror-url, /api/file/proxy, /api/playlist
+│   │   ├── updates.js      /api/app/* (обновления, каналы beta/stable, changelog, отчёты)
+│   │   └── media.js        /api/media-metadata, /api/poster, /api/poster/img
+│   ├── services/           Бизнес-логика подсистем
+│   │   ├── alldebrid.js    Клиент AllDebrid API, деревья файлов, кэш структуры
+│   │   ├── downloads.js    Лимиты (2 активных на IP), привязка раздач к владельцам
+│   │   ├── favorites.js    Управление избранным по устройствам (cookie sdev)
+│   │   ├── library.js      Сборка медиатеки AllDebrid, кэширование и инвалидация
+│   │   ├── mirror.js       Генерация и валидация подписей, проксирование видеопотока
+│   │   ├── updates.js      Версионирование, кэш changelog, чистка старых сборок, отчёты
+│   │   ├── metadata.js     ffprobe-анализ видеопотоков (битрейт, кодек, FPS)
+│   │   ├── posters.js      Поиск постеров TMDB и локальное кэширование картинок
+│   │   └── precompressed.js Предварительное сжатие index.html/redesign.css (gzip/br) и CSP
+│   └── utils/              Вспомогательные модули
+│       ├── helpers.js      clientIp, readCookie, safeHttpsUrl, cleanFileName, contentDisposition
+│       └── json-writer.js  Атомарная отложенная запись JSON с flush по сигналам SIGINT/SIGTERM
 ├── search.js               Мета-поиск торрентов: Prowlarr, Jackett, TPB (apibay), nyaa, yts
 ├── search-ru.js            Парсеры русскоязычных трекеров (rutor, rutracker, kinozal, NNM-Club)
 ├── classify.js             Классификатор типа раздач (фильм, сериал, другое)
+├── poster-query.js         Очистка названий релизов для поиска постеров в TMDB
+├── tmdb-kind.js            Уточнение типов фильмов/сериалов через TMDB
 ├── public/
 │   ├── index.html          Веб-клиент (HTML/CSS/JS в одном файле)
 │   ├── redesign.css        Стили оформления «Проекторная»
 │   ├── redesign.js         Логика интерфейса и анимации сайта
 │   └── fonts/              Шрифты Onest и Unbounded
-├── index.html              Копия public/index.html (проверяется синтаксическим чекером)
-├── client-check.js         Скрипты для синтаксической валидации клиентского кода
-├── client-inline-check.js  Валидация инлайн-скриптов HTML
 ├── scripts/
-│   └── check.js            Комплексная проверка синтаксиса (npm run check)
+│   └── check.js            Комплексная проверка синтаксиса всех модулей и страниц (npm run check)
 ├── test/
-│   └── classify.test.js    Модульные тесты классификатора (npm test / node --test)
+│   ├── classify.test.js    Модульные тесты классификатора раздач
+│   ├── poster-query.test.js Модульные тесты очистки названий для постеров
+│   └── modules.test.js     Модульные тесты хелперов, версий, зеркала и инициализации
 ├── NGINX-MIRROR.md         Конфигурация nginx для X-Accel-Redirect зеркала
 ├── TORAPI.md               Документация по работе с API трекеров и Cloudflare bypass
 ├── UPDATES.md              Схема раздачи обновлений и переключения beta/stable каналов
@@ -46,7 +76,7 @@ website/
 
 ---
 
-## 3. Маршруты API `server.js`
+## 3. Маршруты API (`src/routes/`)
 
 Все API-эндпоинты начинаются с префикса `/api/`.
 

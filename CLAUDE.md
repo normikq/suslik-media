@@ -39,7 +39,7 @@ Changelog (русский) — `android/app/src/main/assets/changelog.json` и `
 ## Сборка и выпуск
 
 - Тесты общего модуля (`shared.yml`) идут на пуш с изменениями в `shared/`: `shared/src/test/...` (`ModelTest`, `BurstProxyTest`, `TsClockTest`, `CoreTest`, `MirrorLinkTest`). Логи заданий CI читаются через `mcp__github__get_job_logs`. Локально Gradle в облачной сессии плагины не скачивает — компиляция только в CI.
-- Серверные модульные тесты: `website/test/classify.test.js` (`node --test test/classify.test.js`).
+- Серверные модульные тесты: `website/test/*.test.js` (`node --test`). Статическая проверка: `npm run check`.
 - `android.yml` и `desktop.yml` запускаются только вручную (workflow_dispatch): пуш APK/MSI не собирает. Отладочная «Suslik Debug» собирается только с `inputs[debug]=true` (по умолчанию нет).
 - Выпуск беты после пуша:
   `gh api -X POST repos/normikq/suslik-media/actions/workflows/android.yml/dispatches -f ref=main -f 'inputs[publish]=true' -f 'inputs[channel]=beta'`

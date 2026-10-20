@@ -91,21 +91,20 @@ suslik-media/
 
 | Файл | Что внутри |
 |---|---|
-| `server.js` (~1690 строк) | весь сервер: вход, медиатека, поиск, ссылки, зеркало, плейлисты, постеры, обновления приложений, отчёты об ошибках |
+| `server.js` (~25 строк) | точка входа: запуск Express-сервера и таймауты сокетов |
+| `src/` | модульная архитектура сервера: `app.js` (сборка приложения), `config.js` (настройки), `routes/` (маршруты API), `services/` (бизнес-логика), `middleware/` (сессии, лимитеры, безопасность), `utils/` (хелперы, json-writer) |
 | `search.js` | мета-поиск торрентов по трекерам (через Prowlarr/Jackett и др.), единый формат результатов |
 | `search-ru.js` | парсеры русских трекеров (rutor, rutracker, kinozal, NNM-Club), кодировка windows-1251 |
 | `classify.js` | определяет тип раздачи по названию/категориям: сериал, фильм, «другое» |
 | `public/index.html` | сам сайт: одна страница с HTML, CSS и JS внутри |
 | `public/redesign.css`, `redesign.js` | оформление и анимации сайта |
-| `index.html` | копия `public/index.html` (проверяется скриптом проверки) |
-| `client-check.js`, `client-inline-check.js` | копии клиентского скрипта, нужны только для проверки синтаксиса |
-| `scripts/check.js` | проверка синтаксиса всего JS и встроенных скриптов страницы (`npm run check`) |
-| `test/classify.test.js` | модульные тесты классификатора раздач (`npm test` или `node --test`) |
+| `scripts/check.js` | проверка синтаксиса всего JS (`src/`, скрипты, встроенный JS страницы) (`npm run check`) |
+| `test/` | модульные тесты: `classify.test.js`, `poster-query.test.js`, `modules.test.js` (`npm test`) |
 | `NGINX-MIRROR.md` | как настроить nginx, чтобы он сам отдавал видео |
 | `TORAPI.md`, `UPDATES.md`, `README*.txt` | заметки по отдельным доработкам |
 | `.env` (не в репозитории) | секреты: ключ AllDebrid, пароль входа, секрет подписи, `UPDATE_TOKEN`, `BETA_CODE`; образец — `.env.example` |
 
-### Маршруты `server.js` по группам
+### Маршруты API (`src/routes/`) по группам
 
 | Группа | Маршруты | Смысл |
 |---|---|---|
@@ -386,10 +385,10 @@ suslik-media/
 | лист «Смотреть» (зеркало/напрямую, продолжить) | Android `library/PlaySheet.kt`, ПК — `LibraryView.kt` |
 | медиатека на телефоне / ПК | `library/LibraryScreen.kt` + `LibraryStore.kt` / `LibraryView.kt` + `Library.kt` |
 | поиск торрентов (трекеры) | сервер: `website/search.js`, `search-ru.js`; экраны — `SearchScreen.kt` / `SearchView.kt` |
-| вход, сессии, пароль | `website/server.js` (раздел вход) + `LoginScreen.kt` / вход в `LibraryView.kt` |
-| ссылки зеркала, подпись, срок | `website/server.js`: `mirror-url`, `file/proxy`; nginx — `NGINX-MIRROR.md` |
+| вход, сессии, пароль | `website/src/routes/auth.js`, `src/middleware/auth.js` + `LoginScreen.kt` / вход в `LibraryView.kt` |
+| ссылки зеркала, подпись, срок | `website/src/routes/mirror.js`, `src/services/mirror.js`; nginx — `NGINX-MIRROR.md` |
 | сам сайт | `website/public/index.html` (+ `redesign.css/js`) |
-| обновления и каналы | сервер `server.js` (раздел `/api/app/...`), приложения `Updater.kt`, workflows |
+| обновления и каналы | сервер `website/src/routes/updates.js`, приложения `Updater.kt`, workflows |
 | тексты «Что нового» | `android/app/src/main/assets/changelog.json`, `desktop/src/main/resources/changelog.json` |
 | плеер в окне громкости Windows и клавиши мультимедиа на ПК | `desktop/.../player/MediaControls.kt`, подключение — `PlayerView.kt` (см. `docs/DESKTOP.md` §10) |
 
