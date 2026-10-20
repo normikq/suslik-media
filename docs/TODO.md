@@ -16,3 +16,9 @@
 - Токены устройств: срок жизни и раздел «Мои устройства» на сайте; предупреждение «подтверждайте только код со своего экрана».
 - Вход по паролю — роль участника, не админа. (`PASSWORD_AUTH_ENABLED=false` уже выкидывает вошедших по паролю.)
 - Совместный просмотр на Android и на сайте; надпись «Ждём, пока загрузится у …» в самом плеере ПК.
+- Android на общем ядре (20.10 вынесено в `shared/`: `core/party/PartyProtocol.kt`, `PartySyncEngine.kt`, `core/auth/Auth.kt`; ПК уже на них):
+  1. Вход по коду устройства: `DeviceAuth` + `X-Device-Token` в `net/Api.kt` (только для своего сервера — `DeviceAuth.isOwnServer`), профиль — `SessionInfo`.
+  2. «Мои фильмы»: `Shelf.body()`, флаг `mine` уже в `Model`.
+  3. Комната: свой клиент на OkHttp (SSE-поток, очередь действий по одной, как `desktop/party/Party.kt`) поверх `PartyRoom.merge/reduce`.
+  4. `PlayerActivity`: `SyncPlayer` поверх libVLC/Media3 и цикл `PartySyncEngine.tick()` раз в 400 мс.
+  Активность в Discord на Android невозможна (у мобильного Discord нет локального IPC) — `DiscordRpc` остаётся только на ПК.

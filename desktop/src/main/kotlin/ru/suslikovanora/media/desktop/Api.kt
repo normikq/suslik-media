@@ -131,11 +131,11 @@ object Api {
     fun request(path: String): HttpRequest.Builder {
         val url = if (path.startsWith("http")) path else BASE + path
         // Session, device token and beta code go only to our own server (an avatar comes from Discord's CDN)
-        val own = url == BASE || url.startsWith("$BASE/")
+        val own = ru.suslikovanora.media.core.auth.DeviceAuth.isOwnServer(url, BASE)
         return HttpRequest.newBuilder(URI.create(url))
             .timeout(Duration.ofSeconds(30))
             .apply { if (own) header("Cookie", cookieHeader()) }
-            .apply { if (own) deviceToken?.let { header("X-Device-Token", it) } }
+            .apply { if (own) deviceToken?.let { header(ru.suslikovanora.media.core.auth.DeviceAuth.TOKEN_HEADER, it) } }
             .apply { if (own) PlaybackSettings.sentBetaCode()?.let { header("X-Beta-Code", it) } } // tester: beta updates
     }
 

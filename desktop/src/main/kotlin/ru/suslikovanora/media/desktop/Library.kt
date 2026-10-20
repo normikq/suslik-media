@@ -1,6 +1,7 @@
 package ru.suslikovanora.media.desktop
 
 import ru.suslikovanora.media.core.*
+import ru.suslikovanora.media.core.auth.*
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -78,26 +79,23 @@ class Library {
 
     var profile by mutableStateOf<Profile>(Profile.Shared)
 
-    data class PairingState(val code: String, val userCode: String, val url: String)
-    var pairing by mutableStateOf<PairingState?>(null)
+    var pairing by mutableStateOf<DevicePairing?>(null)
 
-    /** The server's user (from /api/session or the device poll); the shared password account is [Profile.Shared]. */
-    private fun profileOf(u: JSONObject?): Profile {
-        if (u == null || u.optString("id") == "shared") return Profile.Shared
-        fun str(key: String) = if (u.isNull(key)) "" else u.optString(key)
-        val name = str("name").ifBlank { str("username") }.ifBlank { "Пользователь" }
-        val note = if (str("role") == "admin") "Администратор" else "Участник"
-        return Profile(name, note, str("avatar").takeIf { it.isNotBlank() })
+    /** The server's user (shared parser: core/auth/Auth.kt); the shared password account is [Profile.Shared]. */
+    private fun profileOf(u: UserProfile?): Profile {
+        if (u == null || u.isShared) return Profile.Shared
+        val note = if (u.isAdmin) "Администратор" else "Участник"
+        return Profile(u.name.ifBlank { "Пользователь" }, note, u.avatarUrl)
     }
 
     // The profile is set BEFORE [authenticated]: flipping it closes the login screen, and with it the coroutine that
     // called us (the old order lost the Discord name until the next start: «Вход по паролю» stayed in the sidebar).
     suspend fun checkSession(): Boolean? = try {
-        val res = Api.get("/api/session")
-        val isAuth = res.optBoolean("authenticated")
-        profile = if (isAuth) profileOf(res.optJSONObject("user")) else Profile.Shared
+        val s = SessionInfo.parse(Api.get(SessionInfo.PATH))
+        val isAuth = s.authenticated
+        profile = if (isAuth) profileOf(s.user) else Profile.Shared
         // Discord application of our server: the player shows the film in the Discord profile under it
-        res.optString("discord_client_id").takeIf { it.isNotBlank() }?.let { ru.suslikovanora.media.desktop.discord.DiscordRpc.clientId = it }
+        s.discordClientId?.let { ru.suslikovanora.media.desktop.discord.DiscordRpc.clientId = it }
         authenticated = isAuth
         isAuth
     } catch (e: Exception) { null }
@@ -109,16 +107,11 @@ class Library {
     } catch (e: Exception) { Api.describe(e) }
 
     suspend fun startDeviceAuth(): String? = try {
-        val res = Api.post("/api/auth/device", JSONObject()
-            .put("name", "Suslik Media Windows")
-            .put("site_url", Api.SITE.trimEnd('/'))
-        )
-        val code = res.getString("code")
-        val userCode = res.getString("user_code")
+        val res = Api.post(DeviceAuth.START, DeviceAuth.startBody("Suslik Media Windows", Api.SITE))
         // The server builds the link from site_url; ours is the fallback for an older server
-        val url = res.optString("verification_url").takeIf { it.contains("code=") } ?: "${Api.SITE}link?code=$userCode"
-        pairing = PairingState(code, userCode, url)
-        runCatching { java.awt.Desktop.getDesktop().browse(java.net.URI(url)) }
+        val p = DeviceAuth.parsePairing(res, Api.SITE)
+        pairing = p
+        runCatching { java.awt.Desktop.getDesktop().browse(java.net.URI(p.url)) }
         null
     } catch (e: Exception) {
         Api.describe(e)
@@ -126,24 +119,24 @@ class Library {
 
     suspend fun pollDeviceAuth(): Boolean? {
         val p = pairing ?: return null
-        return try {
-            val res = Api.post("/api/auth/device/poll", JSONObject().put("code", p.code))
-            when (res.optString("status")) {
-                "authorized" -> {
-                    // The device token outlives the cookie session (sent with every request, see Api.request).
-                    res.optString("device_token").takeIf { it.isNotBlank() }?.let { Api.deviceToken = it }
-                    profile = profileOf(res.optJSONObject("user"))
-                    pairing = null
-                    authenticated = true
-                    true
-                }
-                "expired" -> { pairing = null; false }
-                else -> null
-            }
+        val r = try {
+            DeviceAuth.parsePoll(Api.post(DeviceAuth.POLL, DeviceAuth.pollBody(p)))
         } catch (e: Api.HttpError) {
             // 410: the code has expired (10 min) — without this the screen kept waiting forever
-            if (e.code == 410 || e.code == 404) { pairing = null; false } else null
-        } catch (e: Exception) { null }
+            DeviceAuth.pollFailed(e.code)
+        } catch (e: Exception) { DevicePoll.Pending }
+        return when (r) {
+            is DevicePoll.Authorized -> {
+                // The device token outlives the cookie session (sent with every request, see Api.request).
+                r.token?.let { Api.deviceToken = it }
+                profile = profileOf(r.user)
+                pairing = null
+                authenticated = true
+                true
+            }
+            DevicePoll.Expired -> { pairing = null; false }
+            DevicePoll.Pending -> null
+        }
     }
 
     fun cancelDeviceAuth() {
@@ -250,7 +243,7 @@ class Library {
         val before = items
         items = items.map { if (it.m.id == m.id) it.copy(m = it.m.copy(mine = on)) else it }
         return try {
-            withContext(kotlinx.coroutines.NonCancellable) { Api.post("/api/shelf", JSONObject().put("id", m.id).put("mine", on)) }; null
+            withContext(kotlinx.coroutines.NonCancellable) { Api.post(Shelf.PATH, Shelf.body(m.id, on)) }; null
         } catch (e: CancellationException) { throw e } catch (e: Exception) { items = before; Api.describe(e) }
     }
 

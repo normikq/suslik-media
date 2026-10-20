@@ -10,7 +10,7 @@
 | `website/` | Node/Express, API и зеркало файлов `/api/file/proxy/<имя>?link=…&exp=…&sig=…` (HTTP/1.1, nginx без http2) |
 | `android/` | Kotlin, Compose, libVLC 3.6 и Media3 (оба через `BurstProxy`, выбор — `player/EngineChoice`), Android TV. `PlayerActivity.kt` (~1900 строк), `player/PlayerExtras.kt` (ключи Intent), `net/Api.kt`, `Diag.kt`, `AppLog.kt` |
 | `desktop/` | Compose Desktop; `party/` — совместный просмотр, `discord/` — активность в Discord; mpv (`libmpv-2.dll` загружается автоматически) за `PlayerEngine`. mpv рисует в сцене окна: `vo=libmpv` + render API в GL-контексте Skiko (`player/MpvVideo.kt`), панели — слои того же `Box`. Модули: `player/` (плеер и оверлеи), `ui/` (токены и компоненты). Запас: `desktop/.../Reserve.kt` |
-| `shared/` | Общий модуль: `BurstProxy`, `PlaybackSupervisor`, `TsClock`/`TsPlayback`, `MirrorLink` (ключ файла и подпись адреса зеркала), `CatchUp` («копим запас»), `clockText`, `Versions`, `Changelog`, `Model`, `PlaybackPresets`, `LibraryKeep` |
+| `shared/` | Общий модуль: `BurstProxy`, `PlaybackSupervisor`, `TsClock`/`TsPlayback`, `MirrorLink` (ключ файла и подпись адреса зеркала), `CatchUp` («копим запас»), `clockText`, `Versions`, `Changelog`, `Model`, `PlaybackPresets`, `LibraryKeep`; `party/` — протокол комнат (`PartyProtocol`: `PartyRoom`, разбор SSE, команды) и `PartySyncEngine` (синхронизация плеера, тик 400 мс), `auth/` — сессия, код устройства, «Мои фильмы» (`Auth.kt`). Сети и Compose там нет — их держат приложения |
 
 Ядро — `shared/.../core/BurstProxy.kt`: локальный прокси 127.0.0.1 с окнами-запасом в кольцевых файлах.
 Качает «рывками» между low/high в зависимости от битрейта фильма, `MAX_WINDOWS=3` (основное окно фильма не вытесняется), `tailCache` 512 КБ в памяти для конца файла, весь фильм с озвучками на диске не больше `capBytes` из настроек (`trimToBudget()`; озвучке кольцо `cap/8`),
@@ -38,7 +38,7 @@ Changelog (русский) — `android/app/src/main/assets/changelog.json` и `
 
 ## Сборка и выпуск
 
-- Тесты общего модуля (`shared.yml`) идут на пуш с изменениями в `shared/`: `shared/src/test/...` (`ModelTest`, `BurstProxyTest`, `TsClockTest`, `CoreTest`, `MirrorLinkTest`). Логи заданий CI читаются через `mcp__github__get_job_logs`. Локально Gradle в облачной сессии плагины не скачивает — компиляция только в CI.
+- Тесты общего модуля (`shared.yml`) идут на пуш с изменениями в `shared/`: `shared/src/test/...` (`ModelTest`, `BurstProxyTest`, `TsClockTest`, `CoreTest`, `MirrorLinkTest`, `PartyTest`, `PartyProtocolTest`, `PartySyncEngineTest`, `AuthTest`). Логи заданий CI читаются через `mcp__github__get_job_logs`. Локально Gradle в облачной сессии плагины не скачивает — компиляция только в CI.
 - Серверные модульные тесты: `website/test/*.test.js` (`node --test`). Статическая проверка: `npm run check`.
 - `android.yml` и `desktop.yml` запускаются только вручную (workflow_dispatch): пуш APK/MSI не собирает. Отладочная «Suslik Debug» собирается только с `inputs[debug]=true` (по умолчанию нет).
 - Выпуск беты после пуша:

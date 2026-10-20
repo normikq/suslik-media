@@ -64,13 +64,3 @@ object DriftController {
         }
     }
 }
-
-/** Интерфейс плеера, управляемого комнатой совместного просмотра. */
-interface SyncPlayer {
-    val positionMs: Long
-    fun seekTo(ms: Long)
-    fun setRate(rate: Float)
-    fun play()
-    fun pause()
-    val isBuffering: Boolean
-}
