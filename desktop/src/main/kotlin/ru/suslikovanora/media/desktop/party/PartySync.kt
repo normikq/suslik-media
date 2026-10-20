@@ -132,6 +132,9 @@ fun PartySync(key: String?, title: String, keys: List<String>, started: Boolean,
                 Party.startedByMe = null
                 if (p) Party.pause(t) else Party.play(t)
                 lastSeq = Party.state.seq + 1; ownUntil = now + OWN_MS
+                // The film is still opening (seconds over the network): «loading», so the room waits instead of running
+                // ahead — otherwise the drift seeks again right after the first frames (journal 20.10, 19:02:00)
+                if (!p && !hook.running()) { pendingAt = now; pendingTo = t; pendingT = -1L }
                 prevT = t; prevP = p; prevAt = now
                 continue
             }
@@ -167,8 +170,10 @@ fun PartySync(key: String?, title: String, keys: List<String>, started: Boolean,
                 if (abs(t - target) > 1_000L && !alreadyGoing) nt = seekRoom(target, now)
                 ownUntil = now + OWN_MS
                 PlayerLog.write("[party] apply seq=${s.seq} playing=${s.playing} waiting=${s.waiting} target=$target local=$t")
-            } else if (s.playing && s.waiting && !loading && !p) {
-                // Ready, but the room still waits for someone: stand still here
+            } else if (s.playing && s.waiting && !loading && !p &&
+                Party.members.any { it.buffering && it.key != Party.myKey }) {
+                // Ready, but the room still waits for someone else: stand still here. If only we were loading, play on:
+                // the room stops waiting in a moment (the answer to our «ready»), a pause meanwhile was a 0.4 s stall
                 hook.setPaused(true); np = true; ownUntil = now + 1_000L
                 PlayerLog.write("[party] ready, waiting for the others at $t")
             } else if (s.playing && !s.waiting && !p && !loading && now > ownUntil && hook.running() && hook.userRate() == 1f) {
