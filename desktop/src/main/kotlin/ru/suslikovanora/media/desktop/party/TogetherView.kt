@@ -66,6 +66,7 @@ fun TogetherView(lib: Library, onLibrary: () -> Unit, onPlay: (PlayRequest) -> U
                 modifier = Modifier.padding(top = 4.dp, bottom = 16.dp))
         }
         if (!Party.inRoom) item {
+            Party.notice?.let { Text(it, color = Color(0xFFF2B84B), fontFamily = Onest, fontSize = 14.sp, modifier = Modifier.padding(bottom = 12.dp)) }
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 Panel(Modifier.weight(1f)) {
                     Text("Новая комната", fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 17.sp, color = Sm.text)
@@ -96,6 +97,8 @@ private fun RoomPanel(lib: Library, onLibrary: () -> Unit, onOpen: (PlayTarget) 
     // The room's clock moves while it plays: refresh the shown time every second
     var tick by remember { mutableStateOf(0) }
     LaunchedEffect(Unit) { while (true) { delay(1000); tick++ } }
+    var copied by remember { mutableStateOf(false) }
+    LaunchedEffect(copied) { if (copied) { delay(1500); copied = false } }
 
     Panel {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -104,7 +107,7 @@ private fun RoomPanel(lib: Library, onLibrary: () -> Unit, onOpen: (PlayTarget) 
                 Text(id, color = Color.White, fontFamily = Unbounded, fontWeight = FontWeight.Bold, fontSize = 26.sp, letterSpacing = 2.sp,
                     modifier = Modifier.padding(top = 2.dp))
             }
-            OutlineButton("Скопировать код") { copy(id) }
+            OutlineButton(if (copied) "Код скопирован" else "Скопировать код") { copy(id); copied = true }
             Spacer(Modifier.width(10.dp))
             OutlineButton("Выйти из комнаты") { Party.leave() }
         }
@@ -140,13 +143,14 @@ private fun RoomPanel(lib: Library, onLibrary: () -> Unit, onOpen: (PlayTarget) 
                 val magnetId = f.key.substringBefore('|').toLongOrNull()
                 val path = f.key.substringAfter('|')
                 val target = lib.items.firstOrNull { it.m.id == magnetId }?.let { targetFor(it, path) }
-                if (target != null) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        LampButton("Смотреть вместе") { onOpen(target) }
-                        if (Party.isHost) OutlineButton("Другой фильм") { onLibrary() }
-                    }
-                } else {
-                    Text("Этой раздачи нет в вашей медиатеке (или она ещё загружается).", color = Sm.bad, fontFamily = Onest, fontSize = 13.sp)
+                if (target == null) {
+                    Text("Этой раздачи нет в вашей медиатеке (или она ещё загружается).", color = Sm.bad, fontFamily = Onest, fontSize = 13.sp,
+                        modifier = Modifier.padding(bottom = 10.dp))
+                }
+                // «Другой фильм» — и когда этого фильма нет: иначе создателю пришлось бы пересоздавать комнату
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (target != null) LampButton("Смотреть вместе") { onOpen(target) }
+                    if (Party.isHost) OutlineButton("Другой фильм") { onLibrary() }
                 }
             }
         }
@@ -159,7 +163,7 @@ private fun RoomPanel(lib: Library, onLibrary: () -> Unit, onOpen: (PlayTarget) 
                         contentAlignment = Alignment.Center) {
                         Text(m.name.take(1).uppercase(), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
                     }
-                    Text(m.name + (if (m.clientId == Party.clientId) " (вы)" else "") + (if (m.userId == Party.hostId) " · создатель" else "") +
+                    Text(m.name + (if (m.key == Party.myKey) " (вы)" else "") + (if (Party.isCreator(m)) " · создатель" else "") +
                         (if (m.buffering) " · загружается" else ""),
                         color = Sm.text, fontFamily = Onest, fontSize = 13.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(start = 10.dp))

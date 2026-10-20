@@ -63,7 +63,7 @@ const MEDIA_CACHE_FILE = path.join(DATA_DIR, "media-metadata-cache.json");
 const USERS_FILE = path.join(DATA_DIR, "users.json");
 const DEVICES_FILE = path.join(DATA_DIR, "devices.json");
 const SHELF_FILE = path.join(DATA_DIR, "shelf.json");
-const ROOMS_FILE = path.join(DATA_DIR, "rooms.json");
+// (Комнаты совместного просмотра живут только в памяти: после перезапуска приложения входят заново)
 
 if (!process.env.SESSION_SECRET) {
   console.warn("ПРЕДУПРЕЖДЕНИЕ: SESSION_SECRET не задан в .env (сгенерирован временный случайный ключ). Сеансы и временные ссылки зеркала сбросятся при перезапуске сервера.");
@@ -109,7 +109,6 @@ module.exports = {
   USERS_FILE,
   DEVICES_FILE,
   SHELF_FILE,
-  ROOMS_FILE,
   SITE_PREFIX,
   DISCORD_CLIENT_ID,
   DISCORD_CLIENT_SECRET,

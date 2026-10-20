@@ -67,6 +67,14 @@ async function revokeOAuthToken(accessToken) {
   }
 }
 
+async function memberRoles(idStr) {
+  const res = await axios.get(`${DISCORD_API_BASE}/guilds/${config.DISCORD_GUILD_ID}/members/${idStr}`, {
+    headers: { Authorization: `Bot ${config.DISCORD_BOT_TOKEN}` },
+    timeout: 8000
+  });
+  return Array.isArray(res.data?.roles) ? res.data.roles : [];
+}
+
 async function checkGuildMember(discordId) {
   const idStr = String(discordId);
 
@@ -75,10 +83,16 @@ async function checkGuildMember(discordId) {
     return { allowed: true, role: "admin" };
   }
 
-  // 2. Белый список пользователей
+  // 2. Белый список пользователей: пускаем всегда. DISCORD_ROLE_ADMIN — id ролей, не пользователей: админ ли он,
+  // узнаём у бота по ролям на сервере Discord (если бот не ответил или не настроен — обычный доступ)
   if (config.DISCORD_ALLOWED_USERS.includes(idStr)) {
-    const isAdmin = config.DISCORD_ROLE_ADMIN.includes(idStr);
-    return { allowed: true, role: isAdmin ? "admin" : "allow" };
+    if (config.DISCORD_BOT_TOKEN && config.DISCORD_GUILD_ID && config.DISCORD_ROLE_ADMIN.length > 0) {
+      try {
+        const roles = await memberRoles(idStr);
+        if (config.DISCORD_ROLE_ADMIN.some(r => roles.includes(r))) return { allowed: true, role: "admin" };
+      } catch {}
+    }
+    return { allowed: true, role: "allow" };
   }
 
   // 3. Проверка через бота на сервере Discord

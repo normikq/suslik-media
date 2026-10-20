@@ -46,6 +46,8 @@ function recordOwner(id, dev, ip) {
 // Проверка для всех раздач одного запроса: cookie устройства читается один раз, а не для каждой раздачи медиатеки.
 function removeChecker(req) {
   if (!config.OWNER_LOCK) return () => true;
+  // Админ Discord удаляет и чужое (DISCORD.md §1). Не «shared»: у общего пароля тоже role "admin", но это все сразу
+  if (req.user && req.user.role === "admin" && req.user.id !== "shared") return () => true;
   const dev = deviceId(req, null); // только cookie устройства, IP не учитывается
   return id => {
     const o = magnetOwners.get(String(id));
@@ -63,6 +65,17 @@ function deleteOwner(id) {
     return true;
   }
   return false;
+}
+
+// Первый вход через Discord: раздачи, добавленные с этого устройства, переходят пользователю
+function adoptOwners(fromDev, toUser) {
+  if (!fromDev || fromDev === toUser) return 0;
+  let n = 0;
+  for (const o of magnetOwners.values()) {
+    if (o.dev === fromDev) { o.dev = toUser; n++; }
+  }
+  if (n) persistOwners();
+  return n;
 }
 
 function ipDownloadState(ip) {
@@ -131,6 +144,7 @@ module.exports = {
   removeChecker,
   recordOwner,
   deleteOwner,
+  adoptOwners,
   releaseTrackedDownload,
   reserveDownloadSlot,
   cleanupFinishedDownloads,

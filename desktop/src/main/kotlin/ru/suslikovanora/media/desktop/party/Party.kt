@@ -25,7 +25,8 @@ import java.time.Duration
  * Фильм комнаты — ключ просмотра `magnetId|путь` (тот же, что у прогресса в медиатеке): у всех одна общая медиатека.
  */
 object Party {
-    data class Member(val clientId: String, val userId: String, val name: String, val buffering: Boolean = false)
+    /** [key]: the server shows a device by a print of its client id (the id itself is its pass: it is not shown to others). */
+    data class Member(val key: String, val userId: String, val name: String, val buffering: Boolean = false)
     data class FileRef(val key: String, val title: String)
     /** [waiting]: someone is loading — the room's time stands still until everyone is ready (playing stays the intent). */
     data class State(val playing: Boolean, val pos: Double, val rate: Double, val anchorServerMs: Long, val seq: Long, val waiting: Boolean = false)
@@ -34,8 +35,8 @@ object Party {
         private set
     var hostId by mutableStateOf<String?>(null)
         private set
-    /** The creator's device: with the shared password everyone has the id "shared", the device tells the host apart. */
-    var hostClientId by mutableStateOf<String?>(null)
+    /** The creator's device (its key): with the shared password everyone has the id "shared", the device tells the host apart. */
+    var hostKey by mutableStateOf<String?>(null)
         private set
     var hostName by mutableStateOf("")
         private set
@@ -49,18 +50,25 @@ object Party {
         private set
     var connected by mutableStateOf(false)
         private set
+    /** Why the app left the room by itself (shown on the room page until the next create / join). */
+    var notice by mutableStateOf<String?>(null)
     /** My user id on the server (the shared password account is "shared"). */
     var myUserId by mutableStateOf<String?>(null)
         private set
 
     val inRoom get() = roomId != null
     /** Only the host picks the film (the server checks it too); pause and seek — everyone, unless [hostOnly]. */
-    val isHost get() = myUserId != null && myUserId == hostId && (hostId != "shared" || hostClientId == null || hostClientId == clientId)
+    val isHost get() = myUserId != null && myUserId == hostId && (hostId != "shared" || hostKey == null || hostKey == myKey)
+    /** This member is the room's creator (with the shared password — the creating device only). */
+    fun isCreator(m: Member) = m.userId == hostId && (hostId != "shared" || hostKey == null || m.key == hostKey)
     /** Pause, play and seek of the whole room: the host only. A guest's pause stays on their own computer (PartySync). */
     val canControl get() = inRoom && isHost
 
     /** This computer in the room (the server keeps one entry per client id). */
     val clientId = "pc_" + java.util.UUID.randomUUID().toString().replace("-", "").take(12)
+    /** How the server shows this computer to the others: sha-256 of [clientId], 16 hex (rooms.js clientKey). */
+    val myKey: String = java.security.MessageDigest.getInstance("SHA-256").digest(clientId.toByteArray())
+        .joinToString("") { "%02x".format(it) }.take(16)
     val clock = PartyClock()
 
     /** I have just put this film into the room: my player starts the room from its own place (see PartySync). */
@@ -102,7 +110,7 @@ object Party {
     fun leave() {
         val id = roomId ?: return
         stopStream()
-        roomId = null; file = null; members = emptyList(); hostId = null; hostClientId = null; startedByMe = null
+        roomId = null; file = null; members = emptyList(); hostId = null; hostKey = null; startedByMe = null
         reportedBuffering = false
         state = State(false, 0.0, 1.0, 0L, 0L)
         scope.launch { runCatching { Api.post("/api/rooms/$id/leave", JSONObject().put("client_id", clientId)) } }
@@ -178,6 +186,7 @@ object Party {
 
     private suspend fun enter(room: JSONObject) {
         stopStream()
+        notice = null
         clock.reset()
         state = State(false, 0.0, 1.0, 0L, 0L) // another room's seq must not hide this one's state
         reportedBuffering = false
@@ -192,7 +201,7 @@ object Party {
     @Synchronized private fun apply(room: JSONObject) {
         hostId = room.optString("host_id").ifBlank { null }
         hostName = room.optString("host_name")
-        hostClientId = room.optString("host_client_id").ifBlank { null }
+        hostKey = room.optString("host_key").ifBlank { null }
         hostOnly = room.optString("controls") == "host"
         file = room.optJSONObject("file")?.let { f ->
             val key = f.optString("key")
@@ -210,7 +219,7 @@ object Party {
         }
     }
 
-    private fun member(m: JSONObject) = Member(m.optString("client_id"), m.optString("id"), m.optString("name").ifBlank { "Гость" },
+    private fun member(m: JSONObject) = Member(m.optString("key"), m.optString("id"), m.optString("name").ifBlank { "Гость" },
         m.optBoolean("buffering"))
 
     private fun startStream(id: String) {
@@ -223,7 +232,12 @@ object Party {
                         .timeout(Duration.ofHours(12)).header("Accept", "text/event-stream").GET().build()
                     val res = withContext(Dispatchers.IO) { Api.client.send(req, HttpResponse.BodyHandlers.ofLines()) }
                     if (!isActive || roomId != id) { runCatching { res.body().close() }; break }
-                    if (res.statusCode() == 404) { PlayerLog.write("[party] room $id is gone"); leave(); return@launch }
+                    if (res.statusCode() == 404) { PlayerLog.write("[party] room $id is gone"); leave(); notice = "Комната закрыта."; return@launch }
+                    // Вход больше не действует (вышли, доступ отозван): повторять бессмысленно
+                    if (res.statusCode() == 401 || res.statusCode() == 403) {
+                        PlayerLog.write("[party] stream: HTTP ${res.statusCode()}, leaving the room")
+                        leave(); notice = "Вы вышли из комнаты: вход больше не действует. Войдите снова."; return@launch
+                    }
                     if (res.statusCode() !in 200..299) throw java.io.IOException("HTTP ${res.statusCode()}")
                     connected = true; failures = 0
                     val s = res.body(); lines = s
@@ -253,9 +267,9 @@ object Party {
             }
             "state_changed" -> msg.optJSONObject("data")?.let { apply(it) }
             "member_joined" -> msg.optJSONObject("data")?.optJSONObject("member")?.let { m ->
-                val mm = member(m); members = members.filter { it.clientId != mm.clientId } + mm
+                val mm = member(m); members = members.filter { it.key != mm.key } + mm
             }
-            "member_left" -> msg.optJSONObject("data")?.optString("client_id")?.let { cid -> members = members.filter { it.clientId != cid } }
+            "member_left" -> msg.optJSONObject("data")?.optString("key")?.let { k -> members = members.filter { it.key != k } }
         }
     }
 }

@@ -328,9 +328,12 @@ fun LoginView(lib: Library) {
                 } else {
                     Text(tr("library.voyti"), fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 20.sp, color = Sm.text)
                     Spacer(Modifier.height(12.dp))
-                    LampButton("Войти через Discord", modifier = Modifier.fillMaxWidth()) {
+                    LampButton("Войти через Discord", enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                        if (busy) return@LampButton
+                        busy = true; error = null // прежняя ошибка (например, истёкший код) к новому коду не относится
                         scope.launch {
                             val err = lib.startDeviceAuth()
+                            busy = false
                             if (err != null) error = err
                         }
                     }

@@ -264,43 +264,18 @@ function revokeDeviceToken(token) {
   return deleted;
 }
 
-// Миграция данных старого sdev в пользователя
+// Миграция данных старого sdev в пользователя. Через сервисы, а не файлами: они держат данные в памяти
+// и сами пишут файлы с задержкой — прямая запись файла затиралась бы их следующей записью.
+// (require внутри: favorites/downloads сами зависят от middleware/auth, который грузит этот модуль)
 function adoptDevice(sdevId, userId) {
-  if (!sdevId || !userId || sdevId === userId) return;
-
-  // 1. Избранное
+  if (!/^[a-f0-9]{32}$/.test(String(sdevId || "")) || !userId || userId === SHARED_USER.id) return;
   try {
-    const favFile = config.FAVORITES_FILE;
-    if (fs.existsSync(favFile)) {
-      const favs = JSON.parse(fs.readFileSync(favFile, "utf8"));
-      if (Array.isArray(favs[sdevId]) && favs[sdevId].length > 0) {
-        const userFavs = new Set(Array.isArray(favs[userId]) ? favs[userId] : []);
-        for (const id of favs[sdevId]) userFavs.add(id);
-        favs[userId] = Array.from(userFavs);
-        delete favs[sdevId];
-        fs.writeFileSync(favFile, JSON.stringify(favs, null, 2));
-      }
-    }
+    require("./favorites").adoptFavorites(sdevId, userId);
   } catch (err) {
     console.warn("[adopt] Не удалось перенести избранное:", err.message);
   }
-
-  // 2. Владелец раздач
   try {
-    const ownersFile = config.OWNERS_FILE;
-    if (fs.existsSync(ownersFile)) {
-      const owners = JSON.parse(fs.readFileSync(ownersFile, "utf8"));
-      let changed = false;
-      for (const [id, owner] of Object.entries(owners)) {
-        if (owner === sdevId) {
-          owners[id] = userId;
-          changed = true;
-        }
-      }
-      if (changed) {
-        fs.writeFileSync(ownersFile, JSON.stringify(owners, null, 2));
-      }
-    }
+    require("./downloads").adoptOwners(sdevId, userId);
   } catch (err) {
     console.warn("[adopt] Не удалось перенести раздачи:", err.message);
   }

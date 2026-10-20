@@ -201,21 +201,21 @@ fun Sidebar(tab: Tab, profile: Profile, onSelect: (Tab) -> Unit, onSettings: () 
 /** Instead of the old storage gauge: whose library this is. Avatar slot is ready for the Discord picture. */
 @Composable
 private fun ProfileCard(profile: Profile, expanded: Boolean, onLogout: () -> Unit) {
-    val avatar: @Composable () -> Unit = {
-        var bmp by remember(profile.avatarUrl) { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
-        LaunchedEffect(profile.avatarUrl) {
-            val url = profile.avatarUrl ?: return@LaunchedEffect
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                runCatching {
-                    val bytes = Api.bytes(url)
-                    if (bytes != null) {
-                        val skiaImg = org.jetbrains.skia.Image.makeFromEncoded(bytes)
-                        bmp = skiaImg.toComposeImageBitmap()
-                    }
+    // The picture is kept here, above both layouts: collapsing the panel must not load it again (and blink)
+    var bmp by remember(profile.avatarUrl) { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+    LaunchedEffect(profile.avatarUrl) {
+        val url = profile.avatarUrl ?: return@LaunchedEffect
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                val bytes = Api.bytes(url)
+                if (bytes != null) {
+                    val skiaImg = org.jetbrains.skia.Image.makeFromEncoded(bytes)
+                    bmp = skiaImg.toComposeImageBitmap()
                 }
             }
         }
-
+    }
+    val avatar: @Composable () -> Unit = {
         Box(
             Modifier.size(34.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Sm.accent, Color(0xFF6366F1))))
                 .border(1.dp, Color(0x33FFFFFF), CircleShape),

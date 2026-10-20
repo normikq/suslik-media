@@ -3,15 +3,17 @@
 const fs = require("fs");
 const config = require("../config");
 const { makeJsonWriter } = require("../utils/json-writer");
-const { readCookie } = require("../utils/helpers");
+const { deviceId } = require("../middleware/auth");
 const { removeChecker } = require("./downloads");
 
 // ---- Избранное -------------------------------------------------------------------------------
-// У каждого устройства (cookie "sdev") своё избранное: отмеченные раздачи показываются в библиотеке первыми.
-const favorites = new Map(); // dev -> Set(magnet id)
+// У каждого владельца своё избранное: отмеченные раздачи показываются в библиотеке первыми.
+// Владелец — пользователь Discord (u_<id>) или устройство (cookie "sdev") при входе по общему паролю, см. deviceId.
+const OWNER_RE = /^(?:[a-f0-9]{32}|u_\d{1,25})$/;
+const favorites = new Map(); // owner -> Set(magnet id)
 try {
   for (const [dev, ids] of Object.entries(JSON.parse(fs.readFileSync(config.FAVORITES_FILE, "utf8")))) {
-    if (/^[a-f0-9]{32}$/.test(dev) && Array.isArray(ids)) {
+    if (OWNER_RE.test(dev) && Array.isArray(ids)) {
       favorites.set(dev, new Set(ids.map(String).slice(0, 2000)));
     }
   }
@@ -24,8 +26,8 @@ const persistFavorites = makeJsonWriter(
 );
 
 function favoritesOf(req) {
-  const id = readCookie(req, "sdev");
-  return /^[a-f0-9]{32}$/.test(id) ? (favorites.get(id) || null) : null;
+  const id = deviceId(req, null); // без нового cookie: у кого его нет, у того и избранного нет
+  return OWNER_RE.test(id) ? (favorites.get(id) || null) : null;
 }
 
 // Для каждого устройства свои права: кнопка «Отменить/Удалить» показывается только владельцу раздачи.
@@ -60,8 +62,21 @@ function setFavorite(dev, id, on) {
   return on;
 }
 
+// Первый вход через Discord: избранное этого устройства переходит пользователю
+function adoptFavorites(fromDev, toUser) {
+  const from = favorites.get(fromDev);
+  if (!from || fromDev === toUser) return 0;
+  const to = favorites.get(toUser) || new Set();
+  for (const id of from) to.add(id);
+  favorites.set(toUser, to);
+  favorites.delete(fromDev);
+  persistFavorites();
+  return from.size;
+}
+
 module.exports = {
   favoritesOf,
   withRemovable,
-  setFavorite
+  setFavorite,
+  adoptFavorites
 };

@@ -93,7 +93,27 @@ const serviceLimiter = rateLimit({
   handler: (req, res, next, options) => res.status(options.statusCode).json({ error: "Слишком много запросов. Подождите немного." })
 });
 
+// Связка устройства по коду: не подбор пароля, свой счётчик (ТВ, ПК и ноутбук за одним роутером, «Отмена» и снова)
+const deviceAuthLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 60,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  handler: (req, res, next, options) => res.status(options.statusCode).json({ error: "Слишком много запросов кода. Подождите немного." })
+});
+
+// Совместный просмотр: команды ведущего, «грузится», вход. Живой просмотр шлёт единицы в минуту — лимит только от сбоев
+const roomLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 300,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  handler: (req, res, next, options) => res.status(options.statusCode).json({ error: "Слишком много команд комнате." })
+});
+
 module.exports = {
+  deviceAuthLimiter,
+  roomLimiter,
   loginLimiter,
   apiLimiter,
   posterLimiter,

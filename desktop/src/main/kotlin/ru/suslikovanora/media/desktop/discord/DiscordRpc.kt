@@ -40,9 +40,15 @@ object DiscordRpc {
             stop() // the next update reconnects under the new application
         }
 
+    // All work with the pipe goes on this one thread, in order (so no locks). Reading the pipe has no timeout: if Discord
+    // hangs, only this thread waits — before, every update took a new IO thread that stood behind the lock forever.
+    private val worker = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "discord-rpc").apply { isDaemon = true }
+    }.asCoroutineDispatcher()
     private var pipe: RandomAccessFile? = null
     private var connectedAs: String? = null
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val scope = CoroutineScope(worker + SupervisorJob())
+    @Volatile private var busySince = 0L
     private var lastUpdateJob: Job? = null
     private val pid = ProcessHandle.current().pid()
     @Volatile private var lastProblem: String? = null
@@ -52,7 +58,6 @@ object DiscordRpc {
         if (text != lastProblem) { lastProblem = text; PlayerLog.write("[discord] $text") }
     }
 
-    @Synchronized
     private fun ensureConnected(id: String): Boolean {
         if (pipe != null && connectedAs == id) return true
         closePipe()
@@ -82,7 +87,6 @@ object DiscordRpc {
         return false
     }
 
-    @Synchronized
     private fun writeFrame(opcode: Int, json: JSONObject) {
         val p = pipe ?: return
         val payload = json.toString().toByteArray(Charsets.UTF_8)
@@ -93,7 +97,6 @@ object DiscordRpc {
         p.write(payload)
     }
 
-    @Synchronized
     private fun readFrame(): Pair<Int, JSONObject?>? {
         val p = pipe ?: return null
         val header = ByteArray(8)
@@ -107,7 +110,6 @@ object DiscordRpc {
         return opcode to runCatching { JSONObject(String(payload, Charsets.UTF_8)) }.getOrNull()
     }
 
-    @Synchronized
     private fun closePipe() {
         connectedAs = null
         try {
@@ -117,7 +119,6 @@ object DiscordRpc {
     }
 
     /** Sends a command and reads Discord's answer (unread answers would pile up in the pipe; an error says why). */
-    @Synchronized
     private fun send(activity: Any): Boolean {
         val frame = JSONObject()
         frame.put("cmd", "SET_ACTIVITY")
@@ -144,8 +145,11 @@ object DiscordRpc {
         }
         val id = clientId ?: run { problem("no Discord application id yet (the server sends it after sign-in)"); return }
 
-        lastUpdateJob?.cancel()
+        val since = busySince
+        if (since > 0L && System.currentTimeMillis() - since > 10_000L) problem("Discord does not answer (the pipe hangs): activity is not updated")
+        lastUpdateJob?.cancel() // a waiting update is replaced by this one
         lastUpdateJob = scope.launch {
+            busySince = System.currentTimeMillis()
             try {
                 if (!ensureConnected(id)) return@launch
 
@@ -180,6 +184,8 @@ object DiscordRpc {
             } catch (e: Exception) {
                 problem("update failed: ${e.message}")
                 closePipe()
+            } finally {
+                busySince = 0L
             }
         }
     }

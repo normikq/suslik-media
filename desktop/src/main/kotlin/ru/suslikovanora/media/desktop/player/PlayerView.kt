@@ -462,7 +462,8 @@ fun PlayerView(
 
     fun chapterAt(t: Long): Int = chapters.indexOfLast { it.first <= t + 500 }
     fun jumpChapter(d: Int) {
-        if (chapters.size < 2 || partyGuest()) return
+        if (chapters.size < 2) return
+        if (partyGuest()) { flash("Перематывает создатель комнаты"); return }
         val i = (chapterAt(time) + d).coerceIn(0, chapters.size - 1)
         val t = chapters[i].first; time = t; lastSeekAt = System.currentTimeMillis(); supRef.get()?.seeked()
         seekTo(t)
@@ -518,7 +519,7 @@ fun PlayerView(
     }
 
     fun seekBy(d: Long) {
-        if (partyGuest()) return
+        if (partyGuest()) { flash("Перематывает создатель комнаты"); return }
         PlayerLog.write("seek ${if (d > 0) "+" else ""}${d / 1000}s")
         supRef.get()?.seeked()
         var t = (time + d).coerceAtLeast(0L)
@@ -611,8 +612,8 @@ fun PlayerView(
                     WindowMode.setFullscreen(owner, false)
                 } else close()
                 Key.Backspace -> close()
-                Key.N -> if (!partyGuest()) playEntry(index + 1)
-                Key.P -> if (!partyGuest()) playEntry(index - 1)
+                Key.N -> if (!partyGuest()) playEntry(index + 1) else flash("Серию выбирает создатель комнаты")
+                Key.P -> if (!partyGuest()) playEntry(index - 1) else flash("Серию выбирает создатель комнаты")
                 Key.M -> { userMuted = !userMuted; val m = userMuted; runOnPlayer { eMute(m) } }
                 Key.LeftBracket -> if (e.isShiftPressed) shiftSubs(-100L) else shiftAudio(-100L)
                 Key.RightBracket -> if (e.isShiftPressed) shiftSubs(100L) else shiftAudio(100L)

@@ -3,7 +3,7 @@
 const express = require("express");
 const crypto = require("crypto");
 const config = require("../config");
-const { loginLimiter, apiLimiter } = require("../middleware/rate-limit");
+const { loginLimiter, apiLimiter, deviceAuthLimiter } = require("../middleware/rate-limit");
 const { requireLogin, verifyPassword, resolveAuth } = require("../middleware/auth");
 const { alldebridRequest } = require("../services/alldebrid");
 const { exchangeOAuthCode, fetchMe, revokeOAuthToken, checkGuildMember } = require("../services/discord");
@@ -204,7 +204,7 @@ router.get("/api/auth/discord/callback", async (req, res) => {
 });
 
 // 4. Device Flow — запрос кода привязки (для ТВ / ПК)
-router.post("/api/auth/device", loginLimiter, (req, res) => {
+router.post("/api/auth/device", deviceAuthLimiter, (req, res) => {
   const pairing = createDevicePairing(req.body?.name);
   const host = req.get("host");
   const protocol = req.protocol;
@@ -224,7 +224,7 @@ router.post("/api/auth/device", loginLimiter, (req, res) => {
 });
 
 // 5. Device Flow — проверка кода перед подтверждением
-router.get("/api/auth/device/check", (req, res) => {
+router.get("/api/auth/device/check", deviceAuthLimiter, (req, res) => {
   const code = req.query?.code;
   const item = findPendingPairing(code);
   if (!item) {
@@ -254,6 +254,8 @@ router.post("/api/auth/device/poll", (req, res) => {
   const result = pollDevicePairing(code);
 
   if (result.status === "authorized") {
+    // Приложение (ПК, ТВ) опрашивает со своим cookie устройства: его избранное и раздачи переходят пользователю
+    if (result.user?.id) adoptDevice(readCookie(req, "sdev"), result.user.id);
     // Устанавливаем сессионную cookie, чтобы клиент мог работать как обычный браузер
     req.session.regenerate(err => {
       if (!err) {

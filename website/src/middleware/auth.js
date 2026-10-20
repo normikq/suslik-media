@@ -138,8 +138,10 @@ function requireAdmin(req, res, next) {
   return res.status(403).json({ error: "Недостаточно прав администратора." });
 }
 
+// Чьё «личное» (избранное, свои раздачи): пользователь Discord — его id; вход по общему паролю — устройство
+// (cookie sdev): у всех парольных один id "shared", и тогда избранное и права на удаление стали бы общими
 function deviceId(req, res) {
-  if (req.user && req.user.id) {
+  if (req.user && req.user.id && req.user.id !== SHARED_USER.id) {
     return req.user.id;
   }
   let id = readCookie(req, "sdev");

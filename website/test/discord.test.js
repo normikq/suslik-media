@@ -150,6 +150,111 @@ test("rooms: with the shared password the creating device is the host", () => {
   assert.equal(handleRoomAction(room.id, shared, { type: "change_file", file: film, client_id: "pc_a" }).ok, true);
 });
 
+test("rooms: client ids are not shown to others (a guest cannot act as the host's device)", () => {
+  const { clientKey } = require("../src/services/rooms");
+  const shared = { id: "shared", name: "Общий доступ" };
+  const room = createRoom(shared, null, "all", "pc_secret_host");
+  joinRoom(room.id, shared, "pc_secret_host");
+  joinRoom(room.id, shared, "pc_guest2");
+  const pub = JSON.stringify(getRoomPublicData(room));
+  assert.equal(pub.includes("pc_secret_host"), false);
+  assert.equal(pub.includes("pc_guest2"), false);
+  const data = getRoomPublicData(room);
+  assert.equal(data.host_key, clientKey("pc_secret_host"));
+  assert.deepEqual(data.members.map(m => m.key).sort(), [clientKey("pc_secret_host"), clientKey("pc_guest2")].sort());
+  // Отпечаток вместо client_id не даёт прав ведущего
+  const film = { key: "3|c.mkv", name: "C" };
+  assert.equal(handleRoomAction(room.id, shared, { type: "change_file", file: film, client_id: data.host_key }).ok, false);
+});
+
+test("rooms: an empty room is removed after 30 minutes, even if nobody ever came in", () => {
+  const { getRoom, sweepRooms, leaveRoom } = require("../src/services/rooms");
+  const host = { id: "u_30", name: "Host" };
+  const never = createRoom(host, null, "all", "pc_x");
+  const used = createRoom(host, null, "all", "pc_y");
+  joinRoom(used.id, host, "pc_y");
+  const later = Date.now() + 31 * 60 * 1000;
+  sweepRooms(later);
+  assert.equal(getRoom(never.id), null);
+  assert.ok(getRoom(used.id)); // в ней кто-то есть
+  leaveRoom(used.id, "pc_y");
+  sweepRooms(Date.now() + 10 * 60 * 1000);
+  assert.ok(getRoom(used.id)); // пуста недавно
+  sweepRooms(Date.now() + 31 * 60 * 1000);
+  assert.equal(getRoom(used.id), null);
+});
+
+test("rooms: the host is gone for good — the longest member becomes the host; a short drop changes nothing", () => {
+  const { leaveRoom, promoteIfHostGone, isRoomHost } = require("../src/services/rooms");
+  const host = { id: "u_40", name: "Host" };
+  const g1 = { id: "u_41", name: "First" };
+  const g2 = { id: "u_42", name: "Second" };
+  const room = createRoom(host, null, "host", "pc_h40");
+  joinRoom(room.id, host, "pc_h40");
+  joinRoom(room.id, g1, "pc_g41");
+  joinRoom(room.id, g2, "pc_g42");
+
+  // Ведущий на месте — никого не повышают
+  assert.equal(promoteIfHostGone(room), false);
+  // Обрыв и возврат за минуту — ведущий тот же
+  leaveRoom(room.id, "pc_h40");
+  joinRoom(room.id, host, "pc_h40");
+  assert.equal(promoteIfHostGone(room), false);
+  assert.equal(room.host_id, "u_40");
+
+  // Ушёл совсем — ведущим становится тот, кто вошёл раньше остальных
+  leaveRoom(room.id, "pc_h40", true);
+  assert.equal(promoteIfHostGone(room), true);
+  assert.equal(room.host_id, "u_41");
+  assert.equal(isRoomHost(room, g1, "pc_g41"), true);
+  assert.equal(handleRoomAction(room.id, g1, { type: "play", pos: 1, client_id: "pc_g41" }).ok, true);
+  assert.equal(handleRoomAction(room.id, g2, { type: "pause", pos: 2, client_id: "pc_g42" }).ok, false);
+});
+
+test("discord: a whitelisted user is not an admin by a role list (role ids are not user ids)", async () => {
+  const was = { users: config.DISCORD_ALLOWED_USERS, admin: config.DISCORD_ROLE_ADMIN, bot: config.DISCORD_BOT_TOKEN };
+  try {
+    config.DISCORD_ALLOWED_USERS = ["555"];
+    config.DISCORD_ROLE_ADMIN = ["555"]; // совпадение id пользователя и роли не делает админом
+    config.DISCORD_BOT_TOKEN = "";
+    assert.deepEqual(await checkGuildMember("555"), { allowed: true, role: "allow" });
+  } finally {
+    config.DISCORD_ALLOWED_USERS = was.users;
+    config.DISCORD_ROLE_ADMIN = was.admin;
+    config.DISCORD_BOT_TOKEN = was.bot;
+  }
+});
+
+test("favorites: per Discord user, per device with the shared password; the device's data moves on sign-in", () => {
+  const { setFavorite, favoritesOf, withRemovable } = require("../src/services/favorites");
+  const { recordOwner } = require("../src/services/downloads");
+  const { deviceId } = require("../src/middleware/auth");
+  const users = require("../src/services/users");
+  const sdev = "0123456789abcdef0123456789abcdef";
+  const cookieReq = (user, dev) => ({ user, headers: { cookie: dev ? `sdev=${dev}` : "" } });
+
+  // Общий пароль: у каждого устройства своё, а не одно «shared» на всех
+  const sharedA = cookieReq(users.SHARED_USER, sdev);
+  const sharedB = cookieReq(users.SHARED_USER, "f".repeat(32));
+  assert.equal(deviceId(sharedA, null), sdev);
+  setFavorite(deviceId(sharedA, null), "101", true);
+  recordOwner("101", deviceId(sharedA, null), "1.1.1.1");
+  assert.deepEqual([...favoritesOf(sharedA)], ["101"]);
+  assert.equal(favoritesOf(sharedB), null);
+
+  // Вход через Discord с этого устройства: избранное и раздачи — пользователю
+  const u = users.findOrCreateUser({ id: "4242", username: "fav" }, "allow");
+  users.adoptDevice(sdev, u.id);
+  const asUser = cookieReq(u, sdev);
+  assert.equal(deviceId(asUser, null), u.id);
+  assert.deepEqual([...favoritesOf(asUser)], ["101"]);
+  assert.equal(withRemovable({ magnets: [{ id: 101 }] }, asUser).magnets[0].canRemove, true);
+  assert.equal(withRemovable({ magnets: [{ id: 101 }] }, sharedA).magnets[0].canRemove, false);
+  // То, что отмечено под пользователем, ему и отдаётся
+  setFavorite(u.id, "202", true);
+  assert.deepEqual([...favoritesOf(asUser)].sort(), ["101", "202"]);
+});
+
 test("rooms: the room waits while someone is loading, then goes on from the same place", () => {
   const { leaveRoom } = require("../src/services/rooms");
   const host = { id: "u_20", name: "Host" };

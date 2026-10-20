@@ -812,9 +812,10 @@ if ($("deviceLinkForm")) {
   $("deviceLinkForm").addEventListener("submit", async e => {
     e.preventDefault();
     const code = $("deviceCodeInput").value.trim();
-    if (!code) return;
+    if (!code || $("deviceLinkSubmit").disabled) return;
     $("deviceLinkStatus").textContent = "Проверка кода…";
     $("deviceLinkStatus").className = "status";
+    $("deviceLinkSubmit").disabled = true; // второе нажатие не шлёт тот же код ещё раз
     try {
       const res = await api("/api/auth/device/confirm", {
         method: "POST",
@@ -836,6 +837,8 @@ if ($("deviceLinkForm")) {
     } catch (err) {
       $("deviceLinkStatus").textContent = err.message;
       $("deviceLinkStatus").className = "status error";
+    } finally {
+      $("deviceLinkSubmit").disabled = false;
     }
   });
 }

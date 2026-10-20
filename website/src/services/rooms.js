@@ -10,6 +10,20 @@ const rooms = new Map();
 // roomId -> Set<res/ws>
 const roomListeners = new Map();
 
+// Пустая комната живёт столько, потом удаляется (и та, куда после создания так никто и не вошёл)
+const EMPTY_ROOM_TTL_MS = 30 * 60 * 1000;
+
+// client_id устройства — его пропуск (по нему ведущий при общем пароле, «грузится», «вышел»): другим его не показываем,
+// в общих данных только отпечаток. Своё устройство приложение узнаёт, посчитав отпечаток своего client_id.
+function clientKey(clientId) {
+  if (typeof clientId !== "string" || !clientId) return null;
+  return crypto.createHash("sha256").update(clientId).digest("hex").slice(0, 16);
+}
+
+function publicMember({ streams, buffering_since, client_id, ...m }) {
+  return { ...m, key: clientKey(client_id) };
+}
+
 // Комната ждёт, пока кто-то грузится (waiting): её время стоит на месте
 function getEstimatedPos(state) {
   if (!state.playing || state.waiting) return state.pos;
@@ -38,7 +52,8 @@ function createRoom(hostUser, file = null, controls = "all", hostClientId = null
       seq: 1
     },
     members: new Map(), // clientId -> { id, name, avatar, buffering, last_seen }
-    created_at: Date.now()
+    created_at: Date.now(),
+    empty_since: Date.now() // 0 — в комнате кто-то есть
   };
 
   rooms.set(id, room);
@@ -57,7 +72,7 @@ function getRoomPublicData(room) {
     id: room.id,
     host_id: room.host_id,
     host_name: room.host_name,
-    host_client_id: room.host_client_id,
+    host_key: clientKey(room.host_client_id),
     file: room.file,
     controls: room.controls,
     state: {
@@ -65,7 +80,7 @@ function getRoomPublicData(room) {
       current_pos: getEstimatedPos(room.state),
       server_time: Date.now()
     },
-    members: Array.from(room.members.values()).map(({ streams, buffering_since, ...m }) => m),
+    members: Array.from(room.members.values()).map(publicMember),
     member_count: room.members.size
   };
 }
@@ -121,9 +136,9 @@ function joinRoom(roomId, user, clientId = null) {
   const member = existing ? Object.assign(existing, { last_seen: fresh.last_seen }) : { ...fresh, streams: 0 };
   member.streams++;
   room.members.set(member.client_id, member);
+  room.empty_since = 0;
   if (!existing) {
-    const { streams, ...pub } = member;
-    broadcast(roomId, "member_joined", { member: pub, total: room.members.size });
+    broadcast(roomId, "member_joined", { member: publicMember(member), total: room.members.size });
   }
   return { room, member };
 }
@@ -161,6 +176,28 @@ function pauseIfEmpty(room) {
   room.state.seq++;
 }
 
+// Ведущий ушёл (закрыл приложение, пропала связь) и не вернулся за минуту: ведущим становится тот, кто в комнате
+// дольше всех — иначе комнатой никто не может управлять. Минута — чтобы короткий обрыв связи ведущего не сменил.
+const HOST_GRACE_MS = 60 * 1000;
+
+function hostPresent(room) {
+  for (const m of room.members.values()) {
+    if (isRoomHost(room, { id: m.id }, m.client_id)) return true;
+  }
+  return false;
+}
+
+// true — ведущий сменился (и все об этом узнали)
+function promoteIfHostGone(room) {
+  if (rooms.get(room.id) !== room || room.members.size === 0 || hostPresent(room)) return false;
+  const next = room.members.values().next().value; // Map хранит порядок входа
+  room.host_id = next.id;
+  room.host_name = next.name;
+  room.host_client_id = next.client_id;
+  broadcast(room.id, "state_changed", getRoomPublicData(room));
+  return true;
+}
+
 function isRoomHost(room, user, clientId) {
   if (!user || user.id !== room.host_id) return false;
   // Общий пароль: один id на всех, ведущий — устройство, создавшее комнату
@@ -178,24 +215,26 @@ function leaveRoom(roomId, clientId, force = false) {
     member.streams = force ? 0 : Math.max(0, (member.streams || 1) - 1);
     if (member.streams === 0) {
       room.members.delete(clientId);
-      broadcast(roomId, "member_left", { client_id: clientId, total: room.members.size });
+      broadcast(roomId, "member_left", { key: clientKey(clientId), total: room.members.size });
+      if (room.members.size === 0) room.empty_since = Date.now();
+      else if (!hostPresent(room)) setTimeout(() => promoteIfHostGone(room), HOST_GRACE_MS).unref?.();
       pauseIfEmpty(room);
       // Ушёл тот, кого ждали: комната идёт дальше
       if (updateWaiting(room)) broadcast(roomId, "state_changed", getRoomPublicData(room));
     }
   }
+}
 
-  // Если в комнате никого нет больше 30 минут — удаляем её
-  if (room.members.size === 0) {
-    setTimeout(() => {
-      const current = rooms.get(roomId);
-      if (current && current.members.size === 0) {
-        rooms.delete(roomId);
-        roomListeners.delete(roomId);
-      }
-    }, 30 * 60 * 1000).unref?.();
+// Удаляет комнаты, пустые дольше EMPTY_ROOM_TTL_MS (в том числе созданные, но так и не открытые)
+function sweepRooms(now = Date.now()) {
+  for (const [id, room] of rooms) {
+    if (room.members.size === 0 && room.empty_since && now - room.empty_since > EMPTY_ROOM_TTL_MS) {
+      rooms.delete(id);
+      roomListeners.delete(id);
+    }
   }
 }
+setInterval(sweepRooms, 5 * 60 * 1000).unref?.();
 
 function handleRoomAction(roomId, user, action) {
   const room = getRoom(roomId);
@@ -299,7 +338,11 @@ module.exports = {
   addListener,
   joinRoom,
   previewMember,
+  publicMember,
+  clientKey,
   isRoomHost,
   leaveRoom,
+  sweepRooms,
+  promoteIfHostGone,
   handleRoomAction
 };
