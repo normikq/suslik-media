@@ -1,6 +1,7 @@
 package ru.suslikovanora.media.library
 
 import ru.suslikovanora.media.core.*
+import ru.suslikovanora.media.core.auth.*
 
 import android.content.Context
 import androidx.compose.runtime.getValue
@@ -100,6 +101,25 @@ class LibraryStore(context: Context) {
         } catch (e: Exception) { magnets = beforeM; items = beforeI; Api.describe(e) }
     }
 
+    /** «Мои фильмы» on/off: only this user's list; the torrent stays in the shared library. */
+    suspend fun setMine(m: Magnet, on: Boolean): String? {
+        val beforeM = magnets; val beforeI = items
+        magnets = magnets.map { if (it.id == m.id) it.copy(mine = on) else it }
+        items = items.map { if (it.m.id == m.id) it.copy(m = it.m.copy(mine = on)) else it }
+        return try {
+            withContext(kotlinx.coroutines.NonCancellable) { Api.post(Shelf.PATH, Shelf.body(m.id, on)) }
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val root = JSONObject(snapshotFile.readText())
+                    val arr = root.optJSONArray("magnets")
+                    if (arr != null) for (i in 0 until arr.length()) arr.optJSONObject(i)?.takeIf { it.optLong("id") == m.id }?.put("mine", on)
+                    snapshotFile.writeText(root.toString())
+                }
+            }
+            null
+        } catch (e: CancellationException) { throw e } catch (e: Exception) { magnets = beforeM; items = beforeI; Api.describe(e) }
+    }
+
     suspend fun restoreSnapshot() {
         if (magnets.isNotEmpty()) return
         val list = withContext(Dispatchers.IO) {
@@ -110,22 +130,69 @@ class LibraryStore(context: Context) {
         statusKind = StatusKind.Info
     }
 
+    /** Who is signed in (core/auth/Auth.kt); null — the shared password or not known yet. */
+    var profile by mutableStateOf<UserProfile?>(null)
+        private set
+    /** Discord sign-in by code: the code on the screen while the browser confirms it. */
+    var pairing by mutableStateOf<DevicePairing?>(null)
+        private set
+
+    // The profile is set BEFORE [authenticated]: flipping it closes the login screen (and the coroutine that called us).
     suspend fun checkSession(): Boolean? = try {
-        Api.get("/api/session").optBoolean("authenticated").also { authenticated = it }
+        val s = SessionInfo.parse(Api.get(SessionInfo.PATH))
+        profile = s.user?.takeIf { !it.isShared }
+        authenticated = s.authenticated
+        s.authenticated
     } catch (e: Exception) {
         null // offline: keep whatever we know
     }
 
     suspend fun login(password: String): String? = try {
         Api.post("/api/login", JSONObject().put("password", password))
-        authenticated = true
+        if (checkSession() == null) authenticated = true
         null
     } catch (e: Exception) {
         Api.describe(e)
     }
 
+    /** Asks the server for a code; the browser opens the page where it is confirmed (null = fine, else the error). */
+    suspend fun startDeviceAuth(name: String): String? = try {
+        val res = Api.post(DeviceAuth.START, DeviceAuth.startBody(name, Api.SITE), repeatable = false)
+        pairing = DeviceAuth.parsePairing(res, Api.SITE)
+        null
+    } catch (e: Exception) {
+        Api.describe(e)
+    }
+
+    /** One poll: true — signed in, false — the code has expired, null — still waiting. */
+    suspend fun pollDeviceAuth(): Boolean? {
+        val p = pairing ?: return null
+        val r = try {
+            DeviceAuth.parsePoll(Api.post(DeviceAuth.POLL, DeviceAuth.pollBody(p)))
+        } catch (e: Api.HttpError) {
+            DeviceAuth.pollFailed(e.code) // 410: the code has expired (10 min)
+        } catch (e: Exception) { DevicePoll.Pending }
+        return when (r) {
+            is DevicePoll.Authorized -> {
+                r.token?.let { Api.deviceToken = it }
+                profile = r.user?.takeIf { !it.isShared }
+                pairing = null
+                authenticated = true
+                true
+            }
+            DevicePoll.Expired -> { pairing = null; false }
+            DevicePoll.Pending -> null
+        }
+    }
+
+    fun cancelDeviceAuth() { pairing = null }
+
     suspend fun logout() {
+        ru.suslikovanora.media.party.Party.leave()
         runCatching { Api.post("/api/logout") }
+        Api.deviceToken = null
+        profile = null
+        pairing = null
         authenticated = false
         magnets = emptyList()
         items = emptyList()

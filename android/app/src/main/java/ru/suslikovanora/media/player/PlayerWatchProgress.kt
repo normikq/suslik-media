@@ -30,6 +30,9 @@ class PlayerWatchProgress(
     private var watchKeys: List<String> = emptyList()
     private var lastPersistAt = 0L
 
+    /** The playlist's watch keys (the first is the episode the player opened with). */
+    val keys: List<String> get() = watchKeys
+
     fun setWatchKeys(keys: List<String>) {
         watchKeys = keys
     }

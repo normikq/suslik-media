@@ -186,3 +186,36 @@ fun HeartIcon(modifier: Modifier = Modifier, filled: Boolean, color: Color = Col
         if (filled) drawPath(path, color) else drawPath(path, color, style = Stroke(1.6.dp.toPx(), join = StrokeJoin.Round))
     }
 }
+
+/** «Мои фильмы»: a bookmark (filled when the film is in the list). Same drawing as on the PC. */
+@Composable
+fun BookmarkIcon(modifier: Modifier = Modifier, filled: Boolean, color: Color = Color.White, size: Dp = 16.dp) {
+    Canvas(modifier = modifier.size(size)) {
+        val w = this.size.width
+        val h = this.size.height
+        val r = w * 0.10f
+        val path = Path().apply {
+            moveTo(w * 0.22f, h * 0.88f)
+            lineTo(w * 0.22f, h * 0.12f + r)
+            quadraticTo(w * 0.22f, h * 0.12f, w * 0.22f + r, h * 0.12f)
+            lineTo(w * 0.78f - r, h * 0.12f)
+            quadraticTo(w * 0.78f, h * 0.12f, w * 0.78f, h * 0.12f + r)
+            lineTo(w * 0.78f, h * 0.88f)
+            lineTo(w * 0.5f, h * 0.68f)
+            close()
+        }
+        if (filled) drawPath(path, color) else drawPath(path, color, style = Stroke(1.6.dp.toPx(), join = StrokeJoin.Round))
+    }
+}
+
+/** «Вместе» (shared viewing): two people. Same drawing as the PC's sidebar. */
+@Composable
+fun PeopleIcon(modifier: Modifier = Modifier, color: Color = Color.White, size: Dp = 16.dp) {
+    Canvas(modifier = modifier.size(size)) {
+        val w = this.size.width; val st = 1.6.dp.toPx()
+        drawCircle(color, w * 0.17f, Offset(w * 0.36f, w * 0.34f), style = Stroke(st))
+        drawArc(color, 200f, 140f, false, Offset(w * 0.06f, w * 0.52f), Size(w * 0.60f, w * 0.60f), style = Stroke(st, cap = StrokeCap.Round))
+        drawCircle(color, w * 0.14f, Offset(w * 0.70f, w * 0.30f), style = Stroke(st))
+        drawArc(color, 240f, 100f, false, Offset(w * 0.46f, w * 0.48f), Size(w * 0.50f, w * 0.50f), style = Stroke(st, cap = StrokeCap.Round))
+    }
+}

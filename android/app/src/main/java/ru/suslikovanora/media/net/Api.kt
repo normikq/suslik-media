@@ -24,6 +24,8 @@ object Api {
     /** Домен сайта приходит из сборки (BuildConfig, секрет SITE_URL), в репозитории его нет. */
     const val HOST = ru.suslikovanora.media.BuildConfig.SITE_HOST
     const val BASE = "https://$HOST"
+    /** The site's pages (the page where a sign-in code is confirmed lives under it). */
+    const val SITE = "$BASE/media/"
 
     class HttpError(val code: Int, message: String) : Exception(message)
 
@@ -42,6 +44,8 @@ object Api {
             if (ours) {
                 CookieManager.getInstance().getCookie(BASE)?.takeIf { it.isNotBlank() }?.let { builder.header("Cookie", it) }
                 betaCode()?.let { builder.header("X-Beta-Code", it) }
+                // Discord sign-in by code: the device token outlives the cookie session (only to our own server)
+                deviceToken?.let { builder.header(ru.suslikovanora.media.core.auth.DeviceAuth.TOKEN_HEADER, it) }
             }
             val res = chain.proceed(builder.build())
             if (ours) {
@@ -59,6 +63,13 @@ object Api {
             return res
         }
     }
+
+    private fun authPrefs() = appCtx?.getSharedPreferences("auth", android.content.Context.MODE_PRIVATE)
+
+    /** Discord sign-in by device code: the server's token for this phone, sent with every request to our server. */
+    var deviceToken: String?
+        get() = authPrefs()?.getString("device_token", null)?.takeIf { it.isNotBlank() }
+        set(value) { authPrefs()?.edit()?.apply { if (value == null) remove("device_token") else putString("device_token", value) }?.apply() }
 
     @Volatile private var cacheDir: java.io.File? = null
     /** Called once by the activities: enables the small HTTP cache (needs a Context for its folder). */

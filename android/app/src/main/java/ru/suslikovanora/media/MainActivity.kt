@@ -63,6 +63,8 @@ import ru.suslikovanora.media.library.PlaySheet
 import ru.suslikovanora.media.library.PlayTarget
 import ru.suslikovanora.media.library.SearchModel
 import ru.suslikovanora.media.library.SearchScreen
+import ru.suslikovanora.media.library.TogetherScreen
+import ru.suslikovanora.media.party.Party
 import ru.suslikovanora.media.ui.NavBar
 import ru.suslikovanora.media.ui.Sm
 import ru.suslikovanora.media.ui.ambientBackdrop
@@ -70,7 +72,8 @@ import ru.suslikovanora.media.ui.SuslikTheme
 import ru.suslikovanora.media.ui.Tab
 
 /**
- * Host screen, fully native (Compose): «Ссылка» (magnet / file link / .torrent), «Библиотека», «Поиск».
+ * Host screen, fully native (Compose): «Ссылка» (magnet / file link / .torrent), «Библиотека», «Мои фильмы»,
+ * «Вместе» (shared viewing, party/Party.kt), «Поиск».
  * No WebView any more: nothing of the website runs in the background, the session cookie is shared through
  * CookieManager (same as before, so an existing login keeps working).
  */
@@ -105,7 +108,7 @@ class MainActivity : ComponentActivity() {
                     playTarget != null -> playTarget = null
                     Tv.isTv(this@MainActivity) && !navFocused && !settingsOpen && store.authenticated == true &&
                         runCatching { navFocus.requestFocus() }.isSuccess -> {}
-                    tab != Tab.Library -> selectTab(Tab.Library)
+                    tab != homeTab() -> selectTab(homeTab())
                     else -> { isEnabled = false; onBackPressedDispatcher.onBackPressed(); isEnabled = true }
                 }
             }
@@ -147,6 +150,8 @@ class MainActivity : ComponentActivity() {
         val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
         // Hoisted so every tab keeps its scroll position (and the library its filter) across tab switches.
         val gridState = rememberLazyGridState()
+        val mineGrid = rememberLazyGridState()
+        val togetherList = rememberLazyListState()
         val addList = rememberLazyListState()
         val searchList = rememberLazyListState()
         var query by rememberSaveable { mutableStateOf("") }
@@ -157,6 +162,9 @@ class MainActivity : ComponentActivity() {
             // TV: the remote starts on the tabs (from there «up» goes into the open tab)
             if (store.authenticated == true && Tv.isTv(this@MainActivity)) runCatching { navFocus.requestFocus() }
         }
+        // A guest of a room stays on the room's page: the library (and «Мои фильмы») are closed until they leave it
+        val guest = Party.isGuest
+        LaunchedEffect(guest) { if (guest && tab in GUEST_LOCKED) tab = Tab.Together }
         CompositionLocalProvider(LocalHeaderHeight provides headerHeight) {
         Box(Modifier.fillMaxSize().ambientBackdrop().windowInsetsPadding(WindowInsets.safeDrawing)) {
             if (store.authenticated == false) {
@@ -184,6 +192,11 @@ class MainActivity : ComponentActivity() {
                                     store = store, onPlay = { playTarget = it },
                                     query = query, onQuery = { query = it }, gridState = gridState, onLogout = logout
                                 )
+                                Tab.Mine -> LibraryScreen(
+                                    store = store, onPlay = { playTarget = it },
+                                    query = query, onQuery = { query = it }, gridState = mineGrid, onLogout = logout, mineOnly = true
+                                )
+                                Tab.Together -> TogetherScreen(store, togetherList, onLibrary = { selectTab(Tab.Library) }, onOpen = { playTarget = it })
                                 Tab.Search -> SearchScreen(search, searchList, onLogout = logout)
                             }
                         }
@@ -195,6 +208,8 @@ class MainActivity : ComponentActivity() {
                             val (i, o) = when (t) {
                                 Tab.Links -> addList.firstVisibleItemIndex to addList.firstVisibleItemScrollOffset
                                 Tab.Library -> gridState.firstVisibleItemIndex to gridState.firstVisibleItemScrollOffset
+                                Tab.Mine -> mineGrid.firstVisibleItemIndex to mineGrid.firstVisibleItemScrollOffset
+                                Tab.Together -> togetherList.firstVisibleItemIndex to togetherList.firstVisibleItemScrollOffset
                                 Tab.Search -> searchList.firstVisibleItemIndex to searchList.firstVisibleItemScrollOffset
                             }
                             return if (i == 0) o.toFloat().coerceAtMost(headerHidePx) else headerHidePx
@@ -209,9 +224,12 @@ class MainActivity : ComponentActivity() {
                             Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 14.dp)
                                 .graphicsLayer { translationY = -headerY.value; alpha = 1f - (headerY.value / headerHidePx).coerceIn(0f, 1f) * 0.15f }
                                 .onSizeChanged { sz -> val h = with(density) { sz.height.toDp() }; if (h != headerHeight && h > 0.dp) headerHeight = h }
-                        ) { BrandHeader(onLogout = logout, onSettings = { settingsOpen = true }) }
+                        ) { BrandHeader(onLogout = logout, onSettings = { settingsOpen = true }, profile = store.profile) }
                     }
-                    if (!imeVisible) NavBar(current = tab, onSelect = ::selectTab, focus = navFocus, onFocused = { navFocused = it })
+                    if (!imeVisible) NavBar(
+                        current = tab, onSelect = ::selectTab, focus = navFocus, onFocused = { navFocused = it },
+                        locked = if (guest) GUEST_LOCKED else emptySet(), dot = if (Party.inRoom) setOf(Tab.Together) else emptySet()
+                    )
                 }
             }
             // Once after an update: what changed, in plain words (not on top of the update offer).
@@ -229,11 +247,15 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Where Back leads: the library, or for a guest of a room (the library is closed for them) the room's page. */
+    private fun homeTab() = if (Party.isGuest) Tab.Together else Tab.Library
+
     private fun selectTab(t: Tab) {
         if (t == tab) return
+        if (Party.isGuest && t in GUEST_LOCKED) return
         tab = t
         // Coming back to the library after a while: refresh in the background (the grid stays on screen).
-        if (t == Tab.Library && store.authenticated == true && System.currentTimeMillis() - store.lastRefreshAt > 60_000L) {
+        if ((t == Tab.Library || t == Tab.Mine) && store.authenticated == true && System.currentTimeMillis() - store.lastRefreshAt > 60_000L) {
             uiScope.launch { store.refresh() }
         }
     }
@@ -248,6 +270,8 @@ class MainActivity : ComponentActivity() {
             Toast.makeText(this, tr("main.nepodderzhivaemaya_ssylka"), Toast.LENGTH_SHORT).show()
             return
         }
+        // In a room, the host's film becomes the room's film (a guest's other film just plays for them alone)
+        watchKeys.firstOrNull()?.let { key -> if (Party.isHost) Party.putFilm(ru.suslikovanora.media.core.party.PartyFileRef(key, title ?: tr("main.video"))) }
         // A playlist may only come from our own site: it is fetched without any credentials.
         val playlistUri = playlist?.let { runCatching { Uri.parse(it) }.getOrNull() }
             ?.takeIf { it.scheme == "https" && it.host == siteHost }
@@ -288,5 +312,6 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val KEY_TAB = "tab"
+        private val GUEST_LOCKED = setOf(Tab.Library, Tab.Mine)
     }
 }

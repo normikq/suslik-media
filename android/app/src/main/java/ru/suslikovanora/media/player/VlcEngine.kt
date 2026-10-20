@@ -175,6 +175,7 @@ class VlcEngine(private val context: Context) : PlayerEngine {
     override val lengthMs: Long get() = player?.length ?: 0L
     override val fraction: Float get() = player?.position ?: 0f
     override val rate: Float get() = player?.rate ?: 1f
+    override fun setRate(rate: Float) { player?.rate = rate }
     override val volume: Int get() = player?.volume ?: 0
     override fun seekTo(ms: Long) { player?.setTime(ms) }
     override fun seekToFraction(fraction: Float) { player?.position = fraction }
