@@ -170,6 +170,8 @@ fun PlayerView(
     var started by remember { mutableStateOf(false) }
     var enginePaused by remember { mutableStateOf(false) }
     var seeking by remember { mutableStateOf<Float?>(null) }
+    var seekByJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var pendingSeekByTarget by remember { mutableStateOf<Long?>(null) }
     var retries by remember { mutableStateOf(0) }
     var lastGood by remember { mutableStateOf(initialPos) }
     var closing by remember { mutableStateOf(false) }
@@ -341,6 +343,7 @@ fun PlayerView(
 
     fun playEntry(i: Int) {
         if (i !in queue.indices) return
+        seekByJob?.cancel(); seekByJob = null; pendingSeekByTarget = null
         savePos(time, length)
         index = i; nextIn = -1; currentUrl = queue[i].url; title = queue[i].title; retries = 0
         val url = currentUrl; val start = savedPos(i)
@@ -518,24 +521,6 @@ fun PlayerView(
         flash(tr("player.zaderzhka_zvuka_p_d", "ms" to signed(d)))
     }
 
-    fun seekBy(d: Long) {
-        if (partyGuest()) { flash("Перематывает создатель комнаты"); return }
-        PlayerLog.write("seek ${if (d > 0) "+" else ""}${d / 1000}s")
-        supRef.get()?.seeked()
-        var t = (time + d).coerceAtLeast(0L)
-        if (length > 0) t = t.coerceAtMost((length - 2_000L).coerceAtLeast(0L))
-        time = t; lastGood = t; lastSeekAt = System.currentTimeMillis()
-        seekTo(t)
-    }
-
-    fun toggleFullscreen() {
-        if (mini) {
-            setMini(false)
-            return
-        }
-        WindowMode.toggleFullscreen(owner)
-    }
-
     var leaveJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
     fun poke() {
@@ -553,9 +538,40 @@ fun PlayerView(
         }
     }
 
+    fun seekBy(d: Long) {
+        if (partyGuest()) { flash("Перематывает создатель комнаты"); return }
+        val base = pendingSeekByTarget ?: time
+        var t = (base + d).coerceAtLeast(0L)
+        if (length > 0) t = t.coerceAtMost((length - 2_000L).coerceAtLeast(0L))
+        time = t
+        lastGood = t
+        pendingSeekByTarget = t
+        poke()
+        seekByJob?.cancel()
+        seekByJob = scope.launch {
+            delay(250)
+            val target = pendingSeekByTarget ?: t
+            pendingSeekByTarget = null
+            PlayerLog.write("seek to ${target / 1000}s")
+            bufferingShown = 0
+            lastSeekAt = System.currentTimeMillis()
+            supRef.get()?.seeked()
+            seekTo(target)
+        }
+    }
+
+    fun toggleFullscreen() {
+        if (mini) {
+            setMini(false)
+            return
+        }
+        WindowMode.toggleFullscreen(owner)
+    }
+
     fun close() {
         if (closing) return
         closing = true
+        seekByJob?.cancel(); seekByJob = null; pendingSeekByTarget = null
         DisplayAwake.setAwake(false)
         savePos(time, length)
         library.bumpWatch()
@@ -678,7 +694,7 @@ fun PlayerView(
         ru.suslikovanora.media.desktop.party.SyncHooks(
             // Right after a seek mpv still reports the old place for a moment: then the bar's target counts
             timeMs = { if (System.currentTimeMillis() - lastSeekAt < 2500L) time else engine.timeMs.takeIf { it > 0L } ?: time },
-            busy = { seeking != null },
+            busy = { seeking != null || pendingSeekByTarget != null },
             engineMs = { engine.timeMs },
             seekStamp = { lastSeekAt },
             paused = { pausedAt > 0L || enginePaused },
@@ -1410,6 +1426,7 @@ fun PlayerView(
             onSeekBy = { seekBy(it) },
             onSeekTo = { t ->
                 seeking = null
+                seekByJob?.cancel(); seekByJob = null; pendingSeekByTarget = null
                 if (partyGuest()) return@PlayerBottomBar
                 bufferingShown = 0
                 time = t
