@@ -102,7 +102,10 @@ fun PartySync(key: String?, title: String, keys: List<String>, started: Boolean,
                     restoreRate()
                     if (p) Party.seek(t) else Party.play(t)
                     lastSeq = Party.state.seq + 1
-                    pendingAt = 0L; ownUntil = now + OWN_MS
+                    // The new place loads for seconds here too: say «loading» (the room waits, not runs ahead) and do not
+                    // chase it meanwhile. Before, 3 s later the drift saw «3 s behind» and seeked again: a second load.
+                    pendingAt = now; pendingTo = t; pendingT = -1L
+                    ownUntil = now + OWN_MS
                     prevT = t; prevP = p; prevAt = now
                     continue
                 }
