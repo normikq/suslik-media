@@ -75,7 +75,9 @@ class PlayerWatchProgress(
         currentWatchKey()?.let { wk ->
             if (time < 5_000L && !nearEnd) return@let
             val pos = if (nearEnd || (isEnded && length > 0L)) length else time
-            watchPrefs.edit().putString(wk, "$pos|${length.coerceAtLeast(0L)}|${System.currentTimeMillis()}").apply()
+            val at = System.currentTimeMillis()
+            watchPrefs.edit().putString(wk, "$pos|${length.coerceAtLeast(0L)}|$at").apply()
+            ru.suslikovanora.media.library.CloudSync.noteWatch(wk, pos, length.coerceAtLeast(0L), at)
         }
     }
 

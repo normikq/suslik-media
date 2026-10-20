@@ -460,6 +460,7 @@ class PlayerActivity : ComponentActivity() {
             override fun isPlayerAlive(generation: Int): Boolean = player?.generation == generation
             override fun getCurrentTitle(): String = currentTitle
             override fun getCurrentPlayer(): PlayerEngine? = player
+            override fun getFilmKey(): String? = ru.suslikovanora.media.core.sync.WatchSync.filmKeyOf(watchProgress.currentWatchKey())
         })
     }
 

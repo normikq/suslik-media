@@ -32,6 +32,8 @@ class PlayerTrackSelector(
         fun isPlayerAlive(generation: Int): Boolean
         fun getCurrentTitle(): String
         fun getCurrentPlayer(): PlayerEngine?
+        /** "m<magnetId>" фильма из библиотеки (общий с ПК ключ выбора и синхронизации) или null. */
+        fun getFilmKey(): String?
     }
 
     companion object {
@@ -205,9 +207,9 @@ class PlayerTrackSelector(
                 tracks.joinToString { it.name }.ifEmpty { "none" } + " · files left: ${extra.size - 1}")
             selectedAudioId = null
             p?.addAudioFile(wrapUrl?.invoke(u) ?: u)
-            val key = seriesKey(callback.getCurrentTitle())
-            prefs.edit().putString("track:sidecar:$key", activeSidecar)
-                .remove("track:audio:$key").remove("track:audio:*").apply()
+            prefs.edit().apply { prefKeys().forEach { putString("track:sidecar:$it", activeSidecar).remove("track:audio:$it") } }
+                .remove("track:audio:*").apply()
+            ru.suslikovanora.media.library.CloudSync.noteTrack(callback.getFilmKey(), null, null, activeSidecar, alsoAny = false)
             callback.onAudioTrackChanged()
             return
         }
@@ -215,9 +217,9 @@ class PlayerTrackSelector(
         selectedAudioId = track.id
         p?.setAudioTrack(track.id)
         activeSidecar = SIDECAR_NONE
-        prefs.edit().putString("track:sidecar:${seriesKey(callback.getCurrentTitle())}", SIDECAR_NONE).apply()
+        prefs.edit().apply { prefKeys().forEach { putString("track:sidecar:$it", SIDECAR_NONE) } }.apply()
         callback.onAudioTrackChanged()
-        saveTrackPref("audio", track.name, callback.getCurrentTitle())
+        saveTrackPref("audio", track.name)
     }
 
     /** The subtitles sheet: «off» first, then the tracks. */
@@ -232,12 +234,12 @@ class PlayerTrackSelector(
         if (which == 0) {
             selectedSpuId = -1
             p?.setSubtitleTrack(-1)
-            saveTrackPref("spu", SPU_OFF, callback.getCurrentTitle())
+            saveTrackPref("spu", SPU_OFF)
         } else {
             val track = p?.subtitleTracks().orEmpty().filter { it.id != -1 }.getOrNull(which - 1) ?: return
             selectedSpuId = track.id
             p?.setSubtitleTrack(track.id)
-            saveTrackPref("spu", track.name, callback.getCurrentTitle())
+            saveTrackPref("spu", track.name)
         }
         callback.onSubtitleTrackChanged()
     }
@@ -255,7 +257,7 @@ class PlayerTrackSelector(
         attachedAudio.clear()
         if (files == null) return Sidecars(emptyList(), emptyList())
         this.wrapUrl = wrapUrl
-        val want = activeSidecar ?: prefs.getString("track:sidecar:${seriesKey(callback.getCurrentTitle())}", null)
+        val want = activeSidecar ?: pref("sidecar")
         pendingAudio = null
         val pick = if (want == SIDECAR_NONE) null
             else audioUrls.firstOrNull { audioLabel(it) == want } ?: audioUrls.firstOrNull { fileLabel(it) == want } ?: audioUrls.firstOrNull()
@@ -286,15 +288,24 @@ class PlayerTrackSelector(
 
     private fun seriesKey(title: String) = title.substringBefore(" · ").trim().lowercase(Locale.ROOT)
 
-    private fun saveTrackPref(kind: String, name: String, title: String) {
-        val key = seriesKey(title)
-        prefs.edit().putString("track:$kind:$key", name).putString("track:$kind:*", name).apply()
+    /**
+     * Где помнится выбор: фильм библиотеки ("m<id>" — как на ПК, его же синхронизирует [CloudSync] по аккаунту), затем
+     * название (так было до синхронизации и для файлов не из библиотеки).
+     */
+    private fun prefKeys(): List<String> = listOfNotNull(callback.getFilmKey(), seriesKey(callback.getCurrentTitle()))
+    private fun pref(kind: String): String? = prefKeys().firstNotNullOfOrNull { prefs.getString("track:$kind:$it", null) }
+
+    private fun saveTrackPref(kind: String, name: String) {
+        prefs.edit().apply { prefKeys().forEach { putString("track:$kind:$it", name) } }.putString("track:$kind:*", name).apply()
+        val sidecar = if (kind == "audio") SIDECAR_NONE else null // своя дорожка фильма, не файл рядом
+        ru.suslikovanora.media.library.CloudSync.noteTrack(callback.getFilmKey(),
+            name.takeIf { kind == "audio" }, name.takeIf { kind == "spu" }, sidecar, alsoAny = true)
     }
 
+    @Suppress("UNUSED_PARAMETER")
     private fun applyPreferredTracks(p: PlayerEngine, currentTitle: String) {
-        val key = seriesKey(currentTitle)
-        val audio = prefs.getString("track:audio:$key", null) ?: prefs.getString("track:audio:*", null)
-        val spu = prefs.getString("track:spu:$key", null) ?: prefs.getString("track:spu:*", null)
+        val audio = pref("audio") ?: prefs.getString("track:audio:*", null)
+        val spu = pref("spu") ?: prefs.getString("track:spu:*", null)
         runCatching {
             pickTrack(p.audioTracks(), audio)?.let { id ->
                 if (id != p.audioTrack) {

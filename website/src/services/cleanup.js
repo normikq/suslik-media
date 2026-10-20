@@ -7,6 +7,7 @@ const { makeJsonWriter } = require("../utils/json-writer");
 const { treeCache, persistTreeCache } = require("./alldebrid");
 const { deleteOwner, releaseTrackedDownload } = require("./downloads");
 const { dropEverywhere } = require("./shelf");
+const { dropMagnet } = require("./sync");
 
 // ---- Автоочистка библиотеки ------------------------------------------------------------------------
 // Раздачу «открыли», когда кто-то попросил ссылку на её файл (mirror-url, file/unlock, плейлист): так делает любой
@@ -83,6 +84,7 @@ function forget(id) {
   releaseTrackedDownload(key);
   deleteOwner(key);
   dropEverywhere(key);
+  dropMagnet(key);
   if (usage.delete(key)) persistUsage();
   if (treeCache.delete(Number(id))) persistTreeCache();
 }

@@ -87,6 +87,10 @@ Changelog (русский) — `android/app/src/main/assets/changelog.json` и `
 - Готовится: **Android 2.5.0** (код 62, та же ветка, 20.10; поверх 2.4.4 «новый дизайн»): то же на общем ядре — вход через Discord по коду
   (ТВ — ссылка и код для телефона), вкладки «Мои» и «Вместе» (`party/Party.kt`, `library/TogetherScreen.kt`), плеер идёт за комнатой
   (`player/PlayerPartySync.kt`, полоса «● Вместе» у гостя). Компилируется локально, на устройствах не проверено. Подробно: `docs/ANDROID.md` §6а, `docs/TODO.md`.
+- Готовится (20.10, версия не назначена): **синхронизация по аккаунту Discord** — прогресс (`magnetId|path`) и выбор озвучки/субтитров
+  (`m<id>` и `*`; Android ещё файл озвучки рядом). Сервер `services/sync.js` + `routes/sync.js` (`/api/sync`, `sync.json`), запись,
+  которой не пользовались `SYNC_IDLE_DAYS` (10) дней, удаляется (прогресс фильма продлевает и его дорожки); протокол — `shared/.../sync/WatchSync.kt`,
+  клиенты — `desktop/.../CloudSync.kt`, `android/.../library/CloudSync.kt`. Android теперь помнит дорожки и по `m<id>`. На устройствах не проверено.
 - **ПК 2.4.0 — стабильная** (18.10, сразу всем по команде владельца; PR #15, #16, #17): mpv рисует в сцене окна — `vo=libmpv` + render API в GL-контексте Skiko, кадр без копии (рисует прямо в текстуру Skia), панели — слои Compose; пока открыт плеер mpv, `Toolkit.setDynamicLayout(false)` (иначе ресайз держит поток интерфейса по 1–5 с). PR #16 (в ветку PR #15): render context освобождать до закрытия окна — иначе mpv роняет процесс (`0xC0000409`). Подробно: `docs/DESKTOP.md` §4.1.
 - Аудит 16.10 (отчёт `/mnt/project-files/audit/Аудит Suslik Media.md`): подпись зеркала обновляется (`MirrorLink`, `refreshUrl`), Blu-ray на Android через `TsPlayback`, «копим запас» общий (`CatchUp`). Не сделано: деление `BurstProxy`/`PlayerActivity`/`PlayerView`.
 - Журнал ПК из консоли Claude читать только через `//localhost/C$/Users/nanar/AppData/Roaming/...` (`%APPDATA%` у пакета Claude — старая копия).

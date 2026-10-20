@@ -98,6 +98,8 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
     LaunchedEffect(Unit) {
         val mpvSetup = ru.suslikovanora.media.desktop.player.MpvInstall.start(appScope)
         appScope.launch(Dispatchers.IO) { Uninstaller.register() }
+        // Прогресс и дорожки на аккаунт Discord; пришедшее с телефона или ТВ — сразу в плитки «Продолжить»
+        CloudSync.start(appScope) { javax.swing.SwingUtilities.invokeLater { lib.bumpWatch() } }
         withContext(Dispatchers.IO) {
             mpvSetup.await()
             mpvWarm.complete(ru.suslikovanora.media.desktop.player.Mpv.available)
@@ -121,6 +123,7 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
             // Suslik Debug: Compose сейчас уберёт слой с видео — здесь зависала Skia (цикл glGetError)
             if (Diag.on) { PlayerLog.write("[ui] player close: removing the player"); MpvVideoOut.probeGl("player close: before removal") }
             playing = null; leaving = false; onTop.value = false
+            CloudSync.kick() // прогресс этого просмотра — на аккаунт сразу
             if (Diag.on) javax.swing.SwingUtilities.invokeLater { MpvVideoOut.probeGl("player close: after removal") }
         }
     }

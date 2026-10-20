@@ -18,6 +18,7 @@ const mirrorRoutes = require("./routes/mirror");
 const updatesRoutes = require("./routes/updates");
 const mediaRoutes = require("./routes/media");
 const roomsRoutes = require("./routes/rooms");
+const syncRoutes = require("./routes/sync");
 
 function createApp() {
   const app = express();
@@ -63,6 +64,7 @@ function createApp() {
   // Body parsers
   app.use("/api/playlist", express.json({ limit: "200kb" }));
   app.use("/api/app/changelog", express.json({ limit: "200kb" }));
+  app.use("/api/sync", express.json({ limit: "512kb" })); // первая выгрузка прогресса — до 500 записей
   app.use(express.json({ limit: "20kb" }));
   app.use(express.urlencoded({ extended: false, limit: "20kb" }));
 
@@ -79,6 +81,7 @@ function createApp() {
   app.use(updatesRoutes);
   app.use(mediaRoutes);
   app.use(roomsRoutes);
+  app.use(syncRoutes);
 
   // Static files
   app.use(

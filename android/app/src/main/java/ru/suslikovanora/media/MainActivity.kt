@@ -101,6 +101,8 @@ class MainActivity : ComponentActivity() {
         store = LibraryStore(this)
         add = AddModel(this, uiScope, store)
         search = SearchModel(uiScope, store)
+        // Progress from the PC or the TV (CloudSync): the tiles re-read it
+        uiScope.launch { ru.suslikovanora.media.library.CloudSync.changes.collect { if (it > 0) store.bumpWatch() } }
         savedInstanceState?.getString(KEY_TAB)?.let { name -> Tab.entries.firstOrNull { it.name == name }?.let { tab = it } }
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -298,6 +300,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         store.bumpWatch() // the player may have saved new progress
+        ru.suslikovanora.media.library.CloudSync.kick() // and it goes to the account; others' progress comes back
     }
 
     override fun onSaveInstanceState(outState: Bundle) {

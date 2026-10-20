@@ -141,6 +141,7 @@ class LibraryStore(context: Context) {
     suspend fun checkSession(): Boolean? = try {
         val s = SessionInfo.parse(Api.get(SessionInfo.PATH))
         profile = s.user?.takeIf { !it.isShared }
+        CloudSync.userId = if (s.authenticated) profile?.id else null
         authenticated = s.authenticated
         s.authenticated
     } catch (e: Exception) {
@@ -176,6 +177,7 @@ class LibraryStore(context: Context) {
             is DevicePoll.Authorized -> {
                 r.token?.let { Api.deviceToken = it }
                 profile = r.user?.takeIf { !it.isShared }
+                CloudSync.userId = profile?.id
                 pairing = null
                 authenticated = true
                 true
@@ -192,6 +194,7 @@ class LibraryStore(context: Context) {
         runCatching { Api.post("/api/logout") }
         Api.deviceToken = null
         profile = null
+        CloudSync.userId = null
         pairing = null
         authenticated = false
         magnets = emptyList()

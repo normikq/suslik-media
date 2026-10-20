@@ -17,6 +17,8 @@ const OWNER_LOCK = process.env.OWNER_LOCK !== "false";
 const AUTO_CLEAN = process.env.AUTO_CLEAN !== "false";
 const LIBRARY_IDLE_DAYS = Math.max(1, Number(process.env.LIBRARY_IDLE_DAYS || 10));
 const LIBRARY_MAX_ITEMS = Math.max(10, Number(process.env.LIBRARY_MAX_ITEMS || 800));
+// Синхронизация прогресса и дорожек по аккаунту Discord: запись, которой не пользовались N дней, удаляется (services/sync.js)
+const SYNC_IDLE_DAYS = Math.max(1, Number(process.env.SYNC_IDLE_DAYS || 10));
 const TRUST_PROXY = process.env.TRUST_PROXY;
 const BETA_CODE = process.env.BETA_CODE || "";
 const UPDATE_TOKEN = process.env.UPDATE_TOKEN || "";
@@ -68,6 +70,7 @@ const USERS_FILE = path.join(DATA_DIR, "users.json");
 const DEVICES_FILE = path.join(DATA_DIR, "devices.json");
 const SHELF_FILE = path.join(DATA_DIR, "shelf.json");
 const USAGE_FILE = path.join(DATA_DIR, "usage.json"); // когда раздачу последний раз открывали (services/cleanup.js)
+const SYNC_FILE = path.join(DATA_DIR, "sync.json"); // прогресс и дорожки пользователей Discord (services/sync.js)
 // (Комнаты совместного просмотра живут только в памяти: после перезапуска приложения входят заново)
 
 if (!process.env.SESSION_SECRET) {
@@ -118,6 +121,8 @@ module.exports = {
   DEVICES_FILE,
   SHELF_FILE,
   USAGE_FILE,
+  SYNC_FILE,
+  SYNC_IDLE_DAYS,
   AUTO_CLEAN,
   LIBRARY_IDLE_DAYS,
   LIBRARY_MAX_ITEMS,
