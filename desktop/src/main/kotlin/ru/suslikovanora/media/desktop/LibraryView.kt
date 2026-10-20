@@ -525,13 +525,50 @@ private fun RefreshButton(loading: Boolean, onClick: () -> Unit) {
     }
     val tilt by animateFloatAsState(if (hovered && !loading) 90f else 0f, tween(380, easing = Sm.ease))
     val scale = hoverScale(hovered, pressed, 1.06f)
-    val glow by animateFloatAsState(if (loading) 1f else 0f, tween(300))
+    val glow by animateFloatAsState(if (loading) 1f else if (hovered) 0.6f else 0.25f, tween(300))
+    val bg by animateColorAsState(
+        when {
+            pressed -> Color(0x3860A5FA)
+            hovered -> Color(0x2E60A5FA)
+            loading -> Color(0x2460A5FA)
+            else -> Color(0x1460A5FA)
+        },
+        tween(200)
+    )
+    val border by animateColorAsState(
+        when {
+            hovered || loading -> Color(0x8060A5FA)
+            else -> Color(0x4060A5FA)
+        },
+        tween(200)
+    )
+    val iconColor by animateColorAsState(
+        when {
+            loading -> Color(0xFF60A5FA)
+            hovered -> Color(0xFF93C5FD)
+            else -> Color(0xFF60A5FA)
+        },
+        tween(200)
+    )
+    val shape = RoundedCornerShape(12.dp)
     Box(
         Modifier.graphicsLayer { scaleX = scale; scaleY = scale }.size(42.dp)
-            .drawBehind { if (glow > 0.01f) drawCircle(Brush.radialGradient(listOf(Sm.accent.copy(alpha = 0.45f * glow), Color.Transparent)), size.maxDimension * 0.85f) }
-            .glass(RoundedCornerShape(12.dp), hovered || loading).hoverClick(src, enabled = !loading, onClick = onClick),
+            .drawBehind {
+                if (glow > 0.01f) {
+                    drawCircle(
+                        Brush.radialGradient(listOf(Color(0xFF60A5FA).copy(alpha = 0.35f * glow), Color.Transparent)),
+                        size.maxDimension * 0.85f
+                    )
+                }
+            }
+            .clip(shape)
+            .background(bg)
+            .border(1.dp, border, shape)
+            .hoverClick(src, enabled = !loading, onClick = onClick),
         contentAlignment = Alignment.Center
-    ) { RefreshIcon(Modifier.graphicsLayer { rotationZ = rot.value + tilt }, color = if (loading) Color(0xFF60A5FA) else Color.White, size = 16.dp) }
+    ) {
+        RefreshIcon(Modifier.graphicsLayer { rotationZ = rot.value + tilt }, color = iconColor, size = 16.dp)
+    }
 }
 
 @Composable

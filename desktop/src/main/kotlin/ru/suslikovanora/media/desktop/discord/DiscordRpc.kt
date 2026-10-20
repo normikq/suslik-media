@@ -138,7 +138,9 @@ object DiscordRpc {
         subtitle: String = "",
         playing: Boolean = true,
         timeMs: Long = 0L,
-        lengthMs: Long = 0L
+        lengthMs: Long = 0L,
+        posterUrl: String? = null,
+        activityName: String = "Suslik Media"
     ) {
         if (!isEnabled) {
             stop()
@@ -156,6 +158,7 @@ object DiscordRpc {
 
                 val activity = JSONObject()
                 activity.put("type", 3) // «Смотрит»
+                activity.put("name", activityName)
                 activity.put("details", title.take(128).padEnd(2))
                 if (subtitle.isNotBlank()) {
                     activity.put("state", subtitle.take(128).padEnd(2))
@@ -174,8 +177,13 @@ object DiscordRpc {
                 // Pictures with these names are uploaded in the Developer Portal (Rich Presence → Art Assets);
                 // without them Discord just shows no picture.
                 val assets = JSONObject()
-                assets.put("large_image", "brand-mark")
-                assets.put("large_text", "Suslik Media")
+                if (!posterUrl.isNullOrBlank()) {
+                    assets.put("large_image", posterUrl)
+                    assets.put("large_text", if (subtitle.isNotBlank() && subtitle != "Suslik Media") "$subtitle: $title".take(128) else title.take(128))
+                } else {
+                    assets.put("large_image", "brand-mark")
+                    assets.put("large_text", "Suslik Media")
+                }
                 assets.put("small_image", if (playing) "play" else "pause")
                 assets.put("small_text", if (playing) "Воспроизведение" else "Пауза")
                 activity.put("assets", assets)

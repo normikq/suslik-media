@@ -53,6 +53,7 @@ async function searchPoster(rawQuery) {
   const file = match ? String(match.poster_path).replace(/^\//, "") : "";
   const body = {
     poster: /^[A-Za-z0-9_-]+\.(?:jpg|png|webp)$/.test(file) ? `/api/poster/img/w500/${file}` : null,
+    poster_url: /^[A-Za-z0-9_-]+\.(?:jpg|png|webp)$/.test(file) ? `https://image.tmdb.org/t/p/w500/${file}` : null,
     title: match?.title || match?.name || null,
     type: match ? match.media_type : null,
     animation: !!match && Array.isArray(match.genre_ids) && match.genre_ids.includes(16) // 16 = Animation в TMDB

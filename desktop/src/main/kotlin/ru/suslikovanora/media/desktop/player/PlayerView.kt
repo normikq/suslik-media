@@ -147,7 +147,10 @@ fun PlayerView(
         val key = watchKey(i) ?: return
         if (t < 5_000L) return
         val done = len > 0 && t > len - 15_000L
-        library.watch.put(key, "${if (done) len else t}|${len.coerceAtLeast(0)}|${System.currentTimeMillis()}")
+        val pos = if (done) len else t
+        val at = System.currentTimeMillis()
+        library.watch.put(key, "$pos|${len.coerceAtLeast(0)}|$at")
+        ru.suslikovanora.media.desktop.CloudSync.noteWatch(key, pos, len.coerceAtLeast(0), at)
     }
     fun savedPos(i: Int = index): Long {
         val w = watchKey(i)?.let { library.watchInfo(it) } ?: return 0L
@@ -688,10 +691,16 @@ fun PlayerView(
 
     var smtcPoster by remember { mutableStateOf<java.io.File?>(null) }
     var posterLooked by remember { mutableStateOf(false) }
+    var discordPosterUrl by remember { mutableStateOf(library.posterUrl(req.posterQueries)) }
     LaunchedEffect(Unit) {
         smtcPoster = runCatching { library.posterFileFor(req.posterQueries) }.getOrNull()
         posterLooked = true
         PlayerLog.write("[smtc] poster ${smtcPoster?.name ?: "none"}")
+    }
+    LaunchedEffect(posterLooked) {
+        if (posterLooked && discordPosterUrl == null) {
+            discordPosterUrl = library.posterUrl(req.posterQueries)
+        }
     }
 
     val userPaused = pausedAt > 0L || enginePaused
@@ -727,16 +736,19 @@ fun PlayerView(
 
     // Активность в Discord: фильм, пауза и полоса времени. Обновляется, когда фильм пошёл (длина известна),
     // на паузе, перемотке и смене серии; короткая задержка — одна отправка на серию быстрых нажатий.
-    LaunchedEffect(title, index, userPaused, started, length > 0L, lastSeekAt) {
+    LaunchedEffect(title, index, userPaused, started, length > 0L, lastSeekAt, discordPosterUrl) {
         if (closing || !started) return@LaunchedEffect
         delay(700)
         val (displayTitle, displaySubtitle) = smtcTitles()
+        val discordSubtitle = if (queue.size > 1) displaySubtitle else "Фильм"
         ru.suslikovanora.media.desktop.discord.DiscordRpc.update(
             title = displayTitle,
-            subtitle = displaySubtitle,
+            subtitle = if (userPaused) "Пауза" else discordSubtitle,
             playing = !userPaused,
             timeMs = engine.timeMs.takeIf { it > 0L } ?: time,
-            lengthMs = length
+            lengthMs = length,
+            posterUrl = discordPosterUrl,
+            activityName = "Suslik Media"
         )
     }
 
@@ -1459,11 +1471,13 @@ fun PlayerView(
                     applyTrackNow()
                     ui.put("audio:${seriesKey()}", name)
                     ui.put("audio:*", name)
+                    ru.suslikovanora.media.desktop.CloudSync.noteTrack(seriesKey(), name, null)
                 } else {
                     runOnPlayer { eSetSub(id) }
                     val v = if (id == -1) "__off__" else name
                     ui.put("spu:${seriesKey()}", v)
                     ui.put("spu:*", v)
+                    ru.suslikovanora.media.desktop.CloudSync.noteTrack(seriesKey(), null, v)
                 }
                 closePicker()
             },

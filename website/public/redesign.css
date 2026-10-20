@@ -835,14 +835,17 @@ body:has(#appPanel.hidden) main {
   font-size: 13.5px;
   border-radius: 12px;
   cursor: pointer;
-  background: var(--glass-fill) !important;
-  color: #fff !important;
-  border: 1px solid var(--line2) !important;
-  box-shadow: none !important;
+  background: rgba(96, 165, 250, 0.12) !important;
+  color: #93c5fd !important;
+  border: 1px solid rgba(96, 165, 250, 0.35) !important;
+  box-shadow: 0 0 16px rgba(96, 165, 250, 0.15) !important;
+  transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease;
 }
 .btn-refresh:hover {
-  background: var(--glass-fill-hover) !important;
-  border-color: rgba(96, 165, 250, 0.4) !important;
+  background: rgba(96, 165, 250, 0.22) !important;
+  border-color: rgba(96, 165, 250, 0.6) !important;
+  color: #bfdbfe !important;
+  box-shadow: 0 0 20px rgba(96, 165, 250, 0.3) !important;
 }
 .refresh-spinner {
   font-size: 16px;
