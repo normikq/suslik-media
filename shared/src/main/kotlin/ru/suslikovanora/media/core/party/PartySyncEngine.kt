@@ -65,6 +65,8 @@ class PartySyncEngine(private val link: PartyLink, private val log: (String) -> 
     private var pendingTo = 0L
     private var pendingT = -1L
     private var stalledSince = 0L     // кадры встали сами (сеть), а не по паузе
+    private var lastEngineMs = Long.MIN_VALUE
+    private var engineMovedAt = 0L    // когда время движка последний раз сдвинулось (или стояло на паузе)
     private var localHold = false     // гость поставил паузу себе: комната идёт без него
     private var seenSeek: Long? = null // последняя уже учтённая перемотка (наша или пользователя)
 
@@ -76,7 +78,7 @@ class PartySyncEngine(private val link: PartyLink, private val log: (String) -> 
     fun idle(player: SyncPlayer) {
         if (seenSeek == null) seenSeek = player.seekStamp
         restoreRate(player)
-        lastSeq = -1L; pendingAt = 0L; stalledSince = 0L
+        lastSeq = -1L; pendingAt = 0L; stalledSince = 0L; lastEngineMs = Long.MIN_VALUE
         link.reportBuffering(false)
     }
 
@@ -120,8 +122,14 @@ class PartySyncEngine(private val link: PartyLink, private val log: (String) -> 
                 pendingAt = 0L; ownUntil = now + OWN_MS
             } else pendingT = e
         }
-        // Сами грузимся, хотя должны играть (сеть): через 1 с комната ждёт и нас
-        stalledSince = if (!p && pendingAt == 0L && !player.running) (if (stalledSince > 0L) stalledSince else now) else 0L
+        // Сами грузимся, хотя должны играть (сеть): через 1 с комната ждёт и нас. «Играю» от движка мало: сразу после
+        // открытия mpv сообщает «играю», а время стоит секунды, пока не пришли данные (журнал 20.10, 20:19:51) —
+        // поэтому стоящее время без паузы тоже загрузка.
+        val e = player.engineMs
+        if (p || e != lastEngineMs) { lastEngineMs = e; engineMovedAt = now }
+        val frozen = now - engineMovedAt >= FROZEN_MS
+        stalledSince = if (!p && pendingAt == 0L && (!player.running || frozen))
+            (if (stalledSince > 0L) stalledSince else if (frozen) engineMovedAt else now) else 0L
         val loading = pendingAt > 0L || (stalledSince > 0L && now - stalledSince > 1_000L)
         link.reportBuffering(loading && link.state.playing)
 
@@ -164,9 +172,14 @@ class PartySyncEngine(private val link: PartyLink, private val log: (String) -> 
             // Новая команда (или мы только вошли, или комната начала / перестала ждать): берём состояние комнаты.
             lastSeq = s.seq
             restoreRate(player)
-            if (p != wantPaused && !(loading && !wantPaused)) { player.applyPaused(wantPaused); np = wantPaused }
             val alreadyGoing = pendingAt > 0L && abs(pendingTo - target) < 1_000L
-            if (abs(t - target) > 1_000L && !alreadyGoing) nt = seekRoom(player, target, now)
+            val needSeek = abs(t - target) > 1_000L && !alreadyGoing
+            // Комната играет, но ждёт других, а нам ещё перематываться: перемотку грузим без паузы. На паузе она
+            // засчитывалась через такт, гость говорил «готов», комната шла, а он стоял (журнал 20.10, 20:16:54):
+            // дрейф перематывал снова — вторая загрузка. Готовые встанут ниже, в «ждём остальных».
+            val pauseNow = if (needSeek && s.playing && !localHold) false else wantPaused
+            if (p != pauseNow && !(loading && !pauseNow)) { player.applyPaused(pauseNow); np = pauseNow }
+            if (needSeek) nt = seekRoom(player, target, now)
             ownUntil = now + OWN_MS
             log("[party] apply seq=${s.seq} playing=${s.playing} waiting=${s.waiting} target=$target local=$t")
         } else if (s.playing && s.waiting && !loading && !p && othersLoading) {
@@ -202,5 +215,7 @@ class PartySyncEngine(private val link: PartyLink, private val log: (String) -> 
         const val TICK_MS = 400L
         /** После того как комната сдвинула нас, наши собственные изменения — не новость для комнаты. */
         const val OWN_MS = 2_500L
+        /** Время движка стоит столько без паузы — значит, ждём данные (даже если движок говорит «играю»). */
+        const val FROZEN_MS = 1_000L
     }
 }

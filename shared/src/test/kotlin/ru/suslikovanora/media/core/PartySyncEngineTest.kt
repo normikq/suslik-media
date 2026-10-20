@@ -94,6 +94,7 @@ class PartySyncEngineTest {
         val e = PartySyncEngine(l)
         e.tick(p, key, 1_000L)
         assertTrue(p.paused)
+        e.tick(p, key, 3_600L)                    // стоим на паузе (такты идут)
         p.paused = false
         e.tick(p, key, 4_000L)                    // окно OWN_MS прошло
         assertEquals(listOf("play 5000"), l.sent)
@@ -118,16 +119,19 @@ class PartySyncEngineTest {
     @Test
     fun smallDriftChangesRate() {
         val p = FakePlayer(); val l = FakeLink(host = false)
-        l.state = PartyState(true, 10.0, 1.0, 0L, seq = 1); l.target = 10_500L
+        l.state = PartyState(true, 10.0, 1.0, 0L, seq = 1); l.target = 10_200L
         p.timeMs = 10_000L; p.engineMs = 10_000L
         val e = PartySyncEngine(l)
-        e.tick(p, key, 1_000L)                    // разница 0,5 с: без перемотки
+        e.tick(p, key, 1_000L)                    // разница 0,2 с: без перемотки
         assertTrue(p.seeks.isEmpty())
-        l.target = 10_800L
-        e.tick(p, key, 4_000L)                    // после OWN_MS: отстаём на 0,8 с
+        var now = 1_000L
+        while (now < 3_600L) { now += 400; p.play(400) ; l.target += 400; e.tick(p, key, now) } // играем, окно OWN_MS
+        assertTrue(p.rates.isEmpty())
+        l.target = p.timeMs + 800L
+        now += 400; p.play(400); l.target += 400; e.tick(p, key, now) // отстаём на 0,8 с
         assertEquals(listOf(1.05f), p.rates)
-        l.target = 10_050L
-        e.tick(p, key, 4_400L)                    // догнали: своя скорость
+        l.target = p.timeMs + 450L
+        now += 400; p.play(400); e.tick(p, key, now) // догнали: своя скорость
         assertEquals(listOf(1.05f, 1f), p.rates)
         assertTrue(p.seeks.isEmpty())
     }
@@ -145,7 +149,7 @@ class PartySyncEngineTest {
         assertEquals(listOf(false), l.buffering)
         e.tick(p, key, 2_600L)
         assertEquals(listOf(false, true), l.buffering)
-        p.running = true
+        p.running = true; p.play(400)
         e.tick(p, key, 3_000L)
         assertEquals(listOf(false, true, false), l.buffering)
     }
@@ -233,5 +237,47 @@ class PartySyncEngineTest {
             e.tick(p, key, 2_000L + step * 400L)
             assertTrue(p.paused)
         }
+    }
+
+    /**
+     * Журнал 20.10, 20:16:54: комната играет, но ждёт другого, а гостю надо перемотаться. Перемотка грузится
+     * без паузы, «готов» — только когда кадры пошли с нового места; потом гость встаёт ждать остальных.
+     */
+    @Test
+    fun guestSeekWhileRoomWaitsIsNotDoneUntilLoaded() {
+        val p = FakePlayer(); val l = FakeLink(host = false)
+        l.state = PartyState(true, 1104.0, 1.0, 0L, seq = 3, waiting = true); l.target = 1_104_000L; l.others = true
+        p.timeMs = 774_000L; p.engineMs = 774_000L
+        val e = PartySyncEngine(l)
+        e.tick(p, key, 1_000L)
+        assertEquals(listOf(1_104_000L), p.seeks)
+        assertFalse(p.paused)                     // грузим без паузы
+        p.running = false                         // данных ещё нет
+        var now = 1_000L
+        repeat(5) { now += 400; e.tick(p, key, now) }
+        assertEquals(listOf(false, true), l.buffering) // всё это время «грузимся», комната ждёт
+        p.running = true
+        repeat(2) { now += 400; p.play(400); e.tick(p, key, now) }
+        assertEquals(listOf(false, true, false), l.buffering) // кадры пошли: «готов»
+        now += 400; p.play(400); e.tick(p, key, now)
+        assertTrue(p.paused)                      // ждём остальных на месте комнаты
+    }
+
+    /** Журнал 20.10, 20:19:51: движок говорит «играю», а время стоит — это загрузка, комната ждёт, без перемотки. */
+    @Test
+    fun frozenTimeCountsAsLoading() {
+        val p = FakePlayer(); val l = FakeLink(host = true)
+        p.paused = false; p.timeMs = 5_208_700L; p.engineMs = 5_208_700L
+        l.startedKey = key
+        val e = PartySyncEngine(l)
+        e.tick(p, key, 1_000L)                    // ставим фильм в комнату: «пуск отсюда»
+        l.state = PartyState(true, 5208.7, 1.0, 0L, seq = 2); l.target = 5_208_700L
+        var now = 1_000L
+        repeat(4) { now += 400; l.target += 400; e.tick(p, key, now) } // running = true, но время стоит
+        assertEquals(listOf(false, true), l.buffering)
+        repeat(6) { now += 400; e.tick(p, key, now) } // комната ждёт (её время стоит)
+        assertTrue(p.seeks.isEmpty())             // никакой перемотки «отстали»
+        p.play(400); now += 400; e.tick(p, key, now)
+        assertEquals(listOf(false, true, false), l.buffering)
     }
 }
