@@ -245,6 +245,15 @@ class Library {
         } catch (e: CancellationException) { throw e } catch (e: Exception) { items = before; Api.describe(e) }
     }
 
+    /** «Мои фильмы» on/off: only this user's list; the torrent stays in the shared library and in AllDebrid. */
+    suspend fun setMine(m: Magnet, on: Boolean): String? {
+        val before = items
+        items = items.map { if (it.m.id == m.id) it.copy(m = it.m.copy(mine = on)) else it }
+        return try {
+            withContext(kotlinx.coroutines.NonCancellable) { Api.post("/api/shelf", JSONObject().put("id", m.id).put("mine", on)) }; null
+        } catch (e: CancellationException) { throw e } catch (e: Exception) { items = before; Api.describe(e) }
+    }
+
     suspend fun remove(m: Magnet): String? = try {
         Api.post("/api/magnets/${m.id}/${if (m.downloading) "cancel" else "delete"}")
         items = items.filter { it.m.id != m.id }

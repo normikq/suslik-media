@@ -51,7 +51,7 @@ import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Date
 
-enum class Tab(val label: String) { Library(tr("search.biblioteka")), Favorites(tr("library.izbrannoe")), Search(tr("search.poisk_razdach")), Add(tr("search.magnet_torrent")), Together(tr("sidebar.sovmestnyy_prosmotr")) }
+enum class Tab(val label: String) { Library(tr("search.biblioteka")), Mine(tr("library.moi_filmy")), Search(tr("search.poisk_razdach")), Add(tr("search.magnet_torrent")), Together(tr("sidebar.sovmestnyy_prosmotr")) }
 
 /** Pages of the top lens tabs (Together lives only in the side panel). */
 val lensTabs = Tab.entries.filter { it != Tab.Together }

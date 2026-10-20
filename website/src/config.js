@@ -68,6 +68,9 @@ const SHELF_FILE = path.join(DATA_DIR, "shelf.json");
 if (!process.env.SESSION_SECRET) {
   console.warn("ПРЕДУПРЕЖДЕНИЕ: SESSION_SECRET не задан в .env (сгенерирован временный случайный ключ). Сеансы и временные ссылки зеркала сбросятся при перезапуске сервера.");
 }
+if (DISCORD_ENABLED && !(DISCORD_BOT_TOKEN && DISCORD_GUILD_ID) && DISCORD_ALLOWED_USERS.length === 0) {
+  console.warn("ПРЕДУПРЕЖДЕНИЕ: вход через Discord включён, но не заданы ни бот (DISCORD_BOT_TOKEN + DISCORD_GUILD_ID), ни DISCORD_ALLOWED_USERS: войти сможет только DISCORD_OWNER_ID.");
+}
 if (!SITE_PASSWORD) {
   console.warn("ПРЕДУПРЕЖДЕНИЕ: SITE_PASSWORD не задан. Вход будет недоступен, пока пароль не будет указан в .env.");
 }

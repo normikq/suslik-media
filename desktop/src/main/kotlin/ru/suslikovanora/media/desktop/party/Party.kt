@@ -258,7 +258,9 @@ object Party {
         connected = false
     }
 
-    private fun onEvent(text: String) {
+    // Under the same lock as apply(): «member joined/left» from the stream and the answer to my own action (outbox thread)
+    // both rewrite [members]; without the lock one of the two changes could be lost
+    @Synchronized private fun onEvent(text: String) {
         val msg = runCatching { JSONObject(text) }.getOrNull() ?: return
         when (msg.optString("event")) {
             "init" -> {

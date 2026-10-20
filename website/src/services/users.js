@@ -266,7 +266,7 @@ function revokeDeviceToken(token) {
 
 // Миграция данных старого sdev в пользователя. Через сервисы, а не файлами: они держат данные в памяти
 // и сами пишут файлы с задержкой — прямая запись файла затиралась бы их следующей записью.
-// (require внутри: favorites/downloads сами зависят от middleware/auth, который грузит этот модуль)
+// (require внутри: favorites/downloads/shelf сами зависят от middleware/auth, который грузит этот модуль)
 function adoptDevice(sdevId, userId) {
   if (!/^[a-f0-9]{32}$/.test(String(sdevId || "")) || !userId || userId === SHARED_USER.id) return;
   try {
@@ -278,6 +278,11 @@ function adoptDevice(sdevId, userId) {
     require("./downloads").adoptOwners(sdevId, userId);
   } catch (err) {
     console.warn("[adopt] Не удалось перенести раздачи:", err.message);
+  }
+  try {
+    require("./shelf").adoptShelf(sdevId, userId);
+  } catch (err) {
+    console.warn("[adopt] Не удалось перенести «Мои фильмы»:", err.message);
   }
 }
 

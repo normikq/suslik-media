@@ -310,3 +310,24 @@ fun HeartIcon(modifier: Modifier = Modifier, filled: Boolean, color: Color = Col
         if (filled) drawPath(path, color) else drawPath(path, color, style = Stroke(1.6.dp.toPx(), join = androidx.compose.ui.graphics.StrokeJoin.Round))
     }
 }
+
+/** «Мои фильмы»: закладка; [filled] — фильм в личной библиотеке. */
+@Composable
+fun BookmarkIcon(modifier: Modifier = Modifier, filled: Boolean, color: Color = Color.White, size: Dp = 16.dp) {
+    Canvas(modifier = modifier.size(size)) {
+        val w = this.size.width
+        val h = this.size.height
+        val r = w * 0.10f
+        val path = androidx.compose.ui.graphics.Path().apply {
+            moveTo(w * 0.22f, h * 0.88f)
+            lineTo(w * 0.22f, h * 0.12f + r)
+            quadraticBezierTo(w * 0.22f, h * 0.12f, w * 0.22f + r, h * 0.12f)
+            lineTo(w * 0.78f - r, h * 0.12f)
+            quadraticBezierTo(w * 0.78f, h * 0.12f, w * 0.78f, h * 0.12f + r)
+            lineTo(w * 0.78f, h * 0.88f)
+            lineTo(w * 0.5f, h * 0.68f)
+            close()
+        }
+        if (filled) drawPath(path, color) else drawPath(path, color, style = Stroke(1.6.dp.toPx(), join = androidx.compose.ui.graphics.StrokeJoin.Round))
+    }
+}

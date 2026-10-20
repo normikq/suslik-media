@@ -10,6 +10,7 @@ const { requireLogin } = require("../middleware/auth");
 const { safeHttpsUrl } = require("../utils/helpers");
 const { alldebridRequest, adUploadMagnet, adUploadTorrent, flattenMagnetFiles } = require("../services/alldebrid");
 const { reserveDownloadSlot, releaseTrackedDownload, canRemove, deleteOwner } = require("../services/downloads");
+const { setOnShelf, dropEverywhere } = require("../services/shelf");
 
 const router = express.Router();
 
@@ -51,6 +52,7 @@ router.post("/api/magnets", requireLogin, apiLimiter, async (req, res) => {
   try {
     const item = await adUploadMagnet(magnet);
     slot.attach(item.id, Boolean(item.ready) || Number(item.statusCode) === 4);
+    setOnShelf(slot.dev, item.id, true); // добавленное попадает и в общую библиотеку, и в «Мои фильмы»
     const hash = typeof item.hash === "string" ? item.hash.trim().toLowerCase() : null;
     const sha256 = hash ? crypto.createHash("sha256").update(hash).digest("hex") : null;
     res.json({ ok: true, id: item.id, name: item.name || "Magnet", ready: Boolean(item.ready), hash, sha256 });
@@ -85,6 +87,7 @@ router.post(
     try {
       const item = await adUploadTorrent(bytes, filename);
       slot.attach(item.id, Boolean(item.ready) || Number(item.statusCode) === 4);
+      setOnShelf(slot.dev, item.id, true);
       const hash = typeof item.hash === "string" ? item.hash.trim().toLowerCase() : null;
       const sha256 = hash ? crypto.createHash("sha256").update(hash).digest("hex") : null;
       res.json({
@@ -130,6 +133,7 @@ router.post(["/api/magnets/:id/cancel", "/api/magnets/:id/delete"], requireLogin
     }
     releaseTrackedDownload(id);
     deleteOwner(id);
+    dropEverywhere(id);
     res.json({ ok: true, id, message: response.data?.data?.message || "Magnet-ссылка удалена." });
   } catch (err) {
     res.status(502).json({ error: err.message || "Не удалось отменить magnet-ссылку." });

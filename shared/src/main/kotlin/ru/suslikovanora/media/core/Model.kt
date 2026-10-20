@@ -22,7 +22,8 @@ data class Magnet(
     val downloaded: Long,
     val files: List<MFile>,
     val canRemove: Boolean,
-    val favorite: Boolean = false // per device, shown first in the library
+    val favorite: Boolean = false, // per device, shown first in the library
+    val mine: Boolean = false // in the owner's own list «Мои фильмы» (server: services/shelf.js)
 ) {
     val ready get() = statusCode == 4
     val downloading get() = statusCode < 4
@@ -57,7 +58,8 @@ fun parseLibrary(json: JSONObject): List<Magnet> {
             downloaded = m.optLong("downloaded", 0L),
             files = files,
             canRemove = m.optBoolean("canRemove", true),
-            favorite = m.optBoolean("favorite", false)
+            favorite = m.optBoolean("favorite", false),
+            mine = m.optBoolean("mine", false)
         )
     }
     return out

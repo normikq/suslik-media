@@ -177,16 +177,20 @@ function verifyPassword(password) {
   return crypto.timingSafeEqual(hashGiven, hashExpected);
 }
 
+// Сравнение секрета без утечки его длины по времени: сравниваются хеши одинаковой длины
+function secretEquals(given, secret) {
+  if (!secret) return false;
+  const a = crypto.createHash("sha256").update(String(given)).digest();
+  const b = crypto.createHash("sha256").update(String(secret)).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+
 function isTester(req) {
-  const code = config.BETA_CODE;
-  const given = String(req.get("X-Beta-Code") || "");
-  return !!code && given.length === code.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(code));
+  return secretEquals(req.get("X-Beta-Code") || "", config.BETA_CODE);
 }
 
 function updateTokenOk(req) {
-  const token = config.UPDATE_TOKEN;
-  const given = String(req.get("X-Update-Token") || "");
-  return !!token && given.length === token.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(token));
+  return secretEquals(req.get("X-Update-Token") || "", config.UPDATE_TOKEN);
 }
 
 module.exports = {

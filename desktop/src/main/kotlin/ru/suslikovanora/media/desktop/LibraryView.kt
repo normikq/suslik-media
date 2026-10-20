@@ -358,7 +358,7 @@ fun LoginView(lib: Library) {
 fun LibraryView(
     lib: Library,
     grid: androidx.compose.foundation.lazy.grid.LazyGridState = rememberLazyGridState(),
-    favoritesOnly: Boolean = false,
+    mineOnly: Boolean = false,
     onPlay: (PlayRequest) -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -372,7 +372,7 @@ fun LibraryView(
     var sortOpen by remember { mutableStateOf(false) }
 
     val all = lib.items
-    val source = if (favoritesOnly) all.filter { it.m.favorite } else all
+    val source = if (mineOnly) all.filter { it.m.mine } else all
     val filtered = remember(source, query, category, sortBy, onlyReady, Animation.version) {
         val q = query.trim().lowercase()
         var list = if (q.isEmpty()) source else source.filter { it.searchText.contains(q) }
@@ -415,14 +415,14 @@ fun LibraryView(
                         query = query,
                         onQueryChange = { query = it },
                         totalCount = shown.size,
-                        title = if (favoritesOnly) tr("library.izbrannoe") else tr("library.moya_biblioteka_alldebrid"),
+                        title = if (mineOnly) tr("library.moi_filmy") else tr("library.moya_biblioteka_alldebrid"),
                         lib = lib,
                         onRefresh = { scope.launch { lib.refresh() } }
                     )
                 }
 
                 // 2. Continue watching section
-                if (query.isBlank() && !favoritesOnly) {
+                if (query.isBlank() && !mineOnly) {
                     item(span = { GridItemSpan(maxLineSpan) }, key = "continue", contentType = "continue") {
                         ContinueRow(all, lib) { t -> target = t }
                     }
@@ -444,12 +444,12 @@ fun LibraryView(
                     )
                 }
 
-                if (favoritesOnly && filtered.isEmpty()) {
-                    item(span = { GridItemSpan(maxLineSpan) }, key = "empty") { EmptyFavorites() }
+                if (mineOnly && filtered.isEmpty()) {
+                    item(span = { GridItemSpan(maxLineSpan) }, key = "empty") { EmptyMine() }
                 }
                 // 4. Catalog grid of poster cards
                 items(shown, key = { it.m.id }, contentType = { "tile" }) { item ->
-                    Tile(item, lib, versions = versionsOf[item.m.id].orEmpty(), inFavorites = favoritesOnly, onOpen = open, modifier = if (Motion.simple) Modifier else Modifier.animateItem(fadeInSpec = tween(300), fadeOutSpec = tween(320, easing = Sm.ease)))
+                    Tile(item, lib, versions = versionsOf[item.m.id].orEmpty(), inMine = mineOnly, onOpen = open, modifier = if (Motion.simple) Modifier else Modifier.animateItem(fadeInSpec = tween(300), fadeOutSpec = tween(320, easing = Sm.ease)))
                 }
             }
         } else {
@@ -464,13 +464,13 @@ fun LibraryView(
                         query = query,
                         onQueryChange = { query = it },
                         totalCount = shown.size,
-                        title = if (favoritesOnly) tr("library.izbrannoe") else tr("library.moya_biblioteka_alldebrid"),
+                        title = if (mineOnly) tr("library.moi_filmy") else tr("library.moya_biblioteka_alldebrid"),
                         lib = lib,
                         onRefresh = { scope.launch { lib.refresh() } }
                     )
                 }
 
-                if (query.isBlank() && !favoritesOnly) {
+                if (query.isBlank() && !mineOnly) {
                     item(key = "continue", contentType = "continue") {
                         ContinueRow(all, lib) { t -> target = t }
                     }
@@ -491,6 +491,9 @@ fun LibraryView(
                     )
                 }
 
+                if (mineOnly && filtered.isEmpty()) {
+                    item(key = "empty") { EmptyMine() }
+                }
                 items(shown, key = { it.m.id }, contentType = { "list_row" }) { item ->
                     ListRow(item, lib, onOpen = open, modifier = if (Motion.simple) Modifier else Modifier.animateItem(fadeInSpec = tween(300), fadeOutSpec = tween(200)))
                 }
@@ -630,17 +633,32 @@ private fun FilterControlsBar(
 }
 
 @Composable
-private fun EmptyFavorites() {
+private fun EmptyMine() {
     Column(Modifier.fillMaxWidth().padding(vertical = 64.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        HeartIcon(filled = false, color = Sm.muted, size = 40.dp)
+        BookmarkIcon(filled = false, color = Sm.muted, size = 40.dp)
         Text(tr("library.izbrannoe_pusto"), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, modifier = Modifier.padding(top = 14.dp))
         Text(tr("library.izbrannoe_pusto_podskazka"), color = Sm.muted, fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(top = 4.dp))
     }
 }
 
+/** A round button in the poster's corner: always shown when [on], otherwise only while the tile is hovered. */
+@Composable
+private fun CornerButton(on: Boolean, tileHovered: Boolean, onClick: () -> Unit, icon: @Composable () -> Unit) {
+    val src = remember { MutableInteractionSource() }
+    val hover by src.collectIsHoveredAsState()
+    val alpha by animateFloatAsState(if (on || tileHovered) 1f else 0f, tween(200))
+    val scale by animateFloatAsState(if (hover) 1.12f else 1f, tween(180, easing = Sm.ease))
+    Box(
+        Modifier.graphicsLayer { this.alpha = alpha; scaleX = scale; scaleY = scale }
+            .size(30.dp).clip(CircleShape).background(if (hover) Color(0x99000000) else Color(0x55000000))
+            .hoverClick(src, enabled = alpha > 0.05f, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) { icon() }
+}
+
 /** The sleek poster tile matching the concept image. */
 @Composable
-private fun Tile(item: LibraryItem, lib: Library, versions: List<LibraryItem>, inFavorites: Boolean, onOpen: (PlayTarget) -> Unit, modifier: Modifier) {
+private fun Tile(item: LibraryItem, lib: Library, versions: List<LibraryItem>, inMine: Boolean, onOpen: (PlayTarget) -> Unit, modifier: Modifier) {
     val scope = rememberCoroutineScope()
     val m = item.m
     val playable = item.playable
@@ -711,25 +729,23 @@ private fun Tile(item: LibraryItem, lib: Library, versions: List<LibraryItem>, i
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF222838), Color(0xFF10131B)))))
         }
 
-        // Top gradient under the heart
+        // Top gradient under the corner buttons
         Box(Modifier.fillMaxWidth().height(60.dp).background(Brush.verticalGradient(listOf(Color(0x99000000), Color.Transparent))))
-        // Favourite: a heart in the opposite corner; always visible when set, appears on hover otherwise.
-        run {
-            val favSrc = remember { MutableInteractionSource() }
-            val favHover by favSrc.collectIsHoveredAsState()
-            val isFav = m.favorite || versions.any { it.m.favorite }
-            val favAlpha by animateFloatAsState(if (isFav || hovered) 1f else 0f, tween(200))
-            val favScale by animateFloatAsState(if (favHover) 1.12f else 1f, tween(180, easing = Sm.ease))
-            Box(
-                Modifier.align(Alignment.TopStart).padding(8.dp).graphicsLayer { alpha = favAlpha; scaleX = favScale; scaleY = favScale }
-                    .size(30.dp).clip(CircleShape).background(if (favHover) Color(0x99000000) else Color(0x55000000))
-                    .hoverClick(favSrc, enabled = favAlpha > 0.05f) {
-                        // Added: the poster flies into «Избранное»; taken out while viewing the favourites: back into «Библиотека».
-                        val to = if (!isFav) Tab.Favorites else if (inFavorites) Tab.Library else null
-                        if (to != null) TileBounds.posterRect(m.id)?.let { FlyHub.launch(poster, it, to) }
-                        scope.launch { (versions.ifEmpty { listOf(item) }).forEach { lib.setFavorite(it.m, !isFav) } } },
-                contentAlignment = Alignment.Center
-            ) { HeartIcon(filled = isFav, color = if (isFav) Color(0xFFFF6B8A) else Color.White, size = 16.dp) }
+        // Corner buttons: «Мои фильмы» (bookmark) and favourite (heart, shown first in the lists). Always visible when set,
+        // appear on hover otherwise.
+        val isMine = m.mine || versions.any { it.m.mine }
+        val isFav = m.favorite || versions.any { it.m.favorite }
+        val group = versions.ifEmpty { listOf(item) }
+        Row(Modifier.align(Alignment.TopStart).padding(8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            CornerButton(isMine, hovered, onClick = {
+                // Added: the poster flies into «Мои фильмы»; taken out there: back into «Библиотека».
+                val to = if (!isMine) Tab.Mine else if (inMine) Tab.Library else null
+                if (to != null) TileBounds.posterRect(m.id)?.let { FlyHub.launch(poster, it, to) }
+                scope.launch { group.forEach { lib.setMine(it.m, !isMine) } }
+            }) { BookmarkIcon(filled = isMine, color = if (isMine) Color(0xFF7FB2FF) else Color.White, size = 15.dp) }
+            CornerButton(isFav, hovered, onClick = { scope.launch { group.forEach { lib.setFavorite(it.m, !isFav) } } }) {
+                HeartIcon(filled = isFav, color = if (isFav) Color(0xFFFF6B8A) else Color.White, size = 16.dp)
+            }
         }
         if (versions.size > 1) {
             Text(
@@ -753,6 +769,14 @@ private fun Tile(item: LibraryItem, lib: Library, versions: List<LibraryItem>, i
                         )
                     }
                 }
+                DropdownMenuItem(
+                    text = { Text(if (isMine) tr("library.iz_moih_filmov") else tr("library.v_moi_filmy"), color = Sm.text, fontFamily = Onest) },
+                    onClick = { menuOpen = false; scope.launch { group.forEach { lib.setMine(it.m, !isMine) } } }
+                )
+                DropdownMenuItem(
+                    text = { Text(if (isFav) tr("library.iz_izbrannogo") else tr("library.v_izbrannoe"), color = Sm.text, fontFamily = Onest) },
+                    onClick = { menuOpen = false; scope.launch { group.forEach { lib.setFavorite(it.m, !isFav) } } }
+                )
                 if (m.canRemove) {
                     DropdownMenuItem(
                         text = { Text(if (m.downloading) tr("library.otmenit") else tr("library.udalit"), color = Sm.bad, fontFamily = Onest) },
@@ -949,6 +973,20 @@ private fun ListRow(item: LibraryItem, lib: Library, onOpen: (PlayTarget) -> Uni
         }
 
         Spacer(Modifier.width(16.dp))
+
+        // «Мои фильмы»
+        val mineSrc = remember { MutableInteractionSource() }
+        val mineHovered by mineSrc.collectIsHoveredAsState()
+        val mineScale by animateFloatAsState(if (mineHovered) 1.12f else 1f, tween(180, easing = Sm.ease))
+        Box(
+            Modifier.size(38.dp).graphicsLayer { scaleX = mineScale; scaleY = mineScale }
+                .hoverClick(mineSrc) { scope.launch { lib.setMine(m, !m.mine) } },
+            contentAlignment = Alignment.Center
+        ) {
+            BookmarkIcon(filled = m.mine, color = if (m.mine) Color(0xFF7FB2FF) else if (mineHovered) Color.White else Color(0xFF8E96A8), size = 18.dp)
+        }
+
+        Spacer(Modifier.width(4.dp))
 
         // Favorite Button
         val favSrc = remember { MutableInteractionSource() }

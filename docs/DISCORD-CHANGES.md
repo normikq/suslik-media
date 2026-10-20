@@ -10,7 +10,9 @@ Android в этой ветке не менялся.
 | `src/services/discord.js` | OAuth2 (обмен кода, профиль, отзыв токена), проверка участника и ролей ботом, ссылка на аватар |
 | `src/services/users.js` | Пользователи, токены устройств (только хеши), коды связки, перепроверка роли раз в 15 мин |
 | `src/services/rooms.js`, `src/routes/rooms.js` | Комнаты: SSE-поток, ведущий, участники = открытые потоки, ожидание загрузки, пауза пустой комнаты |
-| `src/services/shelf.js` | Видимость и права удаления — **пока не подключено** |
+| `src/services/shelf.js`, `src/routes/favorites.js` | «Мои фильмы» (2.5.2): личный список раздач `shelf.json` (`{владелец: [id]}`), `GET/POST /api/shelf`, флаг `mine` в `/api/library`. Добавленное через magnet/torrent попадает в список сразу; при первом обращении список заполняется своими раздачами и избранным; удаление из AllDebrid убирает раздачу из всех списков; при входе через Discord список устройства переходит пользователю |
+| `src/services/discord.js` | 2.5.2: без бота и белого списка входит только `DISCORD_OWNER_ID` (раньше — любой аккаунт Discord) |
+| `src/services/downloads.js` | 2.5.2: лимит двух загрузок — на пользователя Discord (общий пароль — по IP); повторное добавление чужой раздачи не меняет её владельца |
 | `src/routes/auth.js` | Вход через Discord с возвратом на исходную страницу, вход устройств по коду, `discord_client_id` в `/api/session`, отзыв токена при выходе |
 | `src/middleware/auth.js` | `resolveAuth`: токен устройства или сессия; cookie `SameSite=Lax` (возврат с discord.com); при `PASSWORD_AUTH_ENABLED=false` вошедшие по паролю выкидываются |
 | `src/services/precompressed.js` | CSP: аватары с `cdn.discordapp.com` |
@@ -22,7 +24,8 @@ Android в этой ветке не менялся.
 |---|---|
 | `Library.kt`, `LibraryView.kt` | Вход через Discord по коду, профиль из ответа сервера, токен устройства; истёкший код больше не ждёт вечно |
 | `Api.kt` | `X-Device-Token`; cookie, токен и бета-код — только своему серверу |
-| `Sidebar.kt`, `Main.kt`, `SearchView.kt` | Профиль с аватаром; пункт «Совместный просмотр»; у участника комнаты закрыты «Библиотека» и «Избранное» |
+| `Sidebar.kt`, `Main.kt`, `SearchView.kt` | Профиль с аватаром; пункт «Совместный просмотр»; у участника комнаты закрыты «Библиотека» и «Мои фильмы» |
+| `LibraryView.kt`, `Library.setMine`, `ui/DesktopIcons.BookmarkIcon` | 2.5.2: вкладка «Мои фильмы» вместо «Избранного» (закладка на постере, постер улетает во вкладку); сердечко — только «показывать первым» |
 | `party/Party.kt`, `PartySync.kt`, `TogetherView.kt` | Совместный просмотр (`docs/DESKTOP.md` §12.2) |
 | `player/PlayerView.kt`, `PlayerOverlays.kt`, `PlayerControls.kt` | Синхронизация; у участника — полоса «● Вместе», без перемотки; серая кнопка, пока ведущий держит паузу |
 | `discord/DiscordRpc.kt`, `Settings.kt` | Активность «Смотрит» в профиле Discord, переключатель |
@@ -33,7 +36,7 @@ Android в этой ветке не менялся.
 
 ## Включение на сервере
 1. `.env`: `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `DISCORD_BOT_TOKEN`, `DISCORD_GUILD_ID` (и при желании роли, `DISCORD_OWNER_ID`),
-   `SITE_PREFIX=/media`, `COOKIE_SECURE=true`, `SESSION_SECRET`. Без бота и белого списка пускают любой аккаунт Discord.
+   `SITE_PREFIX=/media`, `COOKIE_SECURE=true`, `SESSION_SECRET`. Без бота и белого списка `DISCORD_ALLOWED_USERS` входит только `DISCORD_OWNER_ID`.
 2. Developer Portal → OAuth2 → Redirects: `https://<домен>/api/auth/discord/callback`. Бот добавлен на сервер (scope `bot`, без прав).
    Rich Presence → Art Assets: картинки `brand-mark`, `play`, `pause`.
 3. nginx: короткая ссылка для ТВ — `location = /link { return 302 /media/link$is_args$args; }` (`website/NGINX-MIRROR.md`).

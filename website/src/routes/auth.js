@@ -234,7 +234,8 @@ router.get("/api/auth/device/check", deviceAuthLimiter, (req, res) => {
 });
 
 // 6. Device Flow — подтверждение кода пользователем
-router.post("/api/auth/device/confirm", requireLogin, (req, res) => {
+// Код короткий (6 знаков): подбор упирается в тот же лимит, что и выдача кодов
+router.post("/api/auth/device/confirm", deviceAuthLimiter, requireLogin, (req, res) => {
   const userCode = req.body?.user_code || req.body?.code;
   const userId = req.user ? req.user.id : "shared";
 

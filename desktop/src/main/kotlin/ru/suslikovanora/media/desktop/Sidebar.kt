@@ -167,11 +167,11 @@ fun Sidebar(tab: Tab, profile: Profile, onSelect: (Tab) -> Unit, onSettings: () 
         }
         Spacer(Modifier.height(22.dp))
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            // A guest of a room watches the room's film: the library (and favourites) are closed until they leave it
+            // A guest of a room watches the room's film: the library (and «Мои фильмы») are closed until they leave it
             val guest = ru.suslikovanora.media.desktop.party.Party.let { it.inRoom && !it.isHost }
             val lockNote = if (guest) "вы в комнате" else null
             NavItem(Tab.Library.label, tab == Tab.Library, expanded, { GridIcon(color = it, size = 16.dp) }, enabled = !guest, soon = lockNote, tab = Tab.Library) { onSelect(Tab.Library) }
-            NavItem(Tab.Favorites.label, tab == Tab.Favorites, expanded, { HeartIcon(filled = false, color = it, size = 16.dp) }, enabled = !guest, soon = lockNote, tab = Tab.Favorites) { onSelect(Tab.Favorites) }
+            NavItem(Tab.Mine.label, tab == Tab.Mine, expanded, { BookmarkIcon(filled = false, color = it, size = 16.dp) }, enabled = !guest, soon = lockNote, tab = Tab.Mine) { onSelect(Tab.Mine) }
             NavItem(Tab.Search.label, tab == Tab.Search, expanded, { SearchIcon(color = it, size = 16.dp) }) { onSelect(Tab.Search) }
             NavItem(Tab.Add.label, tab == Tab.Add, expanded, { LinkChainIcon(color = it, size = 16.dp) }) { onSelect(Tab.Add) }
             NavItem(Tab.Together.label, tab == Tab.Together, expanded, PeopleIcon,

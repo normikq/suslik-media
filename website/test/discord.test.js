@@ -321,3 +321,63 @@ test("PASSWORD_AUTH_ENABLED=false logs out everyone who came in with the passwor
     config.PASSWORD_AUTH_ENABLED = was;
   }
 });
+
+test("discord: without a bot and a whitelist only the owner gets in (not every Discord account)", async () => {
+  const was = { users: config.DISCORD_ALLOWED_USERS, bot: config.DISCORD_BOT_TOKEN, guild: config.DISCORD_GUILD_ID, owner: config.DISCORD_OWNER_ID };
+  try {
+    config.DISCORD_ALLOWED_USERS = [];
+    config.DISCORD_BOT_TOKEN = "";
+    config.DISCORD_GUILD_ID = "";
+    config.DISCORD_OWNER_ID = "777";
+    assert.equal((await checkGuildMember("12345")).allowed, false);
+    assert.deepEqual(await checkGuildMember("777"), { allowed: true, role: "admin" });
+  } finally {
+    config.DISCORD_ALLOWED_USERS = was.users;
+    config.DISCORD_BOT_TOKEN = was.bot;
+    config.DISCORD_GUILD_ID = was.guild;
+    config.DISCORD_OWNER_ID = was.owner;
+  }
+});
+
+test("shelf («Мои фильмы»): personal, starts from own torrents and favourites, removal is only for me", () => {
+  const { shelfOf, setOnShelf, dropEverywhere } = require("../src/services/shelf");
+  const { setFavorite, withRemovable } = require("../src/services/favorites");
+  const { recordOwner } = require("../src/services/downloads");
+  const users = require("../src/services/users");
+  const devA = "a".repeat(32);
+  const devB = "b".repeat(32);
+  const req = (user, dev) => ({ user, headers: { cookie: dev ? `sdev=${dev}` : "" } });
+  const a = req(users.SHARED_USER, devA);
+  const b = req(users.SHARED_USER, devB);
+
+  // Первое обращение: своё добавленное и избранное
+  recordOwner("301", devA, "1.1.1.1");
+  setFavorite(devA, "302", true);
+  assert.deepEqual([...shelfOf(a)].sort(), ["301", "302"]);
+  assert.equal(shelfOf(req(users.SHARED_USER, null)), null); // без cookie устройства списка нет
+
+  // Повторное добавление чужой раздачи не меняет её владельца
+  recordOwner("301", devB, "2.2.2.2");
+  assert.equal(withRemovable({ magnets: [{ id: 301 }] }, a).magnets[0].canRemove, true);
+  assert.equal(withRemovable({ magnets: [{ id: 301 }] }, b).magnets[0].canRemove, false);
+
+  // Взял из общей библиотеки — только себе
+  setOnShelf(devB, "303", true);
+  assert.equal(withRemovable({ magnets: [{ id: 303 }] }, b).magnets[0].mine, true);
+  assert.equal(withRemovable({ magnets: [{ id: 303 }] }, a).magnets[0].mine, false);
+
+  // Убрал из «Моих фильмов» — у других остаётся
+  setOnShelf(devA, "303", true);
+  setOnShelf(devB, "303", false);
+  assert.equal(shelfOf(b).has("303"), false);
+  assert.equal(shelfOf(a).has("303"), true);
+
+  // Раздачу удалили из AllDebrid — её нет ни у кого
+  dropEverywhere("303");
+  assert.equal(shelfOf(a).has("303"), false);
+
+  // Вход через Discord: список устройства переходит пользователю
+  const u = users.findOrCreateUser({ id: "5151", username: "shelf" }, "allow");
+  users.adoptDevice(devA, u.id);
+  assert.deepEqual([...shelfOf(req(u, devA))].sort(), ["301", "302"]);
+});

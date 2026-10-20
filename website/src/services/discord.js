@@ -129,13 +129,9 @@ async function checkGuildMember(discordId) {
     }
   }
 
-  // 4. Если бот/гильдия не настроены, но белый список задан — не пускаем тех, кто не в белом списке
-  if (config.DISCORD_ALLOWED_USERS.length > 0) {
-    return { allowed: false, reason: "not_in_whitelist" };
-  }
-
-  // 5. Открытый режим (если ни бот, ни белый список не заданы, но клиент включён)
-  return { allowed: true, role: "allow" };
+  // 4. Бот и сервер Discord не настроены: пускаем только владельца и белый список (выше). Без проверки — никого,
+  // иначе любой аккаунт Discord в мире получил бы медиатеку и AllDebrid
+  return { allowed: false, reason: "not_in_whitelist" };
 }
 
 module.exports = {

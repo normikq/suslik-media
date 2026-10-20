@@ -104,7 +104,8 @@ object DiscordRpc {
         val buf = ByteBuffer.wrap(header).order(ByteOrder.LITTLE_ENDIAN)
         val opcode = buf.int
         val len = buf.int
-        if (len !in 0..1_000_000) return opcode to null
+        // A broken length leaves its payload in the pipe: every next read would take those bytes for a header. Reconnect
+        if (len !in 0..1_000_000) { problem("bad frame length $len: reconnecting"); closePipe(); return null }
         val payload = ByteArray(len)
         p.readFully(payload)
         return opcode to runCatching { JSONObject(String(payload, Charsets.UTF_8)) }.getOrNull()

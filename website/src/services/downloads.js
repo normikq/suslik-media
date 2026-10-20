@@ -6,7 +6,7 @@ const { makeJsonWriter } = require("../utils/json-writer");
 const { clientIp } = require("../utils/helpers");
 const { deviceId } = require("../middleware/auth");
 
-// Limit each client IP to two unfinished magnet/torrent submissions.
+// Limit each client IP (or Discord user) to two unfinished magnet/torrent submissions.
 // This is process-local; use a shared store if running multiple Node workers/instances.
 const MAX_ACTIVE_DOWNLOADS_PER_IP = 2;
 const activeDownloadsByIp = new Map(); // ip -> { ids: Set<string>, pending: number }
@@ -34,6 +34,8 @@ function setLibraryChangedHook(fn) {
 
 function recordOwner(id, dev, ip) {
   if (id === undefined || id === null) return;
+  // Уже известная раздача (AllDebrid вернул тот же id на повторное добавление): владелец остаётся прежним
+  if (magnetOwners.has(String(id))) return;
   magnetOwners.set(String(id), { dev, ip, at: Date.now() });
   if (magnetOwners.size > 5000) {
     for (const k of [...magnetOwners.keys()].slice(0, magnetOwners.size - 5000)) {
@@ -65,6 +67,13 @@ function deleteOwner(id) {
     return true;
   }
   return false;
+}
+
+/** Раздачи, добавленные этим владельцем (для первого заполнения «Моих фильмов»). */
+function ownedBy(owner) {
+  const out = [];
+  for (const [id, o] of magnetOwners) if (o.dev === owner) out.push(id);
+  return out;
 }
 
 // Первый вход через Discord: раздачи, добавленные с этого устройства, переходят пользователю
@@ -102,14 +111,17 @@ function releaseTrackedDownload(id) {
 function reserveDownloadSlot(req, res) {
   const ip = clientIp(req);
   const dev = deviceId(req, res);
-  const state = ipDownloadState(ip);
+  // Вошедший через Discord считается сам по себе (семья за одним роутером, мобильный NAT); общий пароль — по IP
+  const slotKey = /^u_\d+$/.test(dev) ? dev : ip;
+  const state = ipDownloadState(slotKey);
   if (state.ids.size + state.pending >= MAX_ACTIVE_DOWNLOADS_PER_IP) {
-    res.status(429).json({ error: "Для этого IP-адреса уже выполняются две загрузки. Дождитесь завершения одной из них или отмените её." });
+    res.status(429).json({ error: "У вас уже выполняются две загрузки. Дождитесь завершения одной из них или отмените её." });
     return null;
   }
   state.pending += 1;
   let completed = false;
   return {
+    dev,
     attach(id, ready) {
       if (completed) return;
       completed = true;
@@ -119,15 +131,15 @@ function reserveDownloadSlot(req, res) {
       if (!ready && id !== undefined && id !== null) {
         const key = String(id);
         state.ids.add(key);
-        downloadOwnerById.set(key, ip);
+        downloadOwnerById.set(key, slotKey);
       }
-      cleanupIpState(ip, state);
+      cleanupIpState(slotKey, state);
     },
     release() {
       if (completed) return;
       completed = true;
       state.pending = Math.max(0, state.pending - 1);
-      cleanupIpState(ip, state);
+      cleanupIpState(slotKey, state);
     }
   };
 }
@@ -145,6 +157,7 @@ module.exports = {
   recordOwner,
   deleteOwner,
   adoptOwners,
+  ownedBy,
   releaseTrackedDownload,
   reserveDownloadSlot,
   cleanupFinishedDownloads,

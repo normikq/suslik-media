@@ -5,6 +5,7 @@ const config = require("../config");
 const { makeJsonWriter } = require("../utils/json-writer");
 const { deviceId } = require("../middleware/auth");
 const { removeChecker } = require("./downloads");
+const { shelfOf } = require("./shelf");
 
 // ---- Избранное -------------------------------------------------------------------------------
 // У каждого владельца своё избранное: отмеченные раздачи показываются в библиотеке первыми.
@@ -30,16 +31,23 @@ function favoritesOf(req) {
   return OWNER_RE.test(id) ? (favorites.get(id) || null) : null;
 }
 
+/** Избранное владельца списком id (для первого заполнения «Моих фильмов»). */
+function favoriteIds(owner) {
+  return [...(favorites.get(owner) || [])];
+}
+
 // Для каждого устройства свои права: кнопка «Отменить/Удалить» показывается только владельцу раздачи.
 function withRemovable(data, req) {
   const fav = favoritesOf(req);
+  const mine = shelfOf(req);
   const canRemove = removeChecker(req);
   return {
     ...data,
     magnets: (data.magnets || []).map(m => ({
       ...m,
       canRemove: canRemove(m.id),
-      favorite: Boolean(fav && fav.has(String(m.id)))
+      favorite: Boolean(fav && fav.has(String(m.id))),
+      mine: Boolean(mine && mine.has(String(m.id))) // в «Моих фильмах» (services/shelf.js)
     }))
   };
 }
@@ -76,6 +84,7 @@ function adoptFavorites(fromDev, toUser) {
 
 module.exports = {
   favoritesOf,
+  favoriteIds,
   withRemovable,
   setFavorite,
   adoptFavorites
