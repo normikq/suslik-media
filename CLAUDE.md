@@ -87,7 +87,7 @@ Changelog (русский) — `android/app/src/main/assets/changelog.json` и `
 - Готовится: **Android 2.5.0** (код 62, та же ветка, 20.10; поверх 2.4.4 «новый дизайн»): то же на общем ядре — вход через Discord по коду
   (ТВ — ссылка и код для телефона), вкладки «Мои» и «Вместе» (`party/Party.kt`, `library/TogetherScreen.kt`), плеер идёт за комнатой
   (`player/PlayerPartySync.kt`, полоса «● Вместе» у гостя). Компилируется локально, на устройствах не проверено. Подробно: `docs/ANDROID.md` §6а, `docs/TODO.md`.
-- Готовится (20.10, версия не назначена): **синхронизация по аккаунту Discord** — прогресс (`magnetId|path`) и выбор озвучки/субтитров
+- Готовится: **ПК 2.5.3 и Android 2.5.1** (код 63, 20.10; ещё постеры в Discord, новая иконка, .avi на Android сразу в VLC): **синхронизация по аккаунту Discord** — прогресс (`magnetId|path`) и выбор озвучки/субтитров
   (`m<id>` и `*`; Android ещё файл озвучки рядом). Сервер `services/sync.js` + `routes/sync.js` (`/api/sync`, `sync.json`), запись,
   которой не пользовались `SYNC_IDLE_DAYS` (10) дней, удаляется (прогресс фильма продлевает и его дорожки); протокол — `shared/.../sync/WatchSync.kt`,
   клиенты — `desktop/.../CloudSync.kt`, `android/.../library/CloudSync.kt`. Android теперь помнит дорожки и по `m<id>`. На устройствах не проверено.
