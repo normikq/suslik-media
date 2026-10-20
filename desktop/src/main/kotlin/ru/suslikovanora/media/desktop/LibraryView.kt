@@ -777,7 +777,9 @@ private fun Tile(item: LibraryItem, lib: Library, versions: List<LibraryItem>, i
                     text = { Text(if (isFav) tr("library.iz_izbrannogo") else tr("library.v_izbrannoe"), color = Sm.text, fontFamily = Onest) },
                     onClick = { menuOpen = false; scope.launch { group.forEach { lib.setFavorite(it.m, !isFav) } } }
                 )
-                if (m.canRemove) {
+                // «Удалить» стирает раздачу из AllDebrid у всех: в «Моих фильмах» его нет, там только «Убрать из моих фильмов»
+                // (отменить свою незаконченную загрузку можно и там)
+                if (m.canRemove && (!inMine || m.downloading)) {
                     DropdownMenuItem(
                         text = { Text(if (m.downloading) tr("library.otmenit") else tr("library.udalit"), color = Sm.bad, fontFamily = Onest) },
                         onClick = { menuOpen = false; scope.launch { lib.remove(m) } }
