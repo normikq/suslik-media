@@ -97,7 +97,7 @@ android/
   читает понемногу, как VLC, — по этим чтениям `BurstProxy` меряет битрейт и не считает читателя ушедшим). Клиент к 127.0.0.1
   с таймаутом чтения 90 с (запас ждёт сеть сам). Без запаса («Экономная загрузка» выключена) — к зеркалу напрямую, буфер 30–90 с. Внешняя озвучка — `MergingMediaSource`,
   субтитры — `SubtitleConfiguration`, DTS/TrueHD — модуль FFmpeg (`EXTENSION_RENDERER_MODE_ON`), PiP и MediaSession — общие (`PlayerPipController`, `PlayerAudioSession`).
-- Сразу в VLC: `.m2ts`, `.mts`, `.ts`, `.iso`. Из Media3 в VLC с того же места (`EngineListener.unsupported`): видео или звук без
+- Сразу в VLC: `.m2ts`, `.mts`, `.ts`, `.iso`, `.avi`. Из Media3 в VLC с того же места (`EngineListener.unsupported`): видео или звук без
   декодера (проверка в `onTracksChanged` — неподдерживаемый звук Media3 играет молча), файл без индекса, ошибка не сети,
   декодер не показывает кадров (`checkNoPicture`). Выбор VLC запоминается для файла (`player_engine` в настройках приложения), «Продолжить» сразу открывает VLC.
 - Запас общий: при переходе файла из Media3 в VLC скачанное остаётся.
