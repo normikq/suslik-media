@@ -139,7 +139,8 @@ private fun NavItem(
             Column(Modifier.padding(start = 12.dp)) {
                 Text(label, color = fg, fontFamily = Onest, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium, fontSize = 14.sp,
                     maxLines = 1, softWrap = false)
-                if (soon != null) Text(soon, color = Color(0xFF5B6272), fontFamily = Onest, fontSize = 10.5.sp, maxLines = 1, softWrap = false, lineHeight = 11.sp)
+                // On the active (accent) item the grey note was unreadable: there it is light
+                if (soon != null) Text(soon, color = if (active) Color.White.copy(alpha = 0.78f) else Color(0xFF5B6272), fontFamily = Onest, fontSize = 10.5.sp, maxLines = 1, softWrap = false, lineHeight = 11.sp)
             }
         }
     }
@@ -148,7 +149,7 @@ private fun NavItem(
 @Composable
 fun Sidebar(tab: Tab, profile: Profile, onSelect: (Tab) -> Unit, onSettings: () -> Unit, onLogout: () -> Unit) {
     var collapsed by remember { mutableStateOf(ui.get("sidebar_collapsed") == "1") }
-    val width by animateDpAsState(if (collapsed) 76.dp else 244.dp, tween(300, easing = Sm.ease))
+    val width by animateDpAsState(if (collapsed) 76.dp else 256.dp, tween(300, easing = Sm.ease))
     val expanded = !collapsed
     Column(
         Modifier.width(width).fillMaxHeight().background(Sm.glassSide).drawEdge()
@@ -198,37 +199,44 @@ fun Sidebar(tab: Tab, profile: Profile, onSelect: (Tab) -> Unit, onSettings: () 
     }
 }
 
-/** Instead of the old storage gauge: whose library this is. Avatar slot is ready for the Discord picture. */
+/** Discord pictures already loaded (profile, room members): opening a screen again must not load them again (and blink). */
+private object Avatars {
+    val images = java.util.concurrent.ConcurrentHashMap<String, androidx.compose.ui.graphics.ImageBitmap>()
+}
+
+/** A round Discord avatar; while it loads (or without one) — the first letter of the name on the accent colour. */
 @Composable
-private fun ProfileCard(profile: Profile, expanded: Boolean, onLogout: () -> Unit) {
-    // The picture is kept here, above both layouts: collapsing the panel must not load it again (and blink)
-    var bmp by remember(profile.avatarUrl) { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
-    LaunchedEffect(profile.avatarUrl) {
-        val url = profile.avatarUrl ?: return@LaunchedEffect
+fun Avatar(url: String?, name: String, size: androidx.compose.ui.unit.Dp, fontSize: androidx.compose.ui.unit.TextUnit) {
+    var bmp by remember(url) { mutableStateOf(url?.let { Avatars.images[it] }) }
+    LaunchedEffect(url) {
+        if (url.isNullOrBlank() || bmp != null) return@LaunchedEffect
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             runCatching {
-                val bytes = Api.bytes(url)
-                if (bytes != null) {
-                    val skiaImg = org.jetbrains.skia.Image.makeFromEncoded(bytes)
-                    bmp = skiaImg.toComposeImageBitmap()
-                }
+                val bytes = Api.bytes(url) ?: return@runCatching
+                val img = org.jetbrains.skia.Image.makeFromEncoded(bytes).toComposeImageBitmap()
+                Avatars.images[url] = img
+                bmp = img
             }
         }
     }
-    val avatar: @Composable () -> Unit = {
-        Box(
-            Modifier.size(34.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Sm.accent, Color(0xFF6366F1))))
-                .border(1.dp, Color(0x33FFFFFF), CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            val b = bmp
-            if (b != null) {
-                androidx.compose.foundation.Image(b, null, Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
-            } else {
-                Text(profile.name.take(1).uppercase(), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-            }
+    Box(
+        Modifier.size(size).clip(CircleShape).background(Brush.linearGradient(listOf(Sm.accent, Color(0xFF6366F1))))
+            .border(1.dp, Color(0x33FFFFFF), CircleShape),
+        contentAlignment = Alignment.Center
+    ) {
+        val b = bmp
+        if (b != null) {
+            androidx.compose.foundation.Image(b, null, Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+        } else {
+            Text(name.trim().take(1).uppercase(), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = fontSize)
         }
     }
+}
+
+/** Instead of the old storage gauge: whose library this is, with the Discord picture. */
+@Composable
+private fun ProfileCard(profile: Profile, expanded: Boolean, onLogout: () -> Unit) {
+    val avatar: @Composable () -> Unit = { Avatar(profile.avatarUrl, profile.name, 34.dp, 14.sp) }
     if (!expanded) {
         // Icons only: the avatar and a small exit button.
         val src = remember { MutableInteractionSource() }

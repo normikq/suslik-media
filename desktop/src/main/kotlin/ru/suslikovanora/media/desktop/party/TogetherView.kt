@@ -159,10 +159,7 @@ private fun RoomPanel(lib: Library, onLibrary: () -> Unit, onOpen: (PlayTarget) 
             Spacer(Modifier.height(8.dp))
             for (m in Party.members) {
                 Row(Modifier.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(26.dp).clip(CircleShape).background(Sm.accent).border(1.dp, Color(0x33FFFFFF), CircleShape),
-                        contentAlignment = Alignment.Center) {
-                        Text(m.name.take(1).uppercase(), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
-                    }
+                    ru.suslikovanora.media.desktop.Avatar(m.avatar, m.name, 26.dp, 12.sp)
                     Text(m.name + (if (m.key == Party.myKey) " (вы)" else "") + (if (Party.isCreator(m)) " · создатель" else "") +
                         (if (m.buffering) " · загружается" else ""),
                         color = Sm.text, fontFamily = Onest, fontSize = 13.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,

@@ -26,7 +26,7 @@ import java.time.Duration
  */
 object Party {
     /** [key]: the server shows a device by a print of its client id (the id itself is its pass: it is not shown to others). */
-    data class Member(val key: String, val userId: String, val name: String, val buffering: Boolean = false)
+    data class Member(val key: String, val userId: String, val name: String, val buffering: Boolean = false, val avatar: String? = null)
     data class FileRef(val key: String, val title: String)
     /** [waiting]: someone is loading — the room's time stands still until everyone is ready (playing stays the intent). */
     data class State(val playing: Boolean, val pos: Double, val rate: Double, val anchorServerMs: Long, val seq: Long, val waiting: Boolean = false)
@@ -220,7 +220,7 @@ object Party {
     }
 
     private fun member(m: JSONObject) = Member(m.optString("key"), m.optString("id"), m.optString("name").ifBlank { "Гость" },
-        m.optBoolean("buffering"))
+        m.optBoolean("buffering"), m.optString("avatar").takeIf { it.startsWith("https://") })
 
     private fun startStream(id: String) {
         stream = scope.launch {
