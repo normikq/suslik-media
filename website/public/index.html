@@ -399,7 +399,7 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
 @media (max-width:340px){.navrow button{font-size:10px!important}.navrow button::before{font-size:15px!important}}
 </style>
 <script>/* App 1.2+: native library and bottom bar */try{if(Number(window.__suslikApp||0)>=3)document.documentElement.classList.add("suslik-native");}catch(e){}</script>
-<link rel="stylesheet" href="redesign.css?v=13">
+<link rel="stylesheet" href="redesign.css?v=16">
 </head>
 <body>
 <main>
@@ -1865,7 +1865,7 @@ function closeLibraryModal(){$("libraryModal").classList.add("hidden");document.
 $("closeLibraryModal").addEventListener("click",closeLibraryModal);
 $("libraryModal").addEventListener("click",e=>{if(e.target===$("libraryModal"))closeLibraryModal();});
 document.addEventListener("keydown",e=>{if(e.key==="Escape")closeLibraryModal();});
-try { const snapshot=webLibraryNeeded()?JSON.parse(localStorage.getItem(LIBRARY_SNAPSHOT_KEY)||"null"):null; if(snapshot && Array.isArray(snapshot.magnets)){ cachedLibrary=snapshot.magnets; renderLibrary(); const when=new Date(snapshot.savedAt).toLocaleString(); $("libraryStatus").textContent=`Showing saved library snapshot from ${when}. Press Обновить for current AllDebrid status.`; } } catch {}
+try { const snapshot=webLibraryNeeded()?JSON.parse(localStorage.getItem(LIBRARY_SNAPSHOT_KEY)||"null"):null; if(snapshot && Array.isArray(snapshot.magnets)){ cachedLibrary=snapshot.magnets; renderLibrary(); const when=new Date(snapshot.savedAt).toLocaleString(); $("libraryStatus").textContent=`Показана сохранённая копия медиатеки от ${when}. Нажмите «Обновить», чтобы получить актуальное состояние AllDebrid.`; } } catch {}
 renderHistory();
 // Обновить active magnet entries in the local history automatically. Poll conservatively.
 let historyPollBusy = false;

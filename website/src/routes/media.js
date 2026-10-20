@@ -21,7 +21,7 @@ router.post("/api/media-metadata", requireLogin, mediaInfoLimiter, async (req, r
     const message = /ENOENT/.test(err.message)
       ? "На сервере не установлен ffprobe."
       : /SIGKILL|timed out/i.test(err.message)
-        ? "Media analysis timed out."
+        ? "Анализ видео занял слишком много времени."
         : "Не удалось прочитать сведения о видео.";
     res.status(502).json({ error: message });
   }
@@ -31,7 +31,8 @@ router.get("/api/poster", requireLogin, posterLimiter, async (req, res) => {
   const query = typeof req.query.q === "string" ? req.query.q : "";
   try {
     const body = await searchPoster(query);
-    res.set("Cache-Control", "private, max-age=604800");
+    // Найденный постер браузер помнит неделю, «постера нет» — сутки (TMDB мог его ещё не завести).
+    res.set("Cache-Control", `private, max-age=${body.poster ? 604800 : 86400}`);
     res.json(body);
   } catch (err) {
     res.status(err.status || 502).json({ error: err.message || "Не удалось найти постер." });

@@ -120,6 +120,12 @@ function createApp() {
         error: req.path === "/api/torrents" ? "Торрент-файл должен быть не больше 1 МБ." : "Слишком большой запрос."
       });
     }
+    if (err && err.type === "entity.parse.failed") {
+      return res.status(400).json({ error: "Некорректный запрос: тело не является JSON." });
+    }
+    if (err && err.status >= 400 && err.status < 500 && err.expose) {
+      return res.status(err.status).json({ error: "Некорректный запрос." });
+    }
     console.error("Ошибка запроса:", err.message);
     res.status(err.status || 500).json({ error: "Непредвиденная ошибка сервера." });
   });

@@ -127,6 +127,8 @@ async function resolveDirect(key, fresh) {
         for (const [k, v] of unlockCache) {
           if (v.until < Date.now()) unlockCache.delete(k);
         }
+        // Все ещё живы (много файлов за 10 минут): вытесняются самые старые записи.
+        while (unlockCache.size > 500) unlockCache.delete(unlockCache.keys().next().value);
       }
       return entry;
     })().finally(() => unlockInflight.delete(key));
