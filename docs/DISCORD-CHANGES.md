@@ -12,7 +12,7 @@ Android в этой ветке не менялся.
 | `src/services/rooms.js`, `src/routes/rooms.js` | Комнаты: SSE-поток, ведущий, участники = открытые потоки, ожидание загрузки, пауза пустой комнаты |
 | `src/services/shelf.js` | Видимость и права удаления — **пока не подключено** |
 | `src/routes/auth.js` | Вход через Discord с возвратом на исходную страницу, вход устройств по коду, `discord_client_id` в `/api/session`, отзыв токена при выходе |
-| `src/middleware/auth.js` | `resolveAuth`: токен устройства или сессия; cookie `SameSite=Lax` (возврат с discord.com) |
+| `src/middleware/auth.js` | `resolveAuth`: токен устройства или сессия; cookie `SameSite=Lax` (возврат с discord.com); при `PASSWORD_AUTH_ENABLED=false` вошедшие по паролю выкидываются |
 | `src/services/precompressed.js` | CSP: аватары с `cdn.discordapp.com` |
 | `public/index.html`, `redesign.css` | Кнопка «Войти через Discord», профиль, окно «Связать устройство» (кто войдёт, код из ссылки) |
 | `test/discord.test.js` | Вход, устройства, комнаты (ведущий, ожидание загрузки, пустая комната) |

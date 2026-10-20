@@ -178,3 +178,41 @@ test("rooms: the room waits while someone is loading, then goes on from the same
   leaveRoom(room.id, "pc_g", true);
   assert.equal(room.state.waiting, false);
 });
+
+test("PASSWORD_AUTH_ENABLED=false logs out everyone who came in with the password", () => {
+  const { resolveAuth } = require("../src/middleware/auth");
+  const users = require("../src/services/users");
+  const fakeReq = (session, token) => {
+    let destroyed = false;
+    const s = session ? { ...session, destroy: cb => { destroyed = true; cb && cb(); } } : null;
+    return { req: { session: s, get: h => (h === "X-Device-Token" ? token || "" : "") }, destroyed: () => destroyed };
+  };
+
+  // Устройство, привязанное из парольной сессии, и устройство пользователя Discord
+  const p1 = users.createDevicePairing("ТВ по паролю");
+  users.authorizeDevicePairing(p1.user_code, "shared");
+  const sharedToken = users.pollDevicePairing(p1.code).device_token;
+  const discordUser = users.findOrCreateUser({ id: "777", username: "d" }, "allow");
+  const p2 = users.createDevicePairing("ПК Discord");
+  users.authorizeDevicePairing(p2.user_code, discordUser.id);
+  const discordToken = users.pollDevicePairing(p2.code).device_token;
+
+  const was = config.PASSWORD_AUTH_ENABLED;
+  try {
+    config.PASSWORD_AUTH_ENABLED = true;
+    assert.equal(resolveAuth(fakeReq({ authenticated: true }).req), true);
+    assert.equal(resolveAuth(fakeReq(null, sharedToken).req), true);
+
+    config.PASSWORD_AUTH_ENABLED = false;
+    const pw = fakeReq({ authenticated: true });
+    assert.equal(resolveAuth(pw.req), false);
+    assert.equal(pw.destroyed(), true); // сессия по паролю удалена
+    assert.equal(resolveAuth(fakeReq({ authenticated: true, uid: "shared" }).req), false);
+    assert.equal(resolveAuth(fakeReq(null, sharedToken).req), false);
+    // Вход через Discord работает как прежде
+    assert.equal(resolveAuth(fakeReq({ authenticated: true, uid: discordUser.id }).req), true);
+    assert.equal(resolveAuth(fakeReq(null, discordToken).req), true);
+  } finally {
+    config.PASSWORD_AUTH_ENABLED = was;
+  }
+});

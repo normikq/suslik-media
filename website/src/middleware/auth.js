@@ -93,12 +93,18 @@ function createSessionMiddleware() {
   });
 }
 
+// Вход по общему паролю выключен (PASSWORD_AUTH_ENABLED=false): всё, что вошло по паролю — сессии и устройства,
+// привязанные из такой сессии, — больше не действует, а не только новые входы
+function sharedAccessOff(user) {
+  return user && user.id === SHARED_USER.id && !config.PASSWORD_AUTH_ENABLED;
+}
+
 function resolveAuth(req) {
   // 1. Проверка по токену устройства (для нативных клиентов без cookies)
   const deviceToken = req.get("X-Device-Token") || (req.get("Authorization") || "").replace(/^Bearer\s+/i, "");
   if (deviceToken) {
     const verified = verifyDeviceToken(deviceToken);
-    if (verified && verified.user) {
+    if (verified && verified.user && !sharedAccessOff(verified.user)) {
       req.user = verified.user;
       req.device = verified.device;
       return true;
@@ -107,17 +113,13 @@ function resolveAuth(req) {
 
   // 2. Проверка по сессии
   if (req.session && req.session.authenticated) {
-    if (req.session.uid) {
-      const user = getUser(req.session.uid);
-      if (!user || user.role === "denied") {
-        req.session.destroy?.(() => {});
-        return false;
-      }
-      req.user = user;
-      touchUser(user.id);
-    } else {
-      req.user = SHARED_USER;
+    const user = req.session.uid ? getUser(req.session.uid) : SHARED_USER;
+    if (!user || user.role === "denied" || sharedAccessOff(user)) {
+      req.session.destroy?.(() => {});
+      return false;
     }
+    req.user = user;
+    if (user.id !== SHARED_USER.id) touchUser(user.id);
     return true;
   }
 

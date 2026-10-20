@@ -244,7 +244,7 @@ website/
 | `FLARESOLVERR_URL` | URL локального FlareSolverr для обхода Cloudflare трекеров |
 | `PROWLARR_URL` / `KEY` | Интеграция с локальным сервером Prowlarr |
 | `COOKIE_SECURE` | Устанавливать в `true` при работе за HTTPS-прокси |
-| `PASSWORD_AUTH_ENABLED` | `false` — вход только через Discord (по умолчанию пароль тоже работает) |
+| `PASSWORD_AUTH_ENABLED` | `false` — вход только через Discord: новые входы по паролю закрыты, вошедшие по паролю (сессии и привязанные из них устройства) выкидываются при следующем запросе |
 | `SITE_PREFIX` | Путь сайта за nginx, например `/media` (ссылки после входа и для устройств) |
 | `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` | Приложение Discord (OAuth2); без них вход через Discord выключен |
 | `DISCORD_BOT_TOKEN` / `DISCORD_GUILD_ID` | Бот и сервер Discord: проверка участника и ролей. **Без них и без белого списка пускают любого** |
