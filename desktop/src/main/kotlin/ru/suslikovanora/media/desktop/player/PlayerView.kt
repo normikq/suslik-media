@@ -168,6 +168,10 @@ fun PlayerView(
     var barVisible by remember { mutableStateOf(true) }
     var lastMove by remember { mutableStateOf(System.currentTimeMillis()) }
     var started by remember { mutableStateOf(false) }
+    // Another episode is chosen, the new file is not open yet: up to 4 s go on waiting for its voice-overs, and all that
+    // time mpv still plays the old one. Its time and «playing» are not the new episode's (they started the player at the
+    // old place, and the room went to 11:24 of the next episode — journal 20.10, 20:43:26 and 20:59:07).
+    var switching by remember { mutableStateOf(false) }
     var enginePaused by remember { mutableStateOf(false) }
     var seeking by remember { mutableStateOf<Float?>(null) }
     var seekByJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
@@ -347,7 +351,7 @@ fun PlayerView(
         savePos(time, length)
         index = i; nextIn = -1; currentUrl = queue[i].url; title = queue[i].title; retries = 0
         val url = currentUrl; val start = savedPos(i)
-        playing = false; started = false; time = start; lastGood = start; length = 0L; status = tr("player.sleduyuschaya_seriya")
+        playing = false; started = false; switching = true; time = start; lastGood = start; length = 0L; status = tr("player.sleduyuschaya_seriya")
         scope.launch {
             val extras = withTimeoutOrNull(4000) { sidecars(i).await() } ?: (emptyList<String>() to emptyList())
             if (index == i && !closing) open(url, start, extras)
@@ -703,7 +707,8 @@ fun PlayerView(
             setPaused = { p -> if ((pausedAt > 0L || enginePaused) != p) togglePause(byRoom = true) },
             seekTo = { t -> time = t; lastGood = t; lastSeekAt = System.currentTimeMillis(); seekTo(t) },
             setRate = { r -> playerExecutor.execute { runCatching { eRate(r) } } },
-            playIndex = { i -> playEntry(i) }
+            playIndex = { i -> playEntry(i) },
+            notice = { text -> flash(text) }
         ))
 
     LaunchedEffect(title, index, queue.size, smtcPoster) {
@@ -782,7 +787,7 @@ fun PlayerView(
     }
     DisposableEffect(Unit) {
         val ui2 = { block: () -> Unit -> SwingUtilities.invokeLater(block) }
-        fun evPlaying() = ui2 {
+        fun evPlayingNow() {
             val wasStarted = started
             playing = true; status = null; retries = 0; started = true; enginePaused = false
             bufferingShown = 0
@@ -823,6 +828,7 @@ fun PlayerView(
                 }
             }
         }
+        fun evPlaying() = ui2 { if (!switching) evPlayingNow() }
         fun evStream() = ui2 {
             if (System.currentTimeMillis() < prefsUntil) { schedulePrefs(400) }
         }
@@ -852,8 +858,9 @@ fun PlayerView(
         }
         fun evTime(currTime: Long) {
             ui2 {
+                if (switching) return@ui2
                 if (!started && currTime > 0) {
-                    evPlaying()
+                    evPlayingNow()
                 }
                 if (seeking == null && System.currentTimeMillis() - lastSeekAt > 600 && (kotlin.math.abs(currTime - time) >= 250 || currTime < time)) time = currTime
                 lastGood = currTime
@@ -886,7 +893,7 @@ fun PlayerView(
         }
 
         engBridge.target = object : EngineListener {
-            override fun opened() = evTracksChanged()
+            override fun opened() { ui2 { switching = false }; evTracksChanged() }
             override fun playing() = evPlaying()
             override fun paused() = evPaused()
             override fun stopped() = evStopped()

@@ -62,7 +62,12 @@ data class PartyRoom(
     val hostOnly: Boolean = false,
     val file: PartyFileRef? = null,
     val state: PartyState = PartyState.Idle,
-    val members: List<PartyMember> = emptyList()
+    val members: List<PartyMember> = emptyList(),
+    /**
+     * Ведущий поставил этот фильм, сервер ещё не подтвердил: ответы на прежние действия везут старый фильм и его
+     * состояние — их фильм и состояние не берём, иначе ведущего вернуло бы на прошлую серию (журнал 20.10, 20:59:30).
+     */
+    val pendingFileKey: String? = null
 ) {
     /** Я ведущий: мой пользователь создал комнату (при общем пароле — именно это устройство). */
     fun isHost(myUserId: String?, myKey: String): Boolean =
@@ -75,8 +80,23 @@ data class PartyRoom(
     /** Грузится кто-то, кроме меня: комната ждёт его. */
     fun othersBuffering(myKey: String): Boolean = members.any { it.buffering && it.key != myKey }
 
+    /** Ведущий ставит фильм [f] (до подтверждения сервера держим его, см. [pendingFileKey]). */
+    fun putFile(f: PartyFileRef): PartyRoom = copy(file = f, pendingFileKey = f.key)
+
+    /** Сервер не принял смену фильма: снова верим его ответам. */
+    fun fileRejected(): PartyRoom = copy(pendingFileKey = null)
+
     /** Ответ сервера с комнатой (создание, вход, действие, `state_changed`). */
-    fun merge(u: RoomUpdate): PartyRoom = copy(
+    fun merge(u: RoomUpdate): PartyRoom {
+        if (pendingFileKey != null && u.file?.key != pendingFileKey) {
+            // Старый ответ: участники и ведущий — свежие, фильм и время — ещё прежние
+            return copy(id = u.id ?: id, hostId = u.hostId, hostKey = u.hostKey, hostName = u.hostName,
+                hostOnly = u.hostOnly, members = u.members ?: members)
+        }
+        return mergeNow(u).copy(pendingFileKey = null)
+    }
+
+    private fun mergeNow(u: RoomUpdate): PartyRoom = copy(
         id = u.id ?: id,
         hostId = u.hostId,
         hostKey = u.hostKey,

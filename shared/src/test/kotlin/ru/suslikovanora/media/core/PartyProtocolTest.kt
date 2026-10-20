@@ -130,4 +130,32 @@ class PartyProtocolTest {
         assertEquals(42L, file.getLong("ad_id"))
         assertEquals("/api/rooms/x/events?client_id=pc_1", PartyProtocol.eventsPath("x", "pc_1"))
     }
+
+    /** Журнал 20.10, 20:59:30: ответ на прежнее действие со старой серией не возвращает ведущего назад. */
+    @Test
+    fun pendingFileIsNotOverwrittenByStaleAnswers() {
+        val r0 = PartyRoom().merge(PartyProtocol.parseRoom(JSONObject(roomJson)))
+        val next = PartyFileRef("42|Season 1/e02.mkv", "Серия 2")
+        var r = r0.putFile(next)
+        // Старый ответ: прежний фильм, состояние новее, новый участник
+        val stale = JSONObject(roomJson).apply {
+            getJSONObject("state").put("seq", 9).put("pos", 679.0)
+            getJSONArray("members").put(JSONObject("""{"key":"k3","id":"u3","name":"Вика"}"""))
+        }
+        r = r.merge(PartyProtocol.parseRoom(stale))
+        assertEquals(next, r.file)
+        assertEquals(7L, r.state.seq)            // старое время не берём
+        assertEquals(3, r.members.size)          // участников — берём
+        // Сервер подтвердил: дальше всё как обычно
+        val confirmed = JSONObject(roomJson).apply {
+            put("file", JSONObject().put("key", next.key).put("name", next.title))
+            getJSONObject("state").put("seq", 10).put("pos", 0.0).put("playing", false)
+        }
+        r = r.merge(PartyProtocol.parseRoom(confirmed))
+        assertNull(r.pendingFileKey)
+        assertEquals(10L, r.state.seq)
+        assertEquals(next, r.file)
+        // Отказ сервера снимает ожидание
+        assertNull(r0.putFile(next).fileRejected().pendingFileKey)
+    }
 }

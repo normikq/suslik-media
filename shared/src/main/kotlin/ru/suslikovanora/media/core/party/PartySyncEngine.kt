@@ -43,6 +43,15 @@ interface PartyLink {
     fun reportBuffering(loading: Boolean)
 }
 
+/** Подсказка в плеере: что сделал ведущий (гостю) и кого ждёт комната (всем). Текст пишет приложение. */
+sealed class PartyNotice {
+    data object Paused : PartyNotice()
+    data object Resumed : PartyNotice()
+    data class Seeked(val posMs: Long) : PartyNotice()
+    /** Комната стоит дольше [PartySyncEngine.WAIT_NOTICE_MS]: ждём, пока загрузятся другие. */
+    data object Waiting : PartyNotice()
+}
+
 /**
  * Держит плеер в фильме комнаты: следует за пуском, паузой и перемоткой комнаты и отправляет свои.
  * Малый дрейф выравнивает скоростью (0,95–1,05×), большой — перемоткой ([DriftController]).
@@ -54,7 +63,11 @@ interface PartyLink {
  * в это время — только хуже (перемотка → загрузка → «отстали» → перемотка … чёрный экран). Поэтому грузящийся
  * плеер сообщает об этом, и комната его ЖДЁТ: остальные стоят на месте комнаты, пока все не готовы.
  */
-class PartySyncEngine(private val link: PartyLink, private val log: (String) -> Unit = {}) {
+class PartySyncEngine(
+    private val link: PartyLink,
+    private val log: (String) -> Unit = {},
+    private val notice: (PartyNotice) -> Unit = {}
+) {
     private var lastSeq = -1L
     private var ownUntil = 0L
     private var prevT = 0L
@@ -69,6 +82,9 @@ class PartySyncEngine(private val link: PartyLink, private val log: (String) -> 
     private var engineMovedAt = 0L    // когда время движка последний раз сдвинулось (или стояло на паузе)
     private var localHold = false     // гость поставил паузу себе: комната идёт без него
     private var seenSeek: Long? = null // последняя уже учтённая перемотка (наша или пользователя)
+    private var applied: PartyState? = null // последнее принятое состояние комнаты: с чем сравнивать новое
+    private var waitSince = 0L        // комната ждёт других с этого момента (для подсказки)
+    private var waitNoticed = false
 
     /** Последнее увиденное место: для паузы комнаты, когда ведущий закрыл фильм. */
     var lastTimeMs = 0L
@@ -79,6 +95,7 @@ class PartySyncEngine(private val link: PartyLink, private val log: (String) -> 
         if (seenSeek == null) seenSeek = player.seekStamp
         restoreRate(player)
         lastSeq = -1L; pendingAt = 0L; stalledSince = 0L; lastEngineMs = Long.MIN_VALUE
+        applied = null; waitSince = 0L; waitNoticed = false
         link.reportBuffering(false)
     }
 
@@ -168,8 +185,17 @@ class PartySyncEngine(private val link: PartyLink, private val log: (String) -> 
         val wantPaused = !s.playing || (s.waiting && !loading && othersLoading) || localHold
         var nt = t
         var np = p
+        // Комната долго ждёт других: один раз сказать, кого (короткие ожидания после перемотки — без подсказки)
+        if (s.playing && s.waiting && othersLoading) {
+            if (waitSince == 0L) waitSince = now
+            else if (!waitNoticed && now - waitSince >= WAIT_NOTICE_MS) { waitNoticed = true; notice(PartyNotice.Waiting) }
+        } else { waitSince = 0L; waitNoticed = false }
         if (lastSeq < 0 || s.seq > lastSeq) {
             // Новая команда (или мы только вошли, или комната начала / перестала ждать): берём состояние комнаты.
+            val before = applied.takeIf { lastSeq >= 0 }
+            applied = s
+            // Гостю — что сделал ведущий (свои действия ведущий знает сам; их ответы сюда и не попадают)
+            if (before != null && !link.canControl) noticeOf(before, s)?.let(notice)
             lastSeq = s.seq
             restoreRate(player)
             val alreadyGoing = pendingAt > 0L && abs(pendingTo - target) < 1_000L
@@ -201,6 +227,19 @@ class PartySyncEngine(private val link: PartyLink, private val log: (String) -> 
         prevT = nt; prevP = np; prevAt = now
     }
 
+    /** Что изменил ведущий: перемотка (место не там, куда пришло бы само), иначе пауза или пуск. */
+    private fun noticeOf(before: PartyState, s: PartyState): PartyNotice? {
+        val ran = if (before.playing && !before.waiting) ((s.anchorServerMs - before.anchorServerMs).coerceAtLeast(0L) * before.rate).toLong() else 0L
+        val expected = (before.pos * 1000).toLong() + ran
+        val pos = (s.pos * 1000).toLong()
+        return when {
+            abs(pos - expected) > SEEK_NOTICE_MS -> PartyNotice.Seeked(pos)
+            before.playing && !s.playing -> PartyNotice.Paused
+            !before.playing && s.playing -> PartyNotice.Resumed
+            else -> null
+        }
+    }
+
     private fun restoreRate(player: SyncPlayer) {
         if (drift != 1f) { drift = 1f; player.setRate(player.userRate) }
     }
@@ -217,5 +256,9 @@ class PartySyncEngine(private val link: PartyLink, private val log: (String) -> 
         const val OWN_MS = 2_500L
         /** Время движка стоит столько без паузы — значит, ждём данные (даже если движок говорит «играю»). */
         const val FROZEN_MS = 1_000L
+        /** Подсказка «ждём, пока загрузится у …» — если комната стоит дольше. */
+        const val WAIT_NOTICE_MS = 2_000L
+        /** Скачок места больше — это перемотка ведущего, а не ход времени. */
+        const val SEEK_NOTICE_MS = 3_000L
     }
 }

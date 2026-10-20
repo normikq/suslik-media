@@ -1,6 +1,7 @@
 package ru.suslikovanora.media.core
 
 import ru.suslikovanora.media.core.party.PartyLink
+import ru.suslikovanora.media.core.party.PartyNotice
 import ru.suslikovanora.media.core.party.PartyState
 import ru.suslikovanora.media.core.party.PartySyncEngine
 import ru.suslikovanora.media.core.party.SyncPlayer
@@ -279,5 +280,40 @@ class PartySyncEngineTest {
         assertTrue(p.seeks.isEmpty())             // никакой перемотки «отстали»
         p.play(400); now += 400; e.tick(p, key, now)
         assertEquals(listOf(false, true, false), l.buffering)
+    }
+
+    /** Гость видит, что сделал ведущий: пауза, пуск, перемотка; ход времени — не перемотка. */
+    @Test
+    fun guestSeesHostActions() {
+        val p = FakePlayer(); val l = FakeLink(host = false)
+        val notes = mutableListOf<PartyNotice>()
+        l.state = PartyState(true, 100.0, 1.0, anchorServerMs = 0L, seq = 1); l.target = 100_000L
+        p.timeMs = 100_000L; p.engineMs = 100_000L
+        val e = PartySyncEngine(l, notice = { notes += it })
+        var now = 1_000L
+        e.tick(p, key, now)                       // вошли: без подсказки
+        fun step(state: PartyState) { l.state = state; l.target = (state.pos * 1000).toLong(); now += 400; p.play(400); e.tick(p, key, now) }
+        step(PartyState(false, 110.0, 1.0, 10_000L, seq = 2))  // пауза через 10 с хода
+        step(PartyState(true, 110.0, 1.0, 20_000L, seq = 3))   // пуск с того же места
+        step(PartyState(true, 600.0, 1.0, 25_000L, seq = 4))   // перемотка на 10:00
+        step(PartyState(true, 600.0, 1.0, 25_500L, seq = 5, waiting = true)) // комната ждёт — не перемотка
+        assertEquals(listOf(PartyNotice.Paused, PartyNotice.Resumed, PartyNotice.Seeked(600_000L)), notes)
+    }
+
+    /** «Ждём, пока загрузится у …» — один раз и только если комната стоит дольше 2 с; ведущему действий не подсказываем. */
+    @Test
+    fun waitingNoticeOnceAfterTwoSeconds() {
+        val p = FakePlayer(); val l = FakeLink(host = true)
+        val notes = mutableListOf<PartyNotice>()
+        l.state = PartyState(true, 10.0, 1.0, 0L, seq = 1); l.target = 10_000L
+        p.timeMs = 10_000L; p.engineMs = 10_000L
+        val e = PartySyncEngine(l, notice = { notes += it })
+        var now = 1_000L
+        e.tick(p, key, now)
+        l.state = l.state.copy(waiting = true, seq = 2); l.others = true
+        repeat(4) { now += 400; e.tick(p, key, now) }
+        assertTrue(notes.isEmpty())               // 1,6 с — рано
+        repeat(10) { now += 400; e.tick(p, key, now) }
+        assertEquals(listOf<PartyNotice>(PartyNotice.Waiting), notes)
     }
 }

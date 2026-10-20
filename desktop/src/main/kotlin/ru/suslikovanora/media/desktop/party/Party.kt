@@ -107,7 +107,7 @@ object Party {
     /** Puts a film into the room (paused at the start, as the server does): the host only; my player will start it. */
     fun putFilm(f: PartyFileRef) {
         if (!inRoom || !isHost || file?.key == f.key) return
-        synchronized(this) { room = room.copy(file = f) }
+        synchronized(this) { room = room.putFile(f) }
         startedByMe = f.key
         action(PartyProtocol.changeFile(f))
     }
@@ -137,7 +137,10 @@ object Party {
                     val res = timed { Api.post(PartyProtocol.actionPath(id), body) }
                     // My own change comes back at once (the stream may be a moment later)
                     if (roomId == id) PartyProtocol.roomOf(res)?.let { apply(it) }
-                } catch (e: Exception) { PlayerLog.write("[party] action ${body.optString("type")} failed: ${Api.describe(e)}") }
+                } catch (e: Exception) {
+                    PlayerLog.write("[party] action ${body.optString("type")} failed: ${Api.describe(e)}")
+                    if (body.optString("type") == "change_file") synchronized(this@Party) { room = room.fileRejected() }
+                }
             }
         }
     }

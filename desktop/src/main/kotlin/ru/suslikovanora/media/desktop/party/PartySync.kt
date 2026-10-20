@@ -8,7 +8,9 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.getValue
 import kotlinx.coroutines.delay
 import ru.suslikovanora.media.core.party.PartyFileRef
+import ru.suslikovanora.media.core.clockText
 import ru.suslikovanora.media.core.party.PartyLink
+import ru.suslikovanora.media.core.party.PartyNotice
 import ru.suslikovanora.media.core.party.PartyState
 import ru.suslikovanora.media.core.party.PartySyncEngine
 import ru.suslikovanora.media.core.party.SyncPlayer
@@ -26,7 +28,8 @@ class SyncHooks(
     val setPaused: (Boolean) -> Unit,
     val seekTo: (Long) -> Unit,
     val setRate: (Float) -> Unit,        // engine speed (drift correction); the player's own speed is restored with userRate
-    val playIndex: (Int) -> Unit         // another episode of this playlist
+    val playIndex: (Int) -> Unit,        // another episode of this playlist
+    val notice: (String) -> Unit = {}    // a short line over the picture: what the host did, whom the room waits for
 )
 
 /** The player for the shared sync engine: always the latest hooks (PlayerView passes new ones on recomposition). */
@@ -70,7 +73,11 @@ fun PartySync(key: String?, title: String, keys: List<String>, started: Boolean,
     val k by rememberUpdatedState(key)
     val ready by rememberUpdatedState(started && !closing)
     val h by rememberUpdatedState(hooks)
-    val engine = remember { PartySyncEngine(DesktopPartyLink) { PlayerLog.write(it) } }
+    val engine = remember {
+        PartySyncEngine(DesktopPartyLink, log = { PlayerLog.write(it) }, notice = { n -> noticeText(n)?.let { h.notice(it) } })
+    }
+    // The host put another episode: said once the new one plays (opening it would cover the line at once)
+    val episodeNotice = remember { arrayOfNulls<String>(1) }
     val player = remember { HooksPlayer { h } }
 
     // The host went on to the next episode: the room follows; a guest's player follows the room's episode.
@@ -81,7 +88,10 @@ fun PartySync(key: String?, title: String, keys: List<String>, started: Boolean,
     LaunchedEffect(Party.file?.key) {
         val rk = Party.file?.key ?: return@LaunchedEffect
         val i = keys.indexOf(rk)
-        if (rk != k && i >= 0 && !closing) { PlayerLog.write("[party] room episode -> $i"); h.playIndex(i) }
+        if (rk != k && i >= 0 && !closing) {
+            PlayerLog.write("[party] room episode -> $i"); h.playIndex(i)
+            if (!Party.isHost) episodeNotice[0] = "${hostWho()} включает «${Party.file?.title.orEmpty()}»"
+        }
     }
 
     // The host closed the film: the room pauses (nobody is left watching it otherwise). A moment later, so that
@@ -98,8 +108,21 @@ fun PartySync(key: String?, title: String, keys: List<String>, started: Boolean,
         while (true) {
             delay(PartySyncEngine.TICK_MS)
             val kk = k
-            if (Party.inRoom && Party.file?.key == kk && kk != null && ready) engine.tick(player, kk, System.currentTimeMillis())
-            else engine.idle(player)
+            if (Party.inRoom && Party.file?.key == kk && kk != null && ready) {
+                episodeNotice[0]?.let { episodeNotice[0] = null; h.notice(it) }
+                engine.tick(player, kk, System.currentTimeMillis())
+            } else engine.idle(player)
         }
     }
+}
+
+private fun hostWho() = Party.hostName.ifBlank { "Создатель комнаты" }
+
+/** Present tense: the name says nothing of a person's gender, «ставит» fits everyone. */
+private fun noticeText(n: PartyNotice): String? = when (n) {
+    PartyNotice.Paused -> "${hostWho()} ставит паузу"
+    PartyNotice.Resumed -> "${hostWho()} продолжает"
+    is PartyNotice.Seeked -> "${hostWho()} перематывает на ${clockText(n.posMs)}"
+    PartyNotice.Waiting -> Party.members.filter { it.buffering && it.key != Party.myKey }.map { it.name }
+        .takeIf { it.isNotEmpty() }?.let { "Ждём, пока загрузится у ${it.joinToString()}" }
 }
