@@ -113,3 +113,10 @@ docker run -d --name flaresolverr --restart unless-stopped -p 127.0.0.1:8191:819
 - Ответы TMDB на поиск постера кэшируются в памяти сервера на сутки.
 
 После обновления выполните `npm install` (добавлен пакет `compression`). Без него сайт работает, просто без сжатия — в логе будет предупреждение.
+
+## Вход через Discord и совместный просмотр
+- В `.env`: `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET` (вход), `DISCORD_BOT_TOKEN`, `DISCORD_GUILD_ID` (кого пускать — участников сервера,
+  при желании с ролью `DISCORD_ROLE_ALLOW`). **Без бота и белого списка `DISCORD_ALLOWED_USERS` пускают любой аккаунт Discord.**
+- `SITE_PREFIX=/media`, если сайт за nginx в подпути; `PASSWORD_AUTH_ENABLED=false` — только Discord.
+- Токены Discord не хранятся (отзываются сразу после входа); у устройств на сервере только хеш токена.
+- Комнаты совместного просмотра — `/api/rooms` (SSE), в памяти сервера. Подробно: `docs/WEBSITE.md` §3.1, `docs/DISCORD.md`.

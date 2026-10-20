@@ -76,17 +76,87 @@ class Library {
         status = tr("library.pokazana_sohranennaya_kopiya_o")
     }
 
+    var profile by mutableStateOf<Profile>(Profile.Shared)
+
+    data class PairingState(val code: String, val userCode: String, val url: String)
+    var pairing by mutableStateOf<PairingState?>(null)
+
+    /** The server's user (from /api/session or the device poll); the shared password account is [Profile.Shared]. */
+    private fun profileOf(u: JSONObject?): Profile {
+        if (u == null || u.optString("id") == "shared") return Profile.Shared
+        fun str(key: String) = if (u.isNull(key)) "" else u.optString(key)
+        val name = str("name").ifBlank { str("username") }.ifBlank { "Пользователь" }
+        val note = if (str("role") == "admin") "Администратор" else "Участник"
+        return Profile(name, note, str("avatar").takeIf { it.isNotBlank() })
+    }
+
+    // The profile is set BEFORE [authenticated]: flipping it closes the login screen, and with it the coroutine that
+    // called us (the old order lost the Discord name until the next start: «Вход по паролю» stayed in the sidebar).
     suspend fun checkSession(): Boolean? = try {
-        Api.get("/api/session").optBoolean("authenticated").also { authenticated = it }
+        val res = Api.get("/api/session")
+        val isAuth = res.optBoolean("authenticated")
+        profile = if (isAuth) profileOf(res.optJSONObject("user")) else Profile.Shared
+        // Discord application of our server: the player shows the film in the Discord profile under it
+        res.optString("discord_client_id").takeIf { it.isNotBlank() }?.let { ru.suslikovanora.media.desktop.discord.DiscordRpc.clientId = it }
+        authenticated = isAuth
+        isAuth
     } catch (e: Exception) { null }
 
     suspend fun login(password: String): String? = try {
-        Api.post("/api/login", JSONObject().put("password", password)); authenticated = true; null
+        Api.post("/api/login", JSONObject().put("password", password))
+        if (checkSession() == null) authenticated = true
+        null
     } catch (e: Exception) { Api.describe(e) }
 
+    suspend fun startDeviceAuth(): String? = try {
+        val res = Api.post("/api/auth/device", JSONObject()
+            .put("name", "Suslik Media Windows")
+            .put("site_url", Api.SITE.trimEnd('/'))
+        )
+        val code = res.getString("code")
+        val userCode = res.getString("user_code")
+        // The server builds the link from site_url; ours is the fallback for an older server
+        val url = res.optString("verification_url").takeIf { it.contains("code=") } ?: "${Api.SITE}link?code=$userCode"
+        pairing = PairingState(code, userCode, url)
+        runCatching { java.awt.Desktop.getDesktop().browse(java.net.URI(url)) }
+        null
+    } catch (e: Exception) {
+        Api.describe(e)
+    }
+
+    suspend fun pollDeviceAuth(): Boolean? {
+        val p = pairing ?: return null
+        return try {
+            val res = Api.post("/api/auth/device/poll", JSONObject().put("code", p.code))
+            when (res.optString("status")) {
+                "authorized" -> {
+                    // The device token outlives the cookie session (sent with every request, see Api.request).
+                    res.optString("device_token").takeIf { it.isNotBlank() }?.let { Api.deviceToken = it }
+                    profile = profileOf(res.optJSONObject("user"))
+                    pairing = null
+                    authenticated = true
+                    true
+                }
+                "expired" -> { pairing = null; false }
+                else -> null
+            }
+        } catch (e: Api.HttpError) {
+            // 410: the code has expired (10 min) — without this the screen kept waiting forever
+            if (e.code == 410 || e.code == 404) { pairing = null; false } else null
+        } catch (e: Exception) { null }
+    }
+
+    fun cancelDeviceAuth() {
+        pairing = null
+    }
+
     suspend fun logout() {
+        ru.suslikovanora.media.desktop.party.Party.leave()
         runCatching { Api.post("/api/logout") }
+        Api.deviceToken = null
         authenticated = false; items = emptyList()
+        profile = Profile.Shared
+        pairing = null
         withContext(Dispatchers.IO) { runCatching { snapshot.delete() } }
     }
 

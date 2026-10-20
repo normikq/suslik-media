@@ -17,6 +17,7 @@ const searchRoutes = require("./routes/search");
 const mirrorRoutes = require("./routes/mirror");
 const updatesRoutes = require("./routes/updates");
 const mediaRoutes = require("./routes/media");
+const roomsRoutes = require("./routes/rooms");
 
 function createApp() {
   const app = express();
@@ -77,6 +78,7 @@ function createApp() {
   app.use(mirrorRoutes);
   app.use(updatesRoutes);
   app.use(mediaRoutes);
+  app.use(roomsRoutes);
 
   // Static files
   app.use(

@@ -131,6 +131,7 @@ fun SettingsSheet(onClose: () -> Unit) {
                 }
                 MotionSection()
                 EngineSection()
+                DiscordSection()
                 StorageSection()
                 if (Diag.on) DiagSection() else ChannelSection()
             }
@@ -381,6 +382,22 @@ private fun EngineOption(
 }
 
 /** «Анимации»: full or simplified (for weak machines, see ui/Motion.kt). */
+@Composable
+private fun DiscordSection() {
+    var enabled by remember { mutableStateOf(ru.suslikovanora.media.desktop.discord.DiscordRpc.isEnabled) }
+    Section("Discord Rich Presence", "Показывать статус воспроизведения и фильм в профиле Discord.", top = 18.dp)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ChannelOption("Включено", enabled, Modifier.weight(1f)) {
+            enabled = true
+            ru.suslikovanora.media.desktop.discord.DiscordRpc.setEnabled(true)
+        }
+        ChannelOption("Выключено", !enabled, Modifier.weight(1f)) {
+            enabled = false
+            ru.suslikovanora.media.desktop.discord.DiscordRpc.setEnabled(false)
+        }
+    }
+}
+
 @Composable
 private fun MotionSection() {
     Section(tr("settings.animatsii"), tr("settings.animatsii_tekst"), top = 18.dp)

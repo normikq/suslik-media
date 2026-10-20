@@ -280,6 +280,21 @@ fun LoginView(lib: Library) {
     var pass by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(lib.pairing) {
+        val p = lib.pairing
+        if (p != null) {
+            while (lib.pairing != null) {
+                kotlinx.coroutines.delay(2000)
+                val res = lib.pollDeviceAuth()
+                if (res == true) break
+                if (res == false) {
+                    error = "Время ожидания кода связки истекло."
+                    break
+                }
+            }
+        }
+    }
     fun submit() {
         if (busy || pass.isBlank()) return
         busy = true; error = null
@@ -292,11 +307,44 @@ fun LoginView(lib: Library) {
             Text(tr("library.naydite_razblokiruyte_smotrite"), color = Sm.text, fontFamily = Unbounded, fontWeight = FontWeight.Bold,
                 fontSize = 40.sp, lineHeight = 46.sp, modifier = Modifier.padding(top = 6.dp, bottom = 28.dp))
             Panel {
-                Text(tr("library.voyti"), fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 20.sp, color = Sm.text)
-                Text(tr("library.vvedite_obschiy_parol_dostupa"), color = Sm.muted, fontFamily = Onest, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
-                Field(pass, { pass = it }, tr("library.parol_dostupa"), password = true, onDone = { submit() })
-                Spacer(Modifier.height(12.dp))
-                LampButton(if (busy) tr("library.vypolnyaetsya_vhod") else tr("library.voyti"), enabled = !busy && pass.isNotBlank()) { submit() }
+                if (lib.pairing != null) {
+                    val pairing = lib.pairing!!
+                    Text("Вход через Discord", fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 20.sp, color = Sm.text)
+                    Text("Подтвердите вход в браузере с помощью кода:", color = Sm.muted, fontFamily = Onest, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
+                    Box(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color(0xFF1E2330))
+                            .border(1.dp, Sm.accent.copy(alpha = 0.5f), RoundedCornerShape(12.dp)).padding(vertical = 16.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(pairing.userCode, color = Color.White, fontFamily = Unbounded, fontWeight = FontWeight.Bold, fontSize = 32.sp, letterSpacing = 4.sp)
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        LampButton("Открыть в браузере", modifier = Modifier.weight(1f)) {
+                            runCatching { java.awt.Desktop.getDesktop().browse(java.net.URI(pairing.url)) }
+                        }
+                        OutlineButton("Отмена") { lib.cancelDeviceAuth() }
+                    }
+                } else {
+                    Text(tr("library.voyti"), fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 20.sp, color = Sm.text)
+                    Spacer(Modifier.height(12.dp))
+                    LampButton("Войти через Discord", modifier = Modifier.fillMaxWidth()) {
+                        scope.launch {
+                            val err = lib.startDeviceAuth()
+                            if (err != null) error = err
+                        }
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.weight(1f).height(1.dp).background(Color(0x1AFFFFFF)))
+                        Text("или по паролю", color = Sm.muted, fontFamily = Onest, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 10.dp))
+                        Box(Modifier.weight(1f).height(1.dp).background(Color(0x1AFFFFFF)))
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    Field(pass, { pass = it }, tr("library.parol_dostupa"), password = true, onDone = { submit() })
+                    Spacer(Modifier.height(12.dp))
+                    OutlineButton(if (busy) tr("library.vypolnyaetsya_vhod") else tr("library.voyti"), modifier = Modifier.fillMaxWidth()) { submit() }
+                }
                 error?.let { Text(it, color = Sm.bad, fontFamily = Onest, fontSize = 14.sp, modifier = Modifier.padding(top = 10.dp)) }
             }
         }
@@ -981,13 +1029,16 @@ private class ContinueEntry(
     val at: Long
 )
 
-private fun targetFor(item: LibraryItem, file: MFile): PlayTarget? {
+private fun targetFor(item: LibraryItem, file: MFile): PlayTarget? = targetFor(item, file.path)
+
+/** What to open for this file of the item (a movie, or an episode with the rest of its season). */
+internal fun targetFor(item: LibraryItem, path: String): PlayTarget? {
     val m = item.m
     return when (val p = item.playable) {
-        is Playable.Movie -> if (p.file.path == file.path) PlayTarget(m.id, p.file, item.baseTitle, emptyList(), subtitlesFor(m, p.file), externalAudioFor(m, p.file), item) else null
+        is Playable.Movie -> if (p.file.path == path) PlayTarget(m.id, p.file, item.baseTitle, emptyList(), subtitlesFor(m, p.file), externalAudioFor(m, p.file), item) else null
         is Playable.Series -> {
             for (s in p.seasons) {
-                val i = s.items.indexOfFirst { it.file.path == file.path }
+                val i = s.items.indexOfFirst { it.file.path == path }
                 if (i < 0) continue
                 val e = s.items[i]
                 return PlayTarget(m.id, e.file, episodeLabel(item.baseTitle, s, e), s.items.drop(i).map { it.file },

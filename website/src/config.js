@@ -23,8 +23,22 @@ const STREAM_IDLE_MS = Number(process.env.STREAM_IDLE_MS || 25000);
 const MIRROR_ACCEL = process.env.MIRROR_ACCEL === "1";
 const FFPROBE_PATH = process.env.FFPROBE_PATH || "ffprobe";
 const APP_DOWNLOAD_RATE_LIMIT = "5242880";
-const SERVER_REV = "2026-10-16 versions-5";
+const SERVER_REV = "2026-10-20 discord-1";
 const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const SITE_PREFIX = (process.env.SITE_PREFIX || "").replace(/\/+$/, "");
+
+// Discord OAuth2 & Access Control
+const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID || "";
+const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || "";
+const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || "";
+const DISCORD_GUILD_ID = process.env.DISCORD_GUILD_ID || "";
+const DISCORD_ROLE_ALLOW = (process.env.DISCORD_ROLE_ALLOW || "").split(",").map(s => s.trim()).filter(Boolean);
+const DISCORD_ROLE_ADMIN = (process.env.DISCORD_ROLE_ADMIN || "").split(",").map(s => s.trim()).filter(Boolean);
+const DISCORD_ALLOWED_USERS = (process.env.DISCORD_ALLOWED_USERS || "").split(",").map(s => s.trim()).filter(Boolean);
+const DISCORD_OWNER_ID = process.env.DISCORD_OWNER_ID || "";
+const DISCORD_REDIRECT_URI = process.env.DISCORD_REDIRECT_URI || "";
+const DISCORD_ENABLED = Boolean(DISCORD_CLIENT_ID && DISCORD_CLIENT_SECRET);
+const PASSWORD_AUTH_ENABLED = process.env.PASSWORD_AUTH_ENABLED !== "false" && Boolean(SITE_PASSWORD);
 
 // Where small runtime files live (sessions, library cache, metadata cache). Defaults to the website folder.
 const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : ROOT_DIR;
@@ -46,6 +60,10 @@ const FAVORITES_FILE = path.join(DATA_DIR, "favorites.json");
 const TREE_CACHE_FILE = path.join(DATA_DIR, "library-files-cache.json");
 const SESSIONS_FILE = path.join(DATA_DIR, "sessions.json");
 const MEDIA_CACHE_FILE = path.join(DATA_DIR, "media-metadata-cache.json");
+const USERS_FILE = path.join(DATA_DIR, "users.json");
+const DEVICES_FILE = path.join(DATA_DIR, "devices.json");
+const SHELF_FILE = path.join(DATA_DIR, "shelf.json");
+const ROOMS_FILE = path.join(DATA_DIR, "rooms.json");
 
 if (!process.env.SESSION_SECRET) {
   console.warn("ПРЕДУПРЕЖДЕНИЕ: SESSION_SECRET не задан в .env (сгенерирован временный случайный ключ). Сеансы и временные ссылки зеркала сбросятся при перезапуске сервера.");
@@ -87,5 +105,21 @@ module.exports = {
   FAVORITES_FILE,
   TREE_CACHE_FILE,
   SESSIONS_FILE,
-  MEDIA_CACHE_FILE
+  MEDIA_CACHE_FILE,
+  USERS_FILE,
+  DEVICES_FILE,
+  SHELF_FILE,
+  ROOMS_FILE,
+  SITE_PREFIX,
+  DISCORD_CLIENT_ID,
+  DISCORD_CLIENT_SECRET,
+  DISCORD_BOT_TOKEN,
+  DISCORD_GUILD_ID,
+  DISCORD_ROLE_ALLOW,
+  DISCORD_ROLE_ADMIN,
+  DISCORD_ALLOWED_USERS,
+  DISCORD_OWNER_ID,
+  DISCORD_REDIRECT_URI,
+  DISCORD_ENABLED,
+  PASSWORD_AUTH_ENABLED
 };

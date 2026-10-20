@@ -7,6 +7,8 @@ const config = require("../config");
 const { makeJsonWriter } = require("../utils/json-writer");
 const { readCookie } = require("../utils/helpers");
 
+const { SHARED_USER, getUser, touchUser, verifyDeviceToken } = require("../services/users");
+
 // Sessions survive a server restart (the default MemoryStore forgets everyone and grows without bound).
 // One shared password means very few sessions, so a JSON file is plenty for this server.
 class FileSessionStore extends session.Store {
@@ -84,19 +86,60 @@ function createSessionMiddleware() {
     rolling: true, // Refresh cookie expiration while the authenticated session is active.
     cookie: {
       httpOnly: true,
-      sameSite: "strict",
+      sameSite: "lax", // Lax allows OAuth callback redirects from discord.com to send the session cookie
       secure: config.COOKIE_SECURE,
       maxAge: config.SESSION_MAX_AGE_MS
     }
   });
 }
 
+function resolveAuth(req) {
+  // 1. Проверка по токену устройства (для нативных клиентов без cookies)
+  const deviceToken = req.get("X-Device-Token") || (req.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+  if (deviceToken) {
+    const verified = verifyDeviceToken(deviceToken);
+    if (verified && verified.user) {
+      req.user = verified.user;
+      req.device = verified.device;
+      return true;
+    }
+  }
+
+  // 2. Проверка по сессии
+  if (req.session && req.session.authenticated) {
+    if (req.session.uid) {
+      const user = getUser(req.session.uid);
+      if (!user || user.role === "denied") {
+        req.session.destroy?.(() => {});
+        return false;
+      }
+      req.user = user;
+      touchUser(user.id);
+    } else {
+      req.user = SHARED_USER;
+    }
+    return true;
+  }
+
+  return false;
+}
+
 function requireLogin(req, res, next) {
-  if (req.session && req.session.authenticated) return next();
+  if (resolveAuth(req)) return next();
   return res.status(401).json({ error: "Сначала выполните вход." });
 }
 
+function requireAdmin(req, res, next) {
+  if (!resolveAuth(req)) return res.status(401).json({ error: "Сначала выполните вход." });
+  // Если вход выполнен по паролю сайта (SITE_PASSWORD) — считаем администратором
+  if (!req.user || req.user.role === "admin") return next();
+  return res.status(403).json({ error: "Недостаточно прав администратора." });
+}
+
 function deviceId(req, res) {
+  if (req.user && req.user.id) {
+    return req.user.id;
+  }
   let id = readCookie(req, "sdev");
   if (!/^[a-f0-9]{32}$/.test(id)) {
     id = crypto.randomBytes(16).toString("hex");
@@ -146,7 +189,9 @@ module.exports = {
   FileSessionStore,
   sessionStore,
   createSessionMiddleware,
+  resolveAuth,
   requireLogin,
+  requireAdmin,
   deviceId,
   verifyPassword,
   isTester,

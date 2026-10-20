@@ -103,6 +103,12 @@ object Api {
     class HttpError(val code: Int, message: String) : Exception(message)
 
     private val cookies = Store.of("cookies")
+    private val auth = Store.of("auth")
+
+    /** Discord sign-in through the browser (device code): the server's token for this computer, sent with every request. */
+    var deviceToken: String?
+        get() = auth.get("device_token")
+        set(value) { auth.put("device_token", value) }
     val client: HttpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(15))
         .followRedirects(HttpClient.Redirect.NORMAL)
@@ -122,11 +128,16 @@ object Api {
         }
     }
 
-    fun request(path: String): HttpRequest.Builder =
-        HttpRequest.newBuilder(URI.create(if (path.startsWith("http")) path else BASE + path))
+    fun request(path: String): HttpRequest.Builder {
+        val url = if (path.startsWith("http")) path else BASE + path
+        // Session, device token and beta code go only to our own server (an avatar comes from Discord's CDN)
+        val own = url == BASE || url.startsWith("$BASE/")
+        return HttpRequest.newBuilder(URI.create(url))
             .timeout(Duration.ofSeconds(30))
-            .header("Cookie", cookieHeader())
-            .apply { PlaybackSettings.sentBetaCode()?.let { header("X-Beta-Code", it) } } // tester: beta updates
+            .apply { if (own) header("Cookie", cookieHeader()) }
+            .apply { if (own) deviceToken?.let { header("X-Device-Token", it) } }
+            .apply { if (own) PlaybackSettings.sentBetaCode()?.let { header("X-Beta-Code", it) } } // tester: beta updates
+    }
 
     suspend fun get(path: String): JSONObject = call(request(path).GET().build())
 

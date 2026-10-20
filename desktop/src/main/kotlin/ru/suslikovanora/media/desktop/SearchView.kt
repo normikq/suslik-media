@@ -51,7 +51,10 @@ import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Date
 
-enum class Tab(val label: String) { Library(tr("search.biblioteka")), Favorites(tr("library.izbrannoe")), Search(tr("search.poisk_razdach")), Add(tr("search.magnet_torrent")) }
+enum class Tab(val label: String) { Library(tr("search.biblioteka")), Favorites(tr("library.izbrannoe")), Search(tr("search.poisk_razdach")), Add(tr("search.magnet_torrent")), Together(tr("sidebar.sovmestnyy_prosmotr")) }
+
+/** Pages of the top lens tabs (Together lives only in the side panel). */
+val lensTabs = Tab.entries.filter { it != Tab.Together }
 
 /**
  * The site's sliding amber "lens" tabs. [lens] is the animated tab position (0f..1f), kept by the main window so the
@@ -63,10 +66,10 @@ fun NavTabs(current: Tab, lens: Float, onSelect: (Tab) -> Unit) {
         Modifier.width(460.dp).clip(RoundedCornerShape(20.dp)).background(Color(0xFF141720))
             .border(1.dp, Color(0xFF242A38), RoundedCornerShape(20.dp)).padding(3.dp).height(38.dp)
     ) {
-        val w = maxWidth / Tab.entries.size
+        val w = maxWidth / lensTabs.size
         Box(Modifier.offset(x = w * lens).width(w).fillMaxHeight().clip(RoundedCornerShape(16.dp)).background(Color(0xFF282E3C)))
         Row(Modifier.fillMaxSize()) {
-            for (t in Tab.entries) {
+            for (t in lensTabs) {
                 val src = remember { MutableInteractionSource() }
                 val hovered by src.collectIsHoveredAsState()
                 val near = kotlin.math.abs(lens - t.ordinal) < 0.5f

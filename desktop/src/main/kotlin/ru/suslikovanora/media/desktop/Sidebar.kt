@@ -2,6 +2,7 @@ package ru.suslikovanora.media.desktop
 
 import ru.suslikovanora.media.core.*
 import ru.suslikovanora.media.desktop.ui.*
+import androidx.compose.ui.graphics.toComposeImageBitmap
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -166,12 +167,15 @@ fun Sidebar(tab: Tab, profile: Profile, onSelect: (Tab) -> Unit, onSettings: () 
         }
         Spacer(Modifier.height(22.dp))
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            NavItem(Tab.Library.label, tab == Tab.Library, expanded, { GridIcon(color = it, size = 16.dp) }, tab = Tab.Library) { onSelect(Tab.Library) }
-            NavItem(Tab.Favorites.label, tab == Tab.Favorites, expanded, { HeartIcon(filled = false, color = it, size = 16.dp) }, tab = Tab.Favorites) { onSelect(Tab.Favorites) }
+            // A guest of a room watches the room's film: the library (and favourites) are closed until they leave it
+            val guest = ru.suslikovanora.media.desktop.party.Party.let { it.inRoom && !it.isHost }
+            val lockNote = if (guest) "вы в комнате" else null
+            NavItem(Tab.Library.label, tab == Tab.Library, expanded, { GridIcon(color = it, size = 16.dp) }, enabled = !guest, soon = lockNote, tab = Tab.Library) { onSelect(Tab.Library) }
+            NavItem(Tab.Favorites.label, tab == Tab.Favorites, expanded, { HeartIcon(filled = false, color = it, size = 16.dp) }, enabled = !guest, soon = lockNote, tab = Tab.Favorites) { onSelect(Tab.Favorites) }
             NavItem(Tab.Search.label, tab == Tab.Search, expanded, { SearchIcon(color = it, size = 16.dp) }) { onSelect(Tab.Search) }
             NavItem(Tab.Add.label, tab == Tab.Add, expanded, { LinkChainIcon(color = it, size = 16.dp) }) { onSelect(Tab.Add) }
-            // Not available yet: greyed out, no click.
-            NavItem(tr("sidebar.sovmestnyy_prosmotr"), false, expanded, PeopleIcon, enabled = false, soon = tr("sidebar.skoro"))
+            NavItem(Tab.Together.label, tab == Tab.Together, expanded, PeopleIcon,
+                soon = ru.suslikovanora.media.desktop.party.Party.let { p -> if (p.inRoom) "в комнате · ${p.members.size.coerceAtLeast(1)}" else null }) { onSelect(Tab.Together) }
             Box(Modifier.padding(vertical = 8.dp).fillMaxWidth().height(1.dp).background(Color(0x1AFFFFFF)))
             NavItem(tr("sidebar.nastroyki"), false, expanded, { GearIcon(it) }, onClick = onSettings)
         }
@@ -198,11 +202,32 @@ fun Sidebar(tab: Tab, profile: Profile, onSelect: (Tab) -> Unit, onSettings: () 
 @Composable
 private fun ProfileCard(profile: Profile, expanded: Boolean, onLogout: () -> Unit) {
     val avatar: @Composable () -> Unit = {
+        var bmp by remember(profile.avatarUrl) { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+        LaunchedEffect(profile.avatarUrl) {
+            val url = profile.avatarUrl ?: return@LaunchedEffect
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching {
+                    val bytes = Api.bytes(url)
+                    if (bytes != null) {
+                        val skiaImg = org.jetbrains.skia.Image.makeFromEncoded(bytes)
+                        bmp = skiaImg.toComposeImageBitmap()
+                    }
+                }
+            }
+        }
+
         Box(
             Modifier.size(34.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Sm.accent, Color(0xFF6366F1))))
                 .border(1.dp, Color(0x33FFFFFF), CircleShape),
             contentAlignment = Alignment.Center
-        ) { Text(profile.name.take(1).uppercase(), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp) }
+        ) {
+            val b = bmp
+            if (b != null) {
+                androidx.compose.foundation.Image(b, null, Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+            } else {
+                Text(profile.name.take(1).uppercase(), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+            }
+        }
     }
     if (!expanded) {
         // Icons only: the avatar and a small exit button.

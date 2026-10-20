@@ -416,10 +416,34 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
 <div class="mascot-orbit" role="img" aria-label="Мультяшный суслик">🐿️</div></section>
 
   <section id="loginPanel" class="panel">
-    <h2>Войти</h2><p>Введите общий пароль доступа.</p>
+    <h2>Войти</h2><p>Войдите через Discord или по паролю доступа.</p>
+    <div id="discordLoginArea" class="discord-login-box">
+      <a href="/api/auth/discord/start" class="btn-discord" id="discordLoginBtn">
+        <svg class="discord-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
+          <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994.021-.041.001-.09-.041-.106a13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.929 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.894.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/>
+        </svg>
+        <span>Войти через Discord</span>
+      </a>
+      <div class="auth-divider"><span>или по паролю</span></div>
+    </div>
     <form id="loginForm"><label for="password">Пароль доступа</label><div class="row"><input id="password" type="password" autocomplete="current-password" required maxlength="256"><button type="submit">Войти</button></div></form>
     <div id="loginStatus" class="status" role="status"></div>
   </section>
+
+  <dialog id="deviceLinkModal" class="device-modal" style="background:#13151f;color:#e2e8f0;border:1px solid rgba(255,255,255,0.15);border-radius:16px;padding:24px;max-width:400px;width:90%;box-shadow:0 16px 40px rgba(0,0,0,0.6);">
+    <h3 style="margin-top:0;font-family:Unbounded,sans-serif;font-size:18px;">Связать устройство</h3>
+    <p style="color:#94a3b8;font-size:13.5px;line-height:1.4;">Введите 6-значный код с экрана ТВ или ПК-приложения для быстрой привязки к вашей библиотеке.</p>
+    <form id="deviceLinkForm">
+      <input id="deviceCodeInput" type="text" placeholder="A3F-821" maxlength="12" required style="font-size:22px;text-align:center;letter-spacing:4px;text-transform:uppercase;margin:12px 0;width:100%;box-sizing:border-box;padding:10px;border-radius:8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.2);color:#fff;">
+      <p id="deviceLinkWho" style="color:#94a3b8;font-size:13px;line-height:1.4;margin:0 0 10px;"></p>
+      <a id="deviceLinkDiscord" class="btn-discord" href="/api/auth/discord/start" hidden style="margin-bottom:12px;"><span>Войти через Discord</span></a>
+      <div id="deviceLinkStatus" class="status" style="margin-bottom:12px;" role="status"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;">
+        <button id="deviceLinkCancel" type="button" class="secondary">Отмена</button>
+        <button id="deviceLinkSubmit" type="submit">Подтвердить</button>
+      </div>
+    </form>
+  </dialog>
 
   <section id="appPanel" class="hidden">
     <aside class="app-sidebar">
@@ -440,10 +464,11 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
       </div>
       <div class="sidebar-profile">
         <div class="sidebar-profile-info">
-          <div class="profile-avatar">S</div>
+          <div id="profileAvatar" class="profile-avatar">S</div>
           <div class="profile-meta">
-            <strong>Suslik Media</strong>
-            <span class="profile-sub">AllDebrid подключён</span>
+            <strong id="profileName">Suslik Media</strong>
+            <span id="profileSub" class="profile-sub">AllDebrid подключён</span>
+            <button id="deviceLinkBtn" class="device-link-btn" type="button" title="Подключить Android TV или ПК">Связать устройство</button>
           </div>
         </div>
         <button id="logout" class="secondary btn-logout" type="button">Выйти</button>
@@ -673,17 +698,146 @@ function showApp(authenticated) { $("loginPanel").classList.toggle("hidden", aut
 // In the app (1.2+) the library is native: the hidden web copy is not loaded at all.
 function webLibraryNeeded(){ return !document.documentElement.classList.contains("suslik-native"); }
 async function checkSession() {
+  const params = new URLSearchParams(window.location.search);
+  const authError = params.get("auth_error");
+  if (authError && $("loginStatus")) {
+    $("loginStatus").textContent = authError;
+    $("loginStatus").className = "status error";
+  }
+
+  // Ссылка с экрана ТВ/ПК (/link?code=…): код помним и до входа, и после возврата из Discord
+  try { if (params.get("code")) sessionStorage.setItem("suslik.linkCode", params.get("code")); } catch {}
+  // После входа через Discord сервер вернёт сюда же (с префиксом /media/ и кодом устройства)
+  if ($("discordLoginBtn")) $("discordLoginBtn").href = discordStartUrl();
+
   try {
     const data = await api("/api/session");
+    sessionUser = data.authenticated ? data.user || null : null;
+    discordEnabled = Boolean(data.discord_enabled);
     showApp(data.authenticated);
-    if (data.authenticated && webLibraryNeeded()) {
-      loadLibrary();
-      const savedTab = (function(){ try { return sessionStorage.getItem("suslik.activeTab"); } catch { return null; } })() || "library";
-      setTab(savedTab);
+    if (!data.discord_enabled && $("discordLoginArea")) {
+      $("discordLoginArea").style.display = "none";
+    }
+    if (data.password_enabled === false) {
+      if ($("loginForm")) $("loginForm").style.display = "none";
+      const div = document.querySelector(".auth-divider");
+      if (div) div.style.display = "none";
+    }
+
+    if (data.authenticated) {
+      if (data.user) {
+        if ($("profileName")) $("profileName").textContent = data.user.name || data.user.username || "Пользователь";
+        if ($("profileSub")) $("profileSub").textContent = data.user.role === "admin" ? "Администратор" : "Участник";
+        if ($("profileAvatar")) {
+          if (data.user.avatar) {
+            // Имя из Discord — через свойства, не через разметку
+            const img = document.createElement("img");
+            img.src = data.user.avatar; img.alt = data.user.name || ""; img.className = "sidebar-user-avatar";
+            $("profileAvatar").replaceChildren(img);
+          } else {
+            $("profileAvatar").textContent = ((data.user.name || "S")[0] || "S").toUpperCase();
+          }
+        }
+      }
+
+      checkLinkIntent();
+
+      if (webLibraryNeeded()) {
+        loadLibrary();
+        const savedTab = (function(){ try { return sessionStorage.getItem("suslik.activeTab"); } catch { return null; } })() || "library";
+        setTab(savedTab);
+      }
     }
   } catch {
     showApp(false);
   }
+}
+
+let sessionUser = null;
+let discordEnabled = false;
+
+// Вход через Discord с возвратом на эту же страницу (без сообщения об ошибке прошлой попытки)
+function discordStartUrl() {
+  const p = new URLSearchParams(window.location.search);
+  p.delete("auth_error");
+  const q = p.toString();
+  return "/api/auth/discord/start?return=" + encodeURIComponent(window.location.pathname + (q ? "?" + q : ""));
+}
+
+// Кому достанется устройство: при входе по паролю — общему доступу, а не вашему Discord-профилю
+function updateLinkWho() {
+  const who = $("deviceLinkWho");
+  if (!who) return;
+  const shared = !sessionUser || sessionUser.id === "shared";
+  who.textContent = shared
+    ? "Вы вошли по паролю: устройство тоже войдёт по паролю, без вашего профиля Discord."
+    : `Устройство войдёт как ${sessionUser.name || sessionUser.username || "вы"}.`;
+  const btn = $("deviceLinkDiscord");
+  if (btn) {
+    btn.hidden = !(shared && discordEnabled);
+    btn.href = discordStartUrl();
+  }
+}
+
+function checkLinkIntent() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code") || sessionStorage.getItem("suslik.linkCode");
+    const isLinkTarget = window.location.pathname.endsWith("/link") || window.location.hash.startsWith("#link") || params.has("link") || Boolean(code);
+    if (params.get("code")) {
+      sessionStorage.setItem("suslik.linkCode", params.get("code"));
+    }
+    if (isLinkTarget && $("deviceLinkModal")) {
+      if (code && $("deviceCodeInput")) {
+        $("deviceCodeInput").value = code;
+      }
+      updateLinkWho();
+      if (!$("deviceLinkModal").open) {
+        $("deviceLinkModal").showModal();
+      }
+    }
+  } catch {}
+}
+
+if ($("deviceLinkBtn")) {
+  $("deviceLinkBtn").addEventListener("click", () => { updateLinkWho(); $("deviceLinkModal")?.showModal(); });
+}
+if ($("deviceLinkCancel")) {
+  $("deviceLinkCancel").addEventListener("click", () => {
+    $("deviceLinkModal")?.close();
+    sessionStorage.removeItem("suslik.linkCode");
+  });
+}
+if ($("deviceLinkForm")) {
+  $("deviceLinkForm").addEventListener("submit", async e => {
+    e.preventDefault();
+    const code = $("deviceCodeInput").value.trim();
+    if (!code) return;
+    $("deviceLinkStatus").textContent = "Проверка кода…";
+    $("deviceLinkStatus").className = "status";
+    try {
+      const res = await api("/api/auth/device/confirm", {
+        method: "POST",
+        body: JSON.stringify({ user_code: code })
+      });
+      $("deviceLinkStatus").textContent = res.message || "Устройство успешно связано!";
+      $("deviceLinkStatus").className = "status ok";
+      sessionStorage.removeItem("suslik.linkCode");
+      // Убираем /link?code=… из адреса: обновление страницы не откроет окно снова
+      try {
+        const home = window.location.pathname.replace(/\/link\/?$/, "/");
+        history.replaceState(null, "", home);
+      } catch {}
+      setTimeout(() => {
+        $("deviceLinkModal")?.close();
+        $("deviceCodeInput").value = "";
+        $("deviceLinkStatus").textContent = "";
+      }, 1500);
+    } catch (err) {
+      $("deviceLinkStatus").textContent = err.message;
+      $("deviceLinkStatus").className = "status error";
+    }
+  });
 }
 $("loginForm").addEventListener("submit", async e => {
   e.preventDefault(); $("loginStatus").textContent="Выполняется вход…"; $("loginStatus").className="status";
@@ -693,6 +847,7 @@ $("loginForm").addEventListener("submit", async e => {
     showApp(true);
     setTab("library");
     if(webLibraryNeeded()) loadLibrary();
+    checkLinkIntent();
   }
   catch(err) { $("loginStatus").textContent=err.message; $("loginStatus").className="status error"; }
 });

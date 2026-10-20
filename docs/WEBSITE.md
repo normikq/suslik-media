@@ -26,11 +26,12 @@ website/
 │   ├── app.js              Фабрика Express-приложения createApp(), middleware и сборка маршрутов
 │   ├── config.js           Конфигурация, переменные окружения (.env), пути к данным
 │   ├── middleware/         Промежуточные обработчики
-│   │   ├── auth.js         Сессии (FileSessionStore), requireLogin, deviceId, verifyPassword
+│   │   ├── auth.js         Сессии (FileSessionStore), resolveAuth (сессия или токен устройства), requireLogin, deviceId, verifyPassword
 │   │   ├── rate-limit.js   Ограничители частоты запросов (rate limiters)
 │   │   └── security.js     Заголовки безопасности (HSTS, CSP, X-Frame) и trust proxy
 │   ├── routes/             Маршруты API Express
-│   │   ├── auth.js         /api/login, /api/logout, /api/session, /api/status
+│   │   ├── auth.js         /api/login, /api/logout, /api/session, /api/status, вход через Discord, вход устройств по коду
+│   │   ├── rooms.js        /api/rooms — комнаты совместного просмотра и поток событий (SSE)
 │   │   ├── library.js      /api/library
 │   │   ├── favorites.js    /api/favorites
 │   │   ├── magnets.js      /api/magnets, /api/torrents, /api/unlock, файлы и отмена
@@ -40,6 +41,10 @@ website/
 │   │   └── media.js        /api/media-metadata, /api/poster, /api/poster/img
 │   ├── services/           Бизнес-логика подсистем
 │   │   ├── alldebrid.js    Клиент AllDebrid API, деревья файлов, кэш структуры
+│   │   ├── discord.js      OAuth2 Discord (обмен кода, профиль, отзыв токена), проверка участника и ролей ботом
+│   │   ├── users.js        Пользователи (users.json), токены устройств (devices.json, только хеши), коды связки
+│   │   ├── rooms.js        Комнаты совместного просмотра: состояние, участники, ожидание загрузки
+│   │   ├── shelf.js        Видимость раздач и права удаления (написано, к маршрутам ещё не подключено)
 │   │   ├── downloads.js    Лимиты (2 активных на IP), привязка раздач к владельцам
 │   │   ├── favorites.js    Управление избранным по устройствам (cookie sdev)
 │   │   ├── library.js      Сборка медиатеки AllDebrid, кэширование и инвалидация
@@ -66,7 +71,8 @@ website/
 ├── test/
 │   ├── classify.test.js    Модульные тесты классификатора раздач
 │   ├── poster-query.test.js Модульные тесты очистки названий для постеров
-│   └── modules.test.js     Модульные тесты хелперов, версий, зеркала и инициализации
+│   ├── modules.test.js     Модульные тесты хелперов, версий, зеркала и инициализации
+│   └── discord.test.js     Тесты входа через Discord, устройств и комнат
 ├── NGINX-MIRROR.md         Конфигурация nginx для X-Accel-Redirect зеркала
 ├── TORAPI.md               Документация по работе с API трекеров и Cloudflare bypass
 ├── UPDATES.md              Схема раздачи обновлений и переключения beta/stable каналов
@@ -81,9 +87,34 @@ website/
 Все API-эндпоинты начинаются с префикса `/api/`.
 
 ### 3.1. Аутентификация и сессии
-- `POST /api/login` — вход по общему паролю (`SITE_PASSWORD`). Устанавливает сессионную cookie с защитой от перебора (rate-limit по IP).
-- `POST /api/logout` — завершение текущей сессии, сброс cookie.
-- `GET /api/session` — проверка валидности текущей сессии и получение базового статуса.
+Вход двумя способами: через Discord (основной) и по общему паролю (запасной, выключается `PASSWORD_AUTH_ENABLED=false`).
+Каждый запрос проходит `resolveAuth`: сначала токен устройства (`X-Device-Token` или `Authorization: Bearer`), потом сессия.
+- `POST /api/login` — вход по общему паролю (`SITE_PASSWORD`, можно bcrypt-хеш). Сессия без пользователя: профиль `shared` с ролью admin.
+- `GET /api/auth/discord/start?return=<путь>` — начало входа через Discord (scope только `identify`). `return` — куда вернуть после входа
+  (только путь этого сайта; без него — страница из `Referer`, иначе главная с `SITE_PREFIX`). Одноразовый `state` — в сессии и запасной cookie.
+- `GET /api/auth/discord/callback` — обмен кода, профиль, **немедленный отзыв токена Discord**, проверка участника и ролей ботом,
+  новая сессия с `uid`. Отказ — страница «Доступ ограничен» со ссылкой на главную того же сайта (`/media/`).
+- `POST /api/auth/device` — код связки для ТВ/ПК (`user_code` вида `A3F-821`, 10 мин) и ссылка `…/link?code=…`.
+- `GET /api/auth/device/check`, `POST /api/auth/device/confirm` (нужен вход) — подтверждение кода на сайте.
+- `POST /api/auth/device/poll` — устройство забирает токен (`device_token`, хранится у устройства; на сервере только SHA-256) и профиль. 410 — код истёк.
+- `POST /api/logout` — конец сессии; если вошли по токену устройства — токен отзывается.
+- `GET /api/session` — `authenticated`, профиль `user` (`id`, `name`, `avatar`, `role`), `discord_enabled`, `password_enabled`,
+  `discord_client_id` (публичный ID приложения Discord — для активности в профиле на ПК).
+
+Роль пользователя перепроверяется ботом раз в 15 минут; без роли (`denied`) сессии и токены устройств перестают действовать.
+Сейчас роль `admin` сервер нигде не проверяет (`requireAdmin`, `shelf.js` не подключены) — см. `docs/DISCORD.md` §0.
+
+### 3.1.1. Совместный просмотр (`/api/rooms`)
+Комнаты живут в памяти сервера (перезапуск — комнаты пропадают). Транспорт — Server-Sent Events, а не WebSocket.
+- `POST /api/rooms` (`client_id`) — создать комнату; создатель — ведущий (`host_id`, при общем пароле — его устройство `host_client_id`).
+- `GET /api/rooms/:id` — состояние; `POST /api/rooms/:id/join` — «кто я» (в список участников попадают с открытием потока).
+- `GET /api/rooms/:id/events?client_id=…` — поток событий (`init`, `state_changed`, `member_joined`, `member_left`), `X-Accel-Buffering: no`.
+  Участник — это открытый поток: закрылся последний поток устройства — его нет в комнате.
+- `POST /api/rooms/:id/leave` — выйти сразу.
+- `POST /api/rooms/:id/action` — `change_file`, `play`, `pause`, `seek`, `rate` — **только ведущий**; `buffering` — любой участник.
+
+Состояние: `playing`, `pos` в момент `anchor_server_ms`, `rate`, `seq`, `waiting`. Пока у кого-то `buffering` (не дольше 30 с), комната
+ждёт (`waiting`, время стоит); все готовы — идёт дальше с того же места. Никого не осталось — пауза.
 
 ### 3.2. Медиатека (AllDebrid Library)
 - `GET /api/library` — получение списка всех magnet-раздач пользователя. Сервер запрашивает статус в AllDebrid, кэширует его и отдаёт клиентам в оптимизированном формате.
@@ -188,7 +219,9 @@ website/
 ## 6. Хранение данных на сервере
 
 Сервер не требует внешней базы данных (PostgreSQL/MongoDB) и использует плоские JSON-файлы с атомарной записью в каталоге `DATA_DIR` (по умолчанию `website/data/`):
-- `sessions.json` — активные пользовательские сессии.
+- `sessions.json` — активные пользовательские сессии (30 дней, продлеваются при заходе).
+- `users.json` — пользователи Discord: ID, ник, имя, ссылка на аватар, роль, даты. Токенов Discord нет.
+- `devices.json` — привязанные устройства: **хеш** токена → пользователь, имя устройства, даты.
 - `owners.json` — привязка добавленных раздач к уникальным идентификаторам устройств (`sdev` cookie).
 - `library-cache.json` — кэшированный список раздач AllDebrid для снижения частоты запросов к внешнему API.
 - `poster-cache/` — локальные изображения постеров фильмов.
@@ -211,6 +244,13 @@ website/
 | `FLARESOLVERR_URL` | URL локального FlareSolverr для обхода Cloudflare трекеров |
 | `PROWLARR_URL` / `KEY` | Интеграция с локальным сервером Prowlarr |
 | `COOKIE_SECURE` | Устанавливать в `true` при работе за HTTPS-прокси |
+| `PASSWORD_AUTH_ENABLED` | `false` — вход только через Discord (по умолчанию пароль тоже работает) |
+| `SITE_PREFIX` | Путь сайта за nginx, например `/media` (ссылки после входа и для устройств) |
+| `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` | Приложение Discord (OAuth2); без них вход через Discord выключен |
+| `DISCORD_BOT_TOKEN` / `DISCORD_GUILD_ID` | Бот и сервер Discord: проверка участника и ролей. **Без них и без белого списка пускают любого** |
+| `DISCORD_ROLE_ALLOW` / `DISCORD_ROLE_ADMIN` | ID ролей (через запятую): кого пускать / кто админ |
+| `DISCORD_ALLOWED_USERS` / `DISCORD_OWNER_ID` | Белый список ID; владелец — всегда админ, бот для него не нужен |
+| `DISCORD_REDIRECT_URI` | Адрес возврата, если не совпадает с `https://<домен>/api/auth/discord/callback` |
 | `TRUST_PROXY` | Устанавливать в `true` при работе за nginx |
 
 ---

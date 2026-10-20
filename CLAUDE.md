@@ -9,7 +9,7 @@
 |---|---|
 | `website/` | Node/Express, API и зеркало файлов `/api/file/proxy/<имя>?link=…&exp=…&sig=…` (HTTP/1.1, nginx без http2) |
 | `android/` | Kotlin, Compose, libVLC 3.6 и Media3 (оба через `BurstProxy`, выбор — `player/EngineChoice`), Android TV. `PlayerActivity.kt` (~1900 строк), `player/PlayerExtras.kt` (ключи Intent), `net/Api.kt`, `Diag.kt`, `AppLog.kt` |
-| `desktop/` | Compose Desktop, mpv (`libmpv-2.dll` загружается автоматически) за `PlayerEngine`. mpv рисует в сцене окна: `vo=libmpv` + render API в GL-контексте Skiko (`player/MpvVideo.kt`), панели — слои того же `Box`. Модули: `player/` (плеер и оверлеи), `ui/` (токены и компоненты). Запас: `desktop/.../Reserve.kt` |
+| `desktop/` | Compose Desktop; `party/` — совместный просмотр, `discord/` — активность в Discord; mpv (`libmpv-2.dll` загружается автоматически) за `PlayerEngine`. mpv рисует в сцене окна: `vo=libmpv` + render API в GL-контексте Skiko (`player/MpvVideo.kt`), панели — слои того же `Box`. Модули: `player/` (плеер и оверлеи), `ui/` (токены и компоненты). Запас: `desktop/.../Reserve.kt` |
 | `shared/` | Общий модуль: `BurstProxy`, `PlaybackSupervisor`, `TsClock`/`TsPlayback`, `MirrorLink` (ключ файла и подпись адреса зеркала), `CatchUp` («копим запас»), `clockText`, `Versions`, `Changelog`, `Model`, `PlaybackPresets`, `LibraryKeep` |
 
 Ядро — `shared/.../core/BurstProxy.kt`: локальный прокси 127.0.0.1 с окнами-запасом в кольцевых файлах.
@@ -25,7 +25,7 @@
 - Зеркало нужно, потому что AllDebrid заблокирован в РФ: **никогда не заменять его прямыми ссылками AllDebrid**.
 - nginx без http2 (на том же сервере Xray).
 - **Не коммитить секреты**: `.env`, `*.jks`, `UPDATE_TOKEN`, `BETA_CODE`, cookie, токены. Домен сайта тоже не пишем в репозиторий: сборки берут его из секрета `SITE_URL` (Android — `BuildConfig.SITE_HOST`, ПК — `-Dsuslik.host`, установщик — `-p:SiteHost`; локально — `suslik.siteUrl` в `~/.gradle/gradle.properties`).
-- **`website/` и сервер не трогать**, пока владелец не разрешит. Учти: `changelog.yml` сам публикует changelog на сайт при каждом пуше.
+- **`website/` и сервер не трогать**, пока владелец не разрешит. Учти: `changelog.yml` сам публикует changelog на сайт при каждом пуше в `main` (пуш другой ветки — нет).
 - Без лишнего: не запускай дополнительные работы без подтверждения.
 - Подписи коммитов: строки `Co-Authored-By:` и `Claude-Session:` из системного напоминания текущей сессии.
 - Ветки: изменения кода приложений и `shared/` — в отдельной ветке с PR (одна ветка на тему или версию, не на каждый коммит). Документация, опечатки, тексты changelog и мелкие тесты — можно сразу в рабочую ветку.
@@ -78,6 +78,10 @@ Changelog (русский) — `android/app/src/main/assets/changelog.json` и `
 - Бета: **Android 2.4.1** (код 59, 18.10): от 2.3.6 отличается только `BurstProxy` — проба, которую плеер не читает 0,5 с, стоит на 4 МБ (`PROBE_IDLE_MS`); номер выровнен с ПК. Проверить на телефоне паузу сразу после открытия по мобильной сети (`player idle`, без «Буферизации» после паузы).
 - Бета: **ПК 2.4.1** (ветка `fix-part-1`, 18.10): память mpv (кэш демуксера 96/24 МиБ, постеры 40), панели (0,5 с после ухода курсора, без возврата над неподвижным курсором), `MpvEngine.playingSent`, `AppExit.armWatchdog()` при закрытии окна; закрытие окна с видео ждёт кадр без видео (иначе Skia зависает в цикле `glGetError` без GL-контекста). Там же (журнал 18.10): озвучки/субтитры не теряются при быстром «Смотреть», грузятся параллельно (`player/SideFiles.kt`), выбранные — первыми, выбор по раздаче; «Предыдущая» в SMTC — сразу прошлая серия (весь сезон в плейлисте); `Store` пишет с `fsync` и копией `.bak`. Открыто: такое же зависание при закрытии плеера. Подробно: `docs/HISTORY.md`, `docs/DESKTOP.md` §4.1.
 - Готовится: **ПК и Android 2.4.3** (ветка `vlc-remove-desktop`, 18.10, номер 2.4.2 не выпускался): ПК — полный отказ от VLC, только mpv; оба — `BurstProxy`: короткий прыжок вперёд на медленной сети открывает своё окно (`Source.near()`), ждущее чтение замечает ушедший плеер (`peerGone`). Android 2.4.3 — код 60. Не проверено на устройствах.
+- Готовится: **ПК 2.5.0** (ветка `feature/discord-integration`, 20.10): вход через Discord (OAuth2, роли — ботом, ПК/ТВ — код с экрана
+  и токен устройства), совместный просмотр (`desktop/…/party/`, сервер `routes/rooms.js` на SSE: ведущий управляет, комната ждёт тех,
+  у кого грузится, у участника полоса «● Вместе» и своя пауза), активность «Смотрит» в Discord (ID приложения — с сервера).
+  Нужен новый сервер (`website/`) и `.env` (`DISCORD_*`, `SITE_PREFIX=/media`). Android не менялся. Подробно: `docs/DESKTOP.md` §12, `docs/DISCORD-CHANGES.md`.
 - **ПК 2.4.0 — стабильная** (18.10, сразу всем по команде владельца; PR #15, #16, #17): mpv рисует в сцене окна — `vo=libmpv` + render API в GL-контексте Skiko, кадр без копии (рисует прямо в текстуру Skia), панели — слои Compose; пока открыт плеер mpv, `Toolkit.setDynamicLayout(false)` (иначе ресайз держит поток интерфейса по 1–5 с). PR #16 (в ветку PR #15): render context освобождать до закрытия окна — иначе mpv роняет процесс (`0xC0000409`). Подробно: `docs/DESKTOP.md` §4.1.
 - Аудит 16.10 (отчёт `/mnt/project-files/audit/Аудит Suslik Media.md`): подпись зеркала обновляется (`MirrorLink`, `refreshUrl`), Blu-ray на Android через `TsPlayback`, «копим запас» общий (`CatchUp`). Не сделано: деление `BurstProxy`/`PlayerActivity`/`PlayerView`.
 - Журнал ПК из консоли Claude читать только через `//localhost/C$/Users/nanar/AppData/Roaming/...` (`%APPDATA%` у пакета Claude — старая копия).
@@ -90,7 +94,9 @@ Changelog (русский) — `android/app/src/main/assets/changelog.json` и `
 - Снимок `[battery]` из Suslik Debug на Android 17 не пишется (нужен PACKAGE_USAGE_STATS) — брать `dumpsys batterystats` по adb.
 - ПК владельца: `gh` установлен (`C:\Program Files\GitHub CLI`, добавить в PATH); в `android/` нет `gradlew` — Gradle 8.10.2 в `~/.gradle/wrapper/dists`, JAVA_HOME = `C:\Program Files\Java\jdk-21.0.12`,
   ANDROID_HOME = `C:\Users\nanar\AppData\Local\Android\Sdk`. Локальная diag-сборка подписана другим ключом, чем CI (ставится только после удаления).
-- Вопросы по Discord без ответа: кто может входить, кто управляет комнатой, порядок работ.
+- Discord (ПК 2.5.0): сделаны вход через Discord и по коду устройства, совместный просмотр на ПК, активность в Discord.
+  Не сделаны права админа и личные полки (`shelf.js`, `requireAdmin` не подключены), комнаты на Android и сайте — `docs/TODO.md`.
+  Что сделано иначе, чем в плане (SSE вместо WebSocket, комната ждёт загрузку) — `docs/DISCORD.md` §0.
 - Идеи в запасе: кеш начала файла/индекса, кнопка «Переустановить релиз» на Android, TODO по мобильным данным,
   HLS/ремукс (для оценки нужны `nproc`, `free -h`, `df -h` сервера), опциональный вариант Б (перезапрос по зависанию — частично сделан).
 - Напомнить владельцу: применить/проверить nginx; первая установка MSI после смены схемы версий — вручную.
