@@ -558,6 +558,9 @@ fun PlayerView(
             pendingSeekByTarget = null
             PlayerLog.write("seek to ${target / 1000}s")
             bufferingShown = 0
+            // The aim again: in the 250 ms the clock of mpv wrote the old place into [time], and the room saw a seek
+            // mark without a jump — the seek was not sent, the room pulled the host back (journal 20.10, 21:17:04)
+            time = target; lastGood = target
             lastSeekAt = System.currentTimeMillis()
             supRef.get()?.seeked()
             seekTo(target)
@@ -862,7 +865,7 @@ fun PlayerView(
                 if (!started && currTime > 0) {
                     evPlayingNow()
                 }
-                if (seeking == null && System.currentTimeMillis() - lastSeekAt > 600 && (kotlin.math.abs(currTime - time) >= 250 || currTime < time)) time = currTime
+                if (seeking == null && pendingSeekByTarget == null && System.currentTimeMillis() - lastSeekAt > 600 && (kotlin.math.abs(currTime - time) >= 250 || currTime < time)) time = currTime
                 lastGood = currTime
                 if (currTime / 10_000 != (currTime - 300) / 10_000) savePos(currTime, length)
             }
