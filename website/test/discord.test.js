@@ -381,3 +381,15 @@ test("shelf («Мои фильмы»): personal, starts from own torrents and fa
   users.adoptDevice(devA, u.id);
   assert.deepEqual([...shelfOf(req(u, devA))].sort(), ["301", "302"]);
 });
+
+test("shelf: whatever is added (magnet, torrent, search) lands in «Мои фильмы» of the one who added it", () => {
+  const { reserveDownloadSlot } = require("../src/services/downloads");
+  const { shelfOf } = require("../src/services/shelf");
+  const users = require("../src/services/users");
+  const u = users.findOrCreateUser({ id: "6161", username: "adder" }, "allow");
+  const req = { user: u, headers: { cookie: "" }, ip: "3.3.3.3", socket: {} };
+  const res = { status() { return this; }, json() {}, cookie() {} };
+  const slot = reserveDownloadSlot(req, res);
+  slot.attach(401, true);
+  assert.equal(shelfOf(req).has("401"), true);
+});

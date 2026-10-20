@@ -127,6 +127,9 @@ function reserveDownloadSlot(req, res) {
       completed = true;
       state.pending = Math.max(0, state.pending - 1);
       recordOwner(id, dev, ip);
+      // Добавленное попадает и в общую библиотеку, и в «Мои фильмы» — любым путём: magnet, torrent, поиск.
+      // (require внутри: shelf сам зависит от этого модуля)
+      if (id !== undefined && id !== null) require("./shelf").setOnShelf(dev, id, true);
       libraryChangedHook(); // a library answer already on its way does not know this torrent: it must not free the slot
       if (!ready && id !== undefined && id !== null) {
         const key = String(id);
