@@ -82,8 +82,11 @@ Changelog (русский) — `android/app/src/main/assets/changelog.json` и `
   и токен устройства), совместный просмотр (`desktop/…/party/`, сервер `routes/rooms.js` на SSE: ведущий управляет, комната ждёт тех,
   у кого грузится, у участника полоса «● Вместе», своя пауза и подсказки о действиях ведущего), активность «Смотрит» в Discord (ID приложения — с сервера).
   «Мои фильмы» вместо «Избранного» (`services/shelf.js`, `/api/shelf`, флаг `mine`); готовые фильмы удаляет только админ; автоочистка `services/cleanup.js` (`AUTO_CLEAN=false` выключает).
-  Логика комнат и входа — в `shared/` (`party/PartyProtocol`, `PartySyncEngine`, `auth/Auth.kt`), ПК на ней; Android ещё не подключён (шаги — `docs/TODO.md`).
-  Android не менялся. Подробно: `docs/DESKTOP.md` §12, `docs/DISCORD-CHANGES.md`.
+  Логика комнат и входа — в `shared/` (`party/PartyProtocol`, `PartySyncEngine`, `auth/Auth.kt`), ПК и Android на ней.
+  Подробно: `docs/DESKTOP.md` §12, `docs/DISCORD-CHANGES.md`.
+- Готовится: **Android 2.5.0** (код 62, та же ветка, 20.10; поверх 2.4.4 «новый дизайн»): то же на общем ядре — вход через Discord по коду
+  (ТВ — ссылка и код для телефона), вкладки «Мои» и «Вместе» (`party/Party.kt`, `library/TogetherScreen.kt`), плеер идёт за комнатой
+  (`player/PlayerPartySync.kt`, полоса «● Вместе» у гостя). Компилируется локально, на устройствах не проверено. Подробно: `docs/ANDROID.md` §6а, `docs/TODO.md`.
 - **ПК 2.4.0 — стабильная** (18.10, сразу всем по команде владельца; PR #15, #16, #17): mpv рисует в сцене окна — `vo=libmpv` + render API в GL-контексте Skiko, кадр без копии (рисует прямо в текстуру Skia), панели — слои Compose; пока открыт плеер mpv, `Toolkit.setDynamicLayout(false)` (иначе ресайз держит поток интерфейса по 1–5 с). PR #16 (в ветку PR #15): render context освобождать до закрытия окна — иначе mpv роняет процесс (`0xC0000409`). Подробно: `docs/DESKTOP.md` §4.1.
 - Аудит 16.10 (отчёт `/mnt/project-files/audit/Аудит Suslik Media.md`): подпись зеркала обновляется (`MirrorLink`, `refreshUrl`), Blu-ray на Android через `TsPlayback`, «копим запас» общий (`CatchUp`). Не сделано: деление `BurstProxy`/`PlayerActivity`/`PlayerView`.
 - Журнал ПК из консоли Claude читать только через `//localhost/C$/Users/nanar/AppData/Roaming/...` (`%APPDATA%` у пакета Claude — старая копия).
@@ -97,7 +100,7 @@ Changelog (русский) — `android/app/src/main/assets/changelog.json` и `
 - ПК владельца: `gh` установлен (`C:\Program Files\GitHub CLI`, добавить в PATH); в `android/` нет `gradlew` — Gradle 8.10.2 в `~/.gradle/wrapper/dists`, JAVA_HOME = `C:\Program Files\Java\jdk-21.0.12`,
   ANDROID_HOME = `C:\Users\nanar\AppData\Local\Android\Sdk`. Локальная diag-сборка подписана другим ключом, чем CI (ставится только после удаления).
 - Discord (ПК 2.5.0): сделаны вход через Discord и по коду устройства, совместный просмотр на ПК, активность в Discord.
-  Не сделаны: `requireAdmin`, «Мои фильмы» на сайте и Android (сервер готов), комнаты на Android и сайте — `docs/TODO.md`.
+  Не сделаны: `requireAdmin`, «Мои фильмы» и комнаты на сайте (Android — 2.5.0) — `docs/TODO.md`.
   Что сделано иначе, чем в плане (SSE вместо WebSocket, комната ждёт загрузку) — `docs/DISCORD.md` §0.
 - Идеи в запасе: кеш начала файла/индекса, кнопка «Переустановить релиз» на Android, TODO по мобильным данным,
   HLS/ремукс (для оценки нужны `nproc`, `free -h`, `df -h` сервера), опциональный вариант Б (перезапрос по зависанию — частично сделан).

@@ -372,6 +372,7 @@ class Media3Engine(private val context: Context) : PlayerEngine {
     override val lengthMs: Long get() = exo?.duration?.takeIf { it != C.TIME_UNSET && it > 0L } ?: 0L
     override val fraction: Float get() = lengthMs.let { d -> if (d > 0L) timeMs.toFloat() / d else -1f }
     override val rate: Float get() = exo?.playbackParameters?.speed ?: 1f
+    override fun setRate(rate: Float) { exo?.setPlaybackSpeed(rate) }
     override val volume: Int get() = ((exo?.volume ?: 0f) * 100).toInt()
     /**
      * A far jump lands on the nearest keyframe: an exact one first fetched and decoded the film from the keyframe before

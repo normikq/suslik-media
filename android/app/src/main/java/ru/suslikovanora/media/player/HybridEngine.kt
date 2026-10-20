@@ -81,6 +81,7 @@ class HybridEngine(private val context: Context) : PlayerEngine {
     override val lengthMs: Long get() = active.lengthMs
     override val fraction: Float get() = active.fraction
     override val rate: Float get() = active.rate
+    override fun setRate(rate: Float) = active.setRate(rate)
     override val volume: Int get() = active.volume
     override fun seekTo(ms: Long) = active.seekTo(ms)
     override fun seekToFraction(fraction: Float) = active.seekToFraction(fraction)

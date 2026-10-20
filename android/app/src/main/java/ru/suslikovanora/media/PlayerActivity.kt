@@ -15,6 +15,8 @@ import ru.suslikovanora.media.player.PlayerGestures
 import ru.suslikovanora.media.player.PlayerNetworkMonitor
 import ru.suslikovanora.media.player.PlayerPipController
 import ru.suslikovanora.media.player.PlayerOverlay
+import ru.suslikovanora.media.player.PlayerPartySync
+import ru.suslikovanora.media.party.Party
 import ru.suslikovanora.media.player.PlayerPlaylistQueue
 import ru.suslikovanora.media.player.PlayerTrackSelector
 import ru.suslikovanora.media.player.PlayerUiState
@@ -300,7 +302,8 @@ class PlayerActivity : ComponentActivity() {
             if (length > 0L && pos >= length - 5_000L) {
                 supervisor.ended()
                 persistPosition(length, length) // watched to the end
-                if (!offerNextEpisode()) {
+                // A guest of the room does not go on by itself: the host's next episode comes through the room
+                if (partyGuest() || !offerNextEpisode()) {
                     ended = true
                     playWhenReady = false
                     playbackPosition = 0L
@@ -399,14 +402,14 @@ class PlayerActivity : ComponentActivity() {
 
     private val audioSession by lazy {
         PlayerAudioSession(this, object : PlayerAudioSession.Callback {
-            override fun onMediaPlay() { doPlay() }
+            override fun onMediaPlay() { userPlay() }
             override fun onMediaPause() { doPause() }
-            override fun onSeekTo(pos: Long) { seekTo(pos) }
+            override fun onSeekTo(pos: Long) { if (!guestBlocks("seek")) seekTo(pos) }
             override fun onSkipToNext() {
-                if (playlistQueue.hasNext) playlistQueue.playNext() else tapSeek(true)
+                if (playlistQueue.hasNext) userNext() else tapSeek(true)
             }
             override fun onSkipToPrevious() {
-                if (playlistQueue.hasPrevious) playlistQueue.playPrevious() else tapSeek(false)
+                if (playlistQueue.hasPrevious) userPrevious() else tapSeek(false)
             }
             override fun onFastForward() { tapSeek(true) }
             override fun onRewind() { tapSeek(false) }
@@ -623,6 +626,52 @@ class PlayerActivity : ComponentActivity() {
         })
     }
 
+    // ---- shared viewing: the room's film plays here in step with the others (PlayerPartySync, core PartySyncEngine) ----
+    private var seekStamp = 0L // every seek (the user's or the room's) changes it: the room tells its own from the user's
+
+    private val syncPlayer = object : ru.suslikovanora.media.core.party.SyncPlayer {
+        override val timeMs: Long get() = perceivedPosition()
+        override val busy: Boolean get() = userSeeking || tapSeekTarget != null
+        override val engineMs: Long get() = player?.let { timeOf(it) } ?: 0L
+        override val seekStamp: Long get() = this@PlayerActivity.seekStamp
+        override val paused: Boolean get() = userPaused || ended
+        override val running: Boolean get() = player?.isPlaying == true && !buffering
+        override val userRate: Float get() = 1f
+        override fun applyPaused(paused: Boolean) { if (paused) doPause() else doPlay() }
+        override fun seekTo(ms: Long) = this@PlayerActivity.seekTo(ms)
+        override fun setRate(rate: Float) { runCatching { player?.setRate(rate) } }
+    }
+
+    private val partySync: PlayerPartySync by lazy {
+        PlayerPartySync(handler, object : PlayerPartySync.Callback {
+            override fun watchKey(): String? = watchProgress.currentWatchKey()
+            override fun keys(): List<String> = watchProgress.keys
+            override fun title(): String = currentTitle
+            override fun ready(): Boolean = alive && !leaving && !keptOnStop && player != null && sideJob?.isActive != true
+            override fun canPlayIndex(): Boolean = playlistQueue.size > 0
+            override fun playIndex(i: Int) { if (i != playlistQueue.currentIndex) playlistQueue.playEntry(i) }
+            override fun notice(text: String) = showSeekLabel(text)
+            override fun onTick() { ui.live = partyGuest() }
+        })
+    }
+
+    /** A guest of the room watching its film: pause / play, seeking and episodes are the host's. */
+    private fun partyGuest(): Boolean = Party.isGuest && Party.file?.key == watchProgress.currentWatchKey()
+    /** The host holds the pause (or the room waits for someone loading): a guest cannot lift it. */
+    private fun partyPlayLocked(): Boolean = partyGuest() && Party.state.let { !it.playing || it.waiting }
+    private fun guestBlocks(what: String): Boolean {
+        if (!partyGuest()) return false
+        showSeekLabel(when (what) {
+            "seek" -> tr("party.peremativaet_sozdatel")
+            "episode" -> tr("party.seriyu_vybiraet_sozdatel")
+            else -> tr("party.pauzu_snimaet_sozdatel")
+        })
+        return true
+    }
+    private fun userPlay() { if (!(partyPlayLocked() && guestBlocks("play"))) doPlay() }
+    private fun userNext() { if (!guestBlocks("episode")) playlistQueue.playNext() }
+    private fun userPrevious() { if (!guestBlocks("episode")) playlistQueue.playPrevious() }
+
     private fun hideNextCard() = playlistQueue.hideNextCard()
     private fun offerNextEpisode(): Boolean = playlistQueue.offerNextEpisode()
     private fun fetchPlaylist(url: String) = playlistQueue.fetchPlaylist(url)
@@ -709,12 +758,11 @@ class PlayerActivity : ComponentActivity() {
         ui.onSeekTo = { t ->
             userSeeking = false
             gestures.resetTapState()
-            ui.time = t
-            seekTo(t)
+            if (!guestBlocks("seek")) { ui.time = t; seekTo(t) }
             showControlsTemporarily()
         }
-        ui.onPrev = { playlistQueue.playPrevious() }
-        ui.onNext = { playlistQueue.playNext() }
+        ui.onPrev = { userPrevious() }
+        ui.onNext = { userNext() }
         ui.onFull = { toggleFullscreen() }
         ui.onLock = { ui.picker = null; lockScreen() }
         ui.onMark = {
@@ -729,7 +777,7 @@ class PlayerActivity : ComponentActivity() {
         }
         ui.onScale = { i -> setScale(i); showControlsTemporarily() }
         ui.onVolume = { v -> setSystemVolume(v); ui.volume = v; controlsOverlay.keepShown() }
-        ui.onNextNow = { playlistQueue.hideNextCard(); playlistQueue.playNext() }
+        ui.onNextNow = { playlistQueue.hideNextCard(); userNext() }
         ui.onNextCancel = { playlistQueue.hideNextCard(); showControlsTemporarily() }
         ui.onPoke = { controlsOverlay.keepShown() }
         overlay = androidx.compose.ui.platform.ComposeView(this).apply {
@@ -746,7 +794,7 @@ class PlayerActivity : ComponentActivity() {
         panel.onScale = { cycleScale() }
         panel.onFull = { toggleFullscreen() }
         panel.onLock = { lockScreen() }
-        panel.onEpisode = { i -> if (i != playlistQueue.currentIndex) playlistQueue.playEntry(i) }
+        panel.onEpisode = { i -> if (i != playlistQueue.currentIndex && !guestBlocks("episode")) playlistQueue.playEntry(i) }
         root.addOnLayoutChangeListener { _, l, _, r, _, ol, _, or_, _ -> if (r - l != or_ - ol) root.post { applyMode() } }
         // The film's area changed size (small player ⇄ full screen, rotation): VLC must re-measure its picture for it,
         // otherwise it keeps the old (bigger) size and the picture spills past the area and is cut off.
@@ -790,6 +838,7 @@ class PlayerActivity : ComponentActivity() {
             override fun getStageHeight(): Float = stage.height.toFloat()
             override fun isSeekable(): Boolean {
                 val p = player ?: return false
+                if (partyGuest()) return false // a guest's swipe does not seek: the host seeks for the room
                 return lengthOf(p) > 0L || p.isSeekable
             }
             override fun getMediaLength(): Long = lengthOf(player)
@@ -823,6 +872,7 @@ class PlayerActivity : ComponentActivity() {
         pipController.setup()
         showControlsTemporarily()
         intent.getStringExtra(EXTRA_PLAYLIST)?.takeIf { it.isNotBlank() }?.let { fetchPlaylist(it) }
+        partySync.start(syncPlayer)
     }
 
 
@@ -1008,6 +1058,7 @@ class PlayerActivity : ComponentActivity() {
     /** Double-tap / repeated tap: accumulates ±10 s steps, applies one real seek after a short pause. */
     private fun tapSeek(forward: Boolean) {
         val p = player ?: return
+        if (guestBlocks("seek")) return
         if (!p.isSeekable && lengthOf(p) <= 0L && !hasSeekedOk) {
             showSeekLabel(tr("player.peremotka_nedostupna_dlya_etog"))
             return
@@ -1038,6 +1089,7 @@ class PlayerActivity : ComponentActivity() {
      */
     private fun seekTo(target: Long) {
         val p = player ?: return
+        seekStamp++
         gestures.resetTapState()
         supervisor.seeked(); AppLog.write("seek to ${target / 1000}s")
         if (catchingUp) endCatchUp() // a jump: the gathered reserve belongs to the old place
@@ -1204,7 +1256,7 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun togglePlay() {
-        if (player?.isPlaying == true && !needsReload) doPause() else doPlay()
+        if (player?.isPlaying == true && !needsReload) doPause() else userPlay()
         showControlsTemporarily()
     }
 
@@ -1604,6 +1656,7 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun keepOnStop(p: PlayerEngine) {
+        partySync.hostAway(perceivedPosition())
         stoppedAt = SystemClock.elapsedRealtime()
         networkAtStop = networkMonitor.activeNetwork()
         endCatchUp()
@@ -1678,11 +1731,11 @@ class PlayerActivity : ComponentActivity() {
         val first = e.repeatCount == 0
         when (code) {
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_HEADSETHOOK -> { if (first) togglePlay(); return true }
-            KeyEvent.KEYCODE_MEDIA_PLAY -> { if (first) { doPlay(); showControlsTemporarily() }; return true }
+            KeyEvent.KEYCODE_MEDIA_PLAY -> { if (first) { userPlay(); showControlsTemporarily() }; return true }
             KeyEvent.KEYCODE_MEDIA_PAUSE -> { if (first) { doPause(); showControlsTemporarily() }; return true }
             KeyEvent.KEYCODE_MEDIA_FAST_FORWARD, KeyEvent.KEYCODE_MEDIA_REWIND -> { tapSeek(code == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD); return true }
-            KeyEvent.KEYCODE_MEDIA_NEXT -> { if (first) playlistQueue.playNext(); return true }
-            KeyEvent.KEYCODE_MEDIA_PREVIOUS -> { if (first) playlistQueue.playPrevious(); return true }
+            KeyEvent.KEYCODE_MEDIA_NEXT -> { if (first) userNext(); return true }
+            KeyEvent.KEYCODE_MEDIA_PREVIOUS -> { if (first) userPrevious(); return true }
         }
         if (locked) return false
         val center = code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER
@@ -1744,6 +1797,7 @@ class PlayerActivity : ComponentActivity() {
         orientationWatch?.disable(); orientationWatch = null
         CrashReports.playerRunning(this, false)
         supervisor.closed()
+        partySync.stop()
         handler.removeCallbacksAndMessages(null)
         if (keptOnStop) { keptOnStop = false; releasePlayer() }
         if (isFinishing) BurstProxy.clear() // the film's cached part is no longer needed
