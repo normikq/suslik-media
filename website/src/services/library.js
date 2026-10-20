@@ -82,7 +82,11 @@ async function buildLibrary(gen = libraryGen) {
   // stopped asking for their status long ago: closed, or the PC gives up after ~30 minutes).
   // Not from an answer asked for before a change: a torrent added meanwhile is missing from it.
   const states = new Map(normalized.map(m => [String(m.id), m.statusCode]));
-  if (gen === libraryGen) cleanupFinishedDownloads(states);
+  if (gen === libraryGen) {
+    cleanupFinishedDownloads(states);
+    // Автоочистка (не чаще раза в час) — в фоне: ответ библиотеки её не ждёт, следующий уже без удалённых
+    require("./cleanup").maybeSweep(normalized, libraryChanged).catch(err => console.warn("[cleanup]", err.message));
+  }
 
   return { ok: true, total: normalized.length, magnets: normalized };
 }

@@ -17,6 +17,7 @@ const {
   handleMirrorAccel,
   handleMirrorStream
 } = require("../services/mirror");
+const { markOpened, markLinkOpened } = require("../services/cleanup");
 
 const router = express.Router();
 
@@ -30,6 +31,7 @@ router.post("/api/file/unlock", requireLogin, apiLimiter, async (req, res) => {
   if (!parsed || !["alldebrid.com", "www.alldebrid.com"].includes(parsed.hostname.toLowerCase()) || !parsed.pathname.startsWith("/f/")) {
     return res.status(400).json({ error: "Некорректная ссылка на файл AllDebrid." });
   }
+  markLinkOpened(parsed.toString()); // фильм открыли: автоочистка его не тронет ещё 10 дней
   try {
     const response = await axios.post(
       `${config.ALLDEBRID_API_BASE}/v4/link/unlock`,
@@ -69,6 +71,7 @@ router.get("/api/file/mirror-url", requireLogin, mirrorUrlLimiter, (req, res) =>
   const parsed = safeHttpsUrl(typeof req.query.link === "string" ? req.query.link.trim() : "");
   if (!isAllDebridFileLink(parsed)) return res.status(400).json({ error: "Некорректная ссылка на файл AllDebrid." });
   const link = parsed.toString();
+  markLinkOpened(link);
   const name = cleanFileName(typeof req.query.name === "string" ? req.query.name.split(/[\\/]/).pop() : "");
   const expires = String(Math.floor(Date.now() / 1000) + config.MIRROR_TTL);
   res.setHeader("Cache-Control", "no-store");
@@ -95,6 +98,7 @@ router.post("/api/playlist", requireLogin, apiLimiter, async (req, res) => {
         return res.status(409).json({ error: "Медиатека изменилась. Нажмите «Обновить» и повторите." });
       }
     }
+    markOpened(magnetId);
     const idxStr = items.map(i => i.index).join(".");
     const expires = String(Math.floor(Date.now() / 1000) + config.MIRROR_TTL);
     const title = cleanFileName(typeof req.body?.title === "string" ? req.body.title : "") || "playlist";

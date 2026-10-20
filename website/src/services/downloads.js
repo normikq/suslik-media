@@ -45,20 +45,28 @@ function recordOwner(id, dev, ip) {
   persistOwners();
 }
 
+function isLibraryAdmin(req) {
+  // Админ Discord. Не «shared»: у общего пароля тоже role "admin", но это все сразу
+  return Boolean(req.user && req.user.role === "admin" && req.user.id !== "shared");
+}
+
+// Кто может убрать раздачу из AllDebrid (у всех): готовую — только админ (остальное чистит автоочистка,
+// services/cleanup.js); незаконченную или сломанную загрузку (statusCode не 4) — ещё и тот, кто её добавил
+// (без записи о владельце — любой). Неизвестное состояние считается готовой раздачей.
 // Проверка для всех раздач одного запроса: cookie устройства читается один раз, а не для каждой раздачи медиатеки.
 function removeChecker(req) {
-  if (!config.OWNER_LOCK) return () => true;
-  // Админ Discord удаляет и чужое (DISCORD.md §1). Не «shared»: у общего пароля тоже role "admin", но это все сразу
-  if (req.user && req.user.role === "admin" && req.user.id !== "shared") return () => true;
+  if (!config.OWNER_LOCK || isLibraryAdmin(req)) return () => true;
   const dev = deviceId(req, null); // только cookie устройства, IP не учитывается
-  return id => {
+  return (id, statusCode) => {
+    const code = Number(statusCode);
+    if (statusCode === undefined || statusCode === null || !Number.isFinite(code) || code === 4) return false;
     const o = magnetOwners.get(String(id));
     return !o || o.dev === dev;
   };
 }
 
-function canRemove(id, req) {
-  return removeChecker(req)(id);
+function canRemove(id, req, statusCode) {
+  return removeChecker(req)(id, statusCode);
 }
 
 function deleteOwner(id) {
@@ -157,6 +165,7 @@ module.exports = {
   MAX_ACTIVE_DOWNLOADS_PER_IP,
   canRemove,
   removeChecker,
+  isLibraryAdmin,
   recordOwner,
   deleteOwner,
   adoptOwners,

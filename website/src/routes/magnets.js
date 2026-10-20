@@ -9,8 +9,9 @@ const { apiLimiter } = require("../middleware/rate-limit");
 const { requireLogin } = require("../middleware/auth");
 const { safeHttpsUrl } = require("../utils/helpers");
 const { alldebridRequest, adUploadMagnet, adUploadTorrent, flattenMagnetFiles } = require("../services/alldebrid");
-const { reserveDownloadSlot, releaseTrackedDownload, canRemove, deleteOwner } = require("../services/downloads");
-const { dropEverywhere } = require("../services/shelf");
+const { reserveDownloadSlot, releaseTrackedDownload, canRemove, isLibraryAdmin } = require("../services/downloads");
+const { deleteMagnet } = require("../services/cleanup");
+const { getLibrary, libraryChanged } = require("../services/library");
 
 const router = express.Router();
 
@@ -110,31 +111,26 @@ router.post(["/api/magnets/:id/cancel", "/api/magnets/:id/delete"], requireLogin
   if (!Number.isSafeInteger(id) || id <= 0) {
     return res.status(400).json({ error: "Некорректный идентификатор magnet-ссылки." });
   }
-  if (!canRemove(id, req)) {
-    return res.status(403).json({ error: "Удалить эту раздачу может только то устройство, с которого она была добавлена." });
+  if (!isLibraryAdmin(req)) {
+    // Состояние раздачи — с сервера, не со слов клиента: готовую удаляет только админ
+    let statusCode;
+    try {
+      const { data } = await getLibrary();
+      statusCode = (data.magnets || []).find(m => m.id === id)?.statusCode;
+    } catch {}
+    if (!canRemove(id, req, statusCode)) {
+      return res.status(403).json({
+        error: "Удалять фильмы из библиотеки может только админ. Отменить можно свою незаконченную загрузку; " +
+          "фильмы, которые долго никто не открывает, удаляются сами."
+      });
+    }
   }
   try {
-    const response = await axios.post(
-      `${config.ALLDEBRID_API_BASE}/v4/magnet/delete`,
-      new URLSearchParams({ id: String(id) }),
-      {
-        headers: {
-          Authorization: `Bearer ${config.ALLDEBRID_API_KEY}`,
-          "Content-Type": "application/x-www-form-urlencoded"
-        },
-        timeout: 15000,
-        validateStatus: () => true
-      }
-    );
-    if (response.status < 200 || response.status >= 300 || response.data?.status === "error") {
-      return res.status(502).json({ error: response.data?.error?.message || "Не удалось отменить эту magnet-ссылку в AllDebrid." });
-    }
-    releaseTrackedDownload(id);
-    deleteOwner(id);
-    dropEverywhere(id);
-    res.json({ ok: true, id, message: response.data?.data?.message || "Magnet-ссылка удалена." });
+    const message = await deleteMagnet(id);
+    libraryChanged();
+    res.json({ ok: true, id, message });
   } catch (err) {
-    res.status(502).json({ error: err.message || "Не удалось отменить magnet-ссылку." });
+    res.status(err.status || 502).json({ error: err.message || "Не удалось удалить раздачу." });
   }
 });
 

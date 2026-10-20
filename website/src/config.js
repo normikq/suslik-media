@@ -13,6 +13,10 @@ const ALLDEBRID_API_BASE = process.env.ALLDEBRID_API_BASE || "https://api.alldeb
 const TMDB_API_KEY = process.env.TMDB_API_KEY || "";
 const COOKIE_SECURE = process.env.COOKIE_SECURE === "true";
 const OWNER_LOCK = process.env.OWNER_LOCK !== "false";
+// Автоочистка библиотеки: не открывали N дней или раздач больше максимума (services/cleanup.js)
+const AUTO_CLEAN = process.env.AUTO_CLEAN !== "false";
+const LIBRARY_IDLE_DAYS = Math.max(1, Number(process.env.LIBRARY_IDLE_DAYS || 10));
+const LIBRARY_MAX_ITEMS = Math.max(10, Number(process.env.LIBRARY_MAX_ITEMS || 800));
 const TRUST_PROXY = process.env.TRUST_PROXY;
 const BETA_CODE = process.env.BETA_CODE || "";
 const UPDATE_TOKEN = process.env.UPDATE_TOKEN || "";
@@ -63,6 +67,7 @@ const MEDIA_CACHE_FILE = path.join(DATA_DIR, "media-metadata-cache.json");
 const USERS_FILE = path.join(DATA_DIR, "users.json");
 const DEVICES_FILE = path.join(DATA_DIR, "devices.json");
 const SHELF_FILE = path.join(DATA_DIR, "shelf.json");
+const USAGE_FILE = path.join(DATA_DIR, "usage.json"); // когда раздачу последний раз открывали (services/cleanup.js)
 // (Комнаты совместного просмотра живут только в памяти: после перезапуска приложения входят заново)
 
 if (!process.env.SESSION_SECRET) {
@@ -112,6 +117,10 @@ module.exports = {
   USERS_FILE,
   DEVICES_FILE,
   SHELF_FILE,
+  USAGE_FILE,
+  AUTO_CLEAN,
+  LIBRARY_IDLE_DAYS,
+  LIBRARY_MAX_ITEMS,
   SITE_PREFIX,
   DISCORD_CLIENT_ID,
   DISCORD_CLIENT_SECRET,

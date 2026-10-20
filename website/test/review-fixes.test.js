@@ -18,14 +18,22 @@ const DEV_A = "a".repeat(32);
 const DEV_B = "b".repeat(32);
 const reqOf = dev => ({ headers: { cookie: `sdev=${dev}` } });
 
-test("downloads: removeChecker matches canRemove and reads the device once", () => {
+test("downloads: a finished film is removed by an admin only; an unfinished download — also by who added it", () => {
   recordOwner(101, DEV_A, "1.1.1.1");
   const asA = removeChecker(reqOf(DEV_A));
   const asB = removeChecker(reqOf(DEV_B));
-  assert.equal(asA(101), true);
-  assert.equal(asB(101), false);
-  assert.equal(asB(999), true); // no owner recorded: anyone may remove
-  assert.equal(canRemove(101, reqOf(DEV_B)), false);
+  assert.equal(asA(101, 1), true); // своя загрузка идёт — можно отменить
+  assert.equal(asA(101, 6), true); // своя загрузка сломалась — можно убрать
+  assert.equal(asA(101, 4), false); // готовая — только админ
+  assert.equal(asA(101), false); // состояние неизвестно — как готовая
+  assert.equal(asB(101, 1), false); // чужая загрузка
+  assert.equal(asB(999, 1), true); // без записи о владельце незаконченную может отменить любой
+  assert.equal(asB(999, 4), false);
+  assert.equal(canRemove(101, reqOf(DEV_B), 1), false);
+  const admin = { user: { id: "u_1", role: "admin" }, headers: { cookie: "" } };
+  assert.equal(canRemove(101, admin, 4), true);
+  const shared = { user: { id: "shared", role: "admin" }, headers: { cookie: `sdev=${DEV_B}` } };
+  assert.equal(canRemove(101, shared, 4), false); // общий пароль — не админ
 });
 
 test("posters: a network failure is not remembered as «no poster»", async t => {

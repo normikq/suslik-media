@@ -45,7 +45,7 @@ function withRemovable(data, req) {
     ...data,
     magnets: (data.magnets || []).map(m => ({
       ...m,
-      canRemove: canRemove(m.id),
+      canRemove: canRemove(m.id, m.statusCode),
       favorite: Boolean(fav && fav.has(String(m.id))),
       mine: Boolean(mine && mine.has(String(m.id))) // в «Моих фильмах» (services/shelf.js)
     }))

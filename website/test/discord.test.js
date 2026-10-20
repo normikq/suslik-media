@@ -248,8 +248,8 @@ test("favorites: per Discord user, per device with the shared password; the devi
   const asUser = cookieReq(u, sdev);
   assert.equal(deviceId(asUser, null), u.id);
   assert.deepEqual([...favoritesOf(asUser)], ["101"]);
-  assert.equal(withRemovable({ magnets: [{ id: 101 }] }, asUser).magnets[0].canRemove, true);
-  assert.equal(withRemovable({ magnets: [{ id: 101 }] }, sharedA).magnets[0].canRemove, false);
+  assert.equal(withRemovable({ magnets: [{ id: 101, statusCode: 1 }] }, asUser).magnets[0].canRemove, true);
+  assert.equal(withRemovable({ magnets: [{ id: 101, statusCode: 1 }] }, sharedA).magnets[0].canRemove, false);
   // То, что отмечено под пользователем, ему и отдаётся
   setFavorite(u.id, "202", true);
   assert.deepEqual([...favoritesOf(asUser)].sort(), ["101", "202"]);
@@ -358,8 +358,8 @@ test("shelf («Мои фильмы»): personal, starts from own torrents and fa
 
   // Повторное добавление чужой раздачи не меняет её владельца
   recordOwner("301", devB, "2.2.2.2");
-  assert.equal(withRemovable({ magnets: [{ id: 301 }] }, a).magnets[0].canRemove, true);
-  assert.equal(withRemovable({ magnets: [{ id: 301 }] }, b).magnets[0].canRemove, false);
+  assert.equal(withRemovable({ magnets: [{ id: 301, statusCode: 1 }] }, a).magnets[0].canRemove, true);
+  assert.equal(withRemovable({ magnets: [{ id: 301, statusCode: 1 }] }, b).magnets[0].canRemove, false);
 
   // Взял из общей библиотеки — только себе
   setOnShelf(devB, "303", true);
@@ -392,4 +392,28 @@ test("shelf: whatever is added (magnet, torrent, search) lands in «Мои фи�
   const slot = reserveDownloadSlot(req, res);
   slot.attach(401, true);
   assert.equal(shelfOf(req).has("401"), true);
+});
+
+test("cleanup: films nobody opened for 10 days go away, and the library is kept under its limit", () => {
+  const { pickForCleanup, markOpened } = require("../src/services/cleanup");
+  const day = 24 * 3600 * 1000;
+  const t0 = Date.UTC(2026, 0, 1);
+  const lib = [{ id: 501 }, { id: 502 }, { id: 503 }, { id: 504 }];
+  // Первый раз видим — отсчёт с этого момента, ничего не удаляется
+  assert.deepEqual(pickForCleanup(lib, t0, { idleDays: 10, maxItems: 800 }), []);
+  // Через 11 дней: 502 открывали на 5-й день — остаётся, остальные — нет
+  const realNow = Date.now;
+  try {
+    Date.now = () => t0 + 5 * day;
+    markOpened(502);
+  } finally {
+    Date.now = realNow;
+  }
+  const idle = pickForCleanup(lib, t0 + 11 * day, { idleDays: 10, maxItems: 800 });
+  assert.deepEqual(idle.map(x => x.id).sort(), [501, 503, 504]);
+  assert.ok(idle.every(x => x.reason === "idle"));
+  // Лимит: остаётся 2 — уходят давно не открытые, при равенстве — добавленные раньше
+  const limit = pickForCleanup(lib, t0 + 6 * day, { idleDays: 10, maxItems: 2 });
+  assert.deepEqual(limit.map(x => x.id), [501, 503]);
+  assert.ok(limit.every(x => x.reason === "limit"));
 });
