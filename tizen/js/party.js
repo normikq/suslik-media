@@ -174,7 +174,12 @@
         });
         if (any) changed();
         // Ответ копится в памяти: после 2 МБ переподключаемся
-        if (seen > 2 * 1024 * 1024) { x.abort(); xhr = null; party.connected = false; connect(); }
+        // (xhr обнуляется до abort(): abort() сразу зовёт onloadend — иначе тот поставил бы второе переподключение)
+        if (seen > 2 * 1024 * 1024) {
+          xhr = null; party.connected = false; failures = 0;
+          try { x.abort(); } catch (e) { /* уже закрыт */ }
+          connect();
+        }
       };
       x.onloadend = function () {
         if (xhr !== x) return;

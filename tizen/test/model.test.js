@@ -154,3 +154,8 @@ test('watchKey, watchInfo, prepareItems', () => {
   assert.ok(item.posterQueries.includes('Inception'));
   assert.ok(item.searchText.includes('inception.mkv'));
 });
+
+test('cleanTitle: не строка — не падает', () => {
+  assert.equal(M.cleanTitle(undefined), 'Untitled');
+  assert.equal(M.cleanTitle(null), 'Untitled');
+});

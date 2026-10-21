@@ -177,7 +177,7 @@
 
   /** Имя раздачи → простое название для поиска постера (как escapeTitle сайта). */
   function cleanTitle(value) {
-    var v = value.trim() ? value : 'Untitled';
+    var v = (typeof value === 'string' ? value : String(value == null ? '' : value)).trim() || 'Untitled';
     var s = v.replace(EXT, '').replace(DOTS, ' ');
     s = s.replace(TAGS, '');
     s = s.replace(YEAR_TAIL, ' ').replace(BRACKETS, ' ').replace(SPACES, ' ').trim();

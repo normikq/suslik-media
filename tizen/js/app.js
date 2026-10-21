@@ -81,6 +81,7 @@
 
   function pair() {
     show(ui.spinner('Получаем код…'));
+    nav.onBack = function () { login(); };
     api.post('/api/auth/device', { name: 'Suslik Media Samsung TV', site_url: api.SITE.replace(/\/+$/, '') }, false).then(function (res) {
       var userCode = res.user_code, code = res.code;
       var url = res.verification_url && res.verification_url.indexOf('code=') >= 0 ? res.verification_url : api.SITE + 'link?code=' + userCode;
@@ -126,6 +127,7 @@
         api.post('/api/logout').catch(function () {});
         api.setToken(null);
         SM.sync.setUser(null);
+        posters.clear();
         login();
       } },
       { text: 'Отмена' }
@@ -329,7 +331,14 @@
 
   /** Постеры: /api/poster?q= → путь картинки → blob (нужен токен). Не больше трёх запросов сразу. */
   var posters = (function () {
-    var cache = {}, queue = [], active = 0;
+    // Не больше 60 картинок в памяти (у ТВ 2018 года на страницу ~200 МБ): старые objectURL освобождаются
+    var cache = {}, order = [], queue = [], active = 0, LIMIT = 60;
+    function remember(q, url) {
+      cache[q] = url;
+      if (!url) return;
+      order.push(q);
+      while (order.length > LIMIT) { var old = order.shift(); if (cache[old]) URL.revokeObjectURL(cache[old]); delete cache[old]; }
+    }
     function pump() {
       while (active < 3 && queue.length) {
         var job = queue.shift();
@@ -341,11 +350,14 @@
       if (cache[q] !== undefined) return Promise.resolve(cache[q]);
       return api.get('/api/poster?q=' + encodeURIComponent(q)).then(function (r) {
         var p = r.poster;
-        if (typeof p !== 'string' || p.indexOf('/api/poster/img/') !== 0) { cache[q] = null; return null; }
-        return api.blobUrl(p).then(function (u) { cache[q] = u; return u; });
+        if (typeof p !== 'string' || p.indexOf('/api/poster/img/') !== 0) { remember(q, null); return null; }
+        return api.blobUrl(p).then(function (u) { remember(q, u); return u; });
       });
     }
-    return { want: function (q, cb) { if (cache[q]) cb(cache[q]); else if (cache[q] !== null) { queue.push({ q: q, cb: cb }); pump(); } } };
+    return {
+      want: function (q, cb) { if (cache[q]) cb(cache[q]); else if (cache[q] !== null) { queue.push({ q: q, cb: cb }); pump(); } },
+      clear: function () { order.forEach(function (q) { if (cache[q]) URL.revokeObjectURL(cache[q]); }); cache = {}; order = []; queue = []; }
+    };
   })();
 
   // ---- раздача: фильм или серии ----

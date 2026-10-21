@@ -63,13 +63,15 @@
     attachParty(cur);
     showBar();
     api.mirrorUrl(opts.file).then(function (url) { if (cur && cur.opts === opts) start(url, cur.resume); })
-      .catch(function (e) { fail('network', api.describe(e)); });
+      .catch(function (e) { if (cur && cur.opts === opts) fail('network', api.describe(e)); });
   }
 
   function start(url, fromMs) {
     var p = av(), c = cur;
     c.url = url;
     try {
+      // close() из PLAYING/PAUSED без stop() на части прошивок Tizen 4.0 оставляет плеер в неясном состоянии
+      try { p.stop(); } catch (e) { /* не играл */ }
       try { p.close(); } catch (e) { /* не был открыт */ }
       p.open(url);
       p.setDisplayRect(0, 0, 1920, 1080);
@@ -87,7 +89,14 @@
         onbufferingstart: function () { note('buffering start'); c.loading = true; buffering(true, 0); },
         onbufferingprogress: function (pct) { buffering(true, pct); },
         onbufferingcomplete: function () { note('buffering complete'); c.loading = false; buffering(false); },
-        oncurrentplaytime: function (ms) { if (cur === c) { c.pos = ms; if (!c.dur) duration(c); watchSpeed(c, ms); if (c.seekTarget == null) renderTime(); } },
+        oncurrentplaytime: function (ms) {
+          if (cur !== c) return;
+          c.pos = ms;
+          if (!c.dur) duration(c);
+          watchSpeed(c, ms);
+          // Панель скрыта — время не перерисовываем (лишняя вёрстка 4 раза в секунду); showBar() обновит его сам
+          if (c.seekTarget == null && el('p-bar').className === 'show') renderTime();
+        },
         onstreamcompleted: function () { note('stream completed'); ended(); },
         onerror: function (type) { note('error ' + type); onError(type); },
         onevent: function (type, data) { note('event ' + type + ' ' + (data || '')); },
@@ -170,7 +179,7 @@
       var at = c.pos || c.resume;
       note('retry ' + c.retries + ' at ' + fmt(at));
       buffering(true, 0);
-      api.mirrorUrl(c.opts.file).then(function (url) { if (cur === c) start(url, at); }).catch(function (e) { fail('network', api.describe(e)); });
+      api.mirrorUrl(c.opts.file).then(function (url) { if (cur === c) start(url, at); }).catch(function (e) { if (cur === c) fail('network', api.describe(e)); });
       return;
     }
     fail(kind, String(type));
@@ -195,8 +204,14 @@
       if (e.keyCode === K.BACK || e.keyCode === K.ESC) { closeMenu(); return true; }
       return false; // стрелки и OK — обычная навигация по меню
     }
-    if (c.diagOpen && (e.keyCode === K.BACK || e.keyCode === K.ESC || e.keyCode === K.YELLOW || e.keyCode === K.INFO)) {
-      closeDiag(c); return true;
+    if (c.diagOpen) {
+      // Проба открыта: ↑/↓ листают журнал (автопрокрутка встаёт, пока не вернулись вниз), остальное плееру не уходит
+      var log = el('diag-log');
+      if (e.keyCode === K.BACK || e.keyCode === K.ESC || e.keyCode === K.YELLOW || e.keyCode === K.INFO) closeDiag(c);
+      else if (e.keyCode === K.UP) { log.scrollTop -= 120; c.diagPinned = log.scrollTop + log.clientHeight < log.scrollHeight - 4; }
+      else if (e.keyCode === K.DOWN) { log.scrollTop += 120; c.diagPinned = log.scrollTop + log.clientHeight < log.scrollHeight - 4; }
+      else if (e.keyCode === K.STOP) { closeDiag(c); close(); }
+      return true;
     }
     switch (e.keyCode) {
       case K.ENTER: case K.PLAY_PAUSE: togglePause(); return true;
@@ -289,7 +304,7 @@
    * заметно медленнее настоящего без буферизации. Тогда один раз говорим об этом словами и пишем в пробу.
    */
   function watchSpeed(c, ms) {
-    if (c.paused || c.loading || c.seekTarget != null || !c.prepared) { c.slow = null; return; }
+    if (c.paused || c.loading || c.seekBusy || c.seekTarget != null || !c.prepared) { c.slow = null; return; }
     var now = Date.now();
     if (!c.slow) { c.slow = { at: now, pos: ms, bad: 0 }; return; }
     var wall = now - c.slow.at;
@@ -390,7 +405,7 @@
     items.push(SM.ui.button((c.subsOn ? '' : '● ') + 'Выключены', function () { setSubs(null); closeMenu(); }, c.subsOn ? '' : 'sel'));
     c.textTracks.forEach(function (t) {
       var info = {};
-      try { info = JSON.parse(t.extra_info); } catch (e) { info = {}; }
+      try { info = typeof t.extra_info === 'string' ? JSON.parse(t.extra_info) : (t.extra_info || {}); } catch (e) { info = {}; }
       var label = (info.track_lang || info.language || 'Дорожка ' + t.index) + (info.subtitle_type ? ' · ' + info.subtitle_type : '');
       var on = c.subsOn && c.subsIndex === t.index;
       items.push(SM.ui.button((on ? '● ' : '') + label, function () { setSubs(t.index); closeMenu(); }, on ? 'sel' : ''));
@@ -420,9 +435,16 @@
   }
 
   var subsTimer = 0;
+  /** Текст субтитра: без тегов, HTML-сущности AVPlay (&quot; &amp; &#39; &nbsp;) — обычными знаками. */
+  function cleanSubs(t) {
+    return String(t || '').replace(/<[^>]+>/g, '')
+      .replace(/&quot;/g, '"').replace(/&apos;|&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .replace(/&nbsp;/g, ' ').replace(/&#(\d+);/g, function (m, n) { return String.fromCharCode(Number(n)); })
+      .replace(/&amp;/g, '&');
+  }
   function showSubtitle(text, duration) {
     var s = el('subs');
-    s.textContent = String(text || '').replace(/<[^>]+>/g, '');
+    s.textContent = cleanSubs(text);
     clearTimeout(subsTimer);
     subsTimer = setTimeout(function () { s.textContent = ''; }, Math.max(500, Number(duration) || 3000));
   }
@@ -433,6 +455,7 @@
     var c = cur;
     if (!c) return;
     el('p-bar').className = 'show';
+    renderTime();
     clearTimeout(c.hideTimer);
     if (!c.paused) c.hideTimer = setTimeout(function () { if (cur === c && !c.paused) el('p-bar').className = ''; }, 4000);
     el('p-state').textContent = c.paused ? '❚❚' : '▶';
@@ -454,6 +477,7 @@
   /** Проба: шапка обновляется раз в секунду, журнал — с каждой строкой. */
   function openDiag(c) {
     c.diagOpen = true;
+    c.diagPinned = false;
     clearInterval(c.diagTimer);
     c.diagTimer = setInterval(function () { if (cur === c) renderDiag(); }, 1000);
     renderDiag();
@@ -483,7 +507,7 @@
     el('diag-head').textContent = lines.join('\n');
     var body = el('diag-log');
     body.textContent = log.join('\n');
-    body.scrollTop = body.scrollHeight; // свежие строки — внизу, видны всегда
+    if (!c.diagPinned) body.scrollTop = body.scrollHeight; // свежие строки — внизу, пока не листали вверх
     el('diag').className = 'show';
   }
 

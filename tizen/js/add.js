@@ -18,11 +18,13 @@
   function follow(id) {
     if (live[id]) return;
     live[id] = { text: 'Обработка' };
-    SM.downloads.watch(id, function (st) {
-      live[id] = { text: st.done ? 'Готово — в медиатеке' : st.failed ? 'Ошибка: ' + st.text : st.text, done: st.done, failed: st.failed };
+    var stop = SM.downloads.watch(id, function (st) {
+      if (!live[id]) return; // загрузку отменили: опрос уже остановлен, поздний ответ не возвращает строку
+      live[id] = { text: st.done ? 'Готово — в медиатеке' : st.failed ? 'Ошибка: ' + st.text : st.text, done: st.done, failed: st.failed, stop: stop };
       if (st.done) SM.app.libraryChanged();
       rerender();
     });
+    live[id].stop = stop;
   }
 
   function submit(text) {
@@ -44,6 +46,7 @@
       { text: 'Отменить загрузку', run: function () {
         api.post('/api/magnets/' + x.id + '/cancel', {}, false).then(function () {
           save(history().filter(function (y) { return y.id !== x.id; }));
+          if (live[x.id] && live[x.id].stop) live[x.id].stop();
           delete live[x.id];
           ui.toast('Отменено');
           SM.app.libraryChanged();
