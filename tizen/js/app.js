@@ -98,14 +98,19 @@
         ])
       ]));
       nav.focusFirst();
+      var polling = false; // ответ медленнее 2 с: следующий опрос ждёт, а не копится
       pollTimer = setInterval(function () {
+        if (polling) return;
+        polling = true;
         api.post('/api/auth/device/poll', { code: code }).then(function (r) {
+          polling = false;
           if (r.status === 'authorized') {
             clearInterval(pollTimer);
             api.setToken(r.device_token || null);
             api.get('/api/session').then(function (s) { signedIn(s.user || null); }, function () { signedIn(null); });
           } else if (r.status === 'expired') login('Код истёк, получите новый.');
         }).catch(function (e) {
+          polling = false;
           if (e && (e.code === 410 || e.code === 404)) login('Код истёк, получите новый.');
         });
       }, 2000);
@@ -322,21 +327,37 @@
     return el;
   }
 
+  // Постер грузится, когда плитка подъезжает к экрану (за 600 px): медиатека в сотни раздач не качает все картинки
+  // разом и не вытесняет из памяти те, что на экране
+  var seen = typeof IntersectionObserver === 'function' ? new IntersectionObserver(function (list) {
+    list.forEach(function (e) {
+      if (!(e.isIntersecting || e.intersectionRatio > 0)) return; // isIntersecting — только с Chromium 58
+      seen.unobserve(e.target);
+      if (e.target.wantPoster) { var f = e.target.wantPoster; e.target.wantPoster = null; f(); }
+    });
+  }, { rootMargin: '600px' }) : null;
+
   function posterInto(poster, it) {
-    posters.want(it.posterQueries[0], function (url) {
+    var q = it.posterQueries[0];
+    var apply = function (url) {
       poster.style.backgroundImage = 'url("' + url + '")';
       poster.classList.add('has-image');
-    });
+    };
+    if (!seen || posters.has(q)) { posters.want(q, apply); return; }
+    poster.wantPoster = function () { posters.want(q, apply); };
+    seen.observe(poster);
   }
 
   /** Постеры: /api/poster?q= → путь картинки → blob (нужен токен). Не больше трёх запросов сразу. */
   var posters = (function () {
-    // Не больше 60 картинок в памяти (у ТВ 2018 года на страницу ~200 МБ): старые objectURL освобождаются
-    var cache = {}, order = [], queue = [], active = 0, LIMIT = 60;
+    // Не больше 60 картинок в памяти (у ТВ 2018 года на страницу ~200 МБ): дольше всех не показанные освобождаются.
+    // Путь картинки на сервере ([paths]) помним всегда: повторный показ — без нового /api/poster
+    var cache = {}, paths = {}, order = [], queue = [], active = 0, LIMIT = 60;
+    function touch(q) { var i = order.indexOf(q); if (i >= 0) order.splice(i, 1); order.push(q); }
     function remember(q, url) {
       cache[q] = url;
       if (!url) return;
-      order.push(q);
+      touch(q);
       while (order.length > LIMIT) { var old = order.shift(); if (cache[old]) URL.revokeObjectURL(cache[old]); delete cache[old]; }
     }
     function pump() {
@@ -348,15 +369,24 @@
     }
     function load(q) {
       if (cache[q] !== undefined) return Promise.resolve(cache[q]);
-      return api.get('/api/poster?q=' + encodeURIComponent(q)).then(function (r) {
+      var path = paths[q] !== undefined ? Promise.resolve(paths[q]) : api.get('/api/poster?q=' + encodeURIComponent(q)).then(function (r) {
         var p = r.poster;
-        if (typeof p !== 'string' || p.indexOf('/api/poster/img/') !== 0) { remember(q, null); return null; }
+        paths[q] = typeof p === 'string' && p.indexOf('/api/poster/img/') === 0 ? p : null;
+        return paths[q];
+      });
+      return path.then(function (p) {
+        if (!p) { cache[q] = null; return null; }
         return api.blobUrl(p).then(function (u) { remember(q, u); return u; });
       });
     }
     return {
-      want: function (q, cb) { if (cache[q]) cb(cache[q]); else if (cache[q] !== null) { queue.push({ q: q, cb: cb }); pump(); } },
-      clear: function () { order.forEach(function (q) { if (cache[q]) URL.revokeObjectURL(cache[q]); }); cache = {}; order = []; queue = []; }
+      has: function (q) { return !!cache[q]; },
+      want: function (q, cb) {
+        if (cache[q]) { touch(q); cb(cache[q]); } else if (cache[q] !== null) { queue.push({ q: q, cb: cb }); pump(); }
+      },
+      /** Начался фильм: очередь постеров не делит канал с AVPlay. */
+      drop: function () { queue = []; },
+      clear: function () { order.forEach(function (q) { if (cache[q]) URL.revokeObjectURL(cache[q]); }); cache = {}; paths = {}; order = []; queue = []; }
     };
   })();
 
@@ -459,6 +489,7 @@
     var go = function () {
       if (party.isHost()) party.putFilm(key, en.label);
       show(h('div')); // экран под плеером пустой: старый не держит фокус и подписки
+      posters.drop();
       SM.player.play({
         magnet: it.m, title: en.label, file: en.file, entries: entries, index: i, watch: watch, toast: toast, dialog: dialog,
         resumeAt: o.resumeAt,
@@ -585,7 +616,8 @@
 
   /** Кнопки пульта, которые без регистрации телевизор оставляет себе. */
   function registerKeys() {
-    var keys = ['MediaPlayPause', 'MediaPlay', 'MediaPause', 'MediaStop', 'MediaRewind', 'MediaFastForward', 'ColorF2Yellow', 'Info'];
+    var keys = ['MediaPlayPause', 'MediaPlay', 'MediaPause', 'MediaStop', 'MediaRewind', 'MediaFastForward', 'MediaTrackPrevious', 'MediaTrackNext',
+      'ColorF2Yellow', 'Info'];
     keys.forEach(function (k) {
       try { g.tizen.tvinputdevice.registerKey(k); } catch (e) { /* не на ТВ или кнопки нет */ }
     });
