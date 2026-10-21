@@ -23,11 +23,21 @@
   var URL_TTL_MS = 11 * 3600 * 1000;
 
   var log = [];
+  // Журнал прошлого просмотра: если телевизор завис и приложение перезапустили, в пробе видно, на чём встало
+  var LOG_KEY = 'tv_player_log', prevLog = [], logSaveTimer = 0;
   function note(text) {
     var d = new Date();
     log.push(('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2) + ' ' + text);
     if (log.length > 300) log.shift();
+    if (!logSaveTimer) logSaveTimer = setTimeout(saveLog, 2000);
     if (cur && cur.diagOpen) renderDiag();
+  }
+  function saveLog() {
+    logSaveTimer = 0;
+    try { localStorage.setItem(LOG_KEY, JSON.stringify(log.slice(-150))); } catch (e) { /* нет хранилища */ }
+  }
+  function loadLog() {
+    try { var v = JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; }
   }
 
   function av() { return g.webapis && g.webapis.avplay; }
@@ -60,6 +70,8 @@
       tc: null, viewer: Math.random().toString(36).slice(2, 10)
     };
     if (opts.resumeAt != null) cur.resume = opts.resumeAt;
+    clearTimeout(logSaveTimer); logSaveTimer = 0;
+    prevLog = log.length ? [] : loadLog(); // журнал в памяти пуст — приложение запущено заново (может, после зависания)
     log = [];
     note('open ' + opts.file.path + ' (' + model.formatBytes(opts.file.size) + ')');
     document.body.classList.add('playing');
@@ -200,8 +212,15 @@
       fail(support.errorKind(e.name) === 'other' ? 'unsupported' : support.errorKind(e.name), e.name);
       return;
     }
+    // prepareAsync молчит (сервер или файл-хост не ответил): без сторожа «Загрузка…» висела бы вечно
+    var prepGuard = setTimeout(function () {
+      if (cur !== c || c.url !== url) return;
+      note('prepare: no answer in ' + (c.tc ? 60 : 40) + ' s');
+      onError('PREPARE_TIMEOUT');
+    }, c.tc ? 60000 : 40000);
     var prepareOk = function () {
-      if (cur !== c) return;
+      clearTimeout(prepGuard);
+      if (cur !== c || c.url !== url) return; // сторож уже переоткрыл: поздний ответ старого открытия не нужен
       if (!c.tc) { try { c.dur = p.getDuration(); } catch (e) { c.dur = 0; } } // у потока с сервера длительность — из tv-info
       note('prepared, duration ' + fmt(c.dur));
       inspectTracks();
@@ -218,6 +237,8 @@
         showBar();
         clearInterval(c.saveTimer);
         c.saveTimer = setInterval(save, 10000);
+        // Перемотка (комната) пришла, пока поток с сервера открывался: теперь её можно сделать
+        if (c.tcSeekNext != null) { var n = c.tcSeekNext; c.tcSeekNext = null; seekTo(c, n); }
       };
       if (fromMs > 0) {
         note('resume at ' + fmt(fromMs));
@@ -228,7 +249,8 @@
       } else go();
     };
     var prepareFail = function (err) {
-      if (cur !== c) return;
+      clearTimeout(prepGuard);
+      if (cur !== c || c.url !== url) return; // сторож уже переоткрыл: поздний ответ старого открытия не нужен
       note('prepare failed ' + (err && err.name ? err.name : err));
       onError(err && err.name ? err.name : err);
     };
@@ -283,6 +305,7 @@
   function selectAudio(t) {
     var c = cur;
     // Поток с сервера: в нём одна дорожка — другая значит новый поток с того же места
+    if (t.server && !c.prepared) { c.opts.toast('Подождите: файл ещё открывается'); return; }
     if (t.server) { c.tc.a = t.index; note('server audio → #' + t.index); c.prepared = false; start(serverUrl(c, c.pos), 0); return; }
     try { av().setSelectTrack('AUDIO', t.index); cur.audio.current = t; note('audio → ' + t.index); }
     catch (e) { note('setSelectTrack AUDIO failed ' + (e.name || e)); }
@@ -423,6 +446,8 @@
     c.seekTarget = to;
     c.slow = null;
     // Поток с сервера байтами не перематывается: новый поток с этого места (подпись живёт 12 ч)
+    // stop()/close() AVPlay, пока он ещё открывает поток, на Tizen 4.0 может повесить приложение: ждём, пока откроется
+    if (c.tc && !c.prepared) { c.tcSeekNext = to; note('seek ' + fmt(to) + ' waits for the stream to open'); return; }
     if (c.tc) { note('seek ' + fmt(c.pos) + ' → ' + fmt(to) + ' (new server stream)'); renderTime(); start(serverUrl(c, to), 0); return; }
     // Прошлая перемотка ещё идёт: AVPlay вторую не примет (InvalidStateError) — эта уйдёт после неё
     if (c.seekBusy) { c.seekNext = to; note('seek ' + fmt(to) + ' queued'); return; }
@@ -637,7 +662,7 @@
     renderTime();
     clearTimeout(c.hideTimer);
     if (!c.paused) c.hideTimer = setTimeout(function () { if (cur === c && !c.paused) el('p-bar').className = ''; }, 4000);
-    el('p-state').textContent = c.paused ? '❚❚' : '▶';
+    el('p-state').textContent = c.paused ? '▶' : '❚❚'; // как на кнопке: что сделает OK
   }
 
   function renderTime() {
@@ -658,7 +683,7 @@
    * Сравнение с битрейтом файла говорит, отчего рывки: сеть не успевает (скорость ниже битрейта) или декодер.
    * Фильм на это время на паузе — иначе замер делит канал с AVPlay.
    */
-  function speedTest(c) {
+  function speedTest(c, noRange) {
     if (c.speedBusy || !c.url) return;
     // Поток с сервера байтами не читается (Range → 416): меряем по обычной ссылке зеркала на тот же файл
     if (c.tc && !c.speedUrl) {
@@ -674,12 +699,15 @@
     var size = c.opts.file.size || 0, LIMIT = 24 * 1024 * 1024;
     var from = c.dur > 0 && size > 0 ? Math.floor(size * Math.min(1, c.pos / c.dur)) : 0;
     if (size > 0 && from + LIMIT > size) from = Math.max(0, size - LIMIT);
-    var x = new XMLHttpRequest(), t0 = Date.now(), first = 0, loaded = 0, status = 0;
+    var x = new XMLHttpRequest(), t0 = Date.now(), first = 0, loaded = 0, status = 0, why = '';
     c.speedXhr = x;
     x.open('GET', testUrl.charAt(0) === '/' ? api.BASE + testUrl : testUrl, true);
-    x.setRequestHeader('Range', 'bytes=' + from + '-' + (from + LIMIT - 1));
+    if (!noRange) x.setRequestHeader('Range', 'bytes=' + from + '-' + (from + LIMIT - 1));
     x.responseType = 'arraybuffer';
+    x.timeout = 20000; // соединение не открылось за 20 с — так и пишем, а не висим
     x.onreadystatechange = function () { if (x.readyState >= 2 && !status) status = x.status; };
+    x.onerror = function () { why = 'ошибка соединения'; };
+    x.ontimeout = function () { why = 'нет ответа за 20 с'; };
     x.onprogress = function (e) {
       if (!first) first = Date.now();
       loaded = e.loaded;
@@ -691,10 +719,16 @@
       var secs = (Date.now() - (first || t0)) / 1000;
       var mbps = secs > 0 ? loaded * 8 / secs / 1e6 : 0;
       var need = c.dur > 0 && size > 0 ? size * 8 / (c.dur / 1000) / 1e6 : 0;
-      if (!loaded) c.speed = 'не удалось (HTTP ' + (status || 'нет ответа') + ')';
+      if (!loaded && !status && !noRange && why === 'ошибка соединения') {
+        // Запрос с Range не ушёл совсем: пробуем без него (с начала файла) — так видно, в Range ли дело
+        note('speed test: ' + why + ' за ' + (Date.now() - t0) + ' мс, повтор без Range');
+        speedTest(c, true);
+        return;
+      }
+      if (!loaded) c.speed = 'не удалось (' + (status ? 'HTTP ' + status : why || 'нет ответа') + ', ' + (Date.now() - t0) + ' мс' + (noRange ? ', без Range' : '') + ')';
       else c.speed = mbps.toFixed(1).replace('.', ',') + ' Мбит/с, первый байт за ' + ((first || t0) - t0) + ' мс' +
         (need ? (mbps < need * 1.3 ? ' — сеть не успевает за файлом (~' + Math.round(need) + ' Мбит/с)' : ' — сети хватает (файлу нужно ~' + Math.round(need) + ' Мбит/с)') : '');
-      note('speed test: ' + c.speed + ' (' + model.formatBytes(loaded) + ', HTTP ' + status + ')');
+      note('speed test: ' + c.speed + ' (' + model.formatBytes(loaded) + ', HTTP ' + status + (noRange ? ', без Range' : '') + ', ' + String(testUrl).split('?')[0].replace(/^https?:\/\/[^/]+/, '') + ')');
       if (cur === c && c.diagOpen) renderDiag();
     };
     x.send(null);
@@ -736,7 +770,7 @@
     } catch (e) { /* нет */ }
     el('diag-head').textContent = lines.join('\n');
     var body = el('diag-log');
-    body.textContent = log.join('\n');
+    body.textContent = (prevLog.length ? '— прошлый просмотр —\n' + prevLog.join('\n') + '\n— сейчас —\n' : '') + log.join('\n');
     if (!c.diagPinned) body.scrollTop = body.scrollHeight; // свежие строки — внизу, пока не листали вверх
     el('diag').className = 'show';
   }

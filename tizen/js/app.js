@@ -411,6 +411,10 @@
       var label = w && !w.watched && w.pos > 30000 ? '▶ Продолжить с ' + ui.clock(w.pos) : '▶ Смотреть';
       if (entries.length > 1) label += ' · ' + entries[resumeAt].label.replace(it.baseTitle, '').replace(/^[\s·—-]+/, '');
       actions.push(button(label, function () { open(it, entries, resumeAt, { back: function () { details(it); } }); }, 'primary play'));
+      // Начато — можно и с начала (с места — основная кнопка)
+      if (w && !w.watched && w.pos > 30000) {
+        actions.push(button('↺ Смотреть заново', function () { open(it, entries, resumeAt, { back: function () { details(it); }, resumeAt: 0 }); }));
+      }
     }
     var mineBtn = button(m.mine ? '★ В «Моих»' : '☆ В «Мои»', function () {
       var on = !m.mine;
