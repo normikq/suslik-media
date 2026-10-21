@@ -293,7 +293,7 @@
       note('server stream failed (' + type + '), opening as is');
       var at = c.tc.base;
       c.tc = null; c.dur = 0; c.serverFailed = true;
-      c.opts.toast('Сервер не смог подготовить файл — открываю как есть');
+      c.opts.toast('Сервер не смог подготовить файл (' + type + ') — открываю как есть');
       api.mirrorUrl(c.opts.file).then(function (url) { if (cur === c) start(url, at); }).catch(function (e) { if (cur === c) fail('network', api.describe(e)); });
       return;
     }

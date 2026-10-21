@@ -67,6 +67,7 @@ router.get("/api/file/tv/:name", mirrorLimiter, async (req, res) => {
   const range = String(req.headers.range || "");
   const m = /^bytes=(\d+)-/.exec(range);
   if (m && Number(m[1]) > 0) {
+    console.warn(`[tv] 416: плеер просит ${range} (поток идёт только с начала)`);
     res.setHeader("Content-Range", "bytes */*");
     return res.status(416).end();
   }
@@ -93,7 +94,11 @@ router.get("/api/file/tv/:name", mirrorLimiter, async (req, res) => {
   let closed = false;
   res.on("close", () => { closed = true; });
   const child = tv.startFfmpeg(tv.ffmpegArgs(entry.url, Math.round(t * 10) / 10, info, audio), viewer);
-  if (!child) return res.status(503).send("Сервер занят: телевизоров смотрит слишком много.");
+  if (!child) {
+    console.warn(`[tv] 503: уже ${tv.activeCount()} ffmpeg`);
+    return res.status(503).send("Сервер занят: телевизоров смотрит слишком много.");
+  }
+  console.log(`[tv] старт a=${a} (${audio.codec}${audio.ok ? ", копия" : " → ac3"}) t=${t} range=${range || "-"} ua="${req.get("user-agent") || "-"}"`);
   mirrorLog(req, `tv stream: a=${a} (${audio.codec}${audio.ok ? ", copy" : " -> ac3"}) t=${t}`);
 
   const kill = () => { if (child.exitCode == null && !child.killed) child.kill("SIGKILL"); };
@@ -111,13 +116,15 @@ router.get("/api/file/tv/:name", mirrorLimiter, async (req, res) => {
     res.write(chunk);
     child.stdout.pipe(res);
   });
-  child.on("error", () => {
+  child.on("error", err => {
     clearTimeout(firstTimer);
+    console.warn(`[tv] ffmpeg не запустился: ${err.message} (FFMPEG_PATH=${config.FFMPEG_PATH})`);
     if (!res.headersSent) res.status(503).send("На сервере нет ffmpeg.");
   });
   child.on("close", code => {
     clearTimeout(firstTimer);
-    if (code) mirrorLog(req, `tv stream: ffmpeg exit ${code} ${String(child.stderrText || "").trim().slice(0, 300)}`);
+    // Ошибки ffmpeg — всегда в журнал (а не только с MIRROR_DEBUG): иначе «сервер не смог подготовить файл» без причины
+    if (code && !closed) console.warn(`[tv] ffmpeg вышел с кодом ${code}: ${String(child.stderrText || "").trim().slice(0, 600)}`);
     if (!res.headersSent) res.status(502).send("Сервер не смог подготовить этот файл.");
   });
 });
