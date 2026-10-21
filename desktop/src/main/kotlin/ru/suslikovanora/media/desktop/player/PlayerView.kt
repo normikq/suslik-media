@@ -734,21 +734,35 @@ fun PlayerView(
         if (!closing) MediaControls.updatePlayback(!userPaused)
     }
 
+    val inParty = ru.suslikovanora.media.desktop.party.Party.let {
+        it.inRoom && it.file?.key == watchKey()
+    }
+    val partyMembersCount = if (inParty) maxOf(1, ru.suslikovanora.media.desktop.party.Party.members.size) else 0
+
     // Активность в Discord: фильм, пауза и полоса времени. Обновляется, когда фильм пошёл (длина известна),
-    // на паузе, перемотке и смене серии; короткая задержка — одна отправка на серию быстрых нажатий.
-    LaunchedEffect(title, index, userPaused, started, length > 0L, lastSeekAt, discordPosterUrl) {
+    // на паузе, перемотке, смене серии или изменении состава комнаты совместного просмотра;
+    // короткая задержка — одна отправка на серию быстрых нажатий.
+    LaunchedEffect(title, index, userPaused, started, length > 0L, lastSeekAt, discordPosterUrl, inParty, partyMembersCount) {
         if (closing || !started) return@LaunchedEffect
         delay(700)
         val (displayTitle, displaySubtitle) = smtcTitles()
-        val discordSubtitle = if (queue.size > 1) displaySubtitle else "Фильм"
+        val (discordTitle, discordSubtitle) = if (inParty) {
+            val titleText = if (queue.size > 1) "$displaySubtitle · $displayTitle" else displayTitle
+            val partyStatus = "Смотрит вместе (участников: $partyMembersCount)"
+            titleText to (if (userPaused) "$partyStatus · Пауза" else partyStatus)
+        } else {
+            val sub = if (queue.size > 1) displaySubtitle else "Фильм"
+            displayTitle to (if (userPaused) "Пауза" else sub)
+        }
         ru.suslikovanora.media.desktop.discord.DiscordRpc.update(
-            title = displayTitle,
-            subtitle = if (userPaused) "Пауза" else discordSubtitle,
+            title = discordTitle,
+            subtitle = discordSubtitle,
             playing = !userPaused,
             timeMs = engine.timeMs.takeIf { it > 0L } ?: time,
             lengthMs = length,
             posterUrl = discordPosterUrl,
-            activityName = "Suslik Media"
+            activityName = "Suslik Media",
+            largeText = if (queue.size > 1) "$displaySubtitle: $displayTitle" else displayTitle
         )
     }
 

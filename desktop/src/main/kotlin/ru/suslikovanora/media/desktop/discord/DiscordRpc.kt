@@ -133,6 +133,53 @@ object DiscordRpc {
         return true
     }
 
+    internal fun buildActivity(
+        title: String,
+        subtitle: String = "",
+        playing: Boolean = true,
+        timeMs: Long = 0L,
+        lengthMs: Long = 0L,
+        posterUrl: String? = null,
+        activityName: String = "Suslik Media",
+        largeText: String? = null,
+        nowMs: Long = System.currentTimeMillis()
+    ): JSONObject {
+        val activity = JSONObject()
+        activity.put("type", 3) // «Смотрит»
+        activity.put("name", activityName)
+        activity.put("details", title.take(128).padEnd(2))
+        if (subtitle.isNotBlank()) {
+            activity.put("state", subtitle.take(128).padEnd(2))
+        } else if (!playing) {
+            activity.put("state", "Пауза")
+        }
+
+        if (playing && lengthMs > 0L) {
+            // Start and end: Discord draws the progress bar of the film
+            activity.put("timestamps", JSONObject()
+                .put("start", (nowMs - timeMs) / 1000L)
+                .put("end", (nowMs + (lengthMs - timeMs).coerceAtLeast(0L)) / 1000L))
+        }
+
+        // Pictures with these names are uploaded in the Developer Portal (Rich Presence → Art Assets);
+        // without them Discord just shows no picture.
+        val assets = JSONObject()
+        val hoverText = largeText?.takeIf { it.isNotBlank() }
+            ?: if (subtitle.isNotBlank() && subtitle != "Suslik Media" && !subtitle.startsWith("Пауза") && !subtitle.startsWith("Смотрит")) "$subtitle: $title"
+            else title
+        if (!posterUrl.isNullOrBlank()) {
+            assets.put("large_image", posterUrl)
+            assets.put("large_text", hoverText.take(128))
+        } else {
+            assets.put("large_image", "brand-mark")
+            assets.put("large_text", "Suslik Media")
+        }
+        assets.put("small_image", if (playing) "play" else "pause")
+        assets.put("small_text", if (playing) "Воспроизведение" else "Пауза")
+        activity.put("assets", assets)
+        return activity
+    }
+
     fun update(
         title: String,
         subtitle: String = "",
@@ -140,7 +187,8 @@ object DiscordRpc {
         timeMs: Long = 0L,
         lengthMs: Long = 0L,
         posterUrl: String? = null,
-        activityName: String = "Suslik Media"
+        activityName: String = "Suslik Media",
+        largeText: String? = null
     ) {
         if (!isEnabled) {
             stop()
@@ -156,37 +204,16 @@ object DiscordRpc {
             try {
                 if (!ensureConnected(id)) return@launch
 
-                val activity = JSONObject()
-                activity.put("type", 3) // «Смотрит»
-                activity.put("name", activityName)
-                activity.put("details", title.take(128).padEnd(2))
-                if (subtitle.isNotBlank()) {
-                    activity.put("state", subtitle.take(128).padEnd(2))
-                } else if (!playing) {
-                    activity.put("state", "Пауза")
-                }
-
-                val nowMs = System.currentTimeMillis()
-                if (playing && lengthMs > 0L) {
-                    // Start and end: Discord draws the progress bar of the film
-                    activity.put("timestamps", JSONObject()
-                        .put("start", (nowMs - timeMs) / 1000L)
-                        .put("end", (nowMs + (lengthMs - timeMs).coerceAtLeast(0L)) / 1000L))
-                }
-
-                // Pictures with these names are uploaded in the Developer Portal (Rich Presence → Art Assets);
-                // without them Discord just shows no picture.
-                val assets = JSONObject()
-                if (!posterUrl.isNullOrBlank()) {
-                    assets.put("large_image", posterUrl)
-                    assets.put("large_text", if (subtitle.isNotBlank() && subtitle != "Suslik Media") "$subtitle: $title".take(128) else title.take(128))
-                } else {
-                    assets.put("large_image", "brand-mark")
-                    assets.put("large_text", "Suslik Media")
-                }
-                assets.put("small_image", if (playing) "play" else "pause")
-                assets.put("small_text", if (playing) "Воспроизведение" else "Пауза")
-                activity.put("assets", assets)
+                val activity = buildActivity(
+                    title = title,
+                    subtitle = subtitle,
+                    playing = playing,
+                    timeMs = timeMs,
+                    lengthMs = lengthMs,
+                    posterUrl = posterUrl,
+                    activityName = activityName,
+                    largeText = largeText
+                )
 
                 // An older Discord takes only «Играет»: then without the «Смотрит» type
                 if (!send(activity) && pipe != null) { activity.remove("type"); send(activity) }
