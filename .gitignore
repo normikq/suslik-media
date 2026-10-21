@@ -24,3 +24,4 @@ desktop/resources/
 # Установщик (desktop/setup): промежуточные файлы dotnet
 desktop/setup/obj/
 desktop/setup/bin/
+tizen/js/site.js
