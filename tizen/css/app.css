@@ -70,6 +70,7 @@ body.playing #av-player { display: block; }
 .badge { background: rgba(16,17,20,.85); border-radius: 8px; padding: 4px 10px; font-size: 20px; margin: 0 6px 6px 0; }
 .badge.bad { background: #8a2a2a; }
 .badge.warn { background: #8a6a1a; }
+.badge.server { background: #24476b; }
 .badge.mine { color: #f3c34b; }
 
 /* Вход */
@@ -143,6 +144,8 @@ body.playing #av-player { display: block; }
 #subs { position: absolute; left: 160px; right: 160px; bottom: 90px; text-align: center; font-size: 44px; white-space: pre-line; text-shadow: 0 0 6px #000, 0 0 3px #000; }
 #p-buffer { display: none; position: absolute; left: 0; right: 0; top: 440px; flex-direction: column; align-items: center; }
 #p-buffer.show { display: flex; }
+/* Продолжение по зеркалу: фильм уже играет с начала, пока плеер переходит к месту, — его не видно */
+#p-buffer.cover { top: 0; bottom: 0; justify-content: center; background: #000; }
 #p-bar { display: none; position: absolute; left: 0; right: 0; bottom: 0; padding: 120px 80px 40px; background: linear-gradient(transparent, rgba(0,0,0,.85)); }
 #p-bar.show { display: block; }
 .p-top { display: flex; align-items: center; font-size: 34px; }
