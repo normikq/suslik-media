@@ -90,6 +90,11 @@ router.get("/api/file/tv/:name", mirrorLimiter, async (req, res) => {
   }
   const audio = info.audio.find(x => x.index === a);
   if (!info.video || !audio) return res.status(400).send("В файле нет такой дорожки.");
+  // AV1 у ТВ 2018–2019 нет: поток был бы со звуком и чёрным экраном (журнал 21.10)
+  if (tv.videoUnsupported(info)) {
+    console.warn(`[tv] 415: видео ${info.video.codec} телевизор не декодирует`);
+    return res.status(415).send("Видео этого файла телевизор не поддерживает.");
+  }
   const t = Math.max(0, Math.min(Number(req.query.t) || 0, info.durationMs ? info.durationMs / 1000 : 1e7));
   const viewer = /^[a-z0-9]{1,32}$/i.test(String(req.query.s || "")) ? String(req.query.s) : null;
 
