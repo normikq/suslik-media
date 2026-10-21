@@ -37,7 +37,7 @@ router.get("/api/file/tv-info", requireLogin, mirrorUrlLimiter, async (req, res)
     return res.status(502).json({ error: err instanceof UnlockError ? err.message : "Сервер не смог прочитать файл." });
   }
   const raw = cleanFileName(typeof req.query.name === "string" ? req.query.name.split(/[\\/]/).pop() : "") || "video";
-  const name = encodeURIComponent(raw.replace(/\.[a-z0-9]{2,5}$/i, "") + ".mkv");
+  const name = encodeURIComponent(raw.replace(/\.[a-z0-9]{2,5}$/i, "") + "." + config.TV_STREAM_FORMAT);
   const expires = String(Math.floor(Date.now() / 1000) + config.MIRROR_TTL);
   const host = req.get("host");
   const def = tv.defaultAudio(info);
@@ -71,7 +71,8 @@ router.get("/api/file/tv/:name", mirrorLimiter, async (req, res) => {
     res.setHeader("Content-Range", "bytes */*");
     return res.status(416).end();
   }
-  res.setHeader("Content-Type", "video/x-matroska");
+  const format = /\.mkv$/i.test(req.params.name) ? "mkv" : "ts";
+  res.setHeader("Content-Type", format === "mkv" ? "video/x-matroska" : "video/mp2t");
   res.setHeader("Cache-Control", "private, no-store");
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Content-Security-Policy", MIRROR_CSP);
@@ -93,12 +94,16 @@ router.get("/api/file/tv/:name", mirrorLimiter, async (req, res) => {
 
   let closed = false;
   res.on("close", () => { closed = true; });
-  const child = tv.startFfmpeg(tv.ffmpegArgs(entry.url, Math.round(t * 10) / 10, info, audio), viewer);
+  const child = tv.startFfmpeg(tv.ffmpegArgs(entry.url, Math.round(t * 10) / 10, info, audio, format), viewer);
   if (!child) {
     console.warn(`[tv] 503: уже ${tv.activeCount()} ffmpeg`);
     return res.status(503).send("Сервер занят: телевизоров смотрит слишком много.");
   }
-  console.log(`[tv] старт a=${a} (${audio.codec}${audio.ok ? ", копия" : " → ac3"}) t=${t} range=${range || "-"} ua="${req.get("user-agent") || "-"}"`);
+  const started = Date.now();
+  let sent = 0;
+  child.stdout.on("data", c => { sent += c.length; });
+  res.on("close", () => console.log(`[tv] плеер закрыл поток: ${Math.round((Date.now() - started) / 1000)} с, отдано ${Math.round(sent / 1024)} КБ`));
+  console.log(`[tv] старт ${format} a=${a} (${audio.codec}${audio.ok ? ", копия" : " → ac3"}) t=${t} range=${range || "-"} ua="${req.get("user-agent") || "-"}"`);
   mirrorLog(req, `tv stream: a=${a} (${audio.codec}${audio.ok ? ", copy" : " -> ac3"}) t=${t}`);
 
   const kill = () => { if (child.exitCode == null && !child.killed) child.kill("SIGKILL"); };

@@ -101,9 +101,9 @@ docker run -d --name flaresolverr --restart unless-stopped -p 127.0.0.1:8191:819
 ## Поток для телевизора (Samsung, Tizen)
 
 Телевизор не играет звук DTS/TrueHD/Blu-ray LPCM, а `.m2ts` по сети показывает рывками. Для таких файлов приложение
-Tizen спрашивает `GET /api/file/tv-info?link=&name=` (ffprobe, кеш 6 ч) и смотрит `GET /api/file/tv/<имя>.mkv?link=&a=&exp=&sig=&t=`:
+Tizen спрашивает `GET /api/file/tv-info?link=&name=` (ffprobe, кеш 6 ч) и смотрит `GET /api/file/tv/<имя>.ts?link=&a=&exp=&sig=&t=`:
 ffmpeg отдаёт видео как есть (`-c:v copy`), выбранную дорожку звука — в AC3 640k (AC3/AAC/E-AC3 — копией), текстовые
-субтитры — копией, контейнер MKV в трубу. Перемотка — новый запрос с `&t=<сек>` (байтами поток не перематывается, Range
+субтитры не несёт, контейнер MPEG-TS в трубу (`TV_STREAM_FORMAT=mkv` — MKV с текстовыми субтитрами; AVPlay на UE40NU7100 MKV из трубы не открыл). Перемотка — новый запрос с `&t=<сек>` (байтами поток не перематывается, Range
 не с нуля → 416). Нагрузка — только звук: ~5–15 % одного ядра и ~100 МБ на просмотр.
 
 Только для ТВ: `tv-info` отвечает 403 всем, у кого в User-Agent нет `Tizen`/`SMART-TV` и чьё устройство не «Samsung TV».

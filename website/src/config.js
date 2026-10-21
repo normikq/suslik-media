@@ -33,6 +33,8 @@ const FFPROBE_PATH = process.env.FFPROBE_PATH || "ffprobe";
 const FFMPEG_PATH = process.env.FFMPEG_PATH || "ffmpeg";
 const TV_STREAM = process.env.TV_STREAM !== "false";
 const TV_STREAM_MAX = Math.max(1, Number(process.env.TV_STREAM_MAX || 2));
+// Контейнер потока: ts (MPEG-TS; AVPlay на UE40NU7100 MKV из трубы не открыл — «unknown error», 21.10) или mkv
+const TV_STREAM_FORMAT = process.env.TV_STREAM_FORMAT === "mkv" ? "mkv" : "ts";
 const APP_DOWNLOAD_RATE_LIMIT = "5242880";
 const SERVER_REV = "2026-10-20 discord-1";
 const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -110,6 +112,7 @@ module.exports = {
   FFMPEG_PATH,
   TV_STREAM,
   TV_STREAM_MAX,
+  TV_STREAM_FORMAT,
   APP_DOWNLOAD_RATE_LIMIT,
   SERVER_REV,
   SESSION_MAX_AGE_MS,

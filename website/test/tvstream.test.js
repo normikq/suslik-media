@@ -56,7 +56,7 @@ test("tvstream: разбор ffprobe и выбор дорожки", () => {
 
 test("tvstream: аргументы ffmpeg", () => {
   const mkv = tv.parseProbe(MKV_DTS);
-  const a = tv.ffmpegArgs("https://host/f.mkv", 600, mkv, mkv.audio[0]);
+  const a = tv.ffmpegArgs("https://host/f.mkv", 600, mkv, mkv.audio[0], "mkv");
   const s = a.join(" ");
   assert.match(s, /-ss 600 -i https:\/\/host\/f\.mkv/, "-ss до -i: быстрый прыжок");
   assert.match(s, /-map 0:0 -map 0:1 -map 0:3/);
@@ -65,6 +65,9 @@ test("tvstream: аргументы ffmpeg", () => {
   assert.match(s, /-c:s copy/);
   assert.match(s, /-reconnect 1/);
   assert.equal(a[a.length - 1], "pipe:1");
+  const t = tv.ffmpegArgs("https://host/f.mkv", 0, mkv, mkv.audio[0]).join(" ");
+  assert.match(t, /-f mpegts/, "по умолчанию MPEG-TS");
+  assert.doesNotMatch(t, /-c:s|0:3/, "субтитров MPEG-TS не несёт");
   const bd = tv.parseProbe(BD);
   const b = tv.ffmpegArgs("https://host/f.m2ts", 0, bd, bd.audio[1]).join(" ");
   assert.match(b, /-c:a copy/, "AC3 копируется");
@@ -109,7 +112,12 @@ test("tvstream: ffmpeg на настоящих файлах", { skip: !hasFfmpeg
     const audio = tv.defaultAudio(info);
     assert.equal(audio.codec, "pcm_bluray");
     const out = path.join(dir, "out.mkv");
-    fs.writeFileSync(out, await run(tv.ffmpegArgs(src, 5, info, audio)));
+    fs.writeFileSync(out, await run(tv.ffmpegArgs(src, 5, info, audio, "mkv")));
+    const outTs = path.join(dir, "out.ts");
+    fs.writeFileSync(outTs, await run(tv.ffmpegArgs(src, 5, info, audio)));
+    const ts = JSON.parse(spawnSync("ffprobe", ["-v", "error", "-show_format", "-show_streams", "-of", "json", outTs]).stdout);
+    assert.equal(ts.format.format_name, "mpegts");
+    assert.deepEqual(ts.streams.map(s => s.codec_name), ["h264", "ac3"]);
     const res = JSON.parse(spawnSync("ffprobe", ["-v", "error", "-show_format", "-show_streams", "-of", "json", out]).stdout);
     const codecs = res.streams.map(s => s.codec_name);
     assert.deepEqual(codecs, ["h264", "ac3"]);
@@ -144,6 +152,10 @@ test("tvstream: маршрут /api/file/tv отдаёт MKV и не перем�
     assert.equal(bad.status, 401, "подпись другой дорожки");
     const ranged = await fetch(url, { headers: { Range: "bytes=1000-" } });
     assert.equal(ranged.status, 416);
+    const rts = await fetch(url.replace("/film.mkv", "/film.ts") + "&t=2&s=abd");
+    assert.equal(rts.status, 200);
+    assert.equal(rts.headers.get("content-type"), "video/mp2t");
+    assert.ok((await rts.arrayBuffer()).byteLength > 1000);
     const r = await fetch(url + "&t=2&s=abc");
     assert.equal(r.status, 200);
     assert.equal(r.headers.get("content-type"), "video/x-matroska");

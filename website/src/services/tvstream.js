@@ -100,8 +100,12 @@ function defaultAudio(info) {
   );
 }
 
-/** Аргументы ffmpeg: [url] — прямая ссылка, [startSec] — с какого места, [audio] — дорожка из parseProbe. */
-function ffmpegArgs(url, startSec, info, audio) {
+/**
+ * Аргументы ffmpeg: [url] — прямая ссылка, [startSec] — с какого места, [audio] — дорожка из parseProbe,
+ * [format] — "ts" (MPEG-TS: поток без длины и индекса телевизор принимает как эфир) или "mkv".
+ */
+function ffmpegArgs(url, startSec, info, audio, format) {
+  const ts = format !== "mkv";
   const args = ["-hide_banner", "-loglevel", "error", "-nostdin"];
   if (/^https?:/i.test(url)) {
     // Файл-хост замолчал на 30 с — ffmpeg выходит, телевизор переоткроет поток с того же места
@@ -110,7 +114,7 @@ function ffmpegArgs(url, startSec, info, audio) {
   args.push("-fflags", "+genpts");
   if (startSec > 0) args.push("-ss", String(startSec));
   args.push("-i", url, "-map", `0:${info.video.index}`, "-map", `0:${audio.index}`);
-  for (const s of info.subs) args.push("-map", `0:${s.index}`);
+  if (!ts) for (const s of info.subs) args.push("-map", `0:${s.index}`); // текстовых субтитров MPEG-TS не несёт
   args.push("-c:v", "copy");
   if (audio.ok) args.push("-c:a", "copy");
   else {
@@ -118,8 +122,11 @@ function ffmpegArgs(url, startSec, info, audio) {
     // AC3, а не AAC: кодируется дешевле, и телевизор передаёт 5.1 на саундбар по ARC/оптике
     args.push("-c:a", "ac3", "-b:a", ch > 2 ? "640k" : "192k", "-ac", String(ch));
   }
-  if (info.subs.length) args.push("-c:s", "copy");
-  args.push("-max_muxing_queue_size", "1024", "-avoid_negative_ts", "make_zero", "-f", "matroska", "pipe:1");
+  if (!ts && info.subs.length) args.push("-c:s", "copy");
+  args.push("-max_muxing_queue_size", "1024", "-avoid_negative_ts", "make_zero");
+  // MPEG-TS: время с нуля, PAT/PMT в начале каждого ключевого кадра — плеер подхватывает поток с любого места
+  if (ts) args.push("-f", "mpegts", "-mpegts_flags", "+resend_headers", "pipe:1");
+  else args.push("-f", "matroska", "pipe:1");
   return args;
 }
 
