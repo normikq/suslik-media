@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=1920, user-scalable=no">
+  <title>Suslik Media</title>
+  <link rel="stylesheet" href="css/app.css">
+  <!-- Samsung Product API (webapis.avplay): есть только на телевизоре -->
+  <script src="$WEBAPIS/webapis/webapis.js"></script>
+</head>
+<body>
+  <!-- Картинка AVPlay рисуется под страницей, на месте этого объекта: пока идёт фильм, фон страницы прозрачный -->
+  <object id="av-player" type="application/avplayer"></object>
+  <div id="screen"></div>
+
+  <div id="player">
+    <div id="subs"></div>
+    <div id="p-buffer"><div class="spinner"></div><span id="p-buffer-text">Загрузка…</span></div>
+    <div id="p-bar">
+      <div class="p-top"><span id="p-state">▶</span><span id="p-title"></span><span id="p-party">● Вместе</span><span id="p-time">0:00 / 0:00</span></div>
+      <div class="p-track"><div id="p-fill"></div></div>
+      <div class="p-hints">OK — пауза · ← → 10 с · ⏪ ⏩ минута · ↓ звук и субтитры · жёлтая — проба · «Назад» — выход</div>
+    </div>
+    <div id="menu"></div>
+    <div id="diag"><pre id="diag-head"></pre><div class="diag-sep">— события (новые внизу) —</div><pre id="diag-log"></pre></div>
+  </div>
+
+  <div id="toast"></div>
+
+  <script src="js/site.js"></script>
+  <script src="js/vendor/qrcode.js"></script>
+  <script src="js/changelog.js"></script>
+  <script src="js/model.js"></script>
+  <script src="js/support.js"></script>
+  <script src="js/partycore.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/sync.js"></script>
+  <script src="js/party.js"></script>
+  <script src="js/player.js"></script>
+  <script src="js/search.js"></script>
+  <script src="js/add.js"></script>
+  <script src="js/together.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
