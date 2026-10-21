@@ -103,6 +103,8 @@ router.get("/api/file/tv/:name", mirrorLimiter, async (req, res) => {
   let sent = 0;
   child.stdout.on("data", c => { sent += c.length; });
   res.on("close", () => console.log(`[tv] плеер закрыл поток: ${Math.round((Date.now() - started) / 1000)} с, отдано ${Math.round(sent / 1024)} КБ`));
+  const v = info.video;
+  console.log(`[tv] видео ${v.codec} ${v.profile} ${v.width}x${v.height} ${v.pixFmt} ${v.transfer || "sdr"}${v.dv ? " DolbyVision P" + v.dv : ""}, контейнер ${info.container}`);
   console.log(`[tv] старт ${format} a=${a} (${audio.codec}${audio.ok ? ", копия" : " → ac3"}) t=${t} range=${range || "-"} ua="${req.get("user-agent") || "-"}"`);
   mirrorLog(req, `tv stream: a=${a} (${audio.codec}${audio.ok ? ", copy" : " -> ac3"}) t=${t}`);
 

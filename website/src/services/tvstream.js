@@ -69,7 +69,13 @@ function parseProbe(data) {
   return {
     container: String(format.format_name || ""),
     durationMs: Number.isFinite(duration) && duration > 0 ? Math.round(duration * 1000) : 0,
-    video: video ? { index: Number(video.index), codec: String(video.codec_name || ""), width: Number(video.width) || 0, height: Number(video.height) || 0 } : null,
+    video: video ? {
+      index: Number(video.index), codec: String(video.codec_name || ""), profile: String(video.profile || ""),
+      width: Number(video.width) || 0, height: Number(video.height) || 0, pixFmt: String(video.pix_fmt || ""),
+      transfer: String(video.color_transfer || ""), // smpte2084 — HDR10, arib-std-b67 — HLG
+      // Dolby Vision: профиль 5 без запасного HDR10, 7/8 — поверх HDR10
+      dv: (Array.isArray(video.side_data_list) ? video.side_data_list : []).filter(d => /dovi|dolby/i.test(String(d.side_data_type || ""))).map(d => Number(d.dv_profile))[0] || 0
+    } : null,
     audio,
     subs
   };

@@ -99,6 +99,8 @@
       if (pick == null) pick = audio[0].index;
       c.tc = { info: r, a: pick, base: 0, playedOk: false };
       if (r.durationMs > 0) c.dur = r.durationMs;
+      var v = r.video || {};
+      note('server stream: video ' + [v.codec, v.profile, v.width + 'x' + v.height, v.pixFmt, v.transfer, v.dv ? 'DV P' + v.dv : ''].filter(Boolean).join(' '));
       note('server stream: audio #' + pick + ' (' + audio.map(function (t) { return t.index + ':' + t.codec + (t.ok ? '' : '→ac3'); }).join(', ') + ')');
       start(serverUrl(c, atMs), 0);
       return true;
@@ -154,7 +156,9 @@
         } catch (e) { note('setBufferingParam failed ' + (e.name || e)); }
       } else note('buffer: AVPlay default');
       // 4K: без этого режима часть телевизоров играет UHD-поток с пропусками кадров (настройка — до prepare)
-      if (/2160p|\b4k\b|\buhd\b/i.test(c.opts.file.path)) {
+      // Поток с сервера (MPEG-TS) телевизор видит как эфир: размер кадра — из ffprobe сервера, а не из имени файла
+      var tcVideo = c.tc && c.tc.info.video;
+      if (tcVideo ? tcVideo.width > 1920 || tcVideo.height > 1080 : /2160p|\b4k\b|\buhd\b/i.test(c.opts.file.path)) {
         try { p.setStreamingProperty('SET_MODE_4K', 'TRUE'); note('mode 4K'); } catch (e) { note('SET_MODE_4K failed ' + (e.name || e)); }
       }
       // Старый плеер после close() ещё может прислать событие: оно не должно трогать новый фильм
