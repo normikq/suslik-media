@@ -28,6 +28,11 @@ const MIRROR_DEBUG = process.env.MIRROR_DEBUG === "1";
 const STREAM_IDLE_MS = Number(process.env.STREAM_IDLE_MS || 25000);
 const MIRROR_ACCEL = process.env.MIRROR_ACCEL === "1";
 const FFPROBE_PATH = process.env.FFPROBE_PATH || "ffprobe";
+// Поток для телевизора (Tizen): звук DTS/TrueHD → AC3 через ffmpeg, видео как есть (services/tvstream.js).
+// TV_STREAM=false выключает; TV_STREAM_MAX — сколько ffmpeg сразу (каждый ~5–15 % ядра)
+const FFMPEG_PATH = process.env.FFMPEG_PATH || "ffmpeg";
+const TV_STREAM = process.env.TV_STREAM !== "false";
+const TV_STREAM_MAX = Math.max(1, Number(process.env.TV_STREAM_MAX || 2));
 const APP_DOWNLOAD_RATE_LIMIT = "5242880";
 const SERVER_REV = "2026-10-20 discord-1";
 const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -102,6 +107,9 @@ module.exports = {
   STREAM_IDLE_MS,
   MIRROR_ACCEL,
   FFPROBE_PATH,
+  FFMPEG_PATH,
+  TV_STREAM,
+  TV_STREAM_MAX,
   APP_DOWNLOAD_RATE_LIMIT,
   SERVER_REV,
   SESSION_MAX_AGE_MS,

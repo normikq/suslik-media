@@ -73,6 +73,14 @@
       return call('GET', '/api/file/mirror-url?link=' + enc(file.link) + '&name=' + enc(name), null, true)
         .then(function (r) { if (!r.url) throw { message: 'Сервер не дал ссылку на файл' }; return r.url; });
     },
+    /**
+     * Поток для ТВ (сервер, ffmpeg): { stream, durationMs, audio: [{ index, codec, channels, language, ok, url }],
+     * subs, audioDefault }. Первый ответ по файлу ждёт ffprobe (до 40 с), повтора нет — дальше из кеша сервера.
+     */
+    tvInfo: function (file) {
+      var name = file.name.trim() ? file.name : SM.model.basename(file.path);
+      return attempt('GET', '/api/file/tv-info?link=' + enc(file.link) + '&name=' + enc(name), null, 45000);
+    },
     describe: function (e) { return (e && e.message) || 'Неизвестная ошибка'; }
   };
 })(window);

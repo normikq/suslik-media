@@ -6,6 +6,10 @@
  * заменяются другой дорожкой; если звука, который ТВ играет, нет — окно «Звук этого файла телевизор не воспроизводит».
  * Жёлтая кнопка или Info — «проба»: кодеки, дорожки и события AVPlay (этап 0 плана: что играет этот телевизор).
  *
+ * Звук, который ТВ не играет, и Blu-ray (.m2ts): файл идёт через сервер (/api/file/tv, ffmpeg) — видео как есть,
+ * звук в AC3. Такой поток перематывается переоткрытием с нужного места (&t=), время фильма = место открытия + время
+ * AVPlay; дорожка звука — одна, выбор другой — тоже переоткрытие. Не вышло — файл открывается как раньше, по зеркалу.
+ *
  * Пульт: OK / ▶❚❚ — пауза, ←/→ — 10 с, ⏪/⏩ — минута, ⏮/⏭ — соседняя серия, ↓ — звук и субтитры, ↑ — панель,
  * «Назад» / ■ — выход.
  */
@@ -52,7 +56,8 @@
       saveTimer: 0, retries: 0, menuOpen: false, diagOpen: false, audio: null, textTracks: [], subsOn: false,
       resume: saved && !saved.watched && saved.pos > 30000 ? saved.pos : 0, ended: false,
       prepared: false, loading: true, seekStamp: 0, seeking: false, slow: null, party: null,
-      urlAt: 0, played: false, retryAt: 0, stalls: 0, stallMs: 0, stallFrom: 0, durAskedAt: 0
+      urlAt: 0, played: false, retryAt: 0, stalls: 0, stallMs: 0, stallFrom: 0, durAskedAt: 0,
+      tc: null, viewer: Math.random().toString(36).slice(2, 10)
     };
     if (opts.resumeAt != null) cur.resume = opts.resumeAt;
     log = [];
@@ -67,8 +72,62 @@
     buffering(true, 0);
     attachParty(cur);
     showBar();
-    api.mirrorUrl(opts.file).then(function (url) { if (cur && cur.opts === opts) start(url, cur.resume); })
-      .catch(function (e) { if (cur && cur.opts === opts) fail('network', api.describe(e)); });
+    var c = cur;
+    var mirror = function () {
+      api.mirrorUrl(opts.file).then(function (url) { if (cur === c) start(url, c.resume); })
+        .catch(function (e) { if (cur === c) fail('network', api.describe(e)); });
+    };
+    if (support.serverFirst(opts.file.path)) viaServer(c, c.resume, {}).then(function (ok) { if (!ok && cur === c) mirror(); });
+    else mirror();
+  }
+
+  // ---- поток через сервер (звук → AC3) ----
+
+  /**
+   * Открыть файл через сервер с места [atMs]. [o]: { force — даже если сервер считает, что ТВ справится сам;
+   * order — какая по счёту звуковая дорожка (как в AVPlay) }. Обещание: true — поток открывается, false — нет.
+   */
+  function viaServer(c, atMs, o) {
+    if (c.serverFailed) return Promise.resolve(false); // уже не вышло: не ходим по кругу «сервер → зеркало → сервер»
+    note('server stream: asking');
+    buffering(true, 0);
+    return api.tvInfo(c.opts.file).then(function (r) {
+      if (cur !== c) return false;
+      var audio = Array.isArray(r.audio) ? r.audio : [];
+      if (!audio.length || (!r.stream && !o.force)) { note('server stream: not needed'); return false; }
+      var pick = o.order != null && audio[o.order] ? audio[o.order].index : r.audioDefault;
+      if (pick == null) pick = audio[0].index;
+      c.tc = { info: r, a: pick, base: 0, playedOk: false };
+      if (r.durationMs > 0) c.dur = r.durationMs;
+      note('server stream: audio #' + pick + ' (' + audio.map(function (t) { return t.index + ':' + t.codec + (t.ok ? '' : '→ac3'); }).join(', ') + ')');
+      start(serverUrl(c, atMs), 0);
+      return true;
+    }, function (e) {
+      note('server stream unavailable: ' + api.describe(e) + (e && e.code ? ' (' + e.code + ')' : ''));
+      return false;
+    });
+  }
+
+  /** Адрес потока с места [ms]: время, которое пришлёт AVPlay, — от этого места. */
+  function serverUrl(c, ms) {
+    var t = c.tc.info.audio.filter(function (x) { return x.index === c.tc.a; })[0] || c.tc.info.audio[0];
+    c.tc.base = Math.max(0, Math.round(ms || 0));
+    c.pos = c.tc.base; // пока AVPlay не прислал время — место открытия (обрыв сразу после перемотки повторит его же)
+    return t.url + '&t=' + (c.tc.base / 1000).toFixed(1) + '&s=' + c.viewer;
+  }
+
+  /** Переоткрыть с места [at]: новая ссылка зеркала или (поток через сервер) новый поток. */
+  function reopenAt(c, at) {
+    buffering(true, 0);
+    var done = function (url) { if (cur === c) start(url, c.tc ? 0 : at); };
+    var bad = function (e) { if (cur === c) fail('network', api.describe(e)); };
+    if (c.tc) {
+      api.tvInfo(c.opts.file).then(function (r) {
+        if (cur !== c) return;
+        if (Array.isArray(r.audio) && r.audio.length) c.tc.info = r; // свежие подписи
+        done(serverUrl(c, at));
+      }, bad);
+    } else api.mirrorUrl(c.opts.file).then(done, bad);
   }
 
   function start(url, fromMs) {
@@ -115,7 +174,7 @@
         },
         oncurrentplaytime: function (ms) {
           if (cur !== c) return;
-          c.pos = ms;
+          c.pos = (c.tc ? c.tc.base : 0) + ms;
           if (!c.dur) duration(c);
           watchSpeed(c, ms);
           // Панель скрыта — время не перерисовываем (лишняя вёрстка 4 раза в секунду); showBar() обновит его сам
@@ -133,7 +192,7 @@
     }
     var prepareOk = function () {
       if (cur !== c) return;
-      try { c.dur = p.getDuration(); } catch (e) { c.dur = 0; }
+      if (!c.tc) { try { c.dur = p.getDuration(); } catch (e) { c.dur = 0; } } // у потока с сервера длительность — из tv-info
       note('prepared, duration ' + fmt(c.dur));
       inspectTracks();
       var started = false, resumeGuard = 0;
@@ -144,6 +203,7 @@
         try { p.play(); } catch (e) { note('play failed ' + (e.name || e)); }
         c.paused = false;
         c.prepared = true; c.loading = false; c.played = true;
+        if (c.tc) { c.tc.playedOk = true; c.seekTarget = null; renderTime(); }
         buffering(false);
         showBar();
         clearInterval(c.saveTimer);
@@ -172,18 +232,35 @@
     try { all = p.getTotalTrackInfo() || []; } catch (e) { note('getTotalTrackInfo failed'); }
     try { now = p.getCurrentStreamInfo() || []; } catch (e) { /* нет сведений */ }
     all.forEach(function (t) { note('track ' + t.index + ' ' + t.type + ' ' + t.extra_info); });
+    c.textTracks = all.filter(function (t) { return t.type === 'TEXT'; });
+    if (c.tc) { serverAudio(c); return; }
     var curAudio = null;
     now.forEach(function (t) { if (t.type === 'AUDIO') curAudio = t.index; });
     c.audio = support.audioPlan(all, curAudio);
     c.textTracks = all.filter(function (t) { return t.type === 'TEXT'; });
     if (!c.audio.tracks.length) return;
     if (!c.audio.playable.length) {
-      warnNoAudio();
+      // Звука, который ТВ играет, нет: тот же файл через сервер (звук → AC3), с того же места
+      var at = c.pos || c.resume;
+      viaServer(c, at, { force: true }).then(function (ok) {
+        if (cur !== c) return;
+        if (ok) c.opts.toast('Звук ' + c.audio.tracks.map(function (t) { return t.codec || '?'; }).join(', ') + ' телевизор не играет — его готовит сервер');
+        else warnNoAudio();
+      });
     } else if (c.audio.current && !c.audio.current.ok) {
       var bad = c.audio.current, next = c.audio.playable[0];
       selectAudio(next);
       c.opts.toast('Дорожка ' + bad.codec + ' не воспроизводится, включена ' + trackName(next));
     }
+  }
+
+  /** Дорожки потока с сервера: все играются (сервер перекодирует), выбрана одна — [c.tc.a]. */
+  function serverAudio(c) {
+    var tracks = c.tc.info.audio.map(function (t) {
+      return { index: t.index, codec: t.codec + (t.ok ? '' : ' → AC3'), language: t.language, channels: t.channels, ok: true, server: true };
+    });
+    var current = tracks.filter(function (t) { return t.index === c.tc.a; })[0] || null;
+    c.audio = { tracks: tracks, playable: tracks, current: current };
   }
 
   function warnNoAudio() {
@@ -194,6 +271,9 @@
   }
 
   function selectAudio(t) {
+    var c = cur;
+    // Поток с сервера: в нём одна дорожка — другая значит новый поток с того же места
+    if (t.server) { c.tc.a = t.index; note('server audio → #' + t.index); c.prepared = false; start(serverUrl(c, c.pos), 0); return; }
     try { av().setSelectTrack('AUDIO', t.index); cur.audio.current = t; note('audio → ' + t.index); }
     catch (e) { note('setSelectTrack AUDIO failed ' + (e.name || e)); }
   }
@@ -208,6 +288,15 @@
     var c = cur;
     if (!c) return;
     var kind = support.errorKind(type);
+    // Поток с сервера не открылся ни разу (ffmpeg, сервер занят): этот же файл — как раньше, по зеркалу
+    if (c.tc && !c.tc.playedOk) {
+      note('server stream failed (' + type + '), opening as is');
+      var at = c.tc.base;
+      c.tc = null; c.dur = 0; c.serverFailed = true;
+      c.opts.toast('Сервер не смог подготовить файл — открываю как есть');
+      api.mirrorUrl(c.opts.file).then(function (url) { if (cur === c) start(url, at); }).catch(function (e) { if (cur === c) fail('network', api.describe(e)); });
+      return;
+    }
     // Сеть или истёкшая подпись зеркала (12 ч): новая ссылка и то же место, не больше двух раз подряд.
     // Подряд — значит без 2 минут спокойного просмотра между ошибками: иначе третий обрыв за длинный фильм был бы последним.
     if (c.retryAt && Date.now() - c.retryAt > 120000) c.retries = 0;
@@ -219,7 +308,7 @@
       var at = c.pos || c.resume;
       note('retry ' + c.retries + ' at ' + fmt(at));
       buffering(true, 0);
-      api.mirrorUrl(c.opts.file).then(function (url) { if (cur === c) start(url, at); }).catch(function (e) { if (cur === c) fail('network', api.describe(e)); });
+      reopenAt(c, at);
       return;
     }
     fail(kind, String(type));
@@ -287,9 +376,7 @@
     var at = c.pos || c.resume;
     note('reopen at ' + fmt(at) + ' (' + why + ')');
     c.prepared = false;
-    buffering(true, 0);
-    api.mirrorUrl(c.opts.file).then(function (url) { if (cur === c) start(url, at); })
-      .catch(function (e) { if (cur === c) fail('network', api.describe(e)); });
+    reopenAt(c, at); // поток с сервера — тоже с новой подписью
   }
 
   /** Соседняя серия (кнопки ⏮ ⏭ пульта). */
@@ -325,6 +412,8 @@
     c.seekStamp++;
     c.seekTarget = to;
     c.slow = null;
+    // Поток с сервера байтами не перематывается: новый поток с этого места (подпись живёт 12 ч)
+    if (c.tc) { note('seek ' + fmt(c.pos) + ' → ' + fmt(to) + ' (new server stream)'); renderTime(); start(serverUrl(c, to), 0); return; }
     // Прошлая перемотка ещё идёт: AVPlay вторую не примет (InvalidStateError) — эта уйдёт после неё
     if (c.seekBusy) { c.seekNext = to; note('seek ' + fmt(to) + ' queued'); return; }
     c.seekBusy = true;
@@ -361,6 +450,7 @@
 
   /** Длительность: у некоторых файлов сразу после открытия AVPlay отдаёт 0, позже — настоящую. */
   function duration(c) {
+    if (c.tc) return; // длительность сказал сервер; AVPlay видит только кусок с места открытия
     // У .m2ts длительность бывает 0 всё время: синхронный вызов AVPlay — не чаще раза в 5 с
     var now = Date.now();
     if (now - c.durAskedAt < 5000) return;
@@ -465,8 +555,17 @@
     if (!c.audio || !c.audio.tracks.length) items.push(h('p', { class: 'muted', text: 'Нет сведений о дорожках' }));
     else c.audio.tracks.forEach(function (t) {
       var selected = c.audio.current && c.audio.current.index === t.index;
-      items.push(SM.ui.button((selected ? '● ' : '') + trackName(t) + (t.ok ? '' : ' — не поддерживается'),
-        function () { if (!t.ok) { c.opts.toast('Звук ' + t.codec + ' телевизор не воспроизводит'); return; } selectAudio(t); closeMenu(); },
+      items.push(SM.ui.button((selected ? '● ' : '') + trackName(t) + (t.ok ? '' : ' — через сервер'),
+        function () {
+          if (!t.ok) {
+            // Дорожку, которую ТВ не играет, готовит сервер: тот же файл через него, с этой дорожкой
+            var k = c.audio.tracks.indexOf(t);
+            closeMenu();
+            viaServer(c, c.pos, { force: true, order: k }).then(function (ok) { if (!ok && cur === c) c.opts.toast('Звук ' + t.codec + ' телевизор не воспроизводит'); });
+            return;
+          }
+          selectAudio(t); closeMenu();
+        },
         (t.ok ? '' : 'disabled') + (selected ? ' sel' : '')));
     });
     var dubs = model.externalAudioFor(c.opts.magnet, c.opts.file);
@@ -551,6 +650,14 @@
    */
   function speedTest(c) {
     if (c.speedBusy || !c.url) return;
+    // Поток с сервера байтами не читается (Range → 416): меряем по обычной ссылке зеркала на тот же файл
+    if (c.tc && !c.speedUrl) {
+      c.speedBusy = true;
+      api.mirrorUrl(c.opts.file).then(function (u) { c.speedBusy = false; c.speedUrl = u; if (cur === c) speedTest(c); },
+        function (e) { c.speedBusy = false; c.speed = 'не удалось: ' + api.describe(e); if (cur === c && c.diagOpen) renderDiag(); });
+      return;
+    }
+    var testUrl = c.tc ? c.speedUrl : c.url;
     if (c.prepared && !c.paused) togglePause();
     c.speedBusy = true; c.speed = 'замер…';
     renderDiag();
@@ -559,7 +666,7 @@
     if (size > 0 && from + LIMIT > size) from = Math.max(0, size - LIMIT);
     var x = new XMLHttpRequest(), t0 = Date.now(), first = 0, loaded = 0, status = 0;
     c.speedXhr = x;
-    x.open('GET', c.url.charAt(0) === '/' ? api.BASE + c.url : c.url, true);
+    x.open('GET', testUrl.charAt(0) === '/' ? api.BASE + testUrl : testUrl, true);
     x.setRequestHeader('Range', 'bytes=' + from + '-' + (from + LIMIT - 1));
     x.responseType = 'arraybuffer';
     x.onreadystatechange = function () { if (x.readyState >= 2 && !status) status = x.status; };
@@ -607,6 +714,7 @@
     var busy = c.loading || c.seekBusy || !c.prepared;
     if (!busy) { try { lines.push('Состояние: ' + p.getState()); } catch (e) { /* нет */ } }
     else lines.push('Состояние: ' + (c.seekBusy ? 'перемотка' : 'загрузка'));
+    lines.push('Поток: ' + (c.tc ? 'через сервер (ffmpeg), звук #' + c.tc.a + ', открыт с ' + fmt(c.tc.base) : 'файл как есть (зеркало)'));
     lines.push('Запас: ' + (bigBuffer() ? 'большой (8 с / 15 с)' : 'как у телевизора') +
       ' · остановок на загрузку: ' + c.stalls + (c.stalls ? ' (всего ' + Math.round((c.stallMs + (c.stallFrom ? Date.now() - c.stallFrom : 0)) / 1000) + ' с)' : ''));
     if (c.speed) lines.push('Скорость сети: ' + c.speed);

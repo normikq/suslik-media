@@ -29,6 +29,15 @@
     return { level: 'ok', text: '' };
   }
 
+  /**
+   * Сразу спросить сервер (/api/file/tv-info): .m2ts/.ts (MPEG-TS телевизор по сети показывает рывками) и звук
+   * DTS/TrueHD в имени. Сервер отдаёт такой файл через ffmpeg: видео как есть, звук — в AC3.
+   */
+  function serverFirst(path) {
+    var p = path.replace(/\\/g, '/'), name = p.substring(p.lastIndexOf('/') + 1);
+    return /\.(m2ts|mts|ts)$/i.test(name) || BLURAY_DIR.test(p) || BAD_AUDIO.test(name.replace(/[._]/g, ' '));
+  }
+
   /** Озвучка отдельным файлом (.mka рядом с видео): AVPlay не умеет подключать второй источник звука. */
   var EXTERNAL_AUDIO_TEXT = 'Озвучка отдельным файлом — на телевизоре недоступна';
 
@@ -81,7 +90,7 @@
   };
 
   SM.support = {
-    checkFile: checkFile, slowHint: slowHint, audioTrack: audioTrack, audioPlan: audioPlan, errorKind: errorKind,
+    checkFile: checkFile, serverFirst: serverFirst, slowHint: slowHint, audioTrack: audioTrack, audioPlan: audioPlan, errorKind: errorKind,
     EXTERNAL_AUDIO_TEXT: EXTERNAL_AUDIO_TEXT, MESSAGES: MESSAGES
   };
   if (typeof module === 'object' && module.exports) module.exports = SM.support;
