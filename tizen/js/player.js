@@ -6,6 +6,10 @@
  * заменяются другой дорожкой; если звука, который ТВ играет, нет — окно «Звук этого файла телевизор не воспроизводит».
  * Жёлтая кнопка или Info — «проба»: кодеки, дорожки и события AVPlay (этап 0 плана: что играет этот телевизор).
  *
+ * Звук, который ТВ не играет, и Blu-ray (.m2ts): файл идёт через сервер (/api/file/tv, ffmpeg) — видео как есть,
+ * звук в AC3. Такой поток перематывается переоткрытием с нужного места (&t=), время фильма = место открытия + время
+ * AVPlay; дорожка звука — одна, выбор другой — тоже переоткрытие. Не вышло — файл открывается как раньше, по зеркалу.
+ *
  * Пульт: OK / ▶❚❚ — пауза, ←/→ — 10 с, ⏪/⏩ — минута, ⏮/⏭ — соседняя серия, ↓ — звук и субтитры, ↑ — панель,
  * «Назад» / ■ — выход.
  */
@@ -19,14 +23,45 @@
   var URL_TTL_MS = 11 * 3600 * 1000;
 
   var log = [];
+  // Журнал прошлого просмотра: если телевизор завис и приложение перезапустили, в пробе видно, на чём встало
+  var LOG_KEY = 'tv_player_log', prevLog = [], logSaveTimer = 0;
   function note(text) {
     var d = new Date();
     log.push(('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2) + ' ' + text);
     if (log.length > 300) log.shift();
+    if (!logSaveTimer) logSaveTimer = setTimeout(saveLog, 2000);
     if (cur && cur.diagOpen) renderDiag();
   }
+  function saveLog() {
+    logSaveTimer = 0;
+    try { localStorage.setItem(LOG_KEY, JSON.stringify(log.slice(-150))); } catch (e) { /* нет хранилища */ }
+  }
+  function loadLog() {
+    try { var v = JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; }
+  }
 
-  function av() { return g.webapis && g.webapis.avplay; }
+  // Вызовы AVPlay синхронные и держат страницу: каждый дольше 300 мс — в пробу с именем (журнал 21.10: 4K — UI stall 20 с)
+  var avWrap = null;
+  function av() {
+    var p = g.webapis && g.webapis.avplay;
+    if (!p) return null;
+    if (avWrap) return avWrap;
+    avWrap = {};
+    Object.keys(p).concat(['open', 'close', 'stop', 'play', 'pause', 'prepareAsync', 'seekTo', 'jumpForward', 'jumpBackward',
+      'getDuration', 'getState', 'getTotalTrackInfo', 'getCurrentStreamInfo', 'setSelectTrack', 'setStreamingProperty',
+      'setDisplayRect', 'setDisplayMethod', 'setBufferingParam', 'setListener', 'setSilentSubtitle', 'suspend', 'restore'])
+      .forEach(function (k) {
+        if (avWrap[k] || typeof p[k] !== 'function') return;
+        avWrap[k] = function () {
+          var t0 = Date.now();
+          try { return p[k].apply(p, arguments); } finally {
+            var ms = Date.now() - t0;
+            if (ms > 300) note('slow AVPlay.' + k + ': ' + ms + ' ms');
+          }
+        };
+      });
+    return avWrap;
+  }
   function bigBuffer() { try { return localStorage.getItem('tv_buffer') === 'big'; } catch (e) { return false; } }
 
   // Сторож: таймер 0,5 с не срабатывал дольше 1,5 с — приложение висело (AVPlay держит поток страницы). В пробу.
@@ -34,7 +69,7 @@
   setInterval(function () {
     var now = Date.now(), gap = now - lastBeat;
     lastBeat = now;
-    if (cur && gap > 1500) note('UI stall ' + gap + ' ms' + (cur.seekBusy ? ' (seek)' : cur.loading ? ' (loading)' : ''));
+    if (cur && gap > 1500) note('UI stall ' + gap + ' ms' + (cur.seekBusy ? ' (seek)' : cur.loading ? ' (loading)' : '') + (cur.diagOpen ? ' (probe open)' : ''));
   }, 500);
   function el(id) { return document.getElementById(id); }
   var h = function () { return SM.ui.h.apply(null, arguments); };
@@ -52,9 +87,12 @@
       saveTimer: 0, retries: 0, menuOpen: false, diagOpen: false, audio: null, textTracks: [], subsOn: false,
       resume: saved && !saved.watched && saved.pos > 30000 ? saved.pos : 0, ended: false,
       prepared: false, loading: true, seekStamp: 0, seeking: false, slow: null, party: null,
-      urlAt: 0, played: false, retryAt: 0, stalls: 0, stallMs: 0, stallFrom: 0, durAskedAt: 0
+      urlAt: 0, played: false, retryAt: 0, stalls: 0, stallMs: 0, stallFrom: 0, durAskedAt: 0,
+      tc: null, viewer: Math.random().toString(36).slice(2, 10)
     };
     if (opts.resumeAt != null) cur.resume = opts.resumeAt;
+    clearTimeout(logSaveTimer); logSaveTimer = 0;
+    prevLog = log.length ? [] : loadLog(); // журнал в памяти пуст — приложение запущено заново (может, после зависания)
     log = [];
     note('open ' + opts.file.path + ' (' + model.formatBytes(opts.file.size) + ')');
     document.body.classList.add('playing');
@@ -67,8 +105,70 @@
     buffering(true, 0);
     attachParty(cur);
     showBar();
-    api.mirrorUrl(opts.file).then(function (url) { if (cur && cur.opts === opts) start(url, cur.resume); })
-      .catch(function (e) { if (cur && cur.opts === opts) fail('network', api.describe(e)); });
+    var c = cur;
+    var mirror = function () {
+      api.mirrorUrl(opts.file).then(function (url) { if (cur === c) start(url, c.resume); })
+        .catch(function (e) { if (cur === c) fail('network', api.describe(e)); });
+    };
+    if (support.serverFirst(opts.file.path)) viaServer(c, c.resume, {}).then(function (ok) { if (!ok && cur === c) mirror(); });
+    else mirror();
+  }
+
+  // ---- поток через сервер (звук → AC3) ----
+
+  /**
+   * Открыть файл через сервер с места [atMs]. [o]: { force — даже если сервер считает, что ТВ справится сам;
+   * order — какая по счёту звуковая дорожка (как в AVPlay) }. Обещание: true — поток открывается, false — нет.
+   */
+  function viaServer(c, atMs, o) {
+    if (c.serverFailed) return Promise.resolve(false); // уже не вышло: не ходим по кругу «сервер → зеркало → сервер»
+    note('server stream: asking');
+    buffering(true, 0, 'Сервер читает файл…');
+    return api.tvInfo(c.opts.file).then(function (r) {
+      if (cur !== c) return false;
+      var audio = Array.isArray(r.audio) ? r.audio : [];
+      // Видео, которого у этого ТВ нет (AV1): ни зеркало, ни сервер не помогут — говорим сразу, а не чёрным экраном
+      if (r.videoUnsupported) {
+        note('video ' + r.videoUnsupported + ': not supported by this TV');
+        fail('unsupported', 'видео ' + String(r.videoUnsupported).toUpperCase());
+        return true;
+      }
+      if (!audio.length || (!r.stream && !o.force)) { note('server stream: not needed'); return false; }
+      var pick = o.order != null && audio[o.order] ? audio[o.order].index : r.audioDefault;
+      if (pick == null) pick = audio[0].index;
+      c.tc = { info: r, a: pick, base: 0, playedOk: false };
+      if (r.durationMs > 0) c.dur = r.durationMs;
+      var v = r.video || {};
+      note('server stream: video ' + [v.codec, v.profile, v.width + 'x' + v.height, v.pixFmt, v.transfer, v.dv ? 'DV P' + v.dv : ''].filter(Boolean).join(' '));
+      note('server stream: audio #' + pick + ' (' + audio.map(function (t) { return t.index + ':' + t.codec + (t.ok ? '' : '→ac3'); }).join(', ') + ')');
+      start(serverUrl(c, atMs), 0);
+      return true;
+    }, function (e) {
+      note('server stream unavailable: ' + api.describe(e) + (e && e.code ? ' (' + e.code + ')' : ''));
+      return false;
+    });
+  }
+
+  /** Адрес потока с места [ms]: время, которое пришлёт AVPlay, — от этого места. */
+  function serverUrl(c, ms) {
+    var t = c.tc.info.audio.filter(function (x) { return x.index === c.tc.a; })[0] || c.tc.info.audio[0];
+    c.tc.base = Math.max(0, Math.round(ms || 0));
+    c.pos = c.tc.base; // пока AVPlay не прислал время — место открытия (обрыв сразу после перемотки повторит его же)
+    return t.url + '&t=' + (c.tc.base / 1000).toFixed(1) + '&s=' + c.viewer;
+  }
+
+  /** Переоткрыть с места [at]: новая ссылка зеркала или (поток через сервер) новый поток. */
+  function reopenAt(c, at) {
+    buffering(true, 0);
+    var done = function (url) { if (cur === c) start(url, c.tc ? 0 : at); };
+    var bad = function (e) { if (cur === c) fail('network', api.describe(e)); };
+    if (c.tc) {
+      api.tvInfo(c.opts.file).then(function (r) {
+        if (cur !== c) return;
+        if (Array.isArray(r.audio) && r.audio.length) c.tc.info = r; // свежие подписи
+        done(serverUrl(c, at));
+      }, bad);
+    } else api.mirrorUrl(c.opts.file).then(done, bad);
   }
 
   function start(url, fromMs) {
@@ -77,7 +177,9 @@
     c.urlAt = Date.now();
     // Переоткрытие (обрыв сети, новая ссылка): пока AVPlay снова не готов, плеер «грузится» — перемотка и пауза ждут
     c.prepared = false; c.loading = true; c.slow = null; c.seekBusy = false; c.seekNext = null;
+    c.resumeSeek = null; c.resumeCover = false;
     clearInterval(c.saveTimer);
+    buffering(true, 0, c.tc ? 'Сервер готовит поток…' : 'Открываю файл…');
     try {
       // close() из PLAYING/PAUSED без stop() на части прошивок Tizen 4.0 оставляет плеер в неясном состоянии
       try { p.stop(); } catch (e) { /* не играл */ }
@@ -95,7 +197,9 @@
         } catch (e) { note('setBufferingParam failed ' + (e.name || e)); }
       } else note('buffer: AVPlay default');
       // 4K: без этого режима часть телевизоров играет UHD-поток с пропусками кадров (настройка — до prepare)
-      if (/2160p|\b4k\b|\buhd\b/i.test(c.opts.file.path)) {
+      // Поток с сервера (MPEG-TS) телевизор видит как эфир: размер кадра — из ffprobe сервера, а не из имени файла
+      var tcVideo = c.tc && c.tc.info.video;
+      if (tcVideo ? tcVideo.width > 1920 || tcVideo.height > 1080 : /2160p|\b4k\b|\buhd\b/i.test(c.opts.file.path)) {
         try { p.setStreamingProperty('SET_MODE_4K', 'TRUE'); note('mode 4K'); } catch (e) { note('SET_MODE_4K failed ' + (e.name || e)); }
       }
       // Старый плеер после close() ещё может прислать событие: оно не должно трогать новый фильм
@@ -103,19 +207,23 @@
         onbufferingstart: function () {
           if (cur !== c) return;
           note('buffering start');
-          c.loading = true; buffering(true, 0);
+          c.loading = true; buffering(true, 0, 'Буферизация…');
           if (c.prepared && !c.seekBusy) { c.stalls++; c.stallFrom = Date.now(); }
         },
         onbufferingprogress: function (pct) { if (cur === c) buffering(true, pct); },
         onbufferingcomplete: function () {
           if (cur !== c) return;
           note('buffering complete');
-          c.loading = false; buffering(false);
+          c.loading = false;
+          if (c.resumeCover) buffering(true, 0); else buffering(false); // переход к месту продолжения ещё впереди
           if (c.stallFrom) { c.stallMs += Date.now() - c.stallFrom; c.stallFrom = 0; }
         },
         oncurrentplaytime: function (ms) {
           if (cur !== c) return;
-          c.pos = ms;
+          // Продолжение по зеркалу: фильм пошёл с начала — теперь переход к месту (время до него не наше)
+          if (c.resumeSeek) { var rs = c.resumeSeek; c.resumeSeek = null; rs(); return; }
+          if (c.resumeCover) return;
+          c.pos = (c.tc ? c.tc.base : 0) + ms;
           if (!c.dur) duration(c);
           watchSpeed(c, ms);
           // Панель скрыта — время не перерисовываем (лишняя вёрстка 4 раза в секунду); showBar() обновит его сам
@@ -131,9 +239,16 @@
       fail(support.errorKind(e.name) === 'other' ? 'unsupported' : support.errorKind(e.name), e.name);
       return;
     }
+    // prepareAsync молчит (сервер или файл-хост не ответил): без сторожа «Загрузка…» висела бы вечно
+    var prepGuard = setTimeout(function () {
+      if (cur !== c || c.url !== url) return;
+      note('prepare: no answer in ' + (c.tc ? 60 : 40) + ' s');
+      onError('PREPARE_TIMEOUT');
+    }, c.tc ? 60000 : 40000);
     var prepareOk = function () {
-      if (cur !== c) return;
-      try { c.dur = p.getDuration(); } catch (e) { c.dur = 0; }
+      clearTimeout(prepGuard);
+      if (cur !== c || c.url !== url) return; // сторож уже переоткрыл: поздний ответ старого открытия не нужен
+      if (!c.tc) { try { c.dur = p.getDuration(); } catch (e) { c.dur = 0; } } // у потока с сервера длительность — из tv-info
       note('prepared, duration ' + fmt(c.dur));
       inspectTracks();
       var started = false, resumeGuard = 0;
@@ -144,21 +259,43 @@
         try { p.play(); } catch (e) { note('play failed ' + (e.name || e)); }
         c.paused = false;
         c.prepared = true; c.loading = false; c.played = true;
+        if (c.tc) { c.tc.playedOk = true; c.seekTarget = null; renderTime(); }
+        c.resumeSeek = null; c.resumeCover = false;
         buffering(false);
         showBar();
         clearInterval(c.saveTimer);
         c.saveTimer = setInterval(save, 10000);
+        // Перемотка (комната) пришла, пока поток с сервера открывался: теперь её можно сделать
+        if (c.tcSeekNext != null) { var n = c.tcSeekNext; c.tcSeekNext = null; seekTo(c, n); }
       };
       if (fromMs > 0) {
-        note('resume at ' + fmt(fromMs));
-        // Ответа на перемотку нет 15 с — запускаем с того места, где AVPlay стоит (иначе вечная «Загрузка…»)
-        resumeGuard = setTimeout(function () { note('resume seek: no answer'); go(); }, 15000);
-        try { p.seekTo(fromMs, go, function () { note('resume seek failed'); go(); }); }
-        catch (e) { note('resume seek failed: ' + (e.name || e)); go(); }
+        // Ответа на перемотку нет 15 с — запускаем с того места, где AVPlay стоит (иначе вечная «Загрузка…»).
+        // Отсчёт — после возврата seekTo: на 4K по зеркалу сам вызов держит страницу ~19 с (журнал 21.10), и сторож,
+        // заведённый до него, срабатывал сразу после — play() посреди перемотки, фильм стоял на 0 %
+        var seek = function () {
+          if (cur !== c || started) return;
+          note('resume seek to ' + fmt(fromMs));
+          var t0 = Date.now();
+          try { p.seekTo(fromMs, function () { note('resume seek done (' + (Date.now() - t0) + ' ms)'); go(); }, function () { note('resume seek failed'); go(); }); }
+          catch (e) { note('resume seek failed: ' + (e.name || e)); go(); }
+          if (!started) resumeGuard = setTimeout(function () { note('resume seek: no answer'); go(); }, 15000);
+        };
+        buffering(true, 0, 'Переход к ' + fmt(fromMs) + '…');
+        c.pos = fromMs;
+        // Tizen 4.0: seekTo до первого кадра подвешивает плеер (журнал 21.10: 19 с на 4K) — сначала запуск с начала
+        // под чёрной заставкой, после первого кадра — переход. Поток с сервера сюда не попадает: его место — &t=
+        c.resumeCover = true;
+        buffering(true, 0);
+        note('resume at ' + fmt(fromMs) + ': play first, seek after the first frame');
+        try { p.play(); } catch (e) { note('play before resume seek failed ' + (e.name || e)); }
+        c.resumeSeek = seek;
+        // Первого кадра нет 10 с — переходим всё равно
+        resumeGuard = setTimeout(function () { if (c.resumeSeek) { c.resumeSeek = null; note('resume: no frame in 10 s'); seek(); } }, 10000);
       } else go();
     };
     var prepareFail = function (err) {
-      if (cur !== c) return;
+      clearTimeout(prepGuard);
+      if (cur !== c || c.url !== url) return; // сторож уже переоткрыл: поздний ответ старого открытия не нужен
       note('prepare failed ' + (err && err.name ? err.name : err));
       onError(err && err.name ? err.name : err);
     };
@@ -172,18 +309,35 @@
     try { all = p.getTotalTrackInfo() || []; } catch (e) { note('getTotalTrackInfo failed'); }
     try { now = p.getCurrentStreamInfo() || []; } catch (e) { /* нет сведений */ }
     all.forEach(function (t) { note('track ' + t.index + ' ' + t.type + ' ' + t.extra_info); });
+    c.textTracks = all.filter(function (t) { return t.type === 'TEXT'; });
+    if (c.tc) { serverAudio(c); return; }
     var curAudio = null;
     now.forEach(function (t) { if (t.type === 'AUDIO') curAudio = t.index; });
     c.audio = support.audioPlan(all, curAudio);
     c.textTracks = all.filter(function (t) { return t.type === 'TEXT'; });
     if (!c.audio.tracks.length) return;
     if (!c.audio.playable.length) {
-      warnNoAudio();
+      // Звука, который ТВ играет, нет: тот же файл через сервер (звук → AC3), с того же места
+      var at = c.pos || c.resume;
+      viaServer(c, at, { force: true }).then(function (ok) {
+        if (cur !== c) return;
+        if (ok) c.opts.toast('Звук ' + c.audio.tracks.map(function (t) { return t.codec || '?'; }).join(', ') + ' телевизор не играет — его готовит сервер');
+        else warnNoAudio();
+      });
     } else if (c.audio.current && !c.audio.current.ok) {
       var bad = c.audio.current, next = c.audio.playable[0];
       selectAudio(next);
       c.opts.toast('Дорожка ' + bad.codec + ' не воспроизводится, включена ' + trackName(next));
     }
+  }
+
+  /** Дорожки потока с сервера: все играются (сервер перекодирует), выбрана одна — [c.tc.a]. */
+  function serverAudio(c) {
+    var tracks = c.tc.info.audio.map(function (t) {
+      return { index: t.index, codec: t.codec + (t.ok ? '' : ' → AC3'), language: t.language, channels: t.channels, ok: true, server: true };
+    });
+    var current = tracks.filter(function (t) { return t.index === c.tc.a; })[0] || null;
+    c.audio = { tracks: tracks, playable: tracks, current: current };
   }
 
   function warnNoAudio() {
@@ -194,6 +348,10 @@
   }
 
   function selectAudio(t) {
+    var c = cur;
+    // Поток с сервера: в нём одна дорожка — другая значит новый поток с того же места
+    if (t.server && !c.prepared) { c.opts.toast('Подождите: файл ещё открывается'); return; }
+    if (t.server) { c.tc.a = t.index; note('server audio → #' + t.index); c.prepared = false; start(serverUrl(c, c.pos), 0); return; }
     try { av().setSelectTrack('AUDIO', t.index); cur.audio.current = t; note('audio → ' + t.index); }
     catch (e) { note('setSelectTrack AUDIO failed ' + (e.name || e)); }
   }
@@ -208,6 +366,15 @@
     var c = cur;
     if (!c) return;
     var kind = support.errorKind(type);
+    // Поток с сервера не открылся ни разу (ffmpeg, сервер занят): этот же файл — как раньше, по зеркалу
+    if (c.tc && !c.tc.playedOk) {
+      note('server stream failed (' + type + '), opening as is');
+      var at = c.tc.base;
+      c.tc = null; c.dur = 0; c.serverFailed = true;
+      c.opts.toast('Сервер не смог подготовить файл (' + type + ') — открываю как есть');
+      api.mirrorUrl(c.opts.file).then(function (url) { if (cur === c) start(url, at); }).catch(function (e) { if (cur === c) fail('network', api.describe(e)); });
+      return;
+    }
     // Сеть или истёкшая подпись зеркала (12 ч): новая ссылка и то же место, не больше двух раз подряд.
     // Подряд — значит без 2 минут спокойного просмотра между ошибками: иначе третий обрыв за длинный фильм был бы последним.
     if (c.retryAt && Date.now() - c.retryAt > 120000) c.retries = 0;
@@ -219,7 +386,7 @@
       var at = c.pos || c.resume;
       note('retry ' + c.retries + ' at ' + fmt(at));
       buffering(true, 0);
-      api.mirrorUrl(c.opts.file).then(function (url) { if (cur === c) start(url, at); }).catch(function (e) { if (cur === c) fail('network', api.describe(e)); });
+      reopenAt(c, at);
       return;
     }
     fail(kind, String(type));
@@ -287,9 +454,7 @@
     var at = c.pos || c.resume;
     note('reopen at ' + fmt(at) + ' (' + why + ')');
     c.prepared = false;
-    buffering(true, 0);
-    api.mirrorUrl(c.opts.file).then(function (url) { if (cur === c) start(url, at); })
-      .catch(function (e) { if (cur === c) fail('network', api.describe(e)); });
+    reopenAt(c, at); // поток с сервера — тоже с новой подписью
   }
 
   /** Соседняя серия (кнопки ⏮ ⏭ пульта). */
@@ -325,6 +490,10 @@
     c.seekStamp++;
     c.seekTarget = to;
     c.slow = null;
+    // Поток с сервера байтами не перематывается: новый поток с этого места (подпись живёт 12 ч)
+    // stop()/close() AVPlay, пока он ещё открывает поток, на Tizen 4.0 может повесить приложение: ждём, пока откроется
+    if (c.tc && !c.prepared) { c.tcSeekNext = to; note('seek ' + fmt(to) + ' waits for the stream to open'); return; }
+    if (c.tc) { note('seek ' + fmt(c.pos) + ' → ' + fmt(to) + ' (new server stream)'); renderTime(); start(serverUrl(c, to), 0); return; }
     // Прошлая перемотка ещё идёт: AVPlay вторую не примет (InvalidStateError) — эта уйдёт после неё
     if (c.seekBusy) { c.seekNext = to; note('seek ' + fmt(to) + ' queued'); return; }
     c.seekBusy = true;
@@ -343,8 +512,10 @@
       renderTime();
       if (!ok) c.opts.toast('Телевизор не смог перемотать этот файл');
     }
-    // Ответа нет 20 с — считаем, что не вышло (иначе перемотка заблокирована навсегда)
-    var guard = setTimeout(function () { finish(false, 'нет ответа'); }, 20000);
+    // Ответа нет 20 с — считаем, что не вышло (иначе перемотка заблокирована навсегда). Сторож заводится после
+    // возврата seekTo/jump: сам вызов на тяжёлых файлах держит страницу до 20 с (см. resume seek)
+    var guard = 0;
+    var arm = function () { if (!done) guard = setTimeout(function () { finish(false, 'нет ответа'); }, 20000); };
     function jump(why) {
       // Запасной путь: прыжок от текущего места (у некоторых файлов seekTo не работает, а jump — да)
       var delta = to - from;
@@ -353,14 +524,17 @@
         if (delta >= 0) av().jumpForward(delta, function () { finish(true, 'jump'); }, function () { finish(false, 'jump'); });
         else av().jumpBackward(-delta, function () { finish(true, 'jump'); }, function () { finish(false, 'jump'); });
       } catch (e) { finish(false, 'jump: ' + (e.name || e)); }
+      clearTimeout(guard); arm();
     }
     try {
       av().seekTo(to, function () { finish(true, 'seekTo'); }, function (err) { jump(err && err.name ? err.name : String(err)); });
     } catch (e) { jump(e.name || String(e)); }
+    if (!guard) arm();
   }
 
   /** Длительность: у некоторых файлов сразу после открытия AVPlay отдаёт 0, позже — настоящую. */
   function duration(c) {
+    if (c.tc) return; // длительность сказал сервер; AVPlay видит только кусок с места открытия
     // У .m2ts длительность бывает 0 всё время: синхронный вызов AVPlay — не чаще раза в 5 с
     var now = Date.now();
     if (now - c.durAskedAt < 5000) return;
@@ -465,8 +639,17 @@
     if (!c.audio || !c.audio.tracks.length) items.push(h('p', { class: 'muted', text: 'Нет сведений о дорожках' }));
     else c.audio.tracks.forEach(function (t) {
       var selected = c.audio.current && c.audio.current.index === t.index;
-      items.push(SM.ui.button((selected ? '● ' : '') + trackName(t) + (t.ok ? '' : ' — не поддерживается'),
-        function () { if (!t.ok) { c.opts.toast('Звук ' + t.codec + ' телевизор не воспроизводит'); return; } selectAudio(t); closeMenu(); },
+      items.push(SM.ui.button((selected ? '● ' : '') + trackName(t) + (t.ok ? '' : ' — через сервер'),
+        function () {
+          if (!t.ok) {
+            // Дорожку, которую ТВ не играет, готовит сервер: тот же файл через него, с этой дорожкой
+            var k = c.audio.tracks.indexOf(t);
+            closeMenu();
+            viaServer(c, c.pos, { force: true, order: k }).then(function (ok) { if (!ok && cur === c) c.opts.toast('Звук ' + t.codec + ' телевизор не воспроизводит'); });
+            return;
+          }
+          selectAudio(t); closeMenu();
+        },
         (t.ok ? '' : 'disabled') + (selected ? ' sel' : '')));
     });
     var dubs = model.externalAudioFor(c.opts.magnet, c.opts.file);
@@ -528,7 +711,7 @@
     renderTime();
     clearTimeout(c.hideTimer);
     if (!c.paused) c.hideTimer = setTimeout(function () { if (cur === c && !c.paused) el('p-bar').className = ''; }, 4000);
-    el('p-state').textContent = c.paused ? '❚❚' : '▶';
+    el('p-state').textContent = c.paused ? '▶' : '❚❚'; // как на кнопке: что сделает OK
   }
 
   function renderTime() {
@@ -539,9 +722,13 @@
     el('p-fill').style.width = (c.dur ? Math.min(100, t / c.dur * 100) : 0) + '%';
   }
 
-  function buffering(on, pct) {
-    el('p-buffer').className = on ? 'show' : '';
-    el('p-buffer-text').textContent = on && pct ? 'Загрузка ' + pct + '%' : 'Загрузка…';
+  // Что сейчас идёт при загрузке: подпись держится, пока её не сменит следующий этап
+  var stage = 'Загрузка…';
+  function buffering(on, pct, label) {
+    if (label) stage = label;
+    if (!on) stage = 'Загрузка…';
+    el('p-buffer').className = on ? 'show' + (cur && cur.resumeCover ? ' cover' : '') : '';
+    el('p-buffer-text').textContent = on && pct ? 'Буферизация ' + pct + '%' : stage;
   }
 
   /**
@@ -549,20 +736,31 @@
    * Сравнение с битрейтом файла говорит, отчего рывки: сеть не успевает (скорость ниже битрейта) или декодер.
    * Фильм на это время на паузе — иначе замер делит канал с AVPlay.
    */
-  function speedTest(c) {
+  function speedTest(c, noRange) {
     if (c.speedBusy || !c.url) return;
+    // Поток с сервера байтами не читается (Range → 416): меряем по обычной ссылке зеркала на тот же файл
+    if (c.tc && !c.speedUrl) {
+      c.speedBusy = true;
+      api.mirrorUrl(c.opts.file).then(function (u) { c.speedBusy = false; c.speedUrl = u; if (cur === c) speedTest(c); },
+        function (e) { c.speedBusy = false; c.speed = 'не удалось: ' + api.describe(e); if (cur === c && c.diagOpen) renderDiag(); });
+      return;
+    }
+    var testUrl = c.tc ? c.speedUrl : c.url;
     if (c.prepared && !c.paused) togglePause();
     c.speedBusy = true; c.speed = 'замер…';
     renderDiag();
     var size = c.opts.file.size || 0, LIMIT = 24 * 1024 * 1024;
     var from = c.dur > 0 && size > 0 ? Math.floor(size * Math.min(1, c.pos / c.dur)) : 0;
     if (size > 0 && from + LIMIT > size) from = Math.max(0, size - LIMIT);
-    var x = new XMLHttpRequest(), t0 = Date.now(), first = 0, loaded = 0, status = 0;
+    var x = new XMLHttpRequest(), t0 = Date.now(), first = 0, loaded = 0, status = 0, why = '';
     c.speedXhr = x;
-    x.open('GET', c.url.charAt(0) === '/' ? api.BASE + c.url : c.url, true);
-    x.setRequestHeader('Range', 'bytes=' + from + '-' + (from + LIMIT - 1));
+    x.open('GET', testUrl.charAt(0) === '/' ? api.BASE + testUrl : testUrl, true);
+    if (!noRange) x.setRequestHeader('Range', 'bytes=' + from + '-' + (from + LIMIT - 1));
     x.responseType = 'arraybuffer';
+    x.timeout = 20000; // соединение не открылось за 20 с — так и пишем, а не висим
     x.onreadystatechange = function () { if (x.readyState >= 2 && !status) status = x.status; };
+    x.onerror = function () { why = 'ошибка соединения'; };
+    x.ontimeout = function () { why = 'нет ответа за 20 с'; };
     x.onprogress = function (e) {
       if (!first) first = Date.now();
       loaded = e.loaded;
@@ -574,10 +772,16 @@
       var secs = (Date.now() - (first || t0)) / 1000;
       var mbps = secs > 0 ? loaded * 8 / secs / 1e6 : 0;
       var need = c.dur > 0 && size > 0 ? size * 8 / (c.dur / 1000) / 1e6 : 0;
-      if (!loaded) c.speed = 'не удалось (HTTP ' + (status || 'нет ответа') + ')';
+      if (!loaded && !status && !noRange && why === 'ошибка соединения') {
+        // Запрос с Range не ушёл совсем: пробуем без него (с начала файла) — так видно, в Range ли дело
+        note('speed test: ' + why + ' за ' + (Date.now() - t0) + ' мс, повтор без Range');
+        speedTest(c, true);
+        return;
+      }
+      if (!loaded) c.speed = 'не удалось (' + (status ? 'HTTP ' + status : why || 'нет ответа') + ', ' + (Date.now() - t0) + ' мс' + (noRange ? ', без Range' : '') + ')';
       else c.speed = mbps.toFixed(1).replace('.', ',') + ' Мбит/с, первый байт за ' + ((first || t0) - t0) + ' мс' +
         (need ? (mbps < need * 1.3 ? ' — сеть не успевает за файлом (~' + Math.round(need) + ' Мбит/с)' : ' — сети хватает (файлу нужно ~' + Math.round(need) + ' Мбит/с)') : '');
-      note('speed test: ' + c.speed + ' (' + model.formatBytes(loaded) + ', HTTP ' + status + ')');
+      note('speed test: ' + c.speed + ' (' + model.formatBytes(loaded) + ', HTTP ' + status + (noRange ? ', без Range' : '') + ', ' + String(testUrl).split('?')[0].replace(/^https?:\/\/[^/]+/, '') + ')');
       if (cur === c && c.diagOpen) renderDiag();
     };
     x.send(null);
@@ -607,6 +811,7 @@
     var busy = c.loading || c.seekBusy || !c.prepared;
     if (!busy) { try { lines.push('Состояние: ' + p.getState()); } catch (e) { /* нет */ } }
     else lines.push('Состояние: ' + (c.seekBusy ? 'перемотка' : 'загрузка'));
+    lines.push('Поток: ' + (c.tc ? 'через сервер (ffmpeg), звук #' + c.tc.a + ', открыт с ' + fmt(c.tc.base) : 'файл как есть (зеркало)'));
     lines.push('Запас: ' + (bigBuffer() ? 'большой (8 с / 15 с)' : 'как у телевизора') +
       ' · остановок на загрузку: ' + c.stalls + (c.stalls ? ' (всего ' + Math.round((c.stallMs + (c.stallFrom ? Date.now() - c.stallFrom : 0)) / 1000) + ' с)' : ''));
     if (c.speed) lines.push('Скорость сети: ' + c.speed);
@@ -618,7 +823,7 @@
     } catch (e) { /* нет */ }
     el('diag-head').textContent = lines.join('\n');
     var body = el('diag-log');
-    body.textContent = log.join('\n');
+    body.textContent = (prevLog.length ? '— прошлый просмотр —\n' + prevLog.join('\n') + '\n— сейчас —\n' : '') + log.join('\n');
     if (!c.diagPinned) body.scrollTop = body.scrollHeight; // свежие строки — внизу, пока не листали вверх
     el('diag').className = 'show';
   }

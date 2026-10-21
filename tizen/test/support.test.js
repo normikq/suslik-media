@@ -8,9 +8,9 @@ test('checkFile: по имени файла', () => {
   assert.equal(S.checkFile('Film/Disc.iso').level, 'no');
   assert.equal(S.checkFile('Film.2023.2160p.AV1.mkv').level, 'no');
   assert.equal(S.checkFile('Old.Film.DVDRip.XviD.avi').level, 'warn');
-  assert.equal(S.checkFile('Film.2010.1080p.BluRay.DTS-HD.MA.5.1.mkv').level, 'warn');
-  assert.equal(S.checkFile('Film.2010.2160p.Remux.TrueHD.Atmos.mkv').level, 'warn');
-  assert.equal(S.checkFile('Film_DTS_rus.mkv').level, 'warn');
+  assert.equal(S.checkFile('Film.2010.1080p.BluRay.DTS-HD.MA.5.1.mkv').level, 'server');
+  assert.equal(S.checkFile('Film.2010.2160p.Remux.TrueHD.Atmos.mkv').level, 'server');
+  assert.equal(S.checkFile('Film_DTS_rus.mkv').level, 'server');
   // «dts» внутри слова — не кодек
   assert.equal(S.checkFile('Shorts.2009.mkv').level, 'ok');
   assert.equal(S.checkFile('Film.WEB-DL.DDP5.1.Atmos.mkv').level, 'ok');
@@ -38,9 +38,9 @@ test('errorKind', () => {
   assert.equal(S.errorKind('PLAYER_ERROR_GENEREIC'), 'other');
 });
 
-test('checkFile: Blu-ray (.m2ts) — предупреждение', () => {
-  assert.equal(S.checkFile('Film.2010.BluRay/BDMV/STREAM/00001.m2ts').level, 'warn');
-  assert.equal(S.checkFile('Film.m2ts').level, 'warn');
+test('checkFile: Blu-ray (.m2ts) — через сервер', () => {
+  assert.equal(S.checkFile('Film.2010.BluRay/BDMV/STREAM/00001.m2ts').level, 'server');
+  assert.equal(S.checkFile('Film.m2ts').level, 'server');
   assert.match(S.slowHint('BDMV/STREAM/00001.m2ts'), /Blu-ray/);
   assert.match(S.slowHint('Film.2160p.Remux.mkv'), /тяжёлый/);
 });
