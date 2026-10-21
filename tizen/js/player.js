@@ -24,12 +24,8 @@
 
   function av() { return g.webapis && g.webapis.avplay; }
   function el(id) { return document.getElementById(id); }
-  var h = function () { return SM.app.h.apply(null, arguments); };
-
-  function fmt(ms) {
-    var s = Math.max(0, Math.floor(ms / 1000)), hh = Math.floor(s / 3600), mm = Math.floor(s / 60) % 60, ss = s % 60;
-    return (hh ? hh + ':' + ('0' + mm).slice(-2) : mm) + ':' + ('0' + ss).slice(-2);
-  }
+  var h = function () { return SM.ui.h.apply(null, arguments); };
+  var fmt = function (ms) { return SM.ui.clock(ms); };
 
   var cur = null; // открытый фильм
 
@@ -41,8 +37,10 @@
     cur = {
       opts: opts, key: key, url: null, pos: 0, dur: 0, paused: false, seekTarget: null, seekTimer: 0, hideTimer: 0,
       saveTimer: 0, retries: 0, menuOpen: false, diagOpen: false, audio: null, textTracks: [], subsOn: false,
-      resume: saved && !saved.watched && saved.pos > 30000 ? saved.pos : 0, ended: false
+      resume: saved && !saved.watched && saved.pos > 30000 ? saved.pos : 0, ended: false,
+      prepared: false, loading: true, seekStamp: 0, seeking: false, slow: null, party: null
     };
+    if (opts.resumeAt != null) cur.resume = opts.resumeAt;
     log = [];
     note('open ' + opts.file.path + ' (' + model.formatBytes(opts.file.size) + ')');
     document.body.classList.add('playing');
@@ -53,6 +51,7 @@
     nav.onKey = onKey;
     nav.onBack = function () { close(); };
     buffering(true, 0);
+    attachParty(cur);
     showBar();
     api.mirrorUrl(opts.file).then(function (url) { if (cur && cur.opts === opts) start(url, cur.resume); })
       .catch(function (e) { fail('network', api.describe(e)); });
@@ -67,10 +66,10 @@
       p.setDisplayRect(0, 0, 1920, 1080);
       p.setDisplayMethod('PLAYER_DISPLAY_MODE_LETTER_BOX');
       p.setListener({
-        onbufferingstart: function () { note('buffering start'); buffering(true, 0); },
+        onbufferingstart: function () { note('buffering start'); c.loading = true; buffering(true, 0); },
         onbufferingprogress: function (pct) { buffering(true, pct); },
-        onbufferingcomplete: function () { note('buffering complete'); buffering(false); },
-        oncurrentplaytime: function (ms) { if (cur === c) { c.pos = ms; if (c.seekTarget == null) renderTime(); } },
+        onbufferingcomplete: function () { note('buffering complete'); c.loading = false; buffering(false); },
+        oncurrentplaytime: function (ms) { if (cur === c) { c.pos = ms; watchSpeed(c, ms); if (c.seekTarget == null) renderTime(); } },
         onstreamcompleted: function () { note('stream completed'); ended(); },
         onerror: function (type) { note('error ' + type); onError(type); },
         onevent: function (type, data) { note('event ' + type + ' ' + (data || '')); },
@@ -90,6 +89,7 @@
         if (cur !== c) return;
         p.play();
         c.paused = false;
+        c.prepared = true; c.loading = false;
         buffering(false);
         showBar();
         c.saveTimer = setInterval(save, 10000);
@@ -208,24 +208,54 @@
   function seekBy(delta) {
     var c = cur;
     if (!c.dur) return;
+    if (c.party && c.party.guestLocked()) { c.opts.toast('Перематывает создатель комнаты'); return; }
     var base = c.seekTarget != null ? c.seekTarget : c.pos;
     c.seekTarget = Math.max(0, Math.min(c.dur - 3000, base + delta));
     renderTime();
     showBar();
     clearTimeout(c.seekTimer);
+    c.seeking = true;
     c.seekTimer = setTimeout(function () {
-      var to = c.seekTarget;
-      note('seek ' + fmt(to));
-      try {
-        av().seekTo(to, function () { if (cur === c) { c.pos = to; c.seekTarget = null; renderTime(); } },
-          function () { note('seek failed'); c.seekTarget = null; });
-      } catch (e) { note('seek failed ' + (e.name || e)); c.seekTarget = null; }
+      c.seeking = false;
+      seekTo(c, c.seekTarget);
     }, 600);
+  }
+
+  /** Перемотка движка (пользователь или комната): метка [seekStamp] говорит комнате, что это перемотка. */
+  function seekTo(c, to) {
+    note('seek ' + fmt(to));
+    c.seekStamp++;
+    c.seekTarget = to;
+    c.slow = null;
+    try {
+      av().seekTo(to, function () { if (cur === c) { c.pos = to; c.seekTarget = null; renderTime(); } },
+        function () { note('seek failed'); c.seekTarget = null; });
+    } catch (e) { note('seek failed ' + (e.name || e)); c.seekTarget = null; }
+  }
+
+  /**
+   * Телевизор не успевает декодировать (журнал 21.10: Blu-ray .m2ts — 1 кадр в секунду, без звука): время фильма идёт
+   * заметно медленнее настоящего без буферизации. Тогда один раз говорим об этом словами и пишем в пробу.
+   */
+  function watchSpeed(c, ms) {
+    if (c.paused || c.loading || c.seekTarget != null || !c.prepared) { c.slow = null; return; }
+    var now = Date.now();
+    if (!c.slow) { c.slow = { at: now, pos: ms, bad: 0 }; return; }
+    var wall = now - c.slow.at;
+    if (wall < 5000) return;
+    var ratio = (ms - c.slow.pos) / wall;
+    c.slow = { at: now, pos: ms, bad: ratio < 0.6 ? c.slow.bad + 1 : 0 };
+    if (c.slow.bad === 2 && !c.slowWarned) {
+      c.slowWarned = true;
+      note('slow playback: ' + Math.round(ratio * 100) + '% of real time');
+      c.opts.toast('Телевизор не успевает показывать этот файл: видео идёт рывками. ' + support.slowHint(c.opts.file.path), 10000);
+    }
   }
 
   function ended() {
     var c = cur;
     if (!c || c.ended) return;
+    if (c.party && c.party.guestLocked()) { note('room film ended: the host picks the next one'); c.paused = true; showBar(); return; }
     c.ended = true;
     c.opts.watch.put(c.key, c.dur, c.dur);
     var next = c.opts.index + 1;
@@ -245,6 +275,7 @@
     if (!c) return;
     save();
     clearInterval(c.saveTimer); clearTimeout(c.seekTimer); clearTimeout(c.hideTimer);
+    if (c.party) c.party.stop();
     cur = null;
     try { av().stop(); } catch (e) { /* уже остановлен */ }
     try { av().close(); } catch (e) { /* уже закрыт */ }
@@ -253,7 +284,37 @@
     el('diag').className = '';
     el('menu').className = '';
     el('subs').textContent = '';
+    el('p-party').className = '';
     if (!silent) c.opts.onClose();
+  }
+
+  // ---- совместный просмотр ----
+
+  /** В комнате плеер идёт за ней (party.js, тот же движок, что на ПК и Android). */
+  function attachParty(c) {
+    var party = SM.party;
+    if (!party || !party.inRoom()) return;
+    var keys = c.opts.entries.map(function (en) { return model.watchKey(c.opts.magnet.id, en.file); });
+    var sp = {
+      get timeMs() { return c.seekTarget != null ? c.seekTarget : c.pos; },
+      get busy() { return c.seeking; },
+      get engineMs() { return c.pos; },
+      get seekStamp() { return c.seekStamp; },
+      get paused() { return c.paused; },
+      get running() { return c.prepared && !c.loading && !c.paused; },
+      applyPaused: function (p) { if (cur === c && p !== c.paused) togglePause(); },
+      seekTo: function (ms) { if (cur === c) seekTo(c, ms); }
+    };
+    c.party = party.attach({
+      player: function () { return cur === c && c.prepared ? sp : null; },
+      key: function () { return c.key; },
+      keys: function () { return keys; },
+      title: function () { return c.opts.title; },
+      playIndex: function (i) { if (cur === c) { var o = c.opts; close(true); o.onEntry(i); } },
+      notice: function (t) { if (cur === c) c.opts.toast(t); },
+      log: note
+    });
+    el('p-party').className = 'show';
   }
 
   // ---- меню звука и субтитров ----
@@ -266,20 +327,20 @@
     if (!c.audio || !c.audio.tracks.length) items.push(h('p', { class: 'muted', text: 'Нет сведений о дорожках' }));
     else c.audio.tracks.forEach(function (t) {
       var selected = c.audio.current && c.audio.current.index === t.index;
-      items.push(SM.app.button((selected ? '● ' : '') + trackName(t) + (t.ok ? '' : ' — не поддерживается'),
+      items.push(SM.ui.button((selected ? '● ' : '') + trackName(t) + (t.ok ? '' : ' — не поддерживается'),
         function () { if (!t.ok) { c.opts.toast('Звук ' + t.codec + ' телевизор не воспроизводит'); return; } selectAudio(t); closeMenu(); },
         (t.ok ? '' : 'disabled') + (selected ? ' sel' : '')));
     });
     var dubs = model.externalAudioFor(c.opts.magnet, c.opts.file);
     if (dubs.length) items.push(h('p', { class: 'note grey', text: support.EXTERNAL_AUDIO_TEXT }));
     items.push(h('h2', { text: 'Субтитры' }));
-    items.push(SM.app.button((c.subsOn ? '' : '● ') + 'Выключены', function () { setSubs(null); closeMenu(); }, c.subsOn ? '' : 'sel'));
+    items.push(SM.ui.button((c.subsOn ? '' : '● ') + 'Выключены', function () { setSubs(null); closeMenu(); }, c.subsOn ? '' : 'sel'));
     c.textTracks.forEach(function (t) {
       var info = {};
       try { info = JSON.parse(t.extra_info); } catch (e) { info = {}; }
       var label = (info.track_lang || info.language || 'Дорожка ' + t.index) + (info.subtitle_type ? ' · ' + info.subtitle_type : '');
       var on = c.subsOn && c.subsIndex === t.index;
-      items.push(SM.app.button((on ? '● ' : '') + label, function () { setSubs(t.index); closeMenu(); }, on ? 'sel' : ''));
+      items.push(SM.ui.button((on ? '● ' : '') + label, function () { setSubs(t.index); closeMenu(); }, on ? 'sel' : ''));
     });
     if (model.subtitlesFor(c.opts.magnet, c.opts.file).length) items.push(h('p', { class: 'note grey', text: 'Субтитры отдельным файлом на телевизоре пока не показываются' }));
     items.forEach(function (i) { menu.appendChild(i); });
@@ -365,5 +426,5 @@
     }
   });
 
-  SM.player = { play: play, close: close, log: function () { return log.slice(); } };
+  SM.player = { play: play, close: close, current: function () { return cur ? cur.key : null; }, log: function () { return log.slice(); } };
 })(window);

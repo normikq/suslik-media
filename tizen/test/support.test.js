@@ -37,3 +37,10 @@ test('errorKind', () => {
   assert.equal(S.errorKind('PLAYER_ERROR_CONNECTION_FAILED'), 'network');
   assert.equal(S.errorKind('PLAYER_ERROR_GENEREIC'), 'other');
 });
+
+test('checkFile: Blu-ray (.m2ts) — предупреждение', () => {
+  assert.equal(S.checkFile('Film.2010.BluRay/BDMV/STREAM/00001.m2ts').level, 'warn');
+  assert.equal(S.checkFile('Film.m2ts').level, 'warn');
+  assert.match(S.slowHint('BDMV/STREAM/00001.m2ts'), /Blu-ray/);
+  assert.match(S.slowHint('Film.2160p.Remux.mkv'), /тяжёлый/);
+});
