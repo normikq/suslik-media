@@ -31,8 +31,12 @@ Tizen Studio Samsung объявил устаревшей. Замена — ра�
 Наше приложение — веб-приложение (не .NET), поэтому нужны именно команды «Tizen TV» этого расширения.
 
 1. Телевизор в режиме разработчика: Apps → на пульте `1 2 3 4 5` → Developer mode **On**, IP компьютера → перезагрузить ТВ.
-2. Подготовить папку приложения (домен сайта — как в CI, только из `SITE_URL`):
-   `SITE_URL=https://<сайт> ./tizen/build.sh` → `tizen/build/app`. Открыть эту папку в VS Code.
+2. Подготовить папку приложения (домен сайта в репозиторий не пишем), результат — `tizen/build/app`:
+   - Windows, PowerShell в папке `tizen`: `powershell -ExecutionPolicy Bypass -File .\build.ps1 -SiteUrl https://<сайт>`
+     (без `-SiteUrl` адрес берётся из `SITE_URL` или `suslik.siteUrl` в `~\.gradle\gradle.properties`);
+   - Linux/macOS/Git Bash: `SITE_URL=https://<сайт> ./tizen/build.sh`.
+
+   Открыть папку `tizen/build/app` в VS Code.
 3. Настройки VS Code: `tizentv.targetDeviceAddress` — IP телевизора.
 4. Команда **Tizen TV: Run Certificate Manager** → новый профиль **Samsung** (тип TV), в сертификат дистрибьютора
    добавить DUID телевизора (расширение видит его, когда ТВ подключён).
