@@ -18,7 +18,7 @@
   function note(text) {
     var d = new Date();
     log.push(('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2) + ' ' + text);
-    if (log.length > 60) log.shift();
+    if (log.length > 300) log.shift();
     if (cur && cur.diagOpen) renderDiag();
   }
 
@@ -65,11 +65,16 @@
       p.open(url);
       p.setDisplayRect(0, 0, 1920, 1080);
       p.setDisplayMethod('PLAYER_DISPLAY_MODE_LETTER_BOX');
+      // Запас побольше (по умолчанию у AVPlay — пара секунд): тяжёлому файлу (Remux 50+ Мбит/с) не хватает
+      try {
+        p.setBufferingParam('PLAYER_BUFFER_FOR_PLAY', 'PLAYER_BUFFER_SIZE_IN_SECOND', 8);
+        p.setBufferingParam('PLAYER_BUFFER_FOR_RESUME', 'PLAYER_BUFFER_SIZE_IN_SECOND', 15);
+      } catch (e) { note('setBufferingParam failed ' + (e.name || e)); }
       p.setListener({
         onbufferingstart: function () { note('buffering start'); c.loading = true; buffering(true, 0); },
         onbufferingprogress: function (pct) { buffering(true, pct); },
         onbufferingcomplete: function () { note('buffering complete'); c.loading = false; buffering(false); },
-        oncurrentplaytime: function (ms) { if (cur === c) { c.pos = ms; watchSpeed(c, ms); if (c.seekTarget == null) renderTime(); } },
+        oncurrentplaytime: function (ms) { if (cur === c) { c.pos = ms; if (!c.dur) duration(c); watchSpeed(c, ms); if (c.seekTarget == null) renderTime(); } },
         onstreamcompleted: function () { note('stream completed'); ended(); },
         onerror: function (type) { note('error ' + type); onError(type); },
         onevent: function (type, data) { note('event ' + type + ' ' + (data || '')); },
@@ -164,7 +169,7 @@
     buffering(false);
     var text = kind === 'unsupported' ? 'Формат или кодек видео этот телевизор не воспроизводит.' : kind === 'network' ? 'Проверьте интернет и попробуйте ещё раз.' : '';
     c.opts.dialog(support.MESSAGES[kind] || support.MESSAGES.other, (text + (detail ? ' (' + detail + ')' : '')).trim(),
-      [{ text: 'Назад', run: function () { close(); } }, { text: 'Проба', run: function () { if (cur) { cur.diagOpen = true; renderDiag(); } } }]);
+      [{ text: 'Назад', run: function () { close(); } }, { text: 'Проба', run: function () { if (cur) openDiag(cur); } }]);
   }
 
   // ---- управление ----
@@ -178,7 +183,7 @@
       return false; // стрелки и OK — обычная навигация по меню
     }
     if (c.diagOpen && (e.keyCode === K.BACK || e.keyCode === K.ESC || e.keyCode === K.YELLOW || e.keyCode === K.INFO)) {
-      c.diagOpen = false; el('diag').className = ''; return true;
+      closeDiag(c); return true;
     }
     switch (e.keyCode) {
       case K.ENTER: case K.PLAY_PAUSE: togglePause(); return true;
@@ -191,7 +196,7 @@
       case K.UP: showBar(); return true;
       case K.DOWN: openMenu(); return true;
       case K.STOP: close(); return true;
-      case K.YELLOW: case K.INFO: c.diagOpen = true; renderDiag(); return true;
+      case K.YELLOW: case K.INFO: openDiag(c); return true;
       default: return false;
     }
   }
@@ -207,10 +212,11 @@
   /** Перемотка копится, пока жмут кнопку, и уходит в AVPlay одним seekTo через 0,6 с. */
   function seekBy(delta) {
     var c = cur;
-    if (!c.dur) return;
+    if (!c.prepared) return;
     if (c.party && c.party.guestLocked()) { c.opts.toast('Перематывает создатель комнаты'); return; }
+    if (!c.dur) duration(c);
     var base = c.seekTarget != null ? c.seekTarget : c.pos;
-    c.seekTarget = Math.max(0, Math.min(c.dur - 3000, base + delta));
+    c.seekTarget = Math.max(0, c.dur > 6000 ? Math.min(c.dur - 3000, base + delta) : base + delta);
     renderTime();
     showBar();
     clearTimeout(c.seekTimer);
@@ -223,14 +229,46 @@
 
   /** Перемотка движка (пользователь или комната): метка [seekStamp] говорит комнате, что это перемотка. */
   function seekTo(c, to) {
-    note('seek ' + fmt(to));
     c.seekStamp++;
     c.seekTarget = to;
     c.slow = null;
+    // Прошлая перемотка ещё идёт: AVPlay вторую не примет (InvalidStateError) — эта уйдёт после неё
+    if (c.seekBusy) { c.seekNext = to; note('seek ' + fmt(to) + ' queued'); return; }
+    c.seekBusy = true;
+    var from = c.pos, started = Date.now(), done = false;
+    note('seek ' + fmt(from) + ' → ' + fmt(to));
+    function finish(ok, how) {
+      if (done) return;
+      done = true;
+      clearTimeout(guard);
+      c.seekBusy = false;
+      if (cur !== c) return;
+      note('seek ' + (ok ? 'done' : 'FAILED') + ' (' + how + ', ' + (Date.now() - started) + ' мс)');
+      if (ok) c.pos = to;
+      if (c.seekNext != null) { var n = c.seekNext; c.seekNext = null; seekTo(c, n); return; }
+      c.seekTarget = null;
+      renderTime();
+      if (!ok) c.opts.toast('Телевизор не смог перемотать этот файл');
+    }
+    // Ответа нет 20 с — считаем, что не вышло (иначе перемотка заблокирована навсегда)
+    var guard = setTimeout(function () { finish(false, 'нет ответа'); }, 20000);
+    function jump(why) {
+      // Запасной путь: прыжок от текущего места (у некоторых файлов seekTo не работает, а jump — да)
+      var delta = to - from;
+      note('seekTo failed (' + why + '), jump ' + Math.round(delta / 1000) + ' с');
+      try {
+        if (delta >= 0) av().jumpForward(delta, function () { finish(true, 'jump'); }, function () { finish(false, 'jump'); });
+        else av().jumpBackward(-delta, function () { finish(true, 'jump'); }, function () { finish(false, 'jump'); });
+      } catch (e) { finish(false, 'jump: ' + (e.name || e)); }
+    }
     try {
-      av().seekTo(to, function () { if (cur === c) { c.pos = to; c.seekTarget = null; renderTime(); } },
-        function () { note('seek failed'); c.seekTarget = null; });
-    } catch (e) { note('seek failed ' + (e.name || e)); c.seekTarget = null; }
+      av().seekTo(to, function () { finish(true, 'seekTo'); }, function (err) { jump(err && err.name ? err.name : String(err)); });
+    } catch (e) { jump(e.name || String(e)); }
+  }
+
+  /** Длительность: у некоторых файлов сразу после открытия AVPlay отдаёт 0, позже — настоящую. */
+  function duration(c) {
+    try { var d = av().getDuration(); if (d > 0 && d !== c.dur) { c.dur = d; note('duration ' + fmt(d)); } } catch (e) { /* нет */ }
   }
 
   /**
@@ -245,10 +283,12 @@
     if (wall < 5000) return;
     var ratio = (ms - c.slow.pos) / wall;
     c.slow = { at: now, pos: ms, bad: ratio < 0.6 ? c.slow.bad + 1 : 0 };
+    if (ratio < 0.9 || c.diagOpen) note('speed ' + Math.round(ratio * 100) + '% (' + fmt(ms) + ')');
     if (c.slow.bad === 2 && !c.slowWarned) {
       c.slowWarned = true;
       note('slow playback: ' + Math.round(ratio * 100) + '% of real time');
-      c.opts.toast('Телевизор не успевает показывать этот файл: видео идёт рывками. ' + support.slowHint(c.opts.file.path), 10000);
+      var mbps = c.dur > 0 ? Math.round(c.opts.file.size * 8 / (c.dur / 1000) / 1e6) : 0;
+      c.opts.toast('Видео идёт рывками: телевизор не успевает' + (mbps ? ' (файл ~' + mbps + ' Мбит/с)' : '') + '. ' + support.slowHint(c.opts.file.path, mbps), 10000);
     }
   }
 
@@ -274,7 +314,7 @@
     var c = cur;
     if (!c) return;
     save();
-    clearInterval(c.saveTimer); clearTimeout(c.seekTimer); clearTimeout(c.hideTimer);
+    clearInterval(c.saveTimer); clearInterval(c.diagTimer); clearTimeout(c.seekTimer); clearTimeout(c.hideTimer);
     if (c.party) c.party.stop();
     cur = null;
     try { av().stop(); } catch (e) { /* уже остановлен */ }
@@ -398,20 +438,36 @@
     el('p-buffer-text').textContent = on && pct ? 'Загрузка ' + pct + '%' : 'Загрузка…';
   }
 
+  /** Проба: шапка обновляется раз в секунду, журнал — с каждой строкой. */
+  function openDiag(c) {
+    c.diagOpen = true;
+    clearInterval(c.diagTimer);
+    c.diagTimer = setInterval(function () { if (cur === c) renderDiag(); }, 1000);
+    renderDiag();
+  }
+
+  function closeDiag(c) {
+    c.diagOpen = false;
+    clearInterval(c.diagTimer);
+    el('diag').className = '';
+  }
+
   function renderDiag() {
     var c = cur, p = av(), lines = [];
     if (!c) return;
     lines.push('Файл: ' + c.opts.file.path);
     lines.push('Проверка по имени: ' + (support.checkFile(c.opts.file.path).text || 'ok'));
     try { lines.push('Состояние: ' + p.getState()); } catch (e) { /* нет */ }
-    lines.push('Длительность: ' + fmt(c.dur) + ', позиция: ' + fmt(c.pos));
+    lines.push('Длительность: ' + fmt(c.dur) + ', позиция: ' + fmt(c.pos) + (c.seekBusy ? ', идёт перемотка' : ''));
+    if (c.dur > 0 && c.opts.file.size > 0) lines.push('Битрейт файла: ~' + Math.round(c.opts.file.size * 8 / (c.dur / 1000) / 1e6) + ' Мбит/с (размер ' + model.formatBytes(c.opts.file.size) + ')');
     try {
       (p.getCurrentStreamInfo() || []).forEach(function (t) { lines.push('Сейчас ' + t.type + ' #' + t.index + ': ' + t.extra_info); });
     } catch (e) { /* нет */ }
-    lines.push('— события —');
-    var d = el('diag');
-    d.textContent = lines.concat(log).join('\n');
-    d.className = 'show';
+    el('diag-head').textContent = lines.join('\n');
+    var body = el('diag-log');
+    body.textContent = log.join('\n');
+    body.scrollTop = body.scrollHeight; // свежие строки — внизу, видны всегда
+    el('diag').className = 'show';
   }
 
   // Приложение свернули: запоминаем место и ставим на паузу, при возврате плеер ждёт кнопку

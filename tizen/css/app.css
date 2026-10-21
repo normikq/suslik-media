@@ -156,8 +156,12 @@ body.playing #av-player { display: block; }
 #menu { display: none; position: absolute; right: 0; top: 0; bottom: 0; width: 720px; background: rgba(16,17,20,.95); padding: 40px; overflow: hidden; }
 #menu.show { display: block; }
 #menu .btn { display: block; width: 100%; text-align: left; margin: 8px 0; }
-#diag { display: none; position: absolute; left: 40px; top: 40px; width: 1100px; max-height: 760px; overflow: hidden; margin: 0; padding: 24px; background: rgba(0,0,0,.85); border-radius: 12px; font-size: 18px; white-space: pre-wrap; word-break: break-all; }
-#diag.show { display: block; }
+#diag { display: none; position: absolute; left: 40px; top: 40px; width: 1200px; height: 800px; flex-direction: column; padding: 24px; background: rgba(0,0,0,.85); border-radius: 12px; font-size: 18px; }
+#diag pre { margin: 0; white-space: pre-wrap; word-break: break-all; font-size: 18px; }
+#diag-head { flex-shrink: 0; max-height: 300px; overflow: hidden; }
+.diag-sep { color: #9aa0ab; margin: 8px 0; flex-shrink: 0; }
+#diag-log { flex: 1; overflow: hidden; }
+#diag.show { display: flex; }
 
 #toast { position: absolute; left: 50%; bottom: 80px; transform: translateX(-50%); background: #2a2d35; border-radius: 14px; padding: 18px 32px; max-width: 1400px; opacity: 0; transition: opacity .3s; z-index: 60; }
 #toast.show { opacity: 1; }
