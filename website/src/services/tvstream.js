@@ -112,7 +112,8 @@ function defaultAudio(info) {
  */
 function ffmpegArgs(url, startSec, info, audio, format) {
   const ts = format !== "mkv";
-  const args = ["-hide_banner", "-loglevel", "error", "-nostdin"];
+  // warning: в журнал попадают переподключения к файл-хосту и битые пакеты источника (артефакты на экране)
+  const args = ["-hide_banner", "-loglevel", "warning", "-nostdin"];
   if (/^https?:/i.test(url)) {
     // Файл-хост замолчал на 30 с — ffmpeg выходит, телевизор переоткроет поток с того же места
     args.push("-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "10", "-rw_timeout", "30000000", "-user_agent", "Mozilla/5.0");
@@ -192,7 +193,14 @@ function startFfmpeg(args, viewer) {
   const id = crypto.randomBytes(8).toString("hex");
   active.set(id, { child, viewer });
   child.stderrText = "";
-  child.stderr.on("data", c => { if (child.stderrText.length < 4000) child.stderrText += c; });
+  let warned = 0;
+  child.stderr.on("data", c => {
+    if (child.stderrText.length < 4000) child.stderrText += c;
+    // Не больше 20 строк на просмотр: битый источник может сыпать предупреждениями на каждом кадре
+    for (const line of String(c).split("\n")) {
+      if (line.trim() && warned++ < 20) console.warn(`[tv] ffmpeg: ${line.trim().slice(0, 300)}`);
+    }
+  });
   const forget = () => active.delete(id);
   child.on("close", forget);
   child.on("error", forget);
