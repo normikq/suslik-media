@@ -263,10 +263,12 @@
       };
       if (fromMs > 0) {
         note('resume at ' + fmt(fromMs));
-        // Ответа на перемотку нет 15 с — запускаем с того места, где AVPlay стоит (иначе вечная «Загрузка…»)
-        resumeGuard = setTimeout(function () { note('resume seek: no answer'); go(); }, 15000);
+        // Ответа на перемотку нет 15 с — запускаем с того места, где AVPlay стоит (иначе вечная «Загрузка…»).
+        // Отсчёт — после возврата seekTo: на 4K по зеркалу сам вызов держит страницу ~19 с (журнал 21.10), и сторож,
+        // заведённый до него, срабатывал сразу после — play() посреди перемотки, фильм стоял на 0 %
         try { p.seekTo(fromMs, go, function () { note('resume seek failed'); go(); }); }
         catch (e) { note('resume seek failed: ' + (e.name || e)); go(); }
+        if (!started) resumeGuard = setTimeout(function () { note('resume seek: no answer'); go(); }, 15000);
       } else go();
     };
     var prepareFail = function (err) {
@@ -488,8 +490,10 @@
       renderTime();
       if (!ok) c.opts.toast('Телевизор не смог перемотать этот файл');
     }
-    // Ответа нет 20 с — считаем, что не вышло (иначе перемотка заблокирована навсегда)
-    var guard = setTimeout(function () { finish(false, 'нет ответа'); }, 20000);
+    // Ответа нет 20 с — считаем, что не вышло (иначе перемотка заблокирована навсегда). Сторож заводится после
+    // возврата seekTo/jump: сам вызов на тяжёлых файлах держит страницу до 20 с (см. resume seek)
+    var guard = 0;
+    var arm = function () { if (!done) guard = setTimeout(function () { finish(false, 'нет ответа'); }, 20000); };
     function jump(why) {
       // Запасной путь: прыжок от текущего места (у некоторых файлов seekTo не работает, а jump — да)
       var delta = to - from;
@@ -498,10 +502,12 @@
         if (delta >= 0) av().jumpForward(delta, function () { finish(true, 'jump'); }, function () { finish(false, 'jump'); });
         else av().jumpBackward(-delta, function () { finish(true, 'jump'); }, function () { finish(false, 'jump'); });
       } catch (e) { finish(false, 'jump: ' + (e.name || e)); }
+      clearTimeout(guard); arm();
     }
     try {
       av().seekTo(to, function () { finish(true, 'seekTo'); }, function (err) { jump(err && err.name ? err.name : String(err)); });
     } catch (e) { jump(e.name || String(e)); }
+    if (!guard) arm();
   }
 
   /** Длительность: у некоторых файлов сразу после открытия AVPlay отдаёт 0, позже — настоящую. */
