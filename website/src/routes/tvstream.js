@@ -43,6 +43,7 @@ router.get("/api/file/tv-info", requireLogin, mirrorUrlLimiter, async (req, res)
   const def = tv.defaultAudio(info);
   res.json({
     stream: tv.needsTvStream(info),
+    videoUnsupported: tv.videoUnsupported(info) ? info.video.codec : null,
     durationMs: info.durationMs,
     container: info.container,
     video: info.video,

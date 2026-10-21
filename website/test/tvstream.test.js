@@ -42,7 +42,7 @@ test("tvstream: разбор ffprobe и выбор дорожки", () => {
   assert.equal(bd.video.index, 0);
   assert.deepEqual(bd.audio.map(a => [a.codec, a.ok]), [["dts", false], ["ac3", true]]);
   assert.equal(bd.subs.length, 0, "PGS не копируем");
-  assert.equal(tv.needsTvStream(bd), true, "MPEG-TS — всегда через сервер");
+  assert.equal(tv.needsTvStream(bd), false, "MPEG-TS с AC3 — по зеркалу, ТВ переключит дорожку сам");
   assert.equal(tv.defaultAudio(bd).index, 2, "дорожка, которую ТВ играет, и русская");
 
   const mkv = tv.parseProbe(MKV_DTS);
@@ -52,6 +52,9 @@ test("tvstream: разбор ffprobe и выбор дорожки", () => {
   assert.deepEqual(mkv.subs.map(s => s.index), [3]);
 
   assert.equal(tv.needsTvStream(tv.parseProbe(MKV_OK)), false, "MKV с AC3 телевизор переключит сам");
+  const av1 = tv.parseProbe({ ...MKV_DTS, streams: MKV_DTS.streams.map(s => (s.index === 0 ? { ...s, codec_name: "av1" } : s)) });
+  assert.equal(tv.videoUnsupported(av1), true);
+  assert.equal(tv.needsTvStream(av1), false, "AV1 сервер не спасёт");
 });
 
 test("tvstream: аргументы ffmpeg", () => {

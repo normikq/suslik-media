@@ -94,6 +94,12 @@
     return api.tvInfo(c.opts.file).then(function (r) {
       if (cur !== c) return false;
       var audio = Array.isArray(r.audio) ? r.audio : [];
+      // Видео, которого у этого ТВ нет (AV1): ни зеркало, ни сервер не помогут — говорим сразу, а не чёрным экраном
+      if (r.videoUnsupported) {
+        note('video ' + r.videoUnsupported + ': not supported by this TV');
+        fail('unsupported', 'видео ' + String(r.videoUnsupported).toUpperCase());
+        return true;
+      }
       if (!audio.length || (!r.stream && !o.force)) { note('server stream: not needed'); return false; }
       var pick = o.order != null && audio[o.order] ? audio[o.order].index : r.audioDefault;
       if (pick == null) pick = audio[0].index;

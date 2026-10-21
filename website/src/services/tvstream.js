@@ -82,12 +82,17 @@ function parseProbe(data) {
 }
 
 /**
- * Нужен ли серверный поток: .m2ts/.ts (MPEG-TS телевизор по сети показывает рывками) или в файле нет звука, который
- * ТВ играет. MKV/MP4 с хотя бы одной дорожкой AC3/AAC телевизор переключит сам — нагрузки на сервер нет.
+/** Видео, которого у Samsung 2018–2019 нет совсем (AV1 — с моделей 2020): ни в каком контейнере, сервер не поможет. */
+function videoUnsupported(info) {
+  return !!(info && info.video && info.video.codec === "av1");
+}
+
+/**
+ * Нужен ли серверный поток: в файле нет звука, который ТВ играет (DTS, TrueHD, LPCM Blu-ray). Файл, где такой звук есть
+ * (в том числе .m2ts с AC3), телевизор берёт по зеркалу и переключает дорожку сам — без лишней перепаковки (21.10).
  */
 function needsTvStream(info) {
-  if (!info || !info.video || !info.audio.length) return false;
-  if (/mpegts/.test(info.container)) return true;
+  if (!info || !info.video || !info.audio.length || videoUnsupported(info)) return false;
   return !info.audio.some(a => a.ok);
 }
 
@@ -118,7 +123,6 @@ function ffmpegArgs(url, startSec, info, audio, format) {
     // Файл-хост замолчал на 30 с — ffmpeg выходит, телевизор переоткроет поток с того же места
     args.push("-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "10", "-rw_timeout", "30000000", "-user_agent", "Mozilla/5.0");
   }
-  args.push("-fflags", "+genpts");
   if (startSec > 0) args.push("-ss", String(startSec));
   args.push("-i", url, "-map", `0:${info.video.index}`, "-map", `0:${audio.index}`);
   if (!ts) for (const s of info.subs) args.push("-map", `0:${s.index}`); // текстовых субтитров MPEG-TS не несёт
@@ -214,6 +218,7 @@ module.exports = {
   isValidTvToken,
   parseProbe,
   needsTvStream,
+  videoUnsupported,
   defaultAudio,
   ffmpegArgs,
   probeFile,
