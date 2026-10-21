@@ -61,6 +61,15 @@ Tizen Studio → `C:\tizen-studio\tools\device-manager\bin\device-manager.exe` (
 Перед этим активным должен быть профиль с Samsung-сертификатом (`tizen security-profiles set-active -n <профиль>`).
 Вручную (`sdb push device-profile.xml /home/developer/`) ТВ этот файл не принимает.
 
+**Подпись для Tizen 4.0 — всегда профиль «mixed»** (проверено 21.10 на UE40NU7100): автор — `author.p12` с Samsung-сертификатом
+(Samsung VD Author CA), дистрибьютор — Samsung `distributor.p12` с DUID телевизора. Другие профили дают `118012`.
+Обновление ставится поверх, только если автор тот же, что у установленной версии.
+```
+tizen security-profiles add -n mixed -a "<путь>\author.p12" -p <пароль> -d "<путь>\distributor.p12" -dp <пароль>
+tizen security-profiles set-active -n mixed
+$env:TIZEN_PROFILE="mixed"; .\build.ps1 -SiteUrl https://<сайт>
+```
+
 5. **Tizen TV: Build Signed Package** (пакет появится в корне папки), затем **Tizen TV: Launch Application** — ставит и запускает на ТВ.
    Для отладки — **Tizen TV: Debug Application** (Chrome Web Inspector).
 
