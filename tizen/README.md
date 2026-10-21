@@ -27,17 +27,21 @@ OK или ▶❚❚ — пауза · ← → — 10 с · ⏪ ⏩ — мину�
 
 ## Сборка и установка на телевизор
 
-1. Tizen Studio + **TV Extensions** (Package Manager → Extension SDK → TV Extensions-4.0 или новее) и Samsung Certificate Extension.
-2. Телевизор в режиме разработчика: Apps → на пульте `1 2 3 4 5` → Developer mode **On**, IP компьютера → перезагрузить ТВ.
-3. Certificate Manager → новый профиль **Samsung** (тип TV), в distributor-сертификат добавить DUID телевизора
-   (виден в Device Manager после подключения). Имя профиля — дальше `TIZEN_PROFILE`.
-4. Сборка (домен сайта — как в CI, только из `SITE_URL`):
-   ```
-   SITE_URL=https://<сайт> TIZEN_PROFILE=<профиль> ./tizen/build.sh
-   sdb connect <IP телевизора>
-   tizen install -n tizen/build/SuslikMedia-0.1.0.wgt -t <имя из sdb devices>
-   ```
-   Без `TIZEN_PROFILE` скрипт только готовит папку `tizen/build/app` — её можно открыть в Tizen Studio и запустить на ТВ.
+Tizen Studio Samsung объявил устаревшей. Замена — расширение **Tizen TV** для VS Code (`code --install-extension tizensdk.tizentv`).
+Приложение веб-шное (не .NET), поэтому нужны именно команды «Tizen TV» этого расширения.
+
+1. Телевизор в режиме разработчика: Apps → на пульте `1 2 3 4 5` → Developer mode **On**, IP компьютера → перезагрузить ТВ.
+2. Подготовить папку приложения (домен сайта — как в CI, только из `SITE_URL`):
+   `SITE_URL=https://<сайт> ./tizen/build.sh` → `tizen/build/app`. Открыть эту папку в VS Code.
+3. Настройки VS Code: `tizentv.targetDeviceAddress` — IP телевизора.
+4. Команда **Tizen TV: Run Certificate Manager** → новый профиль **Samsung** (тип TV), в сертификат дистрибьютора
+   добавить DUID телевизора (расширение видит его, когда ТВ подключён).
+5. **Tizen TV: Build Signed Package** (пакет появится в корне папки), затем **Tizen TV: Launch Application** — ставит и запускает на ТВ.
+   Для отладки — **Tizen TV: Debug Application** (Chrome Web Inspector).
+
+Запасной путь — Tizen Studio (ещё работает, но не развивается) и его CLI:
+`SITE_URL=… TIZEN_PROFILE=<профиль> ./tizen/build.sh` соберёт `tizen/build/SuslikMedia-<версия>.wgt`,
+дальше `sdb connect <IP>` и `tizen install -n <файл .wgt> -t <имя из sdb devices>`.
 
 Самообновления нет: новую версию ставят так же, через `tizen install`.
 
