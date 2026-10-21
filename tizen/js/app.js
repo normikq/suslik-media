@@ -316,6 +316,7 @@
     if (!m.ready) badges.push(h('span', { class: 'badge', text: model.statusRu(m) + (m.downloading ? ' ' + Math.round(m.progress * 100) + '%' : '') }));
     if (check.level === 'no') badges.push(h('span', { class: 'badge bad', text: 'Не поддерживается' }));
     else if (check.level === 'warn') badges.push(h('span', { class: 'badge warn', text: '⚠' }));
+    else if (check.level === 'server') badges.push(h('span', { class: 'badge server', text: 'Через сервер' }));
     if (m.mine) badges.push(h('span', { class: 'badge mine', text: '★' }));
     var key = 't' + m.id;
     var el = h('div', { class: 'f tile' + (m.ready ? '' : ' dim'), tabindex: '-1', 'data-key': key, onclick: function () {
@@ -453,7 +454,7 @@
   /** Предупреждения о файле: формат (support.js) и озвучки отдельными файлами. */
   function notesFor(m, file) {
     var check = support.checkFile(file.path), dubs = model.externalAudioFor(m, file), notes = [];
-    if (check.level !== 'ok') notes.push(h('div', { class: 'note ' + (check.level === 'no' ? 'bad' : 'warn'), text: (check.level === 'no' ? '⛔ ' : '⚠ ') + check.text }));
+    if (check.level !== 'ok') notes.push(h('div', { class: 'note ' + ({ no: 'bad', server: 'grey' }[check.level] || 'warn'), text: ({ no: '⛔ ', server: '⇄ ' }[check.level] || '⚠ ') + check.text }));
     if (dubs.length) notes.push(h('div', { class: 'note grey', text: support.EXTERNAL_AUDIO_TEXT + ' (' + dubs.map(function (d) { return model.basename(d.path); }).join(', ') + ')' }));
     return notes;
   }

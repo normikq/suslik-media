@@ -93,7 +93,7 @@
     return h('div', { class: 'f result', tabindex: '-1', 'data-key': 'r' + x.id, onclick: function () { add(x); } }, [
       h('div', { class: 'result-title', text: x.title }),
       h('div', { class: 'result-meta' }, meta),
-      check.level !== 'ok' ? h('div', { class: 'note ' + (check.level === 'no' ? 'bad' : 'warn'), text: (check.level === 'no' ? '⛔ ' : '⚠ ') + check.text }) : null,
+      check.level !== 'ok' ? h('div', { class: 'note ' + ({ no: 'bad', server: 'grey' }[check.level] || 'warn'), text: ({ no: '⛔ ', server: '⇄ ' }[check.level] || '⚠ ') + check.text }) : null,
       n ? h('div', { class: 'note ' + (n.ok ? 'okc' : 'bad'), text: n.text }) : null
     ]);
   }

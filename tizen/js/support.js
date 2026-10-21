@@ -23,9 +23,9 @@
     if (/\.iso$/i.test(name)) return { level: 'no', text: 'Образ диска (.iso) телевизор не открывает' };
     if (AV1.test(name)) return { level: 'no', text: 'Видео AV1 этот телевизор не поддерживает' };
     if (/\.avi$/i.test(name)) return { level: 'warn', text: 'Старый формат .avi: может не воспроизвестись' };
-    // Blu-ray: 0.1.0 на UE40NU7100 показал такой файл рывками (1 кадр в секунду) и без звука (21.10)
-    if (/\.m2ts$/i.test(name) || BLURAY_DIR.test(path.replace(/\\/g, '/'))) return { level: 'warn', text: 'Blu-ray (.m2ts): телевизор может показывать рывками и без звука' };
-    if (BAD_AUDIO.test(name.replace(/[._]/g, ' '))) return { level: 'warn', text: 'Звук DTS/TrueHD телевизор не воспроизводит' };
+    // Blu-ray и DTS/TrueHD: сам ТВ такое не играет (Blu-ray — 1 кадр/с, 21.10), их готовит сервер (serverFirst) — level 'server'
+    if (/\.m2ts$/i.test(name) || BLURAY_DIR.test(path.replace(/\\/g, '/'))) return { level: 'server', text: 'Blu-ray (.m2ts) — через сервер: перемотка чуть дольше' };
+    if (BAD_AUDIO.test(name.replace(/[._]/g, ' '))) return { level: 'server', text: 'Звук DTS/TrueHD — через сервер, в AC3' };
     return { level: 'ok', text: '' };
   }
 

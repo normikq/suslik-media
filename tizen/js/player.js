@@ -123,7 +123,7 @@
   function viaServer(c, atMs, o) {
     if (c.serverFailed) return Promise.resolve(false); // уже не вышло: не ходим по кругу «сервер → зеркало → сервер»
     note('server stream: asking');
-    buffering(true, 0);
+    buffering(true, 0, 'Сервер читает файл…');
     return api.tvInfo(c.opts.file).then(function (r) {
       if (cur !== c) return false;
       var audio = Array.isArray(r.audio) ? r.audio : [];
@@ -177,7 +177,9 @@
     c.urlAt = Date.now();
     // Переоткрытие (обрыв сети, новая ссылка): пока AVPlay снова не готов, плеер «грузится» — перемотка и пауза ждут
     c.prepared = false; c.loading = true; c.slow = null; c.seekBusy = false; c.seekNext = null;
+    c.resumeSeek = null; c.resumeCover = false;
     clearInterval(c.saveTimer);
+    buffering(true, 0, c.tc ? 'Сервер готовит поток…' : 'Открываю файл…');
     try {
       // close() из PLAYING/PAUSED без stop() на части прошивок Tizen 4.0 оставляет плеер в неясном состоянии
       try { p.stop(); } catch (e) { /* не играл */ }
@@ -205,18 +207,22 @@
         onbufferingstart: function () {
           if (cur !== c) return;
           note('buffering start');
-          c.loading = true; buffering(true, 0);
+          c.loading = true; buffering(true, 0, 'Буферизация…');
           if (c.prepared && !c.seekBusy) { c.stalls++; c.stallFrom = Date.now(); }
         },
         onbufferingprogress: function (pct) { if (cur === c) buffering(true, pct); },
         onbufferingcomplete: function () {
           if (cur !== c) return;
           note('buffering complete');
-          c.loading = false; buffering(false);
+          c.loading = false;
+          if (c.resumeCover) buffering(true, 0); else buffering(false); // переход к месту продолжения ещё впереди
           if (c.stallFrom) { c.stallMs += Date.now() - c.stallFrom; c.stallFrom = 0; }
         },
         oncurrentplaytime: function (ms) {
           if (cur !== c) return;
+          // Продолжение по зеркалу: фильм пошёл с начала — теперь переход к месту (время до него не наше)
+          if (c.resumeSeek) { var rs = c.resumeSeek; c.resumeSeek = null; rs(); return; }
+          if (c.resumeCover) return;
           c.pos = (c.tc ? c.tc.base : 0) + ms;
           if (!c.dur) duration(c);
           watchSpeed(c, ms);
@@ -254,6 +260,7 @@
         c.paused = false;
         c.prepared = true; c.loading = false; c.played = true;
         if (c.tc) { c.tc.playedOk = true; c.seekTarget = null; renderTime(); }
+        c.resumeSeek = null; c.resumeCover = false;
         buffering(false);
         showBar();
         clearInterval(c.saveTimer);
@@ -262,13 +269,28 @@
         if (c.tcSeekNext != null) { var n = c.tcSeekNext; c.tcSeekNext = null; seekTo(c, n); }
       };
       if (fromMs > 0) {
-        note('resume at ' + fmt(fromMs));
         // Ответа на перемотку нет 15 с — запускаем с того места, где AVPlay стоит (иначе вечная «Загрузка…»).
         // Отсчёт — после возврата seekTo: на 4K по зеркалу сам вызов держит страницу ~19 с (журнал 21.10), и сторож,
         // заведённый до него, срабатывал сразу после — play() посреди перемотки, фильм стоял на 0 %
-        try { p.seekTo(fromMs, go, function () { note('resume seek failed'); go(); }); }
-        catch (e) { note('resume seek failed: ' + (e.name || e)); go(); }
-        if (!started) resumeGuard = setTimeout(function () { note('resume seek: no answer'); go(); }, 15000);
+        var seek = function () {
+          if (cur !== c || started) return;
+          note('resume seek to ' + fmt(fromMs));
+          var t0 = Date.now();
+          try { p.seekTo(fromMs, function () { note('resume seek done (' + (Date.now() - t0) + ' ms)'); go(); }, function () { note('resume seek failed'); go(); }); }
+          catch (e) { note('resume seek failed: ' + (e.name || e)); go(); }
+          if (!started) resumeGuard = setTimeout(function () { note('resume seek: no answer'); go(); }, 15000);
+        };
+        buffering(true, 0, 'Переход к ' + fmt(fromMs) + '…');
+        c.pos = fromMs;
+        // Tizen 4.0: seekTo до первого кадра подвешивает плеер (журнал 21.10: 19 с на 4K) — сначала запуск с начала
+        // под чёрной заставкой, после первого кадра — переход. Поток с сервера сюда не попадает: его место — &t=
+        c.resumeCover = true;
+        buffering(true, 0);
+        note('resume at ' + fmt(fromMs) + ': play first, seek after the first frame');
+        try { p.play(); } catch (e) { note('play before resume seek failed ' + (e.name || e)); }
+        c.resumeSeek = seek;
+        // Первого кадра нет 10 с — переходим всё равно
+        resumeGuard = setTimeout(function () { if (c.resumeSeek) { c.resumeSeek = null; note('resume: no frame in 10 s'); seek(); } }, 10000);
       } else go();
     };
     var prepareFail = function (err) {
@@ -700,9 +722,13 @@
     el('p-fill').style.width = (c.dur ? Math.min(100, t / c.dur * 100) : 0) + '%';
   }
 
-  function buffering(on, pct) {
-    el('p-buffer').className = on ? 'show' : '';
-    el('p-buffer-text').textContent = on && pct ? 'Загрузка ' + pct + '%' : 'Загрузка…';
+  // Что сейчас идёт при загрузке: подпись держится, пока её не сменит следующий этап
+  var stage = 'Загрузка…';
+  function buffering(on, pct, label) {
+    if (label) stage = label;
+    if (!on) stage = 'Загрузка…';
+    el('p-buffer').className = on ? 'show' + (cur && cur.resumeCover ? ' cover' : '') : '';
+    el('p-buffer-text').textContent = on && pct ? 'Буферизация ' + pct + '%' : stage;
   }
 
   /**
