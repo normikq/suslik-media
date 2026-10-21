@@ -40,7 +40,28 @@
     try { var v = JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; }
   }
 
-  function av() { return g.webapis && g.webapis.avplay; }
+  // Вызовы AVPlay синхронные и держат страницу: каждый дольше 300 мс — в пробу с именем (журнал 21.10: 4K — UI stall 20 с)
+  var avWrap = null;
+  function av() {
+    var p = g.webapis && g.webapis.avplay;
+    if (!p) return null;
+    if (avWrap) return avWrap;
+    avWrap = {};
+    Object.keys(p).concat(['open', 'close', 'stop', 'play', 'pause', 'prepareAsync', 'seekTo', 'jumpForward', 'jumpBackward',
+      'getDuration', 'getState', 'getTotalTrackInfo', 'getCurrentStreamInfo', 'setSelectTrack', 'setStreamingProperty',
+      'setDisplayRect', 'setDisplayMethod', 'setBufferingParam', 'setListener', 'setSilentSubtitle', 'suspend', 'restore'])
+      .forEach(function (k) {
+        if (avWrap[k] || typeof p[k] !== 'function') return;
+        avWrap[k] = function () {
+          var t0 = Date.now();
+          try { return p[k].apply(p, arguments); } finally {
+            var ms = Date.now() - t0;
+            if (ms > 300) note('slow AVPlay.' + k + ': ' + ms + ' ms');
+          }
+        };
+      });
+    return avWrap;
+  }
   function bigBuffer() { try { return localStorage.getItem('tv_buffer') === 'big'; } catch (e) { return false; } }
 
   // Сторож: таймер 0,5 с не срабатывал дольше 1,5 с — приложение висело (AVPlay держит поток страницы). В пробу.
@@ -48,7 +69,7 @@
   setInterval(function () {
     var now = Date.now(), gap = now - lastBeat;
     lastBeat = now;
-    if (cur && gap > 1500) note('UI stall ' + gap + ' ms' + (cur.seekBusy ? ' (seek)' : cur.loading ? ' (loading)' : ''));
+    if (cur && gap > 1500) note('UI stall ' + gap + ' ms' + (cur.seekBusy ? ' (seek)' : cur.loading ? ' (loading)' : '') + (cur.diagOpen ? ' (probe open)' : ''));
   }, 500);
   function el(id) { return document.getElementById(id); }
   var h = function () { return SM.ui.h.apply(null, arguments); };
