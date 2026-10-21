@@ -6,7 +6,7 @@ const { makeJsonWriter } = require("../utils/json-writer");
 const { clientIp } = require("../utils/helpers");
 const { deviceId } = require("../middleware/auth");
 
-// Limit each client IP to two unfinished magnet/torrent submissions.
+// Limit each client IP (or Discord user) to two unfinished magnet/torrent submissions.
 // This is process-local; use a shared store if running multiple Node workers/instances.
 const MAX_ACTIVE_DOWNLOADS_PER_IP = 2;
 const activeDownloadsByIp = new Map(); // ip -> { ids: Set<string>, pending: number }
@@ -34,6 +34,8 @@ function setLibraryChangedHook(fn) {
 
 function recordOwner(id, dev, ip) {
   if (id === undefined || id === null) return;
+  // Уже известная раздача (AllDebrid вернул тот же id на повторное добавление): владелец остаётся прежним
+  if (magnetOwners.has(String(id))) return;
   magnetOwners.set(String(id), { dev, ip, at: Date.now() });
   if (magnetOwners.size > 5000) {
     for (const k of [...magnetOwners.keys()].slice(0, magnetOwners.size - 5000)) {
@@ -43,10 +45,28 @@ function recordOwner(id, dev, ip) {
   persistOwners();
 }
 
-function canRemove(id, req) {
-  if (!config.OWNER_LOCK) return true;
-  const o = magnetOwners.get(String(id));
-  return !o || o.dev === deviceId(req, null); // только cookie устройства, IP не учитывается
+function isLibraryAdmin(req) {
+  // Админ Discord. Не «shared»: у общего пароля тоже role "admin", но это все сразу
+  return Boolean(req.user && req.user.role === "admin" && req.user.id !== "shared");
+}
+
+// Кто может убрать раздачу из AllDebrid (у всех): готовую — только админ (остальное чистит автоочистка,
+// services/cleanup.js); незаконченную или сломанную загрузку (statusCode не 4) — ещё и тот, кто её добавил
+// (без записи о владельце — любой). Неизвестное состояние считается готовой раздачей.
+// Проверка для всех раздач одного запроса: cookie устройства читается один раз, а не для каждой раздачи медиатеки.
+function removeChecker(req) {
+  if (!config.OWNER_LOCK || isLibraryAdmin(req)) return () => true;
+  const dev = deviceId(req, null); // только cookie устройства, IP не учитывается
+  return (id, statusCode) => {
+    const code = Number(statusCode);
+    if (statusCode === undefined || statusCode === null || !Number.isFinite(code) || code === 4) return false;
+    const o = magnetOwners.get(String(id));
+    return !o || o.dev === dev;
+  };
+}
+
+function canRemove(id, req, statusCode) {
+  return removeChecker(req)(id, statusCode);
 }
 
 function deleteOwner(id) {
@@ -55,6 +75,24 @@ function deleteOwner(id) {
     return true;
   }
   return false;
+}
+
+/** Раздачи, добавленные этим владельцем (для первого заполнения «Моих фильмов»). */
+function ownedBy(owner) {
+  const out = [];
+  for (const [id, o] of magnetOwners) if (o.dev === owner) out.push(id);
+  return out;
+}
+
+// Первый вход через Discord: раздачи, добавленные с этого устройства, переходят пользователю
+function adoptOwners(fromDev, toUser) {
+  if (!fromDev || fromDev === toUser) return 0;
+  let n = 0;
+  for (const o of magnetOwners.values()) {
+    if (o.dev === fromDev) { o.dev = toUser; n++; }
+  }
+  if (n) persistOwners();
+  return n;
 }
 
 function ipDownloadState(ip) {
@@ -81,32 +119,38 @@ function releaseTrackedDownload(id) {
 function reserveDownloadSlot(req, res) {
   const ip = clientIp(req);
   const dev = deviceId(req, res);
-  const state = ipDownloadState(ip);
+  // Вошедший через Discord считается сам по себе (семья за одним роутером, мобильный NAT); общий пароль — по IP
+  const slotKey = /^u_\d+$/.test(dev) ? dev : ip;
+  const state = ipDownloadState(slotKey);
   if (state.ids.size + state.pending >= MAX_ACTIVE_DOWNLOADS_PER_IP) {
-    res.status(429).json({ error: "Для этого IP-адреса уже выполняются две загрузки. Дождитесь завершения одной из них или отмените её." });
+    res.status(429).json({ error: "У вас уже выполняются две загрузки. Дождитесь завершения одной из них или отмените её." });
     return null;
   }
   state.pending += 1;
   let completed = false;
   return {
+    dev,
     attach(id, ready) {
       if (completed) return;
       completed = true;
       state.pending = Math.max(0, state.pending - 1);
       recordOwner(id, dev, ip);
+      // Добавленное попадает и в общую библиотеку, и в «Мои фильмы» — любым путём: magnet, torrent, поиск.
+      // (require внутри: shelf сам зависит от этого модуля)
+      if (id !== undefined && id !== null) require("./shelf").setOnShelf(dev, id, true);
       libraryChangedHook(); // a library answer already on its way does not know this torrent: it must not free the slot
       if (!ready && id !== undefined && id !== null) {
         const key = String(id);
         state.ids.add(key);
-        downloadOwnerById.set(key, ip);
+        downloadOwnerById.set(key, slotKey);
       }
-      cleanupIpState(ip, state);
+      cleanupIpState(slotKey, state);
     },
     release() {
       if (completed) return;
       completed = true;
       state.pending = Math.max(0, state.pending - 1);
-      cleanupIpState(ip, state);
+      cleanupIpState(slotKey, state);
     }
   };
 }
@@ -120,8 +164,12 @@ function cleanupFinishedDownloads(states) {
 module.exports = {
   MAX_ACTIVE_DOWNLOADS_PER_IP,
   canRemove,
+  removeChecker,
+  isLibraryAdmin,
   recordOwner,
   deleteOwner,
+  adoptOwners,
+  ownedBy,
   releaseTrackedDownload,
   reserveDownloadSlot,
   cleanupFinishedDownloads,

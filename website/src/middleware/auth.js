@@ -7,6 +7,8 @@ const config = require("../config");
 const { makeJsonWriter } = require("../utils/json-writer");
 const { readCookie } = require("../utils/helpers");
 
+const { SHARED_USER, getUser, touchUser, verifyDeviceToken } = require("../services/users");
+
 // Sessions survive a server restart (the default MemoryStore forgets everyone and grows without bound).
 // One shared password means very few sessions, so a JSON file is plenty for this server.
 class FileSessionStore extends session.Store {
@@ -84,19 +86,64 @@ function createSessionMiddleware() {
     rolling: true, // Refresh cookie expiration while the authenticated session is active.
     cookie: {
       httpOnly: true,
-      sameSite: "strict",
+      sameSite: "lax", // Lax allows OAuth callback redirects from discord.com to send the session cookie
       secure: config.COOKIE_SECURE,
       maxAge: config.SESSION_MAX_AGE_MS
     }
   });
 }
 
+// Вход по общему паролю выключен (PASSWORD_AUTH_ENABLED=false): всё, что вошло по паролю — сессии и устройства,
+// привязанные из такой сессии, — больше не действует, а не только новые входы
+function sharedAccessOff(user) {
+  return user && user.id === SHARED_USER.id && !config.PASSWORD_AUTH_ENABLED;
+}
+
+function resolveAuth(req) {
+  // 1. Проверка по токену устройства (для нативных клиентов без cookies)
+  const deviceToken = req.get("X-Device-Token") || (req.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+  if (deviceToken) {
+    const verified = verifyDeviceToken(deviceToken);
+    if (verified && verified.user && !sharedAccessOff(verified.user)) {
+      req.user = verified.user;
+      req.device = verified.device;
+      return true;
+    }
+  }
+
+  // 2. Проверка по сессии
+  if (req.session && req.session.authenticated) {
+    const user = req.session.uid ? getUser(req.session.uid) : SHARED_USER;
+    if (!user || user.role === "denied" || sharedAccessOff(user)) {
+      req.session.destroy?.(() => {});
+      return false;
+    }
+    req.user = user;
+    if (user.id !== SHARED_USER.id) touchUser(user.id);
+    return true;
+  }
+
+  return false;
+}
+
 function requireLogin(req, res, next) {
-  if (req.session && req.session.authenticated) return next();
+  if (resolveAuth(req)) return next();
   return res.status(401).json({ error: "Сначала выполните вход." });
 }
 
+function requireAdmin(req, res, next) {
+  if (!resolveAuth(req)) return res.status(401).json({ error: "Сначала выполните вход." });
+  // Если вход выполнен по паролю сайта (SITE_PASSWORD) — считаем администратором
+  if (!req.user || req.user.role === "admin") return next();
+  return res.status(403).json({ error: "Недостаточно прав администратора." });
+}
+
+// Чьё «личное» (избранное, свои раздачи): пользователь Discord — его id; вход по общему паролю — устройство
+// (cookie sdev): у всех парольных один id "shared", и тогда избранное и права на удаление стали бы общими
 function deviceId(req, res) {
+  if (req.user && req.user.id && req.user.id !== SHARED_USER.id) {
+    return req.user.id;
+  }
   let id = readCookie(req, "sdev");
   if (!/^[a-f0-9]{32}$/.test(id)) {
     id = crypto.randomBytes(16).toString("hex");
@@ -130,23 +177,29 @@ function verifyPassword(password) {
   return crypto.timingSafeEqual(hashGiven, hashExpected);
 }
 
+// Сравнение секрета без утечки его длины по времени: сравниваются хеши одинаковой длины
+function secretEquals(given, secret) {
+  if (!secret) return false;
+  const a = crypto.createHash("sha256").update(String(given)).digest();
+  const b = crypto.createHash("sha256").update(String(secret)).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+
 function isTester(req) {
-  const code = config.BETA_CODE;
-  const given = String(req.get("X-Beta-Code") || "");
-  return !!code && given.length === code.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(code));
+  return secretEquals(req.get("X-Beta-Code") || "", config.BETA_CODE);
 }
 
 function updateTokenOk(req) {
-  const token = config.UPDATE_TOKEN;
-  const given = String(req.get("X-Update-Token") || "");
-  return !!token && given.length === token.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(token));
+  return secretEquals(req.get("X-Update-Token") || "", config.UPDATE_TOKEN);
 }
 
 module.exports = {
   FileSessionStore,
   sessionStore,
   createSessionMiddleware,
+  resolveAuth,
   requireLogin,
+  requireAdmin,
   deviceId,
   verifyPassword,
   isTester,

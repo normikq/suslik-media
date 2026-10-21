@@ -8,7 +8,7 @@ import java.util.Locale
 
 /**
  * Какой движок открывает файл. Настройка «Плеер» = VLC — всегда VLC. Иначе Media3, кроме:
- *  - контейнеров, которые Media3 не читает (Blu-ray `.m2ts`, `.ts`, `.iso`) — сразу VLC;
+ *  - контейнеров, которые Media3 не читает или читает нестабильно (Blu-ray `.m2ts`, `.ts`, `.iso`, `.avi`) — сразу VLC;
  *  - файлов, для которых движок уже выбран раньше (Media3 не справился — запомнено [remember]): «Продолжить»
  *    сразу открывает их в нужном движке, без повторной попытки и переключения посреди просмотра.
  */
@@ -43,7 +43,7 @@ class EngineChoice(context: Context) {
     }
 
     companion object {
-        private val VLC_ONLY = setOf("m2ts", "mts", "ts", "iso")
+        private val VLC_ONLY = setOf("m2ts", "mts", "ts", "iso", "avi")
         private const val MAX_FILES = 400
     }
 }

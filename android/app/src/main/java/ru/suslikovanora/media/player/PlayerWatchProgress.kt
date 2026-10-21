@@ -30,6 +30,9 @@ class PlayerWatchProgress(
     private var watchKeys: List<String> = emptyList()
     private var lastPersistAt = 0L
 
+    /** The playlist's watch keys (the first is the episode the player opened with). */
+    val keys: List<String> get() = watchKeys
+
     fun setWatchKeys(keys: List<String>) {
         watchKeys = keys
     }
@@ -72,7 +75,9 @@ class PlayerWatchProgress(
         currentWatchKey()?.let { wk ->
             if (time < 5_000L && !nearEnd) return@let
             val pos = if (nearEnd || (isEnded && length > 0L)) length else time
-            watchPrefs.edit().putString(wk, "$pos|${length.coerceAtLeast(0L)}|${System.currentTimeMillis()}").apply()
+            val at = System.currentTimeMillis()
+            watchPrefs.edit().putString(wk, "$pos|${length.coerceAtLeast(0L)}|$at").apply()
+            ru.suslikovanora.media.library.CloudSync.noteWatch(wk, pos, length.coerceAtLeast(0L), at)
         }
     }
 

@@ -141,11 +141,16 @@ fun PlayerView(
 
     var index by remember { mutableStateOf(startIndex) }
     fun watchKey(i: Int = index) = req.watchKeys.getOrNull(i)
+    // Гость комнаты совместного просмотра: ведёт комната — своей перемотки и смены серии нет
+    fun partyGuest(): Boolean = ru.suslikovanora.media.desktop.party.Party.let { it.inRoom && !it.isHost && it.file?.key == watchKey() }
     fun savePos(t: Long, len: Long, i: Int = index) {
         val key = watchKey(i) ?: return
         if (t < 5_000L) return
         val done = len > 0 && t > len - 15_000L
-        library.watch.put(key, "${if (done) len else t}|${len.coerceAtLeast(0)}|${System.currentTimeMillis()}")
+        val pos = if (done) len else t
+        val at = System.currentTimeMillis()
+        library.watch.put(key, "$pos|${len.coerceAtLeast(0)}|$at")
+        ru.suslikovanora.media.desktop.CloudSync.noteWatch(key, pos, len.coerceAtLeast(0), at)
     }
     fun savedPos(i: Int = index): Long {
         val w = watchKey(i)?.let { library.watchInfo(it) } ?: return 0L
@@ -166,8 +171,14 @@ fun PlayerView(
     var barVisible by remember { mutableStateOf(true) }
     var lastMove by remember { mutableStateOf(System.currentTimeMillis()) }
     var started by remember { mutableStateOf(false) }
+    // Another episode is chosen, the new file is not open yet: up to 4 s go on waiting for its voice-overs, and all that
+    // time mpv still plays the old one. Its time and «playing» are not the new episode's (they started the player at the
+    // old place, and the room went to 11:24 of the next episode — journal 20.10, 20:43:26 and 20:59:07).
+    var switching by remember { mutableStateOf(false) }
     var enginePaused by remember { mutableStateOf(false) }
     var seeking by remember { mutableStateOf<Float?>(null) }
+    var seekByJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var pendingSeekByTarget by remember { mutableStateOf<Long?>(null) }
     var retries by remember { mutableStateOf(0) }
     var lastGood by remember { mutableStateOf(initialPos) }
     var closing by remember { mutableStateOf(false) }
@@ -339,10 +350,11 @@ fun PlayerView(
 
     fun playEntry(i: Int) {
         if (i !in queue.indices) return
+        seekByJob?.cancel(); seekByJob = null; pendingSeekByTarget = null
         savePos(time, length)
         index = i; nextIn = -1; currentUrl = queue[i].url; title = queue[i].title; retries = 0
         val url = currentUrl; val start = savedPos(i)
-        playing = false; started = false; time = start; lastGood = start; length = 0L; status = tr("player.sleduyuschaya_seriya")
+        playing = false; started = false; switching = true; time = start; lastGood = start; length = 0L; status = tr("player.sleduyuschaya_seriya")
         scope.launch {
             val extras = withTimeoutOrNull(4000) { sidecars(i).await() } ?: (emptyList<String>() to emptyList())
             if (index == i && !closing) open(url, start, extras)
@@ -398,8 +410,22 @@ fun PlayerView(
         infoOpen = !infoOpen
     }
 
-    fun togglePause() {
+    var flashJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    fun flash(text: String) {
+        status = text
+        flashJob?.cancel()
+        flashJob = scope.launch {
+            delay(2000)
+            if (status == text) status = null
+        }
+    }
+
+    // Гость комнаты: пока создатель держит паузу (или комната ждёт загрузку), снять её гость не может
+    fun partyPlayLocked(): Boolean = partyGuest() && ru.suslikovanora.media.desktop.party.Party.state.let { !it.playing || it.waiting }
+
+    fun togglePause(byRoom: Boolean = false) {
         val wasPaused = pausedAt > 0 || enginePaused
+        if (wasPaused && !byRoom && partyPlayLocked()) { flash("Паузу снимает создатель комнаты"); return }
         if (!wasPaused) {
             playing = false; pausedAt = System.currentTimeMillis()
             supRef.get()?.paused()
@@ -416,16 +442,6 @@ fun PlayerView(
                 ePause(false)
                 if (longPause) reseekHereNow()
             }
-        }
-    }
-
-    var flashJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
-    fun flash(text: String) {
-        status = text
-        flashJob?.cancel()
-        flashJob = scope.launch {
-            delay(2000)
-            if (status == text) status = null
         }
     }
 
@@ -457,6 +473,7 @@ fun PlayerView(
     fun chapterAt(t: Long): Int = chapters.indexOfLast { it.first <= t + 500 }
     fun jumpChapter(d: Int) {
         if (chapters.size < 2) return
+        if (partyGuest()) { flash("Перематывает создатель комнаты"); return }
         val i = (chapterAt(time) + d).coerceIn(0, chapters.size - 1)
         val t = chapters[i].first; time = t; lastSeekAt = System.currentTimeMillis(); supRef.get()?.seeked()
         seekTo(t)
@@ -511,23 +528,6 @@ fun PlayerView(
         flash(tr("player.zaderzhka_zvuka_p_d", "ms" to signed(d)))
     }
 
-    fun seekBy(d: Long) {
-        PlayerLog.write("seek ${if (d > 0) "+" else ""}${d / 1000}s")
-        supRef.get()?.seeked()
-        var t = (time + d).coerceAtLeast(0L)
-        if (length > 0) t = t.coerceAtMost((length - 2_000L).coerceAtLeast(0L))
-        time = t; lastGood = t; lastSeekAt = System.currentTimeMillis()
-        seekTo(t)
-    }
-
-    fun toggleFullscreen() {
-        if (mini) {
-            setMini(false)
-            return
-        }
-        WindowMode.toggleFullscreen(owner)
-    }
-
     var leaveJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
     fun poke() {
@@ -545,9 +545,43 @@ fun PlayerView(
         }
     }
 
+    fun seekBy(d: Long) {
+        if (partyGuest()) { flash("Перематывает создатель комнаты"); return }
+        val base = pendingSeekByTarget ?: time
+        var t = (base + d).coerceAtLeast(0L)
+        if (length > 0) t = t.coerceAtMost((length - 2_000L).coerceAtLeast(0L))
+        time = t
+        lastGood = t
+        pendingSeekByTarget = t
+        poke()
+        seekByJob?.cancel()
+        seekByJob = scope.launch {
+            delay(250)
+            val target = pendingSeekByTarget ?: t
+            pendingSeekByTarget = null
+            PlayerLog.write("seek to ${target / 1000}s")
+            bufferingShown = 0
+            // The aim again: in the 250 ms the clock of mpv wrote the old place into [time], and the room saw a seek
+            // mark without a jump — the seek was not sent, the room pulled the host back (journal 20.10, 21:17:04)
+            time = target; lastGood = target
+            lastSeekAt = System.currentTimeMillis()
+            supRef.get()?.seeked()
+            seekTo(target)
+        }
+    }
+
+    fun toggleFullscreen() {
+        if (mini) {
+            setMini(false)
+            return
+        }
+        WindowMode.toggleFullscreen(owner)
+    }
+
     fun close() {
         if (closing) return
         closing = true
+        seekByJob?.cancel(); seekByJob = null; pendingSeekByTarget = null
         DisplayAwake.setAwake(false)
         savePos(time, length)
         library.bumpWatch()
@@ -604,8 +638,8 @@ fun PlayerView(
                     WindowMode.setFullscreen(owner, false)
                 } else close()
                 Key.Backspace -> close()
-                Key.N -> playEntry(index + 1)
-                Key.P -> playEntry(index - 1)
+                Key.N -> if (!partyGuest()) playEntry(index + 1) else flash("Серию выбирает создатель комнаты")
+                Key.P -> if (!partyGuest()) playEntry(index - 1) else flash("Серию выбирает создатель комнаты")
                 Key.M -> { userMuted = !userMuted; val m = userMuted; runOnPlayer { eMute(m) } }
                 Key.LeftBracket -> if (e.isShiftPressed) shiftSubs(-100L) else shiftAudio(-100L)
                 Key.RightBracket -> if (e.isShiftPressed) shiftSubs(100L) else shiftAudio(100L)
@@ -637,12 +671,12 @@ fun PlayerView(
                 PlayerLog.write("[smtc] pause (playing=$playing pausedAt=$pausedAt enginePaused=$enginePaused)")
                 togglePause()
             },
-            onNext = { if (index + 1 < queue.size) playEntry(index + 1) },
+            onNext = { if (index + 1 < queue.size && !partyGuest()) playEntry(index + 1) },
             onPrevious = {
                 PlayerLog.write("[smtc] previous (episode ${index + 1} of ${queue.size})")
-                if (index > 0) playEntry(index - 1) else seekTo(0L)
+                if (partyGuest()) Unit else if (index > 0) playEntry(index - 1) else seekTo(0L)
             },
-            onSeek = { targetMs -> seekTo(targetMs) }
+            onSeek = { targetMs -> if (!partyGuest()) seekTo(targetMs) }
         )
         if (owner != null) MediaControls.attach(owner, callbacks)
         onDispose {
@@ -657,11 +691,37 @@ fun PlayerView(
 
     var smtcPoster by remember { mutableStateOf<java.io.File?>(null) }
     var posterLooked by remember { mutableStateOf(false) }
+    var discordPosterUrl by remember { mutableStateOf(library.posterUrl(req.posterQueries)) }
     LaunchedEffect(Unit) {
         smtcPoster = runCatching { library.posterFileFor(req.posterQueries) }.getOrNull()
         posterLooked = true
         PlayerLog.write("[smtc] poster ${smtcPoster?.name ?: "none"}")
     }
+    LaunchedEffect(posterLooked) {
+        if (posterLooked && discordPosterUrl == null) {
+            discordPosterUrl = library.posterUrl(req.posterQueries)
+        }
+    }
+
+    val userPaused = pausedAt > 0L || enginePaused
+
+    // Совместный просмотр: плеер идёт за комнатой, если в ней этот фильм (иначе ничего не делает)
+    ru.suslikovanora.media.desktop.party.PartySync(watchKey(), title, req.watchKeys, started, closing,
+        ru.suslikovanora.media.desktop.party.SyncHooks(
+            // Right after a seek mpv still reports the old place for a moment: then the bar's target counts
+            timeMs = { if (System.currentTimeMillis() - lastSeekAt < 2500L) time else engine.timeMs.takeIf { it > 0L } ?: time },
+            busy = { seeking != null || pendingSeekByTarget != null },
+            engineMs = { engine.timeMs },
+            seekStamp = { lastSeekAt },
+            paused = { pausedAt > 0L || enginePaused },
+            running = { playing && engine.isPlaying },
+            userRate = { rate },
+            setPaused = { p -> if ((pausedAt > 0L || enginePaused) != p) togglePause(byRoom = true) },
+            seekTo = { t -> time = t; lastGood = t; lastSeekAt = System.currentTimeMillis(); seekTo(t) },
+            setRate = { r -> playerExecutor.execute { runCatching { eRate(r) } } },
+            playIndex = { i -> playEntry(i) },
+            notice = { text -> flash(text) }
+        ))
 
     LaunchedEffect(title, index, queue.size, smtcPoster) {
         val (displayTitle, displaySubtitle) = smtcTitles()
@@ -669,10 +729,41 @@ fun PlayerView(
         MediaControls.updateCapabilities(hasNext = index + 1 < queue.size, hasPrev = index > 0 || time > 5_000L)
     }
 
-    val userPaused = pausedAt > 0L || enginePaused
     LaunchedEffect(userPaused) {
         // (closing pauses the film for the flight back: the media controls are already stopped by then)
         if (!closing) MediaControls.updatePlayback(!userPaused)
+    }
+
+    val inParty = ru.suslikovanora.media.desktop.party.Party.let {
+        it.inRoom && it.file?.key == watchKey()
+    }
+    val partyMembersCount = if (inParty) maxOf(1, ru.suslikovanora.media.desktop.party.Party.members.size) else 0
+
+    // Активность в Discord: фильм, пауза и полоса времени. Обновляется, когда фильм пошёл (длина известна),
+    // на паузе, перемотке, смене серии или изменении состава комнаты совместного просмотра;
+    // короткая задержка — одна отправка на серию быстрых нажатий.
+    LaunchedEffect(title, index, userPaused, started, length > 0L, lastSeekAt, discordPosterUrl, inParty, partyMembersCount) {
+        if (closing || !started) return@LaunchedEffect
+        delay(700)
+        val (displayTitle, displaySubtitle) = smtcTitles()
+        val (discordTitle, discordSubtitle) = if (inParty) {
+            val titleText = if (queue.size > 1) "$displaySubtitle · $displayTitle" else displayTitle
+            val partyStatus = "Смотрит вместе (участников: $partyMembersCount)"
+            titleText to (if (userPaused) "$partyStatus · Пауза" else partyStatus)
+        } else {
+            val sub = if (queue.size > 1) displaySubtitle else "Фильм"
+            displayTitle to (if (userPaused) "Пауза" else sub)
+        }
+        ru.suslikovanora.media.desktop.discord.DiscordRpc.update(
+            title = discordTitle,
+            subtitle = discordSubtitle,
+            playing = !userPaused,
+            timeMs = engine.timeMs.takeIf { it > 0L } ?: time,
+            lengthMs = length,
+            posterUrl = discordPosterUrl,
+            activityName = "Suslik Media",
+            largeText = if (queue.size > 1) "$displaySubtitle: $displayTitle" else displayTitle
+        )
     }
 
     val isPlaybackActive = playing && !userPaused && !closing
@@ -725,7 +816,7 @@ fun PlayerView(
     }
     DisposableEffect(Unit) {
         val ui2 = { block: () -> Unit -> SwingUtilities.invokeLater(block) }
-        fun evPlaying() = ui2 {
+        fun evPlayingNow() {
             val wasStarted = started
             playing = true; status = null; retries = 0; started = true; enginePaused = false
             bufferingShown = 0
@@ -766,6 +857,7 @@ fun PlayerView(
                 }
             }
         }
+        fun evPlaying() = ui2 { if (!switching) evPlayingNow() }
         fun evStream() = ui2 {
             if (System.currentTimeMillis() < prefsUntil) { schedulePrefs(400) }
         }
@@ -795,10 +887,11 @@ fun PlayerView(
         }
         fun evTime(currTime: Long) {
             ui2 {
+                if (switching) return@ui2
                 if (!started && currTime > 0) {
-                    evPlaying()
+                    evPlayingNow()
                 }
-                if (seeking == null && System.currentTimeMillis() - lastSeekAt > 600 && (kotlin.math.abs(currTime - time) >= 250 || currTime < time)) time = currTime
+                if (seeking == null && pendingSeekByTarget == null && System.currentTimeMillis() - lastSeekAt > 600 && (kotlin.math.abs(currTime - time) >= 250 || currTime < time)) time = currTime
                 lastGood = currTime
                 if (currTime / 10_000 != (currTime - 300) / 10_000) savePos(currTime, length)
             }
@@ -829,7 +922,7 @@ fun PlayerView(
         }
 
         engBridge.target = object : EngineListener {
-            override fun opened() = evTracksChanged()
+            override fun opened() { ui2 { switching = false }; evTracksChanged() }
             override fun playing() = evPlaying()
             override fun paused() = evPaused()
             override fun stopped() = evStopped()
@@ -848,6 +941,7 @@ fun PlayerView(
         onDispose {
             DisplayAwake.setAwake(false)
             MediaControls.stop()
+            ru.suslikovanora.media.desktop.discord.DiscordRpc.stop()
             ensureAudioJob?.cancel()
             chaptersJob?.cancel()
             prefsJob?.cancel()
@@ -1368,6 +1462,8 @@ fun PlayerView(
             onSeekBy = { seekBy(it) },
             onSeekTo = { t ->
                 seeking = null
+                seekByJob?.cancel(); seekByJob = null; pendingSeekByTarget = null
+                if (partyGuest()) return@PlayerBottomBar
                 bufferingShown = 0
                 time = t
                 lastGood = t
@@ -1389,11 +1485,13 @@ fun PlayerView(
                     applyTrackNow()
                     ui.put("audio:${seriesKey()}", name)
                     ui.put("audio:*", name)
+                    ru.suslikovanora.media.desktop.CloudSync.noteTrack(seriesKey(), name, null)
                 } else {
                     runOnPlayer { eSetSub(id) }
                     val v = if (id == -1) "__off__" else name
                     ui.put("spu:${seriesKey()}", v)
                     ui.put("spu:*", v)
+                    ru.suslikovanora.media.desktop.CloudSync.noteTrack(seriesKey(), null, v)
                 }
                 closePicker()
             },
@@ -1440,6 +1538,8 @@ fun PlayerView(
             onCancelNextIn = { nextIn = -1 },
             onMiniToggle = { setMini(false) },
             onClose = { close() },
+            live = partyGuest(),
+            playLocked = partyPlayLocked(),
             onWindowDragStart = onWindowDragStart,
             onWindowDragMove = onWindowDragMove,
             onWindowDragEnd = onWindowDragEnd,

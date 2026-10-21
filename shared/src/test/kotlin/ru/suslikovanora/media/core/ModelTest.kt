@@ -37,6 +37,7 @@ class ModelTest {
               "downloaded": 5000000,
               "canRemove": false,
               "favorite": true,
+              "mine": true,
               "files": [
                 {
                   "name": "Interstellar.mkv",
@@ -83,6 +84,7 @@ class ModelTest {
         assertEquals(5000000L, m1.downloaded)
         assertFalse(m1.canRemove)
         assertTrue(m1.favorite)
+        assertTrue(m1.mine)
         assertFalse(m1.ready)
         assertTrue(m1.downloading)
         assertFalse(m1.failed)
@@ -109,6 +111,7 @@ class ModelTest {
         assertEquals(0f, m2.progress)
         assertTrue(m2.canRemove) // default true
         assertFalse(m2.favorite) // default false
+        assertFalse(m2.mine)
     }
 
     @Test

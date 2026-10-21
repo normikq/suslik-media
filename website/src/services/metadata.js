@@ -6,7 +6,9 @@ const { spawn } = require("child_process");
 const axios = require("axios");
 const config = require("../config");
 const { safeHttpsUrl } = require("../utils/helpers");
+const { makeJsonWriter } = require("../utils/json-writer");
 const { isAllDebridFileLink } = require("./mirror");
+const { getMagnetFileList } = require("./alldebrid");
 
 // Persistent media metadata cache. Cache keys are hashes of provider file links;
 // direct URLs themselves are never written to disk.
@@ -21,22 +23,8 @@ try {
   }
 } catch {}
 
-let cacheWriteQueued = false;
-function persistMediaCache() {
-  if (cacheWriteQueued) return;
-  cacheWriteQueued = true;
-  setTimeout(() => {
-    cacheWriteQueued = false;
-    try {
-      const obj = Object.fromEntries(mediaMetadataCache);
-      const tmp = config.MEDIA_CACHE_FILE + ".tmp";
-      fs.writeFileSync(tmp, JSON.stringify(obj), { mode: 0o600 });
-      fs.renameSync(tmp, config.MEDIA_CACHE_FILE);
-    } catch (err) {
-      console.error("Не удалось сохранить кэш сведений о медиафайлах:", err.message);
-    }
-  }, 250);
-}
+// Отложенная атомарная запись, как у остальных кешей: при остановке сервера (SIGINT/SIGTERM) дописывается.
+const persistMediaCache = makeJsonWriter(config.MEDIA_CACHE_FILE, () => Object.fromEntries(mediaMetadataCache), 250);
 
 // At most two ffprobe processes at once (a season page asks for dozens; each may run 25 s on a one-core VPS), and the
 // same file asked for twice waits for the one analysis already running.
@@ -126,59 +114,21 @@ async function getMediaMetadata(rawLink, magnetId, wantedPath) {
       err.status = 400;
       throw err;
     }
+    // Дерево файлов готовой раздачи уже лежит в кеше медиатеки: отдельный запрос к AllDebrid не нужен.
+    let list;
     try {
-      const filesResponse = await axios.post(
-        `${config.ALLDEBRID_API_BASE}/v4/magnet/files`,
-        new URLSearchParams({ "id[]": String(magnetId) }),
-        {
-          headers: {
-            Authorization: `Bearer ${config.ALLDEBRID_API_KEY}`,
-            "Content-Type": "application/x-www-form-urlencoded"
-          },
-          timeout: 20000,
-          validateStatus: () => true
-        }
-      );
-      if (filesResponse.status < 200 || filesResponse.status >= 300 || filesResponse.data?.status === "error") {
-        const err = new Error("AllDebrid пока не смог получить этот файл.");
-        err.status = 502;
-        throw err;
-      }
-      const rawRoots = filesResponse.data?.data?.magnets;
-      const roots = Array.isArray(rawRoots) ? rawRoots : rawRoots && typeof rawRoots === "object" ? [rawRoots] : [];
-      let foundLink = "";
-      const walk = (nodes, prefix = "") => {
-        if (!Array.isArray(nodes) || foundLink) return;
-        for (const node of nodes) {
-          if (!node || typeof node !== "object") continue;
-          const name = typeof node.n === "string" ? node.n : typeof node.name === "string" ? node.name : "";
-          if (!name) continue;
-          const fullPath = prefix ? prefix + "/" + name : name;
-          const children = node.e || node.files || node.children;
-          const candidate = typeof node.l === "string" ? node.l : typeof node.link === "string" ? node.link : "";
-          if (fullPath === wantedPath && candidate && isAllDebridFileLink(safeHttpsUrl(candidate))) {
-            foundLink = candidate;
-            return;
-          }
-          if (Array.isArray(children)) walk(children, fullPath);
-          if (foundLink) return;
-        }
-      };
-      for (const root of roots) {
-        walk(root.files || root.links || root.e || []);
-        if (foundLink) break;
-      }
-      parsed = safeHttpsUrl(foundLink);
-      if (!isAllDebridFileLink(parsed)) {
-        const err = new Error("Ссылка на файл пока недоступна. Обновите медиатеку после завершения обработки в AllDebrid.");
-        err.status = 404;
-        throw err;
-      }
-    } catch (err) {
-      if (err.status) throw err;
+      list = await getMagnetFileList(magnetId);
+    } catch {
       const e = new Error("Не удалось найти файл в AllDebrid.");
       e.status = 502;
       throw e;
+    }
+    const file = (list || []).find(f => f.type === "file" && f.path === wantedPath && f.sourceLink);
+    parsed = file ? safeHttpsUrl(file.sourceLink) : null;
+    if (!isAllDebridFileLink(parsed)) {
+      const err = new Error("Ссылка на файл пока недоступна. Обновите медиатеку после завершения обработки в AllDebrid.");
+      err.status = 404;
+      throw err;
     }
   }
 

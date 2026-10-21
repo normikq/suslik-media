@@ -2,6 +2,7 @@ package ru.suslikovanora.media.desktop
 
 import ru.suslikovanora.media.core.*
 import ru.suslikovanora.media.desktop.ui.*
+import androidx.compose.ui.graphics.toComposeImageBitmap
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -138,7 +139,8 @@ private fun NavItem(
             Column(Modifier.padding(start = 12.dp)) {
                 Text(label, color = fg, fontFamily = Onest, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium, fontSize = 14.sp,
                     maxLines = 1, softWrap = false)
-                if (soon != null) Text(soon, color = Color(0xFF5B6272), fontFamily = Onest, fontSize = 10.5.sp, maxLines = 1, softWrap = false, lineHeight = 11.sp)
+                // On the active (accent) item the grey note was unreadable: there it is light
+                if (soon != null) Text(soon, color = if (active) Color.White.copy(alpha = 0.78f) else Color(0xFF5B6272), fontFamily = Onest, fontSize = 10.5.sp, maxLines = 1, softWrap = false, lineHeight = 11.sp)
             }
         }
     }
@@ -147,7 +149,7 @@ private fun NavItem(
 @Composable
 fun Sidebar(tab: Tab, profile: Profile, onSelect: (Tab) -> Unit, onSettings: () -> Unit, onLogout: () -> Unit) {
     var collapsed by remember { mutableStateOf(ui.get("sidebar_collapsed") == "1") }
-    val width by animateDpAsState(if (collapsed) 76.dp else 244.dp, tween(300, easing = Sm.ease))
+    val width by animateDpAsState(if (collapsed) 76.dp else 256.dp, tween(300, easing = Sm.ease))
     val expanded = !collapsed
     Column(
         Modifier.width(width).fillMaxHeight().background(Sm.glassSide).drawEdge()
@@ -166,12 +168,15 @@ fun Sidebar(tab: Tab, profile: Profile, onSelect: (Tab) -> Unit, onSettings: () 
         }
         Spacer(Modifier.height(22.dp))
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            NavItem(Tab.Library.label, tab == Tab.Library, expanded, { GridIcon(color = it, size = 16.dp) }, tab = Tab.Library) { onSelect(Tab.Library) }
-            NavItem(Tab.Favorites.label, tab == Tab.Favorites, expanded, { HeartIcon(filled = false, color = it, size = 16.dp) }, tab = Tab.Favorites) { onSelect(Tab.Favorites) }
+            // A guest of a room watches the room's film: the library (and «Мои фильмы») are closed until they leave it
+            val guest = ru.suslikovanora.media.desktop.party.Party.let { it.inRoom && !it.isHost }
+            val lockNote = if (guest) "вы в комнате" else null
+            NavItem(Tab.Library.label, tab == Tab.Library, expanded, { GridIcon(color = it, size = 16.dp) }, enabled = !guest, soon = lockNote, tab = Tab.Library) { onSelect(Tab.Library) }
+            NavItem(Tab.Mine.label, tab == Tab.Mine, expanded, { BookmarkIcon(filled = false, color = it, size = 16.dp) }, enabled = !guest, soon = lockNote, tab = Tab.Mine) { onSelect(Tab.Mine) }
             NavItem(Tab.Search.label, tab == Tab.Search, expanded, { SearchIcon(color = it, size = 16.dp) }) { onSelect(Tab.Search) }
             NavItem(Tab.Add.label, tab == Tab.Add, expanded, { LinkChainIcon(color = it, size = 16.dp) }) { onSelect(Tab.Add) }
-            // Not available yet: greyed out, no click.
-            NavItem(tr("sidebar.sovmestnyy_prosmotr"), false, expanded, PeopleIcon, enabled = false, soon = tr("sidebar.skoro"))
+            NavItem(Tab.Together.label, tab == Tab.Together, expanded, PeopleIcon,
+                soon = ru.suslikovanora.media.desktop.party.Party.let { p -> if (p.inRoom) "в комнате · ${p.members.size.coerceAtLeast(1)}" else null }) { onSelect(Tab.Together) }
             Box(Modifier.padding(vertical = 8.dp).fillMaxWidth().height(1.dp).background(Color(0x1AFFFFFF)))
             NavItem(tr("sidebar.nastroyki"), false, expanded, { GearIcon(it) }, onClick = onSettings)
         }
@@ -194,16 +199,44 @@ fun Sidebar(tab: Tab, profile: Profile, onSelect: (Tab) -> Unit, onSettings: () 
     }
 }
 
-/** Instead of the old storage gauge: whose library this is. Avatar slot is ready for the Discord picture. */
+/** Discord pictures already loaded (profile, room members): opening a screen again must not load them again (and blink). */
+private object Avatars {
+    val images = java.util.concurrent.ConcurrentHashMap<String, androidx.compose.ui.graphics.ImageBitmap>()
+}
+
+/** A round Discord avatar; while it loads (or without one) — the first letter of the name on the accent colour. */
+@Composable
+fun Avatar(url: String?, name: String, size: androidx.compose.ui.unit.Dp, fontSize: androidx.compose.ui.unit.TextUnit) {
+    var bmp by remember(url) { mutableStateOf(url?.let { Avatars.images[it] }) }
+    LaunchedEffect(url) {
+        if (url.isNullOrBlank() || bmp != null) return@LaunchedEffect
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                val bytes = Api.bytes(url) ?: return@runCatching
+                val img = org.jetbrains.skia.Image.makeFromEncoded(bytes).toComposeImageBitmap()
+                Avatars.images[url] = img
+                bmp = img
+            }
+        }
+    }
+    Box(
+        Modifier.size(size).clip(CircleShape).background(Brush.linearGradient(listOf(Sm.accent, Color(0xFF6366F1))))
+            .border(1.dp, Color(0x33FFFFFF), CircleShape),
+        contentAlignment = Alignment.Center
+    ) {
+        val b = bmp
+        if (b != null) {
+            androidx.compose.foundation.Image(b, null, Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+        } else {
+            Text(name.trim().take(1).uppercase(), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = fontSize)
+        }
+    }
+}
+
+/** Instead of the old storage gauge: whose library this is, with the Discord picture. */
 @Composable
 private fun ProfileCard(profile: Profile, expanded: Boolean, onLogout: () -> Unit) {
-    val avatar: @Composable () -> Unit = {
-        Box(
-            Modifier.size(34.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Sm.accent, Color(0xFF6366F1))))
-                .border(1.dp, Color(0x33FFFFFF), CircleShape),
-            contentAlignment = Alignment.Center
-        ) { Text(profile.name.take(1).uppercase(), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp) }
-    }
+    val avatar: @Composable () -> Unit = { Avatar(profile.avatarUrl, profile.name, 34.dp, 14.sp) }
     if (!expanded) {
         // Icons only: the avatar and a small exit button.
         val src = remember { MutableInteractionSource() }

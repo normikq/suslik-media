@@ -19,7 +19,7 @@ async function searchPoster(rawQuery) {
     throw err;
   }
   if (!config.TMDB_API_KEY) {
-    const err = new Error("TMDB_API_KEY is not configured.");
+    const err = new Error("На сервере не задан TMDB_API_KEY.");
     err.status = 503;
     throw err;
   }
@@ -50,19 +50,21 @@ async function searchPoster(rawQuery) {
     if (match) break;
   }
 
-  if (!match && failed === variants.length) {
-    const err = new Error("Не удалось найти постер.");
-    err.status = 502;
-    throw err;
-  }
-
   const file = match ? String(match.poster_path).replace(/^\//, "") : "";
   const body = {
     poster: /^[A-Za-z0-9_-]+\.(?:jpg|png|webp)$/.test(file) ? `/api/poster/img/w500/${file}` : null,
+    poster_url: /^[A-Za-z0-9_-]+\.(?:jpg|png|webp)$/.test(file) ? `https://image.tmdb.org/t/p/w500/${file}` : null,
     title: match?.title || match?.name || null,
     type: match ? match.media_type : null,
     animation: !!match && Array.isArray(match.genre_ids) && match.genre_ids.includes(16) // 16 = Animation в TMDB
   };
+
+  // «Постера нет» после сбоя сети по части вариантов — не окончательный ответ: не запоминаем, клиент спросит снова.
+  if (!match && failed) {
+    const err = new Error("Не удалось найти постер.");
+    err.status = 502;
+    throw err;
+  }
 
   posterLookupCache.set(ck, { at: Date.now(), body });
   if (posterLookupCache.size > 3000) {

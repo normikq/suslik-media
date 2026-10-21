@@ -50,18 +50,25 @@ import ru.suslikovanora.media.tr
 enum class Tab(val label: String) {
     Links(tr("add.ssylka")),
     Library(tr("navbar.biblioteka")),
+    Mine(tr("navbar.moi")),
+    Together(tr("navbar.vmeste")),
     Search(tr("navbar.poisk"))
 }
 
 /**
  * Floating bottom bar styled with frosted glass and an electric blue sliding lens (ported from PC redesign).
  * Remote control: [focus] lands on the active tab, [onFocused] tells whether one of the tabs has focus.
+ * [locked]: tabs closed for now (a guest of a room watches the room's film: the library is closed until they leave).
+ * [dot]: a small red dot on the tab (in a room: on «Вместе»).
  */
 @Composable
-fun NavBar(current: Tab, onSelect: (Tab) -> Unit, modifier: Modifier = Modifier, focus: FocusRequester? = null, onFocused: (Boolean) -> Unit = {}) {
+fun NavBar(
+    current: Tab, onSelect: (Tab) -> Unit, modifier: Modifier = Modifier, focus: FocusRequester? = null, onFocused: (Boolean) -> Unit = {},
+    locked: Set<Tab> = emptySet(), dot: Set<Tab> = emptySet()
+) {
     Box(modifier.fillMaxWidth().padding(top = 6.dp, bottom = 8.dp), contentAlignment = Alignment.Center) {
         BoxWithConstraints(
-            Modifier.widthIn(max = 340.dp).fillMaxWidth().padding(horizontal = 14.dp)
+            Modifier.widthIn(max = 440.dp).fillMaxWidth().padding(horizontal = 10.dp)
                 .shadow(20.dp, RoundedCornerShape(26.dp), ambientColor = Color.Black.copy(alpha = 0.6f))
                 .clip(RoundedCornerShape(26.dp)).background(Sm.glassSide)
                 .border(1.dp, Sm.glassEdge, RoundedCornerShape(26.dp))
@@ -78,16 +85,21 @@ fun NavBar(current: Tab, onSelect: (Tab) -> Unit, modifier: Modifier = Modifier,
             Row(Modifier.fillMaxSize().onFocusChanged { onFocused(it.hasFocus) }, horizontalArrangement = Arrangement.SpaceEvenly) {
                 for (t in Tab.entries) {
                     val active = t == current
-                    val color by animateColorAsState(if (active) Color.White else Color(0xFF8E96A8), tween(200), label = "tab")
+                    val off = t in locked
+                    val color by animateColorAsState(if (active) Color.White else if (off) Color(0x558E96A8) else Color(0xFF8E96A8), tween(200), label = "tab")
                     Column(
                         Modifier.weight(1f).fillMaxHeight()
                             .then(if (active && focus != null) Modifier.focusRequester(focus) else Modifier)
                             .focusRing(RoundedCornerShape(22.dp), color = Color.White)
-                            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onSelect(t) },
+                            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, enabled = !off) { onSelect(t) },
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
-                        TabIcon(t, color)
+                        Box {
+                            TabIcon(t, color)
+                            // In a room: a red dot on «Вместе», as the «live» line in the player
+                            if (t in dot) Box(Modifier.align(Alignment.TopEnd).offset(x = 4.dp, y = (-2).dp).size(6.dp).clip(androidx.compose.foundation.shape.CircleShape).background(Color(0xFFE5484D)))
+                        }
                         Text(t.label, color = color, fontFamily = Onest, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium, fontSize = 11.sp, maxLines = 1, modifier = Modifier.padding(top = 2.dp))
                     }
                 }
@@ -102,6 +114,8 @@ private fun TabIcon(tab: Tab, color: Color) {
     when (tab) {
         Tab.Links -> LinkChainIcon(color = color, size = 18.dp)
         Tab.Library -> GridIcon(color = color, size = 17.dp)
+        Tab.Mine -> BookmarkIcon(filled = false, color = color, size = 18.dp)
+        Tab.Together -> PeopleIcon(color = color, size = 18.dp)
         Tab.Search -> SearchIcon(color = color, size = 18.dp)
     }
 }

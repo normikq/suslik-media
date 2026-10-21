@@ -7,7 +7,9 @@ import android.content.res.Configuration
 
 /** Android TV (set-top box, TV with a remote): no touch, everything by the D-pad, OK and Back. */
 object Tv {
-    @Volatile private var cached: Boolean? = null
+    /** Known after the first [isTv] (SuslikApp asks at start). */
+    @Volatile var cached: Boolean? = null
+        private set
 
     fun isTv(context: Context): Boolean = cached ?: (
         context.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||

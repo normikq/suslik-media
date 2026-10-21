@@ -222,6 +222,15 @@ private fun targetFor(item: LibraryItem, file: MFile): PlayTarget? {
     }
 }
 
+/** The room's film (`magnetId|path`) as a play target, if this library has it (the «Вместе» page). */
+fun targetForKey(items: List<LibraryItem>, key: String): PlayTarget? {
+    val id = key.substringBefore('|').toLongOrNull() ?: return null
+    val path = key.substringAfter('|', "")
+    val item = items.firstOrNull { it.m.id == id && it.m.ready } ?: return null
+    val file = item.m.files.firstOrNull { it.path == path } ?: return null
+    return targetFor(item, file)
+}
+
 private fun continueEntries(items: List<LibraryItem>, store: LibraryStore): List<ContinueEntry> = items.mapNotNull { item ->
     if (!item.m.ready) return@mapNotNull null
     val (file, w) = store.lastWatched(item.m) ?: return@mapNotNull null
@@ -248,14 +257,17 @@ fun LibraryScreen(
     query: String,
     onQuery: (String) -> Unit,
     gridState: LazyGridState,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** «Мои фильмы»: only the films in this user's own list (the bookmark on a poster). */
+    mineOnly: Boolean = false
 ) {
     val scope = rememberCoroutineScope()
     var category by remember { mutableStateOf(Category.All) }
     val all = store.items
-    val filtered = remember(all, query, category) {
+    val source = if (mineOnly) all.filter { it.m.mine } else all
+    val filtered = remember(source, query, category) {
         val q = query.trim().lowercase()
-        var list = if (q.isEmpty()) all else all.filter { it.searchText.contains(q) }
+        var list = if (q.isEmpty()) source else source.filter { it.searchText.contains(q) }
         if (category != Category.All) {
             list = list.filter { itemCategory(it) == category }
         }
@@ -273,6 +285,8 @@ fun LibraryScreen(
         item(key = "header", span = { GridItemSpan(maxLineSpan) }) { HeaderSlot() }
         item(key = "panel", span = { GridItemSpan(maxLineSpan) }) {
             LibraryPanel(
+                title = if (mineOnly) tr("library.moi_filmy") else tr("library.moya_biblioteka_alldebrid"),
+                subtitle = if (mineOnly) tr("library.moi_filmy_podskazka") else tr("library.torrenty_papki_i_fayly"),
                 query = query, onQuery = onQuery,
                 loading = store.loading, status = store.status, kind = store.statusKind,
                 totalCount = filtered.size,
@@ -283,14 +297,16 @@ fun LibraryScreen(
         }
 
         // Continue watching section
-        if (query.isBlank() && category == Category.All) {
+        if (query.isBlank() && category == Category.All && !mineOnly) {
             item(key = "continue", span = { GridItemSpan(maxLineSpan) }) {
                 ContinueRow(all, store, onPlay)
             }
         }
 
         // Empty state
-        if (filtered.isEmpty() && !store.loading && (store.loadedOnce || store.magnets.isNotEmpty())) {
+        if (mineOnly && source.isEmpty() && !store.loading && (store.loadedOnce || store.magnets.isNotEmpty())) {
+            item(key = "empty", span = { GridItemSpan(maxLineSpan) }) { EmptyMine() }
+        } else if (filtered.isEmpty() && !store.loading && (store.loadedOnce || store.magnets.isNotEmpty())) {
             item(key = "empty", span = { GridItemSpan(maxLineSpan) }) {
                 Panel {
                     Text(
@@ -448,7 +464,7 @@ val LocalHeaderHeight = androidx.compose.runtime.compositionLocalOf { 46.dp }
 fun HeaderSlot() = Spacer(Modifier.fillMaxWidth().height(LocalHeaderHeight.current))
 
 @Composable
-fun BrandHeader(onLogout: (() -> Unit)?, onSettings: (() -> Unit)? = null) {
+fun BrandHeader(onLogout: (() -> Unit)?, onSettings: (() -> Unit)? = null, profile: ru.suslikovanora.media.core.auth.UserProfile? = null) {
     Row(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
         val b by breathing(2600)
         Box(
@@ -465,9 +481,12 @@ fun BrandHeader(onLogout: (() -> Unit)?, onSettings: (() -> Unit)? = null) {
             )
         }
         Column(Modifier.padding(start = 12.dp).weight(1f)) {
-            Text(tr("library.privatnaya_mediateka"), color = Sm.muted, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 12.5.sp)
+            // Signed in with Discord: whose library this is (the PC shows it in the sidebar's profile card)
+            Text(profile?.name?.ifBlank { null } ?: tr("library.privatnaya_mediateka"), color = Sm.muted, fontFamily = Onest,
+                fontWeight = FontWeight.Medium, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text("Suslik Media", color = Color.White, fontFamily = Unbounded, fontWeight = FontWeight.Bold, fontSize = 15.sp)
         }
+        if (profile != null) { Avatar(profile.avatarUrl, profile.name, 36.dp, 14.sp); Spacer(Modifier.width(8.dp)) }
         if (onSettings != null) { SettingsButton(onSettings); Spacer(Modifier.width(8.dp)) }
         if (onLogout != null) OutlineButton(tr("library.vyyti"), onClick = onLogout)
     }
@@ -508,6 +527,7 @@ fun Panel(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
 
 @Composable
 private fun LibraryPanel(
+    title: String, subtitle: String,
     query: String, onQuery: (String) -> Unit,
     loading: Boolean, status: String, kind: StatusKind,
     totalCount: Int,
@@ -519,10 +539,10 @@ private fun LibraryPanel(
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f).padding(end = 10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(tr("library.moya_biblioteka_alldebrid"), fontFamily = Unbounded, fontWeight = FontWeight.SemiBold, fontSize = 20.sp, color = Color.White)
+                    Text(title, fontFamily = Unbounded, fontWeight = FontWeight.SemiBold, fontSize = 20.sp, color = Color.White)
                     Text(totalCount.toString(), color = Sm.muted, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp, modifier = Modifier.padding(start = 8.dp, top = 2.dp))
                 }
-                Text(tr("library.torrenty_papki_i_fayly"), color = Sm.muted, fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(top = 2.dp))
+                Text(subtitle, color = Sm.muted, fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(top = 2.dp))
             }
             RefreshButton(loading = loading, onClick = onRefresh)
         }
@@ -742,6 +762,7 @@ private fun PosterTile(item: LibraryItem, store: LibraryStore, onPlay: (PlayTarg
                     modifier = Modifier.align(Alignment.BottomStart).padding(start = 14.dp, end = 14.dp, bottom = 52.dp)
                 )
             }
+            MineMark(m.mine, Modifier.align(Alignment.TopStart).padding(8.dp)) { on -> store.setMine(m, on) }
             FavStar(m.favorite, Modifier.align(Alignment.TopEnd).padding(8.dp)) { on -> store.setFavorite(m, on) }
 
             // watched progress: electric blue line along the poster's bottom edge
@@ -890,6 +911,39 @@ private fun formatClock(ms: Long): String {
     val t = (ms / 1000).coerceAtLeast(0)
     val h = t / 3600; val mm = (t % 3600) / 60; val ss = t % 60
     return if (h > 0) "%d:%02d:%02d".format(h, mm, ss) else "%02d:%02d".format(mm, ss)
+}
+
+/** «Мои фильмы» bookmark in the poster's corner (blue when the film is in the list, pops when toggled). */
+@Composable
+private fun MineMark(on: Boolean, modifier: Modifier, onToggle: suspend (Boolean) -> String?) {
+    val scope = rememberCoroutineScope()
+    var busy by remember { mutableStateOf(false) }
+    val pop = remember { Animatable(1f) }
+    val bg by animateColorAsState(if (on) Color(0x99000000) else Color(0x55000000), tween(220), label = "minebg")
+    Box(
+        modifier.graphicsLayer { scaleX = pop.value; scaleY = pop.value }.size(34.dp).clip(CircleShape).background(bg)
+            .border(1.dp, if (on) Color(0x33FFFFFF) else Color(0x22FFFFFF), CircleShape)
+            .focusRing(CircleShape, color = Color.White)
+            .clickable(enabled = !busy, interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                busy = true
+                scope.launch {
+                    launch { pop.animateTo(1.25f, tween(130)); pop.animateTo(1f, tween(220, easing = Sm.ease)) }
+                    onToggle(!on); busy = false
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) { BookmarkIcon(filled = on, color = if (on) Color(0xFF7FB2FF) else Color.White, size = 16.dp) }
+}
+
+@Composable
+private fun EmptyMine() {
+    Column(Modifier.fillMaxWidth().padding(vertical = 48.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        BookmarkIcon(filled = false, color = Sm.muted, size = 40.dp)
+        Text(tr("library.izbrannoe_pusto"), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 16.sp,
+            modifier = Modifier.padding(top = 14.dp))
+        Text(tr("library.izbrannoe_pusto_podskazka"), color = Sm.muted, fontFamily = Onest, fontSize = 13.5.sp, lineHeight = 19.sp,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.padding(top = 4.dp, start = 12.dp, end = 12.dp))
+    }
 }
 
 /** Favourite heart in the poster's corner (touch: always visible; pink when on, pops when toggled). */

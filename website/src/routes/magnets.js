@@ -8,8 +8,10 @@ const config = require("../config");
 const { apiLimiter } = require("../middleware/rate-limit");
 const { requireLogin } = require("../middleware/auth");
 const { safeHttpsUrl } = require("../utils/helpers");
-const { alldebridRequest } = require("../services/alldebrid");
-const { reserveDownloadSlot, releaseTrackedDownload, canRemove, deleteOwner } = require("../services/downloads");
+const { alldebridRequest, adUploadMagnet, adUploadTorrent, flattenMagnetFiles } = require("../services/alldebrid");
+const { reserveDownloadSlot, releaseTrackedDownload, canRemove, isLibraryAdmin } = require("../services/downloads");
+const { deleteMagnet } = require("../services/cleanup");
+const { getLibrary, libraryChanged } = require("../services/library");
 
 const router = express.Router();
 
@@ -49,34 +51,14 @@ router.post("/api/magnets", requireLogin, apiLimiter, async (req, res) => {
   const slot = reserveDownloadSlot(req, res);
   if (!slot) return;
   try {
-    const response = await axios.post(
-      `${config.ALLDEBRID_API_BASE}/v4/magnet/upload`,
-      new URLSearchParams({ "magnets[]": magnet }),
-      {
-        headers: {
-          Authorization: `Bearer ${config.ALLDEBRID_API_KEY}`,
-          "Content-Type": "application/x-www-form-urlencoded"
-        },
-        timeout: 20000,
-        validateStatus: () => true
-      }
-    );
-    if (response.status < 200 || response.status >= 300 || response.data?.status === "error") {
-      slot.release();
-      return res.status(502).json({ error: response.data?.error?.message || "AllDebrid не смог принять эту magnet-ссылку." });
-    }
-    const item = response.data?.data?.magnets?.[0];
-    if (!item || item.error) {
-      slot.release();
-      return res.status(400).json({ error: item?.error?.message || "AllDebrid не вернул результат для magnet-ссылки." });
-    }
+    const item = await adUploadMagnet(magnet);
     slot.attach(item.id, Boolean(item.ready) || Number(item.statusCode) === 4);
     const hash = typeof item.hash === "string" ? item.hash.trim().toLowerCase() : null;
     const sha256 = hash ? crypto.createHash("sha256").update(hash).digest("hex") : null;
     res.json({ ok: true, id: item.id, name: item.name || "Magnet", ready: Boolean(item.ready), hash, sha256 });
   } catch (err) {
     slot.release();
-    res.status(502).json({ error: err.message || "Не удалось отправить magnet-ссылку." });
+    res.status(err.status || 502).json({ error: err.message || "Не удалось отправить magnet-ссылку." });
   }
 });
 
@@ -96,45 +78,21 @@ router.post(
     if (!Buffer.isBuffer(bytes) || bytes.length === 0) {
       return res.status(400).json({ error: "Выберите непустой файл .torrent." });
     }
-    if (bytes.length > 1024 * 1024) return res.status(413).json({ error: "Torrent file must be 1 MB or smaller." });
+    if (bytes.length > 1024 * 1024) return res.status(413).json({ error: "Торрент-файл должен быть не больше 1 МБ." });
     if (!filename.toLowerCase().endsWith(".torrent")) {
       return res.status(400).json({ error: "Поддерживаются только файлы .torrent." });
     }
     const slot = reserveDownloadSlot(req, res);
     if (!slot) return;
-    const boundary = `----MoviePortal${crypto.randomBytes(16).toString("hex")}`;
-    const body = Buffer.concat([
-      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="files[]"; filename="${filename}"\r\nContent-Type: application/x-bittorrent\r\n\r\n`),
-      bytes,
-      Buffer.from(`\r\n--${boundary}--\r\n`)
-    ]);
     try {
-      const response = await axios.post(`${config.ALLDEBRID_API_BASE}/v4/magnet/upload/file`, body, {
-        headers: {
-          Authorization: `Bearer ${config.ALLDEBRID_API_KEY}`,
-          "Content-Type": `multipart/form-data; boundary=${boundary}`,
-          "Content-Length": body.length
-        },
-        timeout: 30000,
-        maxBodyLength: 2 * 1024 * 1024,
-        validateStatus: () => true
-      });
-      if (response.status < 200 || response.status >= 300 || response.data?.status === "error") {
-        slot.release();
-        return res.status(502).json({ error: response.data?.error?.message || "AllDebrid не смог принять этот торрент-файл." });
-      }
-      const item = response.data?.data?.files?.[0];
-      if (!item || item.error) {
-        slot.release();
-        return res.status(400).json({ error: item?.error?.message || "AllDebrid не вернул результат для торрент-файла." });
-      }
+      const item = await adUploadTorrent(bytes, filename);
       slot.attach(item.id, Boolean(item.ready) || Number(item.statusCode) === 4);
       const hash = typeof item.hash === "string" ? item.hash.trim().toLowerCase() : null;
       const sha256 = hash ? crypto.createHash("sha256").update(hash).digest("hex") : null;
       res.json({
         ok: true,
         id: item.id,
-        name: item.name || filename.replace(/\.torrent$/i, "") || "Torrent download",
+        name: item.name || filename.replace(/\.torrent$/i, "") || "Торрент",
         ready: Boolean(item.ready),
         hash,
         sha256,
@@ -143,7 +101,7 @@ router.post(
       });
     } catch (err) {
       slot.release();
-      res.status(502).json({ error: err.message || "Не удалось загрузить торрент-файл." });
+      res.status(err.status || 502).json({ error: err.message || "Не удалось загрузить торрент-файл." });
     }
   }
 );
@@ -153,30 +111,26 @@ router.post(["/api/magnets/:id/cancel", "/api/magnets/:id/delete"], requireLogin
   if (!Number.isSafeInteger(id) || id <= 0) {
     return res.status(400).json({ error: "Некорректный идентификатор magnet-ссылки." });
   }
-  if (!canRemove(id, req)) {
-    return res.status(403).json({ error: "Удалить эту раздачу может только то устройство, с которого она была добавлена." });
+  if (!isLibraryAdmin(req)) {
+    // Состояние раздачи — с сервера, не со слов клиента: готовую удаляет только админ
+    let statusCode;
+    try {
+      const { data } = await getLibrary();
+      statusCode = (data.magnets || []).find(m => m.id === id)?.statusCode;
+    } catch {}
+    if (!canRemove(id, req, statusCode)) {
+      return res.status(403).json({
+        error: "Удалять фильмы из библиотеки может только админ. Отменить можно свою незаконченную загрузку; " +
+          "фильмы, которые долго никто не открывает, удаляются сами."
+      });
+    }
   }
   try {
-    const response = await axios.post(
-      `${config.ALLDEBRID_API_BASE}/v4/magnet/delete`,
-      new URLSearchParams({ id: String(id) }),
-      {
-        headers: {
-          Authorization: `Bearer ${config.ALLDEBRID_API_KEY}`,
-          "Content-Type": "application/x-www-form-urlencoded"
-        },
-        timeout: 15000,
-        validateStatus: () => true
-      }
-    );
-    if (response.status < 200 || response.status >= 300 || response.data?.status === "error") {
-      return res.status(502).json({ error: response.data?.error?.message || "Не удалось отменить эту magnet-ссылку в AllDebrid." });
-    }
-    releaseTrackedDownload(id);
-    deleteOwner(id);
-    res.json({ ok: true, id, message: response.data?.data?.message || "Magnet-ссылка удалена." });
+    const message = await deleteMagnet(id);
+    libraryChanged();
+    res.json({ ok: true, id, message });
   } catch (err) {
-    res.status(502).json({ error: err.message || "Не удалось отменить magnet-ссылку." });
+    res.status(err.status || 502).json({ error: err.message || "Не удалось удалить раздачу." });
   }
 });
 
@@ -270,26 +224,10 @@ router.get("/api/magnets/:id/files", requireLogin, apiLimiter, async (req, res) 
     const root = magnetList.find(m => Number(m.id) === id) || magnetList[0];
     if (!root) return res.status(404).json({ error: "Для этой magnet-ссылки не найдено файлов." });
 
-    const files = [];
-    const walk = (nodes, prefix = "") => {
-      if (!Array.isArray(nodes)) return;
-      for (const node of nodes) {
-        if (typeof node === "string") continue;
-        if (!node || typeof node !== "object") continue;
-        const name = typeof node.n === "string" ? node.n : typeof node.name === "string" ? node.name : "";
-        const link = typeof node.l === "string" ? node.l : typeof node.link === "string" ? node.link : "";
-        const fullName = [prefix, name].filter(Boolean).join("/");
-        if (name && link && safeHttpsUrl(link)) {
-          files.push({ name: fullName, sourceUrl: link, size: Number(node.s || node.size || 0) || null });
-        }
-        const children = node.e || node.files || node.children;
-        if (Array.isArray(children)) walk(children, fullName);
-      }
-    };
-    walk(root.files || root.links || []);
-
-    const resolvedFiles = files.map(file => ({ name: file.name, url: null, sourceUrl: file.sourceUrl, size: file.size }));
-    res.json({ id, filename: root.filename || root.name || "Magnet files", status: root.status || "Ready", files: resolvedFiles });
+    const resolvedFiles = flattenMagnetFiles(root)
+      .filter(f => f.type === "file" && f.sourceLink)
+      .map(f => ({ name: f.path, url: null, sourceUrl: f.sourceLink, size: f.size }));
+    res.json({ id, filename: root.filename || root.name || "Файлы раздачи", status: root.status || "Ready", files: resolvedFiles });
   } catch (err) {
     res.status(502).json({ error: err.message || "Не удалось получить список файлов magnet-ссылки." });
   }

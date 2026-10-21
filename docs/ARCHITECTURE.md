@@ -99,7 +99,7 @@ suslik-media/
 | `public/index.html` | сам сайт: одна страница с HTML, CSS и JS внутри |
 | `public/redesign.css`, `redesign.js` | оформление и анимации сайта |
 | `scripts/check.js` | проверка синтаксиса всего JS (`src/`, скрипты, встроенный JS страницы) (`npm run check`) |
-| `test/` | модульные тесты: `classify.test.js`, `poster-query.test.js`, `modules.test.js` (`npm test`) |
+| `test/` | модульные тесты: `classify.test.js`, `poster-query.test.js`, `modules.test.js`, `discord.test.js` (`npm test`) |
 | `NGINX-MIRROR.md` | как настроить nginx, чтобы он сам отдавал видео |
 | `TORAPI.md`, `UPDATES.md`, `README*.txt` | заметки по отдельным доработкам |
 | `.env` (не в репозитории) | секреты: ключ AllDebrid, пароль входа, секрет подписи, `UPDATE_TOKEN`, `BETA_CODE`; образец — `.env.example` |
@@ -108,7 +108,8 @@ suslik-media/
 
 | Группа | Маршруты | Смысл |
 |---|---|---|
-| Вход | `POST /api/login`, `/api/logout`, `GET /api/session` | вход по паролю, сессия в cookie, защита от перебора |
+| Вход | `POST /api/login`, `/api/logout`, `GET /api/session`, `GET /api/auth/discord/start`, `/callback`, `POST /api/auth/device`, `/device/confirm`, `/device/poll` | вход через Discord (роли проверяет бот) или по паролю; ТВ и ПК — по коду с экрана и токену устройства |
+| Вместе | `POST /api/rooms`, `GET /api/rooms/:id`, `/events` (SSE), `POST /api/rooms/:id/join`, `/leave`, `/action` | комнаты совместного просмотра: ведущий управляет, комната ждёт тех, у кого грузится |
 | Медиатека | `GET /api/library`, `/api/magnets/:id`, `/api/magnets/:id/files`, `POST /api/magnets/:id/cancel` (и удалить) | список раздач, файлы раздачи, отмена/удаление |
 | Добавление | `POST /api/magnets` (magnet-ссылка), `/api/torrents` (.torrent), `/api/unlock` | отправить раздачу в AllDebrid |
 | Поиск | `GET /api/search`, `POST /api/search/add`, `/api/favorites` | поиск по трекерам, добавить найденное, избранное |
@@ -118,7 +119,8 @@ suslik-media/
 | Приложения | `GET /api/app/update`, `/api/app/download/...`, `/api/app/beta…`, `POST /api/app/upload`, `/api/app/promote`, `GET /api/app/status`, `GET/POST /api/app/changelog` | раздача обновлений, каналы «релиз/бета», загрузка сборок из CI |
 | Ошибки | `POST /api/app/report`, `GET /api/app/reports` | приложения присылают отчёты о сбоях |
 
-Небольшие данные сервер хранит в JSON-файлах рядом с собой (сессии, кеш медиатеки и файлов раздач, кеш метаданных),
+Небольшие данные сервер хранит в JSON-файлах рядом с собой (сессии, пользователи Discord без их токенов, хеши токенов устройств,
+кеш медиатеки и файлов раздач, кеш метаданных; комнаты — только в памяти),
 сборки приложений — в папке `updates/` (с подпапкой для беты).
 
 ### Что важно помнить
@@ -152,6 +154,7 @@ suslik-media/
 | `LibraryKeep.kt` | что оставить после обновления медиатеки (постеры, прогресс, запас на диске) |
 | `Versions.kt` | сравнение версий (`2.2.3` новее `2.2.1` и т.п.) |
 | `Changelog.kt` | чтение `changelog.json` («Что нового») |
+| `party/PartyModels.kt` | совместный просмотр: часы сервера (`PartyClock`), подгонка расхождения скоростью или перемоткой (`DriftController`); тесты `PartyTest.kt` |
 
 ---
 
@@ -219,7 +222,9 @@ suslik-media/
 | `ui/` | **дизайн-система и общие компоненты**: пакет `ru.suslikovanora.media.desktop.ui` (`Theme.kt` — токены Sm, шрифты, SuslikTheme; `Controls.kt` — Panel, LampButton, OutlineButton, Chip, Field, hover-модификаторы) |
 | `Library.kt`, `LibraryView.kt`, `PlayDialog.kt` | медиатека: данные, экран и окно «Смотреть» |
 | `SearchView.kt`, `AddView.kt` | поиск и добавление |
-| `Api.kt` | запросы к серверу (java.net.http), папка данных `%APPDATA%\SuslikMedia` |
+| `Api.kt` | запросы к серверу (java.net.http), папка данных `%APPDATA%\SuslikMedia`; cookie и токен устройства — только своему серверу |
+| `party/` | **совместный просмотр** (2.5.0): `Party.kt` — комната (REST + SSE), `PartySync.kt` — плеер идёт за комнатой, `TogetherView.kt` — страница в боковой панели |
+| `discord/DiscordRpc.kt` | активность «Смотрит» в профиле Discord через локальный канал discord-ipc |
 | `Reserve.kt` | подключает общий запас `BurstProxy` к этому приложению (свой `HttpClient`, который можно сбросить, обновление подписи адреса) |
 | `Settings.kt` | настройки, канал обновлений (в отладочной сборке — свой раздел) |
 | `Updater.kt`, `WhatsNew.kt` | обновление через MSI (проверка размера и SHA-256, если сайт его дал) и «Что нового» |

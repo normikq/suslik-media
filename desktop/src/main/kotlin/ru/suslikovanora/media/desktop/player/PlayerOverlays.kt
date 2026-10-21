@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -197,6 +198,10 @@ fun PlayerBottomBar(
     onCancelNextIn: () -> Unit,
     onMiniToggle: () -> Unit,
     onClose: () -> Unit = {},
+    /** A guest of a watch-together room: the room leads, the timeline is a full «live» line (no seeking). */
+    live: Boolean = false,
+    /** The room is paused by its host (or waits for someone): a guest cannot start it — the play button is grey. */
+    playLocked: Boolean = false,
     onWindowDragStart: () -> Unit = {},
     onWindowDragMove: () -> Unit = {},
     onWindowDragEnd: () -> Unit = {},
@@ -715,7 +720,11 @@ fun PlayerBottomBar(
                         .padding(horizontal = 6.dp, vertical = 2.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
+                    if (live) Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(7.dp).clip(CircleShape).background(Color(0xFFE5484D)))
+                        Text("Вместе", color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.sp,
+                            modifier = Modifier.padding(start = 6.dp))
+                    } else Text(
                         fmt(hoverAt ?: seeking?.toLong() ?: time),
                         color = Color.White,
                         fontFamily = Onest,
@@ -723,7 +732,13 @@ fun PlayerBottomBar(
                         fontSize = 13.sp
                     )
                 }
-                SeekBar(
+                if (live) {
+                    // Как у стрима: полоса заполнена до конца, перемотки нет
+                    Box(
+                        Modifier.weight(1f).padding(horizontal = 8.dp).height(4.dp).clip(RoundedCornerShape(2.dp))
+                            .background(Color(0xFFE5484D))
+                    )
+                } else SeekBar(
                     position = seeking?.toLong() ?: time,
                     length = length,
                     buffered = animBuffered.toLong(),
@@ -737,7 +752,7 @@ fun PlayerBottomBar(
                     onHover = { t -> hoverAt = t }
                 )
                 Text(
-                    if (length > 0) fmt(length) else "--:--",
+                    if (live) fmt(time) else if (length > 0) fmt(length) else "--:--",
                     color = Sm.muted,
                     fontFamily = Onest,
                     fontWeight = FontWeight.Medium,
@@ -753,8 +768,8 @@ fun PlayerBottomBar(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    HeroPlayButton(playing = playing, onClick = onTogglePause)
-                    if (index < queue.size - 1) {
+                    HeroPlayButton(playing = playing, onClick = onTogglePause, enabled = !(playLocked && !playing), lockedTip = "Паузу снимает создатель комнаты")
+                    if (index < queue.size - 1 && !live) {
                         GlassIconButton(onClick = { onPlayEntry(index + 1) }, tooltip = "Следующая") {
                             NextEpisodeIcon(color = Sm.text, size = 16.dp)
                         }
@@ -789,7 +804,7 @@ fun PlayerBottomBar(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(buttonSpacing)
                         ) {
-                            if (index < queue.size - 1) {
+                            if (index < queue.size - 1 && !live) {
                                 GlassIconButton(
                                     onClick = { onPlayEntry(index + 1) },
                                     tooltip = "Следующая: ${queue[index + 1].title}",
@@ -809,15 +824,16 @@ fun PlayerBottomBar(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(if (isCompact) 8.dp else 12.dp)
                     ) {
-                        GlassIconButton(
+                        if (!live) GlassIconButton(
                             onClick = { onSeekBy(-10_000L) },
                             size = if (isCompact) 38.dp else 42.dp,
                             tooltip = "Назад на 10 сек (←)"
                         ) {
                             Seek10Icon(forward = false, color = Color.White)
                         }
-                        HeroPlayButton(playing = playing, onClick = onTogglePause, size = heroSize)
-                        GlassIconButton(
+                        HeroPlayButton(playing = playing, onClick = onTogglePause, size = heroSize,
+                            enabled = !(playLocked && !playing), lockedTip = "Паузу снимает создатель комнаты")
+                        if (!live) GlassIconButton(
                             onClick = { onSeekBy(10_000L) },
                             size = if (isCompact) 38.dp else 42.dp,
                             tooltip = "Вперед на 10 сек (→)"

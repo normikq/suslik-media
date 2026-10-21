@@ -111,6 +111,8 @@ class PlayerUiState {
     var picker by mutableStateOf<String?>(null) // "audio", "spu", "more"
     var pickerItems by mutableStateOf<List<TrackChoice>>(emptyList())
     var nextTitle by mutableStateOf<String?>(null) // «Следующая: …» with its countdown
+    /** A guest of the shared room: the timeline is a «live» line (the host seeks for everyone). */
+    var live by mutableStateOf(false)
     var nextIn by mutableIntStateOf(0)
     var showLock by mutableStateOf(true)
     var showMark by mutableStateOf(false)
@@ -143,6 +145,7 @@ class PlayerUiState {
 }
 
 private val sheetEase = CubicBezierEasing(0.16f, 1.0f, 0.30f, 1.0f)
+private val LiveRed = Color(0xFFE5484D)
 
 @Composable
 fun PlayerOverlay(s: PlayerUiState) {
@@ -237,17 +240,24 @@ private fun BottomBar(s: PlayerUiState, pad: PaddingValues) {
                     .padding(horizontal = 6.dp, vertical = 2.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Text(fmt(scrub ?: s.time), color = Color.White, fontFamily = Onest,
+                if (s.live) Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(7.dp).clip(CircleShape).background(LiveRed))
+                    Text(tr("party.vmeste"), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.sp,
+                        maxLines = 1, modifier = Modifier.padding(start = 6.dp))
+                } else Text(fmt(scrub ?: s.time), color = Color.White, fontFamily = Onest,
                     fontWeight = if (active) FontWeight.Bold else FontWeight.Medium, fontSize = 13.sp, maxLines = 1)
             }
-            SeekBar(
+            if (s.live) {
+                // As in a stream: the line is full, no seeking (the host seeks for the room)
+                Box(Modifier.weight(1f).padding(horizontal = 6.dp).height(4.dp).clip(RoundedCornerShape(2.dp)).background(LiveRed))
+            } else SeekBar(
                 position = scrub ?: s.time, length = s.length, buffered = animBuffered.toLong(),
                 modifier = Modifier.weight(1f).padding(horizontal = 6.dp).focusRequester(seekFocus),
                 onFocus = { s.seekFocused = it },
                 onScrub = { t -> scrub = t; s.onScrub(t); s.onPoke() },
                 onSeek = { t -> scrub = null; s.onSeekTo(t) }
             )
-            Text(if (s.length > 0) fmt(s.length) else "--:--", color = Sm.muted, fontFamily = Onest, fontWeight = FontWeight.Medium,
+            Text(if (s.live) fmt(s.time) else if (s.length > 0) fmt(s.length) else "--:--", color = Sm.muted, fontFamily = Onest, fontWeight = FontWeight.Medium,
                 fontSize = 13.sp, maxLines = 1, textAlign = TextAlign.End,
                 modifier = Modifier.defaultMinSize(minWidth = 52.dp).padding(horizontal = 6.dp, vertical = 2.dp))
         }

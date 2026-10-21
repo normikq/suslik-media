@@ -151,7 +151,10 @@ class MpvEngine(
         val int64 = if (format == Mpv.FORMAT_INT64 && data != null) data.getLong(0) else null
 
         when (name) {
-            "time-pos" -> if (dbl != null) {
+            // Until the new file is loaded, time-pos is the previous file's (events queued before loadfile): taken as the new
+            // episode's, it started the player at the old place — the room went to 11:24 of the next episode, and the
+            // progress of the new episode got the old place (journal 20.10, 20:43:26)
+            "time-pos" -> if (dbl != null && loaded) {
                 timeSec = dbl
                 // The picture is moving but `playing` never came (a stale event from the previous file during a quick
                 // switch of episodes): the panel stayed at «Открываем…» with the play icon. Report it from the clock.

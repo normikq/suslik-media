@@ -835,14 +835,17 @@ body:has(#appPanel.hidden) main {
   font-size: 13.5px;
   border-radius: 12px;
   cursor: pointer;
-  background: var(--glass-fill) !important;
-  color: #fff !important;
-  border: 1px solid var(--line2) !important;
-  box-shadow: none !important;
+  background: rgba(96, 165, 250, 0.12) !important;
+  color: #93c5fd !important;
+  border: 1px solid rgba(96, 165, 250, 0.35) !important;
+  box-shadow: 0 0 16px rgba(96, 165, 250, 0.15) !important;
+  transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease;
 }
 .btn-refresh:hover {
-  background: var(--glass-fill-hover) !important;
-  border-color: rgba(96, 165, 250, 0.4) !important;
+  background: rgba(96, 165, 250, 0.22) !important;
+  border-color: rgba(96, 165, 250, 0.6) !important;
+  color: #bfdbfe !important;
+  box-shadow: 0 0 20px rgba(96, 165, 250, 0.3) !important;
 }
 .refresh-spinner {
   font-size: 16px;
@@ -1829,4 +1832,386 @@ button.tile-play:hover {
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* ========================================================================================= */
+/* СБРОС СТАРЫХ СТИЛЕЙ из index.html (лесной редизайн, старая нижняя панель)                 */
+/* Они лежат в <style> перед этим файлом и ломали вход, заголовок и иконки сайдбара.        */
+/* ========================================================================================= */
+.navrow button::before {
+  content: none !important;
+  display: none !important;
+}
+h1 {
+  background: none !important;
+  -webkit-background-clip: border-box !important;
+  background-clip: border-box !important;
+  -webkit-text-fill-color: currentColor !important;
+  color: #fff !important;
+}
+.hero {
+  overflow: visible !important;
+  isolation: auto !important;
+  border-radius: 0 !important;
+}
+.hero::before,
+.tile-art::before,
+.tile-art::after {
+  content: none !important;
+  display: none !important;
+}
+.hero .eyebrow {
+  margin-bottom: 10px;
+}
+.panel:hover,
+.magnet-card:hover {
+  border-color: var(--glass-edge) !important;
+}
+.logo {
+  transform: none !important;
+  animation: none !important;
+}
+
+/* Фон как в ПК-приложении (Theme.kt, ambientBackdrop): синее, фиолетовое и бирюзовое свечение, без жёлтого луча. */
+body::before {
+  background:
+    radial-gradient(circle at 25% 22%, rgba(37, 99, 235, 0.19), transparent 55%),
+    radial-gradient(circle at 95% 95%, rgba(139, 92, 246, 0.18), transparent 50%),
+    radial-gradient(circle at 55% 45%, rgba(6, 182, 212, 0.14), transparent 42%) !important;
+  filter: none !important;
+  animation: none !important;
+}
+
+/* ========================================================================================= */
+/* ДЕСКТОП ПО ОБРАЗЦУ ПРИЛОЖЕНИЯ (Sidebar.kt, Theme.kt)                                      */
+/* ========================================================================================= */
+@media (min-width: 901px) {
+  /* Вход: колонка по центру экрана, заголовок не вылезает за карточку. */
+  body:not(.authenticated) main,
+  body:has(#appPanel.hidden) main {
+    width: min(460px, calc(100% - 48px)) !important;
+    min-height: 100vh;
+    margin: 0 auto !important;
+    padding: 48px 0 !important;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  body:not(.authenticated) main > .hero,
+  body:has(#appPanel.hidden) main > .hero {
+    margin: 6px 0 22px !important;
+  }
+  body:not(.authenticated) .hero h1,
+  body:has(#appPanel.hidden) .hero h1 {
+    font-size: 30px;
+    line-height: 1.15;
+    max-width: none;
+    margin: 0 0 12px;
+  }
+  body:not(.authenticated) .hero p,
+  body:has(#appPanel.hidden) .hero p {
+    margin: 0;
+    font-size: 14.5px;
+  }
+  #loginPanel {
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 28px !important;
+    background: var(--glass-sheet) !important;
+    border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  }
+  body:not(.authenticated) main > .foot,
+  body:has(#appPanel.hidden) main > .foot {
+    text-align: center;
+  }
+
+  /* Сайдбар: 244 px, пункты 42 px, активный — синий 78 %, как NavItem. */
+  .app-sidebar {
+    width: 244px;
+    min-width: 244px;
+    padding: 18px 14px;
+    background: rgba(8, 12, 22, 0.58);
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .sidebar-brand {
+    height: 52px;
+    padding: 0 0 0 1px;
+    border-bottom: 0;
+  }
+  .sidebar-brand-text strong {
+    font-size: 17px;
+  }
+  .sidebar-brand-text span {
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.48em;
+  }
+  .navrow {
+    gap: 4px !important;
+    margin: 22px 0 auto !important;
+  }
+  .navrow button, .navrow button.secondary {
+    min-height: 42px !important;
+    height: 42px;
+    padding: 0 8px 0 15px !important;
+    font-size: 14px !important;
+    color: #cbd2e0 !important;
+    transform: none !important;
+  }
+  .navrow button:hover {
+    color: #fff !important;
+    background: rgba(255, 255, 255, 0.06) !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+  }
+  .navrow button:not(.secondary),
+  .navrow button:not(.secondary):hover {
+    background: rgba(37, 99, 235, 0.78) !important;
+    border-color: rgba(96, 165, 250, 0.3) !important;
+    box-shadow: none !important;
+    filter: none !important;
+  }
+  .navrow button .nav-icon,
+  .navrow button:not(.secondary) .nav-icon {
+    width: 18px;
+    font-size: 16px;
+    color: inherit;
+  }
+
+  /* Панели — «матовое стекло» поверх свечения. */
+  .app-viewport .panel {
+    background: rgba(42, 58, 92, 0.3) !important;
+    border: 1px solid rgba(255, 255, 255, 0.09) !important;
+    box-shadow: none !important;
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+  }
+  .app-viewport {
+    padding: 28px 40px 60px;
+  }
+  .app-viewport > .foot {
+    color: #5b6272;
+  }
+}
+
+/* ========================================================================================= */
+/* ВОЗВРАЩЕНО из версии до десктопного редизайна (3ff9139 потерял эти правила)               */
+/* ========================================================================================= */
+
+/* Приложение 1.2+: библиотека и нижняя панель нативные, своя панель сайта не нужна. */
+html.suslik-native .navrow{display:none!important}
+html.suslik-native body{padding-bottom:16px!important}
+
+/* Избранное: короткий «щелчок» звезды */
+.tile-art .tile-fav.pop{animation:favPop .32s var(--ease,ease)}
+@keyframes favPop{0%{transform:scale(1)}45%{transform:scale(1.25)}100%{transform:scale(1)}}
+
+/* Библиотека: плавное появление без моргания. Старая «мозаика» отключена: она сначала показывала плитку,
+   а когда приходил постер — прятала и проявляла заново. Переиспользованные плитки не анимируются вовсе. */
+.library-tile,.library-tile:not(.mosaic-pending),.library-tile.mosaic-pending{animation:none!important;opacity:1;filter:none}
+.library-tile.tile-enter{animation:tileIn .56s cubic-bezier(.22,.8,.24,1) both!important;animation-delay:calc(min(var(--tile-index,0),24)*34ms)!important}
+@keyframes tileIn{from{opacity:0;transform:translateY(18px) scale(.975)}to{opacity:1;transform:none}}
+.tile-art img{transition:opacity .45s ease,transform .5s var(--ease,ease)!important}
+@media (prefers-reduced-motion:reduce){.library-tile.tile-enter{animation:none!important}}
+
+/* Приложения: карточки */
+.apps-hero-glow{position:absolute;inset:-40% -10% auto auto;width:520px;height:520px;border-radius:50%;
+  background:radial-gradient(closest-side,#ffb02e38,#ffb02e10 55%,transparent 72%);pointer-events:none;animation:appsGlow 9s ease-in-out infinite alternate}
+@keyframes appsGlow{from{transform:translate(0,0) scale(1)}to{transform:translate(-40px,30px) scale(1.08)}}
+.app-req{margin:3px 0 0;color:var(--muted);font-size:13px}
+.app-icon svg{width:26px;height:26px}
+.app-meta{display:flex;flex-wrap:wrap;gap:6px}
+.app-meta span:empty{display:none}
+.app-meta span{font:600 12.5px/1 var(--ui);color:var(--text);background:var(--film);border:1px solid var(--line2);border-radius:999px;padding:7px 11px}
+.app-meta .app-version{color:var(--lamp);border-color:#ffb02e55;background:var(--lamp-soft)}
+.app-meta .app-version.muted{color:var(--muted);border-color:var(--line2);background:var(--film)}
+.app-features{list-style:none;margin:0;padding:0;display:grid;gap:8px;color:var(--muted);font-size:14px;line-height:1.45}
+.app-features li{position:relative;padding-left:18px}
+.app-features li::before{content:"";position:absolute;left:2px;top:.55em;width:7px;height:7px;border-radius:50%;background:var(--lamp);box-shadow:0 0 10px #ffb02e88}
+.app-features a{color:var(--lamp)}
+.app-notes{border:1px solid var(--line);border-radius:14px;background:var(--film);padding:10px 14px}
+.app-notes summary{cursor:pointer;font-weight:600;font-size:13.5px;color:var(--text);list-style:none}
+.app-notes summary::-webkit-details-marker{display:none}
+.app-notes summary::after{content:"▾";float:right;color:var(--muted);transition:transform .25s var(--ease)}
+.app-notes[open] summary::after{transform:rotate(180deg)}
+.app-notes-text{white-space:pre-wrap;color:var(--muted);font-size:13.5px;line-height:1.5;margin-top:8px;max-height:200px;overflow:auto}
+.app-card-head h3{margin:0}
+.apps-step strong{display:block;font-size:14.5px;margin-bottom:3px}
+.apps-step span{color:var(--muted);font-size:13.5px;line-height:1.45}
+@media(max-width:520px){.app-badge{font-size:10.5px;padding:5px 8px}.app-card-head{flex-wrap:wrap}}
+
+/* ---- Приложения: график роста версий ------------------------------------------------------------- */
+.apps-hero{overflow:visible;display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,440px);gap:28px;align-items:center;z-index:2}
+.apps-hero-clip{position:absolute;inset:0;overflow:hidden;border-radius:inherit;pointer-events:none}
+.apps-hero-text{position:relative;min-width:0}
+.growth{position:relative;animation:tileIn .6s .12s var(--ease) both}
+.growth-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}
+.growth-title{font:600 12px/1 var(--ui);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.growth-switch{position:relative;display:flex;padding:3px;border-radius:999px;background:#0d1017;border:1px solid var(--line2)}
+.growth-switch span{position:relative;z-index:1;cursor:pointer;user-select:none;padding:6px 12px;border-radius:999px;font:600 12px/1 var(--ui);color:var(--muted);transition:color .25s}
+.growth-switch span:hover{color:var(--text)}
+.growth-switch span.on{color:var(--lamp-ink)}
+.growth-switch span:focus-visible{outline:2px solid var(--lamp);outline-offset:1px}
+.growth-lens{position:absolute;top:3px;bottom:3px;left:3px;border-radius:999px;background:var(--lamp);box-shadow:0 0 16px #ffb02e55;transition:transform .42s var(--ease),width .42s var(--ease)}
+.growth-plot{position:relative;aspect-ratio:2/1;width:100%}
+.growth-plot svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.growth-grid line{stroke:#ffffff0d;stroke-width:1;stroke-dasharray:3 6;vector-effect:non-scaling-stroke}
+.growth-line,.growth-line-glow{fill:none;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:1;vector-effect:non-scaling-stroke}
+.growth-line{stroke:url(#growthStroke);stroke-width:2.5}
+.growth-line-glow{stroke:#ffb02e;stroke-width:7;opacity:.35;filter:url(#growthGlow)}
+.growth-line.drawn,.growth-line-glow.drawn{stroke-dashoffset:0;transition:stroke-dashoffset 1.1s var(--ease)}
+.growth-area{fill:url(#growthFill);opacity:0}
+.growth-area.drawn{opacity:1;transition:opacity .9s .35s ease}
+.growth-points{position:absolute;inset:0}
+.growth-dot{position:absolute;width:30px;height:30px;margin:-15px 0 0 -15px;border-radius:50%;cursor:pointer;outline:none;
+  opacity:0;transform:scale(.4);animation:growthPop .5s var(--d,0s) var(--ease) forwards}
+.growth-dot::before{content:"";position:absolute;inset:3px;border-radius:50%;background:radial-gradient(closest-side,#ffb02e66,#ffb02e00);
+  animation:growthBreath 2.8s var(--b,0s) ease-in-out infinite}
+.growth-dot i{position:absolute;left:50%;top:50%;width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;background:#ffd27a;
+  border:2px solid var(--lamp);box-shadow:0 0 0 4px #ffb02e1f,0 0 14px #ffb02eaa;transition:transform .3s var(--ease),box-shadow .3s}
+.growth-dot.latest i{background:#fff3d6;box-shadow:0 0 0 5px #ffb02e2e,0 0 20px #ffb02ecc}
+.growth-dot em{position:absolute;left:50%;top:100%;transform:translateX(-50%);font:600 11px/1 var(--ui);font-style:normal;color:var(--muted);white-space:nowrap;transition:color .25s}
+.growth-dot:hover i,.growth-dot:focus-visible i,.growth-dot.active i{transform:scale(1.35);box-shadow:0 0 0 6px #ffb02e33,0 0 24px #ffb02e}
+.growth-dot:hover em,.growth-dot.active em,.growth-dot:focus-visible em{color:var(--lamp)}
+@keyframes growthPop{to{opacity:1;transform:scale(1)}}
+@keyframes growthBreath{0%,100%{transform:scale(.75);opacity:.55}50%{transform:scale(1.45);opacity:1}}
+.growth-tip{position:fixed;z-index:10000;top:0;left:0;pointer-events:none;opacity:0;transform:translateY(8px) scale(.97);transform-origin:var(--arrow,50%) 100%;
+  padding:14px 16px 12px;border-radius:16px;background:#151925f2;border:1px solid #ffb02e55;
+  box-shadow:0 22px 50px #000b,0 0 0 1px #ffb02e1a,0 0 36px #ffb02e1c;backdrop-filter:blur(10px);
+  transition:opacity .26s var(--ease),transform .32s var(--ease)}
+.growth-tip.below{transform:translateY(-8px) scale(.97);transform-origin:var(--arrow,50%) 0}
+.growth-tip.on{opacity:1;transform:none;pointer-events:auto}
+.growth-tip::after{content:"";position:absolute;left:var(--arrow,50%);bottom:-6px;width:10px;height:10px;margin-left:-5px;transform:rotate(45deg);
+  background:#151925;border-right:1px solid #ffb02e55;border-bottom:1px solid #ffb02e55}
+.growth-tip.below::after{bottom:auto;top:-6px;border:0;border-left:1px solid #ffb02e55;border-top:1px solid #ffb02e55}
+.growth-tip-head{display:flex;align-items:center;gap:9px;margin-bottom:8px}
+.growth-tip-head b{font:700 11.5px/1 var(--ui);padding:5px 8px;border-radius:7px;background:var(--film);color:var(--muted)}
+.growth-tip-head b.new{background:var(--lamp);color:var(--lamp-ink)}
+.growth-tip-head span{font:600 14.5px/1.25 var(--ui);color:var(--text)}
+.growth-tip ul{margin:0;padding:0;list-style:none;display:grid;gap:6px}
+.growth-tip li{position:relative;padding-left:15px;color:#c9cedb;font-size:13px;line-height:1.45;opacity:0;transform:translateY(4px)}
+.growth-tip.on li{opacity:1;transform:none;transition:opacity .3s var(--ease),transform .35s var(--ease)}
+.growth-tip.on li:nth-child(2){transition-delay:.04s}.growth-tip.on li:nth-child(3){transition-delay:.08s}
+.growth-tip.on li:nth-child(4){transition-delay:.12s}.growth-tip.on li:nth-child(5){transition-delay:.16s}.growth-tip.on li:nth-child(6){transition-delay:.2s}
+.growth-tip li::before{content:"";position:absolute;left:2px;top:.55em;width:5px;height:5px;border-radius:50%;background:var(--lamp)}
+.growth-hint{margin-top:14px;text-align:right;color:var(--muted);font-size:12px;opacity:.8}
+@media(max-width:900px){.apps-hero{grid-template-columns:1fr;gap:18px}.growth-hint{text-align:left}.growth-hint::after{content:" (на телефоне — нажмите)"}}
+@media (prefers-reduced-motion:reduce){.growth,.growth-dot,.growth-dot::before{animation:none!important;opacity:1;transform:none}
+  .growth-line,.growth-line-glow{stroke-dashoffset:0}.growth-area{opacity:1}}
+.growth.empty .growth-hint{visibility:hidden}
+
+/* Пункты и версия на карточках — в синем акценте нового дизайна. */
+.app-meta .app-version{color:#93c5fd;border-color:rgba(96,165,250,.38);background:rgba(37,99,235,.16)}
+.app-features li::before{background:#60a5fa;box-shadow:0 0 10px rgba(96,165,250,.55)}
+.app-features a{color:#93c5fd}
+
+/* «Открыть ссылку»: история справа от формы с самого верха, а не под строкой статуса. */
+@media (min-width: 901px) {
+  #historyPanel {
+    grid-row: 1 / span 2;
+    align-self: start;
+  }
+}
+
+/* После входа шапка и заголовок страницы входа не нужны и на телефоне: там своя верхняя строка. */
+body.authenticated > main > .brand,
+body.authenticated > main > .hero,
+body:has(#appPanel:not(.hidden)) > main > .brand,
+body:has(#appPanel:not(.hidden)) > main > .hero {
+  display: none !important;
+}
+
+/* Discord Auth & Profile Card */
+.discord-login-box {
+  margin-bottom: 20px;
+}
+.btn-discord {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px 20px;
+  background: #5865F2;
+  color: #ffffff !important;
+  font-family: var(--ui, "Onest", sans-serif);
+  font-weight: 600;
+  font-size: 15px;
+  border-radius: 12px;
+  text-decoration: none;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 4px 14px rgba(88, 101, 242, 0.35);
+  transition: background 0.2s, transform 0.15s, box-shadow 0.2s;
+}
+.btn-discord[hidden] {
+  display: none;
+}
+.btn-discord:hover {
+  background: #4752C4;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(88, 101, 242, 0.45);
+}
+.auth-divider {
+  display: flex;
+  align-items: center;
+  margin: 18px 0;
+  color: #94a3b8;
+  font-size: 13px;
+  font-family: var(--ui, "Onest", sans-serif);
+}
+.auth-divider::before, .auth-divider::after {
+  content: "";
+  flex: 1;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+.auth-divider span {
+  padding: 0 12px;
+}
+.sidebar-user-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  margin-top: auto;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.sidebar-user-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: #2a2e3d;
+  flex-shrink: 0;
+}
+.sidebar-user-info {
+  flex: 1;
+  min-width: 0;
+}
+.sidebar-user-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sidebar-user-role {
+  font-size: 11.5px;
+  color: #94a3b8;
+}
+.device-link-btn {
+  font-size: 11.5px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(96, 165, 250, 0.15);
+  color: #93c5fd;
+  border: 1px solid rgba(96, 165, 250, 0.25);
+  cursor: pointer;
+  margin-top: 4px;
+}
+.device-link-btn:hover {
+  background: rgba(96, 165, 250, 0.25);
 }

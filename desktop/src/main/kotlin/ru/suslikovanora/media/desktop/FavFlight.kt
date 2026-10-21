@@ -37,8 +37,8 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /**
- * A poster that "flies" into the sidebar tab it now belongs to: into «Избранное» when a film is added there, back into
- * «Библиотека» when it is taken out while the favourites are open. The sidebar items report where they are
+ * A poster that "flies" into the sidebar tab it now belongs to: into «Мои фильмы» when a film is added there, back into
+ * «Библиотека» when it is taken out while «Мои фильмы» are open. The sidebar items report where they are
  * ([navBounds]) and glow for a moment when the poster lands ([glowTab]).
  */
 object FlyHub {

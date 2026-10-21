@@ -145,12 +145,15 @@ fun GlassIconButton(
 fun HeroPlayButton(
     playing: Boolean,
     onClick: () -> Unit,
-    size: Dp = 48.dp
+    size: Dp = 48.dp,
+    enabled: Boolean = true,      // false: a room guest while the host holds the pause
+    lockedTip: String? = null
 ) {
     GlassIconButton(
         onClick = onClick,
         size = size,
-        tooltip = if (playing) tr("player.pauza_probel") else tr("player.vosproizvedenie_probel")
+        enabled = enabled,
+        tooltip = if (!enabled && lockedTip != null) lockedTip else if (playing) tr("player.pauza_probel") else tr("player.vosproizvedenie_probel")
     ) {
         if (playing) {
             Row(

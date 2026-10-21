@@ -100,6 +100,8 @@ interface PlayerEngine {
     /** Доля файла 0..1 (у движка — -1, если неизвестна). */
     val fraction: Float
     val rate: Float
+    /** Playback speed (the shared room evens out a small drift with 0.95–1.05×). */
+    fun setRate(rate: Float)
     val volume: Int
     fun seekTo(ms: Long)
     fun seekToFraction(fraction: Float)

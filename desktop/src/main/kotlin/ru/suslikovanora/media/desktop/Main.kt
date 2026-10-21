@@ -91,13 +91,15 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
     val appScope = rememberCoroutineScope()
     // Kept here so the library comes back scrolled to where it was after watching something.
     val grid = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
-    val favGrid = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+    val mineGrid = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
 
     // libmpv ставит установщик; если её нет (сервер был недоступен), докачивается в фоне.
     val mpvWarm = remember { CompletableDeferred<Boolean>() }
     LaunchedEffect(Unit) {
         val mpvSetup = ru.suslikovanora.media.desktop.player.MpvInstall.start(appScope)
         appScope.launch(Dispatchers.IO) { Uninstaller.register() }
+        // Прогресс и дорожки на аккаунт Discord; пришедшее с телефона или ТВ — сразу в плитки «Продолжить»
+        CloudSync.start(appScope) { javax.swing.SwingUtilities.invokeLater { lib.bumpWatch() } }
         withContext(Dispatchers.IO) {
             mpvSetup.await()
             mpvWarm.complete(ru.suslikovanora.media.desktop.player.Mpv.available)
@@ -121,10 +123,14 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
             // Suslik Debug: Compose сейчас уберёт слой с видео — здесь зависала Skia (цикл glGetError)
             if (Diag.on) { PlayerLog.write("[ui] player close: removing the player"); MpvVideoOut.probeGl("player close: before removal") }
             playing = null; leaving = false; onTop.value = false
+            CloudSync.kick() // прогресс этого просмотра — на аккаунт сразу
             if (Diag.on) javax.swing.SwingUtilities.invokeLater { MpvVideoOut.probeGl("player close: after removal") }
         }
     }
     fun requestPlay(req: PlayRequest) {
+        // In a room, the host's film becomes the room's film (a guest's other film just plays for them alone)
+        val party = ru.suslikovanora.media.desktop.party.Party
+        req.watchKeys.getOrNull(req.startIndex)?.let { key -> if (party.isHost) party.putFilm(ru.suslikovanora.media.core.party.PartyFileRef(key, req.title)) }
         appScope.launch {
             if (!mpvWarm.isCompleted) preparing = true
             val ok = mpvWarm.await()
@@ -145,6 +151,9 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
     }
     // Which films TMDB calls animation (for the «Мультфильмы» category): in the background, whenever the list changes.
     LaunchedEffect(lib.items.size, lib.authenticated) { if (lib.authenticated == true && lib.items.isNotEmpty()) lib.classifyAnimation() }
+    // A guest of a room stays on the room's page (the library is closed for them, see Sidebar)
+    val partyGuest = ru.suslikovanora.media.desktop.party.Party.let { it.inRoom && !it.isHost }
+    LaunchedEffect(partyGuest) { if (partyGuest && (tab == Tab.Library || tab == Tab.Mine)) tab = Tab.Together }
     // Signed in (at start or after the login screen): load the library in the app-wide scope.
     LaunchedEffect(lib.authenticated) { if (lib.authenticated == true) lib.refresh() }
 
@@ -249,8 +258,8 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
                   androidx.compose.foundation.layout.Row(Modifier.fillMaxSize().ambientBackdrop()) {
                     // Fixed side panel: stays put while the pages change.
                     Sidebar(
-                        tab, Profile.Shared,
-                        onSelect = { tab = it; if (it == Tab.Library || it == Tab.Favorites) appScope.launch { lib.refresh() } },
+                        tab, lib.profile,
+                        onSelect = { tab = it; if (it == Tab.Library || it == Tab.Mine) appScope.launch { lib.refresh() } },
                         onSettings = { PlaybackSettings.open = true },
                         onLogout = { appScope.launch { lib.logout() } }
                     )
@@ -269,9 +278,10 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
                     ) { t ->
                         when (t) {
                             Tab.Library -> LibraryView(lib, grid) { r -> requestPlay(r) }
-                            Tab.Favorites -> LibraryView(lib, favGrid, favoritesOnly = true) { r -> requestPlay(r) }
+                            Tab.Mine -> LibraryView(lib, mineGrid, mineOnly = true) { r -> requestPlay(r) }
                             Tab.Search -> SearchView(lib) {}
                             Tab.Add -> AddView(lib) {}
+                            Tab.Together -> ru.suslikovanora.media.desktop.party.TogetherView(lib, onLibrary = { tab = Tab.Library }) { r -> requestPlay(r) }
                         }
                     }
                   }

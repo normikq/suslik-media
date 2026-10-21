@@ -1,6 +1,7 @@
 package ru.suslikovanora.media.desktop
 
 import ru.suslikovanora.media.core.*
+import ru.suslikovanora.media.core.auth.*
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -76,17 +77,82 @@ class Library {
         status = tr("library.pokazana_sohranennaya_kopiya_o")
     }
 
+    var profile by mutableStateOf<Profile>(Profile.Shared)
+
+    var pairing by mutableStateOf<DevicePairing?>(null)
+
+    /** The server's user (shared parser: core/auth/Auth.kt); the shared password account is [Profile.Shared]. */
+    private fun profileOf(u: UserProfile?): Profile {
+        if (u == null || u.isShared) return Profile.Shared
+        val note = if (u.isAdmin) "Администратор" else "Участник"
+        return Profile(u.name.ifBlank { "Пользователь" }, note, u.avatarUrl)
+    }
+
+    // The profile is set BEFORE [authenticated]: flipping it closes the login screen, and with it the coroutine that
+    // called us (the old order lost the Discord name until the next start: «Вход по паролю» stayed in the sidebar).
     suspend fun checkSession(): Boolean? = try {
-        Api.get("/api/session").optBoolean("authenticated").also { authenticated = it }
+        val s = SessionInfo.parse(Api.get(SessionInfo.PATH))
+        val isAuth = s.authenticated
+        profile = if (isAuth) profileOf(s.user) else Profile.Shared
+        CloudSync.userId = if (isAuth) s.user?.id else null
+        // Discord application of our server: the player shows the film in the Discord profile under it
+        s.discordClientId?.let { ru.suslikovanora.media.desktop.discord.DiscordRpc.clientId = it }
+        authenticated = isAuth
+        isAuth
     } catch (e: Exception) { null }
 
     suspend fun login(password: String): String? = try {
-        Api.post("/api/login", JSONObject().put("password", password)); authenticated = true; null
+        Api.post("/api/login", JSONObject().put("password", password))
+        if (checkSession() == null) authenticated = true
+        null
     } catch (e: Exception) { Api.describe(e) }
 
+    suspend fun startDeviceAuth(): String? = try {
+        val res = Api.post(DeviceAuth.START, DeviceAuth.startBody("Suslik Media Windows", Api.SITE))
+        // The server builds the link from site_url; ours is the fallback for an older server
+        val p = DeviceAuth.parsePairing(res, Api.SITE)
+        pairing = p
+        runCatching { java.awt.Desktop.getDesktop().browse(java.net.URI(p.url)) }
+        null
+    } catch (e: Exception) {
+        Api.describe(e)
+    }
+
+    suspend fun pollDeviceAuth(): Boolean? {
+        val p = pairing ?: return null
+        val r = try {
+            DeviceAuth.parsePoll(Api.post(DeviceAuth.POLL, DeviceAuth.pollBody(p)))
+        } catch (e: Api.HttpError) {
+            // 410: the code has expired (10 min) — without this the screen kept waiting forever
+            DeviceAuth.pollFailed(e.code)
+        } catch (e: Exception) { DevicePoll.Pending }
+        return when (r) {
+            is DevicePoll.Authorized -> {
+                // The device token outlives the cookie session (sent with every request, see Api.request).
+                r.token?.let { Api.deviceToken = it }
+                profile = profileOf(r.user)
+                CloudSync.userId = r.user?.id
+                pairing = null
+                authenticated = true
+                true
+            }
+            DevicePoll.Expired -> { pairing = null; false }
+            DevicePoll.Pending -> null
+        }
+    }
+
+    fun cancelDeviceAuth() {
+        pairing = null
+    }
+
     suspend fun logout() {
+        ru.suslikovanora.media.desktop.party.Party.leave()
         runCatching { Api.post("/api/logout") }
+        Api.deviceToken = null
         authenticated = false; items = emptyList()
+        profile = Profile.Shared
+        CloudSync.userId = null
+        pairing = null
         withContext(Dispatchers.IO) { runCatching { snapshot.delete() } }
     }
 
@@ -175,6 +241,15 @@ class Library {
         } catch (e: CancellationException) { throw e } catch (e: Exception) { items = before; Api.describe(e) }
     }
 
+    /** «Мои фильмы» on/off: only this user's list; the torrent stays in the shared library and in AllDebrid. */
+    suspend fun setMine(m: Magnet, on: Boolean): String? {
+        val before = items
+        items = items.map { if (it.m.id == m.id) it.copy(m = it.m.copy(mine = on)) else it }
+        return try {
+            withContext(kotlinx.coroutines.NonCancellable) { Api.post(Shelf.PATH, Shelf.body(m.id, on)) }; null
+        } catch (e: CancellationException) { throw e } catch (e: Exception) { items = before; Api.describe(e) }
+    }
+
     suspend fun remove(m: Magnet): String? = try {
         Api.post("/api/magnets/${m.id}/${if (m.downloading) "cancel" else "delete"}")
         items = items.filter { it.m.id != m.id }
@@ -198,6 +273,36 @@ class Library {
     suspend fun poster(queries: List<String>): ImageBitmap? {
         for (q in queries) posterFor(q)?.let { return it }
         return null
+    }
+
+    /**
+     * Resolves a public poster URL (e.g. TMDB CDN) for Discord Rich Presence from cached index.
+     * Instantaneous and non-blocking.
+     */
+    fun posterUrl(queries: List<String>): String? {
+        for (q in queries) {
+            val stored = posterIndex.get(q.lowercase()) ?: continue
+            val path = stored.substringAfter('|', "").ifBlank { null } ?: continue
+            toPublicPosterUrl(path)?.let { return it }
+        }
+        return null
+    }
+
+    /**
+     * Resolves a public poster URL, fetching from server if not cached yet.
+     */
+    suspend fun posterUrlFor(queries: List<String>): String? {
+        posterUrl(queries)?.let { return it }
+        if (queries.isEmpty()) return null
+        poster(queries)
+        return posterUrl(queries)
+    }
+
+    fun toPublicPosterUrl(path: String): String? {
+        if (path.startsWith("https://") || path.startsWith("http://")) return path
+        val file = path.substringAfterLast('/').trim()
+        if (file.isEmpty() || !file.contains('.')) return null
+        return "https://image.tmdb.org/t/p/w500/$file"
     }
 
     /**
