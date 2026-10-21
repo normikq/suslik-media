@@ -23,6 +23,15 @@
   }
 
   function av() { return g.webapis && g.webapis.avplay; }
+  function bigBuffer() { try { return localStorage.getItem('tv_buffer') === 'big'; } catch (e) { return false; } }
+
+  // Сторож: таймер 0,5 с не срабатывал дольше 1,5 с — приложение висело (AVPlay держит поток страницы). В пробу.
+  var lastBeat = Date.now();
+  setInterval(function () {
+    var now = Date.now(), gap = now - lastBeat;
+    lastBeat = now;
+    if (cur && gap > 1500) note('UI stall ' + gap + ' ms' + (cur.seekBusy ? ' (seek)' : cur.loading ? ' (loading)' : ''));
+  }, 500);
   function el(id) { return document.getElementById(id); }
   var h = function () { return SM.ui.h.apply(null, arguments); };
   var fmt = function (ms) { return SM.ui.clock(ms); };
@@ -65,11 +74,15 @@
       p.open(url);
       p.setDisplayRect(0, 0, 1920, 1080);
       p.setDisplayMethod('PLAYER_DISPLAY_MODE_LETTER_BOX');
-      // Запас побольше (по умолчанию у AVPlay — пара секунд): тяжёлому файлу (Remux 50+ Мбит/с) не хватает
-      try {
-        p.setBufferingParam('PLAYER_BUFFER_FOR_PLAY', 'PLAYER_BUFFER_SIZE_IN_SECOND', 8);
-        p.setBufferingParam('PLAYER_BUFFER_FOR_RESUME', 'PLAYER_BUFFER_SIZE_IN_SECOND', 15);
-      } catch (e) { note('setBufferingParam failed ' + (e.name || e)); }
+      // «Большой запас» (Настройки): AVPlay ждёт 8 с видео перед стартом и 15 с после остановки. В 0.2.1 был всегда,
+      // и телевизор на время загрузки мог зависнуть намертво (21.10) — теперь по умолчанию запас самого AVPlay
+      if (bigBuffer()) {
+        try {
+          p.setBufferingParam('PLAYER_BUFFER_FOR_PLAY', 'PLAYER_BUFFER_SIZE_IN_SECOND', 8);
+          p.setBufferingParam('PLAYER_BUFFER_FOR_RESUME', 'PLAYER_BUFFER_SIZE_IN_SECOND', 15);
+          note('buffer: big (8 s / 15 s)');
+        } catch (e) { note('setBufferingParam failed ' + (e.name || e)); }
+      } else note('buffer: AVPlay default');
       p.setListener({
         onbufferingstart: function () { note('buffering start'); c.loading = true; buffering(true, 0); },
         onbufferingprogress: function (pct) { buffering(true, pct); },
@@ -457,11 +470,15 @@
     if (!c) return;
     lines.push('Файл: ' + c.opts.file.path);
     lines.push('Проверка по имени: ' + (support.checkFile(c.opts.file.path).text || 'ok'));
-    try { lines.push('Состояние: ' + p.getState()); } catch (e) { /* нет */ }
+    // Пока AVPlay грузится или перематывает, его синхронные вызовы могут держать страницу — не спрашиваем
+    var busy = c.loading || c.seekBusy || !c.prepared;
+    if (!busy) { try { lines.push('Состояние: ' + p.getState()); } catch (e) { /* нет */ } }
+    else lines.push('Состояние: ' + (c.seekBusy ? 'перемотка' : 'загрузка'));
+    lines.push('Запас: ' + (bigBuffer() ? 'большой (8 с / 15 с)' : 'как у телевизора'));
     lines.push('Длительность: ' + fmt(c.dur) + ', позиция: ' + fmt(c.pos) + (c.seekBusy ? ', идёт перемотка' : ''));
     if (c.dur > 0 && c.opts.file.size > 0) lines.push('Битрейт файла: ~' + Math.round(c.opts.file.size * 8 / (c.dur / 1000) / 1e6) + ' Мбит/с (размер ' + model.formatBytes(c.opts.file.size) + ')');
     try {
-      (p.getCurrentStreamInfo() || []).forEach(function (t) { lines.push('Сейчас ' + t.type + ' #' + t.index + ': ' + t.extra_info); });
+      if (!busy) (p.getCurrentStreamInfo() || []).forEach(function (t) { lines.push('Сейчас ' + t.type + ' #' + t.index + ': ' + t.extra_info); });
     } catch (e) { /* нет */ }
     el('diag-head').textContent = lines.join('\n');
     var body = el('diag-log');

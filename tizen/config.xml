@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Samsung Smart TV (Tizen 4.0+, телевизоры 2018 года и новее). Версия приложения — version ниже. -->
-<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets" id="https://github.com/normikq/suslik-media/tizen" version="0.2.1" viewmodes="maximized">
+<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets" id="https://github.com/normikq/suslik-media/tizen" version="0.2.2" viewmodes="maximized">
     <tizen:application id="SuslikMdTV.SuslikMedia" package="SuslikMdTV" required_version="4.0"/>
     <content src="index.html"/>
     <feature name="http://tizen.org/feature/screen.size.normal.1080.1920"/>
