@@ -40,6 +40,13 @@ Tizen Studio Samsung объявил устаревшей. Замена — ра�
 3. Настройки VS Code: `tizentv.targetDeviceAddress` — IP телевизора.
 4. Команда **Tizen TV: Run Certificate Manager** → новый профиль **Samsung** (тип TV), в сертификат дистрибьютора
    добавить DUID телевизора (расширение видит его, когда ТВ подключён).
+**Обязательно для ТВ 2017–2018 (проверено на UE40NU7100):** без шага «Permit to install» телевизор отклоняет любой
+пакет с ошибкой `install failed[118012]` (`118, -12`, «Check certificate error»), даже если DUID в сертификате верный.
+Tizen Studio → `C:\tizen-studio\tools\device-manager\bin\device-manager.exe` (нужен Visual C++ 2013:
+`winget install Microsoft.VCRedist.2013.x86`) → подключить ТВ → правый клик → **Permit to install applications**.
+Перед этим активным должен быть профиль с Samsung-сертификатом (`tizen security-profiles set-active -n <профиль>`).
+Вручную (`sdb push device-profile.xml /home/developer/`) ТВ этот файл не принимает.
+
 5. **Tizen TV: Build Signed Package** (пакет появится в корне папки), затем **Tizen TV: Launch Application** — ставит и запускает на ТВ.
    Для отладки — **Tizen TV: Debug Application** (Chrome Web Inspector).
 
