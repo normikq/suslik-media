@@ -6,7 +6,7 @@ const fs = require("fs");
 const crypto = require("crypto");
 const config = require("../config");
 const { apiLimiter, reportLimiter, anonReportLimiter, serviceLimiter } = require("../middleware/rate-limit");
-const { requireLogin, isTester, updateTokenOk } = require("../middleware/auth");
+const { requireLogin, isTester, updateTokenOk, secretEquals } = require("../middleware/auth");
 const { readCookie } = require("../utils/helpers");
 const {
   UPDATE_KINDS,
@@ -88,9 +88,7 @@ router.get("/api/app/beta", requireLogin, apiLimiter, (req, res) => res.json({ t
 
 // Первая установка беты на устройство, где ещё нет поля для кода
 router.get("/api/app/beta-download/:platform", requireLogin, serviceLimiter, (req, res) => {
-  const code = config.BETA_CODE || "";
-  const given = String(req.query.code || "");
-  if (!code || given.length !== code.length || !crypto.timingSafeEqual(Buffer.from(given), Buffer.from(code))) {
+  if (!secretEquals(String(req.query.code || ""), config.BETA_CODE)) {
     return res.status(403).json({ error: "Неверный код тестировщика." });
   }
   const u = latestUpdate(String(req.params.platform), config.BETA_DIR);

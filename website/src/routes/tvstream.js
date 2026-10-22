@@ -6,7 +6,7 @@ const express = require("express");
 const config = require("../config");
 const { mirrorUrlLimiter, mirrorLimiter } = require("../middleware/rate-limit");
 const { requireLogin } = require("../middleware/auth");
-const { safeHttpsUrl, cleanFileName } = require("../utils/helpers");
+const { safeHttpsUrl, cleanFileName, clientIp } = require("../utils/helpers");
 const { isAllDebridFileLink, resolveDirect, mirrorLog, MIRROR_CSP, UnlockError } = require("../services/mirror");
 const { markLinkOpened } = require("../services/cleanup");
 const tv = require("../services/tvstream");
@@ -96,7 +96,8 @@ router.get("/api/file/tv/:name", mirrorLimiter, async (req, res) => {
     return res.status(415).send("Видео этого файла телевизор не поддерживает.");
   }
   const t = Math.max(0, Math.min(Number(req.query.t) || 0, info.durationMs ? info.durationMs / 1000 : 1e7));
-  const viewer = /^[a-z0-9]{1,32}$/i.test(String(req.query.s || "")) ? String(req.query.s) : null;
+  // s не подписан: привязываем к адресу клиента, чтобы чужая метка не гасила ffmpeg другого зрителя
+  const viewer = /^[a-z0-9]{1,32}$/i.test(String(req.query.s || "")) ? `${clientIp(req)}|${req.query.s}` : null;
 
   let closed = false;
   res.on("close", () => { closed = true; });
