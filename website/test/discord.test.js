@@ -417,3 +417,74 @@ test("cleanup: films nobody opened for 10 days go away, and the library is kept 
   assert.deepEqual(limit.map(x => x.id), [501, 503]);
   assert.ok(limit.every(x => x.reason === "limit"));
 });
+
+test("rooms: 1 account = 1 active room (cannot join from another device into same or other room)", () => {
+  const { createRoom, joinRoom, leaveRoom, findUserActiveRoom } = require("../src/services/rooms");
+  const user = { id: "u_50", name: "MultiDeviceUser" };
+  const otherUser = { id: "u_51", name: "OtherUser" };
+
+  const room1 = createRoom(user, null, "all", "pc_1");
+  const room2 = createRoom(otherUser, null, "all", "pc_other");
+
+  // 1. Первый вход с устройства pc_1 успешен
+  const join1 = joinRoom(room1.id, user, "pc_1");
+  assert.equal(join1.ok, true);
+  assert.ok(join1.member);
+
+  // 2. Попытка войти в ту же комнату с другого устройства (pc_2) тем же аккаунтом блокируется
+  const joinSameRoomOtherDev = joinRoom(room1.id, user, "pc_2");
+  assert.equal(joinSameRoomOtherDev.ok, false);
+  assert.equal(joinSameRoomOtherDev.error, "Этот аккаунт уже подключен к комнате с другого устройства.");
+
+  // 3. Попытка войти в другую комнату (room2) с устройства pc_2 тем же аккаунтом блокируется
+  const joinOtherRoomOtherDev = joinRoom(room2.id, user, "pc_2");
+  assert.equal(joinOtherRoomOtherDev.ok, false);
+  assert.equal(joinOtherRoomOtherDev.error, "Этот аккаунт уже находится в активной комнате.");
+
+  // 4. Попытка создать комнату (проверка findUserActiveRoom с targetRoomId = null) блокируется
+  const activeCheck = findUserActiveRoom(user, "pc_2", null);
+  assert.ok(activeCheck);
+  assert.equal(activeCheck.reason, "other_room");
+
+  // 5. Переподключение с того же устройства (pc_1) в ту же комнату разрешено (второй поток)
+  const reconnectSameDev = joinRoom(room1.id, user, "pc_1");
+  assert.equal(reconnectSameDev.ok, true);
+
+  // 6. Другой пользователь (otherUser) может войти в room1
+  const joinOtherUser = joinRoom(room1.id, otherUser, "pc_other");
+  assert.equal(joinOtherUser.ok, true);
+
+  // 7. Пользователь user выходит из room1 (все потоки закрыты)
+  leaveRoom(room1.id, "pc_1", true);
+
+  // 8. Теперь вход с устройства pc_2 разрешён
+  const joinAfterLeave = joinRoom(room2.id, user, "pc_2");
+  assert.equal(joinAfterLeave.ok, true);
+  assert.ok(joinAfterLeave.member);
+
+  // Очистка
+  leaveRoom(room1.id, "pc_other", true);
+  leaveRoom(room2.id, "pc_2", true);
+});
+
+test("rooms: same device cannot be in two different rooms at the same time", () => {
+  const { createRoom, joinRoom, leaveRoom } = require("../src/services/rooms");
+  const shared = { id: "shared", name: "Общий доступ" };
+  const r1 = createRoom(shared, null, "all", "tv_1");
+  const r2 = createRoom(shared, null, "all", "tv_2");
+
+  const j1 = joinRoom(r1.id, shared, "tv_1");
+  assert.equal(j1.ok, true);
+
+  // То же устройство tv_1 пытается войти в r2, пока активно в r1
+  const j2 = joinRoom(r2.id, shared, "tv_1");
+  assert.equal(j2.ok, false);
+  assert.equal(j2.error, "Это устройство уже подключено к другой комнате.");
+
+  // Другое устройство tv_2 с тем же shared аккаунтом может войти в r1
+  const j3 = joinRoom(r1.id, shared, "tv_2");
+  assert.equal(j3.ok, true);
+
+  leaveRoom(r1.id, "tv_1", true);
+  leaveRoom(r1.id, "tv_2", true);
+});
