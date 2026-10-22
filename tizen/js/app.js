@@ -60,9 +60,11 @@
   function signedIn(user) {
     state.user = user;
     SM.sync.setUser(user && user.id);
+    var syncChanged = function (n) { if (n && state.tab === 'home' && !SM.player.current()) refreshTab(); };
+    SM.sync.onChanged = syncChanged; // периодический опрос, пока приложение открыто
     loadLibrary(true).then(function () {
       shell('home', true);
-      SM.sync.run(function (n) { if (n && state.tab === 'home' && !SM.player.current()) refreshTab(); });
+      SM.sync.run(syncChanged);
       whatsNewOnce();
     }, function () {});
   }

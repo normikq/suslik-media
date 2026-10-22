@@ -28,7 +28,10 @@ interface SyncStore {
     /** Всё своё — для первой выгрузки на аккаунт. */
     fun allWatch(): List<WatchEntry>
     fun allTracks(): List<TrackEntry>
-    /** Для кого и до какого места (время сервера) уже синхронизировано: "u_…|мс". */
+    /**
+     * Для кого и до какого места уже синхронизировано: "u_…|мс сервера|мс устройства". Третье поле — до какого времени своё
+     * всё выгружено (очередь живёт в памяти, после перезапуска из хранилища берётся то, что новее); у старых курсоров его нет.
+     */
     var cursor: String?
 }
 
@@ -42,12 +45,15 @@ class WatchSync(private val store: SyncStore) {
         fun filmKeyOf(watchKey: String?): String? =
             watchKey?.substringBefore('|', "")?.toLongOrNull()?.let { filmKey(it) }
         /** Синхронизация только по Discord: при входе по общему паролю у всех один пользователь. */
-        fun eligible(userId: String?) = userId != null && Regex("""u_\d{1,25}""").matches(userId)
+        private val USER_RE = Regex("""u_\d{1,25}""")
+        fun eligible(userId: String?) = userId != null && USER_RE.matches(userId)
     }
 
     private val lock = Any()
     private val pendingWatch = LinkedHashMap<String, WatchEntry>()
     private val pendingTracks = LinkedHashMap<String, TrackEntry>()
+    /** Для кого очередь собрана в этом процессе; пока не совпало — [request] добирает её из хранилища. */
+    private var loaded: String? = null
 
     /** Плеер сохранил прогресс. */
     fun noteWatch(e: WatchEntry) = synchronized(lock) { pendingWatch.remove(e.key); pendingWatch[e.key] = e }
@@ -62,30 +68,47 @@ class WatchSync(private val store: SyncStore) {
     val hasPending: Boolean get() = synchronized(lock) { pendingWatch.isNotEmpty() || pendingTracks.isNotEmpty() }
 
     /** Что ушло в запросе: после ответа убирается из очереди, если за это время не заменилось новым. */
-    class Sent internal constructor(val user: String, val body: JSONObject, internal val watch: List<WatchEntry>, internal val tracks: List<TrackEntry>) {
+    class Sent internal constructor(
+        val user: String, val body: JSONObject, internal val watch: List<WatchEntry>, internal val tracks: List<TrackEntry>,
+        internal val startedAt: Long,
+    ) {
         /** Остались записи сверх [BATCH]: после ответа сразу следующий запрос. */
         var more = false
             internal set
     }
 
-    private fun since(user: String): Long {
-        val c = store.cursor ?: return -1
-        if (c.substringBefore('|') != user) return -1
-        return c.substringAfter('|', "").toLongOrNull() ?: -1
+    /** Разобранный курсор для [user]: since — время сервера (-1 — не синхронизировались), mark — выгружено своё до этого времени. */
+    private class Cursor(val since: Long, val mark: Long)
+
+    private fun cursor(user: String): Cursor {
+        val p = (store.cursor ?: return Cursor(-1, 0)).split('|')
+        if (p[0] != user) return Cursor(-1, 0)
+        val since = p.getOrNull(1)?.toLongOrNull() ?: return Cursor(-1, 0)
+        return Cursor(since, p.getOrNull(2)?.toLongOrNull() ?: 0L)
     }
 
     /**
      * Тело POST [PATH] для [user]. Первый раз для этого пользователя на устройстве — всё своё (сервер отбросит
-     * старше 10 дней) и since = 0, дальше — только новое с прошлого ответа.
+     * старше 10 дней) и since = 0, дальше — только новое с прошлого ответа. После перезапуска приложения очередь
+     * добирается из хранилища: всё, что новее [Cursor.mark].
      */
     fun request(user: String): Sent = synchronized(lock) {
-        val since = since(user)
-        if (since < 0) {
-            // Очередь заводится заново: в хранилище уже всё, что в неё попадало (и другого пользователя тоже не уйдёт)
-            pendingWatch.clear(); pendingTracks.clear()
-            // Свежее — первым: больше [BATCH] уйдёт следующими запросами, а давнее сервер всё равно не примет
-            for (e in store.allWatch().sortedByDescending { it.at }) pendingWatch[e.key] = e
-            for (e in store.allTracks().sortedByDescending { it.at }) pendingTracks[e.key] = e
+        val startedAt = System.currentTimeMillis()
+        val c = cursor(user)
+        val since = c.since
+        if (loaded != user) {
+            loaded = user
+            if (since < 0) {
+                // Очередь заводится заново: в хранилище уже всё, что в неё попадало (и другого пользователя тоже не уйдёт)
+                pendingWatch.clear(); pendingTracks.clear()
+                // Свежее — первым: больше [BATCH] уйдёт следующими запросами, а давнее сервер всё равно не примет
+                for (e in store.allWatch().sortedByDescending { it.at }) pendingWatch[e.key] = e
+                for (e in store.allTracks().sortedByDescending { it.at }) pendingTracks[e.key] = e
+            } else {
+                // Перезапуск: то, что не успело уйти, лежало только в памяти; уже заметное в этом процессе не трогаем
+                for (e in store.allWatch().filter { it.at > c.mark }.sortedByDescending { it.at }) pendingWatch.putIfAbsent(e.key, e)
+                for (e in store.allTracks().filter { it.at > c.mark }.sortedByDescending { it.at }) pendingTracks.putIfAbsent(e.key, e)
+            }
         }
         val w = pendingWatch.values.take(BATCH)
         val t = pendingTracks.values.take(BATCH)
@@ -96,7 +119,7 @@ class WatchSync(private val store: SyncStore) {
                 t.forEach { put(JSONObject().put("key", it.key).put("audio", it.audio ?: JSONObject.NULL).put("spu", it.spu ?: JSONObject.NULL)
                     .put("sidecar", it.sidecar ?: JSONObject.NULL).put("at", it.at)) }
             })
-        Sent(user, body, w, t).also { it.more = pendingWatch.size > w.size || pendingTracks.size > t.size }
+        Sent(user, body, w, t, startedAt).also { it.more = pendingWatch.size > w.size || pendingTracks.size > t.size }
     }
 
     /** Ответ сервера: пришедшее новее своего ложится в хранилище. Возвращает, сколько записей поменялось. */
@@ -112,6 +135,7 @@ class WatchSync(private val store: SyncStore) {
                 val mine = store.watch(e.key)
                 if (mine != null && mine.at >= e.at) continue
                 if (pendingWatch[e.key]?.let { it.at >= e.at } == true) continue
+                pendingWatch.remove(e.key) // старее пришедшего: не должно уйти обратно
                 store.putWatch(e); changed++
             }
         }
@@ -123,11 +147,19 @@ class WatchSync(private val store: SyncStore) {
                 if (e.key.isEmpty() || e.at <= 0) continue
                 if (store.trackAt(e.key) >= e.at) continue
                 if (pendingTracks[e.key]?.let { it.at >= e.at } == true) continue
+                pendingTracks.remove(e.key) // иначе следующий выбор склеится со старым и затрёт пришедшее
                 store.putTrack(e); changed++
             }
         }
+        // Курсор — только когда ушло всё: оборвавшаяся выгрузка (больше [BATCH]) при следующем запуске начнётся заново
         val now = res.optLong("now", 0)
-        if (now > 0) store.cursor = "${sent.user}|$now"
+        if (now > 0 && !sent.more) {
+            val old = cursor(sent.user)
+            val drained = pendingWatch.isEmpty() && pendingTracks.isEmpty()
+            // Что заметили, пока шёл запрос, осталось в очереди: границу не двигаем, после перезапуска оно подберётся
+            val mark = if (drained) sent.startedAt else old.mark
+            store.cursor = "${sent.user}|$now|$mark"
+        }
         changed
     }
 }
