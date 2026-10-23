@@ -493,6 +493,20 @@ class Media3Engine(private val context: Context) : PlayerEngine {
     override val subtitleTrack: Int get() = selectedOf(C.TRACK_TYPE_TEXT)
     override fun setSubtitleTrack(id: Int) = select(C.TRACK_TYPE_TEXT, id)
 
+    // Files are sources 1… of [buildSource] (0 is the film): MergingMediaSource names their groups "<source>:…" (see [pickLastAudio]).
+    override fun audioFileOf(id: Int, files: Int): Int? {
+        if (files <= 0 || id < 0) return null
+        val g = exo?.currentTracks?.groups?.getOrNull(id / 100) ?: return null
+        val n = g.mediaTrackGroup.id.substringBefore(':', "").toIntOrNull() ?: return null
+        return (n - 1).takeIf { it in 0 until files }
+    }
+
+    override fun audioFileTrack(index: Int, files: Int): Int? {
+        val groups = exo?.currentTracks?.groups ?: return null
+        val gi = groups.indexOfFirst { it.type == C.TRACK_TYPE_AUDIO && it.isSupported(true) && it.mediaTrackGroup.id.startsWith("${index + 1}:") }
+        return if (gi >= 0) gi * 100 else null
+    }
+
     override fun addAudioFile(url: String) {
         val p = exo ?: return
         val m = media ?: return

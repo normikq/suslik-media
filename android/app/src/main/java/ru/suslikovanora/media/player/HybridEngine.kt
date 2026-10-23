@@ -93,6 +93,8 @@ class HybridEngine(private val context: Context) : PlayerEngine {
     override val subtitleTrack: Int get() = active.subtitleTrack
     override fun setSubtitleTrack(id: Int) = active.setSubtitleTrack(id)
     override fun addAudioFile(url: String) = active.addAudioFile(url)
+    override fun audioFileOf(id: Int, files: Int): Int? = active.audioFileOf(id, files)
+    override fun audioFileTrack(index: Int, files: Int): Int? = active.audioFileTrack(index, files)
     override fun setAudioDelayMs(ms: Long) = active.setAudioDelayMs(ms)
 
     override val videoTrackCount: Int get() = active.videoTrackCount

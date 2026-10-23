@@ -114,6 +114,23 @@ interface PlayerEngine {
     fun setSubtitleTrack(id: Int)
     /** Внешняя озвучка, выбранная в меню во время просмотра; сразу становится текущей дорожкой. */
     fun addAudioFile(url: String)
+    /**
+     * Из какого подключённого файла озвучки дорожка [id]: номер файла в порядке подключения (их [files]) или null — дорожка фильма.
+     * VLC: дорожки файлов идут после дорожек фильма в порядке подключения.
+     */
+    fun audioFileOf(id: Int, files: Int): Int? {
+        if (files <= 0) return null
+        val tracks = audioTracks().filter { it.id != -1 }
+        val base = tracks.size - files
+        val idx = tracks.indexOfFirst { it.id == id }
+        return if (base >= 0 && idx >= base) idx - base else null
+    }
+    /** Дорожка [index]-го подключённого файла озвучки (см. [audioFileOf]) или null, если её ещё нет. */
+    fun audioFileTrack(index: Int, files: Int): Int? {
+        val tracks = audioTracks().filter { it.id != -1 }
+        val base = tracks.size - files
+        return if (base >= 1 && index in 0 until files) tracks[base + index].id else null
+    }
     /** Задержка звука (загруженная озвучка со сдвигом). Media3 сдвигает сам файл озвучки ([CustomAudioInfo]), здесь — только VLC. */
     fun setAudioDelayMs(ms: Long) {}
 

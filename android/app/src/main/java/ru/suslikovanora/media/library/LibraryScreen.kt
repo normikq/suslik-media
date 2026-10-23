@@ -285,7 +285,7 @@ internal fun continueEntries(items: List<LibraryItem>, store: LibraryStore): Lis
         val t = targetFor(item, next) ?: return@mapNotNull null
         ContinueEntry(item, t, tr("library.dalshe") + t.label.removePrefix(item.baseTitle).removePrefix(" · "), 0f, 0L, 0L, w.at)
     }
-}.sortedByDescending { it.at }.take(10)
+}.sortedByDescending { it.at }.take(4) // «Продолжить просмотр»: четыре последних (и полоса, и баннер на ТВ)
 
 @Composable
 fun LibraryScreen(
@@ -458,13 +458,8 @@ private fun ContinueCard(
     onClick: () -> Unit
 ) {
     val context = LocalContext.current
-    // The card is wide (170×100): the wide TMDB picture fits it; without one the poster shows its top (faces, title)
-    var wide by remember(e.item.m.id) { mutableStateOf(store.cachedHero(e.item.posterQueries)?.backdrop) }
     var poster by remember(e.item.m.id) { mutableStateOf(store.cachedPoster(e.item.posterQueries)) }
-    LaunchedEffect(e.item.m.id) {
-        if (wide == null) wide = store.hero(e.item.posterQueries)?.backdrop
-        if (wide == null && poster == null) poster = store.poster(e.item.posterQueries)
-    }
+    LaunchedEffect(e.item.m.id) { if (poster == null) poster = store.poster(e.item.posterQueries) }
 
     Column(
         Modifier.width(170.dp).clip(RoundedCornerShape(14.dp))
@@ -476,14 +471,13 @@ private fun ContinueCard(
             Modifier.fillMaxWidth().height(100.dp).clip(RoundedCornerShape(10.dp))
                 .background(Color(0xFF13161F))
         ) {
-            val url = wide ?: poster
+            val url = poster
             if (url != null) {
                 AsyncImage(
                     model = ImageRequest.Builder(context).data(url).memoryCacheKey(url).crossfade(350).build(),
                     imageLoader = Posters.loader(context),
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
-                    alignment = if (wide != null) Alignment.Center else Alignment.TopCenter,
                     modifier = Modifier.fillMaxSize()
                 )
             }

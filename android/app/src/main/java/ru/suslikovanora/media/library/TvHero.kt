@@ -75,7 +75,7 @@ private fun timeLeft(e: ContinueEntry): String? {
 @Composable
 fun TvContinueHero(items: List<LibraryItem>, store: LibraryStore, onOpen: (PlayTarget) -> Unit) {
     val wv = store.watchVersion
-    val entries = remember(items, wv) { continueEntries(items, store).take(4) }
+    val entries = remember(items, wv) { continueEntries(items, store) }
     if (entries.isEmpty()) return
     val context = LocalContext.current
     var chosen by remember { mutableStateOf<Long?>(null) }
@@ -195,7 +195,7 @@ private fun HeroThumb(e: ContinueEntry, store: LibraryStore, selected: Boolean, 
 /** At the start of the app: the banners' texts and pictures (wide picture, logo, posters) are loaded before the page opens. */
 suspend fun warmHero(store: LibraryStore, context: android.content.Context) {
     val loader = Posters.loader(context)
-    for (e in continueEntries(store.items, store).take(4)) {
+    for (e in continueEntries(store.items, store)) {
         val q = e.item.posterQueries
         runCatching {
             store.poster(q)?.let { loader.enqueue(ImageRequest.Builder(context).data(it).memoryCacheKey(it).build()) }
