@@ -96,7 +96,7 @@
   function getInfo(magnet) {
     var q = escapeTitle(magnet.name), key = q.toLowerCase();
     if (!hero.info.has(key)) {
-      hero.info.set(key, api("/api/poster?q=" + encodeURIComponent(q)).catch(function () { return null; }));
+      hero.info.set(key, api("/api/poster?hero=1&q=" + encodeURIComponent(q)).catch(function () { return null; }));
     }
     return hero.info.get(key);
   }
@@ -171,7 +171,7 @@
     // широкий кадр, логотип, описание, год и рейтинг приходят с сервера (TMDB); пока их нет — баннер просто тёмный
     var token = e;
     getInfo(e.magnet).then(function (info) {
-      if (!info || hero.entries[hero.idx] !== token && hero.entries[0] !== token) return;
+      if (!info || (hero.entries[hero.idx] || hero.entries[0]) !== token) return;
       if (!box.contains(bg)) return;
       if (info.backdrop && /^\/api\/poster\/img\//.test(info.backdrop)) {
         var im = new Image();
@@ -243,6 +243,8 @@
         if (changed) renderLibrary(false);
         if (!(j.pending > 0)) break;
         await new Promise(function (r) { setTimeout(r, 30000); });
+        // ушли с медиатеки — не спрашиваем; вернутся — setTab запустит снова
+        if (!libraryVisible()) { tagsBusy = false; return; }
       }
     } catch (e) { /* сервер без /api/tags: остаются метки по названию */ }
     tagsAt = Date.now();

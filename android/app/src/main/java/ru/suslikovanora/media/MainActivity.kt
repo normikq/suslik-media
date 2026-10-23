@@ -150,11 +150,14 @@ class MainActivity : ComponentActivity() {
             if (ok == true) launch { update = Updater.check(this@MainActivity) }
             if (ok == true) add.resume()
             if (ok == true || (ok == null && store.magnets.isNotEmpty())) store.refresh()
-            // Dolby Vision / HDR / DTS marks (the server looks into the files) and the TV banners' pictures: ready before the page opens
-            if (store.items.isNotEmpty() && store.authenticated == true) {
-                launch { store.refreshTags() }
-                if (Tv.isTv(this@MainActivity)) launch { ru.suslikovanora.media.library.warmHero(store, this@MainActivity) }
-            }
+        }
+        // Dolby Vision / HDR / DTS marks (the server looks into the files) and the TV banners' pictures: once the library is there
+        // (also when it arrives later: first start without a snapshot, sign-in after the start)
+        val libraryReady = store.items.isNotEmpty() && store.authenticated == true
+        LaunchedEffect(libraryReady) {
+            if (!libraryReady) return@LaunchedEffect
+            launch { store.refreshTags() }
+            if (Tv.isTv(this@MainActivity)) launch { ru.suslikovanora.media.library.warmHero(store, this@MainActivity) }
         }
         val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
         // Hoisted so every tab keeps its scroll position (and the library its filter) across tab switches.

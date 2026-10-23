@@ -33,7 +33,23 @@ async function addBannerExtras(body, match) {
   if (ov) body.overview = ov.slice(0, 600);
 }
 
-async function searchPoster(rawQuery) {
+// Дополнения баннера (кадр, логотип, описание по-русски — ещё 2 запроса к TMDB) нужны только «Продолжить просмотр»:
+// их просят с ?hero=1 (до 4 названий), обычные плитки медиатеки получают один поиск.
+const heroCache = new Map(); // query -> { at, body }
+
+async function searchPoster(rawQuery, opts = {}) {
+  const base = await searchBase(rawQuery);
+  if (!opts.hero || !base.ref) return base.body;
+  const hit = heroCache.get(base.ck);
+  if (hit && Date.now() - hit.at < 24 * 3600 * 1000) return hit.body;
+  const body = { ...base.body };
+  await addBannerExtras(body, base.ref);
+  heroCache.set(base.ck, { at: Date.now(), body });
+  if (heroCache.size > 300) heroCache.delete(heroCache.keys().next().value);
+  return body;
+}
+
+async function searchBase(rawQuery) {
   const query = typeof rawQuery === "string" ? rawQuery.trim().slice(0, 160) : "";
   if (!query) {
     const err = new Error("Не указано название.");
@@ -49,7 +65,7 @@ async function searchPoster(rawQuery) {
   const ck = query.toLowerCase();
   const hit = posterLookupCache.get(ck);
   if (hit && Date.now() - hit.at < 24 * 3600 * 1000) {
-    return hit.body;
+    return { ck, body: hit.body, ref: hit.ref };
   }
 
   // Название из библиотеки — имя раздачи: «Severance Season 1», «Show - S01-10», «Фильм TrueHD Atmos», «Erai-raws Show - 01 ~ 10».
@@ -87,7 +103,7 @@ async function searchPoster(rawQuery) {
     rating: match && Number(match.vote_average) > 0 ? Math.round(Number(match.vote_average) * 10) / 10 : null
   };
 
-  if (match && match.id) await addBannerExtras(body, match);
+  const ref = match && match.id ? { id: match.id, media_type: match.media_type } : null;
 
   // «Постера нет» после сбоя сети по части вариантов — не окончательный ответ: не запоминаем, клиент спросит снова.
   if (!match && failed) {
@@ -96,12 +112,12 @@ async function searchPoster(rawQuery) {
     throw err;
   }
 
-  posterLookupCache.set(ck, { at: Date.now(), body });
+  posterLookupCache.set(ck, { at: Date.now(), body, ref });
   if (posterLookupCache.size > 3000) {
     posterLookupCache.delete(posterLookupCache.keys().next().value);
   }
 
-  return body;
+  return { ck, body, ref };
 }
 
 function getPosterImagePath(size, file) {

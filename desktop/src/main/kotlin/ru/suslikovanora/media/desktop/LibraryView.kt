@@ -449,7 +449,7 @@ fun LibraryView(
                 }
 
                 // 2. Continue watching section
-                if (query.isBlank() && !mineOnly) {
+                if (query.isBlank() && category == Category.All && !mineOnly) {
                     item(span = { GridItemSpan(maxLineSpan) }, key = "continue", contentType = "continue") {
                         ContinueRow(all, lib) { t -> target = t }
                     }
@@ -458,8 +458,6 @@ fun LibraryView(
                 // 3. Category filter chips and View/Sort Controls
                 item(span = { GridItemSpan(maxLineSpan) }, key = "filters_bar") {
                     FilterControlsBar(
-                        selectedCategory = category,
-                        onCategorySelect = setCategory,
                         viewMode = viewMode,
                         onViewModeSelect = { viewMode = it },
                         sortBy = sortBy,
@@ -497,7 +495,7 @@ fun LibraryView(
                     )
                 }
 
-                if (query.isBlank() && !mineOnly) {
+                if (query.isBlank() && category == Category.All && !mineOnly) {
                     item(key = "continue", contentType = "continue") {
                         ContinueRow(all, lib) { t -> target = t }
                     }
@@ -505,8 +503,6 @@ fun LibraryView(
 
                 item(key = "filters_bar") {
                     FilterControlsBar(
-                        selectedCategory = category,
-                        onCategorySelect = setCategory,
                         viewMode = viewMode,
                         onViewModeSelect = { viewMode = it },
                         sortBy = sortBy,
@@ -631,8 +627,6 @@ private fun LibraryHeader(
 
 @Composable
 private fun FilterControlsBar(
-    selectedCategory: Category,
-    onCategorySelect: (Category) -> Unit,
     viewMode: ViewMode,
     onViewModeSelect: (ViewMode) -> Unit,
     sortBy: SortBy,
@@ -1226,7 +1220,7 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
     val bannerSrc = remember { MutableInteractionSource() }
     val bannerHover by bannerSrc.collectIsHoveredAsState()
     // The banners change by themselves, one after another (not while the pointer is over the banner); a click on a card restarts the wait
-    LaunchedEffect(entries.map { it.item.m.id }, chosen, bannerHover) {
+    LaunchedEffect(entries, chosen, bannerHover) {
         if (entries.size < 2 || bannerHover) return@LaunchedEffect
         kotlinx.coroutines.delay(9000)
         val cur = entries.indexOfFirst { it.item.m.id == chosen }.coerceAtLeast(0)
@@ -1242,8 +1236,6 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
         val queries = e.item.posterQueries
         var hero by remember(e.item.m.id) { mutableStateOf(lib.cachedHero(queries)) }
         LaunchedEffect(e.item.m.id) { if (hero == null) hero = lib.hero(queries) }
-        var poster by remember(e.item.m.id) { mutableStateOf(lib.cachedPoster(queries)) }
-        LaunchedEffect(e.item.m.id) { if (poster == null) poster = lib.poster(queries) }
 
         androidx.compose.foundation.layout.BoxWithConstraints(
             Modifier.padding(top = 6.dp, bottom = 22.dp).fillMaxWidth().height(360.dp).hoverable(bannerSrc)

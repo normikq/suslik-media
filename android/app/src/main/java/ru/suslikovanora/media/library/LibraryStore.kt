@@ -282,6 +282,7 @@ class LibraryStore(context: Context) {
     }
 
     /** Once per start: pictures no tile showed for 7 days leave the disk cache (downloaded again when needed). */
+    @OptIn(coil.annotation.ExperimentalCoilApi::class)
     private suspend fun prunePosters() = withContext(Dispatchers.IO) {
         if (postersPruned) return@withContext
         postersPruned = true
@@ -337,7 +338,7 @@ class LibraryStore(context: Context) {
     // ---- the TV banner «Продолжить просмотр»: wide picture, title logo, description, year, rating (from /api/poster) ----
     /** Urls are absolute (Coil loads them with the API's HTTP client). */
     class HeroInfo(val backdrop: String?, val logo: String?, val overview: String?, val year: String?, val rating: Double?)
-    private val heroes = HashMap<String, HeroInfo>()
+    private val heroes = java.util.concurrent.ConcurrentHashMap<String, HeroInfo>()
 
     fun cachedHero(queries: List<String>): HeroInfo? = queries.firstNotNullOfOrNull { heroes[it.lowercase()] }
 
@@ -346,7 +347,7 @@ class LibraryStore(context: Context) {
         cachedHero(queries)?.let { return it }
         for (q in queries) {
             try {
-                val j = posterGate.withPermit { Api.get("/api/poster?q=" + URLEncoder.encode(q, "UTF-8")) }
+                val j = posterGate.withPermit { Api.get("/api/poster?hero=1&q=" + URLEncoder.encode(q, "UTF-8")) }
                 if (!j.has("backdrop") && !j.has("overview")) continue
                 val abs = { k: String -> j.optString(k).takeIf { it.startsWith("/api/poster/img/") }?.let { Api.BASE + it } }
                 val info = HeroInfo(abs("backdrop"), abs("logo"), j.optString("overview").ifBlank { null }, j.optString("year").ifBlank { null },
@@ -466,6 +467,7 @@ class LibraryStore(context: Context) {
      * Posters (and their picture files, unless another tile shows the same one), the video info line, watch
      * progress, the resume place, the last episode, and a reserve still kept on disk — of films no longer in the list.
      */
+    @OptIn(coil.annotation.ExperimentalCoilApi::class)
     private suspend fun cleanUp(list: List<LibraryItem>) = withContext(Dispatchers.IO) {
         val keep = LibraryKeep(list)
         if (!keep.usable) return@withContext

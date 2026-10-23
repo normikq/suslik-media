@@ -17,6 +17,8 @@ const RETRY_AFTER_MS = 6 * 3600 * 1000;
 const MAX_ATTEMPTS = 3;
 const PAUSE_MS = 1500; // между раздачами: фоновый разбор не мешает просмотру
 const QUEUE_MAX = 300;
+const GONE_MS = 24 * 3600 * 1000;
+const missingSince = new Map(); // id -> когда раздачи впервые не оказалось в списке
 
 const store = new Map(); // magnet id (строка) -> { t: ["Dolby Vision","HDR","DTS-HD MA"], at } | { f: когда не вышло, n: сколько раз }
 try {
@@ -91,7 +93,9 @@ async function work() {
       try {
         const parsed = safeHttpsUrl(job.link);
         if (!isAllDebridFileLink(parsed)) throw new Error("ссылка");
-        const tags = await withFfprobeSlot(async () => probeTags((await resolveDirectUrl(parsed)).toString()));
+        // ссылку берём до слота: ожидание AllDebrid (до 20 с) не держит ffprobe, общий с /api/media-metadata
+        const direct = await resolveDirectUrl(parsed);
+        const tags = await withFfprobeSlot(() => probeTags(direct.toString()));
         store.set(job.id, { t: tags, at: Date.now() });
       } catch (err) {
         store.set(job.id, { f: Date.now(), n: ((prev && prev.n) || 0) + 1 });
@@ -111,9 +115,15 @@ async function work() {
  */
 function snapshot(magnets, prune) {
   if (prune) {
+    // раздача пропала из списка — запись удаляется, только если её нет дольше GONE_MS (сбой AllDebrid не стирает разбор)
     const present = new Set(magnets.map(m => String(m.id)));
+    const now = Date.now();
     let dropped = false;
-    for (const id of [...store.keys()]) if (!present.has(id)) { store.delete(id); dropped = true; }
+    for (const id of [...store.keys()]) {
+      if (present.has(id)) { missingSince.delete(id); continue; }
+      if (!missingSince.has(id)) missingSince.set(id, now);
+      else if (now - missingSince.get(id) > GONE_MS) { store.delete(id); missingSince.delete(id); dropped = true; }
+    }
     if (dropped) persist();
   }
   for (const m of magnets) {

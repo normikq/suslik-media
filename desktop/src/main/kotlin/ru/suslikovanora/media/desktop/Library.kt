@@ -487,7 +487,7 @@ class Library {
         cachedHero(queries)?.let { return it }
         for (q in queries) {
             try {
-                val j = posterGate.withPermit { Api.get("/api/poster?q=" + URLEncoder.encode(q, "UTF-8")) }
+                val j = posterGate.withPermit { Api.get("/api/poster?hero=1&q=" + URLEncoder.encode(q, "UTF-8")) }
                 if (!j.has("backdrop") && !j.has("overview")) continue
                 val bd = j.optString("backdrop").takeIf { it.startsWith("/api/poster/img/") }
                 val img = bd?.let { loadHeroImage(it) }

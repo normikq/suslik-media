@@ -30,7 +30,7 @@ router.post("/api/media-metadata", requireLogin, mediaInfoLimiter, async (req, r
 router.get("/api/poster", requireLogin, posterLimiter, async (req, res) => {
   const query = typeof req.query.q === "string" ? req.query.q : "";
   try {
-    const body = await searchPoster(query);
+    const body = await searchPoster(query, { hero: req.query.hero === "1" });
     // Найденный постер браузер помнит неделю, «постера нет» — сутки (TMDB мог его ещё не завести).
     res.set("Cache-Control", `private, max-age=${body.poster ? 604800 : 86400}`);
     res.json(body);
