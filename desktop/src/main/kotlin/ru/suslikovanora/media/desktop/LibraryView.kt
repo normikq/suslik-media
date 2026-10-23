@@ -1239,12 +1239,16 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
         chosen = entries[(cur + 1) % entries.size].item.m.id
     }
 
+    // While the banner fades out (signed out, the list emptied) it keeps showing the film it had: the list has none
+    var lastShown by remember { mutableStateOf(entries.firstOrNull()) }
+
     androidx.compose.animation.AnimatedVisibility(
         entries.isNotEmpty(),
         enter = fadeIn(tween(300)) + expandVertically(tween(320, easing = Sm.ease)),
         exit = fadeOut(tween(200)) + shrinkVertically(tween(260, easing = Sm.ease))
     ) {
-        val e = entries.firstOrNull { it.item.m.id == chosen } ?: entries.first()
+        val e = entries.firstOrNull { it.item.m.id == chosen } ?: entries.firstOrNull() ?: lastShown ?: return@AnimatedVisibility
+        androidx.compose.runtime.SideEffect { lastShown = e }
         val queries = e.item.posterQueries
         var hero by remember(e.item.m.id) { mutableStateOf(lib.cachedHero(queries)) }
         LaunchedEffect(e.item.m.id) { if (hero == null) hero = lib.hero(queries) }
