@@ -133,8 +133,8 @@ function requireLogin(req, res, next) {
 
 function requireAdmin(req, res, next) {
   if (!resolveAuth(req)) return res.status(401).json({ error: "Сначала выполните вход." });
-  // Если вход выполнен по паролю сайта (SITE_PASSWORD) — считаем администратором
-  if (!req.user || req.user.role === "admin") return next();
+  // Админ — только Discord-пользователь с ролью: общий пароль (id "shared") админом не считается, как в isLibraryAdmin
+  if (req.user && req.user.role === "admin" && req.user.id !== SHARED_USER.id) return next();
   return res.status(403).json({ error: "Недостаточно прав администратора." });
 }
 
@@ -200,6 +200,7 @@ module.exports = {
   resolveAuth,
   requireLogin,
   requireAdmin,
+  secretEquals,
   deviceId,
   verifyPassword,
   isTester,

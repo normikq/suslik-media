@@ -153,7 +153,6 @@ router.get(
   }
 );
 
-router.get(["/api/file/proxy", "/api/file/proxy/:name"], mirrorAuth, mirrorLimiter, handleMirrorAccel);
-router.get(["/api/file/proxy", "/api/file/proxy/:name"], mirrorAuth, handleMirrorStream);
+router.get(["/api/file/proxy", "/api/file/proxy/:name"], mirrorAuth, mirrorLimiter, handleMirrorAccel, handleMirrorStream);
 
 module.exports = router;

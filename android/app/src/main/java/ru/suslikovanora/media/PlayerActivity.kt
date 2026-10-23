@@ -944,6 +944,7 @@ class PlayerActivity : ComponentActivity() {
         needsReload = false; retryCount = 0; reconnectScheduled = false
         handler.removeCallbacks(reconnectRunnable); handler.removeCallbacks(stallRunnable)
         handler.removeCallbacks(stablePlaybackRunnable)
+        handler.removeCallbacks(videoBackRunnable)
         audioSession.abandonAudioFocus()
         handler.removeCallbacks(watchdogRunnable)
         handler.removeCallbacks(seekWatchdogRunnable)
@@ -968,7 +969,7 @@ class PlayerActivity : ComponentActivity() {
         val episode = trackSelector.allEpisodeUrls(url)
         // Both engines read through the same reserve (BurstProxy): it downloads in bursts sized to the network and the
         // film. A file switched from Media3 to VLC keeps what was already downloaded.
-        if (!media3Swept) { media3Swept = true; Thread { Media3Cache.clearAll(applicationContext) }.start() } // Media3's own disk cache of the first 2.2.1 builds
+        if (!media3Swept) { media3Swept = true; scope.launch(kotlinx.coroutines.Dispatchers.IO) { Media3Cache.clearAll(applicationContext) } } // Media3's own disk cache of the first 2.2.1 builds
         BurstProxy.capBytes = reserveBytes
         val main = burst(url)
         // Only what this episode needs stays in the stream cache (the previous episode's files are dropped).
@@ -1674,7 +1675,7 @@ class PlayerActivity : ComponentActivity() {
         handler.removeCallbacks(reattachRunnable); surfaceLost = false
         // Nothing may restart playback (or reconnect) behind the lock screen.
         trackSelector.stop()
-        for (r in listOf(watchdogRunnable, stallRunnable, reconnectRunnable, seekWatchdogRunnable, reseekRunnable, trackSwitchRunnable))
+        for (r in listOf(watchdogRunnable, stallRunnable, reconnectRunnable, seekWatchdogRunnable, reseekRunnable, trackSwitchRunnable, videoBackRunnable))
             handler.removeCallbacks(r)
         networkMonitor.unregister()
         needsReload = false; retryCount = 0; reconnectScheduled = false
@@ -1769,7 +1770,9 @@ class PlayerActivity : ComponentActivity() {
         if (url == currentUrl) return
         // Another film chosen while this one was parked behind the lock screen / in the background: wake the player
         // up first (receivers, video surface) without resuming the old film — the new one replaces it right below.
-        if (keptOnStop) { playOnStart = false; handler.removeCallbacks(idleReleaseRunnable); resumeAfterStop() }
+        if (keptOnStop) { playOnStart = false; handler.removeCallbacks(idleReleaseRunnable); resumeAfterStop()
+            handler.removeCallbacks(videoBackRunnable); videoParked = false // the new stream below gets a fresh player: no seek to the old moment
+        }
         player?.let { persistPosition(perceivedPosition(), lengthOf(it)) }
         currentUrl = url
         lastKnownLength = 0L

@@ -9,6 +9,7 @@ const {
   getRoomPublicData,
   addListener,
   joinRoom,
+  findUserActiveRoom,
   previewMember,
   publicMember,
   leaveRoom,
@@ -20,6 +21,14 @@ const router = express.Router();
 // 1. Создание новой комнаты совместного просмотра
 router.post("/api/rooms", requireLogin, roomLimiter, (req, res) => {
   const { file, controls, client_id } = req.body || {};
+  const active = findUserActiveRoom(req.user, client_id, null);
+  if (active) {
+    const error =
+      active.reason === "same_device_other_room"
+        ? "Это устройство уже подключено к другой комнате."
+        : "Этот аккаунт уже находится в активной комнате.";
+    return res.status(400).json({ error });
+  }
   const room = createRoom(req.user, file, controls, client_id);
   res.json({ ok: true, room: getRoomPublicData(room) });
 });
@@ -37,6 +46,17 @@ router.post("/api/rooms/:id/join", requireLogin, roomLimiter, (req, res) => {
   if (!room) return res.status(404).json({ error: "Комната не найдена." });
 
   const { client_id } = req.body || {};
+  const active = findUserActiveRoom(req.user, client_id, room.id);
+  if (active) {
+    const error =
+      active.reason === "other_device_same_room"
+        ? "Этот аккаунт уже подключен к комнате с другого устройства."
+        : active.reason === "same_device_other_room"
+          ? "Это устройство уже подключено к другой комнате."
+          : "Этот аккаунт уже находится в активной комнате.";
+    return res.status(400).json({ error });
+  }
+
   // В список участников попадают с открытием потока событий (/events), здесь только «кто я»
   res.json({ ok: true, room: getRoomPublicData(room), member: previewMember(req.user, client_id) });
 });
@@ -44,7 +64,18 @@ router.post("/api/rooms/:id/join", requireLogin, roomLimiter, (req, res) => {
 // 4. Выход из комнаты
 router.post("/api/rooms/:id/leave", requireLogin, (req, res) => {
   const { client_id } = req.body || {};
-  if (client_id) leaveRoom(req.params.id, client_id, true);
+  if (client_id) {
+    leaveRoom(req.params.id, client_id, true);
+  } else if (req.user && req.user.id && req.user.id !== "shared") {
+    const room = getRoom(req.params.id);
+    if (room) {
+      for (const m of room.members.values()) {
+        if (m && String(m.id) === String(req.user.id)) {
+          leaveRoom(req.params.id, m.client_id, true);
+        }
+      }
+    }
+  }
   res.json({ ok: true });
 });
 
@@ -64,6 +95,9 @@ router.get("/api/rooms/:id/events", requireLogin, (req, res) => {
 
   const clientId = req.query.client_id;
   const joined = joinRoom(room.id, req.user, clientId);
+  if (!joined || !joined.member) {
+    return res.status(400).json({ error: joined?.error || "Не удалось подключиться к комнате." });
+  }
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");

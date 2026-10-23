@@ -36,7 +36,7 @@ class WatchSyncTest {
         assertEquals(listOf("2|b.mkv", "1|a.mkv"), keys) // свежее первым
         sync.onResponse(first, JSONObject("""{"now":1000,"watch":[],"tracks":[]}"""))
         assertFalse(sync.hasPending)
-        assertEquals("u_1|1000", store.cursor)
+        assertTrue(store.cursor!!.startsWith("u_1|1000|")) // третье поле — время устройства, до которого всё выгружено
 
         sync.noteWatch(WatchEntry("3|c.mkv", 5_000, 0, 1100))
         val next = sync.request("u_1")
@@ -78,6 +78,82 @@ class WatchSyncTest {
         sync.onResponse(sent, JSONObject("""{"now":30,"watch":[{"key":"1|a.mkv","pos":10000,"len":0,"at":100}]}"""))
         assertTrue(sync.hasPending)
         assertNull(store.w["1|a.mkv"])
+    }
+
+    private fun keys(s: WatchSync.Sent) = s.body.getJSONArray("watch").let { a -> (0 until a.length()).map { a.getJSONObject(it).getString("key") } }
+
+    @Test
+    fun unsentQueueSurvivesRestart() {
+        val store = MemStore()
+        val sync = WatchSync(store)
+        sync.onResponse(sync.request("u_1"), JSONObject("""{"now":1000,"watch":[],"tracks":[]}"""))
+        val mark = store.cursor!!.split('|')[2].toLong()
+        // Смотрели, приложение убили до отправки: в хранилище есть, в памяти очереди уже нет
+        store.putWatch(WatchEntry("1|a.mkv", 10_000, 100_000, mark + 5))
+        store.putWatch(WatchEntry("2|old.mkv", 10_000, 100_000, mark - 5)) // старее границы: уже ушло раньше
+        store.putTrack(TrackEntry("m1", "A", null, null, mark + 6))
+        val after = WatchSync(store)
+        val sent = after.request("u_1")
+        assertEquals(1000, sent.body.getLong("since"))
+        assertEquals(listOf("1|a.mkv"), keys(sent))
+        assertEquals("m1", sent.body.getJSONArray("tracks").getJSONObject(0).getString("key"))
+    }
+
+    @Test
+    fun oldCursorWithoutMarkReloadsStore() {
+        val store = MemStore()
+        store.cursor = "u_1|10"
+        store.putWatch(WatchEntry("1|a.mkv", 10_000, 0, 50))
+        assertEquals(listOf("1|a.mkv"), keys(WatchSync(store).request("u_1")))
+    }
+
+    @Test
+    fun cursorWaitsForLastBatch() {
+        val store = MemStore()
+        repeat(WatchSync.BATCH + 3) { store.putWatch(WatchEntry("$it|a.mkv", 10_000, 0, 100L + it)) }
+        val sync = WatchSync(store)
+        val first = sync.request("u_1")
+        assertTrue(first.more)
+        sync.onResponse(first, JSONObject("""{"now":1000}"""))
+        assertNull(store.cursor) // оборвись всё здесь — следующий запуск начнёт заново, а не потеряет остаток
+        val second = sync.request("u_1") // тот же процесс: очередь не пересобирается, уходит остаток
+        assertEquals(0, second.body.getLong("since"))
+        assertEquals(3, second.body.getJSONArray("watch").length())
+        assertFalse(second.more)
+        sync.onResponse(second, JSONObject("""{"now":1100}"""))
+        assertTrue(store.cursor!!.startsWith("u_1|1100|"))
+        assertFalse(sync.hasPending)
+    }
+
+    @Test
+    fun cursorMarkStaysWhileQueueNotDrained() {
+        val store = MemStore()
+        store.cursor = "u_1|10|77"
+        val sync = WatchSync(store)
+        val sent = sync.request("u_1")
+        sync.noteWatch(WatchEntry("1|a.mkv", 10_000, 0, 5)) // заметили, пока шёл запрос
+        sync.onResponse(sent, JSONObject("""{"now":20}"""))
+        assertEquals("u_1|20|77", store.cursor)
+    }
+
+    @Test
+    fun remoteWinDropsStalePending() {
+        val store = MemStore()
+        store.cursor = "u_1|10|0"
+        val sync = WatchSync(store)
+        sync.noteTrack(TrackEntry("m5", "ru", null, null, 100))
+        sync.noteWatch(WatchEntry("1|a.mkv", 1_000, 0, 100))
+        val sent = WatchSync(store).request("u_1") // чужой запрос, чтобы в ответе пришло новее нашего
+        sync.onResponse(sent, JSONObject("""{"now":30,
+            "watch":[{"key":"1|a.mkv","pos":9000,"len":0,"at":200}],
+            "tracks":[{"key":"m5","audio":"orig","spu":null,"sidecar":null,"at":200}]}"""))
+        assertEquals(9_000, store.w["1|a.mkv"]!!.pos)
+        assertFalse(sync.hasPending)
+        // Следующий выбор не должен подтянуть старую озвучку "ru"
+        sync.noteTrack(TrackEntry("m5", null, "sub", null, 300))
+        val t = sync.request("u_1").body.getJSONArray("tracks").getJSONObject(0)
+        assertTrue(t.isNull("audio"))
+        assertEquals("sub", t.getString("spu"))
     }
 
     @Test

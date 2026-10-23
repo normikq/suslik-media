@@ -102,6 +102,15 @@ const deviceAuthLimiter = rateLimit({
   handler: (req, res, next, options) => res.status(options.statusCode).json({ error: "Слишком много запросов кода. Подождите немного." })
 });
 
+// Опрос статуса связки: приложение спрашивает раз в несколько секунд, запас — на несколько устройств за одним роутером
+const devicePollLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 120,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  handler: (req, res, next, options) => res.status(options.statusCode).json({ error: "Слишком частые запросы. Подождите немного." })
+});
+
 // Совместный просмотр: команды ведущего, «грузится», вход. Живой просмотр шлёт единицы в минуту — лимит только от сбоев
 const roomLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -113,6 +122,7 @@ const roomLimiter = rateLimit({
 
 module.exports = {
   deviceAuthLimiter,
+  devicePollLimiter,
   roomLimiter,
   loginLimiter,
   apiLimiter,

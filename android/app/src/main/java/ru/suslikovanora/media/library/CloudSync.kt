@@ -82,7 +82,7 @@ object CloudSync {
     }
     private val sync = WatchSync(store)
     private val kicks = Channel<Unit>(Channel.CONFLATED)
-    private var started = false
+    @Volatile private var started = false
 
     @Synchronized fun init(ctx: Context) {
         if (started) return
@@ -123,10 +123,10 @@ object CloudSync {
         while (kotlinx.coroutines.currentCoroutineContext().isActive) {
             val user = userId
             val now = System.currentTimeMillis()
-            // По [kick] — если прошлый раз был больше 30 с назад (onResume бывает часто); своё во время фильма — раз в 2 минуты
-            val due = (kicked && now - lastPull > 30_000L) || (sync.hasPending && now - lastPush > 2 * 60_000L)
+            // По [kick]: своё уходит сразу (закрыли плеер), пустой onResume (бывает часто) — не чаще раза в 30 с;
+            // своё во время фильма — раз в 2 минуты
+            val due = (kicked && (sync.hasPending || now - lastPull > 30_000L)) || (sync.hasPending && now - lastPush > 2 * 60_000L)
             if (due && user != null && WatchSync.eligible(user)) {
-                lastPush = now
                 try {
                     var changed = 0
                     var rounds = 0
@@ -135,6 +135,7 @@ object CloudSync {
                         changed += sync.onResponse(sent, Api.post(WatchSync.PATH, sent.body))
                     } while (sent.more && ++rounds < 20 && userId == user)
                     lastPull = now
+                    lastPush = now // только после успеха: при сбое сети очередь не ждёт лишних 2 минут
                     if (changed > 0) {
                         AppLog.write("[sync] $changed entries from other devices")
                         changes.value++

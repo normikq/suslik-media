@@ -3,7 +3,7 @@
 const express = require("express");
 const crypto = require("crypto");
 const config = require("../config");
-const { loginLimiter, apiLimiter, deviceAuthLimiter } = require("../middleware/rate-limit");
+const { loginLimiter, apiLimiter, deviceAuthLimiter, devicePollLimiter } = require("../middleware/rate-limit");
 const { requireLogin, verifyPassword, resolveAuth } = require("../middleware/auth");
 const { alldebridRequest } = require("../services/alldebrid");
 const { exchangeOAuthCode, fetchMe, revokeOAuthToken, checkGuildMember } = require("../services/discord");
@@ -208,7 +208,15 @@ router.post("/api/auth/device", deviceAuthLimiter, (req, res) => {
   const pairing = createDevicePairing(req.body?.name);
   const host = req.get("host");
   const protocol = req.protocol;
-  const siteUrl = req.body?.site_url ? String(req.body.site_url).replace(/\/+$/, "") : null;
+  // site_url присылает клиент (адрес с префиксом, например /media), но только свой же хост: иначе в QR-код попал бы чужой адрес
+  let siteUrl = null;
+  try {
+    const u = new URL(String(req.body?.site_url || ""));
+    if ((u.protocol === "https:" || u.protocol === "http:") && !u.username && !u.password && !u.search && !u.hash
+      && u.host.toLowerCase() === String(host || "").toLowerCase()) {
+      siteUrl = `${u.origin}${u.pathname}`.replace(/\/+$/, "");
+    }
+  } catch { /* нет или не адрес: берём адрес сервера */ }
   const prefix = siteUrl ? "" : (config.SITE_PREFIX || "");
   const base = siteUrl || `${protocol}://${host}${prefix}`;
   const verificationUrl = `${base}/link?code=${encodeURIComponent(pairing.user_code)}`;
@@ -248,7 +256,7 @@ router.post("/api/auth/device/confirm", deviceAuthLimiter, requireLogin, (req, r
 });
 
 // 7. Device Flow — поллинг статуса с устройства
-router.post("/api/auth/device/poll", (req, res) => {
+router.post("/api/auth/device/poll", devicePollLimiter, (req, res) => {
   const code = req.body?.code;
   if (!code) return res.status(400).json({ error: "Параметр code обязателен." });
 
@@ -329,7 +337,7 @@ router.get("/api/session", (req, res) => {
       name: "Общий доступ",
       username: "shared",
       avatar: "",
-      role: "admin"
+      role: "user" // не "admin": удалять готовые раздачи общий пароль не может (isLibraryAdmin)
     };
   }
 

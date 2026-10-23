@@ -65,10 +65,6 @@ object WindowMode {
             init { cbSize = size() }
         }
 
-        fun interface WNDENUMPROC : com.sun.jna.win32.StdCallLibrary.StdCallCallback {
-            fun callback(hwnd: Pointer, lParam: Pointer?): Boolean
-        }
-
         fun GetWindowLongW(hwnd: Pointer, nIndex: Int): Int
         fun SetWindowLongW(hwnd: Pointer, nIndex: Int, dwNewLong: Int): Int
         fun GetWindowRect(hwnd: Pointer, rect: RECT): Boolean
@@ -80,8 +76,6 @@ object WindowMode {
         fun SetForegroundWindow(hwnd: Pointer): Boolean
         fun GetForegroundWindow(): Pointer?
         fun GetWindowThreadProcessId(hwnd: Pointer, lpdwProcessId: IntArray?): Int
-        fun EnableWindow(hwnd: Pointer, bEnable: Boolean): Boolean
-        fun EnumChildWindows(hWndParent: Pointer, lpEnumFunc: WNDENUMPROC, lParam: Pointer?): Boolean
         fun SetFocus(hwnd: Pointer): Pointer?
     }
 
@@ -111,7 +105,6 @@ object WindowMode {
     private var savedPlacement: User32.WINDOWPLACEMENT? = null
 
     private const val GWL_STYLE = -16
-    private const val WS_DISABLED = 0x08000000
     private const val WS_POPUP = 0x80000000.toInt()
     private const val WS_CAPTION = 0x00C00000
     private const val WS_THICKFRAME = 0x00040000
@@ -133,7 +126,28 @@ object WindowMode {
     private val HWND_NOTOPMOST = Pointer.createConstant(-2)
     private val HWND_TOPMOST = Pointer.createConstant(-1)
 
-    var currentWindow: Window? = null
+    // Слабая ссылка: пересозданное окно не должно удерживать старое дерево Compose
+    private var currentWindowRef: java.lang.ref.WeakReference<Window>? = null
+    var currentWindow: Window?
+        get() = currentWindowRef?.get()
+        set(value) { currentWindowRef = value?.let { java.lang.ref.WeakReference(it) } }
+
+    /** Поколение «полёта» мини-плеера: устаревший поток видит смену и выходит, не трогая общее состояние. */
+    @Volatile private var flyGen = 0
+
+    /**
+     * Физические пиксели монитора → координаты AWT окна [win]: у каждого монитора своё начало и свой масштаб,
+     * поэтому делим смещение внутри монитора, а не глобальную координату.
+     */
+    private fun toAwt(win: Window, user32: User32, hwnd: Pointer, nx: Int, ny: Int, scale: Double): Pair<Int, Int> {
+        val hMon = user32.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
+        val gb = win.graphicsConfiguration?.bounds
+        if (hMon == null || gb == null) return kotlin.math.round(nx / scale).toInt() to kotlin.math.round(ny / scale).toInt()
+        val mi = User32.MONITORINFO()
+        user32.GetMonitorInfoW(hMon, mi)
+        return (gb.x + kotlin.math.round((nx - mi.rcMonitor.left) / scale).toInt()) to
+            (gb.y + kotlin.math.round((ny - mi.rcMonitor.top) / scale).toInt())
+    }
 
     fun toggleFullscreen(window: Window? = null) {
         val target = window ?: currentWindow ?: runCatching { Frame.getFrames().firstOrNull { it.isShowing } }.getOrNull()
@@ -153,6 +167,9 @@ object WindowMode {
 
         val user32 = User32.INSTANCE
         val hwnd = if (isWindows) runCatching { Native.getWindowPointer(win) }.getOrNull() else null
+
+        // Из мини-плеера сначала возвращаем обычное окно: иначе остаются isMini и HWND_TOPMOST, а стили путаются
+        if (enable && isMini) setMiniMode(win, false)
 
         if (user32 != null && hwnd != null) {
             runCatching {
@@ -320,6 +337,7 @@ object WindowMode {
                     PlayerLog.write("[ui] mini on: from=$sx,$sy ${sw}x$sh to=$x,$y ${w}x$h scale=$scale")
                     isMini = true
                     miniAnimating = true
+                    val gen = ++flyGen
 
                     // Плавный «уезд» в правый нижний угол (ease-out, ~320 мс)
                     // Старт откладываем на один проход очереди событий: пусть сначала отработает перестройка Compose
@@ -333,6 +351,8 @@ object WindowMode {
                         var lastW = -1
                         var lastH = -1
                         while (true) {
+                            // Новый запуск/выход из мини отменяет этот поток; общее состояние ведёт уже новый владелец
+                            if (gen != flyGen) break
                             if (!isMini) { miniAnimating = false; break }
                             val now = System.nanoTime()
                             if (t0 == 0L) t0 = now
@@ -360,7 +380,8 @@ object WindowMode {
                                 javax.swing.SwingUtilities.invokeLater {
                                     // Синхронизируем AWT/Compose с нативным размером (в dip), иначе они держат старый большой размер
                                     runCatching {
-                                        win.setBounds(Math.round(x / scale).toInt(), Math.round(y / scale).toInt(), miniW, miniH)
+                                        val (ax, ay) = toAwt(win, user32, hwnd, x, y, scale)
+                                        win.setBounds(ax, ay, miniW, miniH)
                                     }
                                     PlayerLog.write("[ui] mini synced: awt=${win.bounds}")
                                     win.invalidate(); win.validate(); win.repaint()
@@ -391,6 +412,7 @@ object WindowMode {
                             SWP_NOMOVE or SWP_NOSIZE or SWP_FRAMECHANGED or SWP_SHOWWINDOW
                         )
                     }
+                    flyGen++
                     isMini = false
                     miniAnimating = false
                     javax.swing.SwingUtilities.invokeLater {
@@ -402,8 +424,9 @@ object WindowMode {
                                 val r = User32.RECT()
                                 if (user32.GetWindowRect(hwnd, r)) {
                                     val scale = win.graphicsConfiguration?.defaultTransform?.scaleX ?: 1.0
-                                    val want = java.awt.Rectangle(Math.round(r.left / scale).toInt(), Math.round(r.top / scale).toInt(),
-                                        Math.round((r.right - r.left) / scale).toInt(), Math.round((r.bottom - r.top) / scale).toInt())
+                                    val (ax, ay) = toAwt(win, user32, hwnd, r.left, r.top, scale)
+                                    val want = java.awt.Rectangle(ax, ay,
+                                        kotlin.math.round((r.right - r.left) / scale).toInt(), kotlin.math.round((r.bottom - r.top) / scale).toInt())
                                     if (want.width > 0 && want.height > 0 && win.bounds != want) {
                                         PlayerLog.write("[ui] mini off: awt=${win.bounds} native=$want")
                                         win.bounds = want
@@ -452,14 +475,9 @@ object WindowMode {
             w.requestFocus()
 
             // Ищем именно слой Skia, который получает клавиши Compose.
-            fun isSkiaLayer(c: java.awt.Component): Boolean {
-                var k: Class<*>? = c.javaClass
-                while (k != null) { if (k.name == "org.jetbrains.skiko.SkiaLayer") return true; k = k.superclass }
-                return false
-            }
             fun findFocusable(c: java.awt.Container): java.awt.Component? {
                 for (comp in c.components) {
-                    if (isSkiaLayer(comp)) return comp
+                    if (comp is org.jetbrains.skiko.SkiaLayer) return comp
                     if (comp is java.awt.Container) findFocusable(comp)?.let { return it }
                 }
                 return null
