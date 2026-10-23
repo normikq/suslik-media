@@ -19,7 +19,9 @@ const updatesRoutes = require("./routes/updates");
 const mediaRoutes = require("./routes/media");
 const roomsRoutes = require("./routes/rooms");
 const syncRoutes = require("./routes/sync");
+const tagsRoutes = require("./routes/tags");
 const tvRoutes = require("./routes/tvstream");
+const customAudioRoutes = require("./routes/custom-audio");
 
 function createApp() {
   const app = express();
@@ -83,7 +85,9 @@ function createApp() {
   app.use(mediaRoutes);
   app.use(roomsRoutes);
   app.use(syncRoutes);
+  app.use(tagsRoutes);
   app.use(tvRoutes);
+  app.use(customAudioRoutes);
 
   // Static files
   app.use(

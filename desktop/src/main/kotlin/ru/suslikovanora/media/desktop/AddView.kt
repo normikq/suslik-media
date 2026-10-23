@@ -63,6 +63,8 @@ import java.awt.Frame
 import java.awt.Toolkit
 import java.awt.datatransfer.DataFlavor
 import java.io.File
+import androidx.compose.foundation.draganddrop.dragAndDropTarget
+import androidx.compose.ui.draganddrop.dragData
 
 /** One thing the user added in this session, with its live AllDebrid status. */
 private class Added(val key: Long, val name: String) {
@@ -90,14 +92,15 @@ private suspend fun follow(a: Added, id: Long, readyNow: Boolean, lib: Library) 
 }
 
 @Composable
-fun AddView(lib: Library, header: @Composable () -> Unit) {
+fun AddView(lib: Library, onPlay: (ru.suslikovanora.media.desktop.player.PlayRequest) -> Unit = {}, header: @Composable () -> Unit) {
     val scope = rememberCoroutineScope()
     var magnet by remember { mutableStateOf("") }
     var status by remember { mutableStateOf<String?>(null) }
     var statusOk by remember { mutableStateOf(true) }
     val added = remember { mutableStateListOf<Added>() }
-    var mode by remember { mutableStateOf(0) } // 0 = magnet, 1 = torrent file
-    val chosen = remember { mutableStateListOf<File>() }
+    var mode by remember { mutableStateOf(0) } // 0 = film (magnet or .torrent), 1 = voice-over for a film in the library
+    // Ушли с вкладки «Добавить» — не привязанные озвучки удаляются из AllDebrid (предпросмотр вкладку не закрывает).
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { AudioDraft.leave() } }
 
     fun submitMagnet() {
         val links = magnet.split(Regex("\\s+")).map { it.trim() }.filter { it.startsWith("magnet:?") }
@@ -133,6 +136,15 @@ fun AddView(lib: Library, header: @Composable () -> Unit) {
         }
     }
 
+    /** .torrent из диалога или перетащенные: загружаются сразу (как на экране «Озвучка»). */
+    fun takeTorrents(files: List<File>) {
+        val picked = files.filter { it.name.endsWith(".torrent", ignoreCase = true) }
+        if (picked.isEmpty()) return
+        val tooBig = picked.filter { it.length() > 1024 * 1024 }
+        if (tooBig.isNotEmpty()) { status = tr("add.bolshe_mb_p", "p" to tooBig.joinToString { it.name }); statusOk = false } else status = null
+        picked.filter { it.length() <= 1024 * 1024 }.takeIf { it.isNotEmpty() }?.let { uploadFiles(it) }
+    }
+
     fun pickTorrent() {
         val d = FileDialog(null as Frame?, tr("add.vyberite_torrent"), FileDialog.LOAD).apply {
             isMultipleMode = true
@@ -140,10 +152,7 @@ fun AddView(lib: Library, header: @Composable () -> Unit) {
             setFilenameFilter { _, name -> name.endsWith(".torrent", ignoreCase = true) }
         }
         d.isVisible = true // native Windows dialog; returns when closed
-        val picked = d.files.filter { it.name.endsWith(".torrent", ignoreCase = true) }
-        val tooBig = picked.filter { it.length() > 1024 * 1024 }
-        if (tooBig.isNotEmpty()) { status = tr("add.bolshe_mb_p", "p" to tooBig.joinToString { it.name }); statusOk = false } else status = null
-        picked.filter { it.length() <= 1024 * 1024 && chosen.none { c -> c.absolutePath == it.absolutePath } }.forEach { chosen.add(it) }
+        takeTorrents(d.files.toList())
     }
 
     fun pasteFromClipboard() {
@@ -161,8 +170,8 @@ fun AddView(lib: Library, header: @Composable () -> Unit) {
                     fontFamily = Onest, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp, bottom = 16.dp))
                 Text(tr("add.vyberite_tip_vvoda"), color = Sm.muted, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp, modifier = Modifier.padding(bottom = 8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    ModeCard("↗", tr("add.magnet_ssylka"), tr("add.vstavte_magnet_ssylku"), mode == 0, Modifier.weight(1f)) { mode = 0; status = null }
-                    ModeCard("⇧", tr("add.torrent_fayl"), tr("add.vyberite_fayl_torrent"), mode == 1, Modifier.weight(1f)) { mode = 1; status = null }
+                    ModeCard("▶", tr("add.film"), tr("add.film_podskazka"), mode == 0, Modifier.weight(1f)) { mode = 0; status = null }
+                    ModeCard("♪", tr("audio.ozvuchka"), tr("audio.k_filmu_v_biblioteke"), mode == 1, Modifier.weight(1f)) { mode = 1; status = null }
                 }
                 Spacer(Modifier.height(16.dp))
                 // Same feel as the site: the input area glides in the direction of the chosen card, height follows smoothly.
@@ -175,40 +184,8 @@ fun AddView(lib: Library, header: @Composable () -> Unit) {
                             SizeTransform(clip = false) { _, _ -> tween(320, easing = Sm.ease) }
                     }
                 ) { m ->
-                    if (m == 0) Column {
-                        Text(tr("add.magnet_ssylka"), color = Sm.muted, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp, modifier = Modifier.padding(bottom = 6.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.weight(1f)) { Field(magnet, { magnet = it }, "magnet:?xt=urn:btih:…", onDone = { submitMagnet() }) }
-                            Spacer(Modifier.width(10.dp))
-                            LampButton(tr("add.dobavit_magnet"), enabled = magnet.isNotBlank()) { submitMagnet() }
-                        }
-                        Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            OutlineButton(tr("add.vstavit_iz_bufera")) { pasteFromClipboard() }
-                            Text(tr("add.mozhno_neskolko_ssylok_cherez"), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(start = 12.dp))
-                        }
-                    } else Column {
-                        Text(tr("add.torrent_fayl_do_mb"), color = Sm.muted, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp, modifier = Modifier.padding(bottom = 6.dp))
-                        DropZone(hasFiles = chosen.isNotEmpty()) { pickTorrent() }
-                        chosen.forEach { f ->
-                            Row(Modifier.padding(top = 10.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color(0xFF11141D))
-                                .border(1.dp, Sm.line2, RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 9.dp),
-                                verticalAlignment = Alignment.CenterVertically) {
-                                Text("TORRENT", color = Color.White, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = 10.sp,
-                                    modifier = Modifier.clip(RoundedCornerShape(7.dp)).background(Color(0xFF282E3C)).border(1.dp, Color(0xFF3A4356), RoundedCornerShape(7.dp)).padding(horizontal = 8.dp, vertical = 6.dp))
-                                Text(f.name, color = Sm.text, fontFamily = Onest, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f).padding(horizontal = 10.dp))
-                                Text("${(f.length() / 1024).coerceAtLeast(1)} KB", color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp)
-                                Spacer(Modifier.width(8.dp))
-                                OutlineButton("×") { chosen.remove(f) }
-                            }
-                        }
-                        if (chosen.isNotEmpty()) {
-                            Spacer(Modifier.height(12.dp))
-                            LampButton(if (chosen.size > 1) tr("add.zagruzit_torrenty_size", "size" to chosen.size) else tr("add.zagruzit_torrent"), modifier = Modifier.fillMaxWidth()) {
-                                val list = chosen.toList(); chosen.clear(); uploadFiles(list)
-                            }
-                        }
-                    }
+                    if (m == 1) AudioAttachPane(lib, onPlay)
+                    else FilmPane(magnet, { magnet = it }, ::submitMagnet, ::pickTorrent, ::pasteFromClipboard, ::takeTorrents)
                 }
                 status?.let { Text(it, color = if (statusOk) Sm.ok else Sm.bad, fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(top = 12.dp)) }
             }
@@ -241,6 +218,41 @@ private fun AddedRow(a: Added, modifier: Modifier) {
             Box(Modifier.padding(top = 10.dp).fillMaxWidth().height(5.dp).clip(RoundedCornerShape(5.dp)).background(Sm.line)) {
                 Box(Modifier.fillMaxWidth(bar).height(5.dp).background(Color.White))
             }
+        }
+    }
+}
+
+/**
+ * «Фильм»: magnet-ссылки и .torrent в одном поле, как на экране «Озвучка» — ссылки вставляют (можно несколько),
+ * .torrent выбирают кнопкой или перетаскивают на панель; торренты загружаются сразу.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
+@Composable
+private fun FilmPane(magnet: String, onMagnet: (String) -> Unit, onSubmit: () -> Unit, onPick: () -> Unit, onPaste: () -> Unit,
+                     onDrop: (List<File>) -> Unit) {
+    val drop = remember(onDrop) {
+        object : androidx.compose.ui.draganddrop.DragAndDropTarget {
+            override fun onDrop(event: androidx.compose.ui.draganddrop.DragAndDropEvent): Boolean {
+                val files = event.dragData() as? androidx.compose.ui.draganddrop.DragData.FilesList ?: return false
+                val list = files.readFiles().map { File(java.net.URI(it)) }.filter { it.name.endsWith(".torrent", true) }
+                onDrop(list)
+                return list.isNotEmpty()
+            }
+        }
+    }
+    Column(Modifier.fillMaxWidth().dragAndDropTarget(
+        shouldStartDragAndDrop = { it.dragData() is androidx.compose.ui.draganddrop.DragData.FilesList }, target = drop)) {
+        Text(tr("add.film_tekst"), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(bottom = 10.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f)) { Field(magnet, onMagnet, tr("audio.magnet_ili_torrent"), onDone = onSubmit) }
+            Spacer(Modifier.width(10.dp))
+            OutlineButton(tr("audio.torrent")) { onPick() }
+            Spacer(Modifier.width(10.dp))
+            LampButton(tr("add.dobavit_magnet"), enabled = magnet.isNotBlank()) { onSubmit() }
+        }
+        Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlineButton(tr("add.vstavit_iz_bufera")) { onPaste() }
+            Text(tr("add.mozhno_neskolko_ssylok_cherez"), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(start = 12.dp))
         }
     }
 }

@@ -33,6 +33,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -114,7 +116,7 @@ private fun Label(visible: Boolean, content: @Composable () -> Unit) = AnimatedV
 @Composable
 private fun NavItem(
     label: String, active: Boolean, expanded: Boolean, icon: @Composable (Color) -> Unit,
-    enabled: Boolean = true, soon: String? = null, tab: Tab? = null, onClick: () -> Unit = {}
+    enabled: Boolean = true, soon: String? = null, tab: Tab? = null, count: Int? = null, onClick: () -> Unit = {}
 ) {
     val src = remember { MutableInteractionSource() }
     // A poster has just landed here: a short glow.
@@ -143,11 +145,83 @@ private fun NavItem(
                 if (soon != null) Text(soon, color = if (active) Color.White.copy(alpha = 0.78f) else Color(0xFF5B6272), fontFamily = Onest, fontSize = 10.5.sp, maxLines = 1, softWrap = false, lineHeight = 11.sp)
             }
         }
+        if (count != null) {
+            Spacer(Modifier.weight(1f))
+            Label(expanded) {
+                Text(count.toString(), color = if (active) Color.White else Sm.muted, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 12.sp, maxLines = 1, softWrap = false,
+                    modifier = Modifier.padding(start = 8.dp, end = 4.dp))
+            }
+        }
     }
 }
 
+/** «КОЛЛЕКЦИЯ» / «СЕРВИС»: a small caption over a group; with the panel collapsed — just a line. */
 @Composable
-fun Sidebar(tab: Tab, profile: Profile, onSelect: (Tab) -> Unit, onSettings: () -> Unit, onLogout: () -> Unit) {
+private fun SectionTitle(text: String, expanded: Boolean) {
+    Box(Modifier.padding(top = 6.dp).fillMaxWidth().height(1.dp).background(Color(0x1AFFFFFF)))
+    Box(Modifier.fillMaxWidth().height(if (expanded) 30.dp else 8.dp), contentAlignment = Alignment.CenterStart) {
+        if (expanded) Text(text, color = Color(0xFF8E96A8), fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, letterSpacing = 1.4.sp,
+            maxLines = 1, softWrap = false, modifier = Modifier.padding(start = 15.dp, top = 8.dp))
+    }
+}
+
+private val HomeIcon: @Composable (Color) -> Unit = { col ->
+    Canvas(Modifier.size(16.dp)) {
+        val w = size.width
+        val roof = androidx.compose.ui.graphics.Path().apply {
+            moveTo(w * 0.5f, w * 0.06f); lineTo(w * 0.96f, w * 0.48f); lineTo(w * 0.84f, w * 0.48f); lineTo(w * 0.84f, w * 0.94f)
+            lineTo(w * 0.62f, w * 0.94f); lineTo(w * 0.62f, w * 0.62f); lineTo(w * 0.38f, w * 0.62f); lineTo(w * 0.38f, w * 0.94f)
+            lineTo(w * 0.16f, w * 0.94f); lineTo(w * 0.16f, w * 0.48f); lineTo(w * 0.04f, w * 0.48f); close()
+        }
+        drawPath(roof, col)
+    }
+}
+
+/** Film strip: a rounded frame with sprocket holes down both sides. */
+private val FilmIcon: @Composable (Color) -> Unit = { col ->
+    Canvas(Modifier.size(16.dp)) {
+        val w = size.width; val st = 1.5.dp.toPx()
+        drawRoundRect(col, Offset(w * 0.1f, w * 0.06f), Size(w * 0.8f, w * 0.88f), androidx.compose.ui.geometry.CornerRadius(w * 0.14f), style = Stroke(st))
+        drawLine(col, Offset(w * 0.32f, w * 0.06f), Offset(w * 0.32f, w * 0.94f), strokeWidth = st)
+        drawLine(col, Offset(w * 0.68f, w * 0.06f), Offset(w * 0.68f, w * 0.94f), strokeWidth = st)
+        for (y in listOf(0.26f, 0.5f, 0.74f)) {
+            drawCircle(col, w * 0.045f, Offset(w * 0.21f, w * y)); drawCircle(col, w * 0.045f, Offset(w * 0.79f, w * y))
+        }
+    }
+}
+
+private val ScreenIcon: @Composable (Color) -> Unit = { col ->
+    Canvas(Modifier.size(16.dp)) {
+        val w = size.width; val st = 1.6.dp.toPx()
+        drawRoundRect(col, Offset(w * 0.06f, w * 0.12f), Size(w * 0.88f, w * 0.6f), androidx.compose.ui.geometry.CornerRadius(w * 0.1f), style = Stroke(st))
+        drawLine(col, Offset(w * 0.5f, w * 0.72f), Offset(w * 0.5f, w * 0.88f), strokeWidth = st)
+        drawLine(col, Offset(w * 0.3f, w * 0.9f), Offset(w * 0.7f, w * 0.9f), strokeWidth = st, cap = StrokeCap.Round)
+    }
+}
+
+/** A round face; [ears] — two round ears on top (anime / cartoon), [smile] — a smile instead of dots. */
+private fun faceIcon(ears: Boolean, smile: Boolean): @Composable (Color) -> Unit = { col ->
+    Canvas(Modifier.size(16.dp)) {
+        val w = size.width; val st = 1.5.dp.toPx()
+        if (ears) {
+            drawCircle(col, w * 0.15f, Offset(w * 0.2f, w * 0.2f), style = Stroke(st))
+            drawCircle(col, w * 0.15f, Offset(w * 0.8f, w * 0.2f), style = Stroke(st))
+        }
+        drawCircle(col, w * 0.38f, Offset(w * 0.5f, w * 0.57f), style = Stroke(st))
+        drawCircle(col, w * 0.045f, Offset(w * 0.37f, w * 0.52f)); drawCircle(col, w * 0.045f, Offset(w * 0.63f, w * 0.52f))
+        if (smile) drawArc(col, 20f, 140f, false, Offset(w * 0.34f, w * 0.5f), Size(w * 0.32f, w * 0.3f), style = Stroke(st, cap = StrokeCap.Round))
+        else drawLine(col, Offset(w * 0.4f, w * 0.72f), Offset(w * 0.6f, w * 0.72f), strokeWidth = st, cap = StrokeCap.Round)
+    }
+}
+
+private val CollectionIcons: Map<Category, @Composable (Color) -> Unit> = mapOf(
+    Category.Movies to FilmIcon, Category.Series to ScreenIcon,
+    Category.Anime to faceIcon(ears = true, smile = false), Category.Cartoons to faceIcon(ears = true, smile = true),
+    Category.Other to faceIcon(ears = false, smile = true)
+)
+
+@Composable
+fun Sidebar(tab: Tab, lib: Library, profile: Profile, onSelect: (Tab) -> Unit, onSettings: () -> Unit, onLogout: () -> Unit) {
     var collapsed by remember { mutableStateOf(ui.get("sidebar_collapsed") == "1") }
     val width by animateDpAsState(if (collapsed) 76.dp else 256.dp, tween(300, easing = Sm.ease))
     val expanded = !collapsed
@@ -167,20 +241,40 @@ fun Sidebar(tab: Tab, profile: Profile, onSelect: (Tab) -> Unit, onSettings: () 
             }
         }
         Spacer(Modifier.height(22.dp))
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        // How many films are in each category (the same rule as the library's chips)
+        // (on «Моя медиатека» — among the films of that page only)
+        val inMine = tab == Tab.Mine
+        val counts = remember(lib.items, inMine, Animation.version) { (if (inMine) lib.items.filter { it.m.mine } else lib.items).groupingBy { itemCategory(it) }.eachCount() }
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             // A guest of a room watches the room's film: the library (and «Мои фильмы») are closed until they leave it
             val guest = ru.suslikovanora.media.desktop.party.Party.let { it.inRoom && !it.isHost }
             val lockNote = if (guest) "вы в комнате" else null
-            NavItem(Tab.Library.label, tab == Tab.Library, expanded, { GridIcon(color = it, size = 16.dp) }, enabled = !guest, soon = lockNote, tab = Tab.Library) { onSelect(Tab.Library) }
-            NavItem(Tab.Mine.label, tab == Tab.Mine, expanded, { BookmarkIcon(filled = false, color = it, size = 16.dp) }, enabled = !guest, soon = lockNote, tab = Tab.Mine) { onSelect(Tab.Mine) }
+            val inLibrary = tab == Tab.Library
+            val current = LibraryNav.of(inMine)
+            // Coming from the other page, each page comes back with the category it was left on; on the page itself — back to everything
+            NavItem("Главная", inLibrary && current == Category.All, expanded, HomeIcon, enabled = !guest, soon = lockNote, tab = Tab.Library) {
+                if (inLibrary) LibraryNav.category = Category.All
+                onSelect(Tab.Library)
+            }
+            NavItem("Моя медиатека", inMine && current == Category.All, expanded, { BookmarkIcon(filled = true, color = it, size = 16.dp) }, enabled = !guest, soon = lockNote, tab = Tab.Mine) {
+                if (inMine) LibraryNav.mineCategory = Category.All
+                onSelect(Tab.Mine)
+            }
             NavItem(Tab.Search.label, tab == Tab.Search, expanded, { SearchIcon(color = it, size = 16.dp) }) { onSelect(Tab.Search) }
             NavItem(Tab.Add.label, tab == Tab.Add, expanded, { LinkChainIcon(color = it, size = 16.dp) }) { onSelect(Tab.Add) }
             NavItem(Tab.Together.label, tab == Tab.Together, expanded, PeopleIcon,
                 soon = ru.suslikovanora.media.desktop.party.Party.let { p -> if (p.inRoom) "в комнате · ${p.members.size.coerceAtLeast(1)}" else null }) { onSelect(Tab.Together) }
-            Box(Modifier.padding(vertical = 8.dp).fillMaxWidth().height(1.dp).background(Color(0x1AFFFFFF)))
+            SectionTitle("КОЛЛЕКЦИЯ", expanded)
+            for (c in listOf(Category.Movies, Category.Series, Category.Anime, Category.Cartoons, Category.Other)) {
+                NavItem(c.label, (inLibrary || inMine) && current == c, expanded, CollectionIcons.getValue(c), enabled = !guest, soon = lockNote, count = counts[c] ?: 0) {
+                    // stays on the page it is on (the library or «Моя медиатека»)
+                    LibraryNav.set(inMine, c); onSelect(if (inMine) Tab.Mine else Tab.Library)
+                }
+            }
+            SectionTitle("СЕРВИС", expanded)
             NavItem(tr("sidebar.nastroyki"), false, expanded, { GearIcon(it) }, onClick = onSettings)
         }
-        Spacer(Modifier.weight(1f))
+        Spacer(Modifier.height(8.dp))
         UpdateButton() // appears only when a newer version is on the server
         if (Updater.available != null) Spacer(Modifier.height(10.dp))
         ProfileCard(profile, expanded, onLogout)

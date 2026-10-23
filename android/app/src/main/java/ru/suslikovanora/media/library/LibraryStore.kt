@@ -60,10 +60,17 @@ class LibraryStore(context: Context) {
     var items by mutableStateOf<List<LibraryItem>>(emptyList())
         private set
 
-    private suspend fun publish(list: List<Magnet>) {
+    private suspend fun publish(all: List<Magnet>) {
+        val list = all.filterNot { isVoiceOverOnly(it) }
         val prepared = withContext(Dispatchers.Default) { prepareItems(list) }
         magnets = list
         items = prepared
+    }
+
+    // A torrent of only .mka is an uploaded voice-over (/api/custom-audio): it plays inside its film, not as a tile (as on the PC).
+    private fun isVoiceOverOnly(m: Magnet): Boolean {
+        val files = m.files.filter { !it.isFolder }
+        return files.isNotEmpty() && files.all { ru.suslikovanora.media.core.audio.CustomAudio.isSupported(it.path) }
     }
     var loading by mutableStateOf(false)
         private set
@@ -325,6 +332,49 @@ class LibraryStore(context: Context) {
             own.complete(url)
         }
         return url
+    }
+
+    // ---- the TV banner «Продолжить просмотр»: wide picture, title logo, description, year, rating (from /api/poster) ----
+    /** Urls are absolute (Coil loads them with the API's HTTP client). */
+    class HeroInfo(val backdrop: String?, val logo: String?, val overview: String?, val year: String?, val rating: Double?)
+    private val heroes = HashMap<String, HeroInfo>()
+
+    fun cachedHero(queries: List<String>): HeroInfo? = queries.firstNotNullOfOrNull { heroes[it.lowercase()] }
+
+    /** Null while the server cannot say (offline, an old server without these fields): the banner then stays plain. */
+    suspend fun hero(queries: List<String>): HeroInfo? {
+        cachedHero(queries)?.let { return it }
+        for (q in queries) {
+            try {
+                val j = posterGate.withPermit { Api.get("/api/poster?q=" + URLEncoder.encode(q, "UTF-8")) }
+                if (!j.has("backdrop") && !j.has("overview")) continue
+                val abs = { k: String -> j.optString(k).takeIf { it.startsWith("/api/poster/img/") }?.let { Api.BASE + it } }
+                val info = HeroInfo(abs("backdrop"), abs("logo"), j.optString("overview").ifBlank { null }, j.optString("year").ifBlank { null },
+                    j.optDouble("rating", 0.0).takeIf { it > 0 })
+                heroes[q.lowercase()] = info
+                return info
+            } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+        }
+        return null
+    }
+
+    // ---- Dolby Vision / HDR / DTS marks: the server looks into the file (ffprobe, kept until the film is deleted) ----
+    private val serverTags = androidx.compose.runtime.mutableStateMapOf<Long, List<String>>()
+    fun tagsOf(item: LibraryItem): List<String> = serverTags[item.m.id] ?: itemTags(item)
+
+    /** The server analyses new films one by one in the background: ask again while it has some left. */
+    suspend fun refreshTags() {
+        repeat(40) {
+            val j = try { Api.get("/api/tags") } catch (e: CancellationException) { throw e } catch (_: Exception) { return }
+            val tags = j.optJSONObject("tags")
+            if (tags != null) for (k in tags.keys()) {
+                val a = tags.optJSONArray(k) ?: continue
+                val id = k.toLongOrNull() ?: continue
+                serverTags[id] = (0 until a.length()).map { a.getString(it) }
+            }
+            if (j.optInt("pending", 0) <= 0) return
+            kotlinx.coroutines.delay(30_000)
+        }
     }
 
     // ---- video info line ("1920×1080 · 12 Мбит/с · HEVC · 23.98 fps"), like on the website ----

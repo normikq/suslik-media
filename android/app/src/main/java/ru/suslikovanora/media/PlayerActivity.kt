@@ -217,13 +217,14 @@ class PlayerActivity : ComponentActivity() {
     private val supervisor = PlaybackSupervisor(object : PlaybackSupervisor.Actions {
         override fun restartVideo() {
             val p = player ?: return
-            runCatching { p.setVideoEnabled(false); p.setVideoEnabled(true) }
             val t = perceivedPosition()
             // new decoder from the keyframe right here: the picture comes back at once — unless that keyframe is no
             // longer kept on the phone (a heavy film after a long wait): then the seek would fetch it from the mirror
             // again, step by step; the new decoder picks up at the next keyframe instead
             val keyframeKept = !viaReserve() || BurstProxy.keptBehindSec(currentUrl) >= 8.0
-            if (t > 0L && keyframeKept) seekTo(t)
+            val at = t.takeIf { it > 0L && keyframeKept }
+            runCatching { p.restartVideo(at) }
+            if (at != null) seekTo(at)
         }
         override fun fixSound() {
             val p = player ?: return

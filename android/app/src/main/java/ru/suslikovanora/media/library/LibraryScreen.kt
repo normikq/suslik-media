@@ -100,6 +100,31 @@ object Posters {
     }
 }
 
+/** The category the page shows; the side panel's «Коллекция» (TV) sets it. Each page («Библиотека», «Мои фильмы») remembers its own. */
+object LibraryNav {
+    var category by androidx.compose.runtime.mutableStateOf(Category.All)
+    var mineCategory by androidx.compose.runtime.mutableStateOf(Category.All)
+    fun of(mine: Boolean) = if (mine) mineCategory else category
+    fun set(mine: Boolean, c: Category) { if (mine) mineCategory = c else category = c }
+}
+
+private val TAG_DV = Regex("""\b(dolby[ ._-]?vision|dovi|dv)\b""", RegexOption.IGNORE_CASE)
+private val TAG_HDR = Regex("""\bhdr(10)?(\+|plus)?\b""", RegexOption.IGNORE_CASE)
+private val TAG_DTS = Regex("""\bdts(?:[ ._:-]?(hd|x))?(?:[ ._-]?(ma))?\b""", RegexOption.IGNORE_CASE)
+
+/** Marks of the release for the poster (a guess by the names; the server's answer, see LibraryStore.tagsOf, replaces it). */
+fun itemTags(item: LibraryItem): List<String> {
+    val text = item.m.name + "\n" + item.m.files.joinToString("\n") { it.path }
+    val out = ArrayList<String>(3)
+    if (TAG_DV.containsMatchIn(text)) out += "Dolby Vision"
+    if (TAG_HDR.containsMatchIn(text)) out += "HDR"
+    TAG_DTS.find(text)?.let { m ->
+        val kind = m.groupValues[1].lowercase(); val ma = m.groupValues[2].isNotEmpty()
+        out += when { kind == "hd" -> if (ma) "DTS-HD MA" else "DTS-HD"; kind == "x" -> "DTS:X"; else -> "DTS" }
+    }
+    return out
+}
+
 enum class Category(val label: String) {
     All(tr("library.vse")),
     Movies(tr("library.filmy")),
@@ -231,7 +256,7 @@ fun targetForKey(items: List<LibraryItem>, key: String): PlayTarget? {
     return targetFor(item, file)
 }
 
-private fun continueEntries(items: List<LibraryItem>, store: LibraryStore): List<ContinueEntry> = items.mapNotNull { item ->
+internal fun continueEntries(items: List<LibraryItem>, store: LibraryStore): List<ContinueEntry> = items.mapNotNull { item ->
     if (!item.m.ready) return@mapNotNull null
     val (file, w) = store.lastWatched(item.m) ?: return@mapNotNull null
     if (System.currentTimeMillis() - w.at > 60L * 24 * 3600 * 1000) return@mapNotNull null
@@ -262,7 +287,8 @@ fun LibraryScreen(
     mineOnly: Boolean = false
 ) {
     val scope = rememberCoroutineScope()
-    var category by remember { mutableStateOf(Category.All) }
+    val category = LibraryNav.of(mineOnly)
+    val tv = Tv.isTv(LocalContext.current)
     val all = store.items
     val source = if (mineOnly) all.filter { it.m.mine } else all
     val filtered = remember(source, query, category) {
@@ -291,7 +317,8 @@ fun LibraryScreen(
                 loading = store.loading, status = store.status, kind = store.statusKind,
                 totalCount = filtered.size,
                 selectedCategory = category,
-                onCategorySelect = { category = it },
+                onCategorySelect = { LibraryNav.set(mineOnly, it) },
+                showCategories = !tv,
                 onRefresh = { scope.launch { store.refresh() } }
             )
         }
@@ -299,7 +326,7 @@ fun LibraryScreen(
         // Continue watching section
         if (query.isBlank() && category == Category.All && !mineOnly) {
             item(key = "continue", span = { GridItemSpan(maxLineSpan) }) {
-                ContinueRow(all, store, onPlay)
+                if (tv) TvContinueHero(all, store, onPlay) else ContinueRow(all, store, onPlay)
             }
         }
 
@@ -458,6 +485,27 @@ private fun ContinueCard(
     }
 }
 
+/** «Dolby Vision» / «HDR» / «DTS»: a small framed mark on a poster. */
+@Composable
+fun TagChip(t: String) {
+    val c = when { t.startsWith("Dolby") -> Color(0xFFB794F6); t == "HDR" -> Color(0xFFFFC857); else -> Color(0xFF7DD3FC) }
+    Box(
+        Modifier.height(18.dp).clip(RoundedCornerShape(6.dp)).background(Color(0xB3000000))
+            .border(1.dp, c.copy(alpha = 0.55f), RoundedCornerShape(6.dp)).padding(horizontal = 7.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            t, color = c, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 10.sp, letterSpacing = 0.3.sp, maxLines = 1, softWrap = false,
+            style = TextStyle(
+                lineHeight = 10.sp,
+                lineHeightStyle = androidx.compose.ui.text.style.LineHeightStyle(
+                    androidx.compose.ui.text.style.LineHeightStyle.Alignment.Center, androidx.compose.ui.text.style.LineHeightStyle.Trim.Both
+                )
+            )
+        )
+    }
+}
+
 val LocalHeaderHeight = androidx.compose.runtime.compositionLocalOf { 46.dp }
 
 @Composable
@@ -533,6 +581,7 @@ private fun LibraryPanel(
     totalCount: Int,
     selectedCategory: Category,
     onCategorySelect: (Category) -> Unit,
+    showCategories: Boolean = true,
     onRefresh: () -> Unit
 ) {
     Panel {
@@ -549,7 +598,7 @@ private fun LibraryPanel(
         Spacer(Modifier.height(14.dp))
         SearchField(value = query, onValue = onQuery, placeholder = tr("library.poisk_po_nazvaniyu"))
         Spacer(Modifier.height(10.dp))
-        Row(
+        if (showCategories) Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
@@ -764,6 +813,13 @@ private fun PosterTile(item: LibraryItem, store: LibraryStore, onPlay: (PlayTarg
             }
             MineMark(m.mine, Modifier.align(Alignment.TopStart).padding(8.dp)) { on -> store.setMine(m, on) }
             FavStar(m.favorite, Modifier.align(Alignment.TopEnd).padding(8.dp)) { on -> store.setFavorite(m, on) }
+            // Dolby Vision / HDR / DTS under the star
+            val tags = store.tagsOf(item)
+            if (tags.isNotEmpty()) {
+                Column(Modifier.align(Alignment.TopEnd).padding(top = 46.dp, end = 8.dp), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    for (t in tags) TagChip(t)
+                }
+            }
 
             // watched progress: electric blue line along the poster's bottom edge
             val watch = remember(m.id, currentFile?.path, watchVersion) { currentFile?.let { store.watchInfo(watchKey(m.id, it)) } }

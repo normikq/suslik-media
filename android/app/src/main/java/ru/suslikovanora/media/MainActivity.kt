@@ -22,6 +22,8 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -148,6 +150,11 @@ class MainActivity : ComponentActivity() {
             if (ok == true) launch { update = Updater.check(this@MainActivity) }
             if (ok == true) add.resume()
             if (ok == true || (ok == null && store.magnets.isNotEmpty())) store.refresh()
+            // Dolby Vision / HDR / DTS marks (the server looks into the files) and the TV banners' pictures: ready before the page opens
+            if (store.items.isNotEmpty() && store.authenticated == true) {
+                launch { store.refreshTags() }
+                if (Tv.isTv(this@MainActivity)) launch { ru.suslikovanora.media.library.warmHero(store, this@MainActivity) }
+            }
         }
         val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
         // Hoisted so every tab keeps its scroll position (and the library its filter) across tab switches.
@@ -164,44 +171,59 @@ class MainActivity : ComponentActivity() {
             // TV: the remote starts on the tabs (from there «up» goes into the open tab)
             if (store.authenticated == true && Tv.isTv(this@MainActivity)) runCatching { navFocus.requestFocus() }
         }
+        // The open page (shared by the phone's layout and the TV's)
+        val pages: @Composable () -> Unit = {
+                    // Tabs glide sideways in the direction of the chosen tab (no flash: every page has the same dark background).
+                    AnimatedContent(
+                        targetState = tab,
+                        transitionSpec = {
+                            val dir = if (targetState.ordinal > initialState.ordinal) 1 else -1
+                            (fadeIn(tween(260, delayMillis = 50)) + slideInHorizontally(tween(380, easing = Sm.ease)) { dir * it / 12 }) togetherWith
+                                (fadeOut(tween(150)) + slideOutHorizontally(tween(380, easing = Sm.ease)) { -dir * it / 12 })
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                        label = "tabs"
+                    ) { t ->
+                        when (t) {
+                            Tab.Links -> AddScreen(add, addList, onPlay = { url, title -> handlePlay(url, title) }, onLogout = logout)
+                            Tab.Library -> LibraryScreen(
+                                store = store, onPlay = { playTarget = it },
+                                query = query, onQuery = { query = it }, gridState = gridState, onLogout = logout
+                            )
+                            Tab.Mine -> LibraryScreen(
+                                store = store, onPlay = { playTarget = it },
+                                query = query, onQuery = { query = it }, gridState = mineGrid, onLogout = logout, mineOnly = true
+                            )
+                            Tab.Together -> TogetherScreen(store, togetherList, onLibrary = { selectTab(Tab.Library) }, onOpen = { playTarget = it })
+                            Tab.Search -> SearchScreen(search, searchList, onLogout = logout)
+                        }
+                    }
+        }
         // A guest of a room stays on the room's page: the library (and «Мои фильмы») are closed until they leave it
         val guest = Party.isGuest
+        val tvUi = Tv.isTv(this@MainActivity)
         LaunchedEffect(guest) { if (guest && tab in GUEST_LOCKED) tab = Tab.Together }
-        CompositionLocalProvider(LocalHeaderHeight provides headerHeight) {
+        CompositionLocalProvider(LocalHeaderHeight provides (if (tvUi) 0.dp else headerHeight)) {
         Box(Modifier.fillMaxSize().ambientBackdrop().windowInsetsPadding(WindowInsets.safeDrawing)) {
             if (store.authenticated == false) {
                 LoginScreen(store) {
                     scope.launch { store.refresh() }
                     add.resume()
                 }
+            } else if (tvUi) {
+                // Android TV: the left panel instead of the bottom bar and the brand header (it holds the brand, settings and profile)
+                Row(Modifier.fillMaxSize()) {
+                    ru.suslikovanora.media.ui.TvSidebar(
+                        tab = tab, store = store, onSelect = ::selectTab, onSettings = { settingsOpen = true }, onLogout = logout,
+                        focus = navFocus, onFocused = { navFocused = it },
+                        locked = if (guest) GUEST_LOCKED else emptySet(), inRoom = Party.inRoom
+                    )
+                    Box(Modifier.weight(1f).fillMaxHeight().clipToBounds()) { pages() }
+                }
             } else {
                 Column(Modifier.fillMaxSize()) {
                     Box(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
-                        // Tabs glide sideways in the direction of the chosen tab (no flash: every page has the same dark background).
-                        AnimatedContent(
-                            targetState = tab,
-                            transitionSpec = {
-                                val dir = if (targetState.ordinal > initialState.ordinal) 1 else -1
-                                (fadeIn(tween(260, delayMillis = 50)) + slideInHorizontally(tween(380, easing = Sm.ease)) { dir * it / 12 }) togetherWith
-                                    (fadeOut(tween(150)) + slideOutHorizontally(tween(380, easing = Sm.ease)) { -dir * it / 12 })
-                            },
-                            modifier = Modifier.fillMaxSize(),
-                            label = "tabs"
-                        ) { t ->
-                            when (t) {
-                                Tab.Links -> AddScreen(add, addList, onPlay = { url, title -> handlePlay(url, title) }, onLogout = logout)
-                                Tab.Library -> LibraryScreen(
-                                    store = store, onPlay = { playTarget = it },
-                                    query = query, onQuery = { query = it }, gridState = gridState, onLogout = logout
-                                )
-                                Tab.Mine -> LibraryScreen(
-                                    store = store, onPlay = { playTarget = it },
-                                    query = query, onQuery = { query = it }, gridState = mineGrid, onLogout = logout, mineOnly = true
-                                )
-                                Tab.Together -> TogetherScreen(store, togetherList, onLibrary = { selectTab(Tab.Library) }, onOpen = { playTarget = it })
-                                Tab.Search -> SearchScreen(search, searchList, onLogout = logout)
-                            }
-                        }
+                        pages()
                         // The brand header is drawn once, over the tabs: it does not slide with them. It follows the open tab's
                         // scrolling exactly like a first list item would (each tab keeps an empty slot of the same height).
                         val headerY = remember { Animatable(0f) }
@@ -242,7 +264,7 @@ class MainActivity : ComponentActivity() {
                 PlaySheet(
                     target = t,
                     onDismiss = { playTarget = null },
-                    onPlay = { r -> playTarget = null; handlePlay(r.url, r.title, r.playlist, r.subUrls, r.watchKeys, r.audioUrls, r.fromStart, r.episodeSides) }
+                    onPlay = { r -> playTarget = null; handlePlay(r.url, r.title, r.playlist, r.subUrls, r.watchKeys, r.audioUrls, r.fromStart, r.episodeSides, r.customAudio) }
                 )
             }
         }
@@ -265,7 +287,7 @@ class MainActivity : ComponentActivity() {
     private fun handlePlay(
         url: String, title: String?, playlist: String? = null,
         subUrls: List<String> = emptyList(), watchKeys: List<String> = emptyList(), audioUrls: List<String> = emptyList(),
-        fromStart: Boolean = false, episodeSides: String? = null
+        fromStart: Boolean = false, episodeSides: String? = null, customAudio: String? = null
     ) {
         val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return
         if (uri.scheme !in listOf("http", "https")) {
@@ -287,6 +309,7 @@ class MainActivity : ComponentActivity() {
             if (audioUrls.isNotEmpty()) putStringArrayListExtra(PlayerActivity.EXTRA_AUDIO_URLS, ArrayList(audioUrls))
             putExtra(PlayerActivity.EXTRA_FROM_START, fromStart)
             episodeSides?.let { putExtra(PlayerActivity.EXTRA_EPISODE_SIDES, it) }
+            putExtra(ru.suslikovanora.media.player.PlayerExtras.CUSTOM_AUDIO, customAudio)
         })
     }
 

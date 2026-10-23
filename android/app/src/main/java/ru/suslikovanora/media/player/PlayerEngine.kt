@@ -114,11 +114,18 @@ interface PlayerEngine {
     fun setSubtitleTrack(id: Int)
     /** Внешняя озвучка, выбранная в меню во время просмотра; сразу становится текущей дорожкой. */
     fun addAudioFile(url: String)
+    /** Задержка звука (загруженная озвучка со сдвигом). Media3 сдвигает сам файл озвучки ([CustomAudioInfo]), здесь — только VLC. */
+    fun setAudioDelayMs(ms: Long) {}
 
     val videoTrackCount: Int
     val videoTrack: EngineVideoTrack?
     /** Выключить/включить видео: перезапуск видеодекодера и вывода (картинка застыла, экран пропал и вернулся). */
     fun setVideoEnabled(enabled: Boolean)
+    /**
+     * Картинка застыла: новый видеодекодер. [seekMs] — с опорного кадра в этом месте (его перемотку делает экран
+     * плеера сразу после этого вызова), null — без перемотки, со следующего опорного кадра.
+     */
+    fun restartVideo(seekMs: Long?) { setVideoEnabled(false); setVideoEnabled(true) }
     fun attachVideo()
     fun detachVideo()
     /** Область видео сменила размер: пересчитать картинку. */

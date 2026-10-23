@@ -65,7 +65,7 @@ class PlayerTrackSelector(
     // at once made VLC fetch every file's head and tail before the first frame (16.10: 7 files, ~250 MB, 23 s to start).
     // The rest are added when picked in the audio menu.
     private var wrapUrl: ((String) -> String)? = null
-    private val attachedAudio = HashSet<String>()
+    private val attachedAudio = LinkedHashSet<String>() // in the order they were opened: their tracks come after the film's
     private var activeSidecar: String? = null // label of the picked file; SIDECAR_NONE = an internal track
     private var sidecarsActive = false
 
@@ -83,6 +83,7 @@ class PlayerTrackSelector(
         val subs = i?.getStringArrayListExtra(PlayerExtras.SUB_URLS)?.filter { it.startsWith("https://") }.orEmpty()
         val audio = i?.getStringArrayListExtra(PlayerExtras.AUDIO_URLS)?.filter { it.startsWith("https://") }.orEmpty()
         if (url.isNotEmpty()) episodeFiles[keyOf(url)] = EpisodeFiles(subs, audio)
+        CustomAudioInfo.read(i?.getStringExtra(PlayerExtras.CUSTOM_AUDIO))
         toSign = i?.getStringExtra(PlayerExtras.EPISODE_SIDES)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject()
     }
 
@@ -105,7 +106,8 @@ class PlayerTrackSelector(
                 }
             }.mapNotNull { it.await() }
         }
-        episodeFiles[key] = EpisodeFiles(sign(links(sides.optJSONArray("subs"))), sign(links(sides.optJSONArray("audio"))))
+        val signed = sides.optJSONArray("signed")?.let { a -> (0 until a.length()).map { a.optString(it) }.filter { it.startsWith("https://") } }.orEmpty()
+        episodeFiles[key] = EpisodeFiles(sign(links(sides.optJSONArray("subs"))), sign(links(sides.optJSONArray("audio"))) + signed)
     }
 
     fun resetSelectedTracks() {
@@ -144,6 +146,7 @@ class PlayerTrackSelector(
             AppLog.write("[track] voice-over file «$pendingAudio» is open")
             pendingAudio = null
         }
+        callback.getCurrentPlayer()?.let { syncAudioDelay(it) }
         if (SystemClock.uptimeMillis() < prefsUntil) {
             handler.removeCallbacks(prefsRunnable)
             handler.postDelayed(prefsRunnable, 400L)
@@ -206,7 +209,7 @@ class PlayerTrackSelector(
             AppLog.write("[track] voice-over file «${audioLabel(u)}» added from the menu · film tracks before: " +
                 tracks.joinToString { it.name }.ifEmpty { "none" } + " · files left: ${extra.size - 1}")
             selectedAudioId = null
-            p?.addAudioFile(wrapUrl?.invoke(u) ?: u)
+            p?.addAudioFile(wrap(u))
             prefs.edit().apply { prefKeys().forEach { putString("track:sidecar:$it", activeSidecar).remove("track:audio:$it") } }
                 .remove("track:audio:*").apply()
             ru.suslikovanora.media.library.CloudSync.noteTrack(callback.getFilmKey(), null, null, activeSidecar, alsoAny = false)
@@ -216,6 +219,7 @@ class PlayerTrackSelector(
         val track = tracks.getOrNull(which) ?: return
         selectedAudioId = track.id
         p?.setAudioTrack(track.id)
+        p?.let { syncAudioDelay(it) }
         activeSidecar = SIDECAR_NONE
         prefs.edit().apply { prefKeys().forEach { putString("track:sidecar:$it", SIDECAR_NONE) } }.apply()
         callback.onAudioTrackChanged()
@@ -264,7 +268,7 @@ class PlayerTrackSelector(
         val audio = if (pick != null) {
             attachedAudio += pick
             activeSidecar = audioLabel(pick)
-            listOf(wrapUrl(pick))
+            listOf(wrap(pick))
         } else emptyList()
         return Sidecars(audio, files.subs)
     }
@@ -273,7 +277,24 @@ class PlayerTrackSelector(
      * "Film.rus.mka" beside "Film.mkv" gives "rus"; several files with the same name (one per studio, each in its own
      * folder) are numbered: "rus 1", "rus 2" — 18.10, four «＋ rus» in a row.
      */
+    private fun wrap(u: String): String = (wrapUrl?.invoke(u) ?: u).also { CustomAudioInfo.noteWrapped(u, it) }
+
+    /**
+     * VLC: the delay of the voice-over being heard (an uploaded one with `offsetMs`), 0 for the film's own tracks.
+     * Tracks of the opened files follow the film's, in [attachedAudio] order. Media3 shifts the file itself.
+     */
+    fun syncAudioDelay(p: PlayerEngine) {
+        if (pending() != null) return
+        val tracks = p.audioTracks().filter { it.id != -1 }
+        val files = attachedAudio.toList()
+        val base = tracks.size - files.size
+        val idx = tracks.indexOfFirst { it.id == p.audioTrack }
+        val file = if (base >= 0 && idx >= base) files.getOrNull(idx - base) else null
+        runCatching { p.setAudioDelayMs(file?.let { CustomAudioInfo.of(it)?.offsetMs } ?: 0L) }
+    }
+
     private fun audioLabel(u: String): String {
+        CustomAudioInfo.of(u)?.title?.takeIf { it.isNotBlank() }?.let { return it }
         val name = fileLabel(u)
         val same = audioUrls.filter { fileLabel(it) == name }
         return if (same.size > 1) "$name ${same.indexOf(u) + 1}" else name
@@ -311,6 +332,7 @@ class PlayerTrackSelector(
                 if (id != p.audioTrack) {
                     p.setAudioTrack(id)
                     selectedAudioId = id
+                    syncAudioDelay(p)
                     callback.onAudioTrackChanged()
                 }
             }

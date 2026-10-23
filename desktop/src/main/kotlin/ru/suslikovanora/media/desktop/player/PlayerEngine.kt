@@ -33,10 +33,10 @@ interface EngineListener {
 interface PlayerEngine {
     /**
      * Открыть [url] с позиции [startMs]. [audioUrls]/[subUrls] — внешние дорожки.
-     * Пауза после открытия выключена.
+     * Пауза после открытия выключена. [audioTitles] — название и язык внешней озвучки в меню (по индексу [audioUrls]; null — из файла).
      */
     fun open(url: String, startMs: Long, nightMode: Boolean, audioLang: String?, subLang: String?,
-             audioUrls: List<String>, subUrls: List<String>)
+             audioUrls: List<String>, subUrls: List<String>, audioTitles: List<Pair<String, String?>?> = emptyList())
 
     fun setPaused(paused: Boolean)
     fun stop()
@@ -67,6 +67,8 @@ interface PlayerEngine {
     fun subtitleTracks(): List<EngineTrack>
     fun setAudioTrack(id: Int)
     fun setSubtitleTrack(id: Int)
+    /** Убрать внешнюю звуковую дорожку из открытого файла (удалённая озвучка). */
+    fun removeAudioTrack(id: Int) {}
     fun chapters(): List<EngineChapter>
 
     /** Загружаются ли ещё дорожки (внешние файлы добавляются через sub-add / audio-add). */

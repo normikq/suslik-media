@@ -100,7 +100,7 @@ object Api {
     val BASE = "https://$HOST"
     val SITE = "$BASE/media/"
 
-    class HttpError(val code: Int, message: String) : Exception(message)
+    class HttpError(val code: Int, message: String, val body: JSONObject? = null) : Exception(message)
 
     private val cookies = Store.of("cookies")
     private val auth = Store.of("auth")
@@ -172,6 +172,9 @@ object Api {
 
     private suspend fun call(req: HttpRequest): JSONObject = fetch(req).json
 
+    /** Any request built with [request] (PUT, a raw body…), answered as JSON. */
+    suspend fun send(req: HttpRequest): JSONObject = call(req)
+
     class Fetched(val code: Int, val json: JSONObject, val etag: String?)
 
     /**
@@ -191,7 +194,7 @@ object Api {
         Diag.http(req.method(), req.uri().path, code, System.currentTimeMillis() - t0, text.length)
         if (code == 304) return@withContext Fetched(304, JSONObject(), etag)
         val json = runCatching { JSONObject(text) }.getOrElse { JSONObject() }
-        if (code !in 200..299) throw HttpError(code, json.optString("error").ifBlank { tr("api.oshibka_servera_code", "code" to code) })
+        if (code !in 200..299) throw HttpError(code, json.optString("error").ifBlank { tr("api.oshibka_servera_code", "code" to code) }, json)
         Fetched(code, json, res.headers().firstValue("etag").orElse(null))
     }
 

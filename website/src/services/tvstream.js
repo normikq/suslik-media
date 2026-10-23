@@ -112,31 +112,63 @@ function defaultAudio(info) {
   );
 }
 
-/**
- * Аргументы ffmpeg: [url] — прямая ссылка, [startSec] — с какого места, [audio] — дорожка из parseProbe,
- * [format] — "ts" (MPEG-TS: поток без длины и индекса телевизор принимает как эфир) или "mkv".
- */
-function ffmpegArgs(url, startSec, info, audio, format) {
-  const ts = format !== "mkv";
-  // warning: в журнал попадают переподключения к файл-хосту и битые пакеты источника (артефакты на экране)
-  const args = ["-hide_banner", "-loglevel", "warning", "-nostdin"];
+// Ключ подписи для внешней озвучки: ссылка на её файл и сдвиг (знак — как у озвучек на ПК, CUSTOM-AUDIO-API.md)
+function externalKey(extLink, offsetMs) {
+  return `x:${offsetMs}:${extLink}`;
+}
+
+/** Параметры входа по сети: переподключение к файл-хосту; без genpts .m2ts с места (-ss) не открывался. */
+function inputArgs(url) {
+  const args = [];
   if (/^https?:/i.test(url)) {
     // Файл-хост замолчал на 30 с — ffmpeg выходит, телевизор переоткроет поток с того же места
     args.push("-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "10", "-rw_timeout", "30000000", "-user_agent", "Mozilla/5.0");
   }
   // genpts: без него .m2ts с места (-ss) не открывался — плеер закрывал поток через 7 с (журнал 21.10, 17:29–17:30)
   args.push("-fflags", "+genpts");
+  return args;
+}
+
+const secs = ms => String(Math.round(ms) / 1000);
+
+/**
+ * Аргументы ffmpeg: [url] — прямая ссылка, [startSec] — с какого места, [audio] — дорожка из parseProbe,
+ * [format] — "ts" (MPEG-TS: поток без длины и индекса телевизор принимает как эфир) или "mkv".
+ * [ext] — внешняя озвучка вместо дорожки фильма: { url, audio (дорожка из parseProbe её файла), offsetMs }.
+ * offsetMs как на ПК: +2000 — звук начинается на 00:02 видео, −5000 — первые 5 с дорожки пропускаются.
+ */
+function ffmpegArgs(url, startSec, info, audio, format, ext) {
+  const ts = format !== "mkv";
+  // warning: в журнал попадают переподключения к файл-хосту и битые пакеты источника (артефакты на экране)
+  const args = ["-hide_banner", "-loglevel", "warning", "-nostdin"];
+  args.push(...inputArgs(url));
   if (startSec > 0) args.push("-ss", String(startSec));
-  args.push("-i", url, "-map", `0:${info.video.index}`, "-map", `0:${audio.index}`);
+  args.push("-i", url);
+  let copy = audio && audio.ok;
+  if (ext) {
+    // Место в дорожке = место в видео − сдвиг. До начала звука (сдвиг +) — тишина: вход сдвигается на остаток
+    const at = startSec * 1000 - (ext.offsetMs || 0);
+    args.push(...inputArgs(ext.url));
+    if (at > 0) args.push("-ss", secs(at));
+    else if (at < 0) args.push("-itsoffset", secs(-at));
+    args.push("-i", ext.url);
+    audio = ext.audio;
+    // Копия звука из второго входа с -ss сдвигает видео позже звука на величину -ss (ffmpeg 6.1, проверено 23.10:
+    // −5 с с 6-й секунды — звук на ~1 с раньше картинки, на ТВ слышно интро). Перекодированный звук ffmpeg режет точно
+    copy = audio.ok && !(at > 0);
+  }
+  args.push("-map", `0:${info.video.index}`, "-map", `${ext ? 1 : 0}:${audio.index}`);
   if (!ts) for (const s of info.subs) args.push("-map", `0:${s.index}`); // текстовых субтитров MPEG-TS не несёт
   args.push("-c:v", "copy");
-  if (audio.ok) args.push("-c:a", "copy");
+  if (copy) args.push("-c:a", "copy");
   else {
     const ch = Math.min(audio.channels || 2, 6);
     // AC3, а не AAC: кодируется дешевле, и телевизор передаёт 5.1 на саундбар по ARC/оптике
     args.push("-c:a", "ac3", "-b:a", ch > 2 ? "640k" : "192k", "-ac", String(ch));
   }
   if (!ts && info.subs.length) args.push("-c:s", "copy");
+  // Озвучка длиннее фильма (титры, хвост студии): поток кончается вместе с видео, а не играет звук на чёрном экране
+  if (ext && info.durationMs > startSec * 1000) args.push("-t", secs(info.durationMs - startSec * 1000));
   args.push("-max_muxing_queue_size", "1024", "-avoid_negative_ts", "make_zero");
   // MPEG-TS: время с нуля, PAT/PMT в начале каждого ключевого кадра — плеер подхватывает поток с любого места
   if (ts) args.push("-f", "mpegts", "-mpegts_flags", "+resend_headers", "pipe:1");
@@ -219,6 +251,7 @@ module.exports = {
   isTvClient,
   makeTvToken,
   isValidTvToken,
+  externalKey,
   parseProbe,
   needsTvStream,
   videoUnsupported,

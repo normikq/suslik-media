@@ -10,17 +10,64 @@ const { safeHttpsUrl, cleanFileName, clientIp } = require("../utils/helpers");
 const { isAllDebridFileLink, resolveDirect, mirrorLog, MIRROR_CSP, UnlockError } = require("../services/mirror");
 const { markLinkOpened } = require("../services/cleanup");
 const tv = require("../services/tvstream");
+const ca = require("../services/custom-audio");
 
 const router = express.Router();
 
-function linkOf(req) {
-  const parsed = safeHttpsUrl(typeof req.query.link === "string" ? req.query.link.trim() : "");
+function adLink(v) {
+  const parsed = safeHttpsUrl(typeof v === "string" ? v.trim() : "");
   return isAllDebridFileLink(parsed) ? parsed.toString() : null;
+}
+
+function linkOf(req) {
+  return adLink(req.query.link);
+}
+
+// Озвучек отдельным файлом из раздачи (&ext=) и озвучек пользователей в одном ответе — не больше
+const MAX_EXT_FILES = 8;
+const MAX_CUSTOM = 20;
+
+/**
+ * Внешние озвучки видео для tv-info: файлы из той же раздачи (&ext=<ссылка>, повторяется) и озвучки пользователей
+ * (&magnetId=&path= — раздача и путь видео, /api/custom-audio). Ошибка AllDebrid — без озвучек пользователей.
+ */
+async function externalsOf(req) {
+  const raw = req.query.ext;
+  // asked — ссылка, как её прислал ТВ: по ней он узнаёт свой файл (safeHttpsUrl может переписать адрес)
+  const out = [];
+  const seen = new Set();
+  for (const asked of Array.isArray(raw) ? raw : raw != null ? [raw] : []) {
+    const link = adLink(asked);
+    if (!link || seen.has(link) || out.length >= MAX_EXT_FILES) continue;
+    seen.add(link);
+    out.push({ kind: "file", link, asked: String(asked), offsetMs: 0 });
+  }
+  const magnetId = /^\d{1,20}$/.test(String(req.query.magnetId || "")) ? Number(req.query.magnetId) : null;
+  const path = typeof req.query.path === "string" ? req.query.path : "";
+  if (magnetId && path) {
+    try {
+      const { items, failed } = await ca.trackLinks(magnetId, path);
+      for (const { track: t, link } of items.slice(0, MAX_CUSTOM)) {
+        out.push({ kind: "custom", id: t.id, title: t.title, lang: t.lang, offsetMs: t.offsetMs || 0, link });
+      }
+      // Для разбора «no dub on server» на ТВ: у раздачи озвучки есть, а к этому видео не нашлось ни одной
+      const all = ca.forMovie(magnetId);
+      if (!items.length && all.length) {
+        console.warn(`[tv] озвучки пользователей: у раздачи ${magnetId} их ${all.length}, для «${path}» — ни одной` +
+          (failed ? " (AllDebrid не отдал список файлов озвучки)" : `; пути видео в привязках: ${[...new Set(all.map(t => t.videoPath))].slice(0, 3).join(" | ")}`));
+      }
+    } catch (err) {
+      console.warn(`[tv] озвучки пользователей не получены: ${err.message}`);
+    }
+  }
+  return out;
 }
 
 /**
  * Что в файле и нужен ли серверный поток: { stream, durationMs, video, audio: [{ index, codec, channels, language,
- * title, ok, url }], subs, audioDefault }. url — подписанный адрес потока с этой дорожкой (живёт, как зеркало, 12 ч).
+ * title, ok, url }], subs, audioDefault, external: [{ kind: "file" | "custom", link?, id?, title?, lang?, offsetMs, url }] }.
+ * url — подписанный адрес потока с этой дорожкой (живёт, как зеркало, 12 ч). external — внешние озвучки (externalsOf):
+ * сервер склеивает видео фильма с файлом озвучки; у "file" link — та, что пришла в &ext= (клиент узнаёт свой файл).
  */
 router.get("/api/file/tv-info", requireLogin, mirrorUrlLimiter, async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
@@ -29,10 +76,10 @@ router.get("/api/file/tv-info", requireLogin, mirrorUrlLimiter, async (req, res)
   const link = linkOf(req);
   if (!link) return res.status(400).json({ error: "Некорректная ссылка на файл AllDebrid." });
   markLinkOpened(link);
-  let info;
+  let info, external;
   try {
     const entry = await resolveDirect(link, false);
-    info = await tv.probeFile(link, entry.url);
+    [info, external] = await Promise.all([tv.probeFile(link, entry.url), externalsOf(req)]);
   } catch (err) {
     return res.status(502).json({ error: err instanceof UnlockError ? err.message : "Сервер не смог прочитать файл." });
   }
@@ -41,6 +88,7 @@ router.get("/api/file/tv-info", requireLogin, mirrorUrlLimiter, async (req, res)
   const expires = String(Math.floor(Date.now() / 1000) + config.MIRROR_TTL);
   const host = req.get("host");
   const def = tv.defaultAudio(info);
+  const base = `https://${host}/api/file/tv/${name}?link=${encodeURIComponent(link)}`;
   res.json({
     stream: tv.needsTvStream(info),
     videoUnsupported: tv.videoUnsupported(info) ? info.video.codec : null,
@@ -49,19 +97,33 @@ router.get("/api/file/tv-info", requireLogin, mirrorUrlLimiter, async (req, res)
     video: info.video,
     audio: info.audio.map(a => ({
       index: a.index, codec: a.codec, profile: a.profile, channels: a.channels, language: a.language, title: a.title, ok: a.ok,
-      url: `https://${host}/api/file/tv/${name}?link=${encodeURIComponent(link)}&a=${a.index}&exp=${expires}&sig=${tv.makeTvToken(link, a.index, expires)}`
+      url: `${base}&a=${a.index}&exp=${expires}&sig=${tv.makeTvToken(link, a.index, expires)}`
     })),
     subs: info.subs,
-    audioDefault: def ? def.index : null
+    audioDefault: def ? def.index : null,
+    external: external.map(({ link: extLink, asked, ...x }) => ({
+      ...x,
+      ...(x.kind === "file" ? { link: asked } : {}),
+      url: `${base}&x=${encodeURIComponent(extLink)}&xo=${x.offsetMs}&exp=${expires}&sig=${tv.makeTvToken(link, tv.externalKey(extLink, x.offsetMs), expires)}`
+    }))
   });
 });
 
-/** Сам поток: ?link&a&exp&sig (подпись), &t=<сек> — с какого места, &s=<метка плеера>. */
+/**
+ * Сам поток: ?link&a&exp&sig (подпись), &t=<сек> — с какого места, &s=<метка плеера>. Внешняя озвучка вместо &a:
+ * &x=<ссылка на файл озвучки>&xo=<сдвиг, мс> — ffmpeg берёт видео из фильма, звук из этого файла.
+ */
 router.get("/api/file/tv/:name", mirrorLimiter, async (req, res) => {
   if (!config.TV_STREAM) return res.status(404).send("Поток для телевизора выключен на сервере.");
   const link = linkOf(req);
-  const a = Number(req.query.a);
-  if (!link || !Number.isSafeInteger(a) || a < 0 || !tv.isValidTvToken(link, a, String(req.query.exp || ""), String(req.query.sig || ""))) {
+  const extLink = req.query.x != null ? adLink(req.query.x) : null;
+  const xo = Number(req.query.xo || 0);
+  const a = extLink ? null : Number(req.query.a);
+  // Что подписано: номер дорожки фильма или файл озвучки со сдвигом
+  const signed = extLink
+    ? (Number.isSafeInteger(xo) && Math.abs(xo) <= ca.MAX_OFFSET_MS ? tv.externalKey(extLink, xo) : null)
+    : (Number.isSafeInteger(a) && a >= 0 ? a : null);
+  if (!link || signed == null || (req.query.x != null && !extLink) || !tv.isValidTvToken(link, signed, String(req.query.exp || ""), String(req.query.sig || ""))) {
     return res.status(401).send("Ссылка устарела или недействительна.");
   }
   // Поток идёт только с начала (с места &t=): перематывать его байтами нельзя
@@ -81,14 +143,20 @@ router.get("/api/file/tv/:name", mirrorLimiter, async (req, res) => {
   res.setHeader("X-Accel-Buffering", "no"); // nginx: не копить поток на диске, ffmpeg идёт в темпе телевизора
   if (req.method === "HEAD") return res.status(200).end();
 
-  let info, entry;
+  let info, entry, ext = null;
   try {
     entry = await resolveDirect(link, false);
     info = await tv.probeFile(link, entry.url);
+    if (extLink) {
+      const extEntry = await resolveDirect(extLink, false);
+      const extAudio = tv.defaultAudio(await tv.probeFile(extLink, extEntry.url));
+      if (!extAudio) return res.status(400).send("В файле озвучки нет звука.");
+      ext = { url: extEntry.url, audio: extAudio, offsetMs: xo };
+    }
   } catch (err) {
     return res.status(502).send(err instanceof UnlockError ? err.message : "Сервер не смог прочитать файл.");
   }
-  const audio = info.audio.find(x => x.index === a);
+  const audio = ext ? ext.audio : info.audio.find(x => x.index === a);
   if (!info.video || !audio) return res.status(400).send("В файле нет такой дорожки.");
   // AV1 у ТВ 2018–2019 нет: поток был бы со звуком и чёрным экраном (журнал 21.10)
   if (tv.videoUnsupported(info)) {
@@ -101,7 +169,7 @@ router.get("/api/file/tv/:name", mirrorLimiter, async (req, res) => {
 
   let closed = false;
   res.on("close", () => { closed = true; });
-  const child = tv.startFfmpeg(tv.ffmpegArgs(entry.url, Math.round(t * 10) / 10, info, audio, format), viewer);
+  const child = tv.startFfmpeg(tv.ffmpegArgs(entry.url, Math.round(t * 10) / 10, info, audio, format, ext), viewer);
   if (!child) {
     console.warn(`[tv] 503: уже ${tv.activeCount()} ffmpeg`);
     return res.status(503).send("Сервер занят: телевизоров смотрит слишком много.");
@@ -112,8 +180,9 @@ router.get("/api/file/tv/:name", mirrorLimiter, async (req, res) => {
   res.on("close", () => console.log(`[tv] плеер закрыл поток: ${Math.round((Date.now() - started) / 1000)} с, отдано ${Math.round(sent / 1024)} КБ`));
   const v = info.video;
   console.log(`[tv] видео ${v.codec} ${v.profile} ${v.width}x${v.height} ${v.pixFmt} ${v.transfer || "sdr"}${v.dv ? " DolbyVision P" + v.dv : ""}, контейнер ${info.container}`);
-  console.log(`[tv] старт ${format} a=${a} (${audio.codec}${audio.ok ? ", копия" : " → ac3"}) t=${t} range=${range || "-"} ua="${req.get("user-agent") || "-"}"`);
-  mirrorLog(req, `tv stream: a=${a} (${audio.codec}${audio.ok ? ", copy" : " -> ac3"}) t=${t}`);
+  const which = ext ? `озвучка отдельным файлом, сдвиг ${xo} мс` : `a=${a}`;
+  console.log(`[tv] старт ${format} ${which} (${audio.codec}${audio.ok ? ", копия" : " → ac3"}) t=${t} range=${range || "-"} ua="${req.get("user-agent") || "-"}"`);
+  mirrorLog(req, `tv stream: ${ext ? `ext offset=${xo}` : `a=${a}`} (${audio.codec}${audio.ok ? ", copy" : " -> ac3"}) t=${t}`);
 
   const kill = () => { if (child.exitCode == null && !child.killed) child.kill("SIGKILL"); };
   res.on("close", kill);

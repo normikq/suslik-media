@@ -69,6 +69,12 @@ function canRemove(id, req, statusCode) {
   return removeChecker(req)(id, statusCode);
 }
 
+// Раздачу добавил именно это устройство/пользователь (запись об авторе есть и совпадает). Без записи — нет.
+function isOwner(id, req) {
+  const o = magnetOwners.get(String(id));
+  return Boolean(o && o.dev === deviceId(req, null));
+}
+
 function deleteOwner(id) {
   if (magnetOwners.delete(String(id))) {
     persistOwners();
@@ -164,6 +170,7 @@ function cleanupFinishedDownloads(states) {
 module.exports = {
   MAX_ACTIVE_DOWNLOADS_PER_IP,
   canRemove,
+  isOwner,
   removeChecker,
   isLibraryAdmin,
   recordOwner,

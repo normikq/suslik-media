@@ -29,6 +29,10 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.LoadControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.Renderer
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+import androidx.media3.exoplayer.video.MediaCodecVideoRenderer
+import androidx.media3.exoplayer.video.VideoRendererEventListener
 import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.analytics.PlayerId
@@ -111,6 +115,7 @@ class Media3Engine(private val context: Context) : PlayerEngine {
     @Volatile private var fileSize = -1L
     private var builtViaReserve = false            // what the current ExoPlayer's back buffer was chosen for
     @Volatile private var viaReserve = false     // the film is read from BurstProxy on this phone, not from the mirror
+    private var videoRenderer: FreshDecoderVideoRenderer? = null // of the current ExoPlayer
 
     private val transfer = object : TransferListener {
         override fun onTransferInitializing(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) {}
@@ -131,7 +136,21 @@ class Media3Engine(private val context: Context) : PlayerEngine {
     }
 
     private fun build(reserve: Boolean): ExoPlayer {
-        val renderers = DefaultRenderersFactory(context)
+        val renderers = object : DefaultRenderersFactory(context) {
+            // the same video renderer, only with a new decoder where a flush breaks it ([FreshDecoderVideoRenderer])
+            override fun buildVideoRenderers(
+                context: Context, extensionRendererMode: Int, mediaCodecSelector: MediaCodecSelector,
+                enableDecoderFallback: Boolean, eventHandler: Handler, eventListener: VideoRendererEventListener,
+                allowedVideoJoiningTimeMs: Long, out: ArrayList<Renderer>,
+            ) {
+                super.buildVideoRenderers(context, extensionRendererMode, mediaCodecSelector, enableDecoderFallback,
+                    eventHandler, eventListener, allowedVideoJoiningTimeMs, out)
+                val i = out.indexOfFirst { it is MediaCodecVideoRenderer }
+                if (i >= 0) out[i] = FreshDecoderVideoRenderer(context, codecAdapterFactory, mediaCodecSelector,
+                    allowedVideoJoiningTimeMs, enableDecoderFallback, eventHandler, eventListener,
+                    FreshDecoderVideoRenderer.MAX_DROPPED_FRAMES_TO_NOTIFY).also { videoRenderer = it }
+            }
+        }
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON) // FFmpeg only where the phone can't
             .setEnableDecoderFallback(true)
         // Straight from the mirror: loads in bursts, up to MAX_BUFFER_MS ahead, then the radio rests until only
@@ -199,7 +218,11 @@ class Media3Engine(private val context: Context) : PlayerEngine {
             .setSubtitleConfigurations(m.subtitleFiles.map { subtitle(it) })
             .build()
         val main = factory.createMediaSource(item)
-        val audio = (m.audioFiles + extraAudio).map { factory.createMediaSource(MediaItem.fromUri(it)) }
+        val audio = (m.audioFiles + extraAudio).map { u ->
+            val s = factory.createMediaSource(MediaItem.fromUri(u))
+            val offset = CustomAudioInfo.of(u)?.offsetMs ?: 0L
+            if (offset == 0L) s else OffsetMediaSource(s, offset)
+        }
         return if (audio.isEmpty()) main else MergingMediaSource(main, *audio.toTypedArray())
     }
 
@@ -243,6 +266,7 @@ class Media3Engine(private val context: Context) : PlayerEngine {
         handler.removeCallbacksAndMessages(null)
         val p = exo ?: return
         exo = null
+        videoRenderer = null
         view.player = null
         media = null
         runCatching { p.removeListener(events); p.removeAnalyticsListener(analytics); p.release() }
@@ -382,11 +406,29 @@ class Media3Engine(private val context: Context) : PlayerEngine {
      */
     override fun seekTo(ms: Long) {
         val p = exo ?: return
-        val t = ms.coerceAtLeast(0L)
+        var t = ms.coerceAtLeast(0L)
+        // ExoPlayer skips a seek to the millisecond it plays — and with it the decoder restart the seek is for
+        // (23.10 journal: «restart the video» at 22:39:15 and 22:39:31 did not touch the decoder at all)
+        if (restartSeek) { restartSeek = false; if (kotlin.math.abs(t - p.currentPosition) < SAME_PLACE_MS) t = p.currentPosition + SAME_PLACE_MS }
         val fast = media?.fastSeek == true && extraAudio.isEmpty() && kotlin.math.abs(t - p.currentPosition) > FAR_SEEK_MS
         p.setSeekParameters(if (fast) SeekParameters.CLOSEST_SYNC else SeekParameters.EXACT)
         p.seekTo(t)
     }
+
+    /**
+     * Turning the video off and on at once did nothing here: the track selector already held «on» again when the
+     * playback thread looked. With a seek: the renderer takes a new decoder at it ([FreshDecoderVideoRenderer]).
+     * Without one: the video is off until the playback thread has released the decoder, then on with a new one.
+     */
+    override fun restartVideo(seekMs: Long?) {
+        val p = exo ?: return
+        val r = videoRenderer
+        if (seekMs != null && r != null) { r.freshOnNextReset = true; restartSeek = true; return }
+        setVideoEnabled(false)
+        val g = opened
+        handler.postDelayed({ if (exo === p && opened == g) setVideoEnabled(true) }, VIDEO_OFF_MS)
+    }
+    private var restartSeek = false
     override fun seekToFraction(fraction: Float) { lengthMs.takeIf { it > 0L }?.let { seekTo((it * fraction).toLong()) } }
     override val bufferedPositionMs: Long get() = exo?.bufferedPosition ?: -1L
     override val bitrateMbit: Double?
@@ -555,6 +597,8 @@ class Media3Engine(private val context: Context) : PlayerEngine {
         private const val AFTER_REBUFFER_MS = 6_000
         private const val BACK_BUFFER_MS = 15_000
         private const val FAR_SEEK_MS = 30_000L // a jump further than this goes to the nearest keyframe (see seekTo)
+        private const val SAME_PLACE_MS = 50L   // a restart seek this close to the playing moment is moved this far on
+        private const val VIDEO_OFF_MS = 250L   // restartVideo without a seek: long enough for the playback thread
         private const val TICK_MS = 250L
         private const val TARGET_BUFFER_BYTES = 80 shl 20
         private const val RESERVE_AHEAD_US = 15_000_000L

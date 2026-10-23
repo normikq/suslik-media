@@ -11,4 +11,6 @@ object PlayerExtras {
     const val WATCH_KEYS = "media_watch_keys"
     /** The playlist's other episodes' subtitles and voice-overs (JSON from the play sheet), signed when each starts. */
     const val EPISODE_SIDES = "media_episode_sides"
+    /** Uploaded voice-overs of the film and its playlist: name and delay by signed link (see [CustomAudioInfo]). */
+    const val CUSTOM_AUDIO = "media_custom_audio"
 }

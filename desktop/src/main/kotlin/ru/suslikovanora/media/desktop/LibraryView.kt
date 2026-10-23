@@ -114,6 +114,14 @@ enum class Category(val label: String) {
     Other(tr("library.drugoe"))
 }
 
+/** The category the library page shows; the side panel's «Коллекция» sets it. */
+object LibraryNav {
+    var category by androidx.compose.runtime.mutableStateOf(Category.All)
+    var mineCategory by androidx.compose.runtime.mutableStateOf(Category.All)
+    fun of(mine: Boolean) = if (mine) mineCategory else category
+    fun set(mine: Boolean, c: Category) { if (mine) mineCategory = c else category = c }
+}
+
 enum class SortBy(val label: String) {
     Name(tr("library.nazvanie")),
     Newest(tr("library.snachala_novye")),
@@ -180,6 +188,23 @@ fun itemTypeLabel(item: LibraryItem): String {
         Category.Other -> tr("library.drugoe")
         Category.All -> tr("library.video")
     }
+}
+
+private val TAG_DV = Regex("""\b(dolby[ ._-]?vision|dovi|dv)\b""", RegexOption.IGNORE_CASE)
+private val TAG_HDR = Regex("""\bhdr(10)?(\+|plus)?\b""", RegexOption.IGNORE_CASE)
+private val TAG_DTS = Regex("""\bdts(?:[ ._:-]?(hd|x))?(?:[ ._-]?(ma))?\b""", RegexOption.IGNORE_CASE)
+
+/** Marks of the release for the poster: «Dolby Vision», «HDR», «DTS» (by the names of the torrent and its files). */
+fun itemTags(item: LibraryItem): List<String> {
+    val text = item.m.name + "\n" + item.m.files.joinToString("\n") { it.path }
+    val out = ArrayList<String>(3)
+    if (TAG_DV.containsMatchIn(text)) out += "Dolby Vision"
+    if (TAG_HDR.containsMatchIn(text)) out += "HDR"
+    TAG_DTS.find(text)?.let { m ->
+        val kind = m.groupValues[1].lowercase(); val ma = m.groupValues[2].isNotEmpty()
+        out += when { kind == "hd" -> if (ma) "DTS-HD MA" else "DTS-HD"; kind == "x" -> "DTS:X"; else -> "DTS" }
+    }
+    return out
 }
 
 /** Formats technical media line 1 (Quality • Codec • FPS) and line 2 (Bitrate • Size). */
@@ -365,7 +390,9 @@ fun LibraryView(
     var query by remember { mutableStateOf("") }
     var target by remember { mutableStateOf<PlayTarget?>(null) }
     var pick by remember { mutableStateOf<List<LibraryItem>?>(null) } // versions of one film to choose from
-    var category by remember { mutableStateOf(Category.All) }
+    // The category is chosen in the side panel («Коллекция»); each page («Главная», «Моя медиатека») remembers its own.
+    val category = LibraryNav.of(mineOnly)
+    val setCategory: (Category) -> Unit = { LibraryNav.set(mineOnly, it) }
     var viewMode by remember { mutableStateOf(ViewMode.Grid) }
     var sortBy by remember { mutableStateOf(SortBy.Name) }
     var onlyReady by remember { mutableStateOf(false) }
@@ -432,7 +459,7 @@ fun LibraryView(
                 item(span = { GridItemSpan(maxLineSpan) }, key = "filters_bar") {
                     FilterControlsBar(
                         selectedCategory = category,
-                        onCategorySelect = { category = it },
+                        onCategorySelect = setCategory,
                         viewMode = viewMode,
                         onViewModeSelect = { viewMode = it },
                         sortBy = sortBy,
@@ -479,7 +506,7 @@ fun LibraryView(
                 item(key = "filters_bar") {
                     FilterControlsBar(
                         selectedCategory = category,
-                        onCategorySelect = { category = it },
+                        onCategorySelect = setCategory,
                         viewMode = viewMode,
                         onViewModeSelect = { viewMode = it },
                         sortBy = sortBy,
@@ -620,26 +647,8 @@ private fun FilterControlsBar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        // Left: Filter Chips
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            for (cat in Category.entries) {
-                val active = cat == selectedCategory
-                val src = remember { MutableInteractionSource() }
-                val hovered by src.collectIsHoveredAsState()
-                val bg by animateColorAsState(when { active -> Sm.accent.copy(alpha = 0.85f); hovered -> Color(0x14FFFFFF); else -> Color.Transparent }, tween(200))
-                val edge by animateColorAsState(when { active -> Sm.accentEdge; hovered -> Color(0x26FFFFFF); else -> Sm.glassEdge }, tween(200))
-                val fg by animateColorAsState(when { active -> Color.White; hovered -> Color(0xFFD6DBE4); else -> Color(0xFF8E96A8) }, tween(200))
-
-                Box(
-                    Modifier.clip(RoundedCornerShape(16.dp)).background(bg).border(1.dp, edge, RoundedCornerShape(16.dp))
-                        .hoverClick(src) { onCategorySelect(cat) }
-                        .height(32.dp).padding(horizontal = 14.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(cat.label, color = fg, fontFamily = Onest, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium, fontSize = 13.sp)
-                }
-            }
-        }
+        // (Categories are chosen in the side panel.)
+        Spacer(Modifier.width(1.dp))
 
         // Right: one menu for view mode, sorting and the "ready only" filter.
         Box {
@@ -784,12 +793,34 @@ private fun Tile(item: LibraryItem, lib: Library, versions: List<LibraryItem>, i
                 HeartIcon(filled = isFav, color = if (isFav) Color(0xFFFF6B8A) else Color.White, size = 16.dp)
             }
         }
-        if (versions.size > 1) {
-            Text(
-                versionsWord(versions.size), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 11.sp,
-                modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000))
-                    .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(10.dp)).padding(horizontal = 8.dp, vertical = 4.dp)
-            )
+        val tags = versions.ifEmpty { listOf(item) }.flatMap { lib.tagsOf(it) }.distinct()
+        if (versions.size > 1 || tags.isNotEmpty()) {
+            Column(Modifier.align(Alignment.TopEnd).padding(8.dp), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (versions.size > 1) Text(
+                    versionsWord(versions.size), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 11.sp,
+                    modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(Color(0x99000000))
+                        .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(10.dp)).padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+                for (t in tags) {
+                    val c = when { t.startsWith("Dolby") -> Color(0xFFB794F6); t == "HDR" -> Color(0xFFFFC857); else -> Color(0xFF7DD3FC) }
+                    // a fixed-height box with the text centred in it (the font's own line padding made the text sit high)
+                    Box(
+                        Modifier.height(18.dp).clip(RoundedCornerShape(6.dp)).background(Color(0xB3000000))
+                            .border(1.dp, c.copy(alpha = 0.55f), RoundedCornerShape(6.dp)).padding(horizontal = 7.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            t, color = c, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 10.sp, letterSpacing = 0.3.sp, maxLines = 1, softWrap = false,
+                            style = androidx.compose.ui.text.TextStyle(
+                                lineHeight = 10.sp,
+                                lineHeightStyle = androidx.compose.ui.text.style.LineHeightStyle(
+                                    androidx.compose.ui.text.style.LineHeightStyle.Alignment.Center, androidx.compose.ui.text.style.LineHeightStyle.Trim.Both
+                                )
+                            )
+                        )
+                    }
+                }
+            }
         }
         // Right click: seasons of a series and delete / cancel (the corner button with dots is gone).
         Box(Modifier.align(Alignment.Center)) {
@@ -1152,202 +1183,182 @@ private fun continueEntries(items: List<LibraryItem>, lib: Library): List<Contin
         val t = targetFor(item, next) ?: return@mapNotNull null
         ContinueEntry(item, t, tr("library.dalshe") + t.label.removePrefix(item.baseTitle).removePrefix(" · "), 0f, 0L, 0L, w.at)
     }
-}.sortedByDescending { it.at }.take(14)
+}.sortedByDescending { it.at }.take(4)
 
+/** At the start of the app: the banners' pictures and texts are loaded before the library page is opened. */
+suspend fun warmContinue(items: List<LibraryItem>, lib: Library) {
+    for (e in continueEntries(items, lib)) {
+        val q = e.item.posterQueries
+        runCatching { lib.hero(q); lib.poster(q) }
+    }
+}
+
+private fun plural(n: Int, one: String, few: String, many: String): String {
+    val t = n % 100; val u = n % 10
+    return "$n " + if (t in 11..14) many else when (u) { 1 -> one; 2, 3, 4 -> few; else -> many }
+}
+
+/** «Сезон 1, серия 4» for an episode of a series; null for a film. */
+private fun episodeSub(e: ContinueEntry): String? {
+    val p = e.item.playable as? Playable.Series ?: return null
+    for (s in p.seasons) {
+        val ep = s.items.firstOrNull { it.file.path == e.target.file.path } ?: continue
+        if (ep.title != null) return null
+        val text = if (s.season == 0) "Спецвыпуск ${ep.episode}" else "Сезон ${s.season}, серия ${ep.episode}"
+        return if (e.label.startsWith(tr("library.dalshe"))) tr("library.dalshe") + text else text
+    }
+    return null
+}
+
+private fun timeLeft(e: ContinueEntry): String? {
+    if (e.len <= 0 || e.pos <= 0) return null
+    val min = ((e.len - e.pos) / 60_000L).toInt().coerceAtLeast(1)
+    return (if (min >= 60) "${min / 60} ч ${min % 60} мин" else "$min мин") + " осталось"
+}
+
+/** «Продолжить просмотр»: a banner with the film watched last (wide picture, description, progress); the others are the cards on the right. */
 @Composable
 private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTarget) -> Unit) {
     val scope = rememberCoroutineScope()
     val wv = lib.watchVersion
     val entries = remember(items, wv) { continueEntries(items, lib) }
-    val rowState = rememberLazyListState()
+    var chosen by remember { mutableStateOf<Long?>(null) }
+    val bannerSrc = remember { MutableInteractionSource() }
+    val bannerHover by bannerSrc.collectIsHoveredAsState()
+    // The banners change by themselves, one after another (not while the pointer is over the banner); a click on a card restarts the wait
+    LaunchedEffect(entries.map { it.item.m.id }, chosen, bannerHover) {
+        if (entries.size < 2 || bannerHover) return@LaunchedEffect
+        kotlinx.coroutines.delay(9000)
+        val cur = entries.indexOfFirst { it.item.m.id == chosen }.coerceAtLeast(0)
+        chosen = entries[(cur + 1) % entries.size].item.m.id
+    }
 
     androidx.compose.animation.AnimatedVisibility(
         entries.isNotEmpty(),
         enter = fadeIn(tween(300)) + expandVertically(tween(320, easing = Sm.ease)),
         exit = fadeOut(tween(200)) + shrinkVertically(tween(260, easing = Sm.ease))
     ) {
-        val rowSrc = remember { MutableInteractionSource() }
-        val rowHover by rowSrc.collectIsHoveredAsState()
-        val arrows by animateFloatAsState(if (rowHover) 1f else 0f, tween(220))
-        Column(Modifier.fillMaxWidth().hoverable(rowSrc).padding(top = 6.dp, bottom = 22.dp)) {
-            Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    tr("library.prodolzhit_prosmotr"),
-                    fontFamily = Unbounded,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 17.5.sp,
-                    color = Color.White,
-                )
-                Text(
-                    entries.size.toString(), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 12.sp,
-                    modifier = Modifier.padding(start = 10.dp).clip(RoundedCornerShape(10.dp)).background(Sm.accent).padding(horizontal = 8.dp, vertical = 2.dp)
-                )
-                Spacer(Modifier.weight(1f))
+        val e = entries.firstOrNull { it.item.m.id == chosen } ?: entries.first()
+        val queries = e.item.posterQueries
+        var hero by remember(e.item.m.id) { mutableStateOf(lib.cachedHero(queries)) }
+        LaunchedEffect(e.item.m.id) { if (hero == null) hero = lib.hero(queries) }
+        var poster by remember(e.item.m.id) { mutableStateOf(lib.cachedPoster(queries)) }
+        LaunchedEffect(e.item.m.id) { if (poster == null) poster = lib.poster(queries) }
 
-                // Clear the whole row (each card also has its own ×). Brings back anything watched again later.
-                ClearAllButton { lib.hideContinue(entries.map { it.item.m.id }) }
-                Spacer(Modifier.width(14.dp))
+        androidx.compose.foundation.layout.BoxWithConstraints(
+            Modifier.padding(top = 6.dp, bottom = 22.dp).fillMaxWidth().height(360.dp).hoverable(bannerSrc)
+                .clip(RoundedCornerShape(20.dp)).background(Color(0xFF0B1226)).border(1.dp, Sm.glassEdge, RoundedCornerShape(20.dp))
+        ) {
+            // The wide picture on the right (a poster stretched to this width would be blurry: without a wide picture the banner stays plain)
+            androidx.compose.animation.Crossfade(hero?.backdrop, animationSpec = tween(350), modifier = Modifier.fillMaxSize()) { img ->
+                if (img != null) Image(img, null, contentScale = ContentScale.Crop, alignment = Alignment.CenterEnd, filterQuality = androidx.compose.ui.graphics.FilterQuality.High, modifier = Modifier.fillMaxSize())
+            }
+            Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to Color(0xFF0B1226), 0.42f to Color(0xF20B1226), 0.78f to Color(0x330B1226), 1f to Color(0x000B1226))))
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.6f to Color.Transparent, 1f to Color(0xAA0B1226))))
 
-                // Carousel Chevrons
-                Row(Modifier.graphicsLayer { alpha = arrows }, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    val prevSrc = remember { MutableInteractionSource() }
-                    val prevHover by prevSrc.collectIsHoveredAsState()
-                    Box(
-                        Modifier.size(28.dp).clip(CircleShape).background(if (prevHover) Color(0xFF282E3C) else Color(0xFF141720))
-                            .border(1.dp, Color(0xFF242A38), CircleShape)
-                            .hoverClick(prevSrc) { scope.launch { rowState.animateScrollBy(-560f) } },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        ChevronLeft(color = if (prevHover) Color.White else Color(0xFF8E96A8), size = 12.dp)
+            // The cards on the right take at most 420 dp (and under half of a narrow window); the text keeps the rest and never runs under them
+            val thumbsW = if (entries.size > 1) minOf(420.dp, maxWidth * 0.45f) else 0.dp
+            val textW = (maxWidth - thumbsW - if (entries.size > 1) 60.dp else 0.dp).coerceIn(260.dp, 560.dp)
+            Column(Modifier.fillMaxHeight().width(textW).padding(start = 28.dp, top = 24.dp, bottom = 24.dp), verticalArrangement = Arrangement.SpaceBetween) {
+                Column {
+                    Text(tr("library.prodolzhit_prosmotr").uppercase(), color = Color(0xFF9AA3B8), fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 12.sp, letterSpacing = 1.6.sp)
+                    val logo = hero?.logo
+                    if (logo != null) {
+                        // the film's own title picture (transparent), like on streaming sites
+                        Image(logo, e.item.baseTitle, contentScale = ContentScale.Fit, alignment = Alignment.CenterStart,
+                            filterQuality = androidx.compose.ui.graphics.FilterQuality.High,
+                            modifier = Modifier.padding(top = 8.dp).height(68.dp).widthIn(max = 360.dp))
+                    } else {
+                        Text(e.item.baseTitle, color = Color.White, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = 32.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                            lineHeight = 36.sp, modifier = Modifier.padding(top = 8.dp))
                     }
-
-                    val nextSrc = remember { MutableInteractionSource() }
-                    val nextHover by nextSrc.collectIsHoveredAsState()
-                    Box(
-                        Modifier.size(28.dp).clip(CircleShape).background(if (nextHover) Color(0xFF282E3C) else Color(0xFF141720))
-                            .border(1.dp, Color(0xFF242A38), CircleShape)
-                            .hoverClick(nextSrc) { scope.launch { rowState.animateScrollBy(560f) } },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        ChevronRight(color = if (nextHover) Color.White else Color(0xFF8E96A8), size = 12.dp)
+                    Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        @Composable fun chip(t: String) = Text(t, color = Color(0xFFD6DBE4), fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 12.5.sp,
+                            modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0x1AFFFFFF)).border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 4.dp))
+                        hero?.year?.let { chip(it) }
+                        chip(itemTypeLabel(e.item))
+                        (e.item.playable as? Playable.Series)?.let { p ->
+                            val eps = p.seasons.sumOf { it.items.size }
+                            chip(plural(p.seasons.size, "сезон", "сезона", "сезонов") + " • " + plural(eps, "серия", "серии", "серий"))
+                        }
+                        hero?.rating?.let { r ->
+                            Text("★ " + "%.1f".format(java.util.Locale.US, r), color = Color(0xFFFACC15), fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        }
+                    }
+                    hero?.overview?.let {
+                        Text(it, color = Color(0xFFC3C9D6), fontFamily = Onest, fontSize = 14.5.sp, lineHeight = 21.sp, maxLines = 3, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(top = 12.dp))
                     }
                 }
-            }
-
-            LazyRow(state = rowState, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                items(entries.size, key = { entries[it].item.m.id }) { i ->
-                    val e = entries[i]
-                    ContinueCard(
-                        e, lib, if (Motion.simple) Modifier else Modifier.animateItem(fadeInSpec = tween(250), fadeOutSpec = tween(200)),
-                        onRemove = { lib.hideContinue(listOf(e.item.m.id)) }
-                    ) {
+                Column {
+                    Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(episodeSub(e) ?: e.label, color = Color(0xFFC3C9D6), fontFamily = Onest, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                        timeLeft(e)?.let { Text(it, color = Color(0xFF8E96A8), fontFamily = Onest, fontSize = 12.5.sp) }
+                    }
+                    Box(Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(Color(0x33FFFFFF))) {
+                        Box(Modifier.fillMaxWidth(e.fraction.coerceIn(0f, 1f)).fillMaxHeight().clip(RoundedCornerShape(2.dp))
+                            .background(Brush.horizontalGradient(listOf(Color(0xFF2563EB), Color(0xFF38BDF8)))))
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    HeroPlayButton {
                         TileBounds.fromContinue = true
                         lib.saveEpisode(e.item.m.id, e.target.file.path)
                         onOpen(e.target)
                     }
                 }
             }
+
+            // The other films being watched: the chosen one is outlined, a click chooses; the arrow scrolls
+            if (entries.size > 1) {
+                Row(Modifier.align(Alignment.BottomEnd).padding(end = 14.dp, bottom = 18.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.widthIn(max = thumbsW), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        for (x in entries) {
+                            HeroThumb(x, lib, selected = x.item.m.id == e.item.m.id,
+                                onRemove = { lib.hideContinue(listOf(x.item.m.id)) }) { chosen = x.item.m.id }
+                        }
+                    }
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun ClearAllButton(onClick: () -> Unit) {
+private fun HeroPlayButton(onClick: () -> Unit) {
     val src = remember { MutableInteractionSource() }
     val hovered by src.collectIsHoveredAsState()
-    val fg by animateColorAsState(if (hovered) Color.White else Sm.muted, tween(200))
-    val bg by animateColorAsState(if (hovered) Color(0x1AFFFFFF) else Color.Transparent, tween(200))
+    val bg by animateColorAsState(if (hovered) Color(0xFF3B74F0) else Sm.accent, tween(180))
     Row(
-        Modifier.clip(RoundedCornerShape(10.dp)).background(bg).hoverClick(src, onClick = onClick).padding(horizontal = 10.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)
+        Modifier.height(44.dp).clip(RoundedCornerShape(12.dp)).background(bg).border(1.dp, Sm.accentEdge, RoundedCornerShape(12.dp))
+            .hoverClick(src, onClick = onClick).padding(horizontal = 26.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        CloseCrossIcon(color = fg, size = 10.dp)
-        Text(tr("library.ochistit"), color = fg, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 12.5.sp)
+        Text("▶", color = Color.White, fontSize = 13.sp)
+        Text(tr("library.prodolzhit"), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
     }
 }
 
 @Composable
-private fun ContinueCard(e: ContinueEntry, lib: Library, modifier: Modifier, onRemove: () -> Unit, onClick: () -> Unit) {
+private fun HeroThumb(e: ContinueEntry, lib: Library, selected: Boolean, onRemove: () -> Unit, onClick: () -> Unit) {
     val src = remember { MutableInteractionSource() }
     val hovered by src.collectIsHoveredAsState()
-    val lift by animateFloatAsState(if (hovered) -3f else 0f, tween(260, easing = Sm.ease))
-    val edge by animateColorAsState(if (hovered) Sm.glassEdgeHover else Sm.glassEdge, tween(220))
-    val bg by animateColorAsState(if (hovered) Sm.glassFillHover else Sm.glassFill, tween(220))
     var poster by remember(e.item.m.id) { mutableStateOf(lib.cachedPoster(e.item.posterQueries)) }
     LaunchedEffect(e.item.m.id) { if (poster == null) poster = lib.poster(e.item.posterQueries) }
-    val xSrc = remember { MutableInteractionSource() }
-    val xHover by xSrc.collectIsHoveredAsState()
-    val xAlpha by animateFloatAsState(if (hovered || xHover) 1f else 0f, tween(200))
-
-    Box(modifier.graphicsLayer { translationY = lift }.hoverable(src)) {
-        Row(
-            Modifier.width(268.dp).height(96.dp).clip(RoundedCornerShape(12.dp)).background(bg)
-                .border(1.dp, edge, RoundedCornerShape(12.dp)).hoverClick(src, onClick = onClick)
-                .padding(11.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Left Poster Thumbnail
-            Box(
-                Modifier.width(54.dp).fillMaxHeight()
-                    .trackBounds(TileBounds.cont, e.item.m.id)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF222736))
-            ) {
-                poster?.let { Image(it, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
-            }
-
-            Spacer(Modifier.width(13.dp))
-
-            // Right Text and Progress
-            Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.SpaceBetween) {
-                Column {
-                    Text(
-                        e.item.baseTitle,
-                        color = Color.White,
-                        fontFamily = Onest,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 15.5.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        e.label,
-                        color = Color(0xFF8E96A8),
-                        fontFamily = Onest,
-                        fontSize = 13.5.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(top = 2.dp)
-                    )
-                }
-
-                Column {
-                    val timeText = if (e.pos > 0 && e.len > 0) "${clock(e.pos)} / ${clock(e.len)}" else ""
-                    if (timeText.isNotEmpty()) {
-                        Text(timeText, color = Color(0xFF8E96A8), fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(bottom = 5.dp))
-                    }
-                    Box(Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(Color(0xFF202636))) {
-                        Box(
-                            Modifier.fillMaxWidth(e.fraction.coerceIn(0f, 1f))
-                                .fillMaxHeight()
-                                .clip(RoundedCornerShape(2.dp))
-                                .background(Brush.horizontalGradient(listOf(Color(0xFF0284C7), Color(0xFF38BDF8), Color(0xFF7DD3FC))))
-                        )
-                    }
-                }
-            }
-        }
-
-        // × close button in corner on hover (bigger cross, aligned in corner, white glow on hover, no circle)
-        val xGlowAlpha by animateFloatAsState(if (xHover) 0.50f else 0f, tween(180))
-        val xCrossScale by animateFloatAsState(if (xHover) 1.15f else 1f, tween(180, easing = Sm.ease))
+    val edge by animateColorAsState(if (selected) Color(0xFF7DD3FC) else if (hovered) Color(0x66FFFFFF) else Color(0x26FFFFFF), tween(180))
+    val lift by animateFloatAsState(if (hovered || selected) -3f else 0f, tween(220, easing = Sm.ease))
+    Box(Modifier.graphicsLayer { translationY = lift }.hoverable(src)) {
         Box(
-            Modifier.align(Alignment.TopEnd).padding(top = 6.dp, end = 8.dp)
-                .graphicsLayer { alpha = xAlpha; scaleX = xCrossScale; scaleY = xCrossScale }
-                .size(26.dp)
-                .drawBehind {
-                    if (xGlowAlpha > 0.001f) {
-                        val r = 14.dp.toPx()
-                        drawCircle(
-                            brush = Brush.radialGradient(
-                                colorStops = arrayOf(
-                                    0.0f to Color.White.copy(alpha = xGlowAlpha),
-                                    0.45f to Color.White.copy(alpha = xGlowAlpha * 0.45f),
-                                    0.80f to Color.White.copy(alpha = xGlowAlpha * 0.12f),
-                                    1.0f to Color.Transparent
-                                ),
-                                center = center,
-                                radius = r
-                            ),
-                            radius = r,
-                            center = center
-                        )
-                    }
-                }
-                .hoverClick(xSrc, enabled = xAlpha > 0.05f, onClick = onRemove),
-            contentAlignment = Alignment.Center
+            Modifier.width(96.dp).height(144.dp).trackBounds(TileBounds.cont, e.item.m.id).clip(RoundedCornerShape(10.dp)).background(Color(0xFF222736))
+                .border(if (selected) 2.dp else 1.dp, edge, RoundedCornerShape(10.dp)).hoverClick(src, onClick = onClick)
         ) {
-            Text("×", color = Color.White, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+            poster?.let { Image(it, null, contentScale = ContentScale.Crop, filterQuality = androidx.compose.ui.graphics.FilterQuality.High, modifier = Modifier.fillMaxSize()) }
+            Box(Modifier.align(Alignment.BottomStart).fillMaxWidth(e.fraction.coerceIn(0f, 1f)).height(3.dp).background(Color(0xFF38BDF8)))
+        }
+        if (hovered) {
+            val xSrc = remember { MutableInteractionSource() }
+            Box(Modifier.align(Alignment.TopEnd).padding(3.dp).size(20.dp).clip(CircleShape).background(Color(0xB3000000)).hoverClick(xSrc, onClick = onRemove), contentAlignment = Alignment.Center) {
+                CloseCrossIcon(color = Color.White, size = 8.dp)
+            }
         }
     }
 }

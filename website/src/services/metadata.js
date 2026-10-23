@@ -105,6 +105,30 @@ function runFfprobe(url) {
   });
 }
 
+// Official provider API: a file link -> a direct URL that ffprobe may read (never written to disk).
+async function resolveDirectUrl(parsed) {
+  const unlocked = await axios.post(
+    `${config.ALLDEBRID_API_BASE}/v4/link/unlock`,
+    new URLSearchParams({ link: parsed.toString() }),
+    {
+      headers: {
+        Authorization: `Bearer ${config.ALLDEBRID_API_KEY}`,
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      timeout: 20000,
+      validateStatus: () => true
+    }
+  );
+  if (unlocked.status < 200 || unlocked.status >= 300 || unlocked.data?.status === "error") {
+    throw Object.assign(new Error("unlock"), { userMessage: "AllDebrid не смог получить ссылку на это видео." });
+  }
+  const direct = safeHttpsUrl(unlocked.data?.data?.link || "");
+  if (!direct || !["http:", "https:"].includes(direct.protocol)) {
+    throw Object.assign(new Error("direct"), { userMessage: "AllDebrid вернул некорректный URL видео." });
+  }
+  return direct;
+}
+
 async function getMediaMetadata(rawLink, magnetId, wantedPath) {
   let parsed = safeHttpsUrl(rawLink);
   // Library snapshots may not contain file links; resolve the requested file from AllDebrid by magnet ID + path.
@@ -142,25 +166,7 @@ async function getMediaMetadata(rawLink, magnetId, wantedPath) {
   if (!job) {
     job = withFfprobeSlot(async () => {
       // Resolve through the official provider API; only inspect the resulting direct URL.
-      const unlocked = await axios.post(
-        `${config.ALLDEBRID_API_BASE}/v4/link/unlock`,
-        new URLSearchParams({ link: parsed.toString() }),
-        {
-          headers: {
-            Authorization: `Bearer ${config.ALLDEBRID_API_KEY}`,
-            "Content-Type": "application/x-www-form-urlencoded"
-          },
-          timeout: 20000,
-          validateStatus: () => true
-        }
-      );
-      if (unlocked.status < 200 || unlocked.status >= 300 || unlocked.data?.status === "error") {
-        throw Object.assign(new Error("unlock"), { userMessage: "AllDebrid не смог получить ссылку на это видео." });
-      }
-      const direct = safeHttpsUrl(unlocked.data?.data?.link || "");
-      if (!direct || !["http:", "https:"].includes(direct.protocol)) {
-        throw Object.assign(new Error("direct"), { userMessage: "AllDebrid вернул некорректный URL видео." });
-      }
+      const direct = await resolveDirectUrl(parsed);
       const metadata = await runFfprobe(direct.toString());
       for (const [k, v] of mediaMetadataCache) {
         if (!(v.expiresAt > Date.now())) mediaMetadataCache.delete(k);
@@ -183,5 +189,7 @@ async function getMediaMetadata(rawLink, magnetId, wantedPath) {
 module.exports = {
   mediaMetadataCache,
   runFfprobe,
+  resolveDirectUrl,
+  withFfprobeSlot,
   getMediaMetadata
 };
