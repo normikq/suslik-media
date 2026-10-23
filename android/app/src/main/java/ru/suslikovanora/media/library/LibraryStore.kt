@@ -61,6 +61,7 @@ class LibraryStore(context: Context) {
         private set
 
     private suspend fun publish(all: List<Magnet>) {
+        guessedTags.clear()
         val list = all.filterNot { isVoiceOverOnly(it) }
         val prepared = withContext(Dispatchers.Default) { prepareItems(list) }
         magnets = list
@@ -361,7 +362,9 @@ class LibraryStore(context: Context) {
 
     // ---- Dolby Vision / HDR / DTS marks: the server looks into the file (ffprobe, kept until the film is deleted) ----
     private val serverTags = androidx.compose.runtime.mutableStateMapOf<Long, List<String>>()
-    fun tagsOf(item: LibraryItem): List<String> = serverTags[item.m.id] ?: itemTags(item)
+    // The guess by the names runs regexes over every file of the torrent: once per film, not at every look at a tile
+    private val guessedTags = java.util.concurrent.ConcurrentHashMap<Long, List<String>>()
+    fun tagsOf(item: LibraryItem): List<String> = serverTags[item.m.id] ?: guessedTags.getOrPut(item.m.id) { itemTags(item) }
 
     /** The server analyses new films one by one in the background: ask again while it has some left. */
     suspend fun refreshTags() {
@@ -386,7 +389,10 @@ class LibraryStore(context: Context) {
     private val mediaInflight = HashMap<String, CompletableDeferred<String>>()
 
     /** Ready line for the tile, or null when it still has to be analysed. */
-    private val mediaMemory = HashMap<String, String>()
+    private val mediaMemory = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /** The line if this start already had it (no disk, no parsing): what a tile may ask for while it is being composed. */
+    fun memoryMediaLine(magnetId: Long, file: MFile): String? = mediaMemory["$magnetId|${file.path}"]
 
     fun cachedMediaLine(magnetId: Long, file: MFile): String? {
         mediaMemory["$magnetId|${file.path}"]?.let { return it }

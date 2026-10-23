@@ -177,7 +177,7 @@ fun TvSidebar(
             .onFocusChanged { onFocused(it.hasFocus) }
     ) {
         Row(Modifier.fillMaxWidth().padding(start = 2.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-            val b by breathing(2600)
+            val b by breathing(2600, cycles = LOGO_PULSES)
             Box(
                 Modifier.size(42.dp).drawBehind {
                     val r = size.maxDimension * (0.62f + 0.12f * b)
