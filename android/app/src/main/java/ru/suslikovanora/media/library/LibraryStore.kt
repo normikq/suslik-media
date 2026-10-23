@@ -436,16 +436,23 @@ class LibraryStore(context: Context) {
 
     // ---- watch progress written by the player (prefs "watch": "magnetId|path" -> "pos|len|at") ----
     private val watchPrefs = app.getSharedPreferences("watch", Context.MODE_PRIVATE)
+    private val watchMemory = java.util.concurrent.ConcurrentHashMap<String, WatchInfo>()
     /** Bumped when the app comes back from the player, so tiles re-read their progress. */
     var watchVersion by mutableStateOf(0)
         private set
-    fun bumpWatch() { watchVersion++ }
+    fun bumpWatch() {
+        watchMemory.clear()
+        watchVersion++
+    }
 
     fun watchInfo(key: String): WatchInfo? {
+        watchMemory[key]?.let { return it }
         val v = watchPrefs.getString(key, null) ?: return null
         val parts = v.split('|')
         if (parts.size < 3) return null
-        return WatchInfo(parts[0].toLongOrNull() ?: return null, parts[1].toLongOrNull() ?: 0L, parts[2].toLongOrNull() ?: 0L)
+        val info = WatchInfo(parts[0].toLongOrNull() ?: return null, parts[1].toLongOrNull() ?: 0L, parts[2].toLongOrNull() ?: 0L)
+        watchMemory[key] = info
+        return info
     }
 
     /** Most recently watched file of a torrent (to pre-select the episode and show "Продолжить"). */
@@ -464,7 +471,7 @@ class LibraryStore(context: Context) {
     fun hideContinue(ids: List<Long>) {
         val now = System.currentTimeMillis()
         continueHiddenPrefs.edit().apply { ids.forEach { putLong(it.toString(), now) } }.apply()
-        watchVersion++
+        bumpWatch()
     }
     fun continueHiddenAt(id: Long): Long = continueHiddenPrefs.getLong(id.toString(), 0L)
 
@@ -475,6 +482,8 @@ class LibraryStore(context: Context) {
      */
     @OptIn(coil.annotation.ExperimentalCoilApi::class)
     private suspend fun cleanUp(list: List<LibraryItem>) = withContext(Dispatchers.IO) {
+        watchMemory.clear()
+        episodeMemory.clear()
         val keep = LibraryKeep(list)
         if (!keep.usable) return@withContext
         var n = 0
@@ -501,6 +510,10 @@ class LibraryStore(context: Context) {
     }
 
     // ---- last chosen episode per torrent ----
-    fun lastEpisode(id: Long): String? = episodePrefs.getString(id.toString(), null)
-    fun saveEpisode(id: Long, path: String) = episodePrefs.edit().putString(id.toString(), path).apply()
+    private val episodeMemory = java.util.concurrent.ConcurrentHashMap<Long, String>()
+    fun lastEpisode(id: Long): String? = episodeMemory[id] ?: episodePrefs.getString(id.toString(), null)?.also { episodeMemory[id] = it }
+    fun saveEpisode(id: Long, path: String) {
+        episodeMemory[id] = path
+        episodePrefs.edit().putString(id.toString(), path).apply()
+    }
 }

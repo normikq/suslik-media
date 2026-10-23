@@ -102,7 +102,7 @@ object Posters {
     fun loader(context: Context): ImageLoader = loader ?: synchronized(this) {
         loader ?: ImageLoader.Builder(context.applicationContext)
             .okHttpClient(Api.plain)
-            .crossfade(350)
+            .crossfade(150)
             .build().also { loader = it }
     }
 }
@@ -474,7 +474,7 @@ private fun ContinueCard(
             val url = poster
             if (url != null) {
                 AsyncImage(
-                    model = ImageRequest.Builder(context).data(url).memoryCacheKey(url).crossfade(350).build(),
+                    model = ImageRequest.Builder(context).data(url).memoryCacheKey(url).crossfade(150).build(),
                     imageLoader = Posters.loader(context),
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
@@ -830,10 +830,13 @@ private fun PosterTile(item: LibraryItem, store: LibraryStore, onPlay: (PlayTarg
         Playable.None -> null
     }
 
-    val appear = remember(m.id) { Animatable(if (store.seen(m.id)) 1f else 0f) }
+    // Initial entrance animation is only for the first visible batch when the screen opens.
+    // Tiles scrolling into view later appear without translation/delay to keep scrolling fluid.
+    val shouldAnimate = remember(m.id) { index < 6 && !store.seen(m.id) }
+    val appear = remember(m.id) { Animatable(if (shouldAnimate) 0f else 1f) }
     LaunchedEffect(m.id) {
-        if (appear.value < 1f) {
-            delay(minOf(index, 12) * 40L)
+        if (shouldAnimate && appear.value < 1f) {
+            delay(index * 40L)
             appear.animateTo(1f, tween(460, easing = Sm.ease))
         }
         store.markSeen(m.id)
@@ -848,34 +851,72 @@ private fun PosterTile(item: LibraryItem, store: LibraryStore, onPlay: (PlayTarg
         scaleX = scale * (0.97f + 0.03f * a); scaleY = scaleX
         alpha = a; translationY = (1f - a) * 22.dp.toPx()
     }) {
-        Box(
-            Modifier.fillMaxWidth().aspectRatio(2f / 3f)
-                .clip(RoundedCornerShape(14.dp))
-                .background(Color(0xFF13161F))
-                .border(1.dp, Sm.glassEdge, RoundedCornerShape(14.dp))
-                .focusRing(RoundedCornerShape(14.dp), width = 3.dp)
-                .clickable(interactionSource = source, indication = null, enabled = canPlay) { target()?.let(onPlay) }
-        ) {
-            val url = poster
-            if (url != null) {
-                AsyncImage(
-                    model = ImageRequest.Builder(context).data(url).memoryCacheKey(url).placeholderMemoryCacheKey(url).crossfade(350).build(),
-                    imageLoader = Posters.loader(context),
-                    contentDescription = tr("library.poster_basetitle", "baseTitle" to baseTitle),
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
-            } else {
-                Text(
-                    baseTitle, color = Color.White, fontFamily = Unbounded, fontWeight = FontWeight.Medium,
-                    fontSize = 14.sp, lineHeight = 18.sp, maxLines = 4, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.align(Alignment.BottomStart).padding(start = 14.dp, end = 14.dp, bottom = 52.dp)
-                )
-            }
+        PosterArtwork(
+            item = item,
+            poster = poster,
+            store = store,
+            source = source,
+            canPlay = canPlay,
+            currentFile = currentFile,
+            watchVersion = watchVersion,
+            onPlay = { target()?.let(onPlay) }
+        )
+        TileDetails(
+            item = item,
+            media = media,
+            last = last,
+            series = series,
+            seasonIdx = seasonIdx,
+            episodeIdx = episodeIdx,
+            onSelectSeason = { seasonIdx = it; episodeIdx = 0 },
+            onSelectEpisode = { episodeIdx = it },
+            store = store
+        )
+    }
+}
+
+@Composable
+private fun PosterArtwork(
+    item: LibraryItem,
+    poster: String?,
+    store: LibraryStore,
+    source: MutableInteractionSource,
+    canPlay: Boolean,
+    currentFile: MFile?,
+    watchVersion: Int,
+    onPlay: () -> Unit
+) {
+    val context = LocalContext.current
+    val m = item.m
+    val baseTitle = item.baseTitle
+
+    Box(
+        Modifier.fillMaxWidth().aspectRatio(2f / 3f)
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color(0xFF13161F))
+            .border(1.dp, Sm.glassEdge, RoundedCornerShape(14.dp))
+            .focusRing(RoundedCornerShape(14.dp), width = 3.dp)
+            .clickable(interactionSource = source, indication = null, enabled = canPlay, onClick = onPlay)
+    ) {
+        if (poster != null) {
+            AsyncImage(
+                model = ImageRequest.Builder(context).data(poster).memoryCacheKey(poster).placeholderMemoryCacheKey(poster).crossfade(150).build(),
+                imageLoader = Posters.loader(context),
+                contentDescription = tr("library.poster_basetitle", "baseTitle" to baseTitle),
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            Text(
+                baseTitle, color = Color.White, fontFamily = Unbounded, fontWeight = FontWeight.Medium,
+                fontSize = 14.sp, lineHeight = 18.sp, maxLines = 4, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.align(Alignment.BottomStart).padding(start = 14.dp, end = 14.dp, bottom = 52.dp)
+            )
+        }
             MineMark(m.mine, Modifier.align(Alignment.TopStart).padding(8.dp)) { on -> store.setMine(m, on) }
             FavStar(m.favorite, Modifier.align(Alignment.TopEnd).padding(8.dp)) { on -> store.setFavorite(m, on) }
             // Dolby Vision / HDR / DTS under the star
-            val tags = collapseTags(store.tagsOf(item))
+            val tags = remember(item, store.tagsOf(item)) { collapseTags(store.tagsOf(item)) }
             if (tags.isNotEmpty()) {
                 Column(Modifier.align(Alignment.TopEnd).padding(top = 46.dp, end = 8.dp), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     for (t in tags) TagChip(t)
@@ -914,53 +955,68 @@ private fun PosterTile(item: LibraryItem, store: LibraryStore, onPlay: (PlayTarg
                         .clip(CircleShape).background(Color(0xCC0B1020))
                         .border(1.dp, Color(0x40FFFFFF), CircleShape)
                         .focusProperties { canFocus = false }
-                        .clickable { target()?.let(onPlay) },
+                        .clickable(onClick = onPlay),
                     contentAlignment = Alignment.Center
                 ) { Text("▶", color = Color.White, fontSize = 20.sp, modifier = Modifier.padding(start = 3.dp)) }
             }
         }
-        Column(Modifier.padding(start = 2.dp, end = 2.dp, top = 8.dp)) {
-            Text(m.name, color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp, lineHeight = 18.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text("${itemYear(item)} • ${itemTypeLabel(item)} · ${formatBytes(m.size)}", color = Sm.muted, fontFamily = Onest, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
-            if (m.ready && media != null) {
-                val specs = remember(item, media) { itemSpecs(item, media) }
-                Text(specs.first, color = Color(0xFFB0B7C6), fontFamily = Onest, fontSize = 11.5.sp, modifier = Modifier.padding(top = 2.dp))
+    }
+
+@Composable
+private fun TileDetails(
+    item: LibraryItem,
+    media: String?,
+    last: Pair<MFile, WatchInfo>?,
+    series: Playable.Series?,
+    seasonIdx: Int,
+    episodeIdx: Int,
+    onSelectSeason: (Int) -> Unit,
+    onSelectEpisode: (Int) -> Unit,
+    store: LibraryStore
+) {
+    val m = item.m
+    val playable = item.playable
+    Column(Modifier.padding(start = 2.dp, end = 2.dp, top = 8.dp)) {
+        Text(m.name, color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp, lineHeight = 18.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text("${itemYear(item)} • ${itemTypeLabel(item)} · ${formatBytes(m.size)}", color = Sm.muted, fontFamily = Onest, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
+        if (m.ready && media != null) {
+            val specs = remember(item, media) { itemSpecs(item, media) }
+            Text(specs.first, color = Color(0xFFB0B7C6), fontFamily = Onest, fontSize = 11.5.sp, modifier = Modifier.padding(top = 2.dp))
+        }
+        val lastNow = last
+        if (m.ready && lastNow != null) {
+            val (lf, lw) = lastNow
+            val ep = series?.seasons?.firstNotNullOfOrNull { s ->
+                s.items.firstOrNull { it.file.path == lf.path }?.let { e -> (if (s.season == 0) tr("library.spec") else "S" + s.season.toString().padStart(2, '0')) + "E" + e.episode.toString().padStart(2, '0') }
             }
-            val lastNow = last
-            if (m.ready && lastNow != null) {
-                val (lf, lw) = lastNow
-                val ep = (playable as? Playable.Series)?.seasons?.firstNotNullOfOrNull { s ->
-                    s.items.firstOrNull { it.file.path == lf.path }?.let { e -> (if (s.season == 0) tr("library.spec") else "S" + s.season.toString().padStart(2, '0')) + "E" + e.episode.toString().padStart(2, '0') }
-                }
-                val text = when {
-                    lw.watched && ep != null -> tr("library.prosmotreno_do_ep", "ep" to ep)
-                    lw.watched -> tr("library.prosmotreno")
-                    ep != null -> tr("library.prodolzhit_ep_p", "ep" to ep, "p" to formatClock(lw.pos))
-                    else -> tr("library.prodolzhit_s_p", "p" to formatClock(lw.pos))
-                }
-                Text(text, color = Color(0xFF60A5FA), fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, modifier = Modifier.padding(top = 3.dp))
+            val text = when {
+                lw.watched && ep != null -> tr("library.prosmotreno_do_ep", "ep" to ep)
+                lw.watched -> tr("library.prosmotreno")
+                ep != null -> tr("library.prodolzhit_ep_p", "ep" to ep, "p" to formatClock(lw.pos))
+                else -> tr("library.prodolzhit_s_p", "p" to formatClock(lw.pos))
             }
-            if (series != null && m.ready) {
-                Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (series.seasons.size > 1) {
-                        SelectChip(
-                            label = series.seasons.getOrNull(seasonIdx)?.let { if (it.season == 0) tr("library.spec") else tr("library.sezon_season", "season" to it.season) } ?: "",
-                            options = series.seasons.map { if (it.season == 0) tr("library.specvypuski") else tr("library.sezon_season", "season" to it.season) },
-                            onPick = { seasonIdx = it; episodeIdx = 0 },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                    val season = series.seasons.getOrNull(seasonIdx) ?: series.seasons.first()
+            Text(text, color = Color(0xFF60A5FA), fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, modifier = Modifier.padding(top = 3.dp))
+        }
+        if (series != null && m.ready) {
+            Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (series.seasons.size > 1) {
                     SelectChip(
-                        label = season.items.getOrNull(episodeIdx)?.let { it.title ?: tr("library.seriya_episode", "episode" to it.episode) } ?: "",
-                        options = season.items.map { it.title ?: tr("library.seriya_episode", "episode" to it.episode) },
-                        onPick = { episodeIdx = it },
+                        label = series.seasons.getOrNull(seasonIdx)?.let { if (it.season == 0) tr("library.spec") else tr("library.sezon_season", "season" to it.season) } ?: "",
+                        options = series.seasons.map { if (it.season == 0) tr("library.specvypuski") else tr("library.sezon_season", "season" to it.season) },
+                        onPick = onSelectSeason,
                         modifier = Modifier.weight(1f)
                     )
                 }
+                val season = series.seasons.getOrNull(seasonIdx) ?: series.seasons.first()
+                SelectChip(
+                    label = season.items.getOrNull(episodeIdx)?.let { it.title ?: tr("library.seriya_episode", "episode" to it.episode) } ?: "",
+                    options = season.items.map { it.title ?: tr("library.seriya_episode", "episode" to it.episode) },
+                    onPick = onSelectEpisode,
+                    modifier = Modifier.weight(1f)
+                )
             }
-            if (m.canRemove) RemoveButton(downloading = m.downloading) { store.remove(m) }
         }
+        if (m.canRemove) RemoveButton(downloading = m.downloading) { store.remove(m) }
     }
 }
 
@@ -977,15 +1033,17 @@ private fun SelectChip(label: String, options: List<String>, onPick: (Int) -> Un
             Text(label, color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             Text("▾", color = Sm.muted, fontSize = 12.sp)
         }
-        DropdownMenu(
-            expanded = open, onDismissRequest = { open = false },
-            modifier = Modifier.background(Sm.sheet).border(1.dp, Sm.sheetEdge, RoundedCornerShape(10.dp)).heightIn(max = 360.dp)
-        ) {
-            options.forEachIndexed { i, o ->
-                DropdownMenuItem(
-                    text = { Text(o, color = Sm.text, fontFamily = Onest, fontSize = 14.sp) },
-                    onClick = { open = false; onPick(i) }
-                )
+        if (open) {
+            DropdownMenu(
+                expanded = true, onDismissRequest = { open = false },
+                modifier = Modifier.background(Sm.sheet).border(1.dp, Sm.sheetEdge, RoundedCornerShape(10.dp)).heightIn(max = 360.dp)
+            ) {
+                options.forEachIndexed { i, o ->
+                    DropdownMenuItem(
+                        text = { Text(o, color = Sm.text, fontFamily = Onest, fontSize = 14.sp) },
+                        onClick = { open = false; onPick(i) }
+                    )
+                }
             }
         }
     }
