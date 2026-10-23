@@ -152,6 +152,7 @@ class VlcEngine(private val context: Context) : PlayerEngine {
             MediaPlayer.Event.Paused -> l.paused()
             MediaPlayer.Event.Stopped -> l.stopped()
             MediaPlayer.Event.ESAdded -> l.tracksChanged()
+            MediaPlayer.Event.ESSelected -> if (event.esChangedType == IMedia.Track.Type.Audio) l.audioSelected()
             MediaPlayer.Event.EndReached -> l.endReached()
             MediaPlayer.Event.EncounteredError -> l.failed()
             MediaPlayer.Event.Vout -> l.videoOutput(event.voutCount)

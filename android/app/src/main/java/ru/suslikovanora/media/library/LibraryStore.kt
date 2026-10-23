@@ -437,17 +437,21 @@ class LibraryStore(context: Context) {
     // ---- watch progress written by the player (prefs "watch": "magnetId|path" -> "pos|len|at") ----
     private val watchPrefs = app.getSharedPreferences("watch", Context.MODE_PRIVATE)
     private val watchMemory = java.util.concurrent.ConcurrentHashMap<String, WatchInfo>()
+    // Files never watched: most of the library. Without this every look read the prefs again for each of them.
+    private val watchMissing = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     /** Bumped when the app comes back from the player, so tiles re-read their progress. */
     var watchVersion by mutableStateOf(0)
         private set
     fun bumpWatch() {
         watchMemory.clear()
+        watchMissing.clear()
         watchVersion++
     }
 
     fun watchInfo(key: String): WatchInfo? {
         watchMemory[key]?.let { return it }
-        val v = watchPrefs.getString(key, null) ?: return null
+        if (key in watchMissing) return null
+        val v = watchPrefs.getString(key, null) ?: run { watchMissing += key; return null }
         val parts = v.split('|')
         if (parts.size < 3) return null
         val info = WatchInfo(parts[0].toLongOrNull() ?: return null, parts[1].toLongOrNull() ?: 0L, parts[2].toLongOrNull() ?: 0L)

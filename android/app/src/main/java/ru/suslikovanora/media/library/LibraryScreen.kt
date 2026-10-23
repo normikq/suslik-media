@@ -285,7 +285,10 @@ internal fun continueEntries(items: List<LibraryItem>, store: LibraryStore): Lis
         val t = targetFor(item, next) ?: return@mapNotNull null
         ContinueEntry(item, t, tr("library.dalshe") + t.label.removePrefix(item.baseTitle).removePrefix(" · "), 0f, 0L, 0L, w.at)
     }
-}.sortedByDescending { it.at }.take(4) // «Продолжить просмотр»: четыре последних (и полоса, и баннер на ТВ)
+}.sortedByDescending { it.at }
+
+/** «Продолжить просмотр» shows the last four (the phone's row and the TV banner); «Очистить» hides them all. */
+const val CONTINUE_SHOWN = 4
 
 @Composable
 fun LibraryScreen(
@@ -324,6 +327,11 @@ fun LibraryScreen(
     val curPage = page.coerceIn(0, pageCount - 1)
     val pageItems = remember(filtered, curPage, pageSize) { filtered.drop(curPage * pageSize).take(pageSize) }
 
+    // Worked out here, not inside the grid's item: the item forgets it whenever it scrolls off the screen, and every
+    // return read the progress of every file of the library again — scrolling stuttered while the row was there.
+    val showContinue = query.isBlank() && category == Category.All && !mineOnly
+    val continueAll = remember(all, store.watchVersion, showContinue) { if (showContinue) continueEntries(all, store) else emptyList() }
+
     LazyVerticalGrid(
         columns = GridCells.Adaptive(minSize = 152.dp),
         state = gridState,
@@ -348,9 +356,9 @@ fun LibraryScreen(
         }
 
         // Continue watching section
-        if (query.isBlank() && category == Category.All && !mineOnly) {
+        if (showContinue) {
             item(key = "continue", span = { GridItemSpan(maxLineSpan) }) {
-                if (tv) TvContinueHero(all, store, onPlay) else ContinueRow(all, store, onPlay)
+                if (tv) TvContinueHero(continueAll, store, onPlay) else ContinueRow(continueAll, store, onPlay)
             }
         }
 
@@ -382,12 +390,11 @@ fun LibraryScreen(
 
 @Composable
 private fun ContinueRow(
-    items: List<LibraryItem>,
+    all: List<ContinueEntry>,
     store: LibraryStore,
     onOpen: (PlayTarget) -> Unit
 ) {
-    val wv = store.watchVersion
-    val entries = remember(items, wv) { continueEntries(items, store) }
+    val entries = all.take(CONTINUE_SHOWN)
     if (entries.isEmpty()) return
 
     Column(Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 4.dp)) {
@@ -422,7 +429,7 @@ private fun ContinueRow(
             Row(
                 Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0x14FFFFFF))
                     .focusRing(RoundedCornerShape(8.dp))
-                    .clickable { store.hideContinue(entries.map { it.item.m.id }) }
+                    .clickable { store.hideContinue(all.map { it.item.m.id }) } // all of them: the next four used to come up, five times over
                     .padding(horizontal = 8.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp)

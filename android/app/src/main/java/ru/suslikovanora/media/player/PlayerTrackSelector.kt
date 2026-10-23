@@ -264,6 +264,10 @@ class PlayerTrackSelector(
             p?.setSubtitleTrack(track.id)
             saveTrackPref("spu", track.name)
         }
+        // Which line was tapped and what the engine has now: «subtitles switched» alone did not say whether VLC took it
+        val now = p?.subtitleTrack
+        AppLog.write("[track] subtitles line $which picked · current ${p?.subtitleTracks()?.firstOrNull { it.id == now }?.name ?: "none"} (id $now) · " +
+            "tracks: " + p?.subtitleTracks().orEmpty().joinToString { "${it.id}=${it.name}" })
         callback.onSubtitleTrackChanged()
     }
 
@@ -357,7 +361,8 @@ class PlayerTrackSelector(
         runCatching {
             if (fileIdx != null) {
                 val files = attachedAudio.size
-                if (p.audioFileOf(p.audioTrack, files) != fileIdx) p.audioFileTrack(fileIdx, files)?.let { id ->
+                if (p.audioFileOf(p.audioTrack, files) == fileIdx) syncAudioDelay(p) // VLC already took it: only its delay
+                else p.audioFileTrack(fileIdx, files)?.let { id ->
                     p.setAudioTrack(id)
                     selectedAudioId = id
                     syncAudioDelay(p)
@@ -382,6 +387,7 @@ class PlayerTrackSelector(
                     if (id != p.subtitleTrack) {
                         p.setSubtitleTrack(id)
                         selectedSpuId = id
+                        AppLog.write("[track] remembered subtitles «$spu» → id $id, current now ${p.subtitleTrack}")
                     }
                 }
             }

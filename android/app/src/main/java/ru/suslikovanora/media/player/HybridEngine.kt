@@ -34,6 +34,7 @@ class HybridEngine(private val context: Context) : PlayerEngine {
         override fun paused() { l()?.paused() }
         override fun stopped() { l()?.stopped() }
         override fun tracksChanged() { l()?.tracksChanged() }
+        override fun audioSelected() { l()?.audioSelected() }
         override fun endReached() { l()?.endReached() }
         override fun failed() { l()?.failed() }
         override fun videoOutput(count: Int) { l()?.videoOutput(count) }
