@@ -4,7 +4,10 @@ import ru.suslikovanora.media.core.*
 import ru.suslikovanora.media.desktop.player.*
 import ru.suslikovanora.media.desktop.ui.*
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
@@ -60,6 +63,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -205,6 +209,12 @@ fun itemTags(item: LibraryItem): List<String> {
         out += when { kind == "hd" -> if (ma) "DTS-HD MA" else "DTS-HD"; kind == "x" -> "DTS:X"; else -> "DTS" }
     }
     return out
+}
+
+/** One mark for the picture, one for the sound: «Dolby Vision» (or «HDR» when there is none) and «DTS» — not every variant of every version. */
+fun collapseTags(all: List<String>): List<String> = buildList {
+    if (all.any { it.startsWith("Dolby") }) add("Dolby Vision") else if (all.any { it == "HDR" }) add("HDR")
+    if (all.any { it.startsWith("DTS") }) add("DTS")
 }
 
 /** Formats technical media line 1 (Quality • Codec • FPS) and line 2 (Bitrate • Size). */
@@ -389,8 +399,6 @@ fun LibraryView(
     val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
     var target by remember { mutableStateOf<PlayTarget?>(null) }
-    // Пока выбирают серию и источник, список загруженных озвучек фильма уже грузится: плеер откроется без ожидания
-    LaunchedEffect(target?.magnetId) { target?.let { CustomAudio.prefetch(it.magnetId) } }
     var pick by remember { mutableStateOf<List<LibraryItem>?>(null) } // versions of one film to choose from
     // The category is chosen in the side panel («Коллекция»); each page («Главная», «Моя медиатека») remembers its own.
     val category = LibraryNav.of(mineOnly)
@@ -789,7 +797,7 @@ private fun Tile(item: LibraryItem, lib: Library, versions: List<LibraryItem>, i
                 HeartIcon(filled = isFav, color = if (isFav) Color(0xFFFF6B8A) else Color.White, size = 16.dp)
             }
         }
-        val tags = versions.ifEmpty { listOf(item) }.flatMap { lib.tagsOf(it) }.distinct()
+        val tags = collapseTags(versions.ifEmpty { listOf(item) }.flatMap { lib.tagsOf(it) })
         if (versions.size > 1 || tags.isNotEmpty()) {
             Column(Modifier.align(Alignment.TopEnd).padding(8.dp), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (versions.size > 1) Text(
@@ -801,14 +809,14 @@ private fun Tile(item: LibraryItem, lib: Library, versions: List<LibraryItem>, i
                     val c = when { t.startsWith("Dolby") -> Color(0xFFB794F6); t == "HDR" -> Color(0xFFFFC857); else -> Color(0xFF7DD3FC) }
                     // a fixed-height box with the text centred in it (the font's own line padding made the text sit high)
                     Box(
-                        Modifier.height(18.dp).clip(RoundedCornerShape(6.dp)).background(Color(0xB3000000))
-                            .border(1.dp, c.copy(alpha = 0.55f), RoundedCornerShape(6.dp)).padding(horizontal = 7.dp),
+                        Modifier.height(22.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xCC0E0B1A))
+                            .border(1.dp, c.copy(alpha = 0.7f), RoundedCornerShape(8.dp)).padding(horizontal = 9.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            t, color = c, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 10.sp, letterSpacing = 0.3.sp, maxLines = 1, softWrap = false,
+                            t, color = c, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1, softWrap = false,
                             style = androidx.compose.ui.text.TextStyle(
-                                lineHeight = 10.sp,
+                                lineHeight = 12.sp,
                                 lineHeightStyle = androidx.compose.ui.text.style.LineHeightStyle(
                                     androidx.compose.ui.text.style.LineHeightStyle.Alignment.Center, androidx.compose.ui.text.style.LineHeightStyle.Trim.Both
                                 )
@@ -1219,10 +1227,12 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
     val wv = lib.watchVersion
     val entries = remember(items, wv) { continueEntries(items, lib) }
     var chosen by remember { mutableStateOf<Long?>(null) }
+    var removed by remember { mutableStateOf(setOf<Long>()) } // posters on their way out (the exit animation runs before the film leaves the list)
+    var armTimerKey by remember { mutableStateOf(0) }          // a click restarts the wait before the banner changes by itself
     val bannerSrc = remember { MutableInteractionSource() }
     val bannerHover by bannerSrc.collectIsHoveredAsState()
     // The banners change by themselves, one after another (not while the pointer is over the banner); a click on a card restarts the wait
-    LaunchedEffect(entries, chosen, bannerHover) {
+    LaunchedEffect(entries, chosen, bannerHover, armTimerKey) {
         if (entries.size < 2 || bannerHover) return@LaunchedEffect
         kotlinx.coroutines.delay(9000)
         val cur = entries.indexOfFirst { it.item.m.id == chosen }.coerceAtLeast(0)
@@ -1305,10 +1315,23 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
             // The other films being watched: the chosen one is outlined, a click chooses; the arrow scrolls
             if (entries.size > 1) {
                 Row(Modifier.align(Alignment.BottomEnd).padding(end = 14.dp, bottom = 18.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Row(Modifier.widthIn(max = thumbsW), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        for (x in entries) {
-                            HeroThumb(x, lib, selected = x.item.m.id == e.item.m.id,
-                                onRemove = { lib.hideContinue(listOf(x.item.m.id)) }) { chosen = x.item.m.id }
+                    // Only the OTHER films: the one shown in the banner has no poster here (it comes back when another one is chosen).
+                    // Posters come and go smoothly; a removed one shrinks away first, then leaves the list.
+                    Row(Modifier.widthIn(max = thumbsW)) {
+                        for (x in entries) key(x.item.m.id) {
+                            val id = x.item.m.id
+                            AnimatedVisibility(
+                                visible = id != e.item.m.id && id !in removed,
+                                enter = fadeIn(tween(260)) + expandHorizontally(tween(320, easing = Sm.ease), expandFrom = Alignment.Start),
+                                exit = fadeOut(tween(200)) + shrinkHorizontally(tween(300, easing = Sm.ease), shrinkTowards = Alignment.Start)
+                            ) {
+                                Box(Modifier.padding(start = 10.dp)) {
+                                    HeroThumb(x, lib, onRemove = {
+                                        removed = removed + id
+                                        scope.launch { delay(340); lib.hideContinue(listOf(id)); removed = removed - id }
+                                    }) { chosen = id; armTimerKey++ }
+                                }
+                            }
                         }
                     }
                 }
@@ -1333,17 +1356,17 @@ private fun HeroPlayButton(onClick: () -> Unit) {
 }
 
 @Composable
-private fun HeroThumb(e: ContinueEntry, lib: Library, selected: Boolean, onRemove: () -> Unit, onClick: () -> Unit) {
+private fun HeroThumb(e: ContinueEntry, lib: Library, onRemove: () -> Unit, onClick: () -> Unit) {
     val src = remember { MutableInteractionSource() }
     val hovered by src.collectIsHoveredAsState()
     var poster by remember(e.item.m.id) { mutableStateOf(lib.cachedPoster(e.item.posterQueries)) }
     LaunchedEffect(e.item.m.id) { if (poster == null) poster = lib.poster(e.item.posterQueries) }
-    val edge by animateColorAsState(if (selected) Color(0xFF7DD3FC) else if (hovered) Color(0x66FFFFFF) else Color(0x26FFFFFF), tween(180))
-    val lift by animateFloatAsState(if (hovered || selected) -3f else 0f, tween(220, easing = Sm.ease))
+    val edge by animateColorAsState(if (hovered) Color(0x66FFFFFF) else Color(0x26FFFFFF), tween(180))
+    val lift by animateFloatAsState(if (hovered) -3f else 0f, tween(220, easing = Sm.ease))
     Box(Modifier.graphicsLayer { translationY = lift }.hoverable(src)) {
         Box(
             Modifier.width(96.dp).height(144.dp).trackBounds(TileBounds.cont, e.item.m.id).clip(RoundedCornerShape(10.dp)).background(Color(0xFF222736))
-                .border(if (selected) 2.dp else 1.dp, edge, RoundedCornerShape(10.dp)).hoverClick(src, onClick = onClick)
+                .border(1.dp, edge, RoundedCornerShape(10.dp)).hoverClick(src, onClick = onClick)
         ) {
             poster?.let { Image(it, null, contentScale = ContentScale.Crop, filterQuality = androidx.compose.ui.graphics.FilterQuality.High, modifier = Modifier.fillMaxSize()) }
             Box(Modifier.align(Alignment.BottomStart).fillMaxWidth(e.fraction.coerceIn(0f, 1f)).height(3.dp).background(Color(0xFF38BDF8)))

@@ -43,13 +43,6 @@ object CustomAudio {
     /** Загруженная озвучка — только `.mka` (сервер другие не принимает). */
     fun isSupported(path: String): Boolean = path.endsWith(".mka", ignoreCase = true)
 
-    // Описание, обложка, контрольные суммы рядом с озвучкой (как IGNORED_EXT на сервере)
-    private val SIDE_FILE = Regex("""\.(txt|nfo|md|jpe?g|png|webp|gif|bmp|sfv|md5|sha1|sha256|url|log|cue)$""", RegexOption.IGNORE_CASE)
-
-    /** Раздача — загруженная озвучка: есть `.mka`, а кроме них только описание и обложки. В медиатеке такую не показывают. */
-    fun isVoiceOverOnly(paths: List<String>): Boolean =
-        paths.any { isSupported(it) } && paths.all { isSupported(it) || SIDE_FILE.containsMatchIn(it) }
-
     /** Ответ [tracksPath]; дорожки без ссылки и не `.mka` пропускаются. */
     fun parseTracks(r: JSONObject): List<CustomTrack> = r.optJSONArray("tracks").objects().mapNotNull { t ->
         val url = t.optString("url").takeIf { it.isNotBlank() } ?: return@mapNotNull null

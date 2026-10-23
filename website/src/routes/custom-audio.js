@@ -58,10 +58,19 @@ async function libraryMagnets() {
   }
 }
 
-// Раздел 4: в раздаче с озвучкой только аудио. Сервер раздачу не удаляет (проверка ничего не меняет, а раздача
-// могла быть нужна): только что загруженную для проверки убирает клиент. `removed` — всегда false (старые клиенты читают поле).
-function rejectForbidden(res, forbidden) {
-  const removed = false;
+// Раздел 4: в раздаче с озвучкой только аудио. Раздачу, которую пользователь сам добавил (magnet), сразу удаляем
+// из AllDebrid; чужую, админскую и ничейную — не трогаем. `keep: true` в теле оставляет раздачу.
+async function rejectForbidden(req, res, audioMagnetId, forbidden, magnets) {
+  let removed = false;
+  const isLibraryFilm = ca.mayBeLibraryFilm(magnets, audioMagnetId);
+  const adminCaller = isLibraryAdmin(req);
+  if (audioMagnetId && !isLibraryFilm && !adminCaller && isOwner(audioMagnetId, req) && req.body?.keep !== true) {
+    try {
+      await deleteMagnet(audioMagnetId);
+      libraryChanged();
+      removed = true;
+    } catch {}
+  }
   const first = forbidden[0];
   const more = forbidden.length > 1 ? ` и ещё ${forbidden.length - 1}` : "";
   const allowed = [...ca.AUDIO_EXT].map(e => "." + e).join(", ");
@@ -133,15 +142,13 @@ async function prepare(req, res, { allowTorrent, offsetMs }) {
     return null;
   }
 
-  const fmt = ca.checkFormats(audio.files.filter(f => f.type === "file").map(f => f.path));
+  const magnets = await libraryMagnets();
+  const audioFiles = audio.files.filter(f => f.type === "file");
+  const fmt = ca.checkFormats(audioFiles.map(f => f.path));
   if (!fmt.ok) {
-    rejectForbidden(res, fmt.forbidden);
+    await rejectForbidden(req, res, audioMagnetId, fmt.forbidden, magnets);
     return null;
   }
-  // Описание и обложки раздачи не сопоставляются
-  const skip = new Set(fmt.ignored);
-  const audioFiles = audio.files.filter(f => f.type === "file" && !skip.has(f.path));
-  const magnets = await libraryMagnets();
 
   // Без библиотеки нельзя проверить ни наличие фильма, ни что раздача готова
   if (!magnets) {

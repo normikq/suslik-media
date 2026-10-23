@@ -145,15 +145,13 @@ router.get("/api/file/tv/:name", mirrorLimiter, async (req, res) => {
 
   let info, entry, ext = null;
   try {
-    // Фильм и файл озвучки независимы: ссылки и пробы — одновременно
-    const probe = async l => { const e = await resolveDirect(l, false); return { entry: e, info: await tv.probeFile(l, e.url) }; };
-    const [film, extProbe] = await Promise.all([probe(link), extLink ? probe(extLink) : null]);
-    entry = film.entry;
-    info = film.info;
-    if (extProbe) {
-      const extAudio = tv.defaultAudio(extProbe.info);
+    entry = await resolveDirect(link, false);
+    info = await tv.probeFile(link, entry.url);
+    if (extLink) {
+      const extEntry = await resolveDirect(extLink, false);
+      const extAudio = tv.defaultAudio(await tv.probeFile(extLink, extEntry.url));
       if (!extAudio) return res.status(400).send("В файле озвучки нет звука.");
-      ext = { url: extProbe.entry.url, audio: extAudio, offsetMs: xo };
+      ext = { url: extEntry.url, audio: extAudio, offsetMs: xo };
     }
   } catch (err) {
     return res.status(502).send(err instanceof UnlockError ? err.message : "Сервер не смог прочитать файл.");

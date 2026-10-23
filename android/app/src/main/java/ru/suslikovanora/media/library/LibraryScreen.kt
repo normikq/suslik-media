@@ -112,6 +112,12 @@ private val TAG_DV = Regex("""\b(dolby[ ._-]?vision|dovi|dv)\b""", RegexOption.I
 private val TAG_HDR = Regex("""\bhdr(10)?(\+|plus)?\b""", RegexOption.IGNORE_CASE)
 private val TAG_DTS = Regex("""\bdts(?:[ ._:-]?(hd|x))?(?:[ ._-]?(ma))?\b""", RegexOption.IGNORE_CASE)
 
+/** One mark for the picture, one for the sound: «Dolby Vision» (or «HDR» when there is none) and «DTS» — not every variant of every version. */
+fun collapseTags(all: List<String>): List<String> = buildList {
+    if (all.any { it.startsWith("Dolby") }) add("Dolby Vision") else if (all.any { it == "HDR" }) add("HDR")
+    if (all.any { it.startsWith("DTS") }) add("DTS")
+}
+
 /** Marks of the release for the poster (a guess by the names; the server's answer, see LibraryStore.tagsOf, replaces it). */
 fun itemTags(item: LibraryItem): List<String> {
     val text = item.m.name + "\n" + item.m.files.joinToString("\n") { it.path }
@@ -496,14 +502,14 @@ private fun ContinueCard(
 fun TagChip(t: String) {
     val c = when { t.startsWith("Dolby") -> Color(0xFFB794F6); t == "HDR" -> Color(0xFFFFC857); else -> Color(0xFF7DD3FC) }
     Box(
-        Modifier.height(18.dp).clip(RoundedCornerShape(6.dp)).background(Color(0xB3000000))
-            .border(1.dp, c.copy(alpha = 0.55f), RoundedCornerShape(6.dp)).padding(horizontal = 7.dp),
+        Modifier.height(22.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xCC0E0B1A))
+            .border(1.dp, c.copy(alpha = 0.7f), RoundedCornerShape(8.dp)).padding(horizontal = 9.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
-            t, color = c, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 10.sp, letterSpacing = 0.3.sp, maxLines = 1, softWrap = false,
+            t, color = c, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1, softWrap = false,
             style = TextStyle(
-                lineHeight = 10.sp,
+                lineHeight = 12.sp,
                 lineHeightStyle = androidx.compose.ui.text.style.LineHeightStyle(
                     androidx.compose.ui.text.style.LineHeightStyle.Alignment.Center, androidx.compose.ui.text.style.LineHeightStyle.Trim.Both
                 )
@@ -820,7 +826,7 @@ private fun PosterTile(item: LibraryItem, store: LibraryStore, onPlay: (PlayTarg
             MineMark(m.mine, Modifier.align(Alignment.TopStart).padding(8.dp)) { on -> store.setMine(m, on) }
             FavStar(m.favorite, Modifier.align(Alignment.TopEnd).padding(8.dp)) { on -> store.setFavorite(m, on) }
             // Dolby Vision / HDR / DTS under the star
-            val tags = store.tagsOf(item)
+            val tags = collapseTags(store.tagsOf(item))
             if (tags.isNotEmpty()) {
                 Column(Modifier.align(Alignment.TopEnd).padding(top = 46.dp, end = 8.dp), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     for (t in tags) TagChip(t)

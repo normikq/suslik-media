@@ -2307,6 +2307,7 @@ body:has(#appPanel:not(.hidden)) > main > .hero {
 @media (prefers-reduced-motion: reduce) { .hb-bg, .hb-thumb { transition: none; } }
 
 /* Метки релиза на постере: Dolby Vision, HDR, DTS */
-.tile-badge.badge-dv { color: #c4b5fd; border-color: rgba(196, 181, 253, 0.5); }
-.tile-badge.badge-hdr { color: #fcd34d; border-color: rgba(252, 211, 77, 0.5); }
-.tile-badge.badge-dts { color: #7dd3fc; border-color: rgba(125, 211, 252, 0.5); }
+.tile-badge.badge-tag { font-size: 12px; font-weight: 800; letter-spacing: 0; text-transform: none; padding: 5px 9px; border-radius: 8px; background: rgba(14, 11, 26, 0.8); }
+.tile-badge.badge-dv { color: #c4b5fd; border-color: rgba(196, 181, 253, 0.7); }
+.tile-badge.badge-hdr { color: #fcd34d; border-color: rgba(252, 211, 77, 0.7); }
+.tile-badge.badge-dts { color: #7dd3fc; border-color: rgba(125, 211, 252, 0.7); }

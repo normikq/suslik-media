@@ -105,8 +105,6 @@ fun PlaySheet(
         // blocked in Russia), so it is offered as soon as it comes; the direct link fills in when it is ready.
         coroutineScope {
             val d = async { runCatching { Api.post("/api/file/unlock", JSONObject().put("link", link)).optString("url").ifBlank { null } } }
-            // Uploaded voice-overs (/api/custom-audio) are asked at once, alongside the mirror link, not after it
-            val customJob = async { customAudio(target.magnetId) }
             val mr = runCatching { Api.get("/api/file/mirror-url?link=${enc(link)}&name=${enc(name)}").optString("url").ifBlank { null } }
             mirror = mr.getOrNull()
             if (mirror != null) {
@@ -114,9 +112,8 @@ fun PlaySheet(
                 // Subtitle files and voice-overs next to the video: the player adds them as extra tracks (signed mirror
                 // links, no login needed). «Смотреть» waits for them so the film does not start without them.
                 preparingExtras = true
-                // Voice-overs uploaded by users from other torrents: already signed mirror links. A slow answer does not
-                // hold «Смотреть» for long (most films have none): after 3 s the film starts without them.
-                val custom = kotlinx.coroutines.withTimeoutOrNull(CUSTOM_WAIT_MS) { customJob.await() } ?: emptyMap()
+                // Voice-overs uploaded by users from other torrents (/api/custom-audio): already signed mirror links.
+                val custom = customAudio(target.magnetId)
                 customByPath = custom
                 if (target.subs.isNotEmpty()) {
                     subUrls = mirrorUrls(target.subs, enc)
@@ -256,17 +253,10 @@ private suspend fun mirrorUrls(files: List<MFile>, enc: (String) -> String): Lis
     }.mapNotNull { it.await() }
 }
 
-private const val CUSTOM_WAIT_MS = 3_000L
-private const val CUSTOM_KEEP_MS = 10 * 60_000L // a signed link lives 12 h: the next episode reuses the answer
-private val customCache = java.util.concurrent.ConcurrentHashMap<Long, Pair<Long, Map<String, List<CustomTrack>>>>()
-
-/** Uploaded voice-overs of the film by its video path; empty on any error. Remembered for a while (episodes, reopening). */
-private suspend fun customAudio(magnetId: Long): Map<String, List<CustomTrack>> {
-    customCache[magnetId]?.takeIf { android.os.SystemClock.elapsedRealtime() - it.first < CUSTOM_KEEP_MS }?.let { return it.second }
-    return runCatching {
-        CustomAudio.parseTracks(Api.get(CustomAudio.tracksPath(magnetId))).filter { it.url.startsWith("https://") }.groupBy { it.videoPath }
-    }.onSuccess { customCache[magnetId] = android.os.SystemClock.elapsedRealtime() to it }.getOrDefault(emptyMap())
-}
+/** Uploaded voice-overs of the film by its video path; empty on any error. */
+private suspend fun customAudio(magnetId: Long): Map<String, List<CustomTrack>> = runCatching {
+    CustomAudio.parseTracks(Api.get(CustomAudio.tracksPath(magnetId))).filter { it.url.startsWith("https://") }.groupBy { it.videoPath }
+}.getOrDefault(emptyMap())
 
 /** Name and delay of every uploaded voice-over by its signed link; null if there are none. */
 private fun customJson(custom: Map<String, List<CustomTrack>>): String? = CustomAudio.infoJson(custom.values.flatten())

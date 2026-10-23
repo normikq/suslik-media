@@ -14,8 +14,6 @@ const VIDEO_EXT = new Set(["mkv", "mp4", "m4v", "avi", "mov", "ts", "m2ts", "web
 const EXEC_EXT = new Set(["exe", "bat", "cmd", "sh", "com", "msi", "scr", "ps1", "vbs", "js", "jar", "apk", "dll", "lnk"]);
 const ARCHIVE_EXT = new Set(["zip", "rar", "7z", "tar", "gz", "bz2", "xz", "tgz"]);
 const IMAGE_EXT = new Set(["iso", "img", "bin", "mdf", "nrg"]);
-// Описание, обложка, контрольные суммы — обычные спутники раздачи: не играются и не мешают (не повод отклонять озвучку)
-const IGNORED_EXT = new Set(["txt", "nfo", "md", "jpg", "jpeg", "png", "webp", "gif", "bmp", "sfv", "md5", "sha1", "sha256", "url", "log", "cue"]);
 const MAX_TOTAL = 5000;
 // На один видеофайл: у сериала лимит не делится на все серии раздачи
 const MAX_PER_VIDEO = 50;
@@ -33,19 +31,16 @@ const stem = p => baseName(p).replace(/\.[a-z0-9]{1,6}$/i, "");
 
 // ---- Чекер форматов (раздел 4) ----------------------------------------------------------------------------------
 // В раздаче с озвучкой разрешены только аудиофайлы из белого списка. Всё остальное — видео, исполняемые файлы,
-// архивы, образы и прочее — нарушение; описание и обложки (IGNORED_EXT) пропускаются.
-// Возвращает { ok, forbidden: [{ path, ext, kind }], ignored: [path] }.
+// архивы, образы, текст и прочее — нарушение. Возвращает { ok, forbidden: [{ path, ext, kind }] }.
 function checkFormats(paths) {
   const forbidden = [];
-  const ignored = [];
   for (const path of paths) {
     const ext = extOf(path);
     if (AUDIO_EXT.has(ext)) continue;
-    if (IGNORED_EXT.has(ext)) { ignored.push(path); continue; }
     const kind = VIDEO_EXT.has(ext) ? "video" : EXEC_EXT.has(ext) ? "executable" : ARCHIVE_EXT.has(ext) ? "archive" : IMAGE_EXT.has(ext) ? "image" : "other";
     forbidden.push({ path, ext, kind });
   }
-  return { ok: forbidden.length === 0, forbidden, ignored };
+  return { ok: forbidden.length === 0, forbidden };
 }
 
 // ---- Разбор имени озвучки (раздел 3) ----------------------------------------------------------------------------
@@ -398,21 +393,9 @@ function forMovie(movieMagnetId) {
   return out.sort((a, b) => a.createdAt - b.createdAt);
 }
 
-// Раздачи с озвучками, привязанными к фильму (для продления хранения вместе с фильмом). Зовётся при каждом открытии
-// фильма: индекс «фильм -> раздачи озвучек» строится заново только после изменения хранилища.
-let linkedIndex = null;
-const changed = () => { linkedIndex = null; };
+// Раздачи с озвучками, привязанными к фильму (для продления хранения вместе с фильмом)
 function linkedAudioMagnets(movieMagnetId) {
-  if (!linkedIndex) {
-    linkedIndex = new Map();
-    for (const [key, list] of store) {
-      const movie = Number(key.slice(0, key.indexOf("|")));
-      let set = linkedIndex.get(movie);
-      if (!set) linkedIndex.set(movie, (set = new Set()));
-      for (const t of list) set.add(t.audioMagnetId);
-    }
-  }
-  return [...(linkedIndex.get(Number(movieMagnetId)) || [])];
+  return [...new Set(forMovie(movieMagnetId).map(t => t.audioMagnetId))];
 }
 
 function cleanTitle(v, fallback) {
@@ -488,7 +471,7 @@ function addTracks({ movieMagnetId, audioMagnetId, pairs, author, override = {} 
     total++;
     created.push(view(key, track));
   }
-  if (created.length) { changed(); persist(); }
+  if (created.length) persist();
   return { created, existing };
 }
 
@@ -520,7 +503,6 @@ function removeTrack(id) {
   keyById.delete(id);
   total = Math.max(0, total - 1);
   if (hit.list.length === 0) store.delete(hit.key);
-  changed();
   persist();
   return view(hit.key, hit.t);
 }
@@ -552,7 +534,7 @@ function dropMagnet(magnetId) {
       else store.delete(key);
     }
   }
-  if (n) { total = Math.max(0, total - n); changed(); persist(); }
+  if (n) { total = Math.max(0, total - n); persist(); }
   return n;
 }
 
@@ -588,7 +570,6 @@ async function trackLinks(movieMagnetId, videoPath) {
 }
 
 function _reset() {
-  changed();
   store.clear();
   keyById.clear();
   total = 0;

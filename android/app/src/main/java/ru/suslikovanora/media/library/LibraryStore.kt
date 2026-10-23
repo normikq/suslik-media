@@ -68,8 +68,10 @@ class LibraryStore(context: Context) {
     }
 
     // A torrent of only .mka is an uploaded voice-over (/api/custom-audio): it plays inside its film, not as a tile (as on the PC).
-    private fun isVoiceOverOnly(m: Magnet): Boolean =
-        ru.suslikovanora.media.core.audio.CustomAudio.isVoiceOverOnly(m.files.filter { !it.isFolder }.map { it.path })
+    private fun isVoiceOverOnly(m: Magnet): Boolean {
+        val files = m.files.filter { !it.isFolder }
+        return files.isNotEmpty() && files.all { ru.suslikovanora.media.core.audio.CustomAudio.isSupported(it.path) }
+    }
     var loading by mutableStateOf(false)
         private set
     var status by mutableStateOf(tr("library.nazhmite_obnovit_chtoby_zagruz"))

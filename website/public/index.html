@@ -399,7 +399,7 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
 @media (max-width:340px){.navrow button{font-size:10px!important}.navrow button::before{font-size:15px!important}}
 </style>
 <script>/* App 1.2+: native library and bottom bar */try{if(Number(window.__suslikApp||0)>=3)document.documentElement.classList.add("suslik-native");}catch(e){}</script>
-<link rel="stylesheet" href="redesign.css?v=19">
+<link rel="stylesheet" href="redesign.css?v=20">
 </head>
 <body>
 <main>
@@ -1642,6 +1642,13 @@ function getItemCategory(m) {
 }
 
 // Метки релиза для постера: Dolby Vision, HDR, DTS (по названию раздачи и файлов).
+// Одна метка для картинки и одна для звука: Dolby Vision (а если его нет — HDR) и DTS, без вариантов и повторов.
+function collapseTags(all) {
+  const out = [];
+  if (all.some(t => t.startsWith("Dolby"))) out.push("Dolby Vision"); else if (all.includes("HDR")) out.push("HDR");
+  if (all.some(t => t.startsWith("DTS"))) out.push("DTS");
+  return out;
+}
 const serverTagMap = {}; // id раздачи -> метки, найденные сервером по самому файлу (ffprobe), см. /api/tags
 function getItemTags(m) {
   if (serverTagMap[m.id]) return serverTagMap[m.id];
@@ -1730,7 +1737,7 @@ function renderLibrary(animate=true) {
     const badges = document.createElement("div"); badges.className = "tile-badges";
     if (specs.quality) { const q = document.createElement("span"); q.className = "tile-badge badge-quality"; q.textContent = specs.quality; badges.append(q); }
     if (specs.type) { const tp = document.createElement("span"); tp.className = "tile-badge badge-type"; tp.textContent = specs.type; badges.append(tp); }
-    for (const t of getItemTags(magnet)) { const x = document.createElement("span"); x.className = "tile-badge badge-tag " + (t.startsWith("Dolby") ? "badge-dv" : t === "HDR" ? "badge-hdr" : "badge-dts"); x.textContent = t; badges.append(x); }
+    for (const t of collapseTags(getItemTags(magnet))) { const x = document.createElement("span"); x.className = "tile-badge badge-tag " + (t.startsWith("Dolby") ? "badge-dv" : t === "HDR" ? "badge-hdr" : "badge-dts"); x.textContent = t; badges.append(x); }
     art.append(badges);
     const videoФайл = (magnet.files || []).find(f => /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso)$/i.test(f.path || ""));
     const posterQueries = [...new Set([escapeTitle(magnet.name), videoФайл ? escapeTitle(videoФайл.name || videoФайл.path.split("/").pop()) : ""].filter(Boolean))];
