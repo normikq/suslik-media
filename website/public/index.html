@@ -398,8 +398,10 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
 }
 @media (max-width:340px){.navrow button{font-size:10px!important}.navrow button::before{font-size:15px!important}}
 </style>
-<script>/* App 1.2+: native library and bottom bar */try{if(Number(window.__suslikApp||0)>=3)document.documentElement.classList.add("suslik-native");}catch(e){}</script>
-<link rel="stylesheet" href="redesign.css?v=20">
+<script>/* App 1.2+: native library and bottom bar */try{if(Number(window.__suslikApp||0)>=3)document.documentElement.classList.add("suslik-native");}catch(e){}
+/* Пока не ответил /api/session, страница скрыта: иначе на секунду мелькает форма входа у тех, кто уже вошёл (снимается в showApp; страховка — через 4 с) */
+try{document.documentElement.classList.add("auth-pending");setTimeout(function(){document.documentElement.classList.remove("auth-pending");},4000);}catch(e){}</script>
+<link rel="stylesheet" href="redesign.css?v=23">
 </head>
 <body>
 <main>
@@ -592,6 +594,7 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
           <div id="libraryStatus" class="status" role="status">Нажмите «Обновить», чтобы загрузить медиатеку.</div>
         </div>
         <div id="libraryResults" class="library-grid"></div>
+        <div id="libraryPager" class="library-pager" aria-label="Страницы"></div>
       </section>
 
       <section id="appsTab" class="hidden">
@@ -616,10 +619,10 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
               <svg viewBox="0 0 400 200" aria-hidden="true">
                 <defs>
                   <linearGradient id="growthFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0" stop-color="#ffb02e" stop-opacity=".28"/><stop offset="1" stop-color="#ffb02e" stop-opacity="0"/>
+                    <stop offset="0" stop-color="#3b82f6" stop-opacity=".25"/><stop offset="1" stop-color="#3b82f6" stop-opacity="0"/>
                   </linearGradient>
                   <linearGradient id="growthStroke" x1="0" y1="0" x2="1" y2="0">
-                    <stop offset="0" stop-color="#ffb02e" stop-opacity=".35"/><stop offset=".55" stop-color="#ffb02e"/><stop offset="1" stop-color="#ffd27a"/>
+                    <stop offset="0" stop-color="#3b82f6" stop-opacity=".35"/><stop offset=".55" stop-color="#60a5fa"/><stop offset="1" stop-color="#93c5fd"/>
                   </linearGradient>
                   <filter id="growthGlow" x="-20%" y="-40%" width="140%" height="180%"><feGaussianBlur stdDeviation="4"/></filter>
                 </defs>
@@ -705,7 +708,7 @@ async function api(path, options={}) {
   if (!response.ok) throw new Error(data.error || `Не удалось выполнить запрос (${response.status})`);
   return data;
 }
-function showApp(authenticated) { $("loginPanel").classList.toggle("hidden", authenticated); $("appPanel").classList.toggle("hidden", !authenticated); document.body.classList.toggle("authenticated", !!authenticated); }
+function showApp(authenticated) { document.documentElement.classList.remove("auth-pending"); $("loginPanel").classList.toggle("hidden", authenticated); $("appPanel").classList.toggle("hidden", !authenticated); document.body.classList.toggle("authenticated", !!authenticated); }
 // In the app (1.2+) the library is native: the hidden web copy is not loaded at all.
 function webLibraryNeeded(){ return !document.documentElement.classList.contains("suslik-native"); }
 async function checkSession() {
@@ -1620,6 +1623,30 @@ function setupTilePlayback(magnet,tile,art,info){
 // переставленные (избранное наверх) плавно переезжают на новое место.
 let libraryTiles=new Map();
 let libraryCategory = "all";
+let libraryPage = 0, libraryFilterSig = "";
+function libraryPageSize() { return (IS_ANDROID || IS_IOS || window.matchMedia("(max-width: 600px)").matches) ? 16 : 25; }
+function renderLibraryPager(count) {
+  const box = $("libraryPager");
+  if (!box) return;
+  box.replaceChildren();
+  if (count <= 1) return;
+  const mk = (label, page, opts = {}) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.textContent = label; b.className = "pager-btn" + (opts.active ? " active" : "");
+    b.disabled = Boolean(opts.disabled) || Boolean(opts.active);
+    b.addEventListener("click", () => { libraryPage = page; renderLibrary(false); $("libraryResults").scrollIntoView({ block: "start", behavior: "smooth" }); });
+    return b;
+  };
+  const near = n => n === 0 || n === count - 1 || Math.abs(n - libraryPage) <= 2;
+  box.append(mk("‹", libraryPage - 1, { disabled: libraryPage === 0 }));
+  let gap = false;
+  for (let n = 0; n < count; n++) {
+    if (!near(n)) { if (!gap) { const d = document.createElement("span"); d.className = "pager-gap"; d.textContent = "…"; box.append(d); gap = true; } continue; }
+    gap = false;
+    box.append(mk(String(n + 1), n, { active: n === libraryPage }));
+  }
+  box.append(mk("›", libraryPage + 1, { disabled: libraryPage === count - 1 }));
+}
 let librarySortMode = "newest";
 let libraryOnlyReadyMode = false;
 let libraryViewMode = "grid";
@@ -1710,11 +1737,20 @@ function renderLibrary(animate=true) {
     $("libraryCountBadge").textContent = cachedLibrary.length ? (filtered.length === cachedLibrary.length ? String(cachedLibrary.length) : `${filtered.length} / ${cachedLibrary.length}`) : "0";
   }
 
-  const magnets = filtered.map((m, i) => ({ m, i })).sort((a, b) => {
+  const allMagnets = filtered.map((m, i) => ({ m, i })).sort((a, b) => {
     if (sort === "name") return a.m.name.localeCompare(b.m.name, "ru");
     if (sort === "size") return (Number(b.m.size) || 0) - (Number(a.m.size) || 0);
     return (Number(Boolean(b.m.favorite)) - Number(Boolean(a.m.favorite))) || (a.i - b.i);
   }).map(x => x.m);
+
+  // Не больше LIBRARY_PAGE_SIZE постеров на странице (25; на телефоне 16); новый поиск, категория или фильтр — снова с первой.
+  const pageSize = libraryPageSize();
+  const filterSig = [query, activeCategory, sort, onlyReady].join("|");
+  if (filterSig !== libraryFilterSig) { libraryFilterSig = filterSig; libraryPage = 0; }
+  const pageCount = Math.max(1, Math.ceil(allMagnets.length / pageSize));
+  libraryPage = Math.min(Math.max(0, libraryPage), pageCount - 1);
+  const magnets = allMagnets.slice(libraryPage * pageSize, (libraryPage + 1) * pageSize);
+  renderLibraryPager(pageCount);
 
   target.className = libraryViewMode === "list" ? "library-results library-list" : "library-grid";
 
