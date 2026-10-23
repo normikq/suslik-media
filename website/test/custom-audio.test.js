@@ -38,8 +38,11 @@ test("чекер: только белый список аудио (.mka)", () =>
   const rAudio = ca.checkFormats(["a.ac3", "b.flac", "c.wav", "d.mp3"]);
   assert.equal(rAudio.ok, false);
   assert.equal(rAudio.forbidden.length, 4);
-  const r = ca.checkFormats(["a.mka", "movie.mkv", "x.exe", "pack.rar", "disc.iso", "readme.txt"]);
+  const r = ca.checkFormats(["a.mka", "movie.mkv", "x.exe", "pack.rar", "disc.iso", "song.ogg", "readme.txt", "cover.jpg"]);
   assert.deepEqual(r.forbidden.map(x => x.kind), ["video", "executable", "archive", "image", "other"]);
+  // описание и обложка не мешают
+  assert.deepEqual(r.ignored, ["readme.txt", "cover.jpg"]);
+  assert.equal(ca.checkFormats(["Film/a.mka", "Film/info.nfo", "Film/folder.png"]).ok, true);
 });
 
 test("сопоставление: фильм, один видеофайл", () => {

@@ -78,10 +78,8 @@ class Library {
 
     // Раздача только с аудио — это внешняя озвучка к фильму («Добавить» → «Озвучка»): она играет внутри фильма,
     // отдельной плиткой в медиатеке её не показываем. Такие озвучки — только .mka.
-    private fun isVoiceOverOnly(m: Magnet): Boolean {
-        val files = m.files.filter { !it.isFolder }
-        return files.isNotEmpty() && files.all { ru.suslikovanora.media.core.audio.CustomAudio.isSupported(it.path) }
-    }
+    private fun isVoiceOverOnly(m: Magnet): Boolean =
+        ru.suslikovanora.media.core.audio.CustomAudio.isVoiceOverOnly(m.files.filter { !it.isFolder }.map { it.path })
 
     suspend fun restoreSnapshot() {
         if (items.isNotEmpty()) return

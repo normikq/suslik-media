@@ -11,6 +11,7 @@ const { safeHttpsUrl } = require("../utils/helpers");
 const { alldebridRequest, adUploadMagnet, adUploadTorrent, flattenMagnetFiles } = require("../services/alldebrid");
 const { reserveDownloadSlot, releaseTrackedDownload, canRemove, isLibraryAdmin } = require("../services/downloads");
 const { deleteMagnet } = require("../services/cleanup");
+const { hasAudioMagnetTracks } = require("../services/custom-audio");
 const { getLibrary, libraryChanged } = require("../services/library");
 
 const router = express.Router();
@@ -110,6 +111,10 @@ router.post(["/api/magnets/:id/cancel", "/api/magnets/:id/delete"], requireLogin
   const id = Number(req.params.id);
   if (!Number.isSafeInteger(id) || id <= 0) {
     return res.status(400).json({ error: "Некорректный идентификатор magnet-ссылки." });
+  }
+  // Раздача — источник привязанных озвучек: её удаление стёрло бы их дорожки (сначала удаляют дорожки)
+  if (hasAudioMagnetTracks(id)) {
+    return res.status(409).json({ error: "К этой раздаче привязаны озвучки: сначала удалите их.", code: "AUDIO_ATTACHED" });
   }
   if (!isLibraryAdmin(req)) {
     // Состояние раздачи — с сервера, не со слов клиента: готовую удаляет только админ

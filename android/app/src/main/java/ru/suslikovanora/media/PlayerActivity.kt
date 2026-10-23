@@ -975,7 +975,7 @@ class PlayerActivity : ComponentActivity() {
         val main = burst(url)
         // Only what this episode needs stays in the stream cache (the previous episode's files are dropped).
         BurstProxy.keepOnly(episode)
-        val sidecars = trackSelector.sidecarsFor(url) { burst(it) }
+        val sidecars = trackSelector.sidecarsFor(url, { burst(it) }, vlc = engine.kind == ru.suslikovanora.media.player.EngineKind.VLC)
         return EngineMedia(
             url = main,
             startMs = positionMs,

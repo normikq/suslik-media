@@ -3,6 +3,7 @@ package ru.suslikovanora.media.desktop
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.http.HttpRequest
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import ru.suslikovanora.media.core.audio.CustomCheck
 import ru.suslikovanora.media.core.audio.CustomTrack
@@ -18,14 +19,34 @@ object CustomAudio {
 
     private val cache = java.util.concurrent.ConcurrentHashMap<Long, List<CustomTrack>>()
 
+    // Один запрос на фильм сразу: предзагрузка из карточки и открытие плеера ждут один и тот же ответ
+    private val inflight = java.util.concurrent.ConcurrentHashMap<Long, kotlinx.coroutines.Deferred<List<CustomTrack>?>>()
+
     /** Дорожки фильма (раздача [magnetId]). Нет сети или старый сервер — пусто: фильм играет и без них. */
     suspend fun tracks(magnetId: Long, fresh: Boolean = false): List<CustomTrack> {
         if (!fresh) cache[magnetId]?.let { return it }
-        val list = runCatching { Shared.parseTracks(Api.get(Shared.tracksPath(magnetId))) }
-            .getOrElse { PlayerLog.write("[custom-audio] list of $magnetId failed: ${it.message}"); return cache[magnetId].orEmpty() }
-        list.forEach { t -> t.audioMagnetId?.let { attachedSources.add(it) } }
-        cache[magnetId] = list
-        return list
+        val job = inflight.computeIfAbsent(magnetId) {
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).async {
+                try {
+                    runCatching { Shared.parseTracks(Api.get(Shared.tracksPath(magnetId))) }
+                        .onFailure { PlayerLog.write("[custom-audio] list of $magnetId failed: ${it.message}") }.getOrNull()
+                        ?.also { list -> list.forEach { t -> t.audioMagnetId?.let { attachedSources.add(it) } }; cache[magnetId] = list }
+                } finally { inflight.remove(magnetId) }
+            }
+        }
+        return job.await() ?: cache[magnetId].orEmpty()
+    }
+
+    /** Уже известные дорожки видеофайла (без сети); null — список фильма ещё не загружали. */
+    fun cachedForVideo(watchKey: String?): List<CustomTrack>? {
+        val id = watchKey?.substringBefore('|')?.toLongOrNull() ?: return emptyList()
+        return cache[id]?.let { Shared.forVideo(it, watchKey) }
+    }
+
+    /** Загрузить список заранее (открыли карточку фильма): к «Смотреть» он уже есть. */
+    fun prefetch(magnetId: Long) {
+        if (cache.containsKey(magnetId) || !PlaybackSettings.customAudioOn()) return
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch { tracks(magnetId) }
     }
 
     /** Дорожки для видеофайла по ключу прогресса «magnetId|path». */
@@ -70,13 +91,21 @@ object CustomAudio {
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
             for (id in ids) {
                 if (id in attachedSources) { PlayerLog.write("[custom-audio] voice-over $id is attached elsewhere, kept"); donePending(id); continue }
-                val ok = runCatching { Api.post("/api/magnets/$id/delete") }
-                    .recoverCatching { Api.post("/api/magnets/$id/cancel") }.isSuccess
-                PlayerLog.write("[custom-audio] unattached voice-over $id ${if (ok) "deleted" else "not deleted"}")
-                if (ok) donePending(id)
+                val r = runCatching { Api.post("/api/magnets/$id/delete") }
+                    .recoverCatching { e -> if (attachedOnServer(e)) throw e else Api.post("/api/magnets/$id/cancel") }
+                // Сервер не удаляет раздачу, к которой привязаны озвучки (привязали с другого устройства или до закрытия ПК)
+                val attached = r.exceptionOrNull()?.let { attachedOnServer(it) } == true
+                // 403 — готовую раздачу удаляет только админ: повторять при каждом запуске бесполезно, её уберёт автоочистка
+                val denied = (r.exceptionOrNull() as? Api.HttpError)?.code == 403
+                PlayerLog.write("[custom-audio] unattached voice-over $id " + when {
+                    r.isSuccess -> "deleted"; attached -> "is attached on the server, kept"; denied -> "may not be deleted here, left to auto-clean"; else -> "not deleted"
+                })
+                if (r.isSuccess || attached || denied) donePending(id)
             }
         }
     }
+
+    private fun attachedOnServer(e: Throwable) = e is Api.HttpError && e.code == 409 && e.body?.optString("code") == "AUDIO_ATTACHED"
 
     private var cleaned = false
     /** Один раз за запуск: то, что осталось с прошлого раза. */
@@ -108,6 +137,8 @@ object CustomAudio {
         val r = Api.post(Shared.ATTACH_PATH, Shared.checkBody(audioMagnetId, movieMagnetId))
         cache.clear()
         attachedSources.add(audioMagnetId)
+        // Привязана: больше не «ждёт удаления», даже если ПК закроют, пока сохраняются задержки
+        donePending(audioMagnetId)
         Shared.parseAttached(r)
     }
 

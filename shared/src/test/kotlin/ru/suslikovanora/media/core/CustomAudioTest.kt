@@ -60,4 +60,10 @@ class CustomAudioTest {
         assertEquals(-5000L, idx.of("http://127.0.0.1:5000/s/1")?.offsetMs)
         assertNull(CustomAudio.infoJson(emptyList()))
     }
+
+    @Test fun voiceOverOnlyAllowsSideFiles() {
+        assertEquals(true, CustomAudio.isVoiceOverOnly(listOf("Dub/a.mka", "Dub/readme.txt", "Dub/cover.JPG")))
+        assertEquals(false, CustomAudio.isVoiceOverOnly(listOf("Dub/readme.txt")))          // no voice-over at all
+        assertEquals(false, CustomAudio.isVoiceOverOnly(listOf("Film/a.mka", "Film/Film.mkv"))) // a film with a dub beside it
+    }
 }

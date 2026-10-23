@@ -328,7 +328,9 @@ fun PlayerView(
             // Серверные озвучки — после озвучек раздачи; список кешируется, второе открытие не ждёт сеть.
             val custom = req.preview?.let { listOf(it) }
                 ?: if (!ru.suslikovanora.media.desktop.PlaybackSettings.customAudioOn()) emptyList()
-                else withTimeoutOrNull(3000) { withContext(Dispatchers.IO) { ru.suslikovanora.media.desktop.CustomAudio.forVideo(customKey) } }.orEmpty()
+                // Обычно список уже загружен из карточки фильма (CustomAudio.prefetch); иначе ждём не дольше 3 с
+                else ru.suslikovanora.media.desktop.CustomAudio.cachedForVideo(customKey)
+                    ?: withTimeoutOrNull(3000) { withContext(Dispatchers.IO) { ru.suslikovanora.media.desktop.CustomAudio.forVideo(customKey) } }.orEmpty()
             if (custom.isNotEmpty()) {
                 BurstProxy.keepOnly(listOf(url) + extras.first + custom.map { it.url })
                 PlayerLog.write("[custom-audio] ${custom.size} voice-over(s) from the server")

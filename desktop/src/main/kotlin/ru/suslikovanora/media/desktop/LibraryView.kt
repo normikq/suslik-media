@@ -389,6 +389,8 @@ fun LibraryView(
     val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
     var target by remember { mutableStateOf<PlayTarget?>(null) }
+    // Пока выбирают серию и источник, список загруженных озвучек фильма уже грузится: плеер откроется без ожидания
+    LaunchedEffect(target?.magnetId) { target?.let { CustomAudio.prefetch(it.magnetId) } }
     var pick by remember { mutableStateOf<List<LibraryItem>?>(null) } // versions of one film to choose from
     // The category is chosen in the side panel («Коллекция»); each page («Главная», «Моя медиатека») remembers its own.
     val category = LibraryNav.of(mineOnly)
