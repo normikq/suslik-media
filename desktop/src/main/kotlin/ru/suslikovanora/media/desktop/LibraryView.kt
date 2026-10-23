@@ -64,6 +64,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.key
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -432,12 +433,24 @@ fun LibraryView(
 
     // One tile for the same film added several times; a tile with versions asks which one to play.
     val (shown, versionsOf) = remember(filtered, lib.posterVersion) { groupVersions(filtered) { lib.posterPathOf(it) } }
+    // A page is 3 rows of posters: as many in a row as the window's width fits (the grid's own rule: 180 dp posters, 14 dp apart,
+    // 36 dp margins). A new search, category, sorting or filter starts again from the first page.
+    var areaWidthPx by remember { mutableStateOf(0) }
+    val density = androidx.compose.ui.platform.LocalDensity.current.density
+    val columns = if (areaWidthPx <= 0) 6 else maxOf(1, ((areaWidthPx / density - 72f + 14f) / (180f + 14f)).toInt())
+    val pageSize = if (viewMode == ViewMode.Grid) columns * PAGE_ROWS else PAGE_ROWS * 4
+    val pageCount = ((shown.size + pageSize - 1) / pageSize).coerceAtLeast(1)
+    var page by remember(query, category, sortBy, onlyReady, mineOnly) { mutableStateOf(0) }
+    val curPage = page.coerceIn(0, pageCount - 1)
+    val pageItems = remember(shown, curPage, pageSize) { shown.drop(curPage * pageSize).take(pageSize) }
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val goPage: (Int) -> Unit = { page = it; scope.launch { grid.scrollToItem(0); listState.scrollToItem(0) } }
     val open: (PlayTarget) -> Unit = { t ->
         val vs = t.item?.let { versionsOf[it.m.id] }
         if (vs != null) pick = vs else target = t
     }
 
-    Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().onSizeChanged { areaWidthPx = it.width }) {
         if (viewMode == ViewMode.Grid) {
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(180.dp), state = grid,
@@ -483,13 +496,15 @@ fun LibraryView(
                     item(span = { GridItemSpan(maxLineSpan) }, key = "empty") { EmptyMine() }
                 }
                 // 4. Catalog grid of poster cards
-                items(shown, key = { it.m.id }, contentType = { "tile" }) { item ->
+                items(pageItems, key = { it.m.id }, contentType = { "tile" }) { item ->
                     Tile(item, lib, versions = versionsOf[item.m.id].orEmpty(), inMine = mineOnly, onOpen = open, modifier = if (Motion.simple) Modifier else Modifier.animateItem(fadeInSpec = tween(300), fadeOutSpec = tween(320, easing = Sm.ease)))
                 }
+                if (pageCount > 1) item(span = { GridItemSpan(maxLineSpan) }, key = "pager", contentType = "pager") { PageBar(curPage, pageCount, goPage) }
             }
         } else {
             // List View Mode
             LazyColumn(
+                state = listState,
                 modifier = Modifier.onGloballyPositioned { TileBounds.viewport = it },
                 contentPadding = PaddingValues(start = 36.dp, end = 36.dp, top = 28.dp, bottom = 40.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -527,9 +542,10 @@ fun LibraryView(
                 if (mineOnly && filtered.isEmpty()) {
                     item(key = "empty") { EmptyMine() }
                 }
-                items(shown, key = { it.m.id }, contentType = { "list_row" }) { item ->
+                items(pageItems, key = { it.m.id }, contentType = { "list_row" }) { item ->
                     ListRow(item, lib, onOpen = open, modifier = if (Motion.simple) Modifier else Modifier.animateItem(fadeInSpec = tween(300), fadeOutSpec = tween(200)))
                 }
+                if (pageCount > 1) item(key = "pager", contentType = "pager") { PageBar(curPage, pageCount, goPage) }
             }
         }
 
@@ -537,6 +553,36 @@ fun LibraryView(
             VersionPicker(vs.first().baseTitle, vs, lib, onDismiss = { pick = null }) { v -> pick = null; movieTarget(v)?.let { target = it } }
         }
         target?.let { t -> PlayDialog(t, lib, onDismiss = { target = null }, onPlay = { target = null; onPlay(it) }) }
+    }
+}
+
+/** A page of the library is this many rows of posters (the rest are on the next pages). */
+private const val PAGE_ROWS = 3
+
+/** «‹ 1 2 3 … 9 ›» under the posters. */
+@Composable
+private fun PageBar(page: Int, count: Int, onPage: (Int) -> Unit) {
+    // the numbers around the current page, the first and the last; «…» (-1) in the gaps
+    val nums = (0 until count).filter { it == 0 || it == count - 1 || kotlin.math.abs(it - page) <= 2 }
+        .let { list -> buildList { list.forEachIndexed { i, n -> if (i > 0 && n - list[i - 1] > 1) add(-1); add(n) } } }
+    Row(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 4.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+        @Composable fun cell(label: String, active: Boolean = false, enabled: Boolean = true, onClick: () -> Unit) {
+            val src = remember { MutableInteractionSource() }
+            val hovered by src.collectIsHoveredAsState()
+            val bg by animateColorAsState(when { active -> Sm.accent; hovered && enabled -> Color(0x26FFFFFF); else -> Color(0x12FFFFFF) }, tween(160))
+            Box(
+                Modifier.padding(horizontal = 3.dp).height(36.dp).widthIn(min = 36.dp).clip(RoundedCornerShape(10.dp)).background(bg)
+                    .border(1.dp, if (active) Sm.accentEdge else Sm.glassEdge, RoundedCornerShape(10.dp))
+                    .let { if (enabled && !active) it.hoverClick(src, onClick = onClick) else it.hoverable(src) }.padding(horizontal = 10.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(label, color = if (!enabled) Color(0xFF5B6272) else Color.White, fontFamily = Onest, fontWeight = if (active) FontWeight.Bold else FontWeight.Medium, fontSize = 14.sp)
+            }
+        }
+        cell("‹", enabled = page > 0) { onPage(page - 1) }
+        for (n in nums) if (n < 0) Text("…", color = Sm.muted, fontFamily = Onest, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 4.dp))
+            else cell((n + 1).toString(), active = n == page) { onPage(n) }
+        cell("›", enabled = page < count - 1) { onPage(page + 1) }
     }
 }
 

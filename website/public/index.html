@@ -401,7 +401,7 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
 <script>/* App 1.2+: native library and bottom bar */try{if(Number(window.__suslikApp||0)>=3)document.documentElement.classList.add("suslik-native");}catch(e){}
 /* Пока не ответил /api/session, страница скрыта: иначе на секунду мелькает форма входа у тех, кто уже вошёл (снимается в showApp; страховка — через 4 с) */
 try{document.documentElement.classList.add("auth-pending");setTimeout(function(){document.documentElement.classList.remove("auth-pending");},4000);}catch(e){}</script>
-<link rel="stylesheet" href="redesign.css?v=23">
+<link rel="stylesheet" href="redesign.css?v=24">
 </head>
 <body>
 <main>
@@ -1624,7 +1624,24 @@ function setupTilePlayback(magnet,tile,art,info){
 let libraryTiles=new Map();
 let libraryCategory = "all";
 let libraryPage = 0, libraryFilterSig = "";
-function libraryPageSize() { return (IS_ANDROID || IS_IOS || window.matchMedia("(max-width: 600px)").matches) ? 16 : 25; }
+// Страница — 3 ряда постеров на компьютере и 5 на телефоне: сколько их в ряду, столько и ставится (колонки считает сама сетка).
+let libraryLastPageSize = 0;
+function libraryPageSize() {
+  const phone = IS_ANDROID || IS_IOS || window.matchMedia("(max-width: 600px)").matches;
+  const rows = phone ? 5 : 3;
+  if (libraryViewMode === "list") return rows * (phone ? 2 : 4);
+  const grid = $("libraryResults");
+  let cols = 0;
+  try { grid.className = "library-grid"; cols = getComputedStyle(grid).gridTemplateColumns.split(" ").filter(Boolean).length; } catch {}
+  return (cols || (phone ? 2 : 6)) * rows;
+}
+(function () {
+  let t = 0;
+  window.addEventListener("resize", () => {
+    clearTimeout(t);
+    t = setTimeout(() => { const tab = $("libraryTab"); if (tab && !tab.classList.contains("hidden") && libraryPageSize() !== libraryLastPageSize) renderLibrary(false); }, 250);
+  });
+})();
 function renderLibraryPager(count) {
   const box = $("libraryPager");
   if (!box) return;
@@ -1743,8 +1760,9 @@ function renderLibrary(animate=true) {
     return (Number(Boolean(b.m.favorite)) - Number(Boolean(a.m.favorite))) || (a.i - b.i);
   }).map(x => x.m);
 
-  // Не больше LIBRARY_PAGE_SIZE постеров на странице (25; на телефоне 16); новый поиск, категория или фильтр — снова с первой.
+  // Страница — 3 ряда постеров (на телефоне 5); новый поиск, категория или фильтр — снова с первой.
   const pageSize = libraryPageSize();
+  libraryLastPageSize = pageSize;
   const filterSig = [query, activeCategory, sort, onlyReady].join("|");
   if (filterSig !== libraryFilterSig) { libraryFilterSig = filterSig; libraryPage = 0; }
   const pageCount = Math.max(1, Math.ceil(allMagnets.length / pageSize));

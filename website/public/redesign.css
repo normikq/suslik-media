@@ -2306,7 +2306,7 @@ body:has(#appPanel:not(.hidden)) > main > .hero {
 }
 @media (prefers-reduced-motion: reduce) { .hb-bg, .hb-thumb { transition: none; } }
 
-/* Страницы библиотеки: не больше 25 постеров (на телефоне 16) */
+/* Страницы библиотеки: 3 ряда постеров (на телефоне 5) */
 .library-pager { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 6px; margin: 18px 0 8px; }
 .library-pager:empty { display: none; }
 .library-pager .pager-btn { min-width: 38px; height: 38px; padding: 0 10px; border-radius: 10px; border: 1px solid var(--glass-edge, rgba(255,255,255,.08)) !important; background: rgba(255,255,255,.07) !important; color: #fff !important; font: 500 14px var(--ui) !important; cursor: pointer; box-shadow: none !important; }

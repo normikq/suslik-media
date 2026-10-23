@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -63,6 +64,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextStyle
@@ -74,7 +76,9 @@ import androidx.compose.ui.unit.sp
 import coil.ImageLoader
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import ru.suslikovanora.media.net.Api
 import ru.suslikovanora.media.Tv
@@ -88,6 +92,9 @@ data class PlayTarget(
     val subs: List<MFile> = emptyList(), val audio: List<MFile> = emptyList(),
     val episodeSides: Map<String, Pair<List<MFile>, List<MFile>>> = emptyMap()
 )
+
+/** How long a tile stays on screen before its video info is asked from the server. */
+private const val MEDIA_ASK_DELAY_MS = 700L
 
 object Posters {
     @Volatile private var loader: ImageLoader? = null
@@ -306,10 +313,21 @@ fun LibraryScreen(
         list.sortedByDescending { it.m.favorite }
     }
 
+    // A page is 3 rows of posters on a TV and 5 on a phone: as many in a row as the screen fits (the grid's own rule:
+    // 152 dp posters, 12 dp apart, 16 dp margins). A new search or category starts from the first page.
+    var areaWidthPx by remember { mutableStateOf(0) }
+    val density = androidx.compose.ui.platform.LocalDensity.current.density
+    val columns = if (areaWidthPx <= 0) 2 else maxOf(1, ((areaWidthPx / density - 32f + 12f) / (152f + 12f)).toInt())
+    val pageSize = columns * (if (tv) 3 else 5)
+    val pageCount = ((filtered.size + pageSize - 1) / pageSize).coerceAtLeast(1)
+    var page by remember(query, category, mineOnly) { mutableStateOf(0) }
+    val curPage = page.coerceIn(0, pageCount - 1)
+    val pageItems = remember(filtered, curPage, pageSize) { filtered.drop(curPage * pageSize).take(pageSize) }
+
     LazyVerticalGrid(
         columns = GridCells.Adaptive(minSize = 152.dp),
         state = gridState,
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize().onSizeChanged { areaWidthPx = it.width },
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 80.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)
@@ -350,11 +368,14 @@ fun LibraryScreen(
                 }
             }
         }
-        itemsIndexed(filtered, key = { _, it -> it.m.id }, contentType = { _, _ -> "tile" }) { index, item ->
+        itemsIndexed(pageItems, key = { _, it -> it.m.id }, contentType = { _, _ -> "tile" }) { index, item ->
             PosterTile(
                 item = item, store = store, onPlay = onPlay, index = index,
                 modifier = Modifier.animateItem(fadeInSpec = tween(320), fadeOutSpec = tween(220))
             )
+        }
+        if (pageCount > 1) item(key = "pager", span = { GridItemSpan(maxLineSpan) }, contentType = "pager") {
+            PageBar(curPage, pageCount) { n -> page = n; scope.launch { gridState.scrollToItem(0) } }
         }
     }
 }
@@ -518,6 +539,31 @@ fun TagChip(t: String) {
     }
 }
 
+/** «‹ 1 2 3 … 9 ›» under the posters (the remote moves over the cells, OK picks). */
+@Composable
+private fun PageBar(page: Int, count: Int, onPage: (Int) -> Unit) {
+    val nums = (0 until count).filter { it == 0 || it == count - 1 || kotlin.math.abs(it - page) <= 1 }
+        .let { list -> buildList { list.forEachIndexed { i, n -> if (i > 0 && n - list[i - 1] > 1) add(-1); add(n) } } }
+    Row(Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 4.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+        @Composable fun cell(label: String, active: Boolean = false, enabled: Boolean = true, onClick: () -> Unit) {
+            Box(
+                Modifier.padding(horizontal = 3.dp).height(38.dp).widthIn(min = 38.dp).clip(RoundedCornerShape(10.dp))
+                    .background(if (active) Sm.accent else Color(0x14FFFFFF))
+                    .border(1.dp, if (active) Sm.accentEdge else Sm.glassEdge, RoundedCornerShape(10.dp))
+                    .focusRing(RoundedCornerShape(10.dp), color = Color.White, width = 3.dp)
+                    .clickable(enabled = enabled && !active, onClick = onClick).padding(horizontal = 10.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(label, color = if (!enabled) Color(0xFF5B6272) else Color.White, fontFamily = Onest, fontWeight = if (active) FontWeight.Bold else FontWeight.Medium, fontSize = 14.sp)
+            }
+        }
+        cell("‹", enabled = page > 0) { onPage(page - 1) }
+        for (n in nums) if (n < 0) Text("…", color = Sm.muted, fontFamily = Onest, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 4.dp))
+            else cell((n + 1).toString(), active = n == page) { onPage(n) }
+        cell("›", enabled = page < count - 1) { onPage(page + 1) }
+    }
+}
+
 val LocalHeaderHeight = androidx.compose.runtime.compositionLocalOf { 46.dp }
 
 @Composable
@@ -526,7 +572,7 @@ fun HeaderSlot() = Spacer(Modifier.fillMaxWidth().height(LocalHeaderHeight.curre
 @Composable
 fun BrandHeader(onLogout: (() -> Unit)?, onSettings: (() -> Unit)? = null, profile: ru.suslikovanora.media.core.auth.UserProfile? = null) {
     Row(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-        val b by breathing(2600)
+        val b by breathing(2600, cycles = LOGO_PULSES)
         Box(
             Modifier.size(42.dp).drawBehind {
                 val r = size.maxDimension * (0.62f + 0.12f * b)
@@ -746,10 +792,13 @@ private fun PosterTile(item: LibraryItem, store: LibraryStore, onPlay: (PlayTarg
     var seasonIdx by remember(m.id) { mutableStateOf(0) }
     var episodeIdx by remember(m.id) { mutableStateOf(0) }
     val watchVersion = store.watchVersion
-    val last = remember(m.id, watchVersion) { store.lastWatched(m) }
+    // Read off the main thread: a season of 50+ episodes is 50+ lookups, and a tile is composed as it scrolls in
+    var last by remember(m.id) { mutableStateOf<Pair<MFile, WatchInfo>?>(null) }
     LaunchedEffect(m.id, watchVersion) {
+        val (lw, savedEpisode) = withContext(Dispatchers.Default) { store.lastWatched(m) to store.lastEpisode(m.id) }
+        last = lw
         if (series != null) {
-            val saved = last?.first?.path ?: store.lastEpisode(m.id)
+            val saved = lw?.first?.path ?: savedEpisode
             series.seasons.forEachIndexed { si, s ->
                 val ei = s.items.indexOfFirst { it.file.path == saved }
                 if (ei >= 0) { seasonIdx = si; episodeIdx = ei }
@@ -762,9 +811,15 @@ private fun PosterTile(item: LibraryItem, store: LibraryStore, onPlay: (PlayTarg
         is Playable.Series -> (playable.seasons.getOrNull(seasonIdx) ?: playable.seasons.first()).let { s -> (s.items.getOrNull(episodeIdx) ?: s.items.first()).file }
         Playable.None -> null
     }
-    var media by remember(m.id, currentFile?.path) { mutableStateOf(currentFile?.let { store.cachedMediaLine(m.id, it) }) }
+    var media by remember(m.id, currentFile?.path) { mutableStateOf(currentFile?.let { store.memoryMediaLine(m.id, it) }) }
     LaunchedEffect(m.id, currentFile?.path) {
-        if (media == null && currentFile != null && m.ready) media = store.mediaLine(m.id, currentFile)
+        if (media != null || currentFile == null || !m.ready) return@LaunchedEffect
+        media = withContext(Dispatchers.Default) { store.cachedMediaLine(m.id, currentFile) }
+        if (media != null) return@LaunchedEffect
+        // Asked from the server only for a tile that stays on screen: one that flew past while scrolling has left
+        // the grid by then (this effect is cancelled), and each answer coming in mid-scroll redrew its tile
+        delay(MEDIA_ASK_DELAY_MS)
+        media = store.mediaLine(m.id, currentFile)
     }
 
     fun target(): PlayTarget? = when (playable) {
@@ -874,11 +929,12 @@ private fun PosterTile(item: LibraryItem, store: LibraryStore, onPlay: (PlayTarg
             Text(m.name, color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp, lineHeight = 18.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text("${itemYear(item)} • ${itemTypeLabel(item)} · ${formatBytes(m.size)}", color = Sm.muted, fontFamily = Onest, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
             if (m.ready && media != null) {
-                val specs = itemSpecs(item, media)
+                val specs = remember(item, media) { itemSpecs(item, media) }
                 Text(specs.first, color = Color(0xFFB0B7C6), fontFamily = Onest, fontSize = 11.5.sp, modifier = Modifier.padding(top = 2.dp))
             }
-            if (m.ready && last != null) {
-                val (lf, lw) = last
+            val lastNow = last
+            if (m.ready && lastNow != null) {
+                val (lf, lw) = lastNow
                 val ep = (playable as? Playable.Series)?.seasons?.firstNotNullOfOrNull { s ->
                     s.items.firstOrNull { it.file.path == lf.path }?.let { e -> (if (s.season == 0) tr("library.spec") else "S" + s.season.toString().padStart(2, '0')) + "E" + e.episode.toString().padStart(2, '0') }
                 }
