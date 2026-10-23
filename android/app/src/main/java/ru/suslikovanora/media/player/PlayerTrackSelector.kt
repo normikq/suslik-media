@@ -231,7 +231,10 @@ class PlayerTrackSelector(
             if (p != null) openAudioFile(p, u) else { attachedAudio += u; activeSidecar = audioLabel(u) }
             prefs.edit().apply { prefKeys().forEach { putString("track:sidecar:$it", activeSidecar).remove("track:audio:$it") } }
                 .remove("track:audio:*").apply()
-            ru.suslikovanora.media.library.CloudSync.noteTrack(callback.getFilmKey(), null, null, activeSidecar, alsoAny = false)
+            // An uploaded voice-over goes to the account under its menu name as the audio track too: the PC knows a track
+            // by its name only (it has no «file beside the film»), and «HDRezka [rus]» is the same name there
+            val custom = activeSidecar?.takeIf { customUrlNamed(it) != null }
+            ru.suslikovanora.media.library.CloudSync.noteTrack(callback.getFilmKey(), custom, null, activeSidecar, alsoAny = false)
             callback.onAudioTrackChanged()
             return
         }
@@ -285,7 +288,9 @@ class PlayerTrackSelector(
         this.wrapUrl = wrapUrl
         val want = activeSidecar ?: pref("sidecar")
         pendingAudio = null
-        val pick = if (want == SIDECAR_NONE) null
+        // An uploaded voice-over picked on the PC comes as the audio track's name: it wins over an older choice here
+        val synced = if (activeSidecar == null) customUrlNamed(pref("audio")) else null
+        val pick = synced ?: if (want == SIDECAR_NONE) null
             else audioUrls.firstOrNull { audioLabel(it) == want } ?: audioUrls.firstOrNull { fileLabel(it) == want } ?: audioUrls.firstOrNull()
         val audio = if (pick != null) {
             attachedAudio += pick
@@ -313,6 +318,10 @@ class PlayerTrackSelector(
         val file = fileTrackIds.entries.firstOrNull { cur in it.value }?.key
         runCatching { p.setAudioDelayMs(file?.let { CustomAudioInfo.of(it)?.offsetMs } ?: 0L) }
     }
+
+    /** The uploaded voice-over (/api/custom-audio) of this episode whose menu name is [name]; null if none. */
+    private fun customUrlNamed(name: String?): String? =
+        name?.takeIf { it.isNotBlank() }?.let { n -> audioUrls.firstOrNull { CustomAudioInfo.of(it)?.title == n } }
 
     private fun audioLabel(u: String): String {
         CustomAudioInfo.of(u)?.title?.takeIf { it.isNotBlank() }?.let { return it }
@@ -346,7 +355,8 @@ class PlayerTrackSelector(
 
     @Suppress("UNUSED_PARAMETER")
     private fun applyPreferredTracks(p: PlayerEngine, currentTitle: String) {
-        val audio = pref("audio") ?: prefs.getString("track:audio:*", null)
+        // the name of an uploaded voice-over is its file: opening the file picks it, not a film track of that language
+        val audio = (pref("audio") ?: prefs.getString("track:audio:*", null))?.takeIf { customUrlNamed(it) == null }
         val spu = pref("spu") ?: prefs.getString("track:spu:*", null)
         runCatching {
             pickTrack(p.audioTracks(), audio)?.let { id ->

@@ -337,7 +337,8 @@ fun PlayerView(
             }
             SwingUtilities.invokeLater { customTracks = custom }
             val audio = extras.first + custom.map { it.url }
-            val titles = extras.first.map { null } + custom.map { it.title.removeSuffix(" [${it.lang}]").trim().ifBlank { it.audioPath.substringAfterLast('/') } to it.lang }
+            // Название в mpv — то же, что в меню у Android (menuName): «HDRezka» + язык → «HDRezka [rus]»
+            val titles = extras.first.map { null } + custom.map { (it.lang?.let { l -> it.menuName.removeSuffix(" [$l]") } ?: it.menuName) to it.lang }
             engine.open(playUrl, startAt, nightMode, prefLanguage("audio"), prefLanguage("spu"),
                 audio.map { BurstProxy.wrap(it) }, extras.second, titles)
         }
@@ -383,7 +384,10 @@ fun PlayerView(
         // Предпросмотр озвучки: слушаем именно её
         val a = req.preview?.menuName ?: pref("audio"); val spu = pref("spu")
         if (a != null || spu != null) {
-            if (a != null) eAudioTracks().firstOrNull { it.second == a }?.let { if (eAudioCur() != it.first) { eSetAudio(it.first); applyTrackNow() } }
+            // С Android серверная озвучка приходит под названием из меню: в mpv у дорожки язык может быть свой
+            if (a != null) (eAudioTracks().firstOrNull { it.second == a }
+                ?: eAudioTracks().firstOrNull { ru.suslikovanora.media.core.audio.CustomAudio.byMenuName(customTracks, it.second)?.menuName == a })
+                ?.let { if (eAudioCur() != it.first) { eSetAudio(it.first); applyTrackNow() } }
             val cur = eAudioCur()
             eAudioTracks().firstOrNull { it.first == cur }?.second?.let { n -> SwingUtilities.invokeLater { applyCustomDelay(n) } }
             if (spu == "__off__") { if (eSubCur() != -1) eSetSub(-1) }
@@ -1581,7 +1585,9 @@ fun PlayerView(
                     applyCustomDelay(name)
                     ui.put("audio:${seriesKey()}", name)
                     ui.put("audio:*", name)
-                    ru.suslikovanora.media.desktop.CloudSync.noteTrack(seriesKey(), name, null)
+                    // Серверная озвучка — под своим названием из меню («HDRezka [rus]»): по нему её находит Android
+                    val synced = ru.suslikovanora.media.core.audio.CustomAudio.byMenuName(customTracks, name)?.menuName ?: name
+                    ru.suslikovanora.media.desktop.CloudSync.noteTrack(seriesKey(), synced, null)
                 } else {
                     runOnPlayer { eSetSub(id) }
                     val v = if (id == -1) "__off__" else name
