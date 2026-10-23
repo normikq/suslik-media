@@ -151,7 +151,8 @@
     if (!state.loadedAt) show(ui.spinner('Загружаем медиатеку…'));
     loading = api.get('/api/library').then(function (json) {
       loading = null;
-      state.items = model.prepareItems(model.parseLibrary(json));
+      // Раздачи только с озвучками (.mka) играют внутри фильма — плиткой их не показываем
+      state.items = model.prepareItems(model.parseLibrary(json).filter(function (m) { return !model.isVoiceOverOnly(m); }));
       state.loadedAt = Date.now();
       return state.items;
     }, function (e) {

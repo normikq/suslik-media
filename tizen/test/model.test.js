@@ -143,6 +143,38 @@ test('субтитры и озвучки рядом с видео', () => {
   assert.deepEqual(M.externalAudioFor(mag([film, dub]), film), [dub]);
 });
 
+test('озвучки отдельным файлом: названия, озвучки пользователей, выбор в ответе tv-info', () => {
+  const e1 = file(0, 'Show/Show.S01E01.mkv');
+  assert.equal(M.dubLabel(e1, file(1, 'Show/Show.S01E01.rus.LostFilm.mka')), 'rus LostFilm');
+  assert.equal(M.dubLabel(e1, file(2, 'Show/RUS Sound/HDRezka/Show.S01E01.mka')), 'HDRezka', 'имя как у видео — папка');
+  assert.equal(M.dubLabel(file(0, 'Film/Film.mkv'), file(1, 'Film/Dub.ac3')), 'Dub');
+
+  assert.equal(M.customName({ title: 'HDRezka [rus]', lang: 'rus' }), 'HDRezka [rus]');
+  assert.equal(M.customName({ title: 'HDRezka', lang: 'rus' }), 'HDRezka [rus]');
+  assert.equal(M.customName({ title: '', lang: 'und', audioPath: 'Dub/S01E01.mka' }), 'S01E01.mka');
+
+  const side = file(3, 'Show/Show.S01E01.LostFilm.mka');
+  const custom = [
+    { id: 'trk_00000001', videoPath: 'Show/Show.S01E01.mkv', audioPath: 'S01E01.RHS.mka', title: 'RHS', lang: 'rus' },
+    { id: 'trk_00000002', videoPath: 'Show/Show.S01E02.mkv', audioPath: 'S01E02.RHS.mka', title: 'RHS', lang: 'rus' },
+    { id: 'trk_00000003', videoPath: 'Show/Show.S01E01.mkv', audioPath: 'S01E01.RHS.aac', title: 'Old', lang: null }
+  ];
+  const choices = M.externalChoices(e1, [side], custom);
+  assert.deepEqual(choices.map(c => [c.kind, c.label]), [['file', 'LostFilm'], ['custom', 'RHS [rus]']], 'чужая серия и не .mka — мимо');
+
+  const info = { external: [
+    { kind: 'file', link: 'https://host/f/3', offsetMs: 0, url: 'u1' },
+    { kind: 'custom', id: 'trk_00000001', offsetMs: -4200, url: 'u2' }
+  ] };
+  assert.equal(M.externalIn(info, choices[0]).url, 'u1');
+  assert.equal(M.externalIn(info, choices[1]).url, 'u2');
+  assert.equal(M.externalIn({}, choices[1]), null, 'старый сервер без external');
+
+  assert.equal(M.isVoiceOverOnly(mag([file(0, 'Dub/S01E01.mka'), file(1, 'Dub/S01E02.mka')])), true, 'раздача-озвучка — не плитка');
+  assert.equal(M.isVoiceOverOnly(mag([e1, side])), false);
+  assert.equal(M.isVoiceOverOnly(mag([])), false);
+});
+
 test('watchKey, watchInfo, prepareItems', () => {
   assert.equal(M.watchKey(42, file(5, 'folder/movie.mkv')), '42|folder/movie.mkv');
   assert.equal(M.watchInfo(50000, 100000, 1).watched, false);
