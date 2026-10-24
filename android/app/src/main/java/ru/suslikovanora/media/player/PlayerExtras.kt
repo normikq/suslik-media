@@ -9,6 +9,8 @@ object PlayerExtras {
     const val SUB_URLS = "media_sub_urls"
     const val AUDIO_URLS = "media_audio_urls"
     const val WATCH_KEYS = "media_watch_keys"
+    /** Watch key of the episode the player opens with (the playlist is the whole season, it may be in the middle). */
+    const val WATCH_KEY = "media_watch_key"
     /** The playlist's other episodes' subtitles and voice-overs (JSON from the play sheet), signed when each starts. */
     const val EPISODE_SIDES = "media_episode_sides"
     /** Uploaded voice-overs of the film and its playlist: name and delay by signed link (see [CustomAudioInfo]). */

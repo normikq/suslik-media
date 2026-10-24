@@ -62,7 +62,9 @@ data class PlayRequest(
     /** The playlist's other episodes' subtitles and voice-overs (JSON, see [episodeSidesJson]); the player signs them. */
     val episodeSides: String? = null,
     /** Uploaded voice-overs: `{"<signed url>": {"title", "offsetMs"}}` (see player's CustomAudioInfo). */
-    val customAudio: String? = null
+    val customAudio: String? = null,
+    /** Watch key of the chosen episode ([watchKeys] is the whole season); null — the first of [watchKeys]. */
+    val watchKey: String? = null
 )
 
 /**
@@ -125,13 +127,13 @@ fun PlaySheet(
                 audioUrls = audioUrls + custom[target.file.path].orEmpty().map { it.url }
                 if (audioUrls.isNotEmpty()) sub = tr("play.sub_ozvuchek_iz_razdachi", "sub" to sub, "size" to audioUrls.size)
                 preparingExtras = false
-                // Series via the mirror: this episode plus every following one to the end of the season.
-                val following = target.following.filter { it.link != null }
-                if (following.size > 1) {
+                // Series via the mirror: the whole season, the player starts at this episode.
+                val season = target.season.filter { it.link != null }
+                if (season.size > 1) {
                     preparingPlaylist = true
                     runCatching {
                         val items = JSONArray()
-                        following.forEach { items.put(JSONObject().put("index", it.index).put("link", it.link)) }
+                        season.forEach { items.put(JSONObject().put("index", it.index).put("link", it.link)) }
                         Api.post("/api/playlist", JSONObject().put("magnetId", target.magnetId).put("title", target.label).put("items", items))
                             .optString("url").ifBlank { null }
                     }.onSuccess { playlist = it }
@@ -166,9 +168,9 @@ fun PlaySheet(
                 title = tr("play.cherez_zerkalo"), hint = if (playlist != null) tr("play.cherez_vash_server_dalshe") else tr("play.trafik_idet_cherez_vash"),
                 url = mirror, busy = preparingPlaylist || preparingExtras, busyText = if (preparingPlaylist) tr("play.gotovim_pleylist") else tr("play.gotovim_dorozhki"),
                 onPlay = {
-                    val keys = if (playlist != null) target.following.filter { f -> f.link != null }.map { f -> watchKey(target.magnetId, f) }
+                    val keys = if (playlist != null) target.season.filter { f -> f.link != null }.map { f -> watchKey(target.magnetId, f) }
                     else listOf(watchKey(target.magnetId, target.file))
-                    onPlay(PlayRequest(it, target.label, playlist, subUrls, keys, audioUrls, fromStart, if (playlist != null) episodeSidesJson(target, customByPath) else null, customJson(customByPath)))
+                    onPlay(PlayRequest(it, target.label, playlist, subUrls, keys, audioUrls, fromStart, if (playlist != null) episodeSidesJson(target, customByPath) else null, customJson(customByPath), watchKey(target.magnetId, target.file)))
                 }, onCopy = { copy(context, it) }
             )
             Spacer(Modifier.height(10.dp))
@@ -224,9 +226,9 @@ private fun copy(context: Context, text: String) {
     Toast.makeText(context, tr("add.ssylka_skopirovana"), Toast.LENGTH_SHORT).show()
 }
 
-/** `{"<episode link>": {"subs": [{"link", "name"}], "audio": [...]}}` for the playlist's following episodes; null if none. */
+/** `{"<episode link>": {"subs": [{"link", "name"}], "audio": [...]}}` for the playlist's other episodes; null if none. */
 private fun episodeSidesJson(target: PlayTarget, custom: Map<String, List<CustomTrack>>): String? {
-    val customFor = target.following.filter { it.link != null && custom[it.path] != null }
+    val customFor = target.season.filter { it.link != null && it.path != target.file.path && custom[it.path] != null }
     if (target.episodeSides.isEmpty() && customFor.isEmpty()) return null
     fun files(list: List<MFile>) = JSONArray().apply {
         list.forEach { f -> f.link?.let { put(JSONObject().put("link", it).put("name", f.name.ifBlank { f.path.substringAfterLast('/') })) } }

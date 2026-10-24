@@ -85,10 +85,10 @@ import ru.suslikovanora.media.Tv
 import ru.suslikovanora.media.tr
 import java.util.Locale
 
-/** What the play sheet needs: one file, its display title and (for series) the rest of the season. */
-/** [episodeSides]: subtitles and voice-overs of the following episodes, by each episode's link (signed when it starts). */
+/** What the play sheet needs: one file, its display title and (for series) every episode of its season, in order. */
+/** [episodeSides]: subtitles and voice-overs of the season's other episodes, by each episode's link (signed when it starts). */
 data class PlayTarget(
-    val magnetId: Long, val file: MFile, val label: String, val following: List<MFile>,
+    val magnetId: Long, val file: MFile, val label: String, val season: List<MFile>,
     val subs: List<MFile> = emptyList(), val audio: List<MFile> = emptyList(),
     val episodeSides: Map<String, Pair<List<MFile>, List<MFile>>> = emptyMap()
 )
@@ -249,10 +249,11 @@ private fun targetFor(item: LibraryItem, file: MFile): PlayTarget? {
                 val i = s.items.indexOfFirst { it.file.path == file.path }
                 if (i < 0) continue
                 val e = s.items[i]
-                val following = s.items.drop(i).map { it.file }
-                val sides = following.drop(1).mapNotNull { f -> f.link?.let { it to (subtitlesFor(m, f) to externalAudioFor(m, f)) } }
+                // The whole season: «Предыдущая» goes back too (the player finds the episode in it by its link)
+                val season = s.items.map { it.file }
+                val sides = season.filter { it.path != e.file.path }.mapNotNull { f -> f.link?.let { it to (subtitlesFor(m, f) to externalAudioFor(m, f)) } }
                     .filter { (_, v) -> v.first.isNotEmpty() || v.second.isNotEmpty() }.toMap()
-                return PlayTarget(m.id, e.file, episodeLabel(baseTitle, s, e), following, subtitlesFor(m, e.file), externalAudioFor(m, e.file), sides)
+                return PlayTarget(m.id, e.file, episodeLabel(baseTitle, s, e), season, subtitlesFor(m, e.file), externalAudioFor(m, e.file), sides)
             }
             null
         }
@@ -829,10 +830,10 @@ private fun PosterTile(item: LibraryItem, store: LibraryStore, onPlay: (PlayTarg
             val s = playable.seasons.getOrNull(seasonIdx) ?: playable.seasons.first()
             val e = s.items.getOrNull(episodeIdx) ?: s.items.first()
             store.saveEpisode(m.id, e.file.path)
-            val following = s.items.drop(s.items.indexOf(e)).map { it.file }
-            val sides = following.drop(1).mapNotNull { f -> f.link?.let { it to (subtitlesFor(m, f) to externalAudioFor(m, f)) } }
+            val season = s.items.map { it.file }
+            val sides = season.filter { it.path != e.file.path }.mapNotNull { f -> f.link?.let { it to (subtitlesFor(m, f) to externalAudioFor(m, f)) } }
                 .filter { (_, v) -> v.first.isNotEmpty() || v.second.isNotEmpty() }.toMap()
-            PlayTarget(m.id, e.file, episodeLabel(baseTitle, s, e), following, subtitlesFor(m, e.file), externalAudioFor(m, e.file), sides)
+            PlayTarget(m.id, e.file, episodeLabel(baseTitle, s, e), season, subtitlesFor(m, e.file), externalAudioFor(m, e.file), sides)
         }
         Playable.None -> null
     }

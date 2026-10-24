@@ -106,7 +106,7 @@ class LibraryStore(context: Context) {
                 }
             }
             null
-        } catch (e: Exception) { magnets = beforeM; items = beforeI; Api.describe(e) }
+        } catch (e: CancellationException) { throw e } catch (e: Exception) { magnets = beforeM; items = beforeI; Api.describe(e) }
     }
 
     /** «Мои фильмы» on/off: only this user's list; the torrent stays in the shared library. */
@@ -249,6 +249,8 @@ class LibraryStore(context: Context) {
             }
         }
         null
+    } catch (e: CancellationException) {
+        throw e
     } catch (e: Exception) {
         Api.describe(e)
     }

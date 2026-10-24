@@ -134,7 +134,7 @@ class MainActivity : ComponentActivity() {
             else -> null
         }?.trim() ?: return
         val link = Regex("""magnet:\?\S+""", RegexOption.IGNORE_CASE).find(text)?.value
-            ?: Regex("""https://\S+""").find(text)?.value ?: return
+            ?: Regex("""https?://\S+""", RegexOption.IGNORE_CASE).find(text)?.value ?: return
         add.mode = 0; add.input = link; add.status = tr("main.nazhmite_dobavit_chtoby_otprav"); add.statusOk = true
         tab = Tab.Links
     }
@@ -267,7 +267,7 @@ class MainActivity : ComponentActivity() {
                 PlaySheet(
                     target = t,
                     onDismiss = { playTarget = null },
-                    onPlay = { r -> playTarget = null; handlePlay(r.url, r.title, r.playlist, r.subUrls, r.watchKeys, r.audioUrls, r.fromStart, r.episodeSides, r.customAudio) }
+                    onPlay = { r -> playTarget = null; handlePlay(r.url, r.title, r.playlist, r.subUrls, r.watchKeys, r.audioUrls, r.fromStart, r.episodeSides, r.customAudio, r.watchKey) }
                 )
             }
         }
@@ -290,15 +290,16 @@ class MainActivity : ComponentActivity() {
     private fun handlePlay(
         url: String, title: String?, playlist: String? = null,
         subUrls: List<String> = emptyList(), watchKeys: List<String> = emptyList(), audioUrls: List<String> = emptyList(),
-        fromStart: Boolean = false, episodeSides: String? = null, customAudio: String? = null
+        fromStart: Boolean = false, episodeSides: String? = null, customAudio: String? = null, watchKey: String? = null
     ) {
+        val current = watchKey ?: watchKeys.firstOrNull()
         val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return
         if (uri.scheme !in listOf("http", "https")) {
             Toast.makeText(this, tr("main.nepodderzhivaemaya_ssylka"), Toast.LENGTH_SHORT).show()
             return
         }
         // In a room, the host's film becomes the room's film (a guest's other film just plays for them alone)
-        watchKeys.firstOrNull()?.let { key -> if (Party.isHost) Party.putFilm(ru.suslikovanora.media.core.party.PartyFileRef(key, title ?: tr("main.video"))) }
+        current?.let { key -> if (Party.isHost) Party.putFilm(ru.suslikovanora.media.core.party.PartyFileRef(key, title ?: tr("main.video"))) }
         // A playlist may only come from our own site: it is fetched without any credentials.
         val playlistUri = playlist?.let { runCatching { Uri.parse(it) }.getOrNull() }
             ?.takeIf { it.scheme == "https" && it.host == siteHost }
@@ -309,6 +310,7 @@ class MainActivity : ComponentActivity() {
             playlistUri?.let { putExtra(PlayerActivity.EXTRA_PLAYLIST, it.toString()) }
             if (subUrls.isNotEmpty()) putStringArrayListExtra(PlayerActivity.EXTRA_SUB_URLS, ArrayList(subUrls))
             if (watchKeys.isNotEmpty()) putStringArrayListExtra(PlayerActivity.EXTRA_WATCH_KEYS, ArrayList(watchKeys))
+            putExtra(ru.suslikovanora.media.player.PlayerExtras.WATCH_KEY, current)
             if (audioUrls.isNotEmpty()) putStringArrayListExtra(PlayerActivity.EXTRA_AUDIO_URLS, ArrayList(audioUrls))
             putExtra(PlayerActivity.EXTRA_FROM_START, fromStart)
             episodeSides?.let { putExtra(PlayerActivity.EXTRA_EPISODE_SIDES, it) }
