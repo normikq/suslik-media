@@ -167,6 +167,12 @@ fun PlayerBottomBar(
     pickerCurrent: Int,
     pickerLoading: Boolean = false,
     pickerPendingCount: Int = 0,
+    /** «💾 Запомнить задержку для всех» под дорожками звука (внешняя озвучка с сервера); null — кнопки нет. */
+    saveDelayText: String? = null,
+    onSaveDelay: () -> Unit = {},
+    /** «🗑 Удалить озвучку» (тот же автор/админ); null — кнопки нет. */
+    deleteTrackText: String? = null,
+    onDeleteTrack: () -> Unit = {},
     volume: Int,
     userMuted: Boolean,
     fullscreen: Boolean,
@@ -641,6 +647,12 @@ fun PlayerBottomBar(
                             repeat(skeletonCount) { i ->
                                 PlayerChipSkeleton(index = pickerItems.size + i)
                             }
+                        }
+                        if (kind == "audio" && saveDelayText != null) {
+                            PlayerChipAnimated(saveDelayText, false, pickerItems.size) { onSaveDelay() }
+                        }
+                        if (kind == "audio" && deleteTrackText != null) {
+                            PlayerChipAnimated(deleteTrackText, false, pickerItems.size + 1) { onDeleteTrack() }
                         }
                     }
                 }

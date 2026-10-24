@@ -115,7 +115,7 @@ suslik-media/
 | Поиск | `GET /api/search`, `POST /api/search/add`, `/api/favorites` | поиск по трекерам, добавить найденное, избранное |
 | Ссылки и видео | `POST /api/file/unlock`, `GET /api/file/mirror-url`, `GET /api/file/proxy/...` | прямая ссылка, подписанная ссылка зеркала, само зеркало |
 | Сериалы | `POST /api/playlist`, `GET /api/playlist/:id/:name` | плейлист серий до конца сезона (.m3u) |
-| Оформление | `POST /api/media-metadata`, `GET /api/poster`, `/api/poster/img/...` | постеры и описания фильмов (с кешем) |
+| Оформление | `POST /api/media-metadata`, `GET /api/poster`, `/api/poster/img/...`, `GET /api/tags` | постеры, кадры, логотипы, описания фильмов (с кешем); метки Dolby Vision / HDR / DTS по файлу |
 | Приложения | `GET /api/app/update`, `/api/app/download/...`, `/api/app/beta…`, `POST /api/app/upload`, `/api/app/promote`, `GET /api/app/status`, `GET/POST /api/app/changelog` | раздача обновлений, каналы «релиз/бета», загрузка сборок из CI |
 | Ошибки | `POST /api/app/report`, `GET /api/app/reports` | приложения присылают отчёты о сбоях |
 

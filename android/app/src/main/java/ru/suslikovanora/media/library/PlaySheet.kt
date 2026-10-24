@@ -40,6 +40,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import org.json.JSONArray
 import org.json.JSONObject
+import ru.suslikovanora.media.core.audio.CustomAudio
+import ru.suslikovanora.media.core.audio.CustomTrack
 import ru.suslikovanora.media.net.Api
 import ru.suslikovanora.media.ui.Onest
 import ru.suslikovanora.media.ui.Sm
@@ -58,7 +60,11 @@ data class PlayRequest(
     /** «С начала» chosen in the sheet: ignore the remembered place this time. */
     val fromStart: Boolean = false,
     /** The playlist's other episodes' subtitles and voice-overs (JSON, see [episodeSidesJson]); the player signs them. */
-    val episodeSides: String? = null
+    val episodeSides: String? = null,
+    /** Uploaded voice-overs: `{"<signed url>": {"title", "offsetMs"}}` (see player's CustomAudioInfo). */
+    val customAudio: String? = null,
+    /** Watch key of the chosen episode ([watchKeys] is the whole season); null — the first of [watchKeys]. */
+    val watchKey: String? = null
 )
 
 /**
@@ -82,6 +88,7 @@ fun PlaySheet(
     var preparingExtras by remember(target) { mutableStateOf(false) }
     var subUrls by remember(target) { mutableStateOf<List<String>>(emptyList()) }
     var audioUrls by remember(target) { mutableStateOf<List<String>>(emptyList()) }
+    var customByPath by remember(target) { mutableStateOf<Map<String, List<CustomTrack>>>(emptyMap()) }
     // Where the player stopped last time (the same place the player itself resumes from); null = nothing to resume.
     val resumeAt = remember(target) {
         context.getSharedPreferences("positions", Context.MODE_PRIVATE).getLong("w:" + watchKey(target.magnetId, target.file), 0L)
@@ -106,23 +113,27 @@ fun PlaySheet(
                 sub = tr("play.vyberite_istochnik")
                 // Subtitle files and voice-overs next to the video: the player adds them as extra tracks (signed mirror
                 // links, no login needed). «Смотреть» waits for them so the film does not start without them.
-                preparingExtras = target.subs.isNotEmpty() || target.audio.isNotEmpty()
+                preparingExtras = true
+                // Voice-overs uploaded by users from other torrents (/api/custom-audio): already signed mirror links.
+                val custom = customAudio(target.magnetId)
+                customByPath = custom
                 if (target.subs.isNotEmpty()) {
                     subUrls = mirrorUrls(target.subs, enc)
                     if (subUrls.isNotEmpty()) sub = tr("play.vyberite_istochnik_subtitrov_i", "size" to subUrls.size)
                 }
                 if (target.audio.isNotEmpty()) {
                     audioUrls = mirrorUrls(target.audio, enc)
-                    if (audioUrls.isNotEmpty()) sub = tr("play.sub_ozvuchek_iz_razdachi", "sub" to sub, "size" to audioUrls.size)
                 }
+                audioUrls = audioUrls + custom[target.file.path].orEmpty().map { it.url }
+                if (audioUrls.isNotEmpty()) sub = tr("play.sub_ozvuchek_iz_razdachi", "sub" to sub, "size" to audioUrls.size)
                 preparingExtras = false
-                // Series via the mirror: this episode plus every following one to the end of the season.
-                val following = target.following.filter { it.link != null }
-                if (following.size > 1) {
+                // Series via the mirror: the whole season, the player starts at this episode.
+                val season = target.season.filter { it.link != null }
+                if (season.size > 1) {
                     preparingPlaylist = true
                     runCatching {
                         val items = JSONArray()
-                        following.forEach { items.put(JSONObject().put("index", it.index).put("link", it.link)) }
+                        season.forEach { items.put(JSONObject().put("index", it.index).put("link", it.link)) }
                         Api.post("/api/playlist", JSONObject().put("magnetId", target.magnetId).put("title", target.label).put("items", items))
                             .optString("url").ifBlank { null }
                     }.onSuccess { playlist = it }
@@ -157,16 +168,16 @@ fun PlaySheet(
                 title = tr("play.cherez_zerkalo"), hint = if (playlist != null) tr("play.cherez_vash_server_dalshe") else tr("play.trafik_idet_cherez_vash"),
                 url = mirror, busy = preparingPlaylist || preparingExtras, busyText = if (preparingPlaylist) tr("play.gotovim_pleylist") else tr("play.gotovim_dorozhki"),
                 onPlay = {
-                    val keys = if (playlist != null) target.following.filter { f -> f.link != null }.map { f -> watchKey(target.magnetId, f) }
+                    val keys = if (playlist != null) target.season.filter { f -> f.link != null }.map { f -> watchKey(target.magnetId, f) }
                     else listOf(watchKey(target.magnetId, target.file))
-                    onPlay(PlayRequest(it, target.label, playlist, subUrls, keys, audioUrls, fromStart, if (playlist != null) episodeSidesJson(target) else null))
+                    onPlay(PlayRequest(it, target.label, playlist, subUrls, keys, audioUrls, fromStart, if (playlist != null) episodeSidesJson(target, customByPath) else null, customJson(customByPath), watchKey(target.magnetId, target.file)))
                 }, onCopy = { copy(context, it) }
             )
             Spacer(Modifier.height(10.dp))
             SourceGroup(
                 title = tr("play.napryamuyu"), hint = tr("play.pryamaya_ssylka_alldebrid"),
                 url = direct, busy = false,
-                onPlay = { onPlay(PlayRequest(it, target.label, null, subUrls, listOf(watchKey(target.magnetId, target.file)), audioUrls, fromStart)) },
+                onPlay = { onPlay(PlayRequest(it, target.label, null, subUrls, listOf(watchKey(target.magnetId, target.file)), audioUrls, fromStart, customAudio = customJson(customByPath))) },
                 onCopy = { copy(context, it) }
             )
             Spacer(Modifier.height(12.dp))
@@ -215,14 +226,20 @@ private fun copy(context: Context, text: String) {
     Toast.makeText(context, tr("add.ssylka_skopirovana"), Toast.LENGTH_SHORT).show()
 }
 
-/** `{"<episode link>": {"subs": [{"link", "name"}], "audio": [...]}}` for the playlist's following episodes; null if none. */
-private fun episodeSidesJson(target: PlayTarget): String? {
-    if (target.episodeSides.isEmpty()) return null
+/** `{"<episode link>": {"subs": [{"link", "name"}], "audio": [...]}}` for the playlist's other episodes; null if none. */
+private fun episodeSidesJson(target: PlayTarget, custom: Map<String, List<CustomTrack>>): String? {
+    val customFor = target.season.filter { it.link != null && it.path != target.file.path && custom[it.path] != null }
+    if (target.episodeSides.isEmpty() && customFor.isEmpty()) return null
     fun files(list: List<MFile>) = JSONArray().apply {
         list.forEach { f -> f.link?.let { put(JSONObject().put("link", it).put("name", f.name.ifBlank { f.path.substringAfterLast('/') })) } }
     }
     val out = JSONObject()
     target.episodeSides.forEach { (link, sides) -> out.put(link, JSONObject().put("subs", files(sides.first)).put("audio", files(sides.second))) }
+    // Uploaded voice-overs come signed already: "signed" is used as is.
+    customFor.forEach { f ->
+        val o = out.optJSONObject(f.link!!) ?: JSONObject().also { out.put(f.link, it) }
+        o.put("signed", JSONArray(custom[f.path]!!.map { it.url }))
+    }
     return out.toString()
 }
 
@@ -237,3 +254,11 @@ private suspend fun mirrorUrls(files: List<MFile>, enc: (String) -> String): Lis
         }
     }.mapNotNull { it.await() }
 }
+
+/** Uploaded voice-overs of the film by its video path; empty on any error. */
+private suspend fun customAudio(magnetId: Long): Map<String, List<CustomTrack>> = runCatching {
+    CustomAudio.parseTracks(Api.get(CustomAudio.tracksPath(magnetId))).filter { it.url.startsWith("https://") }.groupBy { it.videoPath }
+}.getOrDefault(emptyMap())
+
+/** Name and delay of every uploaded voice-over by its signed link; null if there are none. */
+private fun customJson(custom: Map<String, List<CustomTrack>>): String? = CustomAudio.infoJson(custom.values.flatten())

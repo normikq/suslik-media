@@ -66,8 +66,21 @@ class Library {
         private set
     fun bumpWatch() { watchVersion++ }
 
+    /** Раздачи только с озвучкой: в медиатеке их нет, но предпросмотру на экране «Озвучка» нужны их файлы. */
+    var voiceOvers: List<Magnet> = emptyList()
+        private set
+
     private suspend fun publish(list: List<Magnet>) {
-        items = withContext(Dispatchers.Default) { prepareItems(list) }
+        voiceOvers = list.filter { isVoiceOverOnly(it) }
+        items = withContext(Dispatchers.Default) { prepareItems(list.filterNot { isVoiceOverOnly(it) }) }
+        CustomAudio.cleanupPending()
+    }
+
+    // Раздача только с аудио — это внешняя озвучка к фильму («Добавить» → «Озвучка»): она играет внутри фильма,
+    // отдельной плиткой в медиатеке её не показываем. Такие озвучки — только .mka.
+    private fun isVoiceOverOnly(m: Magnet): Boolean {
+        val files = m.files.filter { !it.isFolder }
+        return files.isNotEmpty() && files.all { ru.suslikovanora.media.core.audio.CustomAudio.isSupported(it.path) }
     }
 
     suspend fun restoreSnapshot() {
@@ -358,6 +371,25 @@ class Library {
     // The poster file a film resolved to. Two releases of one film under different names ("Новый Человек-паук…" and
     // "The Amazing Spider-Man 2") get the same TMDB poster: that is how they are recognised as one film.
     private val posterPaths = androidx.compose.runtime.mutableStateMapOf<String, String>()
+    /** Dolby Vision / HDR / DTS of a film as ffprobe on the server found them (until it answers — guessed from the names, see [itemTags]). */
+    private val serverTags = androidx.compose.runtime.mutableStateMapOf<Long, List<String>>()
+    fun tagsOf(item: LibraryItem): List<String> = serverTags[item.m.id] ?: itemTags(item)
+
+    /** Asks the server for the marks; it analyses new films one by one in the background, so ask again while it has some left. */
+    suspend fun refreshTags() {
+        repeat(40) {
+            val j = try { Api.get("/api/tags") } catch (e: CancellationException) { throw e } catch (_: Exception) { return }
+            val tags = j.optJSONObject("tags")
+            if (tags != null) for (k in tags.keys()) {
+                val a = tags.optJSONArray(k) ?: continue
+                val id = k.toLongOrNull() ?: continue
+                serverTags[id] = (0 until a.length()).map { a.getString(it) }
+            }
+            if (j.optInt("pending", 0) <= 0) return
+            kotlinx.coroutines.delay(30_000)
+        }
+    }
+
     var posterVersion by mutableStateOf(0)
         private set
 
@@ -442,6 +474,39 @@ class Library {
             } finally { inflight.remove(key, own); own.complete(PosterAnswer(img, known)) }
             return img
         }
+    }
+
+    /** What the «Продолжить просмотр» banner shows besides the title: TMDB's wide picture, description, year, rating. */
+    class HeroInfo(val backdrop: ImageBitmap?, val overview: String?, val year: String?, val rating: Double?, val logo: ImageBitmap? = null)
+    private val heroes = java.util.concurrent.ConcurrentHashMap<String, HeroInfo>()
+
+    fun cachedHero(queries: List<String>): HeroInfo? = queries.firstNotNullOfOrNull { heroes[it.lowercase()] }
+
+    /** Null while the server cannot say (offline, an old server without these fields): the banner then shows what it has. */
+    suspend fun hero(queries: List<String>): HeroInfo? {
+        cachedHero(queries)?.let { return it }
+        for (q in queries) {
+            try {
+                val j = posterGate.withPermit { Api.get("/api/poster?hero=1&q=" + URLEncoder.encode(q, "UTF-8")) }
+                if (!j.has("backdrop") && !j.has("overview")) continue
+                val bd = j.optString("backdrop").takeIf { it.startsWith("/api/poster/img/") }
+                val img = bd?.let { loadHeroImage(it) }
+                val logo = j.optString("logo").takeIf { it.startsWith("/api/poster/img/") }?.let { runCatching { loadHeroImage(it, 500) }.getOrNull() }
+                val info = HeroInfo(
+                    img, j.optString("overview").ifBlank { null }, j.optString("year").ifBlank { null },
+                    j.optDouble("rating", 0.0).takeIf { it > 0 }, logo
+                )
+                heroes[q.lowercase()] = info
+                return info
+            } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+        }
+        return null
+    }
+
+    private suspend fun loadHeroImage(path: String, maxW: Int = 1280): ImageBitmap? = withContext(Dispatchers.IO) {
+        val f = posterFile(path)
+        val bytes = if (f.exists()) f.also { it.setLastModified(System.currentTimeMillis()) }.readBytes() else Api.bytes(path)?.also { runCatching { f.writeBytes(it) } }
+        bytes?.let { runCatching { downscale(org.jetbrains.skia.Image.makeFromEncoded(it), maxW) }.getOrNull() }
     }
 
     private suspend fun loadImage(path: String): ImageBitmap? = withContext(Dispatchers.IO) {

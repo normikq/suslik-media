@@ -65,7 +65,7 @@ class PlayerTrackSelector(
     // at once made VLC fetch every file's head and tail before the first frame (16.10: 7 files, ~250 MB, 23 s to start).
     // The rest are added when picked in the audio menu.
     private var wrapUrl: ((String) -> String)? = null
-    private val attachedAudio = HashSet<String>()
+    private val attachedAudio = LinkedHashSet<String>() // in the order they were opened: their tracks come after the film's
     private var activeSidecar: String? = null // label of the picked file; SIDECAR_NONE = an internal track
     private var sidecarsActive = false
 
@@ -83,6 +83,7 @@ class PlayerTrackSelector(
         val subs = i?.getStringArrayListExtra(PlayerExtras.SUB_URLS)?.filter { it.startsWith("https://") }.orEmpty()
         val audio = i?.getStringArrayListExtra(PlayerExtras.AUDIO_URLS)?.filter { it.startsWith("https://") }.orEmpty()
         if (url.isNotEmpty()) episodeFiles[keyOf(url)] = EpisodeFiles(subs, audio)
+        CustomAudioInfo.read(i?.getStringExtra(PlayerExtras.CUSTOM_AUDIO))
         toSign = i?.getStringExtra(PlayerExtras.EPISODE_SIDES)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject()
     }
 
@@ -105,7 +106,8 @@ class PlayerTrackSelector(
                 }
             }.mapNotNull { it.await() }
         }
-        episodeFiles[key] = EpisodeFiles(sign(links(sides.optJSONArray("subs"))), sign(links(sides.optJSONArray("audio"))))
+        val signed = sides.optJSONArray("signed")?.let { a -> (0 until a.length()).map { a.optString(it) }.filter { it.startsWith("https://") } }.orEmpty()
+        episodeFiles[key] = EpisodeFiles(sign(links(sides.optJSONArray("subs"))), sign(links(sides.optJSONArray("audio"))) + signed)
     }
 
     fun resetSelectedTracks() {
@@ -144,6 +146,7 @@ class PlayerTrackSelector(
             AppLog.write("[track] voice-over file «$pendingAudio» is open")
             pendingAudio = null
         }
+        callback.getCurrentPlayer()?.let { syncAudioDelay(it) }
         if (SystemClock.uptimeMillis() < prefsUntil) {
             handler.removeCallbacks(prefsRunnable)
             handler.postDelayed(prefsRunnable, 400L)
@@ -206,20 +209,40 @@ class PlayerTrackSelector(
             AppLog.write("[track] voice-over file «${audioLabel(u)}» added from the menu · film tracks before: " +
                 tracks.joinToString { it.name }.ifEmpty { "none" } + " · files left: ${extra.size - 1}")
             selectedAudioId = null
-            p?.addAudioFile(wrapUrl?.invoke(u) ?: u)
-            prefs.edit().apply { prefKeys().forEach { putString("track:sidecar:$it", activeSidecar).remove("track:audio:$it") } }
-                .remove("track:audio:*").apply()
-            ru.suslikovanora.media.library.CloudSync.noteTrack(callback.getFilmKey(), null, null, activeSidecar, alsoAny = false)
+            p?.addAudioFile(wrap(u))
+            saveSidecar()
             callback.onAudioTrackChanged()
             return
         }
         val track = tracks.getOrNull(which) ?: return
         selectedAudioId = track.id
         p?.setAudioTrack(track.id)
+        p?.let { syncAudioDelay(it) }
+        // A track of an opened voice-over file is that file, not the film's own track: before, picking it wrote «__none__»
+        // and the next open came without the file (24.10 journal: «OnWave» was not there again).
+        val file = p?.audioFileOf(track.id, attachedAudio.size)?.let { attachedAudio.elementAtOrNull(it) }
+        if (file != null) {
+            activeSidecar = audioLabel(file)
+            AppLog.write("[track] voice-over file «$activeSidecar» picked")
+            saveSidecar()
+            callback.onAudioTrackChanged()
+            return
+        }
         activeSidecar = SIDECAR_NONE
         prefs.edit().apply { prefKeys().forEach { putString("track:sidecar:$it", SIDECAR_NONE) } }.apply()
         callback.onAudioTrackChanged()
         saveTrackPref("audio", track.name)
+    }
+
+    /**
+     * The picked voice-over file is remembered for this film both as the file and as the audio name: the PC knows only the
+     * name (it sends `audio` and never `sidecar`), so with the name it picks the same voice-over too — and back ([fileNamed]).
+     */
+    private fun saveSidecar() {
+        val label = activeSidecar ?: return
+        prefs.edit().apply { prefKeys().forEach { putString("track:sidecar:$it", label).putString("track:audio:$it", label) } }
+            .remove("track:audio:*").apply()
+        ru.suslikovanora.media.library.CloudSync.noteTrack(callback.getFilmKey(), label, null, label, alsoAny = false)
     }
 
     /** The subtitles sheet: «off» first, then the tracks. */
@@ -241,6 +264,10 @@ class PlayerTrackSelector(
             p?.setSubtitleTrack(track.id)
             saveTrackPref("spu", track.name)
         }
+        // Which line was tapped and what the engine has now: «subtitles switched» alone did not say whether VLC took it
+        val now = p?.subtitleTrack
+        AppLog.write("[track] subtitles line $which picked · current ${p?.subtitleTracks()?.firstOrNull { it.id == now }?.name ?: "none"} (id $now) · " +
+            "tracks: " + p?.subtitleTracks().orEmpty().joinToString { "${it.id}=${it.name}" })
         callback.onSubtitleTrackChanged()
     }
 
@@ -257,14 +284,16 @@ class PlayerTrackSelector(
         attachedAudio.clear()
         if (files == null) return Sidecars(emptyList(), emptyList())
         this.wrapUrl = wrapUrl
-        val want = activeSidecar ?: pref("sidecar")
+        // The film's remembered audio naming one of the files (picked on the PC: the server keeps an older «__none__» in
+        // `sidecar` then — 24.10 journal, Japanese played instead of «OnWave») wins over `sidecar`.
+        val want = activeSidecar ?: fileNamed(pref("audio"))?.let { audioLabel(it) } ?: pref("sidecar")
         pendingAudio = null
         val pick = if (want == SIDECAR_NONE) null
             else audioUrls.firstOrNull { audioLabel(it) == want } ?: audioUrls.firstOrNull { fileLabel(it) == want } ?: audioUrls.firstOrNull()
         val audio = if (pick != null) {
             attachedAudio += pick
             activeSidecar = audioLabel(pick)
-            listOf(wrapUrl(pick))
+            listOf(wrap(pick))
         } else emptyList()
         return Sidecars(audio, files.subs)
     }
@@ -273,7 +302,26 @@ class PlayerTrackSelector(
      * "Film.rus.mka" beside "Film.mkv" gives "rus"; several files with the same name (one per studio, each in its own
      * folder) are numbered: "rus 1", "rus 2" — 18.10, four «＋ rus» in a row.
      */
+    private fun wrap(u: String): String = (wrapUrl?.invoke(u) ?: u).also { CustomAudioInfo.noteWrapped(u, it) }
+
+    /**
+     * VLC: the delay of the voice-over being heard (an uploaded one with `offsetMs`), 0 for the film's own tracks.
+     * Tracks of the opened files follow the film's, in [attachedAudio] order. Media3 shifts the file itself.
+     */
+    fun syncAudioDelay(p: PlayerEngine) {
+        if (pending() != null) return
+        val file = p.audioFileOf(p.audioTrack, attachedAudio.size)?.let { attachedAudio.elementAtOrNull(it) }
+        runCatching { p.setAudioDelayMs(file?.let { CustomAudioInfo.of(it)?.offsetMs } ?: 0L) }
+    }
+
+    /** The file whose menu name is [name] (on the PC an uploaded voice-over without a language may lose « [xx]», see CustomAudio.byMenuName). */
+    private fun fileNamed(name: String?): String? {
+        if (name.isNullOrBlank() || name == SIDECAR_NONE) return null
+        return audioUrls.firstOrNull { u -> val l = audioLabel(u); l == name || l.substringBeforeLast(" [") == name || name.substringBeforeLast(" [") == l }
+    }
+
     private fun audioLabel(u: String): String {
+        CustomAudioInfo.of(u)?.title?.takeIf { it.isNotBlank() }?.let { return it }
         val name = fileLabel(u)
         val same = audioUrls.filter { fileLabel(it) == name }
         return if (same.size > 1) "$name ${same.indexOf(u) + 1}" else name
@@ -306,11 +354,26 @@ class PlayerTrackSelector(
     private fun applyPreferredTracks(p: PlayerEngine, currentTitle: String) {
         val audio = pref("audio") ?: prefs.getString("track:audio:*", null)
         val spu = pref("spu") ?: prefs.getString("track:spu:*", null)
+        // The remembered voice-over file is opened with the film ([sidecarsFor]), but neither engine makes its track the
+        // current one by itself: the film's own track played and the file sat unused.
+        val sidecar = activeSidecar?.takeIf { it != SIDECAR_NONE }
+        val fileIdx = sidecar?.let { s -> attachedAudio.indexOfFirst { audioLabel(it) == s } }?.takeIf { it >= 0 }
         runCatching {
-            pickTrack(p.audioTracks(), audio)?.let { id ->
+            if (fileIdx != null) {
+                val files = attachedAudio.size
+                if (p.audioFileOf(p.audioTrack, files) == fileIdx) syncAudioDelay(p) // VLC already took it: only its delay
+                else p.audioFileTrack(fileIdx, files)?.let { id ->
+                    p.setAudioTrack(id)
+                    selectedAudioId = id
+                    syncAudioDelay(p)
+                    AppLog.write("[track] voice-over file «$sidecar» made current")
+                    callback.onAudioTrackChanged()
+                }
+            } else pickTrack(p.audioTracks(), audio)?.let { id ->
                 if (id != p.audioTrack) {
                     p.setAudioTrack(id)
                     selectedAudioId = id
+                    syncAudioDelay(p)
                     callback.onAudioTrackChanged()
                 }
             }
@@ -324,6 +387,7 @@ class PlayerTrackSelector(
                     if (id != p.subtitleTrack) {
                         p.setSubtitleTrack(id)
                         selectedSpuId = id
+                        AppLog.write("[track] remembered subtitles «$spu» → id $id, current now ${p.subtitleTrack}")
                     }
                 }
             }

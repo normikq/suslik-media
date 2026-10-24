@@ -51,6 +51,8 @@ interface EngineListener {
     fun stopped() {}
     /** Появилась новая дорожка (внешняя озвучка приходит чуть позже). */
     fun tracksChanged() {}
+    /** Сменилась текущая звуковая дорожка (VLC сам включает файл озвучки уже после [tracksChanged]). */
+    fun audioSelected() {}
     /** Поток кончился. Обрыв сети тоже выглядит так: настоящий ли это конец, решает плеер. */
     fun endReached() {}
     fun failed() {}
@@ -114,11 +116,35 @@ interface PlayerEngine {
     fun setSubtitleTrack(id: Int)
     /** Внешняя озвучка, выбранная в меню во время просмотра; сразу становится текущей дорожкой. */
     fun addAudioFile(url: String)
+    /**
+     * Из какого подключённого файла озвучки дорожка [id]: номер файла в порядке подключения (их [files]) или null — дорожка фильма.
+     * VLC: дорожки файлов идут после дорожек фильма в порядке подключения.
+     */
+    fun audioFileOf(id: Int, files: Int): Int? {
+        if (files <= 0) return null
+        val tracks = audioTracks().filter { it.id != -1 }
+        val base = tracks.size - files
+        val idx = tracks.indexOfFirst { it.id == id }
+        return if (base >= 0 && idx >= base) idx - base else null
+    }
+    /** Дорожка [index]-го подключённого файла озвучки (см. [audioFileOf]) или null, если её ещё нет. */
+    fun audioFileTrack(index: Int, files: Int): Int? {
+        val tracks = audioTracks().filter { it.id != -1 }
+        val base = tracks.size - files
+        return if (base >= 1 && index in 0 until files) tracks[base + index].id else null
+    }
+    /** Задержка звука (загруженная озвучка со сдвигом). Media3 сдвигает сам файл озвучки ([CustomAudioInfo]), здесь — только VLC. */
+    fun setAudioDelayMs(ms: Long) {}
 
     val videoTrackCount: Int
     val videoTrack: EngineVideoTrack?
     /** Выключить/включить видео: перезапуск видеодекодера и вывода (картинка застыла, экран пропал и вернулся). */
     fun setVideoEnabled(enabled: Boolean)
+    /**
+     * Картинка застыла: новый видеодекодер. [seekMs] — с опорного кадра в этом месте (его перемотку делает экран
+     * плеера сразу после этого вызова), null — без перемотки, со следующего опорного кадра.
+     */
+    fun restartVideo(seekMs: Long?) { setVideoEnabled(false); setVideoEnabled(true) }
     fun attachVideo()
     fun detachVideo()
     /** Область видео сменила размер: пересчитать картинку. */

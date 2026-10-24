@@ -151,6 +151,10 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
     }
     // Which films TMDB calls animation (for the «Мультфильмы» category): in the background, whenever the list changes.
     LaunchedEffect(lib.items.size, lib.authenticated) { if (lib.authenticated == true && lib.items.isNotEmpty()) lib.classifyAnimation() }
+    // Dolby Vision / HDR / DTS marks on the posters: the server finds them with ffprobe (in the background, saved until the film is deleted)
+    LaunchedEffect(lib.items.size, lib.authenticated) { if (lib.authenticated == true && lib.items.isNotEmpty()) lib.refreshTags() }
+    // The «Продолжить просмотр» banners (wide pictures, texts) are ready before the library page opens
+    LaunchedEffect(lib.items.size, lib.authenticated) { if (lib.authenticated == true && lib.items.isNotEmpty()) warmContinue(lib.items, lib) }
     // A guest of a room stays on the room's page (the library is closed for them, see Sidebar)
     val partyGuest = ru.suslikovanora.media.desktop.party.Party.let { it.inRoom && !it.isHost }
     LaunchedEffect(partyGuest) { if (partyGuest && (tab == Tab.Library || tab == Tab.Mine)) tab = Tab.Together }
@@ -258,7 +262,7 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
                   androidx.compose.foundation.layout.Row(Modifier.fillMaxSize().ambientBackdrop()) {
                     // Fixed side panel: stays put while the pages change.
                     Sidebar(
-                        tab, lib.profile,
+                        tab, lib, lib.profile,
                         onSelect = { tab = it; if (it == Tab.Library || it == Tab.Mine) appScope.launch { lib.refresh() } },
                         onSettings = { PlaybackSettings.open = true },
                         onLogout = { appScope.launch { lib.logout() } }
@@ -280,7 +284,7 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
                             Tab.Library -> LibraryView(lib, grid) { r -> requestPlay(r) }
                             Tab.Mine -> LibraryView(lib, mineGrid, mineOnly = true) { r -> requestPlay(r) }
                             Tab.Search -> SearchView(lib) {}
-                            Tab.Add -> AddView(lib) {}
+                            Tab.Add -> AddView(lib, onPlay = { requestPlay(it) }) {}
                             Tab.Together -> ru.suslikovanora.media.desktop.party.TogetherView(lib, onLibrary = { tab = Tab.Library }) { r -> requestPlay(r) }
                         }
                     }

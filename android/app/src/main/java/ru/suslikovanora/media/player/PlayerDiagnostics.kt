@@ -146,13 +146,21 @@ class PlayerDiagnostics(
         if (decodeCheckedUrl == currentUrl) return
         val t = p.videoTrack ?: return
         decodeCheckedUrl = currentUrl
+        val codec = t.codec?.lowercase(Locale.ROOT)?.trim()
         if (p.kind == EngineKind.MEDIA3) {
-            // Media3 plays only what a decoder takes (the decoder's name is in the journal): VC-1 is tried on the phone's
-            // decoder too, and checkNoPicture sends the file to VLC if it shows nothing. AV1 is hardware here.
+            // Media3 plays only what a decoder takes (the decoder's name is in the journal). AV1 is hardware here.
+            // VC-1: Samsung's c2.sec.vc1.decoder takes it and shows it with black flashes (23.10 journal, «Corpse Bride»
+            // BDRemux: every picture counted as shown, none lost — the black ones come from the decoder itself). Media3
+            // has no decoder of its own for it: the file goes to VLC, straight to VLC's own decoder.
+            if (codec != null && VC1.any { codec.contains(it) } && currentUrl !in softwareVideo) {
+                softwareVideo += currentUrl
+                AppLog.write("video: ${t.codec} ${t.width}x${t.height} — the phone's VC-1 decoder flashes black, the file goes to VLC's own decoder")
+                callback.onReopenWithoutHardwareDecoder(callback.getPerceivedPosition())
+                return
+            }
             AppLog.write("video: ${t.codec} ${t.width}x${t.height}")
             return
         }
-        val codec = t.codec?.lowercase(Locale.ROOT)?.trim()
         // VC-1 (old Blu-rays): the phone's own decoder takes it but gives no pictures — sound over a black screen
         // (12.10, Samsung c2.sec.vc1.decoder: «Unsupported mime video/wvc1», dequeueOutputBuffer failed). VLC's own
         // decoder plays it fine: open this file once more without hardware decoding, at the same moment.

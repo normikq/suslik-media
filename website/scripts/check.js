@@ -26,7 +26,8 @@ const files = [
   "classify.js",
   "tmdb-kind.js",
   "poster-query.js",
-  path.join("public", "redesign.js")
+  path.join("public", "redesign.js"),
+  path.join("public", "home.js")
 ];
 let failed = false;
 

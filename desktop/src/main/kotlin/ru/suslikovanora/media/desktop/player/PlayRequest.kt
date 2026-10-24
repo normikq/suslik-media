@@ -15,5 +15,8 @@ data class PlayRequest(
     /** Poster lookups of the film (LibraryItem.posterQueries): its poster goes to the Windows media controls. */
     val posterQueries: List<String> = emptyList(),
     /** This episode's place in [playlist] (the whole season is there, so «previous» works); [url] and the side files are its. */
-    val startIndex: Int = 0
+    val startIndex: Int = 0,
+    /** Предпросмотр озвучки до привязки: эта дорожка выбирается сама, задержка из плеера уходит в [onPreviewDelay]. */
+    val preview: ru.suslikovanora.media.core.audio.CustomTrack? = null,
+    val onPreviewDelay: ((Long) -> Unit)? = null
 )

@@ -12,6 +12,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -71,33 +72,49 @@ fun Modifier.glassSheet(shape: Shape): Modifier =
         .background(Sm.sheet)
         .border(1.dp, Sm.sheetEdge, shape)
 
-/** Soft blue / violet / cyan glows behind everything, ported from desktop. */
+/**
+ * Soft blue / violet / cyan glows behind everything, ported from desktop. Drawn once per window size into a picture:
+ * three full-screen gradients computed again at every frame of a scroll cost the render thread a frame now and then.
+ */
 fun Modifier.ambientBackdrop(): Modifier =
-    background(Sm.backdrop).drawBehind {
-        fun glow(c: Color, cx: Float, cy: Float, r: Float) {
-            val at = Offset(cx, cy)
-            drawCircle(Brush.radialGradient(listOf(c, Color.Transparent), at, r), r, at)
+    background(Sm.backdrop).drawWithCache {
+        val w = size.width.toInt().coerceAtLeast(1)
+        val h = size.height.toInt().coerceAtLeast(1)
+        val picture = androidx.compose.ui.graphics.ImageBitmap(w, h)
+        androidx.compose.ui.graphics.drawscope.CanvasDrawScope().draw(this, layoutDirection, androidx.compose.ui.graphics.Canvas(picture), size) {
+            fun glow(c: Color, cx: Float, cy: Float, r: Float) {
+                val at = Offset(cx, cy)
+                drawCircle(Brush.radialGradient(listOf(c, Color.Transparent), at, r), r, at)
+            }
+            glow(Color(0x382563EB), size.width * 0.22f, 0f, size.minDimension * 0.85f)
+            glow(Color(0x2E8B5CF6), size.width * 0.95f, size.height * 0.95f, size.minDimension * 0.75f)
+            glow(Color(0x2406B6D4), size.width * 0.55f, size.height * 0.45f, size.minDimension * 0.6f)
         }
-        glow(Color(0x382563EB), size.width * 0.22f, 0f, size.minDimension * 0.85f)
-        glow(Color(0x2E8B5CF6), size.width * 0.95f, size.height * 0.95f, size.minDimension * 0.75f)
-        glow(Color(0x2406B6D4), size.width * 0.55f, size.height * 0.45f, size.minDimension * 0.6f)
+        onDrawBehind { drawImage(picture) }
     }
 
 /**
- * A slow 0 → 1 → 0 pulse for decorations. Pauses when window is not focused.
+ * A slow 0 → 1 → 0 pulse for decorations. Pauses when window is not focused. [cycles] pulses, then it rests at 0:
+ * a pulse that never stops redraws the whole window 120 times a second (24.10 journal: ~600 frames per 5 s with the
+ * library standing still, a third of a core on the render thread, and the scroll stuttering on top of it).
  */
 @Composable
-fun breathing(periodMs: Int, active: Boolean = true): androidx.compose.runtime.State<Float> {
+fun breathing(periodMs: Int, active: Boolean = true, cycles: Int = Int.MAX_VALUE): androidx.compose.runtime.State<Float> {
     val a = androidx.compose.runtime.remember { androidx.compose.animation.core.Animatable(0f) }
+    val done = androidx.compose.runtime.remember { intArrayOf(0) }
     val focused = androidx.compose.ui.platform.LocalWindowInfo.current.isWindowFocused
     androidx.compose.runtime.LaunchedEffect(active, focused) {
-        if (active && focused) while (true) {
+        if (active && focused) while (done[0] < cycles) {
             a.animateTo(1f, androidx.compose.animation.core.tween(periodMs, easing = androidx.compose.animation.core.FastOutSlowInEasing))
             a.animateTo(0f, androidx.compose.animation.core.tween(periodMs, easing = androidx.compose.animation.core.FastOutSlowInEasing))
+            done[0]++
         }
     }
     return a.asState()
 }
+
+/** Pulses of the logo's glow after the screen opens: then it stays still (see [breathing]). */
+const val LOGO_PULSES = 3
 
 val Unbounded = FontFamily(
     Font(R.font.unbounded_medium, FontWeight.Medium),

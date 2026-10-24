@@ -82,6 +82,10 @@ object PlaybackSettings {
     /** The beta channel is really in use (chosen and a code saved); otherwise — the release channel. */
     fun betaChannel() = sentBetaCode() != null
 
+    /** «Озвучки пользователей»: false — плеер не подмешивает дорожки, привязанные через «Добавить» → «Озвучка». */
+    fun customAudioOn() = store.get("custom_audio_off") != "1"
+    fun setCustomAudioOn(on: Boolean) = store.put("custom_audio_off", if (on) null else "1")
+
     /** The gear in the header opens the sheet (shown by Main over the library). */
     var open by mutableStateOf(false)
 }
@@ -132,6 +136,7 @@ fun SettingsSheet(onClose: () -> Unit) {
                 MotionSection()
                 EngineSection()
                 DiscordSection()
+                CustomAudioSection()
                 StorageSection()
                 if (Diag.on) DiagSection() else ChannelSection()
             }
@@ -395,6 +400,17 @@ private fun DiscordSection() {
             enabled = false
             ru.suslikovanora.media.desktop.discord.DiscordRpc.setEnabled(false)
         }
+    }
+}
+
+/** «Озвучки пользователей»: показывать в плеере дорожки, которые добавили через «Добавить» → «Озвучка», или скрыть. */
+@Composable
+private fun CustomAudioSection() {
+    var on by remember { mutableStateOf(PlaybackSettings.customAudioOn()) }
+    Section(tr("settings.ozvuchki_polzovateley"), tr("settings.ozvuchki_polzovateley_tekst"), top = 18.dp)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ChannelOption(tr("settings.pokazyvat"), on, Modifier.weight(1f)) { on = true; PlaybackSettings.setCustomAudioOn(true) }
+        ChannelOption(tr("settings.skryt"), !on, Modifier.weight(1f)) { on = false; PlaybackSettings.setCustomAudioOn(false) }
     }
 }
 

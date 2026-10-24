@@ -41,6 +41,7 @@
         proxy_read_timeout 30s;                     # файл-хост замолчал — плеер переподключится
         proxy_connect_timeout 10s;
         proxy_hide_header Set-Cookie;
+        proxy_hide_header Content-Disposition;      # имя файла ставит Node; второй заголовок от файл-хоста (attachment) ломает открытие в Firefox (NS_ERROR_CORRUPTED_CONTENT)
         add_header X-Content-Type-Options nosniff always;
         add_header Content-Security-Policy "sandbox; default-src 'none'" always;   # .html из раздачи не выполняется как страница сайта
         # Ссылка устарела / хост ответил ошибкой — Node получит её заново и отдаст поток сам

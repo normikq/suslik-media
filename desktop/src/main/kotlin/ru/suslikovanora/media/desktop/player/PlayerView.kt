@@ -186,6 +186,11 @@ fun PlayerView(
     var pausedAt by remember { mutableStateOf(0L) }
     var userMuted by remember { mutableStateOf(false) }
     var audioDelay by remember { mutableStateOf(0L) }
+    // Внешние озвучки с сервера для открытого файла (docs/CUSTOM-AUDIO-API.md) и выбранная из них.
+    var customTracks by remember { mutableStateOf(emptyList<ru.suslikovanora.media.core.audio.CustomTrack>()) }
+    var activeCustom by remember { mutableStateOf<ru.suslikovanora.media.core.audio.CustomTrack?>(null) }
+    var endCut by remember { mutableStateOf(false) }
+    var deleteArmed by remember { mutableStateOf<String?>(null) } // id дорожки после первого нажатия «Удалить»
     var parked by remember { mutableStateOf(false) }
     var picker by remember { mutableStateOf<String?>(null) }
     var lastFrame by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
@@ -291,6 +296,8 @@ fun PlayerView(
         time = startAt
         audioDelay = pref("adelay")?.toLongOrNull() ?: 0L
         subDelay = pref("sdelay")?.toLongOrNull() ?: 0L
+        customTracks = emptyList(); activeCustom = null; endCut = false
+        val customKey = watchKey()
         pausedAt = 0L
         trackMenuCache.clear()
         if (picker == "audio" || picker == "spu") {
@@ -318,14 +325,26 @@ fun PlayerView(
                 grabFrame()
                 runCatching { eStop() }
             }
+            // Серверные озвучки — после озвучек раздачи; список кешируется, второе открытие не ждёт сеть.
+            val custom = req.preview?.let { listOf(it) }
+                ?: if (!ru.suslikovanora.media.desktop.PlaybackSettings.customAudioOn()) emptyList()
+                else withTimeoutOrNull(3000) { withContext(Dispatchers.IO) { ru.suslikovanora.media.desktop.CustomAudio.forVideo(customKey) } }.orEmpty()
+            if (custom.isNotEmpty()) {
+                BurstProxy.keepOnly(listOf(url) + extras.first + custom.map { it.url })
+                PlayerLog.write("[custom-audio] ${custom.size} voice-over(s) from the server")
+            }
+            SwingUtilities.invokeLater { customTracks = custom }
+            val audio = extras.first + custom.map { it.url }
+            val titles = extras.first.map { null } + custom.map { it.title.removeSuffix(" [${it.lang}]").trim().ifBlank { it.audioPath.substringAfterLast('/') } to it.lang }
             engine.open(playUrl, startAt, nightMode, prefLanguage("audio"), prefLanguage("spu"),
-                extras.first.map { BurstProxy.wrap(it) }, extras.second)
+                audio.map { BurstProxy.wrap(it) }, extras.second, titles)
         }
     }
 
     fun reopen(at: Long) { val i = index; scope.launch { open(currentUrl, at, sidecars(i).await()) } }
 
     fun seekTo(t: Long) {
+        if (t < length) endCut = false
         lastGood = t
         MediaControls.updateTimeline(t, length, force = true)
         runOnPlayer { eSetTime(t) }
@@ -339,10 +358,32 @@ fun PlayerView(
         supRef.get()?.seeked()
     }
 
+    /**
+     * Выбрана дорожка [name]: у серверной озвучки — её задержка (своя поправка с этого ПК важнее), у остальных — задержка фильма.
+     * Задержка всегда абсолютная — от 00:00 видео, а не прибавка к задержке фильма или прошлой дорожки:
+     * −5000 = дорожка с 00:05 звучит на 00:00 видео (интро студии пропущено), +2000 = звук начинается на 00:02.
+     */
+    fun applyCustomDelay(name: String) {
+        val ct = ru.suslikovanora.media.core.audio.CustomAudio.byMenuName(customTracks, name)
+        if (ct == null && activeCustom == null) return
+        activeCustom = ct
+        val before = audioDelay
+        audioDelay = if (ct != null) (if (ct.id == "preview") null else ui.get("adelay:${ct.id}")?.toLongOrNull()) ?: ct.offsetMs else pref("adelay")?.toLongOrNull() ?: 0L
+        val d = audioDelay
+        // mpv не перечитывает дорожку при новой задержке: звука нет, пока видео не догонит сдвиг (+10 с = 10 с тишины).
+        // Перемотка на то же место сразу берёт звук со смещением.
+        val jump = kotlin.math.abs(d - before) >= 1000L
+        runOnPlayer { eAudioDelay(d); if (jump) reseekHereNow() }
+        if (ct != null && d != 0L) PlayerLog.write("[custom-audio] ${ct.id} delay $d ms")
+    }
+
     fun applyPrefs() {
-        val a = pref("audio"); val spu = pref("spu")
+        // Предпросмотр озвучки: слушаем именно её
+        val a = req.preview?.menuName ?: pref("audio"); val spu = pref("spu")
         if (a != null || spu != null) {
             if (a != null) eAudioTracks().firstOrNull { it.second == a }?.let { if (eAudioCur() != it.first) { eSetAudio(it.first); applyTrackNow() } }
+            val cur = eAudioCur()
+            eAudioTracks().firstOrNull { it.first == cur }?.second?.let { n -> SwingUtilities.invokeLater { applyCustomDelay(n) } }
             if (spu == "__off__") { if (eSubCur() != -1) eSetSub(-1) }
             else if (spu != null) eSubTracks().firstOrNull { it.second == spu }?.let { if (eSubCur() != it.first) eSetSub(it.first) }
         }
@@ -450,6 +491,7 @@ fun PlayerView(
             if (eAudioCur() != -1) return@runOnPlayer
             val first = eAudioTracks().firstOrNull() ?: return@runOnPlayer
             eSetAudio(first.first); applyTrackNow()
+            SwingUtilities.invokeLater { applyCustomDelay(first.second) }
             SwingUtilities.invokeLater { flash(tr("player.zvuk_p", "p" to first.second)) }
         }
     }
@@ -521,10 +563,13 @@ fun PlayerView(
     }
 
     fun shiftAudio(ms: Long) {
-        audioDelay = (audioDelay + ms).coerceIn(-5_000L, 5_000L)
+        audioDelay = (audioDelay + ms).coerceIn(-60_000L, 60_000L)
         val d = audioDelay
-        ui.put("adelay:${seriesKey()}", if (d == 0L) null else d.toString())
-        playerExecutor.execute { runCatching { eAudioDelay(d) } }
+        val ct = activeCustom
+        if (ct?.id == "preview") req.onPreviewDelay?.invoke(d)
+        else if (ct != null) ui.put("adelay:${ct.id}", if (d == ct.offsetMs) null else d.toString())
+        else ui.put("adelay:${seriesKey()}", if (d == 0L) null else d.toString())
+        playerExecutor.execute { runCatching { eAudioDelay(d); if (kotlin.math.abs(ms) >= 1000L) reseekHereNow() } }
         flash(tr("player.zaderzhka_zvuka_p_d", "ms" to signed(d)))
     }
 
@@ -893,6 +938,13 @@ fun PlayerView(
                 }
                 if (seeking == null && pendingSeekByTarget == null && System.currentTimeMillis() - lastSeekAt > 600 && (kotlin.math.abs(currTime - time) >= 250 || currTime < time)) time = currTime
                 lastGood = currTime
+                // Серверная озвучка длиннее видео: когда видео кончилось, остаток дорожки не играем.
+                if (activeCustom != null && !endCut && length > 0 && currTime >= length + 300) {
+                    endCut = true
+                    PlayerLog.write("[custom-audio] video ended at ${length / 1000}s, the rest of the voice-over is cut")
+                    runOnPlayer { ePause(true) }
+                    engBridge.target?.finished()
+                }
                 if (currTime / 10_000 != (currTime - 300) / 10_000) savePos(currTime, length)
             }
         }
@@ -1449,6 +1501,47 @@ fun PlayerView(
             pickerCurrent = pickerCurrent,
             pickerLoading = pickerLoading,
             pickerPendingCount = pickerPendingCount,
+            saveDelayText = activeCustom?.takeIf { it.mine }?.let { tr("player.zapomnit_zaderzhku", "ms" to signed(audioDelay)) },
+            deleteTrackText = activeCustom?.takeIf { it.mine }?.let { tr(if (deleteArmed == it.id) "player.udalit_ozvuchku_tochno" else "player.udalit_ozvuchku") },
+            onDeleteTrack = {
+                val ct = activeCustom
+                if (ct != null && deleteArmed != ct.id) deleteArmed = ct.id
+                else if (ct != null) scope.launch {
+                    deleteArmed = null
+                    try {
+                        ru.suslikovanora.media.desktop.CustomAudio.deleteTrack(ct.id)
+                        PlayerLog.write("[custom-audio] ${ct.id} deleted")
+                        ui.put("adelay:${ct.id}", null)
+                        customTracks = customTracks.filter { it.id != ct.id }
+                        applyCustomDelay("") // задержка фильма вместо задержки озвучки
+                        val (list, cur) = withContext(Dispatchers.IO) { eAudioTracks() to eAudioCur() }
+                        val next = list.firstOrNull { it.first != cur }
+                        runOnPlayer {
+                            if (next != null) eSetAudio(next.first)
+                            engine.removeAudioTrack(cur)
+                        }
+                        next?.let { ui.put("audio:${seriesKey()}", it.second) }
+                        trackMenuCache.clear()
+                        delay(300); refreshPicker("audio")
+                        flash(tr("player.ozvuchka_udalena"))
+                    } catch (e: Exception) { flash(Api.describe(e)) }
+                }
+            },
+            onSaveDelay = {
+                val ct = activeCustom
+                val d = audioDelay
+                if (ct != null) scope.launch {
+                    try {
+                        ru.suslikovanora.media.desktop.CustomAudio.saveOffset(ct.id, d)
+                        ct.audioMagnetId?.let { ru.suslikovanora.media.desktop.CustomAudio.rememberOffset(it, ct.audioPath, d) }
+                        val saved = ct.copy(offsetMs = d)
+                        customTracks = customTracks.map { if (it.id == ct.id) saved else it }
+                        activeCustom = saved
+                        ui.put("adelay:${ct.id}", null)
+                        flash(tr("player.zaderzhka_sohranena", "ms" to signed(d)))
+                    } catch (e: Exception) { flash(Api.describe(e)) }
+                }
+            },
             volume = volume,
             userMuted = userMuted,
             fullscreen = fullscreen,
@@ -1483,6 +1576,7 @@ fun PlayerView(
                 if (kind == "audio") {
                     runOnPlayer { eSetAudio(id) }
                     applyTrackNow()
+                    applyCustomDelay(name)
                     ui.put("audio:${seriesKey()}", name)
                     ui.put("audio:*", name)
                     ru.suslikovanora.media.desktop.CloudSync.noteTrack(seriesKey(), name, null)

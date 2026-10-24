@@ -227,7 +227,7 @@ class MpvEngine(
     }
 
     override fun open(url: String, startMs: Long, nightMode: Boolean, audioLang: String?, subLang: String?,
-                      audioUrls: List<String>, subUrls: List<String>) {
+                      audioUrls: List<String>, subUrls: List<String>, audioTitles: List<Pair<String, String?>?>) {
         this.nightMode = nightMode
         handle()
         loaded = false; playingSent = false; timeSec = 0.0; lengthSec = 0.0
@@ -243,6 +243,7 @@ class MpvEngine(
             openGen++
             currentOpenUrl = url
             pendingAudio = audioUrls
+            pendingAudioTitles = audioUrls.indices.associate { audioUrls[it] to audioTitles.getOrNull(it) }
             pendingSubs = subs
             pendingAudioCount = audioUrls.size
             pendingSubCount = subUrls.size
@@ -254,6 +255,7 @@ class MpvEngine(
     @Volatile private var openGen = 0
     @Volatile private var currentOpenUrl: String? = null
     @Volatile private var pendingAudio: List<String> = emptyList()
+    @Volatile private var pendingAudioTitles: Map<String, Pair<String, String?>?> = emptyMap()
     @Volatile private var pendingSubs: java.util.concurrent.Future<List<SideSub>>? = null
     @Volatile private var pendingAudioCount = 0
     @Volatile private var pendingSubCount = 0
@@ -300,7 +302,12 @@ class MpvEngine(
                 pendingAudioCount = audio.size
                 for (a in audio) {
                     if (!current()) return@Thread
-                    cmd("audio-add", a, "auto")
+                    val t = pendingAudioTitles[a]
+                    when {
+                        t == null -> cmd("audio-add", a, "auto")
+                        t.second != null -> cmd("audio-add", a, "auto", t.first, t.second!!)
+                        else -> cmd("audio-add", a, "auto", t.first)
+                    }
                     pendingAudioCount = (pendingAudioCount - 1).coerceAtLeast(0)
                 }
                 pendingAudioCount = 0
@@ -402,6 +409,7 @@ class MpvEngine(
     override fun setAudioTrack(id: Int) {
         set("aid", if (id < 0) "no" else id.toString())
     }
+    override fun removeAudioTrack(id: Int) { if (id >= 0) cmd("audio-remove", id.toString()) }
     override fun setSubtitleTrack(id: Int) {
         set("sid", if (id < 0) "no" else id.toString())
     }
