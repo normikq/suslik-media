@@ -19,16 +19,21 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import kotlinx.coroutines.launch
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import ru.suslikovanora.media.ui.BookmarkIcon
 import ru.suslikovanora.media.ui.ChevronDownIcon
 import ru.suslikovanora.media.ui.CloseCrossIcon
 import ru.suslikovanora.media.ui.HeartIcon
+import ru.suslikovanora.media.ui.PlayTriangle
+import ru.suslikovanora.media.ui.ReplayIcon
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -243,8 +248,22 @@ fun PlaySheet(
             Text(sub, fontFamily = Onest, fontSize = 13.sp, color = Sm.muted, modifier = Modifier.padding(top = 16.dp, bottom = 8.dp))
             resumeAt?.let { at ->
                 Row(Modifier.fillMaxWidth().padding(bottom = 12.dp).height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    StartOption(tr("play.det_s_p", "p" to clock(at)), tr("play.prodolzhit"), !fromStart, Modifier.weight(1f).fillMaxHeight(), progress = info?.fraction, icon = "▶") { fromStart = false }
-                    StartOption(tr("play.det_s_nachala"), tr("play.zanovo"), fromStart, Modifier.weight(1f).fillMaxHeight(), progress = null, icon = "↺") { fromStart = true }
+                    StartOption(
+                        title = tr("play.det_s_p", "p" to clock(at)),
+                        hint = tr("play.prodolzhit"),
+                        on = !fromStart,
+                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                        progress = info?.fraction,
+                        icon = { PlayTriangle(size = 14.dp) }
+                    ) { fromStart = false }
+                    StartOption(
+                        title = tr("play.det_s_nachala"),
+                        hint = tr("play.zanovo"),
+                        on = fromStart,
+                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                        progress = null,
+                        icon = { ReplayIcon(size = 16.dp) }
+                    ) { fromStart = true }
                 }
             }
             val busy = preparingPlaylist || preparingExtras
@@ -300,26 +319,81 @@ private fun durationText(ms: Long): String {
 
 /** «С 04:14 · продолжить» / «С начала · заново»: two halves of one choice, the chosen one lit; the first shows how far the film went. */
 @Composable
-private fun StartOption(title: String, hint: String, on: Boolean, modifier: Modifier, progress: Float?, icon: String, onClick: () -> Unit) {
+private fun StartOption(
+    title: String,
+    hint: String,
+    on: Boolean,
+    modifier: Modifier,
+    progress: Float?,
+    icon: @Composable () -> Unit,
+    onClick: () -> Unit
+) {
+    val edge by animateColorAsState(if (on) Color(0xFF3B82F6) else Sm.glassEdge, tween(220))
+    val bg by animateColorAsState(if (on) Color(0xFF12203F) else Sm.glassFill, tween(220))
     Column(
-        modifier.clip(RoundedCornerShape(16.dp)).background(if (on) Color(0xFF12203F) else Sm.glassFill)
-            .border(if (on) 1.5.dp else 1.dp, if (on) Color(0xFF3B82F6) else Sm.glassEdge, RoundedCornerShape(16.dp))
+        modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(bg)
+            .border(if (on) 1.5.dp else 1.dp, edge, RoundedCornerShape(16.dp))
             .focusRing(RoundedCornerShape(16.dp), color = Color.White)
-            .clickable(onClick = onClick).padding(12.dp)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 13.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Box(Modifier.size(34.dp).clip(CircleShape).background(if (on) Sm.accent else Color(0xFF1D2638)), contentAlignment = Alignment.Center) {
-                Text(icon, color = Color.White, fontSize = 15.sp)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(11.dp)
+        ) {
+            Box(
+                Modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(if (on) Sm.accent else Color(0xFF1D2638)),
+                contentAlignment = Alignment.Center
+            ) {
+                icon()
             }
             Column(Modifier.weight(1f)) {
-                Text(title, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = Color.White, maxLines = 1)
-                Text(hint, fontFamily = Onest, fontSize = 11.5.sp, color = if (on) Color(0xFF93C5FD) else Sm.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    title,
+                    fontFamily = Onest,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.5.sp,
+                    color = Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    hint,
+                    fontFamily = Onest,
+                    fontSize = 12.sp,
+                    color = if (on) Color(0xFF93C5FD) else Sm.muted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
         if (progress != null) {
-            Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Box(Modifier.weight(1f).height(4.dp).clip(RoundedCornerShape(2.dp)).background(Color(0x33FFFFFF))) {
-                    Box(Modifier.fillMaxWidth(progress.coerceIn(0f, 1f)).fillMaxHeight().clip(RoundedCornerShape(2.dp)).background(Sm.accent))
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(Color(0x33FFFFFF))
+                ) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth(progress.coerceIn(0f, 1f))
+                            .fillMaxHeight()
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(Sm.accent)
+                    )
                 }
                 Text("${(progress * 100).toInt()}%", fontFamily = Onest, fontSize = 11.5.sp, color = Color(0xFFC3C9D6))
             }
@@ -330,7 +404,7 @@ private fun StartOption(title: String, hint: String, on: Boolean, modifier: Modi
 @Composable
 private fun ShelfButton(text: String, on: Boolean, modifier: Modifier, icon: @Composable () -> Unit, onClick: () -> Unit) {
     Row(
-        modifier.heightIn(min = 46.dp).clip(RoundedCornerShape(12.dp))
+        modifier.height(48.dp).clip(RoundedCornerShape(12.dp))
             .background(if (on) Color(0xFF16203A) else Color(0xFF141824))
             .border(1.dp, if (on) Color(0x553B82F6) else Color(0xFF242A3A), RoundedCornerShape(12.dp))
             .focusRing(RoundedCornerShape(12.dp), color = Color.White)
@@ -351,7 +425,7 @@ private fun SheetSelector(label: String, value: String, modifier: Modifier, item
         Text(label, color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(bottom = 6.dp))
         Box {
             Row(
-                Modifier.fillMaxWidth().heightIn(min = 46.dp).clip(RoundedCornerShape(12.dp)).background(Sm.glassFill)
+                Modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(12.dp)).background(Sm.glassFill)
                     .border(1.dp, Sm.glassEdge, RoundedCornerShape(12.dp)).focusRing(RoundedCornerShape(12.dp), color = Color.White)
                     .clickable { open = true }.padding(horizontal = 14.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween
@@ -381,7 +455,7 @@ private fun episodeSidesJson(target: PlayTarget, custom: Map<String, List<Custom
     target.episodeSides.forEach { (link, sides) -> out.put(link, JSONObject().put("subs", files(sides.first)).put("audio", files(sides.second))) }
     // Uploaded voice-overs come signed already: "signed" is used as is.
     customFor.forEach { f ->
-        val o = out.optJSONObject(f.link!!) ?: JSONObject().also { out.put(f.link, it) }
+        val o = out.optJSONObject(f.link!!) ?: JSONObject().also { out.put(f.link!!, it) }
         o.put("signed", JSONArray(custom[f.path]!!.map { it.url }))
     }
     return out.toString()

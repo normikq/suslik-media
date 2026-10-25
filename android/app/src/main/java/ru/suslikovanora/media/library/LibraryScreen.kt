@@ -170,7 +170,7 @@ fun isAnime(item: LibraryItem): Boolean {
 
 private val CARTOON = Regex("""мульт(?!сериал)|анимаци|\bcartoons?\b|\banimation\b|\bPixar\b|\bDreamWorks\b|\bDisney\b""", RegexOption.IGNORE_CASE)
 
-fun isCartoon(item: LibraryItem): Boolean = CARTOON.containsMatchIn(item.m.name) || CARTOON.containsMatchIn(item.baseTitle)
+fun isCartoon(item: LibraryItem): Boolean = CARTOON.containsMatchIn(item.m.name) || CARTOON.containsMatchIn(item.baseTitle) || Animation.of(item)
 
 fun itemCategory(item: LibraryItem): Category {
     if (isAnime(item)) return Category.Anime
@@ -313,7 +313,7 @@ fun LibraryScreen(
     val tv = Tv.isTv(LocalContext.current)
     val all = store.items
     val source = if (mineOnly) all.filter { it.m.mine } else all
-    val filtered = remember(source, query, category) {
+    val filtered = remember(source, query, category, Animation.version) {
         val q = query.trim().lowercase()
         var list = if (q.isEmpty()) source else source.filter { it.searchText.contains(q) }
         if (category != Category.All) {
@@ -728,7 +728,7 @@ private fun PhoneBar(
         }
         if (status.isNotBlank()) {
             val color by animateColorAsState(
-                when (kind) { StatusKind.Ok -> Sm.ok; StatusKind.Error -> Sm.bad; StatusKind.Info -> Sm.muted }, label = "status"
+                if (kind == StatusKind.Error) Sm.bad else Sm.muted, label = "status"
             )
             Text(status, color = color, fontFamily = Onest, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(top = 8.dp))
         }

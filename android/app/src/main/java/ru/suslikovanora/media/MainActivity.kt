@@ -154,9 +154,10 @@ class MainActivity : ComponentActivity() {
         // Dolby Vision / HDR / DTS marks (the server looks into the files) and the TV banners' pictures: once the library is there
         // (also when it arrives later: first start without a snapshot, sign-in after the start)
         val libraryReady = store.items.isNotEmpty() && store.authenticated == true
-        LaunchedEffect(libraryReady) {
-            if (!libraryReady) return@LaunchedEffect
+        LaunchedEffect(store.items.size, store.authenticated) {
+            if (store.authenticated != true || store.items.isEmpty()) return@LaunchedEffect
             launch { store.refreshTags() }
+            launch { store.classifyAnimation() }
             if (Tv.isTv(this@MainActivity)) launch { ru.suslikovanora.media.library.warmHero(store, this@MainActivity) }
         }
         val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0

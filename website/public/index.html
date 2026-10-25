@@ -395,7 +395,7 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
 <script>/* App 1.2+: native library and bottom bar */try{if(Number(window.__suslikApp||0)>=3)document.documentElement.classList.add("suslik-native");}catch(e){}
 /* Пока не ответил /api/session, страница скрыта: иначе на секунду мелькает форма входа у тех, кто уже вошёл (снимается в showApp; страховка — через 4 с) */
 try{document.documentElement.classList.add("auth-pending");setTimeout(function(){document.documentElement.classList.remove("auth-pending");},4000);}catch(e){}</script>
-<link rel="stylesheet" href="redesign.css?v=26">
+<link rel="stylesheet" href="redesign.css?v=27">
 </head>
 <body>
 <main>
@@ -1308,9 +1308,10 @@ async function loadLibrary() {
   button.disabled=true; status.textContent="Загрузка торрентов и файлов из AllDebrid…"; status.className="status";
   try {
     const data=await api("/api/library");
-    cachedLibrary=data.magnets || [];
+    cachedLibrary=(data.magnets || []).filter(m=>!isVoiceOverOnly(m));
     try { localStorage.setItem(LIBRARY_SNAPSHOT_KEY, JSON.stringify({ savedAt: Date.now(), magnets: cachedLibrary })); } catch {}
     renderLibrary();
+    classifyAnimation();
     status.textContent=`Загружено ${data.total} торрент(ов). Копия библиотеки сохранена в браузере.`; status.className="status success";
   } catch(err) { status.textContent=err.message; status.className="status error"; }
   finally { button.disabled=false; }
@@ -1411,7 +1412,22 @@ function buildPlaylist(magnet){
     const list=[...seasons.entries()].sort((a,b)=>a[0]-b[0]).map(([season,items])=>({season,items:items.sort((a,b)=>a.episode-b.episode||String(a.file.path).localeCompare(String(b.file.path)))}));
     return {type:"series",seasons:list};
   }
-  return {type:"movie",file:pickMainВидео(magnet)};
+  const EXTRAS = /(?:^|\/)(?:extras?|bonus|featurettes?|behind[ ._-]?the[ ._-]?scenes|trailers?|доп[^/]*|бонус[^/]*|допы)(?:\/|$)/i;
+  const BLURAY_DIR = /(?:^|\/)(?:BDMV|STREAM|VIDEO_TS)(?:\/|$)/i;
+  if (vids.length >= 2 && !vids.some(f => BLURAY_DIR.test(f.path || ""))) {
+    const main = vids.filter(f => !EXTRAS.test(f.path || ""));
+    const largest = Math.max(0, ...main.map(f => Number(f.size) || 0));
+    if (largest > 0) {
+      const films = main.filter(f => (Number(f.size) || 0) >= 300 * 1024 * 1024 && (Number(f.size) || 0) >= largest / 4);
+      if (films.length >= 2) {
+        const sorted = films.sort((a, b) => basename(a.path).localeCompare(basename(b.path), undefined, { numeric: true, sensitivity: "base" }));
+        const items = sorted.map((f, i) => ({ season: 1, episode: i + 1, file: f, title: escapeTitle(basename(f.path)) || ("Фильм " + (i + 1)) }));
+        return { type: "series", seasons: [{ season: 1, items }] };
+      }
+    }
+  }
+  const mainVideo = pickMainВидео(magnet);
+  return {type: mainVideo ? "movie" : "none", file: mainVideo};
 }
 function readLastEpisode(id){try{return (JSON.parse(localStorage.getItem(LAST_EP_KEY)||"{}")||{})[id]||null;}catch{return null;}}
 function saveLastEpisode(id,path){try{const c=JSON.parse(localStorage.getItem(LAST_EP_KEY)||"{}")||{};c[id]=path;localStorage.setItem(LAST_EP_KEY,JSON.stringify(c));}catch{}}
@@ -1474,7 +1490,10 @@ function psFill(s,magnet,file,label,token){
   if(ep) chip(ep);
   const rating=chip("","ps-rating hidden");
   getPoster(base).then(u=>{if(u&&token===playSheetToken) img.src=u;}).catch(()=>{});
-  if(!psInfoCache.has(base.toLowerCase())) psInfoCache.set(base.toLowerCase(),api("/api/poster?hero=1&q="+encodeURIComponent(base)).catch(()=>null));
+  if(!psInfoCache.has(base.toLowerCase())) psInfoCache.set(base.toLowerCase(),api("/api/poster?hero=1&q="+encodeURIComponent(base)).then(info=>{
+    if(info && typeof info.animation === "boolean") recordAnimation(base, info.animation);
+    return info;
+  }).catch(()=>null));
   psInfoCache.get(base.toLowerCase()).then(info=>{
     if(!info||token!==playSheetToken) return;
     if(info.overview) over.textContent=info.overview;
@@ -1492,6 +1511,43 @@ function psFill(s,magnet,file,label,token){
     prog.classList.remove("hidden");
   }).catch(()=>{});
 }
+// Label and playlist request of an episode: «Название · S01E02» and this episode plus the rest of its season.
+function psEpisode(magnet,pl,file){
+  for(const s of pl.seasons){
+    const i=s.items.findIndex(e=>e.file===file||e.file.path===file.path); if(i<0) continue;
+    const item=s.items[i];
+    const label=escapeTitle(magnet.name)+" · "+(s.season===0?"Спец.":"S"+String(s.season).padStart(2,"0"))+"E"+String(item.episode).padStart(2,"0");
+    const items=s.items.slice(i).map(x=>({index:magnet.files.indexOf(x.file),link:x.file.sourceLink})).filter(x=>x.index>=0&&x.link);
+    return {label,req:{magnetId:magnet.id,items},season:s,index:i};
+  }
+  return null;
+}
+// Season and episode selects inside the sheet (a series only): picking another episode loads it again.
+function psBuildPicker(s,magnet,pl,file){
+  const box=s.querySelector(".ps-pick"); box.replaceChildren();
+  if(!magnet||!pl||pl.type!=="series"){box.classList.add("hidden");return;}
+  const cur=psEpisode(magnet,pl,file); if(!cur){box.classList.add("hidden");return;}
+  const mk=(title)=>{const l=document.createElement("label");l.className="ps-field";const t=document.createElement("span");t.textContent=title;const sel=document.createElement("select");sel.setAttribute("aria-label",title);l.append(t,sel);return {l,sel};};
+  const sf=mk("Сезон"), ef=mk("Серия");
+  for(const x of pl.seasons){const o=document.createElement("option");o.value=String(x.season);o.textContent=x.season===0?"Спецвыпуски":"Сезон "+x.season;sf.sel.append(o);}
+  const fill=(season,idx)=>{
+    ef.sel.replaceChildren();
+    const seen=new Map();
+    season.items.forEach((e,i)=>{const o=document.createElement("option");o.value=String(i);const n=seen.get(e.episode)||0;seen.set(e.episode,n+1);o.textContent="Серия "+e.episode+(n?" ("+(n+1)+")":"");ef.sel.append(o);});
+    ef.sel.value=String(idx);
+  };
+  sf.sel.value=String(cur.season.season); fill(cur.season,cur.index);
+  const go=()=>{
+    const season=pl.seasons.find(x=>String(x.season)===sf.sel.value)||pl.seasons[0];
+    const item=season.items[Number(ef.sel.value)]||season.items[0];
+    saveLastEpisode(magnet.id,item.file.path);
+    const ep=psEpisode(magnet,pl,item.file);
+    psLoad(s,++playSheetToken,item.file,ep.label,ep.req,magnet,false);
+  };
+  sf.sel.addEventListener("change",()=>{const season=pl.seasons.find(x=>String(x.season)===sf.sel.value)||pl.seasons[0];fill(season,0);go();});
+  ef.sel.addEventListener("change",go);
+  box.append(sf.l,ef.l); box.classList.remove("hidden");
+}
 function ensurePlaySheet(){
   let s=document.getElementById("playSheet");
   if(s) return s;
@@ -1502,6 +1558,7 @@ function ensurePlaySheet(){
     '<div class="play-sheet-sub ps-status"></div>'+
     '<div class="ps-progress hidden"><div class="ps-bar"><i></i></div><span></span></div>'+
     '<a class="sheet-btn ps-watch disabled" data-act="player" rel="noopener noreferrer">▶ Смотреть</a>'+
+    '<div class="ps-pick hidden"></div>'+
     '<div class="ps-shelf"><button type="button" class="ps-btn" data-act="mine"></button><button type="button" class="ps-btn" data-act="fav"></button></div></div>';
   const close=()=>{playSheetToken++;s.classList.remove("open");document.body.style.overflow="";};
   s.addEventListener("click",e=>{if(e.target===s)close();});
@@ -1522,10 +1579,15 @@ function fillWatch(s,url){
 }
 async function openPlaySheet(file,label,playlistReq,magnet){
   const s=ensurePlaySheet(), token=++playSheetToken;
+  s.classList.add("open");document.body.style.overflow="hidden";
+  let pl=null; try{ pl=magnet?buildPlaylist(magnet):null; }catch{}
+  psBuildPicker(s,magnet,pl,file);
+  psLoad(s,token,file,label,playlistReq,magnet,true);
+}
+async function psLoad(s,token,file,label,playlistReq,magnet){
   psFill(s,magnet,file,label,token);
   const sub=s.querySelector(".play-sheet-sub");sub.textContent="Готовим к просмотру…";
   fillWatch(s,null);
-  s.classList.add("open");document.body.style.overflow="hidden";
   const name=file.name||String(file.path||"video").split("/").pop();
   let mUrl=null,err=null;
   try{mUrl=await signedMirror(file.sourceLink,name);}catch(e){err=e;}
@@ -1556,59 +1618,20 @@ function setupTilePlayback(magnet,tile,art,info){
   const playBtn=document.createElement("button");playBtn.type="button";playBtn.className="tile-play";playBtn.textContent="▶";
   playBtn.setAttribute("aria-label","Смотреть");
   playBtn.title="Смотреть";
-  let current=null,label=baseTitle;
-  const controls=document.createElement("div");controls.className="tile-controls";
+  let current=null;
   if(pl.type==="series"){
-    const seasonSel=makeSelect("Сезон"),epSel=makeSelect("Серия");
+    // the episode last opened (or the first one); the season and episode are picked in the play sheet
+    let startItem=pl.seasons[0].items[0];
     const saved=readLastEpisode(magnet.id);
-    let startSeason=pl.seasons[0],startPath=null;
-    if(saved){const hit=pl.seasons.find(s=>s.items.some(e=>e.file.path===saved));if(hit){startSeason=hit;startPath=saved;}}
-    for(const s of pl.seasons){const o=document.createElement("option");o.value=String(s.season);o.textContent=s.season===0?"Спецвыпуски":"Сезон "+s.season;seasonSel.append(o);}
-    const fillEpisodes=(season,pickPath)=>{
-      epSel.replaceChildren();
-      const seen=new Map();
-      season.items.forEach((e,i)=>{
-        const o=document.createElement("option");o.value=String(i);
-        const n=seen.get(e.episode)||0;seen.set(e.episode,n+1);
-        o.textContent="Серия "+e.episode+(n?" ("+(n+1)+")":"");
-        epSel.append(o);
-      });
-      let idx=pickPath?season.items.findIndex(e=>e.file.path===pickPath):0;if(idx<0)idx=0;
-      epSel.value=String(idx);
-    };
-    const applyEpisode=(reload)=>{
-      const season=pl.seasons.find(s=>String(s.season)===seasonSel.value)||pl.seasons[0];
-      const item=season.items[Number(epSel.value)]||season.items[0];
-      current=item.file;
-      label=baseTitle+" · "+(season.season===0?"Спец.":"S"+String(season.season).padStart(2,"0"))+"E"+String(item.episode).padStart(2,"0");
-      saveLastEpisode(magnet.id,current.path);
-      if(reload) loadTileMediaInfo(magnet,mediaLine,current);
-    };
-    seasonSel.value=String(startSeason.season);
-    fillEpisodes(startSeason,startPath);
-    seasonSel.addEventListener("change",()=>{const s=pl.seasons.find(x=>String(x.season)===seasonSel.value);fillEpisodes(s,null);applyEpisode(true);});
-    epSel.addEventListener("change",()=>applyEpisode(true));
-    applyEpisode(false);
-    if(pl.seasons.length>1) controls.append(seasonSel);
-    controls.append(epSel);
+    if(saved){for(const s of pl.seasons){const it=s.items.find(e=>e.file.path===saved);if(it){startItem=it;break;}}}
+    current=startItem.file;
   }else{current=pl.file;}
-  controls.addEventListener("click",e=>e.stopPropagation());
-  controls.addEventListener("keydown",e=>e.stopPropagation());
   playBtn.addEventListener("click",e=>{e.stopPropagation();
-    let playlistReq=null;
-    if(pl.type==="series"){
-      const season=pl.seasons.find(x=>x.items.some(i=>i.file===current));
-      if(season){
-        const idx=season.items.findIndex(i=>i.file===current);
-        const items=season.items.slice(idx).map(i=>({index:magnet.files.indexOf(i.file),link:i.file.sourceLink})).filter(i=>i.index>=0&&i.link);
-        playlistReq={magnetId:magnet.id,items};
-      }
-    }
-    playФайл(current,label,playlistReq,magnet);});
+    const ep=pl.type==="series"?psEpisode(magnet,pl,current):null;
+    playФайл(current,ep?ep.label:baseTitle,ep?ep.req:null,magnet);});
   playBtn.addEventListener("keydown",e=>e.stopPropagation());
   art.append(playBtn);
   info.append(mediaLine);
-  if(controls.children.length) info.append(controls);
   whenVisible(tile, ()=>loadTileMediaInfo(magnet,mediaLine,current));
 }
 // Плитки переиспользуются, если раздача не изменилась: обновление списка (снимок -> сервер, поиск, избранное) не
@@ -1662,22 +1685,115 @@ let libraryOnlyReadyMode = false;
 let libraryViewMode = "grid";
 
 const CARTOON_REGEX = /мульт(?!сериал)|анимаци|\bcartoons?\b|\banimation\b|\bpixar\b|\bdreamworks\b|\bdisney\b/i;
-const ANIME_REGEX = /\b(?:anime|аниме|\[anilibria\]|anilibria|\[subsplease\]|\[erai-raws\]|\[horriblesubs\]|\[judas\])\b/i;
-const SERIES_REGEX = /\b(?:s\d{1,2}e\d{1,3}|s\d{2}|season\s*\d|seasons?|episodes?|сезон|сериал|эпизод)\b/i;
 
-function getItemCategory(m) {
+const ANIM_KEY = "animCacheV1";
+let animDbCache = null;
+function getAnimDb() {
+  if (!animDbCache) {
+    try { animDbCache = JSON.parse(localStorage.getItem(ANIM_KEY) || "{}") || {}; } catch { animDbCache = {}; }
+  }
+  return animDbCache;
+}
+function recordAnimation(query, isAnim) {
+  if (typeof isAnim !== "boolean") return;
+  const key = String(query || "").trim().toLowerCase();
+  if (!key) return;
+  const db = getAnimDb();
+  db[key] = { a: isAnim, t: Date.now() };
+  try { localStorage.setItem(ANIM_KEY, JSON.stringify(db)); } catch {}
+}
+function getPosterQueries(m) {
+  const base = escapeTitle(m.name || "");
+  const queries = [base];
+  const main = pickMainВидео(m);
+  if (main) {
+    const mainName = String(main.name || main.path || "").replace(/\\/g, "/").split("/").pop();
+    const mainBase = escapeTitle(mainName);
+    if (mainBase && !queries.includes(mainBase)) queries.push(mainBase);
+  }
+  return queries;
+}
+function isAnimationKnown(m) {
+  const db = getAnimDb();
+  const now = Date.now();
+  const queries = getPosterQueries(m);
+  for (const q of queries) {
+    const hit = db[q.toLowerCase()];
+    if (hit && (now - hit.t < 60 * 864e5)) {
+      if (hit.a) return true;
+    }
+  }
+  return false;
+}
+function isAnime(m) {
+  const text = ((m.name || "") + " " + escapeTitle(m.name || "")).toLowerCase();
+  return text.includes("anime") || text.includes("аниме") ||
+    text.includes("[horriblesubs]") || text.includes("[erai-raws]") ||
+    text.includes("[subsplease]") || text.includes("[judas]") ||
+    text.includes("[anilibria]") || text.includes("anilibria");
+}
+function isCartoon(m) {
   const name = m.name || "";
-  const filePaths = (m.files || []).map(f => f.path || f.name || "").join(" ");
-  const text = name + " " + filePaths;
-  if (ANIME_REGEX.test(text)) return "anime";
-  if (CARTOON_REGEX.test(text)) return "cartoon";
-  if (SERIES_REGEX.test(text) || /(?:^|[^а-яa-z0-9])сери[яи](?:[^а-яa-z0-9]|$)/i.test(text)) return "series";
-  const videoFiles = (m.files || []).filter(f => /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso)$/i.test(f.path || ""));
-  if (videoFiles.length > 2) return "series";
-  if (videoFiles.length > 0) return "movie";
+  const base = escapeTitle(name);
+  if (CARTOON_REGEX.test(name) || CARTOON_REGEX.test(base)) return true;
+  return isAnimationKnown(m);
+}
+function getItemCategory(m) {
+  if (isAnime(m)) return "anime";
+  if (isCartoon(m)) return "cartoon";
+  const pl = buildPlaylist(m);
+  if (pl.type === "series") return "series";
+  if (pl.file) return "movie";
   return "other";
 }
 
+let classifyAnimationRunning = false;
+async function classifyAnimation() {
+  if (classifyAnimationRunning || !cachedLibrary || !cachedLibrary.length) return;
+  classifyAnimationRunning = true;
+  try {
+    const db = getAnimDb();
+    const now = Date.now();
+    const todo = [];
+    for (const m of cachedLibrary) {
+      if (isAnime(m) || isCartoon(m)) continue;
+      const queries = getPosterQueries(m);
+      let known = false;
+      for (const q of queries) {
+        const hit = db[q.toLowerCase()];
+        if (hit && (now - hit.t < 60 * 864e5)) {
+          known = true;
+          break;
+        }
+      }
+      if (!known && queries[0]) todo.push(queries[0]);
+    }
+    const unique = [...new Set(todo)].slice(0, 80);
+    let newlyFound = 0;
+    for (let i = 0; i < unique.length; i++) {
+      const q = unique[i];
+      try {
+        const data = await api("/api/poster?q=" + encodeURIComponent(q));
+        if (data && typeof data.animation === "boolean") {
+          recordAnimation(q, data.animation);
+          if (data.animation) newlyFound++;
+        }
+      } catch {}
+      if (newlyFound > 0 && i % 5 === 0) {
+        renderLibrary(false);
+      }
+      await new Promise(r => setTimeout(r, 120));
+    }
+    if (newlyFound > 0) {
+      renderLibrary(false);
+    }
+  } finally {
+    classifyAnimationRunning = false;
+  }
+}
+
+// Раздача только из .mka — загруженная внешняя озвучка (/api/custom-audio): она играет внутри своего фильма и отдельной плиткой не показывается (как на ПК, Android и ТВ).
+function isVoiceOverOnly(m){ const files=(m.files||[]).filter(f=>f&&f.path&&f.type!=="folder"); return files.length>0&&files.every(f=>/\.mka$/i.test(f.path)); }
 // Метки релиза для постера: Dolby Vision, HDR, DTS (по названию раздачи и файлов).
 // Одна метка для картинки и одна для звука: Dolby Vision (а если его нет — HDR) и DTS, без вариантов и повторов.
 function collapseTags(all) {
@@ -1716,6 +1832,7 @@ function getItemSpecs(m) {
   else if (cat === "cartoon") type = "Мультфильм";
   else if (cat === "anime") type = "Аниме";
   else if (cat === "movie") type = "Фильм";
+  else if (cat === "other") type = "Другое";
   else type = "";
 
   return { quality, codec, type, cat };
@@ -1909,7 +2026,9 @@ async function getPoster(title) {
   if (hit && Date.now()-hit.t < (hit.u ? 30 : 3)*864e5) { const p=Promise.resolve(hit.u||null); posterCache.set(key,p); return p; }
   const task=api("/api/poster?q="+encodeURIComponent(title)).then(data=>{
     const u=typeof data.poster==="string" && data.poster.startsWith("/api/poster/img/") ? data.poster : (data.poster||null);
-    posterDb()[key]={u,t:Date.now()}; savePosterDb(); return u;
+    posterDb()[key]={u,t:Date.now()}; savePosterDb();
+    if (data && typeof data.animation === "boolean") recordAnimation(title, data.animation);
+    return u;
   }).catch(()=>null);
   posterCache.set(key,task); return task;
 }
@@ -2017,7 +2136,7 @@ function closeLibraryModal(){$("libraryModal").classList.add("hidden");document.
 $("closeLibraryModal").addEventListener("click",closeLibraryModal);
 $("libraryModal").addEventListener("click",e=>{if(e.target===$("libraryModal"))closeLibraryModal();});
 document.addEventListener("keydown",e=>{if(e.key==="Escape")closeLibraryModal();});
-try { const snapshot=webLibraryNeeded()?JSON.parse(localStorage.getItem(LIBRARY_SNAPSHOT_KEY)||"null"):null; if(snapshot && Array.isArray(snapshot.magnets)){ cachedLibrary=snapshot.magnets; renderLibrary(); const when=new Date(snapshot.savedAt).toLocaleString(); $("libraryStatus").textContent=`Показана сохранённая копия медиатеки от ${when}. Нажмите «Обновить», чтобы получить актуальное состояние AllDebrid.`; } } catch {}
+try { const snapshot=webLibraryNeeded()?JSON.parse(localStorage.getItem(LIBRARY_SNAPSHOT_KEY)||"null"):null; if(snapshot && Array.isArray(snapshot.magnets)){ cachedLibrary=snapshot.magnets.filter(m=>!isVoiceOverOnly(m)); renderLibrary(); classifyAnimation(); const when=new Date(snapshot.savedAt).toLocaleString(); $("libraryStatus").textContent=`Показана сохранённая копия медиатеки от ${when}. Нажмите «Обновить», чтобы получить актуальное состояние AllDebrid.`; } } catch {}
 renderHistory();
 // Обновить active magnet entries in the local history automatically. Poll conservatively.
 let historyPollBusy = false;

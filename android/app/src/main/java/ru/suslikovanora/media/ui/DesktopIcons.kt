@@ -219,3 +219,55 @@ fun PeopleIcon(modifier: Modifier = Modifier, color: Color = Color.White, size: 
         drawArc(color, 240f, 100f, false, Offset(w * 0.46f, w * 0.48f), Size(w * 0.50f, w * 0.50f), style = Stroke(st, cap = StrokeCap.Round))
     }
 }
+
+/** Треугольник воспроизведения с оптическим центрированием */
+@Composable
+fun PlayTriangle(modifier: Modifier = Modifier, color: Color = Color.White, size: Dp = 14.dp) {
+    Canvas(modifier = modifier.size(size)) {
+        val w = this.size.width
+        val h = this.size.height
+        val path = Path().apply {
+            moveTo(w * 0.20f, h * 0.12f)
+            lineTo(w * 0.88f, h * 0.50f)
+            lineTo(w * 0.20f, h * 0.88f)
+            close()
+        }
+        drawPath(path, color = color, style = Fill)
+    }
+}
+
+/** Значок «С начала / заново» (круговая стрелка с четким наконечником) */
+@Composable
+fun ReplayIcon(modifier: Modifier = Modifier, color: Color = Color.White, size: Dp = 16.dp) {
+    Canvas(modifier = modifier.size(size)) {
+        val w = this.size.width
+        val h = this.size.height
+        val sw = 1.8.dp.toPx()
+        val cx = w / 2f
+        val cy = h / 2f
+        val r = w * 0.35f
+
+        drawArc(
+            color = color,
+            startAngle = 170f,
+            sweepAngle = -255f,
+            useCenter = false,
+            topLeft = Offset(cx - r, cy - r),
+            size = Size(r * 2f, r * 2f),
+            style = Stroke(sw, cap = StrokeCap.Round)
+        )
+
+        val tipX = cx - 2.8.dp.toPx()
+        val tipY = cy - r
+        val arrowW = 4.2.dp.toPx()
+        val arrowH = 3.2.dp.toPx()
+        val headPath = Path().apply {
+            moveTo(tipX, tipY)
+            lineTo(tipX + arrowW, tipY - arrowH)
+            lineTo(tipX + arrowW * 0.72f, tipY)
+            lineTo(tipX + arrowW, tipY + arrowH)
+            close()
+        }
+        drawPath(headPath, color = color, style = Fill)
+    }
+}

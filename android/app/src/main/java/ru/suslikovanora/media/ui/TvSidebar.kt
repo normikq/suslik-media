@@ -45,6 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ru.suslikovanora.media.library.Animation
 import ru.suslikovanora.media.library.Category
 import ru.suslikovanora.media.library.LibraryNav
 import ru.suslikovanora.media.library.LibraryStore
@@ -159,7 +160,7 @@ fun TvSidebar(
     val inLibrary = tab == Tab.Library
     val current = LibraryNav.of(inMine)
     // films per category, among the ones of the page that is open («Моя медиатека» — only the user's own)
-    val counts = remember(store.items, inMine) { (if (inMine) store.items.filter { it.m.mine } else store.items).groupingBy { itemCategory(it) }.eachCount() }
+    val counts = remember(store.items, inMine, Animation.version) { (if (inMine) store.items.filter { it.m.mine } else store.items).groupingBy { itemCategory(it) }.eachCount() }
     val lockNote = if (locked.isNotEmpty()) tr("sidebar.vy_v_komnate") else null
     // the item the remote returns to: the open page's own entry
     val home = inLibrary && current == Category.All

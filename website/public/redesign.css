@@ -2378,3 +2378,10 @@ a.ps-watch { min-height: 52px; background: linear-gradient(135deg, #2563eb, #3b8
 .ps-btn[data-act="mine"].on svg { color: #7fb2ff; fill: #7fb2ff; }
 .ps-btn[hidden] { display: none; }
 @media (max-width: 560px) { .ps-top { flex-direction: column; } .ps-poster { flex-basis: auto; width: 120px; height: 180px; } .ps-info { padding-right: 0; } .ps-shelf { flex-direction: column; } }
+
+.ps-pick { display: flex; gap: 12px; margin-top: 14px; }
+.ps-pick.hidden { display: none; }
+.ps-field { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; font: 500 12.5px system-ui; color: #8e96a8; }
+.ps-field select { width: 100%; height: 48px; padding: 0 34px 0 14px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.14); background: rgba(255, 255, 255, 0.05) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%238e96a8' stroke-width='2'/%3E%3C/svg%3E") no-repeat right 14px center/12px 8px; color: #fff; font: 500 14px system-ui; -webkit-appearance: none; appearance: none; color-scheme: dark; cursor: pointer; text-overflow: ellipsis; }
+.ps-field select:focus { outline: none; border-color: #3b82f6; }
+.ps-field select option { background: #1b1730; color: #fff; }
