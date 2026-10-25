@@ -395,7 +395,7 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
 <script>/* App 1.2+: native library and bottom bar */try{if(Number(window.__suslikApp||0)>=3)document.documentElement.classList.add("suslik-native");}catch(e){}
 /* Пока не ответил /api/session, страница скрыта: иначе на секунду мелькает форма входа у тех, кто уже вошёл (снимается в showApp; страховка — через 4 с) */
 try{document.documentElement.classList.add("auth-pending");setTimeout(function(){document.documentElement.classList.remove("auth-pending");},4000);}catch(e){}</script>
-<link rel="stylesheet" href="redesign.css?v=24">
+<link rel="stylesheet" href="redesign.css?v=26">
 </head>
 <body>
 <main>
@@ -531,56 +531,47 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
       </section>
 
       <section id="libraryTab" class="hidden">
+        <div class="library-search-bar library-search-top">
+          <span class="search-lens" aria-hidden="true">⌕</span>
+          <input id="libraryПоиск" type="search" placeholder="Поиск по названию или файлу…" autocomplete="off" aria-label="Поиск по названию">
+          <button id="clearLibrarySearch" type="button" class="clear-search-btn hidden" aria-label="Очистить поиск" title="Очистить">×</button>
+        </div>
         <div id="continueHero" class="hero-banner hidden" aria-label="Продолжить просмотр"></div>
-        <div class="panel library-header-panel">
-          <div class="library-header-top topline">
-            <div class="library-title-area">
-              <div class="library-heading-row">
-                <h2>Моя библиотека AllDebrid</h2>
-                <span id="libraryCountBadge" class="count-badge">0</span>
-              </div>
-              <p>Торренты, папки и файлы из вашего аккаунта.</p>
+        <div class="library-controls">
+          <span id="libraryCountBadge" class="hidden">0</span>
+          <select id="librarySort" class="hidden" aria-label="Сортировка">
+            <option value="newest">Сначала новые</option>
+            <option value="name">По названию</option>
+            <option value="size">По размеру</option>
+            <option value="fav">Сначала избранное</option>
+          </select>
+          <input id="libraryOnlyReady" type="checkbox" class="hidden">
+          <div class="category-chips" id="libraryCategoryChips" role="tablist" aria-label="Категории">
+            <button type="button" class="cat-chip active" data-cat="all">Все</button>
+            <button type="button" class="cat-chip" data-cat="movie">Фильмы</button>
+            <button type="button" class="cat-chip" data-cat="series">Сериалы</button>
+            <button type="button" class="cat-chip" data-cat="cartoon">Мультфильмы</button>
+            <button type="button" class="cat-chip" data-cat="anime">Аниме</button>
+            <button type="button" class="cat-chip" data-cat="other">Другое</button>
+          </div>
+          <div id="libraryStatus" class="status" role="status">Нажмите «Обновить», чтобы загрузить медиатеку.</div>
+          <div class="lib-actions" role="toolbar" aria-label="Сортировка и вид">
+            <div class="lib-seg" id="libSortSeg" role="group" aria-label="Сортировка">
+              <button type="button" class="lib-pill active" data-sort="newest"><svg class="lib-ic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Новые</button>
+              <button type="button" class="lib-pill" data-sort="name"><svg class="lib-ic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 17l4-10 4 10M4.5 14h5M16 6v12M13 15l3 3 3-3"/></svg>Название</button>
+              <button type="button" class="lib-pill" data-sort="size"><svg class="lib-ic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="14" height="14" rx="2"/><path d="M21 9v10a2 2 0 0 1-2 2H9"/></svg>Размер</button>
+              <button type="button" class="lib-pill" data-sort="fav"><svg class="lib-ic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg>Избранное</button>
+              <button type="button" id="libReadyBtn" class="lib-pill lib-toggle" aria-pressed="false"><svg class="lib-ic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Только готовые</button>
+            </div>
+            <div class="view-switch lib-seg" role="group" aria-label="Вид отображения">
+              <button id="viewGridBtn" type="button" class="view-btn active" title="Сетка постеров" aria-label="Сетка"><svg class="lib-ic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="6.5" height="6.5" rx="1"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1"/></svg></button>
+              <button id="viewListBtn" type="button" class="view-btn" title="Список" aria-label="Список"><svg class="lib-ic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg></button>
             </div>
             <button id="refreshLibrary" type="button" class="btn-refresh">
-              <span class="refresh-spinner" aria-hidden="true">↻</span>
+              <svg class="refresh-spinner" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.6-5.9M20 4v5h-5"/></svg>
               <span>Обновить</span>
             </button>
           </div>
-
-          <div class="library-search-bar">
-            <span class="search-lens" aria-hidden="true">⌕</span>
-            <input id="libraryПоиск" type="search" placeholder="Поиск по названию или файлу…" autocomplete="off" aria-label="Поиск по названию">
-            <button id="clearLibrarySearch" type="button" class="clear-search-btn hidden" aria-label="Очистить поиск" title="Очистить">×</button>
-          </div>
-
-          <div class="library-toolbar">
-            <div class="category-chips" id="libraryCategoryChips" role="tablist" aria-label="Категории">
-              <button type="button" class="cat-chip active" data-cat="all">Все</button>
-              <button type="button" class="cat-chip" data-cat="movie">Фильмы</button>
-              <button type="button" class="cat-chip" data-cat="series">Сериалы</button>
-              <button type="button" class="cat-chip" data-cat="cartoon">Мультфильмы</button>
-              <button type="button" class="cat-chip" data-cat="anime">Аниме</button>
-              <button type="button" class="cat-chip" data-cat="other">Другое</button>
-            </div>
-            <div class="library-tools-right">
-              <select id="librarySort" class="library-select" aria-label="Сортировка">
-                <option value="newest">Сначала новые</option>
-                <option value="name">По названию</option>
-                <option value="size">По размеру</option>
-                <option value="fav">Сначала избранное</option>
-              </select>
-              <label class="library-toggle-label">
-                <input id="libraryOnlyReady" type="checkbox">
-                <span>Только готовые</span>
-              </label>
-              <div class="view-switch" role="group" aria-label="Вид отображения">
-                <button id="viewGridBtn" type="button" class="view-btn active" title="Сетка постеров" aria-label="Сетка">▦</button>
-                <button id="viewListBtn" type="button" class="view-btn" title="Список" aria-label="Список">☰</button>
-              </div>
-            </div>
-          </div>
-
-          <div id="libraryStatus" class="status" role="status">Нажмите «Обновить», чтобы загрузить медиатеку.</div>
         </div>
         <div id="libraryResults" class="library-grid"></div>
         <div id="libraryPager" class="library-pager" aria-label="Страницы"></div>
@@ -1446,17 +1437,76 @@ function playerHref(url){
   return "potplayer://"+url;
 }
 function playerLabel(){return IS_ANDROID?"▶ Плеер":(IS_IOS?"▶ VLC":"▶ PotPlayer");}
+const PS_ICON_MINE='<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18l-6-4-6 4z"/></svg>';
+const PS_ICON_FAV='<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg>';
+function psSyncShelf(s){
+  const m=s._magnet;
+  for(const b of s.querySelectorAll(".ps-btn")){
+    const mine=b.dataset.act==="mine", on=Boolean(m&&(mine?m.mine:m.favorite));
+    b.hidden=!m; b.classList.toggle("on",on);
+    b.innerHTML=(mine?PS_ICON_MINE:PS_ICON_FAV)+"<span>"+(mine?(on?"Из моей медиатеки":"В мою медиатеку"):(on?"Из избранного":"В избранное"))+"</span>";
+  }
+}
+async function psToggle(s,kind){
+  const m=s._magnet; if(!m) return;
+  const next=!(kind==="mine"?m.mine:m.favorite);
+  try{
+    if(kind==="mine") await api("/api/shelf",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:m.id,mine:next})});
+    else await api("/api/favorites",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:m.id,favorite:next})});
+    for(const x of cachedLibrary) if(x.id===m.id) x[kind==="mine"?"mine":"favorite"]=next;
+    m[kind==="mine"?"mine":"favorite"]=next;
+    try{ localStorage.setItem(LIBRARY_SNAPSHOT_KEY, JSON.stringify({ savedAt: Date.now(), magnets: cachedLibrary })); }catch{}
+    renderLibrary(false);
+  }catch(err){ showToast(err.message||"Не удалось сохранить",true); }
+  psSyncShelf(s);
+}
+const psInfoCache=new Map();
+function psFill(s,magnet,file,label,token){
+  s._magnet=magnet||null; psSyncShelf(s);
+  const base=magnet?escapeTitle(magnet.name):label;
+  s.querySelector(".ps-title").textContent=base;
+  const chips=s.querySelector(".ps-chips"), over=s.querySelector(".ps-overview"), img=s.querySelector(".ps-poster img"), prog=s.querySelector(".ps-progress");
+  chips.replaceChildren(); over.textContent=""; img.removeAttribute("src"); prog.classList.add("hidden");
+  const chip=(t,c)=>{const e=document.createElement("span");e.className=c||"ps-chip";e.textContent=t;chips.append(e);return e;};
+  const ep=label&&label.length>base.length&&label.startsWith(base)?label.slice(base.length).replace(/^\s*[·•]\s*/,""):"";
+  const yearChip=chip("","ps-chip hidden");
+  try{const sp=magnet&&getItemSpecs(magnet); if(sp&&sp.type) chip(sp.type);}catch{}
+  if(ep) chip(ep);
+  const rating=chip("","ps-rating hidden");
+  getPoster(base).then(u=>{if(u&&token===playSheetToken) img.src=u;}).catch(()=>{});
+  if(!psInfoCache.has(base.toLowerCase())) psInfoCache.set(base.toLowerCase(),api("/api/poster?hero=1&q="+encodeURIComponent(base)).catch(()=>null));
+  psInfoCache.get(base.toLowerCase()).then(info=>{
+    if(!info||token!==playSheetToken) return;
+    if(info.overview) over.textContent=info.overview;
+    if(info.year){yearChip.textContent=info.year;yearChip.classList.remove("hidden");}
+    if(info.rating){rating.textContent="★ "+Number(info.rating).toFixed(1);rating.classList.remove("hidden");}
+  });
+  // where the film was left (accounts with Discord sync only)
+  if(magnet&&file&&file.path) api("/api/sync?since=0").then(d=>{
+    if(token!==playSheetToken) return;
+    const w=(d.watch||[]).find(x=>String(x.key)===magnet.id+"|"+file.path);
+    if(!w||!(w.len>0)||w.pos<5000||w.pos>w.len-15000) return;
+    const t=Math.floor(w.pos/1000), hh=Math.floor(t/3600), mm=Math.floor(t%3600/60), ss=t%60, p2=n=>String(n).padStart(2,"0");
+    prog.querySelector("span").textContent="Остановились на "+(hh?hh+":"+p2(mm):mm)+":"+p2(ss)+" · "+Math.round(w.pos/w.len*100)+"%";
+    prog.querySelector("i").style.width=Math.round(w.pos/w.len*100)+"%";
+    prog.classList.remove("hidden");
+  }).catch(()=>{});
+}
 function ensurePlaySheet(){
   let s=document.getElementById("playSheet");
   if(s) return s;
   s=document.createElement("div");s.id="playSheet";s.className="play-sheet";s.setAttribute("role","dialog");s.setAttribute("aria-modal","true");
   // One way to watch: through our server. The direct AllDebrid link stays on the server (security audit 25.10).
-  s.innerHTML='<div class="play-sheet-card"><div class="play-sheet-title"></div><div class="play-sheet-sub"></div>'+
-    '<a class="sheet-btn disabled" data-act="player" rel="noopener noreferrer">▶ Смотреть</a>'+
-    '<button type="button" class="sheet-btn sheet-cancel">Закрыть</button></div>';
+  s.innerHTML='<div class="play-sheet-card ps-card"><button type="button" class="ps-close sheet-cancel" aria-label="Закрыть">×</button>'+
+    '<div class="ps-top"><div class="ps-poster"><img alt="" decoding="async"></div><div class="ps-info"><div class="play-sheet-title ps-title"></div><div class="ps-chips"></div><p class="ps-overview"></p></div></div>'+
+    '<div class="play-sheet-sub ps-status"></div>'+
+    '<div class="ps-progress hidden"><div class="ps-bar"><i></i></div><span></span></div>'+
+    '<a class="sheet-btn ps-watch disabled" data-act="player" rel="noopener noreferrer">▶ Смотреть</a>'+
+    '<div class="ps-shelf"><button type="button" class="ps-btn" data-act="mine"></button><button type="button" class="ps-btn" data-act="fav"></button></div></div>';
   const close=()=>{playSheetToken++;s.classList.remove("open");document.body.style.overflow="";};
   s.addEventListener("click",e=>{if(e.target===s)close();});
   s.querySelector(".sheet-cancel").addEventListener("click",close);
+  s.querySelectorAll(".ps-btn").forEach(b=>b.addEventListener("click",()=>psToggle(s,b.dataset.act)));
   s.querySelectorAll("a.sheet-btn").forEach(a=>a.addEventListener("click",e=>{
     if(a.classList.contains("disabled")||!a.getAttribute("href")){e.preventDefault();return;}
     setTimeout(close,400);
@@ -1470,9 +1520,9 @@ function fillWatch(s,url){
   if(!url){player.classList.add("disabled");player.removeAttribute("href");delete player.dataset.mediaUrl;return;}
   player.href=playerHref(url);player.dataset.mediaUrl=url;player.classList.remove("disabled");
 }
-async function openPlaySheet(file,label,playlistReq){
+async function openPlaySheet(file,label,playlistReq,magnet){
   const s=ensurePlaySheet(), token=++playSheetToken;
-  s.querySelector(".play-sheet-title").textContent=label;
+  psFill(s,magnet,file,label,token);
   const sub=s.querySelector(".play-sheet-sub");sub.textContent="Готовим к просмотру…";
   fillWatch(s,null);
   s.classList.add("open");document.body.style.overflow="hidden";
@@ -1493,9 +1543,9 @@ async function openPlaySheet(file,label,playlistReq){
   }
   if(token===playSheetToken) sub.textContent=mUrl?"Можно смотреть":(err?.message||"Не удалось открыть фильм");
 }
-function playФайл(file,label,playlistReq){
+function playФайл(file,label,playlistReq,magnet){
   if(!file||!file.sourceLink){showToast("Ссылка на файл ещё не готова — нажмите «Обновить» в библиотеке.",true);return;}
-  openPlaySheet(file,label,playlistReq);
+  openPlaySheet(file,label,playlistReq,magnet);
 }
 function makeSelect(label){const s=document.createElement("select");s.setAttribute("aria-label",label);return s;}
 function setupTilePlayback(magnet,tile,art,info){
@@ -1554,7 +1604,7 @@ function setupTilePlayback(magnet,tile,art,info){
         playlistReq={magnetId:magnet.id,items};
       }
     }
-    playФайл(current,label,playlistReq);});
+    playФайл(current,label,playlistReq,magnet);});
   playBtn.addEventListener("keydown",e=>e.stopPropagation());
   art.append(playBtn);
   info.append(mediaLine);
@@ -2042,6 +2092,6 @@ checkSession();
 </script>
 
 <script src="redesign.js?v=6" defer></script>
-<script src="home.js?v=3" defer></script>
+<script src="home.js?v=4" defer></script>
 </body>
 </html>

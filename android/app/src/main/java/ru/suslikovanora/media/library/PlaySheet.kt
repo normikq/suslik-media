@@ -4,6 +4,31 @@ import ru.suslikovanora.media.ui.focusRing
 import ru.suslikovanora.media.core.*
 
 import android.content.Context
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextOverflow
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import kotlinx.coroutines.launch
+import ru.suslikovanora.media.ui.BookmarkIcon
+import ru.suslikovanora.media.ui.ChevronDownIcon
+import ru.suslikovanora.media.ui.CloseCrossIcon
+import ru.suslikovanora.media.ui.HeartIcon
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -66,17 +91,39 @@ data class PlayRequest(
 
 /**
  * One way to watch: through our server (for series a playlist with the rest of the season). The direct AllDebrid
- * link stays on the server (security audit 25.10). "Смотреть" opens the app's player.
+ * link stays on the server (security audit 25.10). The sheet looks like the PC's: poster and facts on top, where the
+ * film was left, «Смотреть», for a series the season and episode pickers, and the two shelf buttons.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlaySheet(
-    target: PlayTarget,
+    initial: PlayTarget,
+    store: LibraryStore,
     onDismiss: () -> Unit,
     onPlay: (PlayRequest) -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    val item = store.items.firstOrNull { it.m.id == initial.magnetId }
+    val series = item?.playable as? Playable.Series
+    val start = remember(initial) {
+        var si = 0; var ei = 0
+        series?.seasons?.forEachIndexed { i, s ->
+            val k = s.items.indexOfFirst { it.file.path == initial.file.path }
+            if (k >= 0) { si = i; ei = k }
+        }
+        si to ei
+    }
+    var seasonIdx by remember(initial) { mutableStateOf(start.first) }
+    var episodeIdx by remember(initial) { mutableStateOf(start.second) }
+    // The episode picked in the sheet is the one that plays (the same target the tile would build for it)
+    val target = remember(initial, item?.m?.id, seasonIdx, episodeIdx) {
+        val e = series?.seasons?.getOrNull(seasonIdx)?.items?.getOrNull(episodeIdx)
+        if (item != null && e != null) targetFor(item, e.file) ?: initial else initial
+    }
+
     var sub by remember(target) { mutableStateOf(tr("play.gotovim")) }
     var mirror by remember(target) { mutableStateOf<String?>(null) }
     var playlist by remember(target) { mutableStateOf<String?>(null) }
@@ -90,7 +137,16 @@ fun PlaySheet(
         context.getSharedPreferences("positions", Context.MODE_PRIVATE).getLong("w:" + watchKey(target.magnetId, target.file), 0L)
             .takeIf { it >= 5_000L }
     }
+    val info = remember(target, store.watchVersion) { store.watchInfo(watchKey(target.magnetId, target.file)) }
     var fromStart by remember(target) { mutableStateOf(false) }
+
+    var poster by remember(initial.magnetId) { mutableStateOf(item?.let { store.cachedPoster(it.posterQueries) }) }
+    var hero by remember(initial.magnetId) { mutableStateOf(item?.let { store.cachedHero(it.posterQueries) }) }
+    LaunchedEffect(initial.magnetId) {
+        if (item == null) return@LaunchedEffect
+        if (poster == null) poster = store.poster(item.posterQueries)
+        if (hero == null) hero = store.hero(item.posterQueries)
+    }
 
     LaunchedEffect(target) {
         val link = target.file.link
@@ -143,43 +199,172 @@ fun PlaySheet(
         scrimColor = Sm.scrim,
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
     ) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(bottom = 18.dp).navigationBarsPadding()) {
-            Text(target.label, fontFamily = Unbounded, fontWeight = FontWeight.SemiBold, fontSize = 17.5.sp, lineHeight = 23.sp, color = Color.White)
-            Text(sub, fontFamily = Onest, fontSize = 13.5.sp, color = Sm.muted, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
+        Column(
+            Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
+                .padding(horizontal = 18.dp).padding(bottom = 18.dp).navigationBarsPadding()
+        ) {
+            // poster and facts
+            Box(Modifier.fillMaxWidth()) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Box(
+                        Modifier.width(104.dp).height(156.dp).clip(RoundedCornerShape(12.dp))
+                            .background(Brush.verticalGradient(listOf(Sm.glassEdge, Color(0xFF10131B))))
+                            .border(1.dp, Sm.glassEdge, RoundedCornerShape(12.dp))
+                    ) {
+                        poster?.let { url ->
+                            AsyncImage(
+                                model = ImageRequest.Builder(context).data(url).memoryCacheKey(url).build(), imageLoader = Posters.loader(context),
+                                contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                    }
+                    Column(Modifier.weight(1f).padding(end = 36.dp)) {
+                        Text(item?.baseTitle ?: target.label, fontFamily = Unbounded, fontWeight = FontWeight.Bold, fontSize = 18.sp, lineHeight = 23.sp, color = Color.White, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                        Row(Modifier.padding(top = 10.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            @Composable fun chip(t: String) = Text(t, color = Color(0xFFD6DBE4), fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 11.5.sp, maxLines = 1, softWrap = false,
+                                modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0x1AFFFFFF)).border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 3.dp))
+                            (hero?.year ?: item?.let { itemYear(it) })?.let { chip(it) }
+                            item?.let { chip(itemTypeLabel(it)) }
+                            info?.len?.takeIf { it > 0 }?.let { chip(durationText(it)) }
+                            hero?.rating?.let { r -> Text("★ " + "%.1f".format(java.util.Locale.US, r), color = Color(0xFFFACC15), fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
+                        }
+                        hero?.overview?.let {
+                            Text(it, color = Color(0xFFC3C9D6), fontFamily = Onest, fontSize = 13.sp, lineHeight = 18.sp, maxLines = 4, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 10.dp))
+                        }
+                    }
+                }
+                Box(
+                    Modifier.align(Alignment.TopEnd).size(32.dp).clip(CircleShape).background(Color(0xFF181E2B))
+                        .border(1.dp, Color(0xFF262F40), CircleShape).focusRing(CircleShape, color = Color.White).clickable(onClick = onDismiss),
+                    contentAlignment = Alignment.Center
+                ) { CloseCrossIcon(color = Color(0xFFB0B9C9), size = 11.dp) }
+            }
+
+            Text(sub, fontFamily = Onest, fontSize = 13.sp, color = Sm.muted, modifier = Modifier.padding(top = 16.dp, bottom = 8.dp))
             resumeAt?.let { at ->
-                Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    StartOption(tr("play.s_p", "p" to clock(at)), tr("play.prodolzhit"), !fromStart, Modifier.weight(1f)) { fromStart = false }
-                    StartOption(tr("play.s_nachala"), tr("play.zanovo"), fromStart, Modifier.weight(1f)) { fromStart = true }
+                Row(Modifier.fillMaxWidth().padding(bottom = 12.dp).height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    StartOption(tr("play.det_s_p", "p" to clock(at)), tr("play.prodolzhit"), !fromStart, Modifier.weight(1f).fillMaxHeight(), progress = info?.fraction, icon = "▶") { fromStart = false }
+                    StartOption(tr("play.det_s_nachala"), tr("play.zanovo"), fromStart, Modifier.weight(1f).fillMaxHeight(), progress = null, icon = "↺") { fromStart = true }
                 }
             }
             val busy = preparingPlaylist || preparingExtras
             LampButton(
                 when { preparingPlaylist -> tr("play.gotovim_pleylist"); busy -> tr("play.gotovim_dorozhki"); else -> tr("add.smotret") },
-                enabled = mirror != null && !busy, modifier = Modifier.fillMaxWidth()
+                enabled = mirror != null && !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)
             ) {
                 mirror?.let {
+                    store.saveEpisode(target.magnetId, target.file.path)
                     val keys = if (playlist != null) target.season.filter { f -> f.link != null }.map { f -> watchKey(target.magnetId, f) }
                     else listOf(watchKey(target.magnetId, target.file))
                     onPlay(PlayRequest(it, target.label, playlist, subUrls, keys, audioUrls, fromStart, if (playlist != null) episodeSidesJson(target, customByPath) else null, customJson(customByPath), watchKey(target.magnetId, target.file)))
                 }
             }
-            Spacer(Modifier.height(12.dp))
-            OutlineButton(tr("player.zakryt"), modifier = Modifier.fillMaxWidth(), onClick = onDismiss)
+
+            if (series != null) {
+                val seasonItems = series.seasons.mapIndexed { idx, s ->
+                    (if (s.season == 0) tr("library.spec_materialy") else tr("library.season_sezon", "season" to s.season)) to { seasonIdx = idx; episodeIdx = 0 }
+                }
+                val cs = series.seasons.getOrNull(seasonIdx) ?: series.seasons.first()
+                val episodeItems = cs.items.mapIndexed { idx, ep ->
+                    (if (ep.title != null) "${ep.episode}. ${ep.title}" else tr("library.episode_seriya", "episode" to ep.episode)) to { episodeIdx = idx }
+                }
+                val ce = cs.items.getOrNull(episodeIdx) ?: cs.items.first()
+                Row(Modifier.fillMaxWidth().padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SheetSelector(tr("library.sezon"), if (cs.season == 0) tr("library.spec") else tr("library.season_sezon", "season" to cs.season), Modifier.weight(1f), seasonItems)
+                    SheetSelector(tr("library.seriya"), tr("library.episode_seriya", "episode" to ce.episode), Modifier.weight(1f), episodeItems)
+                }
+            }
+
+            if (item != null) {
+                val isMine = item.m.mine
+                val isFav = item.m.favorite
+                Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    ShelfButton(
+                        if (isMine) tr("play.det_iz_moey_mediateki") else tr("play.det_v_moyu_mediateku"), isMine, Modifier.weight(1f),
+                        icon = { BookmarkIcon(filled = isMine, color = if (isMine) Color(0xFF7FB2FF) else Color(0xFFC4CBD8), size = 16.dp) }
+                    ) { scope.launch { store.setMine(item.m, !isMine) } }
+                    ShelfButton(
+                        if (isFav) tr("play.det_iz_izbrannogo") else tr("play.det_v_izbrannoe"), isFav, Modifier.weight(1f),
+                        icon = { HeartIcon(filled = isFav, color = if (isFav) Color(0xFFFF6B8A) else Color(0xFFC4CBD8), size = 16.dp) }
+                    ) { scope.launch { store.setFavorite(item.m, !isFav) } }
+                }
+            }
         }
     }
 }
 
-/** «Продолжить с …» / «С начала»: two halves of one choice, the chosen one lit. */
+private fun durationText(ms: Long): String {
+    val min = (ms / 60_000L).toInt().coerceAtLeast(1)
+    return if (min >= 60) tr("play.det_ch_min", "h" to min / 60, "m" to min % 60) else tr("play.det_min", "m" to min)
+}
+
+/** «С 04:14 · продолжить» / «С начала · заново»: two halves of one choice, the chosen one lit; the first shows how far the film went. */
 @Composable
-private fun StartOption(title: String, hint: String, on: Boolean, modifier: Modifier, onClick: () -> Unit) {
+private fun StartOption(title: String, hint: String, on: Boolean, modifier: Modifier, progress: Float?, icon: String, onClick: () -> Unit) {
     Column(
-        modifier.clip(RoundedCornerShape(14.dp)).background(if (on) Sm.accentSoft else Sm.glassFill)
-            .border(1.dp, if (on) Sm.accentEdge else Sm.glassEdge, RoundedCornerShape(14.dp))
-            .focusRing(RoundedCornerShape(14.dp), color = Color.White)
-            .clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 10.dp)
+        modifier.clip(RoundedCornerShape(16.dp)).background(if (on) Color(0xFF12203F) else Sm.glassFill)
+            .border(if (on) 1.5.dp else 1.dp, if (on) Color(0xFF3B82F6) else Sm.glassEdge, RoundedCornerShape(16.dp))
+            .focusRing(RoundedCornerShape(16.dp), color = Color.White)
+            .clickable(onClick = onClick).padding(12.dp)
     ) {
-        Text(title, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = if (on) Color.White else Color(0xFFD6DBE4), maxLines = 1)
-        Text(hint, fontFamily = Onest, fontSize = 12.sp, color = if (on) Color(0xFF93C5FD) else Sm.muted)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Box(Modifier.size(34.dp).clip(CircleShape).background(if (on) Sm.accent else Color(0xFF1D2638)), contentAlignment = Alignment.Center) {
+                Text(icon, color = Color.White, fontSize = 15.sp)
+            }
+            Column(Modifier.weight(1f)) {
+                Text(title, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = Color.White, maxLines = 1)
+                Text(hint, fontFamily = Onest, fontSize = 11.5.sp, color = if (on) Color(0xFF93C5FD) else Sm.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        if (progress != null) {
+            Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(Modifier.weight(1f).height(4.dp).clip(RoundedCornerShape(2.dp)).background(Color(0x33FFFFFF))) {
+                    Box(Modifier.fillMaxWidth(progress.coerceIn(0f, 1f)).fillMaxHeight().clip(RoundedCornerShape(2.dp)).background(Sm.accent))
+                }
+                Text("${(progress * 100).toInt()}%", fontFamily = Onest, fontSize = 11.5.sp, color = Color(0xFFC3C9D6))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShelfButton(text: String, on: Boolean, modifier: Modifier, icon: @Composable () -> Unit, onClick: () -> Unit) {
+    Row(
+        modifier.heightIn(min = 46.dp).clip(RoundedCornerShape(12.dp))
+            .background(if (on) Color(0xFF16203A) else Color(0xFF141824))
+            .border(1.dp, if (on) Color(0x553B82F6) else Color(0xFF242A3A), RoundedCornerShape(12.dp))
+            .focusRing(RoundedCornerShape(12.dp), color = Color.White)
+            .clickable(onClick = onClick).padding(horizontal = 8.dp),
+        horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically
+    ) {
+        icon()
+        Spacer(Modifier.width(7.dp))
+        Text(text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** A field with a drop-down list (season / episode). */
+@Composable
+private fun SheetSelector(label: String, value: String, modifier: Modifier, items: List<Pair<String, () -> Unit>>) {
+    var open by remember { mutableStateOf(false) }
+    Column(modifier) {
+        Text(label, color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(bottom = 6.dp))
+        Box {
+            Row(
+                Modifier.fillMaxWidth().heightIn(min = 46.dp).clip(RoundedCornerShape(12.dp)).background(Sm.glassFill)
+                    .border(1.dp, Sm.glassEdge, RoundedCornerShape(12.dp)).focusRing(RoundedCornerShape(12.dp), color = Color.White)
+                    .clickable { open = true }.padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(value, color = Color.White, fontFamily = Onest, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                ChevronDownIcon(color = Sm.muted, size = 13.dp)
+            }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }, modifier = Modifier.background(Color(0xFF181D2A))) {
+                items.forEach { (text, pick) ->
+                    DropdownMenuItem(text = { Text(text, color = Color.White, fontFamily = Onest, fontSize = 13.5.sp) }, onClick = { open = false; pick() })
+                }
+            }
+        }
     }
 }
 
