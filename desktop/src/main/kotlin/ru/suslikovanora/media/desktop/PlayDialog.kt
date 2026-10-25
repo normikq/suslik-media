@@ -136,7 +136,7 @@ private fun extractTrilogyFilmInfo(
     return title to details
 }
 
-/** Source choice dialog: mirror or direct AllDebrid link, styled for series and movie trilogies. */
+/** Play dialog: one «Смотреть» through our server (the direct AllDebrid link stays on the server), styled for series and movie trilogies. */
 @Composable
 internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPlay: (PlayRequest) -> Unit) {
     val item = remember(t) { t.item ?: lib.items.find { it.m.id == t.magnetId } }
@@ -211,9 +211,9 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
         lib.watchInfo(watchKey(t.magnetId, currentFile))?.takeIf { !it.watched && it.pos >= 5_000L }?.pos
     }
     var fromStart by remember(t.magnetId, currentFile.path) { mutableStateOf(false) }
-    var sub by remember(t.magnetId, currentFile.path) { mutableStateOf(tr("library.poluchenie_ssylok")) }
+    var sub by remember(t.magnetId, currentFile.path) { mutableStateOf(tr("library.gotovim")) }
+    var loading by remember(t.magnetId, currentFile.path) { mutableStateOf(true) }
     var mirror by remember(t.magnetId, currentFile.path) { mutableStateOf<String?>(null) }
-    var direct by remember(t.magnetId, currentFile.path) { mutableStateOf<String?>(null) }
     var playlist by remember(t.magnetId, currentFile.path) { mutableStateOf<String?>(null) }
     var subs by remember(t.magnetId, currentFile.path) { mutableStateOf<List<String>>(emptyList()) }
     var audio by remember(t.magnetId, currentFile.path) { mutableStateOf<List<String>>(emptyList()) }
@@ -225,7 +225,7 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
 
     LaunchedEffect(t.magnetId, currentFile.path) {
         val link = currentFile.link ?: run {
-            sub = tr("library.ssylka_na_fayl_esche")
+            sub = tr("library.ssylka_na_fayl_esche"); loading = false
             return@LaunchedEffect
         }
         val enc = { v: String -> URLEncoder.encode(v, "UTF-8") }
@@ -233,7 +233,6 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
         // Everything is fetched before the "Watch" buttons turn on: a click while side voice-overs, subtitles
         // or the playlist were still on their way opened the film without them.
         coroutineScope {
-            val d = async { runCatching { Api.post("/api/file/unlock", JSONObject().put("link", link)).optString("url").ifBlank { null } } }
             val mr = async { runCatching { Api.get("/api/file/mirror-url?link=${enc(link)}&name=${enc(name)}").optString("url").ifBlank { null } } }
             val sb = async { mirrorUrls(subtitlesFor(magnet, currentFile)) }
             val au = async { mirrorUrls(externalAudioFor(magnet, currentFile)) }
@@ -248,9 +247,9 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
             audio = au.await()
             playlist = pl
             mirror = m
-            direct = d.await().getOrNull()
+            loading = false
         }
-        sub = if (mirror != null || direct != null) tr("library.vyberite_istochnik") else tr("library.ne_udalos_poluchit_ssylki")
+        sub = if (mirror != null) tr("library.mozhno_smotret") else tr("library.ne_udalos_otkryt")
 
         lib.saveEpisode(t.magnetId, currentFile.path)
     }
@@ -415,13 +414,9 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                     }
                 }
 
-                // Cards for Mirror & Direct
-                SourceCard(
-                    title = tr("library.cherez_zerkalo"),
-                    badgeText = tr("library.rekomenduetsya"),
-                    isRecommended = true,
-                    hint = tr("library.cherez_vash_server_dalshe", "collectionGenitive" to collectionGenitive),
+                WatchButton(
                     url = mirror,
+                    loading = loading,
                     onPlay = { url ->
                         val list = followingFiles.filter { f -> f.link != null }
                         val keys = if (playlist != null) list.map { f -> watchKey(t.magnetId, f) } else listOf(watchKey(t.magnetId, currentFile))
@@ -435,21 +430,6 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                         onPlay(PlayRequest(url, currentTitle, playlist, subs, keys, audio, if (playlist != null) resolve else null, fromStart,
                             posterQueries = item?.posterQueries.orEmpty(), startIndex = if (playlist != null) queueStart else 0))
                     },
-                    onCopy = { url -> copy(url) }
-                )
-
-                Spacer(Modifier.height(10.dp))
-
-                SourceCard(
-                    title = tr("library.napryamuyu"),
-                    badgeText = tr("library.stabilnyy_istochnik"),
-                    isRecommended = false,
-                    hint = tr("library.pryamaya_ssylka_alldebrid_otkr"),
-                    url = direct,
-                    onPlay = { url ->
-                        onPlay(PlayRequest(url, currentTitle, null, subs, listOf(watchKey(t.magnetId, currentFile)), audio, fromStart = fromStart, posterQueries = item?.posterQueries.orEmpty()))
-                    },
-                    onCopy = { url -> copy(url) }
                 )
 
                 Spacer(Modifier.height(14.dp))
@@ -473,12 +453,9 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                     }
                 }
 
-                SourceCard(
-                    title = tr("library.cherez_zerkalo"),
-                    badgeText = tr("library.rekomenduetsya"),
-                    isRecommended = true,
-                    hint = if (playlist != null) tr("library.cherez_vash_server_dalshe_2") else tr("library.trafik_idet_cherez_vash"),
+                WatchButton(
                     url = mirror,
+                    loading = loading,
                     onPlay = { url ->
                         val list = followingFiles.filter { f -> f.link != null }
                         val keys = if (playlist != null) list.map { f -> watchKey(t.magnetId, f) } else listOf(watchKey(t.magnetId, currentFile))
@@ -492,21 +469,6 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                         onPlay(PlayRequest(url, currentTitle, playlist, subs, keys, audio, if (playlist != null) resolve else null, fromStart,
                             posterQueries = item?.posterQueries.orEmpty(), startIndex = if (playlist != null) queueStart else 0))
                     },
-                    onCopy = { url -> copy(url) }
-                )
-
-                Spacer(Modifier.height(10.dp))
-
-                SourceCard(
-                    title = tr("library.napryamuyu"),
-                    badgeText = tr("library.stabilnyy_istochnik"),
-                    isRecommended = false,
-                    hint = tr("library.pryamaya_ssylka_alldebrid"),
-                    url = direct,
-                    onPlay = { url ->
-                        onPlay(PlayRequest(url, currentTitle, null, subs, listOf(watchKey(t.magnetId, currentFile)), audio, fromStart = fromStart, posterQueries = item?.posterQueries.orEmpty()))
-                    },
-                    onCopy = { url -> copy(url) }
                 )
 
                 // Selectors for Season and Episode
@@ -552,30 +514,12 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                     }
                 }
 
-                SourceCard(
-                    title = tr("library.cherez_zerkalo"),
-                    badgeText = tr("library.rekomenduetsya"),
-                    isRecommended = true,
-                    hint = tr("library.trafik_idet_cherez_vash"),
+                WatchButton(
                     url = mirror,
+                    loading = loading,
                     onPlay = { url ->
                         onPlay(PlayRequest(url, currentTitle, null, subs, listOf(watchKey(t.magnetId, currentFile)), audio, fromStart = fromStart, posterQueries = item?.posterQueries.orEmpty()))
                     },
-                    onCopy = { url -> copy(url) }
-                )
-
-                Spacer(Modifier.height(10.dp))
-
-                SourceCard(
-                    title = tr("library.napryamuyu"),
-                    badgeText = tr("library.stabilnyy_istochnik"),
-                    isRecommended = false,
-                    hint = tr("library.pryamaya_ssylka_alldebrid"),
-                    url = direct,
-                    onPlay = { url ->
-                        onPlay(PlayRequest(url, currentTitle, null, subs, listOf(watchKey(t.magnetId, currentFile)), audio, fromStart = fromStart, posterQueries = item?.posterQueries.orEmpty()))
-                    },
-                    onCopy = { url -> copy(url) }
                 )
 
                 Spacer(Modifier.height(14.dp))
@@ -585,57 +529,11 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
     }
 }
 
+/** The only way to watch: through our server. Off until the link, the tracks and the playlist are ready. */
 @Composable
-private fun SourceCard(
-    title: String,
-    badgeText: String,
-    isRecommended: Boolean,
-    hint: String,
-    url: String?,
-    onPlay: (String) -> Unit,
-    onCopy: (String) -> Unit
-) {
-    Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
-            .background(Sm.glassFill).border(1.dp, Sm.glassEdge, RoundedCornerShape(16.dp))
-            .padding(16.dp)
-    ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text(title, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color.White)
-            if (isRecommended) {
-                Row(
-                    Modifier.clip(RoundedCornerShape(50)).background(Color(0xFF1A263D))
-                        .border(1.dp, Color(0x3360A5FA), RoundedCornerShape(50))
-                        .padding(horizontal = 10.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                    LightningIcon(color = Color(0xFF60A5FA), size = 11.dp)
-                    Text(badgeText, color = Color(0xFF60A5FA), fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
-                }
-            } else {
-                Row(
-                    Modifier.clip(RoundedCornerShape(50)).background(Color(0xFF1B202D))
-                        .padding(horizontal = 10.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                    LinkChainIcon(color = Color(0xFF8E96A8), size = 12.dp)
-                    Text(badgeText, color = Color(0xFF8E96A8), fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 12.sp)
-                }
-            }
-        }
-
-        Text(hint, fontFamily = Onest, fontSize = 13.sp, color = Color(0xFF7E879B), modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
-
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            PlayActionButton(text = tr("library.smotret"), enabled = url != null, modifier = Modifier.weight(1f)) {
-                url?.let(onPlay)
-            }
-            CopyActionButton(text = tr("library.kopirovat_ssylku"), enabled = url != null, modifier = Modifier.weight(1f)) {
-                url?.let(onCopy)
-            }
-        }
+private fun WatchButton(url: String?, loading: Boolean, onPlay: (String) -> Unit) {
+    PlayActionButton(text = if (loading) tr("library.gotovim") else tr("library.smotret"), enabled = url != null && !loading, modifier = Modifier.fillMaxWidth()) {
+        url?.let(onPlay)
     }
 }
 
@@ -662,32 +560,6 @@ private fun PlayActionButton(
         PlayTriangle(color = contentColor, size = 12.dp)
         Spacer(Modifier.width(8.dp))
         Text(text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = contentColor)
-    }
-}
-
-@Composable
-private fun CopyActionButton(
-    text: String,
-    enabled: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit
-) {
-    val src = remember { MutableInteractionSource() }
-    val hovered by src.collectIsHoveredAsState()
-    val bg = if (hovered && enabled) Color(0xFF1C2232) else Sm.glassFill
-    val border = if (hovered && enabled) Color(0xFF323B50) else Sm.glassEdge
-    val contentColor = if (!enabled) Color(0xFF5A6478) else Color(0xFFC4CBD8)
-
-    Row(
-        modifier = modifier.height(44.dp).clip(RoundedCornerShape(12.dp))
-            .background(bg).border(1.dp, border, RoundedCornerShape(12.dp))
-            .hoverClick(src, enabled = enabled, onClick = onClick),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        LinkChainIcon(color = contentColor, size = 13.dp)
-        Spacer(Modifier.width(8.dp))
-        Text(text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = if (enabled) Color.White else contentColor)
     }
 }
 

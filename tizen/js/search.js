@@ -44,7 +44,7 @@
     note(hit.id, 'Добавляю…', true);
     api.post('/api/search/add', { id: hit.id }, false).then(function (r) {
       if (r.ready) { note(hit.id, 'Готово — уже в медиатеке', true); SM.app.libraryChanged(); return; }
-      note(hit.id, 'Добавлено, AllDebrid качает…', true);
+      note(hit.id, 'Добавлено, идёт загрузка…', true);
       SM.downloads.watch(r.id, function (st) {
         if (st.done) { note(hit.id, 'Готово — файлы в медиатеке', true); SM.app.libraryChanged(); }
         else if (st.failed) note(hit.id, 'Ошибка: ' + st.text, false);
