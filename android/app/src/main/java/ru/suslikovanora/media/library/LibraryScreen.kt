@@ -244,7 +244,7 @@ private fun nextEpisode(p: Playable.Series, file: MFile): MFile? {
     return if (i in 0 until all.size - 1) all[i + 1].file else null
 }
 
-private fun targetFor(item: LibraryItem, file: MFile): PlayTarget? {
+internal fun targetFor(item: LibraryItem, file: MFile): PlayTarget? {
     val m = item.m
     val baseTitle = item.baseTitle
     return when (val p = item.playable) {
@@ -347,27 +347,14 @@ fun LibraryScreen(
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
         item(key = "header", span = { GridItemSpan(maxLineSpan) }) { HeaderSlot() }
-        // Phone: the panel (title, refresh, search, categories) above «Продолжить просмотр». TV: the banner first, then
-        // only the search line (no title / refresh / status: the remote has nothing to do with them).
-        if (!tv) item(key = "panel", span = { GridItemSpan(maxLineSpan) }) {
-            LibraryPanel(
-                title = if (mineOnly) tr("library.moi_filmy") else tr("library.moya_biblioteka_alldebrid"),
-                subtitle = if (mineOnly) tr("library.moi_filmy_podskazka") else tr("library.torrenty_papki_i_fayly"),
-                query = query, onQuery = onQuery,
-                loading = store.loading, status = store.status, kind = store.statusKind,
-                totalCount = filtered.size,
-                selectedCategory = category,
-                onCategorySelect = { LibraryNav.set(mineOnly, it) },
-                showCategories = true,
-                onRefresh = { scope.launch { store.refresh() } }
-            )
+        // Phone and TV alike: the search line, the «Продолжить просмотр» banner, then (phone only) the categories and refresh.
+        // The TV keeps the banner first: the remote walks from the sidebar down the page.
+        if (!tv) item(key = "phonesearch", span = { GridItemSpan(maxLineSpan) }) {
+            SearchField(value = query, onValue = onQuery, placeholder = tr("library.poisk_po_nazvaniyu"))
         }
 
-        // Continue watching section
         if (showContinue) {
-            item(key = "continue", span = { GridItemSpan(maxLineSpan) }) {
-                if (tv) TvContinueHero(continueAll, store, onPlay) else ContinueRow(continueAll, store, onPlay)
-            }
+            item(key = "continue", span = { GridItemSpan(maxLineSpan) }) { TvContinueHero(continueAll, store, onPlay) }
         }
 
         if (tv) item(key = "tvsearch", span = { GridItemSpan(maxLineSpan) }) {
@@ -377,6 +364,12 @@ fun LibraryScreen(
                     Text(store.status, color = Sm.bad, fontFamily = Onest, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(top = 8.dp))
                 }
             }
+        } else item(key = "phonebar", span = { GridItemSpan(maxLineSpan) }) {
+            PhoneBar(
+                selected = category, onSelect = { LibraryNav.set(mineOnly, it) },
+                loading = store.loading, status = store.status, kind = store.statusKind,
+                onRefresh = { scope.launch { store.refresh() } }
+            )
         }
 
         // Empty state
@@ -698,6 +691,46 @@ private fun LibraryPanel(
                 when (kind) { StatusKind.Ok -> Sm.ok; StatusKind.Error -> Sm.bad; StatusKind.Info -> Sm.muted }, label = "status"
             )
             Text(status, color = color, fontFamily = Onest, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(top = 10.dp))
+        }
+    }
+}
+
+/** Phone, under the banner: the categories (scrolling) and the refresh button; the status line only when there is news. */
+@Composable
+private fun PhoneBar(
+    selected: Category, onSelect: (Category) -> Unit,
+    loading: Boolean, status: String, kind: StatusKind,
+    onRefresh: () -> Unit
+) {
+    Column {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                for (cat in Category.entries) {
+                    val active = cat == selected
+                    Box(
+                        Modifier.clip(RoundedCornerShape(12.dp))
+                            .background(if (active) Sm.accent else Color(0xFF131A2B))
+                            .border(1.dp, if (active) Sm.accentEdge else Color(0xFF212A40), RoundedCornerShape(12.dp))
+                            .focusRing(RoundedCornerShape(12.dp))
+                            .clickable { onSelect(cat) }
+                            .padding(horizontal = 14.dp, vertical = 9.dp)
+                    ) {
+                        Text(cat.label, color = if (active) Color.White else Color(0xFFC4CBD8), fontFamily = Onest,
+                            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium, fontSize = 13.sp)
+                    }
+                }
+            }
+            Spacer(Modifier.width(10.dp))
+            RefreshButton(loading = loading, onClick = onRefresh)
+        }
+        if (status.isNotBlank()) {
+            val color by animateColorAsState(
+                when (kind) { StatusKind.Ok -> Sm.ok; StatusKind.Error -> Sm.bad; StatusKind.Info -> Sm.muted }, label = "status"
+            )
+            Text(status, color = color, fontFamily = Onest, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(top = 8.dp))
         }
     }
 }
@@ -1032,25 +1065,7 @@ private fun TileDetails(
             }
             Text(text, color = Color(0xFF60A5FA), fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, modifier = Modifier.padding(top = 3.dp))
         }
-        if (series != null && m.ready) {
-            Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (series.seasons.size > 1) {
-                    SelectChip(
-                        label = series.seasons.getOrNull(seasonIdx)?.let { if (it.season == 0) tr("library.spec") else tr("library.sezon_season", "season" to it.season) } ?: "",
-                        options = series.seasons.map { if (it.season == 0) tr("library.specvypuski") else tr("library.sezon_season", "season" to it.season) },
-                        onPick = onSelectSeason,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                val season = series.seasons.getOrNull(seasonIdx) ?: series.seasons.first()
-                SelectChip(
-                    label = season.items.getOrNull(episodeIdx)?.let { it.title ?: tr("library.seriya_episode", "episode" to it.episode) } ?: "",
-                    options = season.items.map { it.title ?: tr("library.seriya_episode", "episode" to it.episode) },
-                    onPick = onSelectEpisode,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-        }
+        // season and episode are picked in the play sheet, not under the poster
         if (m.canRemove) RemoveButton(downloading = m.downloading) { store.remove(m) }
     }
 }

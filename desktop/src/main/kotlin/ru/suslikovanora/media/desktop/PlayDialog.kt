@@ -23,6 +23,7 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -254,6 +255,14 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
         lib.saveEpisode(t.magnetId, currentFile.path)
     }
 
+    val scope = rememberCoroutineScope()
+    val live = lib.items.find { it.m.id == t.magnetId } ?: item
+    var hero by remember(t.magnetId) { mutableStateOf(item?.let { lib.cachedHero(it.posterQueries) }) }
+    LaunchedEffect(t.magnetId) { if (hero == null && item != null) hero = lib.hero(item.posterQueries) }
+    val info = remember(t.magnetId, currentFile.path, lib.watchVersion) { lib.watchInfo(watchKey(t.magnetId, currentFile)) }
+    val extraDetails = (if (audio.isNotEmpty()) tr("library.ozvuchek_size", "size" to audio.size) else "") + (if (subs.isNotEmpty()) tr("library.subtitrov_size", "size" to subs.size) else "")
+    val statusText = (if (mirror != null && !loading) tr("library.det_mozhno_smotret") else sub) + extraDetails
+
     var shown by remember(t) { mutableStateOf(false) }
     LaunchedEffect(t) { shown = true }
     val a by animateFloatAsState(if (shown) 1f else 0f, tween(260, easing = Sm.ease))
@@ -263,7 +272,7 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
             .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { onDismiss() },
         contentAlignment = Alignment.Center
     ) {
-        val dialogWidth = if (isCollection) 660.dp else 540.dp
+        val dialogWidth = if (isCollection) 660.dp else if (series != null && currentSeason != null && currentEpisode != null) 540.dp else 620.dp
         Column(
             Modifier.graphicsLayer { translationY = (1f - a) * 24f; scaleX = 0.97f + 0.03f * a; scaleY = 0.97f + 0.03f * a }
                 .widthIn(max = dialogWidth).glassSheet(RoundedCornerShape(22.dp))
@@ -436,22 +445,10 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                 CloseBottomButton(onClick = onDismiss)
 
             } else if (series != null && currentSeason != null && currentEpisode != null) {
-                // ---- SCREEN 1: SERIES DESIGN ----
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
-                    Column(Modifier.weight(1f)) {
-                        Text(currentTitle, fontFamily = Unbounded, fontWeight = FontWeight.Bold, fontSize = 20.sp, color = Color.White)
-                        val extraDetails = (if (audio.isNotEmpty()) tr("library.ozvuchek_size", "size" to audio.size) else "") + (if (subs.isNotEmpty()) tr("library.subtitrov_size", "size" to subs.size) else "")
-                        Text(sub + extraDetails, color = Color(0xFF8E96A8), fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
-                    }
-                    CloseCircleButton(onClick = onDismiss)
-                }
-
-                resumeAt?.let { at ->
-                    Row(Modifier.fillMaxWidth().padding(bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        StartOption(tr("library.s_p", "p" to clock(at)), tr("library.prodolzhit_s_proshlogo_mesta"), !fromStart, Modifier.weight(1f)) { fromStart = false }
-                        StartOption(tr("library.s_nachala"), tr("library.smotret_zanovo"), fromStart, Modifier.weight(1f)) { fromStart = true }
-                    }
-                }
+                // ---- SERIES: the same card as a movie, plus the season / episode pickers ----
+                DetailHeader(poster, item?.baseTitle ?: t.label, item, hero, info?.len, onDismiss)
+                DetailStatus(statusText)
+                DetailStartRow(resumeAt, info, fromStart) { fromStart = it }
 
                 WatchButton(
                     url = mirror,
@@ -471,7 +468,6 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                     },
                 )
 
-                // Selectors for Season and Episode
                 val seasonItems = seasons.mapIndexed { idx, s ->
                     val sLabel = if (s.season == 0) tr("library.spec_materialy") else tr("library.season_sezon", "season" to s.season)
                     sLabel to {
@@ -486,33 +482,20 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                     }
                 }
 
-                Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(Modifier.fillMaxWidth().padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     val currentSLabel = if (currentSeason.season == 0) tr("library.spec") else tr("library.season_sezon", "season" to currentSeason.season)
                     val currentELabel = tr("library.episode_seriya", "episode" to currentEpisode.episode)
                     DropdownSelector(label = tr("library.sezon"), valueText = currentSLabel, modifier = Modifier.weight(1f), items = seasonItems)
                     DropdownSelector(label = tr("library.seriya"), valueText = currentELabel, modifier = Modifier.weight(1f), items = episodeItems)
                 }
 
-                Spacer(Modifier.height(14.dp))
-                CloseBottomButton(onClick = onDismiss)
+                ShelfRow(live, lib, scope)
 
             } else {
-                // ---- SINGLE MOVIE DESIGN ----
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
-                    Column(Modifier.weight(1f)) {
-                        Text(currentTitle, fontFamily = Unbounded, fontWeight = FontWeight.Bold, fontSize = 20.sp, color = Color.White)
-                        val extraDetails = (if (audio.isNotEmpty()) tr("library.ozvuchek_size", "size" to audio.size) else "") + (if (subs.isNotEmpty()) tr("library.subtitrov_size", "size" to subs.size) else "")
-                        Text(sub + extraDetails, color = Color(0xFF8E96A8), fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
-                    }
-                    CloseCircleButton(onClick = onDismiss)
-                }
-
-                resumeAt?.let { at ->
-                    Row(Modifier.fillMaxWidth().padding(bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        StartOption(tr("library.s_p", "p" to clock(at)), tr("library.prodolzhit_s_proshlogo_mesta"), !fromStart, Modifier.weight(1f)) { fromStart = false }
-                        StartOption(tr("library.s_nachala"), tr("library.smotret_zanovo"), fromStart, Modifier.weight(1f)) { fromStart = true }
-                    }
-                }
+                // ---- SINGLE MOVIE DESIGN: poster, facts, resume / from start, one «Смотреть», two shelf buttons ----
+                DetailHeader(poster, currentTitle, item, hero, info?.len, onDismiss)
+                DetailStatus(statusText)
+                DetailStartRow(resumeAt, info, fromStart) { fromStart = it }
 
                 WatchButton(
                     url = mirror,
@@ -522,17 +505,139 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                     },
                 )
 
-                Spacer(Modifier.height(14.dp))
-                CloseBottomButton(onClick = onDismiss)
+                ShelfRow(live, lib, scope)
             }
         }
+    }
+}
+
+
+@Composable
+private fun DetailHeader(
+    poster: androidx.compose.ui.graphics.ImageBitmap?, title: String, item: LibraryItem?, hero: Library.HeroInfo?, lenMs: Long?, onDismiss: () -> Unit
+) {
+    Box(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+            Box(
+                Modifier.width(150.dp).height(225.dp).clip(RoundedCornerShape(14.dp))
+                    .background(Sm.glassFill).border(1.dp, Sm.glassEdge, RoundedCornerShape(14.dp))
+            ) {
+                if (poster != null) Image(poster, tr("library.poster"), contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                else Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Sm.glassEdge, Color(0xFF10131B)))))
+            }
+            Column(Modifier.weight(1f).padding(end = 40.dp)) {
+                Text(title, fontFamily = Unbounded, fontWeight = FontWeight.Bold, fontSize = 22.sp, lineHeight = 28.sp, color = Color.White, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    @Composable fun chip(text: String) = Text(text, color = Color(0xFFD6DBE4), fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 12.5.sp, maxLines = 1,
+                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0x1AFFFFFF)).border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 4.dp))
+                    chip(hero?.year ?: item?.let { itemYear(it) } ?: "")
+                    item?.let { chip(itemTypeLabel(it)) }
+                    lenMs?.takeIf { it > 0 }?.let { chip(durationText(it)) }
+                    hero?.rating?.let { r ->
+                        Text("★ " + "%.1f".format(Locale.US, r), color = Color(0xFFFACC15), fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    }
+                }
+                hero?.overview?.let {
+                    Text(it, color = Color(0xFFC3C9D6), fontFamily = Onest, fontSize = 14.sp, lineHeight = 21.sp, maxLines = 5, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 14.dp))
+                }
+            }
+        }
+        Box(Modifier.align(Alignment.TopEnd)) { CloseCircleButton(onClick = onDismiss) }
+    }
+}
+
+@Composable
+private fun DetailStatus(text: String) {
+    Text(text, color = Color(0xFF8E96A8), fontFamily = Onest, fontSize = 13.sp, modifier = Modifier.padding(top = 18.dp, bottom = 8.dp))
+}
+
+@Composable
+private fun DetailStartRow(resumeAt: Long?, info: WatchInfo?, fromStart: Boolean, setFromStart: (Boolean) -> Unit) {
+    if (resumeAt == null) return
+    // one height for both cards (the first one has the progress bar)
+    Row(Modifier.fillMaxWidth().padding(bottom = 12.dp).height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        DetailStartOption(
+            tr("library.det_s_p", "p" to clock(resumeAt)), tr("library.prodolzhit_s_proshlogo_mesta"), !fromStart, Modifier.weight(1f).fillMaxHeight(),
+            progress = info?.fraction, icon = { PlayTriangle(color = Color.White, size = 14.dp) }
+        ) { setFromStart(false) }
+        DetailStartOption(
+            tr("library.det_s_nachala"), tr("library.det_smotret_zanovo"), fromStart, Modifier.weight(1f).fillMaxHeight(),
+            progress = null, icon = { Text("↺", color = Color.White, fontSize = 20.sp) }
+        ) { setFromStart(true) }
+    }
+}
+
+@Composable
+private fun ShelfRow(live: LibraryItem?, lib: Library, scope: kotlinx.coroutines.CoroutineScope) {
+    val isMine = live?.m?.mine == true
+    val isFav = live?.m?.favorite == true
+    Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        ShelfButton(
+            if (isMine) tr("library.det_iz_moey_mediateki") else tr("library.det_v_moyu_mediateku"), isMine, Modifier.weight(1f),
+            icon = { BookmarkIcon(filled = isMine, color = if (isMine) Color(0xFF7FB2FF) else Color(0xFFC4CBD8), size = 16.dp) }
+        ) { live?.let { scope.launch { lib.setMine(it.m, !isMine) } } }
+        ShelfButton(
+            if (isFav) tr("library.iz_izbrannogo") else tr("library.det_v_izbrannoe"), isFav, Modifier.weight(1f),
+            icon = { HeartIcon(filled = isFav, color = if (isFav) Color(0xFFFF6B8A) else Color(0xFFC4CBD8), size = 16.dp) }
+        ) { live?.let { scope.launch { lib.setFavorite(it.m, !isFav) } } }
+    }
+}
+
+private fun durationText(ms: Long): String {
+    val min = (ms / 60_000L).toInt().coerceAtLeast(1)
+    return if (min >= 60) tr("library.det_ch_min", "h" to min / 60, "m" to min % 60) else tr("library.det_min", "m" to min)
+}
+
+@Composable
+private fun DetailStartOption(
+    title: String, hint: String, on: Boolean, modifier: Modifier, progress: Float?, icon: @Composable () -> Unit, onClick: () -> Unit
+) {
+    val edge by animateColorAsState(if (on) Color(0xFF3B82F6) else Sm.glassEdge, tween(220))
+    val bg by animateColorAsState(if (on) Color(0xFF12203F) else Sm.glassFill, tween(220))
+    Column(
+        modifier.clip(RoundedCornerShape(16.dp)).background(bg).border(if (on) 1.5.dp else 1.dp, edge, RoundedCornerShape(16.dp))
+            .hoverClick(remember { MutableInteractionSource() }, onClick = onClick).padding(14.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(Modifier.size(40.dp).clip(CircleShape).background(if (on) Sm.accent else Color(0xFF1D2638)), contentAlignment = Alignment.Center) { icon() }
+            Column(Modifier.weight(1f)) {
+                Text(title, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = Color.White, maxLines = 1)
+                Text(hint, fontFamily = Onest, fontSize = 12.sp, color = Color(0xFF8E96A8), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        if (progress != null) {
+            Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(Modifier.weight(1f).height(4.dp).clip(RoundedCornerShape(2.dp)).background(Color(0x33FFFFFF))) {
+                    Box(Modifier.fillMaxWidth(progress.coerceIn(0f, 1f)).fillMaxHeight().clip(RoundedCornerShape(2.dp)).background(Sm.accent))
+                }
+                Text("${(progress * 100).toInt()}%", fontFamily = Onest, fontSize = 12.sp, color = Color(0xFFC3C9D6))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShelfButton(text: String, on: Boolean, modifier: Modifier, icon: @Composable () -> Unit, onClick: () -> Unit) {
+    val src = remember { MutableInteractionSource() }
+    val hovered by src.collectIsHoveredAsState()
+    Row(
+        modifier.height(48.dp).clip(RoundedCornerShape(12.dp))
+            .background(if (hovered) Color(0xFF1C2232) else if (on) Color(0xFF16203A) else Color(0xFF141824))
+            .border(1.dp, if (hovered) Color(0xFF323B50) else if (on) Color(0x553B82F6) else Color(0xFF242A3A), RoundedCornerShape(12.dp))
+            .hoverClick(src, onClick = onClick),
+        horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically
+    ) {
+        icon()
+        Spacer(Modifier.width(8.dp))
+        Text(text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = Color.White, maxLines = 1)
     }
 }
 
 /** The only way to watch: through our server. Off until the link, the tracks and the playlist are ready. */
 @Composable
 private fun WatchButton(url: String?, loading: Boolean, onPlay: (String) -> Unit) {
-    PlayActionButton(text = if (loading) tr("library.gotovim") else tr("library.smotret"), enabled = url != null && !loading, modifier = Modifier.fillMaxWidth()) {
+    PlayActionButton(text = if (loading) tr("library.gotovim") else tr("library.smotret"), enabled = url != null && !loading, modifier = Modifier.fillMaxWidth().height(52.dp)) {
         url?.let(onPlay)
     }
 }

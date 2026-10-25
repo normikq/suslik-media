@@ -265,7 +265,8 @@ class MainActivity : ComponentActivity() {
             if (settingsOpen) SettingsSheet { settingsOpen = false }
             playTarget?.let { t ->
                 PlaySheet(
-                    target = t,
+                    initial = t,
+                    store = store,
                     onDismiss = { playTarget = null },
                     onPlay = { r -> playTarget = null; handlePlay(r.url, r.title, r.playlist, r.subUrls, r.watchKeys, r.audioUrls, r.fromStart, r.episodeSides, r.customAudio, r.watchKey) }
                 )

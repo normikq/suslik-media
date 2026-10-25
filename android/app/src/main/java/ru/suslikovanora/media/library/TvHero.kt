@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -35,6 +36,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -92,11 +94,13 @@ fun TvContinueHero(all: List<ContinueEntry>, store: LibraryStore, onOpen: (PlayT
         chosen = entries[(cur + 1) % entries.size].item.m.id
     }
 
-    Box(
-        Modifier.padding(top = 2.dp, bottom = 6.dp).fillMaxWidth().height(300.dp).clip(RoundedCornerShape(20.dp))
+    androidx.compose.foundation.layout.BoxWithConstraints(
+        Modifier.padding(top = 2.dp, bottom = 6.dp).fillMaxWidth().height(if (LocalConfiguration.current.screenWidthDp < 560) 350.dp else 340.dp).clip(RoundedCornerShape(20.dp))
             .background(Color(0xFF0B1226)).border(1.dp, Sm.glassEdge, RoundedCornerShape(20.dp))
             .onFocusChanged { focused = it.hasFocus }
     ) {
+        // a phone: no room for the cards on the right, the text takes the width and the dots below switch the film
+        val narrow = maxWidth < 560.dp
         // the wide picture on the right; without it the banner stays plain (a stretched poster would be blurry)
         Crossfade(hero?.backdrop, animationSpec = tween(400), modifier = Modifier.fillMaxSize(), label = "backdrop") { url ->
             if (url != null) AsyncImage(
@@ -106,11 +110,12 @@ fun TvContinueHero(all: List<ContinueEntry>, store: LibraryStore, onOpen: (PlayT
         }
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to Color(0xFF0B1226), 0.45f to Color(0xF20B1226), 0.8f to Color(0x330B1226), 1f to Color(0x000B1226))))
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.6f to Color.Transparent, 1f to Color(0xAA0B1226))))
+        if (narrow) Box(Modifier.fillMaxSize().background(Color(0x990B1226)))
 
         // the text stops where the cards begin (4 cards: 78 dp each, 10 dp apart, 16 dp from the edge, a gap of 14 dp)
-        val cardsWidth = if (entries.size > 1) (78 * entries.size + 10 * (entries.size - 1) + 16 + 14).dp else 0.dp
+        val cardsWidth = if (entries.size > 1 && !narrow) (78 * entries.size + 10 * (entries.size - 1) + 16 + 14).dp else 0.dp
         Column(
-            (if (entries.size > 1) Modifier.fillMaxWidth().padding(end = cardsWidth) else Modifier.fillMaxWidth(0.58f))
+            (if (narrow) Modifier.fillMaxWidth().padding(end = 18.dp) else if (entries.size > 1) Modifier.fillMaxWidth().padding(end = cardsWidth) else Modifier.fillMaxWidth(0.58f))
                 .fillMaxHeight().padding(start = 26.dp, top = 20.dp, bottom = 20.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
@@ -166,7 +171,16 @@ fun TvContinueHero(all: List<ContinueEntry>, store: LibraryStore, onOpen: (PlayT
         }
 
         // the other films: the remote moves over the cards (the banner follows), OK opens the one it stands on
-        if (entries.size > 1) {
+        if (entries.size > 1 && narrow) {
+            Row(Modifier.align(Alignment.TopEnd).padding(top = 18.dp, end = 18.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (x in entries) Box(
+                    Modifier.size(width = if (x.item.m.id == e.item.m.id) 18.dp else 7.dp, height = 7.dp).clip(RoundedCornerShape(4.dp))
+                        .background(if (x.item.m.id == e.item.m.id) Color.White else Color(0x66FFFFFF))
+                        .clickable { chosen = x.item.m.id }
+                )
+            }
+        }
+        if (entries.size > 1 && !narrow) {
             Row(Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 18.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 for (x in entries) HeroThumb(x, store, selected = x.item.m.id == e.item.m.id,
                     onFocus = { chosen = x.item.m.id }, onClick = { store.saveEpisode(x.item.m.id, x.target.file.path); onOpen(x.target) })
