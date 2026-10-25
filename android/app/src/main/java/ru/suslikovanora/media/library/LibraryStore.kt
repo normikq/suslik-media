@@ -52,7 +52,31 @@ class LibraryStore(context: Context) {
     private val app = context.applicationContext
     private val snapshotFile = File(app.filesDir, "library.json")
     private val posterPrefs = app.getSharedPreferences("posters", Context.MODE_PRIVATE)
+    private val animPrefs = app.getSharedPreferences("poster_anim", Context.MODE_PRIVATE)
     private val episodePrefs = app.getSharedPreferences("last_episode", Context.MODE_PRIVATE)
+
+    init {
+        loadCachedAnimationFlags()
+    }
+
+    private fun loadCachedAnimationFlags() {
+        val now = System.currentTimeMillis()
+        for ((k, v) in animPrefs.all) {
+            val s = v as? String ?: continue
+            val at = s.substringBefore('|').toLongOrNull() ?: 0L
+            if (now - at < 60L * 86_400_000L) {
+                Animation.flags[k] = s.substringAfter('|') == "1"
+            }
+        }
+        Animation.version++
+    }
+
+    private fun recordAnimation(key: String, j: JSONObject) {
+        if (!j.has("animation")) return
+        val a = j.optBoolean("animation")
+        animPrefs.edit().putString(key, "${System.currentTimeMillis()}|${if (a) 1 else 0}").apply()
+        Animation.flags[key] = a
+    }
 
     var magnets by mutableStateOf<List<Magnet>>(emptyList())
         private set
@@ -321,10 +345,11 @@ class LibraryStore(context: Context) {
         posterInflight[key] = own
         var url: String? = null
         try {
-            url = posterGate.withPermit {
+            val j = posterGate.withPermit {
                 Api.get("/api/poster?q=" + URLEncoder.encode(query, "UTF-8"))
-                    .optString("poster").takeIf { it.startsWith("/api/poster/img/") }
             }
+            if (j.has("animation")) recordAnimation(key, j)
+            url = j.optString("poster").takeIf { it.startsWith("/api/poster/img/") }
             posterPrefs.edit().putString(key, "${System.currentTimeMillis()}|${url.orEmpty()}").apply()
             posterMemory[key] = url
         } catch (e: CancellationException) {
@@ -351,6 +376,7 @@ class LibraryStore(context: Context) {
         for (q in queries) {
             try {
                 val j = posterGate.withPermit { Api.get("/api/poster?hero=1&q=" + URLEncoder.encode(q, "UTF-8")) }
+                if (j.has("animation")) recordAnimation(q.lowercase(), j)
                 if (!j.has("backdrop") && !j.has("overview")) continue
                 val abs = { k: String -> j.optString(k).takeIf { it.startsWith("/api/poster/img/") }?.let { Api.BASE + it } }
                 val info = HeroInfo(abs("backdrop"), abs("logo"), j.optString("overview").ifBlank { null }, j.optString("year").ifBlank { null },
@@ -381,6 +407,51 @@ class LibraryStore(context: Context) {
             if (j.optInt("pending", 0) <= 0) return
             kotlinx.coroutines.delay(30_000)
         }
+    }
+
+    /**
+     * Fills what needs the server's idea of every film: [Animation] (TMDB genre) to classify cartoons.
+     * First from the saved answers, then asks about the films it has not seen (slowly, a limited number per run).
+     * Films whose release name already says "мульт" / Pixar / anime need no genre lookup.
+     */
+    suspend fun classifyAnimation() {
+        val todo = ArrayList<String>()
+        val now = System.currentTimeMillis()
+        for (item in items) {
+            val needGenre = !(isCartoon(item) || isAnime(item))
+            var genreKnown = !needGenre
+            for (q in item.posterQueries) {
+                val key = q.lowercase()
+                animPrefs.getString(key, null)?.let { v ->
+                    val at = v.substringBefore('|').toLongOrNull() ?: 0L
+                    if (now - at < 60L * 86_400_000L) {
+                        Animation.flags[key] = v.substringAfter('|') == "1"
+                        genreKnown = true
+                    }
+                }
+            }
+            if (!genreKnown) item.posterQueries.firstOrNull()?.let { todo += it }
+        }
+        Animation.version++
+        var asked = 0
+        for (q in todo.distinct().take(80)) {
+            try {
+                val j = posterGate.withPermit { Api.get("/api/poster?q=" + URLEncoder.encode(q, "UTF-8")) }
+                val key = q.lowercase()
+                val url = j.optString("poster").takeIf { it.startsWith("/api/poster/img/") }
+                if (url != null && !posterPrefs.contains(key)) {
+                    posterPrefs.edit().putString(key, "${System.currentTimeMillis()}|$url").apply()
+                    posterMemory[key] = url
+                }
+                if (j.has("animation")) recordAnimation(key, j)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            }
+            if (++asked % 5 == 0) Animation.version++
+            kotlinx.coroutines.delay(120)
+        }
+        Animation.version++
     }
 
     // ---- video info line ("1920×1080 · 12 Мбит/с · HEVC · 23.98 fps"), like on the website ----
@@ -504,6 +575,7 @@ class LibraryStore(context: Context) {
         val keptUrls = posters.filterKeys { keep.keepsPoster(it) }.values.mapNotNullTo(HashSet()) { url(it) }
         val goneUrls = posters.filterKeys { !keep.keepsPoster(it) }.values.mapNotNull { url(it) }.filter { it !in keptUrls }
         prune(posterPrefs, keep::keepsPoster)
+        prune(animPrefs, keep::keepsPoster)
         runCatching { Posters.loader(app).diskCache?.let { cache -> goneUrls.forEach { u -> cache.remove(Api.BASE + u) } } }
         if (goneUrls.isNotEmpty()) posterShown.edit().apply { goneUrls.forEach { remove(Api.BASE + it) } }.apply()
         prune(mediaPrefs, keep::keepsKey)
