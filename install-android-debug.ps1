@@ -1,5 +1,121 @@
+param(
+    [string]$DeviceId = $env:ANDROID_SERIAL
+)
+
 # Build and install Suslik Debug APK on Android via ADB
 $ErrorActionPreference = "Stop"
+
+function Select-AdbDevice {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$AdbPath,
+        [string]$PreferredDeviceId = $null
+    )
+
+    & $AdbPath start-server | Out-Null
+
+    $devices = @()
+    $unauthorized = @()
+
+    for ($i = 1; $i -le 5; $i++) {
+        $devicesOutput = & $AdbPath devices -l
+        $devices = @()
+        $unauthorized = @()
+
+        foreach ($line in ($devicesOutput -split "`r?`n")) {
+            if ($line -match '^\s*([^\s]+)\s+device\b(.*)$') {
+                $id = $matches[1]
+                $info = $matches[2].Trim()
+                $model = if ($info -match 'model:([^\s]+)') { $matches[1] -replace '_', ' ' } else { "" }
+                $product = if ($info -match 'product:([^\s]+)') { $matches[1] -replace '_', ' ' } else { "" }
+                $deviceCode = if ($info -match 'device:([^\s]+)') { $matches[1] } else { "" }
+                $displayName = if ($model) { $model } elseif ($product) { $product } elseif ($deviceCode) { $deviceCode } else { "" }
+
+                $devices += [PSCustomObject]@{
+                    Id = $id
+                    Model = $displayName
+                    Label = if ($displayName) { "$id ($displayName)" } else { "$id" }
+                }
+            } elseif ($line -match '^\s*([^\s]+)\s+unauthorized\b') {
+                $unauthorized += $matches[1]
+            }
+        }
+        if ($devices.Count -gt 0) { break }
+        Start-Sleep -Seconds 1
+    }
+
+    if ($devices.Count -eq 0) {
+        Write-Host "ERROR: No authorized Android device connected via USB debugging!" -ForegroundColor Red
+        if ($unauthorized.Count -gt 0) {
+            Write-Host "Found unauthorized device(s): $($unauthorized -join ', ')" -ForegroundColor Yellow
+            Write-Host "Please check your device screen and confirm USB debugging authorization." -ForegroundColor Yellow
+        } else {
+            Write-Host "Please connect your phone, turn on USB debugging, and allow connection on the phone screen." -ForegroundColor Yellow
+        }
+        exit 1
+    }
+
+    # If preferred device was requested, try to find and use it
+    if ($PreferredDeviceId) {
+        $found = $devices | Where-Object { $_.Id -eq $PreferredDeviceId }
+        if ($found) {
+            Write-Host "Using specified device: $($found[0].Label)" -ForegroundColor Green
+            return $found[0].Id
+        } else {
+            Write-Host "WARNING: Specified device '$PreferredDeviceId' not found among connected authorized devices." -ForegroundColor Yellow
+        }
+    }
+
+    # If only one device is connected, select it automatically
+    if ($devices.Count -eq 1) {
+        Write-Host "Connected device: $($devices[0].Label)" -ForegroundColor Green
+        return $devices[0].Id
+    }
+
+    # Multiple devices connected - prompt user to select
+    Write-Host "`nMultiple Android devices connected:" -ForegroundColor Yellow
+    for ($idx = 0; $idx -lt $devices.Count; $idx++) {
+        Write-Host ("  [{0}] {1}" -f ($idx + 1), $devices[$idx].Label) -ForegroundColor Cyan
+    }
+    if ($unauthorized.Count -gt 0) {
+        Write-Host "  (Unauthorized: $($unauthorized -join ', '))" -ForegroundColor DarkGray
+    }
+
+    $selectedIndex = -1
+    while ($selectedIndex -lt 0 -or $selectedIndex -ge $devices.Count) {
+        $inputVal = $null
+        try {
+            $inputVal = Read-Host ("Select device (1-{0}) [Default: 1, 'q' to cancel]" -f $devices.Count)
+        } catch {
+            $selectedIndex = 0
+            break
+        }
+
+        if ([string]::IsNullOrWhiteSpace($inputVal)) {
+            $selectedIndex = 0
+            break
+        }
+
+        if ($inputVal.Trim() -in @("q", "quit", "exit")) {
+            Write-Host "Operation cancelled by user." -ForegroundColor Yellow
+            exit 0
+        }
+
+        if ($inputVal.Trim() -match '^\d+$') {
+            $parsed = [int]$inputVal.Trim() - 1
+            if ($parsed -ge 0 -and $parsed -lt $devices.Count) {
+                $selectedIndex = $parsed
+                break
+            }
+        }
+
+        Write-Host "Invalid choice. Please enter a number between 1 and $($devices.Count)." -ForegroundColor Red
+    }
+
+    $chosen = $devices[$selectedIndex]
+    Write-Host "Selected device: $($chosen.Label)" -ForegroundColor Green
+    return $chosen.Id
+}
 
 Write-Host "=== [1/4] Environment setup ===" -ForegroundColor Cyan
 $projectRoot = $PSScriptRoot
@@ -44,29 +160,7 @@ if (-not $adb) {
 Write-Host "Using ADB: $adb" -ForegroundColor Gray
 
 Write-Host "`n=== [2/4] Checking device connection ===" -ForegroundColor Cyan
-& $adb start-server | Out-Null
-
-$connected = $false
-$deviceId = ""
-for ($i = 1; $i -le 5; $i++) {
-    $devicesOutput = & $adb devices
-    foreach ($line in ($devicesOutput -split "`r?`n")) {
-        if ($line -match "^\s*([^\s]+)\s+device\s*$") {
-            $connected = $true
-            $deviceId = $matches[1]
-            break
-        }
-    }
-    if ($connected) { break }
-    Start-Sleep -Seconds 1
-}
-
-if (-not $connected) {
-    Write-Host "ERROR: No authorized Android device connected via USB debugging!" -ForegroundColor Red
-    Write-Host "Please connect your phone, turn on USB debugging, and allow connection on the phone screen." -ForegroundColor Yellow
-    exit 1
-}
-Write-Host "Connected device: $deviceId" -ForegroundColor Green
+$deviceId = Select-AdbDevice -AdbPath $adb -PreferredDeviceId $DeviceId
 
 Write-Host "`n=== [3/4] Building Suslik Debug APK (assembleDiag) ===" -ForegroundColor Cyan
 $gradlew = Join-Path $projectRoot "desktop\gradlew.bat"

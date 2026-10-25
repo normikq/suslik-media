@@ -1,6 +1,7 @@
 package ru.suslikovanora.media.desktop.player
 
 import com.sun.jna.Pointer
+import ru.suslikovanora.media.desktop.tr
 import java.awt.image.BufferedImage
 import java.io.File
 import javax.imageio.ImageIO
@@ -420,7 +421,7 @@ class MpvEngine(
         val list = ArrayList<EngineChapter>()
         for (i in 0 until count) {
             val time = str("chapter-list/$i/time")?.toDoubleOrNull() ?: continue
-            val title = str("chapter-list/$i/title") ?: "Глава ${i + 1}"
+            val title = str("chapter-list/$i/title") ?: tr("player.glava_n", "n" to (i + 1))
             list += EngineChapter((time * 1000).toLong(), title)
         }
         return list

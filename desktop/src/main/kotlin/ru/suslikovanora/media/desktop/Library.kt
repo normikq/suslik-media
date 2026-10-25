@@ -97,8 +97,8 @@ class Library {
     /** The server's user (shared parser: core/auth/Auth.kt); the shared password account is [Profile.Shared]. */
     private fun profileOf(u: UserProfile?): Profile {
         if (u == null || u.isShared) return Profile.Shared
-        val note = if (u.isAdmin) "Администратор" else "Участник"
-        return Profile(u.name.ifBlank { "Пользователь" }, note, u.avatarUrl)
+        val note = if (u.isAdmin) tr("profile.admin") else tr("profile.member")
+        return Profile(u.name.ifBlank { tr("profile.user") }, note, u.avatarUrl)
     }
 
     // The profile is set BEFORE [authenticated]: flipping it closes the login screen, and with it the coroutine that

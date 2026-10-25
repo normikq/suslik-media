@@ -65,6 +65,9 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextStyle
@@ -213,10 +216,12 @@ fun itemSpecs(item: LibraryItem, mediaStr: String?): Pair<String, String> {
     val brMatch = Regex("""(\d+(\.\d+)?)\s*мбит/с""").find(str)
     val bitrate = if (brMatch != null) {
         brMatch.value
-    } else {
+    } else if (item.m.size > 0) {
         val durH = 1.5
-        val mbps = if (item.m.size > 0) (item.m.size * 8.0) / (durH * 3600.0 * 1_000_000.0) else 0.0
-        if (mbps > 0) "%.1f Мбит/с".format(Locale.ROOT, mbps) else "12 Мбит/с"
+        val mbps = (item.m.size * 8.0) / (durH * 3600.0 * 1_000_000.0)
+        String.format(Locale.ROOT, tr("library.f_mbit_s"), mbps)
+    } else {
+        tr("library.mbit_s_2")
     }
 
     val sz = formatBytes(item.m.size)
@@ -342,7 +347,9 @@ fun LibraryScreen(
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
         item(key = "header", span = { GridItemSpan(maxLineSpan) }) { HeaderSlot() }
-        item(key = "panel", span = { GridItemSpan(maxLineSpan) }) {
+        // Phone: the panel (title, refresh, search, categories) above «Продолжить просмотр». TV: the banner first, then
+        // only the search line (no title / refresh / status: the remote has nothing to do with them).
+        if (!tv) item(key = "panel", span = { GridItemSpan(maxLineSpan) }) {
             LibraryPanel(
                 title = if (mineOnly) tr("library.moi_filmy") else tr("library.moya_biblioteka_alldebrid"),
                 subtitle = if (mineOnly) tr("library.moi_filmy_podskazka") else tr("library.torrenty_papki_i_fayly"),
@@ -351,7 +358,7 @@ fun LibraryScreen(
                 totalCount = filtered.size,
                 selectedCategory = category,
                 onCategorySelect = { LibraryNav.set(mineOnly, it) },
-                showCategories = !tv,
+                showCategories = true,
                 onRefresh = { scope.launch { store.refresh() } }
             )
         }
@@ -360,6 +367,15 @@ fun LibraryScreen(
         if (showContinue) {
             item(key = "continue", span = { GridItemSpan(maxLineSpan) }) {
                 if (tv) TvContinueHero(continueAll, store, onPlay) else ContinueRow(continueAll, store, onPlay)
+            }
+        }
+
+        if (tv) item(key = "tvsearch", span = { GridItemSpan(maxLineSpan) }) {
+            Column {
+                SearchField(value = query, onValue = onQuery, placeholder = tr("library.poisk_po_nazvaniyu"))
+                if (store.status.isNotBlank() && store.statusKind == StatusKind.Error) {
+                    Text(store.status, color = Sm.bad, fontFamily = Onest, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(top = 8.dp))
+                }
             }
         }
 
@@ -716,6 +732,7 @@ private fun RefreshButton(loading: Boolean, onClick: () -> Unit) {
 fun SearchField(value: String, onValue: (String) -> Unit, placeholder: String, password: Boolean = false, onDone: (() -> Unit)? = null) {
     val focus = LocalFocusManager.current
     val tv = Tv.isTv(LocalContext.current)
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     var focused by remember { mutableStateOf(false) }
     val border by animateColorAsState(if (focused) Sm.accentEdge else Sm.glassEdge, label = "border")
     BasicTextField(
@@ -730,7 +747,17 @@ fun SearchField(value: String, onValue: (String) -> Unit, placeholder: String, p
         ),
         keyboardActions = androidx.compose.foundation.text.KeyboardActions(onAny = { focus.clearFocus(); onDone?.invoke() }),
         modifier = Modifier.fillMaxWidth()
-            .onFocusChanged { focused = it.isFocused }
+            .onFocusChanged {
+                focused = it.isFocused
+                // TV: the remote only walks over the field; the keyboard comes up on OK (below), not on the focus itself
+                if (tv && it.isFocused) keyboard?.hide()
+            }
+            .onPreviewKeyEvent { ev ->
+                if (tv && ev.type == androidx.compose.ui.input.key.KeyEventType.KeyUp &&
+                    (ev.key == androidx.compose.ui.input.key.Key.DirectionCenter || ev.key == androidx.compose.ui.input.key.Key.Enter ||
+                        ev.key == androidx.compose.ui.input.key.Key.NumPadEnter)) keyboard?.show()
+                false
+            }
             .clip(RoundedCornerShape(12.dp)).background(Color(0xFF12151D))
             .border(if (focused && tv) 2.5.dp else 1.dp, border, RoundedCornerShape(12.dp)),
         decorationBox = { inner ->

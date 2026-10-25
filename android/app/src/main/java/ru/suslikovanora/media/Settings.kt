@@ -122,10 +122,7 @@ fun SettingsSheet(onClose: () -> Unit) {
             Text(tr("settings.primenyayutsya_pri_sleduyusche"), color = Sm.muted, fontFamily = Onest, fontSize = 13.sp,
                 modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
             Column(Modifier.weight(1f, fill = false).heightIn(max = 620.dp).verticalScroll(rememberScrollState())) {
-                Section(tr("settings.ekonomnaya_zagruzka"),
-                    tr("settings.film_skachivaetsya_ryvkami_vpe") +
-                        tr("settings.batareya_saditsya_medlennee_ob") +
-                        tr("settings.tem_bolshe_nuzhen_zapas"))
+                Section(tr("settings.ekonomnaya_zagruzka"), tr("settings.ekonomnaya_zagruzka_opisanie"))
                 PlaybackSettings.burstPresets.forEach { p ->
                     PresetRow(p, p.value == burst) { burst = p.value; PlaybackSettings.setBurstMb(ctx, p.value) }
                 }
@@ -169,9 +166,7 @@ private fun ChannelSection() {
             val v = Updater.verdict(ctx, info, release = !PlaybackSettings.betaChannel(ctx))
             state = if (v == UpdateChannel.Verdict.Replace)
                 // Android itself never installs a lower version code over a higher one (no app can override that).
-                tr("settings.reliz_p_zamenit_betu", "p" to info?.version, "installed" to installed) +
-                    tr("settings.bolshey_seychas_pereyti_mozhno") +
-                    tr("settings.na_telefone_sbrosyatsya_ili")
+                tr("settings.reliz_zamenit_betu_tekst", "p" to info?.version, "installed" to installed)
             else UpdateChannel.message(v, info?.version, installed, info?.beta == true)
             if (v == UpdateChannel.Verdict.Offer) offer = info
         }
@@ -194,8 +189,7 @@ private fun ChannelSection() {
         PlaybackSettings.setBetaOn(ctx, b)
         if (!b) checkUpdates() else if (code.isBlank()) state = tr("settings.vvedite_kod_testirovschika_i") else saveCode()
     }
-    Section(tr("settings.kanal_obnovleniy"), tr("settings.reliz_proverennye_versii_dlya") +
-        tr("settings.dlya_proverki_nuzhen_kod"), top = 18.dp)
+    Section(tr("settings.kanal_obnovleniy"), tr("settings.kanal_obnovleniy_opisanie"), top = 18.dp)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         ChannelOption(tr("settings.reliz"), !beta, Modifier.weight(1f)) { pick(false) }
         ChannelOption(tr("settings.beta"), beta, Modifier.weight(1f)) { pick(true) }
@@ -236,15 +230,13 @@ private fun TrafficSection() {
     val ctx = LocalContext.current
     var usage by remember { mutableStateOf(TrafficMeter.month(ctx)) }
     var limit by remember { mutableStateOf(PlaybackSettings.heavyMbit(ctx)) }
-    Section(tr("settings.trafik_filmov"), tr("settings.skolko_filmov_skachano_cherez") +
-        tr("settings.postery_i_spiski_v"), top = 18.dp)
+    Section(tr("settings.trafik_filmov"), tr("settings.trafik_filmov_opisanie"), top = 18.dp)
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(tr("settings.mobilnaya_set_p_wi", "mobile" to TrafficMeter.format(usage.first), "wifi" to TrafficMeter.format(usage.second)),
             color = Sm.text, fontFamily = Onest, fontSize = 14.sp, lineHeight = 21.sp, modifier = Modifier.weight(1f))
         ru.suslikovanora.media.library.OutlineButton(tr("settings.sbrosit")) { TrafficMeter.reset(ctx); usage = 0L to 0L }
     }
-    Section(tr("settings.tyazhelye_fayly_na_mobilnoy"), tr("settings.pered_prosmotrom_sprosim_stoit") +
-        tr("settings.tyazhelee_vybrannogo_mbit_s"), top = 14.dp)
+    Section(tr("settings.tyazhelye_fayly_na_mobilnoy"), tr("settings.tyazhelye_fayly_opisanie"), top = 14.dp)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         listOf(0 to tr("settings.vykl"), 12 to tr("settings.mbit"), 20 to tr("settings.mbit_2"), 40 to tr("settings.mbit_3")).forEach { (v, label) ->
             ChannelOption(label, limit == v, Modifier.weight(1f)) { limit = v; PlaybackSettings.setHeavyMbit(ctx, v) }
@@ -261,8 +253,7 @@ private fun StorageSection() {
     var busy by remember { mutableStateOf(false) }
     var state by remember { mutableStateOf("") }
     LaunchedEffect(Unit) { sizes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { Storage.sizes(ctx) } }
-    Section(tr("settings.pamyat"), tr("settings.kesh_mozhno_ochistit_vse") +
-        tr("settings.dannye_filmov_kotoryh_bolshe"), top = 18.dp)
+    Section(tr("settings.pamyat"), tr("settings.pamyat_opisanie"), top = 18.dp)
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         val s = sizes
         Text(if (s == null) tr("settings.schitaem") else tr("settings.zapas_filmov_p_postery", "reserve" to formatBytes(s.reserve), "posters" to formatBytes(s.posters), "other" to formatBytes(s.other)),
@@ -288,8 +279,7 @@ private fun JournalSection() {
     val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
-    Section(tr("settings.zhurnal_pleera"), tr("settings.esli_film_podtormazhival_otpra") +
-        tr("settings.i_skolko_zhdali_server"), top = 18.dp)
+    Section(tr("settings.zhurnal_pleera"), tr("settings.zhurnal_pleera_opisanie"), top = 18.dp)
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(state ?: tr("settings.otpravlyaetsya_tolko_po_knopke"), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp,
             lineHeight = 17.sp, modifier = Modifier.weight(1f))
@@ -312,9 +302,7 @@ private fun DiagSection() {
     val ctx = LocalContext.current
     var state by remember { mutableStateOf<String?>(null) }
     var verbose by remember { mutableStateOf(Diag.vlcVerbose(ctx)) }
-    Section(tr("settings.otladochnaya_sborka"), tr("settings.podrobnyy_zhurnal_android_data", "packageName" to ctx.packageName) +
-        tr("settings.s_kompyutera_adb_pull", "packageName" to ctx.packageName, "p" to Diag.permissions(ctx)) +
-        tr("settings.obnovleniya_v_etoy_sborke"), top = 18.dp)
+    Section(tr("settings.otladochnaya_sborka"), tr("settings.otladochnaya_sborka_opisanie", "packageName" to ctx.packageName, "p" to Diag.permissions(ctx)), top = 18.dp)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         ru.suslikovanora.media.library.OutlineButton(tr("settings.metka"), Modifier.weight(1f)) { state = tr("settings.metka_p_zapisana_v", "p" to Diag.mark("settings")) }
         ru.suslikovanora.media.library.OutlineButton(tr("settings.batareya"), Modifier.weight(1f)) {
@@ -335,8 +323,7 @@ private fun DiagSection() {
         }
         ru.suslikovanora.media.library.OutlineButton(tr("settings.ochistit"), Modifier.weight(1f)) { Diag.clearJournal(); state = tr("settings.starye_chasti_udaleny") }
     }
-    Section(tr("settings.zhurnal_vlc"), tr("settings.podrobnyy_vv_pishet_kazhdoe") +
-        tr("settings.vklyuchayte_na_vremya_odnogo"), top = 12.dp)
+    Section(tr("settings.zhurnal_vlc"), tr("settings.zhurnal_vlc_opisanie"), top = 12.dp)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         ChannelOption(tr("settings.obychnyy"), !verbose, Modifier.weight(1f)) { verbose = false; Diag.setVlcVerbose(ctx, false) }
         ChannelOption(tr("settings.podrobnyy"), verbose, Modifier.weight(1f)) { verbose = true; Diag.setVlcVerbose(ctx, true) }

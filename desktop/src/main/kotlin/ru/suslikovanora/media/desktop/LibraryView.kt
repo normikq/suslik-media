@@ -9,7 +9,6 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.updateTransition
 import androidx.compose.animation.core.animateFloatAsState
 
 import androidx.compose.animation.core.tween
@@ -332,7 +331,7 @@ fun LoginView(lib: Library) {
                 val res = lib.pollDeviceAuth()
                 if (res == true) break
                 if (res == false) {
-                    error = "Время ожидания кода связки истекло."
+                    error = tr("login.vremya_ozhidaniya_isteklo")
                     break
                 }
             }
@@ -352,8 +351,8 @@ fun LoginView(lib: Library) {
             Panel {
                 if (lib.pairing != null) {
                     val pairing = lib.pairing!!
-                    Text("Вход через Discord", fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 20.sp, color = Sm.text)
-                    Text("Подтвердите вход в браузере с помощью кода:", color = Sm.muted, fontFamily = Onest, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
+                    Text(tr("login.vhod_cherez_discord"), fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 20.sp, color = Sm.text)
+                    Text(tr("login.podtverdite_v_brauzere"), color = Sm.muted, fontFamily = Onest, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
                     Box(
                         Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color(0xFF1E2330))
                             .border(1.dp, Sm.accent.copy(alpha = 0.5f), RoundedCornerShape(12.dp)).padding(vertical = 16.dp),
@@ -363,15 +362,15 @@ fun LoginView(lib: Library) {
                     }
                     Spacer(Modifier.height(14.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        LampButton("Открыть в браузере", modifier = Modifier.weight(1f)) {
+                        LampButton(tr("login.otkryt_v_brauzere"), modifier = Modifier.weight(1f)) {
                             runCatching { java.awt.Desktop.getDesktop().browse(java.net.URI(pairing.url)) }
                         }
-                        OutlineButton("Отмена") { lib.cancelDeviceAuth() }
+                        OutlineButton(tr("login.otmena")) { lib.cancelDeviceAuth() }
                     }
                 } else {
                     Text(tr("library.voyti"), fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 20.sp, color = Sm.text)
                     Spacer(Modifier.height(12.dp))
-                    LampButton("Войти через Discord", enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                    LampButton(tr("login.voyti_cherez_discord"), enabled = !busy, modifier = Modifier.fillMaxWidth()) {
                         if (busy) return@LampButton
                         busy = true; error = null // прежняя ошибка (например, истёкший код) к новому коду не относится
                         scope.launch {
@@ -383,7 +382,7 @@ fun LoginView(lib: Library) {
                     Spacer(Modifier.height(16.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.weight(1f).height(1.dp).background(Color(0x1AFFFFFF)))
-                        Text("или по паролю", color = Sm.muted, fontFamily = Onest, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 10.dp))
+                        Text(tr("login.ili_po_parolyu"), color = Sm.muted, fontFamily = Onest, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 10.dp))
                         Box(Modifier.weight(1f).height(1.dp).background(Color(0x1AFFFFFF)))
                     }
                     Spacer(Modifier.height(14.dp))
@@ -1261,7 +1260,7 @@ private fun episodeSub(e: ContinueEntry): String? {
     for (s in p.seasons) {
         val ep = s.items.firstOrNull { it.file.path == e.target.file.path } ?: continue
         if (ep.title != null) return null
-        val text = if (s.season == 0) "Спецвыпуск ${ep.episode}" else "Сезон ${s.season}, серия ${ep.episode}"
+        val text = if (s.season == 0) tr("library.specvypusk_n", "episode" to ep.episode) else tr("library.sezon_seriya", "season" to s.season, "episode" to ep.episode)
         return if (e.label.startsWith(tr("library.dalshe"))) tr("library.dalshe") + text else text
     }
     return null
@@ -1270,7 +1269,7 @@ private fun episodeSub(e: ContinueEntry): String? {
 private fun timeLeft(e: ContinueEntry): String? {
     if (e.len <= 0 || e.pos <= 0) return null
     val min = ((e.len - e.pos) / 60_000L).toInt().coerceAtLeast(1)
-    return (if (min >= 60) "${min / 60} ч ${min % 60} мин" else "$min мин") + " осталось"
+    return if (min >= 60) tr("library.ostalos_ch_min", "hours" to (min / 60), "minutes" to (min % 60)) else tr("library.ostalos_min", "minutes" to min)
 }
 
 /** «Продолжить просмотр»: a banner with the film watched last (wide picture, description, progress); the others are the cards on the right. */
@@ -1323,11 +1322,8 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
         // The part of the picture that does not fit the banner is not cut off: it goes on past the banner edges, blurred, onto the page background
 
 
-        // The blurred layer is a layer of its own (blur): the alpha of Crossfade's wrapper does not reach it, so it fades by the same timing itself
-        val fadeT = updateTransition(hero?.backdrop, label = "backdrop")
         androidx.compose.animation.Crossfade(hero?.backdrop, animationSpec = tween(350), modifier = Modifier.fillMaxSize()) { img ->
             if (img != null) Box(Modifier.fillMaxSize()) {
-                val own by fadeT.animateFloat(transitionSpec = { tween(350) }, label = "glowFade") { if (it == img) 1f else 0f }
 
                 // the glow is drawn everywhere except the banner itself
                 Box(Modifier.fillMaxSize().drawWithContent {
@@ -1338,7 +1334,7 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
                 }) {
                     if (glow > 0f) Image(img, null, contentScale = ContentScale.FillWidth, alignment = Alignment.CenterEnd,
                         modifier = Modifier.fillMaxWidth().wrapContentHeight(Alignment.CenterVertically, unbounded = true)
-                            .graphicsLayer { alpha = glow * own; compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+                            .graphicsLayer { alpha = glow; compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
                             .drawWithContent { // soft edges: the picture melts into the page instead of ending in a straight line
                                 drawContent()
                                 val clear = Color.Transparent
@@ -1381,7 +1377,7 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
                         chip(itemTypeLabel(e.item))
                         (e.item.playable as? Playable.Series)?.let { p ->
                             val eps = p.seasons.sumOf { it.items.size }
-                            chip(plural(p.seasons.size, "сезон", "сезона", "сезонов") + " • " + plural(eps, "серия", "серии", "серий"))
+                            chip(plural(p.seasons.size, tr("common.plural_sezon_1"), tr("common.plural_sezon_2"), tr("common.plural_sezon_5")) + " • " + plural(eps, tr("common.plural_seriya_1"), tr("common.plural_seriya_2"), tr("common.plural_seriya_5")))
                         }
                         hero?.rating?.let { r ->
                             Text("★ " + "%.1f".format(java.util.Locale.US, r), color = Color(0xFFFACC15), fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)

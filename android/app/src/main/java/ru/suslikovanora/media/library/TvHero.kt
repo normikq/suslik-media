@@ -59,7 +59,7 @@ private fun episodeSub(e: ContinueEntry): String? {
     for (s in p.seasons) {
         val ep = s.items.firstOrNull { it.file.path == e.target.file.path } ?: continue
         if (ep.title != null) return null
-        val text = if (s.season == 0) "Спецвыпуск ${ep.episode}" else "Сезон ${s.season}, серия ${ep.episode}"
+        val text = if (s.season == 0) tr("library.specvypusk_n", "episode" to ep.episode) else tr("library.sezon_seriya", "season" to s.season, "episode" to ep.episode)
         return if (e.sub.startsWith(tr("library.dalshe"))) tr("library.dalshe") + text else text
     }
     return null
@@ -68,7 +68,7 @@ private fun episodeSub(e: ContinueEntry): String? {
 private fun timeLeft(e: ContinueEntry): String? {
     if (e.len <= 0 || e.pos <= 0) return null
     val min = ((e.len - e.pos) / 60_000L).toInt().coerceAtLeast(1)
-    return (if (min >= 60) "${min / 60} ч ${min % 60} мин" else "$min мин") + " осталось"
+    return if (min >= 60) tr("library.ostalos_ch_min", "hours" to (min / 60), "minutes" to (min % 60)) else tr("library.ostalos_min", "minutes" to min)
 }
 
 /** TV: «Продолжить просмотр» as a banner with the film watched last; the cards on the right choose another (the remote just moves over them). */
@@ -107,7 +107,13 @@ fun TvContinueHero(all: List<ContinueEntry>, store: LibraryStore, onOpen: (PlayT
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to Color(0xFF0B1226), 0.45f to Color(0xF20B1226), 0.8f to Color(0x330B1226), 1f to Color(0x000B1226))))
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.6f to Color.Transparent, 1f to Color(0xAA0B1226))))
 
-        Column(Modifier.fillMaxHeight().fillMaxWidth(0.58f).padding(start = 26.dp, top = 20.dp, bottom = 20.dp), verticalArrangement = Arrangement.SpaceBetween) {
+        // the text stops where the cards begin (4 cards: 78 dp each, 10 dp apart, 16 dp from the edge, a gap of 14 dp)
+        val cardsWidth = if (entries.size > 1) (78 * entries.size + 10 * (entries.size - 1) + 16 + 14).dp else 0.dp
+        Column(
+            (if (entries.size > 1) Modifier.fillMaxWidth().padding(end = cardsWidth) else Modifier.fillMaxWidth(0.58f))
+                .fillMaxHeight().padding(start = 26.dp, top = 20.dp, bottom = 20.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
             Column {
                 Text(tr("library.prodolzhit_prosmotr").uppercase(), color = Color(0xFF9AA3B8), fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 11.sp, letterSpacing = 1.6.sp)
                 val logo = hero?.logo
@@ -127,7 +133,7 @@ fun TvContinueHero(all: List<ContinueEntry>, store: LibraryStore, onOpen: (PlayT
                     hero?.year?.let { chip(it) }
                     chip(itemTypeLabel(e.item))
                     (e.item.playable as? Playable.Series)?.let { p ->
-                        chip(plural(p.seasons.size, "сезон", "сезона", "сезонов") + " • " + plural(p.seasons.sumOf { it.items.size }, "серия", "серии", "серий"))
+                        chip(plural(p.seasons.size, tr("common.plural_sezon_1"), tr("common.plural_sezon_2"), tr("common.plural_sezon_5")) + " • " + plural(p.seasons.sumOf { it.items.size }, tr("common.plural_seriya_1"), tr("common.plural_seriya_2"), tr("common.plural_seriya_5")))
                     }
                     hero?.rating?.let { r -> Text("★ " + "%.1f".format(java.util.Locale.US, r), color = Color(0xFFFACC15), fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
                 }

@@ -248,30 +248,30 @@ fun Sidebar(tab: Tab, lib: Library, profile: Profile, onSelect: (Tab) -> Unit, o
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             // A guest of a room watches the room's film: the library (and «Мои фильмы») are closed until they leave it
             val guest = ru.suslikovanora.media.desktop.party.Party.let { it.inRoom && !it.isHost }
-            val lockNote = if (guest) "вы в комнате" else null
+            val lockNote = if (guest) tr("sidebar.vy_v_komnate") else null
             val inLibrary = tab == Tab.Library
             val current = LibraryNav.of(inMine)
             // Coming from the other page, each page comes back with the category it was left on; on the page itself — back to everything
-            NavItem("Главная", inLibrary && current == Category.All, expanded, HomeIcon, enabled = !guest, soon = lockNote, tab = Tab.Library) {
+            NavItem(tr("sidebar.glavnaya"), inLibrary && current == Category.All, expanded, HomeIcon, enabled = !guest, soon = lockNote, tab = Tab.Library) {
                 if (inLibrary) LibraryNav.category = Category.All
                 onSelect(Tab.Library)
             }
-            NavItem("Моя медиатека", inMine && current == Category.All, expanded, { BookmarkIcon(filled = true, color = it, size = 16.dp) }, enabled = !guest, soon = lockNote, tab = Tab.Mine) {
+            NavItem(tr("sidebar.moya_mediateka"), inMine && current == Category.All, expanded, { BookmarkIcon(filled = true, color = it, size = 16.dp) }, enabled = !guest, soon = lockNote, tab = Tab.Mine) {
                 if (inMine) LibraryNav.mineCategory = Category.All
                 onSelect(Tab.Mine)
             }
             NavItem(Tab.Search.label, tab == Tab.Search, expanded, { SearchIcon(color = it, size = 16.dp) }) { onSelect(Tab.Search) }
             NavItem(Tab.Add.label, tab == Tab.Add, expanded, { LinkChainIcon(color = it, size = 16.dp) }) { onSelect(Tab.Add) }
             NavItem(Tab.Together.label, tab == Tab.Together, expanded, PeopleIcon,
-                soon = ru.suslikovanora.media.desktop.party.Party.let { p -> if (p.inRoom) "в комнате · ${p.members.size.coerceAtLeast(1)}" else null }) { onSelect(Tab.Together) }
-            SectionTitle("КОЛЛЕКЦИЯ", expanded)
+                soon = ru.suslikovanora.media.desktop.party.Party.let { p -> if (p.inRoom) tr("sidebar.v_komnate_n", "n" to p.members.size.coerceAtLeast(1)) else null }) { onSelect(Tab.Together) }
+            SectionTitle(tr("sidebar.kollektsiya"), expanded)
             for (c in listOf(Category.Movies, Category.Series, Category.Anime, Category.Cartoons, Category.Other)) {
                 NavItem(c.label, (inLibrary || inMine) && current == c, expanded, CollectionIcons.getValue(c), enabled = !guest, soon = lockNote, count = counts[c] ?: 0) {
                     // stays on the page it is on (the library or «Моя медиатека»)
                     LibraryNav.set(inMine, c); onSelect(if (inMine) Tab.Mine else Tab.Library)
                 }
             }
-            SectionTitle("СЕРВИС", expanded)
+            SectionTitle(tr("sidebar.servis"), expanded)
             NavItem(tr("sidebar.nastroyki"), false, expanded, { GearIcon(it) }, onClick = onSettings)
         }
         Spacer(Modifier.height(8.dp))

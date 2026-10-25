@@ -22,6 +22,9 @@ class PlayerPipController(
         fun onPipModeChanged(inPip: Boolean)
     }
 
+    // No mini player on Android TV: the home button just leaves, and auto-enter is never switched on.
+    private val tv = ru.suslikovanora.media.Tv.isTv(activity)
+
     var inPip: Boolean = false
         private set
 
@@ -38,7 +41,7 @@ class PlayerPipController(
      * On Android 12+, auto-enter handles this seamlessly without tearing down video surface.
      */
     fun onUserLeaveHint() {
-        if (Build.VERSION.SDK_INT in 26..30 && callback.getCurrentPlayer()?.isPlaying == true) {
+        if (!tv && Build.VERSION.SDK_INT in 26..30 && callback.getCurrentPlayer()?.isPlaying == true) {
             try {
                 activity.enterPictureInPictureMode(buildPipParams(playing = true))
             } catch (_: Exception) { }
@@ -46,7 +49,7 @@ class PlayerPipController(
     }
 
     fun updatePipParams(playing: Boolean) {
-        if (Build.VERSION.SDK_INT < 26) return
+        if (Build.VERSION.SDK_INT < 26 || tv) return
         try {
             activity.setPictureInPictureParams(buildPipParams(playing))
         } catch (_: Exception) { }

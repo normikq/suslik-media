@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 import ru.suslikovanora.media.desktop.PlayerLog
+import ru.suslikovanora.media.desktop.tr
 import java.io.File
 import java.io.IOException
 import java.net.URI
@@ -69,9 +70,9 @@ object MpvInstall {
     }
 
     private fun message(e: IOException): String = when (e) {
-        is ServerAnswer -> "сервер ответил ошибкой ${e.code}"
-        is BadFile -> "файл с сервера повреждён"
-        else -> "сервер недоступен"
+        is ServerAnswer -> tr("app.mpv_oshibka_servera", "code" to e.code)
+        is BadFile -> tr("app.mpv_fayl_povrezhden")
+        else -> tr("app.mpv_server_nedostupen")
     }
 
     private class ServerAnswer(val code: Int) : IOException("HTTP $code")

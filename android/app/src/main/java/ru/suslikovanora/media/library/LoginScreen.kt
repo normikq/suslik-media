@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -118,6 +119,12 @@ fun LoginScreen(store: LibraryStore, onLoggedIn: () -> Unit) {
                         if (tv) tr("login.tv_otkroyte_ssylku", "url" to pairing.url) else tr("login.podtverdite_v_brauzere"),
                         color = Sm.muted, fontFamily = Onest, fontSize = 14.sp, lineHeight = 20.sp, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp)
                     )
+                    if (tv) {
+                        Box(Modifier.fillMaxWidth().padding(bottom = 14.dp), contentAlignment = Alignment.Center) {
+                            QrCode(pairing.url, Modifier.size(180.dp))
+                        }
+                        Text(tr("login.tv_qr_podskazka"), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(bottom = 12.dp))
+                    }
                     Box(
                         Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(androidx.compose.ui.graphics.Color(0xFF1E2330))
                             .border(1.dp, Sm.accent.copy(alpha = 0.5f), RoundedCornerShape(12.dp)).padding(vertical = 16.dp),
@@ -157,3 +164,27 @@ fun LoginScreen(store: LibraryStore, onLoggedIn: () -> Unit) {
 }
 
 private val Color5f677a = androidx.compose.ui.graphics.Color(0xFF5F677A)
+
+/** QR code of [text]: dark modules on white with a quiet zone (a phone camera needs it), drawn once per text. */
+@Composable
+private fun QrCode(text: String, modifier: Modifier = Modifier) {
+    val matrix = remember(text) {
+        runCatching {
+            com.google.zxing.qrcode.QRCodeWriter().encode(
+                text, com.google.zxing.BarcodeFormat.QR_CODE, 0, 0,
+                mapOf(com.google.zxing.EncodeHintType.MARGIN to 0, com.google.zxing.EncodeHintType.ERROR_CORRECTION to com.google.zxing.qrcode.decoder.ErrorCorrectionLevel.M)
+            )
+        }.getOrNull()
+    } ?: return
+    androidx.compose.foundation.Canvas(modifier.clip(RoundedCornerShape(8.dp)).background(androidx.compose.ui.graphics.Color.White).padding(10.dp)) {
+        val n = matrix.width
+        val cell = size.width / n
+        for (y in 0 until n) for (x in 0 until n) if (matrix.get(x, y)) {
+            drawRect(
+                androidx.compose.ui.graphics.Color.Black,
+                androidx.compose.ui.geometry.Offset(x * cell, y * cell),
+                androidx.compose.ui.geometry.Size(cell + 0.5f, cell + 0.5f)
+            )
+        }
+    }
+}

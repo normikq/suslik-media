@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.sp
 import ru.suslikovanora.media.library.Category
 import ru.suslikovanora.media.library.LibraryNav
 import ru.suslikovanora.media.library.LibraryStore
+import ru.suslikovanora.media.tr
 import ru.suslikovanora.media.library.itemCategory
 
 private val GearIcon: @Composable (Color) -> Unit = { col ->
@@ -159,7 +160,7 @@ fun TvSidebar(
     val current = LibraryNav.of(inMine)
     // films per category, among the ones of the page that is open («Моя медиатека» — only the user's own)
     val counts = remember(store.items, inMine) { (if (inMine) store.items.filter { it.m.mine } else store.items).groupingBy { itemCategory(it) }.eachCount() }
-    val lockNote = if (locked.isNotEmpty()) "вы в комнате" else null
+    val lockNote = if (locked.isNotEmpty()) tr("sidebar.vy_v_komnate") else null
     // the item the remote returns to: the open page's own entry
     val home = inLibrary && current == Category.All
     val mine = inMine && current == Category.All
@@ -194,19 +195,19 @@ fun TvSidebar(
             }
         }
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            SideItem("Главная", home, HomeIcon, mod(focusOn == 0), enabled = Tab.Library !in locked, note = lockNote) {
+            SideItem(tr("sidebar.glavnaya"), home, HomeIcon, mod(focusOn == 0), enabled = Tab.Library !in locked, note = lockNote) {
                 if (inLibrary) LibraryNav.category = Category.All
                 onSelect(Tab.Library)
             }
-            SideItem("Моя медиатека", mine, { BookmarkIcon(filled = true, color = it, size = 16.dp) }, mod(focusOn == 1), enabled = Tab.Mine !in locked, note = lockNote) {
+            SideItem(tr("sidebar.moya_mediateka"), mine, { BookmarkIcon(filled = true, color = it, size = 16.dp) }, mod(focusOn == 1), enabled = Tab.Mine !in locked, note = lockNote) {
                 if (inMine) LibraryNav.mineCategory = Category.All
                 onSelect(Tab.Mine)
             }
-            SideItem("Поиск раздач", tab == Tab.Search, { SearchIcon(color = it, size = 16.dp) }, mod(focusOn == 2)) { onSelect(Tab.Search) }
-            SideItem("Magnet / торрент", tab == Tab.Links, { LinkChainIcon(color = it, size = 16.dp) }, mod(focusOn == 3)) { onSelect(Tab.Links) }
-            SideItem("Совместный просмотр", tab == Tab.Together, { PeopleIcon(color = it, size = 16.dp) }, mod(focusOn == 4),
-                note = if (inRoom) "в комнате" else null) { onSelect(Tab.Together) }
-            SectionTitle("КОЛЛЕКЦИЯ")
+            SideItem(tr("sidebar.poisk_razdach"), tab == Tab.Search, { SearchIcon(color = it, size = 16.dp) }, mod(focusOn == 2)) { onSelect(Tab.Search) }
+            SideItem(tr("sidebar.magnet_torrent"), tab == Tab.Links, { LinkChainIcon(color = it, size = 16.dp) }, mod(focusOn == 3)) { onSelect(Tab.Links) }
+            SideItem(tr("sidebar.sovmestnyy_prosmotr"), tab == Tab.Together, { PeopleIcon(color = it, size = 16.dp) }, mod(focusOn == 4),
+                note = if (inRoom) tr("sidebar.v_komnate") else null) { onSelect(Tab.Together) }
+            SectionTitle(tr("sidebar.kollektsiya"))
             for (c in listOf(Category.Movies, Category.Series, Category.Anime, Category.Cartoons, Category.Other)) {
                 val off = (inMine && Tab.Mine in locked) || (!inMine && Tab.Library in locked)
                 SideItem(
@@ -217,8 +218,8 @@ fun TvSidebar(
                     LibraryNav.set(inMine, c); onSelect(if (inMine) Tab.Mine else Tab.Library)
                 }
             }
-            SectionTitle("СЕРВИС")
-            SideItem("Настройки", false, GearIcon, onClick = onSettings)
+            SectionTitle(tr("sidebar.servis"))
+            SideItem(tr("sidebar.nastroyki"), false, GearIcon, onClick = onSettings)
         }
         Spacer(Modifier.height(8.dp))
         // whose library this is
@@ -226,7 +227,7 @@ fun TvSidebar(
             val p = store.profile
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (p != null) { Avatar(p.avatarUrl, p.name, 32.dp, 13.sp); Spacer(Modifier.width(10.dp)) }
-                Text(p?.name?.ifBlank { null } ?: "Моя библиотека", color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.sp,
+                Text(p?.name?.ifBlank { null } ?: tr("sidebar.profil_imya"), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.sp,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Spacer(Modifier.height(8.dp))
@@ -235,7 +236,7 @@ fun TvSidebar(
                     .focusRing(RoundedCornerShape(10.dp), color = Color.White, width = 3.dp)
                     .clickable(onClick = onLogout).padding(vertical = 8.dp),
                 contentAlignment = Alignment.Center
-            ) { Text("Выйти", color = Color.White, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp) }
+            ) { Text(tr("sidebar.vyyti"), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp) }
         }
     }
 }

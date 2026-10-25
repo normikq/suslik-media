@@ -466,7 +466,7 @@ fun PlayerView(
 
     fun togglePause(byRoom: Boolean = false) {
         val wasPaused = pausedAt > 0 || enginePaused
-        if (wasPaused && !byRoom && partyPlayLocked()) { flash("Паузу снимает создатель комнаты"); return }
+        if (wasPaused && !byRoom && partyPlayLocked()) { flash(tr("party.pauzu_snimaet_sozdatel")); return }
         if (!wasPaused) {
             playing = false; pausedAt = System.currentTimeMillis()
             supRef.get()?.paused()
@@ -515,7 +515,7 @@ fun PlayerView(
     fun chapterAt(t: Long): Int = chapters.indexOfLast { it.first <= t + 500 }
     fun jumpChapter(d: Int) {
         if (chapters.size < 2) return
-        if (partyGuest()) { flash("Перематывает создатель комнаты"); return }
+        if (partyGuest()) { flash(tr("party.peremativaet_sozdatel")); return }
         val i = (chapterAt(time) + d).coerceIn(0, chapters.size - 1)
         val t = chapters[i].first; time = t; lastSeekAt = System.currentTimeMillis(); supRef.get()?.seeked()
         seekTo(t)
@@ -591,7 +591,7 @@ fun PlayerView(
     }
 
     fun seekBy(d: Long) {
-        if (partyGuest()) { flash("Перематывает создатель комнаты"); return }
+        if (partyGuest()) { flash(tr("party.peremativaet_sozdatel")); return }
         val base = pendingSeekByTarget ?: time
         var t = (base + d).coerceAtLeast(0L)
         if (length > 0) t = t.coerceAtMost((length - 2_000L).coerceAtLeast(0L))
@@ -683,8 +683,8 @@ fun PlayerView(
                     WindowMode.setFullscreen(owner, false)
                 } else close()
                 Key.Backspace -> close()
-                Key.N -> if (!partyGuest()) playEntry(index + 1) else flash("Серию выбирает создатель комнаты")
-                Key.P -> if (!partyGuest()) playEntry(index - 1) else flash("Серию выбирает создатель комнаты")
+                Key.N -> if (!partyGuest()) playEntry(index + 1) else flash(tr("party.seriyu_vybiraet_sozdatel"))
+                Key.P -> if (!partyGuest()) playEntry(index - 1) else flash(tr("party.seriyu_vybiraet_sozdatel"))
                 Key.M -> { userMuted = !userMuted; val m = userMuted; runOnPlayer { eMute(m) } }
                 Key.LeftBracket -> if (e.isShiftPressed) shiftSubs(-100L) else shiftAudio(-100L)
                 Key.RightBracket -> if (e.isShiftPressed) shiftSubs(100L) else shiftAudio(100L)
@@ -793,11 +793,11 @@ fun PlayerView(
         val (displayTitle, displaySubtitle) = smtcTitles()
         val (discordTitle, discordSubtitle) = if (inParty) {
             val titleText = if (queue.size > 1) "$displaySubtitle · $displayTitle" else displayTitle
-            val partyStatus = "Смотрит вместе (участников: $partyMembersCount)"
-            titleText to (if (userPaused) "$partyStatus · Пауза" else partyStatus)
+            val partyStatus = tr("discord.smotrit_vmeste", "count" to partyMembersCount)
+            titleText to (if (userPaused) "$partyStatus · " + tr("discord.pauza") else partyStatus)
         } else {
-            val sub = if (queue.size > 1) displaySubtitle else "Фильм"
-            displayTitle to (if (userPaused) "Пауза" else sub)
+            val sub = if (queue.size > 1) displaySubtitle else tr("discord.film")
+            displayTitle to (if (userPaused) tr("discord.pauza") else sub)
         }
         ru.suslikovanora.media.desktop.discord.DiscordRpc.update(
             title = discordTitle,

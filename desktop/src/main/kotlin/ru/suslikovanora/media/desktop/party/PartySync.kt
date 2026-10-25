@@ -15,6 +15,7 @@ import ru.suslikovanora.media.core.party.PartyState
 import ru.suslikovanora.media.core.party.PartySyncEngine
 import ru.suslikovanora.media.core.party.SyncPlayer
 import ru.suslikovanora.media.desktop.PlayerLog
+import ru.suslikovanora.media.desktop.tr
 
 /** What the player lets the room do with it (PlayerView passes its own functions: the bars and SMTC stay right). */
 class SyncHooks(
@@ -90,7 +91,7 @@ fun PartySync(key: String?, title: String, keys: List<String>, started: Boolean,
         val i = keys.indexOf(rk)
         if (rk != k && i >= 0 && !closing) {
             PlayerLog.write("[party] room episode -> $i"); h.playIndex(i)
-            if (!Party.isHost) episodeNotice[0] = "${hostWho()} включает «${Party.file?.title.orEmpty()}»"
+            if (!Party.isHost) episodeNotice[0] = tr("party.vklyuchaet", "who" to hostWho(), "title" to Party.file?.title.orEmpty())
         }
     }
 
@@ -116,13 +117,13 @@ fun PartySync(key: String?, title: String, keys: List<String>, started: Boolean,
     }
 }
 
-private fun hostWho() = Party.hostName.ifBlank { "Создатель комнаты" }
+private fun hostWho() = Party.hostName.ifBlank { tr("party.sozdatel_komnaty") }
 
 /** Present tense: the name says nothing of a person's gender, «ставит» fits everyone. */
 private fun noticeText(n: PartyNotice): String? = when (n) {
-    PartyNotice.Paused -> "${hostWho()} ставит паузу"
-    PartyNotice.Resumed -> "${hostWho()} продолжает"
-    is PartyNotice.Seeked -> "${hostWho()} перематывает на ${clockText(n.posMs)}"
+    PartyNotice.Paused -> tr("party.stavit_pauzu", "who" to hostWho())
+    PartyNotice.Resumed -> tr("party.prodolzhaet", "who" to hostWho())
+    is PartyNotice.Seeked -> tr("party.peremativaet_na", "who" to hostWho(), "time" to clockText(n.posMs))
     PartyNotice.Waiting -> Party.members.filter { it.buffering && it.key != Party.myKey }.map { it.name }
-        .takeIf { it.isNotEmpty() }?.let { "Ждём, пока загрузится у ${it.joinToString()}" }
+        .takeIf { it.isNotEmpty() }?.let { tr("party.zhdyom_zagruzku", "names" to it.joinToString()) }
 }

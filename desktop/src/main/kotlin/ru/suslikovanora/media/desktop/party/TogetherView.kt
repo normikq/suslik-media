@@ -42,6 +42,7 @@ import ru.suslikovanora.media.desktop.clock
 import ru.suslikovanora.media.desktop.copy
 import ru.suslikovanora.media.desktop.player.PlayRequest
 import ru.suslikovanora.media.desktop.targetFor
+import ru.suslikovanora.media.desktop.tr
 import ru.suslikovanora.media.desktop.ui.*
 
 /** Страница «Совместный просмотр» (пункт в боковой панели): создать комнату, войти по коду, открыть фильм комнаты. */
@@ -61,26 +62,26 @@ fun TogetherView(lib: Library, onLibrary: () -> Unit, onPlay: (PlayRequest) -> U
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(28.dp)) {
         item {
-            Text("Совместный просмотр", fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 22.sp, color = Sm.text)
-            Text("Один фильм, одна пауза и перемотка у всех в комнате.", color = Sm.muted, fontFamily = Onest, fontSize = 14.sp,
+            Text(tr("party.sovmestnyy_prosmotr"), fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 22.sp, color = Sm.text)
+            Text(tr("party.odin_film_odna_pauza"), color = Sm.muted, fontFamily = Onest, fontSize = 14.sp,
                 modifier = Modifier.padding(top = 4.dp, bottom = 16.dp))
         }
         if (!Party.inRoom) item {
             Party.notice?.let { Text(it, color = Color(0xFFF2B84B), fontFamily = Onest, fontSize = 14.sp, modifier = Modifier.padding(bottom = 12.dp)) }
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 Panel(Modifier.weight(1f)) {
-                    Text("Новая комната", fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 17.sp, color = Sm.text)
-                    Text("Создайте комнату и отправьте код друзьям. Фильм выберите в медиатеке — он станет фильмом комнаты.",
+                    Text(tr("party.novaya_komnata"), fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 17.sp, color = Sm.text)
+                    Text(tr("party.sozdayte_komnatu"),
                         color = Sm.muted, fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
-                    LampButton(if (busy) "Создаём…" else "Создать комнату", enabled = !busy, modifier = Modifier.fillMaxWidth()) { run { Party.create() } }
+                    LampButton(if (busy) tr("party.sozdaem") else tr("party.sozdat_komnatu"), enabled = !busy, modifier = Modifier.fillMaxWidth()) { run { Party.create() } }
                 }
                 Panel(Modifier.weight(1f)) {
-                    Text("Войти по коду", fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 17.sp, color = Sm.text)
-                    Text("Код комнаты вам пришлёт тот, кто её создал.", color = Sm.muted, fontFamily = Onest, fontSize = 13.5.sp,
+                    Text(tr("party.voyti_po_kodu"), fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 17.sp, color = Sm.text)
+                    Text(tr("party.kod_prishlet"), color = Sm.muted, fontFamily = Onest, fontSize = 13.5.sp,
                         modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
-                    Field(code, { code = it }, "Код комнаты", onDone = { if (code.isNotBlank()) run { Party.join(code) } })
+                    Field(code, { code = it }, tr("party.kod_komnaty"), onDone = { if (code.isNotBlank()) run { Party.join(code) } })
                     Spacer(Modifier.height(10.dp))
-                    OutlineButton(if (busy) "Входим…" else "Войти", modifier = Modifier.fillMaxWidth()) { if (code.isNotBlank()) run { Party.join(code) } }
+                    OutlineButton(if (busy) tr("party.vhodim") else tr("party.voyti"), modifier = Modifier.fillMaxWidth()) { if (code.isNotBlank()) run { Party.join(code) } }
                 }
             }
         } else item {
@@ -103,40 +104,40 @@ private fun RoomPanel(lib: Library, onLibrary: () -> Unit, onOpen: (PlayTarget) 
     Panel {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("Код комнаты", color = Sm.muted, fontFamily = Onest, fontSize = 13.sp)
+                Text(tr("party.kod_komnaty"), color = Sm.muted, fontFamily = Onest, fontSize = 13.sp)
                 Text(id, color = Color.White, fontFamily = Unbounded, fontWeight = FontWeight.Bold, fontSize = 26.sp, letterSpacing = 2.sp,
                     modifier = Modifier.padding(top = 2.dp))
             }
-            OutlineButton(if (copied) "Код скопирован" else "Скопировать код") { copy(id); copied = true }
+            OutlineButton(if (copied) tr("party.skopirovano") else tr("party.skopirovat")) { copy(id); copied = true }
             Spacer(Modifier.width(10.dp))
-            OutlineButton("Выйти из комнаты") { Party.leave() }
+            OutlineButton(tr("party.vyyti_iz_komnaty")) { Party.leave() }
         }
         Text(
-            (if (Party.connected) "На связи" else "Подключаемся…") +
-                (if (Party.hostName.isNotBlank()) " · создал ${Party.hostName}" else "") +
-                (if (Party.hostOnly) " · управляет только создатель" else ""),
+            (if (Party.connected) tr("party.na_svyazi") else tr("party.podklyuchaemsya")) +
+                (if (Party.hostName.isNotBlank()) tr("party.sozdal", "name" to Party.hostName) else "") +
+                (if (Party.hostOnly) tr("party.upravlyaet_sozdatel") else ""),
             color = if (Party.connected) Sm.muted else Color(0xFFF2B84B), fontFamily = Onest, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp)
         )
     }
     Spacer(Modifier.height(14.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         Panel(Modifier.weight(2f)) {
-            Text("Фильм", fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 17.sp, color = Sm.text)
+            Text(tr("party.film"), fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 17.sp, color = Sm.text)
             val f = Party.file
             if (f == null) {
-                Text(if (Party.isHost) "Пока не выбран. Откройте фильм в медиатеке — он станет фильмом комнаты."
-                    else "Пока не выбран: фильм включает ${Party.hostName.ifBlank { "создатель комнаты" }}.",
+                Text(if (Party.isHost) tr("party.ne_vybran_host")
+                    else tr("party.ne_vybran_gost", "who" to Party.hostName.ifBlank { tr("party.sozdatel_komnaty_mal") }),
                     color = Sm.muted, fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(top = 6.dp, bottom = 12.dp))
-                if (Party.isHost) LampButton("К медиатеке") { onLibrary() }
+                if (Party.isHost) LampButton(tr("party.k_mediateke")) { onLibrary() }
             } else {
                 val s = Party.state
                 Text(f.title.ifBlank { f.key.substringAfterLast('/') }, color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 15.sp,
                     maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
                 val loadingNames = Party.members.filter { it.buffering }.joinToString { it.name }
                 val stateText = when {
-                    !s.playing -> "На паузе"
-                    s.waiting -> "Ждём, пока загрузится" + (if (loadingNames.isNotBlank()) " у $loadingNames" else "")
-                    else -> "Идёт"
+                    !s.playing -> tr("party.na_pauze")
+                    s.waiting -> tr("party.zhdyom") + (if (loadingNames.isNotBlank()) tr("party.u_kogo", "names" to loadingNames) else "")
+                    else -> tr("party.idyot")
                 }
                 Text(stateText + " · " + clock(tick.let { Party.targetMs() }), color = if (s.playing && s.waiting) Color(0xFFF2B84B) else Sm.muted,
                     fontFamily = Onest, fontSize = 13.sp, modifier = Modifier.padding(top = 2.dp, bottom = 12.dp))
@@ -144,24 +145,24 @@ private fun RoomPanel(lib: Library, onLibrary: () -> Unit, onOpen: (PlayTarget) 
                 val path = f.key.substringAfter('|')
                 val target = lib.items.firstOrNull { it.m.id == magnetId }?.let { targetFor(it, path) }
                 if (target == null) {
-                    Text("Этой раздачи нет в вашей медиатеке (или она ещё загружается).", color = Sm.bad, fontFamily = Onest, fontSize = 13.sp,
+                    Text(tr("party.net_v_mediateke"), color = Sm.bad, fontFamily = Onest, fontSize = 13.sp,
                         modifier = Modifier.padding(bottom = 10.dp))
                 }
                 // «Другой фильм» — и когда этого фильма нет: иначе создателю пришлось бы пересоздавать комнату
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (target != null) LampButton("Смотреть вместе") { onOpen(target) }
-                    if (Party.isHost) OutlineButton("Другой фильм") { onLibrary() }
+                    if (target != null) LampButton(tr("party.smotret_vmeste")) { onOpen(target) }
+                    if (Party.isHost) OutlineButton(tr("party.drugoy_film")) { onLibrary() }
                 }
             }
         }
         Panel(Modifier.weight(1f)) {
-            Text("В комнате · ${Party.members.size}", fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 17.sp, color = Sm.text)
+            Text(tr("party.v_komnate", "n" to Party.members.size), fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 17.sp, color = Sm.text)
             Spacer(Modifier.height(8.dp))
             for (m in Party.members) {
                 Row(Modifier.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     ru.suslikovanora.media.desktop.Avatar(m.avatar, m.name, 26.dp, 12.sp)
-                    Text(m.name + (if (m.key == Party.myKey) " (вы)" else "") + (if (Party.isCreator(m)) " · создатель" else "") +
-                        (if (m.buffering) " · загружается" else ""),
+                    Text(m.name + (if (m.key == Party.myKey) tr("party.vy") else "") + (if (Party.isCreator(m)) tr("party.sozdatel") else "") +
+                        (if (m.buffering) tr("party.zagruzhaetsya") else ""),
                         color = Sm.text, fontFamily = Onest, fontSize = 13.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(start = 10.dp))
                 }
@@ -169,6 +170,6 @@ private fun RoomPanel(lib: Library, onLibrary: () -> Unit, onOpen: (PlayTarget) 
         }
     }
     Spacer(Modifier.height(10.dp))
-    Text("Пауза и перемотка у одного — у всех. Небольшое расхождение плеер выравнивает сам, слегка меняя скорость.",
+    Text(tr("party.podskazka_sinhron"),
         color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.clip(RoundedCornerShape(8.dp)))
 }

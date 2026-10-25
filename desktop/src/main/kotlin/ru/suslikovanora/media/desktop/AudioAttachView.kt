@@ -338,7 +338,7 @@ private fun SourceCard(s: Source, lib: Library, onCheck: () -> Unit, onAttach: (
                 Text(tr("audio.zaderzhka_dlya_vseh"), color = Sm.muted, fontFamily = Onest, fontSize = 13.sp)
                 Spacer(Modifier.width(10.dp))
                 Box(Modifier.width(110.dp)) { Field(s.allOffset, { v -> s.allOffset = v.filter { it.isDigit() || it == '-' || it == '+' || it == '−' }.take(7) }, "0") }
-                Text(" мс", color = Sm.muted, fontFamily = Onest, fontSize = 12.sp)
+                Text(tr("common.ms"), color = Sm.muted, fontFamily = Onest, fontSize = 12.sp)
                 Spacer(Modifier.width(10.dp))
                 val v = s.allOffset.trim().replace('−', '-').toLongOrNull()?.takeIf { it in -60_000L..60_000L }
                 OutlineButton(tr("audio.primenit_ko_vsem", "n" to s.rows.size)) { if (v != null) s.rows.forEach { it.offset = v.toString() } }
@@ -376,7 +376,7 @@ private fun PairRow(r: AudioRow, movie: ru.suslikovanora.media.core.LibraryItem?
             OutlineButton("▶") { onPreview() }
             Spacer(Modifier.width(6.dp))
             Box(Modifier.weight(1f)) { Field(r.offset, { v -> r.offset = v.filter { it.isDigit() || it == '-' || it == '+' || it == '−' }.take(7) }, "0") }
-            Text(" мс", color = if (r.offsetMs == null) Sm.bad else Sm.muted, fontFamily = Onest, fontSize = 12.sp)
+            Text(tr("common.ms"), color = if (r.offsetMs == null) Sm.bad else Sm.muted, fontFamily = Onest, fontSize = 12.sp)
         }
     }
     Spacer(Modifier.height(1.dp).fillMaxWidth().background(Sm.line))

@@ -4,6 +4,7 @@ import kotlinx.coroutines.*
 import org.json.JSONObject
 import ru.suslikovanora.media.desktop.PlayerLog
 import ru.suslikovanora.media.desktop.Store
+import ru.suslikovanora.media.desktop.tr
 import java.io.File
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
@@ -151,7 +152,7 @@ object DiscordRpc {
         if (subtitle.isNotBlank()) {
             activity.put("state", subtitle.take(128).padEnd(2))
         } else if (!playing) {
-            activity.put("state", "Пауза")
+            activity.put("state", tr("discord.pauza"))
         }
 
         if (playing && lengthMs > 0L) {
@@ -165,7 +166,7 @@ object DiscordRpc {
         // without them Discord just shows no picture.
         val assets = JSONObject()
         val hoverText = largeText?.takeIf { it.isNotBlank() }
-            ?: if (subtitle.isNotBlank() && subtitle != "Suslik Media" && !subtitle.startsWith("Пауза") && !subtitle.startsWith("Смотрит")) "$subtitle: $title"
+            ?: if (subtitle.isNotBlank() && subtitle != "Suslik Media" && !subtitle.startsWith(tr("discord.pauza")) && !subtitle.startsWith(tr("discord.smotrit"))) "$subtitle: $title"
             else title
         if (!posterUrl.isNullOrBlank()) {
             assets.put("large_image", posterUrl)
@@ -175,7 +176,7 @@ object DiscordRpc {
             assets.put("large_text", "Suslik Media")
         }
         assets.put("small_image", if (playing) "play" else "pause")
-        assets.put("small_text", if (playing) "Воспроизведение" else "Пауза")
+        assets.put("small_text", if (playing) tr("discord.vosproizvedenie") else tr("discord.pauza"))
         activity.put("assets", assets)
         return activity
     }

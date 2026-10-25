@@ -203,6 +203,7 @@ class PlayerActivity : ComponentActivity() {
             if (!p.isPlaying) return // paused: nobody wakes up (restarted by the Playing event)
             warnIfSoftwareDecoding(p) // once per file; the track may not be known yet at the first picture
             checkNoPicture(p)
+            diagnostics.checkProcessorOverload(p)
             checkHeavy()
             // Network trouble is handled by the reconnect logic; the supervisor judges only real playback.
             if (!userPaused && !ended && !networkMonitor.isNetworkLost && !audioSession.isPausedForFocus) statsOf(p)?.let { supervisor.tick(it) }
@@ -1290,8 +1291,7 @@ class PlayerActivity : ComponentActivity() {
         doPause()
         heavyDialog = AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
             .setTitle(tr("player.tyazhelyy_fayl_na_mobilnoy"))
-            .setMessage(tr("player.etot_fayl_f_mbit").format(mbit, gbPerHour) +
-                tr("player.luchshe_dozhdatsya_wi_fi"))
+            .setMessage(tr("player.tyazhelyy_fayl_preduprezhdenie").format(mbit, gbPerHour))
             .setPositiveButton(tr("player.vse_ravno_smotret")) { _, _ -> heavyDialog = null; doPlay() }
             .setNeutralButton(tr("player.ne_sprashivat")) { _, _ -> heavyDialog = null; PlaybackSettings.setHeavyMbit(this, 0); doPlay() }
             .setNegativeButton(tr("player.zakryt")) { _, _ -> heavyDialog = null; leave() }
