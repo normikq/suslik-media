@@ -8,7 +8,10 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.updateTransition
 import androidx.compose.animation.core.animateFloatAsState
+
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -39,6 +42,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -79,6 +83,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerInput
@@ -1290,8 +1297,8 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
 
     androidx.compose.animation.AnimatedVisibility(
         entries.isNotEmpty(),
-        enter = fadeIn(tween(300)) + expandVertically(tween(320, easing = Sm.ease)),
-        exit = fadeOut(tween(200)) + shrinkVertically(tween(260, easing = Sm.ease))
+        enter = fadeIn(tween(300)) + expandVertically(tween(320, easing = Sm.ease), clip = false),
+        exit = fadeOut(tween(200)) + shrinkVertically(tween(260, easing = Sm.ease), clip = false)
     ) {
         val e = entries.firstOrNull { it.item.m.id == chosen } ?: entries.firstOrNull() ?: lastShown ?: return@AnimatedVisibility
         androidx.compose.runtime.SideEffect { lastShown = e }
@@ -1299,14 +1306,55 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
         var hero by remember(e.item.m.id) { mutableStateOf(lib.cachedHero(queries)) }
         LaunchedEffect(e.item.m.id) { if (hero == null) hero = lib.hero(queries) }
 
-        androidx.compose.foundation.layout.BoxWithConstraints(
-            Modifier.padding(top = 6.dp, bottom = 22.dp).fillMaxWidth().height(360.dp).hoverable(bannerSrc)
-                .clip(RoundedCornerShape(20.dp)).background(Color(0xFF0B1226)).border(1.dp, Sm.glassEdge, RoundedCornerShape(20.dp))
-        ) {
-            // The wide picture on the right (a poster stretched to this width would be blurry: without a wide picture the banner stays plain)
-            androidx.compose.animation.Crossfade(hero?.backdrop, animationSpec = tween(350), modifier = Modifier.fillMaxSize()) { img ->
-                if (img != null) Image(img, null, contentScale = ContentScale.Crop, alignment = Alignment.CenterEnd, filterQuality = androidx.compose.ui.graphics.FilterQuality.High, modifier = Modifier.fillMaxSize())
+        // While the window is being dragged the heavy blurred glow is off (it would be recomputed on every step); it fades back 200 ms after the last step
+        var resizing by remember { mutableStateOf(false) }
+        var lastWidth by remember { mutableStateOf(-1) }
+        var resizeStamp by remember { mutableStateOf(0) }
+        LaunchedEffect(resizeStamp) { if (resizeStamp > 0) { kotlinx.coroutines.delay(200); resizing = false } }
+        val glow by animateFloatAsState(if (resizing) 0f else 0.55f, tween(if (resizing) 0 else 300))
+        Box(Modifier.padding(top = 6.dp, bottom = 22.dp).fillMaxWidth().height(360.dp).hoverable(bannerSrc)
+            .onSizeChanged {
+                val diff = if (lastWidth >= 0) kotlin.math.abs(it.width - lastWidth) else 0
+                if (lastWidth >= 0 && diff > 8) { resizing = true; resizeStamp++ }
+                lastWidth = it.width
+            }) {
+        Box(Modifier.fillMaxSize().clip(RoundedCornerShape(20.dp)).background(Color(0xFF0B1226)))
+        // One crossfade for both pictures, so the blurred part and the sharp one change together.
+        // The part of the picture that does not fit the banner is not cut off: it goes on past the banner edges, blurred, onto the page background
+
+
+        // The blurred layer is a layer of its own (blur): the alpha of Crossfade's wrapper does not reach it, so it fades by the same timing itself
+        val fadeT = updateTransition(hero?.backdrop, label = "backdrop")
+        androidx.compose.animation.Crossfade(hero?.backdrop, animationSpec = tween(350), modifier = Modifier.fillMaxSize()) { img ->
+            if (img != null) Box(Modifier.fillMaxSize()) {
+                val own by fadeT.animateFloat(transitionSpec = { tween(350) }, label = "glowFade") { if (it == img) 1f else 0f }
+
+                // the glow is drawn everywhere except the banner itself
+                Box(Modifier.fillMaxSize().drawWithContent {
+                    val hole = androidx.compose.ui.graphics.Path().apply {
+                        addRoundRect(androidx.compose.ui.geometry.RoundRect(0f, 0f, size.width, size.height, androidx.compose.ui.geometry.CornerRadius(20.dp.toPx())))
+                    }
+                    clipPath(hole, androidx.compose.ui.graphics.ClipOp.Difference) { this@drawWithContent.drawContent() }
+                }) {
+                    if (glow > 0f) Image(img, null, contentScale = ContentScale.FillWidth, alignment = Alignment.CenterEnd,
+                        modifier = Modifier.fillMaxWidth().wrapContentHeight(Alignment.CenterVertically, unbounded = true)
+                            .graphicsLayer { alpha = glow * own; compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+                            .drawWithContent { // soft edges: the picture melts into the page instead of ending in a straight line
+                                drawContent()
+                                val clear = Color.Transparent
+                                drawRect(Brush.verticalGradient(0f to clear, 0.3f to Color.Black, 0.7f to Color.Black, 1f to clear), blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
+                                drawRect(Brush.horizontalGradient(0f to clear, 0.12f to Color.Black, 0.88f to Color.Black, 1f to clear), blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
+                            }
+                            .blur(22.dp, androidx.compose.ui.draw.BlurredEdgeTreatment.Unbounded))
+                }
+                // The wide picture on the right (a poster stretched to this width would be blurry: without a wide picture the banner stays plain)
+                Image(img, null, contentScale = ContentScale.Crop, alignment = Alignment.CenterEnd, filterQuality = androidx.compose.ui.graphics.FilterQuality.High,
+                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(20.dp)))
             }
+        }
+        androidx.compose.foundation.layout.BoxWithConstraints(
+            Modifier.fillMaxSize().clip(RoundedCornerShape(20.dp)).border(1.dp, Sm.glassEdge, RoundedCornerShape(20.dp))
+        ) {
             Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to Color(0xFF0B1226), 0.42f to Color(0xF20B1226), 0.78f to Color(0x330B1226), 1f to Color(0x000B1226))))
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.6f to Color.Transparent, 1f to Color(0xAA0B1226))))
 
@@ -1386,6 +1434,7 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
                     }
                 }
             }
+        }
         }
     }
 }
