@@ -128,7 +128,7 @@
         saveLastEpisode(magnet.id, file.path);
       });
     } else file = pl.file;
-    if (file) playФайл(file, label, req);
+    if (file) playФайл(file, label, req, magnet);
   }
 
   function renderHero() {
@@ -266,4 +266,23 @@
   };
   sideNavSync();
   heroRefresh();
+})();
+
+// Кнопки сортировки и «Только готовые» под баннером: ведут за собой прежние скрытые select и флажок, на которых держится отрисовка.
+(function () {
+  "use strict";
+  var sel = document.getElementById("librarySort"), seg = document.getElementById("libSortSeg");
+  var ready = document.getElementById("libraryOnlyReady"), readyBtn = document.getElementById("libReadyBtn");
+  if (!sel || !seg || !ready || !readyBtn) return;
+  function fire(n) { n.dispatchEvent(new Event("change", { bubbles: true })); }
+  seg.addEventListener("click", function (e) {
+    var b = e.target.closest(".lib-pill"); if (!b) return;
+    sel.value = b.dataset.sort; fire(sel);
+    seg.querySelectorAll(".lib-pill").forEach(function (x) { x.classList.toggle("active", x === b); });
+  });
+  readyBtn.addEventListener("click", function () {
+    ready.checked = !ready.checked; fire(ready);
+    readyBtn.classList.toggle("active", ready.checked);
+    readyBtn.setAttribute("aria-pressed", String(ready.checked));
+  });
 })();
