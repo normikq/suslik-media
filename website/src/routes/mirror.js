@@ -1,7 +1,6 @@
 "use strict";
 
 const express = require("express");
-const axios = require("axios");
 const config = require("../config");
 const { apiLimiter, mirrorUrlLimiter, mirrorLimiter } = require("../middleware/rate-limit");
 const { requireLogin } = require("../middleware/auth");
@@ -22,50 +21,6 @@ const { markOpened, markLinkOpened } = require("../services/cleanup");
 const router = express.Router();
 
 const PLAYLIST_MAX_ITEMS = 200;
-
-// Resolve an AllDebrid magnet file's /f/ page into a true download URL.
-// Never return the original account-page URL as if it were a direct link.
-router.post("/api/file/unlock", requireLogin, apiLimiter, async (req, res) => {
-  const raw = typeof req.body?.link === "string" ? req.body.link.trim() : "";
-  const parsed = safeHttpsUrl(raw);
-  if (!parsed || !["alldebrid.com", "www.alldebrid.com"].includes(parsed.hostname.toLowerCase()) || !parsed.pathname.startsWith("/f/")) {
-    return res.status(400).json({ error: "Некорректная ссылка на файл AllDebrid." });
-  }
-  markLinkOpened(parsed.toString()); // фильм открыли: автоочистка его не тронет ещё 10 дней
-  try {
-    const response = await axios.post(
-      `${config.ALLDEBRID_API_BASE}/v4/link/unlock`,
-      new URLSearchParams({ link: parsed.toString() }),
-      {
-        headers: {
-          Authorization: `Bearer ${config.ALLDEBRID_API_KEY}`,
-          "Content-Type": "application/x-www-form-urlencoded"
-        },
-        timeout: 20000,
-        validateStatus: () => true
-      }
-    );
-    if (response.status < 200 || response.status >= 300 || response.data?.status === "error") {
-      return res.status(502).json({ error: response.data?.error?.message || "AllDebrid не смог создать прямую ссылку на скачивание этого файла." });
-    }
-    const result = response.data?.data || {};
-    const direct = typeof result.link === "string" ? safeHttpsUrl(result.link) : null;
-    if (!direct || (direct.hostname.toLowerCase().endsWith("alldebrid.com") && direct.pathname.startsWith("/f/"))) {
-      return res.status(502).json({
-        error: "AllDebrid вернул страницу файла вместо прямой ссылки для скачивания. API не предоставил ссылку для воспроизведения."
-      });
-    }
-    res.json({
-      ok: true,
-      url: direct.toString(),
-      filename: result.filename || "Ссылка для скачивания",
-      filesize: result.filesize || null,
-      host: result.host || null
-    });
-  } catch (err) {
-    res.status(502).json({ error: "Не удалось получить прямую ссылку AllDebrid. Попробуйте ещё раз." });
-  }
-});
 
 router.get("/api/file/mirror-url", requireLogin, mirrorUrlLimiter, (req, res) => {
   const parsed = safeHttpsUrl(typeof req.query.link === "string" ? req.query.link.trim() : "");

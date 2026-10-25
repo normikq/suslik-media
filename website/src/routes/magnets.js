@@ -7,40 +7,12 @@ const axios = require("axios");
 const config = require("../config");
 const { apiLimiter } = require("../middleware/rate-limit");
 const { requireLogin } = require("../middleware/auth");
-const { safeHttpsUrl } = require("../utils/helpers");
-const { alldebridRequest, adUploadMagnet, adUploadTorrent, flattenMagnetFiles } = require("../services/alldebrid");
+const { adUploadMagnet, adUploadTorrent, flattenMagnetFiles } = require("../services/alldebrid");
 const { reserveDownloadSlot, releaseTrackedDownload, canRemove, isLibraryAdmin } = require("../services/downloads");
 const { deleteMagnet } = require("../services/cleanup");
 const { getLibrary, libraryChanged } = require("../services/library");
 
 const router = express.Router();
-
-router.post("/api/unlock", requireLogin, apiLimiter, async (req, res) => {
-  const raw = typeof req.body?.url === "string" ? req.body.url.trim() : "";
-  const url = safeHttpsUrl(raw);
-  if (!url) return res.status(400).json({ error: "Введите корректную ссылку, начинающуюся с https://." });
-
-  // Only submit a URL to the provider; never fetch user-supplied URLs from this server.
-  try {
-    const data = await alldebridRequest("/link/unlock", { link: url.toString() });
-    const result = data.data || {};
-    const streamUrl = typeof result.link === "string" ? result.link : "";
-    if (!safeHttpsUrl(streamUrl)) {
-      return res.status(502).json({ error: "AllDebrid не вернул подходящую HTTPS-ссылку для воспроизведения." });
-    }
-
-    res.json({
-      ok: true,
-      filename: result.filename || "Ссылка для воспроизведения",
-      filesize: result.filesize || null,
-      mimeType: result.type || null,
-      url: streamUrl,
-      host: result.host || null
-    });
-  } catch (err) {
-    res.status(err.status || 502).json({ error: err.message || "Не удалось обработать эту ссылку." });
-  }
-});
 
 // Magnet support: submit a magnet, check its status, then retrieve available files.
 router.post("/api/magnets", requireLogin, apiLimiter, async (req, res) => {

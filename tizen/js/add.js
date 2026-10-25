@@ -37,7 +37,7 @@
       save(list);
       if (r.ready) { live[r.id] = { text: 'Готово — в медиатеке', done: true }; SM.app.libraryChanged(); }
       else follow(r.id);
-      status = r.ready ? 'Готово — в медиатеке' : 'Добавлено, AllDebrid качает…'; ok = true;
+      status = r.ready ? 'Готово — в медиатеке' : 'Добавлено, идёт загрузка…'; ok = true;
     }).catch(function (e) { status = api.describe(e); ok = false; }).then(rerender);
   }
 
@@ -65,7 +65,7 @@
     box.appendChild(h('div', { class: 'add' }, [
       h('div', { class: 'add-main' }, [
         h('h2', { text: 'Добавить раздачу по magnet-ссылке' }),
-        h('p', { class: 'muted', text: 'AllDebrid скачает раздачу, файлы появятся в медиатеке.' }),
+        h('p', { class: 'muted', text: 'Раздача скачается, файлы появятся в медиатеке.' }),
         h('div', { class: 'search-head' }, [input, go]),
         status ? h('p', { class: ok ? 'muted' : 'error', text: status }) : null,
         h('h2', { text: 'Добавлено с телевизора' }),

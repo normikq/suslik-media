@@ -34,7 +34,7 @@ website/
 │   │   ├── rooms.js        /api/rooms — комнаты совместного просмотра и поток событий (SSE)
 │   │   ├── library.js      /api/library
 │   │   ├── favorites.js    /api/favorites
-│   │   ├── magnets.js      /api/magnets, /api/torrents, /api/unlock, файлы и отмена
+│   │   ├── magnets.js      /api/magnets, /api/torrents, файлы и отмена
 │   │   ├── search.js       /api/search, /api/search/add
 │   │   ├── mirror.js       /api/file/mirror-url, /api/file/proxy, /api/playlist
 │   │   ├── updates.js      /api/app/* (обновления, каналы beta/stable, changelog, отчёты)
@@ -129,7 +129,6 @@ website/
 ### 3.3. Добавление медиа
 - `POST /api/magnets` — добавление новой magnet-ссылки в AllDebrid.
 - `POST /api/torrents` — загрузка `.torrent` файла в AllDebrid.
-- `POST /api/unlock` — разблокировка внешней ссылки на файлообменнике через AllDebrid.
 
 ### 3.4. Поиск торрентов
 - `GET /api/search?q=...&cat=...` — мета-поиск по всем подключённым индексаторам и трекерам.
@@ -141,7 +140,6 @@ website/
 - `GET /api/favorites`, `POST /api/favorites` — управление списком избранного.
 
 ### 3.5. Стриминг и Зеркало видео (Video Proxy)
-- `POST /api/file/unlock` — получение прямой ссылки AllDebrid (для режима «Напрямую»).
 - `GET /api/file/mirror-url?link=...&name=...` — генерация защищённой подписанной ссылки зеркала (подпись живёт 12 ч; приложения берут здесь новую, когда старая истекла; свой лимит 300 в минуту):
   `/api/file/proxy/<имя>?link=<ссылка>&exp=<время>&sig=<HMAC-SHA256>`.
 - `GET /api/file/proxy/:name` — эндпоинт зеркала.

@@ -188,7 +188,7 @@ class MainActivity : ComponentActivity() {
                         label = "tabs"
                     ) { t ->
                         when (t) {
-                            Tab.Links -> AddScreen(add, addList, onPlay = { url, title -> handlePlay(url, title) }, onLogout = logout)
+                            Tab.Links -> AddScreen(add, addList, onLogout = logout)
                             Tab.Library -> LibraryScreen(
                                 store = store, onPlay = { playTarget = it },
                                 query = query, onQuery = { query = it }, gridState = gridState, onLogout = logout

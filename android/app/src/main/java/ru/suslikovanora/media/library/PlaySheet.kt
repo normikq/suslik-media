@@ -3,10 +3,7 @@ package ru.suslikovanora.media.library
 import ru.suslikovanora.media.ui.focusRing
 import ru.suslikovanora.media.core.*
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
-import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -68,8 +65,8 @@ data class PlayRequest(
 )
 
 /**
- * Same choice as the website's play sheet: through the server (mirror; for series a playlist with the rest of
- * the season) or the direct AllDebrid link. "Смотреть" opens the app's VLC player.
+ * One way to watch: through our server (for series a playlist with the rest of the season). The direct AllDebrid
+ * link stays on the server (security audit 25.10). "Смотреть" opens the app's player.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -80,9 +77,8 @@ fun PlaySheet(
 ) {
     val context = LocalContext.current
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var sub by remember(target) { mutableStateOf(tr("play.poluchenie_ssylok")) }
+    var sub by remember(target) { mutableStateOf(tr("play.gotovim")) }
     var mirror by remember(target) { mutableStateOf<String?>(null) }
-    var direct by remember(target) { mutableStateOf<String?>(null) }
     var playlist by remember(target) { mutableStateOf<String?>(null) }
     var preparingPlaylist by remember(target) { mutableStateOf(false) }
     var preparingExtras by remember(target) { mutableStateOf(false) }
@@ -101,16 +97,11 @@ fun PlaySheet(
         if (link == null) { sub = tr("play.ssylka_na_fayl_esche"); return@LaunchedEffect }
         val name = target.file.name.ifBlank { target.file.path.substringAfterLast('/') }
         val enc = { v: String -> URLEncoder.encode(v, "UTF-8") }
-        // The mirror does not wait for the direct link. Both used to be awaited together, and the direct one goes to
-        // AllDebrid through the server: on a bad mobile network (12.10) it failed twice and took ~18 s while the mirror
-        // link was there after 5 s — «Получение ссылок…» for all that time. The mirror is the main way (AllDebrid is
-        // blocked in Russia), so it is offered as soon as it comes; the direct link fills in when it is ready.
         coroutineScope {
-            val d = async { runCatching { Api.post("/api/file/unlock", JSONObject().put("link", link)).optString("url").ifBlank { null } } }
             val mr = runCatching { Api.get("/api/file/mirror-url?link=${enc(link)}&name=${enc(name)}").optString("url").ifBlank { null } }
             mirror = mr.getOrNull()
             if (mirror != null) {
-                sub = tr("play.vyberite_istochnik")
+                sub = tr("play.gotovo")
                 // Subtitle files and voice-overs next to the video: the player adds them as extra tracks (signed mirror
                 // links, no login needed). «Смотреть» waits for them so the film does not start without them.
                 preparingExtras = true
@@ -119,7 +110,7 @@ fun PlaySheet(
                 customByPath = custom
                 if (target.subs.isNotEmpty()) {
                     subUrls = mirrorUrls(target.subs, enc)
-                    if (subUrls.isNotEmpty()) sub = tr("play.vyberite_istochnik_subtitrov_i", "size" to subUrls.size)
+                    if (subUrls.isNotEmpty()) sub = tr("play.gotovo_subtitrov", "size" to subUrls.size)
                 }
                 if (target.audio.isNotEmpty()) {
                     audioUrls = mirrorUrls(target.audio, enc)
@@ -140,10 +131,7 @@ fun PlaySheet(
                     preparingPlaylist = false
                 }
             }
-            val dr = d.await()
-            direct = dr.getOrNull()
-            if (mirror == null) sub = if (direct != null) tr("play.vyberite_istochnik")
-                else ((mr.exceptionOrNull() ?: dr.exceptionOrNull())?.let { Api.describe(it) } ?: tr("play.ne_udalos_poluchit_ssylki"))
+            if (mirror == null) sub = mr.exceptionOrNull()?.let { Api.describe(it) } ?: tr("play.ne_udalos_otkryt")
         }
     }
 
@@ -164,42 +152,19 @@ fun PlaySheet(
                     StartOption(tr("play.s_nachala"), tr("play.zanovo"), fromStart, Modifier.weight(1f)) { fromStart = true }
                 }
             }
-            SourceGroup(
-                title = tr("play.cherez_zerkalo"), hint = if (playlist != null) tr("play.cherez_vash_server_dalshe") else tr("play.trafik_idet_cherez_vash"),
-                url = mirror, busy = preparingPlaylist || preparingExtras, busyText = if (preparingPlaylist) tr("play.gotovim_pleylist") else tr("play.gotovim_dorozhki"),
-                onPlay = {
+            val busy = preparingPlaylist || preparingExtras
+            LampButton(
+                when { preparingPlaylist -> tr("play.gotovim_pleylist"); busy -> tr("play.gotovim_dorozhki"); else -> tr("add.smotret") },
+                enabled = mirror != null && !busy, modifier = Modifier.fillMaxWidth()
+            ) {
+                mirror?.let {
                     val keys = if (playlist != null) target.season.filter { f -> f.link != null }.map { f -> watchKey(target.magnetId, f) }
                     else listOf(watchKey(target.magnetId, target.file))
                     onPlay(PlayRequest(it, target.label, playlist, subUrls, keys, audioUrls, fromStart, if (playlist != null) episodeSidesJson(target, customByPath) else null, customJson(customByPath), watchKey(target.magnetId, target.file)))
-                }, onCopy = { copy(context, it) }
-            )
-            Spacer(Modifier.height(10.dp))
-            SourceGroup(
-                title = tr("play.napryamuyu"), hint = tr("play.pryamaya_ssylka_alldebrid"),
-                url = direct, busy = false,
-                onPlay = { onPlay(PlayRequest(it, target.label, null, subUrls, listOf(watchKey(target.magnetId, target.file)), audioUrls, fromStart, customAudio = customJson(customByPath))) },
-                onCopy = { copy(context, it) }
-            )
+                }
+            }
             Spacer(Modifier.height(12.dp))
             OutlineButton(tr("player.zakryt"), modifier = Modifier.fillMaxWidth(), onClick = onDismiss)
-        }
-    }
-}
-
-@Composable
-private fun SourceGroup(title: String, hint: String, url: String?, busy: Boolean, busyText: String = tr("play.gotovim_pleylist"), onPlay: (String) -> Unit, onCopy: (String) -> Unit) {
-    Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Sm.glassFill)
-            .border(1.dp, Sm.glassEdge, RoundedCornerShape(14.dp)).padding(12.dp)
-    ) {
-        Text(title, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp, color = Color.White)
-        Text(hint, fontFamily = Onest, fontSize = 12.5.sp, color = Sm.muted, modifier = Modifier.padding(top = 2.dp, bottom = 10.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            LampButton(
-                if (busy) busyText else tr("add.smotret"), enabled = url != null && !busy,
-                modifier = Modifier.weight(1f)
-            ) { url?.let(onPlay) }
-            OutlineButton(tr("add.kopirovat"), color = if (url != null) Color.White else Sm.muted) { url?.let(onCopy) }
         }
     }
 }
@@ -219,12 +184,6 @@ private fun StartOption(title: String, hint: String, on: Boolean, modifier: Modi
 }
 
 private fun clock(ms: Long): String = ru.suslikovanora.media.core.clockText(ms)
-
-private fun copy(context: Context, text: String) {
-    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-    cm.setPrimaryClip(ClipData.newPlainText(tr("add.ssylka"), text))
-    Toast.makeText(context, tr("add.ssylka_skopirovana"), Toast.LENGTH_SHORT).show()
-}
 
 /** `{"<episode link>": {"subs": [{"link", "name"}], "audio": [...]}}` for the playlist's other episodes; null if none. */
 private fun episodeSidesJson(target: PlayTarget, custom: Map<String, List<CustomTrack>>): String? {

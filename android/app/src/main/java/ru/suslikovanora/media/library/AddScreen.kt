@@ -3,12 +3,10 @@ package ru.suslikovanora.media.library
 import ru.suslikovanora.media.ui.focusRing
 import ru.suslikovanora.media.core.*
 
-import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
-import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
@@ -79,7 +77,7 @@ import ru.suslikovanora.media.ui.Sm
 import ru.suslikovanora.media.ui.Unbounded
 import ru.suslikovanora.media.tr
 
-/** One thing added from this device: a magnet, a .torrent or a file-host link. Kept between app starts. */
+/** One thing added from this device: a magnet or a .torrent. Kept between app starts. */
 class AddEntry(val key: String, title: String, val magnetId: Long, status: String, percent: Int, ready: Boolean, failed: Boolean, val at: Long) {
     var title by mutableStateOf(title)
     var status by mutableStateOf(status)
@@ -91,25 +89,21 @@ class AddEntry(val key: String, title: String, val magnetId: Long, status: Strin
         .put("percent", percent).put("ready", ready).put("failed", failed).put("at", at)
 }
 
-/** A file-host link unlocked through AllDebrid: ready to play. */
-data class UnlockedLink(val name: String, val size: Long, val url: String)
-
 /** A .torrent chosen on the device (read when uploading). */
 data class PickedTorrent(val uri: Uri, val name: String, val size: Long)
 
 /**
- * State of the "Ссылка" tab, owned by the activity: input, chosen files, history with live AllDebrid status.
+ * State of the «Добавить» tab, owned by the activity: input, chosen files, history with live AllDebrid status.
  * History is saved on the device (like the site's «История поиска»); unfinished downloads resume polling on start.
  */
 class AddModel(context: Context, private val scope: CoroutineScope, private val store: LibraryStore) {
     private val app = context.applicationContext
     private val prefs = app.getSharedPreferences("add_history", Context.MODE_PRIVATE)
-    var mode by mutableStateOf(0) // 0 = link / magnet, 1 = torrent file
+    var mode by mutableStateOf(0) // 0 = magnet, 1 = torrent file
     var input by mutableStateOf("")
     var busy by mutableStateOf(false)
     var status by mutableStateOf<String?>(null)
     var statusOk by mutableStateOf(true)
-    var unlocked by mutableStateOf<UnlockedLink?>(null)
     val chosen = mutableStateListOf<PickedTorrent>()
     val history = mutableStateListOf<AddEntry>()
     private val polling = HashMap<Long, Job>()
@@ -137,16 +131,11 @@ class AddModel(context: Context, private val scope: CoroutineScope, private val 
 
     fun submitInput() {
         val v = input.trim()
-        if (v.isEmpty()) { say(tr("add.vstavte_magnet_ssylku_ili"), false); return }
-        unlocked = null
-        when {
-            v.startsWith("magnet:?", ignoreCase = true) -> {
-                val links = v.split(Regex("\\s+")).filter { it.startsWith("magnet:?", true) }
-                input = ""; links.forEach { addMagnet(it) }
-            }
-            v.startsWith("https://", ignoreCase = true) -> unlock(v)
-            else -> say(tr("add.podderzhivayutsya_magnet_i_ssy"), false)
-        }
+        if (v.isEmpty()) { say(tr("add.vstavte_magnet_ssylku"), false); return }
+        // Only magnets: links to file hosts are not opened through the shared AllDebrid account (security audit 25.10).
+        if (!v.startsWith("magnet:?", ignoreCase = true)) { say(tr("add.vstavte_ssylku_kotoraya_nachin"), false); return }
+        val links = v.split(Regex("\\s+")).filter { it.startsWith("magnet:?", true) }
+        input = ""; links.forEach { addMagnet(it) }
     }
 
     private fun magnetName(link: String): String =
@@ -231,17 +220,6 @@ class AddModel(context: Context, private val scope: CoroutineScope, private val 
 
     fun forget(e: AddEntry) { history.remove(e); save() }
     fun clearFinished() { history.removeAll { !it.active }; save() }
-
-    private fun unlock(url: String) {
-        busy = true; say(tr("add.poluchaem_ssylku_cherez_alldeb"), true)
-        scope.launch {
-            try {
-                val r = Api.post("/api/unlock", JSONObject().put("url", url))
-                unlocked = UnlockedLink(r.optString("filename").ifBlank { tr("main.video") }, r.optLong("filesize"), r.optString("url"))
-                say(tr("add.ssylka_gotova"), true); input = ""
-            } catch (ex: Exception) { say(Api.describe(ex), false) } finally { busy = false }
-        }
-    }
 }
 
 private fun displayName(context: Context, uri: Uri): Pair<String, Long> {
@@ -258,7 +236,7 @@ private fun displayName(context: Context, uri: Uri): Pair<String, Long> {
 }
 
 @Composable
-fun AddScreen(m: AddModel, listState: LazyListState, onPlay: (String, String) -> Unit, onLogout: () -> Unit, modifier: Modifier = Modifier) {
+fun AddScreen(m: AddModel, listState: LazyListState, onLogout: () -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         for (u in uris) {
@@ -276,10 +254,10 @@ fun AddScreen(m: AddModel, listState: LazyListState, onPlay: (String, String) ->
         item(key = "panel") {
             Panel(Modifier.animateContentSize(tween(280, easing = Sm.ease))) {
                 Text(tr("add.dobavit_razdachu"), fontFamily = Unbounded, fontWeight = FontWeight.SemiBold, fontSize = 20.sp, color = Color.White)
-                Text(tr("add.magnet_ssylka_na_fayl"),
+                Text(tr("add.magnet_ssylka_ili_fayl"),
                     color = Sm.muted, fontFamily = Onest, fontSize = 14.sp, lineHeight = 19.sp, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    ModeCard("↗", tr("add.ssylka"), tr("add.magnet_ili_https"), m.mode == 0, Modifier.weight(1f)) { m.mode = 0; m.status = null }
+                    ModeCard("↗", tr("add.ssylka"), tr("add.magnet_ssylka"), m.mode == 0, Modifier.weight(1f)) { m.mode = 0; m.status = null }
                     ModeCard("⇧", tr("add.torrent_fayl"), tr("add.fayl_torrent"), m.mode == 1, Modifier.weight(1f)) { m.mode = 1; m.status = null }
                 }
                 Spacer(Modifier.height(14.dp))
@@ -293,7 +271,7 @@ fun AddScreen(m: AddModel, listState: LazyListState, onPlay: (String, String) ->
                     }, label = "mode"
                 ) { mode ->
                     if (mode == 0) Column {
-                        SearchField(m.input, { m.input = it }, tr("add.magnet_xt_ili_https"), onDone = { m.submitInput() })
+                        SearchField(m.input, { m.input = it }, tr("add.magnet_xt"), onDone = { m.submitInput() })
                         Spacer(Modifier.height(10.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             LampButton(if (m.busy) tr("add.vypolnyaetsya") else tr("add.dobavit"), enabled = !m.busy && m.input.isNotBlank(), modifier = Modifier.weight(1f)) { m.submitInput() }
@@ -325,20 +303,6 @@ fun AddScreen(m: AddModel, listState: LazyListState, onPlay: (String, String) ->
                     }
                 }
                 m.status?.let { Text(it, color = if (m.statusOk) Sm.ok else Sm.bad, fontFamily = Onest, fontSize = 13.5.sp, lineHeight = 19.sp, modifier = Modifier.padding(top = 12.dp)) }
-                m.unlocked?.let { u ->
-                    Column(Modifier.padding(top = 12.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Sm.glassFill)
-                        .border(1.dp, Sm.accentEdge, RoundedCornerShape(14.dp)).padding(14.dp)) {
-                        Text(u.name, color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                        if (u.size > 0) Text(formatBytes(u.size), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 2.dp))
-                        Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            LampButton(tr("add.smotret"), modifier = Modifier.weight(1f)) { onPlay(u.url, u.name) }
-                            OutlineButton(tr("add.kopirovat")) {
-                                (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("link", u.url))
-                                Toast.makeText(context, tr("add.ssylka_skopirovana"), Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    }
-                }
             }
         }
         if (m.history.isNotEmpty()) item(key = "historyHead") {

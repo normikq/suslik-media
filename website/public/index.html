@@ -346,12 +346,6 @@ a.sheet-btn,button.sheet-btn{display:flex;flex-direction:column;align-items:cent
 .sheet-btn.disabled{opacity:.45;pointer-events:none}
 button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight:600}
 .play-toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:100001;max-width:min(92vw,420px);padding:12px 16px;border-radius:14px;background:rgba(30,23,50,.8);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,.2);color:#fff;font:600 14px system-ui;text-align:center;pointer-events:none;opacity:0;transition:opacity .2s}
-.sheet-group{display:flex;flex-direction:column;gap:8px;padding:10px;border-radius:16px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1)}
-.sheet-group-title{font:700 15px system-ui;color:#fff;display:flex;flex-direction:column;gap:2px}
-.sheet-group-title small{font:500 12px system-ui;opacity:.65}
-.sheet-row{display:flex;gap:8px}
-.sheet-row .sheet-btn{flex:1 1 0;min-width:0;min-height:50px;padding:8px 6px;font:700 14px system-ui;border-radius:12px;cursor:pointer;flex-direction:row}
-.sheet-row .sheet-btn:first-child{flex:1.25 1 0}
 .play-toast.show{opacity:1}
 .play-toast.error{border-color:rgba(255,120,120,.6)}
 @media(min-width:700px){.play-sheet{align-items:center}.play-sheet-card{border-radius:22px}}
@@ -513,11 +507,6 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
           <section id="historyPanel" class="history-panel"><div class="topline"><h3>История поиска и загрузок</h3><button id="clearHistory" class="secondary" type="button">Очистить</button></div><p class="file-meta">Сохраняется в этом браузере, в том числе после обновления страницы.</p><div id="searchHistory"></div></section>
         </div>
         <div id="magnetPanel" class="panel hidden"><div id="magnetStatus" class="status"></div><div id="magnetФайлы" class="actions"></div></div>
-        <div id="resultPanel" class="panel hidden">
-          <div id="filename" class="result-title"></div><div id="metadata" class="meta"></div>
-          <div class="actions"><button id="copyBtn">Копировать ссылку для воспроизведения</button><a id="openBtn" class="button secondary" href="#" target="_blank" rel="noopener noreferrer">Открыть ссылку</a></div>
-          <p class="foot">Для VLC/PotPlayer скопируйте ссылку и откройте сетевой поток в плеере. Браузер не может напрямую запускать настольные плееры без специального помощника.</p>
-        </div>
       </section>
 
       <section id="searchTab" class="hidden">
@@ -676,7 +665,7 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
         </div>
       </section>
 
-      <div class="foot">Данные API хранятся на сервере. Запросы AllDebrid выполняются сервером. При прямом воспроизведении видеотрафик может идти с вашего устройства к AllDebrid.</div>
+      <div class="foot">Данные API хранятся на сервере. Запросы AllDebrid выполняются сервером. Видео идёт через наш сервер.</div>
     </div>
 
     <div id="libraryModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="library-modal"><div class="modal-head"><div><h2 id="modalTitle">Файлы</h2><p id="modalMeta"></p></div><div class="actions"><button id="closeLibraryModal" class="secondary" type="button">Закрыть</button></div></div><div id="modalФайлы" class="modal-files"></div></div></div>
@@ -905,11 +894,11 @@ $("linkForm").addEventListener("submit", async e=>{
   const value=inputMode==="magnet"?$("url").value.trim():"", btn=inputMode==="torrent"?$("submitTorrentBtn"):$("submitBtn");
   if(inputMode==="torrent"&&!torrentФайл){$("linkStatus").textContent="Сначала выберите файл .torrent.";$("linkStatus").className="status error";return;}
   if(torrentФайл&&torrentФайл.size>1024*1024){$("linkStatus").textContent="Размер файла .torrent не должен превышать 1 МБ.";$("linkStatus").className="status error";return;}
-  if(inputMode==="magnet"&&!value){$("linkStatus").textContent="Введите magnet-ссылку или поддерживаемый URL.";$("linkStatus").className="status error";return;}
+  if(inputMode==="magnet"&&!value){$("linkStatus").textContent="Введите magnet-ссылку.";$("linkStatus").className="status error";return;}
   const historyValue=torrentФайл?`torrentfile:${torrentФайл.name}:${torrentФайл.size}:${torrentФайл.lastModified}`:value;
   btn.disabled=true; btn.textContent="Выполняется…";
   $("linkStatus").textContent="Обработка ссылки…"; $("linkStatus").className="status";
-  $("resultPanel").classList.add("hidden"); $("magnetPanel").classList.add("hidden");
+  $("magnetPanel").classList.add("hidden");
   try {
     if(torrentФайл || value.startsWith("magnet:?")){
       let submitted;
@@ -965,16 +954,12 @@ $("linkForm").addEventListener("submit", async e=>{
             const title=document.createElement("div"); title.textContent=file.name; title.style.cssText="overflow-wrap:anywhere;margin-bottom:8px";
             wrap.append(title);
             if (typeof file.sourceUrl === "string" && /^https:\/\//i.test(file.sourceUrl)) {
-              // Links are requested only when the user asks: one unlock call per click, not one per file up front.
-              const getLinks=document.createElement("button"); getLinks.type="button"; getLinks.className="secondary"; getLinks.textContent="Получить ссылки";
-              getLinks.addEventListener("click",async()=>{
-                getLinks.disabled=true; getLinks.textContent="Получение ссылок…";
-                try{ wrap.append(await fileLinkActions(file.sourceUrl,String(file.name||"").split("/").pop())); getLinks.remove(); }
-                catch(err){ getLinks.disabled=false; getLinks.textContent="Повторить"; $("linkStatus").textContent=err.message; $("linkStatus").className="status error"; }
-              });
-              wrap.append(getLinks);
+              const name=String(file.name||"").split("/").pop();
+              const watch=document.createElement("button"); watch.type="button"; watch.className="secondary"; watch.textContent="▶ Смотреть";
+              watch.addEventListener("click",()=>openPlaySheet({sourceLink:file.sourceUrl,name},name));
+              wrap.append(watch);
             } else {
-              const unavailable=document.createElement("div"); unavailable.className="file-meta"; unavailable.textContent=file.note || "Прямая ссылка на этот файл пока недоступна.";
+              const unavailable=document.createElement("div"); unavailable.className="file-meta"; unavailable.textContent=file.note || "Файл пока недоступен.";
               wrap.append(unavailable);
             }
             list.append(wrap);
@@ -984,39 +969,13 @@ $("linkForm").addEventListener("submit", async e=>{
         }
       }
     } else {
-      const data=await api("/api/unlock",{method:"POST",body:JSON.stringify({url:value})});
-      // Ошибка/unsupported text never reaches history.
-      rememberПоиск(historyValue);
-      updateHistory(historyValue,{title:data.filename || "Ссылка для воспроизведения",status:"Готово",ready:true,percent:100});
-      $("filename").textContent=data.filename || "Ссылка для воспроизведения";
-      $("metadata").textContent=[data.host, data.mimeType, data.filesize ? `${data.filesize} bytes` : ""].filter(Boolean).join(" · ");
-      $("copyBtn").dataset.url=data.url; $("openBtn").href=data.url;
-      $("copyBtn").textContent="Копировать прямую ссылку"; $("openBtn").textContent="Открыть";
-      $("copyBtn").className="secondary split-first"; $("openBtn").className="button secondary split-last";
-      $("openBtn").style.marginLeft="0"; $("openBtn").style.borderLeft="0";
-      $("resultPanel").classList.remove("hidden");
-      let vpsActions=$("resultVpsActions");
-      if (!vpsActions) { vpsActions=document.createElement("div"); vpsActions.id="resultVpsActions"; vpsActions.className="actions"; $("resultPanel").querySelector(".actions").after(vpsActions); }
-      vpsActions.replaceChildren();
-      const parsedInput=(()=>{try{return new URL(value)}catch{return null}})();
-      if (parsedInput && ["alldebrid.com","www.alldebrid.com"].includes(parsedInput.hostname.toLowerCase()) && parsedInput.pathname.startsWith("/f/")) {
-        const vpsUrl=await signedMirror(parsedInput.toString());
-        const group=document.createElement("div"); group.className="split-actions";
-        const copyVps=document.createElement("button"); copyVps.className="secondary split-first"; copyVps.textContent="Копировать ссылку-зеркало";
-        copyVps.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(vpsUrl);$("linkStatus").textContent="Ссылка-зеркало успешно скопирована.";$("linkStatus").className="status success";}catch{$("linkStatus").textContent="Не удалось скопировать ссылку-зеркало.";$("linkStatus").className="status error";}});
-        const openVps=document.createElement("a"); openVps.className="button secondary split-last"; openVps.href=vpsUrl; openVps.target="_blank"; openVps.rel="noopener noreferrer"; openVps.textContent="Открыть";
-        group.append(copyVps,openVps); vpsActions.append(group);
-        const potVps=document.createElement("button"); potVps.className="secondary"; potVps.textContent="▶ PotPlayer · зеркало"; potVps.addEventListener("click",()=>{window.location.href=`potplayer://${vpsUrl}`}); vpsActions.append(potVps);
-      }
-      const potDirect=document.createElement("button"); potDirect.className="secondary"; potDirect.textContent="▶ PotPlayer · напрямую"; potDirect.addEventListener("click",()=>{window.location.href=`potplayer://${data.url}`}); vpsActions.append(potDirect);
-      $("linkStatus").textContent="Ссылка успешно подготовлена."; $("linkStatus").className="status success";
+      throw new Error("Поддерживаются только magnet-ссылки и файлы .torrent.");
     }
   } catch(err) {
     $("linkStatus").textContent=err.message; $("linkStatus").className="status error";
   }
   finally {btn.disabled=false;btn.textContent=inputMode==="torrent"?"Загрузить торрент":"Добавить magnet";}
 });
-$("copyBtn").addEventListener("click", async()=>{try{await navigator.clipboard.writeText($("copyBtn").dataset.url);$("linkStatus").textContent="Ссылка успешно скопирована."; $("linkStatus").className="status success";}catch{$("linkStatus").textContent="Не удалось скопировать ссылку. Нажмите «Открыть ссылку» или скопируйте её из адресной строки."; $("linkStatus").className="status error";}});
 let cachedLibrary = [];
 let libraryDirty = false;
 function setTab(tab) {
@@ -1250,7 +1209,7 @@ async function runSearch(ev) {
     const failed = (data.providers || []).filter(p => !p.ok).length;
     $("searchTools").classList.toggle("hidden", !searchState.items.length);
     if (!searchState.items.length) {
-      st.textContent = failed === (data.providers || []).length ? "Ни один трекер не ответил. Проверьте настройки или зеркала в .env." : "Ничего не найдено. Попробуйте другое название (в т.ч. на английском).";
+      st.textContent = failed === (data.providers || []).length ? "Ни один трекер не ответил. Проверьте настройки трекеров." : "Ничего не найдено. Попробуйте другое название (в т.ч. на английском).";
       st.className = "status error";
     } else {
       st.textContent = `Найдено ${data.total} за ${(data.tookMs / 1000).toFixed(1)} с` + (failed ? ` · не ответили: ${failed}` : "");
@@ -1487,21 +1446,14 @@ function playerHref(url){
   return "potplayer://"+url;
 }
 function playerLabel(){return IS_ANDROID?"▶ Плеер":(IS_IOS?"▶ VLC":"▶ PotPlayer");}
-function sheetGroup(kind,title,hint){
-  return '<div class="sheet-group" data-kind="'+kind+'"><div class="sheet-group-title">'+title+'<small>'+hint+'</small></div><div class="sheet-row">'+
-    '<a class="sheet-btn disabled" data-act="player" rel="noopener noreferrer"></a>'+
-    '<a class="sheet-btn disabled" data-act="browser" target="_blank" rel="noopener noreferrer">🌐 Браузер</a>'+
-    '<button type="button" class="sheet-btn disabled" data-act="copy">Копировать</button></div></div>';
-}
 function ensurePlaySheet(){
   let s=document.getElementById("playSheet");
   if(s) return s;
   s=document.createElement("div");s.id="playSheet";s.className="play-sheet";s.setAttribute("role","dialog");s.setAttribute("aria-modal","true");
+  // One way to watch: through our server. The direct AllDebrid link stays on the server (security audit 25.10).
   s.innerHTML='<div class="play-sheet-card"><div class="play-sheet-title"></div><div class="play-sheet-sub"></div>'+
-    sheetGroup("mirror","Через зеркало","Трафик идёт через ваш сервер")+
-    sheetGroup("direct","Напрямую","Прямая ссылка AllDebrid")+
+    '<a class="sheet-btn disabled" data-act="player" rel="noopener noreferrer">▶ Смотреть</a>'+
     '<button type="button" class="sheet-btn sheet-cancel">Закрыть</button></div>';
-  s.querySelectorAll('[data-act="player"]').forEach(a=>{a.textContent=playerLabel();});
   const close=()=>{playSheetToken++;s.classList.remove("open");document.body.style.overflow="";};
   s.addEventListener("click",e=>{if(e.target===s)close();});
   s.querySelector(".sheet-cancel").addEventListener("click",close);
@@ -1509,38 +1461,29 @@ function ensurePlaySheet(){
     if(a.classList.contains("disabled")||!a.getAttribute("href")){e.preventDefault();return;}
     setTimeout(close,400);
   }));
-  s.querySelectorAll('[data-act="copy"]').forEach(b=>b.addEventListener("click",async()=>{
-    const url=b.dataset.url;if(!url||b.classList.contains("disabled"))return;
-    try{await navigator.clipboard.writeText(url);b.textContent="✓ Готово";setTimeout(()=>{b.textContent="Копировать";},1600);}
-    catch{window.prompt("Скопируйте ссылку:",url);}
-  }));
   document.addEventListener("keydown",e=>{if(e.key==="Escape"&&s.classList.contains("open"))close();});
   document.body.append(s);return s;
 }
-function fillSheetGroup(s,kind,url){
-  const g=s.querySelector('.sheet-group[data-kind="'+kind+'"]');
-  const player=g.querySelector('[data-act="player"]'),browser=g.querySelector('[data-act="browser"]'),copy=g.querySelector('[data-act="copy"]');
-  if(!url){for(const el of [player,browser,copy]){el.classList.add("disabled");el.removeAttribute("href");delete el.dataset.url;}delete player.dataset.mediaUrl;delete player.dataset.playlist;return;}
-  player.href=playerHref(url);player.dataset.mediaUrl=url;delete player.dataset.playlist;browser.href=url;copy.dataset.url=url;
-  for(const el of [player,browser,copy])el.classList.remove("disabled");
+function fillWatch(s,url){
+  const player=s.querySelector('[data-act="player"]');
+  delete player.dataset.playlist;
+  if(!url){player.classList.add("disabled");player.removeAttribute("href");delete player.dataset.mediaUrl;return;}
+  player.href=playerHref(url);player.dataset.mediaUrl=url;player.classList.remove("disabled");
 }
 async function openPlaySheet(file,label,playlistReq){
   const s=ensurePlaySheet(), token=++playSheetToken;
   s.querySelector(".play-sheet-title").textContent=label;
-  const sub=s.querySelector(".play-sheet-sub");sub.textContent="Получение ссылок…";
-  fillSheetGroup(s,"mirror",null);fillSheetGroup(s,"direct",null);
+  const sub=s.querySelector(".play-sheet-sub");sub.textContent="Готовим к просмотру…";
+  fillWatch(s,null);
   s.classList.add("open");document.body.style.overflow="hidden";
   const name=file.name||String(file.path||"video").split("/").pop();
-  const [direct,mirror]=await Promise.allSettled([
-    api("/api/file/unlock",{method:"POST",body:JSON.stringify({link:file.sourceLink})}),
-    api("/api/file/mirror-url?link="+encodeURIComponent(file.sourceLink)+"&name="+encodeURIComponent(name))
-  ]);
+  let mUrl=null,err=null;
+  try{mUrl=await signedMirror(file.sourceLink,name);}catch(e){err=e;}
   if(token!==playSheetToken) return;
-  const mUrl=mirror.status==="fulfilled"?mirror.value.url:null, dUrl=direct.status==="fulfilled"?direct.value.url:null;
-  fillSheetGroup(s,"mirror",mUrl);fillSheetGroup(s,"direct",dUrl);
+  fillWatch(s,mUrl);
   // PotPlayer (desktop) and the Android app: this episode plus every following one to the end of the season.
   if(mUrl&&(IS_DESKTOP||nativeApp())&&playlistReq&&playlistReq.items.length>1){
-    const mp=s.querySelector('.sheet-group[data-kind="mirror"] [data-act="player"]');mp.classList.add("disabled");
+    const mp=s.querySelector('[data-act="player"]');mp.classList.add("disabled");sub.textContent="Готовим плейлист…";
     try{
       const pl=await api("/api/playlist",{method:"POST",body:JSON.stringify({magnetId:playlistReq.magnetId,title:label,items:playlistReq.items})});
       if(token!==playSheetToken) return;
@@ -1548,7 +1491,7 @@ async function openPlaySheet(file,label,playlistReq){
     }catch{}
     if(token===playSheetToken)mp.classList.remove("disabled");
   }
-  sub.textContent=(mUrl||dUrl)?"Выберите источник и способ открытия":((direct.reason||mirror.reason)?.message||"Не удалось получить ссылки");
+  if(token===playSheetToken) sub.textContent=mUrl?"Можно смотреть":(err?.message||"Не удалось открыть фильм");
 }
 function playФайл(file,label,playlistReq){
   if(!file||!file.sourceLink){showToast("Ссылка на файл ещё не готова — нажмите «Обновить» в библиотеке.",true);return;}
@@ -1924,11 +1867,10 @@ async function signedMirror(link,name=""){
   // Players have no session cookie, so the server signs a time-limited mirror URL for this link.
   // No silent fallback to an unsigned URL: it would look fine but return 401 in every external player.
   const r=await api("/api/file/mirror-url?link="+encodeURIComponent(link)+(name?"&name="+encodeURIComponent(name):""));
-  if(!r||!r.url) throw new Error("Сервер не выдал подписанную ссылку-зеркало. Перезапустите сервер с новым server.js.");
+  if(!r||!r.url) throw new Error("Сервер не подготовил фильм к просмотру. Попробуйте ещё раз.");
   return r.url;
 }
 const IS_DESKTOP=!IS_ANDROID&&!IS_IOS;
-function launchPotPlayer(url){window.location.href="potplayer://"+url;}
 // ---- Contract with the Android app -------------------------------------------------------
 // The app announces itself with window.__suslikApp (>=2) and a SuslikNative bridge, and understands one
 // call: nativePlay({url, title, playlist}). The site decides what is playable; the app does not scrape buttons.
@@ -1939,7 +1881,6 @@ function nativePlay(payload){
 }
 function titleForLink(a){
   if(a.closest(".play-sheet")) return (document.querySelector(".play-sheet-title")||{}).textContent||document.title;
-  if(a.id==="openBtn") return ($("filename")||{}).textContent||document.title;
   const row=a.closest(".file-row,.magnet-card,[data-play-title]");
   const t=row&&(row.dataset.playTitle||(row.querySelector(".file-path,.result-title")||{}).textContent);
   return String(t||document.title||"Видео").trim().slice(0,180);
@@ -1948,39 +1889,13 @@ document.addEventListener("click",e=>{
   if(!nativeApp()) return;
   const a=e.target&&e.target.closest?e.target.closest("a"):null;
   if(!a) return;
-  const isPlay=a.matches('[data-act="player"]')||a.id==="openBtn"||a.classList.contains("split-last");
+  const isPlay=a.matches('[data-act="player"]');
   const url=a.dataset.mediaUrl||a.href;
   if(!isPlay||!/^https?:\/\//i.test(url||"")) return;
   e.preventDefault();e.stopImmediatePropagation();
   nativePlay({url,title:titleForLink(a),playlist:a.dataset.playlist||null});
 },true);
 
-// One file: unlock + mirror link on demand (nothing is requested from AllDebrid until the user asks).
-async function fileLinkActions(sourceLink,fileName){
-  const [direct,mirror]=await Promise.allSettled([
-    api("/api/file/unlock",{method:"POST",body:JSON.stringify({link:sourceLink})}),
-    signedMirror(sourceLink,fileName)
-  ]);
-  if(direct.status==="rejected"&&mirror.status==="rejected") throw direct.reason;
-  const directUrl=direct.status==="fulfilled"?direct.value.url:null, mirrorUrl=mirror.status==="fulfilled"?mirror.value:null;
-  const makeSplit=(label,url,kind)=>{
-    const group=document.createElement("div");group.className="split-button";
-    const copy=document.createElement("button");copy.type="button";copy.className="secondary split-first";copy.textContent="Копировать "+label;
-    copy.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(url);copy.textContent="Скопировано";setTimeout(()=>{copy.textContent="Копировать "+label;},1600);}catch{window.prompt("Скопируйте ссылку:",url);}});
-    const open=document.createElement("a");open.className="button secondary split-last";open.href=url;open.target="_blank";open.rel="noopener noreferrer";open.textContent="Открыть";
-    if(kind==="mirror") open.title="Видео передаётся через этот VPS; используется исходящий трафик сервера.";
-    group.append(copy,open);return group;
-  };
-  const actions=document.createElement("div");actions.className="file-link-actions";
-  if(directUrl) actions.append(makeSplit("прямую ссылку",directUrl,"direct"));
-  if(mirrorUrl) actions.append(makeSplit("ссылку-зеркало",mirrorUrl,"mirror"));
-  if(IS_DESKTOP){
-    const pot=(label,url)=>{const b=document.createElement("button");b.type="button";b.className="secondary";b.textContent=label;b.addEventListener("click",()=>launchPotPlayer(url));return b;};
-    if(directUrl) actions.append(pot("▶ PotPlayer · напрямую",directUrl));
-    if(mirrorUrl) actions.append(pot("▶ PotPlayer · зеркало",mirrorUrl));
-  }
-  return actions;
-}
 function openLibraryModal(magnet) {
   $("modalTitle").textContent=magnet.name;
   $("modalMeta").textContent=`${magnet.status} · ID ${magnet.id} · ${formatBytes(magnet.size)} · ${magnet.files.length} file/folder entries`;
@@ -1994,28 +1909,8 @@ function openLibraryModal(magnet) {
     const quickPlay=document.createElement("button");quickPlay.type="button";quickPlay.className="button";
     quickPlay.textContent="▶ Запустить основной фильм (M2TS · "+formatBytes(mainM2ts.size)+")";
     quickPlay.title=String(mainM2ts.path||mainM2ts.name||"");
-    quickPlay.addEventListener("click",async()=>{
-      quickPlay.disabled=true;quickPlay.textContent="Разблокировка M2TS…";
-      try{
-        const name=String(mainM2ts.name||String(mainM2ts.path||"main.m2ts").split("/").pop()||"main.m2ts");
-        // the mirror first: it works without a direct link (AllDebrid is blocked in Russia, its direct link is extra)
-        const mirror=await api("/api/file/mirror-url?link="+encodeURIComponent(mainM2ts.sourceLink)+"&name="+encodeURIComponent(name));
-        const result=await api("/api/file/unlock",{method:"POST",body:JSON.stringify({link:mainM2ts.sourceLink})}).catch(()=>null);
-        const actions=document.createElement("div");actions.className="file-link-actions";
-        const directGroup=document.createElement("div");directGroup.className="split-actions";
-        const directКопировать=document.createElement("button");directКопировать.type="button";directКопировать.className="secondary split-first";directКопировать.textContent="Прямая ссылка";
-        directКопировать.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(result.url);directКопировать.textContent="Скопировано";}catch{window.prompt("Скопируйте прямую ссылку:",result.url);}});
-        const directOpen=document.createElement("a");directOpen.className="button secondary split-last";directOpen.href=result.url;directOpen.target="_blank";directOpen.rel="noopener noreferrer";directOpen.textContent="Открыть";
-        directGroup.append(directКопировать,directOpen);
-        const mirrorGroup=document.createElement("div");mirrorGroup.className="split-actions";
-        const mirrorКопировать=document.createElement("button");mirrorКопировать.type="button";mirrorКопировать.className="secondary split-first";mirrorКопировать.textContent="Ссылка-зеркало";
-        mirrorКопировать.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(mirror.url);mirrorКопировать.textContent="Скопировано";}catch{window.prompt("Скопируйте ссылку-зеркало:",mirror.url);}});
-        const mirrorOpen=document.createElement("a");mirrorOpen.className="button secondary split-last";mirrorOpen.href=mirror.url;mirrorOpen.target="_blank";mirrorOpen.rel="noopener noreferrer";mirrorOpen.textContent="Открыть";
-        mirrorGroup.append(mirrorКопировать,mirrorOpen);
-        if(IS_DESKTOP){const pot=document.createElement("button");pot.type="button";pot.className="button";pot.textContent="▶ PotPlayer · зеркало";pot.addEventListener("click",()=>launchPotPlayer(mirror.url));actions.append(pot);}
-        actions.append(mirrorGroup);if(result&&result.url)actions.append(directGroup);quickWrap.append(actions);quickPlay.remove();
-      }catch(err){quickPlay.disabled=false;quickPlay.textContent="Повторить запуск M2TS";let note=quickWrap.querySelector(".unlock-error");if(!note){note=document.createElement("div");note.className="unlock-error status error";quickWrap.append(note);}note.textContent=err.message;}
-    });
+    const m2tsName=String(mainM2ts.name||String(mainM2ts.path||"main.m2ts").split("/").pop()||"main.m2ts");
+    quickPlay.addEventListener("click",()=>openPlaySheet(mainM2ts,m2tsName));
     quickWrap.append(quickPlay);target.append(quickWrap);
   }
   const query=$("libraryПоиск").value.trim().toLowerCase();
@@ -2049,47 +1944,10 @@ function openLibraryModal(magnet) {
     const path=document.createElement("span");path.textContent=filePath;left.append(icon,path);row.append(left);
     rows.push(row);    const right=document.createElement("div");right.style.cssText="display:flex;align-items:center;gap:8px;flex-wrap:wrap";
     if(file.size){const size=document.createElement("span");size.className="file-meta";size.textContent=formatBytes(file.size);right.append(size);}
-    // Offer a season playlist when a folder contains video files with AllDebrid source links.
-    if(file.type==="folder" && /(?:season|сезон)[ ._-]*0*\d+/i.test(filePath)){
-      const seasonFiles=(magnet.files||[])
-        .filter(f=>f.type!=="folder" && String(f.path||"").startsWith(filePath.replace(/\/+$/,"")+"/") && f.sourceLink && /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts)$/i.test(String(f.path||"")))
-        .sort((a,b)=>String(a.path||a.name||"").localeCompare(String(b.path||b.name||""),"ru",{numeric:true,sensitivity:"base"}));
-      if(seasonFiles.length){
-        const playlistBtn=document.createElement("button");playlistBtn.type="button";playlistBtn.className="button season-playlist-btn";
-        playlistBtn.textContent="▶ Весь сезон · PotPlayer";
-        playlistBtn.title=`Подготовить плейлист из ${seasonFiles.length} серий для PotPlayer`;
-        playlistBtn.addEventListener("click",async()=>{
-          playlistBtn.disabled=true;playlistBtn.textContent="Подготовка 0/"+seasonFiles.length+"…";
-          try{
-            const entries=[];
-            for(let i=0;i<seasonFiles.length;i++){
-              const episode=seasonFiles[i];
-              const name=String(episode.path||episode.name||"Серия "+(i+1)).split("/").pop();
-              const mirror=await api("/api/file/mirror-url?link="+encodeURIComponent(episode.sourceLink)+"&name="+encodeURIComponent(name));
-              entries.push({name,url:mirror.url});
-              playlistBtn.textContent=`Подготовка ${i+1}/${seasonFiles.length}…`;
-            }
-            const safeName=String(filePath.split("/").pop()||"Season").replace(/[\\/:*?"<>|]+/g,"_");
-            const m3u=["#EXTM3U",...entries.flatMap(item=>["#EXTINF:-1,"+item.name,item.url])].join("\r\n")+"\r\n";
-            const blob=new Blob(["\uFEFF"+m3u],{type:"audio/x-mpegurl;charset=utf-8"});
-            const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=safeName+".m3u";document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
-            playlistBtn.textContent="✓ Плейлист готов";
-            let note=row.querySelector(".season-playlist-note");if(!note){note=document.createElement("div");note.className="file-meta season-playlist-note";row.append(note);}
-            note.textContent="Откройте скачанный .m3u в PotPlayer. Ссылки-зеркала действуют ограниченное время.";
-          }catch(err){playlistBtn.disabled=false;playlistBtn.textContent="▶ Повторить подготовку";let note=row.querySelector(".season-playlist-note");if(!note){note=document.createElement("div");note.className="status error season-playlist-note";row.append(note);}note.textContent=err.message||"Не удалось подготовить плейлист.";}
-        });
-        right.append(playlistBtn);
-      }
-    }
     if(file.sourceLink){
-      const unlock=document.createElement("button");unlock.className="secondary";unlock.textContent="Получить ссылки";
-      unlock.addEventListener("click",async()=>{
-        unlock.disabled=true;unlock.textContent="Получение ссылок…";
-        try{
-          const actions=await fileLinkActions(file.sourceLink,String(file.path||file.name||"").split("/").pop());
-          row.append(actions);unlock.remove();
-        }catch(err){unlock.disabled=false;unlock.textContent="Повторить";let note=row.querySelector(".unlock-error");if(!note){note=document.createElement("div");note.className="unlock-error status error";row.append(note);}note.textContent=err.message;}
-      });right.append(unlock);
+      const name=String(file.path||file.name||"").split("/").pop();
+      const watch=document.createElement("button");watch.type="button";watch.className="secondary";watch.textContent="▶ Смотреть";
+      watch.addEventListener("click",()=>openPlaySheet(file,name));right.append(watch);
     }
     row.append(right);
   }

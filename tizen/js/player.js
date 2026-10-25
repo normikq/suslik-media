@@ -936,7 +936,7 @@
     if (!busy) { try { lines.push('Состояние: ' + p.getState()); } catch (e) { /* нет */ } }
     else lines.push('Состояние: ' + (c.seekBusy ? 'перемотка' : 'загрузка'));
     lines.push('Поток: ' + (c.tc ? 'через сервер (ffmpeg), ' + (c.tc.ext ? 'озвучка «' + c.tc.ext.label + '»' : 'звук #' + c.tc.a) +
-      ', открыт с ' + fmt(c.tc.base) : 'файл как есть (зеркало)'));
+      ', открыт с ' + fmt(c.tc.base) : 'файл как есть'));
     lines.push('Запас: ' + (bigBuffer() ? 'большой (8 с / 15 с)' : 'как у телевизора') +
       ' · остановок на загрузку: ' + c.stalls + (c.stalls ? ' (всего ' + Math.round((c.stallMs + (c.stallFrom ? Date.now() - c.stallFrom : 0)) / 1000) + ' с)' : ''));
     if (c.speed) lines.push('Скорость сети: ' + c.speed);

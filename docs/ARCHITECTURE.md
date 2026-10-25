@@ -47,7 +47,7 @@ Suslik Media — частная медиатека поверх **AllDebrid**. A
    **подписанную ссылку зеркала**:
    `https://ваш-сайт/api/file/proxy/<имя>?link=<ссылка AllDebrid>&exp=<срок>&sig=<подпись>`.
    Подпись — HMAC с секретом сервера: без неё зеркало не отдаст файл, и ссылка работает ограниченное время.
-   (Параллельно спрашивается `POST /api/file/unlock` — прямая ссылка AllDebrid, вариант «Напрямую».)
+   Прямую ссылку AllDebrid приложения не спрашивают и не показывают (аудит безопасности 25.10): она есть только у сервера.
 3. **Зеркало на сервере.** Запрос на `/api/file/proxy` приходит в Node: он проверяет подпись и узнаёт у AllDebrid
    настоящий адрес файла. Сами байты видео отдаёт **nginx** (заголовок `X-Accel-Redirect`, настройка в
    `website/NGINX-MIRROR.md`), чтобы Node на одном ядре не гонял через себя гигабайты. Если ссылка AllDebrid устарела,
@@ -111,9 +111,9 @@ suslik-media/
 | Вход | `POST /api/login`, `/api/logout`, `GET /api/session`, `GET /api/auth/discord/start`, `/callback`, `POST /api/auth/device`, `/device/confirm`, `/device/poll` | вход через Discord (роли проверяет бот) или по паролю; ТВ и ПК — по коду с экрана и токену устройства |
 | Вместе | `POST /api/rooms`, `GET /api/rooms/:id`, `/events` (SSE), `POST /api/rooms/:id/join`, `/leave`, `/action` | комнаты совместного просмотра: ведущий управляет, комната ждёт тех, у кого грузится |
 | Медиатека | `GET /api/library`, `/api/magnets/:id`, `/api/magnets/:id/files`, `POST /api/magnets/:id/cancel` (и удалить) | список раздач, файлы раздачи, отмена/удаление |
-| Добавление | `POST /api/magnets` (magnet-ссылка), `/api/torrents` (.torrent), `/api/unlock` | отправить раздачу в AllDebrid |
+| Добавление | `POST /api/magnets` (magnet-ссылка), `/api/torrents` (.torrent) | отправить раздачу в AllDebrid |
 | Поиск | `GET /api/search`, `POST /api/search/add`, `/api/favorites` | поиск по трекерам, добавить найденное, избранное |
-| Ссылки и видео | `POST /api/file/unlock`, `GET /api/file/mirror-url`, `GET /api/file/proxy/...` | прямая ссылка, подписанная ссылка зеркала, само зеркало |
+| Ссылки и видео | `GET /api/file/mirror-url`, `GET /api/file/proxy/...` | подписанная ссылка зеркала, само зеркало (прямую ссылку сервер не отдаёт с 25.10) |
 | Сериалы | `POST /api/playlist`, `GET /api/playlist/:id/:name` | плейлист серий до конца сезона (.m3u) |
 | Оформление | `POST /api/media-metadata`, `GET /api/poster`, `/api/poster/img/...`, `GET /api/tags` | постеры, кадры, логотипы, описания фильмов (с кешем); метки Dolby Vision / HDR / DTS по файлу |
 | Приложения | `GET /api/app/update`, `/api/app/download/...`, `/api/app/beta…`, `POST /api/app/upload`, `/api/app/promote`, `GET /api/app/status`, `GET/POST /api/app/changelog` | раздача обновлений, каналы «релиз/бета», загрузка сборок из CI |
