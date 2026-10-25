@@ -152,6 +152,7 @@ class VlcEngine(private val context: Context) : PlayerEngine {
             MediaPlayer.Event.Paused -> l.paused()
             MediaPlayer.Event.Stopped -> l.stopped()
             MediaPlayer.Event.ESAdded -> l.tracksChanged()
+            MediaPlayer.Event.ESSelected -> if (event.esChangedType == IMedia.Track.Type.Audio) l.audioSelected()
             MediaPlayer.Event.EndReached -> l.endReached()
             MediaPlayer.Event.EncounteredError -> l.failed()
             MediaPlayer.Event.Vout -> l.videoOutput(event.voutCount)
@@ -191,6 +192,16 @@ class VlcEngine(private val context: Context) : PlayerEngine {
     override fun setSubtitleTrack(id: Int) { player?.setSpuTrack(id) }
     override fun addAudioFile(url: String) {
         runCatching { player?.addSlave(IMedia.Slave.Type.Audio, Uri.parse(url), true) }
+    }
+
+    override fun setAudioDelayMs(ms: Long) {
+        val p = player ?: return
+        val before = p.audioDelay / 1000L
+        if (before == ms) return
+        p.setAudioDelay(ms * 1000L)
+        // A big jump leaves silence until the video catches up: the same place again takes the sound with the new delay.
+        if (kotlin.math.abs(ms - before) >= 1000L && p.isSeekable) p.setTime(p.time)
+        ru.suslikovanora.media.AppLog.write("[track] audio delay $ms ms")
     }
 
     // ---- video -------------------------------------------------------------------------------

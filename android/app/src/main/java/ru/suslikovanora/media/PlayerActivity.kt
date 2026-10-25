@@ -203,6 +203,7 @@ class PlayerActivity : ComponentActivity() {
             if (!p.isPlaying) return // paused: nobody wakes up (restarted by the Playing event)
             warnIfSoftwareDecoding(p) // once per file; the track may not be known yet at the first picture
             checkNoPicture(p)
+            diagnostics.checkProcessorOverload(p)
             checkHeavy()
             // Network trouble is handled by the reconnect logic; the supervisor judges only real playback.
             if (!userPaused && !ended && !networkMonitor.isNetworkLost && !audioSession.isPausedForFocus) statsOf(p)?.let { supervisor.tick(it) }
@@ -217,13 +218,14 @@ class PlayerActivity : ComponentActivity() {
     private val supervisor = PlaybackSupervisor(object : PlaybackSupervisor.Actions {
         override fun restartVideo() {
             val p = player ?: return
-            runCatching { p.setVideoEnabled(false); p.setVideoEnabled(true) }
             val t = perceivedPosition()
             // new decoder from the keyframe right here: the picture comes back at once — unless that keyframe is no
             // longer kept on the phone (a heavy film after a long wait): then the seek would fetch it from the mirror
             // again, step by step; the new decoder picks up at the next keyframe instead
             val keyframeKept = !viaReserve() || BurstProxy.keptBehindSec(currentUrl) >= 8.0
-            if (t > 0L && keyframeKept) seekTo(t)
+            val at = t.takeIf { it > 0L && keyframeKept }
+            runCatching { p.restartVideo(at) }
+            if (at != null) seekTo(at)
         }
         override fun fixSound() {
             val p = player ?: return
@@ -293,6 +295,9 @@ class PlayerActivity : ComponentActivity() {
             // from it (the sheet was refreshed right after the tap, before Media3 had opened the file).
             handler.post { if (ui.picker == "audio" || ui.picker == "spu") refreshPicker() }
         }
+        // VLC switches to the voice-over file by itself a moment after it is added: its delay follows the track then
+        // (24.10 journal: «OnWave» played with no delay at all — set while the film's own track was still current).
+        override fun audioSelected() { player?.let { trackSelector.syncAudioDelay(it) } }
         override fun endReached() {
             val owner = player ?: return
             // A dead network connection also shows up as EOF, so only a position near the known
@@ -1286,8 +1291,7 @@ class PlayerActivity : ComponentActivity() {
         doPause()
         heavyDialog = AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
             .setTitle(tr("player.tyazhelyy_fayl_na_mobilnoy"))
-            .setMessage(tr("player.etot_fayl_f_mbit").format(mbit, gbPerHour) +
-                tr("player.luchshe_dozhdatsya_wi_fi"))
+            .setMessage(tr("player.tyazhelyy_fayl_preduprezhdenie").format(mbit, gbPerHour))
             .setPositiveButton(tr("player.vse_ravno_smotret")) { _, _ -> heavyDialog = null; doPlay() }
             .setNeutralButton(tr("player.ne_sprashivat")) { _, _ -> heavyDialog = null; PlaybackSettings.setHeavyMbit(this, 0); doPlay() }
             .setNegativeButton(tr("player.zakryt")) { _, _ -> heavyDialog = null; leave() }

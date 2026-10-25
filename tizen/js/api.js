@@ -75,12 +75,21 @@
     },
     /**
      * Поток для ТВ (сервер, ffmpeg): { stream, durationMs, audio: [{ index, codec, channels, language, ok, url }],
-     * subs, audioDefault }. Первый ответ по файлу ждёт ffprobe (до 40 с), повтора нет — дальше из кеша сервера.
+     * subs, audioDefault, external: [{ kind, link | id, title, offsetMs, url }] }. Первый ответ по файлу ждёт ffprobe
+     * (до 40 с), повтора нет — дальше из кеша сервера. [ext] — озвучки отдельным файлом: { magnetId, links } — ссылки
+     * файлов из раздачи и раздача для озвучек пользователей (по пути видео); сервер склеит видео с выбранной.
      */
-    tvInfo: function (file) {
+    tvInfo: function (file, ext) {
       var name = file.name.trim() ? file.name : SM.model.basename(file.path);
-      return attempt('GET', '/api/file/tv-info?link=' + enc(file.link) + '&name=' + enc(name), null, 45000);
+      var q = '/api/file/tv-info?link=' + enc(file.link) + '&name=' + enc(name);
+      if (ext) {
+        (ext.links || []).forEach(function (l) { q += '&ext=' + enc(l); });
+        if (ext.magnetId) q += '&magnetId=' + enc(ext.magnetId) + '&path=' + enc(file.path);
+      }
+      return attempt('GET', q, null, 45000);
     },
+    /** Озвучки пользователей раздачи (/api/custom-audio): { tracks: [{ id, videoPath, audioPath, title, lang, offsetMs }] }. */
+    customAudio: function (magnetId) { return attempt('GET', '/api/custom-audio/' + enc(magnetId), null, 8000); },
     describe: function (e) { return (e && e.message) || 'Неизвестная ошибка'; }
   };
 })(window);

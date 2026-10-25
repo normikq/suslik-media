@@ -171,7 +171,8 @@ class AddModel(context: Context, private val scope: CoroutineScope, private val 
             history.add(0, e)
             scope.launch {
                 try {
-                    val bytes = withContext(Dispatchers.IO) { context.contentResolver.openInputStream(t.uri)?.use { it.readBytes() } }
+                    // At most 1 MB + 1 byte: a film picked by mistake is not read into memory whole
+                    val bytes = withContext(Dispatchers.IO) { context.contentResolver.openInputStream(t.uri)?.use { readAtMost(it, 1024 * 1024 + 1) } }
                         ?: throw IllegalStateException(tr("add.ne_udalos_prochitat_fayl"))
                     if (bytes.size > 1024 * 1024) throw IllegalStateException(tr("add.fayl_bolshe_mb"))
                     accepted(e, Api.postTorrent(bytes, t.name))
@@ -422,4 +423,16 @@ private fun DropZone(hasFiles: Boolean, onPick: () -> Unit) {
             fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
         if (!hasFiles) Text(tr("add.do_mb_mozhno_neskolko"), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 2.dp))
     }
+}
+
+/** Up to [limit] bytes of [input] (fewer if it ends sooner). */
+private fun readAtMost(input: java.io.InputStream, limit: Int): ByteArray {
+    val out = java.io.ByteArrayOutputStream()
+    val buf = ByteArray(64 * 1024)
+    while (out.size() < limit) {
+        val n = input.read(buf, 0, minOf(buf.size, limit - out.size()))
+        if (n < 0) break
+        out.write(buf, 0, n)
+    }
+    return out.toByteArray()
 }

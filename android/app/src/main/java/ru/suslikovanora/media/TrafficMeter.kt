@@ -71,5 +71,5 @@ object TrafficMeter {
     }
 
     fun format(bytes: Long): String =
-        if (bytes >= 1L shl 30) "%.2f ГБ".format(bytes / 1073741824.0) else "%d МБ".format(bytes shr 20)
+        if (bytes >= 1L shl 30) tr("common.f_gb").format(bytes / 1073741824.0) else tr("common.d_mb").format(bytes shr 20)
 }

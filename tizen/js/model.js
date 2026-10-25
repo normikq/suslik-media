@@ -257,6 +257,52 @@
     return videoCount(m) <= 1 ? audio.slice(0, 8) : [];
   }
 
+  /** Название озвучки из раздачи: хвост имени после имени видео («rus LostFilm»), иначе папка («LostFilm»), иначе файл. */
+  function dubLabel(video, audio) {
+    var vBase = stripExt(basename(video.path)), name = stripExt(basename(audio.path));
+    var rest = name.toLowerCase().indexOf(vBase.toLowerCase()) === 0 ? name.substring(vBase.length) : name;
+    rest = rest.replace(/[._]+/g, ' ').replace(/^[\s-]+|[\s-]+$/g, '');
+    return rest || basename(dirname(audio.path)) || basename(audio.path);
+  }
+
+  /** Озвучка пользователя в меню — как на ПК (CustomTrack.menuName): «HDRezka [rus]», без названия — имя файла. */
+  function customName(t) {
+    var lang = t.lang && t.lang !== 'und' ? t.lang : '', title = str(t.title).trim();
+    if (lang && title.slice(-(lang.length + 3)) === ' [' + lang + ']') title = title.slice(0, -(lang.length + 3)).trim();
+    return (title || basename(str(t.audioPath))) + (lang ? ' [' + lang + ']' : '');
+  }
+
+  /**
+   * Озвучки отдельным файлом для видео: из раздачи ([dubs] — externalAudioFor) и пользователей ([custom] — дорожки
+   * /api/custom-audio этого видео). { key, kind: 'file' | 'custom', label, link | id }; key — для выбора в tv-info.
+   */
+  function externalChoices(video, dubs, custom) {
+    var out = (dubs || []).map(function (f) { return { key: 'f:' + f.link, kind: 'file', link: f.link, label: dubLabel(video, f) }; });
+    (custom || []).forEach(function (t) {
+      if (t.videoPath === video.path && /\.mka$/i.test(str(t.audioPath))) out.push({ key: 'c:' + t.id, kind: 'custom', id: t.id, label: customName(t) });
+    });
+    return out;
+  }
+
+  /** Ответ tv-info: внешняя озвучка, что соответствует выбору [choice] (по ссылке файла или id дорожки). */
+  function externalIn(info, choice) {
+    var list = info && Array.isArray(info.external) ? info.external : [];
+    for (var i = 0; i < list.length; i++) {
+      var x = list[i];
+      if (choice.kind === 'file' ? x.kind === 'file' && x.link === choice.link : x.kind === 'custom' && x.id === choice.id) return x;
+    }
+    return null;
+  }
+
+  /**
+   * Раздача только с озвучками (.mka) — внешняя озвучка к фильму («Добавить» → «Озвучка» на ПК): она играет внутри
+   * фильма, отдельной плиткой в медиатеке не показывается (как Library.isVoiceOverOnly на ПК).
+   */
+  function isVoiceOverOnly(m) {
+    var files = m.files.filter(function (f) { return !f.isFolder; });
+    return files.length > 0 && files.every(function (f) { return /\.mka$/i.test(f.path); });
+  }
+
   function watchKey(magnetId, file) { return magnetId + '|' + file.path; }
 
   function watchInfo(pos, len, at) {
@@ -271,6 +317,7 @@
     parseLibrary: parseLibrary, magnet: magnet, mainVideo: mainVideo, buildPlayable: buildPlayable,
     cleanTitle: cleanTitle, formatBytes: formatBytes, statusRu: statusRu, episodeLabel: episodeLabel,
     prepareItems: prepareItems, subtitlesFor: subtitlesFor, externalAudioFor: externalAudioFor,
+    isVoiceOverOnly: isVoiceOverOnly, dubLabel: dubLabel, customName: customName, externalChoices: externalChoices, externalIn: externalIn,
     watchKey: watchKey, watchInfo: watchInfo, basename: basename
   };
   if (typeof module === 'object' && module.exports) module.exports = SM.model;

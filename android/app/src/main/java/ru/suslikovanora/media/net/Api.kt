@@ -161,11 +161,16 @@ object Api {
         while (true) {
             try {
                 return@withContext attempt(request, limits[n])
-            } catch (e: java.net.SocketTimeoutException) {
+            } catch (e: java.io.IOException) {
+                // No DNS answer means no network at all: another attempt will not help. Any other failure (reset, TLS,
+                // refused) is often a connection that died with the switch Wi-Fi ↔ mobile or a VPN drop: a new one works.
+                if (e is java.net.UnknownHostException) throw e
                 n++
                 if (n >= limits.size || kotlin.coroutines.coroutineContext[kotlinx.coroutines.Job]?.isActive == false) throw e
-                ru.suslikovanora.media.AppLog.write("api: no answer for ${request.url.encodedPath}, retrying on a new connection ($n)")
+                val timeout = e is java.net.SocketTimeoutException
+                ru.suslikovanora.media.AppLog.write("api: ${if (timeout) "no answer" else e.javaClass.simpleName} for ${request.url.encodedPath}, retrying on a new connection ($n)")
                 runCatching { client.connectionPool.evictAll() }
+                if (!timeout) kotlinx.coroutines.delay(1_000) // a failure at once: give the new network a moment
             }
         }
         @Suppress("UNREACHABLE_CODE") error("unreachable")

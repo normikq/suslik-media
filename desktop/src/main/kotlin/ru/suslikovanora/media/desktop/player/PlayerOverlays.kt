@@ -61,6 +61,7 @@ import androidx.compose.ui.unit.sp
 import ru.suslikovanora.media.desktop.ui.Onest
 import ru.suslikovanora.media.desktop.ui.Sm
 import ru.suslikovanora.media.desktop.ui.CloseCrossIcon
+import ru.suslikovanora.media.desktop.tr
 
 enum class ResizeDirection {
     NONE,
@@ -113,13 +114,13 @@ fun PlayerTopBar(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            GlassIconButton(onClick = onClose, tooltip = "В библиотеку (Esc)") {
+            GlassIconButton(onClick = onClose, tooltip = tr("player.v_biblioteku_esc")) {
                 Text("‹", color = Sm.text, fontSize = 24.sp, fontWeight = FontWeight.Bold)
             }
             GlassIconButton(
                 onClick = onToggleOnTop,
                 active = onTop,
-                tooltip = if (onTop) "Открепить окно (T)" else "Поверх всех окон (T)"
+                tooltip = if (onTop) tr("player.otkrepit_okno_t") else tr("player.poverh_vseh_okon_t")
             ) {
                 Text("⧉", color = Sm.text, fontSize = 18.sp)
             }
@@ -167,6 +168,12 @@ fun PlayerBottomBar(
     pickerCurrent: Int,
     pickerLoading: Boolean = false,
     pickerPendingCount: Int = 0,
+    /** «💾 Запомнить задержку для всех» под дорожками звука (внешняя озвучка с сервера); null — кнопки нет. */
+    saveDelayText: String? = null,
+    onSaveDelay: () -> Unit = {},
+    /** «🗑 Удалить озвучку» (тот же автор/админ); null — кнопки нет. */
+    deleteTrackText: String? = null,
+    onDeleteTrack: () -> Unit = {},
     volume: Int,
     userMuted: Boolean,
     fullscreen: Boolean,
@@ -478,7 +485,7 @@ fun PlayerBottomBar(
                         .padding(horizontal = 14.dp, vertical = 7.dp)
                 ) {
                     Text(
-                        infoText.ifBlank { "Собираем данные…" },
+                        infoText.ifBlank { tr("player.sobiraem_dannye") },
                         color = Color.White.copy(alpha = 0.85f),
                         fontFamily = Onest,
                         fontSize = 11.5.sp,
@@ -502,7 +509,7 @@ fun PlayerBottomBar(
                             .padding(horizontal = 16.dp, vertical = 8.dp)
                     ) {
                         Text(
-                            "Пропустить заставку (S)",
+                            tr("player.propustit_zastavku_s"),
                             color = Color.White,
                             fontFamily = Onest,
                             fontWeight = FontWeight.SemiBold,
@@ -541,7 +548,7 @@ fun PlayerBottomBar(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Настройки воспроизведения", color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                            Text(tr("player.nastroyki_vosproizvedeniya"), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                             GlassIconButton(onClick = onClosePicker, size = 26.dp) {
                                 Text("✕", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
                             }
@@ -598,7 +605,7 @@ fun PlayerBottomBar(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                if (kind == "audio") "Аудиодорожки" else "Субтитры",
+                                if (kind == "audio") tr("player.audiodorozhki") else tr("player.subtitry"),
                                 color = Color.White,
                                 fontFamily = Onest,
                                 fontWeight = FontWeight.SemiBold,
@@ -623,7 +630,7 @@ fun PlayerBottomBar(
 
                             if (!hasLoadedTracks && !pickerLoading && skeletonCount == 0) {
                                 Text(
-                                    "Дорожки ещё не определены",
+                                    tr("player.dorozhki_esche_ne_opredeleny"),
                                     color = Color.White.copy(alpha = 0.5f),
                                     fontFamily = Onest,
                                     fontSize = 13.sp,
@@ -641,6 +648,12 @@ fun PlayerBottomBar(
                             repeat(skeletonCount) { i ->
                                 PlayerChipSkeleton(index = pickerItems.size + i)
                             }
+                        }
+                        if (kind == "audio" && saveDelayText != null) {
+                            PlayerChipAnimated(saveDelayText, false, pickerItems.size) { onSaveDelay() }
+                        }
+                        if (kind == "audio" && deleteTrackText != null) {
+                            PlayerChipAnimated(deleteTrackText, false, pickerItems.size + 1) { onDeleteTrack() }
                         }
                     }
                 }
@@ -661,7 +674,7 @@ fun PlayerBottomBar(
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Text(
-                            "Следующая: ${queue[index + 1].title}",
+                            tr("player.sleduyuschaya_p", "p" to queue[index + 1].title),
                             color = Sm.text,
                             fontFamily = Onest,
                             fontSize = 13.sp,
@@ -676,7 +689,7 @@ fun PlayerBottomBar(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                "через $nextIn с",
+                                tr("player.cherez_nextin_s", "nextIn" to nextIn),
                                 color = Color.White,
                                 fontFamily = Onest,
                                 fontWeight = FontWeight.SemiBold,
@@ -690,14 +703,14 @@ fun PlayerBottomBar(
                             GlassIconButton(
                                 onClick = { onPlayEntry(index + 1) },
                                 size = 32.dp,
-                                tooltip = "Включить сейчас"
+                                tooltip = tr("player.vklyuchit_seychas")
                             ) {
                                 NextPlayTriangleIcon(color = Color.White, size = 12.5.dp)
                             }
                             GlassIconButton(
                                 onClick = onCancelNextIn,
                                 size = 32.dp,
-                                tooltip = "Отмена"
+                                tooltip = tr("player.otmena")
                             ) {
                                 CloseCrossIcon(color = Color.White, size = 12.dp)
                             }
@@ -722,7 +735,7 @@ fun PlayerBottomBar(
                 ) {
                     if (live) Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(7.dp).clip(CircleShape).background(Color(0xFFE5484D)))
-                        Text("Вместе", color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.sp,
+                        Text(tr("party.vmeste"), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.sp,
                             modifier = Modifier.padding(start = 6.dp))
                     } else Text(
                         fmt(hoverAt ?: seeking?.toLong() ?: time),
@@ -768,9 +781,9 @@ fun PlayerBottomBar(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    HeroPlayButton(playing = playing, onClick = onTogglePause, enabled = !(playLocked && !playing), lockedTip = "Паузу снимает создатель комнаты")
+                    HeroPlayButton(playing = playing, onClick = onTogglePause, enabled = !(playLocked && !playing), lockedTip = tr("party.pauzu_snimaet_sozdatel"))
                     if (index < queue.size - 1 && !live) {
-                        GlassIconButton(onClick = { onPlayEntry(index + 1) }, tooltip = "Следующая") {
+                        GlassIconButton(onClick = { onPlayEntry(index + 1) }, tooltip = tr("player.sleduyuschaya")) {
                             NextEpisodeIcon(color = Sm.text, size = 16.dp)
                         }
                     }
@@ -783,10 +796,10 @@ fun PlayerBottomBar(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
                     )
-                    GlassIconButton(onClick = onMiniToggle, tooltip = "Обычный режим (O)") {
+                    GlassIconButton(onClick = onMiniToggle, tooltip = tr("player.obychnyy_rezhim_o")) {
                         Text("⤢", color = Sm.text, fontSize = 16.sp)
                     }
-                    GlassIconButton(onClick = onClose, tooltip = "Закрыть (Esc)") {
+                    GlassIconButton(onClick = onClose, tooltip = tr("player.zakryt_esc")) {
                         CloseCrossIcon(color = Sm.text, size = 11.dp)
                     }
                 }
@@ -807,7 +820,7 @@ fun PlayerBottomBar(
                             if (index < queue.size - 1 && !live) {
                                 GlassIconButton(
                                     onClick = { onPlayEntry(index + 1) },
-                                    tooltip = "Следующая: ${queue[index + 1].title}",
+                                    tooltip = tr("player.sleduyuschaya_p", "p" to queue[index + 1].title),
                                     size = btnSize
                                 ) {
                                     NextEpisodeIcon(color = Sm.text, size = if (isCompact) 14.dp else 16.dp)
@@ -827,16 +840,16 @@ fun PlayerBottomBar(
                         if (!live) GlassIconButton(
                             onClick = { onSeekBy(-10_000L) },
                             size = if (isCompact) 38.dp else 42.dp,
-                            tooltip = "Назад на 10 сек (←)"
+                            tooltip = tr("player.nazad_na_sek")
                         ) {
                             Seek10Icon(forward = false, color = Color.White)
                         }
                         HeroPlayButton(playing = playing, onClick = onTogglePause, size = heroSize,
-                            enabled = !(playLocked && !playing), lockedTip = "Паузу снимает создатель комнаты")
+                            enabled = !(playLocked && !playing), lockedTip = tr("party.pauzu_snimaet_sozdatel"))
                         if (!live) GlassIconButton(
                             onClick = { onSeekBy(10_000L) },
                             size = if (isCompact) 38.dp else 42.dp,
-                            tooltip = "Вперед на 10 сек (→)"
+                            tooltip = tr("player.vpered_na_sek")
                         ) {
                             Seek10Icon(forward = true, color = Color.White)
                         }

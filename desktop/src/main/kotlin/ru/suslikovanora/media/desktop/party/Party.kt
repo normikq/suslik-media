@@ -22,6 +22,7 @@ import ru.suslikovanora.media.core.party.PartyRoom
 import ru.suslikovanora.media.core.party.RoomUpdate
 import ru.suslikovanora.media.desktop.Api
 import ru.suslikovanora.media.desktop.PlayerLog
+import ru.suslikovanora.media.desktop.tr
 import java.net.http.HttpResponse
 import java.time.Duration
 
@@ -86,7 +87,7 @@ object Party {
 
     suspend fun join(code: String): String? {
         val id = PartyProtocol.normalizeCode(code)
-        if (id.isEmpty()) return "Введите код комнаты."
+        if (id.isEmpty()) return tr("party.vvedite_kod")
         return try {
             val res = timed { Api.post(PartyProtocol.joinPath(id), PartyProtocol.joinBody(clientId)) }
             PartyProtocol.memberIdOf(res)?.let { myUserId = it }
@@ -173,7 +174,7 @@ object Party {
     }
 
     private fun roomOf(res: JSONObject): RoomUpdate =
-        PartyProtocol.roomOf(res)?.takeIf { it.id != null } ?: throw java.io.IOException("Сервер не прислал комнату.")
+        PartyProtocol.roomOf(res)?.takeIf { it.id != null } ?: throw java.io.IOException(tr("party.server_ne_prislal_komnatu"))
 
     private suspend fun enter(update: RoomUpdate) {
         stopStream()
@@ -201,11 +202,11 @@ object Party {
                         .timeout(Duration.ofHours(12)).header("Accept", "text/event-stream").GET().build()
                     val res = withContext(Dispatchers.IO) { Api.client.send(req, HttpResponse.BodyHandlers.ofLines()) }
                     if (!isActive || roomId != id) { runCatching { res.body().close() }; break }
-                    if (res.statusCode() == 404) { PlayerLog.write("[party] room $id is gone"); leave(); notice = "Комната закрыта."; return@launch }
+                    if (res.statusCode() == 404) { PlayerLog.write("[party] room $id is gone"); leave(); notice = tr("party.komnata_zakryta"); return@launch }
                     // Вход больше не действует (вышли, доступ отозван): повторять бессмысленно
                     if (res.statusCode() == 401 || res.statusCode() == 403) {
                         PlayerLog.write("[party] stream: HTTP ${res.statusCode()}, leaving the room")
-                        leave(); notice = "Вы вышли из комнаты: вход больше не действует. Войдите снова."; return@launch
+                        leave(); notice = tr("party.vhod_bolshe_ne_deystvuet"); return@launch
                     }
                     if (res.statusCode() !in 200..299) throw java.io.IOException("HTTP ${res.statusCode()}")
                     connected = true; failures = 0

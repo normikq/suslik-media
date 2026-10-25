@@ -82,6 +82,10 @@ object PlaybackSettings {
     /** The beta channel is really in use (chosen and a code saved); otherwise — the release channel. */
     fun betaChannel() = sentBetaCode() != null
 
+    /** «Озвучки пользователей»: false — плеер не подмешивает дорожки, привязанные через «Добавить» → «Озвучка». */
+    fun customAudioOn() = store.get("custom_audio_off") != "1"
+    fun setCustomAudioOn(on: Boolean) = store.put("custom_audio_off", if (on) null else "1")
+
     /** The gear in the header opens the sheet (shown by Main over the library). */
     var open by mutableStateOf(false)
 }
@@ -115,11 +119,7 @@ fun SettingsSheet(onClose: () -> Unit) {
             Text(tr("settings.primenyayutsya_pri_sleduyusche"), color = Sm.muted, fontFamily = Onest, fontSize = 13.sp,
                 modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
             Column(Modifier.weight(1f, fill = false).heightIn(max = 620.dp).verticalScroll(rememberScrollState())) {
-                Section(tr("settings.zapas_filma_na_diske"),
-                    tr("settings.film_skachivaetsya_ryvkami_vpe") +
-                        tr("settings.preryvayut_prosmotr_vneshnyaya") +
-                        tr("settings.zapasa_mgnovennaya_a_wi") +
-                        tr("settings.tem_bolshe_nuzhen_zapas"))
+                Section(tr("settings.zapas_filma_na_diske"), tr("settings.zapas_filma_opisanie"))
                 PlaybackSettings.burstPresets.forEach { p ->
                     PresetRow(p, p.value == burst) { burst = p.value; PlaybackSettings.setBurstMb(p.value) }
                 }
@@ -132,6 +132,7 @@ fun SettingsSheet(onClose: () -> Unit) {
                 MotionSection()
                 EngineSection()
                 DiscordSection()
+                CustomAudioSection()
                 StorageSection()
                 if (Diag.on) DiagSection() else ChannelSection()
             }
@@ -185,8 +186,7 @@ private fun ChannelSection() {
         PlaybackSettings.setBetaOn(b)
         if (!b) checkUpdates() else if (code.isBlank()) state = tr("settings.vvedite_kod_testirovschika_i") else saveCode()
     }
-    Section(tr("settings.kanal_obnovleniy"), tr("settings.reliz_proverennye_versii_dlya") +
-        tr("settings.dlya_proverki_nuzhen_kod"), top = 18.dp)
+    Section(tr("settings.kanal_obnovleniy"), tr("settings.kanal_obnovleniy_opisanie"), top = 18.dp)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         ChannelOption(tr("settings.reliz"), !beta, Modifier.weight(1f)) { pick(false) }
         ChannelOption(tr("settings.beta"), beta, Modifier.weight(1f)) { pick(true) }
@@ -385,16 +385,27 @@ private fun EngineOption(
 @Composable
 private fun DiscordSection() {
     var enabled by remember { mutableStateOf(ru.suslikovanora.media.desktop.discord.DiscordRpc.isEnabled) }
-    Section("Discord Rich Presence", "Показывать статус воспроизведения и фильм в профиле Discord.", top = 18.dp)
+    Section(tr("settings.discord_rpc"), tr("settings.discord_rpc_opisanie"), top = 18.dp)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        ChannelOption("Включено", enabled, Modifier.weight(1f)) {
+        ChannelOption(tr("settings.vklyucheno"), enabled, Modifier.weight(1f)) {
             enabled = true
             ru.suslikovanora.media.desktop.discord.DiscordRpc.setEnabled(true)
         }
-        ChannelOption("Выключено", !enabled, Modifier.weight(1f)) {
+        ChannelOption(tr("settings.vyklyucheno"), !enabled, Modifier.weight(1f)) {
             enabled = false
             ru.suslikovanora.media.desktop.discord.DiscordRpc.setEnabled(false)
         }
+    }
+}
+
+/** «Озвучки пользователей»: показывать в плеере дорожки, которые добавили через «Добавить» → «Озвучка», или скрыть. */
+@Composable
+private fun CustomAudioSection() {
+    var on by remember { mutableStateOf(PlaybackSettings.customAudioOn()) }
+    Section(tr("settings.ozvuchki_polzovateley"), tr("settings.ozvuchki_polzovateley_tekst"), top = 18.dp)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ChannelOption(tr("settings.pokazyvat"), on, Modifier.weight(1f)) { on = true; PlaybackSettings.setCustomAudioOn(true) }
+        ChannelOption(tr("settings.skryt"), !on, Modifier.weight(1f)) { on = false; PlaybackSettings.setCustomAudioOn(false) }
     }
 }
 
@@ -415,8 +426,7 @@ private fun StorageSection() {
     var busy by remember { mutableStateOf(false) }
     var state by remember { mutableStateOf("") }
     LaunchedEffect(Unit) { sizes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { Storage.sizes() } }
-    Section(tr("settings.pamyat"), tr("settings.kesh_mozhno_ochistit_vse") +
-        tr("settings.dannye_filmov_kotoryh_bolshe"), top = 18.dp)
+    Section(tr("settings.pamyat"), tr("settings.pamyat_opisanie"), top = 18.dp)
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         val s = sizes
         Text(if (s == null) tr("settings.schitaem") else tr("settings.zapas_filmov_p_postery", "reserve" to formatBytes(s.reserve), "posters" to formatBytes(s.posters), "other" to formatBytes(s.other)),

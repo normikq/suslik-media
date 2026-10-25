@@ -16,7 +16,7 @@
   ];
   var tabs = SM.tabs = SM.tabs || {};
 
-  var state = { items: [], loadedAt: 0, tab: 'home', focusKey: null, user: null };
+  var state = { items: [], loadedAt: 0, tab: 'home', focusKey: null, user: null, pages: {} };
 
   // Экран уходит: отписки (комната, таймеры вкладок)
   var leaving = [];
@@ -151,7 +151,8 @@
     if (!state.loadedAt) show(ui.spinner('Загружаем медиатеку…'));
     loading = api.get('/api/library').then(function (json) {
       loading = null;
-      state.items = model.prepareItems(model.parseLibrary(json));
+      // Раздачи только с озвучками (.mka) играют внутри фильма — плиткой их не показываем
+      state.items = model.prepareItems(model.parseLibrary(json).filter(function (m) { return !model.isVoiceOverOnly(m); }));
       state.loadedAt = Date.now();
       return state.items;
     }, function (e) {
@@ -206,7 +207,7 @@
     l.forEach(function (f) { try { f(); } catch (e) { /* ничего */ } });
     contentEl.innerHTML = '';
     if (id === 'home') renderHome(contentEl);
-    else if (id === 'mine') renderGrid(contentEl, state.items.filter(function (it) { return it.m.mine; }), 'В «Моих» пока ничего нет. Откройте раздачу и нажмите «В Мои».');
+    else if (id === 'mine') renderGrid(contentEl, state.items.filter(function (it) { return it.m.mine; }), 'В «Моих» пока ничего нет. Откройте раздачу и нажмите «В Мои».', 'mine');
     else if (id === 'settings') renderSettings(contentEl);
     else if (tabs[id]) tabs[id].render(contentEl);
   }
@@ -243,11 +244,48 @@
       box.appendChild(h('div', { class: 'strip' }, cont.map(continueCard)));
       box.appendChild(h('h2', { class: 'section', text: 'Все раздачи' }));
     }
-    renderGrid(box, state.items, 'Медиатека пуста. Найдите фильм во вкладке «Поиск».');
+    renderGrid(box, state.items, 'Медиатека пуста. Найдите фильм во вкладке «Поиск».', 'home');
   }
 
-  function renderGrid(box, list, empty) {
-    box.appendChild(list.length ? h('div', { class: 'grid' }, sorted(list).map(tile)) : h('p', { class: 'muted empty', text: empty }));
+  /** Страница — 3 ряда постеров (слабому ТВ хватает памяти и времени); сколько их в ряду, столько и ставится. Остальные — на следующих страницах. */
+  var PAGE_ROWS = 3;
+  var TILE_STEP = 276; // плитка 248 + отступ 28 (css/app.css)
+  function pageSize(box) { return Math.max(1, Math.floor((box.clientWidth || 1620) / TILE_STEP)) * PAGE_ROWS; }
+
+  function renderGrid(box, list, empty, key) {
+    if (!list.length) { box.appendChild(h('p', { class: 'muted empty', text: empty })); return; }
+    var size = pageSize(box);
+    var all = sorted(list), pages = Math.ceil(all.length / size);
+    var page = Math.min(Math.max(0, state.pages[key] || 0), pages - 1);
+    box.appendChild(h('div', { class: 'grid' }, all.slice(page * size, (page + 1) * size).map(tile)));
+    if (pages > 1) box.appendChild(pager(key, page, pages));
+  }
+
+  /** «‹ 1 2 3 … 9 ›» под сеткой: пультом влево/вправо, OK открывает страницу. */
+  function pager(key, page, pages) {
+    var bar = h('div', { class: 'pager' });
+    function btn(label, n, active, off) {
+      if (off) return h('span', { class: 'pager-btn off', text: label });
+      return h('div', { class: 'f pager-btn' + (active ? ' active' : ''), tabindex: '-1', 'data-key': 'pg:' + label, text: label, onclick: function () {
+        if (active) return;
+        state.pages[key] = n;
+        renderTab(state.tab);
+        var again = contentEl.querySelector('[data-key="pg:' + label + '"]') || contentEl.querySelector('.pager .f');
+        nav.focus(again);
+      } });
+    }
+    bar.appendChild(btn('‹', page - 1, false, page === 0));
+    var gap = false;
+    for (var n = 0; n < pages; n++) {
+      if (!(n === 0 || n === pages - 1 || Math.abs(n - page) <= 2)) {
+        if (!gap) { bar.appendChild(h('span', { class: 'pager-gap', text: '…' })); gap = true; }
+        continue;
+      }
+      gap = false;
+      bar.appendChild(btn(String(n + 1), n, n === page, false));
+    }
+    bar.appendChild(btn('›', page + 1, false, page === pages - 1));
+    return bar;
   }
 
   /** Серии и фильмы раздачи по порядку: { label, file, season }. */

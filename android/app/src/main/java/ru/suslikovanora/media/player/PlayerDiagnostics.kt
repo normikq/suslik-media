@@ -39,6 +39,11 @@ class PlayerDiagnostics(
     }
 
     private val softwareVideo = HashSet<String>() // files played without hardware decoding
+    private val cpuDecoded = HashSet<String>() // files the processor decodes (no hardware decoder): candidates for the "too slow" notice
+    private var overloadWarned = ""
+    private var overloadPrev: EngineStats? = null
+    private var overloadAt = 0L
+    private var overloadBad = 0
     private var decodeCheckedUrl = ""
     private var lastOpenAtTime = 0L
 
@@ -141,23 +146,59 @@ class PlayerDiagnostics(
         callback.onReopenWithoutHardwareDecoder(callback.getPerceivedPosition())
     }
 
+    /**
+     * A file the processor decodes (VC-1, AV1 in VLC, no hardware decoder) on a weak chip: the picture falls behind
+     * while the sound goes on (25.10 journal, Hisense TV, VC-1 1080p: 4–15 of 24 pictures a second, one core at 100%).
+     * Over 5 s windows: fewer than 70% of the expected pictures shown (or many lost) twice in a row -> one notice per file.
+     */
+    fun checkProcessorOverload(p: PlayerEngine) {
+        val url = callback.getCurrentUrl()
+        if (p.kind != EngineKind.VLC || url !in cpuDecoded || overloadWarned == url) return
+        val st = p.stats() ?: return
+        val vt = p.videoTrack ?: return
+        val fps = if (vt.frameRateNum > 0 && vt.frameRateDen > 0) vt.frameRateNum.toDouble() / vt.frameRateDen else 24.0
+        val now = SystemClock.elapsedRealtime()
+        val q = overloadPrev
+        val span = now - overloadAt
+        overloadPrev = st; overloadAt = now
+        if (q == null || span < 4_000L || st.displayedPictures < q.displayedPictures) { overloadBad = 0; return }
+        val shown = st.displayedPictures - q.displayedPictures
+        val lost = (st.lostPictures - q.lostPictures).coerceAtLeast(0)
+        val wanted = fps * span / 1000.0
+        if (shown < wanted * 0.7 || lost > wanted * 0.3) overloadBad++ else overloadBad = 0
+        if (overloadBad < 2) return
+        overloadWarned = url
+        AppLog.write("video: the processor cannot keep up (shown $shown of ${wanted.toInt()} in ${span / 1000} s, lost $lost)")
+        Toast.makeText(context, tr("player.processor_ne_tyanet", "w" to vt.width, "h" to vt.height), Toast.LENGTH_LONG).show()
+    }
+
     fun warnIfSoftwareDecoding(p: PlayerEngine) {
         val currentUrl = callback.getCurrentUrl()
         if (decodeCheckedUrl == currentUrl) return
         val t = p.videoTrack ?: return
         decodeCheckedUrl = currentUrl
+        val codec = t.codec?.lowercase(Locale.ROOT)?.trim()
         if (p.kind == EngineKind.MEDIA3) {
-            // Media3 plays only what a decoder takes (the decoder's name is in the journal): VC-1 is tried on the phone's
-            // decoder too, and checkNoPicture sends the file to VLC if it shows nothing. AV1 is hardware here.
+            // Media3 plays only what a decoder takes (the decoder's name is in the journal). AV1 is hardware here.
+            // VC-1: Samsung's c2.sec.vc1.decoder takes it and shows it with black flashes (23.10 journal, «Corpse Bride»
+            // BDRemux: every picture counted as shown, none lost — the black ones come from the decoder itself). Media3
+            // has no decoder of its own for it: the file goes to VLC, straight to VLC's own decoder.
+            if (codec != null && VC1.any { codec.contains(it) } && currentUrl !in softwareVideo) {
+                softwareVideo += currentUrl
+                cpuDecoded += currentUrl
+                AppLog.write("video: ${t.codec} ${t.width}x${t.height} — the phone's VC-1 decoder flashes black, the file goes to VLC's own decoder")
+                callback.onReopenWithoutHardwareDecoder(callback.getPerceivedPosition())
+                return
+            }
             AppLog.write("video: ${t.codec} ${t.width}x${t.height}")
             return
         }
-        val codec = t.codec?.lowercase(Locale.ROOT)?.trim()
         // VC-1 (old Blu-rays): the phone's own decoder takes it but gives no pictures — sound over a black screen
         // (12.10, Samsung c2.sec.vc1.decoder: «Unsupported mime video/wvc1», dequeueOutputBuffer failed). VLC's own
         // decoder plays it fine: open this file once more without hardware decoding, at the same moment.
         if (codec != null && VC1.any { codec.contains(it) } && currentUrl !in softwareVideo) {
             softwareVideo += currentUrl
+            cpuDecoded += currentUrl
             AppLog.write("video: $codec ${t.width}x${t.height} — the hardware decoder gives no picture for VC-1, reopening with VLC's own decoder")
             callback.onReopenWithoutHardwareDecoder(callback.getPerceivedPosition())
             return
@@ -166,6 +207,7 @@ class PlayerDiagnostics(
         // libVLC 3.6.0's own MediaCodec module has no AV1 at all (no "video/av01" in libvlc.so): it always goes to software
         // dav1d, even where the phone has an AV1 hardware decoder.
         if (codec != null && (codec.contains("av1") || codec.contains("av01"))) {
+            cpuDecoded += currentUrl
             AppLog.write("video: ${t.codec} ${t.width}x${t.height}, VLC has no hardware AV1 decoder (processor will decode)")
             Toast.makeText(context, tr("player.av1_processorom", "w" to t.width, "h" to t.height), Toast.LENGTH_LONG).show()
             return
@@ -188,8 +230,8 @@ class PlayerDiagnostics(
             }
         }.getOrDefault(true)
         AppLog.write("video: ${t.codec} ${t.width}x${t.height}, hardware decoder ${if (hw) "available" else "NOT available (processor will decode)"}")
-        if (!hw) Toast.makeText(context, "Телефон не умеет аппаратно декодировать этот файл (${t.width}×${t.height}) — " +
-            "он воспроизводится процессором и заметно сильнее расходует батарею.", Toast.LENGTH_LONG).show()
+        if (!hw) cpuDecoded += currentUrl
+        if (!hw) Toast.makeText(context, tr("player.processorom_decodirovanie", "w" to t.width, "h" to t.height), Toast.LENGTH_LONG).show()
     }
 
     /**

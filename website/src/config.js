@@ -36,7 +36,7 @@ const TV_STREAM_MAX = Math.max(1, Number(process.env.TV_STREAM_MAX || 2));
 // Контейнер потока: ts (MPEG-TS; AVPlay на UE40NU7100 MKV из трубы не открыл — «unknown error», 21.10) или mkv
 const TV_STREAM_FORMAT = process.env.TV_STREAM_FORMAT === "mkv" ? "mkv" : "ts";
 const APP_DOWNLOAD_RATE_LIMIT = "5242880";
-const SERVER_REV = "2026-10-20 discord-1";
+const SERVER_REV = "2026-10-23 tv-dubs";
 const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const SITE_PREFIX = (process.env.SITE_PREFIX || "").replace(/\/+$/, "");
 
@@ -76,8 +76,10 @@ const MEDIA_CACHE_FILE = path.join(DATA_DIR, "media-metadata-cache.json");
 const USERS_FILE = path.join(DATA_DIR, "users.json");
 const DEVICES_FILE = path.join(DATA_DIR, "devices.json");
 const SHELF_FILE = path.join(DATA_DIR, "shelf.json");
+const TAGS_FILE = path.join(DATA_DIR, "media-tags.json"); // Dolby Vision / HDR / DTS по ffprobe, до удаления раздачи (services/mediatags.js)
 const USAGE_FILE = path.join(DATA_DIR, "usage.json"); // когда раздачу последний раз открывали (services/cleanup.js)
 const SYNC_FILE = path.join(DATA_DIR, "sync.json"); // прогресс и дорожки пользователей Discord (services/sync.js)
+const AUDIO_TRACKS_FILE = path.join(DATA_DIR, "audio-tracks.json"); // внешние озвучки, привязанные к фильмам (services/custom-audio.js)
 // (Комнаты совместного просмотра живут только в памяти: после перезапуска приложения входят заново)
 
 if (!process.env.SESSION_SECRET) {
@@ -132,7 +134,9 @@ module.exports = {
   DEVICES_FILE,
   SHELF_FILE,
   USAGE_FILE,
+  TAGS_FILE,
   SYNC_FILE,
+  AUDIO_TRACKS_FILE,
   SYNC_IDLE_DAYS,
   AUTO_CLEAN,
   LIBRARY_IDLE_DAYS,

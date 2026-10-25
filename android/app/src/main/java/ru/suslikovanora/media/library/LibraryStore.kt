@@ -60,10 +60,18 @@ class LibraryStore(context: Context) {
     var items by mutableStateOf<List<LibraryItem>>(emptyList())
         private set
 
-    private suspend fun publish(list: List<Magnet>) {
+    private suspend fun publish(all: List<Magnet>) {
+        guessedTags.clear()
+        val list = all.filterNot { isVoiceOverOnly(it) }
         val prepared = withContext(Dispatchers.Default) { prepareItems(list) }
         magnets = list
         items = prepared
+    }
+
+    // A torrent of only .mka is an uploaded voice-over (/api/custom-audio): it plays inside its film, not as a tile (as on the PC).
+    private fun isVoiceOverOnly(m: Magnet): Boolean {
+        val files = m.files.filter { !it.isFolder }
+        return files.isNotEmpty() && files.all { ru.suslikovanora.media.core.audio.CustomAudio.isSupported(it.path) }
     }
     var loading by mutableStateOf(false)
         private set
@@ -98,7 +106,7 @@ class LibraryStore(context: Context) {
                 }
             }
             null
-        } catch (e: Exception) { magnets = beforeM; items = beforeI; Api.describe(e) }
+        } catch (e: CancellationException) { throw e } catch (e: Exception) { magnets = beforeM; items = beforeI; Api.describe(e) }
     }
 
     /** «Мои фильмы» on/off: only this user's list; the torrent stays in the shared library. */
@@ -241,6 +249,8 @@ class LibraryStore(context: Context) {
             }
         }
         null
+    } catch (e: CancellationException) {
+        throw e
     } catch (e: Exception) {
         Api.describe(e)
     }
@@ -275,6 +285,7 @@ class LibraryStore(context: Context) {
     }
 
     /** Once per start: pictures no tile showed for 7 days leave the disk cache (downloaded again when needed). */
+    @OptIn(coil.annotation.ExperimentalCoilApi::class)
     private suspend fun prunePosters() = withContext(Dispatchers.IO) {
         if (postersPruned) return@withContext
         postersPruned = true
@@ -327,6 +338,51 @@ class LibraryStore(context: Context) {
         return url
     }
 
+    // ---- the TV banner «Продолжить просмотр»: wide picture, title logo, description, year, rating (from /api/poster) ----
+    /** Urls are absolute (Coil loads them with the API's HTTP client). */
+    class HeroInfo(val backdrop: String?, val logo: String?, val overview: String?, val year: String?, val rating: Double?)
+    private val heroes = java.util.concurrent.ConcurrentHashMap<String, HeroInfo>()
+
+    fun cachedHero(queries: List<String>): HeroInfo? = queries.firstNotNullOfOrNull { heroes[it.lowercase()] }
+
+    /** Null while the server cannot say (offline, an old server without these fields): the banner then stays plain. */
+    suspend fun hero(queries: List<String>): HeroInfo? {
+        cachedHero(queries)?.let { return it }
+        for (q in queries) {
+            try {
+                val j = posterGate.withPermit { Api.get("/api/poster?hero=1&q=" + URLEncoder.encode(q, "UTF-8")) }
+                if (!j.has("backdrop") && !j.has("overview")) continue
+                val abs = { k: String -> j.optString(k).takeIf { it.startsWith("/api/poster/img/") }?.let { Api.BASE + it } }
+                val info = HeroInfo(abs("backdrop"), abs("logo"), j.optString("overview").ifBlank { null }, j.optString("year").ifBlank { null },
+                    j.optDouble("rating", 0.0).takeIf { it > 0 })
+                heroes[q.lowercase()] = info
+                return info
+            } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+        }
+        return null
+    }
+
+    // ---- Dolby Vision / HDR / DTS marks: the server looks into the file (ffprobe, kept until the film is deleted) ----
+    private val serverTags = androidx.compose.runtime.mutableStateMapOf<Long, List<String>>()
+    // The guess by the names runs regexes over every file of the torrent: once per film, not at every look at a tile
+    private val guessedTags = java.util.concurrent.ConcurrentHashMap<Long, List<String>>()
+    fun tagsOf(item: LibraryItem): List<String> = serverTags[item.m.id] ?: guessedTags.getOrPut(item.m.id) { itemTags(item) }
+
+    /** The server analyses new films one by one in the background: ask again while it has some left. */
+    suspend fun refreshTags() {
+        repeat(40) {
+            val j = try { Api.get("/api/tags") } catch (e: CancellationException) { throw e } catch (_: Exception) { return }
+            val tags = j.optJSONObject("tags")
+            if (tags != null) for (k in tags.keys()) {
+                val a = tags.optJSONArray(k) ?: continue
+                val id = k.toLongOrNull() ?: continue
+                serverTags[id] = (0 until a.length()).map { a.getString(it) }
+            }
+            if (j.optInt("pending", 0) <= 0) return
+            kotlinx.coroutines.delay(30_000)
+        }
+    }
+
     // ---- video info line ("1920×1080 · 12 Мбит/с · HEVC · 23.98 fps"), like on the website ----
     // The server runs ffprobe on the remote file, so analyses go strictly one at a time and only for tiles on
     // screen. A result is kept forever (the file does not change); a server-side failure is not retried for 6 h.
@@ -335,7 +391,10 @@ class LibraryStore(context: Context) {
     private val mediaInflight = HashMap<String, CompletableDeferred<String>>()
 
     /** Ready line for the tile, or null when it still has to be analysed. */
-    private val mediaMemory = HashMap<String, String>()
+    private val mediaMemory = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /** The line if this start already had it (no disk, no parsing): what a tile may ask for while it is being composed. */
+    fun memoryMediaLine(magnetId: Long, file: MFile): String? = mediaMemory["$magnetId|${file.path}"]
 
     fun cachedMediaLine(magnetId: Long, file: MFile): String? {
         mediaMemory["$magnetId|${file.path}"]?.let { return it }
@@ -379,16 +438,27 @@ class LibraryStore(context: Context) {
 
     // ---- watch progress written by the player (prefs "watch": "magnetId|path" -> "pos|len|at") ----
     private val watchPrefs = app.getSharedPreferences("watch", Context.MODE_PRIVATE)
+    private val watchMemory = java.util.concurrent.ConcurrentHashMap<String, WatchInfo>()
+    // Files never watched: most of the library. Without this every look read the prefs again for each of them.
+    private val watchMissing = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     /** Bumped when the app comes back from the player, so tiles re-read their progress. */
     var watchVersion by mutableStateOf(0)
         private set
-    fun bumpWatch() { watchVersion++ }
+    fun bumpWatch() {
+        watchMemory.clear()
+        watchMissing.clear()
+        watchVersion++
+    }
 
     fun watchInfo(key: String): WatchInfo? {
-        val v = watchPrefs.getString(key, null) ?: return null
+        watchMemory[key]?.let { return it }
+        if (key in watchMissing) return null
+        val v = watchPrefs.getString(key, null) ?: run { watchMissing += key; return null }
         val parts = v.split('|')
         if (parts.size < 3) return null
-        return WatchInfo(parts[0].toLongOrNull() ?: return null, parts[1].toLongOrNull() ?: 0L, parts[2].toLongOrNull() ?: 0L)
+        val info = WatchInfo(parts[0].toLongOrNull() ?: return null, parts[1].toLongOrNull() ?: 0L, parts[2].toLongOrNull() ?: 0L)
+        watchMemory[key] = info
+        return info
     }
 
     /** Most recently watched file of a torrent (to pre-select the episode and show "Продолжить"). */
@@ -407,7 +477,7 @@ class LibraryStore(context: Context) {
     fun hideContinue(ids: List<Long>) {
         val now = System.currentTimeMillis()
         continueHiddenPrefs.edit().apply { ids.forEach { putLong(it.toString(), now) } }.apply()
-        watchVersion++
+        bumpWatch()
     }
     fun continueHiddenAt(id: Long): Long = continueHiddenPrefs.getLong(id.toString(), 0L)
 
@@ -416,7 +486,10 @@ class LibraryStore(context: Context) {
      * Posters (and their picture files, unless another tile shows the same one), the video info line, watch
      * progress, the resume place, the last episode, and a reserve still kept on disk — of films no longer in the list.
      */
+    @OptIn(coil.annotation.ExperimentalCoilApi::class)
     private suspend fun cleanUp(list: List<LibraryItem>) = withContext(Dispatchers.IO) {
+        watchMemory.clear()
+        episodeMemory.clear()
         val keep = LibraryKeep(list)
         if (!keep.usable) return@withContext
         var n = 0
@@ -443,6 +516,10 @@ class LibraryStore(context: Context) {
     }
 
     // ---- last chosen episode per torrent ----
-    fun lastEpisode(id: Long): String? = episodePrefs.getString(id.toString(), null)
-    fun saveEpisode(id: Long, path: String) = episodePrefs.edit().putString(id.toString(), path).apply()
+    private val episodeMemory = java.util.concurrent.ConcurrentHashMap<Long, String>()
+    fun lastEpisode(id: Long): String? = episodeMemory[id] ?: episodePrefs.getString(id.toString(), null)?.also { episodeMemory[id] = it }
+    fun saveEpisode(id: Long, path: String) {
+        episodeMemory[id] = path
+        episodePrefs.edit().putString(id.toString(), path).apply()
+    }
 }

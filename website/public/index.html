@@ -398,8 +398,10 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
 }
 @media (max-width:340px){.navrow button{font-size:10px!important}.navrow button::before{font-size:15px!important}}
 </style>
-<script>/* App 1.2+: native library and bottom bar */try{if(Number(window.__suslikApp||0)>=3)document.documentElement.classList.add("suslik-native");}catch(e){}</script>
-<link rel="stylesheet" href="redesign.css?v=16">
+<script>/* App 1.2+: native library and bottom bar */try{if(Number(window.__suslikApp||0)>=3)document.documentElement.classList.add("suslik-native");}catch(e){}
+/* Пока не ответил /api/session, страница скрыта: иначе на секунду мелькает форма входа у тех, кто уже вошёл (снимается в showApp; страховка — через 4 с) */
+try{document.documentElement.classList.add("auth-pending");setTimeout(function(){document.documentElement.classList.remove("auth-pending");},4000);}catch(e){}</script>
+<link rel="stylesheet" href="redesign.css?v=24">
 </head>
 <body>
 <main>
@@ -457,11 +459,21 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
         </div>
       </div>
       <div class="row navrow">
-        <button id="showLibraryTab" class="secondary"><span class="nav-icon" aria-hidden="true">▤</span><span class="nav-long">Моя библиотека</span><span class="nav-short">Библиотека</span></button>
+        <button id="showLibraryTab" class="secondary"><span class="nav-icon" aria-hidden="true">▤</span><span class="nav-long">Главная</span><span class="nav-short">Библиотека</span></button>
         <button id="showSearchTab" class="secondary"><span class="nav-icon" aria-hidden="true">⌕</span><span class="nav-long">Поиск раздач</span><span class="nav-short">Поиск</span></button>
-        <button id="showLinkTab"><span class="nav-icon" aria-hidden="true">↗</span><span class="nav-long">Открыть ссылку</span><span class="nav-short">Ссылка</span></button>
+        <button id="showLinkTab"><span class="nav-icon" aria-hidden="true">↗</span><span class="nav-long">Magnet / торрент</span><span class="nav-short">Ссылка</span></button>
         <button id="showAppsTab" class="secondary"><span class="nav-icon" aria-hidden="true">⇩</span><span class="nav-long">Приложения</span><span class="nav-short">Скачать</span></button>
       </div>
+      <nav class="side-collection" aria-label="Коллекция">
+        <div class="side-caption">Коллекция</div>
+        <button type="button" class="side-cat secondary" data-cat="movie"><span class="side-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 3v18M16 3v18M3 8h5M3 16h5M16 8h5M16 16h5"/></svg></span><span class="side-name">Фильмы</span><span class="side-count">0</span></button>
+        <button type="button" class="side-cat secondary" data-cat="series"><span class="side-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M12 16v4M8 20h8"/></svg></span><span class="side-name">Сериалы</span><span class="side-count">0</span></button>
+        <button type="button" class="side-cat secondary" data-cat="anime"><span class="side-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><circle cx="6" cy="5.5" r="2.5"/><circle cx="18" cy="5.5" r="2.5"/><path d="M9 12.5h.01M15 12.5h.01"/></svg></span><span class="side-name">Аниме</span><span class="side-count">0</span></button>
+        <button type="button" class="side-cat secondary" data-cat="cartoon"><span class="side-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><circle cx="6" cy="5.5" r="2.5"/><circle cx="18" cy="5.5" r="2.5"/><path d="M9 12h.01M15 12h.01M9 16c1.5 1.5 4.5 1.5 6 0"/></svg></span><span class="side-name">Мультфильмы</span><span class="side-count">0</span></button>
+        <button type="button" class="side-cat secondary" data-cat="other"><span class="side-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9 11.5h.01M15 11.5h.01M9 15.5c1.5 1.2 4.5 1.2 6 0"/></svg></span><span class="side-name">Другое</span><span class="side-count">0</span></button>
+        <div class="side-caption">Сервис</div>
+        <button type="button" id="sideAppsTab" class="side-cat secondary side-service"><span class="side-ico" aria-hidden="true">⇩</span><span class="side-name">Приложения</span></button>
+      </nav>
       <div class="sidebar-profile">
         <div class="sidebar-profile-info">
           <div id="profileAvatar" class="profile-avatar">S</div>
@@ -530,6 +542,7 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
       </section>
 
       <section id="libraryTab" class="hidden">
+        <div id="continueHero" class="hero-banner hidden" aria-label="Продолжить просмотр"></div>
         <div class="panel library-header-panel">
           <div class="library-header-top topline">
             <div class="library-title-area">
@@ -581,6 +594,7 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
           <div id="libraryStatus" class="status" role="status">Нажмите «Обновить», чтобы загрузить медиатеку.</div>
         </div>
         <div id="libraryResults" class="library-grid"></div>
+        <div id="libraryPager" class="library-pager" aria-label="Страницы"></div>
       </section>
 
       <section id="appsTab" class="hidden">
@@ -605,10 +619,10 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
               <svg viewBox="0 0 400 200" aria-hidden="true">
                 <defs>
                   <linearGradient id="growthFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0" stop-color="#ffb02e" stop-opacity=".28"/><stop offset="1" stop-color="#ffb02e" stop-opacity="0"/>
+                    <stop offset="0" stop-color="#3b82f6" stop-opacity=".25"/><stop offset="1" stop-color="#3b82f6" stop-opacity="0"/>
                   </linearGradient>
                   <linearGradient id="growthStroke" x1="0" y1="0" x2="1" y2="0">
-                    <stop offset="0" stop-color="#ffb02e" stop-opacity=".35"/><stop offset=".55" stop-color="#ffb02e"/><stop offset="1" stop-color="#ffd27a"/>
+                    <stop offset="0" stop-color="#3b82f6" stop-opacity=".35"/><stop offset=".55" stop-color="#60a5fa"/><stop offset="1" stop-color="#93c5fd"/>
                   </linearGradient>
                   <filter id="growthGlow" x="-20%" y="-40%" width="140%" height="180%"><feGaussianBlur stdDeviation="4"/></filter>
                 </defs>
@@ -694,7 +708,7 @@ async function api(path, options={}) {
   if (!response.ok) throw new Error(data.error || `Не удалось выполнить запрос (${response.status})`);
   return data;
 }
-function showApp(authenticated) { $("loginPanel").classList.toggle("hidden", authenticated); $("appPanel").classList.toggle("hidden", !authenticated); document.body.classList.toggle("authenticated", !!authenticated); }
+function showApp(authenticated) { document.documentElement.classList.remove("auth-pending"); $("loginPanel").classList.toggle("hidden", authenticated); $("appPanel").classList.toggle("hidden", !authenticated); document.body.classList.toggle("authenticated", !!authenticated); }
 // In the app (1.2+) the library is native: the hidden web copy is not loaded at all.
 function webLibraryNeeded(){ return !document.documentElement.classList.contains("suslik-native"); }
 async function checkSession() {
@@ -1609,6 +1623,47 @@ function setupTilePlayback(magnet,tile,art,info){
 // переставленные (избранное наверх) плавно переезжают на новое место.
 let libraryTiles=new Map();
 let libraryCategory = "all";
+let libraryPage = 0, libraryFilterSig = "";
+// Страница — 3 ряда постеров на компьютере и 5 на телефоне: сколько их в ряду, столько и ставится (колонки считает сама сетка).
+let libraryLastPageSize = 0;
+function libraryPageSize() {
+  const phone = IS_ANDROID || IS_IOS || window.matchMedia("(max-width: 600px)").matches;
+  const rows = phone ? 5 : 3;
+  if (libraryViewMode === "list") return rows * (phone ? 2 : 4);
+  const grid = $("libraryResults");
+  let cols = 0;
+  try { grid.className = "library-grid"; cols = getComputedStyle(grid).gridTemplateColumns.split(" ").filter(Boolean).length; } catch {}
+  return (cols || (phone ? 2 : 6)) * rows;
+}
+(function () {
+  let t = 0;
+  window.addEventListener("resize", () => {
+    clearTimeout(t);
+    t = setTimeout(() => { const tab = $("libraryTab"); if (tab && !tab.classList.contains("hidden") && libraryPageSize() !== libraryLastPageSize) renderLibrary(false); }, 250);
+  });
+})();
+function renderLibraryPager(count) {
+  const box = $("libraryPager");
+  if (!box) return;
+  box.replaceChildren();
+  if (count <= 1) return;
+  const mk = (label, page, opts = {}) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.textContent = label; b.className = "pager-btn" + (opts.active ? " active" : "");
+    b.disabled = Boolean(opts.disabled) || Boolean(opts.active);
+    b.addEventListener("click", () => { libraryPage = page; renderLibrary(false); $("libraryResults").scrollIntoView({ block: "start", behavior: "smooth" }); });
+    return b;
+  };
+  const near = n => n === 0 || n === count - 1 || Math.abs(n - libraryPage) <= 2;
+  box.append(mk("‹", libraryPage - 1, { disabled: libraryPage === 0 }));
+  let gap = false;
+  for (let n = 0; n < count; n++) {
+    if (!near(n)) { if (!gap) { const d = document.createElement("span"); d.className = "pager-gap"; d.textContent = "…"; box.append(d); gap = true; } continue; }
+    gap = false;
+    box.append(mk(String(n + 1), n, { active: n === libraryPage }));
+  }
+  box.append(mk("›", libraryPage + 1, { disabled: libraryPage === count - 1 }));
+}
 let librarySortMode = "newest";
 let libraryOnlyReadyMode = false;
 let libraryViewMode = "grid";
@@ -1628,6 +1683,26 @@ function getItemCategory(m) {
   if (videoFiles.length > 2) return "series";
   if (videoFiles.length > 0) return "movie";
   return "other";
+}
+
+// Метки релиза для постера: Dolby Vision, HDR, DTS (по названию раздачи и файлов).
+// Одна метка для картинки и одна для звука: Dolby Vision (а если его нет — HDR) и DTS, без вариантов и повторов.
+function collapseTags(all) {
+  const out = [];
+  if (all.some(t => t.startsWith("Dolby"))) out.push("Dolby Vision"); else if (all.includes("HDR")) out.push("HDR");
+  if (all.some(t => t.startsWith("DTS"))) out.push("DTS");
+  return out;
+}
+const serverTagMap = {}; // id раздачи -> метки, найденные сервером по самому файлу (ffprobe), см. /api/tags
+function getItemTags(m) {
+  if (serverTagMap[m.id]) return serverTagMap[m.id];
+  const text = (m.name || "") + "\n" + (m.files || []).map(f => f.path || f.name || "").join("\n");
+  const out = [];
+  if (/\b(dolby[ ._-]?vision|dovi|dv)\b/i.test(text)) out.push("Dolby Vision");
+  if (/\bhdr(10)?(\+|plus)?\b/i.test(text)) out.push("HDR");
+  const d = text.match(/\bdts(?:[ ._:-]?(hd|x))?(?:[ ._-]?(ma))?\b/i);
+  if (d) { const k = (d[1] || "").toLowerCase(); out.push(k === "hd" ? (d[2] ? "DTS-HD MA" : "DTS-HD") : k === "x" ? "DTS:X" : "DTS"); }
+  return out;
 }
 
 function getItemSpecs(m) {
@@ -1653,7 +1728,7 @@ function getItemSpecs(m) {
   return { quality, codec, type, cat };
 }
 
-function tileSig(m){ return JSON.stringify([m.name,m.status,m.statusCode,m.size,m.downloaded,Boolean(m.favorite),m.canRemove!==false,(m.files||[]).length,libraryViewMode]); }
+function tileSig(m){ return JSON.stringify([(serverTagMap[m.id]||[]).join(),m.name,m.status,m.statusCode,m.size,m.downloaded,Boolean(m.favorite),m.canRemove!==false,(m.files||[]).length,libraryViewMode]); }
 
 function renderLibrary(animate=true) {
   const target=$("libraryResults"), query=$("libraryПоиск") ? $("libraryПоиск").value.trim().toLowerCase() : "";
@@ -1679,11 +1754,21 @@ function renderLibrary(animate=true) {
     $("libraryCountBadge").textContent = cachedLibrary.length ? (filtered.length === cachedLibrary.length ? String(cachedLibrary.length) : `${filtered.length} / ${cachedLibrary.length}`) : "0";
   }
 
-  const magnets = filtered.map((m, i) => ({ m, i })).sort((a, b) => {
+  const allMagnets = filtered.map((m, i) => ({ m, i })).sort((a, b) => {
     if (sort === "name") return a.m.name.localeCompare(b.m.name, "ru");
     if (sort === "size") return (Number(b.m.size) || 0) - (Number(a.m.size) || 0);
     return (Number(Boolean(b.m.favorite)) - Number(Boolean(a.m.favorite))) || (a.i - b.i);
   }).map(x => x.m);
+
+  // Страница — 3 ряда постеров (на телефоне 5); новый поиск, категория или фильтр — снова с первой.
+  const pageSize = libraryPageSize();
+  libraryLastPageSize = pageSize;
+  const filterSig = [query, activeCategory, sort, onlyReady].join("|");
+  if (filterSig !== libraryFilterSig) { libraryFilterSig = filterSig; libraryPage = 0; }
+  const pageCount = Math.max(1, Math.ceil(allMagnets.length / pageSize));
+  libraryPage = Math.min(Math.max(0, libraryPage), pageCount - 1);
+  const magnets = allMagnets.slice(libraryPage * pageSize, (libraryPage + 1) * pageSize);
+  renderLibraryPager(pageCount);
 
   target.className = libraryViewMode === "list" ? "library-results library-list" : "library-grid";
 
@@ -1706,6 +1791,7 @@ function renderLibrary(animate=true) {
     const badges = document.createElement("div"); badges.className = "tile-badges";
     if (specs.quality) { const q = document.createElement("span"); q.className = "tile-badge badge-quality"; q.textContent = specs.quality; badges.append(q); }
     if (specs.type) { const tp = document.createElement("span"); tp.className = "tile-badge badge-type"; tp.textContent = specs.type; badges.append(tp); }
+    for (const t of collapseTags(getItemTags(magnet))) { const x = document.createElement("span"); x.className = "tile-badge badge-tag " + (t.startsWith("Dolby") ? "badge-dv" : t === "HDR" ? "badge-hdr" : "badge-dts"); x.textContent = t; badges.append(x); }
     art.append(badges);
     const videoФайл = (magnet.files || []).find(f => /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso)$/i.test(f.path || ""));
     const posterQueries = [...new Set([escapeTitle(magnet.name), videoФайл ? escapeTitle(videoФайл.name || videoФайл.path.split("/").pop()) : ""].filter(Boolean))];
@@ -2098,5 +2184,6 @@ checkSession();
 </script>
 
 <script src="redesign.js?v=6" defer></script>
+<script src="home.js?v=3" defer></script>
 </body>
 </html>

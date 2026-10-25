@@ -30,7 +30,7 @@ class PlayerWatchProgress(
     private var watchKeys: List<String> = emptyList()
     private var lastPersistAt = 0L
 
-    /** The playlist's watch keys (the first is the episode the player opened with). */
+    /** The playlist's watch keys, in its order. */
     val keys: List<String> get() = watchKeys
 
     fun setWatchKeys(keys: List<String>) {
@@ -39,13 +39,17 @@ class PlayerWatchProgress(
 
     fun readIntent(intent: Intent?) {
         watchKeys = intent?.getStringArrayListExtra(PlayerExtras.WATCH_KEYS).orEmpty()
+        startKey = intent?.getStringExtra(PlayerExtras.WATCH_KEY)
     }
 
-    /** "magnetId|path" of what is playing (the playlist starts with current episode, like watchKeys). */
+    /** The episode the player opened with: what plays until the season's playlist is loaded. */
+    private var startKey: String? = null
+
+    /** "magnetId|path" of what is playing (watchKeys go in the playlist's order: the whole season). */
     fun currentWatchKey(): String? {
         val qSize = callback.getQueueSize()
         val qIndex = callback.getCurrentQueueIndex()
-        return if (qSize > 0 && qIndex >= 0) watchKeys.getOrNull(qIndex) else watchKeys.firstOrNull()
+        return if (qSize > 0 && qIndex >= 0) watchKeys.getOrNull(qIndex) else startKey ?: watchKeys.firstOrNull()
     }
 
     /** Position persistence key (keyed by host+path, query/token ignored). */

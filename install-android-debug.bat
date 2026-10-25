@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 > nul
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0install-android-debug.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0install-android-debug.ps1" %*
 if errorlevel 1 (
     echo.
     echo [ОШИБКА] Установка завершилась с ошибкой.

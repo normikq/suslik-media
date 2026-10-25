@@ -71,8 +71,8 @@ android {
         applicationId = "ru.suslikovanora.media"
         minSdk = 24
         targetSdk = 35
-        versionCode = 63
-        versionName = "2.5.1"
+        versionCode = 65
+        versionName = "2.6.1"
         buildConfigField("boolean", "DIAG", "false")
         buildConfigField("String", "SITE_HOST", "\"$siteHost\"")
         manifestPlaceholders["appLabel"] = "Suslik Media — медиатека"
@@ -107,6 +107,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     // HTTP (shares the WebView's login cookie) and poster loading with memory + disk cache
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.google.zxing:core:3.5.3") // QR code of the sign-in link on the TV screen
     implementation("io.coil-kt:coil-compose:2.7.0")
 
     // Media3 (ExoPlayer) — the second player engine next to VLC (player/Media3Engine.kt), with the FFmpeg audio decoder

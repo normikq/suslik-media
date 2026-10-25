@@ -34,6 +34,7 @@ class HybridEngine(private val context: Context) : PlayerEngine {
         override fun paused() { l()?.paused() }
         override fun stopped() { l()?.stopped() }
         override fun tracksChanged() { l()?.tracksChanged() }
+        override fun audioSelected() { l()?.audioSelected() }
         override fun endReached() { l()?.endReached() }
         override fun failed() { l()?.failed() }
         override fun videoOutput(count: Int) { l()?.videoOutput(count) }
@@ -93,10 +94,14 @@ class HybridEngine(private val context: Context) : PlayerEngine {
     override val subtitleTrack: Int get() = active.subtitleTrack
     override fun setSubtitleTrack(id: Int) = active.setSubtitleTrack(id)
     override fun addAudioFile(url: String) = active.addAudioFile(url)
+    override fun audioFileOf(id: Int, files: Int): Int? = active.audioFileOf(id, files)
+    override fun audioFileTrack(index: Int, files: Int): Int? = active.audioFileTrack(index, files)
+    override fun setAudioDelayMs(ms: Long) = active.setAudioDelayMs(ms)
 
     override val videoTrackCount: Int get() = active.videoTrackCount
     override val videoTrack: EngineVideoTrack? get() = active.videoTrack
     override fun setVideoEnabled(enabled: Boolean) = active.setVideoEnabled(enabled)
+    override fun restartVideo(seekMs: Long?) = active.restartVideo(seekMs)
     override fun attachVideo() = active.attachVideo()
     override fun detachVideo() = active.detachVideo()
     override fun refreshVideoSize() = active.refreshVideoSize()

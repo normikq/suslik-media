@@ -8,6 +8,7 @@ const { treeCache, persistTreeCache } = require("./alldebrid");
 const { deleteOwner, releaseTrackedDownload } = require("./downloads");
 const { dropEverywhere } = require("./shelf");
 const { dropMagnet } = require("./sync");
+const customAudio = require("./custom-audio");
 
 // ---- Автоочистка библиотеки ------------------------------------------------------------------------
 // Раздачу «открыли», когда кто-то попросил ссылку на её файл (mirror-url, file/unlock, плейлист): так делает любой
@@ -42,7 +43,10 @@ function rebuildLinkIndex() {
 function markOpened(id) {
   const key = String(id ?? "");
   if (!/^\d{1,20}$/.test(key)) return;
-  usage.set(key, Date.now());
+  const now = Date.now();
+  usage.set(key, now);
+  // Фильм открыли — раздачи с его внешними озвучками тоже нужны (не удалять ещё LIBRARY_IDLE_DAYS дней)
+  for (const audioId of customAudio.linkedAudioMagnets(Number(key))) usage.set(String(audioId), now);
   persistUsage();
 }
 
@@ -85,6 +89,7 @@ function forget(id) {
   deleteOwner(key);
   dropEverywhere(key);
   dropMagnet(key);
+  customAudio.dropMagnet(Number(key));
   if (usage.delete(key)) persistUsage();
   if (treeCache.delete(Number(id))) persistTreeCache();
 }
