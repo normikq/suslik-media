@@ -4,6 +4,8 @@
   "use strict";
   if (typeof renderLibrary !== "function" || typeof setTab !== "function") return;
 
+  var tr = (typeof window !== "undefined" && window.tr) ? window.tr : function(k, p, def) { return def || k; };
+
   var CATS = ["movie", "series", "anime", "cartoon", "other"];
 
   // ---- Боковая панель ---------------------------------------------------------------------------
@@ -83,12 +85,12 @@
       var id = String(w.key).split("|")[0], path = String(w.key).slice(id.length + 1);
       var magnet = (cachedLibrary || []).find(function (m) { return String(m.id) === id; });
       if (!magnet || Number(magnet.statusCode) !== 4) return;
-      var pl = buildPlaylist(magnet), sub = "Фильм", epCount = null;
+      var pl = buildPlaylist(magnet), sub = tr("common.movie", null, "Фильм"), epCount = null;
       if (pl.type === "series") {
         var found = null;
         pl.seasons.forEach(function (s) { s.items.forEach(function (e) { if (e.file.path === path) found = { s: s, e: e }; }); });
         if (!found) return;
-        sub = found.s.season === 0 ? "Спецвыпуск " + found.e.episode : "Сезон " + found.s.season + ", серия " + found.e.episode;
+        sub = found.s.season === 0 ? tr("hero.special_episode", { episode: found.e.episode }, "Спецвыпуск " + found.e.episode) : tr("hero.season_episode", { season: found.s.season, episode: found.e.episode }, "Сезон " + found.s.season + ", серия " + found.e.episode);
         epCount = { seasons: pl.seasons.length, eps: pl.seasons.reduce(function (a, s) { return a + s.items.length; }, 0) };
       } else if (!pl.file) return;
       out.push({ magnet: magnet, path: path, pos: w.pos, len: w.len, at: w.at, fraction: fraction, sub: sub, epCount: epCount });
@@ -115,7 +117,8 @@
   function timeLeft(e) {
     if (!(e.len > 0 && e.pos > 0)) return "";
     var min = Math.max(1, Math.floor((e.len - e.pos) / 60000));
-    return (min >= 60 ? Math.floor(min / 60) + " ч " + (min % 60) + " мин" : min + " мин") + " осталось";
+    var timeStr = (min >= 60 ? Math.floor(min / 60) + " ч " + (min % 60) + " мин" : min + " мин");
+    return tr("hero.time_left", { time: timeStr }, timeStr + " осталось");
   }
 
   function playEntry(e) {
@@ -125,7 +128,7 @@
         var i = s.items.findIndex(function (x) { return x.file.path === e.path; });
         if (i < 0 || file) return;
         file = s.items[i].file;
-        label += " · " + (s.season === 0 ? "Спец." : "S" + pad2(s.season)) + "E" + pad2(s.items[i].episode);
+        label += " · " + (s.season === 0 ? tr("hero.special_short", null, "Спец.") : "S" + pad2(s.season)) + "E" + pad2(s.items[i].episode);
         var items = s.items.slice(i).map(function (x) { return { index: magnet.files.indexOf(x.file), link: x.file.sourceLink }; })
           .filter(function (x) { return x.index >= 0 && x.link; });
         req = { magnetId: magnet.id, items: items };
@@ -141,7 +144,7 @@
     var e = hero.entries[hero.idx] || hero.entries[0];
     if (!e) { box.replaceChildren(); return; }
     var bg = el("div", "hb-bg"), shade = el("div", "hb-shade"), text = el("div", "hb-text"), thumbs = el("div", "hb-thumbs");
-    var eyebrow = el("div", "hb-eyebrow", "ПРОДОЛЖИТЬ ПРОСМОТР");
+    var eyebrow = el("div", "hb-eyebrow", tr("hero.eyebrow", null, "ПРОДОЛЖИТЬ ПРОСМОТР"));
     var titleBox = el("div", "hb-title"), title = el("h2", "", escapeTitle(e.magnet.name));
     titleBox.append(title);
     var chips = el("div", "hb-chips"), overview = el("p", "hb-overview");
@@ -157,7 +160,7 @@
     meta.append(left, right);
     var bar = el("div", "hb-bar"), fill = el("i"); fill.style.width = Math.round(Math.min(1, Math.max(0, e.fraction)) * 100) + "%"; bar.append(fill);
     var play = el("button", "hb-play"); play.type = "button";
-    play.append(el("span", "", "▶"), el("span", "", "Продолжить"));
+    play.append(el("span", "", "▶"), el("span", "", tr("hero.resume", null, "Продолжить")));
     play.addEventListener("click", function () { playEntry(e); });
     text.append(eyebrow, titleBox, chips, overview, el("div", "hb-spacer"), meta, bar, play);
 

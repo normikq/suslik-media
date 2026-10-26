@@ -6,7 +6,18 @@
 | `website/` | Сайт и API (Node/Express) | [docs/WEBSITE.md](docs/WEBSITE.md), [website/README.md](website/README.md) |
 | `android/` | Android-приложение (Kotlin, Compose, libVLC) | [docs/ANDROID.md](docs/ANDROID.md), [android/DEBUG-BUILD.md](android/DEBUG-BUILD.md) |
 | `desktop/` | Windows-приложение (Compose Desktop, mpv / VLC) | [docs/DESKTOP.md](docs/DESKTOP.md), [desktop/README.md](desktop/README.md) |
+| `tizen/` | Клиент для Samsung Smart TV (Tizen web app) | [tizen/README.md](tizen/README.md) |
 | `shared/` | Общий модуль (BurstProxy, Supervisor, TsClock) | [В общей архитектуре](docs/ARCHITECTURE.md#5-общий-модуль-shared) |
+
+## Локализация (i18n)
+
+Все клиентские приложения и веб-интерфейс используют централизованную систему локализации на базе JSON-словарей:
+- **Desktop (Windows)**: ресурсы `desktop/src/main/resources/strings/ru.json`, функция `tr(key, ...)` в `I18n.kt`.
+- **Android**: ассеты `android/app/src/main/assets/strings/ru.json`, функция `tr(key, ...)` в `Strings.kt`.
+- **Samsung Smart TV (Tizen)**: словарь `tizen/locales/ru.json`, клиентский модуль `tizen/js/i18n.js`, декларативные атрибуты `data-i18n`.
+- **Веб-сайт**: словарь `website/public/locales/ru.json`, клиентский модуль `website/public/i18n.js` (`window.tr`, атрибуты `data-i18n`).
+
+Все тексты ориентированы на пользователя (понятные и дружелюбные описания без технического жаргона и упоминаний внешних сервисов загрузки).
 
 ## Сборка (GitHub Actions)
 

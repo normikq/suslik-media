@@ -86,7 +86,7 @@ internal suspend fun rejectIfNoVideo(id: Long): String? {
     val names = (0 until files.length()).map { files.optJSONObject(it)?.optString("name").orEmpty() }
     val rejected = TorrentInspector.rejectionForPaths(names) ?: return null
     val removed = runCatching { Api.post("/api/magnets/$id/cancel") }.isSuccess
-    return rejected + if (removed) "" else " · её удалит админ или автоочистка"
+    return rejected + if (removed) "" else tr("add.rejected_cleanup_note")
 }
 
 /** Polls AllDebrid's status of a magnet until it is ready (then refreshes the library) or fails. */

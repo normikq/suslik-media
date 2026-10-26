@@ -11,7 +11,7 @@ if [ -z "$HOST" ]; then echo "Не задан SITE_URL (адрес сайта)" 
 VERSION=$(sed -n 's/.*<widget[^>]* version="\([^"]*\)".*/\1/p' config.xml)
 
 rm -rf build && mkdir -p build/app
-cp -r config.xml index.html icon.png css js build/app/
+cp -r config.xml index.html icon.png css js locales build/app/
 printf "window.SM = window.SM || {};\nwindow.SM.SITE_HOST = '%s';\n" "$HOST" > build/app/js/site.js
 echo "Папка приложения: tizen/build/app (версия $VERSION)"
 

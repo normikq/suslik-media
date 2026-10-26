@@ -110,11 +110,11 @@ async function resolveDirect(key, fresh) {
         }
       );
       if (unlocked.status < 200 || unlocked.status >= 300 || unlocked.data?.status === "error") {
-        throw new UnlockError(unlocked.data?.error?.message || "AllDebrid не смог получить ссылку на этот файл.");
+        throw new UnlockError(unlocked.data?.error?.message || "Не удалось получить прямую ссылку на этот файл.");
       }
       const found = safeHttpsUrl(unlocked.data?.data?.link || "");
       if (!found || (found.hostname.toLowerCase().endsWith("alldebrid.com") && found.pathname.startsWith("/f/"))) {
-        throw new UnlockError("AllDebrid не вернул прямой URL файла.");
+        throw new UnlockError("Не удалось получить прямой URL файла.");
       }
       const apiName = typeof unlocked.data?.data?.filename === "string" ? unlocked.data.data.filename : "";
       let urlName = "";
@@ -169,7 +169,7 @@ async function openUpstream(key, rangeHeaders) {
 async function handleMirrorAccel(req, res, next) {
   if (!config.MIRROR_ACCEL || req.get("X-Mirror-Retry")) return next();
   const parsed = safeHttpsUrl(typeof req.query.link === "string" ? req.query.link.trim() : "");
-  if (!isAllDebridFileLink(parsed)) return res.status(400).send("Некорректная ссылка на файл AllDebrid.");
+  if (!isAllDebridFileLink(parsed)) return res.status(400).send("Некорректная ссылка на медиафайл.");
   let entry;
   try {
     entry = await resolveDirect(parsed.toString(), false);
@@ -192,7 +192,7 @@ async function handleMirrorAccel(req, res, next) {
 
 async function handleMirrorStream(req, res) {
   const parsed = safeHttpsUrl(typeof req.query.link === "string" ? req.query.link.trim() : "");
-  if (!isAllDebridFileLink(parsed)) return res.status(400).send("Некорректная ссылка на файл AllDebrid.");
+  if (!isAllDebridFileLink(parsed)) return res.status(400).send("Некорректная ссылка на медиафайл.");
   const key = parsed.toString();
   if (req.get("X-Mirror-Retry")) unlockCache.delete(key); // nginx: the cached direct link failed, get a fresh one
 

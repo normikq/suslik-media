@@ -120,11 +120,11 @@ async function resolveDirectUrl(parsed) {
     }
   );
   if (unlocked.status < 200 || unlocked.status >= 300 || unlocked.data?.status === "error") {
-    throw Object.assign(new Error("unlock"), { userMessage: "AllDebrid не смог получить ссылку на это видео." });
+    throw Object.assign(new Error("unlock"), { userMessage: "Не удалось получить прямую ссылку на это видео." });
   }
   const direct = safeHttpsUrl(unlocked.data?.data?.link || "");
   if (!direct || !["http:", "https:"].includes(direct.protocol)) {
-    throw Object.assign(new Error("direct"), { userMessage: "AllDebrid вернул некорректный URL видео." });
+    throw Object.assign(new Error("direct"), { userMessage: "Сервер вернул некорректный URL видео." });
   }
   return direct;
 }
@@ -143,14 +143,14 @@ async function getMediaMetadata(rawLink, magnetId, wantedPath) {
     try {
       list = await getMagnetFileList(magnetId);
     } catch {
-      const e = new Error("Не удалось найти файл в AllDebrid.");
+      const e = new Error("Не удалось найти файл в медиатеке.");
       e.status = 502;
       throw e;
     }
     const file = (list || []).find(f => f.type === "file" && f.path === wantedPath && f.sourceLink);
     parsed = file ? safeHttpsUrl(file.sourceLink) : null;
     if (!isAllDebridFileLink(parsed)) {
-      const err = new Error("Ссылка на файл пока недоступна. Обновите медиатеку после завершения обработки в AllDebrid.");
+      const err = new Error("Ссылка на файл пока недоступна. Обновите медиатеку чуть позже.");
       err.status = 404;
       throw err;
     }

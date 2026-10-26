@@ -20,7 +20,7 @@ router.get("/api/library", requireLogin, apiLimiter, async (req, res) => {
   } catch (err) {
     console.error("Не удалось получить медиатеку:", err.message);
     res.status(502).json({
-      error: err.userMessage || "Не удалось загрузить медиатеку AllDebrid. Попробуйте обновить её через некоторое время."
+      error: err.userMessage || "Не удалось загрузить медиатеку. Попробуйте обновить её через некоторое время."
     });
   }
 });

@@ -26,14 +26,14 @@ async function alldebridRequest(endpoint, params = {}) {
   });
 
   if (response.status < 200 || response.status >= 300) {
-    const err = new Error(`AllDebrid HTTP error (${response.status}).`);
+    const err = new Error(`Ошибка облачного сервиса (${response.status}).`);
     err.status = 502;
     throw err;
   }
 
   const data = response.data;
   if (data && data.status === "error") {
-    const err = new Error(data.error?.message || "AllDebrid отклонил запрос.");
+    const err = new Error(data.error?.message || "Облачный сервис отклонил запрос.");
     err.status = 502;
     throw err;
   }
@@ -54,11 +54,11 @@ async function adUploadMagnet(magnet) {
     }
   );
   if (response.status < 200 || response.status >= 300 || response.data?.status === "error") {
-    throw adFail(502, response.data?.error?.message || "AllDebrid не смог принять эту magnet-ссылку.");
+    throw adFail(502, response.data?.error?.message || "Не удалось принять эту magnet-ссылку.");
   }
   const item = response.data?.data?.magnets?.[0];
   if (!item || item.error) {
-    throw adFail(400, item?.error?.message || "AllDebrid не вернул результат для magnet-ссылки.");
+    throw adFail(400, item?.error?.message || "Не удалось добавить magnet-ссылку в медиатеку.");
   }
   return item;
 }
@@ -86,11 +86,11 @@ async function adUploadTorrent(bytes, filename) {
     }
   );
   if (response.status < 200 || response.status >= 300 || response.data?.status === "error") {
-    throw adFail(502, response.data?.error?.message || "AllDebrid не смог принять этот торрент-файл.");
+    throw adFail(502, response.data?.error?.message || "Не удалось принять этот торрент-файл.");
   }
   const item = response.data?.data?.files?.[0];
   if (!item || item.error) {
-    throw adFail(400, item?.error?.message || "AllDebrid не вернул результат для торрент-файла.");
+    throw adFail(400, item?.error?.message || "Не удалось добавить торрент-файл в медиатеку.");
   }
   return item;
 }

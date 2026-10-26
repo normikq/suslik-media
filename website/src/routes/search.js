@@ -26,7 +26,7 @@ router.get("/api/search", requireLogin, searchLimiter, async (req, res) => {
 router.post("/api/search/add", requireLogin, apiLimiter, async (req, res) => {
   const r = torrentSearch.getResult(req.body?.id);
   if (!r) return res.status(404).json({ error: "Результат устарел. Повторите поиск." });
-  if (!config.ALLDEBRID_API_KEY) return res.status(503).json({ error: "На сервере не задан ALLDEBRID_API_KEY." });
+  if (!config.ALLDEBRID_API_KEY) return res.status(503).json({ error: "Облачный сервис не настроен на сервере." });
   const slot = reserveDownloadSlot(req, res);
   if (!slot) return;
   try {

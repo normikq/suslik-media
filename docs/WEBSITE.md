@@ -65,6 +65,8 @@ website/
 │   ├── index.html          Веб-клиент (HTML/CSS/JS в одном файле)
 │   ├── redesign.css        Стили оформления «Проекторная»
 │   ├── redesign.js         Логика интерфейса и анимации сайта
+│   ├── i18n.js             Клиентский модуль локализации (window.tr, автоподстановка data-i18n)
+│   ├── locales/            Файлы локализации веб-клиента (ru.json)
 │   └── fonts/              Шрифты Onest и Unbounded
 ├── scripts/
 │   └── check.js            Комплексная проверка синтаксиса всех модулей и страниц (npm run check)
@@ -72,6 +74,7 @@ website/
 │   ├── classify.test.js    Модульные тесты классификатора раздач
 │   ├── poster-query.test.js Модульные тесты очистки названий для постеров
 │   ├── modules.test.js     Модульные тесты хелперов, версий, зеркала и инициализации
+│   ├── i18n.test.js        Тесты локализации и проверки чистоты пользовательских текстов
 │   └── discord.test.js     Тесты входа через Discord, устройств и комнат
 ├── NGINX-MIRROR.md         Конфигурация nginx для X-Accel-Redirect зеркала
 ├── TORAPI.md               Документация по работе с API трекеров и Cloudflare bypass

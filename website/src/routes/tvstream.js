@@ -74,7 +74,7 @@ router.get("/api/file/tv-info", requireLogin, mirrorUrlLimiter, async (req, res)
   if (!config.TV_STREAM) return res.status(404).json({ error: "Поток для телевизора выключен на сервере." });
   if (!tv.isTvClient(req)) return res.status(403).json({ error: "Только для приложения на телевизоре." });
   const link = linkOf(req);
-  if (!link) return res.status(400).json({ error: "Некорректная ссылка на файл AllDebrid." });
+  if (!link) return res.status(400).json({ error: "Некорректная ссылка на медиафайл." });
   markLinkOpened(link);
   let info, external;
   try {

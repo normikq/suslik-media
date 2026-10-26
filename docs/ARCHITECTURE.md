@@ -34,6 +34,7 @@ Suslik Media — частная медиатека поверх **AllDebrid**. A
 | `website/` | Node.js + Express, один HTML с JS | сервер: вход, медиатека, поиск торрентов, ссылки и зеркало видео, раздача обновлений приложений; плюс сам сайт |
 | `android/` | Kotlin, Jetpack Compose, libVLC 3.6 | приложение для телефона и ТВ-приставок |
 | `desktop/` | Kotlin, Compose Desktop, vlcj (VLC, установленный на ПК) | приложение для Windows |
+| `tizen/` | HTML/JS (Tizen Web API, AVPlay) | приложение для Samsung Smart TV (Tizen 4.0+) |
 | `shared/` | чистый Kotlin (без Android и без окон) | общий код обоих приложений: запас фильма, сторож воспроизведения, Blu-ray, модель медиатеки, версии |
 
 ---
@@ -405,4 +406,14 @@ suslik-media/
 - Зеркало не заменять прямыми ссылками AllDebrid.
 - Секреты (`.env`, ключи подписи APK, токены, коды беты, cookie) не попадают в репозиторий.
 - `website/` и сервер меняются только с вашего разрешения.
-- Подробнее для Claude — `CLAUDE.md`; отложенные задачи — `docs/TODO.md`.
+---
+
+## 12. Подсистема локализации (i18n)
+
+Все платформы проекта выносят пользовательские строки в JSON-файлы локализации:
+- **Desktop**: `desktop/src/main/resources/strings/ru.json`, доступ через функцию `tr(key, ...)` (`I18n.kt`).
+- **Android**: `android/app/src/main/assets/strings/ru.json`, доступ через `tr(key, ...)` (`Strings.kt`).
+- **Samsung Smart TV (Tizen)**: `tizen/locales/ru.json`, модуль `tizen/js/i18n.js` (`tr()` и декларативные атрибуты `data-i18n`).
+- **Веб-интерфейс**: `website/public/locales/ru.json`, модуль `website/public/i18n.js` (`window.tr`, декларативные атрибуты `data-i18n`).
+
+Строки ориентированы на пользователя (понятные объяснения без технического жаргона) и не содержат прямых упоминаний сторонних сервисов (AllDebrid).

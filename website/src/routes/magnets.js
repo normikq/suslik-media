@@ -150,7 +150,7 @@ router.get("/api/magnets/:id", requireLogin, apiLimiter, async (req, res) => {
     if (!magnet) {
       console.warn("В ответе AllDebrid отсутствует запрошенный идентификатор magnet-ссылки", id, "response keys:", Object.keys(response.data?.data || {}));
       return res.status(502).json({
-        error: "AllDebrid не вернул состояние этой magnet-ссылки. Возможно, она ещё регистрируется. Повторите попытку через несколько секунд."
+        error: "Не удалось получить состояние этой раздачи. Возможно, она ещё регистрируется. Повторите попытку через несколько секунд."
       });
     }
     const statusCode = Number.isFinite(Number(magnet.statusCode)) ? Number(magnet.statusCode) : 0;

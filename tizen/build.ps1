@@ -1,4 +1,4 @@
-﻿# Сборка приложения для Samsung TV на Windows: папка build\app (открыть в VS Code с расширением Tizen TV).
+# Сборка приложения для Samsung TV на Windows: папка build\app (открыть в VS Code с расширением Tizen TV).
 #   .\build.ps1                         — адрес сайта из SITE_URL или suslik.siteUrl в ~\.gradle\gradle.properties
 #   .\build.ps1 -SiteUrl https://…      — адрес явно
 #   $env:TIZEN_PROFILE="tv"; .\build.ps1 — ещё и подписанный build\SuslikMedia-<версия>.wgt через Tizen CLI (Tizen Studio)
@@ -25,7 +25,7 @@ $build = Join-Path $root "build"
 $app = Join-Path $build "app"
 if (Test-Path $build) { Remove-Item $build -Recurse -Force }
 New-Item -ItemType Directory -Path $app | Out-Null
-foreach ($item in "config.xml", "index.html", "icon.png", "css", "js") {
+foreach ($item in "config.xml", "index.html", "icon.png", "css", "js", "locales") {
     Copy-Item (Join-Path $root $item) -Destination $app -Recurse
 }
 # UTF-8 без BOM, как у остальных файлов приложения

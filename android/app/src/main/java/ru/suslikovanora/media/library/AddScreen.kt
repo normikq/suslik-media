@@ -198,7 +198,7 @@ class AddModel(context: Context, private val scope: CoroutineScope, private val 
         val rejected = TorrentInspector.rejectionForPaths((0 until files.length()).map { files.optJSONObject(it)?.optString("name").orEmpty() }) ?: return
         val removed = runCatching { Api.post("/api/magnets/${e.magnetId}/cancel") }.isSuccess
         e.ready = false; e.failed = true
-        e.status = rejected + if (removed) "" else " · её удалит админ или автоочистка"
+        e.status = rejected + if (removed) "" else tr("add.rejected_cleanup_note")
         save()
     }
 

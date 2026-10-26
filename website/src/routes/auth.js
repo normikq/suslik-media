@@ -454,7 +454,7 @@ router.get("/api/status", requireLogin, apiLimiter, async (req, res) => {
         : null
     });
   } catch (err) {
-    res.status(err.status || 502).json({ error: err.message || "Не удалось связаться с AllDebrid." });
+    res.status(err.status || 502).json({ error: err.userMessage || "Не удалось связаться с облачным сервисом." });
   }
 });
 

@@ -12,6 +12,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
+import ru.suslikovanora.media.desktop.tr
 import ru.suslikovanora.media.desktop.AppDir
 import java.io.File
 import java.net.ServerSocket
@@ -881,7 +882,7 @@ object EdgeBrowserBridge {
         onStatus: (String) -> Unit = {}
     ): Result<String> = withContext(Dispatchers.IO) {
         val exeFile = getExecutable(type)
-            ?: return@withContext Result.failure(IllegalStateException("Браузер ${type.displayName} не найден на этом компьютере"))
+            ?: return@withContext Result.failure(IllegalStateException(tr("trackers.browser_not_found", "browser" to type.displayName)))
         val exe = exeFile.absolutePath
         val profDir = profileDirFor(type)
 
@@ -901,7 +902,7 @@ object EdgeBrowserBridge {
                 val port = ServerSocket(0).use { it.localPort }
                 val loginUrl = "${baseUrl.removeSuffix("/")}/forum/login.php"
 
-                onStatus("Открываем окно ${type.displayName}...")
+                onStatus(tr("trackers.browser_opening", "browser" to type.displayName))
                 val pb = ProcessBuilder(
                     exe,
                     "--remote-debugging-port=$port",
@@ -925,17 +926,17 @@ object EdgeBrowserBridge {
                 }
 
                 if (session == null) {
-                    return@withContext Result.failure(IllegalStateException("Не удалось подключиться к окну браузера ${type.displayName}"))
+                    return@withContext Result.failure(IllegalStateException(tr("trackers.browser_connect_failed", "browser" to type.displayName)))
                 }
 
                 try {
-                    onStatus("Выполните вход на RuTracker в открывшемся окне ${type.displayName} — куки сохранятся автоматически")
+                    onStatus(tr("trackers.browser_login_prompt", "browser" to type.displayName))
 
                     // Poll every 500ms for up to 3 minutes
                     for (i in 1..360) {
                         delay(500)
                         if (!p.isAlive) {
-                            return@withContext Result.failure(IllegalStateException("Окно авторизации ${type.displayName} было закрыто до завершения входа"))
+                            return@withContext Result.failure(IllegalStateException(tr("trackers.browser_window_closed")))
                         }
 
                         val resp = runCatching { session.sendCmd("Storage.getCookies") }.getOrNull()
@@ -943,7 +944,7 @@ object EdgeBrowserBridge {
                         if (arr != null) {
                             val header = formatTrackerCookies(arr, baseUrl)
                             if (header != null && header.contains("bb_session")) {
-                                onStatus("✓ Вход выполнен! Сохраняем куки...")
+                                onStatus(tr("trackers.browser_login_success"))
                                 preferredBrowserType = type
                                 runCatching {
                                     session.sendCmd("Browser.close")
@@ -956,7 +957,7 @@ object EdgeBrowserBridge {
                         }
                     }
 
-                    Result.failure(IllegalStateException("Время ожидания входа истекло (3 минуты)"))
+                    Result.failure(IllegalStateException(tr("trackers.browser_timeout")))
                 } finally {
                     session.close()
                 }

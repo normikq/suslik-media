@@ -105,3 +105,9 @@ $env:TIZEN_PROFILE="mixed"; .\build.ps1 -SiteUrl https://<сайт>
 - `js/searchcore.js`: перенос `shared/.../core/search` (разбор релиза, фильтры, сортировка); копия лежит в
   `website/public/searchcore.js` — правим обе. `js/search.js`: пресеты, качество, сортировка, «Только RU-трекеры», метки,
   «Показать ещё». Тесты: `test/searchcore.test.js`, `test/model.test.js`.
+
+## Локализация (i18n)
+- Файл строк интерфейса: `locales/ru.json`.
+- Модуль интернационализации: `js/i18n.js` (предоставляет `window.tr(key, params)` и автоматическую замену для элементов с `data-i18n`).
+- Сборочные скрипты `build.sh` и `build.ps1` упаковывают папку `locales/` в пакет приложения.
+

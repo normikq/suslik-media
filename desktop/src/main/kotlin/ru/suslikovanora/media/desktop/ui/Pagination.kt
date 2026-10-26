@@ -27,6 +27,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ru.suslikovanora.media.desktop.tr
 
 object PaginationHelper {
     /**
@@ -137,7 +138,7 @@ fun PaginationBar(
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text(
-                text = "Раздачи ${fromIndex + 1}–$toIndex из $totalItems",
+                text = tr("pagination.range", "from" to (fromIndex + 1), "to" to toIndex, "total" to totalItems),
                 color = Sm.muted,
                 fontFamily = Onest,
                 fontSize = 13.sp,
@@ -146,7 +147,7 @@ fun PaginationBar(
 
             if (onPageSizeChange != null && totalItems > 25) {
                 Text("·", color = Sm.line2, fontFamily = Onest, fontSize = 13.sp)
-                Text("Показывать по:", color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp)
+                Text(tr("pagination.page_size"), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp)
                 for (s in listOf(25, 50)) {
                     val isCur = pageSize == s
                     Text(
@@ -172,7 +173,7 @@ fun PaginationBar(
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 PageButton(
-                    label = "‹ Назад",
+                    label = tr("pagination.prev"),
                     enabled = currentPage > 1,
                     selected = false,
                     onClick = { onPageSelect(currentPage - 1) }
@@ -202,7 +203,7 @@ fun PaginationBar(
                 }
 
                 PageButton(
-                    label = "Вперед ›",
+                    label = tr("pagination.next"),
                     enabled = currentPage < totalPages,
                     selected = false,
                     onClick = { onPageSelect(currentPage + 1) }

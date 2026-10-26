@@ -37,6 +37,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ru.suslikovanora.media.desktop.tr
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -122,9 +123,9 @@ fun TrackerSettingsDialog(onDismiss: () -> Unit) {
             // Header with Close button
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("Настройки трекеров", fontFamily = Unbounded, fontWeight = FontWeight.SemiBold, fontSize = 20.sp, color = Sm.text)
+                    Text(tr("trackers.title"), fontFamily = Unbounded, fontWeight = FontWeight.SemiBold, fontSize = 20.sp, color = Sm.text)
                     Text(
-                        "Управление источниками поиска и авторизация на локальных трекерах.",
+                        tr("trackers.subtitle"),
                         fontFamily = Onest,
                         fontSize = 13.5.sp,
                         color = Sm.muted,
@@ -145,13 +146,13 @@ fun TrackerSettingsDialog(onDismiss: () -> Unit) {
             // Main Tabs: Tab 0 = RuTracker (ПК), Tab 1 = Выбор трекеров
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Chip(
-                    label = "RuTracker (ПК)" + if (rtEnabled && rtCookie.isNotBlank()) " ✓" else "",
+                    label = tr("search.rutracker_pc") + if (rtEnabled && rtCookie.isNotBlank()) " ✓" else "",
                     on = activeTab == 0
                 ) {
                     activeTab = 0
                 }
                 Chip(
-                    label = "Выбор трекеров ($enabledSourcesCount/${TrackerSettings.SOURCES.size})",
+                    label = tr("trackers.selection_title", "enabled" to enabledSourcesCount, "total" to TrackerSettings.SOURCES.size),
                     on = activeTab == 1
                 ) {
                     activeTab = 1
@@ -165,7 +166,7 @@ fun TrackerSettingsDialog(onDismiss: () -> Unit) {
                 // Enabled Toggle
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Chip(
-                        label = if (rtEnabled) "✓ Прямой поиск с ПК включен" else "○ Прямой поиск выключен",
+                        label = if (rtEnabled) tr("trackers.direct_search_enabled") else tr("trackers.direct_search_disabled"),
                         on = rtEnabled
                     ) {
                         rtEnabled = !rtEnabled
@@ -173,21 +174,21 @@ fun TrackerSettingsDialog(onDismiss: () -> Unit) {
                         trackerRefresh++
                     }
                     if (rtEnabled && rtCookie.isBlank()) {
-                        Text("нужно указать куки ниже", color = Sm.lamp, fontFamily = Onest, fontSize = 12.5.sp)
+                        Text(tr("trackers.need_cookies"), color = Sm.lamp, fontFamily = Onest, fontSize = 12.5.sp)
                     }
                 }
 
                 Spacer(Modifier.height(14.dp))
 
                 // Tracker URL / Mirror
-                Text("Адрес / зеркало трекера:", color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                Text(tr("trackers.address_label"), color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp)
                 Spacer(Modifier.height(4.dp))
-                Field(rtUrl, { rtUrl = it }, "https://rutracker.org (или rutracker.net)")
+                Field(rtUrl, { rtUrl = it }, tr("trackers.address_hint"))
                 Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Chip("rutracker.org (основной)", rtUrl.contains("rutracker.org")) {
+                    Chip(tr("trackers.address_main"), rtUrl.contains("rutracker.org")) {
                         rtUrl = "https://rutracker.org"
                     }
-                    Chip("rutracker.net (зеркало)", rtUrl.contains("rutracker.net")) {
+                    Chip(tr("trackers.address_mirror"), rtUrl.contains("rutracker.net")) {
                         rtUrl = "https://rutracker.net"
                     }
                 }
@@ -195,9 +196,9 @@ fun TrackerSettingsDialog(onDismiss: () -> Unit) {
                 Spacer(Modifier.height(16.dp))
 
                 // Browser Auto-detection section
-                Text("Автоопределение кук из браузера:", color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                Text(tr("trackers.autodetect_title"), color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp)
                 Text(
-                    "Выберите браузер, где вы залогинены на RuTracker, и нажмите «Взять куки»:",
+                    tr("trackers.autodetect_desc"),
                     color = Sm.muted,
                     fontFamily = Onest,
                     fontSize = 12.5.sp,
@@ -218,14 +219,14 @@ fun TrackerSettingsDialog(onDismiss: () -> Unit) {
 
                     val b = selectedBrowser
                     val isChromium = b?.type?.isChromium == true
-                    val browserName = b?.type?.displayName ?: "браузера"
+                    val browserName = b?.type?.displayName ?: tr("trackers.browser_fallback")
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         OutlineButton(
                             text = if (busy) {
-                                if (isChromium) "Ожидаем вход в $browserName..." else "Читаем..."
+                                if (isChromium) tr("trackers.waiting_login", "browser" to browserName) else tr("trackers.reading")
                             } else {
-                                if (isChromium) "🔑 Взять куки / Войти через $browserName"
-                                else "📥 Взять куки из $browserName"
+                                if (isChromium) tr("trackers.btn_login_via", "browser" to browserName)
+                                else tr("trackers.btn_take_from", "browser" to browserName)
                             }
                         ) {
                             val target = selectedBrowser ?: return@OutlineButton
@@ -244,10 +245,10 @@ fun TrackerSettingsDialog(onDismiss: () -> Unit) {
                                         RuTrackerTracker.enabled = true
                                         EdgeBrowserBridge.preferredBrowserType = target.type
                                         ru.suslikovanora.media.desktop.Store.flushAll()
-                                        browserStatus = true to "✓ Куки успешно получены из $browserName и сохранены!"
+                                        browserStatus = true to tr("trackers.cookies_saved", "browser" to browserName)
                                         trackerRefresh++
                                     }.onFailure {
-                                        browserStatus = false to (it.message ?: "Не удалось получить куки из $browserName")
+                                        browserStatus = false to (it.message ?: tr("trackers.cookies_save_failed", "browser" to browserName))
                                     }
                                 } else {
                                     val res = withContext(Dispatchers.IO) {
@@ -260,10 +261,10 @@ fun TrackerSettingsDialog(onDismiss: () -> Unit) {
                                         RuTrackerTracker.cookie = it
                                         RuTrackerTracker.enabled = true
                                         ru.suslikovanora.media.desktop.Store.flushAll()
-                                        browserStatus = true to "✓ Куки успешно найдены и активированы!"
+                                        browserStatus = true to tr("trackers.cookies_found")
                                         trackerRefresh++
                                     }.onFailure {
-                                        browserStatus = false to (it.message ?: "Не удалось извлечь куки")
+                                        browserStatus = false to (it.message ?: tr("trackers.cookies_extract_failed"))
                                     }
                                 }
                             }
@@ -281,7 +282,7 @@ fun TrackerSettingsDialog(onDismiss: () -> Unit) {
 
                     if (isChromium) {
                         Text(
-                            "💡 В $browserName куки защищены Windows App-Bound Encryption (v20): кнопка выше выполнит автоподбор или откроет $browserName для входа, и куки сохранятся автоматически.",
+                            tr("trackers.v20_hint", "browser" to browserName),
                             color = Sm.muted,
                             fontFamily = Onest,
                             fontSize = 12.sp,
@@ -289,7 +290,7 @@ fun TrackerSettingsDialog(onDismiss: () -> Unit) {
                         )
                     } else if (selectedBrowser?.type == BrowserType.FIREFOX) {
                         Text(
-                            "💡 Из Firefox куки считываются напрямую из локального профиля.",
+                            tr("trackers.firefox_hint"),
                             color = Sm.muted,
                             fontFamily = Onest,
                             fontSize = 12.sp,
@@ -297,16 +298,16 @@ fun TrackerSettingsDialog(onDismiss: () -> Unit) {
                         )
                     }
                 } else {
-                    Text("Установленные браузеры сканируются...", color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp)
+                    Text(tr("trackers.scanning_browsers"), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp)
                 }
 
                 Spacer(Modifier.height(16.dp))
 
                 // Cookie input
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text("Куки сессии (bb_session или вся строка Cookie):", color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                    Text(tr("trackers.session_cookie_label"), color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 13.sp)
                     Text(
-                        "📋 Вставить из буфера",
+                        tr("trackers.btn_paste"),
                         color = Sm.accent,
                         fontFamily = Onest,
                         fontSize = 12.5.sp,
@@ -335,7 +336,7 @@ fun TrackerSettingsDialog(onDismiss: () -> Unit) {
                 var testingConnection by remember { mutableStateOf(false) }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlineButton(
-                        text = if (testingConnection) "Проверяем через ${EdgeBrowserBridge.activeBrowserName}..." else "🔍 Проверить подключение"
+                        text = if (testingConnection) tr("trackers.checking_via", "browser" to EdgeBrowserBridge.activeBrowserName) else tr("trackers.btn_check_connection")
                     ) {
                         if (testingConnection) return@OutlineButton
                         saveAll()
@@ -357,14 +358,14 @@ fun TrackerSettingsDialog(onDismiss: () -> Unit) {
                 // ================= TAB 2: Выбор трекеров =================
                 Column(Modifier.fillMaxWidth()) {
                     Text(
-                        "Источники поиска",
+                        tr("trackers.sources_title"),
                         fontFamily = Onest,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 15.sp,
                         color = Sm.text
                     )
                     Text(
-                        "Включайте или отключайте трекеры для поиска. Отключение ненужных трекеров ускоряет поиск и исключает лишние результаты.",
+                        tr("trackers.sources_desc"),
                         fontFamily = Onest,
                         fontSize = 13.sp,
                         color = Sm.muted,
@@ -373,12 +374,12 @@ fun TrackerSettingsDialog(onDismiss: () -> Unit) {
 
                     // Quick action buttons
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 14.dp)) {
-                        Chip("Включить все", on = enabledSourcesCount == TrackerSettings.SOURCES.size) {
+                        Chip(tr("trackers.btn_enable_all"), on = enabledSourcesCount == TrackerSettings.SOURCES.size) {
                             TrackerSettings.setAll(true)
                             rtEnabled = true
                             trackerRefresh++
                         }
-                        Chip("Только русскоязычные", on = false) {
+                        Chip(tr("trackers.btn_only_ru"), on = false) {
                             TrackerSettings.setOnlyRussian()
                             rtEnabled = true
                             trackerRefresh++
@@ -443,7 +444,7 @@ fun TrackerSettingsDialog(onDismiss: () -> Unit) {
 
                                 // Toggle button
                                 Chip(
-                                    label = if (on) "✓ Включен" else "○ Отключен",
+                                    label = if (on) tr("trackers.status_on") else tr("trackers.status_off"),
                                     on = on
                                 ) {
                                     val next = !on
@@ -461,7 +462,7 @@ fun TrackerSettingsDialog(onDismiss: () -> Unit) {
 
             // Bottom action
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                LampButton("Сохранить и закрыть") {
+                LampButton(tr("trackers.btn_save_close")) {
                     dismissDialog()
                 }
             }
