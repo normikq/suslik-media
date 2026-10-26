@@ -97,3 +97,11 @@ $env:TIZEN_PROFILE="mixed"; .\build.ps1 -SiteUrl https://<сайт>
 комната и движок синхронизации (`party.test.js`), прогресс по аккаунту (`sync.test.js`), версия в «Что нового» = `config.xml`.
 
 **Страницы библиотеки:** на «Главной» и в «Моих» страница — 3 ряда постеров (`PAGE_ROWS` в `js/app.js`, колонок столько, сколько влезает), внизу «‹ 1 2 3 … ›» — пультом влево/вправо и OK. На ТВ не проверялось.
+
+## Слияние версий и поиск как на ПК (0.2.8, 26.10)
+- `js/model.js`: `groupVersions`, `titleKey`, `numberedEpisodesOf`, `seriesLine` (перенос `shared/.../core/Model.kt`); плитка на все
+  версии, нажатие открывает диалог выбора (`app.js`, `pickVersion`). Пути постеров (слияние по общему постеру) хранятся в
+  `localStorage` (`sm.posterPaths`), недостающие докачиваются в фоне (`posters.fill`, до 40 за раз).
+- `js/searchcore.js`: перенос `shared/.../core/search` (разбор релиза, фильтры, сортировка); копия лежит в
+  `website/public/searchcore.js` — правим обе. `js/search.js`: пресеты, качество, сортировка, «Только RU-трекеры», метки,
+  «Показать ещё». Тесты: `test/searchcore.test.js`, `test/model.test.js`.
