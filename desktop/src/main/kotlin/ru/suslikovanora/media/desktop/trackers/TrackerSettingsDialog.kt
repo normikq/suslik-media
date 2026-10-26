@@ -87,13 +87,15 @@ fun TrackerSettingsDialog(onDismiss: () -> Unit) {
         RuTrackerTracker.enabled = rtEnabled
         RuTrackerTracker.url = rtUrl
         RuTrackerTracker.cookie = rtCookie
-        ru.suslikovanora.media.desktop.Store.flushAll()
+        scope.launch(Dispatchers.IO) {
+            ru.suslikovanora.media.desktop.Store.flushAll()
+        }
     }
 
     fun dismissDialog() {
         saveAll()
-        EdgeBrowserBridge.stop()
         onDismiss()
+        EdgeBrowserBridge.stopAsync()
     }
 
     val enabledSourcesCount = remember(trackerRefresh, rtEnabled) {
