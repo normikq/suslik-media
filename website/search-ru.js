@@ -204,7 +204,26 @@ function make(h) {
         try {
           const r = await fetchPage(`${base}/search/0/0/000/0/${encodeURIComponent(q)}`);
           if (r.status !== 200) throw new Error(`HTTP ${r.status}`);
-          const rows = parseRutor(r.text);
+          let rows = parseRutor(r.text);
+
+          // Rutor Sphinx search engine requires adjacent words in queries;
+          // because Russian titles on Rutor are separated from the year by the English title
+          // (e.g. "Новый Человек-паук / The Amazing Spider-Man (2012)"), queries like "новый человек паук 2012"
+          // return 0 results. If 0 results and query contains a year, retry without the year and filter by year.
+          const yearMatch = /\b(19\d{2}|20\d{2})\b/.exec(q);
+          if (!rows.length && yearMatch) {
+            const cleanQ = q.replace(/\b(19\d{2}|20\d{2})\b/g, "").replace(/\s+/g, " ").trim();
+            if (cleanQ.length >= 2) {
+              const r2 = await fetchPage(`${base}/search/0/0/000/0/${encodeURIComponent(cleanQ)}`);
+              if (r2.status === 200) {
+                const rows2 = parseRutor(r2.text);
+                const targetYear = yearMatch[1];
+                const matchingYear = rows2.filter(row => row.title && row.title.includes(targetYear));
+                rows = matchingYear.length > 0 ? matchingYear : rows2;
+              }
+            }
+          }
+
           if (!rows.length) debugEmpty("rutor", r.text, r.finalUrl);
           return rows;
         } catch (err) { lastErr = err; } // следующее зеркало
@@ -486,12 +505,12 @@ function make(h) {
     }
     return out;
   }
-  // NNM-Club порой отдаёт ленту свежих раздач вместо результатов (запрос в адресе игнорируется). Такие ответы
-  // распознаются по тому, что большинство названий не содержит слов запроса: тогда запрос повторяется
-  // как отправка формы поиска (POST), а в итог попадают только подходящие раздачи.
+  // NNM-Club ожидает поисковый запрос nm в кодировке UTF-8. Если отправлять cp1251, движок NNM-Club
+  // вырезает кириллические байты как невалидный UTF-8, оставляя только цифры (напр. "2012"), из-за чего
+  // сайт возвращал случайные раздачи 2012 года. При пустом запросе отдаётся общая лента свежих раздач.
   const normQ = s => String(s || "").toLowerCase().replace(/[ёэ]/g, "е").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
   function nnmMatching(rows, q) {
-    const words = normQ(q).split(" ").filter(w => w.length >= 3);
+    const words = normQ(q).split(" ").filter(w => w.length >= 3 && !/^\d{4}$/.test(w));
     if (!words.length) return rows;
     const stems = words.map(w => (w.length > 5 ? w.slice(0, -2) : w)); // окончания: «бэтмена», «матрицы»
     return rows.filter(r => { const t = normQ(r.title); return stems.some(st => t.includes(st)); });
@@ -499,11 +518,11 @@ function make(h) {
   const looksIgnored = (rows, hits) => rows.length >= 5 && hits.length < rows.length * 0.3;
   async function nnmSearchPage(q, headers) {
     const base = nnmBase();
-    const r = await fetchPage(`${base}/forum/tracker.php?nm=${encodeCp1251(q)}`, { headers, charset: "windows-1251" });
+    const r = await fetchPage(`${base}/forum/tracker.php?nm=${encodeURIComponent(q)}`, { headers, charset: "windows-1251" });
     if (r.status !== 200) throw new Error(`HTTP ${r.status}`);
     let rows = parseNnm(r.text), hits = nnmMatching(rows, q);
     if (looksIgnored(rows, hits)) {
-      const body = `nm=${encodeCp1251(q)}&f=-1&o=10&s=2&submit_search=%CF%EE%E8%F1%EA`; // «Поиск» в cp1251
+      const body = `nm=${encodeURIComponent(q)}&f=-1&o=10&s=2&submit_search=%CF%EE%E8%F1%EA`;
       const r2 = await fetchPage(`${base}/forum/tracker.php`, {
         method: "POST", data: body, charset: "windows-1251",
         headers: { ...headers, "Content-Type": "application/x-www-form-urlencoded", Referer: `${base}/forum/tracker.php` }

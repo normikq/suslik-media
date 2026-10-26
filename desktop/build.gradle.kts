@@ -28,6 +28,8 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+    // Своя папка данных на время тестов: настройки трекеров, вход и прогресс владельца в %APPDATA% остаются нетронутыми.
+    systemProperty("suslik.appdir", layout.buildDirectory.dir("test-appdir").get().asFile.absolutePath)
 }
 
 // Адрес сайта не хранится в репозитории: секрет SITE_URL в CI или suslik.siteUrl в ~/.gradle/gradle.properties.
@@ -42,7 +44,7 @@ gradle.taskGraph.whenReady {
 }
 
 // One place for the version: the installer, and the app itself (update check) via -Dsuslik.version.
-val appVersion = "2.6.2"
+val appVersion = "2.6.3"
 // Windows Installer takes at most three numbers (2.0.0.1 → 2.0.0); ensure at least 3 parts for WiX (2.2 → 2.2.0)
 val msiVersion = appVersion.split(".").let { parts ->
     when (parts.size) {

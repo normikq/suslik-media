@@ -331,3 +331,32 @@ fun BookmarkIcon(modifier: Modifier = Modifier, filled: Boolean, color: Color = 
         if (filled) drawPath(path, color) else drawPath(path, color, style = Stroke(1.6.dp.toPx(), join = androidx.compose.ui.graphics.StrokeJoin.Round))
     }
 }
+
+@Composable
+fun GearIcon(modifier: Modifier = Modifier, color: Color = Color(0xFF8E96A8), size: Dp = 16.dp) {
+    Canvas(modifier = modifier.size(size)) {
+        val w = this.size.width
+        val h = this.size.height
+        val cx = w / 2f
+        val cy = h / 2f
+        val rCenter = w * 0.18f
+        val rRing = w * 0.32f
+        val sw = 1.6.dp.toPx()
+
+        drawCircle(color, rCenter, Offset(cx, cy), style = Stroke(sw))
+        drawCircle(color, rRing, Offset(cx, cy), style = Stroke(sw))
+
+        for (i in 0 until 6) {
+            rotate(degrees = i * 60f, pivot = Offset(cx, cy)) {
+                drawLine(
+                    color = color,
+                    start = Offset(cx, cy - rRing),
+                    end = Offset(cx, cy - w * 0.45f),
+                    strokeWidth = 2.4.dp.toPx(),
+                    cap = StrokeCap.Round
+                )
+            }
+        }
+    }
+}
+
