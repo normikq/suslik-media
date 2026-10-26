@@ -27,8 +27,8 @@ enum class SearchSort(val title: String) {
  * Cleans user queries by stripping search noise/stop-words (e.g. "фильмы", "сериал", "скачать", "смотреть").
  */
 object SearchQueryCleaner {
-    private val MEDIA_STOP_WORDS_REGEX = Regex(
-        """(?iU)\b(?:фильм[ыа-я]*|кино(?:фильм[ыа-я]*)?|сериал[ыа-я]*|мульт(?:фильм[ыа-я]*|ик[иа-я]*)?|аниме|смотреть|скачать|онлайн|в\s*хорошем\s*качестве)\b"""
+    private val MEDIA_STOP_WORDS_REGEX = ReleaseParser.uRegex(
+        """\b(?:фильм[ыа-я]*|кино(?:фильм[ыа-я]*)?|сериал[ыа-я]*|мульт(?:фильм[ыа-я]*|ик[иа-я]*)?|аниме|смотреть|скачать|онлайн|в\s*хорошем\s*качестве)\b"""
     )
     private val WHITESPACE_REGEX = Regex("""\s+""")
 

@@ -156,9 +156,46 @@ fun buildPlayable(m: Magnet): Playable {
         }
         return Playable.Series(seasons)
     }
+    // Episodes named only by a number ("Show - 01 [1080p].mkv"): a series, not a collection of films.
+    numberedEpisodesOf(m, vids)?.let { return it }
     // Collection (trilogy, several films / parts in one torrent, no episode numbers): every full-size film is listed.
     collectionOf(vids)?.let { return it }
     return mainVideo(m)?.let { Playable.Movie(it) } ?: Playable.None
+}
+
+private val NUM_NOISE = Regex("""(?:2160|1080|720|480|576)[pi]|[xh][ .]?26[45]|\d+(?:[.,]\d+)?\s?(?:fps|kbps|mbps|bit|gb|mb)|(?<!\d)(?:19|20)\d{2}(?!\d)|(?<!\d)[1-9]\.[01](?!\d)""", IC)
+private val NUM = Regex("""(?<!\d)\d{1,3}(?!\d)""")
+private val SERIES_HINT = Regex("""(?<![\p{L}\p{N}])(?:сезон\p{L}*|season\p{L}*|серии|серия|series|episodes?|эпизод\p{L}*|s\d{1,2}|ova|ona)(?![\p{L}\p{N}])""", IC)
+
+/**
+ * Files that differ only by one number ("Show - 01", "Show - 02" …) are episodes when the torrent says so (season / series
+ * in its name) or looks like a season: five or more files of similar size numbered one after another.
+ * Without that a trilogy ("Film 1", "Film 2") stays a collection.
+ */
+private fun numberedEpisodesOf(m: Magnet, vids: List<MFile>): Playable.Series? {
+    if (vids.size < 2 || vids.any { BLURAY_DIR.containsMatchIn(it.path) }) return null
+    val main = vids.filter { !EXTRAS.containsMatchIn(it.path) }
+    if (main.size < 2) return null
+    val parsed = main.map { f ->
+        val base = basename(f.path).replace(EXT, "").replace(DOTS, " ").replace(NUM_NOISE, " ")
+        base to NUM.findAll(base).toList()
+    }
+    val slots = parsed.minOf { it.second.size }
+    for (slot in 0 until slots) {
+        val nums = parsed.map { it.second[slot].value.toInt() }
+        if (nums.toSet().size != nums.size) continue
+        val templates = parsed.map { (b, ms) -> b.replaceRange(ms[slot].range, "#") }
+        if (templates.toSet().size != 1) continue
+        val sorted = nums.sorted()
+        val consecutive = sorted.zipWithNext().all { (a, b) -> b - a == 1 }
+        val sizes = main.map { it.size }
+        val similar = sizes.max() <= sizes.min() * 2
+        val looksLikeSeason = main.size >= 5 && consecutive && similar
+        if (!SERIES_HINT.containsMatchIn(m.name) && !looksLikeSeason) continue
+        val eps = main.mapIndexed { i, f -> Episode(1, nums[i], f) }.sortedBy { it.episode }
+        return Playable.Series(listOf(Season(1, eps)))
+    }
+    return null
 }
 
 private val EXTRAS = Regex("""(?:^|/)(?:extras?|bonus|featurettes?|behind[ ._-]?the[ ._-]?scenes|trailers?|доп[^/]*|бонус[^/]*|допы)(?:/|$)""", RegexOption.IGNORE_CASE)
@@ -189,6 +226,22 @@ fun cleanTitle(value: String): String {
     s = s.replace(TAGS, "")
     s = s.replace(YEAR_TAIL, " ").replace(BRACKETS, " ").replace(SPACES, " ").trim()
     return s.ifBlank { value.replace(DOTS, " ").trim() }
+}
+
+private val SEASON_NOISE = Regex(
+    """(?<![\p{L}\p{N}])(?:\d{1,2}(?:\s*[-–]\s*\d{1,2})?\s*(?:сезон\p{L}*|season\p{L}*)|(?:сезон\p{L}*|season\p{L}*|серии|серия|series|episodes?)\s*\d{1,3}(?:\s*[-–]\s*\d{1,3})?|s\d{1,2}(?:\s*[-–]?\s*[se]\d{1,3})?|complete|полный|полностью|(?:сезон\p{L}*|season\p{L}*|серии|episodes))(?![\p{L}\p{N}])""",
+    IC
+)
+private val NON_WORD = Regex("""[^\p{L}\p{N}]+""")
+
+/**
+ * Key of «the same title»: the release's plain title without season / episode marks, so "Show S01", "Show Season 2"
+ * and "Show [1-3 сезон]" are one show. Different seasons and releases of it share the key.
+ */
+fun titleKey(baseTitle: String): String {
+    val plain = baseTitle.lowercase(Locale.ROOT).replace('ё', 'е')
+    val key = plain.replace(SEASON_NOISE, " ").replace(NON_WORD, " ").trim()
+    return key.ifBlank { plain.replace(NON_WORD, " ").trim() }
 }
 
 fun formatBytes(value: Long): String {
@@ -229,6 +282,50 @@ fun prepareItems(list: List<Magnet>): List<LibraryItem> = list.map { m ->
         posterQueries = listOfNotNull(base, main?.let { cleanTitle(it.name.ifBlank { it.path.substringAfterLast('/') }) }).distinct(),
         searchText = (m.name + "\n" + m.files.joinToString("\n") { it.path }).lowercase()
     )
+}
+
+/** «Сезоны 1–3 · 24 серии» for a series row of the picker. */
+fun seriesLine(p: Playable.Series): String {
+    val nums = p.seasons.map { it.season }.filter { it > 0 }
+    val eps = p.seasons.sumOf { it.items.size }
+    val first = p.seasons.firstOrNull()?.items?.firstOrNull()
+    val isFilms = first?.title != null
+    val epWord = if (isFilms) "фильм." else if (eps % 10 in 2..4 && eps % 100 !in 12..14) "серии" else if (eps % 10 == 1 && eps % 100 != 11) "серия" else "серий"
+    val range = when {
+        isFilms || nums.isEmpty() -> ""
+        nums.size == 1 -> "Сезон ${nums.first()} · "
+        else -> "Сезоны ${nums.min()}–${nums.max()} · "
+    }
+    return "$range$eps $epWord"
+}
+
+private val YEAR_IN_NAME = Regex("""\b(19\d{2}|20\d{2})\b""")
+
+/**
+ * Same film or show added more than once (different releases: 720p / 1080p / 4K, other voice-overs, other titles,
+ * other seasons of a show): one tile for all of them. Only ready items are merged. Films merge with films, series
+ * (and collections) with series: by the same poster (when [posterOf] knows it), otherwise by the title without season
+ * marks (a film also by year). The first one in the list order stays on screen; [Pair.second] maps its id to every
+ * version (itself included).
+ */
+fun groupVersions(list: List<LibraryItem>, posterOf: (LibraryItem) -> String? = { null }): Pair<List<LibraryItem>, Map<Long, List<LibraryItem>>> {
+    val byKey = HashMap<String, MutableList<LibraryItem>>()
+    val groups = ArrayList<MutableList<LibraryItem>>()
+    val shown = ArrayList<LibraryItem>(list.size)
+    for (it in list) {
+        if (it.playable is Playable.None || !it.m.ready || it.baseTitle.isBlank()) { shown += it; continue }
+        val kind = if (it.playable is Playable.Movie) "m" else "s"
+        val keys = listOfNotNull(
+            posterOf(it)?.let { p -> "$kind|poster|$p" },
+            if (kind == "m") "m|" + titleKey(it.baseTitle) + "|" + (YEAR_IN_NAME.find(it.m.name)?.value ?: "") else "s|" + titleKey(it.baseTitle)
+        )
+        val group = keys.firstNotNullOfOrNull { k -> byKey[k] }
+        if (group == null) { val g = mutableListOf(it); groups += g; shown += it; keys.forEach { k -> byKey[k] = g } }
+        else { group += it; keys.forEach { k -> byKey.putIfAbsent(k, group) } }
+    }
+    val versions = HashMap<Long, List<LibraryItem>>()
+    for (g in groups) if (g.size > 1) versions[g.first().m.id] = g
+    return shown to versions
 }
 
 /**
