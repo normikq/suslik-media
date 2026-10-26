@@ -126,8 +126,7 @@ object ReleaseParser {
         TRAILER_OR_TEASER_REGEX.containsMatchIn(rawTitle)
 
     private val VIDEO_FORUM_WHITELIST = listOf(
-        "музыкальное видео", "видеоклип", "клип", "концерт", "экранизац", "фильм", "кино", "сериал", "мульт",
-        "передач", "шоу", "спектакл", "театр", "документал", "спорт"
+        "музыкальное видео", "видеоклип", "клип", "концерт", "экранизац", "по играм", "по книг"
     )
 
     private val NON_VIDEO_FORUM_KEYWORDS = listOf(

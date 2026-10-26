@@ -300,5 +300,9 @@ class ReleaseParserTest {
         // Non-video music and books should be filtered
         assertTrue(ReleaseParser.isNonVideo("Linkin Park - Meteora (2003) FLAC", "Музыка (lossless)"))
         assertTrue(ReleaseParser.isNonVideo("Стивен Кинг - Сияние FB2, EPUB", "Книги и журналы"))
+
+        // Игровая категория больше не спасается общими словами «фильм»/«кино»
+        assertTrue(ReleaseParser.isNonVideo("Some Game (2020) PC", "Игры для PC: фильм-квесты"))
+        assertFalse(ReleaseParser.isNonVideo("Silent Hill (2006) 1080p", "Фильмы по играм"))
     }
 }

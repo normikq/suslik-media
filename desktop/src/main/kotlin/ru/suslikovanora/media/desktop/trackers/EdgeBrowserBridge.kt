@@ -237,6 +237,8 @@ object EdgeBrowserBridge {
             if (!assigned) {
                 val err = com.sun.jna.Native.getLastError()
                 System.err.println("[EdgeBrowserBridge] AssignProcessToJobObject failed: error $err")
+                k32.CloseHandle(hJob) // без привязки job бесполезен: полагаемся на taskkill
+                return@runCatching null
             }
             hJob
         }.getOrNull()
@@ -260,7 +262,11 @@ object EdgeBrowserBridge {
                     val err = com.sun.jna.Native.getLastError()
                     System.err.println("[EdgeBrowserBridge] SetInformationJobObject failed for pid $pid: error $err")
                 }
-                k32.AssignProcessToJobObject(hJob, hProc)
+                if (!k32.AssignProcessToJobObject(hJob, hProc)) {
+                    System.err.println("[EdgeBrowserBridge] AssignProcessToJobObject failed for pid $pid: error ${com.sun.jna.Native.getLastError()}")
+                    k32.CloseHandle(hJob)
+                    return@runCatching null
+                }
                 hJob
             } finally {
                 k32.CloseHandle(hProc)
@@ -601,7 +607,7 @@ object EdgeBrowserBridge {
                                                 if (!title) continue;
                                                 const forumEl = r.querySelector('a.f, a[href*="tracker.php?f="]');
                                                 const forum = forumEl ? forumEl.textContent.trim() : '';
-                                                const sizeEl = r.querySelector('td.tor-size, td[data-ts_text]');
+                                                const sizeEl = r.querySelector('td.tor-size');
                                                 const sizeBytes = sizeEl ? (parseInt(sizeEl.getAttribute('data-ts_text') || '0', 10) || 0) : 0;
                                                 const seedEl = r.querySelector('td.seedmed');
                                                 const seeds = seedEl ? (parseInt(seedEl.textContent.replace(/\D/g, ''), 10) || 0) : 0;
