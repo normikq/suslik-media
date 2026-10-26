@@ -42,6 +42,7 @@ class HybridEngine(private val context: Context) : PlayerEngine {
         override fun timeChanged() { l()?.timeChanged() }
         override fun lengthChanged() { l()?.lengthChanged() }
         override fun unsupported(reason: String) { l()?.unsupported(reason) }
+        override fun hdrVideo(dolbyVision: Boolean) { l()?.hdrVideo(dolbyVision) }
     }
 
     private fun engine(kind: EngineKind): PlayerEngine = when (kind) {
@@ -97,6 +98,8 @@ class HybridEngine(private val context: Context) : PlayerEngine {
     override fun audioFileOf(id: Int, files: Int): Int? = active.audioFileOf(id, files)
     override fun audioFileTrack(index: Int, files: Int): Int? = active.audioFileTrack(index, files)
     override fun setAudioDelayMs(ms: Long) = active.setAudioDelayMs(ms)
+    override fun setAudioSyncMs(ms: Long) = active.setAudioSyncMs(ms)
+    override fun setSubtitleDelayMs(ms: Long) = active.setSubtitleDelayMs(ms)
 
     override val videoTrackCount: Int get() = active.videoTrackCount
     override val videoTrack: EngineVideoTrack? get() = active.videoTrack

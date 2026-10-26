@@ -194,14 +194,31 @@ class VlcEngine(private val context: Context) : PlayerEngine {
         runCatching { player?.addSlave(IMedia.Slave.Type.Audio, Uri.parse(url), true) }
     }
 
-    override fun setAudioDelayMs(ms: Long) {
+    // The sound's delay is the uploaded voice-over's own offset plus what the viewer set; the subtitles' is the viewer's.
+    private var voiceDelayMs = 0L
+    private var syncDelayMs = 0L
+    private var subtitleDelayMs = 0L
+
+    override fun setAudioDelayMs(ms: Long) { voiceDelayMs = ms; applyAudioDelay() }
+    override fun setAudioSyncMs(ms: Long) { syncDelayMs = ms; applyAudioDelay() }
+
+    private fun applyAudioDelay() {
         val p = player ?: return
+        val ms = voiceDelayMs + syncDelayMs
         val before = p.audioDelay / 1000L
         if (before == ms) return
         p.setAudioDelay(ms * 1000L)
         // A big jump leaves silence until the video catches up: the same place again takes the sound with the new delay.
         if (kotlin.math.abs(ms - before) >= 1000L && p.isSeekable) p.setTime(p.time)
-        ru.suslikovanora.media.AppLog.write("[track] audio delay $ms ms")
+        ru.suslikovanora.media.AppLog.write("[track] audio delay $ms ms (voice-over $voiceDelayMs, set by the viewer $syncDelayMs)")
+    }
+
+    override fun setSubtitleDelayMs(ms: Long) {
+        subtitleDelayMs = ms
+        val p = player ?: return
+        if (p.spuDelay / 1000L == ms) return
+        p.setSpuDelay(ms * 1000L)
+        ru.suslikovanora.media.AppLog.write("[track] subtitle delay $ms ms")
     }
 
     // ---- video -------------------------------------------------------------------------------

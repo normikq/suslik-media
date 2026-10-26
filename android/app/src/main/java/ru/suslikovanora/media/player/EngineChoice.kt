@@ -7,7 +7,7 @@ import ru.suslikovanora.media.PlaybackSettings
 import java.util.Locale
 
 /**
- * Какой движок открывает файл. Настройка «Плеер» = VLC — всегда VLC. Иначе Media3, кроме:
+ * Какой движок открывает файл. Настройка «Плеер» = VLC — VLC, кроме Dolby Vision (его VLC не умеет). Иначе Media3, кроме:
  *  - контейнеров, которые Media3 не читает или читает нестабильно (Blu-ray `.m2ts`, `.ts`, `.iso`, `.avi`) — сразу VLC;
  *  - файлов, для которых движок уже выбран раньше (Media3 не справился — запомнено [remember]): «Продолжить»
  *    сразу открывает их в нужном движке, без повторной попытки и переключения посреди просмотра.
@@ -19,10 +19,12 @@ class EngineChoice(context: Context) {
     private val prefs = app.getSharedPreferences("player_engine", Context.MODE_PRIVATE)
 
     fun choose(url: String): Pick {
-        if (PlaybackSettings.engine(app) == EngineKind.VLC) return Pick(EngineKind.VLC, "setting: VLC")
         val ext = Uri.parse(url).lastPathSegment.orEmpty().substringAfterLast('.', "").lowercase(Locale.ROOT)
         if (ext in VLC_ONLY) return Pick(EngineKind.VLC, ".$ext: Media3 cannot read this container")
         remembered(url)?.let { return Pick(it.kind, "remembered for this file (${it.reason})") }
+        // libVLC 3.6 has no Dolby Vision: even with «Плеер: VLC» such a file goes to Media3 (its decoder, or the base layer by itself)
+        if (VideoHints.isDolbyVision(url)) return Pick(EngineKind.MEDIA3, "Dolby Vision: libVLC shows only the base layer")
+        if (PlaybackSettings.engine(app) == EngineKind.VLC) return Pick(EngineKind.VLC, "setting: VLC")
         return Pick(EngineKind.MEDIA3, "setting: Media3")
     }
 
