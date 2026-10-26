@@ -1,6 +1,7 @@
 package ru.suslikovanora.media.core.search
 
 import java.util.Locale
+import java.util.regex.Pattern
 
 /**
  * Calibrated tracker release parser for Russian and international trackers (Rutor, Rutracker,
@@ -11,93 +12,97 @@ import java.util.Locale
  */
 object ReleaseParser {
 
-    private val IC = RegexOption.IGNORE_CASE
+    /**
+     * Creates a precompiled [Regex] with both CASE_INSENSITIVE and UNICODE_CHARACTER_CLASS enabled.
+     * This ensures \b word boundaries and character classes work correctly for Cyrillic on desktop JVM (JDK 21+)
+     * as well as Android.
+     */
+    private fun uRegex(pattern: String): Regex =
+        Pattern.compile(pattern, Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CHARACTER_CLASS).toRegex()
 
     // --- Resolution ---
-    private val RES_4K = Regex("""(?:\b|_)(?:2160p|4k|uhd|3840x2160|4к)(?:\b|_)""", IC)
-    private val RES_1080P = Regex("""(?:\b|_)(?:1080[pi]|fhd|full[- ]?hd|1920x1080)(?:\b|_)""", IC)
-    private val RES_720P = Regex("""(?:\b|_)(?:720p|1280x720)(?:\b|_)""", IC)
-    private val RES_SD = Regex("""(?:\b|_)(?:480[pi]|576[pi]|sd)(?:\b|_)""", IC)
+    private val RES_4K = uRegex("""(?:\b|_)(?:2160p|4k|uhd|3840x2160|4к)(?:\b|_)""")
+    private val RES_1080P = uRegex("""(?:\b|_)(?:1080[pi]|fhd|full[- ]?hd|1920x1080)(?:\b|_)""")
+    private val RES_720P = uRegex("""(?:\b|_)(?:720p|1280x720)(?:\b|_)""")
+    private val RES_SD = uRegex("""(?:\b|_)(?:480[pi]|576[pi]|sd)(?:\b|_)""")
 
     // --- Video Codec ---
-    private val CODEC_HEVC = Regex("""(?:\b|_)(?:hevc|h\.?265|x265)(?:\b|_)""", IC)
-    private val CODEC_AVC = Regex("""(?:\b|_)(?:avc|h\.?264|x264)(?:\b|_)""", IC)
-    private val CODEC_AV1 = Regex("""(?:\b|_)(?:av1)(?:\b|_)""", IC)
-    private val CODEC_OTHER = Regex("""(?:\b|_)(?:xvid|divx|mpeg-?2)(?:\b|_)""", IC)
+    private val CODEC_HEVC = uRegex("""(?:\b|_)(?:hevc|h\.?265|x265)(?:\b|_)""")
+    private val CODEC_AVC = uRegex("""(?:\b|_)(?:avc|h\.?264|x264)(?:\b|_)""")
+    private val CODEC_AV1 = uRegex("""(?:\b|_)(?:av1)(?:\b|_)""")
+    private val CODEC_OTHER = uRegex("""(?:\b|_)(?:xvid|divx|mpeg-?2)(?:\b|_)""")
 
     // --- Rip Types ---
-    private val RIP_REMUX = Regex("""(?:\b|_)(?:bd[- ]?remux|remux)(?:\b|_)""", IC)
-    private val RIP_CAM = Regex(
-        """(?:\b|_)(?:cam[- ]?rip|cam|hdcam|telesync|hd-?ts|экранка)(?:\b|_)|\[ts\]|\|\s*ts\b|звук\s*с\s*ts|\b(?:dvdscr|scr)\b""",
-        IC
+    private val RIP_REMUX = uRegex("""(?:\b|_)(?:bd[- ]?remux|remux)(?:\b|_)""")
+    private val RIP_CAM = uRegex(
+        """(?:\b|_)(?:cam[- ]?rip|cam|hdcam|telesync|hd-?ts|экранка)(?:\b|_)|\[ts\]|\|\s*ts\b|звук\s*с\s*ts|\b(?:dvdscr|scr)\b"""
     )
-    private val RIP_BDRIP = Regex("""(?:\b|_)(?:bd[- ]?rip|brrip|bdrip-hevc)(?:\b|_)""", IC)
-    private val RIP_BLURAY = Regex("""(?:\b|_)(?:bluray|blu[- ]?ray|bdmv)(?:\b|_)""", IC)
-    private val RIP_WEBDL = Regex("""(?:\b|_)(?:web-?dl(?:rip)?|webdl(?:rip)?)(?:\b|_)""", IC)
-    private val RIP_WEBRIP = Regex("""(?:\b|_)(?:web-?rip|webrip)(?:\b|_)""", IC)
-    private val RIP_HDTV = Regex("""(?:\b|_)(?:hdtv(?:rip)?|tvrip|satrip)(?:\b|_)""", IC)
-    private val RIP_DVDRIP = Regex("""(?:\b|_)(?:dvd[- ]?rip|dvd[59])(?:\b|_)""", IC)
+    private val RIP_BDRIP = uRegex("""(?:\b|_)(?:bd[- ]?rip|brrip|bdrip-hevc)(?:\b|_)""")
+    private val RIP_BLURAY = uRegex("""(?:\b|_)(?:bluray|blu[- ]?ray|bdmv)(?:\b|_)""")
+    private val RIP_WEBDL = uRegex("""(?:\b|_)(?:web-?dl(?:rip)?|webdl(?:rip)?)(?:\b|_)""")
+    private val RIP_WEBRIP = uRegex("""(?:\b|_)(?:web-?rip|webrip)(?:\b|_)""")
+    private val RIP_HDTV = uRegex("""(?:\b|_)(?:hdtv(?:rip)?|tvrip|satrip)(?:\b|_)""")
+    private val RIP_DVDRIP = uRegex("""(?:\b|_)(?:dvd[- ]?rip|dvd[59])(?:\b|_)""")
 
     // --- Dynamic Range (HDR) ---
-    private val HDR_DV = Regex("""(?:\b|_)(?:dolby\s*vision|dovi)(?:\b|_)|(?:\b|_|\|)(?:dv)(?:\b|_|\||\+)""", IC)
-    private val HDR_10PLUS = Regex("""(?:\b|_)(?:hdr10\+|hdr10plus)(?:\b|_)""", IC)
-    private val HDR_10 = Regex("""(?:\b|_)(?:hdr10?)(?:\b|_)""", IC)
+    private val HDR_DV = uRegex("""(?:\b|_)(?:dolby\s*vision|dovi)(?:\b|_)|(?:\b|_|\|)(?:dv)(?:\b|_|\||\+)""")
+    private val HDR_10PLUS = uRegex("""(?:\b|_)(?:hdr10\+|hdr10plus)(?:\b|_)""")
+    private val HDR_10 = uRegex("""(?:\b|_)(?:hdr10?)(?:\b|_)""")
 
     // --- Audio / Voiceover ---
-    private val VOICE_DUB = Regex(
-        """(?:\b|_)(?:дублированный|дубляж|лицензия|dub)\b|(?<=[|\[(\s])(?:d|дб)\b|\[дубляж\]""",
-        IC
+    private val VOICE_DUB = uRegex(
+        """(?:\b|_)(?:дублированный|дубляж|лицензия|dub)\b|(?<=[|\[(\s])(?:d|дб)\b|\[дубляж\]"""
     )
-    private val VOICE_MVO = Regex(
-        """(?:\b|_)(?:многоголосый|профессиональный\s*\(многоголосый\)|пм|mvo)\b""",
-        IC
+    private val VOICE_MVO = uRegex(
+        """(?:\b|_)(?:многоголосый|профессиональный\s*\(многоголосый\)|пм|mvo)\b"""
     )
-    private val VOICE_DVO = Regex(
-        """(?:\b|_)(?:двухголосый|профессиональный\s*\(двухголосый\)|пд|dvo)\b""",
-        IC
+    private val VOICE_DVO = uRegex(
+        """(?:\b|_)(?:двухголосый|профессиональный\s*\(двухголосый\)|пд|dvo)\b"""
     )
-    private val VOICE_AVO = Regex(
-        """(?:\b|_)(?:авторский|одноголосый|avo)\b""",
-        IC
+    private val VOICE_AVO = uRegex(
+        """(?:\b|_)(?:авторский|одноголосый|avo)\b"""
     )
-    private val VOICE_ORIG = Regex(
-        """(?:\b|_)(?:субтитры|оригинал|original)(?:\b|_)|(?:\b|_)(?:eng|jap)(?:\b|_)""",
-        IC
+    private val VOICE_ORIG = uRegex(
+        """(?:\b|_)(?:субтитры|оригинал|original)(?:\b|_)|(?:\b|_)(?:eng|jap)(?:\b|_)"""
     )
 
     // --- Series / Episodes count ---
     // e.g. "серии 1-9 из 9", "73 из 73", "1 of 10"
-    private val EP_OF = Regex("""\b\d{1,3}\s*(?:из|of)\s*(\d{1,3})\b""", IC)
+    private val EP_OF = uRegex("""\b\d{1,3}\s*(?:из|of)\s*(\d{1,3})\b""")
     // e.g. "[01-05x01-62]"
-    private val EP_RANGE = Regex("""\[\d{1,2}(?:-\d{1,2})?x\d{1,2}-(\d{1,3})\]""", IC)
+    private val EP_RANGE = uRegex("""\[\d{1,2}(?:-\d{1,2})?x\d{1,2}-(\d{1,3})\]""")
     // e.g. "серии 1-12", "эпизоды 1-8"
-    private val EP_WORD_RANGE = Regex("""(?:\b(?:сери[йи]|эпизод[оыв]?)\s*\d{1,3}-(\d{1,3})\b)""", IC)
+    private val EP_WORD_RANGE = uRegex("""(?:\b(?:сери[йи]|эпизод[оыв]?)\s*\d{1,3}-(\d{1,3})\b)""")
     // e.g. "S01E01-E10"
-    private val EP_SX_EX = Regex("""S\d{1,2}E\d{1,3}-E?(\d{1,3})""", IC)
-    private val SERIES_HINT = Regex("""\b(?:сезон|сериал|season|s\d{1,2}|сери[яи]|эпизод)\b""", IC)
+    private val EP_SX_EX = uRegex("""S\d{1,2}E\d{1,3}-E?(\d{1,3})""")
+    private val SERIES_HINT = uRegex("""\b(?:сезон|сериал|season|s\d{1,2}|сери[яи]|эпизод)\b""")
 
     // --- Collections / Franchises / Multi-film sets ---
-    private val COLLECTION_WORDS = Regex(
-        """\b(коллекци[яи]|collection|boxset|box-set|антологи[яи]|anthology|все\s+части|все\s+фильмы|все\s+выпуски|полная\s+коллекция|полное\s+собрание|франшиза|киносага|сага|franchise)\b|\[коллекция\]|\(коллекция\)|\[антология\]|\(антология\)""",
-        IC
+    private val COLLECTION_WORDS = uRegex(
+        """\b(коллекци[яи]|collection|boxset|box-set|антологи[яи]|anthology|все\s+части|все\s+фильмы|все\s+выпуски|полная\s+коллекция|полное\s+собрание|франшиза|киносага|сага|franchise)\b|\[коллекция\]|\(коллекция\)|\[антология\]|\(антология\)"""
     )
-    private val COLLECTION_COUNT = Regex(
-        """\b(\d{1,2})\s*(?:фильм[а-ов]?|movies?|parts?|частей|части|фильма)\b|\b(?:части|фильмы|parts|movies)\s*1\s*[-–—]\s*(\d{1,2})\b""",
-        IC
+    private val COLLECTION_COUNT = uRegex(
+        """\b(\d{1,2})\s*(?:фильм[а-ов]?|movies?|parts?|частей|части|фильма)\b|\b(?:части|фильмы|parts|movies)\s*1\s*[-–—]\s*(\d{1,2})\b"""
     )
-    private val YEAR_RANGE = Regex("""\b(19\d{2}|20\d{2})\s*[-–—]\s*(19\d{2}|20\d{2})\b""")
-    private val YEAR_REGEX = Regex("""\b(19\d{2}|20\d{2})\b""")
+    private val TRILOGY = uRegex("""\b(трилоги[яи]|trilogy)\b""")
+    private val DUOLOGY = uRegex("""\b(дилоги[яи]|duology|dilogy)\b""")
+    private val QUADRILOGY = uRegex("""\b(квадрологи[яи]|тетралоги[яи]|quadrilogy|tetralogy)\b""")
+    private val PENTALOGY = uRegex("""\b(пенталоги[яи])\b""")
+    private val HEXALOGY = uRegex("""\b(гексалоги[яи])\b""")
+
+    private val YEAR_RANGE = uRegex("""\b(19\d{2}|20\d{2})\s*[-–—]\s*(19\d{2}|20\d{2})\b""")
+    private val YEAR_REGEX = uRegex("""\b(19\d{2}|20\d{2})\b""")
 
     // Cut-off regex for cleanTitle: where technical release tags start
-    private val TECH_SPLIT = Regex(
-        """(?:\s*[|]\s*|\s+(?:2160p|1080[pi]|720p|480p|4k|bdremux|remux|bluray|blu-ray|bdrip|web-?dl(?:rip)?|web-?rip|hdtv(?:rip)?|dvdrip|camrip|telesync|x26[45]|hevc|avc|h\.?26[45]|aac|dts|ddp?5?\.?1)\b)""",
-        IC
+    private val TECH_SPLIT = uRegex(
+        """(?:\s*[|]\s*|\s+(?:2160p|1080[pi]|720p|480p|4k|bdremux|remux|bluray|blu-ray|bdrip|web-?dl(?:rip)?|web-?rip|hdtv(?:rip)?|dvdrip|camrip|telesync|x26[45]|hevc|avc|h\.?26[45]|aac|dts|ddp?5?\.?1)\b)"""
     )
+    private val TRAILING_PUNCTUATION_REGEX = Regex("""[\s|/\\-]+$""")
 
     // --- Non-video signatures (Games, Software, Audiobooks, Music, Comics, Trailers, Teasers, etc.) ---
     // Метки, которые у фильма не встречаются: раздача с любой из них — точно не кино.
-    private val GAME_STRONG_REGEX = Regex(
-        """(?iU)(?:(?:\b|_)(?:fpkg|xci|nsp|fitgirl|xatab|dodi|decepticon|steam-?rip|gog|cusa\d+|ppsa\d+)(?:\b|_)|""" +
+    private val GAME_STRONG_REGEX = uRegex(
+        """(?:(?:\b|_)(?:fpkg|xci|nsp|fitgirl|xatab|dodi|decepticon|steam-?rip|gog|cusa\d+|ppsa\d+)(?:\b|_)|""" +
         """\b(?:rus\s*text|eng\s*text|rus\s*sound|eng\s*sound)\b|""" +
         """\b(?:goty|game\s*of\s*the\s*year)\b|""" +
         """(?:таблетка|кряк|crack)\s*[:(]?\s*(?:вшита|вшит|присутствует|не требуется))"""
@@ -105,27 +110,32 @@ object ReleaseParser {
 
     // Метки, которые бывают и у фильмов: «Dune.Part.Two.2024.REPACK.1080p», «Бэтмен против Супермена [Ultimate Edition]».
     // Такую раздачу отсеиваем, только если меток две и больше (напр. «... (2020) PC | RePack»).
-    private val GAME_WEAK_REGEX = Regex(
-        """(?iU)(?:(?:\b|_)(?:repack|рипак|репак|pkg|pc)(?:\b|_)|""" +
+    private val GAME_WEAK_REGEX = uRegex(
+        """(?:(?:\b|_)(?:repack|рипак|репак|pkg|pc)(?:\b|_)|""" +
         """\b(?:digital\s*deluxe|deluxe\s*edition|gold\s*edition|ultimate\s*edition)\b|""" +
         """\bv\d+\.\d+(?:\.\d+)?\b)"""
     )
 
     // Окончания перечислены по одному: «трейлер[а-я]*» ловил «Парни из Трейлерного парка»,
     // а «trailers?» — «Trailer Park Boys» (его отводит проверка на парк).
-    private val TRAILER_OR_TEASER_REGEX = Regex(
-        """(?iU)\b(?:тизер(?:[- ]?трейлер)?(?:ы|а|ов|у|е|ом|ам|ами)?|трейлер(?:ы|а|ов|у|е|ом|ам|ами)?|teasers?|trailers?)\b(?!\s*(?:парк|park))"""
+    private val TRAILER_OR_TEASER_REGEX = uRegex(
+        """\b(?:тизер(?:[- ]?трейлер)?(?:ы|а|ов|у|е|ом|ам|ами)?|трейлер(?:ы|а|ов|у|е|ом|ам|ами)?|teasers?|trailers?)\b(?!\s*(?:парк|park))"""
     )
 
     fun isTrailerOrTeaser(rawTitle: String): Boolean =
         TRAILER_OR_TEASER_REGEX.containsMatchIn(rawTitle)
 
+    private val VIDEO_FORUM_WHITELIST = listOf(
+        "музыкальное видео", "видеоклип", "клип", "концерт", "экранизац", "фильм", "кино", "сериал", "мульт",
+        "передач", "шоу", "спектакл", "театр", "документал", "спорт"
+    )
+
     private val NON_VIDEO_FORUM_KEYWORDS = listOf(
         "игр", "game", "ps3", "ps4", "ps5", "playstation", "xbox", "nintendo", "switch",
         "программ", "софт", "soft", "windows", "macos", "linux", "драйвер",
-        "книг", "журнал", "аудиокниг", "литератур", "book",
-        "музык", "music", "дискографи", "lossless", "flac", "саундтрек",
-        "обои", "картинк", "фото", "модел"
+        "книги и журналы", "аудиокниг", "литератур", "электронные книги", "комикс",
+        "музыка (lossless)", "дискографи", "lossless", "flac", "саундтрек", "музыка mp3",
+        "обои", "картинк", "фотографии", "3d модел"
     )
 
     /**
@@ -133,9 +143,12 @@ object ReleaseParser {
      */
     fun isNonVideo(rawTitle: String, forumCategory: String = ""): Boolean {
         if (forumCategory.isNotBlank()) {
-            val f = forumCategory.lowercase()
-            if (NON_VIDEO_FORUM_KEYWORDS.any { f.contains(it) }) {
-                return true
+            val f = forumCategory.lowercase(Locale.ROOT)
+            val isWhitelistedVideo = VIDEO_FORUM_WHITELIST.any { f.contains(it) }
+            if (!isWhitelistedVideo) {
+                if (NON_VIDEO_FORUM_KEYWORDS.any { f.contains(it) }) return true
+                if ((f.contains("музык") || f.contains("music")) && !f.contains("видео") && !f.contains("клип") && !f.contains("концерт")) return true
+                if ((f.contains("книг") || f.contains("book")) && !f.contains("экранизац")) return true
             }
         }
         if (GAME_STRONG_REGEX.containsMatchIn(rawTitle)) return true
@@ -213,11 +226,11 @@ object ReleaseParser {
 
         // 7. Collection / Franchise detection
         val specificCount = when {
-            Regex("""\b(трилоги[яи]|trilogy)\b""", IC).containsMatchIn(s) -> 3
-            Regex("""\b(дилоги[яи]|duology|dilogy)\b""", IC).containsMatchIn(s) -> 2
-            Regex("""\b(квадрологи[яи]|тетралоги[яи]|quadrilogy|tetralogy)\b""", IC).containsMatchIn(s) -> 4
-            Regex("""\b(пенталоги[яи])\b""", IC).containsMatchIn(s) -> 5
-            Regex("""\b(гексалоги[яи])\b""", IC).containsMatchIn(s) -> 6
+            TRILOGY.containsMatchIn(s) -> 3
+            DUOLOGY.containsMatchIn(s) -> 2
+            QUADRILOGY.containsMatchIn(s) -> 4
+            PENTALOGY.containsMatchIn(s) -> 5
+            HEXALOGY.containsMatchIn(s) -> 6
             else -> null
         }
         val explicitCountMatch = COLLECTION_COUNT.find(s)
@@ -344,7 +357,7 @@ object ReleaseParser {
         }
 
         // Clean up trailing punctuation, hyphens, pipes, or unclosed brackets
-        var result = clean.replace(Regex("""[\s|/\\-]+$"""), "").trim()
+        var result = clean.replace(TRAILING_PUNCTUATION_REGEX, "").trim()
         if (result.endsWith("(") && !result.contains(")")) result = result.dropLast(1).trim()
         if (result.endsWith("[") && !result.contains("]")) result = result.dropLast(1).trim()
 

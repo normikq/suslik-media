@@ -135,6 +135,7 @@ object EdgeBrowserBridge {
         fun AssignProcessToJobObject(hJob: Pointer, hProcess: Pointer): Boolean
         fun TerminateJobObject(hJob: Pointer, uExitCode: Int): Boolean
         fun OpenProcess(dwDesiredAccess: Int, bInheritHandle: Boolean, dwProcessId: Int): Pointer?
+        fun ResumeThread(hThread: Pointer): Int
     }
 
     fun getExecutable(type: BrowserType = preferredBrowserType): File? =
@@ -195,6 +196,8 @@ object EdgeBrowserBridge {
     private var cdpPort: Int = 0
 
     private val mutex = Mutex()
+    private val activeRequests = AtomicInteger(0)
+    private val bridgeScope = CoroutineScope(Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
     private val client: HttpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(5))
         .build()
@@ -209,7 +212,7 @@ object EdgeBrowserBridge {
     init {
         cleanOrphanTrackerProcesses()
         Runtime.getRuntime().addShutdownHook(Thread {
-            stop()
+            stop(force = true)
             cleanOrphanTrackerProcesses()
         })
     }
@@ -219,9 +222,22 @@ object EdgeBrowserBridge {
         val k32 = WinKernel32.INSTANCE ?: return null
         return runCatching {
             val hJob = k32.CreateJobObjectW(null, null) ?: return@runCatching null
-            val mem = Memory(112).apply { clear(); setInt(16, 0x2000 /* JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE */) }
-            runCatching { k32.SetInformationJobObject(hJob, 9 /* JobObjectExtendedLimitInformation */, mem, 112) }
-            k32.AssignProcessToJobObject(hJob, hProcess)
+            val is64 = com.sun.jna.Native.POINTER_SIZE == 8
+            val structSize = if (is64) 144 else 112
+            val mem = Memory(structSize.toLong()).apply {
+                clear()
+                setInt(16, 0x2000 /* JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE */)
+            }
+            val ok = k32.SetInformationJobObject(hJob, 9 /* JobObjectExtendedLimitInformation */, mem, structSize)
+            if (!ok) {
+                val err = com.sun.jna.Native.getLastError()
+                System.err.println("[EdgeBrowserBridge] SetInformationJobObject failed: error $err")
+            }
+            val assigned = k32.AssignProcessToJobObject(hJob, hProcess)
+            if (!assigned) {
+                val err = com.sun.jna.Native.getLastError()
+                System.err.println("[EdgeBrowserBridge] AssignProcessToJobObject failed: error $err")
+            }
             hJob
         }.getOrNull()
     }
@@ -233,8 +249,17 @@ object EdgeBrowserBridge {
             val hProc = k32.OpenProcess(0x1F0FFF /* PROCESS_ALL_ACCESS */, false, pid) ?: return@runCatching null
             try {
                 val hJob = k32.CreateJobObjectW(null, null) ?: return@runCatching null
-                val mem = Memory(112).apply { clear(); setInt(16, 0x2000 /* JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE */) }
-                runCatching { k32.SetInformationJobObject(hJob, 9 /* JobObjectExtendedLimitInformation */, mem, 112) }
+                val is64 = com.sun.jna.Native.POINTER_SIZE == 8
+                val structSize = if (is64) 144 else 112
+                val mem = Memory(structSize.toLong()).apply {
+                    clear()
+                    setInt(16, 0x2000 /* JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE */)
+                }
+                val ok = k32.SetInformationJobObject(hJob, 9 /* JobObjectExtendedLimitInformation */, mem, structSize)
+                if (!ok) {
+                    val err = com.sun.jna.Native.getLastError()
+                    System.err.println("[EdgeBrowserBridge] SetInformationJobObject failed for pid $pid: error $err")
+                }
                 k32.AssignProcessToJobObject(hJob, hProc)
                 hJob
             } finally {
@@ -288,7 +313,9 @@ object EdgeBrowserBridge {
                 if (profileNames.any { cmd.contains(it, ignoreCase = true) }) {
                     val pid = h.pid()
                     runCatching {
-                        Runtime.getRuntime().exec(arrayOf("taskkill", "/F", "/T", "/PID", pid.toString())).waitFor()
+                        val pb = ProcessBuilder("taskkill", "/F", "/T", "/PID", pid.toString())
+                        val p = pb.start()
+                        p.waitFor(1, java.util.concurrent.TimeUnit.SECONDS)
                     }
                     runCatching { h.destroyForcibly() }
                 }
@@ -297,12 +324,23 @@ object EdgeBrowserBridge {
     }
 
     /** Браузер больше не нужен: закроется сам, если за [IDLE_SHUTDOWN_MS] не будет нового поиска. */
-    @Synchronized
     private fun scheduleIdleStop() {
-        idleTask?.cancel(false)
-        idleTask = runCatching {
-            idleTimer.schedule({ stop() }, IDLE_SHUTDOWN_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
-        }.getOrNull()
+        synchronized(this) {
+            idleTask?.cancel(false)
+            idleTask = runCatching {
+                idleTimer.schedule({
+                    if (activeRequests.get() == 0) {
+                        bridgeScope.launch {
+                            mutex.withLock {
+                                if (activeRequests.get() == 0) {
+                                    stopInternal()
+                                }
+                            }
+                        }
+                    }
+                }, IDLE_SHUTDOWN_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+            }.getOrNull()
+        }
     }
 
     /** Запущенный браузер отвечает на CDP: можно переиспользовать. */
@@ -341,13 +379,28 @@ object EdgeBrowserBridge {
 
     /** Асинхронная остановка в фоновом потоке IO — не блокирует интерфейс пользователя. */
     fun stopAsync() {
-        CoroutineScope(Dispatchers.IO).launch {
-            stop()
+        bridgeScope.launch {
+            if (activeRequests.get() == 0) {
+                mutex.withLock {
+                    if (activeRequests.get() == 0) {
+                        stopInternal()
+                    }
+                }
+            }
         }
     }
 
-    @Synchronized
-    fun stop() {
+    fun stop(force: Boolean = false) {
+        if (!force && activeRequests.get() > 0) {
+            scheduleIdleStop()
+            return
+        }
+        synchronized(this) {
+            stopInternal()
+        }
+    }
+
+    private fun stopInternal() {
         idleTask?.cancel(false)
         idleTask = null
         try {
@@ -385,7 +438,6 @@ object EdgeBrowserBridge {
             currentDesktopHandle = null
             fallbackProcess = null
             cdpPort = 0
-            cleanOrphanTrackerProcesses()
         }
     }
 
@@ -426,7 +478,7 @@ object EdgeBrowserBridge {
                     "--no-first-run --no-default-browser-check about:blank"
 
             val ok = WinKernel32.INSTANCE?.CreateProcessW(
-                null, WString(cmdLine), null, null, false, 0, null, null, si, pi
+                null, WString(cmdLine), null, null, false, 0x00000004 /* CREATE_SUSPENDED */, null, null, si, pi
             ) ?: false
 
             if (ok && pi.dwProcessId > 0) {
@@ -434,6 +486,8 @@ object EdgeBrowserBridge {
                 currentProcessHandle = pi.hProcess
                 currentThreadHandle = pi.hThread
                 currentJobHandle = createJobForProcess(pi.hProcess)
+                // Resume thread only after process is safely assigned to the Job Object
+                pi.hThread?.let { WinKernel32.INSTANCE?.ResumeThread(it) }
                 cdpPort = port
                 launched = true
             }
@@ -482,149 +536,179 @@ object EdgeBrowserBridge {
         port
     }
 
+    private fun extractCookieDomain(baseUrl: String): String {
+        val host = URI.create(baseUrl).host?.let { if (it.startsWith("www.")) it.substring(4) else it } ?: "rutracker.org"
+        val parts = host.split('.')
+        return if (parts.size >= 2) "${parts[parts.size - 2]}.${parts.last()}" else host
+    }
+
     /**
-     * Executes tracker search via Edge in hidden desktop.
-     * Браузер остаётся запущенным ещё 90 с: следующий поиск или скачивание пройдут без холодного старта.
+     * Executes tracker search via browser in hidden desktop and parses results into compact JSON array directly in DOM.
+     * Extracts unescaped text content, exact byte sizes, seeds, and avoids sending large raw HTML blobs over CDP.
      */
     suspend fun searchHtml(baseUrl: String, query: String, cookies: Map<String, String>): String? = withContext(Dispatchers.IO) {
-        mutex.withLock {
-            try {
-                val port = ensureRunning()
-                val session = openTabSession(port) ?: return@withContext null
+        activeRequests.incrementAndGet()
+        try {
+            mutex.withLock {
+                withTimeoutOrNull(25_000L) {
+                    val port = ensureRunning()
+                    val session = openTabSession(port) ?: return@withTimeoutOrNull null
 
-                try {
-                    session.sendCmd("Network.enable")
-                    session.sendCmd("Page.enable")
-
-                    // Inject tracker cookies
-                    val domain = URI.create(baseUrl).host?.let { if (it.startsWith("www.")) it.substring(4) else it } ?: "rutracker.org"
-                    val rootDomain = if (domain.count { it == '.' } >= 2) domain.substringAfter('.') else domain
-
-                    for ((k, v) in cookies) {
-                        session.sendCmd("Network.setCookie", JSONObject().apply {
-                            put("name", k)
-                            put("value", v)
-                            put("domain", ".$rootDomain")
-                            put("path", "/")
-                        })
-                    }
-
-                    val encoded = URLEncoder.encode(query, "windows-1251")
-                    val targetUrl = "${baseUrl.removeSuffix("/")}/forum/tracker.php?nm=$encoded"
-                    session.sendCmd("Page.navigate", JSONObject().put("url", targetUrl))
-
-                    // Poll for #tor-tbl or "Ничего не найдено" up to 15 seconds.
-                    // Форма входа (куки не приняты) и проверка Cloudflare — отдельные ответы: прямой HTTP-запрос
-                    // после них тоже не пройдёт, поэтому сразу говорим пользователю, в чём дело.
-                    var resultHtml: String? = null
-                    var lastState = ""
-                    for (attempt in 1..30) {
-                        delay(500)
-                        val eval = session.sendCmd(
-                            "Runtime.evaluate",
-                            JSONObject().put(
-                                "expression",
-                                "(() => { const el = document.getElementById('tor-tbl'); if (el) return el.outerHTML; " +
-                                    "if (document.querySelector('input[name=\"login_username\"]')) return '__LOGIN__'; " +
-                                    "if (document.body && document.body.innerText.includes('Не найдено')) return '__EMPTY__'; " +
-                                    "if (/just a moment|один момент/i.test(document.title) || document.querySelector('#challenge-form, .cf-turnstile, iframe[src*=\"challenges.cloudflare.com\"]')) return '__CF__'; " +
-                                    "return ''; })()"
-                            ).put("returnByValue", true)
-                        )
-                        val resVal = eval.optJSONObject("result")?.optJSONObject("result")?.optString("value") ?: ""
-                        if (resVal == "__LOGIN__") throw TrackerAuthException()
-                        if (resVal == "__EMPTY__") {
-                            resultHtml = ""
-                            break
+                    try {
+                        val rootDomain = extractCookieDomain(baseUrl)
+                        for ((k, v) in cookies) {
+                            session.sendCmd("Network.setCookie", JSONObject().apply {
+                                put("name", k)
+                                put("value", v)
+                                put("domain", ".$rootDomain")
+                                put("path", "/")
+                            })
                         }
-                        if (resVal.contains("tor-tbl")) {
-                            resultHtml = resVal
-                            break
-                        }
-                        if (resVal.isNotEmpty()) lastState = resVal
-                    }
-                    if (resultHtml == null && lastState == "__CF__") throw TrackerChallengeException()
 
-                    resultHtml
-                } finally {
-                    session.close()
+                        val encoded = URLEncoder.encode(query, "windows-1251")
+                        val targetUrl = "${baseUrl.removeSuffix("/")}/forum/tracker.php?nm=$encoded"
+                        session.sendCmd("Page.navigate", JSONObject().put("url", targetUrl))
+
+                        var resultJson: String? = null
+                        var lastState = ""
+                        for (attempt in 1..28) {
+                            delay(400)
+                            val eval = runCatching {
+                                session.sendCmd(
+                                    "Runtime.evaluate",
+                                    JSONObject().put(
+                                        "expression",
+                                        """
+                                        (() => {
+                                            const table = document.getElementById('tor-tbl');
+                                            if (!table) {
+                                                if (document.querySelector('input[name="login_username"]')) return '__LOGIN__';
+                                                if (document.body && (document.body.innerText.includes('Не найдено') || document.body.innerText.includes('Результатов поиска: 0'))) return '[]';
+                                                if (/just a moment|один момент/i.test(document.title) || document.querySelector('#challenge-form, .cf-turnstile, iframe[src*="challenges.cloudflare.com"]')) return '__CF__';
+                                                return '';
+                                            }
+                                            const rows = table.querySelectorAll('tr.hl-tr, tr.tCenter, tr[id^="trs-tr-"]');
+                                            if (!rows || rows.length === 0) return '[]';
+                                            const items = [];
+                                            for (const r of rows) {
+                                                const link = r.querySelector('a.tLink, a[href*="viewtopic.php?t="]');
+                                                if (!link) continue;
+                                                const href = link.getAttribute('href') || '';
+                                                const tMatch = href.match(/viewtopic\.php\?t=(\d+)/);
+                                                const topicId = tMatch ? tMatch[1] : '';
+                                                if (!topicId) continue;
+                                                const title = link.textContent.trim();
+                                                if (!title) continue;
+                                                const forumEl = r.querySelector('a.f, a[href*="tracker.php?f="]');
+                                                const forum = forumEl ? forumEl.textContent.trim() : '';
+                                                const sizeEl = r.querySelector('td.tor-size, td[data-ts_text]');
+                                                const sizeBytes = sizeEl ? (parseInt(sizeEl.getAttribute('data-ts_text') || '0', 10) || 0) : 0;
+                                                const seedEl = r.querySelector('td.seedmed');
+                                                const seeds = seedEl ? (parseInt(seedEl.textContent.replace(/\D/g, ''), 10) || 0) : 0;
+                                                const leechEl = r.querySelector('td.leechmed');
+                                                const leeches = leechEl ? (parseInt(leechEl.textContent.replace(/\D/g, ''), 10) || 0) : 0;
+                                                const magnetEl = r.querySelector('a[href^="magnet:"]');
+                                                const magnet = magnetEl ? magnetEl.getAttribute('href') : '';
+                                                items.push({ topicId, title, forum, sizeBytes, seeds, leeches, magnet });
+                                            }
+                                            return JSON.stringify(items);
+                                        })()
+                                        """.trimIndent()
+                                    ).put("returnByValue", true)
+                                )
+                            }.getOrNull()
+
+                            val resVal = eval?.optJSONObject("result")?.optJSONObject("result")?.optString("value") ?: ""
+                            if (resVal == "__LOGIN__") throw TrackerAuthException()
+                            if (resVal == "[]" || (resVal.startsWith("[") && resVal.endsWith("]"))) {
+                                resultJson = resVal
+                                break
+                            }
+                            if (resVal.isNotEmpty()) lastState = resVal
+                        }
+                        if (resultJson == null && lastState == "__CF__") throw TrackerChallengeException()
+
+                        resultJson
+                    } finally {
+                        session.close()
+                    }
                 }
-            } finally {
-                scheduleIdleStop()
             }
+        } finally {
+            activeRequests.decrementAndGet()
+            scheduleIdleStop()
         }
     }
 
     /**
      * Downloads .torrent file bytes inside the browser session via fetch().
-     * Браузер остаётся запущенным ещё 90 с (см. [searchHtml]).
+     * Браузер остаётся запущенным ещё 15 с (см. [scheduleIdleStop]).
      */
     suspend fun downloadTorrentBytes(baseUrl: String, topicId: String, cookies: Map<String, String>): ByteArray? = withContext(Dispatchers.IO) {
-        mutex.withLock {
-            try {
-                val port = ensureRunning()
-                val session = openTabSession(port) ?: return@withContext null
+        require(topicId.matches(Regex("""^\d+$"""))) { "Неверный topicId" }
+        activeRequests.incrementAndGet()
+        try {
+            mutex.withLock {
+                withTimeoutOrNull(25_000L) {
+                    val port = ensureRunning()
+                    val session = openTabSession(port) ?: return@withTimeoutOrNull null
 
-                try {
-                    session.sendCmd("Network.enable")
-                    session.sendCmd("Page.enable")
+                    try {
+                        val rootDomain = extractCookieDomain(baseUrl)
+                        for ((k, v) in cookies) {
+                            session.sendCmd("Network.setCookie", JSONObject().apply {
+                                put("name", k)
+                                put("value", v)
+                                put("domain", ".$rootDomain")
+                                put("path", "/")
+                            })
+                        }
 
-                    val domain = URI.create(baseUrl).host?.let { if (it.startsWith("www.")) it.substring(4) else it } ?: "rutracker.org"
-                    val rootDomain = if (domain.count { it == '.' } >= 2) domain.substringAfter('.') else domain
+                        val targetUrl = "${baseUrl.removeSuffix("/")}/forum/viewtopic.php?t=$topicId"
+                        session.sendCmd("Page.navigate", JSONObject().put("url", targetUrl))
 
-                    for ((k, v) in cookies) {
-                        session.sendCmd("Network.setCookie", JSONObject().apply {
-                            put("name", k)
-                            put("value", v)
-                            put("domain", ".$rootDomain")
-                            put("path", "/")
-                        })
-                    }
+                        // Wait for page ready (up to 8s)
+                        for (attempt in 1..16) {
+                            delay(400)
+                            val eval = runCatching {
+                                session.sendCmd(
+                                    "Runtime.evaluate",
+                                    JSONObject().put("expression", "document.readyState === 'complete'").put("returnByValue", true)
+                                )
+                            }.getOrNull()
+                            if (eval?.optJSONObject("result")?.optJSONObject("result")?.optBoolean("value") == true) break
+                        }
 
-                    val targetUrl = "${baseUrl.removeSuffix("/")}/forum/viewtopic.php?t=$topicId"
-                    session.sendCmd("Page.navigate", JSONObject().put("url", targetUrl))
+                        val fetchJs = """
+                            new Promise((resolve) => {
+                                fetch('/forum/dl.php?t=$topicId', { credentials: 'include' })
+                                    .then(r => r.blob())
+                                    .then(blob => {
+                                        const reader = new FileReader();
+                                        reader.onload = () => resolve(reader.result.split(',')[1]);
+                                        reader.readAsDataURL(blob);
+                                    })
+                                    .catch(() => resolve(''));
+                            })
+                        """.trimIndent()
 
-                    // Wait for page ready (up to 8s)
-                    for (attempt in 1..16) {
-                        delay(400)
                         val eval = session.sendCmd(
                             "Runtime.evaluate",
-                            JSONObject().put("expression", "document.readyState === 'complete'").put("returnByValue", true)
+                            JSONObject().put("expression", fetchJs).put("awaitPromise", true).put("returnByValue", true),
+                            timeoutMs = 12000L
                         )
-                        if (eval.optJSONObject("result")?.optJSONObject("result")?.optBoolean("value") == true) break
-                    }
-
-                    val fetchJs = """
-                        new Promise((resolve) => {
-                            fetch('/forum/dl.php?t=$topicId', { credentials: 'include' })
-                                .then(r => r.blob())
-                                .then(b => {
-                                    const reader = new FileReader();
-                                    reader.onload = () => resolve(reader.result.split(',')[1]);
-                                    reader.onerror = () => resolve('');
-                                    reader.readAsDataURL(b);
-                                })
-                                .catch(() => resolve(''));
-                        })
-                    """.trimIndent()
-
-                    val evalRes = session.sendCmd(
-                        "Runtime.evaluate",
-                        JSONObject().put("expression", fetchJs).put("awaitPromise", true).put("returnByValue", true)
-                    )
-                    val b64 = evalRes.optJSONObject("result")?.optJSONObject("result")?.optString("value") ?: ""
-                    if (b64.isNotBlank()) {
-                        val bytes = runCatching { Base64.getDecoder().decode(b64) }.getOrNull()
-                        if (bytes != null && bytes.isNotEmpty() && bytes[0] == 0x64.toByte()) {
-                            bytes
+                        val b64 = eval.optJSONObject("result")?.optJSONObject("result")?.optString("value") ?: ""
+                        if (b64.isNotBlank()) {
+                            Base64.getDecoder().decode(b64)
                         } else null
-                    } else null
-                } finally {
-                    session.close()
+                    } finally {
+                        session.close()
+                    }
                 }
-            } finally {
-                scheduleIdleStop()
             }
+        } finally {
+            activeRequests.decrementAndGet()
+            scheduleIdleStop()
         }
     }
 
@@ -683,6 +767,9 @@ object EdgeBrowserBridge {
                         session.close()
                     }
                 }
+                // Background instance is already running on this profile and has no matching cookies.
+                // Launching a second Chromium process on the same user-data-dir would fail to open CDP port.
+                return@withContext null
             }
 
             var tempProc: Process? = null
@@ -762,7 +849,7 @@ object EdgeBrowserBridge {
         }
 
         mutex.withLock {
-            stop() // Stop background instance to unlock profile
+            stop(force = true) // Stop background instance to unlock profile
 
             var proc: Process? = null
             var jobHandle: Pointer? = null
@@ -807,8 +894,8 @@ object EdgeBrowserBridge {
                             return@withContext Result.failure(IllegalStateException("Окно авторизации ${type.displayName} было закрыто до завершения входа"))
                         }
 
-                        val resp = session.sendCmd("Storage.getCookies")
-                        val arr = resp.optJSONObject("result")?.optJSONArray("cookies")
+                        val resp = runCatching { session.sendCmd("Storage.getCookies") }.getOrNull()
+                        val arr = resp?.optJSONObject("result")?.optJSONArray("cookies")
                         if (arr != null) {
                             val header = formatTrackerCookies(arr, baseUrl)
                             if (header != null && header.contains("bb_session")) {
@@ -817,7 +904,9 @@ object EdgeBrowserBridge {
                                 runCatching {
                                     session.sendCmd("Browser.close")
                                 }
-                                delay(400)
+                                runCatching {
+                                    p.waitFor(1500, java.util.concurrent.TimeUnit.MILLISECONDS)
+                                }
                                 return@withContext Result.success(header)
                             }
                         }
@@ -835,7 +924,6 @@ object EdgeBrowserBridge {
                     WinKernel32.INSTANCE?.CloseHandle(it)
                 }
                 killProcessTree(proc)
-                cleanOrphanTrackerProcesses()
             }
         }
     }
@@ -845,65 +933,74 @@ object EdgeBrowserBridge {
      * Автоматически проходит Cloudflare Turnstile и считывает имя пользователя.
      */
     suspend fun checkConnection(baseUrl: String, cookies: Map<String, String>): Pair<Boolean, String> = withContext(Dispatchers.IO) {
-        mutex.withLock {
-            try {
-                val port = ensureRunning()
-                val session = openTabSession(port) ?: return@withContext false to "Не удалось подключиться к браузеру"
-
+        activeRequests.incrementAndGet()
+        try {
+            mutex.withLock {
                 try {
-                    session.sendCmd("Network.enable")
-                    session.sendCmd("Page.enable")
+                    val port = ensureRunning()
+                    val session = openTabSession(port) ?: return@withContext false to "Не удалось подключиться к браузеру"
 
-                    val domain = URI.create(baseUrl).host?.let { if (it.startsWith("www.")) it.substring(4) else it } ?: "rutracker.org"
-                    val rootDomain = if (domain.count { it == '.' } >= 2) domain.substringAfter('.') else domain
-
-                    for ((k, v) in cookies) {
-                        session.sendCmd("Network.setCookie", JSONObject().apply {
-                            put("name", k)
-                            put("value", v)
-                            put("url", "${baseUrl.removeSuffix("/")}/")
-                            put("domain", ".$rootDomain")
-                            put("path", "/")
-                        })
-                    }
-
-                    val targetUrl = "${baseUrl.removeSuffix("/")}/forum/index.php"
-                    session.sendCmd("Page.navigate", JSONObject().put("url", targetUrl))
-
-                    // Wait up to 14s for either logged-in user, login form, or Cloudflare
-                    for (attempt in 1..28) {
-                        delay(500)
-                        val eval = session.sendCmd(
-                            "Runtime.evaluate",
-                            JSONObject().put(
-                                "expression",
-                                "(() => { " +
-                                    "const u = document.querySelector('#logged-in-username, .logged-in-username, a[href*=\"mode=viewprofile\"] b'); " +
-                                    "if (u && u.innerText.trim()) return 'USER:' + u.innerText.trim(); " +
-                                    "if (document.querySelector('input[name=\"login_username\"]')) return '__LOGIN__'; " +
-                                    "if (/just a moment|один момент/i.test(document.title) || document.querySelector('#challenge-form, .cf-turnstile, iframe[src*=\"challenges.cloudflare.com\"]')) return '__CF__'; " +
-                                    "return ''; " +
-                                "})()"
-                            ).put("returnByValue", true)
-                        )
-                        val res = eval.optJSONObject("result")?.optJSONObject("result")?.optString("value") ?: ""
-                        if (res.startsWith("USER:")) {
-                            val user = res.substring(5).trim()
-                            return@withContext true to "✓ Авторизован как $user ($activeBrowserName)"
+                    try {
+                        val rootDomain = extractCookieDomain(baseUrl)
+                        for ((k, v) in cookies) {
+                            session.sendCmd("Network.setCookie", JSONObject().apply {
+                                put("name", k)
+                                put("value", v)
+                                put("url", "${baseUrl.removeSuffix("/")}/")
+                                put("domain", ".$rootDomain")
+                                put("path", "/")
+                            })
                         }
-                        if (res == "__LOGIN__") {
-                            return@withContext false to "Сессия не принята (обновите bb_session в $activeBrowserName)"
+
+                        val targetUrl = "${baseUrl.removeSuffix("/")}/forum/index.php"
+                        session.sendCmd("Page.navigate", JSONObject().put("url", targetUrl))
+
+                        // Wait up to 14s for either logged-in user, login form, or Cloudflare
+                        for (attempt in 1..28) {
+                            delay(500)
+                            val eval = runCatching {
+                                session.sendCmd(
+                                    "Runtime.evaluate",
+                                    JSONObject().put(
+                                        "expression",
+                                        "(() => { " +
+                                            "const u = document.querySelector('#logged-in-username, .logged-in-username, a[href*=\"mode=viewprofile\"] b'); " +
+                                            "if (u && u.innerText.trim()) return 'USER:' + u.innerText.trim(); " +
+                                            "if (document.querySelector('input[name=\"login_username\"]')) return '__LOGIN__'; " +
+                                            "if (/just a moment|один момент/i.test(document.title) || document.querySelector('#challenge-form, .cf-turnstile, iframe[src*=\"challenges.cloudflare.com\"]')) return '__CF__'; " +
+                                            "return ''; " +
+                                        "})()"
+                                    ).put("returnByValue", true)
+                                )
+                            }.getOrNull()
+                            val res = eval?.optJSONObject("result")?.optJSONObject("result")?.optString("value") ?: ""
+                            if (res.startsWith("USER:")) {
+                                val user = res.substring(5).trim()
+                                val updatedCookies = runCatching {
+                                    val cookiesResp = session.sendCmd("Storage.getCookies")
+                                    val arr = cookiesResp.optJSONObject("result")?.optJSONArray("cookies")
+                                    if (arr != null) formatTrackerCookies(arr, baseUrl) else null
+                                }.getOrNull()
+                                if (!updatedCookies.isNullOrBlank()) {
+                                    RuTrackerTracker.cookie = updatedCookies
+                                }
+                                return@withContext true to "✓ Авторизован как $user ($activeBrowserName)"
+                            }
+                            if (res == "__LOGIN__") {
+                                return@withContext false to "Сессия не принята (обновите bb_session в $activeBrowserName)"
+                            }
                         }
+                        false to "Не удалось проверить авторизацию (таймаут ответа)"
+                    } finally {
+                        session.close()
                     }
-                    false to "Не удалось проверить авторизацию (таймаут ответа)"
-                } finally {
-                    session.close()
+                } catch (e: Exception) {
+                    false to (e.message ?: "Ошибка проверки подключения")
                 }
-            } catch (e: Exception) {
-                false to (e.message ?: "Ошибка проверки подключения")
-            } finally {
-                scheduleIdleStop()
             }
+        } finally {
+            activeRequests.decrementAndGet()
+            scheduleIdleStop()
         }
     }
 
@@ -955,14 +1052,15 @@ object EdgeBrowserBridge {
         val msgId: AtomicInteger,
         val responses: java.util.concurrent.ConcurrentHashMap<Int, CompletableDeferred<JSONObject>>
     ) {
-        suspend fun sendCmd(method: String, params: JSONObject = JSONObject()): JSONObject {
+        suspend fun sendCmd(method: String, params: JSONObject = JSONObject(), timeoutMs: Long = 7000L): JSONObject {
             val id = msgId.getAndIncrement()
             val def = CompletableDeferred<JSONObject>()
             responses[id] = def
             try {
                 val cmd = JSONObject().put("id", id).put("method", method).put("params", params)
                 ws.sendText(cmd.toString(), true)
-                return withTimeoutOrNull(15000) { def.await() } ?: JSONObject()
+                return withTimeoutOrNull(timeoutMs) { def.await() }
+                    ?: throw java.util.concurrent.TimeoutException("CDP command '$method' timed out after ${timeoutMs}ms")
             } finally {
                 responses.remove(id)
             }
@@ -1028,14 +1126,15 @@ object EdgeBrowserBridge {
         val msgId: AtomicInteger,
         val responses: java.util.concurrent.ConcurrentHashMap<Int, CompletableDeferred<JSONObject>>
     ) {
-        suspend fun sendCmd(method: String, params: JSONObject = JSONObject()): JSONObject {
+        suspend fun sendCmd(method: String, params: JSONObject = JSONObject(), timeoutMs: Long = 7000L): JSONObject {
             val id = msgId.getAndIncrement()
             val def = CompletableDeferred<JSONObject>()
             responses[id] = def
             try {
                 val cmd = JSONObject().put("id", id).put("method", method).put("params", params)
                 ws.sendText(cmd.toString(), true)
-                return withTimeoutOrNull(15000) { def.await() } ?: JSONObject()
+                return withTimeoutOrNull(timeoutMs) { def.await() }
+                    ?: throw java.util.concurrent.TimeoutException("CDP command '$method' timed out after ${timeoutMs}ms")
             } finally {
                 responses.remove(id) // иначе ответы копились до конца сессии
             }
