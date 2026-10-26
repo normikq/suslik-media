@@ -230,7 +230,7 @@ fun PlayerView(
         while (true) {
             val diskBufferMs = BurstProxy.aheadMs(currentUrl, length)
             val t = timeNow
-            bufferedMs = if (length > 0L) (t + diskBufferMs).coerceIn(t, length) else 0L
+            bufferedMs = if (length > 0L) (t + diskBufferMs).coerceIn(minOf(t, length), length) else 0L
             delay(200L)
         }
     }
