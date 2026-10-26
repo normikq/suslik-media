@@ -7,7 +7,7 @@ const config = require("../config");
 const { makeJsonWriter } = require("../utils/json-writer");
 const { readCookie } = require("../utils/helpers");
 
-const { SHARED_USER, getUser, touchUser, verifyDeviceToken, hasDeviceHash } = require("../services/users");
+const { SHARED_USER, getUser, touchUser, verifyDeviceToken, hasDeviceHash, hashToken } = require("../services/users");
 
 // Sessions survive a server restart (the default MemoryStore forgets everyone and grows without bound).
 // One shared password means very few sessions, so a JSON file is plenty for this server.
@@ -15,6 +15,8 @@ class FileSessionStore extends session.Store {
   constructor(file) {
     super();
     this.map = new Map();
+    // Недавно завершённые сеансы: запрос, начатый до отзыва, не должен записать сеанс обратно (set после destroy)
+    this.gone = new Map();
     try {
       const saved = JSON.parse(fs.readFileSync(file, "utf8"));
       const now = Date.now();
@@ -53,6 +55,7 @@ class FileSessionStore extends session.Store {
   }
 
   set(sid, sess, cb) {
+    if (this.gone.has(sid)) return cb && cb(null);
     this.map.set(sid, { data: JSON.stringify(sess), expires: this._expiry(sess) });
     this.save();
     cb && cb(null);
@@ -96,14 +99,21 @@ class FileSessionStore extends session.Store {
       try { data = JSON.parse(entry.data); } catch { continue; }
       if (!data || !data.meta || !data.meta.app || (data.uid || "shared") !== uid) continue;
       if (data.meta.dev && data.meta.dev !== dev) continue;
-      this.map.delete(sid); n++;
+      this._drop(sid); n++;
     }
     if (n) this.save();
     return n;
   }
 
-  destroy(sid, cb) {
+  _drop(sid) {
     this.map.delete(sid);
+    const now = Date.now();
+    for (const [s, t] of this.gone) if (t < now - 10 * 60 * 1000) this.gone.delete(s);
+    this.gone.set(sid, now);
+  }
+
+  destroy(sid, cb) {
+    this._drop(sid);
     this.save();
     cb && cb(null);
   }
@@ -142,6 +152,12 @@ function resolveAuth(req) {
     if (verified && verified.user && !sharedAccessOff(verified.user)) {
       req.user = verified.user;
       req.device = verified.device;
+      // Приложение шлёт и ключ, и cookie-сеанс. Сеанс, выданный до пометки приложений (без meta.dev), привязываем
+      // к ключу сейчас: иначе после отзыва ключа приложение продолжало бы работать по cookie
+      const sess = req.session;
+      if (sess && sess.authenticated && !(sess.meta && sess.meta.dev)) {
+        sess.meta = { ...(sess.meta || {}), app: true, dev: hashToken(deviceToken) };
+      }
       return true;
     }
   }

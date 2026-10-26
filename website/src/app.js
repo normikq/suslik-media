@@ -3,7 +3,7 @@
 const express = require("express");
 const path = require("path");
 const config = require("./config");
-const { securityHeaders, setupTrustProxy } = require("./middleware/security");
+const { securityHeaders, setupTrustProxy, sameOriginWrites } = require("./middleware/security");
 const { createSessionMiddleware } = require("./middleware/auth");
 const { PRECOMPRESSED, precompressed, sendPrecompressed } = require("./services/precompressed");
 const { libraryChanged } = require("./services/library");
@@ -70,6 +70,9 @@ function createApp() {
   app.use("/api/sync", express.json({ limit: "512kb" })); // первая выгрузка прогресса — до 500 записей
   app.use(express.json({ limit: "20kb" }));
   app.use(express.urlencoded({ extended: false, limit: "20kb" }));
+
+  // Изменяющие запросы с cookie — только со страниц самого сайта
+  app.use(sameOriginWrites);
 
   // Sessions
   app.use(createSessionMiddleware());
