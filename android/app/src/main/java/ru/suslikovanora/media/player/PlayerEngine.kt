@@ -65,6 +65,8 @@ interface EngineListener {
      * молча, поэтому это видно только по дорожкам). Плеер переоткрывает файл в другом движке с того же места.
      */
     fun unsupported(reason: String) {}
+    /** В видео HDR ([dolbyVision] — Dolby Vision): экрану пора перейти в режим HDR до первого кадра. */
+    fun hdrVideo(dolbyVision: Boolean) {}
 }
 
 /**
@@ -135,6 +137,10 @@ interface PlayerEngine {
     }
     /** Задержка звука (загруженная озвучка со сдвигом). Media3 сдвигает сам файл озвучки ([CustomAudioInfo]), здесь — только VLC. */
     fun setAudioDelayMs(ms: Long) {}
+    /** Сдвиг звука, выставленный зрителем (+ — звук позже): складывается с задержкой озвучки, запоминается на файл ([PlaybackTweaks]). */
+    fun setAudioSyncMs(ms: Long) {}
+    /** Сдвиг субтитров, выставленный зрителем (+ — субтитры позже). */
+    fun setSubtitleDelayMs(ms: Long) {}
 
     val videoTrackCount: Int
     val videoTrack: EngineVideoTrack?

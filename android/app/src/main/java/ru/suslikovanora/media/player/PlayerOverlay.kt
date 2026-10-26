@@ -137,6 +137,11 @@ class PlayerUiState {
     var onPicker: (String?) -> Unit = {}
     var onPick: (String, Int) -> Unit = { _, _ -> }
     var onScale: (Int) -> Unit = {}
+    /** Сдвиг субтитров и звука этого файла, мс (+ — позже); [onSubDelay] / [onAudioDelay] получают новое значение целиком. */
+    var subDelay by mutableLongStateOf(0L)
+    var audioDelay by mutableLongStateOf(0L)
+    var onSubDelay: (Long) -> Unit = {}
+    var onAudioDelay: (Long) -> Unit = {}
     var onVolume: (Int) -> Unit = {}
     var onNextNow: () -> Unit = {}
     var onNextCancel: () -> Unit = {}
@@ -350,6 +355,9 @@ fun PlayerSheet(s: PlayerUiState, modifier: Modifier = Modifier) {
                             }
                         }
                     }
+                    DelayRow(tr("overlay.sdvig_subtitrov"), s.subDelay) { s.onSubDelay(it); s.onPoke() }
+                    DelayRow(tr("overlay.sdvig_zvuka"), s.audioDelay) { s.onAudioDelay(it); s.onPoke() }
+                    Text(tr("overlay.sdvig_opisanie"), color = Color.White.copy(alpha = 0.45f), fontFamily = Onest, fontSize = 11.5.sp)
                     if (s.showLock || s.showMark) Row(verticalAlignment = Alignment.CenterVertically) {
                         SheetLabel(tr("overlay.ekran"))
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -373,8 +381,25 @@ fun PlayerSheet(s: PlayerUiState, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun SheetLabel(t: String) =
-    Text(t, color = Color.White.copy(alpha = 0.6f), fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.width(76.dp))
+private fun SheetLabel(t: String, width: Dp = 76.dp) =
+    Text(t, color = Color.White.copy(alpha = 0.6f), fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.width(width))
+
+/** «−0,5  −0,1  [значение]  +0,1  +0,5»: the middle chip shows the shift and, pressed, takes it back to 0 (the Kodi-style subtitle / audio offset). */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DelayRow(label: String, ms: Long, onChange: (Long) -> Unit) {
+    fun step(d: Long) = onChange(PlaybackTweaks.clamp(ms + d))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        SheetLabel(label, 112.dp)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            PlayerChip("−0,5", false) { step(-500) }
+            PlayerChip("−0,1", false) { step(-100) }
+            PlayerChip(tr("overlay.sdvig_znachenie", "v" to PlaybackTweaks.label(ms)), ms != 0L) { onChange(0L) }
+            PlayerChip("+0,1", false) { step(100) }
+            PlayerChip("+0,5", false) { step(500) }
+        }
+    }
+}
 
 /** «Следующая: …  через N с  ▶  ✕» — the Windows player's capsule. */
 @Composable

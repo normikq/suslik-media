@@ -27,6 +27,8 @@ import ru.suslikovanora.media.player.EngineKind
 import ru.suslikovanora.media.player.HybridEngine
 import ru.suslikovanora.media.player.Media3Cache
 import ru.suslikovanora.media.player.Media3Engine
+import ru.suslikovanora.media.player.PlaybackTweaks
+import ru.suslikovanora.media.player.VideoHints
 
 import android.app.AlertDialog
 import android.content.Context
@@ -71,6 +73,8 @@ class PlayerActivity : ComponentActivity() {
     /** The video engine (VLC or Media3, chosen per file — see [EngineChoice]), made in onCreate; [player] is it while a film is open. */
     private lateinit var engine: HybridEngine
     private val engineChoice by lazy { EngineChoice(this) }
+    private val tweaks by lazy { PlaybackTweaks(this) }
+    private var delays = PlaybackTweaks.Delays(0L, 0L) // субтитры / звук этого файла, помнятся на файл
     private var engineLoggedFor = "" // "<engine> <file>" last written to the journal (reconnects do not repeat it)
     private val player: PlayerEngine? get() = if (::engine.isInitialized) engine.takeIf { it.hasPlayer } else null
     private lateinit var root: FrameLayout
@@ -275,6 +279,7 @@ class PlayerActivity : ComponentActivity() {
             setPlayIcon(true)
             startWatchdog()
             applyVideoFrameRate(owner)
+            applyDelays(owner)
             updatePipParams(playing = true)
             trackSelector.onPlaying(owner, currentUrl, currentTitle)
             updateSession()
@@ -321,6 +326,7 @@ class PlayerActivity : ComponentActivity() {
             }
         }
         override fun failed() = handleError()
+        override fun hdrVideo(dolbyVision: Boolean) = setHdrWindow(true)
         override fun videoOutput(count: Int) {
             val owner = player ?: return
             if (count > 0) { applyVideoFrameRate(owner); updatePipParams(playing = owner.isPlaying); warnIfSoftwareDecoding(owner) }
@@ -782,6 +788,8 @@ class PlayerActivity : ComponentActivity() {
             showControlsTemporarily()
         }
         ui.onScale = { i -> setScale(i); showControlsTemporarily() }
+        ui.onSubDelay = { ms -> setDelays(delays.copy(subtitleMs = PlaybackTweaks.clamp(ms))) }
+        ui.onAudioDelay = { ms -> setDelays(delays.copy(audioMs = PlaybackTweaks.clamp(ms))) }
         ui.onVolume = { v -> setSystemVolume(v); ui.volume = v; controlsOverlay.keepShown() }
         ui.onNextNow = { playlistQueue.hideNextCard(); userNext() }
         ui.onNextCancel = { playlistQueue.hideNextCard(); showControlsTemporarily() }
@@ -933,7 +941,36 @@ class PlayerActivity : ComponentActivity() {
             "network=${if (TrafficMeter.isMetered(this)) "mobile" else "wifi"}")
         engine.open(buildMedia(url, positionMs), shownScale())
         hookSurfaces()
+        delays = tweaks.get(url)
+        ui.subDelay = delays.subtitleMs; ui.audioDelay = delays.audioMs
+        applyDelays(engine)
+        // The screen can already be told "HDR" by the file's name (the engine confirms it from the tracks, before the first picture)
+        setHdrWindow(VideoHints.isHdr(url))
         return engine
+    }
+
+    /** The viewer's shifts of the subtitles and the sound (this file, remembered): to the engine and to the sheet. */
+    private fun setDelays(d: PlaybackTweaks.Delays) {
+        delays = d
+        tweaks.set(currentUrl, d)
+        ui.subDelay = d.subtitleMs; ui.audioDelay = d.audioMs
+        player?.let { applyDelays(it) }
+    }
+
+    private fun applyDelays(p: PlayerEngine) {
+        runCatching { p.setSubtitleDelayMs(delays.subtitleMs); p.setAudioSyncMs(delays.audioMs) }
+    }
+
+    /**
+     * Android 8+: the window says it shows HDR, so the display (a TV over HDMI) can switch to its HDR / Dolby Vision mode
+     * before the first picture instead of when the first HDR frame reaches it. Back to normal for the next SDR file.
+     */
+    private fun setHdrWindow(on: Boolean) {
+        if (Build.VERSION.SDK_INT < 26) return
+        val want = if (on) ActivityInfo.COLOR_MODE_HDR else ActivityInfo.COLOR_MODE_DEFAULT
+        if (window.colorMode == want) return
+        window.colorMode = want
+        AppLog.write("[display] window colour mode ${if (on) "HDR" else "default"}")
     }
 
     private fun startWatchdog() {

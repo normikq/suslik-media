@@ -85,6 +85,21 @@ object PlaybackSettings {
         if (prefs(ctx).getString("player_engine", "media3") == "vlc") ru.suslikovanora.media.player.EngineKind.VLC
         else ru.suslikovanora.media.player.EngineKind.MEDIA3
     fun setEngine(ctx: Context, kind: ru.suslikovanora.media.player.EngineKind) = prefs(ctx).edit().putString("player_engine", kind.tag).apply()
+    /**
+     * «Передача звука» (Media3): on — DTS, AC3, E-AC3, TrueHD go to the receiver as they are, if the device says it can take them
+     * (the system's own list); off — the phone decodes them to PCM. Read when a film opens.
+     */
+    fun passthrough(ctx: Context) = prefs(ctx).getBoolean("audio_passthrough", true)
+    fun setPassthrough(ctx: Context, on: Boolean) = prefs(ctx).edit().putBoolean("audio_passthrough", on).apply()
+    /**
+     * «Подстройка частоты кадров»: [FRAME_RATE_OFF]; [FRAME_RATE_SEAMLESS] — only where the screen switches without a blink
+     * (as before); [FRAME_RATE_ALWAYS] — also with a blink, as Kodi does (24 Hz film on a 60 Hz TV judders without it).
+     */
+    const val FRAME_RATE_OFF = 0
+    const val FRAME_RATE_SEAMLESS = 1
+    const val FRAME_RATE_ALWAYS = 2
+    fun frameRateMode(ctx: Context) = prefs(ctx).getInt("frame_rate_mode", FRAME_RATE_SEAMLESS)
+    fun setFrameRateMode(ctx: Context, v: Int) = prefs(ctx).edit().putInt("frame_rate_mode", v).apply()
     /** The beta channel is really in use (chosen and a code saved); otherwise — the release channel. */
     fun betaChannel(ctx: Context) = betaOn(ctx) && betaCode(ctx).isNotBlank()
 }
@@ -133,6 +148,7 @@ fun SettingsSheet(onClose: () -> Unit) {
                     PresetRow(p, p.value == cache) { cache = p.value; PlaybackSettings.setCacheMs(ctx, p.value) }
                 }
                 EngineSection()
+                PictureSoundSection()
                 TrafficSection()
                 StorageSection()
                 if (Diag.on) DiagSection() else ChannelSection()
@@ -220,6 +236,29 @@ private fun EngineSection() {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         listOf(ru.suslikovanora.media.player.EngineKind.VLC to "VLC", ru.suslikovanora.media.player.EngineKind.MEDIA3 to "Media3").forEach { (k, label) ->
             ChannelOption(label, engine == k, Modifier.weight(1f)) { engine = k; PlaybackSettings.setEngine(ctx, k) }
+        }
+    }
+}
+
+/** «Передача звука» and «Подстройка частоты кадров» (the Kodi pair for a TV and a receiver). */
+@Composable
+private fun PictureSoundSection() {
+    val ctx = LocalContext.current
+    var pass by remember { mutableStateOf(PlaybackSettings.passthrough(ctx)) }
+    var rate by remember { mutableStateOf(PlaybackSettings.frameRateMode(ctx)) }
+    Section(tr("settings.peredacha_zvuka"), tr("settings.peredacha_zvuka_opisanie"), top = 18.dp)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ChannelOption(tr("settings.avto"), pass, Modifier.weight(1f)) { pass = true; PlaybackSettings.setPassthrough(ctx, true) }
+        ChannelOption(tr("settings.vykl"), !pass, Modifier.weight(1f)) { pass = false; PlaybackSettings.setPassthrough(ctx, false) }
+    }
+    Section(tr("settings.chastota_kadrov"), tr("settings.chastota_kadrov_opisanie"), top = 14.dp)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf(
+            PlaybackSettings.FRAME_RATE_OFF to tr("settings.vykl"),
+            PlaybackSettings.FRAME_RATE_SEAMLESS to tr("settings.besshovno"),
+            PlaybackSettings.FRAME_RATE_ALWAYS to tr("settings.vsegda"),
+        ).forEach { (v, label) ->
+            ChannelOption(label, rate == v, Modifier.weight(1f)) { rate = v; PlaybackSettings.setFrameRateMode(ctx, v) }
         }
     }
 }

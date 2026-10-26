@@ -240,20 +240,25 @@ class PlayerDiagnostics(
      */
     fun applyVideoFrameRate(owner: PlayerEngine, root: View) {
         if (Build.VERSION.SDK_INT < 30) return
+        val mode = ru.suslikovanora.media.PlaybackSettings.frameRateMode(context)
+        if (mode == ru.suslikovanora.media.PlaybackSettings.FRAME_RATE_OFF) return
         val track = owner.videoTrack ?: return
         if (track.frameRateNum <= 0 || track.frameRateDen <= 0) return
         val fps = track.frameRateNum.toFloat() / track.frameRateDen
         if (fps < 10f || fps > 121f) return
         for (sv in surfaceViews(root)) {
             val surface = sv.holder?.surface?.takeIf { it.isValid } ?: continue
-            try { setSurfaceFrameRate(surface, fps) } catch (_: Exception) { }
+            try { setSurfaceFrameRate(surface, fps, always = mode == ru.suslikovanora.media.PlaybackSettings.FRAME_RATE_ALWAYS) } catch (_: Exception) { }
         }
+        if (frameRateLogged != fps) { frameRateLogged = fps; AppLog.write("[display] film ${"%.3f".format(Locale.US, fps)} fps, frame rate mode ${if (mode == ru.suslikovanora.media.PlaybackSettings.FRAME_RATE_ALWAYS) "always" else "seamless"}") }
     }
+    private var frameRateLogged = 0f
 
     @RequiresApi(30)
-    private fun setSurfaceFrameRate(surface: Surface, fps: Float) {
+    private fun setSurfaceFrameRate(surface: Surface, fps: Float, always: Boolean) {
         if (Build.VERSION.SDK_INT >= 31) {
-            surface.setFrameRate(fps, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE, Surface.CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS)
+            surface.setFrameRate(fps, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE,
+                if (always) Surface.CHANGE_FRAME_RATE_ALWAYS else Surface.CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS)
         } else {
             surface.setFrameRate(fps, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE)
         }

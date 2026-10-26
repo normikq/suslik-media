@@ -13,6 +13,7 @@ import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.Timeline
 import androidx.media3.common.TrackSelectionOverride
@@ -27,6 +28,12 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.decoder.ffmpeg.FfmpegLibrary
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.ForwardingRenderer
+import androidx.media3.exoplayer.MediaClock
+import androidx.media3.exoplayer.audio.AudioCapabilities
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.exoplayer.text.TextOutput
 import androidx.media3.exoplayer.LoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.Renderer
@@ -44,6 +51,7 @@ import androidx.media3.exoplayer.trackselection.ExoTrackSelection
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import ru.suslikovanora.media.AppLog
+import ru.suslikovanora.media.PlaybackSettings
 import ru.suslikovanora.media.core.BurstProxy
 import ru.suslikovanora.media.net.Api
 import java.util.Locale
@@ -116,6 +124,13 @@ class Media3Engine(private val context: Context) : PlayerEngine {
     private var builtViaReserve = false            // what the current ExoPlayer's back buffer was chosen for
     @Volatile private var viaReserve = false     // the film is read from BurstProxy on this phone, not from the mirror
     private var videoRenderer: FreshDecoderVideoRenderer? = null // of the current ExoPlayer
+    // Set by the viewer (PlaybackTweaks), + = later. ExoPlayer has no such thing: see SyncedClock / DelayedTextRenderer.
+    @Volatile private var audioSyncUs = 0L
+    @Volatile private var subtitleDelayUs = 0L
+    private var builtPassthrough = true                // the audio sink's capabilities are fixed when the player is built
+    private var openedAt = 0L
+    private var playAt = 0L
+    private var hdrSent = false
 
     private val transfer = object : TransferListener {
         override fun onTransferInitializing(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) {}
@@ -150,6 +165,33 @@ class Media3Engine(private val context: Context) : PlayerEngine {
                     allowedVideoJoiningTimeMs, enableDecoderFallback, eventHandler, eventListener,
                     FreshDecoderVideoRenderer.MAX_DROPPED_FRAMES_TO_NOTIFY).also { videoRenderer = it }
             }
+
+            // «Передача звука» off: the sink is told the device plays PCM only, so DTS / AC3 / TrueHD are decoded (FFmpeg), not sent on
+            override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioTrackPlaybackParams: Boolean): AudioSink? =
+                if (passthrough) super.buildAudioSink(context, enableFloatOutput, enableAudioTrackPlaybackParams)
+                else DefaultAudioSink.Builder(context)
+                    .setAudioCapabilities(AudioCapabilities.DEFAULT_AUDIO_CAPABILITIES)
+                    .setEnableFloatOutput(enableFloatOutput)
+                    .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                    .build()
+
+            // Sound and subtitle shifts: the audio renderer's clock and the text renderer's position are moved (the video follows the clock)
+            override fun buildAudioRenderers(
+                context: Context, extensionRendererMode: Int, mediaCodecSelector: MediaCodecSelector, enableDecoderFallback: Boolean,
+                audioSink: AudioSink, eventHandler: Handler, eventListener: androidx.media3.exoplayer.audio.AudioRendererEventListener,
+                out: ArrayList<Renderer>,
+            ) {
+                super.buildAudioRenderers(context, extensionRendererMode, mediaCodecSelector, enableDecoderFallback, audioSink,
+                    eventHandler, eventListener, out)
+                for (i in out.indices) if (out[i].trackType == C.TRACK_TYPE_AUDIO && out[i] !is ForwardingRenderer) out[i] = SyncedAudioRenderer(out[i])
+            }
+
+            override fun buildTextRenderers(
+                context: Context, output: TextOutput, outputLooper: android.os.Looper, extensionRendererMode: Int, out: ArrayList<Renderer>,
+            ) {
+                super.buildTextRenderers(context, output, outputLooper, extensionRendererMode, out)
+                for (i in out.indices) if (out[i].trackType == C.TRACK_TYPE_TEXT && out[i] !is ForwardingRenderer) out[i] = DelayedTextRenderer(out[i])
+            }
         }
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON) // FFmpeg only where the phone can't
             .setEnableDecoderFallback(true)
@@ -172,14 +214,53 @@ class Media3Engine(private val context: Context) : PlayerEngine {
             // Audio focus, «becoming noisy» and the media buttons stay with PlayerAudioSession (the same for both engines).
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), false)
             .setHandleAudioBecomingNoisy(false)
-            .setVideoChangeFrameRateStrategy(C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS)
+            // «Подстройка частоты кадров»: Media3 itself changes the rate only where the switch is seamless; the other kind
+            // («Всегда») is asked for by PlayerDiagnostics.applyVideoFrameRate after the first picture
+            .setVideoChangeFrameRateStrategy(
+                if (PlaybackSettings.frameRateMode(context) == PlaybackSettings.FRAME_RATE_OFF) C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF
+                else C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS)
             .setSeekParameters(SeekParameters.EXACT)
             .build()
         p.addListener(events)
         p.addAnalyticsListener(analytics)
         logFfmpegOnce()
         builtViaReserve = reserve
+        builtPassthrough = passthrough
         return p
+    }
+
+    private val passthrough: Boolean get() = PlaybackSettings.passthrough(context)
+
+    /** The audio renderer with its media clock moved by [audioSyncUs]: the picture follows the clock, so the sound comes that much later (+) or earlier (−). */
+    private inner class SyncedAudioRenderer(r: Renderer) : ForwardingRenderer(r) {
+        private val clock = r.mediaClock?.let { SyncedClock(it) }
+        override fun getMediaClock(): MediaClock? = clock
+    }
+
+    private inner class SyncedClock(private val inner: MediaClock) : MediaClock {
+        override fun getPositionUs() = inner.positionUs + audioSyncUs
+        override fun hasSkippedSilenceSinceLastCall() = inner.hasSkippedSilenceSinceLastCall()
+        override fun setPlaybackParameters(playbackParameters: PlaybackParameters) = inner.setPlaybackParameters(playbackParameters)
+        override fun getPlaybackParameters(): PlaybackParameters = inner.playbackParameters
+    }
+
+    /** The text renderer is shown the film's moment minus the delay: a positive delay shows the subtitles later. */
+    private inner class DelayedTextRenderer(r: Renderer) : ForwardingRenderer(r) {
+        override fun render(positionUs: Long, elapsedRealtimeUs: Long) = super.render(positionUs - subtitleDelayUs, elapsedRealtimeUs)
+        override fun getDurationToProgressUs(positionUs: Long, elapsedRealtimeUs: Long) =
+            super.getDurationToProgressUs(positionUs - subtitleDelayUs, elapsedRealtimeUs)
+    }
+
+    override fun setAudioSyncMs(ms: Long) {
+        if (audioSyncUs == ms * 1000L) return
+        audioSyncUs = ms * 1000L
+        AppLog.write("[track] audio delay $ms ms (set by the viewer)")
+    }
+
+    override fun setSubtitleDelayMs(ms: Long) {
+        if (subtitleDelayUs == ms * 1000L) return
+        subtitleDelayUs = ms * 1000L
+        AppLog.write("[track] subtitle delay $ms ms")
     }
 
     private fun dataSourceFactory(): DataSource.Factory =
@@ -238,12 +319,14 @@ class Media3Engine(private val context: Context) : PlayerEngine {
 
     override fun open(media: EngineMedia, scale: VideoScale) {
         val reserve = Uri.parse(media.url).host == LOCAL_HOST
-        if (exo != null && builtViaReserve != reserve) release() // the back buffer is fixed when the player is built
+        // the back buffer and the audio sink's capabilities are fixed when the player is built
+        if (exo != null && (builtViaReserve != reserve || builtPassthrough != passthrough)) release()
         val p = exo ?: build(reserve).also { exo = it; view.player = it }
         this.media = media
         extraAudio.clear()
         opened++
         reported = false; tracksLogged = ""; selectLastAudio = false; lengthSent = 0L; bufferedPct = -1
+        hdrSent = false; openedAt = android.os.SystemClock.elapsedRealtime(); playAt = 0L
         // A reconnect to the same file reuses the decoders (no new "initialized" event): their names stay.
         if (MirrorLink.fileKey(media.url) != mainKey) { videoDecoder = ""; audioDecoder = "" }
         bytesRead.set(0L)
@@ -290,11 +373,17 @@ class Media3Engine(private val context: Context) : PlayerEngine {
             if (!playWhenReady) listener?.paused()
         }
         override fun onTracksChanged(tracks: Tracks) {
+            noteHdr(tracks)
             judge(tracks)
             if (selectLastAudio) pickLastAudio(tracks)
             listener?.tracksChanged()
         }
-        override fun onRenderedFirstFrame() { listener?.videoOutput(1) }
+        override fun onRenderedFirstFrame() {
+            // how long the picture took (the 24.10 «Dolby Vision turns on late» question: the journal now has the numbers)
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (openedAt > 0L) AppLog.write("[media3] first picture ${now - openedAt} ms after open" + if (playAt > 0L) ", ${now - playAt} ms after play" else "")
+            listener?.videoOutput(1)
+        }
         override fun onTimelineChanged(timeline: Timeline, reason: Int) {
             val d = lengthMs
             if (d > 0L && d != lengthSent) { lengthSent = d; listener?.lengthChanged() }
@@ -357,6 +446,19 @@ class Media3Engine(private val context: Context) : PlayerEngine {
         handler.post { if (gen == opened && exo != null) listener?.unsupported(reason) }
     }
 
+    /** HDR / Dolby Vision in the video: said once, as soon as the tracks are known, so the screen can switch before the first picture. */
+    private fun noteHdr(tracks: Tracks) {
+        if (hdrSent) return
+        val f = tracks.groups.firstOrNull { it.type == C.TRACK_TYPE_VIDEO && it.length > 0 }?.getTrackFormat(0) ?: return
+        hdrSent = true
+        val dolby = f.sampleMimeType == MimeTypes.VIDEO_DOLBY_VISION || f.codecs?.startsWith("dvh", true) == true || f.codecs?.startsWith("dva", true) == true
+        val transfer = f.colorInfo?.colorTransfer
+        val hdr = dolby || transfer == C.COLOR_TRANSFER_ST2084 || transfer == C.COLOR_TRANSFER_HLG
+        AppLog.write("[media3] video ${f.sampleMimeType} codecs=${f.codecs ?: "-"} ${f.width}x${f.height} transfer=${transfer ?: "-"}" +
+            (if (dolby) " — Dolby Vision" else if (hdr) " — HDR" else ""))
+        if (hdr) listener?.hdrVideo(dolby)
+    }
+
     /** Video or sound that no decoder (the phone's or FFmpeg) takes: Media3 would play a black picture or silence. */
     private fun judge(tracks: Tracks) {
         if (reported || tracks.groups.isEmpty()) return
@@ -385,7 +487,10 @@ class Media3Engine(private val context: Context) : PlayerEngine {
     }
 
     // ---- playback ----------------------------------------------------------------------------
-    override fun play() { exo?.playWhenReady = true }
+    override fun play() {
+        if (playAt == 0L) playAt = android.os.SystemClock.elapsedRealtime()
+        exo?.playWhenReady = true
+    }
     override fun pause() { exo?.playWhenReady = false }
 
     // Like VLC: "playing" also while it waits for data (the play/pause button then pauses, not starts again).
