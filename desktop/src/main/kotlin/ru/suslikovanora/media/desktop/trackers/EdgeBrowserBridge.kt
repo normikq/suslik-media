@@ -548,6 +548,41 @@ object EdgeBrowserBridge {
         return if (parts.size >= 2) "${parts[parts.size - 2]}.${parts.last()}" else host
     }
 
+    /** Идентификаторы видео-разделов RuTracker (из выпадающего списка форума), кэш на время работы приложения. */
+    @Volatile
+    private var videoForumIds: List<String>? = null
+
+    private suspend fun loadVideoForumIds(session: CdpTabSession, baseUrl: String): List<String> {
+        session.sendCmd("Page.navigate", JSONObject().put("url", "${baseUrl.removeSuffix("/")}/forum/tracker.php"))
+        val js = """
+            (() => {
+                const sel = document.querySelector('select#fs-main, select[name="f[]"], select[name="f"]');
+                if (!sel) return '';
+                const keep = /кино|видео|мульт|аниме|сериал/i, drop = /обуч|музык|игр|программ|книг|софт/i;
+                const ids = [];
+                for (const g of sel.querySelectorAll('optgroup')) {
+                    const label = g.getAttribute('label') || '';
+                    if (!keep.test(label) || drop.test(label)) continue;
+                    for (const o of g.querySelectorAll('option')) if (/^\d+$/.test(o.value)) ids.push(o.value);
+                }
+                return JSON.stringify(ids);
+            })()
+        """.trimIndent()
+        repeat(15) {
+            delay(400)
+            val v = runCatching {
+                session.sendCmd("Runtime.evaluate", JSONObject().put("expression", js).put("returnByValue", true))
+            }.getOrNull()?.optJSONObject("result")?.optJSONObject("result")?.optString("value").orEmpty()
+            if (v.startsWith("[")) {
+                val arr = JSONArray(v)
+                val ids = (0 until arr.length()).map { arr.getString(it) }.distinct().take(400)
+                if (ids.isNotEmpty()) videoForumIds = ids
+                return ids
+            }
+        }
+        return emptyList() // список не получили — ищем без фильтра по разделам
+    }
+
     /**
      * Executes tracker search via browser in hidden desktop and parses results into compact JSON array directly in DOM.
      * Extracts unescaped text content, exact byte sizes, seeds, and avoids sending large raw HTML blobs over CDP.
@@ -572,7 +607,10 @@ object EdgeBrowserBridge {
                         }
 
                         val encoded = URLEncoder.encode(query, "windows-1251")
-                        val targetUrl = "${baseUrl.removeSuffix("/")}/forum/tracker.php?nm=$encoded"
+                        // Отсев на стороне трекера: ищем только в разделах кино/сериалов/мультфильмов/аниме
+                        val forums = videoForumIds ?: loadVideoForumIds(session, baseUrl)
+                        val fParam = if (forums.isNotEmpty()) "f=${forums.joinToString(",")}&" else ""
+                        val targetUrl = "${baseUrl.removeSuffix("/")}/forum/tracker.php?${fParam}nm=$encoded"
                         session.sendCmd("Page.navigate", JSONObject().put("url", targetUrl))
 
                         var resultJson: String? = null
