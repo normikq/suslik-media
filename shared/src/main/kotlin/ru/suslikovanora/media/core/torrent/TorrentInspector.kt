@@ -43,6 +43,30 @@ object TorrentInspector {
     fun hasVideoFiles(files: List<TorrentFileInfo>): Boolean =
         files.any { it.isVideo }
 
+    /**
+     * Общая проверка «в раздаче есть видео» для ПК и Android (сайт повторяет её в `index.html`).
+     * Возвращает текст отказа или null, если всё в порядке либо судить не по чему (пустой список).
+     */
+    fun rejectionForPaths(paths: List<String>): String? {
+        if (paths.isEmpty() || paths.any { isVideoFileName(it) }) return null
+        val exts = paths.mapNotNull { p ->
+            p.substringAfterLast('/').substringAfterLast('.', "").lowercase().takeIf { it.isNotBlank() && it.length <= 5 }
+        }.toCollection(linkedSetOf())
+        return "Отклонено: в раздаче нет видеофайлов" + extsNote(exts)
+    }
+
+    /** `.torrent`: список файлов читается из самого файла, до отправки на сервер. */
+    fun rejectionForTorrent(bytes: ByteArray): String? = rejectionForPaths(inspect(bytes).files.map { it.path })
+
+    /** Магнет: до готовности известно только имя `dn` — отказ, если у него расширение не видео. */
+    fun rejectionForMagnetName(dn: String): String? {
+        val ext = dn.substringAfterLast('.', "").lowercase()
+        return if (NON_VIDEO_EXTENSIONS.contains(ext)) "Отклонено: не является видеофайлом (.$ext)" else null
+    }
+
+    private fun extsNote(exts: Set<String>): String =
+        if (exts.isEmpty()) "" else " (найдены: " + exts.take(4).joinToString { ".$it" } + ")"
+
     fun inspect(bytes: ByteArray): TorrentInspection {
         if (bytes.isEmpty() || bytes.size > MAX_TORRENT_FILE_SIZE) {
             return TorrentInspection(

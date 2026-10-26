@@ -7,7 +7,7 @@ const config = require("../config");
 const { makeJsonWriter } = require("../utils/json-writer");
 const { readCookie } = require("../utils/helpers");
 
-const { SHARED_USER, getUser, touchUser, verifyDeviceToken } = require("../services/users");
+const { SHARED_USER, getUser, touchUser, verifyDeviceToken, hasDeviceHash } = require("../services/users");
 
 // Sessions survive a server restart (the default MemoryStore forgets everyone and grows without bound).
 // One shared password means very few sessions, so a JSON file is plenty for this server.
@@ -67,6 +67,41 @@ class FileSessionStore extends session.Store {
     cb && cb(null);
   }
 
+  // Входы пользователя в браузере: id — начало хеша сеанса (сам идентификатор сеанса наружу не отдаётся).
+  // Время последней активности — по сроку: cookie «скользящая», срок = последняя активность + SESSION_MAX_AGE_MS.
+  listFor(uid) {
+    const out = [];
+    const now = Date.now();
+    for (const [sid, entry] of this.map) {
+      if (entry.expires < now) continue;
+      let data;
+      try { data = JSON.parse(entry.data); } catch { continue; }
+      if (!data || !data.authenticated || (data.uid || "shared") !== uid || (data.meta && data.meta.app)) continue;
+      out.push({
+        sid, id: crypto.createHash("sha256").update(sid).digest("hex").slice(0, 16),
+        ua: data.meta && data.meta.ua || "", created_at: data.meta && data.meta.at || 0,
+        last_seen: entry.expires - config.SESSION_MAX_AGE_MS
+      });
+    }
+    return out;
+  }
+
+  // Сеансы-cookie приложения (получены при привязке по коду) вместе с её ключом устройства: отзыв ключа закрывает и их.
+  // dev — хеш ключа; сеансы старой версии без привязки (dev не записан) закрываются у того же пользователя целиком:
+  // приложения всё равно входят по своему ключу устройства.
+  destroyAppSessions(uid, dev) {
+    let n = 0;
+    for (const [sid, entry] of this.map) {
+      let data;
+      try { data = JSON.parse(entry.data); } catch { continue; }
+      if (!data || !data.meta || !data.meta.app || (data.uid || "shared") !== uid) continue;
+      if (data.meta.dev && data.meta.dev !== dev) continue;
+      this.map.delete(sid); n++;
+    }
+    if (n) this.save();
+    return n;
+  }
+
   destroy(sid, cb) {
     this.map.delete(sid);
     this.save();
@@ -113,6 +148,12 @@ function resolveAuth(req) {
 
   // 2. Проверка по сессии
   if (req.session && req.session.authenticated) {
+    // Сеанс приложения живёт, пока жив её ключ устройства: отозвали ключ — выходит и сеанс
+    const dev = req.session.meta && req.session.meta.dev;
+    if (dev && !hasDeviceHash(dev)) {
+      req.session.destroy?.(() => {});
+      return false;
+    }
     const user = req.session.uid ? getUser(req.session.uid) : SHARED_USER;
     if (!user || user.role === "denied" || sharedAccessOff(user)) {
       req.session.destroy?.(() => {});

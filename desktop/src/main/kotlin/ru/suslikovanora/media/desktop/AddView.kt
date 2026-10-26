@@ -83,16 +83,10 @@ private class Added(val key: Long, val name: String) {
  */
 internal suspend fun rejectIfNoVideo(id: Long): String? {
     val files = runCatching { Api.get("/api/magnets/$id/files").optJSONArray("files") }.getOrNull() ?: return null
-    val other = linkedSetOf<String>()
-    for (i in 0 until files.length()) {
-        val name = files.optJSONObject(i)?.optString("name").orEmpty()
-        if (TorrentInspector.isVideoFileName(name)) return null
-        name.substringAfterLast('/').substringAfterLast('.', "").lowercase().takeIf { it.isNotBlank() && it.length <= 5 }?.let { other.add(it) }
-    }
-    if (other.isEmpty()) return null
+    val names = (0 until files.length()).map { files.optJSONObject(it)?.optString("name").orEmpty() }
+    val rejected = TorrentInspector.rejectionForPaths(names) ?: return null
     val removed = runCatching { Api.post("/api/magnets/$id/cancel") }.isSuccess
-    return "Отклонено: в раздаче нет видеофайлов (найдены: ${other.take(4).joinToString { ".$it" }})" +
-        if (removed) "" else " · её удалит админ или автоочистка"
+    return rejected + if (removed) "" else " · её удалит админ или автоочистка"
 }
 
 /** Polls AllDebrid's status of a magnet until it is ready (then refreshes the library) or fails. */
@@ -138,15 +132,9 @@ fun AddView(lib: Library, onPlay: (ru.suslikovanora.media.desktop.player.PlayReq
                 ?.let { runCatching { java.net.URLDecoder.decode(it, "UTF-8") }.getOrNull() } ?: tr("add.magnet_ssylka")
 
             // Immediate pre-check if dn ends with known non-video format
-            val dnExt = dn.substringAfterLast('.', "").lowercase()
-            if (TorrentInspector.NON_VIDEO_EXTENSIONS.contains(dnExt)) {
-                val a = Added(System.nanoTime(), dn).also { added.add(0, it) }
-                a.note = "Отклонено: не является видеофайлом (.$dnExt)"
-                a.ok = false
-                continue
-            }
-
             val a = Added(System.nanoTime(), dn).also { added.add(0, it) }
+            val reason = TorrentInspector.rejectionForMagnetName(dn)
+            if (reason != null) { a.note = reason; a.ok = false; continue }
             scope.launch {
                 try {
                     val r = Api.post("/api/magnets", JSONObject().put("magnet", link))
@@ -168,12 +156,9 @@ fun AddView(lib: Library, onPlay: (ru.suslikovanora.media.desktop.player.PlayReq
                     if (bytes.size > 1024 * 1024) { a.note = tr("add.fayl_bolshe_mb"); a.ok = false; return@launch }
 
                     // Pre-inspect .torrent files to ensure they contain video files
-                    val inspection = TorrentInspector.inspect(bytes)
-                    if (inspection.files.isNotEmpty() && !inspection.hasVideo) {
-                        val extsStr = if (inspection.nonVideoExtensions.isNotEmpty()) {
-                            " (найдены: " + inspection.nonVideoExtensions.take(4).joinToString { ".$it" } + ")"
-                        } else ""
-                        a.note = "Отклонено: в торренте нет видеофайлов$extsStr"
+                    val rejected = TorrentInspector.rejectionForTorrent(bytes)
+                    if (rejected != null) {
+                        a.note = rejected
                         a.ok = false
                         return@launch
                     }

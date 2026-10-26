@@ -20,8 +20,11 @@
       b.classList.toggle("active", inLib && libraryCategory === cat);
     });
     $("showLibraryTab").classList.toggle("secondary", !(inLib && libraryCategory === "all"));
+    $("showMineTab").classList.toggle("secondary", !(inLib && libraryCategory === "mine"));
     var svc = $("sideAppsTab");
     if (svc) svc.classList.toggle("active", !$("appsTab").classList.contains("hidden"));
+    var ses = $("sideSessionsTab");
+    if (ses) ses.classList.toggle("active", !$("sessionsTab").classList.contains("hidden"));
   }
 
   function setCategory(cat) {
@@ -33,12 +36,13 @@
   }
 
   document.querySelectorAll(".side-cat").forEach(function (b) {
-    b.addEventListener("click", function () { setCategory(b.dataset.cat); });
+    b.addEventListener("click", function () { if (b.dataset.cat) setCategory(b.dataset.cat); }); // «Приложения» и «Сессии» открывают свои вкладки сами
   });
   // «Главная» на странице библиотеки сбрасывает категорию на «Все»
   $("showLibraryTab").addEventListener("click", function () {
     if (libraryVisible() && libraryCategory !== "all") setCategory("all");
   }, true);
+  $("showMineTab").addEventListener("click", function () { setCategory("mine"); });
   var sideApps = $("sideAppsTab");
   if (sideApps) sideApps.addEventListener("click", function () { setTab("apps"); });
 

@@ -4,7 +4,7 @@ const express = require("express");
 const crypto = require("crypto");
 const config = require("../config");
 const { loginLimiter, apiLimiter, deviceAuthLimiter, devicePollLimiter } = require("../middleware/rate-limit");
-const { requireLogin, verifyPassword, resolveAuth } = require("../middleware/auth");
+const { requireLogin, verifyPassword, resolveAuth, sessionStore } = require("../middleware/auth");
 const { alldebridRequest } = require("../services/alldebrid");
 const { exchangeOAuthCode, fetchMe, revokeOAuthToken, checkGuildMember } = require("../services/discord");
 const {
@@ -15,7 +15,10 @@ const {
   authorizeDevicePairing,
   pollDevicePairing,
   adoptDevice,
-  revokeDeviceToken
+  revokeDeviceToken,
+  hashToken,
+  listDevices,
+  revokeDeviceById
 } = require("../services/users");
 const { readCookie } = require("../utils/helpers");
 
@@ -57,6 +60,22 @@ function getRedirectUri(req) {
   return `${req.protocol}://${req.get("host")}/api/auth/discord/callback`;
 }
 
+// Пометка входа для списка «Активные сессии»: с чего вошли и когда (адрес не пишем)
+function markSession(req) {
+  req.session.meta = { ua: String(req.get("user-agent") || "").slice(0, 300), at: Date.now() };
+}
+
+// «Chrome · Windows» из User-Agent
+function describeAgent(ua) {
+  ua = String(ua || "");
+  if (!ua) return "Браузер";
+  const os = /Android/i.test(ua) ? "Android" : /iPhone|iPad|iPod/i.test(ua) ? "iOS" : /Windows/i.test(ua) ? "Windows"
+    : /Mac OS X|Macintosh/i.test(ua) ? "macOS" : /Linux|X11/i.test(ua) ? "Linux" : "";
+  const br = /Edg\//.test(ua) ? "Edge" : /OPR\/|Opera/.test(ua) ? "Opera" : /YaBrowser/.test(ua) ? "Яндекс Браузер"
+    : /Firefox\//.test(ua) ? "Firefox" : /Chrome\/|CriOS/.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "Браузер";
+  return os ? `${br} · ${os}` : br;
+}
+
 // 1. Вход по общему паролю (запасной / админский)
 router.post("/api/login", loginLimiter, (req, res) => {
   if (!config.PASSWORD_AUTH_ENABLED) {
@@ -75,6 +94,7 @@ router.post("/api/login", loginLimiter, (req, res) => {
   req.session.regenerate(regenErr => {
     if (regenErr) return res.status(500).json({ error: "Не удалось создать сеанс." });
     req.session.authenticated = true;
+    markSession(req);
     delete req.session.uid; // Вход по паролю: shared сессия
     req.session.save(err => {
       if (err) return res.status(500).json({ error: "Не удалось создать сеанс." });
@@ -190,6 +210,7 @@ router.get("/api/auth/discord/callback", async (req, res) => {
     req.session.regenerate(regenErr => {
       if (regenErr) return res.status(500).send("Не удалось инициализировать сеанс.");
       req.session.authenticated = true;
+      markSession(req);
       req.session.uid = user.id;
       req.session.save(saveErr => {
         if (saveErr) return res.status(500).send("Не удалось сохранить сеанс.");
@@ -269,6 +290,7 @@ router.post("/api/auth/device/poll", devicePollLimiter, (req, res) => {
     req.session.regenerate(err => {
       if (!err) {
         req.session.authenticated = true;
+        req.session.meta = { app: true, dev: result.device_token ? hashToken(result.device_token) : "" }; // сеанс приложения: в списке сессий его представляет ключ устройства
         if (result.user?.id) req.session.uid = result.user.id;
         req.session.save(() => {
           res.json({
@@ -307,6 +329,66 @@ router.post("/api/logout", requireLogin, (req, res) => {
     res.clearCookie("movieportal.sid");
     res.json({ ok: true });
   });
+});
+
+// 8а. Активные сессии: входы в браузере и подключённые устройства (ПК, ТВ) этого пользователя
+function sessionOwner(req) { return req.user ? req.user.id : "shared"; }
+function currentDeviceHash(req) {
+  const t = req.get("X-Device-Token") || (req.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+  return t ? hashToken(t) : "";
+}
+function collectSessions(req) {
+  const uid = sessionOwner(req);
+  const curHash = currentDeviceHash(req);
+  const list = [];
+  for (const s of sessionStore.listFor(uid)) {
+    list.push({ id: "b" + s.id, kind: "browser", name: describeAgent(s.ua), created_at: s.created_at, last_seen: s.last_seen,
+      current: !curHash && s.sid === req.sessionID, _sid: s.sid });
+  }
+  for (const d of listDevices(uid)) {
+    list.push({ _hash: d.hash, id: "d" + d.id, kind: "device", name: d.name, created_at: d.created_at, last_seen: d.last_seen, current: d.hash === curHash });
+  }
+  list.sort((a, b) => (b.current - a.current) || (b.last_seen - a.last_seen));
+  return list;
+}
+
+router.get("/api/sessions", requireLogin, apiLimiter, (req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.json({ ok: true, sessions: collectSessions(req).map(({ _sid, _hash, ...s }) => s) });
+});
+
+function revokeOne(req, res, item) {
+  if (item.kind === "device") {
+    const ok = revokeDeviceById(sessionOwner(req), item.id.slice(1));
+    if (ok) sessionStore.destroyAppSessions(sessionOwner(req), item._hash);
+    return ok;
+  }
+  sessionStore.destroy(item._sid);
+  if (item.current) res.clearCookie("movieportal.sid");
+  return true;
+}
+
+router.post("/api/sessions/revoke", requireLogin, apiLimiter, (req, res) => {
+  const id = String(req.body?.id || "");
+  const item = collectSessions(req).find(s => s.id === id);
+  if (!item) return res.status(404).json({ error: "Сессия не найдена или уже завершена." });
+  revokeOne(req, res, item);
+  res.json({ ok: true, current: item.current });
+});
+
+router.post("/api/sessions/revoke-others", requireLogin, apiLimiter, (req, res) => {
+  let n = 0;
+  for (const item of collectSessions(req)) if (!item.current && revokeOne(req, res, item)) n++;
+  res.json({ ok: true, revoked: n });
+});
+
+// Завершить давно неактивные (по умолчанию — не заходили больше 7 дней); текущую не трогает
+router.post("/api/sessions/revoke-stale", requireLogin, apiLimiter, (req, res) => {
+  const days = Math.min(365, Math.max(1, Number(req.body?.days) || 7));
+  const limit = Date.now() - days * 864e5;
+  let n = 0;
+  for (const item of collectSessions(req)) if (!item.current && item.last_seen < limit && revokeOne(req, res, item)) n++;
+  res.json({ ok: true, revoked: n });
 });
 
 // 9. Получение текущего состояния сеанса и пользователя
