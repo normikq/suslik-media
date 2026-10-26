@@ -736,5 +736,16 @@
   "trackers.browser_login_prompt": "Выполните вход на трекер в открывшемся окне {browser} — куки сохранятся автоматически",
   "trackers.browser_window_closed": "Окно авторизации было закрыто до завершения входа",
   "trackers.browser_login_success": "✓ Вход выполнен! Сохраняем сессию…",
-  "trackers.browser_timeout": "Время ожидания входа истекло (3 минуты)"
+  "trackers.browser_timeout": "Время ожидания входа истекло (3 минуты)",
+  "overlay.sdvig_subtitrov": "Сдвиг субтитров",
+  "overlay.sdvig_zvuka": "Сдвиг звука",
+  "overlay.sdvig_opisanie": "+ — позже, − — раньше. Помнится для этого файла.",
+  "overlay.sdvig_znachenie": "{v} с",
+  "settings.avto": "Авто",
+  "settings.besshovno": "Без мигания",
+  "settings.vsegda": "Всегда",
+  "settings.peredacha_zvuka": "Передача звука",
+  "settings.peredacha_zvuka_opisanie": "Авто — DTS, Dolby Digital и TrueHD уходят на ресивер или саундбар как есть, если устройство это умеет. Выкл — телефон или приставка сами превращают их в обычный звук. Действует со следующего фильма (Media3).",
+  "settings.chastota_kadrov": "Подстройка частоты кадров",
+  "settings.chastota_kadrov_opisanie": "Экран переключается на частоту фильма (24, 25, 30 Гц) — без неё кино на 60 Гц чуть «подрагивает». Без мигания — только там, где экран переключается незаметно. Всегда — и с миганием, как в Kodi; на ТВ ещё нужна включённая в его настройках подстройка. Действует со следующего фильма."
 }
