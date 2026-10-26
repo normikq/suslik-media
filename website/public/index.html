@@ -395,7 +395,7 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
 <script>/* App 1.2+: native library and bottom bar */try{if(Number(window.__suslikApp||0)>=3)document.documentElement.classList.add("suslik-native");}catch(e){}
 /* Пока не ответил /api/session, страница скрыта: иначе на секунду мелькает форма входа у тех, кто уже вошёл (снимается в showApp; страховка — через 4 с) */
 try{document.documentElement.classList.add("auth-pending");setTimeout(function(){document.documentElement.classList.remove("auth-pending");},4000);}catch(e){}</script>
-<link rel="stylesheet" href="redesign.css?v=27">
+<link rel="stylesheet" href="redesign.css?v=39">
 <style>
 .sr-badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
 .sr-badges .rb { background: #1c2230; color: #c7d0e0; border: 1px solid #2e3850; border-radius: 6px; padding: 2px 8px; font-size: 12px; font-weight: 700; }
@@ -490,6 +490,7 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
       </div>
       <div class="row navrow">
         <button id="showLibraryTab" class="secondary"><span class="nav-icon" aria-hidden="true">▤</span><span class="nav-long">Главная</span><span class="nav-short">Библиотека</span></button>
+        <button id="showMineTab" class="secondary"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18l-6-4-6 4z"/></svg></span><span class="nav-long">Моя медиатека</span><span class="nav-short">Мои</span></button>
         <button id="showSearchTab" class="secondary"><span class="nav-icon" aria-hidden="true">⌕</span><span class="nav-long">Поиск раздач</span><span class="nav-short">Поиск</span></button>
         <button id="showLinkTab"><span class="nav-icon" aria-hidden="true">↗</span><span class="nav-long">Magnet / торрент</span><span class="nav-short">Ссылка</span></button>
         <button id="showAppsTab" class="secondary"><span class="nav-icon" aria-hidden="true">⇩</span><span class="nav-long">Приложения</span><span class="nav-short">Скачать</span></button>
@@ -503,6 +504,7 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
         <button type="button" class="side-cat secondary" data-cat="other"><span class="side-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9 11.5h.01M15 11.5h.01M9 15.5c1.5 1.2 4.5 1.2 6 0"/></svg></span><span class="side-name">Другое</span><span class="side-count">0</span></button>
         <div class="side-caption">Сервис</div>
         <button type="button" id="sideAppsTab" class="side-cat secondary side-service"><span class="side-ico" aria-hidden="true">⇩</span><span class="side-name">Приложения</span></button>
+        <button type="button" id="sideSessionsTab" class="side-cat secondary side-service"><span class="side-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></span><span class="side-name">Сессии</span></button>
       </nav>
       <div class="sidebar-profile">
         <div class="sidebar-profile-info">
@@ -525,6 +527,7 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
           </div>
           <div><h2>Suslik Media</h2><p>Ссылки и ваша библиотека AllDebrid.</p></div>
         </div>
+        <button id="mobileSessions" class="secondary btn-logout-mobile" type="button" aria-label="Активные сессии">Сессии</button>
         <button id="mobileLogout" class="secondary btn-logout-mobile" type="button">Выйти</button>
       </div>
 
@@ -595,6 +598,9 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
           </div>
           <div id="libraryStatus" class="status" role="status">Нажмите «Обновить», чтобы загрузить медиатеку.</div>
           <div class="lib-actions" role="toolbar" aria-label="Сортировка и вид">
+            <div class="lib-menu-wrap">
+            <button type="button" id="libMenuBtn" class="lib-menu-btn" aria-haspopup="true" aria-expanded="false"><svg class="lib-ic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4-2v-4z"/></svg>Вид<svg class="lib-caret" viewBox="0 0 12 8" width="10" height="7" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M1 1l5 5 5-5"/></svg></button>
+            <div class="lib-menu" id="libMenu" hidden>
             <div class="lib-seg" id="libSortSeg" role="group" aria-label="Сортировка">
               <button type="button" class="lib-pill active" data-sort="newest"><svg class="lib-ic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Новые</button>
               <button type="button" class="lib-pill" data-sort="name"><svg class="lib-ic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 17l4-10 4 10M4.5 14h5M16 6v12M13 15l3 3 3-3"/></svg>Название</button>
@@ -606,14 +612,27 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
               <button id="viewGridBtn" type="button" class="view-btn active" title="Сетка постеров" aria-label="Сетка"><svg class="lib-ic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="6.5" height="6.5" rx="1"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1"/></svg></button>
               <button id="viewListBtn" type="button" class="view-btn" title="Список" aria-label="Список"><svg class="lib-ic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg></button>
             </div>
-            <button id="refreshLibrary" type="button" class="btn-refresh">
+            </div>
+            </div>
+            <button id="refreshLibrary" type="button" class="btn-refresh" title="Обновить" aria-label="Обновить">
               <svg class="refresh-spinner" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.6-5.9M20 4v5h-5"/></svg>
-              <span>Обновить</span>
+              <span class="btn-refresh-text">Обновить</span>
             </button>
           </div>
         </div>
         <div id="libraryResults" class="library-grid"></div>
         <div id="libraryPager" class="library-pager" aria-label="Страницы"></div>
+      </section>
+
+      <section id="sessionsTab" class="hidden">
+        <div class="panel sessions-panel">
+          <div class="sessions-head">
+            <div><h2>Активные сессии</h2><p class="sessions-hint">Браузеры и устройства (ПК, ТВ), где выполнен вход в ваш аккаунт. Завершите сессию, если не узнаёте устройство.</p></div>
+            <div class="sessions-actions"><button type="button" id="sessionsRevokeStale" class="sess-btn">Завершить неактивные (7+ дней)</button><button type="button" id="sessionsRevokeOthers" class="sess-btn danger">Завершить все остальные</button></div>
+          </div>
+          <div id="sessionsStatus" class="status" role="status"></div>
+          <div id="sessionsList" class="sessions-list"></div>
+        </div>
       </section>
 
       <section id="appsTab" class="hidden">
@@ -918,6 +937,39 @@ $("removeTorrentBtn").addEventListener("click",()=>{$("torrentФайл").value="
 for(const ev of ["dragenter","dragover"])$("torrentDropzone").addEventListener(ev,e=>{e.preventDefault();$("torrentDropzone").classList.add("dragover");});
 for(const ev of ["dragleave","drop"])$("torrentDropzone").addEventListener(ev,e=>{e.preventDefault();$("torrentDropzone").classList.remove("dragover");});
 $("torrentDropzone").addEventListener("drop",e=>{const file=e.dataTransfer?.files?.[0];if(!file)return;e.preventDefault();if(file.size>1024*1024){$("linkStatus").textContent="Размер файла .torrent не должен превышать 1 МБ.";$("linkStatus").className="status error";return;}if(!file.name.toLowerCase().endsWith(".torrent")){$("linkStatus").textContent="Выберите файл с расширением .torrent.";$("linkStatus").className="status error";return;}const transfer=new DataTransfer();transfer.items.add(file);$("torrentФайл").files=transfer.files;renderChosenTorrent();});
+// «В раздаче есть видео» — то же правило, что в shared/…/core/torrent/TorrentInspector.kt (ПК и Android)
+const CHK_VIDEO_EXT=new Set(["mkv","mp4","m4v","avi","mov","webm","ts","m2ts","mts","wmv","vob","mpg","mpeg","flv","3gp","ogv","asf"]);
+const CHK_NON_VIDEO_EXT=new Set(["exe","msi","apk","pkg","deb","rpm","bin","cue","dmg","zip","rar","7z","tar","gz","cbr","cbz","pdf","epub","fb2","mp3","flac","wav","ape","aac","ogg","wma","doc","docx"]);
+function addExtOf(name){const i=name.lastIndexOf(".");return i<0?"":name.slice(i+1).toLowerCase();}
+function noVideoReason(paths){
+  if(!paths.length||paths.some(p=>CHK_VIDEO_EXT.has(addExtOf(p))))return null;
+  const exts=[...new Set(paths.map(p=>addExtOf(p.split("/").pop())).filter(x=>x&&x.length<=5))].slice(0,4);
+  return "Отклонено: в раздаче нет видеофайлов"+(exts.length?" (найдены: "+exts.map(x=>"."+x).join(", ")+")":"");
+}
+function magnetNameReason(link){
+  const m=/[?&]dn=([^&]+)/.exec(link); if(!m)return null;
+  let dn; try{dn=decodeURIComponent(m[1].replace(/\+/g," "));}catch{return null;}
+  const ext=addExtOf(dn);
+  return CHK_NON_VIDEO_EXT.has(ext)?"Отклонено: не является видеофайлом (."+ext+")":null;
+}
+// Пути файлов из .torrent (bencode). Не разобрали — пустой список, то есть не мешаем.
+function torrentPaths(b){
+  let pos=0; const dec=new TextDecoder("utf-8");
+  function parse(depth){
+    if(depth>32||pos>=b.length)throw new Error("bencode");
+    const c=b[pos];
+    if(c===0x69){const e=b.indexOf(0x65,pos);if(e<0)throw new Error("bencode");const n=Number(dec.decode(b.subarray(pos+1,e)));pos=e+1;return n;}
+    if(c===0x6c){pos++;const a=[];while(b[pos]!==0x65){if(pos>=b.length)throw new Error("bencode");a.push(parse(depth+1));}pos++;return a;}
+    if(c===0x64){pos++;const o={};while(b[pos]!==0x65){if(pos>=b.length)throw new Error("bencode");const k=parse(depth+1);if(typeof k!=="string")throw new Error("bencode");o[k]=parse(depth+1);}pos++;return o;}
+    if(c>=0x30&&c<=0x39){const col=b.indexOf(0x3a,pos);if(col<0)throw new Error("bencode");const len=Number(dec.decode(b.subarray(pos,col)));const s=col+1;if(!(len>=0)||s+len>b.length)throw new Error("bencode");pos=s+len;return dec.decode(b.subarray(s,s+len));}
+    throw new Error("bencode");
+  }
+  try{
+    const info=parse(0).info; if(!info||typeof info!=="object")return [];
+    if(Array.isArray(info.files))return info.files.map(f=>{const p=f["path.utf-8"]||f.path;return Array.isArray(p)?p.join("/"):"";}).filter(Boolean);
+    const name=info["name.utf-8"]||info.name; return typeof name==="string"&&name?[name]:[];
+  }catch{return [];}
+}
 $("linkForm").addEventListener("submit", async e=>{
   e.preventDefault();
   // The active mode is authoritative, so one submit can never send both types.
@@ -935,8 +987,12 @@ $("linkForm").addEventListener("submit", async e=>{
       let submitted;
       if (torrentФайл) {
         const bytes = await torrentФайл.arrayBuffer();
+        const noVideoTorrent = noVideoReason(torrentPaths(new Uint8Array(bytes)));
+        if (noVideoTorrent) throw new Error(noVideoTorrent);
         submitted = await api("/api/torrents", { method:"POST", headers:{"Content-Type":"application/x-bittorrent","X-Torrent-Filename":encodeURIComponent(torrentФайл.name)}, body:bytes });
       } else {
+        const noVideoMagnet = magnetNameReason(value);
+        if (noVideoMagnet) throw new Error(noVideoMagnet);
         submitted = await api("/api/magnets",{method:"POST",body:JSON.stringify({magnet:value})});
       }
       // Only persist a search after the server accepted a real magnet/torrent.
@@ -975,6 +1031,16 @@ $("linkForm").addEventListener("submit", async e=>{
       } else {
         updateHistory(activeHistoryValue,{status:"Готово",percent:100,ready:true,magnetId:submitted.id});
         const result=await api(`/api/magnets/${submitted.id}/files`);
+        // Список файлов магнета известен только теперь: раздачу без видео убираем (готовую удаляет только админ)
+        const noVideo=noVideoReason((result.files||[]).map(f=>String(f.name||"")));
+        if(noVideo){
+          let removed=true;
+          try{await api(`/api/magnets/${submitted.id}/cancel`,{method:"POST"});}catch{removed=false;}
+          updateHistory(activeHistoryValue,{status:noVideo,failed:true,ready:false,percent:null});
+          $("magnetPanel").classList.add("hidden");
+          $("linkStatus").textContent=noVideo+(removed?"":" · её удалит админ или автоочистка"); $("linkStatus").className="status error";
+          return;
+        }
         const list=$("magnetФайлы"); list.replaceChildren();
         if(!result.files || !result.files.length) {
           $("magnetStatus").textContent += "  — готово, но ссылки на файлы не получены. Проверьте ответ API AllDebrid.";
@@ -1010,8 +1076,9 @@ $("linkForm").addEventListener("submit", async e=>{
 let cachedLibrary = [];
 let libraryDirty = false;
 function setTab(tab) {
-  const library = tab === "library", search = tab === "search", apps = tab === "apps";
-  $("linkTab").classList.toggle("hidden", library || search || apps);
+  const library = tab === "library", search = tab === "search", apps = tab === "apps", sessions = tab === "sessions";
+  $("linkTab").classList.toggle("hidden", library || search || apps || sessions);
+  $("sessionsTab").classList.toggle("hidden", !sessions);
   $("libraryTab").classList.toggle("hidden", !library);
   $("searchTab").classList.toggle("hidden", !search);
   $("appsTab").classList.toggle("hidden", !apps);
@@ -1021,6 +1088,7 @@ function setTab(tab) {
   $("showAppsTab").classList.toggle("secondary", !apps);
   try { sessionStorage.setItem("suslik.activeTab", tab); } catch {}
   if (apps) { loadAppVersions(); growth.show(); }
+  if (sessions) loadSessions();
   if (library && (!cachedLibrary.length || libraryDirty)) { libraryDirty = false; loadLibrary(); }
   if (search) setTimeout(() => { try { $("searchInput").focus(); } catch {} }, 50);
 }
@@ -1028,6 +1096,66 @@ $("showLinkTab").addEventListener("click", () => setTab("links"));
 $("showLibraryTab").addEventListener("click", () => setTab("library"));
 $("showSearchTab").addEventListener("click", () => setTab("search"));
 $("showAppsTab").addEventListener("click", () => setTab("apps"));
+$("sideSessionsTab").addEventListener("click", () => setTab("sessions"));
+$("mobileSessions").addEventListener("click", () => setTab("sessions"));
+// ---- Активные сессии: входы в браузере и устройства этого аккаунта, с отзывом ---------------------
+const SESSION_STALE_MS = 7 * 864e5;
+function sessionAgo(ts) {
+  if (!ts) return "—";
+  const d = Math.max(0, Date.now() - ts), m = Math.round(d / 6e4);
+  if (m < 2) return "только что";
+  if (m < 60) return m + " мин назад";
+  const h = Math.round(m / 60);
+  if (h < 24) return h + " ч назад";
+  const days = Math.round(h / 24);
+  return days + " дн. назад";
+}
+async function loadSessions() {
+  const list = $("sessionsList"), status = $("sessionsStatus");
+  status.className = "status"; status.textContent = "Загрузка…";
+  try {
+    const data = await api("/api/sessions");
+    const items = data.sessions || [];
+    status.textContent = "";
+    $("sessionsRevokeOthers").classList.toggle("hidden", !items.some(x => !x.current));
+    $("sessionsRevokeStale").classList.toggle("hidden", !items.some(x => !x.current && Date.now() - x.last_seen > SESSION_STALE_MS));
+    if (!items.length) { list.replaceChildren(); status.textContent = "Активных сессий нет."; return; }
+    list.replaceChildren(...items.map(it => {
+      const stale = !it.current && Date.now() - it.last_seen > SESSION_STALE_MS;
+      const row = document.createElement("div"); row.className = "sess-row" + (it.current ? " current" : "") + (stale ? " stale" : "");
+      const ic = document.createElement("div"); ic.className = "sess-ico"; ic.textContent = it.kind === "device" ? "▭" : "◍";
+      const info = document.createElement("div"); info.className = "sess-info";
+      const name = document.createElement("strong"); name.textContent = it.name;
+      if (it.current) { const b = document.createElement("span"); b.className = "sess-badge"; b.textContent = "это устройство"; name.append(" ", b); }
+      const meta = document.createElement("div"); meta.className = "sess-meta";
+      meta.textContent = (it.kind === "device" ? "Приложение" : "Браузер") + " · активность: " + sessionAgo(it.last_seen) + (it.created_at ? " · вход: " + new Date(it.created_at).toLocaleDateString("ru-RU") : "");
+      info.append(name, meta);
+      const btn = document.createElement("button"); btn.type = "button"; btn.className = "sess-btn danger";
+      btn.textContent = it.current ? "Выйти" : "Завершить";
+      btn.addEventListener("click", async () => {
+        if (it.current && !confirm("Выйти на этом устройстве?")) return;
+        btn.disabled = true;
+        try {
+          const r = await api("/api/sessions/revoke", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: it.id }) });
+          if (r.current) { location.reload(); return; }
+          loadSessions();
+        } catch (err) { btn.disabled = false; status.className = "status error"; status.textContent = err.message || "Не удалось завершить сессию."; }
+      });
+      row.append(ic, info, btn);
+      return row;
+    }));
+  } catch (err) { status.className = "status error"; status.textContent = err.message || "Не удалось загрузить сессии."; }
+}
+$("sessionsRevokeStale").addEventListener("click", async () => {
+  const b = $("sessionsRevokeStale"); b.disabled = true;
+  try { await api("/api/sessions/revoke-stale", { method: "POST", body: JSON.stringify({ days: 7 }) }); } catch {}
+  b.disabled = false; loadSessions();
+});
+$("sessionsRevokeOthers").addEventListener("click", async () => {
+  const b = $("sessionsRevokeOthers"); b.disabled = true;
+  try { await api("/api/sessions/revoke-others", { method: "POST" }); } catch {}
+  b.disabled = false; loadSessions();
+});
 // ---- Приложения: актуальные версии из папки updates/ на сервере ---------------------------
 let appVersionsAt = 0;
 async function loadAppVersions() {
@@ -1291,6 +1419,11 @@ try { const k = localStorage.getItem("searchKind"); if (k && [...$("searchKind")
 $("searchKind").addEventListener("change", () => { try { localStorage.setItem("searchKind", $("searchKind").value); } catch {} renderSearchResults(true); });
 $("searchFilter").addEventListener("input", () => renderSearchResults(true));
 $("searchMore").addEventListener("click", () => renderSearchResults(false));
+{ const mb=$("libMenuBtn"), mn=$("libMenu");
+  const setMenu=on=>{ mn.hidden=!on; mb.setAttribute("aria-expanded",String(on)); mb.classList.toggle("open",on); };
+  mb.addEventListener("click",e=>{ e.stopPropagation(); setMenu(mn.hidden); });
+  document.addEventListener("click",e=>{ if(!mn.hidden && !mn.contains(e.target)) setMenu(false); });
+  document.addEventListener("keydown",e=>{ if(e.key==="Escape") setMenu(false); }); }
 $("refreshLibrary").addEventListener("click", () => {
   $("refreshLibrary").classList.add("loading");
   loadLibrary().finally(() => $("refreshLibrary").classList.remove("loading"));
@@ -1387,11 +1520,11 @@ function loadTileMediaInfo(magnet,line,fileArg){
   if(!file){return;}
   const key=magnet.id+"|"+file.path;
   line.dataset.key=key;
-  const show=m=>{if(line.dataset.key!==key)return;line.textContent="🎞 "+formatMediaInfo(m);line.title=file.path;line.classList.remove("media-pending");};
+  const show=m=>{if(line.dataset.key!==key)return;line.textContent=formatMediaInfo(m);line.title=file.path;line.classList.remove("media-pending");};
   const cached=readMediaInfoCache()[key];
   if(cached && !cached.__failedAt){show(cached);return;}
-  if(cached && Date.now()-cached.__failedAt < 6*3600e3){line.textContent="🎞 разрешение: н/д";line.classList.remove("media-pending");return;}
-  line.textContent="🎞 анализ видео…";line.title="";line.classList.add("media-pending");
+  if(cached && Date.now()-cached.__failedAt < 6*3600e3){line.textContent="";line.classList.remove("media-pending");return;}
+  line.textContent="";line.title="";line.classList.add("media-pending");
   let p=mediaInfoInflight.get(key);
   if(!p){
     p=withMediaInfoSlot(async()=>{
@@ -1400,7 +1533,7 @@ function loadTileMediaInfo(magnet,line,fileArg){
     }).finally(()=>mediaInfoInflight.delete(key));
     mediaInfoInflight.set(key,p);
   }
-  p.then(show).catch(err=>{if(!/HTTP 4|сеть|network|fetch/i.test(String(err&&err.message)))writeMediaInfoCache(key,{__failedAt:Date.now()});if(line.dataset.key!==key)return;line.textContent="🎞 разрешение: н/д";line.title=err.message;line.classList.remove("media-pending");});
+  p.then(show).catch(err=>{if(!/HTTP 4|сеть|network|fetch/i.test(String(err&&err.message)))writeMediaInfoCache(key,{__failedAt:Date.now()});if(line.dataset.key!==key)return;line.textContent="";line.title=err.message;line.classList.remove("media-pending");});
 }
 const VIDEO_EXT=/\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso)$/i;
 const IS_MOBILE=/Android|iPhone|iPad|iPod/i.test(navigator.userAgent||"");
@@ -1797,7 +1930,7 @@ function setupTilePlayback(magnet,tile,art,info){
     playФайл(current,ep?ep.label:baseTitle,ep?ep.req:null,magnet);});
   playBtn.addEventListener("keydown",e=>e.stopPropagation());
   art.append(playBtn);
-  info.append(mediaLine);
+  const stEl=info.querySelector(".tile-status"); if(stEl) stEl.after(mediaLine); else info.append(mediaLine);
   whenVisible(tile, ()=>loadTileMediaInfo(magnet,mediaLine,current));
 }
 // Плитки переиспользуются, если раздача не изменилась: обновление списка (снимок -> сервер, поиск, избранное) не
@@ -2005,7 +2138,7 @@ function getItemSpecs(m) {
   return { quality, codec, type, cat };
 }
 
-function tileSig(m){ return JSON.stringify([(serverTagMap[m.id]||[]).join(),m.name,m.status,m.statusCode,m.size,m.downloaded,Boolean(m.favorite),m.canRemove!==false,(m.files||[]).length,libraryViewMode]); }
+function tileSig(m){ return JSON.stringify([(serverTagMap[m.id]||[]).join(),m.name,m.status,m.statusCode,m.size,m.downloaded,Boolean(m.favorite),Boolean(m.mine),m.canRemove!==false,(m.files||[]).length,libraryViewMode]); }
 
 function renderLibrary(animate=true) {
   const target=$("libraryResults"), query=$("libraryПоиск") ? $("libraryПоиск").value.trim().toLowerCase() : "";
@@ -2023,7 +2156,8 @@ function renderLibrary(animate=true) {
   let filtered = cachedLibrary.filter(m => {
     if (query && !m.name.toLowerCase().includes(query) && !m.files.some(f => f.path.toLowerCase().includes(query))) return false;
     if (onlyReady && Number(m.statusCode) !== 4) return false;
-    if (activeCategory !== "all" && getItemCategory(m) !== activeCategory) return false;
+    if (activeCategory === "mine") { if (!m.mine) return false; }
+    else if (activeCategory !== "all" && getItemCategory(m) !== activeCategory) return false;
     return true;
   });
 
@@ -2053,7 +2187,7 @@ function renderLibrary(animate=true) {
 
   if (!magnets.length) {
     target.replaceChildren();
-    const empty=document.createElement("div"); empty.className="panel"; empty.textContent=cachedLibrary.length ? "Совпадений не найдено." : "Сохранённой медиатеки пока нет. Нажмите «Обновить», чтобы загрузить данные из AllDebrid."; target.append(empty); return;
+    const empty=document.createElement("div"); empty.className="panel"; empty.textContent=cachedLibrary.length ? (activeCategory==="mine" && !query ? "В «Моей медиатеке» пока пусто. Нажмите закладку на плитке фильма, чтобы добавить его сюда." : "Совпадений не найдено.") : "Сохранённой медиатеки пока нет. Нажмите «Обновить», чтобы загрузить данные из AllDebrid."; target.append(empty); return;
   }
   let fresh=0;
   for (const magnet of magnets) {
@@ -2072,7 +2206,7 @@ function renderLibrary(animate=true) {
     if (specs.quality) { const q = document.createElement("span"); q.className = "tile-badge badge-quality"; q.textContent = specs.quality; badges.append(q); }
     if (specs.type) { const tp = document.createElement("span"); tp.className = "tile-badge badge-type"; tp.textContent = specs.type; badges.append(tp); }
     for (const t of collapseTags(getItemTags(magnet))) { const x = document.createElement("span"); x.className = "tile-badge badge-tag " + (t.startsWith("Dolby") ? "badge-dv" : t === "HDR" ? "badge-hdr" : "badge-dts"); x.textContent = t; badges.append(x); }
-    if (versions) { const vb = document.createElement("span"); vb.className = "tile-badge badge-type"; vb.textContent = versionsWord(versions.length); badges.append(vb); }
+    if (versions) { const vb = document.createElement("span"); vb.className = "tile-badge badge-type badge-ver"; vb.textContent = versionsWord(versions.length); badges.append(vb); }
     art.append(badges);
     const videoФайл = (magnet.files || []).find(f => /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso)$/i.test(f.path || ""));
     const posterQueries = [...new Set([escapeTitle(magnet.name), videoФайл ? escapeTitle(videoФайл.name || videoФайл.path.split("/").pop()) : ""].filter(Boolean))];
@@ -2093,28 +2227,39 @@ function renderLibrary(animate=true) {
     })().catch(()=>{}).finally(()=>{
       if (tile.isConnected) tile.classList.remove("mosaic-pending");
     }));
-    const fav=document.createElement("button"); fav.type="button"; fav.className="tile-fav"+(magnet.favorite?" on":"");
-    fav.textContent=magnet.favorite?"★":"☆"; fav.title=magnet.favorite?"Убрать из избранного":"В избранное"; fav.setAttribute("aria-label",fav.title); fav.setAttribute("aria-pressed",String(Boolean(magnet.favorite)));
-    fav.addEventListener("click",async e=>{
-      e.stopPropagation(); if(fav.disabled) return;
-      const next=!magnet.favorite; fav.disabled=true; fav.classList.add("pop");
-      try{
-        await api("/api/favorites",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:magnet.id,favorite:next})});
-        for(const m of cachedLibrary) if(m.id===magnet.id) m.favorite=next;
-        try{ localStorage.setItem(LIBRARY_SNAPSHOT_KEY, JSON.stringify({ savedAt: Date.now(), magnets: cachedLibrary })); }catch{}
-        renderLibrary(false);
-      }catch(err){ fav.disabled=false; fav.classList.remove("pop"); fav.title="Ошибка: "+(err.message||"не удалось"); }
-    });
-    fav.addEventListener("keydown",e=>e.stopPropagation());
-    art.append(fav);
+    // Как на ПК и в Android: закладка («Мои») слева, сердце («Избранное») справа; пока не отмечены — видны при наведении.
+    const corner=(kind,icon,onTitle,offTitle)=>{
+      const on=Boolean(magnet[kind]);
+      const b=document.createElement("button"); b.type="button"; b.className="tile-fav tile-"+(kind==="mine"?"mine":"heart")+(on?" on":"");
+      b.innerHTML=icon; b.title=on?onTitle:offTitle; b.setAttribute("aria-label",b.title); b.setAttribute("aria-pressed",String(on));
+      b.addEventListener("click",async e=>{
+        e.stopPropagation(); if(b.disabled) return;
+        const next=!magnet[kind]; b.disabled=true; b.classList.add("pop");
+        try{
+          if(kind==="mine") await api("/api/shelf",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:magnet.id,mine:next})});
+          else await api("/api/favorites",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:magnet.id,favorite:next})});
+          for(const m of cachedLibrary) if(m.id===magnet.id) m[kind]=next;
+          try{ localStorage.setItem(LIBRARY_SNAPSHOT_KEY, JSON.stringify({ savedAt: Date.now(), magnets: cachedLibrary })); }catch{}
+          renderLibrary(false);
+        }catch(err){ b.disabled=false; b.classList.remove("pop"); b.title="Ошибка: "+(err.message||"не удалось"); }
+      });
+      b.addEventListener("keydown",e=>e.stopPropagation());
+      return b;
+    };
+    art.append(corner("mine",PS_ICON_MINE,"Убрать из моих фильмов","В мои фильмы"),corner("favorite",PS_ICON_FAV,"Убрать из избранного","В избранное"));
     const total=Number(magnet.size)||0, done=Number(magnet.downloaded)||0;
-    if(Number(magnet.statusCode)===4){ const ready=document.createElement("div"); ready.className="tile-progress-label"; ready.textContent="Готово · 100%"; art.append(ready); }
+    if(Number(magnet.statusCode)===4){ const ready=document.createElement("div"); ready.className="tile-progress-label"; ready.textContent="Готово"; art.append(ready); }
     else if(total>0 && Number(magnet.statusCode)<4){ const pct=Math.max(0,Math.min(100,done/total*100)); const track=document.createElement("div"); track.className="tile-progress-track"; const fill=document.createElement("div"); fill.className="tile-progress-fill"; fill.style.width=pct+"%"; track.append(fill); const label=document.createElement("div"); label.className="tile-progress-label"; label.textContent=Math.floor(pct)+"% · "+(magnet.status||"Обработка"); art.append(track,label); }
     const info=document.createElement("div"); info.className="tile-info";
     const name=document.createElement("strong"); name.textContent=magnet.name;
-    const meta=document.createElement("div"); meta.className="file-meta"; meta.textContent=`${magnet.status} · ${magnet.files.length} entries`;
-    const size=document.createElement("div"); size.className="file-meta"; size.textContent=formatBytes(magnet.size);
-    info.append(name,meta,size);
+    // «год • тип · размер» — как под плиткой в Android и в подробностях плитки на ПК
+    const yearM=/(?:^|[^\d])((?:19|20)\d{2})(?!\d)/.exec(magnet.name||"");
+    const sub=document.createElement("div"); sub.className="file-meta tile-sub";
+    sub.textContent=[yearM?yearM[1]:"", specs.type].filter(Boolean).join(" • ")+(Number(magnet.size)?(yearM||specs.type?" · ":"")+formatBytes(magnet.size):"");
+    const more=document.createElement("div"); more.className="tile-more"+(Number(magnet.statusCode)<4?" open":"");
+    const statusText=Number(magnet.statusCode)===4?"Готово":(total>0&&Number(magnet.statusCode)<4?Math.floor(Math.max(0,Math.min(100,done/total*100)))+"% · ":"")+(magnet.status||"Обработка");
+    const st=document.createElement("span"); st.className="tile-status"+(Number(magnet.statusCode)===4?" ready":""); st.textContent=statusText;
+    info.append(name,more); more.append(sub,st);
     if(magnet.canRemove!==false){
       const downloading=Number(magnet.statusCode)<4;
       const label=downloading?"✕ Отменить":"🗑 Удалить";
@@ -2134,7 +2279,7 @@ function renderLibrary(animate=true) {
         }catch(err){ rm.disabled=false; rm.classList.remove("armed"); rm.textContent="Ошибка: "+(err.message||"не удалось").slice(0,60); setTimeout(()=>{rm.textContent=label;},4000); }
       });
       rm.addEventListener("keydown",e=>e.stopPropagation());
-      info.append(rm);
+      more.append(rm);
     }
     tile.append(art,info);
     if(Number(magnet.statusCode)===4 && !versions) setupTilePlayback(magnet,tile,art,info);
@@ -2383,6 +2528,6 @@ checkSession();
 </script>
 
 <script src="redesign.js?v=6" defer></script>
-<script src="home.js?v=4" defer></script>
+<script src="home.js?v=7" defer></script>
 </body>
 </html>

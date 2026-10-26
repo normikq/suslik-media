@@ -237,14 +237,14 @@ button, .button {
   border-radius: 12px;
   transition: transform 0.18s var(--ease), background 0.2s, box-shadow 0.25s, border-color 0.2s, opacity 0.2s;
 }
-button:not(.secondary):not(.mode-card):not(.tile-remove):not(.tile-play):not(.tile-fav):not(.cat-chip):not(.view-btn):not(.clear-search-btn),
+button:not(.secondary):not(.mode-card):not(.tile-remove):not(.tile-play):not(.tile-fav):not(.cat-chip):not(.view-btn):not(.clear-search-btn):not(.lib-pill):not(.btn-refresh):not(.lib-menu-btn):not(.sess-btn),
 a.button:not(.secondary) {
   background: linear-gradient(135deg, #2563eb, #1d4ed8) !important;
   color: #fff !important;
   border: 1px solid rgba(96, 165, 250, 0.4) !important;
   box-shadow: 0 4px 18px rgba(37, 99, 235, 0.35) !important;
 }
-button:not(.secondary):not(.mode-card):not(.tile-remove):not(.tile-play):not(.tile-fav):not(.cat-chip):not(.view-btn):not(.clear-search-btn):hover:not(:disabled) {
+button:not(.secondary):not(.mode-card):not(.tile-remove):not(.tile-play):not(.tile-fav):not(.cat-chip):not(.view-btn):not(.clear-search-btn):not(.lib-pill):not(.btn-refresh):not(.lib-menu-btn):not(.sess-btn):hover:not(:disabled) {
   box-shadow: 0 6px 26px rgba(37, 99, 235, 0.5) !important;
   filter: brightness(1.06);
   transform: translateY(-1px);
@@ -2385,3 +2385,194 @@ a.ps-watch { min-height: 52px; background: linear-gradient(135deg, #2563eb, #3b8
 .ps-field select { width: 100%; height: 48px; padding: 0 34px 0 14px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.14); background: rgba(255, 255, 255, 0.05) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%238e96a8' stroke-width='2'/%3E%3C/svg%3E") no-repeat right 14px center/12px 8px; color: #fff; font: 500 14px system-ui; -webkit-appearance: none; appearance: none; color-scheme: dark; cursor: pointer; text-overflow: ellipsis; }
 .ps-field select:focus { outline: none; border-color: #3b82f6; }
 .ps-field select option { background: #1b1730; color: #fff; }
+
+
+/* ===== Плитка как в приложениях: закладка «Мои» и сердце «Избранное» в углу, значки справа ===== */
+.tile-art .tile-fav svg { width: 16px; height: 16px; display: block; fill: none; }
+.tile-art .tile-fav.tile-mine { left: 8px; right: auto; }
+.tile-art .tile-fav.on, .tile-art .tile-fav.on:hover {
+  background: rgba(9, 11, 16, 0.78) !important;
+  border-color: rgba(255, 255, 255, 0.25) !important;
+}
+.tile-art .tile-fav.tile-mine.on { color: #7fb2ff !important; }
+.tile-art .tile-fav.tile-mine.on svg { fill: #7fb2ff; }
+.tile-art .tile-fav.tile-heart.on { color: #ff6b8a !important; }
+.tile-art .tile-fav.tile-heart.on svg { fill: #ff6b8a; }
+.tile-art .tile-fav:hover { border-color: rgba(255, 255, 255, 0.55) !important; color: #fff !important; }
+.tile-status { display: none; }
+.tile-media:empty, .tile-sub:empty { display: none; }
+
+/* ---------- Десктоп: плитка ПК (LibraryView.kt, Tile) — название на постере, подробности при наведении ---------- */
+@media (min-width: 901px) {
+  .library-grid .library-tile { position: relative; }
+  .library-grid .library-tile:hover { transform: translateY(-6px) scale(1.025) !important; }
+  .library-grid .tile-art { border-color: #202430; box-shadow: none; }
+  .library-grid .library-tile:hover .tile-art { border-color: #5a6680; box-shadow: 0 16px 36px rgba(0, 0, 0, 0.55); }
+  .library-grid .library-tile:hover .tile-art img { transform: scale(1.06) !important; }
+  .library-grid .tile-art .tile-fav.tile-heart { right: auto; left: 44px; }
+  .library-grid .tile-art .tile-fav { width: 30px; height: 30px; background: rgba(0, 0, 0, 0.33) !important; border: 0 !important; }
+  .library-grid .tile-art .tile-fav:hover { background: rgba(0, 0, 0, 0.6) !important; transform: scale(1.12); }
+  .library-grid .tile-art .tile-fav svg { width: 15px; height: 15px; }
+  /* верхняя тень под кнопками */
+  .library-grid .tile-art::before {
+    content: "" !important; display: block !important; position: absolute; left: 0; right: 0; top: 0; height: 60px; z-index: 1;
+    background: linear-gradient(rgba(0, 0, 0, 0.6), transparent); pointer-events: none;
+  }
+  /* значки справа сверху */
+  .library-grid .tile-badges { left: auto; right: 8px; align-items: flex-end; }
+  .library-grid .tile-badge.badge-quality, .library-grid .tile-badge.badge-type:not(.badge-ver) { display: none; }
+  .library-grid .tile-badge.badge-ver { color: #fff; background: rgba(0, 0, 0, 0.6); border-color: rgba(255, 255, 255, 0.2); text-transform: none; font-weight: 500; font-size: 11px; padding: 4px 8px; border-radius: 10px; }
+  .library-grid .tile-badge.badge-tag { font-size: 12px; font-weight: 700; padding: 0 9px; height: 22px; display: inline-flex; align-items: center; background: rgba(14, 11, 26, 0.8); }
+  /* название поверх нижнего градиента, подробности выезжают при наведении */
+  .library-grid .tile-info {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; pointer-events: none;
+    padding: 46px 12px 11px !important; border-radius: 0 0 14px 14px;
+    background: linear-gradient(transparent, rgba(11, 14, 20, 0.8) 45%, #0b0e14);
+  }
+  .library-grid .tile-info strong { font-size: 13.5px; line-height: 17px; margin: 0; }
+  .library-grid .tile-more { max-height: 0; opacity: 0; overflow: hidden; transition: max-height 0.3s var(--ease), opacity 0.2s; }
+  .library-grid .library-tile:hover .tile-more, .library-grid .library-tile:focus-within .tile-more, .library-grid .tile-more.open { max-height: 150px; opacity: 1; }
+  .library-grid .tile-sub { margin-top: 2px; font-size: 11.5px; color: #9ba4b5; }
+  .library-grid .tile-status {
+    display: inline-block; margin-top: 5px; padding: 2px 7px; border-radius: 6px; font-size: 10.5px; font-weight: 500; color: #fff;
+    background: #181b24; border: 1px solid #2a3040;
+  }
+  .library-grid .tile-media { margin-top: 5px; font-size: 11px; font-weight: 400; color: #c0c7d5; }
+  .library-grid .tile-remove { pointer-events: auto; margin-top: 7px; }
+  /* «Готово» и дорожка загрузки — в подробностях, а не поверх постера */
+  .library-grid .tile-progress-label, .library-grid .tile-progress-track { display: none; }
+}
+
+/* ---------- Телефон: плитка Android (LibraryScreen.kt, PosterTile) ---------- */
+@media (max-width: 900px) {
+  .library-grid { gap: 18px 12px !important; }
+  .library-grid .tile-art { border: 1px solid var(--glass-edge); box-shadow: none; background: #13161f !important; }
+  .library-grid .library-tile:hover { transform: none !important; }
+  .library-grid .library-tile:active .tile-art { transform: scale(0.975); }
+  .library-grid .tile-art { transition: transform 0.2s var(--ease); }
+  .library-grid .tile-art .tile-fav { width: 34px; height: 34px; opacity: 1; transform: none; background: rgba(9, 11, 16, 0.6) !important; border: 1px solid rgba(255, 255, 255, 0.18) !important; }
+  .library-grid .tile-art .tile-fav.tile-heart { right: 8px; }
+  /* Dolby Vision / HDR / DTS — под сердцем */
+  .library-grid .tile-badges { left: auto; right: 8px; top: 50px; align-items: flex-end; }
+  .library-grid .tile-badge.badge-quality, .library-grid .tile-badge.badge-type:not(.badge-ver) { display: none; }
+  .library-grid .tile-badge.badge-ver { position: absolute; right: auto; left: 10px; bottom: 36px; white-space: nowrap; color: #fff; background: rgba(0, 0, 0, 0.6); border-color: rgba(255, 255, 255, 0.2); text-transform: none; font-weight: 500; font-size: 11px; padding: 4px 8px; border-radius: 10px; }
+  .library-grid .tile-badge.badge-tag { height: 22px; padding: 0 8px; display: inline-flex; align-items: center; }
+  .library-grid .tile-progress-label { left: 10px; bottom: 10px; font-size: 11.5px; font-weight: 600; padding: 3px 8px; border-radius: 7px !important; background: rgba(16, 19, 27, 0.85) !important; border: 1px solid var(--glass-edge); }
+  .library-grid .tile-progress-track { left: 10px; right: 10px; bottom: 38px; }
+  /* кнопка «Смотреть» всегда видна, немного выше центра */
+  .library-grid button.tile-play { opacity: 1; top: 44% !important; width: 50px !important; height: 50px !important; font-size: 20px !important; background: rgba(11, 16, 32, 0.8) !important; border-color: rgba(255, 255, 255, 0.25) !important; }
+  .library-grid .library-tile:hover button.tile-play { transform: translate(-50%, -50%) scale(1) !important; }
+  /* название, «год • тип · размер», параметры видео — под постером */
+  .library-grid .tile-info { padding: 8px 2px 0 !important; }
+  .library-grid .tile-info strong { font-size: 13.5px; line-height: 18px; font-weight: 600; margin: 0; color: var(--text); }
+  .library-grid .tile-sub { margin-top: 2px; font-size: 12px; color: var(--muted); }
+  .library-grid .tile-media { margin-top: 2px; font-size: 11.5px; font-weight: 400; color: #b0b7c6; }
+  .library-grid .tile-remove { margin-top: 6px; }
+}
+
+/* ---------- Телефон: шапка, категории и нижняя панель как в Android (LibraryScreen.kt, NavBar.kt) ---------- */
+@media (max-width: 900px) {
+  .mobile-topline h2 { font: 700 15px var(--display); }
+  .mobile-topline p { color: var(--muted); font-size: 12.5px; }
+  .library-search-top input { height: 48px; border-radius: 14px !important; }
+  /* категории — одной прокручиваемой строкой */
+  .library-controls .category-chips { flex-wrap: nowrap; overflow-x: auto; gap: 8px; margin: 0 -16px; padding: 0 16px; scrollbar-width: none; }
+  .library-controls .category-chips::-webkit-scrollbar { display: none; }
+  .library-controls .cat-chip { flex: 0 0 auto; padding: 9px 14px; border-radius: 12px; font: 500 13px var(--ui); background: #131a2b; border: 1px solid #212a40; color: #c4cbd8; }
+  .library-controls .cat-chip.active { background: var(--accent); border-color: rgba(96, 165, 250, 0.3); color: #fff; font-weight: 600; }
+  /* сортировка и вид — компактной строкой */
+  .lib-actions { gap: 8px; }
+  .lib-seg { flex-wrap: nowrap; overflow-x: auto; gap: 8px; max-width: 100%; scrollbar-width: none; }
+  .lib-seg::-webkit-scrollbar { display: none; }
+  .lib-pill, .library-controls .btn-refresh { height: 36px; padding: 0 13px; font-size: 12.5px; border-radius: 12px; }
+  /* нижняя панель: матовое стекло и синяя «линза» */
+  .navrow { width: min(440px, calc(100% - 20px)) !important; border-radius: 26px !important; padding: 4px !important; background: rgba(8, 12, 22, 0.92) !important; border-color: var(--glass-edge) !important; }
+  .navrow button, .navrow button.secondary { border-radius: 22px !important; min-height: 50px !important; color: #8e96a8 !important; font-weight: 500 !important; }
+  .navrow button:not(.secondary) { background: var(--accent) !important; color: #fff !important; font-weight: 600 !important; box-shadow: 0 0 18px rgba(37, 99, 235, 0.45) !important; }
+}
+
+/* Кнопки сортировки и вида — тёмные «пилюли», активная — синяя (общий стиль кнопок их перекрашивал в синий) */
+.library-controls .lib-pill, .library-controls button.btn-refresh {
+  background: #131a2b !important; border: 1px solid #212a40 !important; color: #e6eaf2 !important; box-shadow: none !important;
+}
+.library-controls .lib-pill:hover, .library-controls button.btn-refresh:hover { background: #1a2338 !important; border-color: #2e3a57 !important; }
+.library-controls .lib-pill.active { background: #2563eb !important; border-color: #3b82f6 !important; color: #fff !important; }
+.library-controls .lib-pill, .library-controls button.btn-refresh { background-image: none !important; }
+.library-controls .lib-pill.active { background-color: #2563eb !important; }
+
+/* ---------- Компактная панель: «Вид ▾» (сортировка, сетка/список, «только готовые») и кнопка обновления ---------- */
+.lib-actions { flex-wrap: nowrap; gap: 8px; }
+.lib-menu-wrap { position: relative; }
+.library-controls .lib-menu-btn, .library-controls button.btn-refresh {
+  display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px; border-radius: 12px;
+  font: 600 13.5px var(--ui); cursor: pointer; white-space: nowrap;
+  background: #131a2b !important; background-image: none !important; color: #e6eaf2 !important; border: 1px solid #212a40 !important; box-shadow: none !important;
+}
+.library-controls .lib-menu-btn:hover, .library-controls .lib-menu-btn.open, .library-controls button.btn-refresh:hover { background: #1a2338 !important; border-color: #2e3a57 !important; }
+.library-controls .lib-menu-btn.open .lib-caret { transform: rotate(180deg); }
+.lib-caret { transition: transform .2s; opacity: .7; }
+.library-controls button.btn-refresh { width: 40px; padding: 0; justify-content: center; }
+.btn-refresh-text { display: none; }
+.lib-menu {
+  position: absolute; right: 0; top: calc(100% + 8px); z-index: 60; min-width: 210px; padding: 8px;
+  display: flex; flex-direction: column; gap: 6px; border-radius: 14px;
+  background: rgba(11, 16, 32, 0.97); border: 1px solid rgba(255, 255, 255, 0.14); box-shadow: 0 18px 44px rgba(0, 0, 0, 0.6);
+}
+.lib-menu[hidden] { display: none; }
+.lib-menu .lib-seg { flex-direction: column; gap: 2px; overflow: visible; align-items: stretch; }
+.lib-menu .lib-seg + .lib-seg { border-top: 1px solid #252b3b; padding-top: 6px; }
+.lib-menu .lib-pill {
+  justify-content: flex-start; height: 36px; padding: 0 10px; border: 0 !important; background: transparent !important; background-image: none !important; font-size: 13.5px; font-weight: 500; border-radius: 9px;
+}
+.lib-menu .lib-pill:hover { background: rgba(255, 255, 255, 0.08) !important; }
+.lib-menu .lib-pill.active, .lib-menu .lib-pill[aria-pressed="true"] { background: rgba(37, 99, 235, 0.28) !important; color: #fff !important; }
+.lib-menu .view-switch { flex-direction: row !important; border: 0; background: none; overflow: visible; gap: 6px; }
+.lib-menu .view-btn { flex: 1; width: auto; height: 36px; border-radius: 9px !important; background: rgba(255, 255, 255, 0.05) !important; }
+.lib-menu .view-btn.active { background: rgba(37, 99, 235, 0.28) !important; color: #fff !important; }
+@media (max-width: 900px) {
+  .library-controls .status:empty { display: none; }
+  .library-controls { gap: 8px; }
+  .library-controls .lib-actions { width: auto; margin-left: auto; }
+}
+@media (max-width: 900px) {
+  .library-controls { flex-wrap: wrap; }
+  .library-controls .category-chips { flex: 1 1 0 !important; flex-basis: 0 !important; min-width: 0; margin: 0; padding: 0; }
+  .library-controls .status { order: 5; flex-basis: 100%; }
+  .lib-menu { right: 0; }
+}
+
+/* ---------- Активные сессии ---------- */
+.sessions-panel { padding: 22px 24px !important; }
+.sessions-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
+.sessions-head h2 { margin: 0 0 6px; font-size: clamp(20px, 2.2vw, 26px); }
+.sessions-hint { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; max-width: 560px; }
+.sessions-list { display: flex; flex-direction: column; gap: 10px; }
+.sess-row { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border-radius: 14px; background: var(--glass-fill); border: 1px solid var(--glass-edge); }
+.sess-row.current { border-color: rgba(96, 165, 250, 0.4); background: rgba(37, 99, 235, 0.12); }
+.sess-ico { flex: 0 0 38px; height: 38px; display: grid; place-items: center; border-radius: 12px; background: rgba(255, 255, 255, 0.07); font-size: 18px; color: #93c5fd; }
+.sess-info { flex: 1; min-width: 0; }
+.sess-info strong { font-size: 14.5px; font-weight: 600; color: #fff; }
+.sess-badge { display: inline-block; margin-left: 6px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; color: #93c5fd; background: rgba(37, 99, 235, 0.22); border: 1px solid rgba(96, 165, 250, 0.35); }
+.sess-meta { margin-top: 3px; font-size: 12.5px; color: var(--muted); }
+button.sess-btn { height: 36px; padding: 0 14px; border-radius: 10px; font: 600 13px var(--ui); cursor: pointer; white-space: nowrap; background: #131a2b !important; background-image: none !important; color: #e6eaf2 !important; border: 1px solid #212a40 !important; box-shadow: none !important; }
+button.sess-btn.danger { color: #ffb3b3 !important; border-color: rgba(255, 107, 107, 0.4) !important; background: rgba(255, 107, 107, 0.1) !important; }
+button.sess-btn.danger:hover:not(:disabled) { background: rgba(255, 107, 107, 0.22) !important; }
+button.sess-btn:disabled { opacity: .6; cursor: default; }
+button.sess-btn.hidden { display: none; }
+#mobileSessions { display: none; }
+@media (max-width: 900px) {
+  #mobileSessions { display: inline-flex; padding: 8px 12px; font-size: 13px; margin-right: 8px; }
+  .mobile-topline { gap: 6px; }
+  .sess-row { flex-wrap: wrap; }
+  .sess-row button.sess-btn { margin-left: 52px; }
+  .sessions-head button.sess-btn { width: 100%; }
+}
+@media (max-width: 900px) {
+  .sess-row { display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 10px 12px; }
+  .sess-row button.sess-btn { grid-column: 1 / -1; margin-left: 0; width: 100%; }
+  .sess-ico { flex: none; }
+}
+.sessions-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.sess-row.stale { opacity: .6; }
+.sess-row.stale .sess-meta { color: #d6a46a; }
+@media (max-width: 900px) { .sessions-actions { width: 100%; flex-direction: column; } .sessions-actions button.sess-btn { width: 100%; } }

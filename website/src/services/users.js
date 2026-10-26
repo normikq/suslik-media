@@ -264,6 +264,30 @@ function revokeDeviceToken(token) {
   return deleted;
 }
 
+// Ключи устройств пользователя для списка «Активные сессии»: id — начало хеша (сам токен по нему не восстановить)
+function listDevices(userId) {
+  const out = [];
+  for (const [hash, d] of devicesMap) {
+    if (d.user_id === userId) out.push({ id: hash.slice(0, 16), hash, name: d.name || "Устройство", created_at: d.created_at || 0, last_seen: d.last_seen || 0 });
+  }
+  return out;
+}
+
+function hasDeviceHash(hash) {
+  return devicesMap.has(hash);
+}
+
+function revokeDeviceById(userId, id) {
+  for (const [hash, d] of devicesMap) {
+    if (d.user_id === userId && hash.slice(0, 16) === id) {
+      devicesMap.delete(hash);
+      saveDevices();
+      return true;
+    }
+  }
+  return false;
+}
+
 // Миграция данных старого sdev в пользователя. Через сервисы, а не файлами: они держат данные в памяти
 // и сами пишут файлы с задержкой — прямая запись файла затиралась бы их следующей записью.
 // (require внутри: favorites/downloads/shelf сами зависят от middleware/auth, который грузит этот модуль)
@@ -299,5 +323,9 @@ module.exports = {
   pollDevicePairing,
   verifyDeviceToken,
   revokeDeviceToken,
+  hashToken,
+  listDevices,
+  revokeDeviceById,
+  hasDeviceHash,
   adoptDevice
 };
