@@ -321,6 +321,9 @@ fun LibraryScreen(
         }
         list.sortedByDescending { it.m.favorite }
     }
+    // One tile for the same film or show added several times (other releases, other seasons); a tile with versions asks which one.
+    val (shown, versionsOf) = remember(filtered, store.posterVersion) { groupVersions(filtered) { store.posterPathOf(it) } }
+    var pick by remember { mutableStateOf<List<LibraryItem>?>(null) }
 
     // A page is 3 rows of posters on a TV and 5 on a phone: as many in a row as the screen fits (the grid's own rule:
     // 152 dp posters, 12 dp apart, 16 dp margins). A new search or category starts from the first page.
@@ -328,10 +331,10 @@ fun LibraryScreen(
     val density = androidx.compose.ui.platform.LocalDensity.current.density
     val columns = if (areaWidthPx <= 0) 2 else maxOf(1, ((areaWidthPx / density - 32f + 12f) / (152f + 12f)).toInt())
     val pageSize = columns * (if (tv) 3 else 5)
-    val pageCount = ((filtered.size + pageSize - 1) / pageSize).coerceAtLeast(1)
+    val pageCount = ((shown.size + pageSize - 1) / pageSize).coerceAtLeast(1)
     var page by remember(query, category, mineOnly) { mutableStateOf(0) }
     val curPage = page.coerceIn(0, pageCount - 1)
-    val pageItems = remember(filtered, curPage, pageSize) { filtered.drop(curPage * pageSize).take(pageSize) }
+    val pageItems = remember(shown, curPage, pageSize) { shown.drop(curPage * pageSize).take(pageSize) }
 
     // Worked out here, not inside the grid's item: the item forgets it whenever it scrolls off the screen, and every
     // return read the progress of every file of the library again — scrolling stuttered while the row was there.
@@ -389,12 +392,16 @@ fun LibraryScreen(
         itemsIndexed(pageItems, key = { _, it -> it.m.id }, contentType = { _, _ -> "tile" }) { index, item ->
             PosterTile(
                 item = item, store = store, onPlay = onPlay, index = index,
+                versions = versionsOf[item.m.id].orEmpty(), onPick = { pick = it },
                 modifier = Modifier.animateItem(fadeInSpec = tween(320), fadeOutSpec = tween(220))
             )
         }
         if (pageCount > 1) item(key = "pager", span = { GridItemSpan(maxLineSpan) }, contentType = "pager") {
             PageBar(curPage, pageCount) { n -> page = n; scope.launch { gridState.scrollToItem(0) } }
         }
+    }
+    pick?.let { vs ->
+        VersionSheet(vs.first().baseTitle, vs, store, onDismiss = { pick = null }) { v -> pick = null; versionTarget(v, store)?.let(onPlay) }
     }
 }
 
@@ -841,7 +848,10 @@ fun OutlineButton(text: String, modifier: Modifier = Modifier, color: Color = Co
 // ---- tile ------------------------------------------------------------------------------------
 
 @Composable
-private fun PosterTile(item: LibraryItem, store: LibraryStore, onPlay: (PlayTarget) -> Unit, index: Int = 0, modifier: Modifier = Modifier) {
+private fun PosterTile(
+    item: LibraryItem, store: LibraryStore, onPlay: (PlayTarget) -> Unit, index: Int = 0,
+    versions: List<LibraryItem> = emptyList(), onPick: (List<LibraryItem>) -> Unit = {}, modifier: Modifier = Modifier
+) {
     val context = LocalContext.current
     val m = item.m
     val playable = item.playable
@@ -927,7 +937,8 @@ private fun PosterTile(item: LibraryItem, store: LibraryStore, onPlay: (PlayTarg
             canPlay = canPlay,
             currentFile = currentFile,
             watchVersion = watchVersion,
-            onPlay = { target()?.let(onPlay) }
+            versions = versions,
+            onPlay = { if (versions.size > 1) onPick(versions) else target()?.let(onPlay) }
         )
         TileDetails(
             item = item,
@@ -952,6 +963,7 @@ private fun PosterArtwork(
     canPlay: Boolean,
     currentFile: MFile?,
     watchVersion: Int,
+    versions: List<LibraryItem> = emptyList(),
     onPlay: () -> Unit
 ) {
     val context = LocalContext.current
@@ -981,10 +993,11 @@ private fun PosterArtwork(
                 modifier = Modifier.align(Alignment.BottomStart).padding(start = 14.dp, end = 14.dp, bottom = 52.dp)
             )
         }
-            MineMark(m.mine, Modifier.align(Alignment.TopStart).padding(8.dp)) { on -> store.setMine(m, on) }
-            FavStar(m.favorite, Modifier.align(Alignment.TopEnd).padding(8.dp)) { on -> store.setFavorite(m, on) }
+            val group = versions.ifEmpty { listOf(item) }
+            MineMark(group.any { it.m.mine }, Modifier.align(Alignment.TopStart).padding(8.dp)) { on -> group.map { store.setMine(it.m, on) }.firstOrNull { it != null } }
+            FavStar(group.any { it.m.favorite }, Modifier.align(Alignment.TopEnd).padding(8.dp)) { on -> group.map { store.setFavorite(it.m, on) }.firstOrNull { it != null } }
             // Dolby Vision / HDR / DTS under the star
-            val tags = remember(item, store.tagsOf(item)) { collapseTags(store.tagsOf(item)) }
+            val tags = remember(item, versions, group.flatMap { store.tagsOf(it) }) { collapseTags(group.flatMap { store.tagsOf(it) }) }
             if (tags.isNotEmpty()) {
                 Column(Modifier.align(Alignment.TopEnd).padding(top = 46.dp, end = 8.dp), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     for (t in tags) TagChip(t)
@@ -1006,6 +1019,13 @@ private fun PosterArtwork(
                             .background(Brush.horizontalGradient(listOf(Color(0xFF60A5FA), Sm.accent))))
                     }
                     Spacer(Modifier.height(8.dp))
+                }
+                if (versions.size > 1) {
+                    Text(
+                        versionsWord(versions.size), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 11.sp,
+                        modifier = Modifier.padding(bottom = 6.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000))
+                            .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(10.dp)).padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
                 }
                 val label = when {
                     m.ready -> tr("library.gotovo")

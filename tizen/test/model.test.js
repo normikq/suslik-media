@@ -191,3 +191,45 @@ test('cleanTitle: не строка — не падает', () => {
   assert.equal(M.cleanTitle(undefined), 'Untitled');
   assert.equal(M.cleanTitle(null), 'Untitled');
 });
+
+// ---- слияние версий (SeriesGroupingTest.kt, groupVersions) ----
+
+test('titleKey: пометки сезона не делят название', () => {
+  const a = M.titleKey(M.cleanTitle('Breaking.Bad.S01.1080p.BluRay'));
+  assert.equal(a, 'breaking bad');
+  assert.equal(M.titleKey(M.cleanTitle('Breaking Bad Season 2 1080p')), a);
+  assert.equal(M.titleKey(M.cleanTitle('Breaking Bad [1-3 сезон] 1080p')), a);
+  assert.equal(M.titleKey(M.cleanTitle('Breaking Bad Complete 720p')), a);
+  assert.notEqual(M.titleKey('Cyberpunk Edgerunners'), M.titleKey('Cyberpunk 2077'));
+});
+
+test('buildPlayable: пронумерованные серии — сериал, а не сборник', () => {
+  const files = Array.from({ length: 10 }, (_, i) => file(i, `Show/Show - ${String(i + 1).padStart(2, '0')} [1080p].mkv`, 800));
+  const p = M.buildPlayable(mag(files, { name: 'Show [WEB-DL 1080p]' }));
+  assert.equal(p.kind, 'series');
+  assert.equal(p.seasons[0].items.length, 10);
+  assert.equal(p.seasons[0].items[0].episode, 1);
+  assert.equal(p.seasons[0].items[0].title, null);
+});
+
+test('buildPlayable: трилогия остаётся сборником', () => {
+  const p = M.buildPlayable(mag([file(0, 'Film 1 (1999).mkv', 4000), file(1, 'Film 2 (2003).mkv', 4200), file(2, 'Film 3 (2003).mkv', 4100)], { name: 'Trilogy' }));
+  assert.equal(p.kind, 'series');
+  assert.equal(p.seasons[0].items[0].title, 'Film 1');
+});
+
+test('groupVersions: сезоны и раздачи сериала — одна плитка; фильмы — по названию и году', () => {
+  const ep = (n) => file(n, `S/Show.S01E0${n + 1}.mkv`, 500);
+  const items = M.prepareItems([
+    mag([ep(0), ep(1)], { id: 1, name: 'Show.S01.1080p' }),
+    mag([ep(0), ep(1)], { id: 2, name: 'Show Season 2 720p' }),
+    mag([file(0, 'Film.mkv', 4000)], { id: 3, name: 'Film.2020.1080p' }),
+    mag([file(0, 'Film.mkv', 2000)], { id: 4, name: 'Film.2020.720p' }),
+    mag([file(0, 'Film.mkv', 2000)], { id: 5, name: 'Film.2021.720p' })
+  ]);
+  const g = M.groupVersions(items);
+  assert.deepEqual(g.shown.map((i) => i.m.id), [1, 3, 5]);
+  assert.deepEqual(g.versions[1].map((i) => i.m.id), [1, 2]);
+  assert.deepEqual(g.versions[3].map((i) => i.m.id), [3, 4]);
+  assert.equal(g.versions[5], undefined);
+});

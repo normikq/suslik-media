@@ -41,31 +41,20 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-private val YEAR = Regex("""\b(19\d{2}|20\d{2})\b""")
-
-/**
- * Same film added more than once (different releases: 720p / 1080p / 4K, other voice-overs, other titles): one tile for all of them.
- * Only ready single films are merged — series and collections keep their own tiles. The first one in the list order
- * stays on screen; [Pair.second] maps its id to every version (itself included).
- */
-fun groupVersions(list: List<LibraryItem>, posterOf: (LibraryItem) -> String? = { null }): Pair<List<LibraryItem>, Map<Long, List<LibraryItem>>> {
-    val byKey = LinkedHashMap<String, MutableList<LibraryItem>>()
-    val shown = ArrayList<LibraryItem>(list.size)
-    for (it in list) {
-        if (it.playable !is Playable.Movie || !it.m.ready || it.baseTitle.isBlank()) { shown += it; continue }
-        // Same poster = same film, whatever the releases are called; without a poster yet, the title and year decide.
-        val key = posterOf(it)?.let { p -> "poster|$p" } ?: (it.baseTitle.lowercase() + "|" + (YEAR.find(it.m.name)?.value ?: ""))
-        val group = byKey[key]
-        if (group == null) { byKey[key] = mutableListOf(it); shown += it } else group += it
-    }
-    val versions = HashMap<Long, List<LibraryItem>>()
-    for (g in byKey.values) if (g.size > 1) versions[g.first().m.id] = g
-    return shown to versions
-}
-
 fun movieTarget(item: LibraryItem): PlayTarget? {
     val movie = item.playable as? Playable.Movie ?: return null
     return PlayTarget(item.m.id, movie.file, item.baseTitle, emptyList(), subtitlesFor(item.m, movie.file), externalAudioFor(item.m, movie.file), item)
+}
+
+/** What a chosen version opens: a film plays, a series goes on from where it was left (or from its first episode). */
+fun versionTarget(item: LibraryItem, lib: Library): PlayTarget? {
+    val series = item.playable as? Playable.Series ?: return movieTarget(item)
+    val m = item.m
+    val saved = lib.lastWatched(m)?.first?.path ?: lib.lastEpisode(m.id)
+    val seasons = series.seasons
+    val s = seasons.firstOrNull { s -> s.items.any { it.file.path == saved } } ?: seasons.first()
+    val e = s.items.firstOrNull { it.file.path == saved } ?: s.items.first()
+    return PlayTarget(m.id, e.file, episodeLabel(item.baseTitle, s, e), s.items.drop(s.items.indexOf(e)).map { it.file }, subtitlesFor(m, e.file), externalAudioFor(m, e.file), item) { f -> externalAudioFor(m, f) to subtitlesFor(m, f) }
 }
 
 fun versionsWord(n: Int) = tr(if (n % 10 in 2..4 && n % 100 !in 12..14) "library.versii_2" else "library.versiy_5", "n" to n)
@@ -106,15 +95,16 @@ private fun VersionRow(v: LibraryItem, lib: Library, onClick: () -> Unit) {
     val hovered by src.collectIsHoveredAsState()
     val bg by animateColorAsState(if (hovered) Sm.glassFillHover else Sm.glassFill, tween(200))
     val edge by animateColorAsState(if (hovered) Sm.glassEdgeHover else Sm.glassEdge, tween(200))
-    val file = (v.playable as? Playable.Movie)?.file
-    val watched = file?.let { lib.watchInfo(watchKey(v.m.id, it)) }
+    val series = v.playable as? Playable.Series
+    val watched = if (series != null) lib.lastWatched(v.m)?.second
+        else (v.playable as? Playable.Movie)?.file?.let { lib.watchInfo(watchKey(v.m.id, it)) }
     val specs = itemSpecs(v, null).first.split(" • ").take(2).joinToString(" • ") // quality • codec (the frame rate there is a guess)
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(bg).border(1.dp, edge, RoundedCornerShape(14.dp))
             .hoverClick(src, onClick = onClick).padding(horizontal = 14.dp, vertical = 11.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(specs, color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp, modifier = Modifier.weight(1f))
+            Text(if (series != null) seriesLine(series) + " • " + specs else specs, color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp, modifier = Modifier.weight(1f))
             Text(formatBytes(v.m.size), color = Sm.muted, fontFamily = Onest, fontSize = 13.sp)
         }
         Text(v.m.name, color = Sm.muted, fontFamily = Onest, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 3.dp))

@@ -284,6 +284,17 @@ class LibraryStore(context: Context) {
     private val posterInflight = HashMap<String, CompletableDeferred<String?>>()
     private val posterMemory = HashMap<String, String?>()
 
+    /** Poster path per query: films with the same poster are one film (versions are merged by it, see groupVersions). */
+    private val posterPaths = androidx.compose.runtime.mutableStateMapOf<String, String>()
+    var posterVersion by mutableStateOf(0)
+        private set
+
+    fun posterPathOf(item: LibraryItem): String? = item.posterQueries.firstNotNullOfOrNull { posterPaths[it.lowercase()] }
+
+    private fun notePoster(key: String, path: String) {
+        if (posterPaths[key] != path) { posterPaths[key] = path; posterVersion++ }
+    }
+
     fun cachedPoster(queries: List<String>): String? {
         for (q in queries) {
             posterMemory[q.lowercase()]?.let { return Api.BASE + it }
@@ -352,6 +363,7 @@ class LibraryStore(context: Context) {
             url = j.optString("poster").takeIf { it.startsWith("/api/poster/img/") }
             posterPrefs.edit().putString(key, "${System.currentTimeMillis()}|${url.orEmpty()}").apply()
             posterMemory[key] = url
+            url?.let { notePoster(key, it) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -420,8 +432,10 @@ class LibraryStore(context: Context) {
         for (item in items) {
             val needGenre = !(isCartoon(item) || isAnime(item))
             var genreKnown = !needGenre
+            var posterKnown = false
             for (q in item.posterQueries) {
                 val key = q.lowercase()
+                posterPrefs.getString(key, null)?.substringAfter('|', "")?.takeIf { it.startsWith("/api/poster/img/") }?.let { notePoster(key, it); posterKnown = true }
                 animPrefs.getString(key, null)?.let { v ->
                     val at = v.substringBefore('|').toLongOrNull() ?: 0L
                     if (now - at < 60L * 86_400_000L) {
@@ -430,7 +444,7 @@ class LibraryStore(context: Context) {
                     }
                 }
             }
-            if (!genreKnown) item.posterQueries.firstOrNull()?.let { todo += it }
+            if (!genreKnown || !posterKnown) item.posterQueries.firstOrNull()?.let { todo += it }
         }
         Animation.version++
         var asked = 0
@@ -443,6 +457,7 @@ class LibraryStore(context: Context) {
                     posterPrefs.edit().putString(key, "${System.currentTimeMillis()}|$url").apply()
                     posterMemory[key] = url
                 }
+                if (url != null) notePoster(key, url)
                 if (j.has("animation")) recordAnimation(key, j)
             } catch (e: CancellationException) {
                 throw e

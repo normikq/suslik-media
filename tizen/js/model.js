@@ -147,6 +147,8 @@
         }) };
       }) };
     }
+    var numbered = numberedEpisodesOf(m, vids);
+    if (numbered) return numbered;
     var col = collectionOf(vids);
     if (col) return col;
     var main = mainVideo(m);
@@ -171,6 +173,55 @@
     return { kind: 'series', seasons: [{ season: 1, items: items }] };
   }
 
+  // Без lookbehind (Chromium 56): «не цифра перед» — через (^|\D) и сдвиг индекса
+  var NUM_NOISE = /(?:2160|1080|720|480|576)[pi]|[xh][ .]?26[45]|\d+(?:[.,]\d+)?\s?(?:fps|kbps|mbps|bit|gb|mb)|\b(?:19|20)\d{2}\b|\b[1-9]\.[01]\b/gi;
+  var NUM = /(^|\D)(\d{1,3})(?!\d)/g;
+  var SERIES_HINT = /(^|[^a-zа-яё0-9])(?:сезон[a-zа-яё]*|season[a-zа-яё]*|серии|серия|series|episodes?|эпизод[a-zа-яё]*|s\d{1,2}|ova|ona)(?![a-zа-яё0-9])/i;
+
+  /** Номера в имени: [{ value, start, end }] (число отдельно, не часть большего). */
+  function numbersIn(s) {
+    var out = [], m;
+    NUM.lastIndex = 0;
+    while ((m = NUM.exec(s))) {
+      var start = m.index + m[1].length;
+      out.push({ value: parseInt(m[2], 10), start: start, end: start + m[2].length });
+      NUM.lastIndex = start + m[2].length;
+    }
+    return out;
+  }
+
+  /**
+   * Файлы, что отличаются одним номером («Show - 01», «Show - 02»), — серии, если так сказано в имени раздачи (сезон,
+   * серии) или это похоже на сезон: пять и больше файлов похожего размера, пронумерованных подряд. Без этого трилогия
+   * («Film 1», «Film 2») остаётся сборником.
+   */
+  function numberedEpisodesOf(m, vids) {
+    if (vids.length < 2 || vids.some(function (f) { return BLURAY_DIR.test(f.path); })) return null;
+    var main = vids.filter(function (f) { return !EXTRAS.test(f.path); });
+    if (main.length < 2) return null;
+    var parsed = main.map(function (f) {
+      var base = stripExt(basename(f.path)).replace(DOTS, ' ').replace(NUM_NOISE, ' ');
+      return { base: base, nums: numbersIn(base) };
+    });
+    var slots = Math.min.apply(null, parsed.map(function (x) { return x.nums.length; }));
+    for (var slot = 0; slot < slots; slot++) {
+      var nums = parsed.map(function (x) { return x.nums[slot].value; });
+      if (new Set(nums).size !== nums.length) continue;
+      var templates = {};
+      parsed.forEach(function (x) { var n = x.nums[slot]; templates[x.base.substring(0, n.start) + '#' + x.base.substring(n.end)] = 1; });
+      if (Object.keys(templates).length !== 1) continue;
+      var sorted = nums.slice().sort(function (a, b) { return a - b; });
+      var consecutive = sorted.every(function (v, i) { return i === 0 || v - sorted[i - 1] === 1; });
+      var sizes = main.map(function (f) { return f.size; });
+      var similar = Math.max.apply(null, sizes) <= Math.min.apply(null, sizes) * 2;
+      if (!SERIES_HINT.test(m.name) && !(main.length >= 5 && consecutive && similar)) continue;
+      var eps = main.map(function (f, i) { return { season: 1, episode: nums[i], file: f, title: null }; })
+        .sort(function (a, b) { return a.episode - b.episode; });
+      return { kind: 'series', seasons: [{ season: 1, items: eps }] };
+    }
+    return null;
+  }
+
   var EXT = /\.[a-z0-9]{2,5}$/i;
   var TAGS = /\b(2160p|1080p|720p|480p|4k|8k|web[- ]?dl|web[- ]?rip|bluray|blu[- ]?ray|bdrip|bdremux|remux|hdr10?\+?|dv|dovi|hevc|h\.?265|x265|h\.?264|x264|aac|dts|ddp?5?\.?1|proper|repack|extended|limited|internal|amzn|nf|dsnp|hmax|yts|rarbg)\b[\s\S]*$/i;
   var YEAR_TAIL = /\b(19|20)\d{2}\b[\s\S]*$/;
@@ -182,6 +233,56 @@
     s = s.replace(TAGS, '');
     s = s.replace(YEAR_TAIL, ' ').replace(BRACKETS, ' ').replace(SPACES, ' ').trim();
     return s || v.replace(DOTS, ' ').trim();
+  }
+
+  // «Сезон»/«season» и т. п. без \p{L} и lookbehind: слово ограничено началом/не-буквой слева и не-буквой справа
+  var SEASON_NOISE = /(^|[^a-zа-яё0-9])(?:\d{1,2}(?:\s*[-–]\s*\d{1,2})?\s*(?:сезон[a-zа-яё]*|season[a-zа-яё]*)|(?:сезон[a-zа-яё]*|season[a-zа-яё]*|серии|серия|series|episodes?)\s*\d{1,3}(?:\s*[-–]\s*\d{1,3})?|s\d{1,2}(?:\s*[-–]?\s*[se]\d{1,3})?|complete|полный|полностью|(?:сезон[a-zа-яё]*|season[a-zа-яё]*|серии|episodes))(?![a-zа-яё0-9])/gi;
+  var NON_WORD = /[^a-zа-яё0-9]+/g;
+
+  /** Ключ «того же названия» без пометок сезона: «Show S01», «Show Season 2», «Show [1-3 сезон]» — один сериал (titleKey в Model.kt). */
+  function titleKey(baseTitle) {
+    var plain = String(baseTitle).toLowerCase().replace(/ё/g, 'е');
+    var key = plain.replace(SEASON_NOISE, '$1 ').replace(NON_WORD, ' ').trim();
+    return key || plain.replace(NON_WORD, ' ').trim();
+  }
+
+  var YEAR_IN_NAME = /\b(19\d{2}|20\d{2})\b/;
+
+  /**
+   * Один фильм или сериал, добавленный несколько раз (другие релизы, озвучки, сезоны): одна плитка на всех
+   * (groupVersions в Model.kt). Только готовые; фильмы с фильмами, сериалы и сборники — с сериалами; по названию без
+   * пометок сезона (фильм — ещё и по году). Первый по порядку остаётся на экране; versions — id первого → все версии.
+   */
+  function groupVersions(list, posterOf) {
+    var byKey = {}, groups = [], shown = [];
+    list.forEach(function (it) {
+      if (it.playable.kind === 'none' || !it.m.ready || !it.baseTitle.trim()) { shown.push(it); return; }
+      var kind = it.playable.kind === 'movie' ? 'm' : 's';
+      var y = YEAR_IN_NAME.exec(it.m.name);
+      var keys = [];
+      var poster = posterOf ? posterOf(it) : null;
+      if (poster) keys.push(kind + '|poster|' + poster);
+      keys.push(kind === 'm' ? 'm|' + titleKey(it.baseTitle) + '|' + (y ? y[1] : '') : 's|' + titleKey(it.baseTitle));
+      var group = null;
+      for (var i = 0; i < keys.length && !group; i++) group = byKey[keys[i]] || null;
+      if (!group) { group = [it]; groups.push(group); shown.push(it); keys.forEach(function (k) { byKey[k] = group; }); }
+      else { group.push(it); keys.forEach(function (k) { if (!byKey[k]) byKey[k] = group; }); }
+    });
+    var versions = {};
+    groups.forEach(function (g) { if (g.length > 1) versions[g[0].m.id] = g; });
+    return { shown: shown, versions: versions };
+  }
+
+  /** «Сезоны 1–3 · 24 серии» для строки выбора версии (seriesLine в Model.kt). */
+  function seriesLine(p) {
+    var nums = p.seasons.map(function (s) { return s.season; }).filter(function (n) { return n > 0; });
+    var eps = p.seasons.reduce(function (a, s) { return a + s.items.length; }, 0);
+    var first = p.seasons[0] && p.seasons[0].items[0];
+    var films = !!(first && first.title);
+    var mod10 = eps % 10, mod100 = eps % 100;
+    var word = films ? 'фильм.' : mod10 >= 2 && mod10 <= 4 && !(mod100 >= 12 && mod100 <= 14) ? 'серии' : mod10 === 1 && mod100 !== 11 ? 'серия' : 'серий';
+    var range = films || !nums.length ? '' : nums.length === 1 ? 'Сезон ' + nums[0] + ' · ' : 'Сезоны ' + Math.min.apply(null, nums) + '–' + Math.max.apply(null, nums) + ' · ';
+    return range + eps + ' ' + word;
   }
 
   function formatBytes(value) {
@@ -315,7 +416,7 @@
 
   SM.model = {
     parseLibrary: parseLibrary, magnet: magnet, mainVideo: mainVideo, buildPlayable: buildPlayable,
-    cleanTitle: cleanTitle, formatBytes: formatBytes, statusRu: statusRu, episodeLabel: episodeLabel,
+    cleanTitle: cleanTitle, titleKey: titleKey, groupVersions: groupVersions, seriesLine: seriesLine, formatBytes: formatBytes, statusRu: statusRu, episodeLabel: episodeLabel,
     prepareItems: prepareItems, subtitlesFor: subtitlesFor, externalAudioFor: externalAudioFor,
     isVoiceOverOnly: isVoiceOverOnly, dubLabel: dubLabel, customName: customName, externalChoices: externalChoices, externalIn: externalIn,
     watchKey: watchKey, watchInfo: watchInfo, basename: basename

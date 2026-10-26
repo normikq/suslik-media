@@ -556,7 +556,7 @@ fun LibraryView(
         }
 
         pick?.let { vs ->
-            VersionPicker(vs.first().baseTitle, vs, lib, onDismiss = { pick = null }) { v -> pick = null; movieTarget(v)?.let { target = it } }
+            VersionPicker(vs.first().baseTitle, vs, lib, onDismiss = { pick = null }) { v -> pick = null; versionTarget(v, lib)?.let { target = it } }
         }
         target?.let { t -> PlayDialog(t, lib, onDismiss = { target = null }, onPlay = { target = null; onPlay(it) }) }
     }

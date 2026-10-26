@@ -39,9 +39,9 @@
   }
 
   /** Окно с вопросом поверх экрана: [buttons] — [{ text, run }]. «Назад» закрывает его. */
-  function dialog(title, text, buttons) {
+  function dialog(title, text, buttons, cls) {
     var prevBack = nav.onBack, prevRoot = nav.root, prevKey = nav.onKey, prevFocus = document.activeElement;
-    var box = h('div', { class: 'dialog' }, [h('div', { class: 'dialog-box' }, [
+    var box = h('div', { class: 'dialog' }, [h('div', { class: 'dialog-box' + (cls ? ' ' + cls : '') }, [
       h('h2', { text: title }), text ? h('p', { text: text }) : null,
       h('div', { class: 'row' }, buttons.map(function (b, i) { return button(b.text, function () { close(); if (b.run) b.run(); }, i === 0 ? 'primary' : ''); }))
     ])]);

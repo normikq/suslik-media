@@ -4,13 +4,17 @@
  */
 (function (g) {
   'use strict';
-  var SM = g.SM, api = SM.api, ui = SM.ui, model = SM.model, h = ui.h, button = ui.button;
+  var SM = g.SM, api = SM.api, ui = SM.ui, model = SM.model, core = SM.searchcore, h = ui.h, button = ui.button;
 
   var KINDS = [{ id: 'video', title: 'Фильмы и сериалы' }, { id: 'movie', title: 'Фильмы' }, { id: 'cartoon', title: 'Мультфильмы' },
     { id: 'series', title: 'Сериалы' }, { id: 'all', title: 'Всё' }];
   var KIND_RU = { series: 'сериал', movie: 'фильм', cartoon: 'мультфильм' };
 
-  var s = { query: '', busy: false, status: null, ok: true, hits: [], kind: 'video', seeded: false, notes: {} };
+  var RESOLUTIONS = [{ id: '', title: 'Любое' }, { id: '4K', title: '4K' }, { id: '1080p', title: '1080p' }, { id: '720p', title: '720p' }];
+  var PAGE = 25;
+
+  // Тот же поиск, что на ПК (searchcore.js: разбор релиза, пресеты, качество, сортировка); прямого поиска с ПК (RuTracker) на ТВ нет
+  var s = { query: '', active: '', busy: false, status: null, ok: true, hits: [], kind: 'video', seeded: false, preset: 'ALL', resolution: '', sort: 'DEFAULT', refine: '', count: PAGE, notes: {} };
 
   function keyed(el, key) { el.setAttribute('data-key', key); return el; }
 
@@ -20,18 +24,14 @@
     q = String(q || '').trim();
     s.query = q;
     if (q.length < 2 || s.busy) { s.status = 'Введите минимум 2 символа.'; s.ok = false; rerender(); return; }
+    s.active = core.cleanQuery(q) || q; s.count = PAGE;
     s.busy = true; s.status = 'Опрашиваем трекеры…'; s.ok = true; s.hits = [];
     rerender();
-    api.get('/api/search?q=' + encodeURIComponent(q)).then(function (j) {
-      s.hits = (Array.isArray(j.results) ? j.results : []).filter(function (r) { return r && r.id; }).map(function (r) {
-        var src = Array.isArray(r.sources) && r.sources.length > 1 ? r.sources.join(' + ') : String(r.provider || '');
-        var d = typeof r.date === 'number' && r.date > 0 ? new Date(r.date).toLocaleDateString('ru-RU') : typeof r.date === 'string' ? r.date.substring(0, 10) : '';
-        return { id: String(r.id), title: String(r.title || ''), size: Number(r.size) || 0, seeders: Number(r.seeders) || 0,
-          leechers: Number(r.leechers) || 0, kind: String(r.kind || ''), source: src, date: d };
-      });
+    api.get('/api/search?q=' + encodeURIComponent(s.active)).then(function (j) {
+      s.hits = (Array.isArray(j.results) ? j.results : []).map(core.toHit).filter(function (x) { return x && !core.isNonVideo(x.title); });
       var failed = (Array.isArray(j.providers) ? j.providers : []).filter(function (p) { return p && !p.ok; }).length;
       s.status = !s.hits.length ? 'Ничего не найдено.' :
-        'Найдено ' + (j.total || s.hits.length) + ' за ' + ((Number(j.tookMs) || 0) / 1000).toFixed(1).replace('.', ',') + ' с' + (failed ? ' · не ответили: ' + failed : '');
+        'Найдено ' + s.hits.length + ' за ' + ((Number(j.tookMs) || 0) / 1000).toFixed(1).replace('.', ',') + ' с' + (failed ? ' · не ответили: ' + failed : '');
       s.ok = s.hits.length > 0;
     }).catch(function (e) { s.status = api.describe(e); s.ok = false; })
       .then(function () { s.busy = false; rerender(); });
@@ -54,9 +54,16 @@
   }
 
   function shown() {
-    return s.hits.filter(function (x) {
-      return (s.kind === 'all' || (s.kind === 'video' && x.kind !== 'other') || x.kind === s.kind) && (!s.seeded || x.seeders > 0);
+    return core.filter(s.hits, { query: s.active, kind: s.kind, preset: s.preset, resolution: s.resolution || null, onlySeeded: s.seeded, refine: s.refine, sort: s.sort });
+  }
+
+  function chipRow(label, items, current, pick, prefix) {
+    var chips = items.map(function (it, i) {
+      var c = button(it.title, function () { pick(it.id); s.count = PAGE; SM.app.refreshTab(); }, 'chip' + (current === it.id ? ' on' : ''));
+      c.setAttribute('data-key', prefix + i);
+      return c;
     });
+    return h('div', { class: 'chips' }, [h('span', { class: 'muted chip-label', text: label })].concat(chips));
   }
 
   function render(box) {
@@ -65,18 +72,25 @@
     box.appendChild(h('div', { class: 'search-head' }, [
       input, keyed(button(s.busy ? 'Ищем…' : 'Найти', function () { run(input.value()); }, 'primary'), 'go')
     ]));
-    var chips = KINDS.map(function (k) {
-      return button(k.title, function () { s.kind = k.id; SM.app.refreshTab(); }, 'chip' + (s.kind === k.id ? ' on' : ''));
-    });
-    chips.forEach(function (c, i) { c.setAttribute('data-key', 'k' + i); });
-    var seeded = button((s.seeded ? '✓ ' : '') + 'Только с сидами', function () { s.seeded = !s.seeded; SM.app.refreshTab(); }, 'chip' + (s.seeded ? ' on' : ''));
+    var seeded = button((s.seeded ? '✓ ' : '') + 'Только с сидами', function () { s.seeded = !s.seeded; s.count = PAGE; SM.app.refreshTab(); }, 'chip' + (s.seeded ? ' on' : ''));
     seeded.setAttribute('data-key', 'seeded');
-    box.appendChild(h('div', { class: 'chips' }, chips.concat([seeded])));
+    var kinds = chipRow('Что искать', KINDS, s.kind, function (v) { s.kind = v; }, 'k');
+    kinds.appendChild(seeded);
+    box.appendChild(kinds);
     if (s.status) box.appendChild(h('p', { class: s.ok ? 'muted' : 'error', text: s.status }));
+    if (s.hits.length) {
+      box.appendChild(chipRow('Пресет', core.PRESETS, s.preset, function (v) { s.preset = v; }, 'p'));
+      box.appendChild(chipRow('Качество', RESOLUTIONS, s.resolution, function (v) { s.resolution = v; }, 'r'));
+      box.appendChild(chipRow('Сортировка', core.SORTS, s.sort, function (v) { s.sort = v; }, 's'));
+    }
     var list = shown();
     if (s.hits.length && list.length < s.hits.length) box.appendChild(h('p', { class: 'muted small', text: 'Скрыто фильтрами: ' + (s.hits.length - list.length) }));
     if (!s.hits.length && !s.status) box.appendChild(h('p', { class: 'muted', text: 'Один запрос — сразу по нескольким трекерам. Нажмите OK на результате, чтобы добавить раздачу в медиатеку.' }));
-    box.appendChild(h('div', { class: 'results' }, list.slice(0, 100).map(row)));
+    var rows = list.slice(0, s.count).map(row);
+    if (list.length > s.count) {
+      rows.push(keyed(button('Показать ещё (' + (list.length - s.count) + ')', function () { s.count += PAGE; SM.app.refreshTab(); }), 'more'));
+    }
+    box.appendChild(h('div', { class: 'results' }, rows));
   }
 
   function row(x) {
@@ -91,7 +105,9 @@
       x.date ? h('span', { class: 'muted', text: x.date }) : null
     ];
     return h('div', { class: 'f result', tabindex: '-1', 'data-key': 'r' + x.id, onclick: function () { add(x); } }, [
-      h('div', { class: 'result-title', text: x.title }),
+      h('div', { class: 'result-title', text: x.release.cleanTitle || x.title }),
+      x.release.cleanTitle && x.release.cleanTitle !== x.title ? h('div', { class: 'muted small result-raw', text: x.title }) : null,
+      h('div', { class: 'result-badges' }, core.badges(x.release).map(function (bd) { return h('span', { class: 'rb ' + bd.tone, text: bd.text }); })),
       h('div', { class: 'result-meta' }, meta),
       check.level !== 'ok' ? h('div', { class: 'note ' + ({ no: 'bad', server: 'grey' }[check.level] || 'warn'), text: ({ no: '⛔ ', server: '⇄ ' }[check.level] || '⚠ ') + check.text }) : null,
       n ? h('div', { class: 'note ' + (n.ok ? 'okc' : 'bad'), text: n.text }) : null
