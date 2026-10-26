@@ -15,19 +15,20 @@
 
   <div id="player">
     <div id="subs"></div>
-    <div id="p-buffer"><div class="spinner"></div><span id="p-buffer-text">Загрузка…</span></div>
+    <div id="p-buffer"><div class="spinner"></div><span id="p-buffer-text" data-i18n="player.loading">Загрузка…</span></div>
     <div id="p-bar">
-      <div class="p-top"><span id="p-state">▶</span><span id="p-title"></span><span id="p-party">● Вместе</span><span id="p-time">0:00 / 0:00</span></div>
+      <div class="p-top"><span id="p-state">▶</span><span id="p-title"></span><span id="p-party" data-i18n="player.together">● Вместе</span><span id="p-time">0:00 / 0:00</span></div>
       <div class="p-track"><div id="p-fill"></div></div>
-      <div class="p-hints">OK — пауза · ← → 10 с · ⏪ ⏩ минута · ⏮ ⏭ серия · ↓ звук и субтитры · жёлтая — проба · «Назад» — выход</div>
+      <div class="p-hints" data-i18n="player.hints">OK — пауза · ← → 10 с · ⏪ ⏩ минута · ⏮ ⏭ серия · ↓ звук и субтитры · жёлтая — проба · «Назад» — выход</div>
     </div>
     <div id="menu"></div>
-    <div id="diag"><pre id="diag-head"></pre><div class="diag-sep">— события (новые внизу) —</div><pre id="diag-log"></pre></div>
+    <div id="diag"><pre id="diag-head"></pre><div class="diag-sep" data-i18n="player.diag_events">— события (новые внизу) —</div><pre id="diag-log"></pre></div>
   </div>
 
   <div id="toast"></div>
 
   <script src="js/site.js"></script>
+  <script src="js/i18n.js"></script>
   <script src="js/vendor/qrcode.js"></script>
   <script src="js/changelog.js"></script>
   <script src="js/model.js"></script>

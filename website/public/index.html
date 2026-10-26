@@ -7,6 +7,7 @@
   <link rel="icon" href="favicon.ico" sizes="any">
   <link rel="icon" type="image/png" sizes="128x128" href="brand-mark.png">
   <link rel="apple-touch-icon" href="icon.png">
+  <script src="i18n.js"></script>
   <style>
     :root{color-scheme:dark;--bg:#0b0c10;--panel:#141720;--line:#292d3a;--text:#f3f4f8;--muted:#9da4b5;--accent:#b7a0ff;--accent2:#8b70ed}
     *{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at top,#19152a 0,#0b0c10 55%);color:var(--text);font:16px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh}
@@ -511,11 +512,11 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
           <div id="profileAvatar" class="profile-avatar">S</div>
           <div class="profile-meta">
             <strong id="profileName">Suslik Media</strong>
-            <span id="profileSub" class="profile-sub">AllDebrid подключён</span>
-            <button id="deviceLinkBtn" class="device-link-btn" type="button" title="Подключить Android TV или ПК">Связать устройство</button>
+            <span id="profileSub" class="profile-sub" data-i18n="profile.connected">Облако подключено</span>
+            <button id="deviceLinkBtn" class="device-link-btn" type="button" data-i18n="auth.device_link" data-i18n-title="auth.device_link_title" title="Подключить Android TV или ПК">Связать устройство</button>
           </div>
         </div>
-        <button id="logout" class="secondary btn-logout" type="button">Выйти</button>
+        <button id="logout" class="secondary btn-logout" type="button" data-i18n="auth.logout_btn">Выйти</button>
       </div>
     </aside>
 
@@ -525,7 +526,7 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
           <div class="brand-mark-wrap">
             <img class="mobile-brand-logo" src="brand-mark.png" alt="Suslik Media" width="34" height="34">
           </div>
-          <div><h2>Suslik Media</h2><p>Ссылки и ваша библиотека AllDebrid.</p></div>
+          <div><h2>Suslik Media</h2><p data-i18n="app.tagline">Медиатека, поиск и просмотр фильмов онлайн.</p></div>
         </div>
         <button id="mobileSessions" class="secondary btn-logout-mobile" type="button" aria-label="Активные сессии">Сессии</button>
         <button id="mobileLogout" class="secondary btn-logout-mobile" type="button">Выйти</button>
@@ -550,7 +551,7 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
 
       <section id="searchTab" class="hidden">
         <div class="panel">
-          <div class="topline"><div><h2>Поиск раздач</h2><p>Один запрос — сразу по нескольким трекерам. Результат добавляется в вашу библиотеку AllDebrid.</p></div></div>
+          <div class="topline"><div><h2 data-i18n="search.title">Поиск раздач</h2><p data-i18n="search.tagline">Один запрос — сразу по нескольким трекерам. Фильм мгновенно появится в медиатеке.</p></div></div>
           <form id="searchForm" class="search-form" role="search">
             <input id="searchInput" type="search" placeholder="Название фильма или сериала…" maxlength="120" autocomplete="off" enterkeyhint="search" aria-label="Название для поиска">
             <button id="searchBtn" type="submit">Найти</button>
@@ -714,12 +715,12 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
         </div>
       </section>
 
-      <div class="foot">Данные API хранятся на сервере. Запросы AllDebrid выполняются сервером. Видео идёт через наш сервер.</div>
+      <div class="foot" data-i18n="footer.server_notice">Все запросы и медиафайлы безопасно обрабатываются нашим сервером.</div>
     </div>
 
     <div id="libraryModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="library-modal"><div class="modal-head"><div><h2 id="modalTitle">Файлы</h2><p id="modalMeta"></p></div><div class="actions"><button id="closeLibraryModal" class="secondary" type="button">Закрыть</button></div></div><div id="modalФайлы" class="modal-files"></div></div></div>
   </section>
-  <div class="foot">Используйте только контент и ссылки, к которым у вас есть разрешённый доступ.</div>
+  <div class="foot" data-i18n="footer.disclaimer">Используйте только контент и ссылки, к которым у вас есть разрешённый доступ.</div>
 </main>
 <script src="searchcore.js"></script>
 <script>
@@ -916,7 +917,7 @@ function readHistory(){try{const value=JSON.parse(localStorage.getItem(HISTORY_K
 function saveHistory(value){try{localStorage.setItem(HISTORY_KEY,JSON.stringify(value.slice(0,30)));}catch{}if(window.ensureHistoryPoll)window.ensureHistoryPoll();}
 function rememberПоиск(value){const history=readHistory().filter(item=>item.value!==value);history.unshift({value,at:Date.now(),title:value.startsWith("magnet:?")?"Загрузка по magnet-ссылке":"Проверка ссылки",status:"Отправлено"});saveHistory(history);renderHistory();}
 function updateHistory(value, patch){const history=readHistory();const item=history.find(entry=>entry.value===value);if(item)Object.assign(item,patch,{updatedAt:Date.now()});saveHistory(history);renderHistory();}
-function renderHistory(){const target=$("searchHistory");if(!target)return;target.replaceChildren();const history=readHistory();if(!history.length){const empty=document.createElement("p");empty.className="file-meta";empty.textContent="История поиска пуста.";target.append(empty);return;}for(const item of history){const row=document.createElement("div");row.className="history-item";const info=document.createElement("div");info.className="history-value";const titleRow=document.createElement("div");titleRow.className="history-title-row";const title=document.createElement("strong");title.textContent=item.title|| (item.value.startsWith("magnet:?")?"Загрузка по magnet-ссылке":"Проверка ссылки");title.style.display="block";titleRow.append(title);if(item.magnetId && !item.ready && !item.cancelled){const progress=document.createElement("div");progress.className="history-progress";const track=document.createElement("div");track.className="history-progress-track";track.setAttribute("role","progressbar");track.setAttribute("aria-valuemin","0");track.setAttribute("aria-valuemax","100");const fill=document.createElement("div");fill.className="history-progress-fill";const pct=item.percent==null?0:Math.max(0,Math.min(100,Number(item.percent)));fill.style.width=pct+"%";track.append(fill);const percent=document.createElement("span");percent.className="history-percent";percent.textContent=item.percent==null?"…":pct+"%";progress.append(track,percent);titleRow.append(progress);}const detail=document.createElement("div");detail.className="file-meta";detail.textContent=[item.status||"Отправлено",item.ready?"100%": ""].filter(Boolean).join(" · ");info.append(titleRow,detail);const actions=document.createElement("div");actions.className="history-actions";const activeСкачать=Boolean(item.magnetId && !item.ready && !item.cancelled && !item.failed);if(activeСкачать){const cancel=document.createElement("button");cancel.type="button";cancel.className="secondary";cancel.textContent="Отменить загрузку";cancel.addEventListener("click",async()=>{if(!confirm("Отменить загрузку и удалить magnet-ссылку из AllDebrid? Это действие нельзя отменить."))return;cancel.disabled=true;cancel.textContent="Отмена…";try{await api(`/api/magnets/${item.magnetId}/cancel`,{method:"POST"});updateHistory(item.value,{status:"Отменено",cancelled:true});}catch(err){alert(err.message);cancel.disabled=false;cancel.textContent="Отменить загрузку";}});actions.append(cancel);}else{const reuse=document.createElement("button");reuse.type="button";reuse.className="secondary";reuse.textContent="Использовать снова";reuse.addEventListener("click",()=>{if(item.sourceType==="torrent-file"){setInputMode("torrent");$("linkStatus").textContent="Выберите файл .torrent повторно: браузер не позволяет восстановить вложение автоматически.";$("linkStatus").className="status";$("torrentDropzone").focus();}else{setInputMode("magnet");$("url").value=item.value;$("url").focus();}});actions.append(reuse);if(item.ready || item.cancelled || item.failed){const remove=document.createElement("button");remove.type="button";remove.className="secondary";remove.textContent="×";remove.title="Удалить из истории";remove.setAttribute("aria-label","Удалить из истории");remove.addEventListener("click",event=>{event.preventDefault();event.stopPropagation();saveHistory(readHistory().filter(entry=>entry.value!==item.value));renderHistory();});actions.append(remove);}}row.append(info,actions);target.append(row);}}
+function renderHistory(){const target=$("searchHistory");if(!target)return;target.replaceChildren();const history=readHistory();if(!history.length){const empty=document.createElement("p");empty.className="file-meta";empty.textContent="История поиска пуста.";target.append(empty);return;}for(const item of history){const row=document.createElement("div");row.className="history-item";const info=document.createElement("div");info.className="history-value";const titleRow=document.createElement("div");titleRow.className="history-title-row";const title=document.createElement("strong");title.textContent=item.title|| (item.value.startsWith("magnet:?")?"Загрузка по magnet-ссылке":"Проверка ссылки");title.style.display="block";titleRow.append(title);if(item.magnetId && !item.ready && !item.cancelled){const progress=document.createElement("div");progress.className="history-progress";const track=document.createElement("div");track.className="history-progress-track";track.setAttribute("role","progressbar");track.setAttribute("aria-valuemin","0");track.setAttribute("aria-valuemax","100");const fill=document.createElement("div");fill.className="history-progress-fill";const pct=item.percent==null?0:Math.max(0,Math.min(100,Number(item.percent)));fill.style.width=pct+"%";track.append(fill);const percent=document.createElement("span");percent.className="history-percent";percent.textContent=item.percent==null?"…":pct+"%";progress.append(track,percent);titleRow.append(progress);}const detail=document.createElement("div");detail.className="file-meta";detail.textContent=[item.status||"Отправлено",item.ready?"100%": ""].filter(Boolean).join(" · ");info.append(titleRow,detail);const actions=document.createElement("div");actions.className="history-actions";const activeСкачать=Boolean(item.magnetId && !item.ready && !item.cancelled && !item.failed);if(activeСкачать){const cancel=document.createElement("button");cancel.type="button";cancel.className="secondary";cancel.textContent="Отменить загрузку";cancel.addEventListener("click",async()=>{if(!confirm(tr("history.confirm_cancel", "Отменить загрузку и удалить раздачу из медиатеки? Это действие нельзя отменить.")))return;cancel.disabled=true;cancel.textContent=tr("history.cancelling", "Отмена…");try{await api(`/api/magnets/${item.magnetId}/cancel`,{method:"POST"});updateHistory(item.value,{status:"Отменено",cancelled:true});}catch(err){alert(err.message);cancel.disabled=false;cancel.textContent=tr("history.cancel_download", "Отменить загрузку");}});actions.append(cancel);}else{const reuse=document.createElement("button");reuse.type="button";reuse.className="secondary";reuse.textContent="Использовать снова";reuse.addEventListener("click",()=>{if(item.sourceType==="torrent-file"){setInputMode("torrent");$("linkStatus").textContent="Выберите файл .torrent повторно: браузер не позволяет восстановить вложение автоматически.";$("linkStatus").className="status";$("torrentDropzone").focus();}else{setInputMode("magnet");$("url").value=item.value;$("url").focus();}});actions.append(reuse);if(item.ready || item.cancelled || item.failed){const remove=document.createElement("button");remove.type="button";remove.className="secondary";remove.textContent="×";remove.title="Удалить из истории";remove.setAttribute("aria-label","Удалить из истории");remove.addEventListener("click",event=>{event.preventDefault();event.stopPropagation();saveHistory(readHistory().filter(entry=>entry.value!==item.value));renderHistory();});actions.append(remove);}}row.append(info,actions);target.append(row);}}
 $("clearHistory").addEventListener("click",()=>{saveHistory(readHistory().filter(item=>!(item.ready || item.cancelled || item.failed)));renderHistory();});
 let inputMode = "magnet";
 function setInputMode(mode){
@@ -1021,7 +1022,7 @@ $("linkForm").addEventListener("submit", async e=>{
         if(status.statusCode===4 || status.ready) break;
         if(status.statusCode>=5) {
           updateHistory(activeHistoryValue,{status:status.status||"Ошибка",failed:true,ready:false,percent:null});
-          throw new Error(`AllDebrid magnet processing failed: ${status.status}`);
+          throw new Error(tr("magnet.processing_failed", { status: status.status || "" }, "Ошибка обработки раздачи: " + (status.status || "неизвестная ошибка")));
         }
       }
       if(!status || !(status.statusCode===4 || status.ready)){
@@ -1043,7 +1044,7 @@ $("linkForm").addEventListener("submit", async e=>{
         }
         const list=$("magnetФайлы"); list.replaceChildren();
         if(!result.files || !result.files.length) {
-          $("magnetStatus").textContent += "  — готово, но ссылки на файлы не получены. Проверьте ответ API AllDebrid.";
+          $("magnetStatus").textContent += tr("magnet.ready_no_files", null, "  — готово, но список файлов ещё подготавливается. Попробуйте обновить медиатеку через минуту.");
         } else {
           for(const file of result.files){
             const wrap=document.createElement("div"); wrap.style.cssText="width:100%;padding:10px 0;border-bottom:1px solid #292d3a";
@@ -1388,16 +1389,16 @@ async function addSearchResult(r, btn, note) {
   try {
     const res = await api("/api/search/add", { method: "POST", body: JSON.stringify({ id: r.id }) });
     btn.textContent = "✓ Добавлено";
-    note.textContent = "AllDebrid обрабатывает…";
+    note.textContent = tr("search.status_processing", null, "Обработка в медиатеке…");
     libraryDirty = true;
     pollAdded(res.id, note, res.ready);
   } catch (err) {
-    btn.disabled = false; btn.textContent = "Повторить";
+    btn.disabled = false; btn.textContent = tr("search.retry", null, "Повторить");
     note.textContent = err.message; note.className = "sr-note error";
   }
 }
 async function pollAdded(id, note, alreadyReady) {
-  if (alreadyReady) { note.textContent = "Готово — уже в библиотеке (кэш AllDebrid)"; note.className = "sr-note success"; return; }
+  if (alreadyReady) { note.textContent = tr("search.status_ready_instant", null, "Готово — уже в медиатеке"); note.className = "sr-note success"; return; }
   const started = Date.now();
   for (let i = 0; i < 60; i++) {
     const age = Date.now() - started;
@@ -1407,10 +1408,10 @@ async function pollAdded(id, note, alreadyReady) {
     try { st = await api("/api/magnets/" + id); } catch { continue; }
     const total = Number(st.size) || 0, done = Number(st.downloaded) || 0;
     note.textContent = `${st.status || "Обработка"}${total > 0 ? " · " + Math.floor(Math.min(100, done / total * 100)) + "%" : ""}`;
-    if (st.statusCode === 4 || st.ready) { note.textContent = "Готово — файлы в библиотеке"; note.className = "sr-note success"; return; }
-    if (st.statusCode >= 5) { note.textContent = "Ошибка: " + (st.status || "AllDebrid не смог загрузить"); note.className = "sr-note error"; return; }
+    if (st.statusCode === 4 || st.ready) { note.textContent = tr("search.status_ready", null, "Готово — файлы в медиатеке"); note.className = "sr-note success"; return; }
+    if (st.statusCode >= 5) { note.textContent = tr("search.status_error", { error: st.status || "Не удалось загрузить" }, "Ошибка: " + (st.status || "Не удалось загрузить")); note.className = "sr-note error"; return; }
   }
-  note.textContent = "Загрузка идёт долго — следите за статусом в библиотеке.";
+  note.textContent = tr("search.status_long", null, "Загрузка продолжается — следите за статусом в медиатеке.");
 }
 $("searchForm").addEventListener("submit", runSearch);
 $("searchSort").addEventListener("change", () => renderSearchResults(true));
@@ -1487,14 +1488,14 @@ function formatBytes(value) {
 }
 async function loadLibrary() {
   const status=$("libraryStatus"), button=$("refreshLibrary");
-  button.disabled=true; status.textContent="Загрузка торрентов и файлов из AllDebrid…"; status.className="status";
+  button.disabled=true; status.textContent=tr("library.loading", null, "Загрузка медиатеки…"); status.className="status";
   try {
     const data=await api("/api/library");
     cachedLibrary=(data.magnets || []).filter(m=>!isVoiceOverOnly(m));
     try { localStorage.setItem(LIBRARY_SNAPSHOT_KEY, JSON.stringify({ savedAt: Date.now(), magnets: cachedLibrary })); } catch {}
     renderLibrary();
     classifyAnimation();
-    status.textContent=`Загружено ${data.total} торрент(ов). Копия библиотеки сохранена в браузере.`; status.className="status success";
+    status.textContent=tr("library.loaded", { count: data.total }, `Загружено раздач: ${data.total}. Список сохранён в браузере.`); status.className="status success";
   } catch(err) { status.textContent=err.message; status.className="status error"; }
   finally { button.disabled=false; }
 }
@@ -1854,7 +1855,7 @@ function ensurePlaySheet(){
   let s=document.getElementById("playSheet");
   if(s) return s;
   s=document.createElement("div");s.id="playSheet";s.className="play-sheet";s.setAttribute("role","dialog");s.setAttribute("aria-modal","true");
-  // One way to watch: through our server. The direct AllDebrid link stays on the server (security audit 25.10).
+  // One way to watch: through our server. The direct media link stays on the server (security audit 25.10).
   s.innerHTML='<div class="play-sheet-card ps-card"><button type="button" class="ps-close sheet-cancel" aria-label="Закрыть">×</button>'+
     '<div class="ps-top"><div class="ps-poster"><img alt="" decoding="async"></div><div class="ps-info"><div class="play-sheet-title ps-title"></div><div class="ps-chips"></div><p class="ps-overview"></p></div></div>'+
     '<div class="play-sheet-sub ps-status"></div>'+
@@ -2190,7 +2191,7 @@ function renderLibrary(animate=true) {
 
   if (!magnets.length) {
     target.replaceChildren();
-    const empty=document.createElement("div"); empty.className="panel"; empty.textContent=cachedLibrary.length ? (activeCategory==="mine" && !query ? "В «Моей медиатеке» пока пусто. Нажмите закладку на плитке фильма, чтобы добавить его сюда." : "Совпадений не найдено.") : "Сохранённой медиатеки пока нет. Нажмите «Обновить», чтобы загрузить данные из AllDebrid."; target.append(empty); return;
+    const empty=document.createElement("div"); empty.className="panel"; empty.textContent=cachedLibrary.length ? (activeCategory==="mine" && !query ? tr("library.empty_mine", null, "В «Моей медиатеке» пока пусто. Нажмите закладку на карточке фильма, чтобы добавить его сюда.") : tr("library.no_matches", null, "Совпадений не найдено.")) : tr("library.empty", null, "Медиатека пока пуста. Нажмите «Обновить», чтобы загрузить список фильмов."); target.append(empty); return;
   }
   let fresh=0;
   for (const magnet of magnets) {
@@ -2404,7 +2405,7 @@ function openLibraryModal(magnet) {
   }
   const query=$("libraryПоиск").value.trim().toLowerCase();
   const files=magnet.files.filter(f=>!query||f.path.toLowerCase().includes(query));
-  if(!files.length){const empty=document.createElement("p");empty.className="file-meta";empty.textContent="AllDebrid пока не вернул файлы этой раздачи.";target.append(empty);}
+  if(!files.length){const empty=document.createElement("p");empty.className="file-meta";empty.textContent=tr("library.files_pending", null, "Файлы этой раздачи ещё подготавливаются. Пожалуйста, подождите немного.");target.append(empty);}
   const folderState = new Map();
   const rows = [];
   const folderPaths = files.filter(f=>f.type==="folder").map(f=>String(f.path||"").replace(/\/+$/,"")).sort((a,b)=>a.length-b.length);
@@ -2456,7 +2457,7 @@ function closeLibraryModal(){$("libraryModal").classList.add("hidden");document.
 $("closeLibraryModal").addEventListener("click",closeLibraryModal);
 $("libraryModal").addEventListener("click",e=>{if(e.target===$("libraryModal"))closeLibraryModal();});
 document.addEventListener("keydown",e=>{if(e.key==="Escape")closeLibraryModal();});
-try { const snapshot=webLibraryNeeded()?JSON.parse(localStorage.getItem(LIBRARY_SNAPSHOT_KEY)||"null"):null; if(snapshot && Array.isArray(snapshot.magnets)){ cachedLibrary=snapshot.magnets.filter(m=>!isVoiceOverOnly(m)); renderLibrary(); classifyAnimation(); const when=new Date(snapshot.savedAt).toLocaleString(); $("libraryStatus").textContent=`Показана сохранённая копия медиатеки от ${when}. Нажмите «Обновить», чтобы получить актуальное состояние AllDebrid.`; } } catch {}
+try { const snapshot=webLibraryNeeded()?JSON.parse(localStorage.getItem(LIBRARY_SNAPSHOT_KEY)||"null"):null; if(snapshot && Array.isArray(snapshot.magnets)){ cachedLibrary=snapshot.magnets.filter(m=>!isVoiceOverOnly(m)); renderLibrary(); classifyAnimation(); const when=new Date(snapshot.savedAt).toLocaleString(); $("libraryStatus").textContent=tr("library.snapshot_loaded", { when }, `Показана сохранённая копия медиатеки от ${when}. Нажмите «Обновить», чтобы синхронизировать список.`); } } catch {}
 renderHistory();
 // Обновить active magnet entries in the local history automatically. Poll conservatively.
 let historyPollBusy = false;

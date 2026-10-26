@@ -44,7 +44,7 @@ async function filesOf(res, id, what) {
     return null;
   }
   if (!list || !list.some(f => f.type === "file")) {
-    fail(res, 409, "NOT_READY", `Раздача ${what} ещё загружается или в ней нет файлов. Повторите проверку, когда AllDebrid подготовит список.`);
+    fail(res, 409, "NOT_READY", `Раздача ${what} ещё загружается или в ней нет файлов. Повторите проверку, когда список файлов будет готов.`);
     return null;
   }
   return list;
@@ -74,7 +74,7 @@ async function rejectForbidden(req, res, audioMagnetId, forbidden, magnets) {
   const first = forbidden[0];
   const more = forbidden.length > 1 ? ` и ещё ${forbidden.length - 1}` : "";
   const allowed = [...ca.AUDIO_EXT].map(e => "." + e).join(", ");
-  fail(res, 422, "FORBIDDEN_FILES", `В раздаче есть недопустимые файлы (${first.path}${more}): разрешены только аудио — ${allowed}.${removed ? " Раздача удалена из AllDebrid." : ""}`, {
+  fail(res, 422, "FORBIDDEN_FILES", `В раздаче есть недопустимые файлы (${first.path}${more}): разрешены только аудио — ${allowed}.${removed ? " Раздача удалена из медиатеки." : ""}`, {
     forbidden: forbidden.slice(0, 50),
     removed
   });
@@ -165,7 +165,7 @@ async function prepare(req, res, { allowTorrent, offsetMs }) {
       return null;
     }
     if (hit.statusCode !== 4) {
-      fail(res, 409, "NOT_READY", "Раздача с фильмом ещё загружается или в ней нет файлов. Повторите проверку, когда AllDebrid подготовит список.");
+      fail(res, 409, "NOT_READY", "Раздача с фильмом ещё загружается или в ней нет файлов. Повторите проверку, когда список файлов будет готов.");
       return null;
     }
     const files = await filesOf(res, movieMagnetId, "с фильмом");
@@ -210,7 +210,7 @@ async function prepare(req, res, { allowTorrent, offsetMs }) {
   const warnings = [];
   let durations = [];
   if (isTorrent) {
-    warnings.push({ code: "DURATION_UNCHECKED", message: "Длительность сверится при привязке, когда раздача будет в AllDebrid." });
+    warnings.push({ code: "DURATION_UNCHECKED", message: "Длительность сверится при привязке, когда раздача появится в медиатеке." });
   } else if (src.ignoreDuration === true && isLibraryAdmin(req)) {
     warnings.push({ code: "DURATION_SKIPPED", message: "Сверка длительности пропущена по запросу админа." });
   } else {

@@ -67,7 +67,7 @@
     blobUrl: function (path) {
       return attempt('GET', path, null, 15000, 'blob').then(function (b) { return URL.createObjectURL(b); });
     },
-    /** Подписанная ссылка зеркала (живёт 12 ч). Прямые ссылки AllDebrid не используем: в РФ он заблокирован. */
+    /** Подписанная ссылка зеркала (живёт 12 ч). Прямые ссылки провайдера не используем в целях безопасности. */
     mirrorUrl: function (file) {
       var name = file.name.trim() ? file.name : SM.model.basename(file.path);
       return call('GET', '/api/file/mirror-url?link=' + enc(file.link) + '&name=' + enc(name), null, true)

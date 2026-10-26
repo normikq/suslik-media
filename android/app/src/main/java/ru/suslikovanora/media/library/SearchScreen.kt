@@ -162,22 +162,22 @@ fun SearchScreen(m: SearchModel, listState: LazyListState, onLogout: () -> Unit,
                             Chip(label, m.kind == k) { m.kind = k; m.shownCount = SearchModel.PAGE }
                         }
                         Chip(tr("search.tolko_s_sidami"), m.onlySeeded) { m.onlySeeded = !m.onlySeeded; m.shownCount = SearchModel.PAGE }
-                        Chip("Только RU-трекеры", m.onlyRu) { m.onlyRu = !m.onlyRu; m.shownCount = SearchModel.PAGE }
+                        Chip(tr("search.only_ru"), m.onlyRu) { m.onlyRu = !m.onlyRu; m.shownCount = SearchModel.PAGE }
                     }
                     Row(Modifier.padding(top = 8.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("Пресет:", color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp)
+                        Text(tr("search.preset"), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp)
                         for (p in FilterPreset.entries) Chip(p.title, m.preset == p) { m.preset = p; m.shownCount = SearchModel.PAGE }
                     }
                     Row(Modifier.padding(top = 8.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("Качество:", color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp)
-                        Chip("Любое", m.resolution == null) { m.resolution = null; m.shownCount = SearchModel.PAGE }
+                        Text(tr("search.quality"), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp)
+                        Chip(tr("search.any_quality"), m.resolution == null) { m.resolution = null; m.shownCount = SearchModel.PAGE }
                         for (res in listOf(Resolution.UHD_4K, Resolution.FHD_1080P, Resolution.HD_720P)) {
                             Chip(res.label, m.resolution == res) { m.resolution = if (m.resolution == res) null else res; m.shownCount = SearchModel.PAGE }
                         }
                     }
                     Row(Modifier.padding(top = 8.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("Сортировка:", color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp)
-                        for ((so, label) in listOf(SearchSort.DEFAULT to "Обычная", SearchSort.SIZE_ASC to "Сначала лёгкие", SearchSort.SEEDS_DESC to "По сидам")) {
+                        Text(tr("search.sort"), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp)
+                        for ((so, label) in listOf(SearchSort.DEFAULT to tr("search.sort_default"), SearchSort.SIZE_ASC to tr("search.sort_size_asc"), SearchSort.SEEDS_DESC to tr("search.sort_seeds_desc"))) {
                             Chip(label, m.sort == so) { m.sort = so; m.shownCount = SearchModel.PAGE }
                         }
                     }
@@ -191,7 +191,7 @@ fun SearchScreen(m: SearchModel, listState: LazyListState, onLogout: () -> Unit,
         items(shown.take(m.shownCount), key = { it.id }) { h -> HitRow(h, m.notes[h.id], Modifier.animateItem(fadeInSpec = tween(260), fadeOutSpec = tween(180))) { m.add(h) } }
         if (shown.size > m.shownCount) item(key = "more") {
             Box(Modifier.fillMaxWidth().padding(top = 10.dp), contentAlignment = Alignment.Center) {
-                OutlineButton("Показать ещё (${shown.size - m.shownCount})") { m.shownCount += SearchModel.PAGE }
+                OutlineButton(tr("search.show_more", "count" to (shown.size - m.shownCount))) { m.shownCount += SearchModel.PAGE }
             }
         }
     }
@@ -222,25 +222,26 @@ private fun ReleaseBadges(r: ReleaseInfo) {
         }
         if (r.hdr != HdrType.NONE) ReleaseBadge(r.hdr.label, Color(0xFFFFC069), Color(0xFF241D14), Color(0xFF5A4422))
         when (r.ripType) {
-            RipType.CAM -> ReleaseBadge("CAM / Экранка", Color(0xFFFF8B85), Color(0xFF2A1010), Color(0xFF662222))
+            RipType.CAM -> ReleaseBadge(tr("search.badge_cam"), Color(0xFFFF8B85), Color(0xFF2A1010), Color(0xFF662222))
             RipType.REMUX -> ReleaseBadge("BDRemux", Color(0xFFD49BFF), Color(0xFF221430), Color(0xFF4C276E))
             RipType.BLURAY -> ReleaseBadge("Blu-ray", Color(0xFFBCA6F7), Color(0xFF1A152E), Color(0xFF382B63))
             RipType.UNKNOWN -> {}
             else -> ReleaseBadge(r.ripType.label)
         }
-        if (r.isCollection) ReleaseBadge(if (r.collectionCount != null) "Коллекция (${r.collectionCount})" else "Коллекция", Color(0xFFD6B4FC), Color(0xFF261D3B), Color(0xFF533B85))
+        if (r.isCollection) ReleaseBadge(if (r.collectionCount != null) tr("search.badge_collection_count", "count" to r.collectionCount) else tr("search.badge_collection"), Color(0xFFD6B4FC), Color(0xFF261D3B), Color(0xFF533B85))
         when (r.voice) {
-            VoiceType.DUB -> ReleaseBadge("Дубляж", Color(0xFF86B8E6), Color(0xFF14202B), Color(0xFF233A50))
+            VoiceType.DUB -> ReleaseBadge(tr("search.badge_dub"), Color(0xFF86B8E6), Color(0xFF14202B), Color(0xFF233A50))
             VoiceType.MVO -> ReleaseBadge("MVO")
             VoiceType.DVO -> ReleaseBadge("DVO")
             VoiceType.AVO -> ReleaseBadge("AVO")
-            VoiceType.ORIGINAL -> ReleaseBadge("Оригинал/Sub")
+            VoiceType.ORIGINAL -> ReleaseBadge(tr("search.badge_original"))
             VoiceType.UNKNOWN -> {}
         }
         if (r.estimatedBitrateMbps > 0f) {
             val c = when (r.bitrateTier) { BitrateTier.LIGHT -> Sm.ok; BitrateTier.MEDIUM -> Sm.lamp; BitrateTier.HEAVY -> Sm.bad }
-            val t = if (r.estimatedBitrateMbps < 1f) "< 1 Мбит/с" else "~%.1f Мбит/с".format(Locale.US, r.estimatedBitrateMbps)
-            ReleaseBadge(if (r.isCollection) "$t / фильм" else t, c, Color(0xFF12151D), Color(0xFF232A3B))
+            val mbpsStr = "%.1f".format(Locale.US, r.estimatedBitrateMbps)
+            val t = if (r.estimatedBitrateMbps < 1f) tr("search.bitrate_low") else tr("search.bitrate_mbps", "mbps" to mbpsStr)
+            ReleaseBadge(if (r.isCollection) tr("search.bitrate_per_film", "bitrate" to t) else t, c, Color(0xFF12151D), Color(0xFF232A3B))
         }
     }
 }

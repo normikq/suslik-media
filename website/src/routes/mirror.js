@@ -24,7 +24,7 @@ const PLAYLIST_MAX_ITEMS = 200;
 
 router.get("/api/file/mirror-url", requireLogin, mirrorUrlLimiter, (req, res) => {
   const parsed = safeHttpsUrl(typeof req.query.link === "string" ? req.query.link.trim() : "");
-  if (!isAllDebridFileLink(parsed)) return res.status(400).json({ error: "Некорректная ссылка на файл AllDebrid." });
+  if (!isAllDebridFileLink(parsed)) return res.status(400).json({ error: "Некорректная ссылка на медиафайл." });
   const link = parsed.toString();
   markLinkOpened(link);
   const name = cleanFileName(typeof req.query.name === "string" ? req.query.name.split(/[\\/]/).pop() : "");

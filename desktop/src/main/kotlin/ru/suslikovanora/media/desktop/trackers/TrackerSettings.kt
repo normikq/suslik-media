@@ -1,14 +1,18 @@
 package ru.suslikovanora.media.desktop.trackers
 
 import ru.suslikovanora.media.desktop.Store
+import ru.suslikovanora.media.desktop.tr
 
 data class TrackerSourceInfo(
     val id: String,
     val name: String,
-    val description: String,
-    val tag: String,
+    val descKey: String,
+    val tagKey: String,
     val isLocal: Boolean = false
-)
+) {
+    val description: String get() = tr(descKey)
+    val tag: String get() = tr(tagKey)
+}
 
 object TrackerSettings {
     private val store: Store
@@ -18,32 +22,32 @@ object TrackerSettings {
         TrackerSourceInfo(
             id = "rutor",
             name = "Rutor",
-            description = "Открытый русскоязычный трекер · Фильмы и сериалы",
-            tag = "RU · Сервер"
+            descKey = "trackers.desc_kinozal",
+            tagKey = "trackers.badge_kinozal"
         ),
         TrackerSourceInfo(
             id = "nnmclub",
             name = "NNM-Club",
-            description = "Фильмы, сериалы, классика кино, редкие и авторские релизы",
-            tag = "RU · Сервер"
+            descKey = "trackers.desc_rutor",
+            tagKey = "trackers.badge_rutor"
         ),
         TrackerSourceInfo(
             id = "tpb",
             name = "The Pirate Bay",
-            description = "Международный открытый трекер · Оригинальные дорожки, 4K UHD",
-            tag = "EN · Сервер"
+            descKey = "trackers.desc_torrentgalaxy",
+            tagKey = "trackers.badge_torrentgalaxy"
         ),
         TrackerSourceInfo(
             id = "nyaa",
             name = "Nyaa",
-            description = "Аниме, дорамы, азиатские фильмы и сериалы",
-            tag = "ANIME · Сервер"
+            descKey = "trackers.desc_nyaa",
+            tagKey = "trackers.badge_nyaa"
         ),
         TrackerSourceInfo(
             id = "rutracker",
             name = "RuTracker (ПК)",
-            description = "Прямой поиск с вашего компьютера в обход Cloudflare и блокировок",
-            tag = "ПК · Локально",
+            descKey = "trackers.desc_rutracker",
+            tagKey = "trackers.badge_rutracker",
             isLocal = true
         )
     )

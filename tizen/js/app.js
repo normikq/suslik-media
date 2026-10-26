@@ -6,13 +6,14 @@
 (function (g) {
   'use strict';
   var SM = g.SM, api = SM.api, model = SM.model, support = SM.support, nav = SM.nav, ui = SM.ui, party = SM.party;
+  var tr = SM.tr || g.tr || function (k) { return k; };
   var h = ui.h, button = ui.button, toast = ui.toast, dialog = ui.dialog;
   var root = ui.root;
 
   // Вкладки других файлов (search.js, add.js, together.js) уже в SM.tabs; порядок — как на Android
   var TABS = [
-    { id: 'home', title: 'Медиатека' }, { id: 'mine', title: 'Мои' }, { id: 'search', title: 'Поиск' },
-    { id: 'add', title: 'Добавить' }, { id: 'party', title: 'Вместе' }, { id: 'settings', title: 'Настройки' }
+    { id: 'home', title: tr('nav.library') }, { id: 'mine', title: tr('nav.mine') }, { id: 'search', title: tr('nav.search') },
+    { id: 'add', title: tr('nav.add') }, { id: 'party', title: tr('nav.together') }, { id: 'settings', title: tr('nav.settings') }
   ];
   var tabs = SM.tabs = SM.tabs || {};
 
@@ -46,13 +47,13 @@
   var pollTimer = 0;
 
   function start() {
-    if (!api.HOST) { show(h('div', { class: 'center' }, [h('h1', { text: 'Сборка без адреса сайта' }), h('p', { text: 'Соберите приложение с SITE_URL (см. tizen/README.md).' })])); return; }
-    show(ui.spinner('Подключение…'));
+    if (!api.HOST) { show(h('div', { class: 'center' }, [h('h1', { text: tr('auth.no_site_host') }), h('p', { text: tr('auth.no_site_host_desc') })])); return; }
+    show(ui.spinner(tr('auth.connecting')));
     api.get('/api/session').then(function (s) {
       if (!s.authenticated) { login(); return; }
       signedIn(s.user || null);
     }).catch(function (e) {
-      show(h('div', { class: 'center' }, [h('h1', { text: 'Нет связи с сервером' }), h('p', { text: api.describe(e) }), button('Повторить', start, 'primary')]));
+      show(h('div', { class: 'center' }, [h('h1', { text: tr('common.connection_error') }), h('p', { text: api.describe(e) }), button(tr('common.retry'), start, 'primary')]));
       nav.focusFirst();
     });
   }
@@ -74,29 +75,29 @@
     nav.onBack = askExit;
     show(h('div', { class: 'center' }, [
       h('img', { class: 'logo', src: 'icon.png', alt: '' }),
-      h('h1', { text: 'Suslik Media' }),
-      error ? h('p', { class: 'error', text: error }) : h('p', { text: 'Вход через Discord: телефоном по QR-коду или по ссылке с кодом.' }),
-      button('Войти', pair, 'primary')
+      h('h1', { text: tr('auth.login_title') }),
+      error ? h('p', { class: 'error', text: error }) : h('p', { text: tr('auth.login_intro') }),
+      button(tr('auth.login_btn'), pair, 'primary')
     ]));
     nav.focusFirst();
   }
 
   function pair() {
-    show(ui.spinner('Получаем код…'));
+    show(ui.spinner(tr('auth.getting_code')));
     nav.onBack = function () { login(); };
     api.post('/api/auth/device', { name: 'Suslik Media Samsung TV', site_url: api.SITE.replace(/\/+$/, '') }, false).then(function (res) {
       var userCode = res.user_code, code = res.code;
       var url = res.verification_url && res.verification_url.indexOf('code=') >= 0 ? res.verification_url : api.SITE + 'link?code=' + userCode;
       nav.onBack = function () { login(); };
       show(h('div', { class: 'pair' }, [
-        h('div', { class: 'pair-qr' }, [ui.qr(url, 480), h('p', { class: 'muted', text: 'Наведите камеру телефона' })]),
+        h('div', { class: 'pair-qr' }, [ui.qr(url, 480), h('p', { class: 'muted', text: tr('auth.scan_qr') })]),
         h('div', { class: 'pair-text' }, [
-          h('h1', { text: 'Вход в Suslik Media' }),
-          h('p', { text: 'Отсканируйте QR-код — код подставится сам. Или откройте ссылку и введите код:' }),
+          h('h1', { text: tr('auth.pair_title') }),
+          h('p', { text: tr('auth.pair_desc') }),
           h('div', { class: 'link', text: api.SITE.replace(/^https?:\/\//, '') + 'link' }),
           h('div', { class: 'code', text: userCode }),
-          h('p', { class: 'muted', text: 'Код действует 10 минут. Экран обновится сам после входа.' }),
-          button('Отмена', function () { login(); })
+          h('p', { class: 'muted', text: tr('auth.pair_expiry') }),
+          button(tr('common.cancel'), function () { login(); })
         ])
       ]));
       nav.focusFirst();
@@ -110,17 +111,17 @@
             clearInterval(pollTimer);
             api.setToken(r.device_token || null);
             api.get('/api/session').then(function (s) { signedIn(s.user || null); }, function () { signedIn(null); });
-          } else if (r.status === 'expired') login('Код истёк, получите новый.');
+          } else if (r.status === 'expired') login(tr('auth.code_expired'));
         }).catch(function (e) {
           polling = false;
-          if (e && (e.code === 410 || e.code === 404)) login('Код истёк, получите новый.');
+          if (e && (e.code === 410 || e.code === 404)) login(tr('auth.code_expired'));
         });
       }, 2000);
     }).catch(function (e) { login(api.describe(e)); });
   }
 
   function askExit() {
-    dialog('Закрыть Suslik Media?', null, [{ text: 'Закрыть', run: exit }, { text: 'Отмена' }]);
+    dialog(tr('app.exit_confirm'), null, [{ text: tr('common.close'), run: exit }, { text: tr('common.cancel') }]);
   }
 
   function exit() {
@@ -128,8 +129,8 @@
   }
 
   function logout() {
-    dialog('Выйти из аккаунта?', 'Прогресс просмотра на телевизоре останется.', [
-      { text: 'Выйти', run: function () {
+    dialog(tr('settings.logout_confirm'), tr('settings.logout_hint'), [
+      { text: tr('settings.logout'), run: function () {
         party.leave();
         api.post('/api/logout').catch(function () {});
         api.setToken(null);
@@ -137,7 +138,7 @@
         posters.clear();
         login();
       } },
-      { text: 'Отмена' }
+      { text: tr('common.cancel') }
     ]);
   }
 
@@ -148,7 +149,7 @@
   function loadLibrary(force) {
     if (!force && Date.now() - state.loadedAt < 60000) return Promise.resolve(state.items);
     if (loading) return loading;
-    if (!state.loadedAt) show(ui.spinner('Загружаем медиатеку…'));
+    if (!state.loadedAt) show(ui.spinner(tr('library.refreshing')));
     loading = api.get('/api/library').then(function (json) {
       loading = null;
       // Раздачи только с озвучками (.mka) играют внутри фильма — плиткой их не показываем
@@ -160,9 +161,9 @@
       loading = null;
       if (e && e.code === 401) { api.setToken(null); login(); throw e; }
       if (!state.loadedAt) {
-        show(h('div', { class: 'center' }, [h('h1', { text: 'Не удалось загрузить медиатеку' }), h('p', { text: api.describe(e) }), button('Повторить', start, 'primary')]));
+        show(h('div', { class: 'center' }, [h('h1', { text: tr('library.load_error') }), h('p', { text: api.describe(e) }), button(tr('common.retry'), start, 'primary')]));
         nav.focusFirst();
-      } else toast('Медиатека не обновилась: ' + api.describe(e));
+      } else toast(tr('library.update_error', { error: api.describe(e) }));
       throw e;
     });
     return loading;
@@ -208,7 +209,7 @@
     l.forEach(function (f) { try { f(); } catch (e) { /* ничего */ } });
     contentEl.innerHTML = '';
     if (id === 'home') renderHome(contentEl);
-    else if (id === 'mine') renderGrid(contentEl, state.items.filter(function (it) { return it.m.mine; }), 'В «Моих» пока ничего нет. Откройте раздачу и нажмите «В Мои».', 'mine');
+    else if (id === 'mine') renderGrid(contentEl, state.items.filter(function (it) { return it.m.mine; }), tr('library.empty_mine'), 'mine');
     else if (id === 'settings') renderSettings(contentEl);
     else if (tabs[id]) tabs[id].render(contentEl);
   }
@@ -241,11 +242,11 @@
   function renderHome(box) {
     var cont = continueList();
     if (cont.length) {
-      box.appendChild(h('h2', { class: 'section', text: 'Продолжить просмотр' }));
+      box.appendChild(h('h2', { class: 'section', text: tr('library.hero_continue') }));
       box.appendChild(h('div', { class: 'strip' }, cont.map(continueCard)));
-      box.appendChild(h('h2', { class: 'section', text: 'Все раздачи' }));
+      box.appendChild(h('h2', { class: 'section', text: tr('library.all_releases') }));
     }
-    renderGrid(box, state.items, 'Медиатека пуста. Найдите фильм во вкладке «Поиск».', 'home');
+    renderGrid(box, state.items, tr('library.empty'), 'home');
   }
 
   /** Страница — 3 ряда постеров (слабому ТВ хватает памяти и времени); сколько их в ряду, столько и ставится. Остальные — на следующих страницах. */
@@ -340,7 +341,7 @@
       poster,
       h('div', { class: 'card-bar' }, [h('div', { style: 'width:' + Math.round(c.fraction * 100) + '%' })]),
       h('div', { class: 'tile-name', text: en.label }),
-      h('div', { class: 'tile-sub', text: c.next ? 'Следующая серия' : 'Осталось ' + left(c) })
+      h('div', { class: 'tile-sub', text: c.next ? tr('library.next_episode') : tr('library.left_time', { time: left(c) }) })
     ]);
     posterInto(poster, c.it);
     return el;
@@ -358,15 +359,15 @@
     var poster = h('div', { class: 'poster' }, [h('span', { class: 'poster-title', text: it.baseTitle })]);
     var badges = [];
     if (!m.ready) badges.push(h('span', { class: 'badge', text: model.statusRu(m) + (m.downloading ? ' ' + Math.round(m.progress * 100) + '%' : '') }));
-    if (check.level === 'no') badges.push(h('span', { class: 'badge bad', text: 'Не поддерживается' }));
+    if (check.level === 'no') badges.push(h('span', { class: 'badge bad', text: tr('library.badge_unsupported') }));
     else if (check.level === 'warn') badges.push(h('span', { class: 'badge warn', text: '⚠' }));
-    else if (check.level === 'server') badges.push(h('span', { class: 'badge server', text: 'Через сервер' }));
+    else if (check.level === 'server') badges.push(h('span', { class: 'badge server', text: tr('library.badge_via_server') }));
     if (group.some(function (v) { return v.m.mine; })) badges.push(h('span', { class: 'badge mine', text: '★' }));
     if (group.length > 1) badges.push(h('span', { class: 'badge', text: versionsWord(group.length) }));
     var key = 't' + m.id;
     var el = h('div', { class: 'f tile' + (m.ready ? '' : ' dim'), tabindex: '-1', 'data-key': key, onclick: function () {
       state.focusKey = key;
-      if (!m.ready) { toast('Раздача ещё не готова: ' + model.statusRu(m)); return; }
+      if (!m.ready) { toast(tr('library.not_ready', { status: model.statusRu(m) })); return; }
       if (group.length > 1) pickVersion(it.baseTitle, group); else details(it);
     } }, [poster, h('div', { class: 'badges' }, badges), h('div', { class: 'tile-name', text: it.baseTitle })]);
     posterInto(poster, it);
@@ -377,7 +378,7 @@
 
   /** «Какую версию включить?»: строка на раздачу — серии и сезоны в ней, размер и имя; открывает её экран. */
   function pickVersion(title, versions) {
-    dialog('Какую версию включить?', title + ' · ' + versionsWord(versions.length), versions.map(function (v) {
+    dialog(tr('library.pick_version_title'), title + ' · ' + versionsWord(versions.length), versions.map(function (v) {
       var q = /2160p|4k/i.test(v.m.name) ? '4K' : /720p/i.test(v.m.name) ? '720p' : '1080p';
       var head = v.playable.kind === 'series' ? model.seriesLine(v.playable) + ' • ' + q : q;
       return { text: head + ' · ' + model.formatBytes(v.m.size) + ' · ' + shorten(v.m.name, 60), run: function () { details(v); } };
@@ -494,30 +495,30 @@
     entries.forEach(function (en, i) {
       if (p.kind === 'series' && p.seasons.length > 1 && en.season !== lastSeason) {
         lastSeason = en.season;
-        rows.push(h('h3', { text: en.season === 0 ? 'Спецвыпуски' : 'Сезон ' + en.season }));
+        rows.push(h('h3', { text: en.season === 0 ? tr('player.specials') : tr('player.season', { season: en.season }) }));
       }
       rows.push(entryRow(it, entries, i));
     });
-    if (!entries.length) rows.push(h('p', { class: 'muted', text: 'В раздаче нет видео.' }));
+    if (!entries.length) rows.push(h('p', { class: 'muted', text: tr('library.no_video') }));
     var back = function () { shell(state.tab, true); };
     var resumeAt = resumeIndex(m, entries);
     var actions = [];
     if (entries.length) {
       var w = watch.get(model.watchKey(m.id, entries[resumeAt].file));
-      var label = w && !w.watched && w.pos > 30000 ? '▶ Продолжить с ' + ui.clock(w.pos) : '▶ Смотреть';
+      var label = w && !w.watched && w.pos > 30000 ? tr('player.resume', { time: ui.clock(w.pos) }) : tr('player.play');
       if (entries.length > 1) label += ' · ' + entries[resumeAt].label.replace(it.baseTitle, '').replace(/^[\s·—-]+/, '');
       actions.push(button(label, function () { open(it, entries, resumeAt, { back: function () { details(it); } }); }, 'primary play'));
       // Начато — можно и с начала (с места — основная кнопка)
       if (w && !w.watched && w.pos > 30000) {
-        actions.push(button('↺ Смотреть заново', function () { open(it, entries, resumeAt, { back: function () { details(it); }, resumeAt: 0 }); }));
+        actions.push(button(tr('player.from_beginning'), function () { open(it, entries, resumeAt, { back: function () { details(it); }, resumeAt: 0 }); }));
       }
     }
-    var mineBtn = button(m.mine ? '★ В «Моих»' : '☆ В «Мои»', function () {
+    var mineBtn = button(m.mine ? '★ ' + tr('library.in_mine') : '☆ ' + tr('library.to_mine'), function () {
       var on = !m.mine;
       api.post('/api/shelf', { id: String(m.id), mine: on }).then(function () {
         m.mine = on;
-        mineBtn.textContent = on ? '★ В «Моих»' : '☆ В «Мои»';
-        toast(on ? 'Добавлено в «Мои»' : 'Убрано из «Моих»');
+        mineBtn.textContent = on ? '★ ' + tr('library.in_mine') : '☆ ' + tr('library.to_mine');
+        toast(on ? tr('library.added_to_mine') : tr('library.removed_from_mine'));
       }).catch(function (e) { toast(api.describe(e)); });
     });
     actions.push(mineBtn);
@@ -574,14 +575,14 @@
   /** Открыть файл в плеере. [o]: { back — куда после закрытия, resumeAt — с какого места (мс), room — фильм комнаты }. */
   function open(it, entries, i, o) {
     var en = entries[i];
-    if (!en.file.link) { toast('Ссылка на файл ещё не готова. Обновите медиатеку.'); return; }
+    if (!en.file.link) { toast(tr('player.link_not_ready')); return; }
     var key = model.watchKey(it.m.id, en.file);
     var rf = party.room.file;
     if (!o.room && party.isGuest() && rf && rf.key !== key) {
-      dialog('Вы в комнате «Вместе»', 'Фильм комнаты выбирает ' + (party.room.hostName || 'её создатель') + '.', [
-        { text: 'Смотреть фильм комнаты', run: followRoom },
-        { text: 'Выйти из комнаты и открыть', run: function () { party.leave(); open(it, entries, i, o); } },
-        { text: 'Отмена' }
+      dialog(tr('together.in_room_dialog_title'), tr('together.in_room_dialog_desc', { host: (party.room.hostName || tr('together.host')) }), [
+        { text: tr('together.watch_room_film'), run: followRoom },
+        { text: tr('together.leave_and_open'), run: function () { party.leave(); open(it, entries, i, o); } },
+        { text: tr('common.cancel') }
       ]);
       return;
     }
@@ -597,7 +598,7 @@
         onEntry: function (j) { open(it, entries, j, { back: o.back, room: o.room }); }
       });
     };
-    if (check.level === 'no') dialog(support.MESSAGES.unsupported, check.text + '.', [{ text: 'Всё равно попробовать', run: go }, { text: 'Назад' }]);
+    if (check.level === 'no') dialog(support.MESSAGES.unsupported, check.text + '.', [{ text: tr('player.try_anyway'), run: go }, { text: tr('common.back') }]);
     else go();
   }
 
@@ -612,7 +613,7 @@
     if (SM.player.current() === f.key) return;
     var found = findKey(f.key);
     var go = function (hit) {
-      if (!hit) { toast('Фильма комнаты нет в медиатеке (или он ещё загружается).'); return; }
+      if (!hit) { toast(tr('together.room_film_not_found')); return; }
       open(hit.it, hit.entries, hit.index, { back: function () { shell('party', true); }, room: true, resumeAt: party.targetMs() });
     };
     if (found) go(found);
@@ -632,7 +633,7 @@
 
   party.onChange(function () {
     var t = document.querySelector('.tab[data-tab="party"]');
-    if (t) t.textContent = 'Вместе' + (party.inRoom() ? ' ●' : '');
+    if (t) t.textContent = tr('nav.together') + (party.inRoom() ? ' ●' : '');
     var f = party.room.file;
     if (!party.isGuest() || !f) { if (!party.inRoom()) followed = null; return; }
     if (f.key === followed) return;
@@ -648,23 +649,22 @@
     var u = state.user;
     var rows = [
       h('div', { class: 'card-row' }, [
-        h('h2', { text: 'Аккаунт' }),
-        h('p', { text: u ? (u.name || u.username || 'Без имени') + (u.id === 'shared' ? ' (общий вход)' : '') : 'Вход выполнен' }),
-        h('p', { class: 'muted', text: SM.sync.active() ? 'Прогресс просмотра общий с компьютером и телефоном.' : 'Прогресс просмотра хранится только на этом телевизоре (общий — при входе через Discord).' }),
-        button('Выйти из аккаунта', logout)
+        h('h2', { text: tr('settings.account') }),
+        h('p', { text: u ? (u.name || u.username || 'Без имени') + (u.id === 'shared' ? tr('settings.shared_login') : '') : 'Вход выполнен' }),
+        h('p', { class: 'muted', text: SM.sync.active() ? tr('settings.sync_on') : tr('settings.sync_off') }),
+        button(tr('settings.logout'), logout)
       ]),
       h('div', { class: 'card-row' }, [
-        h('h2', { text: 'Приложение' }),
-        h('p', { text: 'Версия ' + SM.VERSION + ' для Samsung TV' }),
-        h('div', { class: 'row left' }, [button('Что нового', function () { whatsNew(); }), button('Обновить медиатеку', function () {
-          loadLibrary(true).then(function () { toast('Медиатека обновлена'); }, function () {});
+        h('h2', { text: tr('settings.app_title') }),
+        h('p', { text: tr('settings.version_label', { version: SM.VERSION }) }),
+        h('div', { class: 'row left' }, [button(tr('settings.whats_new'), function () { whatsNew(); }), button(tr('library.refresh'), function () {
+          loadLibrary(true).then(function () { toast(tr('library.refreshed')); }, function () {});
         })])
       ]),
       h('div', { class: 'card-row' }, [
-        h('h2', { text: 'Запас видео' }),
-        h('p', { class: 'muted', text: 'Большой запас: плеер набирает 8 с видео перед стартом и 15 с после остановки — меньше рывков на тяжёлых файлах, ' +
-          'но старт и перемотка дольше, а на некоторых телевизорах экран на это время замирает. Применяется при следующем открытии фильма.' }),
-        h('div', { class: 'row left' }, [['std', 'Как у телевизора'], ['big', 'Большой']].map(function (o) {
+        h('h2', { text: tr('settings.buffer_title') }),
+        h('p', { class: 'muted', text: tr('settings.buffer_desc') }),
+        h('div', { class: 'row left' }, [['std', tr('settings.buffer_std')], ['big', tr('settings.buffer_big')]].map(function (o) {
           var on = (localStorage.getItem('tv_buffer') || 'std') === o[0];
           var b = button((on ? '● ' : '') + o[1], function () {
             try { localStorage.setItem('tv_buffer', o[0]); } catch (e) { /* нет хранилища */ }
@@ -675,9 +675,8 @@
         }))
       ]),
       h('div', { class: 'card-row' }, [
-        h('h2', { text: 'Что телевизор не воспроизводит' }),
-        h('p', { class: 'muted', text: 'Звук DTS и TrueHD, видео AV1, образы дисков .iso; Blu-ray (.m2ts) и очень тяжёлые файлы могут идти рывками. ' +
-          'Такие раздачи помечены ⚠ или ⛔. Озвучки и субтитры отдельными файлами пока недоступны. В плеере жёлтая кнопка показывает пробу: какие дорожки увидел телевизор.' })
+        h('h2', { text: tr('settings.unsupported_formats_title') }),
+        h('p', { class: 'muted', text: tr('settings.unsupported_formats_desc') })
       ])
     ];
     rows.forEach(function (r) { box.appendChild(r); });
@@ -691,9 +690,9 @@
     });
     var prevBack = nav.onBack, prevRoot = nav.root, prevFocus = document.activeElement;
     var box = h('div', { class: 'dialog' }, [h('div', { class: 'dialog-box wide' }, [
-      h('h2', { text: 'Что нового' }),
+      h('h2', { text: tr('settings.whats_new') }),
       h('div', { class: 'changelog' }, items),
-      h('div', { class: 'row' }, [button('Понятно', close, 'primary')])
+      h('div', { class: 'row' }, [button(tr('common.understand'), close, 'primary')])
     ])]);
     function close() {
       if (!box.parentNode) return;

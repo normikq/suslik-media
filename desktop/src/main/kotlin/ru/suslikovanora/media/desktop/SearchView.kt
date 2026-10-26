@@ -160,9 +160,9 @@ fun SearchView(lib: Library, header: @Composable () -> Unit) {
                         val cleanLocalHits = localHits.filter { !ReleaseParser.isNonVideo(it.title) }
                         val existingTopics = combinedHits.mapNotNull { it.topicId }.toSet()
                         combinedHits.addAll(0, cleanLocalHits.filter { it.topicId == null || it.topicId !in existingTopics })
-                        combinedProviders.add(SearchProviderInfo(name = "RuTracker (ПК)", ok = true, count = cleanLocalHits.size, error = ""))
+                        combinedProviders.add(SearchProviderInfo(name = tr("search.rutracker_pc"), ok = true, count = cleanLocalHits.size, error = ""))
                     }?.onFailure { err ->
-                        combinedProviders.add(SearchProviderInfo(name = "RuTracker (ПК)", ok = false, count = 0, error = err.message ?: "Ошибка"))
+                        combinedProviders.add(SearchProviderInfo(name = tr("search.rutracker_pc"), ok = false, count = 0, error = err.message ?: tr("search.error_title")))
                     }
                     val pending = ruDef != null && ruRes == null
                     hits = combinedHits
@@ -170,10 +170,10 @@ fun SearchView(lib: Library, header: @Composable () -> Unit) {
                     ruSearching = pending
                     val failed = combinedProviders.count { !it.ok }
                     val tookSec = "%.1f".format((System.currentTimeMillis() - t0) / 1000.0)
-                    val wait = if (pending) " · RuTracker (ПК) ещё ищет…" else ""
+                    val wait = if (pending) tr("search.rutracker_still_searching") else ""
 
                     if (serverRes.isFailure && ruRes?.isSuccess != true) {
-                        status = Api.describe(serverRes.exceptionOrNull() ?: Exception("Ошибка поиска")) + wait
+                        status = Api.describe(serverRes.exceptionOrNull() ?: Exception(tr("search.error_searching"))) + wait
                         statusOk = false
                     } else {
                         status = (if (combinedHits.isEmpty()) tr("search.nichego_ne_naydeno")
@@ -209,14 +209,14 @@ fun SearchView(lib: Library, header: @Composable () -> Unit) {
                     if (!h.magnet.isNullOrBlank()) {
                         Api.post("/api/magnets", JSONObject().put("magnet", h.magnet))
                     } else if (!tid.isNullOrBlank() && h.localTrackerId == "rutracker") {
-                        notes.value = notes.value + (h.id to ("Скачиваю .torrent с RuTracker..." to true))
+                        notes.value = notes.value + (h.id to (tr("search.downloading_torrent") to true))
                         val torrentBytes = RuTrackerTracker.downloadTorrent(tid)
-                            ?: throw IllegalStateException("Не удалось скачать .torrent с RuTracker")
+                            ?: throw IllegalStateException(tr("search.failed_download_torrent"))
                         val safeName = (h.release.cleanTitle.ifBlank { h.title })
                             .replace(Regex("[^a-zA-Z0-9а-яА-ЯёЁ ._-]"), "_").take(80) + ".torrent"
                         Api.postTorrent(torrentBytes, safeName)
                     } else {
-                        throw IllegalStateException("Нет magnet-ссылки или .torrent")
+                        throw IllegalStateException(tr("search.no_link_or_torrent"))
                     }
                 } else {
                     Api.post("/api/search/add", JSONObject().put("id", h.id))
@@ -293,7 +293,7 @@ fun SearchView(lib: Library, header: @Composable () -> Unit) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 GearIcon(color = if (isLocalActive) Sm.accent else Sm.text, size = 15.dp)
                                 Text(
-                                    "Трекеры" + if (isLocalActive) " (ПК ✓)" else "",
+                                    tr("search.trackers_button") + if (isLocalActive) tr("search.trackers_pc_badge") else "",
                                     fontFamily = Onest,
                                     fontWeight = FontWeight.Medium,
                                     fontSize = 13.sp,
@@ -303,7 +303,7 @@ fun SearchView(lib: Library, header: @Composable () -> Unit) {
                         }
                     }
                 if (providers.isNotEmpty() || ruSearching) FlowRow(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (ruSearching) Text("⋯ RuTracker (ПК) · ищем", color = Sm.muted, fontFamily = Onest, fontSize = 12.sp,
+                    if (ruSearching) Text(tr("search.rutracker_searching"), color = Sm.muted, fontFamily = Onest, fontSize = 12.sp,
                         modifier = Modifier.clip(RoundedCornerShape(999.dp)).background(Color(0xFF161A24))
                             .border(1.dp, Sm.line, RoundedCornerShape(999.dp)).padding(horizontal = 10.dp, vertical = 4.dp))
                     providers.forEach { p ->
@@ -328,31 +328,31 @@ fun SearchView(lib: Library, header: @Composable () -> Unit) {
                             Chip(label, kind == k) { kind = k; currentPage = 1 }
                         }
                         Chip(tr("search.tolko_s_sidami"), onlySeeded) { onlySeeded = !onlySeeded; currentPage = 1 }
-                        Chip("Только RU-трекеры", onlyRu) { onlyRu = !onlyRu; currentPage = 1 }
+                        Chip(tr("search.only_ru"), onlyRu) { onlyRu = !onlyRu; currentPage = 1 }
                         Box(Modifier.weight(1f)) { Field(refine, { refine = it; currentPage = 1 }, tr("search.utochnit_p_p_rus")) }
                     }
 
                     // Row 2: Presets (including Mobile), Resolution & Sort
                     Row(Modifier.fillMaxWidth().padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Пресет:", color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp)
+                        Text(tr("search.preset"), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp)
                         for (p in FilterPreset.entries) {
                             Chip(p.title, preset == p) { preset = p; currentPage = 1 }
                         }
 
                         Spacer(Modifier.width(8.dp))
-                        Text("Качество:", color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp)
-                        Chip("Любое", resolution == null) { resolution = null; currentPage = 1 }
+                        Text(tr("search.quality"), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp)
+                        Chip(tr("search.any_quality"), resolution == null) { resolution = null; currentPage = 1 }
                         for (res in listOf(Resolution.UHD_4K, Resolution.FHD_1080P, Resolution.HD_720P)) {
                             Chip(res.label, resolution == res) { resolution = if (resolution == res) null else res; currentPage = 1 }
                         }
 
                         Spacer(Modifier.weight(1f))
-                        Text("Сортировка:", color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp)
+                        Text(tr("search.sort"), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp)
                         for (s in listOf(SearchSort.DEFAULT, SearchSort.SIZE_ASC, SearchSort.SEEDS_DESC)) {
                             val label = when (s) {
-                                SearchSort.DEFAULT -> "Обычная"
-                                SearchSort.SIZE_ASC -> "Сначала лёгкие"
-                                SearchSort.SEEDS_DESC -> "По сидам"
+                                SearchSort.DEFAULT -> tr("search.sort_default")
+                                SearchSort.SIZE_ASC -> tr("search.sort_size_asc")
+                                SearchSort.SEEDS_DESC -> tr("search.sort_seeds_desc")
                                 else -> s.title
                             }
                             Chip(label, sort == s) { sort = s; currentPage = 1 }
@@ -452,7 +452,7 @@ fun SearchView(lib: Library, header: @Composable () -> Unit) {
                             "cartoon" -> tr("search.multfilm")
                             else -> null
                         }?.let { Text(it, color = Sm.muted, fontFamily = Onest, fontSize = 13.sp) }
-                        Text(h.source + if (h.localTrackerId != null && !h.source.contains("(ПК)")) " (ПК)" else "", color = Sm.muted, fontFamily = Onest, fontSize = 13.sp)
+                        Text(h.source + if (h.localTrackerId != null && !h.source.contains(tr("search.pc_source_suffix"))) tr("search.pc_source_suffix") else "", color = Sm.muted, fontFamily = Onest, fontSize = 13.sp)
                         if (h.date.isNotBlank()) Text(h.date, color = Sm.muted, fontFamily = Onest, fontSize = 13.sp)
                     }
                     note?.let { (t, ok) -> Text(t, color = if (ok) Sm.ok else Sm.bad, fontFamily = Onest, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp)) }
@@ -555,7 +555,7 @@ private fun ReleaseBadges(release: ReleaseInfo) {
 
         // 4. Rip Type
         when (release.ripType) {
-            RipType.CAM -> ReleaseBadge(text = "CAM / Экранка", bg = Color(0xFF2A1010), edge = Color(0xFF662222), fg = Color(0xFFFF8B85))
+            RipType.CAM -> ReleaseBadge(text = tr("search.badge_cam"), bg = Color(0xFF2A1010), edge = Color(0xFF662222), fg = Color(0xFFFF8B85))
             RipType.REMUX -> ReleaseBadge(text = "BDRemux", bg = Color(0xFF221430), edge = Color(0xFF4C276E), fg = Color(0xFFD49BFF))
             RipType.BLURAY -> ReleaseBadge(text = "Blu-ray", bg = Color(0xFF1A152E), edge = Color(0xFF382B63), fg = Color(0xFFBCA6F7))
             RipType.BDRIP -> ReleaseBadge(text = "BDRip")
@@ -568,7 +568,7 @@ private fun ReleaseBadges(release: ReleaseInfo) {
 
         // 5. Collection
         if (release.isCollection) {
-            val text = if (release.collectionCount != null) "Коллекция (${release.collectionCount})" else "Коллекция"
+            val text = if (release.collectionCount != null) tr("search.badge_collection_count", "count" to release.collectionCount) else tr("search.badge_collection")
             ReleaseBadge(
                 text = text,
                 bg = Color(0xFF261D3B),
@@ -579,22 +579,23 @@ private fun ReleaseBadges(release: ReleaseInfo) {
 
         // 6. Voice
         when (release.voice) {
-            VoiceType.DUB -> ReleaseBadge(text = "Дубляж", bg = Color(0xFF14202B), edge = Color(0xFF233A50), fg = Color(0xFF86B8E6))
+            VoiceType.DUB -> ReleaseBadge(text = tr("search.badge_dub"), bg = Color(0xFF14202B), edge = Color(0xFF233A50), fg = Color(0xFF86B8E6))
             VoiceType.MVO -> ReleaseBadge(text = "MVO")
             VoiceType.DVO -> ReleaseBadge(text = "DVO")
             VoiceType.AVO -> ReleaseBadge(text = "AVO")
-            VoiceType.ORIGINAL -> ReleaseBadge(text = "Оригинал/Sub")
+            VoiceType.ORIGINAL -> ReleaseBadge(text = tr("search.badge_original"))
             VoiceType.UNKNOWN -> {}
         }
 
         // 7. Bitrate indicator (with color dot)
         if (release.estimatedBitrateMbps > 0f) {
+            val mbpsStr = "%.1f".format(Locale.US, release.estimatedBitrateMbps)
             val (dotColor, textStr) = when (release.bitrateTier) {
-                BitrateTier.LIGHT -> Sm.ok to (if (release.estimatedBitrateMbps < 1f) "< 1 Мбит/с" else "~%.1f Мбит/с".format(Locale.US, release.estimatedBitrateMbps))
-                BitrateTier.MEDIUM -> Sm.lamp to "~%.1f Мбит/с".format(Locale.US, release.estimatedBitrateMbps)
-                BitrateTier.HEAVY -> Sm.bad to "~%.1f Мбит/с".format(Locale.US, release.estimatedBitrateMbps)
+                BitrateTier.LIGHT -> Sm.ok to (if (release.estimatedBitrateMbps < 1f) tr("search.bitrate_low") else tr("search.bitrate_mbps", "mbps" to mbpsStr))
+                BitrateTier.MEDIUM -> Sm.lamp to tr("search.bitrate_mbps", "mbps" to mbpsStr)
+                BitrateTier.HEAVY -> Sm.bad to tr("search.bitrate_mbps", "mbps" to mbpsStr)
             }
-            val fullText = if (release.isCollection) "$textStr / фильм" else textStr
+            val fullText = if (release.isCollection) tr("search.bitrate_per_film", "bitrate" to textStr) else textStr
             ReleaseBadge(
                 text = fullText,
                 dot = dotColor,

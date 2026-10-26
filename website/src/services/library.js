@@ -32,7 +32,7 @@ async function buildLibrary(gen = libraryGen) {
     }
   );
   if (statusResponse.status < 200 || statusResponse.status >= 300 || statusResponse.data?.status === "error") {
-    const err = new Error(statusResponse.data?.error?.message || "Не удалось загрузить список magnet-ссылок из AllDebrid.");
+    const err = new Error(statusResponse.data?.error?.message || "Не удалось загрузить список раздач из облачного хранилища.");
     err.userMessage = err.message;
     throw err;
   }

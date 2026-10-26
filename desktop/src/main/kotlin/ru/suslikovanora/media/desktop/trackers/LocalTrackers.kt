@@ -6,6 +6,7 @@ import org.json.JSONArray
 import ru.suslikovanora.media.core.search.ReleaseParser
 import ru.suslikovanora.media.core.search.SearchHit
 import ru.suslikovanora.media.desktop.Store
+import ru.suslikovanora.media.desktop.tr
 import java.net.URI
 import java.net.URLEncoder
 import java.net.http.HttpClient
@@ -73,12 +74,12 @@ object RuTrackerTracker : LocalTracker {
     fun validateRutrackerUrl(urlStr: String): String {
         val trimmed = urlStr.trim().removeSuffix("/")
         val uri = URI.create(trimmed)
-        require(uri.scheme == "https") { "Поддерживается только безопасный протокол https://" }
+        require(uri.scheme == "https") { tr("trackers.only_https") }
         val host = uri.host?.lowercase(Locale.ROOT) ?: ""
         val isAllowed = host == "rutracker.org" || host.endsWith(".rutracker.org") ||
                 host == "rutracker.net" || host.endsWith(".rutracker.net") ||
                 host == "rutracker.nl" || host.endsWith(".rutracker.nl")
-        require(isAllowed) { "Разрешены только официальные зеркала RuTracker (rutracker.org, rutracker.net, rutracker.nl)" }
+        require(isAllowed) { tr("trackers.allowed_mirrors") }
         return trimmed
     }
 
@@ -128,9 +129,9 @@ object RuTrackerTracker : LocalTracker {
 
     override suspend fun testConnection(): Pair<Boolean, String> = withContext(Dispatchers.IO) {
         val c = normalizeCookie(cookie)
-        if (c.isBlank()) return@withContext false to "Куки не заданы"
+        if (c.isBlank()) return@withContext false to tr("trackers.no_cookies")
         val base = runCatching { validateRutrackerUrl(url.ifBlank { defaultUrl }) }.getOrElse {
-            return@withContext false to (it.message ?: "Неверный URL трекера")
+            return@withContext false to (it.message ?: tr("trackers.invalid_url"))
         }
         val cookieMap = parseCookieMap(c)
 
@@ -138,8 +139,8 @@ object RuTrackerTracker : LocalTracker {
         if (EdgeBrowserBridge.isAnyAvailable) {
             val res = EdgeBrowserBridge.checkConnection(base, cookieMap)
             if (res.first) return@withContext res
-            if (res.second.contains("Сессия не принята")) return@withContext res
-            if (!res.second.contains("Cloudflare") && !res.second.contains("таймаут")) return@withContext res
+            if (res.second.contains("Сессия не принята") || res.second.contains(tr("trackers.session_rejected"))) return@withContext res
+            if (!res.second.contains("Cloudflare") && !res.second.contains("таймаут") && !res.second.contains(tr("trackers.timeout"))) return@withContext res
         }
 
         // 2. Запасной прямой HTTP-запрос (если браузер не установлен или отключен)
@@ -156,8 +157,8 @@ object RuTrackerTracker : LocalTracker {
             val html = String(res.body(), cp1251)
 
             if (html.contains("Just a moment") || html.contains("challenge-platform")) {
-                val tip = if (EdgeBrowserBridge.isAnyAvailable) " (нажмите «🔑 Войти через ${EdgeBrowserBridge.activeBrowserName}»)" else ""
-                return@withContext false to "Cloudflare-проверка: используйте вход через браузер или зеркало rutracker.net$tip"
+                val tip = if (EdgeBrowserBridge.isAnyAvailable) tr("trackers.tip_login_button", "browser" to EdgeBrowserBridge.activeBrowserName) else ""
+                return@withContext false to tr("trackers.cloudflare_check", "tip" to tip)
             }
 
             val userMatch = Regex("""logged-in-username[^>]*>([^<]+)""").find(html)
@@ -166,16 +167,16 @@ object RuTrackerTracker : LocalTracker {
 
             if (userMatch != null) {
                 val browserNote = if (EdgeBrowserBridge.isAnyAvailable) " · ${EdgeBrowserBridge.activeBrowserName}" else ""
-                return@withContext true to "✓ Авторизован как ${userMatch.groupValues[1].trim()}$browserNote"
+                return@withContext true to tr("trackers.authorized_as", "user" to userMatch.groupValues[1].trim(), "note" to browserNote)
             }
 
             if (html.contains("name=\"login_username\"")) {
-                return@withContext false to "Сессия не принята (обновите bb_session cookie)"
+                return@withContext false to tr("trackers.session_rejected")
             }
 
-            false to "Не удалось проверить ответ трекера"
+            false to tr("trackers.failed_check_response")
         } catch (e: Exception) {
-            false to (e.message ?: "Ошибка подключения")
+            false to (e.message ?: tr("trackers.connection_error"))
         }
     }
 
