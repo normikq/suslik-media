@@ -2,6 +2,7 @@ package ru.suslikovanora.media.library
 
 import ru.suslikovanora.media.ui.focusRing
 import ru.suslikovanora.media.core.*
+import ru.suslikovanora.media.core.torrent.TorrentInspector
 
 import android.content.ClipboardManager
 import android.content.Context
@@ -145,6 +146,8 @@ class AddModel(context: Context, private val scope: CoroutineScope, private val 
     private fun addMagnet(link: String) {
         val e = AddEntry("m:" + System.nanoTime(), magnetName(link), 0, tr("add.otpravlyayu"), -1, false, false, System.currentTimeMillis())
         history.add(0, e)
+        // Имя dn уже говорит, что это не видео — на сервер не отправляем
+        TorrentInspector.rejectionForMagnetName(e.title)?.let { e.status = it; e.failed = true; save(); return }
         scope.launch {
             try {
                 val r = Api.post("/api/magnets", JSONObject().put("magnet", link), repeatable = false)
@@ -164,6 +167,8 @@ class AddModel(context: Context, private val scope: CoroutineScope, private val 
                     val bytes = withContext(Dispatchers.IO) { context.contentResolver.openInputStream(t.uri)?.use { readAtMost(it, 1024 * 1024 + 1) } }
                         ?: throw IllegalStateException(tr("add.ne_udalos_prochitat_fayl"))
                     if (bytes.size > 1024 * 1024) throw IllegalStateException(tr("add.fayl_bolshe_mb"))
+                    // Список файлов виден в самом .torrent — раздачу без видео на сервер не отправляем
+                    TorrentInspector.rejectionForTorrent(bytes)?.let { e.status = it; e.failed = true; save(); return@launch }
                     accepted(e, Api.postTorrent(bytes, t.name))
                 } catch (ex: Exception) { e.status = Api.describe(ex); e.failed = true; save() }
             }
@@ -181,7 +186,20 @@ class AddModel(context: Context, private val scope: CoroutineScope, private val 
         val i = history.indexOf(placeholder)
         if (i >= 0) history[i] = e else history.add(0, e)
         save()
-        if (ready) scope.launch { store.refresh() } else follow(e)
+        if (ready) scope.launch { noVideoCheck(e); store.refresh() } else follow(e)
+    }
+
+    /**
+     * Раздача готова: список файлов AllDebrid отдаёт только теперь. Нет видео — просим удалить (готовую удаляет только админ).
+     * Не получили список — не мешаем.
+     */
+    private suspend fun noVideoCheck(e: AddEntry) {
+        val files = runCatching { Api.get("/api/magnets/${e.magnetId}/files").optJSONArray("files") }.getOrNull() ?: return
+        val rejected = TorrentInspector.rejectionForPaths((0 until files.length()).map { files.optJSONObject(it)?.optString("name").orEmpty() }) ?: return
+        val removed = runCatching { Api.post("/api/magnets/${e.magnetId}/cancel") }.isSuccess
+        e.ready = false; e.failed = true
+        e.status = rejected + if (removed) "" else " · её удалит админ или автоочистка"
+        save()
     }
 
     private fun follow(e: AddEntry) {
@@ -196,7 +214,10 @@ class AddModel(context: Context, private val scope: CoroutineScope, private val 
                 val before = Triple(e.title, e.status, e.percent)
                 st.optString("filename").takeIf { it.isNotBlank() }?.let { e.title = it }
                 when {
-                    code == 4 || st.optBoolean("ready") -> { e.ready = true; e.percent = 100; e.status = tr("add.gotovo_v_biblioteke"); save(); store.refresh() }
+                    code == 4 || st.optBoolean("ready") -> {
+                        e.ready = true; e.percent = 100; e.status = tr("add.gotovo_v_biblioteke"); save()
+                        noVideoCheck(e); store.refresh()
+                    }
                     code >= 5 -> { e.failed = true; e.status = tr("add.oshibka_p", "p" to st.optString("status")); save() }
                     else -> {
                         e.status = st.optString("status").ifBlank { tr("add.obrabotka") }; e.percent = if (total > 0) (done * 100 / total).toInt() else -1
