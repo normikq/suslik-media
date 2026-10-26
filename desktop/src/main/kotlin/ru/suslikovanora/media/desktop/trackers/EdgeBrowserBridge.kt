@@ -2,8 +2,10 @@ package ru.suslikovanora.media.desktop.trackers
 
 import com.sun.jna.*
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -317,24 +319,30 @@ object EdgeBrowserBridge {
 
     /**
      * Просим Edge закрыться самостоятельно, чтобы он дописал куки (cf_clearance) в профиль.
-     * Не ответил за 3 с — дальше его снимает [stop].
      */
     private fun closeGracefully(port: Int) {
         runCatching {
             val req = HttpRequest.newBuilder(URI.create("http://127.0.0.1:$port/json/version"))
-                .timeout(Duration.ofSeconds(2)).GET().build()
+                .timeout(Duration.ofMillis(300)).GET().build()
             val res = client.send(req, HttpResponse.BodyHandlers.ofString())
             if (res.statusCode() != 200) return
             val wsUrl = JSONObject(res.body()).optString("webSocketDebuggerUrl").ifBlank { return }
-            val ws = client.newWebSocketBuilder().connectTimeout(Duration.ofSeconds(2))
-                .buildAsync(URI.create(wsUrl), object : WebSocket.Listener {}).get(3, java.util.concurrent.TimeUnit.SECONDS)
+            val ws = client.newWebSocketBuilder().connectTimeout(Duration.ofMillis(300))
+                .buildAsync(URI.create(wsUrl), object : WebSocket.Listener {}).get(500, java.util.concurrent.TimeUnit.MILLISECONDS)
             ws.sendText(JSONObject().put("id", 1).put("method", "Browser.close").toString(), true)
             val pid = currentPid
             if (pid > 0) {
                 ProcessHandle.of(pid.toLong()).ifPresent { h ->
-                    h.onExit().get(2, java.util.concurrent.TimeUnit.SECONDS)
+                    h.onExit().get(500, java.util.concurrent.TimeUnit.MILLISECONDS)
                 }
             }
+        }
+    }
+
+    /** Асинхронная остановка в фоновом потоке IO — не блокирует интерфейс пользователя. */
+    fun stopAsync() {
+        CoroutineScope(Dispatchers.IO).launch {
+            stop()
         }
     }
 
@@ -347,14 +355,16 @@ object EdgeBrowserBridge {
             val job = currentJobHandle
             currentJobHandle = null
 
-            // 1. Закрываем Job Object (Windows гарантированно завершит все дочерние процессы)
+            // 1. Просим аккуратно закрыться через CDP (до 500 мс)
+            if (cdpPort != 0) closeGracefully(cdpPort)
+
+            // 2. Закрываем Job Object (Windows гарантированно завершит все дочерние процессы)
             job?.let {
                 WinKernel32.INSTANCE?.TerminateJobObject(it, 0)
                 WinKernel32.INSTANCE?.CloseHandle(it)
             }
 
-            // 2. Просим аккуратно закрыться через CDP или убиваем дерево процессов
-            if (cdpPort != 0) closeGracefully(cdpPort)
+            // 3. Добиваем дерево процессов taskkill
             killProcessTree(fallbackProcess, pid.toLong())
 
             currentProcessHandle?.let {
