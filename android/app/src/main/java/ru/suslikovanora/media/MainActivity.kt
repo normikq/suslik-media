@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.exclude
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -34,6 +35,7 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -160,7 +162,10 @@ class MainActivity : ComponentActivity() {
             launch { store.classifyAnimation() }
             if (Tv.isTv(this@MainActivity)) launch { ru.suslikovanora.media.library.warmHero(store, this@MainActivity) }
         }
-        val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+        // Read inside derivedStateOf: the root is recomposed when the keyboard appears or goes, not at every frame of its animation
+        val imeDensity = LocalDensity.current
+        val imeInsets = WindowInsets.ime
+        val imeVisible by remember { derivedStateOf { imeInsets.getBottom(imeDensity) > 0 } }
         // Hoisted so every tab keeps its scroll position (and the library its filter) across tab switches.
         val gridState = rememberLazyGridState()
         val mineGrid = rememberLazyGridState()
@@ -208,7 +213,8 @@ class MainActivity : ComponentActivity() {
         val tvUi = Tv.isTv(this@MainActivity)
         LaunchedEffect(guest) { if (guest && tab in GUEST_LOCKED) tab = Tab.Together }
         CompositionLocalProvider(LocalHeaderHeight provides (if (tvUi) 0.dp else headerHeight)) {
-        Box(Modifier.fillMaxSize().ambientBackdrop().windowInsetsPadding(WindowInsets.safeDrawing)) {
+        // Without the keyboard's inset: with it the whole screen was measured again at every frame of the keyboard animation
+        Box(Modifier.fillMaxSize().ambientBackdrop().windowInsetsPadding(WindowInsets.safeDrawing.exclude(WindowInsets.ime))) {
             if (store.authenticated == false) {
                 LoginScreen(store) {
                     scope.launch { store.refresh() }

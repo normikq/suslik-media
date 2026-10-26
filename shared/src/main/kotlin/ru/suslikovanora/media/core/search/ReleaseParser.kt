@@ -17,8 +17,13 @@ object ReleaseParser {
      * This ensures \b word boundaries and character classes work correctly for Cyrillic on desktop JVM (JDK 21+)
      * as well as Android.
      */
-    private fun uRegex(pattern: String): Regex =
-        Pattern.compile(pattern, Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CHARACTER_CLASS).toRegex()
+    internal fun uRegex(pattern: String): Regex =
+        try {
+            Pattern.compile(pattern, Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CHARACTER_CLASS).toRegex()
+        } catch (e: Throwable) {
+            // Android (ICU) has no UNICODE_CHARACTER_CLASS flag, but its \b and classes are Unicode-aware already
+            Pattern.compile(pattern, Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE).toRegex()
+        }
 
     // --- Resolution ---
     private val RES_4K = uRegex("""(?:\b|_)(?:2160p|4k|uhd|3840x2160|4к)(?:\b|_)""")

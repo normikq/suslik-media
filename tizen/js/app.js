@@ -154,6 +154,7 @@
       // Раздачи только с озвучками (.mka) играют внутри фильма — плиткой их не показываем
       state.items = model.prepareItems(model.parseLibrary(json).filter(function (m) { return !model.isVoiceOverOnly(m); }));
       state.loadedAt = Date.now();
+      posters.fill(state.items, function () { if (state.tab === 'home' || state.tab === 'mine') refreshTab(); });
       return state.items;
     }, function (e) {
       loading = null;
@@ -255,9 +256,11 @@
   function renderGrid(box, list, empty, key) {
     if (!list.length) { box.appendChild(h('p', { class: 'muted empty', text: empty })); return; }
     var size = pageSize(box);
-    var all = sorted(list), pages = Math.ceil(all.length / size);
+    // Одна плитка на несколько версий одного фильма / сериала; с версиями плитка спрашивает, какую открыть
+    var grouped = model.groupVersions(sorted(list), function (it) { return posters.pathOf(it.posterQueries); });
+    var all = grouped.shown, pages = Math.ceil(all.length / size);
     var page = Math.min(Math.max(0, state.pages[key] || 0), pages - 1);
-    box.appendChild(h('div', { class: 'grid' }, all.slice(page * size, (page + 1) * size).map(tile)));
+    box.appendChild(h('div', { class: 'grid' }, all.slice(page * size, (page + 1) * size).map(function (it) { return tile(it, grouped.versions[it.m.id]); })));
     if (pages > 1) box.appendChild(pager(key, page, pages));
   }
 
@@ -348,8 +351,9 @@
     return w && w.len > w.pos ? ui.clock(w.len - w.pos) : '';
   }
 
-  function tile(it) {
+  function tile(it, versions) {
     var m = it.m, main = model.mainVideo(m);
+    var group = versions || [it];
     var check = main ? support.checkFile(main.path) : { level: 'ok' };
     var poster = h('div', { class: 'poster' }, [h('span', { class: 'poster-title', text: it.baseTitle })]);
     var badges = [];
@@ -357,16 +361,29 @@
     if (check.level === 'no') badges.push(h('span', { class: 'badge bad', text: 'Не поддерживается' }));
     else if (check.level === 'warn') badges.push(h('span', { class: 'badge warn', text: '⚠' }));
     else if (check.level === 'server') badges.push(h('span', { class: 'badge server', text: 'Через сервер' }));
-    if (m.mine) badges.push(h('span', { class: 'badge mine', text: '★' }));
+    if (group.some(function (v) { return v.m.mine; })) badges.push(h('span', { class: 'badge mine', text: '★' }));
+    if (group.length > 1) badges.push(h('span', { class: 'badge', text: versionsWord(group.length) }));
     var key = 't' + m.id;
     var el = h('div', { class: 'f tile' + (m.ready ? '' : ' dim'), tabindex: '-1', 'data-key': key, onclick: function () {
       state.focusKey = key;
       if (!m.ready) { toast('Раздача ещё не готова: ' + model.statusRu(m)); return; }
-      details(it);
+      if (group.length > 1) pickVersion(it.baseTitle, group); else details(it);
     } }, [poster, h('div', { class: 'badges' }, badges), h('div', { class: 'tile-name', text: it.baseTitle })]);
     posterInto(poster, it);
     return el;
   }
+
+  function versionsWord(n) { return n % 10 >= 2 && n % 10 <= 4 && !(n % 100 >= 12 && n % 100 <= 14) ? n + ' версии' : n + ' версий'; }
+
+  /** «Какую версию включить?»: строка на раздачу — серии и сезоны в ней, размер и имя; открывает её экран. */
+  function pickVersion(title, versions) {
+    dialog('Какую версию включить?', title + ' · ' + versionsWord(versions.length), versions.map(function (v) {
+      var q = /2160p|4k/i.test(v.m.name) ? '4K' : /720p/i.test(v.m.name) ? '720p' : '1080p';
+      var head = v.playable.kind === 'series' ? model.seriesLine(v.playable) + ' • ' + q : q;
+      return { text: head + ' · ' + model.formatBytes(v.m.size) + ' · ' + shorten(v.m.name, 60), run: function () { details(v); } };
+    }), 'versions');
+  }
+  function shorten(s, n) { return s.length > n ? s.substring(0, n - 1) + '…' : s; }
 
   // Постер грузится, когда плитка подъезжает к экрану (за 600 px): медиатека в сотни раздач не качает все картинки
   // разом и не вытесняет из памяти те, что на экране
@@ -394,6 +411,41 @@
     // Не больше 60 картинок в памяти (у ТВ 2018 года на страницу ~200 МБ): дольше всех не показанные освобождаются.
     // Путь картинки на сервере ([paths]) помним всегда: повторный показ — без нового /api/poster
     var cache = {}, paths = {}, order = [], queue = [], active = 0, LIMIT = 60;
+    // Пути постеров помним и между запусками: по ним сливаются версии одного фильма (один постер = один фильм)
+    var PATHS_KEY = 'sm.posterPaths';
+    try { paths = JSON.parse(localStorage.getItem(PATHS_KEY) || '{}') || {}; } catch (e) { paths = {}; }
+    var saveTimer = 0;
+    function savePaths() {
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(function () { try { var keep = {}; Object.keys(paths).forEach(function (k) { if (paths[k]) keep[k] = paths[k]; }); localStorage.setItem(PATHS_KEY, JSON.stringify(keep)); } catch (e) { /* место кончилось */ } }, 1500);
+    }
+    function pathOf(queries) {
+      for (var i = 0; i < queries.length; i++) if (typeof paths[queries[i]] === 'string') return paths[queries[i]];
+      return null;
+    }
+    /** Спросить у сервера постеры готовых раздач, которых ещё нет (не больше 40 за раз, по одному); [done] — когда что-то нашлось. */
+    var filling = false;
+    function fill(items, done) {
+      if (filling) return;
+      var todo = [], seen = {};
+      items.forEach(function (it) {
+        var q = it.posterQueries[0];
+        if (it.m.ready && q && !seen[q] && pathOf(it.posterQueries) == null && paths[q] === undefined) { seen[q] = 1; todo.push(q); }
+      });
+      todo = todo.slice(0, 40);
+      if (!todo.length) return;
+      filling = true;
+      var n = 0;
+      (function next() {
+        if (!todo.length) { filling = false; if (n) done(); return; }
+        var q = todo.shift();
+        api.get('/api/poster?q=' + encodeURIComponent(q)).then(function (r) {
+          var p = r.poster;
+          paths[q] = typeof p === 'string' && p.indexOf('/api/poster/img/') === 0 ? p : null;
+          if (paths[q]) { n++; savePaths(); }
+        }, function () {}).then(function () { setTimeout(next, 150); });
+      })();
+    }
     function touch(q) { var i = order.indexOf(q); if (i >= 0) order.splice(i, 1); order.push(q); }
     function remember(q, url) {
       cache[q] = url;
@@ -413,6 +465,7 @@
       var path = paths[q] !== undefined ? Promise.resolve(paths[q]) : api.get('/api/poster?q=' + encodeURIComponent(q)).then(function (r) {
         var p = r.poster;
         paths[q] = typeof p === 'string' && p.indexOf('/api/poster/img/') === 0 ? p : null;
+        savePaths();
         return paths[q];
       });
       return path.then(function (p) {
@@ -422,6 +475,8 @@
     }
     return {
       has: function (q) { return !!cache[q]; },
+      pathOf: pathOf,
+      fill: fill,
       want: function (q, cb) {
         if (cache[q]) { touch(q); cb(cache[q]); } else if (cache[q] !== null) { queue.push({ q: q, cb: cb }); pump(); }
       },

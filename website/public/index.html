@@ -396,6 +396,22 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
 /* Пока не ответил /api/session, страница скрыта: иначе на секунду мелькает форма входа у тех, кто уже вошёл (снимается в showApp; страховка — через 4 с) */
 try{document.documentElement.classList.add("auth-pending");setTimeout(function(){document.documentElement.classList.remove("auth-pending");},4000);}catch(e){}</script>
 <link rel="stylesheet" href="redesign.css?v=27">
+<style>
+.sr-badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
+.sr-badges .rb { background: #1c2230; color: #c7d0e0; border: 1px solid #2e3850; border-radius: 6px; padding: 2px 8px; font-size: 12px; font-weight: 700; }
+.sr-badges .rb.res4k { background: #281e10; color: #ffb02e; border-color: #6e501c; }
+.sr-badges .rb.res { background: #101b2e; color: #7fafff; border-color: #243a66; }
+.sr-badges .rb.codec { background: #0f2218; color: #7fe0b0; border-color: #204d36; }
+.sr-badges .rb.hdr { background: #241d14; color: #ffc069; border-color: #5a4422; }
+.sr-badges .rb.cam { background: #2a1010; color: #ff8b85; border-color: #662222; }
+.sr-badges .rb.remux { background: #221430; color: #d49bff; border-color: #4c276e; }
+.sr-badges .rb.coll { background: #261d3b; color: #d6b4fc; border-color: #533b85; }
+.sr-badges .rb.voice { background: #14202b; color: #86b8e6; border-color: #233a50; }
+.sr-badges .rb.light { color: #5fd08a; }
+.sr-badges .rb.medium { color: #f3c34b; }
+.sr-badges .rb.heavy { color: #ff7a72; }
+.sr-raw { opacity: .6; font-size: 12px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style>
 </head>
 <body>
 <main>
@@ -519,8 +535,10 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
           <div id="searchProviders" class="search-providers"></div>
           <div id="searchStatus" class="status" role="status"></div>
           <div id="searchTools" class="search-tools hidden">
-            <select id="searchSort" aria-label="Сортировка"><option value="ru">RU сначала</option><option value="seeders">По сидам</option><option value="size">По размеру</option><option value="date">По дате</option></select>
+            <select id="searchSort" aria-label="Сортировка"><option value="DEFAULT">Обычная (по релевантности)</option><option value="SIZE_ASC">Сначала лёгкие</option><option value="SEEDS_DESC">По сидам</option></select>
             <select id="searchKind" aria-label="Тип раздачи"><option value="video">Фильмы и сериалы</option><option value="movie">Только фильмы</option><option value="cartoon">Только мультфильмы</option><option value="series">Только сериалы</option><option value="all">Всё подряд</option></select>
+            <select id="searchPreset" aria-label="Пресет"><option value="ALL">Все</option><option value="MOBILE">📱 Мобильная сеть</option><option value="BALANCED">Оптимальные (1080p)</option><option value="MAX_QUALITY">Макс. качество</option></select>
+            <select id="searchRes" aria-label="Качество"><option value="">Любое качество</option><option value="4K">4K</option><option value="1080p">1080p</option><option value="720p">720p</option></select>
             <label><input id="searchHideDead" type="checkbox"> Только с сидами</label>
             <input id="searchFilter" type="search" placeholder="Уточнить: 1080p, 2160p, rus…" autocomplete="off">
           </div>
@@ -663,6 +681,7 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
   </section>
   <div class="foot">Используйте только контент и ссылки, к которым у вас есть разрешённый доступ.</div>
 </main>
+<script src="searchcore.js"></script>
 <script>
 
   // Обновить the library every time it is opened, while preventing overlapping requests.
@@ -1133,24 +1152,18 @@ function renderSearchProviders(list) {
   for (const p of (list || []).filter(x => !x.ok && x.error)) box.append(srEl("div", "sr-note error", `${p.name}: ${p.error}`));
 }
 function filteredSearchItems() {
-  const sort = $("searchSort").value, dead = $("searchHideDead").checked;
-  const words = $("searchFilter").value.toLowerCase().split(/\s+/).filter(Boolean);
-  const kind = $("searchKind").value;
-  const kindOk = r => kind === "all" || (kind === "video" ? r.kind !== "other" : kind === "movie" ? (r.kind === "movie" || r.kind === "unknown") : kind === "cartoon" ? r.kind === "cartoon" : r.kind === "series");
-  searchState.hiddenKind = searchState.items.filter(r => !kindOk(r)).length;
-  let items = searchState.items.filter(r => kindOk(r) && (!dead || r.seeders > 0) && words.every(w => r.title.toLowerCase().includes(w)));
-  if (sort === "ru") { // живые RU, живые остальные, мёртвые RU, мёртвые остальные
-    const tier = r => (r.ru ? 0 : 1) + (r.seeders > 0 ? 0 : 2);
-    return items.sort((a, b) => tier(a) - tier(b) || b.seeders - a.seeders || b.size - a.size);
-  }
-  const key = { seeders: r => r.seeders, size: r => r.size, date: r => r.date }[sort] || (r => r.seeders);
-  return items.sort((a, b) => key(b) - key(a) || b.seeders - a.seeders);
+  // Тот же разбор релизов, пресеты, качество и сортировка, что на ПК (searchcore.js)
+  searchState.hiddenKind = searchState.nonVideo || 0;
+  return SM.searchcore.filter(searchState.items, {
+    query: searchState.query || "", kind: $("searchKind").value, preset: $("searchPreset").value, resolution: $("searchRes").value || null,
+    onlySeeded: $("searchHideDead").checked, refine: $("searchFilter").value, sort: $("searchSort").value
+  });
 }
 function renderSearchResults(reset = true) {
   const box = $("searchResults");
   const items = filteredSearchItems();
   if (reset) { box.textContent = ""; searchState.shown = 0; }
-  $("searchHidden").textContent = searchState.hiddenKind ? `Скрыто как не фильмы и не сериалы: ${searchState.hiddenKind} (игры, софт, музыка, книги). Выберите «Всё подряд», чтобы показать.` : "";
+  $("searchHidden").textContent = searchState.hiddenKind ? `Скрыто как не фильмы и не сериалы: ${searchState.hiddenKind} (игры, софт, музыка, книги, трейлеры).` : "";
   const next = items.slice(searchState.shown, searchState.shown + SEARCH_PAGE);
   for (const r of next) box.append(searchRow(r));
   searchState.shown += next.length;
@@ -1159,14 +1172,19 @@ function renderSearchResults(reset = true) {
 }
 function searchRow(r) {
   const row = srEl("div", "sr-row");
-  row.append(srEl("div", "sr-title", r.title));
+  const clean = r.release.cleanTitle || r.title;
+  row.append(srEl("div", "sr-title", clean));
+  if (clean !== r.title) row.append(srEl("div", "sr-raw", r.title));
+  const badges = srEl("div", "sr-badges");
+  for (const bd of SM.searchcore.badges(r.release)) badges.append(srEl("span", "rb " + bd.tone, bd.text));
+  if (badges.childNodes.length) row.append(badges);
   const meta = srEl("div", "sr-meta");
   if (r.size) meta.append(srEl("span", "", formatBytes(r.size)));
   meta.append(srEl("span", "seed" + (r.seeders ? "" : " zero"), `↑ ${r.seeders}`), srEl("span", "", `↓ ${r.leechers}`));
   if (r.ru) meta.append(srEl("span", "ru-badge", "RU"));
   if (r.kind === "series") meta.append(srEl("span", "", "сериал")); else if (r.kind === "movie") meta.append(srEl("span", "", "фильм")); else if (r.kind === "cartoon") meta.append(srEl("span", "", "мультфильм"));
-  meta.append(srEl("span", "", r.sources && r.sources.length > 1 ? r.sources.join(" + ") : r.provider));
-  const d = fmtDate(r.date); if (d) meta.append(srEl("span", "", d));
+  meta.append(srEl("span", "", r.source));
+  if (r.date) meta.append(srEl("span", "", r.date));
   row.append(meta);
   const act = srEl("div", "sr-actions");
   const add = srEl("button", "", "＋ В библиотеку"); add.type = "button";
@@ -1193,8 +1211,12 @@ async function runSearch(ev) {
   st.textContent = "Опрашиваем трекеры…"; st.className = "status";
   $("searchResults").textContent = ""; $("searchMore").classList.add("hidden"); $("searchTools").classList.add("hidden");
   try {
-    const data = await api("/api/search?q=" + encodeURIComponent(q));
-    searchState.items = data.results || [];
+    const cleaned = SM.searchcore.cleanQuery(q) || q;
+    const data = await api("/api/search?q=" + encodeURIComponent(cleaned));
+    const all = (data.results || []).map(SM.searchcore.toHit).filter(Boolean);
+    searchState.items = all.filter(x => !SM.searchcore.isNonVideo(x.title));
+    searchState.nonVideo = all.length - searchState.items.length;
+    searchState.query = cleaned;
     renderSearchProviders(data.providers);
     renderSearchResults(true);
     const failed = (data.providers || []).filter(p => !p.ok).length;
@@ -1203,7 +1225,7 @@ async function runSearch(ev) {
       st.textContent = failed === (data.providers || []).length ? "Ни один трекер не ответил. Проверьте настройки трекеров." : "Ничего не найдено. Попробуйте другое название (в т.ч. на английском).";
       st.className = "status error";
     } else {
-      st.textContent = `Найдено ${data.total} за ${(data.tookMs / 1000).toFixed(1)} с` + (failed ? ` · не ответили: ${failed}` : "");
+      st.textContent = `Найдено ${searchState.items.length} за ${(data.tookMs / 1000).toFixed(1)} с` + (failed ? ` · не ответили: ${failed}` : "");
       st.className = "status success";
     }
   } catch (err) { st.textContent = err.message; st.className = "status error"; }
@@ -1241,6 +1263,8 @@ async function pollAdded(id, note, alreadyReady) {
 $("searchForm").addEventListener("submit", runSearch);
 $("searchSort").addEventListener("change", () => renderSearchResults(true));
 $("searchHideDead").addEventListener("change", () => renderSearchResults(true));
+$("searchPreset").addEventListener("change", () => renderSearchResults(true));
+$("searchRes").addEventListener("change", () => renderSearchResults(true));
 try { const k = localStorage.getItem("searchKind"); if (k && [...$("searchKind").options].some(o => o.value === k)) $("searchKind").value = k; } catch {}
 $("searchKind").addEventListener("change", () => { try { localStorage.setItem("searchKind", $("searchKind").value); } catch {} renderSearchResults(true); });
 $("searchFilter").addEventListener("input", () => renderSearchResults(true));
@@ -1412,6 +1436,9 @@ function buildPlaylist(magnet){
     const list=[...seasons.entries()].sort((a,b)=>a[0]-b[0]).map(([season,items])=>({season,items:items.sort((a,b)=>a.episode-b.episode||String(a.file.path).localeCompare(String(b.file.path)))}));
     return {type:"series",seasons:list};
   }
+  // Серии, названные только номером («Show - 01 [1080p].mkv»), — сериал, а не сборник фильмов.
+  const numbered = numberedEpisodesOf(magnet, vids);
+  if (numbered) return numbered;
   const EXTRAS = /(?:^|\/)(?:extras?|bonus|featurettes?|behind[ ._-]?the[ ._-]?scenes|trailers?|доп[^/]*|бонус[^/]*|допы)(?:\/|$)/i;
   const BLURAY_DIR = /(?:^|\/)(?:BDMV|STREAM|VIDEO_TS)(?:\/|$)/i;
   if (vids.length >= 2 && !vids.some(f => BLURAY_DIR.test(f.path || ""))) {
@@ -1428,6 +1455,123 @@ function buildPlaylist(magnet){
   }
   const mainVideo = pickMainВидео(magnet);
   return {type: mainVideo ? "movie" : "none", file: mainVideo};
+}
+// ---- одна плитка на несколько версий (groupVersions / numberedEpisodesOf / titleKey в shared/.../core/Model.kt) ----
+const NUM_NOISE=/(?:2160|1080|720|480|576)[pi]|[xh][ .]?26[45]|\d+(?:[.,]\d+)?\s?(?:fps|kbps|mbps|bit|gb|mb)|(?<!\d)(?:19|20)\d{2}(?!\d)|(?<!\d)[1-9]\.[01](?!\d)/gi;
+const NUM_IN_NAME=/(?<!\d)\d{1,3}(?!\d)/g;
+const SERIES_HINT=/(?<![\p{L}\p{N}])(?:сезон\p{L}*|season\p{L}*|серии|серия|series|episodes?|эпизод\p{L}*|s\d{1,2}|ova|ona)(?![\p{L}\p{N}])/iu;
+function numberedEpisodesOf(magnet, vids){
+  const EXTRAS=/(?:^|\/)(?:extras?|bonus|featurettes?|behind[ ._-]?the[ ._-]?scenes|trailers?|доп[^/]*|бонус[^/]*|допы)(?:\/|$)/i;
+  const BLURAY_DIR=/(?:^|\/)(?:BDMV|STREAM|VIDEO_TS)(?:\/|$)/i;
+  if(vids.length<2||vids.some(f=>BLURAY_DIR.test(f.path||""))) return null;
+  const main=vids.filter(f=>!EXTRAS.test(f.path||""));
+  if(main.length<2) return null;
+  const basename=(path)=>String(path||"").replace(/\\/g,"/").split("/").pop();
+  const parsed=main.map(f=>{
+    const base=basename(f.path).replace(/\.[a-z0-9]{2,5}$/i,"").replace(/[._]+/g," ").replace(NUM_NOISE," ");
+    return {base,nums:[...base.matchAll(NUM_IN_NAME)]};
+  });
+  const slots=Math.min(...parsed.map(x=>x.nums.length));
+  for(let slot=0;slot<slots;slot++){
+    const nums=parsed.map(x=>Number(x.nums[slot][0]));
+    if(new Set(nums).size!==nums.length) continue;
+    const templates=new Set(parsed.map(x=>{const n=x.nums[slot];return x.base.slice(0,n.index)+"#"+x.base.slice(n.index+n[0].length);}));
+    if(templates.size!==1) continue;
+    const sorted=[...nums].sort((a,b)=>a-b);
+    const consecutive=sorted.every((v,i)=>!i||v-sorted[i-1]===1);
+    const sizes=main.map(f=>Number(f.size)||0);
+    const similar=Math.max(...sizes)<=Math.min(...sizes)*2;
+    if(!SERIES_HINT.test(magnet.name||"")&&!(main.length>=5&&consecutive&&similar)) continue;
+    const items=main.map((file,i)=>({season:1,episode:nums[i],file})).sort((a,b)=>a.episode-b.episode);
+    return {type:"series",seasons:[{season:1,items}]};
+  }
+  return null;
+}
+const SEASON_NOISE=/(?<![\p{L}\p{N}])(?:\d{1,2}(?:\s*[-–]\s*\d{1,2})?\s*(?:сезон\p{L}*|season\p{L}*)|(?:сезон\p{L}*|season\p{L}*|серии|серия|series|episodes?)\s*\d{1,3}(?:\s*[-–]\s*\d{1,3})?|s\d{1,2}(?:\s*[-–]?\s*[se]\d{1,3})?|complete|полный|полностью|(?:сезон\p{L}*|season\p{L}*|серии|episodes))(?![\p{L}\p{N}])/giu;
+function titleKey(baseTitle){
+  const plain=String(baseTitle||"").toLowerCase().replace(/ё/g,"е");
+  const key=plain.replace(SEASON_NOISE," ").replace(/[^\p{L}\p{N}]+/gu," ").trim();
+  return key||plain.replace(/[^\p{L}\p{N}]+/gu," ").trim();
+}
+const playableKindCache=new WeakMap();
+function playableKind(m){
+  let k=playableKindCache.get(m);
+  if(k===undefined){ try{ k=buildPlaylist(m).type; }catch{ k="none"; } playableKindCache.set(m,k); }
+  return k;
+}
+// Один фильм или сериал, добавленный несколько раз (другие релизы, озвучки, сезоны): одна плитка. Только готовые;
+// фильмы с фильмами (по названию и году), сериалы и сборники с сериалами (по названию без пометок сезона).
+function groupLibraryVersions(list){
+  const byKey=new Map(), groups=[], shown=[];
+  // Один постер = один фильм, как бы ни назывались раздачи (постер берётся из сохранённых ответов сервера, см. fillPosterPaths)
+  for(const m of list){
+    const base=escapeTitle(m.name||"");
+    const kind0=Number(m.statusCode)===4&&base.trim()?playableKind(m):"none";
+    if(kind0==="none"){ shown.push(m); continue; }
+    const kind=kind0==="movie"?"m":"s";
+    const year=/\b(19\d{2}|20\d{2})\b/.exec(m.name||"");
+    const poster=posterPathOf(m);
+    const keys=[];
+    if(poster) keys.push(kind+"|poster|"+poster);
+    keys.push(kind==="m"?"m|"+titleKey(base)+"|"+(year?year[1]:""):"s|"+titleKey(base));
+    let group=null;
+    for(const k of keys){ group=byKey.get(k)||null; if(group) break; }
+    if(!group){ group=[m]; groups.push(group); shown.push(m); for(const k of keys) byKey.set(k,group); }
+    else { group.push(m); for(const k of keys) if(!byKey.has(k)) byKey.set(k,group); }
+  }
+  const versions=new Map();
+  for(const g of groups) if(g.length>1) versions.set(g[0].id,g);
+  return {shown,versions};
+}
+function posterPathOf(m){
+  const db=posterDb();
+  for(const q of getPosterQueries(m)){ const h=db[q.toLowerCase()]; if(h&&typeof h.u==="string"&&h.u.startsWith("/api/poster/img/")) return h.u; }
+  return null;
+}
+// Постеры готовых раздач, которых ещё нет в сохранённых ответах: понемногу в фоне (не больше 80 за раз), плитки с одним постером сливаются.
+let fillPostersRunning=false;
+async function fillPosterPaths(){
+  if(fillPostersRunning||!cachedLibrary||!cachedLibrary.length) return;
+  fillPostersRunning=true;
+  try{
+    const todo=[...new Set(cachedLibrary.filter(m=>Number(m.statusCode)===4&&!posterPathOf(m)).map(m=>getPosterQueries(m)[0]).filter(Boolean))].slice(0,80);
+    let n=0;
+    for(const q of todo){ await getPoster(q); if(++n%10===0) renderLibrary(false); await wait(120); }
+    if(n) renderLibrary(false);
+  }catch{} finally{ fillPostersRunning=false; }
+}
+function versionsWord(n){ return n+(n%10>=2&&n%10<=4&&!(n%100>=12&&n%100<=14)?" версии":" версий"); }
+function versionLine(m){
+  const pl=(()=>{try{return buildPlaylist(m);}catch{return null;}})();
+  const q=/2160p|4k/i.test(m.name)?"4K":/720p/i.test(m.name)?"720p":"1080p";
+  if(!pl||pl.type!=="series") return q;
+  const nums=pl.seasons.map(s=>s.season).filter(n=>n>0);
+  const eps=pl.seasons.reduce((a,s)=>a+s.items.length,0);
+  const films=Boolean(pl.seasons[0]&&pl.seasons[0].items[0]&&pl.seasons[0].items[0].title);
+  const word=films?"фильм.":eps%10>=2&&eps%10<=4&&!(eps%100>=12&&eps%100<=14)?"серии":eps%10===1&&eps%100!==11?"серия":"серий";
+  const range=films||!nums.length?"":nums.length===1?"Сезон "+nums[0]+" · ":"Сезоны "+Math.min(...nums)+"–"+Math.max(...nums)+" · ";
+  return range+eps+" "+word+" • "+q;
+}
+// «Какую версию включить?»: окно со строкой на раздачу; выбор открывает обычное окно раздачи.
+function openVersionPicker(versions){
+  const back=document.createElement("div"); back.className="modal-backdrop"; back.setAttribute("role","dialog"); back.setAttribute("aria-modal","true");
+  const box=document.createElement("div"); box.className="library-modal";
+  const h=document.createElement("h2"); h.textContent="Какую версию включить?";
+  const sub=document.createElement("p"); sub.className="file-meta"; sub.textContent=escapeTitle(versions[0].name||"")+" · "+versionsWord(versions.length);
+  const list=document.createElement("div"); list.style.cssText="display:grid;gap:8px;margin:14px 0;max-height:60vh;overflow:auto";
+  const close=()=>{ back.remove(); document.removeEventListener("keydown",onKey); };
+  const onKey=e=>{ if(e.key==="Escape") close(); };
+  for(const m of versions){
+    const b=document.createElement("button"); b.type="button"; b.className="secondary"; b.style.cssText="text-align:left;padding:12px 14px";
+    const head=document.createElement("strong"); head.textContent=versionLine(m)+" · "+formatBytes(m.size);
+    const nm=document.createElement("div"); nm.className="file-meta"; nm.textContent=m.name;
+    b.append(head,nm); b.addEventListener("click",()=>{ close(); openLibraryModal(m); }); list.append(b);
+  }
+  const cancel=document.createElement("button"); cancel.type="button"; cancel.className="secondary"; cancel.textContent="Закрыть"; cancel.addEventListener("click",close);
+  box.append(h,sub,list,cancel); back.append(box);
+  back.addEventListener("click",e=>{ if(e.target===back) close(); });
+  document.addEventListener("keydown",onKey); document.body.append(back);
+  const first=list.querySelector("button"); if(first) first.focus();
 }
 function readLastEpisode(id){try{return (JSON.parse(localStorage.getItem(LAST_EP_KEY)||"{}")||{})[id]||null;}catch{return null;}}
 function saveLastEpisode(id,path){try{const c=JSON.parse(localStorage.getItem(LAST_EP_KEY)||"{}")||{};c[id]=path;localStorage.setItem(LAST_EP_KEY,JSON.stringify(c));}catch{}}
@@ -1749,6 +1893,7 @@ function getItemCategory(m) {
 
 let classifyAnimationRunning = false;
 async function classifyAnimation() {
+  fillPosterPaths();
   if (classifyAnimationRunning || !cachedLibrary || !cachedLibrary.length) return;
   classifyAnimationRunning = true;
   try {
@@ -1875,9 +2020,11 @@ function renderLibrary(animate=true) {
   libraryLastPageSize = pageSize;
   const filterSig = [query, activeCategory, sort, onlyReady].join("|");
   if (filterSig !== libraryFilterSig) { libraryFilterSig = filterSig; libraryPage = 0; }
-  const pageCount = Math.max(1, Math.ceil(allMagnets.length / pageSize));
+  const grouped = groupLibraryVersions(allMagnets);
+  const versionsOf = grouped.versions;
+  const pageCount = Math.max(1, Math.ceil(grouped.shown.length / pageSize));
   libraryPage = Math.min(Math.max(0, libraryPage), pageCount - 1);
-  const magnets = allMagnets.slice(libraryPage * pageSize, (libraryPage + 1) * pageSize);
+  const magnets = grouped.shown.slice(libraryPage * pageSize, (libraryPage + 1) * pageSize);
   renderLibraryPager(pageCount);
 
   target.className = libraryViewMode === "list" ? "library-results library-list" : "library-grid";
@@ -1888,7 +2035,8 @@ function renderLibrary(animate=true) {
   }
   let fresh=0;
   for (const magnet of magnets) {
-    const sig=tileSig(magnet), old=prevTiles.get(magnet.id);
+    const versions=versionsOf.get(magnet.id)||null;
+    const sig=tileSig(magnet)+(versions?"|v"+versions.map(v=>v.id).join(","):""), old=prevTiles.get(magnet.id);
     if(old && old.sig===sig){ nodes.push(old.tile); libraryTiles.set(magnet.id,old); continue; }
     const tile=document.createElement("div"); tile.setAttribute("role","button"); tile.tabIndex=0;
     // Анимация только у действительно новых плиток; при первом показе — каскадом, потом — сразу.
@@ -1902,6 +2050,7 @@ function renderLibrary(animate=true) {
     if (specs.quality) { const q = document.createElement("span"); q.className = "tile-badge badge-quality"; q.textContent = specs.quality; badges.append(q); }
     if (specs.type) { const tp = document.createElement("span"); tp.className = "tile-badge badge-type"; tp.textContent = specs.type; badges.append(tp); }
     for (const t of collapseTags(getItemTags(magnet))) { const x = document.createElement("span"); x.className = "tile-badge badge-tag " + (t.startsWith("Dolby") ? "badge-dv" : t === "HDR" ? "badge-hdr" : "badge-dts"); x.textContent = t; badges.append(x); }
+    if (versions) { const vb = document.createElement("span"); vb.className = "tile-badge badge-type"; vb.textContent = versionsWord(versions.length); badges.append(vb); }
     art.append(badges);
     const videoФайл = (magnet.files || []).find(f => /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso)$/i.test(f.path || ""));
     const posterQueries = [...new Set([escapeTitle(magnet.name), videoФайл ? escapeTitle(videoФайл.name || videoФайл.path.split("/").pop()) : ""].filter(Boolean))];
@@ -1966,9 +2115,10 @@ function renderLibrary(animate=true) {
       info.append(rm);
     }
     tile.append(art,info);
-    if(Number(magnet.statusCode)===4) setupTilePlayback(magnet,tile,art,info);
-    tile.addEventListener("click",()=>openLibraryModal(magnet));
-    tile.addEventListener("keydown",e=>{if(e.target===tile&&(e.key==="Enter"||e.key===" ")){e.preventDefault();openLibraryModal(magnet);}});
+    if(Number(magnet.statusCode)===4 && !versions) setupTilePlayback(magnet,tile,art,info);
+    const openTile=()=>{ if(versions) openVersionPicker(versions); else openLibraryModal(magnet); };
+    tile.addEventListener("click",openTile);
+    tile.addEventListener("keydown",e=>{if(e.target===tile&&(e.key==="Enter"||e.key===" ")){e.preventDefault();openTile();}});
     nodes.push(tile); libraryTiles.set(magnet.id,{tile,sig});
   }
   target.replaceChildren(...nodes);
