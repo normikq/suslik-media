@@ -53,6 +53,8 @@ data class SearchFilterCriteria(
     val codec: VideoCodec? = null,
     val maxSizeBytes: Long? = null,
     val onlySeeded: Boolean = false,
+    /** Only releases from Russian-language trackers (the hit's [SearchHit.ru] flag). */
+    val onlyRu: Boolean = false,
     val hideCam: Boolean = false,
     val refine: String = "",
     val sort: SearchSort = SearchSort.DEFAULT
@@ -76,6 +78,7 @@ data class SearchFilterCriteria(
 
         // 2. Only seeded check
         if (onlySeeded && hit.seeders <= 0) return false
+        if (onlyRu && !hit.ru) return false
 
         // 3. CAM / Telesync exclusion
         if ((hideCam || preset == FilterPreset.MOBILE || preset == FilterPreset.BALANCED) && hit.release.isCam) {

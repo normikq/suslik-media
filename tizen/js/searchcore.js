@@ -216,6 +216,7 @@
     var kind = c.kind || 'video';
     if (!(kind === 'all' || (kind === 'video' ? hit.kind !== 'other' : hit.kind === kind))) return false;
     if (c.onlySeeded && hit.seeders <= 0) return false;
+    if (c.onlyRu && !hit.ru) return false;
     var preset = c.preset || 'ALL', rel = hit.release;
     if ((preset === 'MOBILE' || preset === 'BALANCED') && rel.isCam) return false;
     if (preset === 'MOBILE') {
@@ -277,7 +278,7 @@
     return score;
   }
 
-  /** Фильтр + сортировка. [c]: { query, kind, preset, resolution, onlySeeded, refine, sort }. Не меняет [hits]. */
+  /** Фильтр + сортировка. [c]: { query, kind, preset, resolution, onlySeeded, onlyRu, refine, sort }. Не меняет [hits]. */
   function filter(hits, c) {
     var list = hits.filter(function (h) { return !isNonVideo(h.title) && matches(h, c); });
     var order = new Map(list.map(function (h, i) { return [h, i]; })); // sort в Chromium 56 не устойчивый

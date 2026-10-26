@@ -111,6 +111,7 @@ fun SearchView(lib: Library, header: @Composable () -> Unit) {
     var resolution by remember { mutableStateOf<Resolution?>(null) }
     var sort by remember { mutableStateOf(SearchSort.DEFAULT) }
     var onlySeeded by remember { mutableStateOf(false) }
+    var onlyRu by remember { mutableStateOf(false) }
     var refine by remember { mutableStateOf("") }
     val notes = remember { mutableStateOf(mapOf<String, Pair<String, Boolean>>()) }
     var showTrackerSettings by remember { mutableStateOf(false) }
@@ -242,13 +243,14 @@ fun SearchView(lib: Library, header: @Composable () -> Unit) {
         }
     }
 
-    val shown = remember(hits, kind, preset, resolution, onlySeeded, refine, sort, trackerUpdateTrigger, activeQuery) {
+    val shown = remember(hits, kind, preset, resolution, onlySeeded, onlyRu, refine, sort, trackerUpdateTrigger, activeQuery) {
         SearchFilterCriteria(
             query = activeQuery,
             kind = kind,
             preset = preset,
             resolution = resolution,
             onlySeeded = onlySeeded,
+            onlyRu = onlyRu,
             refine = refine,
             sort = sort
         ).filter(hits.filter { TrackerSettings.isSourceEnabledForHit(it.source) && !ReleaseParser.isNonVideo(it.title) })
@@ -326,6 +328,7 @@ fun SearchView(lib: Library, header: @Composable () -> Unit) {
                             Chip(label, kind == k) { kind = k; currentPage = 1 }
                         }
                         Chip(tr("search.tolko_s_sidami"), onlySeeded) { onlySeeded = !onlySeeded; currentPage = 1 }
+                        Chip("Только RU-трекеры", onlyRu) { onlyRu = !onlyRu; currentPage = 1 }
                         Box(Modifier.weight(1f)) { Field(refine, { refine = it; currentPage = 1 }, tr("search.utochnit_p_p_rus")) }
                     }
 

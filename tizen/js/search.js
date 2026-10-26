@@ -14,7 +14,7 @@
   var PAGE = 25;
 
   // Тот же поиск, что на ПК (searchcore.js: разбор релиза, пресеты, качество, сортировка); прямого поиска с ПК (RuTracker) на ТВ нет
-  var s = { query: '', active: '', busy: false, status: null, ok: true, hits: [], kind: 'video', seeded: false, preset: 'ALL', resolution: '', sort: 'DEFAULT', refine: '', count: PAGE, notes: {} };
+  var s = { query: '', active: '', busy: false, status: null, ok: true, hits: [], kind: 'video', seeded: false, onlyRu: false, preset: 'ALL', resolution: '', sort: 'DEFAULT', refine: '', count: PAGE, notes: {} };
 
   function keyed(el, key) { el.setAttribute('data-key', key); return el; }
 
@@ -54,7 +54,7 @@
   }
 
   function shown() {
-    return core.filter(s.hits, { query: s.active, kind: s.kind, preset: s.preset, resolution: s.resolution || null, onlySeeded: s.seeded, refine: s.refine, sort: s.sort });
+    return core.filter(s.hits, { query: s.active, kind: s.kind, preset: s.preset, resolution: s.resolution || null, onlySeeded: s.seeded, onlyRu: s.onlyRu, refine: s.refine, sort: s.sort });
   }
 
   function chipRow(label, items, current, pick, prefix) {
@@ -76,6 +76,9 @@
     seeded.setAttribute('data-key', 'seeded');
     var kinds = chipRow('Что искать', KINDS, s.kind, function (v) { s.kind = v; }, 'k');
     kinds.appendChild(seeded);
+    var onlyRu = button((s.onlyRu ? '✓ ' : '') + 'Только RU-трекеры', function () { s.onlyRu = !s.onlyRu; s.count = PAGE; SM.app.refreshTab(); }, 'chip' + (s.onlyRu ? ' on' : ''));
+    onlyRu.setAttribute('data-key', 'onlyru');
+    kinds.appendChild(onlyRu);
     box.appendChild(kinds);
     if (s.status) box.appendChild(h('p', { class: s.ok ? 'muted' : 'error', text: s.status }));
     if (s.hits.length) {
