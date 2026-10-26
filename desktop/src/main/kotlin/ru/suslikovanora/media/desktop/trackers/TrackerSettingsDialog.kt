@@ -90,14 +90,19 @@ fun TrackerSettingsDialog(onDismiss: () -> Unit) {
         ru.suslikovanora.media.desktop.Store.flushAll()
     }
 
+    fun dismissDialog() {
+        saveAll()
+        EdgeBrowserBridge.stop()
+        onDismiss()
+    }
+
     val enabledSourcesCount = remember(trackerRefresh, rtEnabled) {
         TrackerSettings.SOURCES.count { TrackerSettings.isEnabled(it.id) }
     }
 
     Box(
         Modifier.fillMaxSize().background(Sm.scrim).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
-            saveAll()
-            onDismiss()
+            dismissDialog()
         },
         contentAlignment = Alignment.Center
     ) {
@@ -126,8 +131,7 @@ fun TrackerSettingsDialog(onDismiss: () -> Unit) {
                 }
                 Box(
                     Modifier.clip(RoundedCornerShape(8.dp)).hoverClick(remember { MutableInteractionSource() }) {
-                        saveAll()
-                        onDismiss()
+                        dismissDialog()
                     }.padding(6.dp)
                 ) {
                     CloseCrossIcon(color = Sm.muted, size = 16.dp)
@@ -326,13 +330,19 @@ fun TrackerSettingsDialog(onDismiss: () -> Unit) {
                 Spacer(Modifier.height(12.dp))
 
                 // Test connection
+                var testingConnection by remember { mutableStateOf(false) }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlineButton("🔍 Проверить подключение") {
+                    OutlineButton(
+                        text = if (testingConnection) "Проверяем через ${EdgeBrowserBridge.activeBrowserName}..." else "🔍 Проверить подключение"
+                    ) {
+                        if (testingConnection) return@OutlineButton
                         saveAll()
+                        testingConnection = true
+                        testStatus = null
                         scope.launch {
-                            testStatus = null
                             val res = RuTrackerTracker.testConnection()
                             testStatus = res
+                            testingConnection = false
                         }
                     }
 
@@ -450,8 +460,7 @@ fun TrackerSettingsDialog(onDismiss: () -> Unit) {
             // Bottom action
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 LampButton("Сохранить и закрыть") {
-                    saveAll()
-                    onDismiss()
+                    dismissDialog()
                 }
             }
         }

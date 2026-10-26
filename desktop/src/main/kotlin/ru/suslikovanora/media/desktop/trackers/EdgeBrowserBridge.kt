@@ -123,6 +123,16 @@ object EdgeBrowserBridge {
 
         fun TerminateProcess(hProcess: Pointer, uExitCode: Int): Boolean
         fun CloseHandle(hObject: Pointer): Boolean
+        fun CreateJobObjectW(lpJobAttributes: Pointer?, lpName: WString?): Pointer?
+        fun SetInformationJobObject(
+            hJob: Pointer,
+            JobObjectInformationClass: Int,
+            lpJobObjectInformation: Pointer,
+            cbJobObjectInformationLength: Int
+        ): Boolean
+        fun AssignProcessToJobObject(hJob: Pointer, hProcess: Pointer): Boolean
+        fun TerminateJobObject(hJob: Pointer, uExitCode: Int): Boolean
+        fun OpenProcess(dwDesiredAccess: Int, bInheritHandle: Boolean, dwProcessId: Int): Pointer?
     }
 
     fun getExecutable(type: BrowserType = preferredBrowserType): File? =
@@ -178,6 +188,7 @@ object EdgeBrowserBridge {
     private var currentProcessHandle: Pointer? = null
     private var currentThreadHandle: Pointer? = null
     private var currentDesktopHandle: Pointer? = null
+    private var currentJobHandle: Pointer? = null
     private var fallbackProcess: Process? = null
     private var cdpPort: Int = 0
 
@@ -186,19 +197,101 @@ object EdgeBrowserBridge {
         .connectTimeout(Duration.ofSeconds(5))
         .build()
 
-    // Браузер живёт между запросами: холодный старт Edge — это 2–6 с на каждый поиск, а поиск с годом и добавление
-    // раздачи запускали его ещё раз. Выключение через Browser.close: при убийстве процесса Chromium не успевает
-    // дописать куки на диск, и cf_clearance терялся — Cloudflare проверял нас заново при каждом поиске.
-    private const val IDLE_SHUTDOWN_MS = 90_000L
+    // Браузер завершается через 15 с неактивности, освобождая память и ресурсы.
+    private const val IDLE_SHUTDOWN_MS = 15_000L
     private val idleTimer = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r ->
         Thread(r, "edge-bridge-idle").apply { isDaemon = true }
     }
     private var idleTask: java.util.concurrent.ScheduledFuture<*>? = null
 
     init {
+        cleanOrphanTrackerProcesses()
         Runtime.getRuntime().addShutdownHook(Thread {
             stop()
+            cleanOrphanTrackerProcesses()
         })
+    }
+
+    private fun createJobForProcess(hProcess: Pointer?): Pointer? {
+        if (!isWindows || hProcess == null) return null
+        val k32 = WinKernel32.INSTANCE ?: return null
+        return runCatching {
+            val hJob = k32.CreateJobObjectW(null, null) ?: return@runCatching null
+            val mem = Memory(112).apply { clear(); setInt(16, 0x2000 /* JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE */) }
+            runCatching { k32.SetInformationJobObject(hJob, 9 /* JobObjectExtendedLimitInformation */, mem, 112) }
+            k32.AssignProcessToJobObject(hJob, hProcess)
+            hJob
+        }.getOrNull()
+    }
+
+    fun createJobForPid(pid: Int): Pointer? {
+        if (!isWindows || pid <= 0) return null
+        val k32 = WinKernel32.INSTANCE ?: return null
+        return runCatching {
+            val hProc = k32.OpenProcess(0x1F0FFF /* PROCESS_ALL_ACCESS */, false, pid) ?: return@runCatching null
+            try {
+                val hJob = k32.CreateJobObjectW(null, null) ?: return@runCatching null
+                val mem = Memory(112).apply { clear(); setInt(16, 0x2000 /* JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE */) }
+                runCatching { k32.SetInformationJobObject(hJob, 9 /* JobObjectExtendedLimitInformation */, mem, 112) }
+                k32.AssignProcessToJobObject(hJob, hProc)
+                hJob
+            } finally {
+                k32.CloseHandle(hProc)
+            }
+        }.getOrNull()
+    }
+
+    /** Уничтожает процесс и все его дочерние процессы (GPU, utility, renderers). */
+    fun killProcessTree(proc: Process?, rootPid: Long = proc?.let { runCatching { it.pid() }.getOrNull() } ?: 0L) {
+        if (proc == null && rootPid <= 0L) return
+        val pid = if (rootPid > 0L) rootPid else proc?.let { runCatching { it.pid() }.getOrNull() } ?: 0L
+
+        val descendants = if (pid > 0L) {
+            runCatching {
+                ProcessHandle.of(pid).map { it.descendants().toList() }.orElse(emptyList())
+            }.getOrDefault(emptyList())
+        } else emptyList()
+
+        if (isWindows && pid > 0L) {
+            runCatching {
+                val pb = ProcessBuilder("taskkill", "/F", "/T", "/PID", pid.toString())
+                pb.redirectErrorStream(true)
+                val p = pb.start()
+                p.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
+            }
+        }
+
+        descendants.forEach { runCatching { it.destroyForcibly() } }
+        proc?.let { runCatching { it.destroyForcibly() } }
+        if (pid > 0L) {
+            runCatching { ProcessHandle.of(pid).ifPresent { it.destroyForcibly() } }
+        }
+    }
+
+    /** Принудительно завершает любые висящие фоновые процессы наших профилей браузеров. */
+    fun cleanOrphanTrackerProcesses() {
+        if (!isWindows) return
+        val profileNames = listOf(
+            "edge_tracker_profile",
+            "chrome_tracker_profile",
+            "yandex_tracker_profile",
+            "brave_tracker_profile",
+            "opera_tracker_profile",
+            "opera_gx_tracker_profile",
+            "vivaldi_tracker_profile"
+        )
+        runCatching {
+            ProcessHandle.allProcesses().forEach { h ->
+                val cmd = runCatching { h.info().commandLine().orElse("") }.getOrDefault("")
+                if (profileNames.any { cmd.contains(it, ignoreCase = true) }) {
+                    val pid = h.pid()
+                    runCatching {
+                        Runtime.getRuntime().exec(arrayOf("taskkill", "/F", "/T", "/PID", pid.toString())).waitFor()
+                    }
+                    runCatching { h.destroyForcibly() }
+                }
+            }
+        }
     }
 
     /** Браузер больше не нужен: закроется сам, если за [IDLE_SHUTDOWN_MS] не будет нового поиска. */
@@ -239,7 +332,7 @@ object EdgeBrowserBridge {
             val pid = currentPid
             if (pid > 0) {
                 ProcessHandle.of(pid.toLong()).ifPresent { h ->
-                    h.onExit().get(3, java.util.concurrent.TimeUnit.SECONDS)
+                    h.onExit().get(2, java.util.concurrent.TimeUnit.SECONDS)
                 }
             }
         }
@@ -251,20 +344,19 @@ object EdgeBrowserBridge {
         idleTask = null
         try {
             val pid = currentPid
-            if (cdpPort != 0) closeGracefully(cdpPort)
-            if (pid > 0) {
-                runCatching {
-                    ProcessHandle.of(pid.toLong()).ifPresent { h ->
-                        h.descendants().forEach { it.destroyForcibly() }
-                        h.destroyForcibly()
-                    }
-                }
-                if (isWindows) {
-                    runCatching {
-                        Runtime.getRuntime().exec(arrayOf("taskkill", "/F", "/T", "/PID", pid.toString())).waitFor()
-                    }
-                }
+            val job = currentJobHandle
+            currentJobHandle = null
+
+            // 1. Закрываем Job Object (Windows гарантированно завершит все дочерние процессы)
+            job?.let {
+                WinKernel32.INSTANCE?.TerminateJobObject(it, 0)
+                WinKernel32.INSTANCE?.CloseHandle(it)
             }
+
+            // 2. Просим аккуратно закрыться через CDP или убиваем дерево процессов
+            if (cdpPort != 0) closeGracefully(cdpPort)
+            killProcessTree(fallbackProcess, pid.toLong())
+
             currentProcessHandle?.let {
                 WinKernel32.INSTANCE?.TerminateProcess(it, 0)
                 WinKernel32.INSTANCE?.CloseHandle(it)
@@ -275,7 +367,6 @@ object EdgeBrowserBridge {
             currentDesktopHandle?.let {
                 WinUser32.INSTANCE?.CloseDesktop(it)
             }
-            fallbackProcess?.destroyForcibly()
         } catch (_: Exception) {
         } finally {
             currentPid = 0
@@ -284,6 +375,7 @@ object EdgeBrowserBridge {
             currentDesktopHandle = null
             fallbackProcess = null
             cdpPort = 0
+            cleanOrphanTrackerProcesses()
         }
     }
 
@@ -331,6 +423,7 @@ object EdgeBrowserBridge {
                 currentPid = pi.dwProcessId
                 currentProcessHandle = pi.hProcess
                 currentThreadHandle = pi.hThread
+                currentJobHandle = createJobForProcess(pi.hProcess)
                 cdpPort = port
                 launched = true
             }
@@ -351,6 +444,7 @@ object EdgeBrowserBridge {
             val proc = pb.start()
             fallbackProcess = proc
             currentPid = proc.pid().toInt()
+            currentJobHandle = createJobForPid(currentPid)
             cdpPort = port
         }
 
@@ -582,6 +676,7 @@ object EdgeBrowserBridge {
             }
 
             var tempProc: Process? = null
+            var jobHandle: Pointer? = null
             try {
                 val port = ServerSocket(0).use { it.localPort }
                 val pb = ProcessBuilder(
@@ -595,7 +690,9 @@ object EdgeBrowserBridge {
                     "about:blank"
                 )
                 pb.redirectErrorStream(true)
-                tempProc = pb.start()
+                val p = pb.start()
+                tempProc = p
+                jobHandle = createJobForPid(p.pid().toInt())
 
                 for (i in 1..25) {
                     delay(150)
@@ -618,7 +715,11 @@ object EdgeBrowserBridge {
             } catch (_: Exception) {
                 null
             } finally {
-                tempProc?.let { runCatching { it.destroyForcibly() } }
+                jobHandle?.let {
+                    WinKernel32.INSTANCE?.TerminateJobObject(it, 0)
+                    WinKernel32.INSTANCE?.CloseHandle(it)
+                }
+                killProcessTree(tempProc)
             }
         }
     }
@@ -654,6 +755,7 @@ object EdgeBrowserBridge {
             stop() // Stop background instance to unlock profile
 
             var proc: Process? = null
+            var jobHandle: Pointer? = null
             try {
                 val port = ServerSocket(0).use { it.localPort }
                 val loginUrl = "${baseUrl.removeSuffix("/")}/forum/login.php"
@@ -671,6 +773,7 @@ object EdgeBrowserBridge {
                 pb.redirectErrorStream(true)
                 val p = pb.start()
                 proc = p
+                jobHandle = createJobForPid(p.pid().toInt())
 
                 // Connect to browser-level CDP
                 var session: CdpSession? = null
@@ -704,7 +807,7 @@ object EdgeBrowserBridge {
                                 runCatching {
                                     session.sendCmd("Browser.close")
                                 }
-                                delay(600)
+                                delay(400)
                                 return@withContext Result.success(header)
                             }
                         }
@@ -717,11 +820,79 @@ object EdgeBrowserBridge {
             } catch (e: Exception) {
                 Result.failure(e)
             } finally {
-                proc?.let {
-                    runCatching {
-                        if (it.isAlive) it.destroyForcibly()
-                    }
+                jobHandle?.let {
+                    WinKernel32.INSTANCE?.TerminateJobObject(it, 0)
+                    WinKernel32.INSTANCE?.CloseHandle(it)
                 }
+                killProcessTree(proc)
+                cleanOrphanTrackerProcesses()
+            }
+        }
+    }
+
+    /**
+     * Проверяет авторизацию на RuTracker через движок браузера.
+     * Автоматически проходит Cloudflare Turnstile и считывает имя пользователя.
+     */
+    suspend fun checkConnection(baseUrl: String, cookies: Map<String, String>): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            try {
+                val port = ensureRunning()
+                val session = openTabSession(port) ?: return@withContext false to "Не удалось подключиться к браузеру"
+
+                try {
+                    session.sendCmd("Network.enable")
+                    session.sendCmd("Page.enable")
+
+                    val domain = URI.create(baseUrl).host?.let { if (it.startsWith("www.")) it.substring(4) else it } ?: "rutracker.org"
+                    val rootDomain = if (domain.count { it == '.' } >= 2) domain.substringAfter('.') else domain
+
+                    for ((k, v) in cookies) {
+                        session.sendCmd("Network.setCookie", JSONObject().apply {
+                            put("name", k)
+                            put("value", v)
+                            put("url", "${baseUrl.removeSuffix("/")}/")
+                            put("domain", ".$rootDomain")
+                            put("path", "/")
+                        })
+                    }
+
+                    val targetUrl = "${baseUrl.removeSuffix("/")}/forum/index.php"
+                    session.sendCmd("Page.navigate", JSONObject().put("url", targetUrl))
+
+                    // Wait up to 14s for either logged-in user, login form, or Cloudflare
+                    for (attempt in 1..28) {
+                        delay(500)
+                        val eval = session.sendCmd(
+                            "Runtime.evaluate",
+                            JSONObject().put(
+                                "expression",
+                                "(() => { " +
+                                    "const u = document.querySelector('#logged-in-username, .logged-in-username, a[href*=\"mode=viewprofile\"] b'); " +
+                                    "if (u && u.innerText.trim()) return 'USER:' + u.innerText.trim(); " +
+                                    "if (document.querySelector('input[name=\"login_username\"]')) return '__LOGIN__'; " +
+                                    "if (/just a moment|один момент/i.test(document.title) || document.querySelector('#challenge-form, .cf-turnstile, iframe[src*=\"challenges.cloudflare.com\"]')) return '__CF__'; " +
+                                    "return ''; " +
+                                "})()"
+                            ).put("returnByValue", true)
+                        )
+                        val res = eval.optJSONObject("result")?.optJSONObject("result")?.optString("value") ?: ""
+                        if (res.startsWith("USER:")) {
+                            val user = res.substring(5).trim()
+                            return@withContext true to "✓ Авторизован как $user ($activeBrowserName)"
+                        }
+                        if (res == "__LOGIN__") {
+                            return@withContext false to "Сессия не принята (обновите bb_session в $activeBrowserName)"
+                        }
+                    }
+                    false to "Не удалось проверить авторизацию (таймаут ответа)"
+                } finally {
+                    session.close()
+                }
+            } catch (e: Exception) {
+                false to (e.message ?: "Ошибка проверки подключения")
+            } finally {
+                scheduleIdleStop()
             }
         }
     }

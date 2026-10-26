@@ -92,10 +92,20 @@ object RuTrackerTracker : LocalTracker {
         val c = normalizeCookie(cookie)
         if (c.isBlank()) return@withContext false to "Куки не заданы"
         val base = url.ifBlank { defaultUrl }
+        val cookieMap = parseCookieMap(c)
 
+        // 1. Проверка через браузерный мост: обходит Cloudflare Turnstile на 100%
+        if (EdgeBrowserBridge.isAnyAvailable) {
+            val res = EdgeBrowserBridge.checkConnection(base, cookieMap)
+            if (res.first) return@withContext res
+            if (res.second.contains("Сессия не принята")) return@withContext res
+            if (!res.second.contains("Cloudflare") && !res.second.contains("таймаут")) return@withContext res
+        }
+
+        // 2. Запасной прямой HTTP-запрос (если браузер не установлен или отключен)
         try {
             val req = HttpRequest.newBuilder(URI.create("$base/forum/index.php"))
-                .timeout(Duration.ofSeconds(12))
+                .timeout(Duration.ofSeconds(10))
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:158.0) Gecko/20100101 Firefox/158.0")
                 .header("Cookie", c)
                 .header("Accept-Language", "ru,en;q=0.9")
@@ -106,24 +116,24 @@ object RuTrackerTracker : LocalTracker {
             val html = String(res.body(), cp1251)
 
             if (html.contains("Just a moment") || html.contains("challenge-platform")) {
-                return@withContext false to "Cloudflare-проверка: скопируйте также cf_clearance или попробуйте rutracker.net"
+                val tip = if (EdgeBrowserBridge.isAnyAvailable) " (нажмите «🔑 Войти через ${EdgeBrowserBridge.activeBrowserName}»)" else ""
+                return@withContext false to "Cloudflare-проверка: используйте вход через браузер или зеркало rutracker.net$tip"
             }
 
-            if (html.contains("name=\"login_username\"") || !html.contains("logged-in-username")) {
-                val userMatch = Regex("""logged-in-username[^>]*>([^<]+)""").find(html)
-                    ?: Regex("""user-name[^>]*>([^<]+)""").find(html)
-                    ?: Regex("""href="profile\.php\?mode=viewprofile[^>]*><b>([^<]+)</b>""").find(html)
-                if (userMatch != null) {
-                    val edgeNote = if (EdgeBrowserBridge.isAvailable()) " · Edge активен" else ""
-                    return@withContext true to "Авторизован как ${userMatch.groupValues[1].trim()}$edgeNote"
-                }
+            val userMatch = Regex("""logged-in-username[^>]*>([^<]+)""").find(html)
+                ?: Regex("""user-name[^>]*>([^<]+)""").find(html)
+                ?: Regex("""href="profile\.php\?mode=viewprofile[^>]*><b>([^<]+)</b>""").find(html)
+
+            if (userMatch != null) {
+                val browserNote = if (EdgeBrowserBridge.isAnyAvailable) " · ${EdgeBrowserBridge.activeBrowserName}" else ""
+                return@withContext true to "✓ Авторизован как ${userMatch.groupValues[1].trim()}$browserNote"
+            }
+
+            if (html.contains("name=\"login_username\"")) {
                 return@withContext false to "Сессия не принята (обновите bb_session cookie)"
             }
 
-            val name = Regex("""logged-in-username[^>]*>([^<]+)""").find(html)?.groupValues?.get(1)?.trim()
-                ?: "пользователь"
-            val edgeNote = if (EdgeBrowserBridge.isAvailable()) " · Edge активен" else ""
-            true to "Авторизован как $name$edgeNote"
+            false to "Не удалось проверить ответ трекера"
         } catch (e: Exception) {
             false to (e.message ?: "Ошибка подключения")
         }
