@@ -30,11 +30,12 @@ object SearchQueryCleaner {
     private val MEDIA_STOP_WORDS_REGEX = Regex(
         """(?iU)\b(?:фильм[ыа-я]*|кино(?:фильм[ыа-я]*)?|сериал[ыа-я]*|мульт(?:фильм[ыа-я]*|ик[иа-я]*)?|аниме|смотреть|скачать|онлайн|в\s*хорошем\s*качестве)\b"""
     )
+    private val WHITESPACE_REGEX = Regex("""\s+""")
 
     fun clean(raw: String): String {
         val s = raw.trim()
         val stripped = s.replace(MEDIA_STOP_WORDS_REGEX, " ")
-            .replace(Regex("""\s+"""), " ")
+            .replace(WHITESPACE_REGEX, " ")
             .trim()
 
         return if (stripped.length >= 2) stripped else s
@@ -85,8 +86,9 @@ data class SearchFilterCriteria(
         when (preset) {
             FilterPreset.MOBILE -> {
                 if (!hit.release.isMobileFriendly) return false
-                val isSeries = hit.kind == "series" || hit.release.episodesCount != null
-                if (!isSeries && hit.size > 4L * 1024 * 1024 * 1024 && hit.release.estimatedBitrateMbps > 4.5f) {
+                val isMultiItem = hit.kind == "series" || hit.release.episodesCount != null || hit.release.isCollection
+                // Single movie over 4GB with bitrate > 4.5 Mbps burns excessive cellular traffic
+                if (!isMultiItem && hit.size > 4L * 1024 * 1024 * 1024 && hit.release.estimatedBitrateMbps > 4.5f) {
                     return false
                 }
             }
@@ -160,6 +162,9 @@ data class SearchFilterCriteria(
     }
 
     companion object {
+        private val WORD_SPLIT_REGEX = Regex("[^a-zA-Z0-9а-яА-ЯёЁ]+")
+        private val YEAR_REGEX = Regex("""\b(19\d{2}|20\d{2})\b""")
+
         /**
          * Computes search relevance score for [hit] against [query].
          * Prioritizes exact phrase matches, complete query words coverage, word order, and seeders.
@@ -168,7 +173,7 @@ data class SearchFilterCriteria(
             if (query.isBlank()) return hit.seeders
 
             val normQuery = query.trim().lowercase(Locale.ROOT).replace('-', ' ')
-            val qWords = normQuery.split(Regex("[^a-zA-Z0-9а-яА-ЯёЁ]+")).filter { it.length >= 2 }
+            val qWords = normQuery.split(WORD_SPLIT_REGEX).filter { it.length >= 2 }
             if (qWords.isEmpty()) return hit.seeders
 
             val normTitle = hit.title.lowercase(Locale.ROOT).replace('-', ' ')
@@ -224,7 +229,7 @@ data class SearchFilterCriteria(
             }
 
             // 5. Target release year bonus / penalty
-            val yearMatch = Regex("""\b(19\d{2}|20\d{2})\b""").find(normQuery)
+            val yearMatch = YEAR_REGEX.find(normQuery)
             if (yearMatch != null) {
                 val targetYearStr = yearMatch.groupValues[1]
                 val targetYear = targetYearStr.toIntOrNull()

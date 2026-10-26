@@ -1,6 +1,8 @@
 package ru.suslikovanora.media.core.torrent
 
 object TorrentInspector {
+    const val MAX_TORRENT_FILE_SIZE = 10 * 1024 * 1024 // 10 MB sanity limit
+
     val VIDEO_EXTENSIONS = setOf(
         "mkv", "mp4", "m4v", "avi", "mov", "webm", "ts", "m2ts", "mts",
         "wmv", "vob", "mpg", "mpeg", "flv", "3gp", "ogv", "asf"
@@ -29,7 +31,8 @@ object TorrentInspector {
         val videoSize: Long,
         val hasVideo: Boolean,
         val videoCount: Int,
-        val nonVideoExtensions: Set<String>
+        val nonVideoExtensions: Set<String>,
+        val isParsedSuccessfully: Boolean = true
     )
 
     fun isVideoFileName(name: String): Boolean {
@@ -41,7 +44,29 @@ object TorrentInspector {
         files.any { it.isVideo }
 
     fun inspect(bytes: ByteArray): TorrentInspection {
-        val files = extractFilesFromTorrentBytes(bytes)
+        if (bytes.isEmpty() || bytes.size > MAX_TORRENT_FILE_SIZE) {
+            return TorrentInspection(
+                files = emptyList(),
+                totalSize = 0L,
+                videoSize = 0L,
+                hasVideo = false,
+                videoCount = 0,
+                nonVideoExtensions = emptySet(),
+                isParsedSuccessfully = false
+            )
+        }
+        val files = runCatching { extractFilesFromTorrentBytesInternal(bytes) }.getOrNull()
+        if (files == null) {
+            return TorrentInspection(
+                files = emptyList(),
+                totalSize = 0L,
+                videoSize = 0L,
+                hasVideo = false,
+                videoCount = 0,
+                nonVideoExtensions = emptySet(),
+                isParsedSuccessfully = false
+            )
+        }
         val totalSize = files.sumOf { it.size }
         val videoFiles = files.filter { it.isVideo }
         val videoSize = videoFiles.sumOf { it.size }
@@ -55,60 +80,67 @@ object TorrentInspector {
             videoSize = videoSize,
             hasVideo = videoFiles.isNotEmpty(),
             videoCount = videoFiles.size,
-            nonVideoExtensions = nonVideoExts
+            nonVideoExtensions = nonVideoExts,
+            isParsedSuccessfully = true
         )
     }
 
     fun extractFilesFromTorrentBytes(bytes: ByteArray): List<TorrentFileInfo> {
-        return runCatching {
-            val parser = BencodeParser(bytes)
-            val root = parser.parse() as? Map<*, *> ?: return emptyList()
-            val info = root["info"] as? Map<*, *> ?: return emptyList()
+        if (bytes.isEmpty() || bytes.size > MAX_TORRENT_FILE_SIZE) return emptyList()
+        return runCatching { extractFilesFromTorrentBytesInternal(bytes) }.getOrDefault(emptyList())
+    }
 
-            val filesList = mutableListOf<TorrentFileInfo>()
-            val multiFiles = info["files"] as? List<*>
+    private fun extractFilesFromTorrentBytesInternal(bytes: ByteArray): List<TorrentFileInfo> {
+        val parser = BencodeParser(bytes)
+        val root = parser.parse() as? Map<*, *> ?: throw IllegalArgumentException("Invalid bencode root")
+        val info = root["info"] as? Map<*, *> ?: throw IllegalArgumentException("Missing info dictionary")
 
-            if (multiFiles != null) {
-                for (item in multiFiles) {
-                    val fileDict = item as? Map<*, *> ?: continue
-                    val length = (fileDict["length"] as? Number)?.toLong() ?: 0L
-                    val pathList = fileDict["path"] as? List<*> ?: continue
-                    val pathStr = pathList.mapNotNull {
-                        when (it) {
-                            is ByteArray -> String(it, Charsets.UTF_8)
-                            is String -> it
-                            else -> null
-                        }
-                    }.joinToString("/")
-                    if (pathStr.isNotBlank()) {
-                        filesList.add(TorrentFileInfo(pathStr, length))
+        val filesList = mutableListOf<TorrentFileInfo>()
+        val multiFiles = info["files"] as? List<*>
+
+        if (multiFiles != null) {
+            for (item in multiFiles) {
+                val fileDict = item as? Map<*, *> ?: continue
+                val length = (fileDict["length"] as? Number)?.toLong() ?: 0L
+                val pathList = (fileDict["path.utf-8"] as? List<*>)
+                    ?: (fileDict["path"] as? List<*>)
+                    ?: continue
+                val pathStr = pathList.mapNotNull {
+                    when (it) {
+                        is ByteArray -> String(it, Charsets.UTF_8)
+                        is String -> it
+                        else -> null
                     }
+                }.joinToString("/")
+                if (pathStr.isNotBlank()) {
+                    filesList.add(TorrentFileInfo(pathStr, length))
                 }
-            } else {
-                // Single-file torrent
-                val nameObj = info["name"]
-                val name = when (nameObj) {
-                    is ByteArray -> String(nameObj, Charsets.UTF_8)
-                    is String -> nameObj
-                    else -> "unknown"
-                }
-                val length = (info["length"] as? Number)?.toLong() ?: 0L
-                filesList.add(TorrentFileInfo(name, length))
             }
+        } else {
+            // Single-file torrent
+            val nameObj = info["name.utf-8"] ?: info["name"]
+            val name = when (nameObj) {
+                is ByteArray -> String(nameObj, Charsets.UTF_8)
+                is String -> nameObj
+                else -> "unknown"
+            }
+            val length = (info["length"] as? Number)?.toLong() ?: 0L
+            filesList.add(TorrentFileInfo(name, length))
+        }
 
-            filesList
-        }.getOrDefault(emptyList())
+        return filesList
     }
 
     private class BencodeParser(private val bytes: ByteArray) {
         private var pos = 0
 
-        fun parse(): Any? {
+        fun parse(depth: Int = 0): Any? {
+            if (depth > 32) throw IllegalStateException("Bencode recursion depth limit exceeded (> 32)")
             if (pos >= bytes.size) return null
             return when (bytes[pos].toInt().toChar()) {
                 'i' -> parseInteger()
-                'l' -> parseList()
-                'd' -> parseDictionary()
+                'l' -> parseList(depth + 1)
+                'd' -> parseDictionary(depth + 1)
                 in '0'..'9' -> parseByteArray()
                 else -> null
             }
@@ -139,31 +171,39 @@ object TorrentInspector {
             return result
         }
 
-        private fun parseList(): List<Any?> {
+        private fun parseList(depth: Int): List<Any?> {
             pos++ // skip 'l'
             val list = mutableListOf<Any?>()
-            while (pos < bytes.size && bytes[pos].toInt().toChar() != 'e') {
-                val item = parse() ?: break
+            var closed = false
+            while (pos < bytes.size) {
+                if (bytes[pos].toInt().toChar() == 'e') {
+                    pos++
+                    closed = true
+                    break
+                }
+                val item = parse(depth) ?: break
                 list.add(item)
             }
-            if (pos < bytes.size && bytes[pos].toInt().toChar() == 'e') {
-                pos++ // skip 'e'
-            }
+            if (!closed) throw IllegalArgumentException("Unclosed bencode list")
             return list
         }
 
-        private fun parseDictionary(): Map<String, Any?> {
+        private fun parseDictionary(depth: Int): Map<String, Any?> {
             pos++ // skip 'd'
             val map = mutableMapOf<String, Any?>()
-            while (pos < bytes.size && bytes[pos].toInt().toChar() != 'e') {
-                val rawKey = parse() as? ByteArray ?: break
+            var closed = false
+            while (pos < bytes.size) {
+                if (bytes[pos].toInt().toChar() == 'e') {
+                    pos++
+                    closed = true
+                    break
+                }
+                val rawKey = parse(depth) as? ByteArray ?: break
                 val key = String(rawKey, Charsets.UTF_8)
-                val value = parse()
+                val value = parse(depth)
                 map[key] = value
             }
-            if (pos < bytes.size && bytes[pos].toInt().toChar() == 'e') {
-                pos++ // skip 'e'
-            }
+            if (!closed) throw IllegalArgumentException("Unclosed bencode dictionary")
             return map
         }
     }

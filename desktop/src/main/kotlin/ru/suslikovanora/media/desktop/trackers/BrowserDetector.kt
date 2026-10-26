@@ -211,7 +211,7 @@ object BrowserDetector {
             when {
                 detected.type == BrowserType.FIREFOX -> extractFirefox(detected.cookieFile, domainKeyword)
                 detected.type.isChromium -> {
-                    val existing = runCatching {
+                    val existing: String? = runCatching {
                         kotlinx.coroutines.runBlocking {
                             EdgeBrowserBridge.getExistingCookies(detected.type, "https://$domainKeyword.org")
                         }
@@ -219,23 +219,29 @@ object BrowserDetector {
                     if (!existing.isNullOrBlank()) {
                         Result.success(existing)
                     } else {
-                        extractChromium(detected.cookieFile, detected.localStateFile, domainKeyword, detected.type)
+                        Result.failure<String>(IllegalStateException("В профиле ${detected.type.displayName} нет активной сессии: нажмите «🔑 Войти через ${detected.type.displayName}» выше"))
                     }
                 }
-                else -> Result.failure(IllegalStateException("Неподдерживаемый браузер"))
+                else -> Result.failure<String>(IllegalStateException("Неподдерживаемый браузер"))
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure<String>(e)
         }
     }
 
     private fun extractFirefox(cookieFile: File, domainKeyword: String): Result<String> {
         if (!cookieFile.exists()) return Result.failure(IllegalStateException("Файл cookies.sqlite не найден"))
 
-        // Copy SQLite DB because running Firefox keeps an exclusive file lock
+        // Copy SQLite DB (and WAL if present) because running Firefox keeps an exclusive file lock
         val tmp = File.createTempFile("sm_ff_cookies_", ".sqlite")
+        val walSource = File(cookieFile.parentFile, "${cookieFile.name}-wal")
+        val tmpWal = File(tmp.parentFile, "${tmp.name}-wal")
         try {
             Files.copy(cookieFile.toPath(), tmp.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            if (walSource.exists()) {
+                runCatching { Files.copy(walSource.toPath(), tmpWal.toPath(), StandardCopyOption.REPLACE_EXISTING) }
+            }
+
             val bytes = tmp.readBytes()
             val text = String(bytes, Charsets.UTF_8)
 
@@ -265,76 +271,7 @@ object BrowserDetector {
             return Result.success(header)
         } finally {
             runCatching { tmp.delete() }
-        }
-    }
-
-    private fun extractChromium(
-        cookieFile: File,
-        localStateFile: File?,
-        domainKeyword: String,
-        type: BrowserType = BrowserType.EDGE
-    ): Result<String> {
-        if (!cookieFile.exists()) return Result.failure(IllegalStateException("Файл Cookies не найден"))
-        if (localStateFile == null || !localStateFile.exists()) {
-            return Result.failure(IllegalStateException("Файл Local State не найден"))
-        }
-
-        // PowerShell script to inspect and decrypt Chromium cookies
-        val psScript = """
-            try {
-                ${'$'}cFile = '${cookieFile.absolutePath.replace("'", "''")}';
-                ${'$'}lState = '${localStateFile.absolutePath.replace("'", "''")}';
-                ${'$'}domain = '$domainKeyword';
-                
-                if (-not (Test-Path ${'$'}cFile)) { exit 1 }
-
-                ${'$'}tmpDb = [System.IO.Path]::GetTempFileName();
-                ${'$'}copied = ${'$'}false;
-                try {
-                    Copy-Item -Path ${'$'}cFile -Destination ${'$'}tmpDb -Force -ErrorAction Stop;
-                    ${'$'}copied = ${'$'}true;
-                } catch {}
-
-                if (-not ${'$'}copied) {
-                    exit 6;
-                }
-
-                ${'$'}rawBytes = [System.IO.File]::ReadAllBytes(${'$'}tmpDb);
-                Remove-Item ${'$'}tmpDb -Force -ErrorAction SilentlyContinue;
-                ${'$'}rawText = [System.Text.Encoding]::UTF8.GetString(${'$'}rawBytes);
-
-                if (-not (${'$'}rawText -match ${'$'}domain)) { exit 2 }
-
-                # Modern Chromium App-Bound Encryption check
-                if (${'$'}rawText -match 'v20') { exit 5 }
-
-                # Check for unencrypted fallback cookies
-                ${'$'}cookies = @();
-                [regex]::Matches(${'$'}rawText, "(bb_[a-z_]+)\x00([^\x00\x01\x02\x03\x04\x05]{1,120})") | ForEach-Object {
-                    ${'$'}cookies += "${'$'}(${'$'}_.Groups[1].Value)=${'$'}(${'$'}_.Groups[2].Value)"
-                };
-                if (${'$'}cookies.Count -gt 0) {
-                    Write-Output (${'$'}cookies -join '; ');
-                    exit 0;
-                }
-
-                exit 3;
-            } catch { exit 1 }
-        """.trimIndent()
-
-        val process = ProcessBuilder("powershell", "-NoProfile", "-Command", psScript)
-            .redirectErrorStream(true)
-            .start()
-
-        val output = process.inputStream.bufferedReader().readText().trim()
-        val exitCode = process.waitFor()
-
-        return when (exitCode) {
-            0 -> if (output.isNotBlank()) Result.success(output) else Result.failure(IllegalStateException("Куки не найдены"))
-            2 -> Result.failure(IllegalStateException("В этом браузере (${type.displayName}) нет сохранённых кук для $domainKeyword"))
-            5 -> Result.failure(IllegalStateException("В ${type.displayName} куки защищены App-Bound Encryption (v20): используйте кнопку «Войти через ${type.displayName}»"))
-            6 -> Result.failure(IllegalStateException("Файл Cookies занят работающим браузером — закройте ${type.displayName} или используйте кнопку выше"))
-            else -> Result.failure(IllegalStateException("Куки в ${type.displayName} зашифрованы: скопируйте значение bb_session из DevTools"))
+            runCatching { tmpWal.delete() }
         }
     }
 }

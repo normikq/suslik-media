@@ -247,4 +247,58 @@ class ReleaseParserTest {
         // Real movie title should not be flagged
         assertFalse(ReleaseParser.isTrailerOrTeaser("Новый Человек-паук / The Amazing Spider-Man (2012) BDRip 1080p"))
     }
+
+    @Test
+    fun testCyrillicWordBoundariesOnJdk21() {
+        // 1. Cyrillic word boundaries for series detection (\bсезон\b)
+        val s1 = ReleaseParser.parse("Дом Дракона (Сезон 1) (2022) 1080p", 10L * 1024 * 1024 * 1024, "movie")
+        assertEquals(Resolution.FHD_1080P, s1.resolution)
+        // Even when tracker category defaults to 'movie', 'Сезон' must trigger series logic on JDK 21!
+        assertTrue(s1.estimatedBitrateMbps in 3f..4f, "Bitrate must be calculated as series, not 105-min film")
+
+        // 2. Cyrillic episode range and "из"
+        val s2 = ReleaseParser.parse("Слово пацана (серии 1-8) (2023) WEBRip 720p", 4L * 1024 * 1024 * 1024, "series")
+        assertEquals(8, s2.episodesCount)
+
+        val s3 = ReleaseParser.parse("Чернобыль (1 из 5) (2019) BDRip 1080p", 3L * 1024 * 1024 * 1024, "series")
+        assertEquals(5, s3.episodesCount)
+
+        // 3. Cyrillic voiceovers with \b
+        val vDub = ReleaseParser.parse("Начало / Inception (2010) BDRip 1080p | Дубляж")
+        assertEquals(VoiceType.DUB, vDub.voice)
+
+        val vMvo = ReleaseParser.parse("Матрица / The Matrix (1999) BDRip 1080p | многоголосый")
+        assertEquals(VoiceType.MVO, vMvo.voice)
+
+        val vDvo = ReleaseParser.parse("Бойцовский клуб / Fight Club (1999) BDRip 1080p | двухголосый")
+        assertEquals(VoiceType.DVO, vDvo.voice)
+
+        // 4. Cyrillic franchise words (\bтрилоги[яи]\b, \bдилоги[яи]\b, \bквадрологи[яи]\b)
+        val tr = ReleaseParser.parse("Хоббит: Трилогия (2012-2014) BDRemux 1080p")
+        assertTrue(tr.isCollection)
+        assertEquals(3, tr.collectionCount)
+
+        val du = ReleaseParser.parse("Дюна: Дилогия (2021-2024) BDRip 1080p")
+        assertTrue(du.isCollection)
+        assertEquals(2, du.collectionCount)
+
+        val qd = ReleaseParser.parse("Джон Уик: Квадрология (2014-2023) BDRip 1080p")
+        assertTrue(qd.isCollection)
+        assertEquals(4, qd.collectionCount)
+    }
+
+    @Test
+    fun testVideoCategoryWhitelistWithKeywords() {
+        // "Музыкальное видео" contains "музык", but is a legitimate video category
+        assertFalse(ReleaseParser.isNonVideo("Linkin Park - Live in Texas (2003) 1080p", "Музыкальное видео"))
+        assertFalse(ReleaseParser.isNonVideo("Queen - Rock Montreal (1981) BDRip", "Видеоклипы и Концерты"))
+
+        // "Экранизации книг" contains "книг", but is a legitimate video category
+        assertFalse(ReleaseParser.isNonVideo("Война и мир (1965) BDRip", "Экранизации зарубежной классики"))
+        assertFalse(ReleaseParser.isNonVideo("Преступление и наказание (2007) 1080p", "Экранизации книг"))
+
+        // Non-video music and books should be filtered
+        assertTrue(ReleaseParser.isNonVideo("Linkin Park - Meteora (2003) FLAC", "Музыка (lossless)"))
+        assertTrue(ReleaseParser.isNonVideo("Стивен Кинг - Сияние FB2, EPUB", "Книги и журналы"))
+    }
 }
