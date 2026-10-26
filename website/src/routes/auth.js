@@ -349,12 +349,14 @@ function collectSessions(req) {
     list.push({ _hash: d.hash, id: "d" + d.id, kind: "device", name: d.name, created_at: d.created_at, last_seen: d.last_seen, current: d.hash === curHash });
   }
   list.sort((a, b) => (b.current - a.current) || (b.last_seen - a.last_seen));
-  return list;
+  // Вход по общему паролю не привязан к человеку: у всех парольных один владелец "shared". Чужие входы
+  // им не показываем и завершать не даём — только свою текущую сессию
+  return uid === "shared" ? list.filter(s => s.current) : list;
 }
 
 router.get("/api/sessions", requireLogin, apiLimiter, (req, res) => {
   res.set("Cache-Control", "no-store");
-  res.json({ ok: true, sessions: collectSessions(req).map(({ _sid, _hash, ...s }) => s) });
+  res.json({ ok: true, shared: sessionOwner(req) === "shared", sessions: collectSessions(req).map(({ _sid, _hash, ...s }) => s) });
 });
 
 function revokeOne(req, res, item) {
@@ -363,8 +365,13 @@ function revokeOne(req, res, item) {
     if (ok) sessionStore.destroyAppSessions(sessionOwner(req), item._hash);
     return ok;
   }
-  sessionStore.destroy(item._sid);
-  if (item.current) res.clearCookie("movieportal.sid");
+  if (item.current && req.session) {
+    // Свою сессию — через req.session: иначе express-session («скользящая» cookie) в конце ответа снова поставит cookie
+    req.session.destroy(() => {});
+    res.clearCookie("movieportal.sid");
+  } else {
+    sessionStore.destroy(item._sid);
+  }
   return true;
 }
 

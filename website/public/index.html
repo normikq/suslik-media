@@ -1116,10 +1116,10 @@ async function loadSessions() {
   try {
     const data = await api("/api/sessions");
     const items = data.sessions || [];
-    status.textContent = "";
+    status.textContent = data.shared ? "Вход по общему паролю: другие входы не показываются. Чтобы видеть все свои устройства, войдите через Discord." : "";
     $("sessionsRevokeOthers").classList.toggle("hidden", !items.some(x => !x.current));
     $("sessionsRevokeStale").classList.toggle("hidden", !items.some(x => !x.current && Date.now() - x.last_seen > SESSION_STALE_MS));
-    if (!items.length) { list.replaceChildren(); status.textContent = "Активных сессий нет."; return; }
+    if (!items.length) { list.replaceChildren(); if (!data.shared) status.textContent = "Активных сессий нет."; return; }
     list.replaceChildren(...items.map(it => {
       const stale = !it.current && Date.now() - it.last_seen > SESSION_STALE_MS;
       const row = document.createElement("div"); row.className = "sess-row" + (it.current ? " current" : "") + (stale ? " stale" : "");
@@ -1146,16 +1146,19 @@ async function loadSessions() {
     }));
   } catch (err) { status.className = "status error"; status.textContent = err.message || "Не удалось загрузить сессии."; }
 }
-$("sessionsRevokeStale").addEventListener("click", async () => {
-  const b = $("sessionsRevokeStale"); b.disabled = true;
-  try { await api("/api/sessions/revoke-stale", { method: "POST", body: JSON.stringify({ days: 7 }) }); } catch {}
-  b.disabled = false; loadSessions();
-});
-$("sessionsRevokeOthers").addEventListener("click", async () => {
-  const b = $("sessionsRevokeOthers"); b.disabled = true;
-  try { await api("/api/sessions/revoke-others", { method: "POST" }); } catch {}
-  b.disabled = false; loadSessions();
-});
+async function revokeMany(btnId, path, body, question) {
+  if (!confirm(question)) return;
+  const b = $(btnId), status = $("sessionsStatus"); b.disabled = true;
+  let error = "";
+  try { await api(path, { method: "POST", body: JSON.stringify(body) }); } catch (err) { error = err.message || "Не удалось завершить сессии."; }
+  b.disabled = false;
+  await loadSessions();
+  if (error) { status.className = "status error"; status.textContent = error; }
+}
+$("sessionsRevokeStale").addEventListener("click", () =>
+  revokeMany("sessionsRevokeStale", "/api/sessions/revoke-stale", { days: 7 }, "Завершить сессии, неактивные больше 7 дней?"));
+$("sessionsRevokeOthers").addEventListener("click", () =>
+  revokeMany("sessionsRevokeOthers", "/api/sessions/revoke-others", {}, "Завершить все сессии, кроме этой? Приложения на ТВ и ПК придётся подключить заново."));
 // ---- Приложения: актуальные версии из папки updates/ на сервере ---------------------------
 let appVersionsAt = 0;
 async function loadAppVersions() {
