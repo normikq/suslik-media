@@ -1,6 +1,7 @@
 package ru.suslikovanora.media.desktop
 
 import ru.suslikovanora.media.core.*
+import ru.suslikovanora.media.core.torrent.TorrentInspector
 import ru.suslikovanora.media.desktop.ui.*
 
 import androidx.compose.animation.AnimatedContent
@@ -74,17 +75,43 @@ private class Added(val key: Long, val name: String) {
     var done by mutableStateOf(false)
 }
 
+/**
+ * Раздача без единого видеофайла (игра, музыка, софт): текст отказа, иначе null.
+ * Список файлов AllDebrid отдаёт только готовой раздаче (`/api/magnets/:id/files`), поэтому проверка — в момент
+ * готовности. Такую раздачу просим удалить; если сервер не даёт (готовую удаляет только админ) — так и пишем.
+ * Не получили список — не мешаем (null).
+ */
+internal suspend fun rejectIfNoVideo(id: Long): String? {
+    val files = runCatching { Api.get("/api/magnets/$id/files").optJSONArray("files") }.getOrNull() ?: return null
+    val other = linkedSetOf<String>()
+    for (i in 0 until files.length()) {
+        val name = files.optJSONObject(i)?.optString("name").orEmpty()
+        if (TorrentInspector.isVideoFileName(name)) return null
+        name.substringAfterLast('/').substringAfterLast('.', "").lowercase().takeIf { it.isNotBlank() && it.length <= 5 }?.let { other.add(it) }
+    }
+    if (other.isEmpty()) return null
+    val removed = runCatching { Api.post("/api/magnets/$id/cancel") }.isSuccess
+    return "Отклонено: в раздаче нет видеофайлов (найдены: ${other.take(4).joinToString { ".$it" }})" +
+        if (removed) "" else " · её удалит админ или автоочистка"
+}
+
 /** Polls AllDebrid's status of a magnet until it is ready (then refreshes the library) or fails. */
 private suspend fun follow(a: Added, id: Long, readyNow: Boolean, lib: Library) {
-    if (readyNow) { a.note = tr("add.gotovo_uzhe_v_biblioteke"); a.done = true; lib.refresh(); return }
+    suspend fun ready(note: String) {
+        val rejected = rejectIfNoVideo(id)
+        if (rejected != null) { a.note = rejected; a.ok = false } else { a.note = note; a.progress = 1f }
+        a.done = true; lib.refresh()
+    }
+    if (readyNow) { ready(tr("add.gotovo_uzhe_v_biblioteke")); return }
     a.note = tr("add.dobavleno_alldebrid_kachaet")
     val started = System.currentTimeMillis()
+
     repeat(120) {
         delay(if (System.currentTimeMillis() - started < 60_000) 4000 else 15000)
         val st = runCatching { Api.get("/api/magnets/$id") }.getOrNull() ?: return@repeat
         val total = st.optLong("size"); val got = st.optLong("downloaded")
         val code = st.optInt("statusCode")
-        if (code == 4 || st.optBoolean("ready")) { a.note = tr("add.gotovo_fayly_v_biblioteke"); a.progress = 1f; a.done = true; lib.refresh(); return }
+        if (code == 4 || st.optBoolean("ready")) { ready(tr("add.gotovo_fayly_v_biblioteke")); return }
         if (code >= 5) { a.note = tr("add.oshibka_p", "p" to st.optString("status")); a.ok = false; return }
         a.progress = if (total > 0) (got.toFloat() / total).coerceIn(0f, 1f) else -1f
         a.note = st.optString("status").ifBlank { tr("add.obrabotka") } + if (total > 0) " · ${got * 100 / total}%" else ""
@@ -109,6 +136,16 @@ fun AddView(lib: Library, onPlay: (ru.suslikovanora.media.desktop.player.PlayReq
         for (link in links) {
             val dn = Regex("[?&]dn=([^&]+)").find(link)?.groupValues?.get(1)
                 ?.let { runCatching { java.net.URLDecoder.decode(it, "UTF-8") }.getOrNull() } ?: tr("add.magnet_ssylka")
+
+            // Immediate pre-check if dn ends with known non-video format
+            val dnExt = dn.substringAfterLast('.', "").lowercase()
+            if (TorrentInspector.NON_VIDEO_EXTENSIONS.contains(dnExt)) {
+                val a = Added(System.nanoTime(), dn).also { added.add(0, it) }
+                a.note = "Отклонено: не является видеофайлом (.$dnExt)"
+                a.ok = false
+                continue
+            }
+
             val a = Added(System.nanoTime(), dn).also { added.add(0, it) }
             scope.launch {
                 try {
@@ -129,6 +166,18 @@ fun AddView(lib: Library, onPlay: (ru.suslikovanora.media.desktop.player.PlayReq
                 try {
                     val bytes = withContext(Dispatchers.IO) { f.readBytes() }
                     if (bytes.size > 1024 * 1024) { a.note = tr("add.fayl_bolshe_mb"); a.ok = false; return@launch }
+
+                    // Pre-inspect .torrent files to ensure they contain video files
+                    val inspection = TorrentInspector.inspect(bytes)
+                    if (inspection.files.isNotEmpty() && !inspection.hasVideo) {
+                        val extsStr = if (inspection.nonVideoExtensions.isNotEmpty()) {
+                            " (найдены: " + inspection.nonVideoExtensions.take(4).joinToString { ".$it" } + ")"
+                        } else ""
+                        a.note = "Отклонено: в торренте нет видеофайлов$extsStr"
+                        a.ok = false
+                        return@launch
+                    }
+
                     val r = Api.postTorrent(bytes, f.name)
                     follow(a, r.optLong("id"), r.optBoolean("ready"), lib)
                 } catch (e: Exception) { a.note = Api.describe(e); a.ok = false }

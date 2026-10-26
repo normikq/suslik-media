@@ -16,6 +16,10 @@ import java.util.Properties
 /** App data folder: %APPDATA%\SuslikMedia on Windows (the debug build: SuslikMediaDebug), ~/.suslikmedia elsewhere. */
 object AppDir {
     val dir: File by lazy {
+        // suslik.appdir задают только тесты (tasks.test в build.gradle.kts): иначе они писали бы настройки трекеров,
+        // вход и прогресс владельца в %APPDATA% — после ./gradlew test выбор трекеров сбрасывался.
+        val override = System.getProperty("suslik.appdir")?.takeIf { it.isNotBlank() }
+        if (override != null) return@lazy File(override).apply { mkdirs() }
         // The debug build keeps its own folder: its own sign-in, settings, progress and journal, next to the normal app.
         val name = if (System.getProperty("suslik.diag") == "true") "SuslikMediaDebug" else "SuslikMedia"
         val base = System.getenv("APPDATA")?.let { File(it, name) } ?: File(System.getProperty("user.home"), "." + name.lowercase())
