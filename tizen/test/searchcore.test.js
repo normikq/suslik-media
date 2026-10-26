@@ -178,3 +178,10 @@ test('релевантность: год в запросе решает', () => 
   assert.ok(S.relevance(b, 'Дюна 2021') > S.relevance(a, 'Дюна 2021'));
   assert.deepEqual(S.filter([a, b], { query: 'Дюна 2021' }).map((h) => h.id), ['b', 'a']);
 });
+
+test('только RU-трекеры', () => {
+  const ru = S.toHit({ id: '1', title: 'Дюна (2021) 1080p', size: 5e9, seeders: 3, kind: 'movie', provider: 'RuTracker', ru: true });
+  const en = S.toHit({ id: '2', title: 'Dune (2021) 1080p', size: 5e9, seeders: 9, kind: 'movie', provider: 'YTS', ru: false });
+  assert.deepEqual(S.filter([ru, en], { onlyRu: true }).map((h) => h.id), ['1']);
+  assert.equal(S.filter([ru, en], {}).length, 2);
+});

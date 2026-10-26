@@ -71,6 +71,7 @@ class SearchModel(private val scope: CoroutineScope, private val store: LibraryS
     var resolution by mutableStateOf<Resolution?>(null)
     var sort by mutableStateOf(SearchSort.DEFAULT)
     var onlySeeded by mutableStateOf(false)
+    var onlyRu by mutableStateOf(false)
     var refine by mutableStateOf("")
     var shownCount by mutableStateOf(PAGE)
     var notes by mutableStateOf(mapOf<String, Pair<String, Boolean>>()) // id -> (text, ok)
@@ -122,7 +123,7 @@ class SearchModel(private val scope: CoroutineScope, private val store: LibraryS
 
     fun shown(): List<SearchHit> = SearchFilterCriteria(
         query = activeQuery, kind = kind, preset = preset, resolution = resolution,
-        onlySeeded = onlySeeded, refine = refine, sort = sort
+        onlySeeded = onlySeeded, onlyRu = onlyRu, refine = refine, sort = sort
     ).filter(hits)
 
     companion object { const val PAGE = 25 }
@@ -132,7 +133,7 @@ class SearchModel(private val scope: CoroutineScope, private val store: LibraryS
 @Composable
 fun SearchScreen(m: SearchModel, listState: LazyListState, onLogout: () -> Unit, modifier: Modifier = Modifier) {
     // Filtering and sorting parse every hit: once per change of the results or filters, not at every recomposition (the keyboard's, scrolling)
-    val shown = remember(m.hits, m.kind, m.preset, m.resolution, m.sort, m.onlySeeded, m.refine, m.activeQuery) { m.shown() }
+    val shown = remember(m.hits, m.kind, m.preset, m.resolution, m.sort, m.onlySeeded, m.onlyRu, m.refine, m.activeQuery) { m.shown() }
     LazyColumn(
         modifier.fillMaxSize(), state = listState,
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 80.dp)
@@ -161,6 +162,7 @@ fun SearchScreen(m: SearchModel, listState: LazyListState, onLogout: () -> Unit,
                             Chip(label, m.kind == k) { m.kind = k; m.shownCount = SearchModel.PAGE }
                         }
                         Chip(tr("search.tolko_s_sidami"), m.onlySeeded) { m.onlySeeded = !m.onlySeeded; m.shownCount = SearchModel.PAGE }
+                        Chip("Только RU-трекеры", m.onlyRu) { m.onlyRu = !m.onlyRu; m.shownCount = SearchModel.PAGE }
                     }
                     Row(Modifier.padding(top = 8.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text("Пресет:", color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp)

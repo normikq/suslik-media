@@ -410,6 +410,26 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
 .sr-badges .rb.light { color: #5fd08a; }
 .sr-badges .rb.medium { color: #f3c34b; }
 .sr-badges .rb.heavy { color: #ff7a72; }
+.sr-row .sr-actions { margin-top: 2px; }
+@media (max-width: 700px) {
+  /* Поиск на телефоне: выдача и фильтры в одну колонку (десктопная сетка из redesign.css сжимала название) */
+  #searchTab .panel { padding: 16px 14px; }
+  .search-form { flex-direction: column; }
+  .search-form button { width: 100%; }
+  .search-tools { display: grid !important; grid-template-columns: 1fr 1fr; gap: 8px !important; padding: 12px !important; }
+  .search-tools select { width: 100%; min-width: 0; font-size: 14px; }
+  .search-tools label { grid-column: 1 / -1; white-space: normal !important; min-height: 32px; font-size: 14px !important; }
+  .search-tools input[type="checkbox"] { width: 20px; height: 20px; flex: none; }
+  .search-tools input[type="search"] { grid-column: 1 / -1; min-width: 0 !important; width: 100%; }
+  .sr-row { grid-template-columns: minmax(0, 1fr) !important; gap: 8px !important; padding: 12px 6px !important; }
+  .sr-row .sr-title { font-size: 15px; }
+  .sr-row .sr-actions { display: flex; gap: 8px; }
+  .sr-row .sr-actions button { flex: 1 1 0; min-height: 42px; }
+  .sr-row .sr-note { flex-basis: 100%; }
+  .sr-badges { gap: 5px; }
+  #searchMore { width: 100%; }
+  #searchProviders .chip { font-size: 11.5px; padding: 4px 10px; }
+}
 .sr-raw { opacity: .6; font-size: 12px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>
 </head>
@@ -540,6 +560,7 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
             <select id="searchPreset" aria-label="Пресет"><option value="ALL">Все</option><option value="MOBILE">📱 Мобильная сеть</option><option value="BALANCED">Оптимальные (1080p)</option><option value="MAX_QUALITY">Макс. качество</option></select>
             <select id="searchRes" aria-label="Качество"><option value="">Любое качество</option><option value="4K">4K</option><option value="1080p">1080p</option><option value="720p">720p</option></select>
             <label><input id="searchHideDead" type="checkbox"> Только с сидами</label>
+            <label><input id="searchOnlyRu" type="checkbox"> Только RU-трекеры</label>
             <input id="searchFilter" type="search" placeholder="Уточнить: 1080p, 2160p, rus…" autocomplete="off">
           </div>
           <div id="searchHidden" class="file-meta"></div>
@@ -1156,7 +1177,7 @@ function filteredSearchItems() {
   searchState.hiddenKind = searchState.nonVideo || 0;
   return SM.searchcore.filter(searchState.items, {
     query: searchState.query || "", kind: $("searchKind").value, preset: $("searchPreset").value, resolution: $("searchRes").value || null,
-    onlySeeded: $("searchHideDead").checked, refine: $("searchFilter").value, sort: $("searchSort").value
+    onlySeeded: $("searchHideDead").checked, onlyRu: $("searchOnlyRu").checked, refine: $("searchFilter").value, sort: $("searchSort").value
   });
 }
 function renderSearchResults(reset = true) {
@@ -1263,6 +1284,7 @@ async function pollAdded(id, note, alreadyReady) {
 $("searchForm").addEventListener("submit", runSearch);
 $("searchSort").addEventListener("change", () => renderSearchResults(true));
 $("searchHideDead").addEventListener("change", () => renderSearchResults(true));
+$("searchOnlyRu").addEventListener("change", () => renderSearchResults(true));
 $("searchPreset").addEventListener("change", () => renderSearchResults(true));
 $("searchRes").addEventListener("change", () => renderSearchResults(true));
 try { const k = localStorage.getItem("searchKind"); if (k && [...$("searchKind").options].some(o => o.value === k)) $("searchKind").value = k; } catch {}
