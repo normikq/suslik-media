@@ -528,4 +528,20 @@ class ModelTest {
             assertEquals(listOf(1L, 2L), groupVersions(items).first.map { it.m.id }, status)
         }
     }
+
+    @Test
+    fun acceptedAiTitleNamesTheTileAndItsPoster() {
+        val items = prepareItems(parseLibrary(aiLibrary("accepted")))
+        assertEquals("Тачки 2", items[1].baseTitle)
+        assertEquals("Тачки 2", items[1].posterQueries.first())
+        val suggested = prepareItems(parseLibrary(aiLibrary("suggested")))[1]
+        assertTrue(suggested.baseTitle != "Тачки 2" || suggested.m.name.contains("Тачки"))
+        // «Принять» и «Отклонить» без новой загрузки медиатеки
+        val accepted = suggested.withAiTitle(suggested.m.aiTitle!!.copy(status = "accepted"))
+        assertEquals("Тачки 2", accepted.baseTitle)
+        assertEquals("Тачки 2", accepted.posterQueries.first())
+        val rejected = accepted.withAiTitle(accepted.m.aiTitle!!.copy(status = "rejected"))
+        assertEquals(cleanTitle(suggested.m.name), rejected.baseTitle)
+        assertEquals(suggested.playable, rejected.playable)
+    }
 }

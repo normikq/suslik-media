@@ -327,7 +327,8 @@
   /** Всё, что нужно плитке: считается один раз на загрузку медиатеки. */
   function prepareItems(list) {
     return list.map(function (m) {
-      var base = cleanTitle(m.name), main = mainVideo(m);
+      // принятое название ИИ (services/aititle.js) — и в плитке, и в поиске постера (titleOf в Model.kt)
+      var ai = m.aiTitle, base = ai && ai.status === 'accepted' && ai.base ? ai.base : cleanTitle(m.name), main = mainVideo(m);
       var queries = [base];
       if (main) {
         var q = cleanTitle(main.name.trim() ? main.name : basename(main.path));

@@ -301,16 +301,30 @@ data class LibraryItem(
     val baseTitle: String,
     val posterQueries: List<String>,
     val searchText: String
-)
+) {
+    /** Same item with the AI's answer changed (accepted / rejected): title and poster queries follow, the rest stays. */
+    fun withAiTitle(ai: AiTitle?): LibraryItem {
+        val nm = m.copy(aiTitle = ai)
+        val base = titleOf(nm)
+        return copy(m = nm, baseTitle = base, posterQueries = posterQueriesOf(nm, base))
+    }
+}
+
+/** The tile's title: the AI's one once the owner accepted it (services/aititle.js), otherwise the regexes'. */
+private fun titleOf(m: Magnet): String = m.aiTitle?.takeIf { it.accepted }?.base ?: cleanTitle(m.name)
+
+private fun posterQueriesOf(m: Magnet, base: String): List<String> {
+    val main = mainVideo(m)
+    return listOfNotNull(base, main?.let { cleanTitle(it.name.ifBlank { it.path.substringAfterLast('/') }) }).distinct()
+}
 
 fun prepareItems(list: List<Magnet>): List<LibraryItem> = list.map { m ->
-    val base = cleanTitle(m.name)
-    val main = mainVideo(m)
+    val base = titleOf(m)
     LibraryItem(
         m = m,
         playable = buildPlayable(m),
         baseTitle = base,
-        posterQueries = listOfNotNull(base, main?.let { cleanTitle(it.name.ifBlank { it.path.substringAfterLast('/') }) }).distinct(),
+        posterQueries = posterQueriesOf(m, base),
         searchText = (m.name + "\n" + m.files.joinToString("\n") { it.path }).lowercase()
     )
 }
@@ -333,7 +347,7 @@ fun seriesLine(p: Playable.Series): String {
 private val YEAR_IN_NAME = Regex("""\b(19\d{2}|20\d{2})\b""")
 
 /** Title the tile is grouped by: the AI's one once the owner accepted it, otherwise the regexes' [LibraryItem.baseTitle]. */
-fun groupTitle(it: LibraryItem): String = it.m.aiTitle?.takeIf { a -> a.accepted }?.base ?: it.baseTitle
+fun groupTitle(it: LibraryItem): String = it.m.aiTitle?.takeIf { a -> a.accepted }?.base ?: it.baseTitle // = baseTitle (prepareItems)
 
 /**
  * Same film or show added more than once (different releases: 720p / 1080p / 4K, other voice-overs, other titles,

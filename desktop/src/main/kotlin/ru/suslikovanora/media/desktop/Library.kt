@@ -270,34 +270,59 @@ class Library {
         } catch (e: CancellationException) { throw e } catch (e: Exception) { items = before; Api.describe(e) }
     }
 
-    // ---- «Определить через ИИ» (server services/aititle.js): one answer per torrent, then the owner accepts or rejects ----
+    // ---- «Определить через ИИ» (server services/aititle.js): the torrents of one tile in one call, then accept / reject ----
+    /** What the AI window shows: these torrents' answers, or just a [message] (cooldown, error). */
+    class AiPanel(val ids: List<Long>, val message: String? = null)
+    var aiPanel by mutableStateOf<AiPanel?>(null)
+    var aiBusy by mutableStateOf(false)
+
     private fun setAi(id: Long, ai: AiTitle?) {
-        items = items.map { if (it.m.id == id) it.copy(m = it.m.copy(aiTitle = ai)) else it }
+        items = items.map { if (it.m.id == id) it.withAiTitle(ai) else it }
     }
 
-    suspend fun askAi(m: Magnet) {
+    suspend fun askAi(list: List<Magnet>) {
+        if (list.isEmpty() || aiBusy) return
+        aiBusy = true
         status = tr("library.ai_sprashivaem"); statusKind = StatusKind.Info
         try {
-            val r = Api.post("/api/library/${m.id}/ai-title")
-            val ai = parseAiTitle(r.optJSONObject("aiTitle"))
+            val r = Api.post("/api/library/ai-title", JSONObject().put("ids", org.json.JSONArray(list.map { it.id })))
             aiReadyAt = r.optLong("aiTitleReadyAt", 0L) // у админа кулдауна нет: 0
-            setAi(m.id, ai)
-            if (ai == null || ai.status == "none") { status = tr("library.ai_ne_smog"); statusKind = StatusKind.Info }
-            else { status = tr("library.ai_predlagaet", "title" to aiLabel(ai)); statusKind = StatusKind.Ok }
+            val res = r.optJSONArray("results") ?: org.json.JSONArray()
+            val ids = ArrayList<Long>()
+            for (i in 0 until res.length()) {
+                val o = res.optJSONObject(i) ?: continue
+                val id = o.optLong("id")
+                setAi(id, parseAiTitle(o.optJSONObject("aiTitle")))
+                ids += id
+            }
+            val found = items.count { it.m.id in ids && it.m.aiTitle?.status == "suggested" }
+            status = if (found > 0) tr("library.ai_gotovo") else tr("library.ai_ne_smog"); statusKind = StatusKind.Ok
+            aiPanel = AiPanel(ids, if (found == 0) tr("library.ai_ne_smog") else null)
         } catch (e: CancellationException) { throw e } catch (e: Exception) {
-            val sec = (e as? Api.HttpError)?.takeIf { it.code == 429 }?.body?.optLong("retryAfterSec", 0L) ?: 0L
-            if (sec > 0 && (e as Api.HttpError).body?.optString("reason") == "cooldown") {
+            val body = (e as? Api.HttpError)?.takeIf { it.code == 429 }?.body
+            val sec = body?.optLong("retryAfterSec", 0L) ?: 0L
+            val msg = if (sec > 0 && body?.optString("reason") == "cooldown") {
                 aiReadyAt = System.currentTimeMillis() + sec * 1000
-                status = tr("library.ai_podozhdite", "min" to (sec + 59) / 60); statusKind = StatusKind.Info
-            } else { status = Api.describe(e); statusKind = StatusKind.Error }
-        }
+                tr("library.ai_podozhdite", "min" to (sec + 59) / 60)
+            } else Api.describe(e)
+            status = msg; statusKind = StatusKind.Error
+            aiPanel = AiPanel(emptyList(), msg)
+        } finally { aiBusy = false }
     }
 
-    suspend fun decideAi(m: Magnet, accept: Boolean) {
-        try {
-            val r = Api.post("/api/library/${m.id}/ai-title/decision", JSONObject().put("accept", accept))
-            setAi(m.id, parseAiTitle(r.optJSONObject("aiTitle")))
-        } catch (e: CancellationException) { throw e } catch (e: Exception) { status = Api.describe(e); statusKind = StatusKind.Error }
+    /** id -> take the AI's title (true) or keep the regexes' one (false). */
+    suspend fun saveAi(decisions: Map<Long, Boolean>) {
+        for ((id, accept) in decisions) {
+            val cur = items.firstOrNull { it.m.id == id }?.m?.aiTitle ?: continue
+            if (cur.status == (if (accept) "accepted" else "rejected")) continue
+            try {
+                val r = Api.post("/api/library/$id/ai-title/decision", JSONObject().put("accept", accept))
+                setAi(id, parseAiTitle(r.optJSONObject("aiTitle")))
+            } catch (e: CancellationException) { throw e } catch (e: Exception) {
+                status = Api.describe(e); statusKind = StatusKind.Error
+                return
+            }
+        }
     }
 
     suspend fun remove(m: Magnet): String? = try {

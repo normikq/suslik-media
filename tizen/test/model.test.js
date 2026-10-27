@@ -259,3 +259,13 @@ test('groupVersions: принятое название ИИ объединяет
   assert.deepEqual(M.groupVersions(build('suggested')).shown.map((i) => i.m.id), [1, 2]);
   assert.deepEqual(M.groupVersions(build('rejected')).shown.map((i) => i.m.id), [1, 2]);
 });
+
+test('prepareItems: принятое название ИИ — в названии плитки и первым запросом постера', () => {
+  const ai = (status) => ({ base: 'Как приручить лису', season: 1, model: 'm', at: 1, status });
+  const files = [file(0, 'Kak.priruchit.lisu.S01E01.mkv', 800), file(1, 'Kak.priruchit.lisu.S01E02.mkv', 800)];
+  const acc = M.prepareItems([mag(files, { name: 'Kak.priruchit.lisu.S01.2025.WEB-DL.1080p', aiTitle: ai('accepted') })])[0];
+  assert.equal(acc.baseTitle, 'Как приручить лису');
+  assert.equal(acc.posterQueries[0], 'Как приручить лису');
+  const sug = M.prepareItems([mag(files, { name: 'Kak.priruchit.lisu.S01.2025.WEB-DL.1080p', aiTitle: ai('suggested') })])[0];
+  assert.notEqual(sug.baseTitle, 'Как приручить лису');
+});
