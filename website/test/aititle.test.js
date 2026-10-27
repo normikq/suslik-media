@@ -300,7 +300,8 @@ test("aititle: a season the release does not mark («Show 2 - 01», «Show - 01�
   assert.equal(v(2, e2, [e2 + "/Cyberpunk Edgerunners 2 - 01 [2160p WEB-DL DV HDR10].mkv"]), 2);
   const e1 = "Cyberpunk - Edgerunners [2022] [WEB-DL] [Dolby Vision] [1080p] [RUS + JAP] [Multi-14]";
   assert.equal(v(1, e1, [e1 + "/Cyberpunk - Edgerunners - 01 (WEB-DL 1920x1080 HEVC DV AAC Rus + Jap).mkv"]), 1);
-  assert.equal(v(14, e1, ["Cyberpunk - Edgerunners - 01.mkv"]), null); // «Multi-14» в скобках
+  // пометок нет — сезон модели (кроме взятого из года)
+  assert.equal(v(14, e1, ["Cyberpunk - Edgerunners - 01.mkv"]), 14);
   assert.equal(v(22, "Show [2022] 1080p", ["Show - 01.mkv"]), null); // год
   assert.equal(v(5, "Show DD5.1", ["Show - 01.mkv"]), null);
   // пометки есть — сезон должен с ними совпадать
@@ -349,4 +350,15 @@ test("aititle: season from the number after the title only for a series without 
   assert.equal(v({ base: "Show", season: 1, kind: "series" }, "Show 3 S01", ["Show.S01E01.mkv"]), 1);
   // без числа в названии — как ответила модель
   assert.equal(v({ base: "Киберпанк", season: 1, kind: "series" }, "Cyberpunk - Edgerunners [2022] [Multi-14]", ["Cyberpunk - Edgerunners - 01.mkv"]), 1);
+});
+
+test("aititle: «Final Season Part 2» — the model's season, not the part number; a year is not a season", () => {
+  const v = (answer, name, paths) => ai.validate(answer, name, paths.map(p => ({ path: p, type: "file" }))).season;
+  const aot = "Attack on Titan The Final Season Part 2 [1080p]";
+  assert.equal(v({ base: "Атака титанов", season: 4, kind: "series" }, aot, ["[SubsPlease] Shingeki no Kyojin (The Final Season) - 76 (1080p).mkv"]), 4);
+  assert.equal(ai.seasonFromName("Атака титанов", aot, []), null);
+  assert.equal(ai.seasonFromName("Атака титанов", "Атака титанов Часть 2", []), null);
+  assert.equal(v({ base: "Доктор Кто", season: 1, kind: "series" }, "Doctor Who 2024 WEB-DL", ["Doctor.Who.2024.E01.mkv"]), 1);
+  assert.equal(v({ base: "Доктор Кто", season: 24, kind: "series" }, "Doctor Who 2024 WEB-DL", ["Doctor.Who.2024.E01.mkv"]), null);
+  assert.equal(v({ base: "Фарго", season: 14, kind: "series" }, "Fargo (2014-2023)", ["Fargo/2014/Fargo.2014.E01.mkv"]), null);
 });

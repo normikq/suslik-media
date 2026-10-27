@@ -29,18 +29,22 @@ const VIDEO_EXT = /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso|wmv|mpg|mpeg|vob)$/i;
 const STATUSES = new Set(["suggested", "accepted", "rejected", "none"]);
 const KINDS = new Set(["movie", "series", "collection"]);
 // Версия ответа: 2 — с типом раздачи (kind), 3 — сезон без пометок в раздаче («Show 2 - 01», «Show - 01»),
-// 4 — сезон из числа после названия (seasonFromName). Ответ старой версии можно спросить заново (stale в медиатеке).
-const VERSION = 4;
+// 4 — сезон из числа после названия (seasonFromName), 5 — без пометок верим модели, «Part 2» — не сезон (прогон
+// scripts/aititle-eval.js 27.10). Ответ старой версии можно спросить заново (stale в медиатеке).
+const VERSION = 5;
 
 const PROMPT = [
   "Ты получаешь одну или несколько торрент-раздач: номер, название и пути видеофайлов. Для каждой раздачи верни объект:",
   "n — её номер; base — название фильма или сериала, по которому его можно найти в TMDB: русское, если оно есть",
   "в раздаче; если название записано транслитом (\"Kak.priruchit.lisu\") — по-русски кириллицей (\"Как приручить лису\");",
   "иначе оригинальное. Слова через пробел (не через точки и подчёркивания), без года, качества, кодеков, озвучки,",
-  "студии, номера сезона и серии; цифры, которые входят в само название (\"Тачки 2\", \"1+1\"), оставь.",
+  "студии, номера сезона и серии и без слов \"трилогия\", \"коллекция\", \"сборник\", \"полный сериал\" (у сборника —",
+  "название франшизы: \"Матрица\", а не \"Матрица: Трилогия\"); цифры, которые входят в само название (\"Тачки 2\",",
+  "\"1+1\"), оставь.",
   "season — номер сезона, если раздача — ровно один сезон сериала (смотри и на пути: S02E01 — сезон 2), иначе null.",
   "Сезон бывает записан без пометок: \"Сериал 2 - 01.mkv\" — второй сезон (цифра после названия), если это не часть",
-  "самого названия; если пометок нет вовсе и это первый сезон — 1.",
+  "самого названия; если пометок нет вовсе и это первый сезон — 1. \"Part 2\", \"Часть 2\", \"Cour 2\", \"Vol. 2\" — часть",
+  "сезона, а не его номер (\"Final Season Part 2\" — номер финального сезона). Год — не номер сезона.",
   "(фильм, несколько сезонов, сборник). kind — что это за раздача: \"movie\" — один фильм (с допами, трейлерами,",
   "частями одного фильма), \"series\" — серии сериала, аниме или шоу (один или несколько сезонов), \"collection\" —",
   "несколько разных фильмов (франшиза, трилогия, подборка)."
@@ -124,16 +128,18 @@ const ANY_SEASON = /(?<![\p{L}\d])s\d{1,2}(?!\d)|(?:season|сезон\p{L}*)[\s.
 // Числа, которые не номер сезона: год, разрешение, кодек, битрейт, звук 5.1
 const NOT_SEASON = /(?:2160|1080|720|480|576)[pi]|[xh][ .]?26[45]|\d+(?:[.,]\d+)?\s?(?:fps|kbps|mbps|bit|gb|mb)|(?<!\d)(?:19|20)\d{2}(?!\d)|(?<!\d)[1-9]\.[01](?!\d)/giu;
 
-/**
- * Сезон n без пометок в раздаче: пометок нет ни в названии, ни в путях, и n — первый сезон или отдельное число
- * в названии раздачи вне скобок («Cyberpunk Edgerunners 2 [2160p]» — 2), не год и не разрешение.
- */
-function seasonUnmarked(n, name, paths) {
-  if ([name, ...paths].some(t => ANY_SEASON.test(t))) return false;
-  if (n === 1) return true;
-  // вне [скобок] и (скобок): там качество, озвучка, «Multi-14»
-  const nums = String(name).replace(/\[[^\]]*\]|\([^)]*\)/g, " ").replace(NOT_SEASON, " ").match(/(?<!\d)\d{1,2}(?!\d)/g) || [];
-  return nums.some(x => Number(x) === n);
+/** Пометки сезона есть в названии или путях (тогда сезон от ИИ должен с ними совпадать). */
+function hasSeasonMarks(name, paths) {
+  return [name, ...paths].some(t => ANY_SEASON.test(t));
+}
+
+// Число после «Part», «Часть», «Cour», «Vol», «Том» — часть сезона, а не его номер («Final Season Part 2»)
+const PART_NUM = /(?:part|pt|часть|ч|cour|vol(?:ume)?|том|chapter|глава)[\s._-]*\d{1,2}(?!\d)/giu;
+
+/** Отдельные числа названия раздачи вне скобок: без года, разрешения, кодека, «Part 2». */
+function nameNumbers(name) {
+  return (String(name).replace(/\[[^\]]*\]|\([^)]*\)/g, " ").replace(PART_NUM, " ").replace(NOT_SEASON, " ")
+    .match(/(?<!\d)\d{1,2}(?!\d)/g) || []).map(Number);
 }
 
 /**
@@ -142,11 +148,22 @@ function seasonUnmarked(n, name, paths) {
  * делает не всегда (27.10 — сезон 1 у «Edgerunners 2»). Одно такое число — сезон, иначе null (решает модель).
  */
 function seasonFromName(base, name, paths) {
-  if ([name, ...paths].some(t => ANY_SEASON.test(t))) return null;
+  if (hasSeasonMarks(name, paths)) return null;
   const inBase = new Set((String(base).match(/\d+/g) || []).map(Number));
-  const nums = (name.replace(/\[[^\]]*\]|\([^)]*\)/g, " ").replace(NOT_SEASON, " ").match(/(?<!\d)\d{1,2}(?!\d)/g) || [])
-    .map(Number).filter(n => n >= 2 && n <= 30 && !inBase.has(n));
+  const nums = nameNumbers(name).filter(n => n >= 2 && n <= 30 && !inBase.has(n));
   return new Set(nums).size === 1 ? nums[0] : null;
+}
+
+/**
+ * Сезон n взят из шума: отдельным числом его в раздаче нет, зато он есть внутри года («2022» → 22), звука «5.1»,
+ * разрешения или кодека. Сезона, которого в раздаче нет вовсе, это не касается: его модель знает сама.
+ */
+function seasonFromNoise(n, name, paths) {
+  const all = [name, ...paths].join(" ");
+  const alone = new RegExp("(?<!\\d)0*" + n + "(?!\\d)");
+  if (alone.test(all.replace(NOT_SEASON, " "))) return false;
+  const year = new RegExp("(?<!\\d)(?:19|20)" + String(n).padStart(2, "0") + "(?!\\d)");
+  return alone.test(all) || (n >= 10 && year.test(all));
 }
 
 function seasonMentioned(n, texts) {
@@ -174,9 +191,9 @@ function seasonMentioned(n, texts) {
 
 /**
  * Проверка ответа модели. Возвращает { base, season } или null (ответа нет, название пустое или слишком длинное).
- * Точки и подчёркивания вместо пробелов («Kak.priruchit.lisu») заменяются пробелами. Сезон без пометок принимается
- * по seasonUnmarked; если пометки есть, сезон должен с ними совпадать. Сезон, которого нет ни в названии,
- * ни в путях (S02, «2 сезон», «1-3 сезон»…), не принимается: остаётся null, название — да.
+ * Точки и подчёркивания вместо пробелов («Kak.priruchit.lisu») заменяются пробелами. Пометки сезона в раздаче есть —
+ * сезон от ИИ должен с ними совпадать; нет — сезон модели (не из года), у сериала «Название 2» — seasonFromName.
+ * Неподходящий сезон не принимается: остаётся null, название — да.
  * Название может не совпадать с раздачей (перевод, кириллица вместо транслита): его всё равно подтверждает владелец.
  * kind — "movie" | "series" | "collection" или null (неизвестный); у фильма и сборника сезона нет.
  */
@@ -188,7 +205,12 @@ function validate(answer, name, files) {
   if (!base || base.length > 200 || /[\u0000-\u001f\u007f]/.test(base)) return null;
   let season = answer.season;
   if (!Number.isInteger(season) || season < 0 || season > 99) season = null;
-  else if (!seasonMentioned(season, [String(name), ...videoPaths(files)]) && !seasonUnmarked(season, String(name), videoPaths(files))) season = null;
+  else {
+    // Пометки сезона есть — сезон от ИИ должен с ними совпадать. Пометок нет — верим модели (она знает, что «Final
+    // Season Part 2» — сезон 4, а «Doctor Who 2024» — сезон 1), кроме сезона из года, «5.1» и т. п.
+    const paths = videoPaths(files);
+    if (hasSeasonMarks(String(name), paths) ? !seasonMentioned(season, [String(name), ...paths]) : seasonFromNoise(season, String(name), paths)) season = null;
+  }
   const kind = KINDS.has(answer.kind) ? answer.kind : null;
   if (kind === "movie" || kind === "collection") season = null;
   if (kind === "series") season = seasonFromName(base, String(name), videoPaths(files)) ?? season;
@@ -433,7 +455,7 @@ module.exports = {
   keyOf,
   videoPaths,
   seasonMentioned,
-  seasonUnmarked,
+  seasonFromName,
   validate,
   cooldownLeft,
   readyAt,
