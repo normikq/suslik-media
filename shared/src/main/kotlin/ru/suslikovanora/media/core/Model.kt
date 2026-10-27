@@ -23,13 +23,42 @@ data class Magnet(
     val files: List<MFile>,
     val canRemove: Boolean,
     val favorite: Boolean = false, // per device, shown first in the library
-    val mine: Boolean = false // in the owner's own list «Мои фильмы» (server: services/shelf.js)
+    val mine: Boolean = false, // in the owner's own list «Мои фильмы» (server: services/shelf.js)
+    val aiTitle: AiTitle? = null, // suggested by the server's AI (services/aititle.js)
+    val canAiTitle: Boolean = false // this user added the ready torrent (or is admin): may ask the AI and accept / reject
 ) {
     val ready get() = statusCode == 4
     val downloading get() = statusCode < 4
     val failed get() = statusCode >= 5
     val progress: Float get() = if (size > 0) (downloaded.toFloat() / size).coerceIn(0f, 1f) else 0f
 }
+
+/**
+ * Title and season the server's AI suggested for a torrent (services/aititle.js). [status]: "suggested", "accepted",
+ * "rejected" or "none" (the answer failed the server's check). Only an accepted one is used for grouping; the regexes
+ * stay the main way.
+ */
+data class AiTitle(val base: String, val season: Int?, val model: String, val at: Long, val status: String) {
+    val accepted get() = status == "accepted" && base.isNotBlank()
+}
+
+private val AI_STATUSES = setOf("suggested", "accepted", "rejected", "none")
+
+fun parseAiTitle(a: JSONObject?): AiTitle? {
+    if (a == null) return null
+    val status = a.optString("status")
+    if (status !in AI_STATUSES) return null
+    return AiTitle(
+        base = a.optString("base").trim(),
+        season = if (a.has("season") && !a.isNull("season")) a.optInt("season") else null,
+        model = a.optString("model"),
+        at = a.optLong("at", 0L),
+        status = status
+    )
+}
+
+/** When this user may ask the AI again (server ms, 0 — now): top-level `aiTitleReadyAt` of /api/library. */
+fun aiTitleReadyAt(json: JSONObject): Long = json.optLong("aiTitleReadyAt", 0L)
 
 fun parseLibrary(json: JSONObject): List<Magnet> {
     val arr = json.optJSONArray("magnets") ?: return emptyList()
@@ -59,7 +88,9 @@ fun parseLibrary(json: JSONObject): List<Magnet> {
             files = files,
             canRemove = m.optBoolean("canRemove", true),
             favorite = m.optBoolean("favorite", false),
-            mine = m.optBoolean("mine", false)
+            mine = m.optBoolean("mine", false),
+            aiTitle = parseAiTitle(m.optJSONObject("aiTitle")),
+            canAiTitle = m.optBoolean("canAiTitle", false)
         )
     }
     return out
@@ -301,6 +332,9 @@ fun seriesLine(p: Playable.Series): String {
 
 private val YEAR_IN_NAME = Regex("""\b(19\d{2}|20\d{2})\b""")
 
+/** Title the tile is grouped by: the AI's one once the owner accepted it, otherwise the regexes' [LibraryItem.baseTitle]. */
+fun groupTitle(it: LibraryItem): String = it.m.aiTitle?.takeIf { a -> a.accepted }?.base ?: it.baseTitle
+
 /**
  * Same film or show added more than once (different releases: 720p / 1080p / 4K, other voice-overs, other titles,
  * other seasons of a show): one tile for all of them. Only ready items are merged. Films merge with films, series
@@ -313,11 +347,12 @@ fun groupVersions(list: List<LibraryItem>, posterOf: (LibraryItem) -> String? = 
     val groups = ArrayList<MutableList<LibraryItem>>()
     val shown = ArrayList<LibraryItem>(list.size)
     for (it in list) {
-        if (it.playable is Playable.None || !it.m.ready || it.baseTitle.isBlank()) { shown += it; continue }
+        val base = groupTitle(it)
+        if (it.playable is Playable.None || !it.m.ready || base.isBlank()) { shown += it; continue }
         val kind = if (it.playable is Playable.Movie) "m" else "s"
         val keys = listOfNotNull(
             posterOf(it)?.let { p -> "$kind|poster|$p" },
-            if (kind == "m") "m|" + titleKey(it.baseTitle) + "|" + (YEAR_IN_NAME.find(it.m.name)?.value ?: "") else "s|" + titleKey(it.baseTitle)
+            if (kind == "m") "m|" + titleKey(base) + "|" + (YEAR_IN_NAME.find(it.m.name)?.value ?: "") else "s|" + titleKey(base)
         )
         val group = keys.firstNotNullOfOrNull { k -> byKey[k] }
         if (group == null) { val g = mutableListOf(it); groups += g; shown += it; keys.forEach { k -> byKey[k] = g } }

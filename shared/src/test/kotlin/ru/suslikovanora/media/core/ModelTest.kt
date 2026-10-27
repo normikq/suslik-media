@@ -479,4 +479,53 @@ class ModelTest {
         assertTrue("inception" in item.searchText)
         assertTrue("inception.mkv" in item.searchText)
     }
+
+    // -------------------------------------------------------------------------
+    // AI title (server services/aititle.js): parsed, used for grouping only once accepted
+    // -------------------------------------------------------------------------
+
+    private fun aiLibrary(status: String) = JSONObject("""
+        {
+          "aiTitleReadyAt": 1700000000000,
+          "magnets": [
+            { "id": 1, "name": "Тачки 2 (2011) BDRip", "statusCode": 4,
+              "files": [ { "name": "Cars.2.mkv", "path": "Cars.2.mkv", "type": "file", "size": 4000, "sourceLink": "https://host/1" } ] },
+            { "id": 2, "name": "Cars.Two.2011.720p", "statusCode": 4, "canAiTitle": true,
+              "aiTitle": { "base": " Тачки 2 ", "season": null, "source": "ai", "model": "gemini-3.5-flash-lite", "at": 5, "status": "$status" },
+              "files": [ { "name": "Cars2.mkv", "path": "Cars2.mkv", "type": "file", "size": 2000, "sourceLink": "https://host/2" } ] }
+          ]
+        }
+    """.trimIndent())
+
+    @Test
+    fun parseLibraryAiTitle() {
+        val json = aiLibrary("suggested")
+        val list = parseLibrary(json)
+        assertNull(list[0].aiTitle)
+        assertFalse(list[0].canAiTitle)
+        assertEquals(AiTitle("Тачки 2", null, "gemini-3.5-flash-lite", 5L, "suggested"), list[1].aiTitle)
+        assertTrue(list[1].canAiTitle)
+        assertFalse(list[1].aiTitle!!.accepted)
+        assertEquals(1700000000000L, aiTitleReadyAt(json))
+        assertEquals(0L, aiTitleReadyAt(JSONObject()))
+        val season = parseLibrary(JSONObject("""{"magnets":[{"id":3,"name":"S","aiTitle":{"base":"Тед Лассо","season":2,"status":"accepted"}}]}"""))
+        assertEquals(2, season[0].aiTitle?.season)
+        assertTrue(season[0].aiTitle!!.accepted)
+        val bad = parseLibrary(JSONObject("""{"magnets":[{"id":4,"name":"S","aiTitle":{"base":"X","status":"weird"}}]}"""))
+        assertNull(bad[0].aiTitle)
+    }
+
+    @Test
+    fun groupVersionsUsesOnlyAcceptedAiTitle() {
+        val accepted = prepareItems(parseLibrary(aiLibrary("accepted")))
+        assertEquals("Тачки 2", groupTitle(accepted[1]))
+        val (shown, versions) = groupVersions(accepted)
+        assertEquals(listOf(1L), shown.map { it.m.id })
+        assertEquals(listOf(1L, 2L), versions[1L]?.map { it.m.id })
+        for (status in listOf("suggested", "rejected", "none")) {
+            val items = prepareItems(parseLibrary(aiLibrary(status)))
+            assertEquals(items[1].baseTitle, groupTitle(items[1]))
+            assertEquals(listOf(1L, 2L), groupVersions(items).first.map { it.m.id }, status)
+        }
+    }
 }

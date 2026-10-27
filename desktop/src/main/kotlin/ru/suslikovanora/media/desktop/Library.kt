@@ -44,6 +44,10 @@ private const val POSTER_CAP = 100L shl 20
 private const val POSTER_UNUSED_DAYS = 7L
 
 /** Same behaviour as the Android LibraryStore, with files in %APPDATA%\SuslikMedia instead of SharedPreferences. */
+/** «Тачки 2» or «Тед Лассо», сезон 2 — how a title suggested by the AI is shown. */
+fun aiLabel(ai: AiTitle): String =
+    if (ai.season != null) tr("library.ai_sezon", "title" to "«${ai.base}»", "season" to ai.season) else "«${ai.base}»"
+
 class Library {
     private val snapshot = AppDir.file("library.json")
     private val libraryEtag = Store.of("library_etag") // version of the list above, for "not modified" answers
@@ -60,6 +64,8 @@ class Library {
     var status by mutableStateOf(tr("library.nazhmite_obnovit_chtoby_zagruz"))
         private set
     var statusKind by mutableStateOf(StatusKind.Info)
+    /** When this user may ask the AI again (ms, 0 — now): from the library answer, or the server's 429. */
+    var aiReadyAt by mutableStateOf(0L)
         private set
     var authenticated by mutableStateOf<Boolean?>(null)
     var watchVersion by mutableStateOf(0)
@@ -183,6 +189,7 @@ class Library {
             }
             val json = res.json
             val list = withContext(Dispatchers.Default) { parseLibrary(json) }
+            aiReadyAt = aiTitleReadyAt(json)
             publish(list)
             cleanUp(items) // what films that left the library left behind (posters, progress, reserve…)
             withContext(Dispatchers.IO) { runCatching { snapshot.writeText(json.toString()) } }
@@ -261,6 +268,36 @@ class Library {
         return try {
             withContext(kotlinx.coroutines.NonCancellable) { Api.post(Shelf.PATH, Shelf.body(m.id, on)) }; null
         } catch (e: CancellationException) { throw e } catch (e: Exception) { items = before; Api.describe(e) }
+    }
+
+    // ---- «Определить через ИИ» (server services/aititle.js): one answer per torrent, then the owner accepts or rejects ----
+    private fun setAi(id: Long, ai: AiTitle?) {
+        items = items.map { if (it.m.id == id) it.copy(m = it.m.copy(aiTitle = ai)) else it }
+    }
+
+    suspend fun askAi(m: Magnet) {
+        status = tr("library.ai_sprashivaem"); statusKind = StatusKind.Info
+        try {
+            val r = Api.post("/api/library/${m.id}/ai-title")
+            val ai = parseAiTitle(r.optJSONObject("aiTitle"))
+            if (!r.optBoolean("cached")) aiReadyAt = System.currentTimeMillis() + 15 * 60_000L // точное — со следующей медиатекой
+            setAi(m.id, ai)
+            if (ai == null || ai.status == "none") { status = tr("library.ai_ne_smog"); statusKind = StatusKind.Info }
+            else { status = tr("library.ai_predlagaet", "title" to aiLabel(ai)); statusKind = StatusKind.Ok }
+        } catch (e: CancellationException) { throw e } catch (e: Exception) {
+            val sec = (e as? Api.HttpError)?.takeIf { it.code == 429 }?.body?.optLong("retryAfterSec", 0L) ?: 0L
+            if (sec > 0 && (e as Api.HttpError).body?.optString("reason") == "cooldown") {
+                aiReadyAt = System.currentTimeMillis() + sec * 1000
+                status = tr("library.ai_podozhdite", "min" to (sec + 59) / 60); statusKind = StatusKind.Info
+            } else { status = Api.describe(e); statusKind = StatusKind.Error }
+        }
+    }
+
+    suspend fun decideAi(m: Magnet, accept: Boolean) {
+        try {
+            val r = Api.post("/api/library/${m.id}/ai-title/decision", JSONObject().put("accept", accept))
+            setAi(m.id, parseAiTitle(r.optJSONObject("aiTitle")))
+        } catch (e: CancellationException) { throw e } catch (e: Exception) { status = Api.describe(e); statusKind = StatusKind.Error }
     }
 
     suspend fun remove(m: Magnet): String? = try {

@@ -901,6 +901,30 @@ private fun Tile(item: LibraryItem, lib: Library, versions: List<LibraryItem>, i
                     text = { Text(if (isFav) tr("library.iz_izbrannogo") else tr("library.v_izbrannoe"), color = Sm.text, fontFamily = Onest) },
                     onClick = { menuOpen = false; scope.launch { group.forEach { lib.setFavorite(it.m, !isFav) } } }
                 )
+                // «Определить через ИИ» — тому, кто добавил раздачу (server services/aititle.js); предложение — принять/отклонить
+                val ai = m.aiTitle
+                if (m.canAiTitle && ai == null) {
+                    val left = lib.aiReadyAt - System.currentTimeMillis()
+                    DropdownMenuItem(
+                        text = { Text(if (left > 0) tr("library.ai_cherez", "min" to (left + 59_999) / 60_000) else tr("library.ai_opredelit"), color = if (left > 0) Sm.muted else Sm.text, fontFamily = Onest) },
+                        enabled = left <= 0,
+                        onClick = { menuOpen = false; scope.launch { lib.askAi(m) } }
+                    )
+                } else if (ai != null && ai.status == "suggested") {
+                    DropdownMenuItem(
+                        text = { Text(tr("library.ai_predlozheno", "title" to aiLabel(ai)), color = Sm.muted, fontFamily = Onest) },
+                        enabled = false, onClick = {}
+                    )
+                    if (m.canAiTitle) {
+                        DropdownMenuItem(text = { Text(tr("library.ai_prinyat"), color = Sm.text, fontFamily = Onest) }, onClick = { menuOpen = false; scope.launch { lib.decideAi(m, true) } })
+                        DropdownMenuItem(text = { Text(tr("library.ai_otklonit"), color = Sm.text, fontFamily = Onest) }, onClick = { menuOpen = false; scope.launch { lib.decideAi(m, false) } })
+                    }
+                } else if (ai != null && ai.status == "accepted" && m.canAiTitle) {
+                    DropdownMenuItem(
+                        text = { Text(tr("library.ai_otmenit", "title" to aiLabel(ai)), color = Sm.text, fontFamily = Onest) },
+                        onClick = { menuOpen = false; scope.launch { lib.decideAi(m, false) } }
+                    )
+                }
                 // «Удалить» стирает раздачу из AllDebrid у всех: в «Моих фильмах» его нет, там только «Убрать из моих фильмов»
                 // (отменить свою незаконченную загрузку можно и там)
                 if (m.canRemove && (!inMine || m.downloading)) {

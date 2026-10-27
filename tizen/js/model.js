@@ -7,6 +7,21 @@
   'use strict';
   var SM = g.SM = g.SM || {};
 
+  /** Название и сезон, предложенные ИИ сервера (services/aititle.js; AiTitle в Model.kt). В группировку — только "accepted". */
+  function parseAiTitle(a) {
+    if (!a || typeof a !== 'object' || ['suggested', 'accepted', 'rejected', 'none'].indexOf(a.status) < 0) return null;
+    return {
+      base: str(a.base).trim(), season: typeof a.season === 'number' && isFinite(a.season) ? Math.floor(a.season) : null,
+      model: str(a.model), at: num(a.at), status: a.status
+    };
+  }
+
+  /** Название для группировки: принятое предложение ИИ, иначе по регуляркам (groupTitle в Model.kt). */
+  function groupTitle(it) {
+    var a = it.m.aiTitle;
+    return a && a.status === 'accepted' && a.base ? a.base : it.baseTitle;
+  }
+
   function parseLibrary(json) {
     var arr = json && json.magnets;
     if (!Array.isArray(arr)) return [];
@@ -23,7 +38,8 @@
       out.push(magnet({
         id: id, name: str(m.name).trim() ? str(m.name) : 'Magnet ' + id, status: str(m.status),
         statusCode: num(m.statusCode), size: num(m.size), downloaded: num(m.downloaded), files: files,
-        canRemove: m.canRemove !== false, favorite: m.favorite === true, mine: m.mine === true
+        canRemove: m.canRemove !== false, favorite: m.favorite === true, mine: m.mine === true,
+        aiTitle: parseAiTitle(m.aiTitle), canAiTitle: m.canAiTitle === true
       }));
     });
     return out;
@@ -256,13 +272,14 @@
   function groupVersions(list, posterOf) {
     var byKey = {}, groups = [], shown = [];
     list.forEach(function (it) {
-      if (it.playable.kind === 'none' || !it.m.ready || !it.baseTitle.trim()) { shown.push(it); return; }
+      var base = groupTitle(it);
+      if (it.playable.kind === 'none' || !it.m.ready || !base.trim()) { shown.push(it); return; }
       var kind = it.playable.kind === 'movie' ? 'm' : 's';
       var y = YEAR_IN_NAME.exec(it.m.name);
       var keys = [];
       var poster = posterOf ? posterOf(it) : null;
       if (poster) keys.push(kind + '|poster|' + poster);
-      keys.push(kind === 'm' ? 'm|' + titleKey(it.baseTitle) + '|' + (y ? y[1] : '') : 's|' + titleKey(it.baseTitle));
+      keys.push(kind === 'm' ? 'm|' + titleKey(base) + '|' + (y ? y[1] : '') : 's|' + titleKey(base));
       var group = null;
       for (var i = 0; i < keys.length && !group; i++) group = byKey[keys[i]] || null;
       if (!group) { group = [it]; groups.push(group); shown.push(it); keys.forEach(function (k) { byKey[k] = group; }); }
@@ -416,7 +433,7 @@
 
   SM.model = {
     parseLibrary: parseLibrary, magnet: magnet, mainVideo: mainVideo, buildPlayable: buildPlayable,
-    cleanTitle: cleanTitle, titleKey: titleKey, groupVersions: groupVersions, seriesLine: seriesLine, formatBytes: formatBytes, statusRu: statusRu, episodeLabel: episodeLabel,
+    cleanTitle: cleanTitle, titleKey: titleKey, groupTitle: groupTitle, groupVersions: groupVersions, seriesLine: seriesLine, formatBytes: formatBytes, statusRu: statusRu, episodeLabel: episodeLabel,
     prepareItems: prepareItems, subtitlesFor: subtitlesFor, externalAudioFor: externalAudioFor,
     isVoiceOverOnly: isVoiceOverOnly, dubLabel: dubLabel, customName: customName, externalChoices: externalChoices, externalIn: externalIn,
     watchKey: watchKey, watchInfo: watchInfo, basename: basename

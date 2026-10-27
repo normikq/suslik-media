@@ -233,3 +233,29 @@ test('groupVersions: сезоны и раздачи сериала — одна 
   assert.deepEqual(g.versions[3].map((i) => i.m.id), [3, 4]);
   assert.equal(g.versions[5], undefined);
 });
+
+// ---- название от ИИ (services/aititle.js; groupTitle в Model.kt) ----
+test('parseLibrary: aiTitle и canAiTitle; неизвестный статус отбрасывается', () => {
+  const list = M.parseLibrary({ magnets: [
+    { id: 1, name: 'A', statusCode: 4, files: [], canAiTitle: true, aiTitle: { base: ' Тед Лассо ', season: 2, source: 'ai', model: 'gemini-3.5-flash-lite', at: 5, status: 'suggested' } },
+    { id: 2, name: 'B', statusCode: 4, files: [], aiTitle: { base: 'X', season: null, status: 'weird' } },
+    { id: 3, name: 'C', statusCode: 4, files: [] }
+  ] });
+  assert.deepEqual(list[0].aiTitle, { base: 'Тед Лассо', season: 2, model: 'gemini-3.5-flash-lite', at: 5, status: 'suggested' });
+  assert.equal(list[0].canAiTitle, true);
+  assert.equal(list[1].aiTitle, null);
+  assert.equal(list[2].aiTitle, null);
+  assert.equal(list[2].canAiTitle, false);
+});
+
+test('groupVersions: принятое название ИИ объединяет, предложенное — нет', () => {
+  const ai = (status) => ({ base: 'Тачки 2', season: null, model: 'm', at: 1, status });
+  const build = (status) => M.prepareItems([
+    mag([file(0, 'Cars.2.mkv', 4000)], { id: 1, name: 'Тачки 2 (2011) BDRip' }),
+    mag([file(0, 'Cars2.mkv', 2000)], { id: 2, name: 'Cars.Two.2011.720p', aiTitle: ai(status) })
+  ]);
+  assert.equal(M.groupTitle(build('accepted')[1]), 'Тачки 2');
+  assert.deepEqual(M.groupVersions(build('accepted')).versions[1].map((i) => i.m.id), [1, 2]);
+  assert.deepEqual(M.groupVersions(build('suggested')).shown.map((i) => i.m.id), [1, 2]);
+  assert.deepEqual(M.groupVersions(build('rejected')).shown.map((i) => i.m.id), [1, 2]);
+});
