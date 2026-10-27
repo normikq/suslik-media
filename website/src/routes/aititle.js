@@ -99,6 +99,25 @@ router.post("/api/library/:id/ai-title/decision", requireLogin, apiLimiter, asyn
   res.json({ aiTitle: r });
 });
 
+// Несколько решений за один запрос (плитка из нескольких раздач): { decisions: [{ id, accept }] } -> { results: [{ id, aiTitle }] }.
+// Раздачи без предложения ИИ пропускаются, как и чужие.
+router.post("/api/library/ai-title/decision", requireLogin, apiLimiter, async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const decisions = Array.isArray(req.body?.decisions) ? req.body.decisions : [];
+  if (!decisions.length || decisions.some(d => !d || typeof d.accept !== "boolean")) {
+    return res.status(400).json({ error: "Нужен список decisions: [{ id, accept: true | false }]." });
+  }
+  const list = await ownMagnets(req, res, decisions.map(d => d.id));
+  if (!list) return;
+  const accept = new Map(decisions.map(d => [String(d.id), d.accept]));
+  const results = [];
+  for (const m of list) {
+    const r = aiTitle.decide(m, accept.get(String(m.id)));
+    if (r) results.push({ id: Number(m.id), aiTitle: r });
+  }
+  res.json({ results });
+});
+
 // Счётчики для замера: вызовы, 429/503, токены за день, доля принятых
 router.get("/api/ai-title/stats", requireAdmin, (req, res) => {
   res.set("Cache-Control", "no-store");

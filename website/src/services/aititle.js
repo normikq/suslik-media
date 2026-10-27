@@ -33,6 +33,7 @@ const KINDS = new Set(["movie", "series", "collection"]);
 // scripts/aititle-eval.js 27.10), 6 — оригинальное название и год (original, year) для поиска постера в TMDB.
 // Ответ старой версии можно спросить заново (stale в медиатеке).
 const VERSION = 6;
+const NONE_RETRY_MS = 3600 * 1000; // «нет ответа» можно спросить заново через час (остальные решения — только force)
 
 const PROMPT = [
   "Ты получаешь одну или несколько торрент-раздач: номер, название и пути видеофайлов. Для каждой раздачи верни объект.",
@@ -134,7 +135,8 @@ function keyOf(name, files) {
 // Любая пометка сезона в тексте: S01, «Season 2», «2 сезон», «Сезон 2», «1-3 сезон»
 const ANY_SEASON = /(?<![\p{L}\d])s\d{1,2}(?!\d)|(?:season|сезон\p{L}*)[\s._:#№-]*\d{1,2}(?!\d)|(?<!\d)\d{1,2}[\s._-]*(?:-?(?:й|ый|ой))?[\s._-]*(?:season|сезон)/iu;
 // Числа, которые не номер сезона: год, разрешение, кодек, битрейт, звук 5.1
-const NOT_SEASON = /(?:2160|1080|720|480|576)[pi]|[xh][ .]?26[45]|\d+(?:[.,]\d+)?\s?(?:fps|kbps|mbps|bit|gb|mb)|(?<!\d)(?:19|20)\d{2}(?!\d)|(?<!\d)[1-9]\.[01](?!\d)/giu;
+// (4K/8K/3D, 10-bit, HDR10 и звук 5.1/7.2 тоже не сезон)
+const NOT_SEASON = /(?:2160|1080|720|480|576)[pi]|[xh][ .]?26[45]|\d+(?:[.,]\d+)?[\s-]?(?:fps|kbps|mbps|bit|gb|mb)|(?<![\p{L}\d])(?:[248]k|3d)(?![\p{L}\d])|hdr10\+?|(?<!\d)(?:19|20)\d{2}(?!\d)|(?<!\d)\d\.\d(?!\d)/giu;
 
 /** Пометки сезона есть в названии или путях (тогда сезон от ИИ должен с ними совпадать). */
 function hasSeasonMarks(name, paths) {
@@ -277,11 +279,14 @@ class AiError extends Error {
  * Один вызов Gemini на несколько раздач ([{ name, files }]). Возвращает { answers: Map(номер с 1 -> ответ), usage }.
  * Бросает AiError: "busy" (429/503/таймаут/сеть — не списывается) или "bad" (прочее).
  */
+// Название и пути приходят из раздач: перевод строки в них подделал бы «Раздача N» и чужой ответ
+const oneLine = s => String(s).replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, " ").trim();
+
 async function callModel(list) {
   const per = Math.min(MAX_FILES, Math.max(20, Math.floor(BATCH_FILES / list.length)));
   const text = list.map((m, i) => {
-    const paths = videoPaths(m.files, per);
-    return "Раздача " + (i + 1) + "\nНазвание: " + String(m.name).slice(0, 500) + "\nФайлы:\n" + (paths.length ? paths.join("\n") : "(нет)");
+    const paths = videoPaths(m.files, per).map(oneLine);
+    return "Раздача " + (i + 1) + "\nНазвание: " + oneLine(String(m.name).slice(0, 500)) + "\nФайлы:\n" + (paths.length ? paths.join("\n") : "(нет)");
   }).join("\n\n");
   const url = `${API_BASE}/models/${encodeURIComponent(config.AI_TITLE_MODEL)}:generateContent`;
   let res;
@@ -299,14 +304,18 @@ async function callModel(list) {
   } catch (err) {
     throw new AiError("busy", "Сервис ИИ не ответил. Попробуйте позже.", { cause: err.name || "network" });
   }
-  if (res.status === 429 || res.status === 503) {
+  if (res.status === 429 || res.status >= 500) {
     throw new AiError("busy", "Сервис ИИ сейчас перегружен. Попробуйте позже.", { status: res.status });
   }
   let body = null;
   try { body = await res.json(); } catch {}
   if (!res.ok) throw new AiError("bad", "Сервис ИИ вернул ошибку.", { status: res.status });
   const usage = body && body.usageMetadata ? body.usageMetadata : null;
-  const raw = body?.candidates?.[0]?.content?.parts?.map(p => p.text || "").join("") || "";
+  let raw = body?.candidates?.[0]?.content?.parts?.map(p => p.text || "").join("") || "";
+  // Фильтр безопасности Gemini: ответа не будет и повторять бессмысленно (хранится как none); причина — в журнал
+  const finish = body?.candidates?.[0]?.finishReason;
+  const blocked = body?.promptFeedback?.blockReason || (["SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "RECITATION"].includes(finish) ? finish : "");
+  if (blocked) raw = "blocked: " + blocked + " " + raw;
   let parsed = null;
   try { parsed = JSON.parse(raw); } catch {}
   const answers = new Map();
@@ -325,6 +334,8 @@ async function callModel(list) {
  */
 async function suggestMany(magnets, owner, now = Date.now(), { noCooldown = false, force = false } = {}) {
   if (!enabled()) throw new AiError("disabled", "Определение через ИИ на сервере не настроено.");
+  const cdMs = config.AI_TITLE_COOLDOWN_MIN * 60000;
+  for (const [o, at] of cooldowns) if (at + cdMs <= now) cooldowns.delete(o); // отсидевшие кулдаун не храним
   const out = new Map(); // id -> key
   const todo = new Map(); // key -> magnet
   for (const m of magnets) {
@@ -332,7 +343,7 @@ async function suggestMany(magnets, owner, now = Date.now(), { noCooldown = fals
     const key = keyOf(m.name, m.files);
     out.set(id, key);
     // ответ старой версии (без типа раздачи) — как будто его нет: спросить можно ещё раз
-    const fresh = k => results.has(k) && (results.get(k).v || 1) >= VERSION;
+    const fresh = k => { const r = results.get(k); return Boolean(r) && (r.v || 1) >= VERSION && !(r.status === "none" && now - r.at > NONE_RETRY_MS); };
     const known = force ? null : (fresh(byId.get(id)) ? byId.get(id) : (fresh(key) ? key : null));
     if (known) {
       out.set(id, known);
@@ -353,8 +364,13 @@ async function suggestMany(magnets, owner, now = Date.now(), { noCooldown = fals
     };
   };
   if (!todo.size) return answer(true);
-  const jobKey = [...todo.keys()].sort().join(",");
-  if (inflight.has(jobKey)) { await inflight.get(jobKey).catch(() => {}); return answer(true); }
+  // Раздачи, которые уже спрашивает другой запрос, второй раз в модель не уходят: ждём его и берём ответ
+  const running = [...todo.keys()].filter(k => inflight.has(k));
+  if (running.length) {
+    await Promise.all(running.map(k => inflight.get(k).catch(() => {})));
+    for (const k of running) todo.delete(k);
+    if (!todo.size) return answer(true);
+  }
   const left = noCooldown ? 0 : cooldownLeft(owner, now);
   if (left > 0) throw new AiError("cooldown", "ИИ можно спрашивать раз в " + config.AI_TITLE_COOLDOWN_MIN + " минут.", { retryAfterMs: left });
   rollDay(now);
@@ -400,8 +416,8 @@ async function suggestMany(magnets, owner, now = Date.now(), { noCooldown = fals
     });
     trim();
     persist();
-  })().finally(() => inflight.delete(jobKey));
-  inflight.set(jobKey, job);
+  })().finally(() => { for (const [k] of list) inflight.delete(k); });
+  for (const [k] of list) inflight.set(k, job);
   await job;
   return answer(false);
 }
@@ -435,7 +451,8 @@ function decide(m, accept) {
 
 function trim() {
   if (results.size <= MAX_RESULTS) return;
-  const order = [...results].sort((a, b) => a[1].at - b[1].at);
+  // принятые названия не вытесняем: на них держатся плитка, постер и слияние версий
+  const order = [...results].filter(([, r]) => r.status !== "accepted").sort((a, b) => a[1].at - b[1].at);
   const gone = new Set(order.slice(0, results.size - MAX_RESULTS).map(([k]) => k));
   for (const k of gone) results.delete(k);
   for (const [id, k] of byId) if (gone.has(k)) byId.delete(id);

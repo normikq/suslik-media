@@ -1709,7 +1709,9 @@ function groupLibraryVersions(list){
     const kind0=Number(m.statusCode)===4&&base.trim()?playableKind(m):"none";
     if(kind0==="none"){ shown.push(m); continue; }
     const kind=kind0==="movie"?"m":"s";
-    const year=/\b(19\d{2}|20\d{2})\b/.exec(m.name||"");
+    // год принятого ответа ИИ важнее года в имени раздачи: «Dune.2021» и «Dune.BDRip» — одна плитка
+    const aiYear=m.aiTitle&&m.aiTitle.status==="accepted"&&m.aiTitle.year;
+    const year=aiYear?[null,String(aiYear)]:/\b(19\d{2}|20\d{2})\b/.exec(m.name||"");
     const poster=posterPathOf(m);
     const keys=[];
     if(poster) keys.push(kind+"|poster|"+poster);
@@ -1839,7 +1841,8 @@ function psSyncAi(s){
   const btn=(text,fn,cls)=>{const b=document.createElement("button");b.type="button";b.className="ps-btn"+(cls?" "+cls:"");b.textContent=text;b.addEventListener("click",fn);return b;};
   const note=(t,cls)=>{const p=document.createElement("div");p.className="ps-ai-note"+(cls?" "+cls:"");p.textContent=t;return p;};
   // stale — ответ до появления типа раздачи: его можно спросить заново
-  const ask=group.filter(x=>x.canAiTitle&&(!x.aiTitle||x.aiTitle.stale));
+  // none старше часа сервер спросит заново
+  const ask=group.filter(x=>x.canAiTitle&&(!x.aiTitle||x.aiTitle.stale||(x.aiTitle.status==="none"&&Date.now()-x.aiTitle.at>3600000)));
   const shown=group.filter(x=>x.aiTitle&&(x.aiTitle.status==="suggested"||x.aiTitle.status==="accepted"||(x.aiTitle.status==="none"&&x.canAiTitle&&!x.aiTitle.stale)));
   if(!ask.length&&!shown.length){box.classList.add("hidden");return;}
   box.classList.remove("hidden");
@@ -1864,7 +1867,12 @@ function psSyncAi(s){
   if(ask.length){
     const left=aiTitleReadyAt-Date.now();
     const b=btn("✨ Определить через ИИ"+(ask.length>1?" ("+ask.length+" раздачи)":""),()=>psAskAi(s,b,ask));
-    if(left>0){b.disabled=true;b.textContent="✨ ИИ — через "+Math.ceil(left/60000)+" мин";}
+    if(left>0){
+      b.disabled=true;b.textContent="✨ ИИ — через "+Math.ceil(left/60000)+" мин";
+      // пока карточка открыта, кнопка сама оживает по окончании кулдауна
+      clearTimeout(s._aiTimer);
+      s._aiTimer=setTimeout(()=>{ if(s.isConnected&&s._magnet===m) psSyncAi(s); },Math.min(left,60000)+200);
+    }
     box.append(b);
   }
 }
@@ -1903,10 +1911,10 @@ async function psDecideAi(s,x,accept){
   psSyncAi(s);
 }
 async function psDecideAll(s,list){
-  for(const x of list){
-    try{ const d=await api("/api/library/"+x.id+"/ai-title/decision",{method:"POST",body:JSON.stringify({accept:true})}); psSetAi(x.id,d.aiTitle); }
-    catch(err){ showToast(err.message||"Не удалось сохранить",true); break; }
-  }
+  try{
+    const d=await api("/api/library/ai-title/decision",{method:"POST",body:JSON.stringify({decisions:list.map(x=>({id:x.id,accept:true}))})});
+    for(const x of d.results||[]) psSetAi(x.id,x.aiTitle);
+  }catch(err){ showToast(err.message||"Не удалось сохранить",true); }
   psSaveAi(); psFillTitle(s); psSyncAi(s);
 }
 // Заголовок карточки после «Принять»: принятое название ИИ
@@ -2295,7 +2303,9 @@ function renderLibrary(animate=true) {
   const sort = $("librarySort") ? $("librarySort").value : "newest";
 
   let filtered = cachedLibrary.filter(m => {
-    if (query && !m.name.toLowerCase().includes(query) && !m.files.some(f => f.path.toLowerCase().includes(query))) return false;
+    // принятое название ИИ (и оригинальное) ищется так же, как имя раздачи
+    const aiNames = m.aiTitle && m.aiTitle.status === "accepted" ? [m.aiTitle.base, m.aiTitle.original] : [];
+    if (query && !m.name.toLowerCase().includes(query) && !aiNames.some(n => n && String(n).toLowerCase().includes(query)) && !m.files.some(f => f.path.toLowerCase().includes(query))) return false;
     if (onlyReady && Number(m.statusCode) !== 4) return false;
     if (activeCategory === "mine") { if (!m.mine) return false; }
     else if (activeCategory !== "all" && getItemCategory(m) !== activeCategory) return false;
