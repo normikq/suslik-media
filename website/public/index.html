@@ -1826,7 +1826,7 @@ async function psAskAi(s,b){
       showToast(d.reason==="cooldown"?"ИИ можно спросить через "+Math.ceil(d.retryAfterSec/60)+" мин":(d.error||"Лимит на сегодня исчерпан"),false);
     } else if(!r.ok) showToast(d.error||"Не удалось спросить ИИ",true);
     else {
-      if(!d.cached) aiTitleReadyAt=Date.now()+15*60000; // точное время придёт со следующей медиатекой
+      aiTitleReadyAt=Number(d.aiTitleReadyAt)||0; // у админа кулдауна нет: 0
       m.aiTitle=d.aiTitle; psSetAi(m.id,d.aiTitle);
     }
   }catch{ showToast("Не удалось спросить ИИ",true); }

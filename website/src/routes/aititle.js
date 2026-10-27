@@ -4,7 +4,7 @@ const express = require("express");
 const { apiLimiter } = require("../middleware/rate-limit");
 const { requireLogin, requireAdmin, deviceId } = require("../middleware/auth");
 const { getLibrary } = require("../services/library");
-const { ownerChecker } = require("../services/downloads");
+const { ownerChecker, isLibraryAdmin } = require("../services/downloads");
 const aiTitle = require("../services/aititle");
 
 const router = express.Router();
@@ -37,7 +37,8 @@ async function ownMagnet(req, res) {
   return m;
 }
 
-// Спросить ИИ: { aiTitle: { base, season, source: "ai", model, at, status }, cached }.
+// Спросить ИИ: { aiTitle: { base, season, source: "ai", model, at, status }, cached, aiTitleReadyAt }.
+// Админу библиотеки кулдауна нет (дневной лимит — есть).
 // 429 { reason: "cooldown" | "daily", retryAfterSec } — подождать; 503 { reason: "busy" } — сервис занят, попытка не списана.
 router.post("/api/library/:id/ai-title", requireLogin, apiLimiter, async (req, res) => {
   res.set("Cache-Control", "no-store");
@@ -47,8 +48,9 @@ router.post("/api/library/:id/ai-title", requireLogin, apiLimiter, async (req, r
   const m = await ownMagnet(req, res);
   if (!m) return;
   try {
-    const out = await aiTitle.suggest(m, owner);
-    res.json(out);
+    const admin = isLibraryAdmin(req);
+    const out = await aiTitle.suggest(m, owner, Date.now(), { noCooldown: admin });
+    res.json({ ...out, aiTitleReadyAt: admin ? 0 : aiTitle.readyAt(owner) });
   } catch (err) {
     if (err instanceof aiTitle.AiError) {
       if (err.code === "cooldown" || err.code === "daily") {

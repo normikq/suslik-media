@@ -214,9 +214,9 @@ async function callModel(name, files) {
 /**
  * Определить раздачу m ({ id, name, files }) для владельца owner. Уже есть результат (по id или по ключу) — он,
  * без вызова. Возвращает { aiTitle, cached }. Бросает AiError: "disabled", "cooldown" (retryAfterMs), "daily"
- * (retryAfterMs), "busy", "bad".
+ * (retryAfterMs), "busy", "bad". noCooldown (админ библиотеки) — без кулдауна; дневной лимит действует и для него.
  */
-async function suggest(m, owner, now = Date.now()) {
+async function suggest(m, owner, now = Date.now(), { noCooldown = false } = {}) {
   if (!enabled()) throw new AiError("disabled", "Определение через ИИ на сервере не настроено.");
   const id = String(m.id);
   const key = keyOf(m.name, m.files);
@@ -226,7 +226,7 @@ async function suggest(m, owner, now = Date.now()) {
     return { aiTitle: publicView(known), cached: true };
   }
   if (inflight.has(key)) return inflight.get(key);
-  const left = cooldownLeft(owner, now);
+  const left = noCooldown ? 0 : cooldownLeft(owner, now);
   if (left > 0) throw new AiError("cooldown", "ИИ можно спрашивать раз в " + config.AI_TITLE_COOLDOWN_MIN + " минут.", { retryAfterMs: left });
   rollDay(now);
   if (day.calls >= config.AI_TITLE_DAILY_MAX) {
@@ -236,7 +236,7 @@ async function suggest(m, owner, now = Date.now()) {
   const job = (async () => {
     // Место в лимите и кулдаун заняты на время вызова: два запроса подряд не проскочат оба
     day.calls++;
-    cooldowns.set(owner, now);
+    if (!noCooldown) cooldowns.set(owner, now);
     let out;
     try {
       out = await callModel(m.name, m.files);
@@ -245,7 +245,7 @@ async function suggest(m, owner, now = Date.now()) {
       else if (err.status === 503) { day.e503++; totals.e503++; }
       if (err.code === "busy") {
         day.calls--;
-        cooldowns.delete(owner);
+        if (!noCooldown) cooldowns.delete(owner);
       } else {
         day.fail++; // прочие ошибки (ключ, запрос) списываются: сломанная настройка не дёргается без конца
       }

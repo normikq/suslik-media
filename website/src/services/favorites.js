@@ -4,7 +4,7 @@ const fs = require("fs");
 const config = require("../config");
 const { makeJsonWriter } = require("../utils/json-writer");
 const { deviceId } = require("../middleware/auth");
-const { removeChecker, ownerChecker } = require("./downloads");
+const { removeChecker, ownerChecker, isLibraryAdmin } = require("./downloads");
 const aiTitle = require("./aititle");
 const { shelfOf } = require("./shelf");
 
@@ -48,7 +48,7 @@ function withRemovable(data, req) {
   return {
     ...data,
     // Когда этот пользователь снова может спросить ИИ (мс эпохи, 0 — уже можно); постоянное значение не ломает ETag
-    aiTitleReadyAt: ai ? aiTitle.readyAt(dev) : 0,
+    aiTitleReadyAt: ai && !isLibraryAdmin(req) ? aiTitle.readyAt(dev) : 0, // админу кулдауна нет
     magnets: (data.magnets || []).map(m => {
       const suggested = aiTitle.resultFor(m.id);
       return {

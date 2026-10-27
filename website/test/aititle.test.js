@@ -135,6 +135,17 @@ test("aititle: 15 minute cooldown per user", async () => {
   assert.equal(calls.length, 3);
 });
 
+test("aititle: no cooldown for the library admin, the daily limit still counts", async () => {
+  reset();
+  for (let i = 0; i < 3; i++) {
+    replies.push(gemini({ base: "Тачки 2", season: null }));
+    await ai.suggest({ ...film, id: 500 + i, name: film.name + " a" + i }, "u_1", NOW + i, { noCooldown: true });
+  }
+  assert.equal(ai.cooldownLeft("u_1", NOW + 5), 0);
+  assert.equal(ai.readyAt("u_1", NOW + 5), 0);
+  await assert.rejects(ai.suggest({ ...film, id: 600, name: film.name + " a9" }, "u_1", NOW + 5, { noCooldown: true }), err => err.code === "daily");
+});
+
 test("aititle: 429 and 503 from Gemini, a timeout or no network do not count", async () => {
   reset();
   replies.push({ status: 503, body: { error: { code: 503 } } });
