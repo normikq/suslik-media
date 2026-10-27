@@ -5,7 +5,8 @@
   var first=true;
   function place(){
     var a=nav.querySelector("button:not(.secondary)");
-    if(!a||!a.offsetWidth) return;
+    if(!a||!a.offsetWidth){ g.style.opacity="0"; return; }
+    g.style.opacity="";
     g.style.width=a.offsetWidth+"px"; g.style.height=a.offsetHeight+"px";
     g.style.transform="translate("+a.offsetLeft+"px,"+a.offsetTop+"px)";
     if(first){ first=false; requestAnimationFrame(function(){ g.classList.add("ready"); }); }

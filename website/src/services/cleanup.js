@@ -74,7 +74,7 @@ async function deleteMagnet(id) {
     }
   );
   if (response.status < 200 || response.status >= 300 || response.data?.status === "error") {
-    const err = new Error(response.data?.error?.message || "Не удалось удалить раздачу в AllDebrid.");
+    const err = new Error(response.data?.error?.message || "Не удалось удалить раздачу.");
     err.status = 502;
     throw err;
   }

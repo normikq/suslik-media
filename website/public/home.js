@@ -29,20 +29,21 @@
     if (ses) ses.classList.toggle("active", !$("sessionsTab").classList.contains("hidden"));
   }
 
-  function setCategory(cat) {
+  function setCategory(cat, switchTab) {
     libraryCategory = cat;
+    try { sessionStorage.setItem("suslik.libraryCategory", cat); } catch (e) {}
     var wrap = $("libraryCategoryChips");
     if (wrap) wrap.querySelectorAll(".cat-chip").forEach(function (c) { c.classList.toggle("active", (c.dataset.cat || "all") === cat); });
-    if (!libraryVisible()) setTab("library");
+    if (switchTab !== false && !libraryVisible()) setTab("library");
     renderLibrary(false);
   }
 
   document.querySelectorAll(".side-cat").forEach(function (b) {
     b.addEventListener("click", function () { if (b.dataset.cat) setCategory(b.dataset.cat); }); // «Приложения» и «Сессии» открывают свои вкладки сами
   });
-  // «Главная» на странице библиотеки сбрасывает категорию на «Все»
+  // «Главная» всегда сбрасывает категорию на «Все»
   $("showLibraryTab").addEventListener("click", function () {
-    if (libraryVisible() && libraryCategory !== "all") setCategory("all");
+    if (libraryCategory !== "all") setCategory("all");
   }, true);
   $("showMineTab").addEventListener("click", function () { setCategory("mine"); });
   var sideApps = $("sideAppsTab");
@@ -271,6 +272,12 @@
     try { sideNavSync(); heroSync(); heroRefresh(); tagsRefresh(); } catch (e) { console.warn("home.js", e); }
     return r;
   };
+  try {
+    var savedCat = sessionStorage.getItem("suslik.libraryCategory");
+    if (savedCat && savedCat !== libraryCategory) {
+      setCategory(savedCat, false);
+    }
+  } catch (e) {}
   sideNavSync();
   heroRefresh();
 })();

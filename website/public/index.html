@@ -725,22 +725,6 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
 <script src="searchcore.js"></script>
 <script>
 
-  // Обновить the library every time it is opened, while preventing overlapping requests.
-  let libraryОбновитьInFlight = null;
-  async function refreshLibraryOnОткрыть() {
-    if (libraryОбновитьInFlight) return libraryОбновитьInFlight;
-    const refreshFn =
-      (typeof refreshLibrary === 'function' ? refreshLibrary :
-      (typeof loadLibrary === 'function' ? loadLibrary :
-      (typeof fetchLibrary === 'function' ? fetchLibrary : null)));
-    if (!refreshFn) return;
-    libraryОбновитьInFlight = Promise.resolve().then(() => refreshFn()).finally(() => {
-      libraryОбновитьInFlight = null;
-    });
-    return libraryОбновитьInFlight;
-  }
-
-
 const $ = id => document.getElementById(id);
 async function api(path, options={}) {
   const response = await fetch(path, { credentials:"same-origin", ...options, headers:{"Content-Type":"application/json", ...(options.headers||{})} });
@@ -1452,6 +1436,7 @@ if (catChipsWrap) {
     catChipsWrap.querySelectorAll(".cat-chip").forEach(c => c.classList.remove("active"));
     chip.classList.add("active");
     libraryCategory = chip.dataset.cat || "all";
+    try { sessionStorage.setItem("suslik.libraryCategory", libraryCategory); } catch {}
     renderLibrary(false);
   });
 }
@@ -1747,7 +1732,7 @@ const IS_IOS=/iPhone|iPad|iPod/i.test(navigator.userAgent||"");
 let playSheetToken=0;
 // Browsers on Android/iOS cannot play most .mkv/HEVC files, so hand the URL to a player app.
 function androidIntent(url){
-  const u=new URL(url);
+  const u=new URL(url,location.href);
   return "intent://"+u.host+u.pathname+u.search+"#Intent;scheme="+u.protocol.replace(":","")+";action=android.intent.action.VIEW;type=video/*;S.browser_fallback_url="+encodeURIComponent(url)+";end";
 }
 function playerHref(url){
@@ -1941,7 +1926,12 @@ function setupTilePlayback(magnet,tile,art,info){
 // пересоздаёт их и не перезапускает анимацию — ничего не моргает. Новые плитки плавно выезжают по очереди,
 // переставленные (избранное наверх) плавно переезжают на новое место.
 let libraryTiles=new Map();
-let libraryCategory = "all";
+let libraryCategory = (function() {
+  try { return sessionStorage.getItem("suslik.libraryCategory") || "all"; } catch { return "all"; }
+})();
+if (catChipsWrap && libraryCategory !== "all") {
+  catChipsWrap.querySelectorAll(".cat-chip").forEach(c => c.classList.toggle("active", (c.dataset.cat || "all") === libraryCategory));
+}
 let libraryPage = 0, libraryFilterSig = "";
 // Страница — 3 ряда постеров на компьютере и 5 на телефоне: сколько их в ряду, столько и ставится (колонки считает сама сетка).
 let libraryLastPageSize = 0;
