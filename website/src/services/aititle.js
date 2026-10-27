@@ -27,6 +27,9 @@ const MAX_RESULTS = 5000;
 const OWNER_RE = /^(?:[a-f0-9]{32}|u_\d{1,25})$/;
 const VIDEO_EXT = /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso|wmv|mpg|mpeg|vob)$/i;
 const STATUSES = new Set(["suggested", "accepted", "rejected", "none"]);
+const KINDS = new Set(["movie", "series", "collection"]);
+// Версия ответа: 2 — с типом раздачи (kind). Ответ старой версии можно спросить заново (stale в ответе медиатеки).
+const VERSION = 2;
 
 const PROMPT = [
   "Ты получаешь одну или несколько торрент-раздач: номер, название и пути видеофайлов. Для каждой раздачи верни объект:",
@@ -35,7 +38,9 @@ const PROMPT = [
   "иначе оригинальное. Слова через пробел (не через точки и подчёркивания), без года, качества, кодеков, озвучки,",
   "студии, номера сезона и серии; цифры, которые входят в само название (\"Тачки 2\", \"1+1\"), оставь.",
   "season — номер сезона, если раздача — ровно один сезон сериала (смотри и на пути: S02E01 — сезон 2), иначе null",
-  "(фильм, несколько сезонов, сборник)."
+  "(фильм, несколько сезонов, сборник). kind — что это за раздача: \"movie\" — один фильм (с допами, трейлерами,",
+  "частями одного фильма), \"series\" — серии сериала, аниме или шоу (один или несколько сезонов), \"collection\" —",
+  "несколько разных фильмов (франшиза, трилогия, подборка)."
 ].join(" ");
 
 const RESPONSE_SCHEMA = {
@@ -48,9 +53,10 @@ const RESPONSE_SCHEMA = {
         properties: {
           n: { type: "INTEGER" },
           base: { type: "STRING" },
-          season: { type: "INTEGER", nullable: true }
+          season: { type: "INTEGER", nullable: true },
+          kind: { type: "STRING", enum: ["movie", "series", "collection"] }
         },
-        required: ["n", "base"]
+        required: ["n", "base", "kind"]
       }
     }
   },
@@ -64,9 +70,9 @@ let day = { d: "", calls: 0, e429: 0, e503: 0, fail: 0, inTok: 0, outTok: 0 };
 let totals = { calls: 0, accepted: 0, rejected: 0, none: 0, e429: 0, e503: 0 };
 const inflight = new Map(); // key -> Promise
 
-function load() {
+function load(saved) {
   try {
-    const saved = JSON.parse(fs.readFileSync(config.AI_TITLE_FILE, "utf8")) || {};
+    if (!saved) saved = JSON.parse(fs.readFileSync(config.AI_TITLE_FILE, "utf8")) || {};
     for (const [k, r] of Object.entries(saved.r || {})) if (/^[a-f0-9]{40}$/.test(k) && r && STATUSES.has(r.status)) results.set(k, r);
     for (const [id, k] of Object.entries(saved.i || {})) if (/^\d{1,20}$/.test(id) && results.has(k)) byId.set(id, k);
     for (const [o, at] of Object.entries(saved.c || {})) if (OWNER_RE.test(o) && Number.isFinite(at)) cooldowns.set(o, at);
@@ -138,6 +144,7 @@ function seasonMentioned(n, texts) {
  * Точки и подчёркивания вместо пробелов («Kak.priruchit.lisu») заменяются пробелами. Сезон, которого нет ни в названии,
  * ни в путях (S02, «2 сезон», «1-3 сезон»…), не принимается: остаётся null, название — да.
  * Название может не совпадать с раздачей (перевод, кириллица вместо транслита): его всё равно подтверждает владелец.
+ * kind — "movie" | "series" | "collection" или null (неизвестный); у фильма и сборника сезона нет.
  */
 function validate(answer, name, files) {
   if (!answer || typeof answer !== "object") return null;
@@ -148,7 +155,9 @@ function validate(answer, name, files) {
   let season = answer.season;
   if (!Number.isInteger(season) || season < 0 || season > 99) season = null;
   else if (!seasonMentioned(season, [String(name), ...videoPaths(files)])) season = null;
-  return { base, season };
+  const kind = KINDS.has(answer.kind) ? answer.kind : null;
+  if (kind === "movie" || kind === "collection") season = null;
+  return { base, season, kind };
 }
 
 function today(now) {
@@ -176,7 +185,7 @@ function publicView(r) {
   if (!r) return null;
   // ответы до 27.10 могли прийти с точками вместо пробелов («Kak.priruchit.lisu»)
   const base = String(r.base || "");
-  return { base: /\s/.test(base) ? base : base.replace(/[._]+/g, " ").trim(), season: r.season ?? null, source: "ai", model: r.model, at: r.at, status: r.status };
+  return { base: /\s/.test(base) ? base : base.replace(/[._]+/g, " ").trim(), season: r.season ?? null, kind: KINDS.has(r.kind) ? r.kind : null, source: "ai", model: r.model, at: r.at, status: r.status, stale: (r.v || 1) < VERSION };
 }
 
 /** Сохранённый результат раздачи (или null). */
@@ -251,7 +260,9 @@ async function suggestMany(magnets, owner, now = Date.now(), { noCooldown = fals
     const id = String(m.id);
     const key = keyOf(m.name, m.files);
     out.set(id, key);
-    const known = force ? null : (results.has(byId.get(id)) ? byId.get(id) : (results.has(key) ? key : null));
+    // ответ старой версии (без типа раздачи) — как будто его нет: спросить можно ещё раз
+    const fresh = k => results.has(k) && (results.get(k).v || 1) >= VERSION;
+    const known = force ? null : (fresh(byId.get(id)) ? byId.get(id) : (fresh(key) ? key : null));
     if (known) {
       out.set(id, known);
       if (byId.get(id) !== known) { byId.set(id, known); persist(); }
@@ -302,8 +313,8 @@ async function suggestMany(magnets, owner, now = Date.now(), { noCooldown = fals
     list.forEach(([key, m], i) => {
       const ok = validate(res.answers.get(i + 1), m.name, m.files);
       const r = ok
-        ? { base: ok.base, season: ok.season, model: config.AI_TITLE_MODEL, at: now, status: "suggested", by: owner }
-        : { base: "", season: null, model: config.AI_TITLE_MODEL, at: now, status: "none", by: owner };
+        ? { base: ok.base, season: ok.season, kind: ok.kind, model: config.AI_TITLE_MODEL, at: now, status: "suggested", by: owner, v: VERSION }
+        : { base: "", season: null, kind: null, model: config.AI_TITLE_MODEL, at: now, status: "none", by: owner, v: VERSION };
       if (!ok) { totals.none++; console.warn(`[aititle] ${m.id}: нет ответа: ${String(res.raw).slice(0, 300)}`); }
       results.set(key, r);
       byId.set(String(m.id), key);
@@ -380,6 +391,7 @@ module.exports = {
   resultFor,
   suggest,
   suggestMany,
+  _load: load,
   decide,
   dropMagnet,
   stats,

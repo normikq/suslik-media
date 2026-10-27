@@ -71,15 +71,15 @@ test("aititle: season must be mentioned in the name or the paths", () => {
 });
 
 test("aititle: validate keeps the title, drops a season the release does not mention", () => {
-  assert.deepEqual(ai.validate({ base: "Тед Лассо", season: 2 }, show.name, show.files), { base: "Тед Лассо", season: 2 });
-  assert.deepEqual(ai.validate({ base: "Тачки 2", season: null }, film.name, film.files), { base: "Тачки 2", season: null });
+  assert.deepEqual(ai.validate({ base: "Тед Лассо", season: 2 }, show.name, show.files), { base: "Тед Лассо", season: 2 , kind: null });
+  assert.deepEqual(ai.validate({ base: "Тачки 2", season: null }, film.name, film.files), { base: "Тачки 2", season: null , kind: null });
   // Сезона 3 нет ни в названии, ни в путях: название остаётся, сезон — нет
-  assert.deepEqual(ai.validate({ base: "Тед Лассо", season: 3 }, show.name, show.files), { base: "Тед Лассо", season: null });
+  assert.deepEqual(ai.validate({ base: "Тед Лассо", season: 3 }, show.name, show.files), { base: "Тед Лассо", season: null , kind: null });
   // Перевод и кириллица вместо транслита — можно: подтверждает владелец
-  assert.deepEqual(ai.validate({ base: "Киберпанк: Бегущие по краю", season: null }, "Cyberpunk - Edgerunners [2022]", []), { base: "Киберпанк: Бегущие по краю", season: null });
+  assert.deepEqual(ai.validate({ base: "Киберпанк: Бегущие по краю", season: null }, "Cyberpunk - Edgerunners [2022]", []), { base: "Киберпанк: Бегущие по краю", season: null , kind: null });
   // Точки вместо пробелов
-  assert.deepEqual(ai.validate({ base: "Kak.priruchit.lisu", season: 1 }, "Kak.priruchit.lisu.S01.2025", []), { base: "Kak priruchit lisu", season: 1 });
-  assert.deepEqual(ai.validate({ base: "Тачки", season: 1.5 }, film.name, film.files), { base: "Тачки", season: null });
+  assert.deepEqual(ai.validate({ base: "Kak.priruchit.lisu", season: 1 }, "Kak.priruchit.lisu.S01.2025", []), { base: "Kak priruchit lisu", season: 1 , kind: null });
+  assert.deepEqual(ai.validate({ base: "Тачки", season: 1.5 }, film.name, film.files), { base: "Тачки", season: null , kind: null });
   assert.equal(ai.validate({ base: "", season: null }, film.name, film.files), null);
   assert.equal(ai.validate({ base: "x".repeat(201), season: null }, film.name, film.files), null);
   assert.equal(ai.validate(null, film.name, film.files), null);
@@ -97,7 +97,7 @@ test("aititle: one call, the right request, then the stored answer", async () =>
   replies.push(gemini({ base: "Тед Лассо", season: 2 }));
   const r = await ai.suggest(show, "u_1", NOW);
   assert.equal(r.cached, false);
-  assert.deepEqual(r.aiTitle, { base: "Тед Лассо", season: 2, source: "ai", model: "gemini-3.5-flash-lite", at: NOW, status: "suggested" });
+  assert.deepEqual(r.aiTitle, { base: "Тед Лассо", season: 2, kind: null, source: "ai", model: "gemini-3.5-flash-lite", at: NOW, status: "suggested", stale: false });
   assert.equal(calls.length, 1);
   const c = calls[0];
   assert.match(c.url, /\/v1beta\/models\/gemini-3\.5-flash-lite:generateContent$/);
@@ -105,7 +105,7 @@ test("aititle: one call, the right request, then the stored answer", async () =>
   assert.ok(!c.url.includes("test-key"), "ключ не в адресе");
   assert.equal(c.body.generationConfig.temperature, 0);
   assert.equal(c.body.generationConfig.responseMimeType, "application/json");
-  assert.deepEqual(Object.keys(c.body.generationConfig.responseSchema.properties.items.items.properties), ["n", "base", "season"]);
+  assert.deepEqual(Object.keys(c.body.generationConfig.responseSchema.properties.items.items.properties), ["n", "base", "season", "kind"]);
   const text = c.body.contents[0].parts[0].text;
   assert.ok(text.includes(show.name) && text.includes("Ted.Lasso.S02E02.mkv") && !text.includes("sample") && !text.includes(".srt"));
 
@@ -263,4 +263,33 @@ test("aititle: force asks again and replaces the stored answer", async () => {
   assert.equal(r.aiTitle.base, "Тед Лассо");
   assert.equal(ai.resultFor(show.id).base, "Тед Лассо");
   assert.equal(calls.length, 2);
+});
+
+test("aititle: kind of the release; a film or a collection has no season", () => {
+  assert.deepEqual(ai.validate({ base: "Тед Лассо", season: 2, kind: "series" }, show.name, show.files), { base: "Тед Лассо", season: 2, kind: "series" });
+  assert.deepEqual(ai.validate({ base: "Тед Лассо", season: 2, kind: "collection" }, show.name, show.files), { base: "Тед Лассо", season: null, kind: "collection" });
+  assert.deepEqual(ai.validate({ base: "Тачки 2", season: null, kind: "movie" }, film.name, film.files), { base: "Тачки 2", season: null, kind: "movie" });
+  assert.deepEqual(ai.validate({ base: "Тачки 2", season: null, kind: "trilogy" }, film.name, film.files), { base: "Тачки 2", season: null, kind: null });
+});
+
+test("aititle: an answer stored before kind existed can be asked again", async () => {
+  reset();
+  replies.push(gemini({ base: "Тед Лассо", season: 2, kind: "series" }));
+  await ai.suggest(show, "u_1", NOW);
+  assert.equal(ai.resultFor(show.id).kind, "series");
+  assert.equal(ai.resultFor(show.id).stale, false);
+  // старая запись: без v и kind
+  const fs2 = require("fs");
+  const saved = { r: {}, i: {} };
+  const key = ai.keyOf(film.name, film.files);
+  saved.r[key] = { base: "Тачки", season: null, model: "m", at: 1, status: "accepted", by: "u_1" };
+  saved.i[String(film.id)] = key;
+  ai._reset();
+  ai._load(saved);
+  assert.equal(ai.resultFor(film.id).stale, true);
+  assert.equal(ai.resultFor(film.id).kind, null);
+  replies.push(gemini({ base: "Тачки 2", season: null, kind: "movie" }));
+  const r = await ai.suggest(film, "u_2", NOW);
+  assert.equal(r.cached, false);
+  assert.deepEqual([r.aiTitle.base, r.aiTitle.kind, r.aiTitle.status, r.aiTitle.stale], ["Тачки 2", "movie", "suggested", false]);
 });

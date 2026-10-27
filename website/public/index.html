@@ -1560,7 +1560,33 @@ function parseEpisode(path){
   }
   return null;
 }
-function buildPlaylist(magnet){
+// Тип раздачи и сезон, которые владелец принял от ИИ (services/aititle.js; applyAiTitle в Model.kt), поверх разбора
+// по файлам: «сериал» — видео по порядку имён серий одного сезона, «сборник» — отдельные фильмы, «фильм» — главный файл;
+// сезон — только если сезон в раздаче один (сериал из нескольких сезонов по папкам он не трогает).
+function buildPlaylist(magnet){ return applyAiTitle(buildPlaylistByFiles(magnet), magnet); }
+function applyAiTitle(pl, m){
+  const ai=m&&m.aiTitle;
+  if(!pl||!ai||ai.status!=="accepted") return pl;
+  const EXTRAS=/(?:^|\/)(?:extras?|bonus|featurettes?|behind[ ._-]?the[ ._-]?scenes|trailers?|доп[^/]*|бонус[^/]*|допы)(?:\/|$)/i;
+  const basename=p=>String(p||"").replace(/\\/g,"/").split("/").pop();
+  const vids=(m.files||[]).filter(f=>f.type!=="folder"&&VIDEO_EXT.test(f.path||"")&&!/(^|[\/._ -])sample([\/._ -]|$)/i.test(f.path||""));
+  const noExtras=vids.filter(f=>!EXTRAS.test(f.path||"")), main=noExtras.length?noExtras:vids;
+  const sorted=()=>main.slice().sort((a,b)=>basename(a.path).localeCompare(basename(b.path),undefined,{numeric:true,sensitivity:"base"}));
+  const isCollection=p=>p.type==="series"&&p.seasons[0]&&p.seasons[0].items[0]&&p.seasons[0].items[0].title!=null;
+  let out=pl;
+  if(ai.kind==="movie"&&pl.type==="series"){ const f=pickMainВидео(m); if(f) out={type:"movie",file:f}; }
+  else if(ai.kind==="series"&&(pl.type==="movie"||isCollection(pl))&&main.length>=2){
+    const s=ai.season>0?ai.season:1;
+    out={type:"series",seasons:[{season:s,items:sorted().map((file,i)=>({season:s,episode:i+1,file}))}]};
+  } else if(ai.kind==="collection"&&(pl.type==="movie"||(pl.type==="series"&&!isCollection(pl)))&&main.length>=2){
+    out={type:"series",seasons:[{season:1,items:sorted().map((file,i)=>({season:1,episode:i+1,file,title:escapeTitle(basename(file.path))||("Фильм "+(i+1))}))}]};
+  }
+  const s=ai.season;
+  if(s>0&&out.type==="series"&&!isCollection(out)&&out.seasons.length===1&&out.seasons[0].season!==s)
+    out={type:"series",seasons:[{season:s,items:out.seasons[0].items.map(e=>({...e,season:s}))}]};
+  return out;
+}
+function buildPlaylistByFiles(magnet){
   const vids=(magnet.files||[]).filter(f=>f.type!=="folder"&&VIDEO_EXT.test(f.path||"")&&!/(^|[\/._ -])sample([\/._ -]|$)/i.test(f.path||""));
   const seasonOf=(path)=>{
     const p=String(path||"").replace(/\\/g,"/");
@@ -1795,15 +1821,17 @@ function psGroupOf(m){
   for(const g of libraryVersionsOf.values()) if(g.some(x=>x.id===m.id)) return g;
   return [m];
 }
-const aiWhat=a=>"«"+a.base+"»"+(a.season!=null?", сезон "+a.season:"");
+const AI_KIND={movie:"фильм",series:"сериал",collection:"сборник"};
+const aiWhat=a=>"«"+a.base+"»"+(a.kind&&AI_KIND[a.kind]?" · "+AI_KIND[a.kind]:"")+(a.season!=null?", сезон "+a.season:"");
 function psSyncAi(s){
   const box=s.querySelector(".ps-ai"), m=s._magnet;
   box.replaceChildren();
   const group=psGroupOf(m).map(x=>cachedLibrary.find(y=>y.id===x.id)||x);
   const btn=(text,fn,cls)=>{const b=document.createElement("button");b.type="button";b.className="ps-btn"+(cls?" "+cls:"");b.textContent=text;b.addEventListener("click",fn);return b;};
   const note=(t,cls)=>{const p=document.createElement("div");p.className="ps-ai-note"+(cls?" "+cls:"");p.textContent=t;return p;};
-  const ask=group.filter(x=>x.canAiTitle&&!x.aiTitle);
-  const shown=group.filter(x=>x.aiTitle&&(x.aiTitle.status==="suggested"||x.aiTitle.status==="accepted"||(x.aiTitle.status==="none"&&x.canAiTitle)));
+  // stale — ответ до появления типа раздачи: его можно спросить заново
+  const ask=group.filter(x=>x.canAiTitle&&(!x.aiTitle||x.aiTitle.stale));
+  const shown=group.filter(x=>x.aiTitle&&(x.aiTitle.status==="suggested"||x.aiTitle.status==="accepted"||(x.aiTitle.status==="none"&&x.canAiTitle&&!x.aiTitle.stale)));
   if(!ask.length&&!shown.length){box.classList.add("hidden");return;}
   box.classList.remove("hidden");
   const many=group.length>1;
@@ -1832,7 +1860,7 @@ function psSyncAi(s){
   }
 }
 function psSetAi(id,ai){
-  for(const x of cachedLibrary) if(x.id===id) x.aiTitle=ai;
+  for(const x of cachedLibrary) if(x.id===id){ x.aiTitle=ai; playableKindCache.delete(x); } // тип раздачи мог смениться
 }
 function psSaveAi(){
   try{ localStorage.setItem(LIBRARY_SNAPSHOT_KEY, JSON.stringify({ savedAt: Date.now(), magnets: cachedLibrary })); }catch{}
