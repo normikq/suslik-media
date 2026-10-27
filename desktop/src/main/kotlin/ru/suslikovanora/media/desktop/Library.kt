@@ -47,7 +47,9 @@ private const val POSTER_UNUSED_DAYS = 7L
 /** «Тачки 2» · фильм or «Тед Лассо» · сериал, сезон 2 — how a title suggested by the AI is shown. */
 fun aiLabel(ai: AiTitle): String {
     val kind = when (ai.kind) { "movie" -> tr("library.ai_tip_film"); "series" -> tr("library.ai_tip_serial"); "collection" -> tr("library.ai_tip_sbornik"); else -> null }
-    val title = "«${ai.base}»" + (kind?.let { " · $it" } ?: "")
+    // оригинал и год — по ним ищется постер: «Дюна» (Dune, 2021) · фильм
+    val orig = listOfNotNull(ai.original?.takeIf { it != ai.base }, ai.year?.toString()).joinToString(", ")
+    val title = "«${ai.base}»" + (if (orig.isNotEmpty()) " ($orig)" else "") + (kind?.let { " · $it" } ?: "")
     return if (ai.season != null) tr("library.ai_sezon", "title" to title, "season" to ai.season) else title
 }
 

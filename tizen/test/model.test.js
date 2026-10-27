@@ -241,7 +241,7 @@ test('parseLibrary: aiTitle и canAiTitle; неизвестный статус �
     { id: 2, name: 'B', statusCode: 4, files: [], aiTitle: { base: 'X', season: null, status: 'weird' } },
     { id: 3, name: 'C', statusCode: 4, files: [] }
   ] });
-  assert.deepEqual(list[0].aiTitle, { base: 'Тед Лассо', season: 2, model: 'gemini-3.5-flash-lite', at: 5, status: 'suggested', kind: null, stale: false });
+  assert.deepEqual(list[0].aiTitle, { base: 'Тед Лассо', season: 2, model: 'gemini-3.5-flash-lite', at: 5, status: 'suggested', kind: null, stale: false, original: null, year: null });
   assert.equal(list[0].canAiTitle, true);
   assert.equal(list[1].aiTitle, null);
   assert.equal(list[2].aiTitle, null);
@@ -293,4 +293,15 @@ test('buildPlayable: принятые тип и сезон от ИИ', () => {
   // два сезона по папкам — номер сезона от ИИ не трогает их
   const two = [file(0, 'Season 1/a.mkv', 500), file(1, 'Season 2/b.mkv', 500)];
   assert.deepEqual(M.buildPlayable(mag(two, { name: 'Show', aiTitle: ai('series', 5) })).seasons.map((s) => s.season), [1, 2]);
+});
+
+test('prepareItems: постер — сначала оригинал с годом от ИИ', () => {
+  const ai = { base: 'Дюна', season: null, kind: 'movie', original: 'Dune', year: 2021, model: 'm', at: 1, status: 'accepted' };
+  const it = M.prepareItems([mag([file(0, 'Dune.2021.mkv', 4000)], { name: 'Дюна (2021) BDRip', aiTitle: ai })])[0];
+  assert.deepEqual(it.posterQueries.slice(0, 2), ['Dune (2021)', 'Дюна']);
+  const sug = M.prepareItems([mag([file(0, 'Dune.2021.mkv', 4000)], { name: 'Дюна (2021) BDRip', aiTitle: Object.assign({}, ai, { status: 'suggested' }) })])[0];
+  assert.ok(sug.posterQueries.indexOf('Dune (2021)') < 0);
+  const parsed = M.parseLibrary({ magnets: [{ id: 1, name: 'A', statusCode: 4, files: [], aiTitle: { base: 'Дюна', original: ' Dune ', year: 2021, status: 'accepted' } }] })[0];
+  assert.equal(parsed.aiTitle.original, 'Dune');
+  assert.equal(parsed.aiTitle.year, 2021);
 });

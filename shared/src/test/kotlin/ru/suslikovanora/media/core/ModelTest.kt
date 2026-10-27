@@ -589,4 +589,21 @@ class ModelTest {
         assertTrue(a.stale)
         assertNull(parseAiTitle(JSONObject("""{"base":"X","kind":"trilogy","status":"suggested"}"""))!!.kind)
     }
+
+    @Test
+    fun acceptedAiOriginalTitleWithYearIsTheFirstPosterQuery() {
+        val json = JSONObject("""{"magnets":[{"id":1,"name":"Дюна (2021) BDRip","statusCode":4,
+            "files":[{"name":"Dune.2021.mkv","path":"Dune.2021.mkv","type":"file","size":4000,"sourceLink":"https://host/1"}],
+            "aiTitle":{"base":"Дюна","season":null,"kind":"movie","original":"Dune","year":2021,"status":"suggested"}}]}""")
+        val item = prepareItems(parseLibrary(json)).single()
+        assertEquals("Dune", item.m.aiTitle?.original)
+        assertEquals(2021, item.m.aiTitle?.year)
+        assertFalse("Dune (2021)" in item.posterQueries)
+        val accepted = item.withAiTitle(item.m.aiTitle!!.copy(status = "accepted"))
+        assertEquals(listOf("Dune (2021)", "Дюна"), accepted.posterQueries.take(2))
+        // без оригинала — как раньше; null в JSON — не строка "null"
+        val none = parseAiTitle(JSONObject("""{"base":"X","original":null,"year":null,"status":"accepted"}"""))!!
+        assertNull(none.original)
+        assertNull(none.posterQuery)
+    }
 }

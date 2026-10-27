@@ -45,9 +45,13 @@ data class AiTitle(
     val at: Long,
     val status: String,
     val kind: String? = null, // "movie" | "series" | "collection": what the release is, applied once accepted
-    val stale: Boolean = false // answered before the server knew [kind]: may be asked again
+    val stale: Boolean = false, // answered by an older server version: may be asked again
+    val original: String? = null, // original title (English when not in Latin letters) — for the TMDB poster
+    val year: Int? = null // the film's year / the show's first season
 ) {
     val accepted get() = status == "accepted" && base.isNotBlank()
+    /** «Dune (2021)»: the server picks the TMDB result of that year. Null without an original title. */
+    val posterQuery: String? get() = original?.takeIf { it.isNotBlank() }?.let { o -> if (year != null) "$o ($year)" else o }
 }
 
 private val AI_STATUSES = setOf("suggested", "accepted", "rejected", "none")
@@ -64,7 +68,9 @@ fun parseAiTitle(a: JSONObject?): AiTitle? {
         at = a.optLong("at", 0L),
         status = status,
         kind = a.optString("kind").takeIf { it in AI_KINDS },
-        stale = a.optBoolean("stale", false)
+        stale = a.optBoolean("stale", false),
+        original = a.optString("original").trim().takeIf { it.isNotEmpty() && !a.isNull("original") },
+        year = if (a.has("year") && !a.isNull("year")) a.optInt("year").takeIf { it in 1880..2100 } else null
     )
 }
 
@@ -360,9 +366,11 @@ data class LibraryItem(
 /** The tile's title: the AI's one once the owner accepted it (services/aititle.js), otherwise the regexes'. */
 private fun titleOf(m: Magnet): String = m.aiTitle?.takeIf { it.accepted }?.base ?: cleanTitle(m.name)
 
+/** Poster lookups in order: the AI's original title with year when accepted («Dune (2021)»), the tile's title, the main file. */
 private fun posterQueriesOf(m: Magnet, base: String): List<String> {
     val main = mainVideo(m)
-    return listOfNotNull(base, main?.let { cleanTitle(it.name.ifBlank { it.path.substringAfterLast('/') }) }).distinct()
+    val ai = m.aiTitle?.takeIf { it.accepted }?.posterQuery
+    return listOfNotNull(ai, base, main?.let { cleanTitle(it.name.ifBlank { it.path.substringAfterLast('/') }) }).distinct()
 }
 
 fun prepareItems(list: List<Magnet>): List<LibraryItem> = list.map { m ->

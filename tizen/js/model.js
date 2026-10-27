@@ -13,7 +13,9 @@
     return {
       base: str(a.base).trim(), season: typeof a.season === 'number' && isFinite(a.season) ? Math.floor(a.season) : null,
       model: str(a.model), at: num(a.at), status: a.status,
-      kind: ['movie', 'series', 'collection'].indexOf(a.kind) >= 0 ? a.kind : null, stale: a.stale === true
+      kind: ['movie', 'series', 'collection'].indexOf(a.kind) >= 0 ? a.kind : null, stale: a.stale === true,
+      original: str(a.original).trim() || null,
+      year: typeof a.year === 'number' && a.year >= 1880 && a.year <= 2100 ? Math.floor(a.year) : null
     };
   }
 
@@ -372,7 +374,10 @@
     return list.map(function (m) {
       // принятое название ИИ (services/aititle.js) — и в плитке, и в поиске постера (titleOf в Model.kt)
       var ai = m.aiTitle, base = ai && ai.status === 'accepted' && ai.base ? ai.base : cleanTitle(m.name), main = mainVideo(m);
-      var queries = [base];
+      // первым — оригинал с годом от ИИ («Dune (2021)»: сервер берёт результат TMDB того же года; posterQueriesOf в Model.kt)
+      var queries = [];
+      if (ai && ai.status === 'accepted' && ai.base && ai.original) queries.push(ai.year ? ai.original + ' (' + ai.year + ')' : ai.original);
+      if (queries.indexOf(base) < 0) queries.push(base);
       if (main) {
         var q = cleanTitle(main.name.trim() ? main.name : basename(main.path));
         if (queries.indexOf(q) < 0) queries.push(q);
