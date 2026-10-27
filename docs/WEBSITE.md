@@ -299,3 +299,11 @@ npm start
 - Поиск раздач на `searchcore.js` (копия `tizen/js/searchcore.js`, правим обе): понятное название, метки качества/озвучки,
   пресеты, качество, сортировка («Обычная», «Сначала лёгкие», «По сидам»), «Только с сидами», «Только RU-трекеры».
 - Телефон (до 700 px): выдача и фильтры в одну колонку, кнопки на всю ширину.
+
+## 11. «Определить через ИИ» (27.10, PR #45; на сервер не выложен)
+- `src/services/aititle.js` (Gemini, проверка ответа, хранилище `ai-titles.json`, кулдаун и дневной лимит) и `src/routes/aititle.js`:
+  `POST /api/library/ai-title`, `POST /api/library/:id/ai-title`, `…/:id/ai-title/decision`, пакетный `POST /api/library/ai-title/decision`,
+  `GET /api/ai-title/stats` (админ). В `/api/library` у раздачи `aiTitle` и `canAiTitle`, сверху `aiTitleReadyAt`.
+- `.env`: `GEMINI_API_KEY` (без него кнопки нет), `AI_TITLE_MODEL`, `AI_TITLE_COOLDOWN_MIN` (15), `AI_TITLE_DAILY_MAX` (200).
+- `public/index.html`: блок ИИ в карточке раздачи, «Принять / Отклонить / Принять все», принятое название — в плитке, поиске и слиянии версий.
+- Подробно: `docs/AI-TITLE.md`.
