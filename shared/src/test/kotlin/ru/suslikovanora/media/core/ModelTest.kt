@@ -521,7 +521,7 @@ class ModelTest {
         assertEquals("Тачки 2", groupTitle(accepted[1]))
         val (shown, versions) = groupVersions(accepted)
         assertEquals(listOf(1L), shown.map { it.m.id })
-        assertEquals(listOf(1L, 2L), versions[1L]?.map { it.m.id })
+        assertEquals(setOf(1L, 2L), versions[1L]?.map { it.m.id }?.toSet())
         for (status in listOf("suggested", "rejected", "none")) {
             val items = prepareItems(parseLibrary(aiLibrary(status)))
             assertEquals(items[1].baseTitle, groupTitle(items[1]))

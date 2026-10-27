@@ -255,7 +255,7 @@ test('groupVersions: принятое название ИИ объединяет
     mag([file(0, 'Cars2.mkv', 2000)], { id: 2, name: 'Cars.Two.2011.720p', aiTitle: ai(status) })
   ]);
   assert.equal(M.groupTitle(build('accepted')[1]), 'Тачки 2');
-  assert.deepEqual(M.groupVersions(build('accepted')).versions[1].map((i) => i.m.id), [1, 2]);
+  assert.deepEqual(M.groupVersions(build('accepted')).versions[1].map((i) => i.m.id).sort(), [1, 2]);
   assert.deepEqual(M.groupVersions(build('suggested')).shown.map((i) => i.m.id), [1, 2]);
   assert.deepEqual(M.groupVersions(build('rejected')).shown.map((i) => i.m.id), [1, 2]);
 });
@@ -316,4 +316,41 @@ test('принятый ИИ: поиск находит его название, 
   assert.equal(g.shown.length, 1);
   const sug = M.prepareItems([mag([file(0, 'Dune.BDRip.mkv', 4000)], { name: 'Dune.BDRip', aiTitle: Object.assign({}, ai, { status: 'suggested' }) })])[0];
   assert.ok(sug.searchText.indexOf('дюна') < 0);
+});
+
+test('sortVersions и versionSections: сезоны и годы упорядочиваются хронологически', () => {
+  const ep = (s, e) => file(e, `Show/Season ${s}/E0${e}.mkv`, 500);
+  const series = M.prepareItems([
+    mag([ep(2, 1), ep(2, 2)], { id: 1, name: 'Cyberpunk Edgerunners 2 [2160p WEB-DL DV HDR10]', size: 26200 }),
+    mag([ep(1, 1), ep(1, 2)], { id: 2, name: 'Cyberpunk - Edgerunners [2022] [WEB-DL] [Dolby Vision] [1080p]', size: 26000 }),
+    mag([ep(2, 1), ep(2, 2)], { id: 3, name: 'Cyberpunk Edgerunners 2 [2160p WEB-DL DV HDR10]', size: 24800 }),
+    mag([ep(1, 1), ep(1, 2)], { id: 4, name: '[Deadmau- RAWS] Cyberpunk.Edgerunners.S01.x264.2022.BDRip.1080...', size: 16200 })
+  ]);
+  const sortedSeries = M.sortVersions(series);
+  assert.deepEqual(sortedSeries.map(i => i.m.id), [2, 4, 1, 3]);
+
+  const secSeries = M.versionSections(series);
+  assert.equal(secSeries.length, 2);
+  assert.equal(secSeries[0].title, 'Сезон 1');
+  assert.deepEqual(secSeries[0].items.map(i => i.m.id), [2, 4]);
+  assert.equal(secSeries[1].title, 'Сезон 2');
+  assert.deepEqual(secSeries[1].items.map(i => i.m.id), [1, 3]);
+
+  const trilogy = M.prepareItems([
+    mag([file(0, 'Movie3.mkv', 45000)], { id: 3, name: 'The Return of the King (2003) 4K' }),
+    mag([file(0, 'Movie1.mkv', 15000)], { id: 1, name: 'The Fellowship of the Ring (2001) 1080p' }),
+    mag([file(0, 'Movie2.mkv', 40000)], { id: 2, name: 'The Two Towers (2002) 4K' }),
+    mag([file(0, 'Movie1.mkv', 42000)], { id: 4, name: 'The Fellowship of the Ring (2001) 4K' })
+  ]);
+  const sortedTrilogy = M.sortVersions(trilogy);
+  assert.deepEqual(sortedTrilogy.map(i => i.m.id), [4, 1, 2, 3]);
+
+  const secTrilogy = M.versionSections(trilogy);
+  assert.equal(secTrilogy.length, 3);
+  assert.equal(secTrilogy[0].title, '2001 год');
+  assert.deepEqual(secTrilogy[0].items.map(i => i.m.id), [4, 1]);
+  assert.equal(secTrilogy[1].title, '2002 год');
+  assert.deepEqual(secTrilogy[1].items.map(i => i.m.id), [2]);
+  assert.equal(secTrilogy[2].title, '2003 год');
+  assert.deepEqual(secTrilogy[2].items.map(i => i.m.id), [3]);
 });

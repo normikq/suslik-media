@@ -406,6 +406,221 @@ fun seriesLine(p: Playable.Series): String {
 }
 
 private val YEAR_IN_NAME = Regex("""\b(19\d{2}|20\d{2})\b""")
+private val SEASON_RANGE_REGEX = Regex(
+    """(?:season|сезон)[s\p{L}]*[\s._-]*(\d{1,2})[\s._-]*[-–][\s._-]*(\d{1,2})|(\d{1,2})[\s._-]*[-–][\s._-]*(\d{1,2})[\s._-]*(?:season|сезон)[s\p{L}]*""",
+    IC
+)
+
+data class VersionSection(
+    val title: String?,
+    val items: List<LibraryItem>
+)
+
+/** Extracts the 4-digit release year (1900..2028) from text or file names. */
+fun extractYear(name: String): Int? {
+    val bracketed = Regex("""[\(\[\{](19\d\d|20[0-2]\d)[\)\]\}]""").find(name)
+    if (bracketed != null) return bracketed.groupValues[1].toInt()
+    val matches = Regex("""\b(19\d\d|20[0-2]\d)\b""").findAll(name)
+    for (m in matches) {
+        val y = m.groupValues[1].toInt()
+        if (y in 1900..2028) return y
+    }
+    return null
+}
+
+fun releaseYear(item: LibraryItem): Int? {
+    item.m.aiTitle?.takeIf { it.accepted }?.year?.let { return it }
+    extractYear(item.m.name)?.let { return it }
+    extractYear(item.baseTitle)?.let { return it }
+    return item.m.files.firstNotNullOfOrNull { extractYear(it.name.ifBlank { it.path }) }
+}
+
+private fun parseRoman(s: String): Int? = when (s.uppercase(Locale.ROOT)) {
+    "I" -> 1
+    "II" -> 2
+    "III" -> 3
+    "IV" -> 4
+    "V" -> 5
+    "VI" -> 6
+    "VII" -> 7
+    "VIII" -> 8
+    "IX" -> 9
+    "X" -> 10
+    else -> null
+}
+
+/** Explicit part or film number (e.g. Part 2, Часть 3, Фильм 1, Chapter 2). */
+fun itemPart(item: LibraryItem): Int? {
+    val text = item.m.name
+    val explicit = Regex(
+        """\b(?:часть|ч|фильм|film|part|pt|глава|chapter)\s*(\d+|[ivx]+)\b""",
+        IC
+    ).find(text)
+    if (explicit != null) {
+        val raw = explicit.groupValues[1]
+        raw.toIntOrNull()?.let { return it }
+        parseRoman(raw)?.let { return it }
+    }
+    val ord = Regex("""\b(\d+)\s*[-–]?\s*(?:я|ая|ья|ей)?\s*(?:часть|серия|фильм)\b""", IC).find(text)
+    if (ord != null) {
+        ord.groupValues[1].toIntOrNull()?.let { return it }
+    }
+    val roman = Regex("""\b([IVX]{1,4})\b""").findAll(text)
+    for (r in roman) {
+        val num = parseRoman(r.groupValues[1])
+        if (num != null && num in 1..10) return num
+    }
+    if (item.baseTitle.isNotBlank()) {
+        val afterBase = Regex("""(?i)\b${Regex.escape(item.baseTitle)}\s+(\d+)\b""").find(text)
+        if (afterBase != null) {
+            afterBase.groupValues[1].toIntOrNull()?.let { return it }
+        }
+    }
+    return null
+}
+
+/** Quality score: 4K (4), 1080p (3), 720p (2), SD (1), other (0). */
+fun qualityScore(name: String): Int {
+    val lower = name.lowercase(Locale.ROOT)
+    return when {
+        lower.contains("2160p") || lower.contains("4k") || lower.contains("3840") -> 4
+        lower.contains("1080p") || lower.contains("1080i") || lower.contains("1920") -> 3
+        lower.contains("720p") || lower.contains("1280") -> 2
+        lower.contains("480p") || lower.contains("576p") || lower.contains("dvd") -> 1
+        else -> 0
+    }
+}
+
+/** Seasons covered by this item: Pair(minSeason, maxSeason) or null if not a series. */
+fun itemSeasons(item: LibraryItem): Pair<Int, Int>? {
+    item.m.aiTitle?.takeIf { it.accepted }?.season?.let { return it to it }
+    val series = item.playable as? Playable.Series
+    if (series != null) {
+        val first = series.seasons.firstOrNull()?.items?.firstOrNull()
+        if (first?.title != null) return null // film collection (trilogy), not a TV series
+        val nums = series.seasons.map { it.season }
+        if (nums.isNotEmpty()) {
+            return (nums.minOrNull() ?: 1) to (nums.maxOrNull() ?: 1)
+        }
+    }
+    val rangeMatch = SEASON_RANGE_REGEX.find(item.m.name)
+    if (rangeMatch != null) {
+        val min = rangeMatch.groupValues[1].ifEmpty { rangeMatch.groupValues[3] }.toIntOrNull()
+        val max = rangeMatch.groupValues[2].ifEmpty { rangeMatch.groupValues[4] }.toIntOrNull()
+        if (min != null && max != null) return min to max
+    }
+    val singleMatch = ANY_SEASON.find(item.m.name) ?: SXXEYY.find(item.m.name)
+    if (singleMatch != null) {
+        val s = singleMatch.groupValues[1].toIntOrNull()
+        if (s != null) return s to s
+    }
+    val file = (item.playable as? Playable.Movie)?.file
+    if (file != null) {
+        seasonOf(file.path)?.let { return it to it }
+        parseEpisode(file.path)?.let { return it.first to it.first }
+    }
+    return null
+}
+
+/**
+ * Sorts versions intelligently:
+ * 1. For series: chronologically by season (Season 1 < Season 2 < Season 3; specials at the end).
+ * 2. For films/trilogies: chronologically by part number / release year (Part 1 < Part 2, 2001 < 2002 < 2003).
+ * 3. Within the same season or film: best quality first (4K > 1080p > 720p), then largest file size (higher bitrate).
+ */
+fun sortVersions(versions: List<LibraryItem>): List<LibraryItem> {
+    if (versions.size <= 1) return versions
+    val hasSeries = versions.any { itemSeasons(it) != null }
+    return versions.sortedWith(Comparator { a, b ->
+        if (hasSeries) {
+            val sa = itemSeasons(a)
+            val sb = itemSeasons(b)
+            if (sa != null && sb != null) {
+                val amin = if (sa.first == 0) Int.MAX_VALUE else sa.first
+                val bmin = if (sb.first == 0) Int.MAX_VALUE else sb.first
+                if (amin != bmin) return@Comparator amin.compareTo(bmin)
+                val aRange = sa.second - sa.first
+                val bRange = sb.second - sb.first
+                if (aRange != bRange) return@Comparator aRange.compareTo(bRange)
+            } else if (sa != null) {
+                return@Comparator -1
+            } else if (sb != null) {
+                return@Comparator 1
+            }
+        } else {
+            val pa = itemPart(a)
+            val pb = itemPart(b)
+            if (pa != null && pb != null && pa != pb) {
+                return@Comparator pa.compareTo(pb)
+            }
+            val ya = releaseYear(a)
+            val yb = releaseYear(b)
+            if (ya != null && yb != null && ya != yb) {
+                return@Comparator ya.compareTo(yb)
+            }
+            if (pa != null && pb == null) return@Comparator -1
+            if (pb != null && pa == null) return@Comparator 1
+            if (ya != null && yb == null) return@Comparator -1
+            if (yb != null && ya == null) return@Comparator 1
+        }
+        val qa = qualityScore(a.m.name)
+        val qb = qualityScore(b.m.name)
+        if (qa != qb) return@Comparator qb.compareTo(qa)
+        val sDiff = b.m.size.compareTo(a.m.size)
+        if (sDiff != 0) return@Comparator sDiff
+        a.m.name.compareTo(b.m.name)
+    })
+}
+
+/**
+ * Groups sorted versions into sections (e.g. "Сезон 1", "Сезон 2" or "2001 год", "2002 год").
+ * If all versions belong to the same single season or single film, returns a single section with [VersionSection.title] = null.
+ */
+fun versionSections(versions: List<LibraryItem>): List<VersionSection> {
+    val sorted = sortVersions(versions)
+    if (sorted.isEmpty()) return emptyList()
+    val hasSeries = sorted.any { itemSeasons(it) != null }
+
+    if (hasSeries) {
+        val seasonKeys = sorted.map { item ->
+            val s = itemSeasons(item)
+            when {
+                s == null -> "Дополнительно"
+                s.first == 0 -> "Спецвыпуски"
+                s.first == s.second -> "Сезон ${s.first}"
+                else -> "Сезоны ${s.first}–${s.second}"
+            }
+        }
+        val distinctKeys = seasonKeys.distinct()
+        if (distinctKeys.size <= 1) {
+            return listOf(VersionSection(null, sorted))
+        }
+        val groups = LinkedHashMap<String, MutableList<LibraryItem>>()
+        for (i in sorted.indices) {
+            groups.getOrPut(seasonKeys[i]) { ArrayList() }.add(sorted[i])
+        }
+        return groups.map { (key, items) -> VersionSection(key, items) }
+    } else {
+        val hasMultiYearOrPart = sorted.mapNotNull { releaseYear(it) }.distinct().size > 1 ||
+                sorted.mapNotNull { itemPart(it) }.distinct().size > 1
+        if (!hasMultiYearOrPart) {
+            return listOf(VersionSection(null, sorted))
+        }
+        val groups = LinkedHashMap<String, MutableList<LibraryItem>>()
+        for (item in sorted) {
+            val y = releaseYear(item)
+            val p = itemPart(item)
+            val key = when {
+                y != null && p != null -> "$y год · Часть $p"
+                y != null -> "$y год"
+                p != null -> "Часть $p"
+                else -> "Другая версия"
+            }
+            groups.getOrPut(key) { ArrayList() }.add(item)
+        }
+        return groups.map { (key, items) -> VersionSection(key, items) }
+    }
+}
 
 /** Title the tile is grouped by: the AI's one once the owner accepted it, otherwise the regexes' [LibraryItem.baseTitle]. */
 fun groupTitle(it: LibraryItem): String = it.m.aiTitle?.takeIf { a -> a.accepted }?.base ?: it.baseTitle // = baseTitle (prepareItems)
@@ -415,7 +630,7 @@ fun groupTitle(it: LibraryItem): String = it.m.aiTitle?.takeIf { a -> a.accepted
  * other seasons of a show): one tile for all of them. Only ready items are merged. Films merge with films, series
  * (and collections) with series: by the same poster (when [posterOf] knows it), otherwise by the title without season
  * marks (a film also by year). The first one in the list order stays on screen; [Pair.second] maps its id to every
- * version (itself included).
+ * version (itself included), sorted intelligently.
  */
 fun groupVersions(list: List<LibraryItem>, posterOf: (LibraryItem) -> String? = { null }): Pair<List<LibraryItem>, Map<Long, List<LibraryItem>>> {
     val byKey = HashMap<String, MutableList<LibraryItem>>()
@@ -434,7 +649,7 @@ fun groupVersions(list: List<LibraryItem>, posterOf: (LibraryItem) -> String? = 
         else { group += it; keys.forEach { k -> byKey.putIfAbsent(k, group) } }
     }
     val versions = HashMap<Long, List<LibraryItem>>()
-    for (g in groups) if (g.size > 1) versions[g.first().m.id] = g
+    for (g in groups) if (g.size > 1) versions[g.first().m.id] = sortVersions(g)
     return shown to versions
 }
 

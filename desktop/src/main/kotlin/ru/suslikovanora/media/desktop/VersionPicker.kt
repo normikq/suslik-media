@@ -15,11 +15,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -65,6 +67,8 @@ fun VersionPicker(title: String, versions: List<LibraryItem>, lib: Library, onDi
     var shown by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { shown = true }
     val a by animateFloatAsState(if (shown) 1f else 0f, tween(260, easing = Sm.ease))
+    val sections = remember(versions) { versionSections(versions) }
+
     Box(
         Modifier.fillMaxSize().graphicsLayer { alpha = a }.background(Sm.scrim)
             .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { onDismiss() },
@@ -79,8 +83,14 @@ fun VersionPicker(title: String, versions: List<LibraryItem>, lib: Library, onDi
             Text(tr("library.vyberite_versiyu"), color = Sm.text, fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 20.sp)
             Text(title + " · " + versionsWord(versions.size), color = Sm.muted, fontFamily = Onest, fontSize = 13.5.sp, maxLines = 1,
                 overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
-            Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                versions.forEach { v -> VersionRow(v, lib) { onChoose(v) } }
+            Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                sections.forEach { section ->
+                    val secTitle = section.title
+                    if (secTitle != null) {
+                        SectionHeader(secTitle)
+                    }
+                    section.items.forEach { v -> VersionRow(v, lib, inSection = secTitle != null) { onChoose(v) } }
+                }
             }
             Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.End) {
                 OutlineButton(tr("library.zakryt")) { onDismiss() }
@@ -90,7 +100,26 @@ fun VersionPicker(title: String, versions: List<LibraryItem>, lib: Library, onDi
 }
 
 @Composable
-private fun VersionRow(v: LibraryItem, lib: Library, onClick: () -> Unit) {
+private fun SectionHeader(title: String) {
+    Row(
+        Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            title.uppercase(),
+            color = Sm.muted,
+            fontFamily = Onest,
+            fontWeight = FontWeight.Bold,
+            fontSize = 11.5.sp,
+            letterSpacing = 1.sp
+        )
+        Spacer(Modifier.width(10.dp))
+        Box(Modifier.weight(1f).height(1.dp).background(Sm.line))
+    }
+}
+
+@Composable
+private fun VersionRow(v: LibraryItem, lib: Library, inSection: Boolean, onClick: () -> Unit) {
     val src = remember { MutableInteractionSource() }
     val hovered by src.collectIsHoveredAsState()
     val bg by animateColorAsState(if (hovered) Sm.glassFillHover else Sm.glassFill, tween(200))
@@ -98,13 +127,39 @@ private fun VersionRow(v: LibraryItem, lib: Library, onClick: () -> Unit) {
     val series = v.playable as? Playable.Series
     val watched = if (series != null) lib.lastWatched(v.m)?.second
         else (v.playable as? Playable.Movie)?.file?.let { lib.watchInfo(watchKey(v.m.id, it)) }
-    val specs = itemSpecs(v, null).first.split(" • ").take(2).joinToString(" • ") // quality • codec (the frame rate there is a guess)
+    val baseSpecs = itemSpecs(v, null).first.split(" • ").take(2).joinToString(" • ")
+    val tags = lib.tagsOf(v).filter { it == "Dolby Vision" || it == "HDR" }
+    val specs = if (tags.isNotEmpty()) baseSpecs + " • " + tags.joinToString(" • ") else baseSpecs
+
+    val heading = when {
+        series != null -> {
+            val sRange = itemSeasons(v)
+            val eps = series.seasons.sumOf { it.items.size }
+            val first = series.seasons.firstOrNull()?.items?.firstOrNull()
+            val isFilms = first?.title != null
+            val epWord = if (isFilms) "фильм." else if (eps % 10 in 2..4 && eps % 100 !in 12..14) "серии" else if (eps % 10 == 1 && eps % 100 != 11) "серия" else "серий"
+            if (inSection) {
+                if (sRange != null && sRange.first != sRange.second) {
+                    "Сезоны ${sRange.first}–${sRange.second} · $eps $epWord • $specs"
+                } else {
+                    "$eps $epWord • $specs"
+                }
+            } else {
+                seriesLine(series) + " • " + specs
+            }
+        }
+        else -> {
+            val y = releaseYear(v)
+            if (y != null && !inSection) "$y год • $specs" else specs
+        }
+    }
+
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(bg).border(1.dp, edge, RoundedCornerShape(14.dp))
             .hoverClick(src, onClick = onClick).padding(horizontal = 14.dp, vertical = 11.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(if (series != null) seriesLine(series) + " • " + specs else specs, color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp, modifier = Modifier.weight(1f))
+            Text(heading, color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp, modifier = Modifier.weight(1f))
             Text(formatBytes(v.m.size), color = Sm.muted, fontFamily = Onest, fontSize = 13.sp)
         }
         Text(v.m.name, color = Sm.muted, fontFamily = Onest, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 3.dp))

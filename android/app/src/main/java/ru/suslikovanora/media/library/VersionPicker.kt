@@ -14,10 +14,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -26,6 +28,8 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -51,6 +55,8 @@ fun versionTarget(item: LibraryItem, store: LibraryStore): PlayTarget? {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VersionSheet(title: String, versions: List<LibraryItem>, store: LibraryStore, onDismiss: () -> Unit, onChoose: (LibraryItem) -> Unit) {
+    val sections = remember(versions) { versionSections(versions) }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -63,26 +69,77 @@ fun VersionSheet(title: String, versions: List<LibraryItem>, store: LibraryStore
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
             )
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                versions.forEach { v -> VersionRow(v, store) { onChoose(v) } }
+                sections.forEach { section ->
+                    val secTitle = section.title
+                    if (secTitle != null) {
+                        SectionHeader(secTitle)
+                    }
+                    section.items.forEach { v -> VersionRow(v, store, inSection = secTitle != null) { onChoose(v) } }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun VersionRow(v: LibraryItem, store: LibraryStore, onClick: () -> Unit) {
+private fun SectionHeader(title: String) {
+    Row(
+        Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            title.uppercase(),
+            color = Sm.muted,
+            fontFamily = Onest,
+            fontWeight = FontWeight.Bold,
+            fontSize = 11.sp,
+            letterSpacing = 1.sp
+        )
+        Spacer(Modifier.width(10.dp))
+        Box(Modifier.weight(1f).height(1.dp).background(Color(0x22FFFFFF)))
+    }
+}
+
+@Composable
+private fun VersionRow(v: LibraryItem, store: LibraryStore, inSection: Boolean, onClick: () -> Unit) {
     val series = v.playable as? Playable.Series
     val watched = if (series != null) store.lastWatched(v.m)?.second
         else (v.playable as? Playable.Movie)?.file?.let { store.watchInfo(watchKey(v.m.id, it)) }
-    val specs = itemSpecs(v, null).first.split(" • ").take(2).joinToString(" • ")
+    val baseSpecs = itemSpecs(v, null).first.split(" • ").take(2).joinToString(" • ")
+    val tags = store.tagsOf(v).filter { it == "Dolby Vision" || it == "HDR" }
+    val specs = if (tags.isNotEmpty()) baseSpecs + " • " + tags.joinToString(" • ") else baseSpecs
+
+    val heading = when {
+        series != null -> {
+            val sRange = itemSeasons(v)
+            val eps = series.seasons.sumOf { it.items.size }
+            val first = series.seasons.firstOrNull()?.items?.firstOrNull()
+            val isFilms = first?.title != null
+            val epWord = if (isFilms) "фильм." else if (eps % 10 in 2..4 && eps % 100 !in 12..14) "серии" else if (eps % 10 == 1 && eps % 100 != 11) "серия" else "серий"
+            if (inSection) {
+                if (sRange != null && sRange.first != sRange.second) {
+                    "Сезоны ${sRange.first}–${sRange.second} · $eps $epWord • $specs"
+                } else {
+                    "$eps $epWord • $specs"
+                }
+            } else {
+                seriesLine(series) + " • " + specs
+            }
+        }
+        else -> {
+            val y = releaseYear(v)
+            if (y != null && !inSection) "$y год • $specs" else specs
+        }
+    }
+
     val shape = RoundedCornerShape(14.dp)
     Column(
         Modifier.fillMaxWidth().clip(shape).background(Color(0x14FFFFFF)).border(1.dp, Sm.glassEdge, shape)
             .focusRing(shape).clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 11.dp)
     ) {
-        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                if (series != null) seriesLine(series) + " • " + specs else specs,
+                heading,
                 color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, modifier = Modifier.weight(1f)
             )
             Text(formatBytes(v.m.size), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp)
