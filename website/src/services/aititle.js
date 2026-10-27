@@ -28,8 +28,9 @@ const OWNER_RE = /^(?:[a-f0-9]{32}|u_\d{1,25})$/;
 const VIDEO_EXT = /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso|wmv|mpg|mpeg|vob)$/i;
 const STATUSES = new Set(["suggested", "accepted", "rejected", "none"]);
 const KINDS = new Set(["movie", "series", "collection"]);
-// Версия ответа: 2 — с типом раздачи (kind). Ответ старой версии можно спросить заново (stale в ответе медиатеки).
-const VERSION = 2;
+// Версия ответа: 2 — с типом раздачи (kind), 3 — сезон без пометок в раздаче («Show 2 - 01», «Show - 01»).
+// Ответ старой версии можно спросить заново (stale в ответе медиатеки).
+const VERSION = 3;
 
 const PROMPT = [
   "Ты получаешь одну или несколько торрент-раздач: номер, название и пути видеофайлов. Для каждой раздачи верни объект:",
@@ -37,7 +38,9 @@ const PROMPT = [
   "в раздаче; если название записано транслитом (\"Kak.priruchit.lisu\") — по-русски кириллицей (\"Как приручить лису\");",
   "иначе оригинальное. Слова через пробел (не через точки и подчёркивания), без года, качества, кодеков, озвучки,",
   "студии, номера сезона и серии; цифры, которые входят в само название (\"Тачки 2\", \"1+1\"), оставь.",
-  "season — номер сезона, если раздача — ровно один сезон сериала (смотри и на пути: S02E01 — сезон 2), иначе null",
+  "season — номер сезона, если раздача — ровно один сезон сериала (смотри и на пути: S02E01 — сезон 2), иначе null.",
+  "Сезон бывает записан без пометок: \"Сериал 2 - 01.mkv\" — второй сезон (цифра после названия), если это не часть",
+  "самого названия; если пометок нет вовсе и это первый сезон — 1.",
   "(фильм, несколько сезонов, сборник). kind — что это за раздача: \"movie\" — один фильм (с допами, трейлерами,",
   "частями одного фильма), \"series\" — серии сериала, аниме или шоу (один или несколько сезонов), \"collection\" —",
   "несколько разных фильмов (франшиза, трилогия, подборка)."
@@ -116,6 +119,23 @@ function keyOf(name, files) {
 }
 
 /** Номер сезона n упомянут в названии или путях: S01, «Season 1», «1 сезон», «Сезон 1», диапазон «1-3 сезон». */
+// Любая пометка сезона в тексте: S01, «Season 2», «2 сезон», «Сезон 2», «1-3 сезон»
+const ANY_SEASON = /(?<![\p{L}\d])s\d{1,2}(?!\d)|(?:season|сезон\p{L}*)[\s._:#№-]*\d{1,2}(?!\d)|(?<!\d)\d{1,2}[\s._-]*(?:-?(?:й|ый|ой))?[\s._-]*(?:season|сезон)/iu;
+// Числа, которые не номер сезона: год, разрешение, кодек, битрейт, звук 5.1
+const NOT_SEASON = /(?:2160|1080|720|480|576)[pi]|[xh][ .]?26[45]|\d+(?:[.,]\d+)?\s?(?:fps|kbps|mbps|bit|gb|mb)|(?<!\d)(?:19|20)\d{2}(?!\d)|(?<!\d)[1-9]\.[01](?!\d)/giu;
+
+/**
+ * Сезон n без пометок в раздаче: пометок нет ни в названии, ни в путях, и n — первый сезон или отдельное число
+ * в названии раздачи вне скобок («Cyberpunk Edgerunners 2 [2160p]» — 2), не год и не разрешение.
+ */
+function seasonUnmarked(n, name, paths) {
+  if ([name, ...paths].some(t => ANY_SEASON.test(t))) return false;
+  if (n === 1) return true;
+  // вне [скобок] и (скобок): там качество, озвучка, «Multi-14»
+  const nums = String(name).replace(/\[[^\]]*\]|\([^)]*\)/g, " ").replace(NOT_SEASON, " ").match(/(?<!\d)\d{1,2}(?!\d)/g) || [];
+  return nums.some(x => Number(x) === n);
+}
+
 function seasonMentioned(n, texts) {
   const S = "(?:season|сезон\\p{L}*)";
   const num = String(n);
@@ -141,7 +161,8 @@ function seasonMentioned(n, texts) {
 
 /**
  * Проверка ответа модели. Возвращает { base, season } или null (ответа нет, название пустое или слишком длинное).
- * Точки и подчёркивания вместо пробелов («Kak.priruchit.lisu») заменяются пробелами. Сезон, которого нет ни в названии,
+ * Точки и подчёркивания вместо пробелов («Kak.priruchit.lisu») заменяются пробелами. Сезон без пометок принимается
+ * по seasonUnmarked; если пометки есть, сезон должен с ними совпадать. Сезон, которого нет ни в названии,
  * ни в путях (S02, «2 сезон», «1-3 сезон»…), не принимается: остаётся null, название — да.
  * Название может не совпадать с раздачей (перевод, кириллица вместо транслита): его всё равно подтверждает владелец.
  * kind — "movie" | "series" | "collection" или null (неизвестный); у фильма и сборника сезона нет.
@@ -154,7 +175,7 @@ function validate(answer, name, files) {
   if (!base || base.length > 200 || /[\u0000-\u001f\u007f]/.test(base)) return null;
   let season = answer.season;
   if (!Number.isInteger(season) || season < 0 || season > 99) season = null;
-  else if (!seasonMentioned(season, [String(name), ...videoPaths(files)])) season = null;
+  else if (!seasonMentioned(season, [String(name), ...videoPaths(files)]) && !seasonUnmarked(season, String(name), videoPaths(files))) season = null;
   const kind = KINDS.has(answer.kind) ? answer.kind : null;
   if (kind === "movie" || kind === "collection") season = null;
   return { base, season, kind };
@@ -385,6 +406,7 @@ module.exports = {
   keyOf,
   videoPaths,
   seasonMentioned,
+  seasonUnmarked,
   validate,
   cooldownLeft,
   readyAt,

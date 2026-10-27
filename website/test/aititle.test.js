@@ -293,3 +293,18 @@ test("aititle: an answer stored before kind existed can be asked again", async (
   assert.equal(r.cached, false);
   assert.deepEqual([r.aiTitle.base, r.aiTitle.kind, r.aiTitle.status, r.aiTitle.stale], ["Тачки 2", "movie", "suggested", false]);
 });
+
+test("aititle: a season the release does not mark («Show 2 - 01», «Show - 01») is kept", () => {
+  const v = (n, name, paths) => ai.validate({ base: "Cyberpunk Edgerunners", season: n, kind: "series" }, name, paths.map(p => ({ path: p, type: "file" }))).season;
+  const e2 = "Cyberpunk Edgerunners 2 [2160p WEB-DL DV HDR10]";
+  assert.equal(v(2, e2, [e2 + "/Cyberpunk Edgerunners 2 - 01 [2160p WEB-DL DV HDR10].mkv"]), 2);
+  const e1 = "Cyberpunk - Edgerunners [2022] [WEB-DL] [Dolby Vision] [1080p] [RUS + JAP] [Multi-14]";
+  assert.equal(v(1, e1, [e1 + "/Cyberpunk - Edgerunners - 01 (WEB-DL 1920x1080 HEVC DV AAC Rus + Jap).mkv"]), 1);
+  assert.equal(v(14, e1, ["Cyberpunk - Edgerunners - 01.mkv"]), null); // «Multi-14» в скобках
+  assert.equal(v(22, "Show [2022] 1080p", ["Show - 01.mkv"]), null); // год
+  assert.equal(v(5, "Show DD5.1", ["Show - 01.mkv"]), null);
+  // пометки есть — сезон должен с ними совпадать
+  const s1 = "[Deadmau- RAWS] Cyberpunk.Edgerunners.S01.x264.2022.BDRip.1080p";
+  assert.equal(v(1, s1, ["a/Cyberpunk.Edgerunners.S01.Ep.01.mkv"]), 1);
+  assert.equal(v(2, s1, ["a/Cyberpunk.Edgerunners.S01.Ep.01.mkv"]), null);
+});
