@@ -378,9 +378,16 @@
 
   /** «Какую версию включить?»: строка на раздачу — серии и сезоны в ней, размер и имя; открывает её экран. */
   function pickVersion(title, versions) {
-    dialog(tr('library.pick_version_title'), title + ' · ' + versionsWord(versions.length), versions.map(function (v) {
+    var sorted = model.sortVersions(versions);
+    dialog(tr('library.pick_version_title'), title + ' · ' + versionsWord(sorted.length), sorted.map(function (v) {
       var q = /2160p|4k/i.test(v.m.name) ? '4K' : /720p/i.test(v.m.name) ? '720p' : '1080p';
-      var head = v.playable.kind === 'series' ? model.seriesLine(v.playable) + ' • ' + q : q;
+      var head;
+      if (v.playable && v.playable.kind === 'series') {
+        head = model.seriesLine(v.playable) + ' • ' + q;
+      } else {
+        var y = model.itemYear(v);
+        head = (y ? y + ' год • ' : '') + q;
+      }
       return { text: head + ' · ' + model.formatBytes(v.m.size) + ' · ' + shorten(v.m.name, 60), run: function () { details(v); } };
     }), 'versions');
   }

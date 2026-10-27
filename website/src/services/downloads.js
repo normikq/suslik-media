@@ -75,6 +75,16 @@ function isOwner(id, req) {
   return Boolean(o && o.dev === deviceId(req, null));
 }
 
+// То же для всех раздач одного запроса (cookie читается один раз): добавил сам или админ библиотеки
+function ownerChecker(req) {
+  if (isLibraryAdmin(req)) return () => true;
+  const dev = deviceId(req, null);
+  return id => {
+    const o = magnetOwners.get(String(id));
+    return Boolean(o && o.dev === dev);
+  };
+}
+
 function deleteOwner(id) {
   if (magnetOwners.delete(String(id))) {
     persistOwners();
@@ -171,6 +181,7 @@ module.exports = {
   MAX_ACTIVE_DOWNLOADS_PER_IP,
   canRemove,
   isOwner,
+  ownerChecker,
   removeChecker,
   isLibraryAdmin,
   recordOwner,

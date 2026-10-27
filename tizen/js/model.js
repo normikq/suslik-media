@@ -7,6 +7,24 @@
   'use strict';
   var SM = g.SM = g.SM || {};
 
+  /** Название и сезон, предложенные ИИ сервера (services/aititle.js; AiTitle в Model.kt). В группировку — только "accepted". */
+  function parseAiTitle(a) {
+    if (!a || typeof a !== 'object' || ['suggested', 'accepted', 'rejected', 'none'].indexOf(a.status) < 0) return null;
+    return {
+      base: str(a.base).trim(), season: typeof a.season === 'number' && isFinite(a.season) ? Math.floor(a.season) : null,
+      model: str(a.model), at: num(a.at), status: a.status,
+      kind: ['movie', 'series', 'collection'].indexOf(a.kind) >= 0 ? a.kind : null, stale: a.stale === true,
+      original: str(a.original).trim() || null,
+      year: typeof a.year === 'number' && a.year >= 1880 && a.year <= 2100 ? Math.floor(a.year) : null
+    };
+  }
+
+  /** Название для группировки: принятое предложение ИИ, иначе по регуляркам (groupTitle в Model.kt). */
+  function groupTitle(it) {
+    var a = it.m.aiTitle;
+    return a && a.status === 'accepted' && a.base ? a.base : it.baseTitle;
+  }
+
   function parseLibrary(json) {
     var arr = json && json.magnets;
     if (!Array.isArray(arr)) return [];
@@ -23,7 +41,8 @@
       out.push(magnet({
         id: id, name: str(m.name).trim() ? str(m.name) : 'Magnet ' + id, status: str(m.status),
         statusCode: num(m.statusCode), size: num(m.size), downloaded: num(m.downloaded), files: files,
-        canRemove: m.canRemove !== false, favorite: m.favorite === true, mine: m.mine === true
+        canRemove: m.canRemove !== false, favorite: m.favorite === true, mine: m.mine === true,
+        aiTitle: parseAiTitle(m.aiTitle), canAiTitle: m.canAiTitle === true
       }));
     });
     return out;
@@ -111,7 +130,49 @@
   }
 
   /** { kind: 'movie', file } | { kind: 'series', seasons: [{ season, items: [{ season, episode, file, title }] }] } | { kind: 'none' } */
-  function buildPlayable(m) {
+  /** Что играть: по файлам, затем тип и сезон, принятые от ИИ (buildPlayable / applyAiTitle в Model.kt). */
+  function buildPlayable(m) { return applyAiTitle(playableByFiles(m), m); }
+
+  function isCollection(p) {
+    return p.kind === 'series' && !!p.seasons[0] && !!p.seasons[0].items[0] && p.seasons[0].items[0].title != null;
+  }
+
+  /**
+   * Тип и сезон, принятые владельцем от ИИ (services/aititle.js), поверх разбора по файлам: «сериал» — видео по
+   * порядку имён серий одного сезона, «сборник» — отдельные фильмы, «фильм» — главный файл. Сезон — только если сезон
+   * в раздаче один (applyAiTitle в Model.kt).
+   */
+  function applyAiTitle(p, m) {
+    var ai = m.aiTitle;
+    if (!ai || ai.status !== 'accepted' || !ai.base) return p;
+    var vids = m.files.filter(function (f) { return isVideo(f) && !SAMPLE.test(f.path); });
+    var main = vids.filter(function (f) { return !EXTRAS.test(f.path); });
+    if (!main.length) main = vids;
+    var sorted = function () { return main.slice().sort(byNameNatural); };
+    var out = p;
+    if (ai.kind === 'movie' && p.kind === 'series') {
+      var mv = mainVideo(m);
+      if (mv) out = { kind: 'movie', file: mv };
+    } else if (ai.kind === 'series' && (p.kind === 'movie' || isCollection(p)) && main.length >= 2) {
+      var sn = ai.season > 0 ? ai.season : 1;
+      out = { kind: 'series', seasons: [{ season: sn, items: sorted().map(function (f, i) {
+        return { season: sn, episode: i + 1, file: f, title: null };
+      }) }] };
+    } else if (ai.kind === 'collection' && (p.kind === 'movie' || (p.kind === 'series' && !isCollection(p))) && main.length >= 2) {
+      out = { kind: 'series', seasons: [{ season: 1, items: sorted().map(function (f, i) {
+        return { season: 1, episode: i + 1, file: f, title: cleanTitle(basename(f.path)) || 'Фильм ' + (i + 1) };
+      }) }] };
+    }
+    var s = ai.season;
+    if (s > 0 && out.kind === 'series' && !isCollection(out) && out.seasons.length === 1 && out.seasons[0].season !== s) {
+      out = { kind: 'series', seasons: [{ season: s, items: out.seasons[0].items.map(function (e) {
+        return { season: s, episode: e.episode, file: e.file, title: e.title };
+      }) }] };
+    }
+    return out;
+  }
+
+  function playableByFiles(m) {
     var vids = m.files.filter(function (f) { return isVideo(f) && !SAMPLE.test(f.path); });
     // Сначала структура папок: многие раздачи называют серии без SxxEyy.
     var bySeason = {}, order = [];
@@ -247,29 +308,221 @@
   }
 
   var YEAR_IN_NAME = /\b(19\d{2}|20\d{2})\b/;
+  var SEASON_RANGE_REGEX = /(?:season|сезон)[a-zа-яё]*[\s._-]*(\d{1,2})[\s._-]*[-–][\s._-]*(\d{1,2})|(\d{1,2})[\s._-]*[-–][\s._-]*(\d{1,2})[\s._-]*(?:season|сезон)[a-zа-яё]*/i;
+
+  function extractYear(name) {
+    if (!name) return null;
+    var b = /[\(\[\{](19\d\d|20[0-2]\d)[\)\]\}]/.exec(name);
+    if (b) return parseInt(b[1], 10);
+    var all = name.match(/\b(19\d\d|20[0-2]\d)\b/g);
+    if (all) {
+      for (var i = 0; i < all.length; i++) {
+        var y = parseInt(all[i], 10);
+        if (y >= 1900 && y <= 2028) return y;
+      }
+    }
+    return null;
+  }
+
+  function itemYear(item) {
+    if (!item) return null;
+    if (item.m && item.m.aiTitle && item.m.aiTitle.status === 'accepted' && item.m.aiTitle.year) {
+      return item.m.aiTitle.year;
+    }
+    var y = extractYear(item.m ? item.m.name : '');
+    if (y) return y;
+    y = extractYear(item.baseTitle || '');
+    if (y) return y;
+    if (item.m && item.m.files) {
+      for (var i = 0; i < item.m.files.length; i++) {
+        y = extractYear(item.m.files[i].path || '');
+        if (y) return y;
+      }
+    }
+    return null;
+  }
+
+  function parseRoman(s) {
+    switch ((s || '').toUpperCase()) {
+      case 'I': return 1;
+      case 'II': return 2;
+      case 'III': return 3;
+      case 'IV': return 4;
+      case 'V': return 5;
+      case 'VI': return 6;
+      case 'VII': return 7;
+      case 'VIII': return 8;
+      case 'IX': return 9;
+      case 'X': return 10;
+      default: return null;
+    }
+  }
+
+  function itemPart(item) {
+    if (!item || !item.m) return null;
+    var text = item.m.name || '';
+    var m = /\b(?:часть|ч|фильм|film|part|pt|глава|chapter)\s*(\d+|[ivx]+)\b/i.exec(text);
+    if (m) {
+      var n = parseInt(m[1], 10);
+      if (!isNaN(n)) return n;
+      var r = parseRoman(m[1]);
+      if (r) return r;
+    }
+    var ord = /\b(\d+)\s*[-–]?\s*(?:я|ая|ья|ей)?\s*(?:часть|серия|фильм)\b/i.exec(text);
+    if (ord) return parseInt(ord[1], 10);
+    var rom = text.match(/\b([IVX]{1,4})\b/g);
+    if (rom) {
+      for (var i = 0; i < rom.length; i++) {
+        var rn = parseRoman(rom[i]);
+        if (rn && rn >= 1 && rn <= 10) return rn;
+      }
+    }
+    return null;
+  }
+
+  function qualityScore(name) {
+    var lower = (name || '').toLowerCase();
+    if (/2160p|4k|3840/.test(lower)) return 4;
+    if (/1080p|1080i|1920/.test(lower)) return 3;
+    if (/720p|1280/.test(lower)) return 2;
+    if (/480p|576p|dvd/.test(lower)) return 1;
+    return 0;
+  }
+
+  function itemSeasons(item) {
+    if (!item) return null;
+    if (item.m && item.m.aiTitle && item.m.aiTitle.status === 'accepted' && typeof item.m.aiTitle.season === 'number' && item.m.aiTitle.season >= 0) {
+      return { min: item.m.aiTitle.season, max: item.m.aiTitle.season };
+    }
+    if (item.playable && item.playable.kind === 'series') {
+      var seasons = item.playable.seasons || [];
+      if (seasons.length > 0 && seasons[0].items && seasons[0].items[0] && seasons[0].items[0].title) return null; // film collection
+      var nums = seasons.map(function (s) { return s.season; }).filter(function (n) { return n >= 0; });
+      if (nums.length) {
+        return { min: Math.min.apply(null, nums), max: Math.max.apply(null, nums) };
+      }
+    }
+    var name = item.m ? item.m.name || '' : '';
+    var range = SEASON_RANGE_REGEX.exec(name);
+    if (range) {
+      var rmin = parseInt(range[1] || range[3], 10);
+      var rmax = parseInt(range[2] || range[4], 10);
+      if (!isNaN(rmin) && !isNaN(rmax)) return { min: rmin, max: rmax };
+    }
+    var single = /(?:season|сезон)[\s._-]?(\d{1,2})|s(\d{1,2})[\s._-]?e\d{1,3}/i.exec(name);
+    if (single) {
+      var s = parseInt(single[1] || single[2], 10);
+      if (!isNaN(s)) return { min: s, max: s };
+    }
+    return null;
+  }
+
+  function sortVersions(list) {
+    if (!list || list.length <= 1) return list ? list.slice() : [];
+    var copy = list.slice();
+    var hasSeries = copy.some(function (it) { return Boolean(itemSeasons(it)); });
+    copy.sort(function (a, b) {
+      if (hasSeries) {
+        var sa = itemSeasons(a), sb = itemSeasons(b);
+        if (sa && sb) {
+          var amin = sa.min === 0 ? 9999 : sa.min;
+          var bmin = sb.min === 0 ? 9999 : sb.min;
+          if (amin !== bmin) return amin - bmin;
+          var aRange = sa.max - sa.min, bRange = sb.max - sb.min;
+          if (aRange !== bRange) return aRange - bRange;
+        } else if (sa) return -1;
+        else if (sb) return 1;
+      } else {
+        var pa = itemPart(a), pb = itemPart(b);
+        if (pa != null && pb != null && pa !== pb) return pa - pb;
+        var ya = itemYear(a), yb = itemYear(b);
+        if (ya != null && yb != null && ya !== yb) return ya - yb;
+        if (pa != null && pb == null) return -1;
+        if (pb != null && pa == null) return 1;
+        if (ya != null && yb == null) return -1;
+        if (yb != null && ya == null) return 1;
+      }
+      var qa = qualityScore(a.m ? a.m.name : ''), qb = qualityScore(b.m ? b.m.name : '');
+      if (qa !== qb) return qb - qa;
+      var saSize = a.m ? a.m.size : 0, sbSize = b.m ? b.m.size : 0;
+      if (sbSize !== saSize) return sbSize - saSize;
+      return ((a.m && a.m.name) || '').localeCompare((b.m && b.m.name) || '');
+    });
+    return copy;
+  }
+
+  function versionSections(list) {
+    var sorted = sortVersions(list);
+    if (!sorted.length) return [];
+    var hasSeries = sorted.some(function (it) { return Boolean(itemSeasons(it)); });
+    var i, it;
+    if (hasSeries) {
+      var seasonKeys = sorted.map(function (item) {
+        var s = itemSeasons(item);
+        if (!s) return 'Дополнительно';
+        if (s.min === 0) return 'Спецвыпуски';
+        if (s.min === s.max) return 'Сезон ' + s.min;
+        return 'Сезоны ' + s.min + '–' + s.max;
+      });
+      var distinct = {};
+      seasonKeys.forEach(function (k) { distinct[k] = true; });
+      if (Object.keys(distinct).length <= 1) {
+        return [{ title: null, items: sorted }];
+      }
+      var groups = {}, order = [];
+      for (i = 0; i < sorted.length; i++) {
+        var k = seasonKeys[i];
+        if (!groups[k]) { groups[k] = []; order.push(k); }
+        groups[k].push(sorted[i]);
+      }
+      return order.map(function (k) { return { title: k, items: groups[k] }; });
+    } else {
+      var years = {}, parts = {};
+      for (i = 0; i < sorted.length; i++) {
+        var y = itemYear(sorted[i]), p = itemPart(sorted[i]);
+        if (y != null) years[y] = true;
+        if (p != null) parts[p] = true;
+      }
+      if (Object.keys(years).length <= 1 && Object.keys(parts).length <= 1) {
+        return [{ title: null, items: sorted }];
+      }
+      var gMovies = {}, mOrder = [];
+      for (i = 0; i < sorted.length; i++) {
+        it = sorted[i];
+        var my = itemYear(it), mp = itemPart(it);
+        var mk = (my != null && mp != null) ? my + ' год · Часть ' + mp : (my != null ? my + ' год' : (mp != null ? 'Часть ' + mp : 'Другая версия'));
+        if (!gMovies[mk]) { gMovies[mk] = []; mOrder.push(mk); }
+        gMovies[mk].push(it);
+      }
+      return mOrder.map(function (k) { return { title: k, items: gMovies[k] }; });
+    }
+  }
 
   /**
    * Один фильм или сериал, добавленный несколько раз (другие релизы, озвучки, сезоны): одна плитка на всех
    * (groupVersions в Model.kt). Только готовые; фильмы с фильмами, сериалы и сборники — с сериалами; по названию без
-   * пометок сезона (фильм — ещё и по году). Первый по порядку остаётся на экране; versions — id первого → все версии.
+   * пометок сезона (фильм — ещё и по году). Первый по порядку остаётся на экране; versions — id первого → все версии (умно отсортированы).
    */
   function groupVersions(list, posterOf) {
     var byKey = {}, groups = [], shown = [];
     list.forEach(function (it) {
-      if (it.playable.kind === 'none' || !it.m.ready || !it.baseTitle.trim()) { shown.push(it); return; }
+      var base = groupTitle(it);
+      if (it.playable.kind === 'none' || !it.m.ready || !base.trim()) { shown.push(it); return; }
       var kind = it.playable.kind === 'movie' ? 'm' : 's';
-      var y = YEAR_IN_NAME.exec(it.m.name);
+      // год принятого ответа ИИ важнее года в имени раздачи (groupVersions в Model.kt)
+      var aiy = it.m.aiTitle && it.m.aiTitle.status === 'accepted' && it.m.aiTitle.base ? it.m.aiTitle.year : null;
+      var y = aiy ? [null, String(aiy)] : YEAR_IN_NAME.exec(it.m.name);
       var keys = [];
       var poster = posterOf ? posterOf(it) : null;
       if (poster) keys.push(kind + '|poster|' + poster);
-      keys.push(kind === 'm' ? 'm|' + titleKey(it.baseTitle) + '|' + (y ? y[1] : '') : 's|' + titleKey(it.baseTitle));
+      keys.push(kind === 'm' ? 'm|' + titleKey(base) + '|' + (y ? y[1] : '') : 's|' + titleKey(base));
       var group = null;
       for (var i = 0; i < keys.length && !group; i++) group = byKey[keys[i]] || null;
       if (!group) { group = [it]; groups.push(group); shown.push(it); keys.forEach(function (k) { byKey[k] = group; }); }
       else { group.push(it); keys.forEach(function (k) { if (!byKey[k]) byKey[k] = group; }); }
     });
     var versions = {};
-    groups.forEach(function (g) { if (g.length > 1) versions[g[0].m.id] = g; });
+    groups.forEach(function (g) { if (g.length > 1) versions[g[0].m.id] = sortVersions(g); });
     return { shown: shown, versions: versions };
   }
 
@@ -310,15 +563,20 @@
   /** Всё, что нужно плитке: считается один раз на загрузку медиатеки. */
   function prepareItems(list) {
     return list.map(function (m) {
-      var base = cleanTitle(m.name), main = mainVideo(m);
-      var queries = [base];
+      // принятое название ИИ (services/aititle.js) — и в плитке, и в поиске постера (titleOf в Model.kt)
+      var ai = m.aiTitle, base = ai && ai.status === 'accepted' && ai.base ? ai.base : cleanTitle(m.name), main = mainVideo(m);
+      // первым — оригинал с годом от ИИ («Dune (2021)»: сервер берёт результат TMDB того же года; posterQueriesOf в Model.kt)
+      var queries = [];
+      if (ai && ai.status === 'accepted' && ai.base && ai.original) queries.push(ai.year ? ai.original + ' (' + ai.year + ')' : ai.original);
+      if (queries.indexOf(base) < 0) queries.push(base);
       if (main) {
         var q = cleanTitle(main.name.trim() ? main.name : basename(main.path));
         if (queries.indexOf(q) < 0) queries.push(q);
       }
       return {
         m: m, playable: buildPlayable(m), baseTitle: base, posterQueries: queries,
-        searchText: (m.name + '\n' + m.files.map(function (f) { return f.path; }).join('\n')).toLowerCase()
+        searchText: (m.name + '\n' + m.files.map(function (f) { return f.path; }).join('\n') +
+          (ai && ai.status === 'accepted' && ai.base ? '\n' + ai.base + '\n' + (ai.original || '') : '')).toLowerCase()
       };
     });
   }
@@ -416,7 +674,10 @@
 
   SM.model = {
     parseLibrary: parseLibrary, magnet: magnet, mainVideo: mainVideo, buildPlayable: buildPlayable,
-    cleanTitle: cleanTitle, titleKey: titleKey, groupVersions: groupVersions, seriesLine: seriesLine, formatBytes: formatBytes, statusRu: statusRu, episodeLabel: episodeLabel,
+    cleanTitle: cleanTitle, titleKey: titleKey, groupTitle: groupTitle, groupVersions: groupVersions, seriesLine: seriesLine,
+    sortVersions: sortVersions, versionSections: versionSections, itemYear: itemYear, itemPart: itemPart,
+    qualityScore: qualityScore, itemSeasons: itemSeasons,
+    formatBytes: formatBytes, statusRu: statusRu, episodeLabel: episodeLabel,
     prepareItems: prepareItems, subtitlesFor: subtitlesFor, externalAudioFor: externalAudioFor,
     isVoiceOverOnly: isVoiceOverOnly, dubLabel: dubLabel, customName: customName, externalChoices: externalChoices, externalIn: externalIn,
     watchKey: watchKey, watchInfo: watchInfo, basename: basename

@@ -396,7 +396,7 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
 <script>/* App 1.2+: native library and bottom bar */try{if(Number(window.__suslikApp||0)>=3)document.documentElement.classList.add("suslik-native");}catch(e){}
 /* Пока не ответил /api/session, страница скрыта: иначе на секунду мелькает форма входа у тех, кто уже вошёл (снимается в showApp; страховка — через 4 с) */
 try{document.documentElement.classList.add("auth-pending");setTimeout(function(){document.documentElement.classList.remove("auth-pending");},4000);}catch(e){}</script>
-<link rel="stylesheet" href="redesign.css?v=39">
+<link rel="stylesheet" href="redesign.css?v=41">
 <style>
 .sr-badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
 .sr-badges .rb { background: #1c2230; color: #c7d0e0; border: 1px solid #2e3850; border-radius: 6px; padding: 2px 8px; font-size: 12px; font-weight: 700; }
@@ -1059,6 +1059,7 @@ $("linkForm").addEventListener("submit", async e=>{
   finally {btn.disabled=false;btn.textContent=inputMode==="torrent"?"Загрузить торрент":"Добавить magnet";}
 });
 let cachedLibrary = [];
+let aiTitleReadyAt = 0; // когда снова можно спросить ИИ (мс эпохи, с сервера; 0 — уже можно)
 let libraryDirty = false;
 function setTab(tab) {
   const library = tab === "library", search = tab === "search", apps = tab === "apps", sessions = tab === "sessions";
@@ -1477,6 +1478,7 @@ async function loadLibrary() {
   try {
     const data=await api("/api/library");
     cachedLibrary=(data.magnets || []).filter(m=>!isVoiceOverOnly(m));
+    aiTitleReadyAt=Number(data.aiTitleReadyAt)||0;
     try { localStorage.setItem(LIBRARY_SNAPSHOT_KEY, JSON.stringify({ savedAt: Date.now(), magnets: cachedLibrary })); } catch {}
     renderLibrary();
     classifyAnimation();
@@ -1543,7 +1545,50 @@ function parseEpisode(path){
   }
   return null;
 }
-function buildPlaylist(magnet){
+// Тип раздачи и сезон, которые владелец принял от ИИ (services/aititle.js; applyAiTitle в Model.kt), поверх разбора
+// по файлам: «сериал» — видео по порядку имён серий одного сезона, «сборник» — отдельные фильмы, «фильм» — главный файл;
+// сезон — только если сезон в раздаче один (сериал из нескольких сезонов по папкам он не трогает).
+const COLLECTION_REGEX=/(?:трилоги[яи]|дилоги[яи]|тетралоги[яи]|квадрологи[яи]|пенталоги[яи]|гексалоги[яи]|франшиз[аеы]|коллекци[яи]|антологи[яи]|саг[аеы]|киносаг[аеы]|сборник|боксет|boxset|box-set|trilogy|duology|dilogy|tetralogy|quadrilogy|anthology|collection|franchise|\b\d+\s*[-–—]\s*(?:в|in)\s*1\b|\bвсе\s+части\b|\bвсе\s+фильмы\b)/i;
+function isCollection(p,m){
+  if(m&&m.aiTitle&&m.aiTitle.status==="accepted"&&m.aiTitle.kind==="collection") return true;
+  if(!p||p.type!=="series") return false;
+  if(p.seasons&&p.seasons[0]&&p.seasons[0].items&&p.seasons[0].items[0]&&p.seasons[0].items[0].title!=null) return true;
+  if(m&&m.name&&COLLECTION_REGEX.test(m.name)) return true;
+  return false;
+}
+function collectionTypeLabel(filmCount, name) {
+  name = name || "";
+  if (/\b(трилоги[яи]|trilogy)\b/i.test(name) || filmCount === 3) return "Кинотрилогия";
+  if (/\b(дилоги[яи]|duology|dilogy)\b/i.test(name) || filmCount === 2) return "Дилогия";
+  if (/\b(квадрологи[яи]|тетралоги[яи]|quadrilogy|tetralogy)\b/i.test(name) || filmCount === 4) return "Кинотетралогия";
+  if (/\b(сборник)\b/i.test(name)) return "Сборник";
+  if (/\b(антологи[яи]|anthology)\b/i.test(name)) return "Антология";
+  if (/\b(коллекци[яи]|collection|boxset)\b/i.test(name)) return "Коллекция";
+  return "Кинофраншиза";
+}
+function buildPlaylist(magnet){ return applyAiTitle(buildPlaylistByFiles(magnet), magnet); }
+function applyAiTitle(pl, m){
+  const ai=m&&m.aiTitle;
+  if(!pl||!ai||ai.status!=="accepted") return pl;
+  const EXTRAS=/(?:^|\/)(?:extras?|bonus|featurettes?|behind[ ._-]?the[ ._-]?scenes|trailers?|доп[^/]*|бонус[^/]*|допы)(?:\/|$)/i;
+  const basename=p=>String(p||"").replace(/\\/g,"/").split("/").pop();
+  const vids=(m.files||[]).filter(f=>f.type!=="folder"&&VIDEO_EXT.test(f.path||"")&&!/(^|[\/._ -])sample([\/._ -]|$)/i.test(f.path||""));
+  const noExtras=vids.filter(f=>!EXTRAS.test(f.path||"")), main=noExtras.length?noExtras:vids;
+  const sorted=()=>main.slice().sort((a,b)=>basename(a.path).localeCompare(basename(b.path),undefined,{numeric:true,sensitivity:"base"}));
+  let out=pl;
+  if(ai.kind==="movie"&&pl.type==="series"){ const f=pickMainВидео(m); if(f) out={type:"movie",file:f}; }
+  else if(ai.kind==="series"&&(pl.type==="movie"||isCollection(pl,m))&&main.length>=2){
+    const s=ai.season>0?ai.season:1;
+    out={type:"series",seasons:[{season:s,items:sorted().map((file,i)=>({season:s,episode:i+1,file}))}]};
+  } else if(ai.kind==="collection"&&(pl.type==="movie"||(pl.type==="series"&&!isCollection(pl,m)))&&main.length>=2){
+    out={type:"series",seasons:[{season:1,items:sorted().map((file,i)=>({season:1,episode:i+1,file,title:escapeTitle(basename(file.path))||("Фильм "+(i+1))}))}]};
+  }
+  const s=ai.season;
+  if(s>0&&out.type==="series"&&!isCollection(out,m)&&out.seasons.length===1&&out.seasons[0].season!==s)
+    out={type:"series",seasons:[{season:s,items:out.seasons[0].items.map(e=>({...e,season:s}))}]};
+  return out;
+}
+function buildPlaylistByFiles(magnet){
   const vids=(magnet.files||[]).filter(f=>f.type!=="folder"&&VIDEO_EXT.test(f.path||"")&&!/(^|[\/._ -])sample([\/._ -]|$)/i.test(f.path||""));
   const seasonOf=(path)=>{
     const p=String(path||"").replace(/\\/g,"/");
@@ -1625,6 +1670,7 @@ function numberedEpisodesOf(magnet, vids){
     const consecutive=sorted.every((v,i)=>!i||v-sorted[i-1]===1);
     const sizes=main.map(f=>Number(f.size)||0);
     const similar=Math.max(...sizes)<=Math.min(...sizes)*2;
+    if(COLLECTION_REGEX.test(magnet.name||"")&&!SERIES_HINT.test(magnet.name||"")) continue;
     if(!SERIES_HINT.test(magnet.name||"")&&!(main.length>=5&&consecutive&&similar)) continue;
     const items=main.map((file,i)=>({season:1,episode:nums[i],file})).sort((a,b)=>a.episode-b.episode);
     return {type:"series",seasons:[{season:1,items}]};
@@ -1632,6 +1678,19 @@ function numberedEpisodesOf(magnet, vids){
   return null;
 }
 const SEASON_NOISE=/(?<![\p{L}\p{N}])(?:\d{1,2}(?:\s*[-–]\s*\d{1,2})?\s*(?:сезон\p{L}*|season\p{L}*)|(?:сезон\p{L}*|season\p{L}*|серии|серия|series|episodes?)\s*\d{1,3}(?:\s*[-–]\s*\d{1,3})?|s\d{1,2}(?:\s*[-–]?\s*[se]\d{1,3})?|complete|полный|полностью|(?:сезон\p{L}*|season\p{L}*|серии|episodes))(?![\p{L}\p{N}])/giu;
+// Название плитки, постера и группировки: принятое предложение ИИ (services/aititle.js), иначе по регуляркам
+function displayTitle(m){
+  const ai=m&&m.aiTitle;
+  return ai&&ai.status==="accepted"&&ai.base?ai.base:escapeTitle((m&&m.name)||"");
+}
+const groupBaseOf=displayTitle;
+// Запрос постера по принятому ответу ИИ: оригинальное название с годом — «Dune (2021)» (сервер берёт результат TMDB
+// того же года); без ответа — null, ищем по названию плитки
+function aiPosterQuery(m){
+  const ai=m&&m.aiTitle;
+  if(!ai||ai.status!=="accepted"||!ai.original) return null;
+  return ai.year?ai.original+" ("+ai.year+")":ai.original;
+}
 function titleKey(baseTitle){
   const plain=String(baseTitle||"").toLowerCase().replace(/ё/g,"е");
   const key=plain.replace(SEASON_NOISE," ").replace(/[^\p{L}\p{N}]+/gu," ").trim();
@@ -1649,11 +1708,13 @@ function groupLibraryVersions(list){
   const byKey=new Map(), groups=[], shown=[];
   // Один постер = один фильм, как бы ни назывались раздачи (постер берётся из сохранённых ответов сервера, см. fillPosterPaths)
   for(const m of list){
-    const base=escapeTitle(m.name||"");
+    const base=groupBaseOf(m);
     const kind0=Number(m.statusCode)===4&&base.trim()?playableKind(m):"none";
     if(kind0==="none"){ shown.push(m); continue; }
     const kind=kind0==="movie"?"m":"s";
-    const year=/\b(19\d{2}|20\d{2})\b/.exec(m.name||"");
+    // год принятого ответа ИИ важнее года в имени раздачи: «Dune.2021» и «Dune.BDRip» — одна плитка
+    const aiYear=m.aiTitle&&m.aiTitle.status==="accepted"&&m.aiTitle.year;
+    const year=aiYear?[null,String(aiYear)]:/\b(19\d{2}|20\d{2})\b/.exec(m.name||"");
     const poster=posterPathOf(m);
     const keys=[];
     if(poster) keys.push(kind+"|poster|"+poster);
@@ -1745,7 +1806,7 @@ const PS_ICON_MINE='<svg viewBox="0 0 24 24" width="16" height="16" fill="none" 
 const PS_ICON_FAV='<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg>';
 function psSyncShelf(s){
   const m=s._magnet;
-  for(const b of s.querySelectorAll(".ps-btn")){
+  for(const b of s.querySelectorAll(".ps-shelf > .ps-btn[data-act]")){
     const mine=b.dataset.act==="mine", on=Boolean(m&&(mine?m.mine:m.favorite));
     b.hidden=!m; b.classList.toggle("on",on);
     b.innerHTML=(mine?PS_ICON_MINE:PS_ICON_FAV)+"<span>"+(mine?(on?"Из моей медиатеки":"В мою медиатеку"):(on?"Из избранного":"В избранное"))+"</span>";
@@ -1764,10 +1825,111 @@ async function psToggle(s,kind){
   }catch(err){ showToast(err.message||"Не удалось сохранить",true); }
   psSyncShelf(s);
 }
+// «Определить через ИИ» (services/aititle.js). Все раздачи плитки (версии и сезоны, слитые по названию) — одним
+// запросом: кнопка, пока у своих раздач плитки нет ответа; потом предложение по каждой — «Принять» / «Отклонить».
+let libraryVersionsOf=new Map(); // id первой раздачи плитки -> все её версии (из groupLibraryVersions)
+function psGroupOf(m){
+  if(!m) return [];
+  for(const g of libraryVersionsOf.values()) if(g.some(x=>x.id===m.id)) return g;
+  return [m];
+}
+const AI_KIND={movie:"фильм",series:"сериал",collection:"сборник"};
+// «Дюна» (Dune, 2021) · фильм — оригинал и год видно до «Принять»: по ним ищется постер
+const aiOrig=a=>{const o=a.original&&a.original!==a.base?a.original:"";return o||a.year?" ("+[o,a.year].filter(Boolean).join(", ")+")":"";};
+const aiWhat=a=>"«"+a.base+"»"+aiOrig(a)+(a.kind&&AI_KIND[a.kind]?" · "+AI_KIND[a.kind]:"")+(a.season!=null?", сезон "+a.season:"");
+function psSyncAi(s){
+  const box=s.querySelector(".ps-ai"), m=s._magnet;
+  box.replaceChildren();
+  const group=psGroupOf(m).map(x=>cachedLibrary.find(y=>y.id===x.id)||x);
+  const btn=(text,fn,cls)=>{const b=document.createElement("button");b.type="button";b.className="ps-btn"+(cls?" "+cls:"");b.textContent=text;b.addEventListener("click",fn);return b;};
+  const note=(t,cls)=>{const p=document.createElement("div");p.className="ps-ai-note"+(cls?" "+cls:"");p.textContent=t;return p;};
+  // stale — ответ до появления типа раздачи: его можно спросить заново
+  // none старше часа сервер спросит заново
+  const ask=group.filter(x=>x.canAiTitle&&(!x.aiTitle||x.aiTitle.stale||(x.aiTitle.status==="none"&&Date.now()-x.aiTitle.at>3600000)));
+  const shown=group.filter(x=>x.aiTitle&&(x.aiTitle.status==="suggested"||x.aiTitle.status==="accepted"||(x.aiTitle.status==="none"&&x.canAiTitle&&!x.aiTitle.stale)));
+  if(!ask.length&&!shown.length){box.classList.add("hidden");return;}
+  box.classList.remove("hidden");
+  const many=group.length>1;
+  for(const x of shown){
+    const a=x.aiTitle, row=document.createElement("div"); row.className="ps-ai-row";
+    if(many) row.append(note(escapeTitle(x.name),"ps-ai-src"));
+    if(a.status==="none") row.append(note("ИИ не смог определить эту раздачу."));
+    else {
+      row.append(note((a.status==="accepted"?"Название от ИИ: ":"ИИ предлагает: ")+aiWhat(a)));
+      if(x.canAiTitle){
+        const bs=document.createElement("div"); bs.className="ps-shelf";
+        if(a.status==="suggested") bs.append(btn("Принять",()=>psDecideAi(s,x,true),"on"),btn("Отклонить",()=>psDecideAi(s,x,false)));
+        else bs.append(btn("Отменить",()=>psDecideAi(s,x,false)));
+        row.append(bs);
+      }
+    }
+    box.append(row);
+  }
+  const pending=shown.filter(x=>x.canAiTitle&&x.aiTitle.status==="suggested");
+  if(pending.length>1) box.append(btn("Принять все ("+pending.length+")",()=>psDecideAll(s,pending),"on"));
+  if(ask.length){
+    const left=aiTitleReadyAt-Date.now();
+    const b=btn("✨ Определить через ИИ"+(ask.length>1?" ("+ask.length+" раздачи)":""),()=>psAskAi(s,b,ask));
+    if(left>0){
+      b.disabled=true;b.textContent="✨ ИИ — через "+Math.ceil(left/60000)+" мин";
+      // пока карточка открыта, кнопка сама оживает по окончании кулдауна
+      clearTimeout(s._aiTimer);
+      s._aiTimer=setTimeout(()=>{ if(s.isConnected&&s._magnet===m) psSyncAi(s); },Math.min(left,60000)+200);
+    }
+    box.append(b);
+  }
+}
+function psSetAi(id,ai){
+  for(const x of cachedLibrary) if(x.id===id){ x.aiTitle=ai; playableKindCache.delete(x); } // тип раздачи мог смениться
+}
+function psSaveAi(){
+  try{ localStorage.setItem(LIBRARY_SNAPSHOT_KEY, JSON.stringify({ savedAt: Date.now(), magnets: cachedLibrary })); }catch{}
+  renderLibrary(false);
+}
+async function psAskAi(s,b,list){
+  b.disabled=true; b.textContent="✨ Спрашиваем ИИ…";
+  try{
+    const r=await fetch("/api/library/ai-title",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({ids:list.map(x=>x.id)})});
+    const d=await r.json().catch(()=>({}));
+    if(r.status===429&&d.retryAfterSec){
+      if(d.reason==="cooldown") aiTitleReadyAt=Date.now()+d.retryAfterSec*1000;
+      showToast(d.reason==="cooldown"?"ИИ можно спросить через "+Math.ceil(d.retryAfterSec/60)+" мин":(d.error||"Лимит на сегодня исчерпан"),false);
+    } else if(!r.ok) showToast(d.error||"Не удалось спросить ИИ",true);
+    else {
+      aiTitleReadyAt=Number(d.aiTitleReadyAt)||0; // у админа кулдауна нет: 0
+      const res=Array.isArray(d.results)?d.results:[];
+      for(const x of res) psSetAi(x.id,x.aiTitle);
+      psSaveAi();
+      const ok=res.filter(x=>x.aiTitle&&x.aiTitle.status==="suggested").length;
+      showToast(ok?"ИИ предложил название — проверьте и примите в карточке":"ИИ не смог определить эту раздачу",!ok);
+    }
+  }catch{ showToast("Не удалось спросить ИИ",true); }
+  psSyncAi(s);
+}
+async function psDecideAi(s,x,accept){
+  try{
+    const d=await api("/api/library/"+x.id+"/ai-title/decision",{method:"POST",body:JSON.stringify({accept})});
+    psSetAi(x.id,d.aiTitle); psSaveAi(); psFillTitle(s);
+  }catch(err){ showToast(err.message||"Не удалось сохранить",true); }
+  psSyncAi(s);
+}
+async function psDecideAll(s,list){
+  try{
+    const d=await api("/api/library/ai-title/decision",{method:"POST",body:JSON.stringify({decisions:list.map(x=>({id:x.id,accept:true}))})});
+    for(const x of d.results||[]) psSetAi(x.id,x.aiTitle);
+  }catch(err){ showToast(err.message||"Не удалось сохранить",true); }
+  psSaveAi(); psFillTitle(s); psSyncAi(s);
+}
+// Заголовок карточки после «Принять»: принятое название ИИ
+function psFillTitle(s){
+  const m=s._magnet; if(!m) return;
+  const cur=cachedLibrary.find(x=>x.id===m.id); if(cur) s._magnet=cur;
+  s.querySelector(".ps-title").textContent=displayTitle(s._magnet);
+}
 const psInfoCache=new Map();
 function psFill(s,magnet,file,label,token){
-  s._magnet=magnet||null; psSyncShelf(s);
-  const base=magnet?escapeTitle(magnet.name):label;
+  s._magnet=magnet||null; psSyncShelf(s); psSyncAi(s);
+  const base=magnet?displayTitle(magnet):label;
   s.querySelector(".ps-title").textContent=base;
   const chips=s.querySelector(".ps-chips"), over=s.querySelector(".ps-overview"), img=s.querySelector(".ps-poster img"), prog=s.querySelector(".ps-progress");
   chips.replaceChildren(); over.textContent=""; img.removeAttribute("src"); prog.classList.add("hidden");
@@ -1777,12 +1939,13 @@ function psFill(s,magnet,file,label,token){
   try{const sp=magnet&&getItemSpecs(magnet); if(sp&&sp.type) chip(sp.type);}catch{}
   if(ep) chip(ep);
   const rating=chip("","ps-rating hidden");
-  getPoster(base).then(u=>{if(u&&token===playSheetToken) img.src=u;}).catch(()=>{});
-  if(!psInfoCache.has(base.toLowerCase())) psInfoCache.set(base.toLowerCase(),api("/api/poster?hero=1&q="+encodeURIComponent(base)).then(info=>{
+  const pq=(magnet&&aiPosterQuery(magnet))||base; // постер и описание — по оригиналу с годом, если ИИ его дал
+  getPoster(pq).then(u=>{if(u&&token===playSheetToken) img.src=u;}).catch(()=>{});
+  if(!psInfoCache.has(pq.toLowerCase())) psInfoCache.set(pq.toLowerCase(),api("/api/poster?hero=1&q="+encodeURIComponent(pq)).then(info=>{
     if(info && typeof info.animation === "boolean") recordAnimation(base, info.animation);
     return info;
   }).catch(()=>null));
-  psInfoCache.get(base.toLowerCase()).then(info=>{
+  psInfoCache.get(pq.toLowerCase()).then(info=>{
     if(!info||token!==playSheetToken) return;
     if(info.overview) over.textContent=info.overview;
     if(info.year){yearChip.textContent=info.year;yearChip.classList.remove("hidden");}
@@ -1804,7 +1967,7 @@ function psEpisode(magnet,pl,file){
   for(const s of pl.seasons){
     const i=s.items.findIndex(e=>e.file===file||e.file.path===file.path); if(i<0) continue;
     const item=s.items[i];
-    const label=escapeTitle(magnet.name)+" · "+(s.season===0?"Спец.":"S"+String(s.season).padStart(2,"0"))+"E"+String(item.episode).padStart(2,"0");
+    const label=displayTitle(magnet)+" · "+(s.season===0?"Спец.":"S"+String(s.season).padStart(2,"0"))+"E"+String(item.episode).padStart(2,"0");
     const items=s.items.slice(i).map(x=>({index:magnet.files.indexOf(x.file),link:x.file.sourceLink})).filter(x=>x.index>=0&&x.link);
     return {label,req:{magnetId:magnet.id,items},season:s,index:i};
   }
@@ -1847,11 +2010,11 @@ function ensurePlaySheet(){
     '<div class="ps-progress hidden"><div class="ps-bar"><i></i></div><span></span></div>'+
     '<a class="sheet-btn ps-watch disabled" data-act="player" rel="noopener noreferrer">▶ Смотреть</a>'+
     '<div class="ps-pick hidden"></div>'+
-    '<div class="ps-shelf"><button type="button" class="ps-btn" data-act="mine"></button><button type="button" class="ps-btn" data-act="fav"></button></div></div>';
+    '<div class="ps-shelf"><button type="button" class="ps-btn" data-act="mine"></button><button type="button" class="ps-btn" data-act="fav"></button></div><div class="ps-ai hidden"></div></div>';
   const close=()=>{playSheetToken++;s.classList.remove("open");document.body.style.overflow="";};
   s.addEventListener("click",e=>{if(e.target===s)close();});
   s.querySelector(".sheet-cancel").addEventListener("click",close);
-  s.querySelectorAll(".ps-btn").forEach(b=>b.addEventListener("click",()=>psToggle(s,b.dataset.act)));
+  s.querySelectorAll(".ps-shelf .ps-btn").forEach(b=>b.addEventListener("click",()=>psToggle(s,b.dataset.act)));
   s.querySelectorAll("a.sheet-btn").forEach(a=>a.addEventListener("click",e=>{
     if(a.classList.contains("disabled")||!a.getAttribute("href")){e.preventDefault();return;}
     setTimeout(close,400);
@@ -1901,7 +2064,7 @@ function makeSelect(label){const s=document.createElement("select");s.setAttribu
 function setupTilePlayback(magnet,tile,art,info){
   const pl=buildPlaylist(magnet);
   if(pl.type==="movie"&&!pl.file) return;
-  const baseTitle=escapeTitle(magnet.name);
+  const baseTitle=displayTitle(magnet);
   const mediaLine=document.createElement("div");mediaLine.className="file-meta tile-media";
   const playBtn=document.createElement("button");playBtn.type="button";playBtn.className="tile-play";playBtn.textContent="▶";
   playBtn.setAttribute("aria-label","Смотреть");
@@ -1996,8 +2159,8 @@ function recordAnimation(query, isAnim) {
   try { localStorage.setItem(ANIM_KEY, JSON.stringify(db)); } catch {}
 }
 function getPosterQueries(m) {
-  const base = escapeTitle(m.name || "");
-  const queries = [base];
+  const base = displayTitle(m);
+  const queries = [...new Set([aiPosterQuery(m), base].filter(Boolean))];
   const main = pickMainВидео(m);
   if (main) {
     const mainName = String(main.name || main.path || "").replace(/\\/g, "/").split("/").pop();
@@ -2035,6 +2198,7 @@ function getItemCategory(m) {
   if (isAnime(m)) return "anime";
   if (isCartoon(m)) return "cartoon";
   const pl = buildPlaylist(m);
+  if (isCollection(pl, m)) return "movie";
   if (pl.type === "series") return "series";
   if (pl.file) return "movie";
   return "other";
@@ -2121,8 +2285,12 @@ function getItemSpecs(m) {
   else if (/\bav1\b/i.test(text)) codec = "AV1";
 
   const cat = getItemCategory(m);
+  const pl = buildPlaylist(m);
   let type = "";
-  if (cat === "series") type = "Сериал";
+  if (isCollection(pl, m)) {
+    const eps = (pl.seasons && pl.seasons[0] && pl.seasons[0].items) ? pl.seasons[0].items.length : 0;
+    type = collectionTypeLabel(eps, m.name || "");
+  } else if (cat === "series") type = "Сериал";
   else if (cat === "cartoon") type = "Мультфильм";
   else if (cat === "anime") type = "Аниме";
   else if (cat === "movie") type = "Фильм";
@@ -2132,7 +2300,7 @@ function getItemSpecs(m) {
   return { quality, codec, type, cat };
 }
 
-function tileSig(m){ return JSON.stringify([(serverTagMap[m.id]||[]).join(),m.name,m.status,m.statusCode,m.size,m.downloaded,Boolean(m.favorite),Boolean(m.mine),m.canRemove!==false,(m.files||[]).length,libraryViewMode]); }
+function tileSig(m){ return JSON.stringify([(serverTagMap[m.id]||[]).join(),m.name,displayTitle(m),m.status,m.statusCode,m.size,m.downloaded,Boolean(m.favorite),Boolean(m.mine),m.canRemove!==false,(m.files||[]).length,libraryViewMode]); }
 
 function renderLibrary(animate=true) {
   const target=$("libraryResults"), query=$("libraryПоиск") ? $("libraryПоиск").value.trim().toLowerCase() : "";
@@ -2148,7 +2316,9 @@ function renderLibrary(animate=true) {
   const sort = $("librarySort") ? $("librarySort").value : "newest";
 
   let filtered = cachedLibrary.filter(m => {
-    if (query && !m.name.toLowerCase().includes(query) && !m.files.some(f => f.path.toLowerCase().includes(query))) return false;
+    // принятое название ИИ (и оригинальное) ищется так же, как имя раздачи
+    const aiNames = m.aiTitle && m.aiTitle.status === "accepted" ? [m.aiTitle.base, m.aiTitle.original] : [];
+    if (query && !m.name.toLowerCase().includes(query) && !aiNames.some(n => n && String(n).toLowerCase().includes(query)) && !m.files.some(f => f.path.toLowerCase().includes(query))) return false;
     if (onlyReady && Number(m.statusCode) !== 4) return false;
     if (activeCategory === "mine") { if (!m.mine) return false; }
     else if (activeCategory !== "all" && getItemCategory(m) !== activeCategory) return false;
@@ -2172,6 +2342,7 @@ function renderLibrary(animate=true) {
   if (filterSig !== libraryFilterSig) { libraryFilterSig = filterSig; libraryPage = 0; }
   const grouped = groupLibraryVersions(allMagnets);
   const versionsOf = grouped.versions;
+  libraryVersionsOf = versionsOf;
   const pageCount = Math.max(1, Math.ceil(grouped.shown.length / pageSize));
   libraryPage = Math.min(Math.max(0, libraryPage), pageCount - 1);
   const magnets = grouped.shown.slice(libraryPage * pageSize, (libraryPage + 1) * pageSize);
@@ -2193,7 +2364,7 @@ function renderLibrary(animate=true) {
     tile.className="library-tile tile-enter"; tile.style.setProperty("--tile-index", String(animate&&!before.size ? fresh++ : 0));
     tile.addEventListener("animationend",e=>{ if(e.target===tile) tile.classList.remove("tile-enter"); });
     const art=document.createElement("div"); art.className="tile-art";
-    const title=document.createElement("div"); title.className="tile-title"; title.textContent=escapeTitle(magnet.name); art.append(title);
+    const title=document.createElement("div"); title.className="tile-title"; title.textContent=displayTitle(magnet); art.append(title);
 
     const specs = getItemSpecs(magnet);
     const badges = document.createElement("div"); badges.className = "tile-badges";
@@ -2203,7 +2374,7 @@ function renderLibrary(animate=true) {
     if (versions) { const vb = document.createElement("span"); vb.className = "tile-badge badge-type badge-ver"; vb.textContent = versionsWord(versions.length); badges.append(vb); }
     art.append(badges);
     const videoФайл = (magnet.files || []).find(f => /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso)$/i.test(f.path || ""));
-    const posterQueries = [...new Set([escapeTitle(magnet.name), videoФайл ? escapeTitle(videoФайл.name || videoФайл.path.split("/").pop()) : ""].filter(Boolean))];
+    const posterQueries = [...new Set([aiPosterQuery(magnet), displayTitle(magnet), videoФайл ? escapeTitle(videoФайл.name || videoФайл.path.split("/").pop()) : ""].filter(Boolean))];
     whenVisible(tile, ()=>(async()=>{
       let url=null;
       for (const q of posterQueries) { url=await getPoster(q); if(url) break; }

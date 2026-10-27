@@ -70,9 +70,16 @@ async function searchBase(rawQuery) {
 
   // Название из библиотеки — имя раздачи: «Severance Season 1», «Show - S01-10», «Фильм TrueHD Atmos», «Erai-raws Show - 01 ~ 10».
   // Если по самому названию постера нет, пробуем очищенное и без дефисов.
+  // «Dune (2021)» — название и год (так ищут по названию от ИИ, services/aititle.js): TMDB ищет год как часть
+  // названия, поэтому ищем без него и берём результат того же года (±1: премьера на фестивале, сериал под Новый год).
+  // Без совпадения по году — первый найденный, как раньше.
   let match = null;
   let failed = 0;
-  const variants = posterQueryVariants(query);
+  const ym = /^(.*\S)\s*\((\d{4})\)$/.exec(query);
+  const year = ym ? Number(ym[2]) : null;
+  const variants = posterQueryVariants(ym ? ym[1] : query);
+  const yearOf = item => Number(String(item.release_date || item.first_air_date || "").slice(0, 4)) || 0;
+  let fallback = null;
 
   for (const q of variants) {
     try {
@@ -81,12 +88,18 @@ async function searchBase(rawQuery) {
         timeout: 5000
       });
       const results = Array.isArray(response.data?.results) ? response.data.results : [];
-      match = results.find(item => item.poster_path && (item.media_type === "movie" || item.media_type === "tv"));
+      const found = results.filter(item => item.poster_path && (item.media_type === "movie" || item.media_type === "tv"));
+      if (!year) match = found[0] || null;
+      else {
+        match = found.find(item => yearOf(item) === year) || found.find(item => Math.abs(yearOf(item) - year) <= 1) || null;
+        if (!fallback) fallback = found[0] || null;
+      }
     } catch {
       failed++;
     }
     if (match) break;
   }
+  if (!match) match = fallback;
 
   const file = match ? String(match.poster_path).replace(/^\//, "") : "";
   const backdropFile = match && match.backdrop_path ? String(match.backdrop_path).replace(/^\//, "") : "";

@@ -71,13 +71,17 @@ class PlayerPanelState {
 @Composable
 fun PlayerInfoPanel(s: PlayerPanelState) {
     val bottom = with(LocalDensity.current) { s.bottomInsetPx.toDp() }
+    val isColl = ru.suslikovanora.media.core.COLLECTION_REGEX.containsMatchIn(s.title) || s.episodes.any { it.contains("фильм", ignoreCase = true) }
     Column(Modifier.fillMaxSize().background(Sm.night).padding(bottom = bottom)) {
         Column(Modifier.fillMaxWidth().padding(start = 18.dp, end = 18.dp, top = 16.dp)) {
             Text(s.title, color = Sm.text, fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 17.sp,
                 lineHeight = 22.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            if (s.episodes.size > 1 && s.index >= 0)
-                Text(tr("player.seriya_p_iz_size", "p" to s.index + 1, "size" to s.episodes.size), color = Sm.muted, fontFamily = Onest, fontWeight = FontWeight.Medium,
+            if (s.episodes.size > 1 && s.index >= 0) {
+                val epLine = if (isColl) tr("library.film_p", "p" to (s.index + 1)) + " / ${s.episodes.size}"
+                             else tr("player.seriya_p_iz_size", "p" to s.index + 1, "size" to s.episodes.size)
+                Text(epLine, color = Sm.muted, fontFamily = Onest, fontWeight = FontWeight.Medium,
                     fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+            }
         }
         Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 14.dp, vertical = 14.dp),
@@ -98,7 +102,7 @@ fun PlayerInfoPanel(s: PlayerPanelState) {
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(Sm.line))
         if (s.episodes.size > 1) {
-            Text(tr("player.serii"), color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 15.sp,
+            Text(if (isColl) tr("library.filmy") else tr("player.serii"), color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 15.sp,
                 modifier = Modifier.padding(start = 18.dp, top = 14.dp, bottom = 4.dp))
             val list = rememberLazyListState()
             LaunchedEffect(s.index) { if (s.index > 0) list.animateScrollToItem((s.index - 1).coerceAtLeast(0)) }

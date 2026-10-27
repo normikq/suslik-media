@@ -19,6 +19,12 @@ const LIBRARY_IDLE_DAYS = Math.max(1, Number(process.env.LIBRARY_IDLE_DAYS || 10
 const LIBRARY_MAX_ITEMS = Math.max(10, Number(process.env.LIBRARY_MAX_ITEMS || 800));
 // Синхронизация прогресса и дорожек по аккаунту Discord: запись, которой не пользовались N дней, удаляется (services/sync.js)
 const SYNC_IDLE_DAYS = Math.max(1, Number(process.env.SYNC_IDLE_DAYS || 10));
+// «Определить через ИИ» (services/aititle.js): ключ Gemini только здесь, в клиентах и репозитории его нет.
+// Без ключа кнопка не показывается. Кулдаун — на пользователя, дневной лимит — на весь сервер.
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
+const AI_TITLE_MODEL = process.env.AI_TITLE_MODEL || "gemini-3.5-flash-lite";
+const AI_TITLE_COOLDOWN_MIN = Math.max(0, Number(process.env.AI_TITLE_COOLDOWN_MIN ?? 15));
+const AI_TITLE_DAILY_MAX = Math.max(0, Number(process.env.AI_TITLE_DAILY_MAX ?? 200));
 const TRUST_PROXY = process.env.TRUST_PROXY;
 const BETA_CODE = process.env.BETA_CODE || "";
 const UPDATE_TOKEN = process.env.UPDATE_TOKEN || "";
@@ -80,6 +86,7 @@ const TAGS_FILE = path.join(DATA_DIR, "media-tags.json"); // Dolby Vision / HDR 
 const USAGE_FILE = path.join(DATA_DIR, "usage.json"); // когда раздачу последний раз открывали (services/cleanup.js)
 const SYNC_FILE = path.join(DATA_DIR, "sync.json"); // прогресс и дорожки пользователей Discord (services/sync.js)
 const AUDIO_TRACKS_FILE = path.join(DATA_DIR, "audio-tracks.json"); // внешние озвучки, привязанные к фильмам (services/custom-audio.js)
+const AI_TITLE_FILE = path.join(DATA_DIR, "ai-titles.json"); // названия, предложенные ИИ, и кулдауны (services/aititle.js)
 // (Комнаты совместного просмотра живут только в памяти: после перезапуска приложения входят заново)
 
 if (!process.env.SESSION_SECRET) {
@@ -137,6 +144,11 @@ module.exports = {
   TAGS_FILE,
   SYNC_FILE,
   AUDIO_TRACKS_FILE,
+  AI_TITLE_FILE,
+  GEMINI_API_KEY,
+  AI_TITLE_MODEL,
+  AI_TITLE_COOLDOWN_MIN,
+  AI_TITLE_DAILY_MAX,
   SYNC_IDLE_DAYS,
   AUTO_CLEAN,
   LIBRARY_IDLE_DAYS,

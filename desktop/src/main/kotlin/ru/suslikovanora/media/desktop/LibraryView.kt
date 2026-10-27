@@ -183,6 +183,7 @@ fun isCartoon(item: LibraryItem): Boolean = CARTOON.containsMatchIn(item.m.name)
 fun itemCategory(item: LibraryItem): Category {
     if (isAnime(item)) return Category.Anime
     if (isCartoon(item)) return Category.Cartoons
+    if (isCollection(item.playable, item.m)) return Category.Movies
     return when (item.playable) {
         is Playable.Series -> Category.Series
         is Playable.Movie -> Category.Movies
@@ -191,6 +192,18 @@ fun itemCategory(item: LibraryItem): Category {
 }
 
 fun itemTypeLabel(item: LibraryItem): String {
+    if (isCollection(item.playable, item.m)) {
+        val count = (item.playable as? Playable.Series)?.seasons?.flatMap { it.items }?.size ?: 0
+        return when (collectionTypeLabel(count, item.m.name)) {
+            "Кинотрилогия" -> tr("library.kinotrilogiya")
+            "Дилогия" -> tr("library.dilogiya")
+            "Кинотетралогия" -> tr("library.kinotetralogiya")
+            "Сборник" -> tr("library.sbornik")
+            "Антология" -> tr("library.antologiya")
+            "Коллекция" -> tr("library.kollektsiya")
+            else -> tr("library.kinofranshiza")
+        }
+    }
     return when (itemCategory(item)) {
         Category.Anime -> tr("library.anime")
         Category.Cartoons -> tr("library.multfilm")
@@ -559,6 +572,7 @@ fun LibraryView(
             VersionPicker(vs.first().baseTitle, vs, lib, onDismiss = { pick = null }) { v -> pick = null; versionTarget(v, lib)?.let { target = it } }
         }
         target?.let { t -> PlayDialog(t, lib, onDismiss = { target = null }, onPlay = { target = null; onPlay(it) }) }
+        lib.aiPanel?.let { p -> AiTitleDialog(p, lib, onDismiss = { lib.aiPanel = null }) }
     }
 }
 
@@ -765,8 +779,9 @@ private fun Tile(item: LibraryItem, lib: Library, versions: List<LibraryItem>, i
     val m = item.m
     val playable = item.playable
     val series = playable as? Playable.Series
-    var poster by remember(m.id) { mutableStateOf(lib.cachedPoster(item.posterQueries)) }
-    LaunchedEffect(m.id) { if (poster == null) poster = lib.poster(item.posterQueries) }
+    // по названию: после «Принять» название от ИИ ищет свой постер
+    var poster by remember(m.id, item.posterQueries) { mutableStateOf(lib.cachedPoster(item.posterQueries)) }
+    LaunchedEffect(m.id, item.posterQueries) { if (poster == null) poster = lib.poster(item.posterQueries) }
     val wv = lib.watchVersion
     val last = remember(m.id, wv) { lib.lastWatched(m) }
     var si by remember(m.id) { mutableStateOf(0) }
@@ -901,6 +916,31 @@ private fun Tile(item: LibraryItem, lib: Library, versions: List<LibraryItem>, i
                     text = { Text(if (isFav) tr("library.iz_izbrannogo") else tr("library.v_izbrannoe"), color = Sm.text, fontFamily = Onest) },
                     onClick = { menuOpen = false; scope.launch { group.forEach { lib.setFavorite(it.m, !isFav) } } }
                 )
+                // «Определить через ИИ» (server services/aititle.js): все свои раздачи плитки (версии, сезоны) одним запросом;
+                // ответы — в окне, там же принять или отклонить
+                // stale — ответ до появления типа раздачи: можно спросить ещё раз
+                val aiAsk = group.map { it.m }.filter { it.canAiTitle && (it.aiTitle == null || it.aiTitle?.stale == true) }
+                val aiKnown = group.map { it.m }.filter { it.aiTitle != null && (it.canAiTitle || it.aiTitle?.status == "suggested" || it.aiTitle?.accepted == true) }
+                if (aiAsk.isNotEmpty()) {
+                    val left = lib.aiReadyAt - System.currentTimeMillis()
+                    val label = when {
+                        left > 0 -> tr("library.ai_cherez", "min" to (left + 59_999) / 60_000)
+                        aiAsk.size > 1 -> tr("library.ai_opredelit_n", "n" to aiAsk.size)
+                        else -> tr("library.ai_opredelit")
+                    }
+                    DropdownMenuItem(
+                        text = { Text(label, color = if (left > 0 || lib.aiBusy) Sm.muted else Sm.text, fontFamily = Onest) },
+                        enabled = left <= 0 && !lib.aiBusy,
+                        onClick = { menuOpen = false; scope.launch { lib.askAi(aiAsk) } }
+                    )
+                }
+                if (aiKnown.isNotEmpty()) {
+                    val waiting = aiKnown.count { it.canAiTitle && it.aiTitle?.status == "suggested" }
+                    DropdownMenuItem(
+                        text = { Text(if (waiting > 0) tr("library.ai_predlozheniya_n", "n" to waiting) else tr("library.ai_nazvanie"), color = Sm.text, fontFamily = Onest) },
+                        onClick = { menuOpen = false; lib.aiPanel = Library.AiPanel(aiKnown.map { it.id }) }
+                    )
+                }
                 // «Удалить» стирает раздачу из AllDebrid у всех: в «Моих фильмах» его нет, там только «Убрать из моих фильмов»
                 // (отменить свою незаконченную загрузку можно и там)
                 if (m.canRemove && (!inMine || m.downloading)) {
@@ -1037,8 +1077,9 @@ private fun ListRow(item: LibraryItem, lib: Library, onOpen: (PlayTarget) -> Uni
     val scope = rememberCoroutineScope()
     val m = item.m
     val playable = item.playable
-    var poster by remember(m.id) { mutableStateOf(lib.cachedPoster(item.posterQueries)) }
-    LaunchedEffect(m.id) { if (poster == null) poster = lib.poster(item.posterQueries) }
+    // по названию: после «Принять» название от ИИ ищет свой постер
+    var poster by remember(m.id, item.posterQueries) { mutableStateOf(lib.cachedPoster(item.posterQueries)) }
+    LaunchedEffect(m.id, item.posterQueries) { if (poster == null) poster = lib.poster(item.posterQueries) }
     val current: MFile? = when (playable) {
         is Playable.Movie -> playable.file
         is Playable.Series -> playable.seasons.firstOrNull()?.items?.firstOrNull()?.file
@@ -1193,7 +1234,8 @@ private class ContinueEntry(
     val fraction: Float,
     val pos: Long,
     val len: Long,
-    val at: Long
+    val at: Long,
+    val posterQueries: List<String>
 )
 
 private fun targetFor(item: LibraryItem, file: MFile): PlayTarget? = targetFor(item, file.path)
@@ -1228,23 +1270,42 @@ private fun continueEntries(items: List<LibraryItem>, lib: Library): List<Contin
     val (file, w) = lib.lastWatched(item.m) ?: return@mapNotNull null
     if (System.currentTimeMillis() - w.at > 60L * 24 * 3600 * 1000) return@mapNotNull null
     if (lib.continueHiddenAt(item.m.id) >= w.at) return@mapNotNull null
+    val isColl = isCollection(item.playable, item.m)
     if (!w.watched) {
         val t = targetFor(item, file) ?: return@mapNotNull null
-        val sub = t.label.removePrefix(item.baseTitle).removePrefix(" · ").ifBlank { tr("library.film") }
-        ContinueEntry(item, t, sub, w.fraction, w.pos, w.len, w.at)
+        val queries = continueItemPosterQueries(item, file)
+        val sub = if (isColl) {
+            val films = (item.playable as? Playable.Series)?.seasons?.flatMap { it.items } ?: emptyList()
+            val idx = films.indexOfFirst { it.file.path == file.path }
+            val filmTitle = collectionFileTitle(item.m, file, item.baseTitle)
+            if (films.size > 1 && idx >= 0) tr("library.film_p", "p" to (idx + 1)) + " · " + filmTitle else filmTitle
+        } else {
+            t.label.removePrefix(item.baseTitle).removePrefix(" · ").ifBlank { tr("library.film") }
+        }
+        ContinueEntry(item, t, sub, w.fraction, w.pos, w.len, w.at, queries)
     } else {
         val series = item.playable as? Playable.Series ?: return@mapNotNull null
         val next = nextEpisode(series, file) ?: return@mapNotNull null
         if (lib.watchInfo(watchKey(item.m.id, next))?.watched == true) return@mapNotNull null
         val t = targetFor(item, next) ?: return@mapNotNull null
-        ContinueEntry(item, t, tr("library.dalshe") + t.label.removePrefix(item.baseTitle).removePrefix(" · "), 0f, 0L, 0L, w.at)
+        val queries = continueItemPosterQueries(item, next)
+        val sub = if (isColl) {
+            val films = series.seasons.flatMap { it.items }
+            val idx = films.indexOfFirst { it.file.path == next.path }
+            val filmTitle = collectionFileTitle(item.m, next, item.baseTitle)
+            val baseSub = if (films.size > 1 && idx >= 0) tr("library.film_p", "p" to (idx + 1)) + " · " + filmTitle else filmTitle
+            tr("library.dalshe") + baseSub
+        } else {
+            tr("library.dalshe") + t.label.removePrefix(item.baseTitle).removePrefix(" · ")
+        }
+        ContinueEntry(item, t, sub, 0f, 0L, 0L, w.at, queries)
     }
 }.sortedByDescending { it.at }.take(4)
 
 /** At the start of the app: the banners' pictures and texts are loaded before the library page is opened. */
 suspend fun warmContinue(items: List<LibraryItem>, lib: Library) {
     for (e in continueEntries(items, lib)) {
-        val q = e.item.posterQueries
+        val q = e.posterQueries
         runCatching { lib.hero(q); lib.poster(q) }
     }
 }
@@ -1301,9 +1362,9 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
     ) {
         val e = entries.firstOrNull { it.item.m.id == chosen } ?: entries.firstOrNull() ?: lastShown ?: return@AnimatedVisibility
         androidx.compose.runtime.SideEffect { lastShown = e }
-        val queries = e.item.posterQueries
-        var hero by remember(e.item.m.id) { mutableStateOf(lib.cachedHero(queries)) }
-        LaunchedEffect(e.item.m.id) { if (hero == null) hero = lib.hero(queries) }
+        val queries = e.posterQueries
+        var hero by remember(e.item.m.id, e.target.file.path) { mutableStateOf(lib.cachedHero(queries)) }
+        LaunchedEffect(e.item.m.id, e.target.file.path) { if (hero == null) hero = lib.hero(queries) }
 
         // While the window is being dragged the heavy blurred glow is off (it would be recomputed on every step); it fades back 200 ms after the last step
         var resizing by remember { mutableStateOf(false) }
@@ -1360,14 +1421,19 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
             Column(Modifier.fillMaxHeight().width(textW).padding(start = 28.dp, top = 24.dp, bottom = 24.dp), verticalArrangement = Arrangement.SpaceBetween) {
                 Column {
                     Text(tr("library.prodolzhit_prosmotr").uppercase(), color = Color(0xFF9AA3B8), fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 12.sp, letterSpacing = 1.6.sp)
+                    val bannerTitle = if (isCollection(e.item.playable, e.item.m)) {
+                        hero?.title ?: continueItemTitle(e.item, e.target.file)
+                    } else {
+                        e.item.baseTitle
+                    }
                     val logo = hero?.logo
                     if (logo != null) {
                         // the film's own title picture (transparent), like on streaming sites
-                        Image(logo, e.item.baseTitle, contentScale = ContentScale.Fit, alignment = Alignment.CenterStart,
+                        Image(logo, bannerTitle, contentScale = ContentScale.Fit, alignment = Alignment.CenterStart,
                             filterQuality = androidx.compose.ui.graphics.FilterQuality.High,
                             modifier = Modifier.padding(top = 8.dp).height(68.dp).widthIn(max = 360.dp))
                     } else {
-                        Text(e.item.baseTitle, color = Color.White, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = 32.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                        Text(bannerTitle, color = Color.White, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = 32.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
                             lineHeight = 36.sp, modifier = Modifier.padding(top = 8.dp))
                     }
                     Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1375,9 +1441,14 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
                             modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0x1AFFFFFF)).border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 4.dp))
                         hero?.year?.let { chip(it) }
                         chip(itemTypeLabel(e.item))
-                        (e.item.playable as? Playable.Series)?.let { p ->
-                            val eps = p.seasons.sumOf { it.items.size }
-                            chip(plural(p.seasons.size, tr("common.plural_sezon_1"), tr("common.plural_sezon_2"), tr("common.plural_sezon_5")) + " • " + plural(eps, tr("common.plural_seriya_1"), tr("common.plural_seriya_2"), tr("common.plural_seriya_5")))
+                        if (isCollection(e.item.playable, e.item.m)) {
+                            val filmCount = (e.item.playable as? Playable.Series)?.seasons?.flatMap { it.items }?.size ?: 0
+                            if (filmCount > 0) chip(filmCountRu(filmCount))
+                        } else {
+                            (e.item.playable as? Playable.Series)?.let { p ->
+                                val eps = p.seasons.sumOf { it.items.size }
+                                chip(plural(p.seasons.size, tr("common.plural_sezon_1"), tr("common.plural_sezon_2"), tr("common.plural_sezon_5")) + " • " + plural(eps, tr("common.plural_seriya_1"), tr("common.plural_seriya_2"), tr("common.plural_seriya_5")))
+                            }
                         }
                         hero?.rating?.let { r ->
                             Text("★ " + "%.1f".format(java.util.Locale.US, r), color = Color(0xFFFACC15), fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
@@ -1454,8 +1525,8 @@ private fun HeroPlayButton(onClick: () -> Unit) {
 private fun HeroThumb(e: ContinueEntry, lib: Library, onRemove: () -> Unit, onClick: () -> Unit) {
     val src = remember { MutableInteractionSource() }
     val hovered by src.collectIsHoveredAsState()
-    var poster by remember(e.item.m.id) { mutableStateOf(lib.cachedPoster(e.item.posterQueries)) }
-    LaunchedEffect(e.item.m.id) { if (poster == null) poster = lib.poster(e.item.posterQueries) }
+    var poster by remember(e.item.m.id, e.target.file.path) { mutableStateOf(lib.cachedPoster(e.posterQueries)) }
+    LaunchedEffect(e.item.m.id, e.target.file.path) { if (poster == null) poster = lib.poster(e.posterQueries) }
     val edge by animateColorAsState(if (hovered) Color(0x66FFFFFF) else Color(0x26FFFFFF), tween(180))
     val lift by animateFloatAsState(if (hovered) -3f else 0f, tween(220, easing = Sm.ease))
     Box(Modifier.graphicsLayer { translationY = lift }.hoverable(src)) {

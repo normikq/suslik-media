@@ -479,4 +479,174 @@ class ModelTest {
         assertTrue("inception" in item.searchText)
         assertTrue("inception.mkv" in item.searchText)
     }
+
+    // -------------------------------------------------------------------------
+    // AI title (server services/aititle.js): parsed, used for grouping only once accepted
+    // -------------------------------------------------------------------------
+
+    private fun aiLibrary(status: String) = JSONObject("""
+        {
+          "aiTitleReadyAt": 1700000000000,
+          "magnets": [
+            { "id": 1, "name": "Тачки 2 (2011) BDRip", "statusCode": 4,
+              "files": [ { "name": "Cars.2.mkv", "path": "Cars.2.mkv", "type": "file", "size": 4000, "sourceLink": "https://host/1" } ] },
+            { "id": 2, "name": "Cars.Two.2011.720p", "statusCode": 4, "canAiTitle": true,
+              "aiTitle": { "base": " Тачки 2 ", "season": null, "source": "ai", "model": "gemini-3.5-flash-lite", "at": 5, "status": "$status" },
+              "files": [ { "name": "Cars2.mkv", "path": "Cars2.mkv", "type": "file", "size": 2000, "sourceLink": "https://host/2" } ] }
+          ]
+        }
+    """.trimIndent())
+
+    @Test
+    fun parseLibraryAiTitle() {
+        val json = aiLibrary("suggested")
+        val list = parseLibrary(json)
+        assertNull(list[0].aiTitle)
+        assertFalse(list[0].canAiTitle)
+        assertEquals(AiTitle("Тачки 2", null, "gemini-3.5-flash-lite", 5L, "suggested"), list[1].aiTitle)
+        assertTrue(list[1].canAiTitle)
+        assertFalse(list[1].aiTitle!!.accepted)
+        assertEquals(1700000000000L, aiTitleReadyAt(json))
+        assertEquals(0L, aiTitleReadyAt(JSONObject()))
+        val season = parseLibrary(JSONObject("""{"magnets":[{"id":3,"name":"S","aiTitle":{"base":"Тед Лассо","season":2,"status":"accepted"}}]}"""))
+        assertEquals(2, season[0].aiTitle?.season)
+        assertTrue(season[0].aiTitle!!.accepted)
+        val bad = parseLibrary(JSONObject("""{"magnets":[{"id":4,"name":"S","aiTitle":{"base":"X","status":"weird"}}]}"""))
+        assertNull(bad[0].aiTitle)
+    }
+
+    @Test
+    fun groupVersionsUsesOnlyAcceptedAiTitle() {
+        val accepted = prepareItems(parseLibrary(aiLibrary("accepted")))
+        assertEquals("Тачки 2", groupTitle(accepted[1]))
+        val (shown, versions) = groupVersions(accepted)
+        assertEquals(listOf(1L), shown.map { it.m.id })
+        assertEquals(setOf(1L, 2L), versions[1L]?.map { it.m.id }?.toSet())
+        for (status in listOf("suggested", "rejected", "none")) {
+            val items = prepareItems(parseLibrary(aiLibrary(status)))
+            assertEquals(items[1].baseTitle, groupTitle(items[1]))
+            assertEquals(listOf(1L, 2L), groupVersions(items).first.map { it.m.id }, status)
+        }
+    }
+
+    @Test
+    fun acceptedAiTitleNamesTheTileAndItsPoster() {
+        val items = prepareItems(parseLibrary(aiLibrary("accepted")))
+        assertEquals("Тачки 2", items[1].baseTitle)
+        assertEquals("Тачки 2", items[1].posterQueries.first())
+        val suggested = prepareItems(parseLibrary(aiLibrary("suggested")))[1]
+        assertTrue(suggested.baseTitle != "Тачки 2" || suggested.m.name.contains("Тачки"))
+        // «Принять» и «Отклонить» без новой загрузки медиатеки
+        val accepted = suggested.withAiTitle(suggested.m.aiTitle!!.copy(status = "accepted"))
+        assertEquals("Тачки 2", accepted.baseTitle)
+        assertEquals("Тачки 2", accepted.posterQueries.first())
+        val rejected = accepted.withAiTitle(accepted.m.aiTitle!!.copy(status = "rejected"))
+        assertEquals(cleanTitle(suggested.m.name), rejected.baseTitle)
+        assertEquals(suggested.playable, rejected.playable)
+    }
+
+    // AI kind and season over what the files say (applyAiTitle)
+    private fun aiFile(i: Int, path: String, mb: Long) = MFile(i, path.substringAfterLast('/'), path, false, mb * 1024 * 1024, "https://host/$i")
+    private fun aiMagnet(files: List<MFile>, kind: String?, season: Int?, status: String = "accepted") =
+        Magnet(1, "Show", "Ready", 4, 0, 0, files, true, aiTitle = AiTitle("Show", season, "m", 1, status, kind))
+
+    @Test
+    fun acceptedAiKindAndSeasonChangeWhatPlays() {
+        val films = listOf(aiFile(0, "Show/Show A.mkv", 1500), aiFile(1, "Show/Show B.mkv", 1500), aiFile(2, "Show/Show C.mkv", 1500))
+        // by the files a collection (no episode numbers)
+        assertNotNull((buildPlayable(aiMagnet(films, null, null, "none")) as Playable.Series).seasons[0].items[0].title)
+        val series = assertIs<Playable.Series>(buildPlayable(aiMagnet(films, "series", 3)))
+        assertEquals(3, series.seasons.single().season)
+        assertEquals(listOf(1, 2, 3), series.seasons[0].items.map { it.episode })
+        assertTrue(series.seasons[0].items.all { it.title == null && it.season == 3 })
+        // suggested only: unchanged
+        assertNotNull((buildPlayable(aiMagnet(films, "series", 3, "suggested")) as Playable.Series).seasons[0].items[0].title)
+
+        val eps = listOf(aiFile(0, "S/Show.S01E01.mkv", 500), aiFile(1, "S/Show.S01E02.mkv", 500))
+        val relabeled = assertIs<Playable.Series>(buildPlayable(aiMagnet(eps, null, 2)))
+        assertEquals(listOf(2, 2), relabeled.seasons.single().items.map { it.season })
+        assertNotNull((buildPlayable(aiMagnet(eps, "collection", null)) as Playable.Series).seasons[0].items[0].title)
+
+        val movie = assertIs<Playable.Movie>(buildPlayable(aiMagnet(listOf(aiFile(0, "Film.mkv", 4000), aiFile(1, "Film part2.mkv", 3900)), "movie", null)))
+        assertEquals("Film.mkv", movie.file.path)
+
+        // two seasons by folders keep their numbers
+        val two = listOf(aiFile(0, "Season 1/a.mkv", 500), aiFile(1, "Season 2/b.mkv", 500))
+        assertEquals(listOf(1, 2), (buildPlayable(aiMagnet(two, "series", 5)) as Playable.Series).seasons.map { it.season })
+
+        // «Принять» without reloading the library rebuilds what plays
+        val item = prepareItems(listOf(aiMagnet(films, "series", 3, "suggested"))).single()
+        assertNotNull((item.playable as Playable.Series).seasons[0].items[0].title)
+        val accepted = item.withAiTitle(item.m.aiTitle!!.copy(status = "accepted"))
+        assertEquals(3, (accepted.playable as Playable.Series).seasons.single().season)
+        assertNull((accepted.playable as Playable.Series).seasons[0].items[0].title)
+    }
+
+    @Test
+    fun parseAiTitleKindAndStale() {
+        val a = parseAiTitle(JSONObject("""{"base":"X","season":null,"kind":"collection","status":"suggested","stale":true}"""))!!
+        assertEquals("collection", a.kind)
+        assertTrue(a.stale)
+        assertNull(parseAiTitle(JSONObject("""{"base":"X","kind":"trilogy","status":"suggested"}"""))!!.kind)
+    }
+
+    @Test
+    fun acceptedAiOriginalTitleWithYearIsTheFirstPosterQuery() {
+        val json = JSONObject("""{"magnets":[{"id":1,"name":"Дюна (2021) BDRip","statusCode":4,
+            "files":[{"name":"Dune.2021.mkv","path":"Dune.2021.mkv","type":"file","size":4000,"sourceLink":"https://host/1"}],
+            "aiTitle":{"base":"Дюна","season":null,"kind":"movie","original":"Dune","year":2021,"status":"suggested"}}]}""")
+        val item = prepareItems(parseLibrary(json)).single()
+        assertEquals("Dune", item.m.aiTitle?.original)
+        assertEquals(2021, item.m.aiTitle?.year)
+        assertFalse("Dune (2021)" in item.posterQueries)
+        val accepted = item.withAiTitle(item.m.aiTitle!!.copy(status = "accepted"))
+        assertEquals(listOf("Dune (2021)", "Дюна"), accepted.posterQueries.take(2))
+        // без оригинала — как раньше; null в JSON — не строка "null"
+        val none = parseAiTitle(JSONObject("""{"base":"X","original":null,"year":null,"status":"accepted"}"""))!!
+        assertNull(none.original)
+        assertNull(none.posterQuery)
+    }
+
+    @Test
+    fun testCollectionDetectionAndPosterQueries() {
+        val f1 = MFile("Harry Potter and the Sorcerers Stone (2001).mkv", "Harry Potter and the Sorcerers Stone (2001).mkv", "file", 2_000_000_000L, "http://link1")
+        val f2 = MFile("Harry Potter and the Chamber of Secrets (2002).mkv", "Harry Potter and the Chamber of Secrets (2002).mkv", "file", 2_000_000_000L, "http://link2")
+        val f3 = MFile("Harry Potter and the Prisoner of Azkaban (2004).mkv", "Harry Potter and the Prisoner of Azkaban (2004).mkv", "file", 2_000_000_000L, "http://link3")
+        val magnet = Magnet(10, "Гарри Поттер: Трилогия / Harry Potter: Trilogy (2001-2004) BDRip", "", 4, 6_000_000_000L, 6_000_000_000L, listOf(f1, f2, f3), false)
+        val item = prepareItems(listOf(magnet)).single()
+
+        assertTrue(isCollection(item.playable, magnet))
+        assertEquals("Кинотрилогия", collectionTypeLabel(3, magnet.name))
+        assertEquals("3 фильма", filmCountRu(3))
+
+        val queries1 = collectionFilePosterQueries(magnet, f1, item.baseTitle)
+        assertTrue(queries1.contains("Harry Potter and the Sorcerers Stone (2001)"))
+        assertTrue(queries1.contains("Harry Potter and the Sorcerers Stone"))
+
+        val queriesItem = continueItemPosterQueries(item, f1)
+        assertEquals(queries1, queriesItem)
+
+        // Film with separate parts
+        val lotrFile = MFile("01. Братство кольца (2001).mkv", "01. Братство кольца (2001).mkv", "file", 2_000_000_000L, "http://link")
+        val lotrMagnet = Magnet(11, "Властелин колец: Трилогия (2001-2003)", "", 4, 6_000_000_000L, 6_000_000_000L, listOf(lotrFile), false)
+        val lotrQueries = collectionFilePosterQueries(lotrMagnet, lotrFile, "Властелин колец")
+        assertTrue(lotrQueries.contains("Братство кольца (2001)"))
+        assertTrue(lotrQueries.contains("Властелин колец: Братство кольца (2001)"))
+        assertEquals("Властелин колец: Братство кольца", collectionFileTitle(lotrMagnet, lotrFile, "Властелин колец"))
+
+        // Track prefix cleaning (e.g. "2 Гарри Поттер и Тайная комната") and collection title noise stripping
+        val hp2File = MFile("2 Гарри Поттер и Тайная комната.mkv", "2 Гарри Поттер и Тайная комната.mkv", "file", 2_000_000_000L, "http://link")
+        val hpMagnet = Magnet(12, "Гарри Поттер: Коллекция 8 фильмов / Harry Potter (2001-2011)", "", 4, 16_000_000_000L, 16_000_000_000L, listOf(hp2File), false)
+        val hpTitle = collectionFileTitle(hpMagnet, hp2File, hpMagnet.name)
+        assertEquals("Гарри Поттер и Тайная комната", hpTitle)
+        val hpQueries = collectionFilePosterQueries(hpMagnet, hp2File, hpMagnet.name)
+        assertTrue(hpQueries.contains("Гарри Поттер и Тайная комната"))
+        assertTrue(hpQueries.contains("Harry Potter"))
+
+        // cleanCollectionFilmTitle tests
+        assertEquals("Гарри Поттер и философский камень", cleanCollectionFilmTitle("1 Гарри Поттер и философский камень (2001).mkv"))
+        assertEquals("Гарри Поттер и философский камень", cleanCollectionFilmTitle("1. 1 Гарри Поттер и философский камень"))
+        assertEquals("Гарри Поттер и Тайная комната", cleanCollectionFilmTitle("Фильм 2 - Гарри Поттер и Тайная комната"))
+        assertEquals("300", cleanCollectionFilmTitle("300.mkv"))
+    }
 }
