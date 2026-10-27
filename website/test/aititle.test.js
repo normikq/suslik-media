@@ -71,15 +71,15 @@ test("aititle: season must be mentioned in the name or the paths", () => {
 });
 
 test("aititle: validate keeps the title, drops a season the release does not mention", () => {
-  assert.deepEqual(ai.validate({ base: "Тед Лассо", season: 2 }, show.name, show.files), { base: "Тед Лассо", season: 2 , kind: null });
-  assert.deepEqual(ai.validate({ base: "Тачки 2", season: null }, film.name, film.files), { base: "Тачки 2", season: null , kind: null });
+  assert.deepEqual(ai.validate({ base: "Тед Лассо", season: 2 }, show.name, show.files), { base: "Тед Лассо", season: 2 , kind: null, original: null, year: null });
+  assert.deepEqual(ai.validate({ base: "Тачки 2", season: null }, film.name, film.files), { base: "Тачки 2", season: null , kind: null, original: null, year: null });
   // Сезона 3 нет ни в названии, ни в путях: название остаётся, сезон — нет
-  assert.deepEqual(ai.validate({ base: "Тед Лассо", season: 3 }, show.name, show.files), { base: "Тед Лассо", season: null , kind: null });
+  assert.deepEqual(ai.validate({ base: "Тед Лассо", season: 3 }, show.name, show.files), { base: "Тед Лассо", season: null , kind: null, original: null, year: null });
   // Перевод и кириллица вместо транслита — можно: подтверждает владелец
-  assert.deepEqual(ai.validate({ base: "Киберпанк: Бегущие по краю", season: null }, "Cyberpunk - Edgerunners [2022]", []), { base: "Киберпанк: Бегущие по краю", season: null , kind: null });
+  assert.deepEqual(ai.validate({ base: "Киберпанк: Бегущие по краю", season: null }, "Cyberpunk - Edgerunners [2022]", []), { base: "Киберпанк: Бегущие по краю", season: null , kind: null, original: null, year: null });
   // Точки вместо пробелов
-  assert.deepEqual(ai.validate({ base: "Kak.priruchit.lisu", season: 1 }, "Kak.priruchit.lisu.S01.2025", []), { base: "Kak priruchit lisu", season: 1 , kind: null });
-  assert.deepEqual(ai.validate({ base: "Тачки", season: 1.5 }, film.name, film.files), { base: "Тачки", season: null , kind: null });
+  assert.deepEqual(ai.validate({ base: "Kak.priruchit.lisu", season: 1 }, "Kak.priruchit.lisu.S01.2025", []), { base: "Kak priruchit lisu", season: 1 , kind: null, original: null, year: null });
+  assert.deepEqual(ai.validate({ base: "Тачки", season: 1.5 }, film.name, film.files), { base: "Тачки", season: null , kind: null, original: null, year: null });
   assert.equal(ai.validate({ base: "", season: null }, film.name, film.files), null);
   assert.equal(ai.validate({ base: "x".repeat(201), season: null }, film.name, film.files), null);
   assert.equal(ai.validate(null, film.name, film.files), null);
@@ -97,7 +97,7 @@ test("aititle: one call, the right request, then the stored answer", async () =>
   replies.push(gemini({ base: "Тед Лассо", season: 2 }));
   const r = await ai.suggest(show, "u_1", NOW);
   assert.equal(r.cached, false);
-  assert.deepEqual(r.aiTitle, { base: "Тед Лассо", season: 2, kind: null, source: "ai", model: "gemini-3.5-flash-lite", at: NOW, status: "suggested", stale: false });
+  assert.deepEqual(r.aiTitle, { base: "Тед Лассо", season: 2, kind: null, original: null, year: null, source: "ai", model: "gemini-3.5-flash-lite", at: NOW, status: "suggested", stale: false });
   assert.equal(calls.length, 1);
   const c = calls[0];
   assert.match(c.url, /\/v1beta\/models\/gemini-3\.5-flash-lite:generateContent$/);
@@ -105,7 +105,7 @@ test("aititle: one call, the right request, then the stored answer", async () =>
   assert.ok(!c.url.includes("test-key"), "ключ не в адресе");
   assert.equal(c.body.generationConfig.temperature, 0);
   assert.equal(c.body.generationConfig.responseMimeType, "application/json");
-  assert.deepEqual(Object.keys(c.body.generationConfig.responseSchema.properties.items.items.properties), ["n", "base", "season", "kind"]);
+  assert.deepEqual(Object.keys(c.body.generationConfig.responseSchema.properties.items.items.properties), ["n", "base", "season", "kind", "original", "year"]);
   const text = c.body.contents[0].parts[0].text;
   assert.ok(text.includes(show.name) && text.includes("Ted.Lasso.S02E02.mkv") && !text.includes("sample") && !text.includes(".srt"));
 
@@ -266,10 +266,10 @@ test("aititle: force asks again and replaces the stored answer", async () => {
 });
 
 test("aititle: kind of the release; a film or a collection has no season", () => {
-  assert.deepEqual(ai.validate({ base: "Тед Лассо", season: 2, kind: "series" }, show.name, show.files), { base: "Тед Лассо", season: 2, kind: "series" });
-  assert.deepEqual(ai.validate({ base: "Тед Лассо", season: 2, kind: "collection" }, show.name, show.files), { base: "Тед Лассо", season: null, kind: "collection" });
-  assert.deepEqual(ai.validate({ base: "Тачки 2", season: null, kind: "movie" }, film.name, film.files), { base: "Тачки 2", season: null, kind: "movie" });
-  assert.deepEqual(ai.validate({ base: "Тачки 2", season: null, kind: "trilogy" }, film.name, film.files), { base: "Тачки 2", season: null, kind: null });
+  assert.deepEqual(ai.validate({ base: "Тед Лассо", season: 2, kind: "series" }, show.name, show.files), { base: "Тед Лассо", season: 2, kind: "series", original: null, year: null });
+  assert.deepEqual(ai.validate({ base: "Тед Лассо", season: 2, kind: "collection" }, show.name, show.files), { base: "Тед Лассо", season: null, kind: "collection", original: null, year: null });
+  assert.deepEqual(ai.validate({ base: "Тачки 2", season: null, kind: "movie" }, film.name, film.files), { base: "Тачки 2", season: null, kind: "movie", original: null, year: null });
+  assert.deepEqual(ai.validate({ base: "Тачки 2", season: null, kind: "trilogy" }, film.name, film.files), { base: "Тачки 2", season: null, kind: null, original: null, year: null });
 });
 
 test("aititle: an answer stored before kind existed can be asked again", async () => {
@@ -361,4 +361,14 @@ test("aititle: «Final Season Part 2» — the model's season, not the part numb
   assert.equal(v({ base: "Доктор Кто", season: 1, kind: "series" }, "Doctor Who 2024 WEB-DL", ["Doctor.Who.2024.E01.mkv"]), 1);
   assert.equal(v({ base: "Доктор Кто", season: 24, kind: "series" }, "Doctor Who 2024 WEB-DL", ["Doctor.Who.2024.E01.mkv"]), null);
   assert.equal(v({ base: "Фарго", season: 14, kind: "series" }, "Fargo (2014-2023)", ["Fargo/2014/Fargo.2014.E01.mkv"]), null);
+});
+
+test("aititle: original title and year for the TMDB poster", () => {
+  const v = answer => ai.validate(answer, film.name, film.files);
+  assert.deepEqual(v({ base: "Тачки 2", season: null, kind: "movie", original: "Cars 2", year: 2011 }),
+    { base: "Тачки 2", season: null, kind: "movie", original: "Cars 2", year: 2011 });
+  assert.equal(v({ base: "Тачки 2", kind: "movie", original: "Cars.2", year: 2011 }).original, "Cars 2");
+  assert.equal(v({ base: "Тачки 2", kind: "movie", original: "", year: 1700 }).original, null);
+  assert.equal(v({ base: "Тачки 2", kind: "movie", original: "Cars 2", year: 1700 }).year, null);
+  assert.equal(v({ base: "Тачки 2", kind: "movie", original: "Cars 2", year: 2011.5 }).year, null);
 });

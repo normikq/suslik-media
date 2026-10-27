@@ -30,24 +30,30 @@ const STATUSES = new Set(["suggested", "accepted", "rejected", "none"]);
 const KINDS = new Set(["movie", "series", "collection"]);
 // Версия ответа: 2 — с типом раздачи (kind), 3 — сезон без пометок в раздаче («Show 2 - 01», «Show - 01»),
 // 4 — сезон из числа после названия (seasonFromName), 5 — без пометок верим модели, «Part 2» — не сезон (прогон
-// scripts/aititle-eval.js 27.10). Ответ старой версии можно спросить заново (stale в медиатеке).
-const VERSION = 5;
+// scripts/aititle-eval.js 27.10), 6 — оригинальное название и год (original, year) для поиска постера в TMDB.
+// Ответ старой версии можно спросить заново (stale в медиатеке).
+const VERSION = 6;
 
 const PROMPT = [
-  "Ты получаешь одну или несколько торрент-раздач: номер, название и пути видеофайлов. Для каждой раздачи верни объект:",
-  "n — её номер; base — название фильма или сериала, по которому его можно найти в TMDB: русское, если оно есть",
-  "в раздаче; если название записано транслитом (\"Kak.priruchit.lisu\") — по-русски кириллицей (\"Как приручить лису\");",
-  "иначе оригинальное. Слова через пробел (не через точки и подчёркивания), без года, качества, кодеков, озвучки,",
-  "студии, номера сезона и серии и без слов \"трилогия\", \"коллекция\", \"сборник\", \"полный сериал\" (у сборника —",
-  "название франшизы: \"Матрица\", а не \"Матрица: Трилогия\"); цифры, которые входят в само название (\"Тачки 2\",",
-  "\"1+1\"), оставь.",
-  "season — номер сезона, если раздача — ровно один сезон сериала (смотри и на пути: S02E01 — сезон 2), иначе null.",
-  "Сезон бывает записан без пометок: \"Сериал 2 - 01.mkv\" — второй сезон (цифра после названия), если это не часть",
-  "самого названия; если пометок нет вовсе и это первый сезон — 1. \"Part 2\", \"Часть 2\", \"Cour 2\", \"Vol. 2\" — часть",
-  "сезона, а не его номер (\"Final Season Part 2\" — номер финального сезона). Год — не номер сезона.",
-  "(фильм, несколько сезонов, сборник). kind — что это за раздача: \"movie\" — один фильм (с допами, трейлерами,",
-  "частями одного фильма), \"series\" — серии сериала, аниме или шоу (один или несколько сезонов), \"collection\" —",
-  "несколько разных фильмов (франшиза, трилогия, подборка)."
+  "Ты получаешь одну или несколько торрент-раздач: номер, название и пути видеофайлов. Для каждой раздачи верни объект.",
+  "n — её номер.",
+  "base — название для показа: русское, если оно есть в раздаче или у фильма есть русское прокатное название; если",
+  "название записано транслитом (\"Kak.priruchit.lisu\") — по-русски кириллицей (\"Как приручить лису\"); иначе оригинальное.",
+  "original — оригинальное название, как в TMDB и IMDb (\"Dune\", \"The Bear\", \"Shingeki no Kyojin\" — нет: если оригинал",
+  "не латиницей, то официальное английское — \"Attack on Titan\"); для русского фильма или сериала — русское.",
+  "Оба названия: слова через пробел (не через точки и подчёркивания), без года, качества, кодеков, озвучки, студии,",
+  "номера сезона и серии, без слов \"трилогия\", \"коллекция\", \"сборник\", \"полный сериал\" (у сборника — название",
+  "франшизы: \"Матрица\", а не \"Матрица: Трилогия\"); цифры, которые входят в само название (\"Тачки 2\", \"1+1\"), оставь.",
+  "year — год выхода: у фильма — год фильма, у сериала — год первого сезона всего сериала (не этой раздачи), у сборника —",
+  "год первого фильма; если не знаешь — null.",
+  "season — номер сезона, если раздача — ровно один сезон сериала (смотри и на пути: S02E01 — сезон 2), иначе null",
+  "(фильм, несколько сезонов, сборник). Сезон бывает записан без пометок: \"Сериал 2 - 01.mkv\" — второй сезон (цифра",
+  "после названия), если это не часть самого названия; если пометок нет вовсе и это первый сезон — 1. \"Part 2\",",
+  "\"Часть 2\", \"Cour 2\", \"Vol. 2\" — часть сезона, а не его номер (\"Final Season Part 2\" — номер финального сезона).",
+  "Год — не номер сезона.",
+  "kind — что это за раздача: \"movie\" — один фильм (с допами, трейлерами, частями одного фильма), \"series\" — серии",
+  "сериала, аниме или шоу (один или несколько сезонов), \"collection\" — несколько разных фильмов (франшиза, трилогия,",
+  "подборка)."
 ].join(" ");
 
 const RESPONSE_SCHEMA = {
@@ -61,9 +67,11 @@ const RESPONSE_SCHEMA = {
           n: { type: "INTEGER" },
           base: { type: "STRING" },
           season: { type: "INTEGER", nullable: true },
-          kind: { type: "STRING", enum: ["movie", "series", "collection"] }
+          kind: { type: "STRING", enum: ["movie", "series", "collection"] },
+          original: { type: "STRING" },
+          year: { type: "INTEGER", nullable: true }
         },
-        required: ["n", "base", "kind"]
+        required: ["n", "base", "kind", "original"]
       }
     }
   },
@@ -214,7 +222,13 @@ function validate(answer, name, files) {
   const kind = KINDS.has(answer.kind) ? answer.kind : null;
   if (kind === "movie" || kind === "collection") season = null;
   if (kind === "series") season = seasonFromName(base, String(name), videoPaths(files)) ?? season;
-  return { base, season, kind };
+  // оригинальное название и год — для поиска постера в TMDB: «Dune (2021)»
+  let original = typeof answer.original === "string" ? answer.original.trim() : "";
+  if (!/\s/.test(original)) original = original.replace(/[._]+/g, " ");
+  original = original.replace(/\s+/g, " ").trim();
+  if (original.length > 200 || /[\u0000-\u001f\u007f]/.test(original)) original = "";
+  const year = Number.isInteger(answer.year) && answer.year >= 1880 && answer.year <= new Date().getFullYear() + 2 ? answer.year : null;
+  return { base, season, kind, original: original || null, year };
 }
 
 function today(now) {
@@ -242,7 +256,7 @@ function publicView(r) {
   if (!r) return null;
   // ответы до 27.10 могли прийти с точками вместо пробелов («Kak.priruchit.lisu»)
   const base = String(r.base || "");
-  return { base: /\s/.test(base) ? base : base.replace(/[._]+/g, " ").trim(), season: r.season ?? null, kind: KINDS.has(r.kind) ? r.kind : null, source: "ai", model: r.model, at: r.at, status: r.status, stale: (r.v || 1) < VERSION };
+  return { base: /\s/.test(base) ? base : base.replace(/[._]+/g, " ").trim(), season: r.season ?? null, kind: KINDS.has(r.kind) ? r.kind : null, original: r.original || null, year: r.year ?? null, source: "ai", model: r.model, at: r.at, status: r.status, stale: (r.v || 1) < VERSION };
 }
 
 /** Сохранённый результат раздачи (или null). */
@@ -377,7 +391,7 @@ async function suggestMany(magnets, owner, now = Date.now(), { noCooldown = fals
     list.forEach(([key, m], i) => {
       const ok = validate(res.answers.get(i + 1), m.name, m.files);
       const r = ok
-        ? { base: ok.base, season: ok.season, kind: ok.kind, model: config.AI_TITLE_MODEL, at: now, status: "suggested", by: owner, v: VERSION }
+        ? { base: ok.base, season: ok.season, kind: ok.kind, original: ok.original, year: ok.year, model: config.AI_TITLE_MODEL, at: now, status: "suggested", by: owner, v: VERSION }
         : { base: "", season: null, kind: null, model: config.AI_TITLE_MODEL, at: now, status: "none", by: owner, v: VERSION };
       if (!ok) { totals.none++; console.warn(`[aititle] ${m.id}: нет ответа: ${String(res.raw).slice(0, 300)}`); }
       results.set(key, r);

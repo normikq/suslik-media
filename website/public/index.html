@@ -1681,6 +1681,13 @@ function displayTitle(m){
   return ai&&ai.status==="accepted"&&ai.base?ai.base:escapeTitle((m&&m.name)||"");
 }
 const groupBaseOf=displayTitle;
+// Запрос постера по принятому ответу ИИ: оригинальное название с годом — «Dune (2021)» (сервер берёт результат TMDB
+// того же года); без ответа — null, ищем по названию плитки
+function aiPosterQuery(m){
+  const ai=m&&m.aiTitle;
+  if(!ai||ai.status!=="accepted"||!ai.original) return null;
+  return ai.year?ai.original+" ("+ai.year+")":ai.original;
+}
 function titleKey(baseTitle){
   const plain=String(baseTitle||"").toLowerCase().replace(/ё/g,"е");
   const key=plain.replace(SEASON_NOISE," ").replace(/[^\p{L}\p{N}]+/gu," ").trim();
@@ -1822,7 +1829,9 @@ function psGroupOf(m){
   return [m];
 }
 const AI_KIND={movie:"фильм",series:"сериал",collection:"сборник"};
-const aiWhat=a=>"«"+a.base+"»"+(a.kind&&AI_KIND[a.kind]?" · "+AI_KIND[a.kind]:"")+(a.season!=null?", сезон "+a.season:"");
+// «Дюна» (Dune, 2021) · фильм — оригинал и год видно до «Принять»: по ним ищется постер
+const aiOrig=a=>{const o=a.original&&a.original!==a.base?a.original:"";return o||a.year?" ("+[o,a.year].filter(Boolean).join(", ")+")":"";};
+const aiWhat=a=>"«"+a.base+"»"+aiOrig(a)+(a.kind&&AI_KIND[a.kind]?" · "+AI_KIND[a.kind]:"")+(a.season!=null?", сезон "+a.season:"");
 function psSyncAi(s){
   const box=s.querySelector(".ps-ai"), m=s._magnet;
   box.replaceChildren();
@@ -1919,12 +1928,13 @@ function psFill(s,magnet,file,label,token){
   try{const sp=magnet&&getItemSpecs(magnet); if(sp&&sp.type) chip(sp.type);}catch{}
   if(ep) chip(ep);
   const rating=chip("","ps-rating hidden");
-  getPoster(base).then(u=>{if(u&&token===playSheetToken) img.src=u;}).catch(()=>{});
-  if(!psInfoCache.has(base.toLowerCase())) psInfoCache.set(base.toLowerCase(),api("/api/poster?hero=1&q="+encodeURIComponent(base)).then(info=>{
+  const pq=(magnet&&aiPosterQuery(magnet))||base; // постер и описание — по оригиналу с годом, если ИИ его дал
+  getPoster(pq).then(u=>{if(u&&token===playSheetToken) img.src=u;}).catch(()=>{});
+  if(!psInfoCache.has(pq.toLowerCase())) psInfoCache.set(pq.toLowerCase(),api("/api/poster?hero=1&q="+encodeURIComponent(pq)).then(info=>{
     if(info && typeof info.animation === "boolean") recordAnimation(base, info.animation);
     return info;
   }).catch(()=>null));
-  psInfoCache.get(base.toLowerCase()).then(info=>{
+  psInfoCache.get(pq.toLowerCase()).then(info=>{
     if(!info||token!==playSheetToken) return;
     if(info.overview) over.textContent=info.overview;
     if(info.year){yearChip.textContent=info.year;yearChip.classList.remove("hidden");}
@@ -2134,7 +2144,7 @@ function recordAnimation(query, isAnim) {
 }
 function getPosterQueries(m) {
   const base = displayTitle(m);
-  const queries = [base];
+  const queries = [...new Set([aiPosterQuery(m), base].filter(Boolean))];
   const main = pickMainВидео(m);
   if (main) {
     const mainName = String(main.name || main.path || "").replace(/\\/g, "/").split("/").pop();
@@ -2341,7 +2351,7 @@ function renderLibrary(animate=true) {
     if (versions) { const vb = document.createElement("span"); vb.className = "tile-badge badge-type badge-ver"; vb.textContent = versionsWord(versions.length); badges.append(vb); }
     art.append(badges);
     const videoФайл = (magnet.files || []).find(f => /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso)$/i.test(f.path || ""));
-    const posterQueries = [...new Set([displayTitle(magnet), videoФайл ? escapeTitle(videoФайл.name || videoФайл.path.split("/").pop()) : ""].filter(Boolean))];
+    const posterQueries = [...new Set([aiPosterQuery(magnet), displayTitle(magnet), videoФайл ? escapeTitle(videoФайл.name || videoФайл.path.split("/").pop()) : ""].filter(Boolean))];
     whenVisible(tile, ()=>(async()=>{
       let url=null;
       for (const q of posterQueries) { url=await getPoster(q); if(url) break; }

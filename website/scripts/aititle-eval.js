@@ -96,6 +96,40 @@ const CASES = [
 ];
 
 // want.season может быть списком допустимых ответов
+// Оригинальное название и год (для постера в TMDB) — по началу имени раздачи. year списком — допустимые ответы.
+const ORIGINAL = [
+  ["Гарри Поттер: Коллекция", /harry potter/i, 2001],
+  ["Миссия невыполнима", /mission.*impossible/i, 1996],
+  ["Фарго", /^fargo$/i, 2014],
+  ["Чернобыль", /^chernobyl$/i, 2019],
+  ["Мандалорец", /mandalorian/i, 2019],
+  ["Доктор Кто", /doctor who/i, [1963, 2005, 2023, 2024]],
+  ["1923 S02", /^1923$/, 2022],
+  ["2012 (2009)", /^2012$/, 2009],
+  ["Дюна / Dune (2021)", /^dune$/i, 2021],
+  ["Тачки 2", /^cars 2$/i, 2011],
+  ["Cyberpunk Edgerunners 2", /cyberpunk.*edgerunners/i, [2022, 2025, 2026]],
+  ["Cyberpunk - Edgerunners", /cyberpunk.*edgerunners/i, 2022],
+  ["Attack on Titan", /attack on titan/i, 2013],
+  ["Sousou no Frieren", /frieren/i, 2023],
+  ["Ходячие мертвецы", /walking dead/i, 2010],
+  ["Во все тяжкие", /breaking bad/i, 2008],
+  ["Мастер и Маргарита (2005)", /мастер и маргарита/i, 2005],
+  ["Сёгун / Shogun (2024)", /sh[oō]gun/i, 2024],
+  ["Тед Лассо", /ted lasso/i, 2020],
+  ["Ted Lasso", /ted lasso/i, 2020],
+  ["Ted.Lasso", /ted lasso/i, 2020],
+  ["Матрица / The Matrix", /^the matrix$/i, 1999],
+  ["Матрица: Трилогия", /matrix/i, 1999],
+  ["Бегущий по лезвию 2049", /blade runner 2049/i, 2017],
+  ["Дюна: Часть вторая", /dune.*part two/i, 2024],
+  ["Mob Psycho 100", /mob psycho 100/i, 2016],
+  ["Слово пацана", /слово пацана/i, 2023],
+  ["Медведь / The Bear", /^the bear$/i, 2022],
+  ["Разделение / Severance", /^severance$/i, 2022],
+  ["Друзья / Friends", /^friends$/i, 1994]
+];
+
 function same(got, want) {
   if (Array.isArray(want)) return want.some(w => same(got, w));
   return got === want || (got == null && want == null);
@@ -117,7 +151,7 @@ function same(got, want) {
     if (u) process.stdout.write(`   токены: вход ${u.promptTokenCount}, выход ${u.candidatesTokenCount}\n`);
     return res;
   };
-  let total = 0, okKind = 0, okSeason = 0, okBase = 0, okAll = 0;
+  let total = 0, okKind = 0, okSeason = 0, okBase = 0, okAll = 0, origTotal = 0, okOrig = 0, okYear = 0;
   const fails = [];
   for (const [title, releases] of CASES) {
     if (filter && !title.toLowerCase().includes(filter)) continue;
@@ -143,11 +177,22 @@ function same(got, want) {
       total++; okKind += k; okSeason += s; okBase += b; okAll += k && s && b;
       const mark = k && s && b ? "✓" : "✗";
       console.log(`   ${mark} ${r.name}`);
-      console.log(`       модель: ${JSON.stringify({ base: m.base, season: m.season, kind: m.kind })}`);
+      console.log(`       модель: ${JSON.stringify({ base: m.base, season: m.season, kind: m.kind, original: m.original, year: m.year })}`);
+      const og = ORIGINAL.find(([prefix]) => r.name.startsWith(prefix));
+      if (og) {
+        origTotal++;
+        const o = og[1].test(got.original || ""), y = same(got.year, og[2]);
+        okOrig += o; okYear += y;
+        if (!o || !y) {
+          console.log(`       ✗ постер: «${got.original} (${got.year})», ждём ${og[1]} (${og[2]})`);
+          fails.push(`${title}: ${r.name} → постер «${got.original} (${got.year})», ждём ${og[1]} (${og[2]})`);
+        }
+      }
       console.log(`       итог:   «${got.base}» ${got.kind}, сезон ${got.season}   ждём: ${r.want.kind}, сезон ${r.want.season}${b ? "" : ", название " + r.want.base}`);
       if (!(k && s && b)) fails.push(`${title}: ${r.name} → ${got.kind}/${got.season}/«${got.base}» (модель ${m.kind}/${m.season}), ждём ${r.want.kind}/${r.want.season}`);
     }
   }
   console.log(`\nИтого раздач: ${total}. Всё верно: ${okAll}. Тип: ${okKind}, сезон: ${okSeason}, название: ${okBase}.`);
+  console.log(`Для постера (${origTotal} раздач): оригинальное название ${okOrig}, год ${okYear}.`);
   if (fails.length) console.log("Ошибки:\n  " + fails.join("\n  "));
 })();
