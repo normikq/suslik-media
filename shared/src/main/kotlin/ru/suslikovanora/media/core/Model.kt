@@ -188,128 +188,7 @@ fun mainVideo(m: Magnet): MFile? {
 /** What to play: from the files, then the kind and season the owner accepted from the AI ([applyAiTitle]). */
 fun buildPlayable(m: Magnet): Playable = applyAiTitle(playableByFiles(m), m)
 
-val COLLECTION_REGEX = Regex(
-    """\b(трилоги[яи]|дилоги[яи]|тетралоги[яи]|квадрологи[яи]|пенталоги[яи]|гексалоги[яи]|франшиз[аеы]|коллекци[яи]|антологи[яи]|саг[аеы]|киносаг[аеы]|сборник|боксет|boxset|box-set|trilogy|duology|dilogy|tetralogy|quadrilogy|anthology|collection|franchise)\b|\b\d+\s*[-–—]\s*(?:в|in)\s*1\b|\bвсе\s+части\b|\bвсе\s+фильмы\b""",
-    RegexOption.IGNORE_CASE
-)
-
-fun isCollection(p: Playable, m: Magnet? = null): Boolean {
-    if (m?.aiTitle?.takeIf { it.accepted }?.kind == "collection") return true
-    if (p !is Playable.Series) return false
-    if (p.seasons.firstOrNull()?.items?.firstOrNull()?.title != null) return true
-    if (m != null && COLLECTION_REGEX.containsMatchIn(m.name)) return true
-    return false
-}
-
-fun collectionTypeLabel(filmCount: Int, name: String = ""): String = when {
-    Regex("""\b(трилоги[яи]|trilogy)\b""", RegexOption.IGNORE_CASE).containsMatchIn(name) || filmCount == 3 -> "Кинотрилогия"
-    Regex("""\b(дилоги[яи]|duology|dilogy)\b""", RegexOption.IGNORE_CASE).containsMatchIn(name) || filmCount == 2 -> "Дилогия"
-    Regex("""\b(квадрологи[яи]|тетралоги[яи]|quadrilogy|tetralogy)\b""", RegexOption.IGNORE_CASE).containsMatchIn(name) || filmCount == 4 -> "Кинотетралогия"
-    Regex("""\b(сборник)\b""", RegexOption.IGNORE_CASE).containsMatchIn(name) -> "Сборник"
-    Regex("""\b(антологи[яи]|anthology)\b""", RegexOption.IGNORE_CASE).containsMatchIn(name) -> "Антология"
-    Regex("""\b(коллекци[яи]|collection|boxset)\b""", RegexOption.IGNORE_CASE).containsMatchIn(name) -> "Коллекция"
-    else -> "Кинофраншиза"
-}
-
-fun filmCountRu(count: Int): String = when {
-    count % 10 == 1 && count % 100 != 11 -> "$count фильм"
-    count % 10 in 2..4 && count % 100 !in 12..14 -> "$count фильма"
-    else -> "$count фильмов"
-}
-
-fun seriesCountRu(seasons: Int, episodes: Int): String {
-    val sWord = when {
-        seasons % 10 == 1 && seasons % 100 != 11 -> "$seasons сезон"
-        seasons % 10 in 2..4 && seasons % 100 !in 12..14 -> "$seasons сезона"
-        else -> "$seasons сезонов"
-    }
-    val eWord = when {
-        episodes % 10 == 1 && episodes % 100 != 11 -> "$episodes серия"
-        episodes % 10 in 2..4 && episodes % 100 !in 12..14 -> "$episodes серии"
-        else -> "$episodes серий"
-    }
-    return "$sWord • $eWord"
-}
-
-val TRACK_PREFIX = Regex(
-    """^\s*(?:\[[^\]]*\]\s*|\([^\)]*\)\s*|(?:фильм|серия|часть|part|movie|vol|cd|диск)?\s*\d{1,3}[\s._-]*)+""",
-    RegexOption.IGNORE_CASE
-)
-
-fun cleanCollectionFilmTitle(raw: String): String {
-    val withoutExt = raw.replace(EXT, "")
-    val stripped = withoutExt.replace(TRACK_PREFIX, "").trim()
-    val cleaned = cleanTitle(stripped.ifBlank { withoutExt })
-    return cleaned.ifBlank { cleanTitle(raw) }
-}
-
-fun collectionFileTitle(m: Magnet, file: MFile, baseTitle: String = cleanTitle(m.name)): String {
-    val raw = file.name.ifBlank { file.path.substringAfterLast('/') }
-    val cleaned = cleanCollectionFilmTitle(raw)
-    val rawBase = baseTitle.replace(COLLECTION_REGEX, " ")
-    val cleanBase = cleanTitle(rawBase.split('/').firstOrNull().orEmpty())
-    return when {
-        cleaned.isNotBlank() && cleanBase.isNotBlank() && !cleaned.contains(cleanBase, ignoreCase = true) ->
-            "$cleanBase: $cleaned"
-        cleaned.isNotBlank() -> cleaned
-        else -> cleanTitle(raw)
-    }
-}
-
-fun collectionFilePosterQueries(m: Magnet, file: MFile, baseTitle: String = cleanTitle(m.name)): List<String> {
-    val out = LinkedHashSet<String>()
-    val raw = file.name.ifBlank { file.path.substringAfterLast('/') }
-    val withoutExt = raw.replace(EXT, "")
-    val stripped = withoutExt.replace(TRACK_PREFIX, "").trim()
-    val year = Regex("""\b(19\d{2}|20\d{2})\b""").find(withoutExt)?.groupValues?.get(1)
-        ?: Regex("""\b(19\d{2}|20\d{2})\b""").find(file.path)?.groupValues?.get(1)
-    val cleaned = cleanTitle(stripped.ifBlank { withoutExt })
-
-    val parts = cleaned.split('/').map { it.trim() }.filter { it.isNotBlank() }
-    val candidates = if (parts.isNotEmpty()) parts else listOf(cleaned)
-
-    for (c in candidates) {
-        if (year != null) out += "$c ($year)"
-        out += c
-    }
-
-    val rawBase = baseTitle.replace(COLLECTION_REGEX, " ")
-    val cleanBases = rawBase.split('/').map { cleanTitle(it) }.filter { it.length >= 2 }
-
-    for (cb in cleanBases) {
-        for (c in candidates) {
-            if (!c.contains(cb, ignoreCase = true)) {
-                if (year != null) out += "$cb: $c ($year)"
-                out += "$cb: $c"
-                if (year != null) out += "$cb $c ($year)"
-                out += "$cb $c"
-            }
-        }
-    }
-
-    // Franchise fallbacks (with year if known)
-    for (cb in cleanBases) {
-        if (year != null) out += "$cb ($year)"
-        out += cb
-    }
-
-    out += cleanTitle(m.name)
-    return out.toList()
-}
-
-fun continueItemPosterQueries(item: LibraryItem, file: MFile): List<String> {
-    if (isCollection(item.playable, item.m)) {
-        return collectionFilePosterQueries(item.m, file, item.baseTitle)
-    }
-    return item.posterQueries
-}
-
-fun continueItemTitle(item: LibraryItem, file: MFile): String {
-    if (isCollection(item.playable, item.m)) {
-        return collectionFileTitle(item.m, file, item.baseTitle)
-    }
-    return item.baseTitle
-}
+private fun isCollection(p: Playable) = p is Playable.Series && p.seasons.firstOrNull()?.items?.firstOrNull()?.title != null
 
 /**
  * The kind and season the owner accepted from the AI (server services/aititle.js) over what the files say:
@@ -330,7 +209,7 @@ fun applyAiTitle(p: Playable, m: Magnet): Playable {
         }
         "collection" -> if ((p is Playable.Movie || (p is Playable.Series && !isCollection(p))) && main.size >= 2) {
             out = Playable.Series(listOf(Season(1, sorted().mapIndexed { i, f ->
-                Episode(1, i + 1, f, cleanCollectionFilmTitle(basename(f.path)).ifBlank { "Фильм ${i + 1}" })
+                Episode(1, i + 1, f, cleanTitle(basename(f.path)).ifBlank { "Фильм ${i + 1}" })
             })))
         }
     }
@@ -396,7 +275,6 @@ private fun numberedEpisodesOf(m: Magnet, vids: List<MFile>): Playable.Series? {
         val sizes = main.map { it.size }
         val similar = sizes.max() <= sizes.min() * 2
         val looksLikeSeason = main.size >= 5 && consecutive && similar
-        if (COLLECTION_REGEX.containsMatchIn(m.name) && !SERIES_HINT.containsMatchIn(m.name)) continue
         if (!SERIES_HINT.containsMatchIn(m.name) && !looksLikeSeason) continue
         val eps = main.mapIndexed { i, f -> Episode(1, nums[i], f) }.sortedBy { it.episode }
         return Playable.Series(listOf(Season(1, eps)))
@@ -415,7 +293,7 @@ private fun collectionOf(vids: List<MFile>): Playable.Series? {
     val films = main.filter { it.size >= 300L * 1024 * 1024 && it.size >= largest / 4 }
     if (films.size < 2) return null
     val sorted = films.sortedWith(compareBy(natural) { basename(it.path) })
-    val items = sorted.mapIndexed { i, f -> Episode(1, i + 1, f, cleanCollectionFilmTitle(basename(f.path)).ifBlank { "Фильм ${i + 1}" }) }
+    val items = sorted.mapIndexed { i, f -> Episode(1, i + 1, f, cleanTitle(basename(f.path)).ifBlank { "Фильм ${i + 1}" }) }
     return Playable.Series(listOf(Season(1, items)))
 }
 

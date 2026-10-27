@@ -555,7 +555,7 @@ class Library {
     }
 
     /** What the «Продолжить просмотр» banner shows besides the title: TMDB's wide picture, description, year, rating. */
-    class HeroInfo(val backdrop: ImageBitmap?, val overview: String?, val year: String?, val rating: Double?, val logo: ImageBitmap? = null, val title: String? = null)
+    class HeroInfo(val backdrop: ImageBitmap?, val overview: String?, val year: String?, val rating: Double?, val logo: ImageBitmap? = null)
     private val heroes = java.util.concurrent.ConcurrentHashMap<String, HeroInfo>()
 
     fun cachedHero(queries: List<String>): HeroInfo? = queries.firstNotNullOfOrNull { heroes[it.lowercase()] }
@@ -566,18 +566,14 @@ class Library {
         for (q in queries) {
             try {
                 val j = posterGate.withPermit { Api.get("/api/poster?hero=1&q=" + URLEncoder.encode(q, "UTF-8")) }
+                if (!j.has("backdrop") && !j.has("overview")) continue
                 val bd = j.optString("backdrop").takeIf { it.startsWith("/api/poster/img/") }
-                    ?: j.optString("poster").takeIf { it.startsWith("/api/poster/img/") }
                 val img = bd?.let { loadHeroImage(it) }
-                val ov = j.optString("overview").ifBlank { null }
-                val yr = j.optString("year").ifBlank { null }
-                val rt = j.optDouble("rating", 0.0).takeIf { it > 0 }
                 val logo = j.optString("logo").takeIf { it.startsWith("/api/poster/img/") }?.let { runCatching { loadHeroImage(it, 500) }.getOrNull() }
-                val title = j.optString("title").ifBlank { null }
-
-                if (img == null && ov == null && title == null && rt == null) continue
-
-                val info = HeroInfo(img, ov, yr, rt, logo, title)
+                val info = HeroInfo(
+                    img, j.optString("overview").ifBlank { null }, j.optString("year").ifBlank { null },
+                    j.optDouble("rating", 0.0).takeIf { it > 0 }, logo
+                )
                 heroes[q.lowercase()] = info
                 return info
             } catch (e: CancellationException) { throw e } catch (_: Exception) { }
