@@ -248,9 +248,12 @@ fun collectionFileTitle(m: Magnet, file: MFile, baseTitle: String = cleanTitle(m
     val cleaned = cleanCollectionFilmTitle(raw)
     val rawBase = baseTitle.replace(COLLECTION_REGEX, " ")
     val cleanBase = cleanTitle(rawBase.split('/').firstOrNull().orEmpty())
+    val coreBase = cleanBase.substringBefore(':')
+        .replace(Regex("""\b\d+\s*(?:фильм\w*|сери\w*|част\w*)\b""", RegexOption.IGNORE_CASE), "")
+        .trim()
     return when {
-        cleaned.isNotBlank() && cleanBase.isNotBlank() && !cleaned.contains(cleanBase, ignoreCase = true) ->
-            "$cleanBase: $cleaned"
+        cleaned.isNotBlank() && coreBase.isNotBlank() && !cleaned.contains(coreBase, ignoreCase = true) ->
+            "$coreBase: $cleaned"
         cleaned.isNotBlank() -> cleaned
         else -> cleanTitle(raw)
     }
@@ -330,7 +333,7 @@ fun applyAiTitle(p: Playable, m: Magnet): Playable {
         }
         "collection" -> if ((p is Playable.Movie || (p is Playable.Series && !isCollection(p))) && main.size >= 2) {
             out = Playable.Series(listOf(Season(1, sorted().mapIndexed { i, f ->
-                Episode(1, i + 1, f, cleanCollectionFilmTitle(basename(f.path)).ifBlank { "Фильм ${i + 1}" })
+                Episode(1, i + 1, f, cleanTitle(basename(f.path)).ifBlank { "Фильм ${i + 1}" })
             })))
         }
     }
@@ -415,7 +418,7 @@ private fun collectionOf(vids: List<MFile>): Playable.Series? {
     val films = main.filter { it.size >= 300L * 1024 * 1024 && it.size >= largest / 4 }
     if (films.size < 2) return null
     val sorted = films.sortedWith(compareBy(natural) { basename(it.path) })
-    val items = sorted.mapIndexed { i, f -> Episode(1, i + 1, f, cleanCollectionFilmTitle(basename(f.path)).ifBlank { "Фильм ${i + 1}" }) }
+    val items = sorted.mapIndexed { i, f -> Episode(1, i + 1, f, cleanTitle(basename(f.path)).ifBlank { "Фильм ${i + 1}" }) }
     return Playable.Series(listOf(Season(1, items)))
 }
 
