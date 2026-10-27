@@ -109,7 +109,13 @@ private fun VersionRow(v: LibraryItem, store: LibraryStore, inSection: Boolean, 
     val tags = store.tagsOf(v).filter { it == "Dolby Vision" || it == "HDR" }
     val specs = if (tags.isNotEmpty()) baseSpecs + " • " + tags.joinToString(" • ") else baseSpecs
 
+    val isColl = isCollection(v.playable, v.m)
     val heading = when {
+        isColl -> {
+            val count = (series?.seasons?.flatMap { it.items })?.size ?: 0
+            val type = collectionTypeLabel(count, v.m.name)
+            "$type • ${filmCountRu(count)} • $specs"
+        }
         series != null -> {
             val sRange = itemSeasons(v)
             val eps = series.seasons.sumOf { it.items.size }

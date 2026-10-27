@@ -606,4 +606,47 @@ class ModelTest {
         assertNull(none.original)
         assertNull(none.posterQuery)
     }
+
+    @Test
+    fun testCollectionDetectionAndPosterQueries() {
+        val f1 = MFile("Harry Potter and the Sorcerers Stone (2001).mkv", "Harry Potter and the Sorcerers Stone (2001).mkv", "file", 2_000_000_000L, "http://link1")
+        val f2 = MFile("Harry Potter and the Chamber of Secrets (2002).mkv", "Harry Potter and the Chamber of Secrets (2002).mkv", "file", 2_000_000_000L, "http://link2")
+        val f3 = MFile("Harry Potter and the Prisoner of Azkaban (2004).mkv", "Harry Potter and the Prisoner of Azkaban (2004).mkv", "file", 2_000_000_000L, "http://link3")
+        val magnet = Magnet(10, "Гарри Поттер: Трилогия / Harry Potter: Trilogy (2001-2004) BDRip", "", 4, 6_000_000_000L, 6_000_000_000L, listOf(f1, f2, f3), false)
+        val item = prepareItems(listOf(magnet)).single()
+
+        assertTrue(isCollection(item.playable, magnet))
+        assertEquals("Кинотрилогия", collectionTypeLabel(3, magnet.name))
+        assertEquals("3 фильма", filmCountRu(3))
+
+        val queries1 = collectionFilePosterQueries(magnet, f1, item.baseTitle)
+        assertTrue(queries1.contains("Harry Potter and the Sorcerers Stone (2001)"))
+        assertTrue(queries1.contains("Harry Potter and the Sorcerers Stone"))
+
+        val queriesItem = continueItemPosterQueries(item, f1)
+        assertEquals(queries1, queriesItem)
+
+        // Film with separate parts
+        val lotrFile = MFile("01. Братство кольца (2001).mkv", "01. Братство кольца (2001).mkv", "file", 2_000_000_000L, "http://link")
+        val lotrMagnet = Magnet(11, "Властелин колец: Трилогия (2001-2003)", "", 4, 6_000_000_000L, 6_000_000_000L, listOf(lotrFile), false)
+        val lotrQueries = collectionFilePosterQueries(lotrMagnet, lotrFile, "Властелин колец")
+        assertTrue(lotrQueries.contains("Братство кольца (2001)"))
+        assertTrue(lotrQueries.contains("Властелин колец: Братство кольца (2001)"))
+        assertEquals("Властелин колец: Братство кольца", collectionFileTitle(lotrMagnet, lotrFile, "Властелин колец"))
+
+        // Track prefix cleaning (e.g. "2 Гарри Поттер и Тайная комната") and collection title noise stripping
+        val hp2File = MFile("2 Гарри Поттер и Тайная комната.mkv", "2 Гарри Поттер и Тайная комната.mkv", "file", 2_000_000_000L, "http://link")
+        val hpMagnet = Magnet(12, "Гарри Поттер: Коллекция 8 фильмов / Harry Potter (2001-2011)", "", 4, 16_000_000_000L, 16_000_000_000L, listOf(hp2File), false)
+        val hpTitle = collectionFileTitle(hpMagnet, hp2File, hpMagnet.name)
+        assertEquals("Гарри Поттер и Тайная комната", hpTitle)
+        val hpQueries = collectionFilePosterQueries(hpMagnet, hp2File, hpMagnet.name)
+        assertTrue(hpQueries.contains("Гарри Поттер и Тайная комната"))
+        assertTrue(hpQueries.contains("Harry Potter"))
+
+        // cleanCollectionFilmTitle tests
+        assertEquals("Гарри Поттер и философский камень", cleanCollectionFilmTitle("1 Гарри Поттер и философский камень (2001).mkv"))
+        assertEquals("Гарри Поттер и философский камень", cleanCollectionFilmTitle("1. 1 Гарри Поттер и философский камень"))
+        assertEquals("Гарри Поттер и Тайная комната", cleanCollectionFilmTitle("Фильм 2 - Гарри Поттер и Тайная комната"))
+        assertEquals("300", cleanCollectionFilmTitle("300.mkv"))
+    }
 }
