@@ -94,7 +94,7 @@ router.post("/api/library/:id/ai-title/decision", requireLogin, apiLimiter, asyn
   if (typeof req.body?.accept !== "boolean") return res.status(400).json({ error: "Нужно поле accept: true или false." });
   const list = await ownMagnets(req, res, [req.params.id]);
   if (!list) return;
-  const r = aiTitle.decide(list[0].id, req.body.accept);
+  const r = aiTitle.decide(list[0], req.body.accept);
   if (!r) return res.status(404).json({ error: "Предложения ИИ для этой раздачи нет." });
   res.json({ aiTitle: r });
 });

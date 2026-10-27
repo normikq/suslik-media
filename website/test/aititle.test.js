@@ -308,3 +308,45 @@ test("aititle: a season the release does not mark («Show 2 - 01», «Show - 01�
   assert.equal(v(1, s1, ["a/Cyberpunk.Edgerunners.S01.Ep.01.mkv"]), 1);
   assert.equal(v(2, s1, ["a/Cyberpunk.Edgerunners.S01.Ep.01.mkv"]), null);
 });
+
+test("aititle: copies of one release (same name and files) share the answer and can each accept it", async () => {
+  reset();
+  const name = "Cyberpunk Edgerunners 2 [2160p WEB-DL DV HDR10]";
+  const files = [{ path: name + "/Cyberpunk Edgerunners 2 - 01 [2160p WEB-DL DV HDR10].mkv", type: "file" }];
+  const a = { id: 822412076, name, files };
+  const b = { id: 811488299, name, files };
+  replies.push(gemini({ base: "Киберпанк: Бегущие по краю", season: 1, kind: "series" }));
+  const r = await ai.suggestMany([a, b], "u_1", NOW);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(r.results.map(x => x.id), [a.id, b.id]);
+  // «Сериал 2 - 01»: сезон — число из названия, а не 1 от модели
+  assert.deepEqual(r.results.map(x => x.aiTitle.season), [2, 2]);
+  assert.equal(ai.resultFor(b.id).base, "Киберпанк: Бегущие по краю");
+  assert.equal(ai.decide(b, true).status, "accepted");
+  assert.equal(ai.decide(a, true).status, "accepted");
+});
+
+test("aititle: accept finds the answer by the release's key when the id was never linked", async () => {
+  reset();
+  replies.push(gemini({ base: "Тед Лассо", season: 2, kind: "series" }));
+  await ai.suggest(show, "u_1", NOW);
+  const copy = { ...show, id: 555 };
+  assert.equal(ai.resultFor(555), null);
+  assert.equal(ai.decide(555, true), null); // только id — не найти
+  assert.equal(ai.decide(copy, true).status, "accepted");
+  assert.equal(ai.resultFor(555).status, "accepted");
+});
+
+test("aititle: season from the number after the title only for a series without season marks", () => {
+  const v = (answer, name, paths) => ai.validate(answer, name, paths.map(p => ({ path: p, type: "file" }))).season;
+  const e2 = "Cyberpunk Edgerunners 2 [2160p WEB-DL DV HDR10]";
+  assert.equal(v({ base: "Киберпанк: Бегущие по краю", season: 1, kind: "series" }, e2, ["Cyberpunk Edgerunners 2 - 01.mkv"]), 2);
+  // число входит в название от ИИ — это часть названия, не сезон
+  assert.equal(v({ base: "Cyberpunk Edgerunners 2", season: 1, kind: "series" }, e2, ["Cyberpunk Edgerunners 2 - 01.mkv"]), 1);
+  // фильм — без сезона
+  assert.equal(v({ base: "Тачки", season: null, kind: "movie" }, "Тачки 2 (2011)", ["Cars.2.mkv"]), null);
+  // пометки есть — по ним
+  assert.equal(v({ base: "Show", season: 1, kind: "series" }, "Show 3 S01", ["Show.S01E01.mkv"]), 1);
+  // без числа в названии — как ответила модель
+  assert.equal(v({ base: "Киберпанк", season: 1, kind: "series" }, "Cyberpunk - Edgerunners [2022] [Multi-14]", ["Cyberpunk - Edgerunners - 01.mkv"]), 1);
+});

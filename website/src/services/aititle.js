@@ -28,9 +28,9 @@ const OWNER_RE = /^(?:[a-f0-9]{32}|u_\d{1,25})$/;
 const VIDEO_EXT = /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso|wmv|mpg|mpeg|vob)$/i;
 const STATUSES = new Set(["suggested", "accepted", "rejected", "none"]);
 const KINDS = new Set(["movie", "series", "collection"]);
-// Версия ответа: 2 — с типом раздачи (kind), 3 — сезон без пометок в раздаче («Show 2 - 01», «Show - 01»).
-// Ответ старой версии можно спросить заново (stale в ответе медиатеки).
-const VERSION = 3;
+// Версия ответа: 2 — с типом раздачи (kind), 3 — сезон без пометок в раздаче («Show 2 - 01», «Show - 01»),
+// 4 — сезон из числа после названия (seasonFromName). Ответ старой версии можно спросить заново (stale в медиатеке).
+const VERSION = 4;
 
 const PROMPT = [
   "Ты получаешь одну или несколько торрент-раздач: номер, название и пути видеофайлов. Для каждой раздачи верни объект:",
@@ -136,6 +136,19 @@ function seasonUnmarked(n, name, paths) {
   return nums.some(x => Number(x) === n);
 }
 
+/**
+ * Сериал без пометок сезона, у которого в названии раздачи после названия стоит отдельное число, а в названии от ИИ
+ * его нет («Cyberpunk Edgerunners 2 [2160p]» → «Киберпанк: Бегущие по краю»): это число и есть сезон. Модель так
+ * делает не всегда (27.10 — сезон 1 у «Edgerunners 2»). Одно такое число — сезон, иначе null (решает модель).
+ */
+function seasonFromName(base, name, paths) {
+  if ([name, ...paths].some(t => ANY_SEASON.test(t))) return null;
+  const inBase = new Set((String(base).match(/\d+/g) || []).map(Number));
+  const nums = (name.replace(/\[[^\]]*\]|\([^)]*\)/g, " ").replace(NOT_SEASON, " ").match(/(?<!\d)\d{1,2}(?!\d)/g) || [])
+    .map(Number).filter(n => n >= 2 && n <= 30 && !inBase.has(n));
+  return new Set(nums).size === 1 ? nums[0] : null;
+}
+
 function seasonMentioned(n, texts) {
   const S = "(?:season|сезон\\p{L}*)";
   const num = String(n);
@@ -178,6 +191,7 @@ function validate(answer, name, files) {
   else if (!seasonMentioned(season, [String(name), ...videoPaths(files)]) && !seasonUnmarked(season, String(name), videoPaths(files))) season = null;
   const kind = KINDS.has(answer.kind) ? answer.kind : null;
   if (kind === "movie" || kind === "collection") season = null;
+  if (kind === "series") season = seasonFromName(base, String(name), videoPaths(files)) ?? season;
   return { base, season, kind };
 }
 
@@ -291,10 +305,17 @@ async function suggestMany(magnets, owner, now = Date.now(), { noCooldown = fals
       todo.set(key, m);
     }
   }
-  const answer = cached => ({
-    results: [...out].filter(([, k]) => results.has(k)).map(([id, k]) => ({ id: Number(id), aiTitle: publicView(results.get(k)) })),
-    cached
-  });
+  const answer = cached => {
+    // Ответ привязывается ко всем раздачам запроса, и к копиям (тот же ключ: одинаковые название и файлы), которые
+    // в вызов не ушли: иначе «Принять» у копии не найдёт его (byId)
+    let linked = false;
+    for (const [id, k] of out) if (results.has(k) && byId.get(id) !== k) { byId.set(id, k); linked = true; }
+    if (linked) persist();
+    return {
+      results: [...out].filter(([, k]) => results.has(k)).map(([id, k]) => ({ id: Number(id), aiTitle: publicView(results.get(k)) })),
+      cached
+    };
+  };
   if (!todo.size) return answer(true);
   const jobKey = [...todo.keys()].sort().join(",");
   if (inflight.has(jobKey)) { await inflight.get(jobKey).catch(() => {}); return answer(true); }
@@ -356,8 +377,14 @@ async function suggest(m, owner, now = Date.now(), opts = {}) {
 }
 
 /** Владелец подтвердил или отклонил предложение. Возвращает новый результат или null (нечего решать). */
-function decide(id, accept) {
-  const key = byId.get(String(id));
+function decide(m, accept) {
+  const id = String(typeof m === "object" ? m.id : m);
+  // нет связи по id (копия раздачи, ответ получен до 27.10) — по ключу самой раздачи
+  let key = byId.get(id);
+  if (!results.has(key) && typeof m === "object" && m.name) {
+    key = keyOf(m.name, m.files);
+    if (results.has(key)) { byId.set(id, key); persist(); }
+  }
   const r = key && results.get(key);
   if (!r || r.status === "none") return null;
   const next = accept ? "accepted" : "rejected";
