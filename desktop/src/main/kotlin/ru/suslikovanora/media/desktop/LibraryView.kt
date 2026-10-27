@@ -905,7 +905,8 @@ private fun Tile(item: LibraryItem, lib: Library, versions: List<LibraryItem>, i
                 )
                 // «Определить через ИИ» (server services/aititle.js): все свои раздачи плитки (версии, сезоны) одним запросом;
                 // ответы — в окне, там же принять или отклонить
-                val aiAsk = group.map { it.m }.filter { it.canAiTitle && it.aiTitle == null }
+                // stale — ответ до появления типа раздачи: можно спросить ещё раз
+                val aiAsk = group.map { it.m }.filter { it.canAiTitle && (it.aiTitle == null || it.aiTitle?.stale == true) }
                 val aiKnown = group.map { it.m }.filter { it.aiTitle != null && (it.canAiTitle || it.aiTitle?.status == "suggested" || it.aiTitle?.accepted == true) }
                 if (aiAsk.isNotEmpty()) {
                     val left = lib.aiReadyAt - System.currentTimeMillis()

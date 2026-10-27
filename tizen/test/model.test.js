@@ -241,7 +241,7 @@ test('parseLibrary: aiTitle и canAiTitle; неизвестный статус �
     { id: 2, name: 'B', statusCode: 4, files: [], aiTitle: { base: 'X', season: null, status: 'weird' } },
     { id: 3, name: 'C', statusCode: 4, files: [] }
   ] });
-  assert.deepEqual(list[0].aiTitle, { base: 'Тед Лассо', season: 2, model: 'gemini-3.5-flash-lite', at: 5, status: 'suggested' });
+  assert.deepEqual(list[0].aiTitle, { base: 'Тед Лассо', season: 2, model: 'gemini-3.5-flash-lite', at: 5, status: 'suggested', kind: null, stale: false });
   assert.equal(list[0].canAiTitle, true);
   assert.equal(list[1].aiTitle, null);
   assert.equal(list[2].aiTitle, null);
@@ -268,4 +268,29 @@ test('prepareItems: принятое название ИИ — в названи
   assert.equal(acc.posterQueries[0], 'Как приручить лису');
   const sug = M.prepareItems([mag(files, { name: 'Kak.priruchit.lisu.S01.2025.WEB-DL.1080p', aiTitle: ai('suggested') })])[0];
   assert.notEqual(sug.baseTitle, 'Как приручить лису');
+});
+
+// ---- тип раздачи и сезон от ИИ (applyAiTitle в Model.kt) ----
+test('buildPlayable: принятые тип и сезон от ИИ', () => {
+  const ai = (kind, season, status = 'accepted') => ({ base: 'Show', season, kind, model: 'm', at: 1, status });
+  const films = [file(0, 'Show/Show A.mkv', 1500), file(1, 'Show/Show B.mkv', 1500), file(2, 'Show/Show C.mkv', 1500)];
+  // по файлам — сборник (нет номеров серий)
+  assert.ok(M.buildPlayable(mag(films, { name: 'Show' })).seasons[0].items[0].title);
+  const series = M.buildPlayable(mag(films, { name: 'Show', aiTitle: ai('series', 3) }));
+  assert.equal(series.kind, 'series');
+  assert.equal(series.seasons[0].season, 3);
+  assert.deepEqual(series.seasons[0].items.map((e) => [e.episode, e.title, e.file.path]), [[1, null, 'Show/Show A.mkv'], [2, null, 'Show/Show B.mkv'], [3, null, 'Show/Show C.mkv']]);
+  // предложенное, не принятое — без изменений
+  assert.ok(M.buildPlayable(mag(films, { name: 'Show', aiTitle: ai('series', 3, 'suggested') })).seasons[0].items[0].title);
+  // сериал по SxxEyy: сезон 1 → 2; сборник; фильм
+  const eps = [file(0, 'S/Show.S01E01.mkv', 500), file(1, 'S/Show.S01E02.mkv', 500)];
+  const relabeled = M.buildPlayable(mag(eps, { name: 'Show', aiTitle: ai(null, 2) }));
+  assert.deepEqual([relabeled.seasons[0].season, relabeled.seasons[0].items[1].season, relabeled.seasons[0].items[1].episode], [2, 2, 2]);
+  assert.ok(M.buildPlayable(mag(eps, { name: 'Show', aiTitle: ai('collection', null) })).seasons[0].items[0].title);
+  const movie = M.buildPlayable(mag([file(0, 'Film.mkv', 4000), file(1, 'Film part2.mkv', 3900)], { name: 'Film', aiTitle: ai('movie', null) }));
+  assert.equal(movie.kind, 'movie');
+  assert.equal(movie.file.path, 'Film.mkv');
+  // два сезона по папкам — номер сезона от ИИ не трогает их
+  const two = [file(0, 'Season 1/a.mkv', 500), file(1, 'Season 2/b.mkv', 500)];
+  assert.deepEqual(M.buildPlayable(mag(two, { name: 'Show', aiTitle: ai('series', 5) })).seasons.map((s) => s.season), [1, 2]);
 });

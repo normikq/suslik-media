@@ -38,11 +38,20 @@ data class Magnet(
  * "rejected" or "none" (the answer failed the server's check). Only an accepted one is used for grouping; the regexes
  * stay the main way.
  */
-data class AiTitle(val base: String, val season: Int?, val model: String, val at: Long, val status: String) {
+data class AiTitle(
+    val base: String,
+    val season: Int?,
+    val model: String,
+    val at: Long,
+    val status: String,
+    val kind: String? = null, // "movie" | "series" | "collection": what the release is, applied once accepted
+    val stale: Boolean = false // answered before the server knew [kind]: may be asked again
+) {
     val accepted get() = status == "accepted" && base.isNotBlank()
 }
 
 private val AI_STATUSES = setOf("suggested", "accepted", "rejected", "none")
+private val AI_KINDS = setOf("movie", "series", "collection")
 
 fun parseAiTitle(a: JSONObject?): AiTitle? {
     if (a == null) return null
@@ -53,7 +62,9 @@ fun parseAiTitle(a: JSONObject?): AiTitle? {
         season = if (a.has("season") && !a.isNull("season")) a.optInt("season") else null,
         model = a.optString("model"),
         at = a.optLong("at", 0L),
-        status = status
+        status = status,
+        kind = a.optString("kind").takeIf { it in AI_KINDS },
+        stale = a.optBoolean("stale", false)
     )
 }
 
@@ -168,7 +179,43 @@ fun mainVideo(m: Magnet): MFile? {
     return (real.ifEmpty { vids }).maxByOrNull { it.size }
 }
 
-fun buildPlayable(m: Magnet): Playable {
+/** What to play: from the files, then the kind and season the owner accepted from the AI ([applyAiTitle]). */
+fun buildPlayable(m: Magnet): Playable = applyAiTitle(playableByFiles(m), m)
+
+private fun isCollection(p: Playable) = p is Playable.Series && p.seasons.firstOrNull()?.items?.firstOrNull()?.title != null
+
+/**
+ * The kind and season the owner accepted from the AI (server services/aititle.js) over what the files say:
+ * "series" — the videos in name order are the episodes of one season, "collection" — separate films, "movie" — the main
+ * file. The season is applied only when the release has one season (a show with season folders keeps its own numbers).
+ */
+fun applyAiTitle(p: Playable, m: Magnet): Playable {
+    val ai = m.aiTitle?.takeIf { it.accepted } ?: return p
+    val vids = m.files.filter { !it.isFolder && VIDEO_EXT.containsMatchIn(it.path) && !SAMPLE.containsMatchIn(it.path) }
+    val main = vids.filter { !EXTRAS.containsMatchIn(it.path) }.ifEmpty { vids }
+    val sorted = { main.sortedWith(compareBy(natural) { basename(it.path) }) }
+    var out = p
+    when (ai.kind) {
+        "movie" -> if (p is Playable.Series) mainVideo(m)?.let { out = Playable.Movie(it) }
+        "series" -> if ((p is Playable.Movie || isCollection(p)) && main.size >= 2) {
+            val s = ai.season?.takeIf { it > 0 } ?: 1
+            out = Playable.Series(listOf(Season(s, sorted().mapIndexed { i, f -> Episode(s, i + 1, f) })))
+        }
+        "collection" -> if ((p is Playable.Movie || (p is Playable.Series && !isCollection(p))) && main.size >= 2) {
+            out = Playable.Series(listOf(Season(1, sorted().mapIndexed { i, f ->
+                Episode(1, i + 1, f, cleanTitle(basename(f.path)).ifBlank { "Фильм ${i + 1}" })
+            })))
+        }
+    }
+    val s = ai.season
+    val one = (out as? Playable.Series)?.seasons?.singleOrNull()
+    if (s != null && s > 0 && one != null && !isCollection(out) && one.season != s) {
+        out = Playable.Series(listOf(Season(s, one.items.map { it.copy(season = s) })))
+    }
+    return out
+}
+
+private fun playableByFiles(m: Magnet): Playable {
     val vids = m.files.filter { !it.isFolder && VIDEO_EXT.containsMatchIn(it.path) && !SAMPLE.containsMatchIn(it.path) }
     // Directory structure first: many releases name episodes without SxxEyy.
     val bySeason = LinkedHashMap<Int, MutableList<MFile>>()
@@ -306,7 +353,7 @@ data class LibraryItem(
     fun withAiTitle(ai: AiTitle?): LibraryItem {
         val nm = m.copy(aiTitle = ai)
         val base = titleOf(nm)
-        return copy(m = nm, baseTitle = base, posterQueries = posterQueriesOf(nm, base))
+        return copy(m = nm, playable = buildPlayable(nm), baseTitle = base, posterQueries = posterQueriesOf(nm, base))
     }
 }
 

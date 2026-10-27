@@ -544,4 +544,49 @@ class ModelTest {
         assertEquals(cleanTitle(suggested.m.name), rejected.baseTitle)
         assertEquals(suggested.playable, rejected.playable)
     }
+
+    // AI kind and season over what the files say (applyAiTitle)
+    private fun aiFile(i: Int, path: String, mb: Long) = MFile(i, path.substringAfterLast('/'), path, false, mb * 1024 * 1024, "https://host/$i")
+    private fun aiMagnet(files: List<MFile>, kind: String?, season: Int?, status: String = "accepted") =
+        Magnet(1, "Show", "Ready", 4, 0, 0, files, true, aiTitle = AiTitle("Show", season, "m", 1, status, kind))
+
+    @Test
+    fun acceptedAiKindAndSeasonChangeWhatPlays() {
+        val films = listOf(aiFile(0, "Show/Show A.mkv", 1500), aiFile(1, "Show/Show B.mkv", 1500), aiFile(2, "Show/Show C.mkv", 1500))
+        // by the files a collection (no episode numbers)
+        assertNotNull((buildPlayable(aiMagnet(films, null, null, "none")) as Playable.Series).seasons[0].items[0].title)
+        val series = assertIs<Playable.Series>(buildPlayable(aiMagnet(films, "series", 3)))
+        assertEquals(3, series.seasons.single().season)
+        assertEquals(listOf(1, 2, 3), series.seasons[0].items.map { it.episode })
+        assertTrue(series.seasons[0].items.all { it.title == null && it.season == 3 })
+        // suggested only: unchanged
+        assertNotNull((buildPlayable(aiMagnet(films, "series", 3, "suggested")) as Playable.Series).seasons[0].items[0].title)
+
+        val eps = listOf(aiFile(0, "S/Show.S01E01.mkv", 500), aiFile(1, "S/Show.S01E02.mkv", 500))
+        val relabeled = assertIs<Playable.Series>(buildPlayable(aiMagnet(eps, null, 2)))
+        assertEquals(listOf(2, 2), relabeled.seasons.single().items.map { it.season })
+        assertNotNull((buildPlayable(aiMagnet(eps, "collection", null)) as Playable.Series).seasons[0].items[0].title)
+
+        val movie = assertIs<Playable.Movie>(buildPlayable(aiMagnet(listOf(aiFile(0, "Film.mkv", 4000), aiFile(1, "Film part2.mkv", 3900)), "movie", null)))
+        assertEquals("Film.mkv", movie.file.path)
+
+        // two seasons by folders keep their numbers
+        val two = listOf(aiFile(0, "Season 1/a.mkv", 500), aiFile(1, "Season 2/b.mkv", 500))
+        assertEquals(listOf(1, 2), (buildPlayable(aiMagnet(two, "series", 5)) as Playable.Series).seasons.map { it.season })
+
+        // «Принять» without reloading the library rebuilds what plays
+        val item = prepareItems(listOf(aiMagnet(films, "series", 3, "suggested"))).single()
+        assertNotNull((item.playable as Playable.Series).seasons[0].items[0].title)
+        val accepted = item.withAiTitle(item.m.aiTitle!!.copy(status = "accepted"))
+        assertEquals(3, (accepted.playable as Playable.Series).seasons.single().season)
+        assertNull((accepted.playable as Playable.Series).seasons[0].items[0].title)
+    }
+
+    @Test
+    fun parseAiTitleKindAndStale() {
+        val a = parseAiTitle(JSONObject("""{"base":"X","season":null,"kind":"collection","status":"suggested","stale":true}"""))!!
+        assertEquals("collection", a.kind)
+        assertTrue(a.stale)
+        assertNull(parseAiTitle(JSONObject("""{"base":"X","kind":"trilogy","status":"suggested"}"""))!!.kind)
+    }
 }

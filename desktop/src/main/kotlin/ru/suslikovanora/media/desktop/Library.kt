@@ -44,9 +44,12 @@ private const val POSTER_CAP = 100L shl 20
 private const val POSTER_UNUSED_DAYS = 7L
 
 /** Same behaviour as the Android LibraryStore, with files in %APPDATA%\SuslikMedia instead of SharedPreferences. */
-/** «Тачки 2» or «Тед Лассо», сезон 2 — how a title suggested by the AI is shown. */
-fun aiLabel(ai: AiTitle): String =
-    if (ai.season != null) tr("library.ai_sezon", "title" to "«${ai.base}»", "season" to ai.season) else "«${ai.base}»"
+/** «Тачки 2» · фильм or «Тед Лассо» · сериал, сезон 2 — how a title suggested by the AI is shown. */
+fun aiLabel(ai: AiTitle): String {
+    val kind = when (ai.kind) { "movie" -> tr("library.ai_tip_film"); "series" -> tr("library.ai_tip_serial"); "collection" -> tr("library.ai_tip_sbornik"); else -> null }
+    val title = "«${ai.base}»" + (kind?.let { " · $it" } ?: "")
+    return if (ai.season != null) tr("library.ai_sezon", "title" to title, "season" to ai.season) else title
+}
 
 class Library {
     private val snapshot = AppDir.file("library.json")

@@ -12,7 +12,8 @@
     if (!a || typeof a !== 'object' || ['suggested', 'accepted', 'rejected', 'none'].indexOf(a.status) < 0) return null;
     return {
       base: str(a.base).trim(), season: typeof a.season === 'number' && isFinite(a.season) ? Math.floor(a.season) : null,
-      model: str(a.model), at: num(a.at), status: a.status
+      model: str(a.model), at: num(a.at), status: a.status,
+      kind: ['movie', 'series', 'collection'].indexOf(a.kind) >= 0 ? a.kind : null, stale: a.stale === true
     };
   }
 
@@ -127,7 +128,49 @@
   }
 
   /** { kind: 'movie', file } | { kind: 'series', seasons: [{ season, items: [{ season, episode, file, title }] }] } | { kind: 'none' } */
-  function buildPlayable(m) {
+  /** Что играть: по файлам, затем тип и сезон, принятые от ИИ (buildPlayable / applyAiTitle в Model.kt). */
+  function buildPlayable(m) { return applyAiTitle(playableByFiles(m), m); }
+
+  function isCollection(p) {
+    return p.kind === 'series' && !!p.seasons[0] && !!p.seasons[0].items[0] && p.seasons[0].items[0].title != null;
+  }
+
+  /**
+   * Тип и сезон, принятые владельцем от ИИ (services/aititle.js), поверх разбора по файлам: «сериал» — видео по
+   * порядку имён серий одного сезона, «сборник» — отдельные фильмы, «фильм» — главный файл. Сезон — только если сезон
+   * в раздаче один (applyAiTitle в Model.kt).
+   */
+  function applyAiTitle(p, m) {
+    var ai = m.aiTitle;
+    if (!ai || ai.status !== 'accepted' || !ai.base) return p;
+    var vids = m.files.filter(function (f) { return isVideo(f) && !SAMPLE.test(f.path); });
+    var main = vids.filter(function (f) { return !EXTRAS.test(f.path); });
+    if (!main.length) main = vids;
+    var sorted = function () { return main.slice().sort(byNameNatural); };
+    var out = p;
+    if (ai.kind === 'movie' && p.kind === 'series') {
+      var mv = mainVideo(m);
+      if (mv) out = { kind: 'movie', file: mv };
+    } else if (ai.kind === 'series' && (p.kind === 'movie' || isCollection(p)) && main.length >= 2) {
+      var sn = ai.season > 0 ? ai.season : 1;
+      out = { kind: 'series', seasons: [{ season: sn, items: sorted().map(function (f, i) {
+        return { season: sn, episode: i + 1, file: f, title: null };
+      }) }] };
+    } else if (ai.kind === 'collection' && (p.kind === 'movie' || (p.kind === 'series' && !isCollection(p))) && main.length >= 2) {
+      out = { kind: 'series', seasons: [{ season: 1, items: sorted().map(function (f, i) {
+        return { season: 1, episode: i + 1, file: f, title: cleanTitle(basename(f.path)) || 'Фильм ' + (i + 1) };
+      }) }] };
+    }
+    var s = ai.season;
+    if (s > 0 && out.kind === 'series' && !isCollection(out) && out.seasons.length === 1 && out.seasons[0].season !== s) {
+      out = { kind: 'series', seasons: [{ season: s, items: out.seasons[0].items.map(function (e) {
+        return { season: s, episode: e.episode, file: e.file, title: e.title };
+      }) }] };
+    }
+    return out;
+  }
+
+  function playableByFiles(m) {
     var vids = m.files.filter(function (f) { return isVideo(f) && !SAMPLE.test(f.path); });
     // Сначала структура папок: многие раздачи называют серии без SxxEyy.
     var bySeason = {}, order = [];
