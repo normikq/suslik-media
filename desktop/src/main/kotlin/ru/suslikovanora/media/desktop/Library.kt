@@ -44,6 +44,15 @@ private const val POSTER_CAP = 100L shl 20
 private const val POSTER_UNUSED_DAYS = 7L
 
 /** Same behaviour as the Android LibraryStore, with files in %APPDATA%\SuslikMedia instead of SharedPreferences. */
+/** «Тачки 2» · фильм or «Тед Лассо» · сериал, сезон 2 — how a title suggested by the AI is shown. */
+fun aiLabel(ai: AiTitle): String {
+    val kind = when (ai.kind) { "movie" -> tr("library.ai_tip_film"); "series" -> tr("library.ai_tip_serial"); "collection" -> tr("library.ai_tip_sbornik"); else -> null }
+    // оригинал и год — по ним ищется постер: «Дюна» (Dune, 2021) · фильм
+    val orig = listOfNotNull(ai.original?.takeIf { it != ai.base }, ai.year?.toString()).joinToString(", ")
+    val title = "«${ai.base}»" + (if (orig.isNotEmpty()) " ($orig)" else "") + (kind?.let { " · $it" } ?: "")
+    return if (ai.season != null) tr("library.ai_sezon", "title" to title, "season" to ai.season) else title
+}
+
 class Library {
     private val snapshot = AppDir.file("library.json")
     private val libraryEtag = Store.of("library_etag") // version of the list above, for "not modified" answers
@@ -60,6 +69,8 @@ class Library {
     var status by mutableStateOf(tr("library.nazhmite_obnovit_chtoby_zagruz"))
         private set
     var statusKind by mutableStateOf(StatusKind.Info)
+    /** When this user may ask the AI again (ms, 0 — now): from the library answer, or the server's 429. */
+    var aiReadyAt by mutableStateOf(0L)
         private set
     var authenticated by mutableStateOf<Boolean?>(null)
     var watchVersion by mutableStateOf(0)
@@ -183,6 +194,7 @@ class Library {
             }
             val json = res.json
             val list = withContext(Dispatchers.Default) { parseLibrary(json) }
+            aiReadyAt = aiTitleReadyAt(json)
             publish(list)
             cleanUp(items) // what films that left the library left behind (posters, progress, reserve…)
             withContext(Dispatchers.IO) { runCatching { snapshot.writeText(json.toString()) } }
@@ -261,6 +273,72 @@ class Library {
         return try {
             withContext(kotlinx.coroutines.NonCancellable) { Api.post(Shelf.PATH, Shelf.body(m.id, on)) }; null
         } catch (e: CancellationException) { throw e } catch (e: Exception) { items = before; Api.describe(e) }
+    }
+
+    // ---- «Определить через ИИ» (server services/aititle.js): the torrents of one tile in one call, then accept / reject ----
+    /** What the AI window shows: these torrents' answers, or just a [message] (cooldown, error). */
+    class AiPanel(val ids: List<Long>, val message: String? = null)
+    var aiPanel by mutableStateOf<AiPanel?>(null)
+    var aiBusy by mutableStateOf(false)
+
+    /** Several answers at once: one new list, one recomposition. */
+    private fun setAi(answers: Map<Long, AiTitle?>) {
+        if (answers.isEmpty()) return
+        items = items.map { if (it.m.id in answers) it.withAiTitle(answers[it.m.id]) else it }
+    }
+
+    suspend fun askAi(list: List<Magnet>) {
+        if (list.isEmpty() || aiBusy) return
+        aiBusy = true
+        status = tr("library.ai_sprashivaem"); statusKind = StatusKind.Info
+        try {
+            val r = Api.post("/api/library/ai-title", JSONObject().put("ids", org.json.JSONArray(list.map { it.id })))
+            aiReadyAt = r.optLong("aiTitleReadyAt", 0L) // у админа кулдауна нет: 0
+            val res = r.optJSONArray("results") ?: org.json.JSONArray()
+            val ids = ArrayList<Long>()
+            val answers = HashMap<Long, AiTitle?>()
+            for (i in 0 until res.length()) {
+                val o = res.optJSONObject(i) ?: continue
+                val id = o.optLong("id")
+                answers[id] = parseAiTitle(o.optJSONObject("aiTitle"))
+                ids += id
+            }
+            setAi(answers)
+            val found = items.count { it.m.id in ids && it.m.aiTitle?.status == "suggested" }
+            status = if (found > 0) tr("library.ai_gotovo") else tr("library.ai_ne_smog"); statusKind = StatusKind.Ok
+            aiPanel = AiPanel(ids, if (found == 0) tr("library.ai_ne_smog") else null)
+        } catch (e: CancellationException) { throw e } catch (e: Exception) {
+            val body = (e as? Api.HttpError)?.takeIf { it.code == 429 }?.body
+            val sec = body?.optLong("retryAfterSec", 0L) ?: 0L
+            val msg = if (sec > 0 && body?.optString("reason") == "cooldown") {
+                aiReadyAt = System.currentTimeMillis() + sec * 1000
+                tr("library.ai_podozhdite", "min" to (sec + 59) / 60)
+            } else Api.describe(e)
+            status = msg; statusKind = StatusKind.Error
+            aiPanel = AiPanel(emptyList(), msg)
+        } finally { aiBusy = false }
+    }
+
+    /**
+     * id -> take the AI's title (true) or keep the regexes' one (false). Every torrent is saved even if one fails:
+     * stopping halfway split a tile (some versions renamed, some not). All changes land in one go at the end.
+     */
+    suspend fun saveAi(decisions: Map<Long, Boolean>) = withContext(kotlinx.coroutines.NonCancellable) {
+        // The window may close (and its scope end) while saving: all requests still go out, or the tile would be split.
+        val done = HashMap<Long, AiTitle?>()
+        var error: String? = null
+        for ((id, accept) in decisions) {
+            val cur = items.firstOrNull { it.m.id == id }?.m?.aiTitle ?: continue
+            if (cur.status == (if (accept) "accepted" else "rejected")) continue
+            try {
+                val r = Api.post("/api/library/$id/ai-title/decision", JSONObject().put("accept", accept))
+                done[id] = parseAiTitle(r.optJSONObject("aiTitle"))
+            } catch (e: Exception) {
+                error = Api.describe(e)
+            }
+        }
+        if (done.isNotEmpty()) items = items.map { if (it.m.id in done) it.withAiTitle(done[it.m.id]) else it }
+        if (error != null) { status = error; statusKind = StatusKind.Error }
     }
 
     suspend fun remove(m: Magnet): String? = try {

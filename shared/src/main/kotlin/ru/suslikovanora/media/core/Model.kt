@@ -23,13 +23,59 @@ data class Magnet(
     val files: List<MFile>,
     val canRemove: Boolean,
     val favorite: Boolean = false, // per device, shown first in the library
-    val mine: Boolean = false // in the owner's own list «Мои фильмы» (server: services/shelf.js)
+    val mine: Boolean = false, // in the owner's own list «Мои фильмы» (server: services/shelf.js)
+    val aiTitle: AiTitle? = null, // suggested by the server's AI (services/aititle.js)
+    val canAiTitle: Boolean = false // this user added the ready torrent (or is admin): may ask the AI and accept / reject
 ) {
     val ready get() = statusCode == 4
     val downloading get() = statusCode < 4
     val failed get() = statusCode >= 5
     val progress: Float get() = if (size > 0) (downloaded.toFloat() / size).coerceIn(0f, 1f) else 0f
 }
+
+/**
+ * Title and season the server's AI suggested for a torrent (services/aititle.js). [status]: "suggested", "accepted",
+ * "rejected" or "none" (the answer failed the server's check). Only an accepted one is used for grouping; the regexes
+ * stay the main way.
+ */
+data class AiTitle(
+    val base: String,
+    val season: Int?,
+    val model: String,
+    val at: Long,
+    val status: String,
+    val kind: String? = null, // "movie" | "series" | "collection": what the release is, applied once accepted
+    val stale: Boolean = false, // answered by an older server version: may be asked again
+    val original: String? = null, // original title (English when not in Latin letters) — for the TMDB poster
+    val year: Int? = null // the film's year / the show's first season
+) {
+    val accepted get() = status == "accepted" && base.isNotBlank()
+    /** «Dune (2021)»: the server picks the TMDB result of that year. Null without an original title. */
+    val posterQuery: String? get() = original?.takeIf { it.isNotBlank() }?.let { o -> if (year != null) "$o ($year)" else o }
+}
+
+private val AI_STATUSES = setOf("suggested", "accepted", "rejected", "none")
+private val AI_KINDS = setOf("movie", "series", "collection")
+
+fun parseAiTitle(a: JSONObject?): AiTitle? {
+    if (a == null) return null
+    val status = a.optString("status")
+    if (status !in AI_STATUSES) return null
+    return AiTitle(
+        base = a.optString("base").trim(),
+        season = if (a.has("season") && !a.isNull("season")) a.optInt("season") else null,
+        model = a.optString("model"),
+        at = a.optLong("at", 0L),
+        status = status,
+        kind = a.optString("kind").takeIf { it in AI_KINDS },
+        stale = a.optBoolean("stale", false),
+        original = a.optString("original").trim().takeIf { it.isNotEmpty() && !a.isNull("original") },
+        year = if (a.has("year") && !a.isNull("year")) a.optInt("year").takeIf { it in 1880..2100 } else null
+    )
+}
+
+/** When this user may ask the AI again (server ms, 0 — now): top-level `aiTitleReadyAt` of /api/library. */
+fun aiTitleReadyAt(json: JSONObject): Long = json.optLong("aiTitleReadyAt", 0L)
 
 fun parseLibrary(json: JSONObject): List<Magnet> {
     val arr = json.optJSONArray("magnets") ?: return emptyList()
@@ -59,7 +105,9 @@ fun parseLibrary(json: JSONObject): List<Magnet> {
             files = files,
             canRemove = m.optBoolean("canRemove", true),
             favorite = m.optBoolean("favorite", false),
-            mine = m.optBoolean("mine", false)
+            mine = m.optBoolean("mine", false),
+            aiTitle = parseAiTitle(m.optJSONObject("aiTitle")),
+            canAiTitle = m.optBoolean("canAiTitle", false)
         )
     }
     return out
@@ -137,7 +185,43 @@ fun mainVideo(m: Magnet): MFile? {
     return (real.ifEmpty { vids }).maxByOrNull { it.size }
 }
 
-fun buildPlayable(m: Magnet): Playable {
+/** What to play: from the files, then the kind and season the owner accepted from the AI ([applyAiTitle]). */
+fun buildPlayable(m: Magnet): Playable = applyAiTitle(playableByFiles(m), m)
+
+private fun isCollection(p: Playable) = p is Playable.Series && p.seasons.firstOrNull()?.items?.firstOrNull()?.title != null
+
+/**
+ * The kind and season the owner accepted from the AI (server services/aititle.js) over what the files say:
+ * "series" — the videos in name order are the episodes of one season, "collection" — separate films, "movie" — the main
+ * file. The season is applied only when the release has one season (a show with season folders keeps its own numbers).
+ */
+fun applyAiTitle(p: Playable, m: Magnet): Playable {
+    val ai = m.aiTitle?.takeIf { it.accepted } ?: return p
+    val vids = m.files.filter { !it.isFolder && VIDEO_EXT.containsMatchIn(it.path) && !SAMPLE.containsMatchIn(it.path) }
+    val main = vids.filter { !EXTRAS.containsMatchIn(it.path) }.ifEmpty { vids }
+    val sorted = { main.sortedWith(compareBy(natural) { basename(it.path) }) }
+    var out = p
+    when (ai.kind) {
+        "movie" -> if (p is Playable.Series) mainVideo(m)?.let { out = Playable.Movie(it) }
+        "series" -> if ((p is Playable.Movie || isCollection(p)) && main.size >= 2) {
+            val s = ai.season?.takeIf { it > 0 } ?: 1
+            out = Playable.Series(listOf(Season(s, sorted().mapIndexed { i, f -> Episode(s, i + 1, f) })))
+        }
+        "collection" -> if ((p is Playable.Movie || (p is Playable.Series && !isCollection(p))) && main.size >= 2) {
+            out = Playable.Series(listOf(Season(1, sorted().mapIndexed { i, f ->
+                Episode(1, i + 1, f, cleanTitle(basename(f.path)).ifBlank { "Фильм ${i + 1}" })
+            })))
+        }
+    }
+    val s = ai.season
+    val one = (out as? Playable.Series)?.seasons?.singleOrNull()
+    if (s != null && s > 0 && one != null && !isCollection(out) && one.season != s) {
+        out = Playable.Series(listOf(Season(s, one.items.map { it.copy(season = s) })))
+    }
+    return out
+}
+
+private fun playableByFiles(m: Magnet): Playable {
     val vids = m.files.filter { !it.isFolder && VIDEO_EXT.containsMatchIn(it.path) && !SAMPLE.containsMatchIn(it.path) }
     // Directory structure first: many releases name episodes without SxxEyy.
     val bySeason = LinkedHashMap<Int, MutableList<MFile>>()
@@ -270,17 +354,39 @@ data class LibraryItem(
     val baseTitle: String,
     val posterQueries: List<String>,
     val searchText: String
-)
+) {
+    /** Same item with the AI's answer changed (accepted / rejected): title and poster queries follow, the rest stays. */
+    fun withAiTitle(ai: AiTitle?): LibraryItem {
+        val nm = m.copy(aiTitle = ai)
+        val base = titleOf(nm)
+        return copy(m = nm, playable = buildPlayable(nm), baseTitle = base, posterQueries = posterQueriesOf(nm, base), searchText = searchTextOf(nm))
+    }
+}
+
+/** What the library search looks in: the release name, its files and, once accepted, the AI's title and original title. */
+private fun searchTextOf(m: Magnet): String {
+    val ai = m.aiTitle?.takeIf { it.accepted }
+    return (m.name + "\n" + m.files.joinToString("\n") { it.path } + (ai?.let { "\n" + it.base + "\n" + it.original.orEmpty() } ?: "")).lowercase()
+}
+
+/** The tile's title: the AI's one once the owner accepted it (services/aititle.js), otherwise the regexes'. */
+private fun titleOf(m: Magnet): String = m.aiTitle?.takeIf { it.accepted }?.base ?: cleanTitle(m.name)
+
+/** Poster lookups in order: the AI's original title with year when accepted («Dune (2021)»), the tile's title, the main file. */
+private fun posterQueriesOf(m: Magnet, base: String): List<String> {
+    val main = mainVideo(m)
+    val ai = m.aiTitle?.takeIf { it.accepted }?.posterQuery
+    return listOfNotNull(ai, base, main?.let { cleanTitle(it.name.ifBlank { it.path.substringAfterLast('/') }) }).distinct()
+}
 
 fun prepareItems(list: List<Magnet>): List<LibraryItem> = list.map { m ->
-    val base = cleanTitle(m.name)
-    val main = mainVideo(m)
+    val base = titleOf(m)
     LibraryItem(
         m = m,
         playable = buildPlayable(m),
         baseTitle = base,
-        posterQueries = listOfNotNull(base, main?.let { cleanTitle(it.name.ifBlank { it.path.substringAfterLast('/') }) }).distinct(),
-        searchText = (m.name + "\n" + m.files.joinToString("\n") { it.path }).lowercase()
+        posterQueries = posterQueriesOf(m, base),
+        searchText = searchTextOf(m)
     )
 }
 
@@ -300,31 +406,250 @@ fun seriesLine(p: Playable.Series): String {
 }
 
 private val YEAR_IN_NAME = Regex("""\b(19\d{2}|20\d{2})\b""")
+private val SEASON_RANGE_REGEX = Regex(
+    """(?:season|сезон)[s\p{L}]*[\s._-]*(\d{1,2})[\s._-]*[-–][\s._-]*(\d{1,2})|(\d{1,2})[\s._-]*[-–][\s._-]*(\d{1,2})[\s._-]*(?:season|сезон)[s\p{L}]*""",
+    IC
+)
+
+data class VersionSection(
+    val title: String?,
+    val items: List<LibraryItem>
+)
+
+/** Extracts the 4-digit release year (1900..2028) from text or file names. */
+fun extractYear(name: String): Int? {
+    val bracketed = Regex("""[\(\[\{](19\d\d|20[0-2]\d)[\)\]\}]""").find(name)
+    if (bracketed != null) return bracketed.groupValues[1].toInt()
+    val matches = Regex("""\b(19\d\d|20[0-2]\d)\b""").findAll(name)
+    for (m in matches) {
+        val y = m.groupValues[1].toInt()
+        if (y in 1900..2028) return y
+    }
+    return null
+}
+
+fun releaseYear(item: LibraryItem): Int? {
+    item.m.aiTitle?.takeIf { it.accepted }?.year?.let { return it }
+    extractYear(item.m.name)?.let { return it }
+    extractYear(item.baseTitle)?.let { return it }
+    return item.m.files.firstNotNullOfOrNull { extractYear(it.name.ifBlank { it.path }) }
+}
+
+private fun parseRoman(s: String): Int? = when (s.uppercase(Locale.ROOT)) {
+    "I" -> 1
+    "II" -> 2
+    "III" -> 3
+    "IV" -> 4
+    "V" -> 5
+    "VI" -> 6
+    "VII" -> 7
+    "VIII" -> 8
+    "IX" -> 9
+    "X" -> 10
+    else -> null
+}
+
+/** Explicit part or film number (e.g. Part 2, Часть 3, Фильм 1, Chapter 2). */
+fun itemPart(item: LibraryItem): Int? {
+    val text = item.m.name
+    val explicit = Regex(
+        """\b(?:часть|ч|фильм|film|part|pt|глава|chapter)\s*(\d+|[ivx]+)\b""",
+        IC
+    ).find(text)
+    if (explicit != null) {
+        val raw = explicit.groupValues[1]
+        raw.toIntOrNull()?.let { return it }
+        parseRoman(raw)?.let { return it }
+    }
+    val ord = Regex("""\b(\d+)\s*[-–]?\s*(?:я|ая|ья|ей)?\s*(?:часть|серия|фильм)\b""", IC).find(text)
+    if (ord != null) {
+        ord.groupValues[1].toIntOrNull()?.let { return it }
+    }
+    val roman = Regex("""\b([IVX]{1,4})\b""").findAll(text)
+    for (r in roman) {
+        val num = parseRoman(r.groupValues[1])
+        if (num != null && num in 1..10) return num
+    }
+    if (item.baseTitle.isNotBlank()) {
+        val afterBase = Regex("""(?i)\b${Regex.escape(item.baseTitle)}\s+(\d+)\b""").find(text)
+        if (afterBase != null) {
+            afterBase.groupValues[1].toIntOrNull()?.let { return it }
+        }
+    }
+    return null
+}
+
+/** Quality score: 4K (4), 1080p (3), 720p (2), SD (1), other (0). */
+fun qualityScore(name: String): Int {
+    val lower = name.lowercase(Locale.ROOT)
+    return when {
+        lower.contains("2160p") || lower.contains("4k") || lower.contains("3840") -> 4
+        lower.contains("1080p") || lower.contains("1080i") || lower.contains("1920") -> 3
+        lower.contains("720p") || lower.contains("1280") -> 2
+        lower.contains("480p") || lower.contains("576p") || lower.contains("dvd") -> 1
+        else -> 0
+    }
+}
+
+/** Seasons covered by this item: Pair(minSeason, maxSeason) or null if not a series. */
+fun itemSeasons(item: LibraryItem): Pair<Int, Int>? {
+    item.m.aiTitle?.takeIf { it.accepted }?.season?.let { return it to it }
+    val series = item.playable as? Playable.Series
+    if (series != null) {
+        val first = series.seasons.firstOrNull()?.items?.firstOrNull()
+        if (first?.title != null) return null // film collection (trilogy), not a TV series
+        val nums = series.seasons.map { it.season }
+        if (nums.isNotEmpty()) {
+            return (nums.minOrNull() ?: 1) to (nums.maxOrNull() ?: 1)
+        }
+    }
+    val rangeMatch = SEASON_RANGE_REGEX.find(item.m.name)
+    if (rangeMatch != null) {
+        val min = rangeMatch.groupValues[1].ifEmpty { rangeMatch.groupValues[3] }.toIntOrNull()
+        val max = rangeMatch.groupValues[2].ifEmpty { rangeMatch.groupValues[4] }.toIntOrNull()
+        if (min != null && max != null) return min to max
+    }
+    val singleMatch = ANY_SEASON.find(item.m.name) ?: SXXEYY.find(item.m.name)
+    if (singleMatch != null) {
+        val s = singleMatch.groupValues[1].toIntOrNull()
+        if (s != null) return s to s
+    }
+    val file = (item.playable as? Playable.Movie)?.file
+    if (file != null) {
+        seasonOf(file.path)?.let { return it to it }
+        parseEpisode(file.path)?.let { return it.first to it.first }
+    }
+    return null
+}
+
+/**
+ * Sorts versions intelligently:
+ * 1. For series: chronologically by season (Season 1 < Season 2 < Season 3; specials at the end).
+ * 2. For films/trilogies: chronologically by part number / release year (Part 1 < Part 2, 2001 < 2002 < 2003).
+ * 3. Within the same season or film: best quality first (4K > 1080p > 720p), then largest file size (higher bitrate).
+ */
+fun sortVersions(versions: List<LibraryItem>): List<LibraryItem> {
+    if (versions.size <= 1) return versions
+    val hasSeries = versions.any { itemSeasons(it) != null }
+    return versions.sortedWith(Comparator { a, b ->
+        if (hasSeries) {
+            val sa = itemSeasons(a)
+            val sb = itemSeasons(b)
+            if (sa != null && sb != null) {
+                val amin = if (sa.first == 0) Int.MAX_VALUE else sa.first
+                val bmin = if (sb.first == 0) Int.MAX_VALUE else sb.first
+                if (amin != bmin) return@Comparator amin.compareTo(bmin)
+                val aRange = sa.second - sa.first
+                val bRange = sb.second - sb.first
+                if (aRange != bRange) return@Comparator aRange.compareTo(bRange)
+            } else if (sa != null) {
+                return@Comparator -1
+            } else if (sb != null) {
+                return@Comparator 1
+            }
+        } else {
+            val pa = itemPart(a)
+            val pb = itemPart(b)
+            if (pa != null && pb != null && pa != pb) {
+                return@Comparator pa.compareTo(pb)
+            }
+            val ya = releaseYear(a)
+            val yb = releaseYear(b)
+            if (ya != null && yb != null && ya != yb) {
+                return@Comparator ya.compareTo(yb)
+            }
+            if (pa != null && pb == null) return@Comparator -1
+            if (pb != null && pa == null) return@Comparator 1
+            if (ya != null && yb == null) return@Comparator -1
+            if (yb != null && ya == null) return@Comparator 1
+        }
+        val qa = qualityScore(a.m.name)
+        val qb = qualityScore(b.m.name)
+        if (qa != qb) return@Comparator qb.compareTo(qa)
+        val sDiff = b.m.size.compareTo(a.m.size)
+        if (sDiff != 0) return@Comparator sDiff
+        a.m.name.compareTo(b.m.name)
+    })
+}
+
+/**
+ * Groups sorted versions into sections (e.g. "Сезон 1", "Сезон 2" or "2001 год", "2002 год").
+ * If all versions belong to the same single season or single film, returns a single section with [VersionSection.title] = null.
+ */
+fun versionSections(versions: List<LibraryItem>): List<VersionSection> {
+    val sorted = sortVersions(versions)
+    if (sorted.isEmpty()) return emptyList()
+    val hasSeries = sorted.any { itemSeasons(it) != null }
+
+    if (hasSeries) {
+        val seasonKeys = sorted.map { item ->
+            val s = itemSeasons(item)
+            when {
+                s == null -> "Дополнительно"
+                s.first == 0 -> "Спецвыпуски"
+                s.first == s.second -> "Сезон ${s.first}"
+                else -> "Сезоны ${s.first}–${s.second}"
+            }
+        }
+        val distinctKeys = seasonKeys.distinct()
+        if (distinctKeys.size <= 1) {
+            return listOf(VersionSection(null, sorted))
+        }
+        val groups = LinkedHashMap<String, MutableList<LibraryItem>>()
+        for (i in sorted.indices) {
+            groups.getOrPut(seasonKeys[i]) { ArrayList() }.add(sorted[i])
+        }
+        return groups.map { (key, items) -> VersionSection(key, items) }
+    } else {
+        val hasMultiYearOrPart = sorted.mapNotNull { releaseYear(it) }.distinct().size > 1 ||
+                sorted.mapNotNull { itemPart(it) }.distinct().size > 1
+        if (!hasMultiYearOrPart) {
+            return listOf(VersionSection(null, sorted))
+        }
+        val groups = LinkedHashMap<String, MutableList<LibraryItem>>()
+        for (item in sorted) {
+            val y = releaseYear(item)
+            val p = itemPart(item)
+            val key = when {
+                y != null && p != null -> "$y год · Часть $p"
+                y != null -> "$y год"
+                p != null -> "Часть $p"
+                else -> "Другая версия"
+            }
+            groups.getOrPut(key) { ArrayList() }.add(item)
+        }
+        return groups.map { (key, items) -> VersionSection(key, items) }
+    }
+}
+
+/** Title the tile is grouped by: the AI's one once the owner accepted it, otherwise the regexes' [LibraryItem.baseTitle]. */
+fun groupTitle(it: LibraryItem): String = it.m.aiTitle?.takeIf { a -> a.accepted }?.base ?: it.baseTitle // = baseTitle (prepareItems)
 
 /**
  * Same film or show added more than once (different releases: 720p / 1080p / 4K, other voice-overs, other titles,
  * other seasons of a show): one tile for all of them. Only ready items are merged. Films merge with films, series
  * (and collections) with series: by the same poster (when [posterOf] knows it), otherwise by the title without season
  * marks (a film also by year). The first one in the list order stays on screen; [Pair.second] maps its id to every
- * version (itself included).
+ * version (itself included), sorted intelligently.
  */
 fun groupVersions(list: List<LibraryItem>, posterOf: (LibraryItem) -> String? = { null }): Pair<List<LibraryItem>, Map<Long, List<LibraryItem>>> {
     val byKey = HashMap<String, MutableList<LibraryItem>>()
     val groups = ArrayList<MutableList<LibraryItem>>()
     val shown = ArrayList<LibraryItem>(list.size)
     for (it in list) {
-        if (it.playable is Playable.None || !it.m.ready || it.baseTitle.isBlank()) { shown += it; continue }
+        val base = groupTitle(it)
+        if (it.playable is Playable.None || !it.m.ready || base.isBlank()) { shown += it; continue }
         val kind = if (it.playable is Playable.Movie) "m" else "s"
         val keys = listOfNotNull(
             posterOf(it)?.let { p -> "$kind|poster|$p" },
-            if (kind == "m") "m|" + titleKey(it.baseTitle) + "|" + (YEAR_IN_NAME.find(it.m.name)?.value ?: "") else "s|" + titleKey(it.baseTitle)
+            if (kind == "m") "m|" + titleKey(base) + "|" + (it.m.aiTitle?.takeIf { a -> a.accepted }?.year?.toString() ?: YEAR_IN_NAME.find(it.m.name)?.value ?: "") else "s|" + titleKey(base)
         )
         val group = keys.firstNotNullOfOrNull { k -> byKey[k] }
         if (group == null) { val g = mutableListOf(it); groups += g; shown += it; keys.forEach { k -> byKey[k] = g } }
         else { group += it; keys.forEach { k -> byKey.putIfAbsent(k, group) } }
     }
     val versions = HashMap<Long, List<LibraryItem>>()
-    for (g in groups) if (g.size > 1) versions[g.first().m.id] = g
+    for (g in groups) if (g.size > 1) versions[g.first().m.id] = sortVersions(g)
     return shown to versions
 }
 

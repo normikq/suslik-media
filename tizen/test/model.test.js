@@ -233,3 +233,124 @@ test('groupVersions: сезоны и раздачи сериала — одна 
   assert.deepEqual(g.versions[3].map((i) => i.m.id), [3, 4]);
   assert.equal(g.versions[5], undefined);
 });
+
+// ---- название от ИИ (services/aititle.js; groupTitle в Model.kt) ----
+test('parseLibrary: aiTitle и canAiTitle; неизвестный статус отбрасывается', () => {
+  const list = M.parseLibrary({ magnets: [
+    { id: 1, name: 'A', statusCode: 4, files: [], canAiTitle: true, aiTitle: { base: ' Тед Лассо ', season: 2, source: 'ai', model: 'gemini-3.5-flash-lite', at: 5, status: 'suggested' } },
+    { id: 2, name: 'B', statusCode: 4, files: [], aiTitle: { base: 'X', season: null, status: 'weird' } },
+    { id: 3, name: 'C', statusCode: 4, files: [] }
+  ] });
+  assert.deepEqual(list[0].aiTitle, { base: 'Тед Лассо', season: 2, model: 'gemini-3.5-flash-lite', at: 5, status: 'suggested', kind: null, stale: false, original: null, year: null });
+  assert.equal(list[0].canAiTitle, true);
+  assert.equal(list[1].aiTitle, null);
+  assert.equal(list[2].aiTitle, null);
+  assert.equal(list[2].canAiTitle, false);
+});
+
+test('groupVersions: принятое название ИИ объединяет, предложенное — нет', () => {
+  const ai = (status) => ({ base: 'Тачки 2', season: null, model: 'm', at: 1, status });
+  const build = (status) => M.prepareItems([
+    mag([file(0, 'Cars.2.mkv', 4000)], { id: 1, name: 'Тачки 2 (2011) BDRip' }),
+    mag([file(0, 'Cars2.mkv', 2000)], { id: 2, name: 'Cars.Two.2011.720p', aiTitle: ai(status) })
+  ]);
+  assert.equal(M.groupTitle(build('accepted')[1]), 'Тачки 2');
+  assert.deepEqual(M.groupVersions(build('accepted')).versions[1].map((i) => i.m.id).sort(), [1, 2]);
+  assert.deepEqual(M.groupVersions(build('suggested')).shown.map((i) => i.m.id), [1, 2]);
+  assert.deepEqual(M.groupVersions(build('rejected')).shown.map((i) => i.m.id), [1, 2]);
+});
+
+test('prepareItems: принятое название ИИ — в названии плитки и первым запросом постера', () => {
+  const ai = (status) => ({ base: 'Как приручить лису', season: 1, model: 'm', at: 1, status });
+  const files = [file(0, 'Kak.priruchit.lisu.S01E01.mkv', 800), file(1, 'Kak.priruchit.lisu.S01E02.mkv', 800)];
+  const acc = M.prepareItems([mag(files, { name: 'Kak.priruchit.lisu.S01.2025.WEB-DL.1080p', aiTitle: ai('accepted') })])[0];
+  assert.equal(acc.baseTitle, 'Как приручить лису');
+  assert.equal(acc.posterQueries[0], 'Как приручить лису');
+  const sug = M.prepareItems([mag(files, { name: 'Kak.priruchit.lisu.S01.2025.WEB-DL.1080p', aiTitle: ai('suggested') })])[0];
+  assert.notEqual(sug.baseTitle, 'Как приручить лису');
+});
+
+// ---- тип раздачи и сезон от ИИ (applyAiTitle в Model.kt) ----
+test('buildPlayable: принятые тип и сезон от ИИ', () => {
+  const ai = (kind, season, status = 'accepted') => ({ base: 'Show', season, kind, model: 'm', at: 1, status });
+  const films = [file(0, 'Show/Show A.mkv', 1500), file(1, 'Show/Show B.mkv', 1500), file(2, 'Show/Show C.mkv', 1500)];
+  // по файлам — сборник (нет номеров серий)
+  assert.ok(M.buildPlayable(mag(films, { name: 'Show' })).seasons[0].items[0].title);
+  const series = M.buildPlayable(mag(films, { name: 'Show', aiTitle: ai('series', 3) }));
+  assert.equal(series.kind, 'series');
+  assert.equal(series.seasons[0].season, 3);
+  assert.deepEqual(series.seasons[0].items.map((e) => [e.episode, e.title, e.file.path]), [[1, null, 'Show/Show A.mkv'], [2, null, 'Show/Show B.mkv'], [3, null, 'Show/Show C.mkv']]);
+  // предложенное, не принятое — без изменений
+  assert.ok(M.buildPlayable(mag(films, { name: 'Show', aiTitle: ai('series', 3, 'suggested') })).seasons[0].items[0].title);
+  // сериал по SxxEyy: сезон 1 → 2; сборник; фильм
+  const eps = [file(0, 'S/Show.S01E01.mkv', 500), file(1, 'S/Show.S01E02.mkv', 500)];
+  const relabeled = M.buildPlayable(mag(eps, { name: 'Show', aiTitle: ai(null, 2) }));
+  assert.deepEqual([relabeled.seasons[0].season, relabeled.seasons[0].items[1].season, relabeled.seasons[0].items[1].episode], [2, 2, 2]);
+  assert.ok(M.buildPlayable(mag(eps, { name: 'Show', aiTitle: ai('collection', null) })).seasons[0].items[0].title);
+  const movie = M.buildPlayable(mag([file(0, 'Film.mkv', 4000), file(1, 'Film part2.mkv', 3900)], { name: 'Film', aiTitle: ai('movie', null) }));
+  assert.equal(movie.kind, 'movie');
+  assert.equal(movie.file.path, 'Film.mkv');
+  // два сезона по папкам — номер сезона от ИИ не трогает их
+  const two = [file(0, 'Season 1/a.mkv', 500), file(1, 'Season 2/b.mkv', 500)];
+  assert.deepEqual(M.buildPlayable(mag(two, { name: 'Show', aiTitle: ai('series', 5) })).seasons.map((s) => s.season), [1, 2]);
+});
+
+test('prepareItems: постер — сначала оригинал с годом от ИИ', () => {
+  const ai = { base: 'Дюна', season: null, kind: 'movie', original: 'Dune', year: 2021, model: 'm', at: 1, status: 'accepted' };
+  const it = M.prepareItems([mag([file(0, 'Dune.2021.mkv', 4000)], { name: 'Дюна (2021) BDRip', aiTitle: ai })])[0];
+  assert.deepEqual(it.posterQueries.slice(0, 2), ['Dune (2021)', 'Дюна']);
+  const sug = M.prepareItems([mag([file(0, 'Dune.2021.mkv', 4000)], { name: 'Дюна (2021) BDRip', aiTitle: Object.assign({}, ai, { status: 'suggested' }) })])[0];
+  assert.ok(sug.posterQueries.indexOf('Dune (2021)') < 0);
+  const parsed = M.parseLibrary({ magnets: [{ id: 1, name: 'A', statusCode: 4, files: [], aiTitle: { base: 'Дюна', original: ' Dune ', year: 2021, status: 'accepted' } }] })[0];
+  assert.equal(parsed.aiTitle.original, 'Dune');
+  assert.equal(parsed.aiTitle.year, 2021);
+});
+
+test('принятый ИИ: поиск находит его название, год ИИ склеивает фильмы без года в имени', () => {
+  const ai = { base: 'Дюна', season: null, model: 'm', at: 1, status: 'accepted', kind: 'movie', stale: false, original: 'Dune', year: 2021 };
+  const a = mag([file(0, 'Dune.2021.mkv', 4000)], { id: 1, name: 'Dune.2021.1080p', aiTitle: ai });
+  const b = mag([file(0, 'Dune.BDRip.mkv', 4000)], { id: 2, name: 'Dune.BDRip', aiTitle: ai });
+  const items = M.prepareItems([a, b]);
+  assert.ok(items[1].searchText.indexOf('дюна') >= 0 && items[1].searchText.indexOf('dune') >= 0);
+  const g = M.groupVersions(items);
+  assert.equal(g.shown.length, 1);
+  const sug = M.prepareItems([mag([file(0, 'Dune.BDRip.mkv', 4000)], { name: 'Dune.BDRip', aiTitle: Object.assign({}, ai, { status: 'suggested' }) })])[0];
+  assert.ok(sug.searchText.indexOf('дюна') < 0);
+});
+
+test('sortVersions и versionSections: сезоны и годы упорядочиваются хронологически', () => {
+  const ep = (s, e) => file(e, `Show/Season ${s}/E0${e}.mkv`, 500);
+  const series = M.prepareItems([
+    mag([ep(2, 1), ep(2, 2)], { id: 1, name: 'Cyberpunk Edgerunners 2 [2160p WEB-DL DV HDR10]', size: 26200 }),
+    mag([ep(1, 1), ep(1, 2)], { id: 2, name: 'Cyberpunk - Edgerunners [2022] [WEB-DL] [Dolby Vision] [1080p]', size: 26000 }),
+    mag([ep(2, 1), ep(2, 2)], { id: 3, name: 'Cyberpunk Edgerunners 2 [2160p WEB-DL DV HDR10]', size: 24800 }),
+    mag([ep(1, 1), ep(1, 2)], { id: 4, name: '[Deadmau- RAWS] Cyberpunk.Edgerunners.S01.x264.2022.BDRip.1080...', size: 16200 })
+  ]);
+  const sortedSeries = M.sortVersions(series);
+  assert.deepEqual(sortedSeries.map(i => i.m.id), [2, 4, 1, 3]);
+
+  const secSeries = M.versionSections(series);
+  assert.equal(secSeries.length, 2);
+  assert.equal(secSeries[0].title, 'Сезон 1');
+  assert.deepEqual(secSeries[0].items.map(i => i.m.id), [2, 4]);
+  assert.equal(secSeries[1].title, 'Сезон 2');
+  assert.deepEqual(secSeries[1].items.map(i => i.m.id), [1, 3]);
+
+  const trilogy = M.prepareItems([
+    mag([file(0, 'Movie3.mkv', 45000)], { id: 3, name: 'The Return of the King (2003) 4K' }),
+    mag([file(0, 'Movie1.mkv', 15000)], { id: 1, name: 'The Fellowship of the Ring (2001) 1080p' }),
+    mag([file(0, 'Movie2.mkv', 40000)], { id: 2, name: 'The Two Towers (2002) 4K' }),
+    mag([file(0, 'Movie1.mkv', 42000)], { id: 4, name: 'The Fellowship of the Ring (2001) 4K' })
+  ]);
+  const sortedTrilogy = M.sortVersions(trilogy);
+  assert.deepEqual(sortedTrilogy.map(i => i.m.id), [4, 1, 2, 3]);
+
+  const secTrilogy = M.versionSections(trilogy);
+  assert.equal(secTrilogy.length, 3);
+  assert.equal(secTrilogy[0].title, '2001 год');
+  assert.deepEqual(secTrilogy[0].items.map(i => i.m.id), [4, 1]);
+  assert.equal(secTrilogy[1].title, '2002 год');
+  assert.deepEqual(secTrilogy[1].items.map(i => i.m.id), [2]);
+  assert.equal(secTrilogy[2].title, '2003 год');
+  assert.deepEqual(secTrilogy[2].items.map(i => i.m.id), [3]);
+});
