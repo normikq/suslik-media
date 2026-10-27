@@ -305,3 +305,15 @@ test('prepareItems: постер — сначала оригинал с годо
   assert.equal(parsed.aiTitle.original, 'Dune');
   assert.equal(parsed.aiTitle.year, 2021);
 });
+
+test('принятый ИИ: поиск находит его название, год ИИ склеивает фильмы без года в имени', () => {
+  const ai = { base: 'Дюна', season: null, model: 'm', at: 1, status: 'accepted', kind: 'movie', stale: false, original: 'Dune', year: 2021 };
+  const a = mag([file(0, 'Dune.2021.mkv', 4000)], { id: 1, name: 'Dune.2021.1080p', aiTitle: ai });
+  const b = mag([file(0, 'Dune.BDRip.mkv', 4000)], { id: 2, name: 'Dune.BDRip', aiTitle: ai });
+  const items = M.prepareItems([a, b]);
+  assert.ok(items[1].searchText.indexOf('дюна') >= 0 && items[1].searchText.indexOf('dune') >= 0);
+  const g = M.groupVersions(items);
+  assert.equal(g.shown.length, 1);
+  const sug = M.prepareItems([mag([file(0, 'Dune.BDRip.mkv', 4000)], { name: 'Dune.BDRip', aiTitle: Object.assign({}, ai, { status: 'suggested' }) })])[0];
+  assert.ok(sug.searchText.indexOf('дюна') < 0);
+});

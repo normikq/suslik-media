@@ -359,8 +359,14 @@ data class LibraryItem(
     fun withAiTitle(ai: AiTitle?): LibraryItem {
         val nm = m.copy(aiTitle = ai)
         val base = titleOf(nm)
-        return copy(m = nm, playable = buildPlayable(nm), baseTitle = base, posterQueries = posterQueriesOf(nm, base))
+        return copy(m = nm, playable = buildPlayable(nm), baseTitle = base, posterQueries = posterQueriesOf(nm, base), searchText = searchTextOf(nm))
     }
+}
+
+/** What the library search looks in: the release name, its files and, once accepted, the AI's title and original title. */
+private fun searchTextOf(m: Magnet): String {
+    val ai = m.aiTitle?.takeIf { it.accepted }
+    return (m.name + "\n" + m.files.joinToString("\n") { it.path } + (ai?.let { "\n" + it.base + "\n" + it.original.orEmpty() } ?: "")).lowercase()
 }
 
 /** The tile's title: the AI's one once the owner accepted it (services/aititle.js), otherwise the regexes'. */
@@ -380,7 +386,7 @@ fun prepareItems(list: List<Magnet>): List<LibraryItem> = list.map { m ->
         playable = buildPlayable(m),
         baseTitle = base,
         posterQueries = posterQueriesOf(m, base),
-        searchText = (m.name + "\n" + m.files.joinToString("\n") { it.path }).lowercase()
+        searchText = searchTextOf(m)
     )
 }
 
@@ -421,7 +427,7 @@ fun groupVersions(list: List<LibraryItem>, posterOf: (LibraryItem) -> String? = 
         val kind = if (it.playable is Playable.Movie) "m" else "s"
         val keys = listOfNotNull(
             posterOf(it)?.let { p -> "$kind|poster|$p" },
-            if (kind == "m") "m|" + titleKey(base) + "|" + (YEAR_IN_NAME.find(it.m.name)?.value ?: "") else "s|" + titleKey(base)
+            if (kind == "m") "m|" + titleKey(base) + "|" + (it.m.aiTitle?.takeIf { a -> a.accepted }?.year?.toString() ?: YEAR_IN_NAME.find(it.m.name)?.value ?: "") else "s|" + titleKey(base)
         )
         val group = keys.firstNotNullOfOrNull { k -> byKey[k] }
         if (group == null) { val g = mutableListOf(it); groups += g; shown += it; keys.forEach { k -> byKey[k] = g } }

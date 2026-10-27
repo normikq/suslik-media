@@ -320,7 +320,9 @@
       var base = groupTitle(it);
       if (it.playable.kind === 'none' || !it.m.ready || !base.trim()) { shown.push(it); return; }
       var kind = it.playable.kind === 'movie' ? 'm' : 's';
-      var y = YEAR_IN_NAME.exec(it.m.name);
+      // год принятого ответа ИИ важнее года в имени раздачи (groupVersions в Model.kt)
+      var aiy = it.m.aiTitle && it.m.aiTitle.status === 'accepted' && it.m.aiTitle.base ? it.m.aiTitle.year : null;
+      var y = aiy ? [null, String(aiy)] : YEAR_IN_NAME.exec(it.m.name);
       var keys = [];
       var poster = posterOf ? posterOf(it) : null;
       if (poster) keys.push(kind + '|poster|' + poster);
@@ -384,7 +386,8 @@
       }
       return {
         m: m, playable: buildPlayable(m), baseTitle: base, posterQueries: queries,
-        searchText: (m.name + '\n' + m.files.map(function (f) { return f.path; }).join('\n')).toLowerCase()
+        searchText: (m.name + '\n' + m.files.map(function (f) { return f.path; }).join('\n') +
+          (ai && ai.status === 'accepted' && ai.base ? '\n' + ai.base + '\n' + (ai.original || '') : '')).toLowerCase()
       };
     });
   }

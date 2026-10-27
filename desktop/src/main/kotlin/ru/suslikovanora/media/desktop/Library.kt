@@ -281,8 +281,10 @@ class Library {
     var aiPanel by mutableStateOf<AiPanel?>(null)
     var aiBusy by mutableStateOf(false)
 
-    private fun setAi(id: Long, ai: AiTitle?) {
-        items = items.map { if (it.m.id == id) it.withAiTitle(ai) else it }
+    /** Several answers at once: one new list, one recomposition. */
+    private fun setAi(answers: Map<Long, AiTitle?>) {
+        if (answers.isEmpty()) return
+        items = items.map { if (it.m.id in answers) it.withAiTitle(answers[it.m.id]) else it }
     }
 
     suspend fun askAi(list: List<Magnet>) {
@@ -294,12 +296,14 @@ class Library {
             aiReadyAt = r.optLong("aiTitleReadyAt", 0L) // у админа кулдауна нет: 0
             val res = r.optJSONArray("results") ?: org.json.JSONArray()
             val ids = ArrayList<Long>()
+            val answers = HashMap<Long, AiTitle?>()
             for (i in 0 until res.length()) {
                 val o = res.optJSONObject(i) ?: continue
                 val id = o.optLong("id")
-                setAi(id, parseAiTitle(o.optJSONObject("aiTitle")))
+                answers[id] = parseAiTitle(o.optJSONObject("aiTitle"))
                 ids += id
             }
+            setAi(answers)
             val found = items.count { it.m.id in ids && it.m.aiTitle?.status == "suggested" }
             status = if (found > 0) tr("library.ai_gotovo") else tr("library.ai_ne_smog"); statusKind = StatusKind.Ok
             aiPanel = AiPanel(ids, if (found == 0) tr("library.ai_ne_smog") else null)
@@ -319,7 +323,8 @@ class Library {
      * id -> take the AI's title (true) or keep the regexes' one (false). Every torrent is saved even if one fails:
      * stopping halfway split a tile (some versions renamed, some not). All changes land in one go at the end.
      */
-    suspend fun saveAi(decisions: Map<Long, Boolean>) {
+    suspend fun saveAi(decisions: Map<Long, Boolean>) = withContext(kotlinx.coroutines.NonCancellable) {
+        // The window may close (and its scope end) while saving: all requests still go out, or the tile would be split.
         val done = HashMap<Long, AiTitle?>()
         var error: String? = null
         for ((id, accept) in decisions) {
@@ -328,7 +333,7 @@ class Library {
             try {
                 val r = Api.post("/api/library/$id/ai-title/decision", JSONObject().put("accept", accept))
                 done[id] = parseAiTitle(r.optJSONObject("aiTitle"))
-            } catch (e: CancellationException) { throw e } catch (e: Exception) {
+            } catch (e: Exception) {
                 error = Api.describe(e)
             }
         }

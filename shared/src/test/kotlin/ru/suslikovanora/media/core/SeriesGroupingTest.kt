@@ -51,3 +51,33 @@ class SeriesGroupingTest {
         assertEquals("Film 1", p.seasons.single().items.first().title)
     }
 }
+
+class AiTitleSearchGroupingTest {
+    private val MB = 1024L * 1024
+
+    private fun movie(id: Long, name: String, ai: AiTitle?) = Magnet(
+        id = id, name = name, status = "Ready", statusCode = 4, size = 4000 * MB, downloaded = 0,
+        files = listOf(MFile(0, "$name.mkv", "$name.mkv", false, 4000 * MB, "https://x/$id")),
+        canRemove = true, aiTitle = ai
+    )
+
+    private val accepted = AiTitle("Дюна", null, "m", 1L, "accepted", kind = "movie", original = "Dune", year = 2021)
+
+    @Test
+    fun searchSeesTheAcceptedTitleOnly() {
+        val item = prepareItems(listOf(movie(1, "Sousou.no.Frieren", accepted))).single()
+        kotlin.test.assertTrue("дюна" in item.searchText)
+        kotlin.test.assertTrue("dune" in item.searchText)
+        val suggested = prepareItems(listOf(movie(1, "Sousou.no.Frieren", accepted.copy(status = "suggested")))).single()
+        kotlin.test.assertFalse("дюна" in suggested.searchText)
+        kotlin.test.assertTrue("дюна" in suggested.withAiTitle(accepted).searchText)
+    }
+
+    @Test
+    fun aiYearJoinsReleasesWithoutYearInName() {
+        val items = prepareItems(listOf(movie(1, "Dune.2021.1080p", accepted), movie(2, "Dune.BDRip", accepted)))
+        val (shown, versions) = groupVersions(items)
+        assertEquals(1, shown.size)
+        assertEquals(2, versions.getValue(1L).size)
+    }
+}
