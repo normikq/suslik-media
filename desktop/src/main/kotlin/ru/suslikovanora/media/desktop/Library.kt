@@ -280,7 +280,7 @@ class Library {
         try {
             val r = Api.post("/api/library/${m.id}/ai-title")
             val ai = parseAiTitle(r.optJSONObject("aiTitle"))
-            if (!r.optBoolean("cached")) aiReadyAt = System.currentTimeMillis() + 15 * 60_000L // точное — со следующей медиатекой
+            aiReadyAt = r.optLong("aiTitleReadyAt", 0L) // у админа кулдауна нет: 0
             setAi(m.id, ai)
             if (ai == null || ai.status == "none") { status = tr("library.ai_ne_smog"); statusKind = StatusKind.Info }
             else { status = tr("library.ai_predlagaet", "title" to aiLabel(ai)); statusKind = StatusKind.Ok }
