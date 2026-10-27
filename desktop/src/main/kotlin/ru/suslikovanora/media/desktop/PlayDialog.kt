@@ -67,7 +67,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -121,13 +120,13 @@ private fun extractTrilogyFilmInfo(
 ): Pair<String, String> {
     val raw = ep.file.name.ifBlank { ep.file.path.substringAfterLast('/') }
     val year = Regex("""\b(19\d{2}|20\d{2})\b""").find(raw)?.groupValues?.get(1)
-    val cleaned = cleanCollectionFilmTitle(raw)
+    val cleaned = cleanTitle(raw)
     val partTitle = if (baseTitle.isNotBlank() && cleaned.startsWith(baseTitle, ignoreCase = true)) {
         cleaned.substring(baseTitle.length).trim(' ', '-', ':', '·', '.', '–')
     } else ""
     val title = when {
         partTitle.isNotBlank() -> partTitle
-        !ep.title.isNullOrBlank() -> cleanCollectionFilmTitle(ep.title!!)
+        !ep.title.isNullOrBlank() -> ep.title!!
         else -> cleaned.ifBlank { tr("library.film_p", "p" to index + 1) }
     }
 
@@ -564,7 +563,7 @@ private fun DetailStartRow(resumeAt: Long?, info: WatchInfo?, fromStart: Boolean
         ) { setFromStart(false) }
         DetailStartOption(
             tr("library.det_s_nachala"), tr("library.det_smotret_zanovo"), fromStart, Modifier.weight(1f).fillMaxHeight(),
-            progress = null, icon = { Text("↺", modifier = Modifier.rotate(-90f), color = Color.White, fontSize = 20.sp) }
+            progress = null, icon = { Text("↺", color = Color.White, fontSize = 20.sp) }
         ) { setFromStart(true) }
     }
 }

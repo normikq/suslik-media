@@ -172,36 +172,23 @@ private val CARTOON = Regex("""мульт(?!сериал)|анимаци|\bcarto
 
 fun isCartoon(item: LibraryItem): Boolean = CARTOON.containsMatchIn(item.m.name) || CARTOON.containsMatchIn(item.baseTitle) || Animation.of(item)
 
-fun itemCategory(item: LibraryItem): Category = when {
-    isAnime(item) -> Category.Anime
-    isCartoon(item) -> Category.Cartoons
-    isCollection(item.playable, item.m) -> Category.Movies
-    item.playable is Playable.Series -> Category.Series
-    item.playable is Playable.Movie -> Category.Movies
-    else -> Category.Other
+fun itemCategory(item: LibraryItem): Category {
+    if (isAnime(item)) return Category.Anime
+    if (isCartoon(item)) return Category.Cartoons
+    return when (item.playable) {
+        is Playable.Series -> Category.Series
+        is Playable.Movie -> Category.Movies
+        else -> Category.Other
+    }
 }
 
-fun itemTypeLabel(item: LibraryItem): String {
-    if (isCollection(item.playable, item.m)) {
-        val count = (item.playable as? Playable.Series)?.seasons?.flatMap { it.items }?.size ?: 0
-        return when (collectionTypeLabel(count, item.m.name)) {
-            "Кинотрилогия" -> tr("library.kinotrilogiya")
-            "Дилогия" -> tr("library.dilogiya")
-            "Кинотетралогия" -> tr("library.kinotetralogiya")
-            "Сборник" -> tr("library.sbornik")
-            "Антология" -> tr("library.antologiya")
-            "Коллекция" -> tr("library.kollektsiya")
-            else -> tr("library.kinofranshiza")
-        }
-    }
-    return when (itemCategory(item)) {
-        Category.Anime -> tr("library.anime")
-        Category.Cartoons -> tr("library.multfilm")
-        Category.Series -> tr("library.serial")
-        Category.Movies -> tr("library.film")
-        Category.Other -> tr("library.drugoe")
-        Category.All -> tr("library.video")
-    }
+fun itemTypeLabel(item: LibraryItem): String = when (itemCategory(item)) {
+    Category.Anime -> tr("library.anime")
+    Category.Cartoons -> tr("library.multfilm")
+    Category.Series -> tr("library.serial")
+    Category.Movies -> tr("library.film")
+    Category.Other -> tr("library.drugoe")
+    Category.All -> tr("library.video")
 }
 
 fun itemSpecs(item: LibraryItem, mediaStr: String?): Pair<String, String> {
@@ -248,8 +235,7 @@ data class ContinueEntry(
     val progress: Float,
     val pos: Long,
     val len: Long,
-    val at: Long,
-    val posterQueries: List<String> = item.posterQueries
+    val at: Long
 )
 
 private fun nextEpisode(p: Playable.Series, file: MFile): MFile? {
@@ -264,7 +250,6 @@ internal fun targetFor(item: LibraryItem, file: MFile): PlayTarget? {
     return when (val p = item.playable) {
         is Playable.Movie -> if (p.file.path == file.path) PlayTarget(m.id, p.file, baseTitle, emptyList(), subtitlesFor(m, p.file), externalAudioFor(m, p.file)) else null
         is Playable.Series -> {
-            val isColl = isCollection(p, m)
             for (s in p.seasons) {
                 val i = s.items.indexOfFirst { it.file.path == file.path }
                 if (i < 0) continue
@@ -273,13 +258,7 @@ internal fun targetFor(item: LibraryItem, file: MFile): PlayTarget? {
                 val season = s.items.map { it.file }
                 val sides = season.filter { it.path != e.file.path }.mapNotNull { f -> f.link?.let { it to (subtitlesFor(m, f) to externalAudioFor(m, f)) } }
                     .filter { (_, v) -> v.first.isNotEmpty() || v.second.isNotEmpty() }.toMap()
-                val label = if (isColl) {
-                    val fTitle = e.title?.takeIf { it.isNotBlank() } ?: collectionFileTitle(m, e.file, baseTitle)
-                    baseTitle + " • " + fTitle
-                } else {
-                    episodeLabel(baseTitle, s, e)
-                }
-                return PlayTarget(m.id, e.file, label, season, subtitlesFor(m, e.file), externalAudioFor(m, e.file), sides)
+                return PlayTarget(m.id, e.file, episodeLabel(baseTitle, s, e), season, subtitlesFor(m, e.file), externalAudioFor(m, e.file), sides)
             }
             null
         }
@@ -301,35 +280,16 @@ internal fun continueEntries(items: List<LibraryItem>, store: LibraryStore): Lis
     val (file, w) = store.lastWatched(item.m) ?: return@mapNotNull null
     if (System.currentTimeMillis() - w.at > 60L * 24 * 3600 * 1000) return@mapNotNull null
     if (store.continueHiddenAt(item.m.id) >= w.at) return@mapNotNull null
-    val isColl = isCollection(item.playable, item.m)
     if (!w.watched) {
         val t = targetFor(item, file) ?: return@mapNotNull null
-        val queries = continueItemPosterQueries(item, file)
-        val sub = if (isColl) {
-            val films = (item.playable as? Playable.Series)?.seasons?.flatMap { it.items } ?: emptyList()
-            val idx = films.indexOfFirst { it.file.path == file.path }
-            val filmTitle = collectionFileTitle(item.m, file, item.baseTitle)
-            if (films.size > 1 && idx >= 0) tr("library.film_p", "p" to (idx + 1)) + " · " + filmTitle else filmTitle
-        } else {
-            t.label.removePrefix(item.baseTitle).removePrefix(" · ").ifBlank { tr("library.film") }
-        }
-        ContinueEntry(item, t, sub, w.fraction, w.pos, w.len, w.at, queries)
+        val sub = t.label.removePrefix(item.baseTitle).removePrefix(" · ").ifBlank { tr("library.film") }
+        ContinueEntry(item, t, sub, w.fraction, w.pos, w.len, w.at)
     } else {
         val series = item.playable as? Playable.Series ?: return@mapNotNull null
         val next = nextEpisode(series, file) ?: return@mapNotNull null
         if (store.watchInfo(watchKey(item.m.id, next))?.watched == true) return@mapNotNull null
         val t = targetFor(item, next) ?: return@mapNotNull null
-        val queries = continueItemPosterQueries(item, next)
-        val sub = if (isColl) {
-            val films = series.seasons.flatMap { it.items }
-            val idx = films.indexOfFirst { it.file.path == next.path }
-            val filmTitle = collectionFileTitle(item.m, next, item.baseTitle)
-            val baseSub = if (films.size > 1 && idx >= 0) tr("library.film_p", "p" to (idx + 1)) + " · " + filmTitle else filmTitle
-            tr("library.dalshe") + baseSub
-        } else {
-            tr("library.dalshe") + t.label.removePrefix(item.baseTitle).removePrefix(" · ")
-        }
-        ContinueEntry(item, t, sub, 0f, 0L, 0L, w.at, queries)
+        ContinueEntry(item, t, tr("library.dalshe") + t.label.removePrefix(item.baseTitle).removePrefix(" · "), 0f, 0L, 0L, w.at)
     }
 }.sortedByDescending { it.at }
 
@@ -522,8 +482,8 @@ private fun ContinueCard(
     onClick: () -> Unit
 ) {
     val context = LocalContext.current
-    var poster by remember(e.item.m.id, e.target.file.path) { mutableStateOf(store.cachedPoster(e.posterQueries)) }
-    LaunchedEffect(e.item.m.id, e.target.file.path) { if (poster == null) poster = store.poster(e.posterQueries) }
+    var poster by remember(e.item.m.id) { mutableStateOf(store.cachedPoster(e.item.posterQueries)) }
+    LaunchedEffect(e.item.m.id) { if (poster == null) poster = store.poster(e.item.posterQueries) }
 
     Column(
         Modifier.width(170.dp).clip(RoundedCornerShape(14.dp))
@@ -1114,12 +1074,8 @@ private fun TileDetails(
         val lastNow = last
         if (m.ready && lastNow != null) {
             val (lf, lw) = lastNow
-            val isColl = isCollection(playable, m)
             val ep = series?.seasons?.firstNotNullOfOrNull { s ->
-                val idx = s.items.indexOfFirst { it.file.path == lf.path }
-                if (idx < 0) null
-                else if (isColl) tr("library.film_p", "p" to (idx + 1))
-                else (if (s.season == 0) tr("library.spec") else "S" + s.season.toString().padStart(2, '0')) + "E" + s.items[idx].episode.toString().padStart(2, '0')
+                s.items.firstOrNull { it.file.path == lf.path }?.let { e -> (if (s.season == 0) tr("library.spec") else "S" + s.season.toString().padStart(2, '0')) + "E" + e.episode.toString().padStart(2, '0') }
             }
             val text = when {
                 lw.watched && ep != null -> tr("library.prosmotreno_do_ep", "ep" to ep)

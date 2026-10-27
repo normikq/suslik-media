@@ -377,7 +377,7 @@ class LibraryStore(context: Context) {
 
     // ---- the TV banner «Продолжить просмотр»: wide picture, title logo, description, year, rating (from /api/poster) ----
     /** Urls are absolute (Coil loads them with the API's HTTP client). */
-    class HeroInfo(val backdrop: String?, val logo: String?, val overview: String?, val year: String?, val rating: Double?, val title: String? = null)
+    class HeroInfo(val backdrop: String?, val logo: String?, val overview: String?, val year: String?, val rating: Double?)
     private val heroes = java.util.concurrent.ConcurrentHashMap<String, HeroInfo>()
 
     fun cachedHero(queries: List<String>): HeroInfo? = queries.firstNotNullOfOrNull { heroes[it.lowercase()] }
@@ -389,15 +389,10 @@ class LibraryStore(context: Context) {
             try {
                 val j = posterGate.withPermit { Api.get("/api/poster?hero=1&q=" + URLEncoder.encode(q, "UTF-8")) }
                 if (j.has("animation")) recordAnimation(q.lowercase(), j)
+                if (!j.has("backdrop") && !j.has("overview")) continue
                 val abs = { k: String -> j.optString(k).takeIf { it.startsWith("/api/poster/img/") }?.let { Api.BASE + it } }
-                val bd = abs("backdrop") ?: abs("poster")
-                val ov = j.optString("overview").ifBlank { null }
-                val title = j.optString("title").ifBlank { null }
-                val rt = j.optDouble("rating", 0.0).takeIf { it > 0 }
-
-                if (bd == null && ov == null && title == null && rt == null) continue
-
-                val info = HeroInfo(bd, abs("logo"), ov, j.optString("year").ifBlank { null }, rt, title)
+                val info = HeroInfo(abs("backdrop"), abs("logo"), j.optString("overview").ifBlank { null }, j.optString("year").ifBlank { null },
+                    j.optDouble("rating", 0.0).takeIf { it > 0 })
                 heroes[q.lowercase()] = info
                 return info
             } catch (e: CancellationException) { throw e } catch (_: Exception) { }

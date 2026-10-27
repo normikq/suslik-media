@@ -113,29 +113,19 @@ fun PlaySheet(
 
     val item = store.items.firstOrNull { it.m.id == initial.magnetId }
     val series = item?.playable as? Playable.Series
-    val isColl = item != null && isCollection(item.playable, item.m)
-    val films = remember(series, isColl) {
-        if (isColl && series != null) series.seasons.flatMap { it.items } else emptyList()
-    }
-    val start = remember(initial, isColl, films) {
+    val start = remember(initial) {
         var si = 0; var ei = 0
-        if (isColl && films.isNotEmpty()) {
-            val k = films.indexOfFirst { it.file.path == initial.file.path }
-            if (k >= 0) ei = k
-        } else {
-            series?.seasons?.forEachIndexed { i, s ->
-                val k = s.items.indexOfFirst { it.file.path == initial.file.path }
-                if (k >= 0) { si = i; ei = k }
-            }
+        series?.seasons?.forEachIndexed { i, s ->
+            val k = s.items.indexOfFirst { it.file.path == initial.file.path }
+            if (k >= 0) { si = i; ei = k }
         }
         si to ei
     }
     var seasonIdx by remember(initial) { mutableStateOf(start.first) }
     var episodeIdx by remember(initial) { mutableStateOf(start.second) }
     // The episode picked in the sheet is the one that plays (the same target the tile would build for it)
-    val target = remember(initial, item?.m?.id, seasonIdx, episodeIdx, isColl) {
-        val e = if (isColl && films.isNotEmpty()) films.getOrNull(episodeIdx)
-                else series?.seasons?.getOrNull(seasonIdx)?.items?.getOrNull(episodeIdx)
+    val target = remember(initial, item?.m?.id, seasonIdx, episodeIdx) {
+        val e = series?.seasons?.getOrNull(seasonIdx)?.items?.getOrNull(episodeIdx)
         if (item != null && e != null) targetFor(item, e.file) ?: initial else initial
     }
 
@@ -155,15 +145,12 @@ fun PlaySheet(
     val info = remember(target, store.watchVersion) { store.watchInfo(watchKey(target.magnetId, target.file)) }
     var fromStart by remember(target) { mutableStateOf(false) }
 
-    val sheetQueries = remember(item, target.file.path, isColl) {
-        if (item != null && isColl) continueItemPosterQueries(item, target.file) else item?.posterQueries.orEmpty()
-    }
-    var poster by remember(initial.magnetId, target.file.path) { mutableStateOf(item?.let { store.cachedPoster(sheetQueries) }) }
-    var hero by remember(initial.magnetId, target.file.path) { mutableStateOf(item?.let { store.cachedHero(sheetQueries) }) }
-    LaunchedEffect(initial.magnetId, target.file.path) {
+    var poster by remember(initial.magnetId) { mutableStateOf(item?.let { store.cachedPoster(it.posterQueries) }) }
+    var hero by remember(initial.magnetId) { mutableStateOf(item?.let { store.cachedHero(it.posterQueries) }) }
+    LaunchedEffect(initial.magnetId) {
         if (item == null) return@LaunchedEffect
-        if (poster == null) poster = store.poster(sheetQueries)
-        if (hero == null) hero = store.hero(sheetQueries)
+        if (poster == null) poster = store.poster(item.posterQueries)
+        if (hero == null) hero = store.hero(item.posterQueries)
     }
 
     LaunchedEffect(target) {
@@ -243,9 +230,6 @@ fun PlaySheet(
                                 modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0x1AFFFFFF)).border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 3.dp))
                             (hero?.year ?: item?.let { itemYear(it) })?.let { chip(it) }
                             item?.let { chip(itemTypeLabel(it)) }
-                            if (isColl && films.isNotEmpty()) {
-                                chip(filmCountRu(films.size))
-                            }
                             info?.len?.takeIf { it > 0 }?.let { chip(durationText(it)) }
                             hero?.rating?.let { r -> Text("★ " + "%.1f".format(java.util.Locale.US, r), color = Color(0xFFFACC15), fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
                         }
@@ -295,29 +279,7 @@ fun PlaySheet(
                 }
             }
 
-            if (isColl && films.isNotEmpty()) {
-                val filmItems = films.mapIndexed { idx, ep ->
-                    val raw = ep.title?.takeIf { it.isNotBlank() } ?: collectionFileTitle(item!!.m, ep.file, item.baseTitle)
-                    val stripped = cleanCollectionFilmTitle(raw)
-                    val name = when {
-                        stripped.isNotBlank() && stripped != "${idx + 1}" -> stripped
-                        raw.isNotBlank() && raw != "${idx + 1}" -> raw
-                        else -> tr("library.film_p", "p" to idx + 1)
-                    }
-                    "${idx + 1}. $name" to { seasonIdx = 0; episodeIdx = idx }
-                }
-                val cf = films.getOrNull(episodeIdx) ?: films.first()
-                val currentRaw = cf.title?.takeIf { it.isNotBlank() } ?: (item?.let { collectionFileTitle(it.m, cf.file, it.baseTitle) } ?: "${episodeIdx + 1}")
-                val currentStripped = cleanCollectionFilmTitle(currentRaw)
-                val currentName = when {
-                    currentStripped.isNotBlank() && currentStripped != "${episodeIdx + 1}" -> currentStripped
-                    currentRaw.isNotBlank() && currentRaw != "${episodeIdx + 1}" -> currentRaw
-                    else -> tr("library.film_p", "p" to episodeIdx + 1)
-                }
-                Row(Modifier.fillMaxWidth().padding(top = 14.dp)) {
-                    SheetSelector(tr("library.film"), "${episodeIdx + 1}. $currentName", Modifier.fillMaxWidth(), filmItems)
-                }
-            } else if (series != null) {
+            if (series != null) {
                 val seasonItems = series.seasons.mapIndexed { idx, s ->
                     (if (s.season == 0) tr("library.spec_materialy") else tr("library.season_sezon", "season" to s.season)) to { seasonIdx = idx; episodeIdx = 0 }
                 }

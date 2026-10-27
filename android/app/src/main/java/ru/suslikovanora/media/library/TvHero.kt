@@ -82,9 +82,9 @@ fun TvContinueHero(all: List<ContinueEntry>, store: LibraryStore, onOpen: (PlayT
     var chosen by remember { mutableStateOf<Long?>(null) }
     var focused by remember { mutableStateOf(false) }
     val e = entries.firstOrNull { it.item.m.id == chosen } ?: entries.first()
-    val queries = e.posterQueries
-    var hero by remember(e.item.m.id, e.target.file.path) { mutableStateOf(store.cachedHero(queries)) }
-    LaunchedEffect(e.item.m.id, e.target.file.path) { if (hero == null) hero = store.hero(queries) }
+    val queries = e.item.posterQueries
+    var hero by remember(e.item.m.id) { mutableStateOf(store.cachedHero(queries)) }
+    LaunchedEffect(e.item.m.id) { if (hero == null) hero = store.hero(queries) }
 
     // The banners change by themselves, one after another (not while the remote is on the banner)
     LaunchedEffect(entries.map { it.item.m.id }, chosen, focused) {
@@ -121,20 +121,15 @@ fun TvContinueHero(all: List<ContinueEntry>, store: LibraryStore, onOpen: (PlayT
         ) {
             Column {
                 Text(tr("library.prodolzhit_prosmotr").uppercase(), color = Color(0xFF9AA3B8), fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 11.sp, letterSpacing = 1.6.sp)
-                val bannerTitle = if (isCollection(e.item.playable, e.item.m)) {
-                    hero?.title ?: continueItemTitle(e.item, e.target.file)
-                } else {
-                    e.item.baseTitle
-                }
                 val logo = hero?.logo
                 if (logo != null) {
                     AsyncImage(
                         model = ImageRequest.Builder(context).data(logo).memoryCacheKey(logo).build(), imageLoader = Posters.loader(context),
-                        contentDescription = bannerTitle, contentScale = ContentScale.Fit, alignment = Alignment.CenterStart,
+                        contentDescription = e.item.baseTitle, contentScale = ContentScale.Fit, alignment = Alignment.CenterStart,
                         modifier = Modifier.padding(top = 8.dp).height(56.dp).widthIn(max = 300.dp)
                     )
                 } else {
-                    Text(bannerTitle, color = Color.White, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = 28.sp, lineHeight = 32.sp,
+                    Text(e.item.baseTitle, color = Color.White, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = 28.sp, lineHeight = 32.sp,
                         maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
                 }
                 Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -142,13 +137,8 @@ fun TvContinueHero(all: List<ContinueEntry>, store: LibraryStore, onOpen: (PlayT
                         modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0x1AFFFFFF)).border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(8.dp)).padding(horizontal = 9.dp, vertical = 3.dp))
                     hero?.year?.let { chip(it) }
                     chip(itemTypeLabel(e.item))
-                    if (isCollection(e.item.playable, e.item.m)) {
-                        val filmCount = (e.item.playable as? Playable.Series)?.seasons?.flatMap { it.items }?.size ?: 0
-                        if (filmCount > 0) chip(filmCountRu(filmCount))
-                    } else {
-                        (e.item.playable as? Playable.Series)?.let { p ->
-                            chip(plural(p.seasons.size, tr("common.plural_sezon_1"), tr("common.plural_sezon_2"), tr("common.plural_sezon_5")) + " • " + plural(p.seasons.sumOf { it.items.size }, tr("common.plural_seriya_1"), tr("common.plural_seriya_2"), tr("common.plural_seriya_5")))
-                        }
+                    (e.item.playable as? Playable.Series)?.let { p ->
+                        chip(plural(p.seasons.size, tr("common.plural_sezon_1"), tr("common.plural_sezon_2"), tr("common.plural_sezon_5")) + " • " + plural(p.seasons.sumOf { it.items.size }, tr("common.plural_seriya_1"), tr("common.plural_seriya_2"), tr("common.plural_seriya_5")))
                     }
                     hero?.rating?.let { r -> Text("★ " + "%.1f".format(java.util.Locale.US, r), color = Color(0xFFFACC15), fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp) }
                 }
@@ -202,8 +192,8 @@ fun TvContinueHero(all: List<ContinueEntry>, store: LibraryStore, onOpen: (PlayT
 @Composable
 private fun HeroThumb(e: ContinueEntry, store: LibraryStore, selected: Boolean, onFocus: () -> Unit, onClick: () -> Unit) {
     val context = LocalContext.current
-    var poster by remember(e.item.m.id, e.target.file.path) { mutableStateOf(store.cachedPoster(e.posterQueries)) }
-    LaunchedEffect(e.item.m.id, e.target.file.path) { if (poster == null) poster = store.poster(e.posterQueries) }
+    var poster by remember(e.item.m.id) { mutableStateOf(store.cachedPoster(e.item.posterQueries)) }
+    LaunchedEffect(e.item.m.id) { if (poster == null) poster = store.poster(e.item.posterQueries) }
     Box(
         Modifier.width(78.dp).height(117.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFF222736))
             .border(if (selected) 2.dp else 1.dp, if (selected) Color(0xFF7DD3FC) else Color(0x26FFFFFF), RoundedCornerShape(10.dp))
@@ -225,7 +215,7 @@ private fun HeroThumb(e: ContinueEntry, store: LibraryStore, selected: Boolean, 
 suspend fun warmHero(store: LibraryStore, context: android.content.Context) {
     val loader = Posters.loader(context)
     for (e in continueEntries(store.items, store).take(CONTINUE_SHOWN)) {
-        val q = e.posterQueries
+        val q = e.item.posterQueries
         runCatching {
             store.poster(q)?.let { loader.enqueue(ImageRequest.Builder(context).data(it).memoryCacheKey(it).build()) }
             store.hero(q)?.let { h ->

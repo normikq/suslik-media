@@ -1548,24 +1548,6 @@ function parseEpisode(path){
 // Тип раздачи и сезон, которые владелец принял от ИИ (services/aititle.js; applyAiTitle в Model.kt), поверх разбора
 // по файлам: «сериал» — видео по порядку имён серий одного сезона, «сборник» — отдельные фильмы, «фильм» — главный файл;
 // сезон — только если сезон в раздаче один (сериал из нескольких сезонов по папкам он не трогает).
-const COLLECTION_REGEX=/(?:трилоги[яи]|дилоги[яи]|тетралоги[яи]|квадрологи[яи]|пенталоги[яи]|гексалоги[яи]|франшиз[аеы]|коллекци[яи]|антологи[яи]|саг[аеы]|киносаг[аеы]|сборник|боксет|boxset|box-set|trilogy|duology|dilogy|tetralogy|quadrilogy|anthology|collection|franchise|\b\d+\s*[-–—]\s*(?:в|in)\s*1\b|\bвсе\s+части\b|\bвсе\s+фильмы\b)/i;
-function isCollection(p,m){
-  if(m&&m.aiTitle&&m.aiTitle.status==="accepted"&&m.aiTitle.kind==="collection") return true;
-  if(!p||p.type!=="series") return false;
-  if(p.seasons&&p.seasons[0]&&p.seasons[0].items&&p.seasons[0].items[0]&&p.seasons[0].items[0].title!=null) return true;
-  if(m&&m.name&&COLLECTION_REGEX.test(m.name)) return true;
-  return false;
-}
-function collectionTypeLabel(filmCount, name) {
-  name = name || "";
-  if (/\b(трилоги[яи]|trilogy)\b/i.test(name) || filmCount === 3) return "Кинотрилогия";
-  if (/\b(дилоги[яи]|duology|dilogy)\b/i.test(name) || filmCount === 2) return "Дилогия";
-  if (/\b(квадрологи[яи]|тетралоги[яи]|quadrilogy|tetralogy)\b/i.test(name) || filmCount === 4) return "Кинотетралогия";
-  if (/\b(сборник)\b/i.test(name)) return "Сборник";
-  if (/\b(антологи[яи]|anthology)\b/i.test(name)) return "Антология";
-  if (/\b(коллекци[яи]|collection|boxset)\b/i.test(name)) return "Коллекция";
-  return "Кинофраншиза";
-}
 function buildPlaylist(magnet){ return applyAiTitle(buildPlaylistByFiles(magnet), magnet); }
 function applyAiTitle(pl, m){
   const ai=m&&m.aiTitle;
@@ -1575,16 +1557,17 @@ function applyAiTitle(pl, m){
   const vids=(m.files||[]).filter(f=>f.type!=="folder"&&VIDEO_EXT.test(f.path||"")&&!/(^|[\/._ -])sample([\/._ -]|$)/i.test(f.path||""));
   const noExtras=vids.filter(f=>!EXTRAS.test(f.path||"")), main=noExtras.length?noExtras:vids;
   const sorted=()=>main.slice().sort((a,b)=>basename(a.path).localeCompare(basename(b.path),undefined,{numeric:true,sensitivity:"base"}));
+  const isCollection=p=>p.type==="series"&&p.seasons[0]&&p.seasons[0].items[0]&&p.seasons[0].items[0].title!=null;
   let out=pl;
   if(ai.kind==="movie"&&pl.type==="series"){ const f=pickMainВидео(m); if(f) out={type:"movie",file:f}; }
-  else if(ai.kind==="series"&&(pl.type==="movie"||isCollection(pl,m))&&main.length>=2){
+  else if(ai.kind==="series"&&(pl.type==="movie"||isCollection(pl))&&main.length>=2){
     const s=ai.season>0?ai.season:1;
     out={type:"series",seasons:[{season:s,items:sorted().map((file,i)=>({season:s,episode:i+1,file}))}]};
-  } else if(ai.kind==="collection"&&(pl.type==="movie"||(pl.type==="series"&&!isCollection(pl,m)))&&main.length>=2){
+  } else if(ai.kind==="collection"&&(pl.type==="movie"||(pl.type==="series"&&!isCollection(pl)))&&main.length>=2){
     out={type:"series",seasons:[{season:1,items:sorted().map((file,i)=>({season:1,episode:i+1,file,title:escapeTitle(basename(file.path))||("Фильм "+(i+1))}))}]};
   }
   const s=ai.season;
-  if(s>0&&out.type==="series"&&!isCollection(out,m)&&out.seasons.length===1&&out.seasons[0].season!==s)
+  if(s>0&&out.type==="series"&&!isCollection(out)&&out.seasons.length===1&&out.seasons[0].season!==s)
     out={type:"series",seasons:[{season:s,items:out.seasons[0].items.map(e=>({...e,season:s}))}]};
   return out;
 }
@@ -1670,7 +1653,6 @@ function numberedEpisodesOf(magnet, vids){
     const consecutive=sorted.every((v,i)=>!i||v-sorted[i-1]===1);
     const sizes=main.map(f=>Number(f.size)||0);
     const similar=Math.max(...sizes)<=Math.min(...sizes)*2;
-    if(COLLECTION_REGEX.test(magnet.name||"")&&!SERIES_HINT.test(magnet.name||"")) continue;
     if(!SERIES_HINT.test(magnet.name||"")&&!(main.length>=5&&consecutive&&similar)) continue;
     const items=main.map((file,i)=>({season:1,episode:nums[i],file})).sort((a,b)=>a.episode-b.episode);
     return {type:"series",seasons:[{season:1,items}]};
@@ -2198,7 +2180,6 @@ function getItemCategory(m) {
   if (isAnime(m)) return "anime";
   if (isCartoon(m)) return "cartoon";
   const pl = buildPlaylist(m);
-  if (isCollection(pl, m)) return "movie";
   if (pl.type === "series") return "series";
   if (pl.file) return "movie";
   return "other";
@@ -2285,12 +2266,8 @@ function getItemSpecs(m) {
   else if (/\bav1\b/i.test(text)) codec = "AV1";
 
   const cat = getItemCategory(m);
-  const pl = buildPlaylist(m);
   let type = "";
-  if (isCollection(pl, m)) {
-    const eps = (pl.seasons && pl.seasons[0] && pl.seasons[0].items) ? pl.seasons[0].items.length : 0;
-    type = collectionTypeLabel(eps, m.name || "");
-  } else if (cat === "series") type = "Сериал";
+  if (cat === "series") type = "Сериал";
   else if (cat === "cartoon") type = "Мультфильм";
   else if (cat === "anime") type = "Аниме";
   else if (cat === "movie") type = "Фильм";
