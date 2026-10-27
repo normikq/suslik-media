@@ -313,19 +313,25 @@ class Library {
         } finally { aiBusy = false }
     }
 
-    /** id -> take the AI's title (true) or keep the regexes' one (false). */
+    /**
+     * id -> take the AI's title (true) or keep the regexes' one (false). Every torrent is saved even if one fails:
+     * stopping halfway split a tile (some versions renamed, some not). All changes land in one go at the end.
+     */
     suspend fun saveAi(decisions: Map<Long, Boolean>) {
+        val done = HashMap<Long, AiTitle?>()
+        var error: String? = null
         for ((id, accept) in decisions) {
             val cur = items.firstOrNull { it.m.id == id }?.m?.aiTitle ?: continue
             if (cur.status == (if (accept) "accepted" else "rejected")) continue
             try {
                 val r = Api.post("/api/library/$id/ai-title/decision", JSONObject().put("accept", accept))
-                setAi(id, parseAiTitle(r.optJSONObject("aiTitle")))
+                done[id] = parseAiTitle(r.optJSONObject("aiTitle"))
             } catch (e: CancellationException) { throw e } catch (e: Exception) {
-                status = Api.describe(e); statusKind = StatusKind.Error
-                return
+                error = Api.describe(e)
             }
         }
+        if (done.isNotEmpty()) items = items.map { if (it.m.id in done) it.withAiTitle(done[it.m.id]) else it }
+        if (error != null) { status = error; statusKind = StatusKind.Error }
     }
 
     suspend fun remove(m: Magnet): String? = try {
