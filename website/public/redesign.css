@@ -2377,6 +2377,11 @@ a.ps-watch { min-height: 52px; background: linear-gradient(135deg, #2563eb, #3b8
 .ps-btn[data-act="fav"].on svg { color: #ff6b8a; fill: #ff6b8a; }
 .ps-btn[data-act="mine"].on svg { color: #7fb2ff; fill: #7fb2ff; }
 .ps-btn[hidden] { display: none; }
+.ps-ai { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.ps-ai.hidden { display: none; }
+.ps-ai .ps-shelf { margin-top: 0; }
+.ps-ai-note { color: #c9d2e6; font: 500 14px system-ui; }
+.ps-btn:disabled { opacity: .55; cursor: default; }
 @media (max-width: 560px) { .ps-top { flex-direction: column; } .ps-poster { flex-basis: auto; width: 120px; height: 180px; } .ps-info { padding-right: 0; } .ps-shelf { flex-direction: column; } }
 
 .ps-pick { display: flex; gap: 12px; margin-top: 14px; }

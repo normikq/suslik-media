@@ -4,7 +4,8 @@ const fs = require("fs");
 const config = require("../config");
 const { makeJsonWriter } = require("../utils/json-writer");
 const { deviceId } = require("../middleware/auth");
-const { removeChecker } = require("./downloads");
+const { removeChecker, ownerChecker } = require("./downloads");
+const aiTitle = require("./aititle");
 const { shelfOf } = require("./shelf");
 
 // ---- Избранное -------------------------------------------------------------------------------
@@ -41,14 +42,26 @@ function withRemovable(data, req) {
   const fav = favoritesOf(req);
   const mine = shelfOf(req);
   const canRemove = removeChecker(req);
+  const ai = aiTitle.enabled();
+  const added = ai ? ownerChecker(req) : () => false;
+  const dev = deviceId(req, null);
   return {
     ...data,
-    magnets: (data.magnets || []).map(m => ({
-      ...m,
-      canRemove: canRemove(m.id, m.statusCode),
-      favorite: Boolean(fav && fav.has(String(m.id))),
-      mine: Boolean(mine && mine.has(String(m.id))) // в «Моих фильмах» (services/shelf.js)
-    }))
+    // Когда этот пользователь снова может спросить ИИ (мс эпохи, 0 — уже можно); постоянное значение не ломает ETag
+    aiTitleReadyAt: ai ? aiTitle.readyAt(dev) : 0,
+    magnets: (data.magnets || []).map(m => {
+      const suggested = aiTitle.resultFor(m.id);
+      return {
+        ...m,
+        canRemove: canRemove(m.id, m.statusCode),
+        favorite: Boolean(fav && fav.has(String(m.id))),
+        mine: Boolean(mine && mine.has(String(m.id))), // в «Моих фильмах» (services/shelf.js)
+        // «Определить через ИИ» (services/aititle.js): предложение и его статус. canAiTitle — этот пользователь добавил
+        // готовую раздачу (или админ): ему кнопка, пока aiTitle нет, и «Принять/Отклонить», когда он есть
+        ...(suggested ? { aiTitle: suggested } : {}),
+        canAiTitle: Boolean(ai && Number(m.statusCode) === 4 && added(m.id))
+      };
+    })
   };
 }
 

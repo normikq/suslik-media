@@ -8,6 +8,7 @@ const { treeCache, persistTreeCache } = require("./alldebrid");
 const { deleteOwner, releaseTrackedDownload } = require("./downloads");
 const { dropEverywhere } = require("./shelf");
 const { dropMagnet } = require("./sync");
+const aiTitle = require("./aititle");
 const customAudio = require("./custom-audio");
 
 // ---- Автоочистка библиотеки ------------------------------------------------------------------------
@@ -90,6 +91,7 @@ function forget(id) {
   dropEverywhere(key);
   dropMagnet(key);
   customAudio.dropMagnet(Number(key));
+  aiTitle.dropMagnet(key);
   if (usage.delete(key)) persistUsage();
   if (treeCache.delete(Number(id))) persistTreeCache();
 }
