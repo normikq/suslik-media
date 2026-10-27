@@ -33,8 +33,10 @@ const film = { id: 202, name: "Тачки 2 / Cars 2 (2011) BDRip 1080p", files:
 // Мок fetch: очередь ответов, все вызовы записываются
 let calls = [];
 let replies = [];
+// answer — один ответ ({ base, season }, станет n: 1) или массив { n, base, season }
 function gemini(answer, usage = { promptTokenCount: 120, candidatesTokenCount: 21, totalTokenCount: 141 }) {
-  return { status: 200, body: { candidates: [{ content: { parts: [{ text: JSON.stringify(answer) }] } }], usageMetadata: usage } };
+  const items = Array.isArray(answer) ? answer : [{ n: 1, ...answer }];
+  return { status: 200, body: { candidates: [{ content: { parts: [{ text: JSON.stringify({ items }) }] } }], usageMetadata: usage } };
 }
 globalThis.fetch = async (url, init) => {
   calls.push({ url, init, body: JSON.parse(init.body) });
@@ -68,15 +70,18 @@ test("aititle: season must be mentioned in the name or the paths", () => {
   assert.equal(ai.seasonMentioned(1, ["Show.S01E10.mkv"]), true);
 });
 
-test("aititle: validate keeps a good answer and drops a made-up one", () => {
+test("aititle: validate keeps the title, drops a season the release does not mention", () => {
   assert.deepEqual(ai.validate({ base: "Тед Лассо", season: 2 }, show.name, show.files), { base: "Тед Лассо", season: 2 });
   assert.deepEqual(ai.validate({ base: "Тачки 2", season: null }, film.name, film.files), { base: "Тачки 2", season: null });
-  // Сезона 3 нет ни в названии, ни в путях
-  assert.equal(ai.validate({ base: "Тед Лассо", season: 3 }, show.name, show.files), null);
-  // Ни одного слова из раздачи
-  assert.equal(ai.validate({ base: "Футбольный тренер", season: 2 }, show.name, show.files), null);
+  // Сезона 3 нет ни в названии, ни в путях: название остаётся, сезон — нет
+  assert.deepEqual(ai.validate({ base: "Тед Лассо", season: 3 }, show.name, show.files), { base: "Тед Лассо", season: null });
+  // Перевод и кириллица вместо транслита — можно: подтверждает владелец
+  assert.deepEqual(ai.validate({ base: "Киберпанк: Бегущие по краю", season: null }, "Cyberpunk - Edgerunners [2022]", []), { base: "Киберпанк: Бегущие по краю", season: null });
+  // Точки вместо пробелов
+  assert.deepEqual(ai.validate({ base: "Kak.priruchit.lisu", season: 1 }, "Kak.priruchit.lisu.S01.2025", []), { base: "Kak priruchit lisu", season: 1 });
+  assert.deepEqual(ai.validate({ base: "Тачки", season: 1.5 }, film.name, film.files), { base: "Тачки", season: null });
   assert.equal(ai.validate({ base: "", season: null }, film.name, film.files), null);
-  assert.equal(ai.validate({ base: "Тачки", season: 1.5 }, film.name, film.files), null);
+  assert.equal(ai.validate({ base: "x".repeat(201), season: null }, film.name, film.files), null);
   assert.equal(ai.validate(null, film.name, film.files), null);
 });
 
@@ -100,7 +105,7 @@ test("aititle: one call, the right request, then the stored answer", async () =>
   assert.ok(!c.url.includes("test-key"), "ключ не в адресе");
   assert.equal(c.body.generationConfig.temperature, 0);
   assert.equal(c.body.generationConfig.responseMimeType, "application/json");
-  assert.deepEqual(Object.keys(c.body.generationConfig.responseSchema.properties), ["base", "season"]);
+  assert.deepEqual(Object.keys(c.body.generationConfig.responseSchema.properties.items.items.properties), ["n", "base", "season"]);
   const text = c.body.contents[0].parts[0].text;
   assert.ok(text.includes(show.name) && text.includes("Ted.Lasso.S02E02.mkv") && !text.includes("sample") && !text.includes(".srt"));
 
@@ -174,9 +179,9 @@ test("aititle: other errors count, so a broken key is not hammered", async () =>
   assert.equal(ai.stats(NOW).today.calls, 1);
 });
 
-test("aititle: an answer that fails the check is stored as none and not asked again", async () => {
+test("aititle: no answer for a release is stored as none and not asked again", async () => {
   reset();
-  replies.push(gemini({ base: "Тед Лассо", season: 5 }));
+  replies.push(gemini([{ n: 7, base: "Чужой номер", season: null }]));
   const r = await ai.suggest(show, "u_1", NOW);
   assert.equal(r.aiTitle.status, "none");
   const again = await ai.suggest(show, "u_9", NOW);
@@ -207,7 +212,7 @@ test("aititle: two requests for one release at once make one call", async () => 
   replies.push(gemini({ base: "Тед Лассо", season: 2 }));
   const [a, b] = await Promise.all([ai.suggest(show, "u_1", NOW), ai.suggest(show, "u_1", NOW)]);
   assert.equal(calls.length, 1);
-  assert.deepEqual(a, b);
+  assert.deepEqual(a.aiTitle, b.aiTitle);
 });
 
 test("aititle: owner accepts or rejects, totals follow", async () => {
@@ -222,4 +227,40 @@ test("aititle: owner accepts or rejects, totals follow", async () => {
   assert.equal(ai.decide(12345, true), null);
   ai.dropMagnet(show.id);
   assert.equal(ai.resultFor(show.id), null);
+});
+
+test("aititle: versions of one tile go in one call, each gets its own season, one cooldown", async () => {
+  reset();
+  const s1 = { id: 11, name: "Тед Лассо [S01] 1080p", files: [{ path: "S1/Ted.Lasso.S01E01.mkv", type: "file" }] };
+  const s3 = { id: 13, name: "Ted Lasso Season 3 WEB-DL", files: [{ path: "S3/Ted.Lasso.S03E01.mkv", type: "file" }] };
+  replies.push(gemini([{ n: 1, base: "Тед Лассо", season: 2 }, { n: 2, base: "Тед Лассо", season: 1 }, { n: 3, base: "Тед Лассо", season: 3 }]));
+  const r = await ai.suggestMany([show, s1, s3], "u_1", NOW);
+  assert.equal(calls.length, 1);
+  assert.equal(r.cached, false);
+  assert.deepEqual(r.results.map(x => [x.id, x.aiTitle.base, x.aiTitle.season]), [[101, "Тед Лассо", 2], [11, "Тед Лассо", 1], [13, "Тед Лассо", 3]]);
+  const text = calls[0].body.contents[0].parts[0].text;
+  assert.ok(text.includes("Раздача 1") && text.includes("Раздача 3") && text.includes("Ted.Lasso.S03E01.mkv"));
+  assert.ok(ai.cooldownLeft("u_1", NOW + 1) > 0);
+  // Уже известные — без вызова и без кулдауна; новая версия плитки — только она
+  const s4 = { id: 14, name: "Ted Lasso S04", files: [{ path: "Ted.Lasso.S04E01.mkv", type: "file" }] };
+  replies.push(gemini([{ n: 1, base: "Тед Лассо", season: 4 }]));
+  const r2 = await ai.suggestMany([show, s1, s4], "u_1", NOW + 15 * MIN);
+  assert.equal(calls.length, 2);
+  assert.ok(calls[1].body.contents[0].parts[0].text.includes("Ted Lasso S04") && !calls[1].body.contents[0].parts[0].text.includes("Тед Лассо [S01]"));
+  assert.deepEqual(r2.results.map(x => x.aiTitle.season), [2, 1, 4]);
+  const r3 = await ai.suggestMany([show, s1], "u_1", NOW + 16 * MIN);
+  assert.equal(r3.cached, true);
+  assert.equal(calls.length, 2);
+});
+
+test("aititle: force asks again and replaces the stored answer", async () => {
+  reset();
+  replies.push(gemini({ base: "Kak.priruchit.lisu", season: null }));
+  await ai.suggest(show, "u_1", NOW, { noCooldown: true });
+  replies.push(gemini({ base: "Тед Лассо", season: 2 }));
+  const r = await ai.suggest(show, "u_1", NOW + 1, { noCooldown: true, force: true });
+  assert.equal(r.cached, false);
+  assert.equal(r.aiTitle.base, "Тед Лассо");
+  assert.equal(ai.resultFor(show.id).base, "Тед Лассо");
+  assert.equal(calls.length, 2);
 });

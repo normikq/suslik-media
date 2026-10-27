@@ -2381,6 +2381,8 @@ a.ps-watch { min-height: 52px; background: linear-gradient(135deg, #2563eb, #3b8
 .ps-ai.hidden { display: none; }
 .ps-ai .ps-shelf { margin-top: 0; }
 .ps-ai-note { color: #c9d2e6; font: 500 14px system-ui; }
+.ps-ai-row { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; border-top: 1px solid #1c2232; }
+.ps-ai-src { color: #8e96a8 !important; font-size: 12px !important; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ps-btn:disabled { opacity: .55; cursor: default; }
 @media (max-width: 560px) { .ps-top { flex-direction: column; } .ps-poster { flex-basis: auto; width: 120px; height: 180px; } .ps-info { padding-right: 0; } .ps-shelf { flex-direction: column; } }
 

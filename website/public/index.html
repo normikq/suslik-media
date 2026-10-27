@@ -396,7 +396,7 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
 <script>/* App 1.2+: native library and bottom bar */try{if(Number(window.__suslikApp||0)>=3)document.documentElement.classList.add("suslik-native");}catch(e){}
 /* Пока не ответил /api/session, страница скрыта: иначе на секунду мелькает форма входа у тех, кто уже вошёл (снимается в showApp; страховка — через 4 с) */
 try{document.documentElement.classList.add("auth-pending");setTimeout(function(){document.documentElement.classList.remove("auth-pending");},4000);}catch(e){}</script>
-<link rel="stylesheet" href="redesign.css?v=40">
+<link rel="stylesheet" href="redesign.css?v=41">
 <style>
 .sr-badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
 .sr-badges .rb { background: #1c2230; color: #c7d0e0; border: 1px solid #2e3850; border-radius: 6px; padding: 2px 8px; font-size: 12px; font-weight: 700; }
@@ -1649,11 +1649,12 @@ function numberedEpisodesOf(magnet, vids){
   return null;
 }
 const SEASON_NOISE=/(?<![\p{L}\p{N}])(?:\d{1,2}(?:\s*[-–]\s*\d{1,2})?\s*(?:сезон\p{L}*|season\p{L}*)|(?:сезон\p{L}*|season\p{L}*|серии|серия|series|episodes?)\s*\d{1,3}(?:\s*[-–]\s*\d{1,3})?|s\d{1,2}(?:\s*[-–]?\s*[se]\d{1,3})?|complete|полный|полностью|(?:сезон\p{L}*|season\p{L}*|серии|episodes))(?![\p{L}\p{N}])/giu;
-// Название для группировки: подтверждённое предложение ИИ (services/aititle.js), иначе по регуляркам
-function groupBaseOf(m){
+// Название плитки, постера и группировки: принятое предложение ИИ (services/aititle.js), иначе по регуляркам
+function displayTitle(m){
   const ai=m&&m.aiTitle;
-  return ai&&ai.status==="accepted"&&ai.base?ai.base:escapeTitle(m.name||"");
+  return ai&&ai.status==="accepted"&&ai.base?ai.base:escapeTitle((m&&m.name)||"");
 }
+const groupBaseOf=displayTitle;
 function titleKey(baseTitle){
   const plain=String(baseTitle||"").toLowerCase().replace(/ё/g,"е");
   const key=plain.replace(SEASON_NOISE," ").replace(/[^\p{L}\p{N}]+/gu," ").trim();
@@ -1786,40 +1787,61 @@ async function psToggle(s,kind){
   }catch(err){ showToast(err.message||"Не удалось сохранить",true); }
   psSyncShelf(s);
 }
-// «Определить через ИИ»: кнопка тому, кто добавил раздачу (canAiTitle), пока предложения нет; потом «Принять/Отклонить»
+// «Определить через ИИ» (services/aititle.js). Все раздачи плитки (версии и сезоны, слитые по названию) — одним
+// запросом: кнопка, пока у своих раздач плитки нет ответа; потом предложение по каждой — «Принять» / «Отклонить».
+let libraryVersionsOf=new Map(); // id первой раздачи плитки -> все её версии (из groupLibraryVersions)
+function psGroupOf(m){
+  if(!m) return [];
+  for(const g of libraryVersionsOf.values()) if(g.some(x=>x.id===m.id)) return g;
+  return [m];
+}
+const aiWhat=a=>"«"+a.base+"»"+(a.season!=null?", сезон "+a.season:"");
 function psSyncAi(s){
-  const box=s.querySelector(".ps-ai"), m=s._magnet, ai=m&&m.aiTitle;
+  const box=s.querySelector(".ps-ai"), m=s._magnet;
   box.replaceChildren();
+  const group=psGroupOf(m).map(x=>cachedLibrary.find(y=>y.id===x.id)||x);
   const btn=(text,fn,cls)=>{const b=document.createElement("button");b.type="button";b.className="ps-btn"+(cls?" "+cls:"");b.textContent=text;b.addEventListener("click",fn);return b;};
-  const note=t=>{const p=document.createElement("div");p.className="ps-ai-note";p.textContent=t;return p;};
-  const what=a=>"«"+a.base+"»"+(a.season!=null?", сезон "+a.season:"");
-  if(!m||(!ai&&!m.canAiTitle)){box.classList.add("hidden");return;}
+  const note=(t,cls)=>{const p=document.createElement("div");p.className="ps-ai-note"+(cls?" "+cls:"");p.textContent=t;return p;};
+  const ask=group.filter(x=>x.canAiTitle&&!x.aiTitle);
+  const shown=group.filter(x=>x.aiTitle&&(x.aiTitle.status==="suggested"||x.aiTitle.status==="accepted"||(x.aiTitle.status==="none"&&x.canAiTitle)));
+  if(!ask.length&&!shown.length){box.classList.add("hidden");return;}
   box.classList.remove("hidden");
-  if(!ai){
+  const many=group.length>1;
+  for(const x of shown){
+    const a=x.aiTitle, row=document.createElement("div"); row.className="ps-ai-row";
+    if(many) row.append(note(escapeTitle(x.name),"ps-ai-src"));
+    if(a.status==="none") row.append(note("ИИ не смог определить эту раздачу."));
+    else {
+      row.append(note((a.status==="accepted"?"Название от ИИ: ":"ИИ предлагает: ")+aiWhat(a)));
+      if(x.canAiTitle){
+        const bs=document.createElement("div"); bs.className="ps-shelf";
+        if(a.status==="suggested") bs.append(btn("Принять",()=>psDecideAi(s,x,true),"on"),btn("Отклонить",()=>psDecideAi(s,x,false)));
+        else bs.append(btn("Отменить",()=>psDecideAi(s,x,false)));
+        row.append(bs);
+      }
+    }
+    box.append(row);
+  }
+  const pending=shown.filter(x=>x.canAiTitle&&x.aiTitle.status==="suggested");
+  if(pending.length>1) box.append(btn("Принять все ("+pending.length+")",()=>psDecideAll(s,pending),"on"));
+  if(ask.length){
     const left=aiTitleReadyAt-Date.now();
-    const b=btn("✨ Определить через ИИ",()=>psAskAi(s,b));
+    const b=btn("✨ Определить через ИИ"+(ask.length>1?" ("+ask.length+" раздачи)":""),()=>psAskAi(s,b,ask));
     if(left>0){b.disabled=true;b.textContent="✨ ИИ — через "+Math.ceil(left/60000)+" мин";}
     box.append(b);
-  } else if(ai.status==="suggested"){
-    box.append(note("Предложено ИИ: "+what(ai)));
-    if(m.canAiTitle){const row=document.createElement("div");row.className="ps-shelf";row.append(btn("Принять",()=>psDecideAi(s,true),"on"),btn("Отклонить",()=>psDecideAi(s,false)));box.append(row);}
-  } else if(ai.status==="accepted"){
-    box.append(note("Название от ИИ: "+what(ai)));
-    if(m.canAiTitle) box.append(btn("Отменить",()=>psDecideAi(s,false)));
-  } else if(ai.status==="none"&&m.canAiTitle){
-    box.append(note("ИИ не смог уверенно определить эту раздачу."));
-  } else box.classList.add("hidden");
+  }
 }
 function psSetAi(id,ai){
   for(const x of cachedLibrary) if(x.id===id) x.aiTitle=ai;
+}
+function psSaveAi(){
   try{ localStorage.setItem(LIBRARY_SNAPSHOT_KEY, JSON.stringify({ savedAt: Date.now(), magnets: cachedLibrary })); }catch{}
   renderLibrary(false);
 }
-async function psAskAi(s,b){
-  const m=s._magnet; if(!m) return;
+async function psAskAi(s,b,list){
   b.disabled=true; b.textContent="✨ Спрашиваем ИИ…";
   try{
-    const r=await fetch("/api/library/"+m.id+"/ai-title",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:"{}"});
+    const r=await fetch("/api/library/ai-title",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({ids:list.map(x=>x.id)})});
     const d=await r.json().catch(()=>({}));
     if(r.status===429&&d.retryAfterSec){
       if(d.reason==="cooldown") aiTitleReadyAt=Date.now()+d.retryAfterSec*1000;
@@ -1827,23 +1849,39 @@ async function psAskAi(s,b){
     } else if(!r.ok) showToast(d.error||"Не удалось спросить ИИ",true);
     else {
       aiTitleReadyAt=Number(d.aiTitleReadyAt)||0; // у админа кулдауна нет: 0
-      m.aiTitle=d.aiTitle; psSetAi(m.id,d.aiTitle);
+      const res=Array.isArray(d.results)?d.results:[];
+      for(const x of res) psSetAi(x.id,x.aiTitle);
+      psSaveAi();
+      const ok=res.filter(x=>x.aiTitle&&x.aiTitle.status==="suggested").length;
+      showToast(ok?"ИИ предложил название — проверьте и примите в карточке":"ИИ не смог определить эту раздачу",!ok);
     }
   }catch{ showToast("Не удалось спросить ИИ",true); }
   psSyncAi(s);
 }
-async function psDecideAi(s,accept){
-  const m=s._magnet; if(!m) return;
+async function psDecideAi(s,x,accept){
   try{
-    const d=await api("/api/library/"+m.id+"/ai-title/decision",{method:"POST",body:JSON.stringify({accept})});
-    m.aiTitle=d.aiTitle; psSetAi(m.id,d.aiTitle);
+    const d=await api("/api/library/"+x.id+"/ai-title/decision",{method:"POST",body:JSON.stringify({accept})});
+    psSetAi(x.id,d.aiTitle); psSaveAi(); psFillTitle(s);
   }catch(err){ showToast(err.message||"Не удалось сохранить",true); }
   psSyncAi(s);
+}
+async function psDecideAll(s,list){
+  for(const x of list){
+    try{ const d=await api("/api/library/"+x.id+"/ai-title/decision",{method:"POST",body:JSON.stringify({accept:true})}); psSetAi(x.id,d.aiTitle); }
+    catch(err){ showToast(err.message||"Не удалось сохранить",true); break; }
+  }
+  psSaveAi(); psFillTitle(s); psSyncAi(s);
+}
+// Заголовок карточки после «Принять»: принятое название ИИ
+function psFillTitle(s){
+  const m=s._magnet; if(!m) return;
+  const cur=cachedLibrary.find(x=>x.id===m.id); if(cur) s._magnet=cur;
+  s.querySelector(".ps-title").textContent=displayTitle(s._magnet);
 }
 const psInfoCache=new Map();
 function psFill(s,magnet,file,label,token){
   s._magnet=magnet||null; psSyncShelf(s); psSyncAi(s);
-  const base=magnet?escapeTitle(magnet.name):label;
+  const base=magnet?displayTitle(magnet):label;
   s.querySelector(".ps-title").textContent=base;
   const chips=s.querySelector(".ps-chips"), over=s.querySelector(".ps-overview"), img=s.querySelector(".ps-poster img"), prog=s.querySelector(".ps-progress");
   chips.replaceChildren(); over.textContent=""; img.removeAttribute("src"); prog.classList.add("hidden");
@@ -1880,7 +1918,7 @@ function psEpisode(magnet,pl,file){
   for(const s of pl.seasons){
     const i=s.items.findIndex(e=>e.file===file||e.file.path===file.path); if(i<0) continue;
     const item=s.items[i];
-    const label=escapeTitle(magnet.name)+" · "+(s.season===0?"Спец.":"S"+String(s.season).padStart(2,"0"))+"E"+String(item.episode).padStart(2,"0");
+    const label=displayTitle(magnet)+" · "+(s.season===0?"Спец.":"S"+String(s.season).padStart(2,"0"))+"E"+String(item.episode).padStart(2,"0");
     const items=s.items.slice(i).map(x=>({index:magnet.files.indexOf(x.file),link:x.file.sourceLink})).filter(x=>x.index>=0&&x.link);
     return {label,req:{magnetId:magnet.id,items},season:s,index:i};
   }
@@ -1977,7 +2015,7 @@ function makeSelect(label){const s=document.createElement("select");s.setAttribu
 function setupTilePlayback(magnet,tile,art,info){
   const pl=buildPlaylist(magnet);
   if(pl.type==="movie"&&!pl.file) return;
-  const baseTitle=escapeTitle(magnet.name);
+  const baseTitle=displayTitle(magnet);
   const mediaLine=document.createElement("div");mediaLine.className="file-meta tile-media";
   const playBtn=document.createElement("button");playBtn.type="button";playBtn.className="tile-play";playBtn.textContent="▶";
   playBtn.setAttribute("aria-label","Смотреть");
@@ -2067,7 +2105,7 @@ function recordAnimation(query, isAnim) {
   try { localStorage.setItem(ANIM_KEY, JSON.stringify(db)); } catch {}
 }
 function getPosterQueries(m) {
-  const base = escapeTitle(m.name || "");
+  const base = displayTitle(m);
   const queries = [base];
   const main = pickMainВидео(m);
   if (main) {
@@ -2203,7 +2241,7 @@ function getItemSpecs(m) {
   return { quality, codec, type, cat };
 }
 
-function tileSig(m){ return JSON.stringify([(serverTagMap[m.id]||[]).join(),m.name,m.status,m.statusCode,m.size,m.downloaded,Boolean(m.favorite),Boolean(m.mine),m.canRemove!==false,(m.files||[]).length,libraryViewMode]); }
+function tileSig(m){ return JSON.stringify([(serverTagMap[m.id]||[]).join(),m.name,displayTitle(m),m.status,m.statusCode,m.size,m.downloaded,Boolean(m.favorite),Boolean(m.mine),m.canRemove!==false,(m.files||[]).length,libraryViewMode]); }
 
 function renderLibrary(animate=true) {
   const target=$("libraryResults"), query=$("libraryПоиск") ? $("libraryПоиск").value.trim().toLowerCase() : "";
@@ -2243,6 +2281,7 @@ function renderLibrary(animate=true) {
   if (filterSig !== libraryFilterSig) { libraryFilterSig = filterSig; libraryPage = 0; }
   const grouped = groupLibraryVersions(allMagnets);
   const versionsOf = grouped.versions;
+  libraryVersionsOf = versionsOf;
   const pageCount = Math.max(1, Math.ceil(grouped.shown.length / pageSize));
   libraryPage = Math.min(Math.max(0, libraryPage), pageCount - 1);
   const magnets = grouped.shown.slice(libraryPage * pageSize, (libraryPage + 1) * pageSize);
@@ -2264,7 +2303,7 @@ function renderLibrary(animate=true) {
     tile.className="library-tile tile-enter"; tile.style.setProperty("--tile-index", String(animate&&!before.size ? fresh++ : 0));
     tile.addEventListener("animationend",e=>{ if(e.target===tile) tile.classList.remove("tile-enter"); });
     const art=document.createElement("div"); art.className="tile-art";
-    const title=document.createElement("div"); title.className="tile-title"; title.textContent=escapeTitle(magnet.name); art.append(title);
+    const title=document.createElement("div"); title.className="tile-title"; title.textContent=displayTitle(magnet); art.append(title);
 
     const specs = getItemSpecs(magnet);
     const badges = document.createElement("div"); badges.className = "tile-badges";
@@ -2274,7 +2313,7 @@ function renderLibrary(animate=true) {
     if (versions) { const vb = document.createElement("span"); vb.className = "tile-badge badge-type badge-ver"; vb.textContent = versionsWord(versions.length); badges.append(vb); }
     art.append(badges);
     const videoФайл = (magnet.files || []).find(f => /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso)$/i.test(f.path || ""));
-    const posterQueries = [...new Set([escapeTitle(magnet.name), videoФайл ? escapeTitle(videoФайл.name || videoФайл.path.split("/").pop()) : ""].filter(Boolean))];
+    const posterQueries = [...new Set([displayTitle(magnet), videoФайл ? escapeTitle(videoФайл.name || videoФайл.path.split("/").pop()) : ""].filter(Boolean))];
     whenVisible(tile, ()=>(async()=>{
       let url=null;
       for (const q of posterQueries) { url=await getPoster(q); if(url) break; }

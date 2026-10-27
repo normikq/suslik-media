@@ -6,19 +6,22 @@ const config = require("../config");
 const { makeJsonWriter } = require("../utils/json-writer");
 
 // ---- «Определить через ИИ» -------------------------------------------------------------------------------------
-// Регулярки остаются основным путём. Когда они ошиблись, тот, кто добавил раздачу, может один раз спросить Gemini:
-// модель получает название раздачи и пути видеофайлов (без них не понять сезон) и возвращает { base, season }.
+// Регулярки остаются основным путём. Когда они ошиблись, тот, кто добавил раздачу, может спросить Gemini: модель
+// получает название раздачи и пути видеофайлов (без них не понять сезон) и возвращает { base, season }. Раздачи одной
+// плитки (версии и сезоны, слитые по названию) уходят одним вызовом: у каждой свой ответ, кулдаун тратится один раз.
 // Ответ не детерминирован даже при temperature 0, поэтому считается один раз и дальше берётся из хранилища:
 // по ключу из нормализованного названия и состава файлов (та же раздача, добавленная заново, — без нового вызова).
 // Результат — только предложение (status "suggested"): цифры в названии модель может понять неверно («Тачки 2» →
-// «Тачки»). В группировку медиатеки он идёт, когда владелец его подтвердил ("accepted"); отклонённый ("rejected")
-// и отброшенный проверкой ("none") тоже хранятся: второй вызов на ту же раздачу не делается.
+// «Тачки»). Название плитки, постер и группировка берут его, когда владелец подтвердил ("accepted"); отклонённый
+// ("rejected") и пустой ("none") тоже хранятся. Спросить заново (force) может только админ библиотеки.
 // Кулдаун — на пользователя (u_<id> или устройство), дневной лимит — на весь сервер: сбой клиента не сожжёт бюджет.
 // Ответы 429/503 от Gemini, таймаут и сеть попытку не списывают и кулдаун не запускают.
 // Хранится ai-titles.json: { r: { key: результат }, i: { magnetId: key }, c: { owner: когда звал }, d: счётчики дня, s: итоги }.
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 const TIMEOUT_MS = 20000;
 const MAX_FILES = 150;
+const MAX_BATCH = 10; // раздач в одном вызове
+const BATCH_FILES = 300; // путей на весь вызов (у каждой раздачи не меньше 20)
 const MAX_PATH = 200;
 const MAX_RESULTS = 5000;
 const OWNER_RE = /^(?:[a-f0-9]{32}|u_\d{1,25})$/;
@@ -26,20 +29,32 @@ const VIDEO_EXT = /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso|wmv|mpg|mpeg|vob)$/i;
 const STATUSES = new Set(["suggested", "accepted", "rejected", "none"]);
 
 const PROMPT = [
-  "Ты получаешь название торрент-раздачи и список путей её видеофайлов.",
-  "Верни JSON: base — название фильма или сериала так, как оно написано в раздаче (если есть русское — русское),",
-  "без года, качества, кодеков, озвучки, номера сезона и серии; цифры, которые входят в само название (\"Тачки 2\",",
-  "\"1+1\"), оставь. season — номер сезона, если раздача — ровно один сезон сериала, иначе null",
+  "Ты получаешь одну или несколько торрент-раздач: номер, название и пути видеофайлов. Для каждой раздачи верни объект:",
+  "n — её номер; base — название фильма или сериала, по которому его можно найти в TMDB: русское, если оно есть",
+  "в раздаче; если название записано транслитом (\"Kak.priruchit.lisu\") — по-русски кириллицей (\"Как приручить лису\");",
+  "иначе оригинальное. Слова через пробел (не через точки и подчёркивания), без года, качества, кодеков, озвучки,",
+  "студии, номера сезона и серии; цифры, которые входят в само название (\"Тачки 2\", \"1+1\"), оставь.",
+  "season — номер сезона, если раздача — ровно один сезон сериала (смотри и на пути: S02E01 — сезон 2), иначе null",
   "(фильм, несколько сезонов, сборник)."
 ].join(" ");
 
 const RESPONSE_SCHEMA = {
   type: "OBJECT",
   properties: {
-    base: { type: "STRING" },
-    season: { type: "INTEGER", nullable: true }
+    items: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: {
+          n: { type: "INTEGER" },
+          base: { type: "STRING" },
+          season: { type: "INTEGER", nullable: true }
+        },
+        required: ["n", "base"]
+      }
+    }
   },
-  required: ["base"]
+  required: ["items"]
 };
 
 let results = new Map(); // key -> { base, season, model, at, status, by }
@@ -79,13 +94,13 @@ function enabled() {
 
 const norm = s => String(s || "").toLowerCase().replace(/ё/g, "е").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 
-/** Пути видеофайлов раздачи (без sample), по алфавиту, не больше MAX_FILES. */
-function videoPaths(files) {
+/** Пути видеофайлов раздачи (без sample), по алфавиту, не больше max. */
+function videoPaths(files, max = MAX_FILES) {
   return (Array.isArray(files) ? files : [])
     .filter(f => f && f.type !== "folder" && VIDEO_EXT.test(String(f.path || "")) && !/(^|[\/._ -])sample([\/._ -]|$)/i.test(f.path))
     .map(f => String(f.path).slice(0, MAX_PATH))
     .sort()
-    .slice(0, MAX_FILES);
+    .slice(0, max);
 }
 
 /** Ключ результата: нормализованное название и состав видеофайлов. */
@@ -119,22 +134,20 @@ function seasonMentioned(n, texts) {
 }
 
 /**
- * Проверка ответа модели по исходному названию и путям. Возвращает { base, season } или null (ответ отброшен):
- * пустое или слишком длинное название, ни одного его слова нет в раздаче, сезон не упомянут ни в названии, ни в путях.
+ * Проверка ответа модели. Возвращает { base, season } или null (ответа нет, название пустое или слишком длинное).
+ * Точки и подчёркивания вместо пробелов («Kak.priruchit.lisu») заменяются пробелами. Сезон, которого нет ни в названии,
+ * ни в путях (S02, «2 сезон», «1-3 сезон»…), не принимается: остаётся null, название — да.
+ * Название может не совпадать с раздачей (перевод, кириллица вместо транслита): его всё равно подтверждает владелец.
  */
 function validate(answer, name, files) {
   if (!answer || typeof answer !== "object") return null;
-  const base = typeof answer.base === "string" ? answer.base.replace(/\s+/g, " ").trim() : "";
+  let base = typeof answer.base === "string" ? answer.base.trim() : "";
+  if (!/\s/.test(base)) base = base.replace(/[._]+/g, " ");
+  base = base.replace(/\s+/g, " ").trim();
   if (!base || base.length > 200 || /[\u0000-\u001f\u007f]/.test(base)) return null;
-  const paths = videoPaths(files);
-  const hay = " " + norm([name, ...paths].join(" ")) + " ";
-  const all = norm(base).split(" ").filter(Boolean);
-  const words = all.some(w => w.length >= 2) ? all.filter(w => w.length >= 2) : all; // «1+1» — из одних цифр
-  if (!words.length || !words.some(w => hay.includes(" " + w + " "))) return null;
   let season = answer.season;
-  if (season === undefined || season === null) season = null;
-  else if (!Number.isInteger(season) || season < 0 || season > 99) return null;
-  else if (!seasonMentioned(season, [String(name), ...paths])) return null;
+  if (!Number.isInteger(season) || season < 0 || season > 99) season = null;
+  else if (!seasonMentioned(season, [String(name), ...videoPaths(files)])) season = null;
   return { base, season };
 }
 
@@ -161,7 +174,9 @@ function readyAt(owner, now = Date.now()) {
 
 function publicView(r) {
   if (!r) return null;
-  return { base: r.base || "", season: r.season ?? null, source: "ai", model: r.model, at: r.at, status: r.status };
+  // ответы до 27.10 могли прийти с точками вместо пробелов («Kak.priruchit.lisu»)
+  const base = String(r.base || "");
+  return { base: /\s/.test(base) ? base : base.replace(/[._]+/g, " ").trim(), season: r.season ?? null, source: "ai", model: r.model, at: r.at, status: r.status };
 }
 
 /** Сохранённый результат раздачи (или null). */
@@ -178,10 +193,16 @@ class AiError extends Error {
   }
 }
 
-/** Один вызов Gemini. Бросает AiError: "busy" (429/503/таймаут/сеть — не списывается) или "bad" (прочее). */
-async function callModel(name, files) {
-  const paths = videoPaths(files);
-  const text = "Название раздачи: " + String(name).slice(0, 500) + "\nФайлы:\n" + (paths.length ? paths.join("\n") : "(нет)");
+/**
+ * Один вызов Gemini на несколько раздач ([{ name, files }]). Возвращает { answers: Map(номер с 1 -> ответ), usage }.
+ * Бросает AiError: "busy" (429/503/таймаут/сеть — не списывается) или "bad" (прочее).
+ */
+async function callModel(list) {
+  const per = Math.min(MAX_FILES, Math.max(20, Math.floor(BATCH_FILES / list.length)));
+  const text = list.map((m, i) => {
+    const paths = videoPaths(m.files, per);
+    return "Раздача " + (i + 1) + "\nНазвание: " + String(m.name).slice(0, 500) + "\nФайлы:\n" + (paths.length ? paths.join("\n") : "(нет)");
+  }).join("\n\n");
   const url = `${API_BASE}/models/${encodeURIComponent(config.AI_TITLE_MODEL)}:generateContent`;
   let res;
   try {
@@ -206,26 +227,45 @@ async function callModel(name, files) {
   if (!res.ok) throw new AiError("bad", "Сервис ИИ вернул ошибку.", { status: res.status });
   const usage = body && body.usageMetadata ? body.usageMetadata : null;
   const raw = body?.candidates?.[0]?.content?.parts?.map(p => p.text || "").join("") || "";
-  let answer = null;
-  try { answer = JSON.parse(raw); } catch {}
-  return { answer, usage };
+  let parsed = null;
+  try { parsed = JSON.parse(raw); } catch {}
+  const answers = new Map();
+  const items = Array.isArray(parsed?.items) ? parsed.items : (parsed && typeof parsed === "object" && parsed.base ? [{ n: 1, ...parsed }] : []);
+  for (const it of items) if (it && Number.isInteger(it.n) && !answers.has(it.n)) answers.set(it.n, it);
+  return { answers, usage, raw };
 }
 
 /**
- * Определить раздачу m ({ id, name, files }) для владельца owner. Уже есть результат (по id или по ключу) — он,
- * без вызова. Возвращает { aiTitle, cached }. Бросает AiError: "disabled", "cooldown" (retryAfterMs), "daily"
- * (retryAfterMs), "busy", "bad". noCooldown (админ библиотеки) — без кулдауна; дневной лимит действует и для него.
+ * Определить раздачи magnets ([{ id, name, files }], обычно версии одной плитки) для владельца owner.
+ * У кого результат уже есть (по id или по ключу) — он, без вызова; остальные (до MAX_BATCH) — одним вызовом.
+ * Возвращает { results: [{ id, aiTitle }], cached } (cached — модель не звали). Бросает AiError: "disabled",
+ * "cooldown" (retryAfterMs), "daily" (retryAfterMs), "busy", "bad".
+ * noCooldown (админ библиотеки) — без кулдауна, дневной лимит действует; force (админ) — спросить заново и у тех,
+ * у кого ответ уже есть.
  */
-async function suggest(m, owner, now = Date.now(), { noCooldown = false } = {}) {
+async function suggestMany(magnets, owner, now = Date.now(), { noCooldown = false, force = false } = {}) {
   if (!enabled()) throw new AiError("disabled", "Определение через ИИ на сервере не настроено.");
-  const id = String(m.id);
-  const key = keyOf(m.name, m.files);
-  const known = results.get(byId.get(id)) || results.get(key);
-  if (known) {
-    if (!byId.has(id)) { byId.set(id, key); persist(); }
-    return { aiTitle: publicView(known), cached: true };
+  const out = new Map(); // id -> key
+  const todo = new Map(); // key -> magnet
+  for (const m of magnets) {
+    const id = String(m.id);
+    const key = keyOf(m.name, m.files);
+    out.set(id, key);
+    const known = force ? null : (results.has(byId.get(id)) ? byId.get(id) : (results.has(key) ? key : null));
+    if (known) {
+      out.set(id, known);
+      if (byId.get(id) !== known) { byId.set(id, known); persist(); }
+    } else if (!todo.has(key) && todo.size < MAX_BATCH) {
+      todo.set(key, m);
+    }
   }
-  if (inflight.has(key)) return inflight.get(key);
+  const answer = cached => ({
+    results: [...out].filter(([, k]) => results.has(k)).map(([id, k]) => ({ id: Number(id), aiTitle: publicView(results.get(k)) })),
+    cached
+  });
+  if (!todo.size) return answer(true);
+  const jobKey = [...todo.keys()].sort().join(",");
+  if (inflight.has(jobKey)) { await inflight.get(jobKey).catch(() => {}); return answer(true); }
   const left = noCooldown ? 0 : cooldownLeft(owner, now);
   if (left > 0) throw new AiError("cooldown", "ИИ можно спрашивать раз в " + config.AI_TITLE_COOLDOWN_MIN + " минут.", { retryAfterMs: left });
   rollDay(now);
@@ -233,13 +273,14 @@ async function suggest(m, owner, now = Date.now(), { noCooldown = false } = {}) 
     const midnight = Date.parse(today(now) + "T00:00:00Z") + 24 * 3600 * 1000;
     throw new AiError("daily", "Дневной лимит запросов к ИИ исчерпан. Попробуйте завтра.", { retryAfterMs: midnight - now });
   }
+  const list = [...todo];
   const job = (async () => {
     // Место в лимите и кулдаун заняты на время вызова: два запроса подряд не проскочат оба
     day.calls++;
     if (!noCooldown) cooldowns.set(owner, now);
-    let out;
+    let res;
     try {
-      out = await callModel(m.name, m.files);
+      res = await callModel(list.map(([, m]) => m));
     } catch (err) {
       if (err.status === 429) { day.e429++; totals.e429++; }
       else if (err.status === 503) { day.e503++; totals.e503++; }
@@ -250,27 +291,36 @@ async function suggest(m, owner, now = Date.now(), { noCooldown = false } = {}) 
         day.fail++; // прочие ошибки (ключ, запрос) списываются: сломанная настройка не дёргается без конца
       }
       persist();
-      console.warn(`[aititle] ${m.id}: ${err.status || err.cause || err.code}`);
+      console.warn(`[aititle] ${list.map(([, m]) => m.id).join(",")}: ${err.status || err.cause || err.code}`);
       throw err;
     }
     totals.calls++;
-    const u = out.usage || {};
+    const u = res.usage || {};
     day.inTok += Number(u.promptTokenCount) || 0;
     day.outTok += Number(u.candidatesTokenCount) || 0;
-    console.log(`[aititle] ${m.id}: usage in=${u.promptTokenCount ?? "?"} out=${u.candidatesTokenCount ?? "?"} total=${u.totalTokenCount ?? "?"} files=${videoPaths(m.files).length}`);
-    const ok = validate(out.answer, m.name, m.files);
-    const r = ok
-      ? { base: ok.base, season: ok.season, model: config.AI_TITLE_MODEL, at: now, status: "suggested", by: owner }
-      : { base: "", season: null, model: config.AI_TITLE_MODEL, at: now, status: "none", by: owner };
-    if (!ok) { totals.none++; console.warn(`[aititle] ${m.id}: ответ отброшен проверкой: ${JSON.stringify(out.answer)?.slice(0, 200)}`); }
-    results.set(key, r);
-    byId.set(id, key);
+    console.log(`[aititle] ${list.map(([, m]) => m.id).join(",")}: usage in=${u.promptTokenCount ?? "?"} out=${u.candidatesTokenCount ?? "?"} total=${u.totalTokenCount ?? "?"} releases=${list.length}`);
+    list.forEach(([key, m], i) => {
+      const ok = validate(res.answers.get(i + 1), m.name, m.files);
+      const r = ok
+        ? { base: ok.base, season: ok.season, model: config.AI_TITLE_MODEL, at: now, status: "suggested", by: owner }
+        : { base: "", season: null, model: config.AI_TITLE_MODEL, at: now, status: "none", by: owner };
+      if (!ok) { totals.none++; console.warn(`[aititle] ${m.id}: нет ответа: ${String(res.raw).slice(0, 300)}`); }
+      results.set(key, r);
+      byId.set(String(m.id), key);
+      out.set(String(m.id), key);
+    });
     trim();
     persist();
-    return { aiTitle: publicView(r), cached: false };
-  })().finally(() => inflight.delete(key));
-  inflight.set(key, job);
-  return job;
+  })().finally(() => inflight.delete(jobKey));
+  inflight.set(jobKey, job);
+  await job;
+  return answer(false);
+}
+
+/** Одна раздача: { aiTitle, cached }. */
+async function suggest(m, owner, now = Date.now(), opts = {}) {
+  const r = await suggestMany([m], owner, now, opts);
+  return { aiTitle: r.results[0] ? r.results[0].aiTitle : null, cached: r.cached };
 }
 
 /** Владелец подтвердил или отклонил предложение. Возвращает новый результат или null (нечего решать). */
@@ -329,6 +379,7 @@ module.exports = {
   readyAt,
   resultFor,
   suggest,
+  suggestMany,
   decide,
   dropMagnet,
   stats,
