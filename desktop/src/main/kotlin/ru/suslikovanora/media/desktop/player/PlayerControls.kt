@@ -598,6 +598,8 @@ fun SeekBar(
     length: Long,
     buffered: Long = 0L,
     marks: List<Long>,
+    intro: ru.suslikovanora.media.core.TimeRange? = null,
+    credits: ru.suslikovanora.media.core.TimeRange? = null,
     modifier: Modifier,
     onScrub: (Long?) -> Unit,
     onSeek: (Long) -> Unit,
@@ -645,6 +647,19 @@ fun SeekBar(
                 drawRoundRect(Sm.line2, topLeft = Offset(0f, cy - h / 2), size = Size(size.width, h), cornerRadius = r)
                 val bf = if (length > 0) (buffered.toFloat() / length).coerceIn(0f, 1f) else 0f
                 if (bf > 0f) drawRoundRect(Color(0x80B4B8C4), topLeft = Offset(0f, cy - h / 2), size = Size(size.width * bf, h), cornerRadius = r)
+                // Отметки заставки (янтарная) и титров (серый сланец)
+                if (length > 0) {
+                    if (intro != null && intro.endMs > intro.startMs) {
+                        val x1 = size.width * (intro.startMs.toFloat() / length).coerceIn(0f, 1f)
+                        val x2 = size.width * (intro.endMs.toFloat() / length).coerceIn(0f, 1f)
+                        if (x2 > x1) drawRoundRect(Color(0x80F5A623), topLeft = Offset(x1, cy - h / 2), size = Size(x2 - x1, h), cornerRadius = r)
+                    }
+                    if (credits != null && credits.endMs > credits.startMs) {
+                        val x1 = size.width * (credits.startMs.toFloat() / length).coerceIn(0f, 1f)
+                        val x2 = size.width * (credits.endMs.toFloat() / length).coerceIn(0f, 1f)
+                        if (x2 > x1) drawRoundRect(Color(0x808E96A8), topLeft = Offset(x1, cy - h / 2), size = Size(x2 - x1, h), cornerRadius = r)
+                    }
+                }
                 val f = if (length > 0) (position.toFloat() / length).coerceIn(0f, 1f) else 0f
                 if (f > 0f) drawRoundRect(Color.White, topLeft = Offset(0f, cy - h / 2), size = Size(size.width * f, h), cornerRadius = r)
                 // chapter boundaries: small dark gaps across the track

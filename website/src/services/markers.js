@@ -178,19 +178,24 @@ function parseQuery(q) {
  */
 const LOOKUP = { tmdb: lookupTmdb, introdb: fetchIntroDb, mal: lookupMal, skip: fetchAniSkip };
 
-/** Обе базы по очереди: TheIntroDB, затем AniSkip — для того, чего не нашлось. Ошибка одной не отменяет другую. */
+/** Обе базы по очереди: TheIntroDB, затем AniSkip — для аниме, если TheIntroDB не дал интервалы. Ошибка одной не отменяет другую. */
 async function lookupBoth(title, season, episode, duration, lookup) {
   const found = { i: null, c: null };
   const src = [];
   let failed = false;
+  let isAnime = true;
   try {
     const ref = await lookup.tmdb(title);
     if (ref && ref.id && ref.media_type === (episode ? "tv" : "movie")) {
       const r = await lookup.introdb(ref, season, episode, duration);
       if (r.i || r.c) { found.i = r.i; found.c = r.c; src.push("theintrodb"); }
+      // Западные игровые сериалы в базе аниме (MyAnimeList / AniSkip) не ищем — экономим 6-12 секунд и лимиты Jikan
+      if (ref.original_language && ref.original_language !== "ja") {
+        isAnime = false;
+      }
     }
   } catch { failed = true; }
-  if (episode && (!found.i || !found.c)) {
+  if (episode && isAnime && (!found.i || !found.c)) {
     try {
       const mal = await lookup.mal(title, season);
       const r = mal ? await lookup.skip(mal, episode, duration) : { i: null, c: null };

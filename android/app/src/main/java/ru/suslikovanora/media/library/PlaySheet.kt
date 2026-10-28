@@ -103,9 +103,13 @@ data class PlayRequest(
  * original title (the AI's once accepted, otherwise the release's), the library's title, season and episode; for a film
  * of a collection — its own name and year, without an episode.
  */
-private fun markersJson(item: LibraryItem, series: Playable.Series, files: List<MFile>, collection: Boolean): String {
+private fun markersJson(item: LibraryItem, series: Playable.Series?, files: List<MFile>, collection: Boolean): String {
     val original = item.m.aiTitle?.takeIf { it.accepted }?.original?.takeIf { it.isNotBlank() } ?: cleanTitle(item.m.name)
     val out = org.json.JSONArray()
+    if (series == null) {
+        out.put(org.json.JSONObject().put("title", original).put("alt", item.baseTitle))
+        return out.toString()
+    }
     for (f in files) {
         val hit = series.seasons.firstNotNullOfOrNull { s -> s.items.find { it.file.path == f.path }?.let { s to it } }
         if (collection) {
@@ -330,7 +334,7 @@ fun PlaySheet(
                     else listOf(watchKey(target.magnetId, target.file))
                     val files = if (playlist != null) target.season.filter { f -> f.link != null } else listOf(target.file)
                     onPlay(PlayRequest(it, target.label, playlist, subUrls, keys, audioUrls, fromStart, if (playlist != null) episodeSidesJson(target, customByPath) else null, customJson(customByPath), watchKey(target.magnetId, target.file), isColl,
-                        if (item == null || series == null) null else markersJson(item, series, files, isColl)))
+                        if (item == null) null else markersJson(item, series, files, isColl)))
                 }
             }
 

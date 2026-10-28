@@ -429,11 +429,15 @@ class PlayerActivity : ComponentActivity() {
         fileChapters = emptyList(); chaptersFor = ""; serverMarkers = null; markersAskedFor = ""
         markers = MediaMarkers(); markersLength = 0L; wasInCredits = false; introAutoDone = null; introSeenAt = 0L
         ui.introShown = false
+        ui.introRange = null
+        ui.creditsRange = null
     }
 
     private fun recomputeMarkers(length: Long) {
         markersLength = length
         markers = MarkersDetector.merge(MarkersDetector.fromChapters(fileChapters, length), serverMarkers, length)
+        ui.introRange = markers.intro
+        ui.creditsRange = markers.credits
     }
 
     /** This file's place in the library's list ([PlayerExtras.MARKERS] goes with the watch keys). */
@@ -464,15 +468,37 @@ class PlayerActivity : ComponentActivity() {
         if (file.intro != null && file.credits != null) return
         val q = markerQueries?.optJSONObject(markerQueryIndex()) ?: return
         // no episode — a film of a collection
-        val path = MarkersDetector.serverPath(q.optString("title").ifBlank { null }, q.optString("alt").ifBlank { null },
-            q.optInt("season", 1), q.optInt("episode", 0).takeIf { it > 0 }, len) ?: return
+        val title = q.optString("title").ifBlank { null }
+        val alt = q.optString("alt").ifBlank { null }
+        val season = q.optInt("season", 1)
+        val episode = q.optInt("episode", 0).takeIf { it > 0 }
+        val path = MarkersDetector.serverPath(title, alt, season, episode, len) ?: return
         markersAskedFor = currentUrl
         val url = currentUrl
-        scope.launch {
-            val found = kotlinx.coroutines.withTimeoutOrNull(10_000L) {
-                runCatching { MarkersDetector.parseServer(ru.suslikovanora.media.net.Api.get(path)) }.getOrNull()
+
+        val cacheKey = "$title:$season:$episode:${len / 1000}"
+        val prefs = getSharedPreferences("markers", android.content.Context.MODE_PRIVATE)
+        val cachedRaw = prefs.getString(cacheKey, null)
+        if (cachedRaw != null) {
+            val cachedJson = runCatching { org.json.JSONObject(cachedRaw) }.getOrNull()
+            val cached = cachedJson?.let { MarkersDetector.parseServer(it) }
+            if (cached != null && !cached.isEmpty) {
+                if (url == currentUrl) {
+                    serverMarkers = cached
+                    recomputeMarkers(lengthOf(player))
+                }
+                return
             }
-            if (url != currentUrl || found == null || found.isEmpty) return@launch
+        }
+
+        scope.launch {
+            val raw = kotlinx.coroutines.withTimeoutOrNull(10_000L) {
+                runCatching { ru.suslikovanora.media.net.Api.get(path) }.getOrNull()
+            }
+            if (url != currentUrl || raw == null) return@launch
+            val found = runCatching { MarkersDetector.parseServer(raw) }.getOrNull()
+            if (found == null || found.isEmpty) return@launch
+            runCatching { prefs.edit().putString(cacheKey, raw.toString()).apply() }
             AppLog.write("[markers] server: intro ${found.intro?.let { "${it.startMs / 1000}-${it.endMs / 1000}s" } ?: "-"}, credits ${found.credits?.let { "${it.startMs / 1000}s" } ?: "-"}")
             serverMarkers = found
             recomputeMarkers(lengthOf(player))
@@ -488,6 +514,7 @@ class PlayerActivity : ComponentActivity() {
         if (sideJob?.isActive == true) return
         val len = lengthOf(p)
         if (len > 0L && len != markersLength) recomputeMarkers(len)
+        if (serverMarkers == null && markersAskedFor != currentUrl && len > 0L) askServerMarkers()
         if (markers.isEmpty) { if (ui.introShown) ui.introShown = false; return }
         val t = perceivedPosition()
         val intro = MarkersDetector.introAt(markers, t)

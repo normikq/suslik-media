@@ -1227,13 +1227,27 @@ fun PlayerView(
     // Intro and credits from the open databases when the file's chapters do not have them (episodes, films of a collection)
     LaunchedEffect(index, started, length > 0L) {
         if (!started || length <= 0L || serverMarkers != null) return@LaunchedEffect
-        val q = req.markerQueries.getOrNull(if (queue.size > 1) index else req.startIndex) ?: return@LaunchedEffect
-        delay(2500) // the chapters come first
+        val q = req.markerQueries.getOrNull(index) ?: req.markerQueries.getOrNull(req.startIndex) ?: return@LaunchedEffect
+        delay(300) // chapters from mpv come quickly; short delay avoids initial lag
         val file = MarkersDetector.fromChapters(chapters.map { Chapter(it.first, it.second) }, length)
         if (file.intro != null && file.credits != null) return@LaunchedEffect
         val path = MarkersDetector.serverPath(q.title, q.alt, q.season, q.episode, length) ?: return@LaunchedEffect
-        val found = withTimeoutOrNull(10_000) { runCatching { MarkersDetector.parseServer(Api.get(path)) }.getOrNull() }
-        if (found != null && !found.isEmpty) {
+        // Local client cache: instant 0 ms markers without hitting the network on every open
+        val cached = runCatching { Store.of("markers").get(path)?.let { MarkersDetector.parseServer(org.json.JSONObject(it)) } }.getOrNull()
+        if (cached != null && !cached.isEmpty) {
+            PlayerLog.write("[markers] cache: intro ${cached.intro?.let { "${it.startMs / 1000}-${it.endMs / 1000}s" } ?: "-"}, credits ${cached.credits?.let { "${it.startMs / 1000}s" } ?: "-"}")
+            serverMarkers = cached
+            return@LaunchedEffect
+        }
+        val reqIndex = index
+        val reqUrl = currentUrl
+        val found = withTimeoutOrNull(10_000) { runCatching {
+            val res = Api.get(path)
+            Store.of("markers").put(path, res.toString())
+            MarkersDetector.parseServer(res)
+        }.getOrNull() }
+        // Race condition guard: ignore old response if the user already switched to another episode
+        if (!closing && index == reqIndex && currentUrl == reqUrl && found != null && !found.isEmpty) {
             PlayerLog.write("[markers] server: intro ${found.intro?.let { "${it.startMs / 1000}-${it.endMs / 1000}s" } ?: "-"}, credits ${found.credits?.let { "${it.startMs / 1000}s" } ?: "-"}")
             serverMarkers = found
         }
@@ -1641,6 +1655,8 @@ fun PlayerView(
             lastVolumeWheelAt = lastVolumeWheelAt,
             nextIn = nextIn,
             inIntro = inIntro(),
+            intro = markers.intro,
+            credits = markers.credits,
             seeking = seeking,
             onScrubChange = { seeking = it },
             onPoke = { poke() },

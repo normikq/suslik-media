@@ -81,6 +81,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import ru.suslikovanora.media.core.TimeRange
 import ru.suslikovanora.media.tr
 import ru.suslikovanora.media.ui.Onest
 import ru.suslikovanora.media.ui.Sm
@@ -113,6 +114,8 @@ class PlayerUiState {
     var nextTitle by mutableStateOf<String?>(null) // «Следующая серия: S01E02» / «Следующий фильм: …» with its countdown
     /** Inside the intro (core.MarkersDetector): the «Пропустить заставку» button bottom right. */
     var introShown by mutableStateOf(false)
+    var introRange by mutableStateOf<TimeRange?>(null)
+    var creditsRange by mutableStateOf<TimeRange?>(null)
     /** A guest of the shared room: the timeline is a «live» line (the host seeks for everyone). */
     var live by mutableStateOf(false)
     var nextIn by mutableIntStateOf(0)
@@ -268,6 +271,7 @@ private fun BottomBar(s: PlayerUiState, pad: PaddingValues) {
                 Box(Modifier.weight(1f).padding(horizontal = 6.dp).height(4.dp).clip(RoundedCornerShape(2.dp)).background(LiveRed))
             } else SeekBar(
                 position = scrub ?: s.time, length = s.length, buffered = animBuffered.toLong(),
+                intro = s.introRange, credits = s.creditsRange,
                 modifier = Modifier.weight(1f).padding(horizontal = 6.dp).focusRequester(seekFocus),
                 onFocus = { s.seekFocused = it },
                 onScrub = { t -> scrub = t; s.onScrub(t); s.onPoke() },
@@ -585,6 +589,8 @@ private fun SeekBar(
     position: Long,
     length: Long,
     buffered: Long,
+    intro: TimeRange? = null,
+    credits: TimeRange? = null,
     modifier: Modifier,
     onFocus: (Boolean) -> Unit,
     onScrub: (Long?) -> Unit,
@@ -617,6 +623,18 @@ private fun SeekBar(
                 drawRoundRect(Color(0x33FFFFFF), topLeft = Offset(0f, cy - h / 2), size = Size(size.width, h), cornerRadius = r)
                 val bf = if (length > 0) (buffered.toFloat() / length).coerceIn(0f, 1f) else 0f
                 if (bf > 0f) drawRoundRect(Color(0x80B4B8C4), topLeft = Offset(0f, cy - h / 2), size = Size(size.width * bf, h), cornerRadius = r)
+                if (length > 0) {
+                    if (intro != null && intro.endMs > intro.startMs) {
+                        val x1 = size.width * (intro.startMs.toFloat() / length).coerceIn(0f, 1f)
+                        val x2 = size.width * (intro.endMs.toFloat() / length).coerceIn(0f, 1f)
+                        if (x2 > x1) drawRoundRect(Color(0x80F5A623), topLeft = Offset(x1, cy - h / 2), size = Size(x2 - x1, h), cornerRadius = r)
+                    }
+                    if (credits != null && credits.endMs > credits.startMs) {
+                        val x1 = size.width * (credits.startMs.toFloat() / length).coerceIn(0f, 1f)
+                        val x2 = size.width * (credits.endMs.toFloat() / length).coerceIn(0f, 1f)
+                        if (x2 > x1) drawRoundRect(Color(0x808E96A8), topLeft = Offset(x1, cy - h / 2), size = Size(x2 - x1, h), cornerRadius = r)
+                    }
+                }
                 val f = if (length > 0) (position.toFloat() / length).coerceIn(0f, 1f) else 0f
                 if (f > 0f) drawRoundRect(Color.White, topLeft = Offset(0f, cy - h / 2), size = Size(size.width * f, h), cornerRadius = r)
                 val thumb = Offset(size.width * f, cy)

@@ -196,15 +196,18 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
     }
 
     // Intro and credits from the open databases (server /api/markers): an episode by the original title (the AI's once
-    // accepted, otherwise the release's) and the library's one; a film of a collection by its own name and year
+    // accepted, otherwise the release's) and the library's one; a film of a collection or movie by its name and year
     fun markerQueryOf(f: MFile): MarkerQuery? {
         if (isCollection) {
             val film = films.find { it.file.path == f.path } ?: return null
             return MarkerQuery(MarkersDetector.filmTitle(f.name.ifBlank { f.path.substringAfterLast('/') }, film.title), null, null, null)
         }
-        val (s, e) = seasons.firstNotNullOfOrNull { s -> s.items.find { it.file.path == f.path }?.let { s to it } } ?: return null
         val original = magnet.aiTitle?.takeIf { it.accepted }?.original?.takeIf { it.isNotBlank() } ?: ru.suslikovanora.media.core.cleanTitle(magnet.name)
-        return MarkerQuery(original, item?.let(lib::titleOf), s.season, e.episode)
+        if (series != null) {
+            val (s, e) = seasons.firstNotNullOfOrNull { s -> s.items.find { it.file.path == f.path }?.let { s to it } } ?: return null
+            return MarkerQuery(original, item?.let(lib::titleOf), s.season, e.episode)
+        }
+        return MarkerQuery(original, item?.let(lib::titleOf), null, null)
     }
 
     // The player's queue: the whole season (or collection) with links, so «previous» works from the episode it started
@@ -511,7 +514,7 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                     loading = loading,
                     onPlay = { url ->
                         onPlay(PlayRequest(url, currentTitle, null, subs, listOf(watchKey(t.magnetId, currentFile)), audio, fromStart = fromStart, posterQueries = item?.posterQueries.orEmpty(),
-                            presence = listOf(presenceOf(currentFile))))
+                            presence = listOf(presenceOf(currentFile)), markerQueries = listOf(markerQueryOf(currentFile))))
                     },
                 )
 

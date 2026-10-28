@@ -163,7 +163,12 @@ async function searchBase(rawQuery) {
     rating: match && Number(match.vote_average) > 0 ? Math.round(Number(match.vote_average) * 10) / 10 : null
   };
 
-  const ref = match && match.id ? { id: match.id, media_type: match.media_type } : null;
+  const ref = match && match.id ? {
+    id: match.id,
+    media_type: match.media_type,
+    original_language: match.original_language || null,
+    animation: !!match && Array.isArray(match.genre_ids) && match.genre_ids.includes(16)
+  } : null;
 
   // «Постера нет» после сбоя сети по части вариантов — не окончательный ответ: не запоминаем, клиент спросит снова.
   if (!match && failed) {

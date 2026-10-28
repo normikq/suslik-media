@@ -180,6 +180,8 @@ fun PlayerBottomBar(
     lastVolumeWheelAt: Long,
     nextIn: Int,
     inIntro: Boolean,
+    intro: ru.suslikovanora.media.core.TimeRange? = null,
+    credits: ru.suslikovanora.media.core.TimeRange? = null,
     seeking: Float?,
     onScrubChange: (Float?) -> Unit,
     onPoke: () -> Unit,
@@ -759,6 +761,8 @@ fun PlayerBottomBar(
                     length = length,
                     buffered = animBuffered.toLong(),
                     marks = chapters.map { it.first },
+                    intro = intro,
+                    credits = credits,
                     modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
                     onScrub = { t -> onScrubChange(t?.toFloat()); onPoke() },
                     onSeek = { t ->

@@ -105,4 +105,15 @@ test("markers: TheIntroDB первым, AniSkip дополняет; фильм �
   // сериал с тем же названием, что у фильма в TMDB, не спрашивается как фильм
   const none = await markersFor({ titles: ["Film other"], season: 1, episode: 4, duration: 0 }, 1, { ...lookup, mal: async () => null });
   assert.equal(none.source, null);
+
+  // не-аниме сериал (original_language = en) не опрашивает MAL / AniSkip
+  let malCalled = false;
+  const nonAnime = await markersFor({ titles: ["Western Show"], season: 1, episode: 1, duration: 2400 }, 1, {
+    tmdb: async () => ({ id: 999, media_type: "tv", original_language: "en" }),
+    introdb: async () => ({ i: null, c: null }),
+    mal: async () => { malCalled = true; return 1; },
+    skip: async () => ({ i: [1000, 2000], c: null })
+  });
+  assert.equal(malCalled, false);
+  assert.equal(nonAnime.source, null);
 });
