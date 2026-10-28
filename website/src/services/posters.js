@@ -13,6 +13,19 @@ const posterInflight = new Map();
 
 const IMG_FILE = /^[A-Za-z0-9_-]+\.(?:jpg|png|webp)$/;
 
+// Название по-русски из переводов TMDB (сначала ru-RU, потом другие ru); у русского фильма без перевода — оригинал.
+// Перевода нет — пустая строка. [data] — ответ /{type}/{id}/translations, [match] — результат поиска.
+function russianTitle(data, match) {
+  const list = Array.isArray(data?.translations) ? data.translations : [];
+  const text = v => (typeof v === "string" ? v.trim() : "");
+  const ru = list.filter(t => t && t.iso_639_1 === "ru").sort((a, b) => (b.iso_3166_1 === "RU") - (a.iso_3166_1 === "RU"));
+  for (const t of ru) {
+    const name = text(t.data?.title) || text(t.data?.name);
+    if (name) return name.slice(0, 200);
+  }
+  return match?.original_language === "ru" ? text(match.original_title || match.original_name).slice(0, 200) : "";
+}
+
 // Для баннера: лучший широкий кадр БЕЗ текста на нём (iso_639_1 = null), логотип названия (русский, иначе английский),
 // описание по-русски. Любая ошибка — баннер остаётся с тем, что нашёл поиск.
 async function addBannerExtras(body, match) {
@@ -121,12 +134,26 @@ async function searchBase(rawQuery) {
   }
   if (!match) match = fallback;
 
+  // Название по-русски: поиск идёт без языка (с ru-RU TMDB отдал бы и другие постеры, а клиенты 30 дней помнят путь
+  // постера и по нему сливают версии), поэтому переводы — отдельным запросом. Сбой — ответ не запоминается.
+  let ruTitle = "";
+  let trFailed = false;
+  if (match) {
+    const tr = await axios.get(`https://api.themoviedb.org/3/${match.media_type}/${match.id}/translations`, {
+      params: { api_key: config.TMDB_API_KEY }, timeout: 5000
+    }).then(r => r.data).catch(() => null);
+    trFailed = !tr;
+    ruTitle = russianTitle(tr, match);
+  }
+
   const file = match ? String(match.poster_path).replace(/^\//, "") : "";
   const backdropFile = match && match.backdrop_path ? String(match.backdrop_path).replace(/^\//, "") : "";
   const body = {
     poster: /^[A-Za-z0-9_-]+\.(?:jpg|png|webp)$/.test(file) ? `/api/poster/img/w500/${file}` : null,
     poster_url: /^[A-Za-z0-9_-]+\.(?:jpg|png|webp)$/.test(file) ? `https://image.tmdb.org/t/p/w500/${file}` : null,
-    title: match?.title || match?.name || null,
+    title: ruTitle || match?.title || match?.name || null,
+    // только русское название (или null): подпись плитки, когда пользователь не принял название от ИИ
+    title_ru: ruTitle || null,
     type: match ? match.media_type : null,
     animation: !!match && Array.isArray(match.genre_ids) && match.genre_ids.includes(16), // 16 = Animation в TMDB
     // Для баннера «Продолжить просмотр» на ПК: широкая картинка, описание, год и рейтинг (у старых клиентов поля игнорируются)
@@ -145,7 +172,7 @@ async function searchBase(rawQuery) {
     throw err;
   }
 
-  posterLookupCache.set(ck, { at: Date.now(), body, ref });
+  if (!trFailed) posterLookupCache.set(ck, { at: Date.now(), body, ref });
   if (posterLookupCache.size > 3000) {
     posterLookupCache.delete(posterLookupCache.keys().next().value);
   }

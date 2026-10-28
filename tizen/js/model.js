@@ -687,6 +687,18 @@
 
   function watchKey(magnetId, file) { return magnetId + '|' + file.path; }
 
+  /**
+   * Подпись плитки: принятое название ИИ, иначе русское название TMDB по запросу постера ([ruTitleOf] — title_ru сервера),
+   * иначе название раздачи. У сборника — своё: TMDB находит один его фильм. Как tileTitle в Model.kt.
+   */
+  function tileTitle(item, ruTitleOf) {
+    var ai = item.m && item.m.aiTitle;
+    if ((ai && ai.status === 'accepted' && ai.base) || isCollection(item.playable, item.m)) return item.baseTitle;
+    var qs = item.posterQueries || [];
+    for (var i = 0; i < qs.length; i++) { var t = ruTitleOf(qs[i]); if (t) return t; }
+    return item.baseTitle;
+  }
+
   function watchInfo(pos, len, at) {
     return {
       pos: pos, len: len, at: at,
@@ -703,7 +715,7 @@
     formatBytes: formatBytes, statusRu: statusRu, episodeLabel: episodeLabel,
     prepareItems: prepareItems, subtitlesFor: subtitlesFor, externalAudioFor: externalAudioFor,
     isVoiceOverOnly: isVoiceOverOnly, dubLabel: dubLabel, customName: customName, externalChoices: externalChoices, externalIn: externalIn,
-    watchKey: watchKey, watchInfo: watchInfo, basename: basename
+    watchKey: watchKey, watchInfo: watchInfo, basename: basename, tileTitle: tileTitle
   };
   if (typeof module === 'object' && module.exports) module.exports = SM.model;
 })(typeof window !== 'undefined' ? window : global);

@@ -649,4 +649,18 @@ class ModelTest {
         assertEquals("Гарри Поттер и Тайная комната", cleanCollectionFilmTitle("Фильм 2 - Гарри Поттер и Тайная комната"))
         assertEquals("300", cleanCollectionFilmTitle("300.mkv"))
     }
+
+    @Test
+    fun tileTitleIsAiThenTmdbRussianThenRelease() {
+        val ru = mapOf("тачки 2" to "Тачки 2 (TMDB)")
+        for (status in listOf("suggested", "rejected", "none")) {
+            val item = prepareItems(parseLibrary(aiLibrary(status)))[1]
+            val q = item.posterQueries.first().lowercase()
+            assertEquals("Русское", tileTitle(item) { if (it == q) "Русское" else null }, status)
+            assertEquals(item.baseTitle, tileTitle(item) { "" }, status)
+        }
+        // the user accepted the AI's title: it stays whatever TMDB says
+        val accepted = prepareItems(parseLibrary(aiLibrary("accepted")))[1]
+        assertEquals("Тачки 2", tileTitle(accepted) { ru[it] ?: "Другое" })
+    }
 }

@@ -130,7 +130,7 @@ fun TvContinueHero(all: List<ContinueEntry>, store: LibraryStore, onOpen: (PlayT
                 val bannerTitle = if (isCollection(e.item.playable, e.item.m)) {
                     hero?.title ?: continueItemTitle(e.item, e.target.file)
                 } else {
-                    e.item.baseTitle
+                    store.titleOf(e.item)
                 }
                 val logo = hero?.logo
                 if (logo != null) {

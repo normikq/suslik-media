@@ -294,7 +294,7 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                     Column(Modifier.weight(1f)) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
                             Column(Modifier.weight(1f)) {
-                                Text(item?.baseTitle ?: t.label, fontFamily = Unbounded, fontWeight = FontWeight.Bold, fontSize = 20.sp, color = Color.White)
+                                Text(item?.let(lib::titleOf) ?: t.label, fontFamily = Unbounded, fontWeight = FontWeight.Bold, fontSize = 20.sp, color = Color.White)
                                 Text(headerSubtitle, color = Color(0xFF8E96A8), fontFamily = Onest, fontSize = 13.5.sp, modifier = Modifier.padding(top = 4.dp))
                             }
                             CloseCircleButton(onClick = onDismiss)
@@ -427,7 +427,7 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
 
             } else if (series != null && currentSeason != null && currentEpisode != null) {
                 // ---- SERIES: the same card as a movie, plus the season / episode pickers ----
-                DetailHeader(poster, item?.baseTitle ?: t.label, item, hero, info?.len, onDismiss)
+                DetailHeader(poster, item?.let(lib::titleOf) ?: t.label, item, hero, info?.len, onDismiss)
                 DetailStatus(statusText)
                 DetailStartRow(resumeAt, info, fromStart) { fromStart = it }
 
