@@ -11,6 +11,7 @@ function posterQueryVariants(query) {
     .replace(/\s[-~]\s*\d{1,3}\s*[-~]\s*\d{1,3}\b.*$/, "")
     .replace(/\bS\d{1,2}(?:\s*[-–]\s*S?\d{1,2})?\b.*$/i, "")
     .replace(/\b(?:Season|Seasons|Сезон)\s*\d+.*$/i, "")
+    .replace(/\b\d{1,2}(?:\s*[-–]\s*\d{1,2})?\s*(?:-?й\s*)?(?:сезон\p{L}*|season\p{L}*).*$/iu, "")
     .replace(/\s+[-–]\s*$/, "").replace(/\s+/g, " ").trim();
   if (clean.length >= 2 && clean !== query) out.push(clean);
   const nodash = (clean || query).replace(/[-–_:]+/g, " ").replace(/\s+/g, " ").trim();

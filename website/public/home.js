@@ -66,14 +66,15 @@
     try {
       var d = await api("/api/sync?since=0");
       hero.fetchedAt = Date.now();
+      hero.rawSync = d.watch || [];
       var best = new Map();
-      (d.watch || []).forEach(function (w) {
+      hero.rawSync.forEach(function (w) {
         var id = String(w.key).split("|")[0];
         var old = best.get(id);
         if (!old || w.at > old.at) best.set(id, w);
       });
       hero.raw = [...best.values()];
-    } catch (e) { hero.raw = []; hero.fetchedAt = Date.now(); }
+    } catch (e) { hero.raw = []; hero.rawSync = []; hero.fetchedAt = Date.now(); }
     hero.fetching = false;
   }
 
@@ -118,44 +119,100 @@
     return f.film || escapeTitle(f.raw);
   }
 
+  function nextEpisode(pl, filePath) {
+    if (!pl || !Array.isArray(pl.seasons)) return null;
+    var all = [];
+    pl.seasons.forEach(function (s) {
+      (s.items || []).forEach(function (it) { all.push(it); });
+    });
+    var i = all.findIndex(function (it) { return it.file && it.file.path === filePath; });
+    return (i >= 0 && i < all.length - 1) ? all[i + 1] : null;
+  }
+
   function buildEntries() {
-    var out = [];
-    (hero.raw || []).forEach(function (w) {
+    var rawList = hero.raw || [];
+    var watchMap = new Map();
+    (hero.rawSync || []).forEach(function (w) { watchMap.set(String(w.key), w); });
+
+    var candidates = [];
+    rawList.forEach(function (w) {
       if (Date.now() - w.at > MAX_AGE) return;
-      var fraction = w.len > 0 ? w.pos / w.len : 0;
-      if (fraction > 0.95) return;
       var id = String(w.key).split("|")[0], path = String(w.key).slice(id.length + 1);
       var magnet = (cachedLibrary || []).find(function (m) { return String(m.id) === id; });
       if (!magnet || Number(magnet.statusCode) !== 4) return;
       var pl = buildPlaylist(magnet), isColl = isCollection(pl, magnet);
+      var baseTitle = typeof displayTitle === "function" ? displayTitle(magnet) : escapeTitle(magnet.name);
+
+      var fraction = w.len > 0 ? w.pos / w.len : 0;
+      var isWatched = fraction >= 0.9;
+      var targetPath = path;
+      var isNext = false;
+      var entryPos = w.pos, entryLen = w.len, entryFrac = fraction;
+
+      if (isWatched) {
+        if (!isColl && pl.type !== "series") {
+          // Завершённый фильм дальше не показываем
+          return;
+        }
+        var next = nextEpisode(pl, path);
+        if (!next || !next.file) return;
+        var nextKey = id + "|" + next.file.path;
+        var nextW = watchMap.get(nextKey);
+        if (nextW && nextW.len > 0 && nextW.pos / nextW.len >= 0.9) return;
+        targetPath = next.file.path;
+        isNext = true;
+        entryPos = nextW ? nextW.pos : 0;
+        entryLen = nextW ? nextW.len : 0;
+        entryFrac = entryLen > 0 ? entryPos / entryLen : 0;
+      }
+
       var sub = tr("common.movie", null, "Фильм"), epCount = null, filmTitle = null, queries = null;
       if (isColl) {
         var films = (pl.seasons && pl.seasons[0] && pl.seasons[0].items) || [];
         var idx = -1;
-        films.forEach(function (item, i) { if (item.file.path === path) idx = i; });
-        var curItem = idx >= 0 ? films[idx] : null;
-        var cleanName = collectionFileTitle(magnet, path);
+        films.forEach(function (item, i) { if (item.file.path === targetPath) idx = i; });
+        var cleanName = collectionFileTitle(magnet, targetPath);
         filmTitle = cleanName;
-        sub = (films.length > 1 && idx >= 0) ? tr("library.film_p", { p: idx + 1 }, "Фильм " + (idx + 1)) + " · " + cleanName : cleanName;
-        queries = collectionFilePosterQueries(magnet, path);
+        var baseSub = (films.length > 1 && idx >= 0) ? tr("library.film_p", { p: idx + 1 }, "Фильм " + (idx + 1)) + " · " + cleanName : cleanName;
+        sub = isNext ? (tr("library.dalshe", null, "Дальше: ") + baseSub) : baseSub;
+        queries = collectionFilePosterQueries(magnet, targetPath);
       } else if (pl.type === "series") {
         var found = null;
-        pl.seasons.forEach(function (s) { s.items.forEach(function (e) { if (e.file.path === path) found = { s: s, e: e }; }); });
+        pl.seasons.forEach(function (s) { s.items.forEach(function (e) { if (e.file.path === targetPath) found = { s: s, e: e }; }); });
         if (!found) return;
-        sub = found.s.season === 0 ? tr("hero.special_episode", { episode: found.e.episode }, "Спецвыпуск " + found.e.episode) : tr("hero.season_episode", { season: found.s.season, episode: found.e.episode }, "Сезон " + found.s.season + ", серия " + found.e.episode);
+        var epText = found.s.season === 0
+          ? tr("hero.special_episode", { episode: found.e.episode }, "Спецвыпуск " + found.e.episode)
+          : tr("hero.season_episode", { season: found.s.season, episode: found.e.episode }, "Сезон " + found.s.season + ", серия " + found.e.episode);
+        sub = isNext ? (tr("library.dalshe", null, "Дальше: ") + epText) : epText;
         epCount = { seasons: pl.seasons.length, eps: pl.seasons.reduce(function (a, s) { return a + s.items.length; }, 0) };
-        queries = [aiPosterQuery(magnet), displayTitle(magnet)].filter(Boolean);
+        queries = typeof getPosterQueries === "function" ? getPosterQueries(magnet) : [baseTitle, escapeTitle(magnet.name)];
       } else if (!pl.file) return;
       else {
-        queries = [aiPosterQuery(magnet), displayTitle(magnet)].filter(Boolean);
+        queries = typeof getPosterQueries === "function" ? getPosterQueries(magnet) : [baseTitle, escapeTitle(magnet.name)];
       }
-      out.push({
-        magnet: magnet, path: path, pos: w.pos, len: w.len, at: w.at, fraction: fraction,
+
+      // Группировка по сериалу / фильму (как на ПК и Android: groupVersions), чтобы разные релизы или сезоны не дублировали карточки
+      var pPath = typeof posterPathOf === "function" ? posterPathOf(magnet) : null;
+      var kind = (pl.type === "series" || isColl) ? "s" : "m";
+      var tKey = typeof titleKey === "function" ? titleKey(baseTitle) : baseTitle.toLowerCase().trim();
+      var groupKey = pPath ? (kind + "|poster|" + pPath) : (kind + "|" + tKey);
+
+      candidates.push({
+        magnet: magnet, path: targetPath, pos: entryPos, len: entryLen, at: w.at, fraction: entryFrac,
         sub: sub, epCount: epCount, isCollection: isColl, filmTitle: filmTitle,
         filmCount: isColl ? ((pl.seasons && pl.seasons[0] && pl.seasons[0].items && pl.seasons[0].items.length) || 0) : 0,
-        queries: queries
+        queries: queries, baseTitle: baseTitle, groupKey: groupKey
       });
     });
+
+    // Дедупликация: для одного сериала/фильма оставляем только последнюю просмотренную запись
+    var byGroup = new Map();
+    candidates.forEach(function (item) {
+      var old = byGroup.get(item.groupKey);
+      if (!old || item.at > old.at) byGroup.set(item.groupKey, item);
+    });
+
+    var out = [...byGroup.values()];
     out.sort(function (a, b) { return b.at - a.at; });
     return out.slice(0, LIMIT);
   }
@@ -195,7 +252,7 @@
   }
 
   function playEntry(e) {
-    var magnet = e.magnet, pl = buildPlaylist(magnet), file = null, label = escapeTitle(magnet.name), req = null;
+    var magnet = e.magnet, pl = buildPlaylist(magnet), file = null, baseTitle = e.baseTitle || (typeof displayTitle === "function" ? displayTitle(magnet) : escapeTitle(magnet.name)), label = baseTitle, req = null;
     if (e.isCollection) {
       var films = (pl.seasons && pl.seasons[0] && pl.seasons[0].items) || [];
       var fItem = films.find(function (x) { return x.file.path === e.path; });
@@ -225,8 +282,9 @@
     if (!e) { box.replaceChildren(); return; }
     var bg = el("div", "hb-bg"), shade = el("div", "hb-shade"), text = el("div", "hb-text"), thumbs = el("div", "hb-thumbs");
     var eyebrow = el("div", "hb-eyebrow", tr("hero.eyebrow", null, "ПРОДОЛЖИТЬ ПРОСМОТР"));
-    var displayTitle = (e.isCollection && (e.filmTitle || escapeTitle(e.magnet.name))) || escapeTitle(e.magnet.name);
-    var titleBox = el("div", "hb-title"), title = el("h2", "", displayTitle);
+    var baseTitle = e.baseTitle || (typeof displayTitle === "function" ? displayTitle(e.magnet) : escapeTitle(e.magnet.name));
+    var displayTitleText = e.isCollection ? (e.filmTitle || baseTitle) : baseTitle;
+    var titleBox = el("div", "hb-title"), title = el("h2", "", displayTitleText);
     titleBox.append(title);
     var chips = el("div", "hb-chips"), overview = el("p", "hb-overview");
     var specs = getItemSpecs(e.magnet);
@@ -250,17 +308,18 @@
     text.append(eyebrow, titleBox, chips, overview, el("div", "hb-spacer"), meta, bar, play);
 
     hero.entries.forEach(function (x, i) {
-      var thumbTitle = x.isCollection ? (x.filmTitle || escapeTitle(x.magnet.name)) : escapeTitle(x.magnet.name);
+      var thumbTitle = x.isCollection ? (x.filmTitle || x.baseTitle) : x.baseTitle;
       var b = el("button", "hb-thumb" + (x === e ? " on" : "")); b.type = "button"; b.title = thumbTitle;
+      var titleFallback = el("span", "hb-thumb-title", thumbTitle);
       var img = el("img"); img.alt = ""; img.decoding = "async";
       (async function () {
         for (var q of x.queries) {
           var u = await getPoster(q);
-          if (u) { img.src = u; break; }
+          if (u) { img.src = u; img.onload = function () { img.classList.add("loaded"); }; break; }
         }
       })();
       var p = el("i", "hb-thumb-bar"); p.style.width = Math.round(Math.min(1, x.fraction) * 100) + "%";
-      b.append(img, p);
+      b.append(titleFallback, img, p);
       b.addEventListener("click", function () { hero.idx = i; renderHero(); armTimer(); });
       thumbs.append(b);
     });
@@ -277,7 +336,7 @@
         im.src = info.backdrop;
       }
       if (info.logo && /^\/api\/poster\/img\//.test(info.logo)) {
-        var logo = el("img", "hb-logo"); logo.alt = displayTitle; logo.src = info.logo;
+        var logo = el("img", "hb-logo"); logo.alt = displayTitleText; logo.src = info.logo;
         logo.onload = function () { title.replaceWith(logo); };
       } else if (info.title && e.isCollection) {
         title.textContent = info.title;
