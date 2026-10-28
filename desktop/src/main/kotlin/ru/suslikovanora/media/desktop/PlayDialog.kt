@@ -183,6 +183,18 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
         else -> item?.baseTitle ?: t.label
     }
 
+    // Discord: the title the library shows and the season / episode, not the file name of the torrent
+    fun presenceOf(f: MFile): Presence {
+        val base = item?.baseTitle ?: t.label.substringBefore(" · ")
+        if (isCollection) {
+            val i = films.indexOfFirst { it.file.path == f.path }
+            val film = films.getOrNull(i) ?: return Presence(base)
+            return Presence(extractTrilogyFilmInfo(item?.baseTitle ?: "", film, i, t.magnetId, lib).first.ifBlank { base })
+        }
+        val (s, e) = seasons.firstNotNullOfOrNull { s -> s.items.find { it.file.path == f.path }?.let { s to it } } ?: return Presence(base)
+        return Presence(base, if (s.season == 0) tr("discord.specvypusk", "e" to e.episode) else tr("discord.sezon_seriya", "s" to s.season, "e" to e.episode))
+    }
+
     // The player's queue: the whole season (or collection) with links, so «previous» works from the episode it started
     // with (it used to be this episode and the following ones only: back from the first one just went to 00:00).
     val followingFiles: List<MFile> = when {
@@ -418,7 +430,8 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                             } ?: (emptyList<String>() to emptyList())
                         }
                         onPlay(PlayRequest(url, currentTitle, playlist, subs, keys, audio, if (playlist != null) resolve else null, fromStart,
-                            posterQueries = item?.posterQueries.orEmpty(), startIndex = if (playlist != null) queueStart else 0))
+                            posterQueries = item?.posterQueries.orEmpty(), startIndex = if (playlist != null) queueStart else 0,
+                            presence = if (playlist != null) list.map(::presenceOf) else listOf(presenceOf(currentFile))))
                     },
                 )
 
@@ -445,7 +458,8 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                             } ?: (emptyList<String>() to emptyList())
                         }
                         onPlay(PlayRequest(url, currentTitle, playlist, subs, keys, audio, if (playlist != null) resolve else null, fromStart,
-                            posterQueries = item?.posterQueries.orEmpty(), startIndex = if (playlist != null) queueStart else 0))
+                            posterQueries = item?.posterQueries.orEmpty(), startIndex = if (playlist != null) queueStart else 0,
+                            presence = if (playlist != null) list.map(::presenceOf) else listOf(presenceOf(currentFile))))
                     },
                 )
 
@@ -482,7 +496,8 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                     url = mirror,
                     loading = loading,
                     onPlay = { url ->
-                        onPlay(PlayRequest(url, currentTitle, null, subs, listOf(watchKey(t.magnetId, currentFile)), audio, fromStart = fromStart, posterQueries = item?.posterQueries.orEmpty()))
+                        onPlay(PlayRequest(url, currentTitle, null, subs, listOf(watchKey(t.magnetId, currentFile)), audio, fromStart = fromStart, posterQueries = item?.posterQueries.orEmpty(),
+                            presence = listOf(presenceOf(currentFile))))
                     },
                 )
 

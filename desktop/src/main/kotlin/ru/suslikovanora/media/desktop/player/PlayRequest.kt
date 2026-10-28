@@ -16,7 +16,12 @@ data class PlayRequest(
     val posterQueries: List<String> = emptyList(),
     /** This episode's place in [playlist] (the whole season is there, so «previous» works); [url] and the side files are its. */
     val startIndex: Int = 0,
+    /** Discord: the library's title and the episode of each [playlist] entry (one for a single file); empty — [title]. */
+    val presence: List<Presence> = emptyList(),
     /** Предпросмотр озвучки до привязки: эта дорожка выбирается сама, задержка из плеера уходит в [onPreviewDelay]. */
     val preview: ru.suslikovanora.media.core.audio.CustomTrack? = null,
     val onPreviewDelay: ((Long) -> Unit)? = null
 )
+
+/** What Discord shows: the title from the library (the AI's one once accepted), not the torrent's file name, and the episode. */
+data class Presence(val title: String, val episode: String? = null)
