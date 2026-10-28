@@ -234,7 +234,7 @@ test('groupVersions: сезоны и раздачи сериала — одна 
   assert.equal(g.versions[5], undefined);
 });
 
-// ---- название от ИИ (services/aititle.js; groupTitle в Model.kt) ----
+// ---- название от ИИ (services/aititle.js; baseTitle в Model.kt) ----
 test('parseLibrary: aiTitle и canAiTitle; неизвестный статус отбрасывается', () => {
   const list = M.parseLibrary({ magnets: [
     { id: 1, name: 'A', statusCode: 4, files: [], canAiTitle: true, aiTitle: { base: ' Тед Лассо ', season: 2, source: 'ai', model: 'gemini-3.5-flash-lite', at: 5, status: 'suggested' } },
@@ -254,7 +254,7 @@ test('groupVersions: принятое название ИИ объединяет
     mag([file(0, 'Cars.2.mkv', 4000)], { id: 1, name: 'Тачки 2 (2011) BDRip' }),
     mag([file(0, 'Cars2.mkv', 2000)], { id: 2, name: 'Cars.Two.2011.720p', aiTitle: ai(status) })
   ]);
-  assert.equal(M.groupTitle(build('accepted')[1]), 'Тачки 2');
+  assert.equal(build('accepted')[1].baseTitle, 'Тачки 2');
   assert.deepEqual(M.groupVersions(build('accepted')).versions[1].map((i) => i.m.id).sort(), [1, 2]);
   assert.deepEqual(M.groupVersions(build('suggested')).shown.map((i) => i.m.id), [1, 2]);
   assert.deepEqual(M.groupVersions(build('rejected')).shown.map((i) => i.m.id), [1, 2]);
@@ -318,7 +318,7 @@ test('принятый ИИ: поиск находит его название, 
   assert.ok(sug.searchText.indexOf('дюна') < 0);
 });
 
-test('sortVersions и versionSections: сезоны и годы упорядочиваются хронологически', () => {
+test('sortVersions: сезоны и годы упорядочиваются хронологически', () => {
   const ep = (s, e) => file(e, `Show/Season ${s}/E0${e}.mkv`, 500);
   const series = M.prepareItems([
     mag([ep(2, 1), ep(2, 2)], { id: 1, name: 'Cyberpunk Edgerunners 2 [2160p WEB-DL DV HDR10]', size: 26200 }),
@@ -329,13 +329,6 @@ test('sortVersions и versionSections: сезоны и годы упорядоч
   const sortedSeries = M.sortVersions(series);
   assert.deepEqual(sortedSeries.map(i => i.m.id), [2, 4, 1, 3]);
 
-  const secSeries = M.versionSections(series);
-  assert.equal(secSeries.length, 2);
-  assert.equal(secSeries[0].title, 'Сезон 1');
-  assert.deepEqual(secSeries[0].items.map(i => i.m.id), [2, 4]);
-  assert.equal(secSeries[1].title, 'Сезон 2');
-  assert.deepEqual(secSeries[1].items.map(i => i.m.id), [1, 3]);
-
   const trilogy = M.prepareItems([
     mag([file(0, 'Movie3.mkv', 45000)], { id: 3, name: 'The Return of the King (2003) 4K' }),
     mag([file(0, 'Movie1.mkv', 15000)], { id: 1, name: 'The Fellowship of the Ring (2001) 1080p' }),
@@ -345,12 +338,21 @@ test('sortVersions и versionSections: сезоны и годы упорядоч
   const sortedTrilogy = M.sortVersions(trilogy);
   assert.deepEqual(sortedTrilogy.map(i => i.m.id), [4, 1, 2, 3]);
 
-  const secTrilogy = M.versionSections(trilogy);
-  assert.equal(secTrilogy.length, 3);
-  assert.equal(secTrilogy[0].title, '2001 год');
-  assert.deepEqual(secTrilogy[0].items.map(i => i.m.id), [4, 1]);
-  assert.equal(secTrilogy[1].title, '2002 год');
-  assert.deepEqual(secTrilogy[1].items.map(i => i.m.id), [2]);
-  assert.equal(secTrilogy[2].title, '2003 год');
-  assert.deepEqual(secTrilogy[2].items.map(i => i.m.id), [3]);
+});
+
+test('сборник: слова имени без \\b и lookbehind, «Сага о Винланде» — сериал', () => {
+  const ep = (i) => file(i, 'Vinland/Vinland Saga - 0' + i + ' [1080p].mkv', 800);
+  const vinland = M.prepareItems([mag([1, 2, 3, 4, 5, 6].map(ep), { name: 'Сага о Винланде / Vinland Saga [1080p]' })])[0];
+  assert.equal(vinland.playable.kind, 'series');
+  assert.equal(M.isCollection(vinland.playable, vinland.m), false);
+  const lotr = M.prepareItems([mag([file(0, 'LOTR/01. Братство кольца (2001).mkv', 4000), file(1, 'LOTR/02. Две крепости (2002).mkv', 4000), file(2, 'LOTR/03. Возвращение короля (2003).mkv', 4000)],
+    { name: 'Властелин колец: Трилогия (2001-2003)' })])[0];
+  assert.equal(M.isCollection(lotr.playable, lotr.m), true);
+  assert.equal(M.versionLine(lotr), 'Кинотрилогия • 3 фильма');
+  assert.equal(M.collectionLabel(5, 'Гарри Поттер: Коллекция'), 'Коллекция');
+  assert.equal(M.collectionLabel(3, 'Дилогия плюс бонус'), 'Дилогия');
+  // римская цифра в имени — не часть («X-Men» — не десятая), номер после «Часть» — часть
+  const items = M.prepareItems([mag([file(0, 'X-Men.2000.mkv', 4000)], { name: 'X-Men (2000) 1080p' }), mag([file(0, 'Dune2.mkv', 4000)], { name: 'Дюна: Часть II (2024)' })]);
+  assert.equal(M.itemPart(items[0]), null);
+  assert.equal(M.itemPart(items[1]), 2);
 });

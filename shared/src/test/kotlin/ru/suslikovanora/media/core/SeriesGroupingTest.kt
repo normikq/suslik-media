@@ -3,7 +3,10 @@ package ru.suslikovanora.media.core
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 class SeriesGroupingTest {
     private val MB = 1024L * 1024
@@ -168,6 +171,12 @@ class AiTitleSearchGroupingTest {
         canRemove = true, aiTitle = ai
     )
 
+    private fun magnet(name: String, vararg files: Pair<String, Long>) = Magnet(
+        id = 1, name = name, status = "Ready", statusCode = 4, size = files.sumOf { it.second }, downloaded = 0,
+        files = files.mapIndexed { i, (p, s) -> MFile(i, p.substringAfterLast('/'), p, false, s, "https://x/$i") },
+        canRemove = true
+    )
+
     private val accepted = AiTitle("Дюна", null, "m", 1L, "accepted", kind = "movie", original = "Dune", year = 2021)
 
     @Test
@@ -186,5 +195,75 @@ class AiTitleSearchGroupingTest {
         val (shown, versions) = groupVersions(items)
         assertEquals(1, shown.size)
         assertEquals(2, versions.getValue(1L).size)
+    }
+
+    // ---- сборники: русские слова на JDK 21 (\b там только латиница), «сага» у сериала, порядок версий ----
+
+    @Test
+    fun russianOnlyCollectionWordsWorkOnTheJvm() {
+        val lotr = magnet(
+            "Властелин колец: Трилогия (2001-2003)",
+            "LOTR/Братство кольца (2001).mkv" to 4000 * MB, "LOTR/Две крепости (2002).mkv" to 4000 * MB, "LOTR/Возвращение короля (2003).mkv" to 4000 * MB
+        )
+        val item = prepareItems(listOf(lotr)).single()
+        assertTrue(isCollection(item.playable, item.m))
+        assertEquals(CollectionKind.Trilogy, collectionKind(3, lotr.name))
+        assertEquals(CollectionKind.Dilogy, collectionKind(3, "Дилогия + бонус"))
+        assertEquals(CollectionKind.Collection, collectionKind(8, "Гарри Поттер: Коллекция 8 фильмов"))
+        assertEquals("Кинотрилогия • 3 фильма", versionLine(item, inSection = false))
+        // «все части», «3 в 1» — тоже набор фильмов; сериал со словом «трилогия» и сезоном — нет
+        val serial = Playable.Series(listOf(Season(1, listOf(Episode(1, 1, lotr.files[0]), Episode(1, 2, lotr.files[1])))))
+        assertTrue(isCollection(serial, lotr.copy(name = "Пила все части")))
+        assertTrue(isCollection(serial, lotr.copy(name = "Матрица 3 в 1")))
+        assertFalse(isCollection(serial, lotr.copy(name = "Шоу: трилогия, 2 сезон")))
+    }
+
+    @Test
+    fun aShowCalledSagaOrCollectionStaysAShow() {
+        val files = (1..24).map { "Vinland/Vinland Saga - ${it.toString().padStart(2, '0')} [1080p].mkv" to 800 * MB }
+        for (name in listOf("Сага о Винланде / Vinland Saga [1080p]", "Cowboy Bebop Complete Collection [BD 1080p]")) {
+            val m = magnet(name, *files.toTypedArray())
+            val p = assertIs<Playable.Series>(buildPlayable(m), name)
+            assertEquals(24, p.seasons.single().items.size, name)
+            assertEquals(null, p.seasons.single().items.first().title, name)
+            assertFalse(isCollection(p, m), name)
+        }
+        // «коллекция» с фильмами разных лет — сборник
+        val mi = magnet("Миссия невыполнима: коллекция", *(0 until 6).map { "MI/Mission ${it + 1} (${1996 + it * 4}).mkv" to 4000 * MB }.toTypedArray())
+        assertNotNull(assertIs<Playable.Series>(buildPlayable(mi)).seasons.single().items.first().title)
+    }
+
+    @Test
+    fun acceptedAiKindDecidesWhetherItIsACollection() {
+        val m = magnet("Властелин колец: Трилогия", "A (2001).mkv" to 4000 * MB, "B (2002).mkv" to 4000 * MB)
+        val series = Playable.Series(listOf(Season(1, listOf(Episode(1, 1, m.files[0]), Episode(1, 2, m.files[1])))))
+        assertTrue(isCollection(series, m))
+        assertFalse(isCollection(series, m.copy(aiTitle = AiTitle("Шоу", 1, "m", 1, "accepted", "series"))))
+        assertTrue(isCollection(series, m.copy(name = "Шоу", aiTitle = AiTitle("Шоу", null, "m", 1, "accepted", "collection"))))
+    }
+
+    @Test
+    fun romanNumeralsElsewhereAreNotParts() {
+        val xmen = prepareItems(listOf(magnet("X-Men (2000) 1080p", "X-Men.2000.mkv" to 4000 * MB))).single()
+        assertEquals(null, itemPart(xmen))
+        val dune = prepareItems(listOf(magnet("Дюна: Часть II (2024)", "Dune2.mkv" to 4000 * MB))).single()
+        assertEquals(2, itemPart(dune))
+        val second = prepareItems(listOf(magnet("Тачки 2 (2011)", "Cars2.mkv" to 4000 * MB))).single()
+        assertEquals(null, itemPart(prepareItems(listOf(magnet("8 фильмов", "a.mkv" to MB))).single()))
+        assertEquals(2, itemPart(second.copy(baseTitle = "Тачки")))
+    }
+
+    @Test
+    fun sortingManyMixedVersionsKeepsATotalOrder() {
+        // part without year, year without part, both, neither: the old comparator could loop (A < B < C < A) and TimSort threw
+        val names = listOf("Film Part 2", "Film (2000)", "Film Part 1 (2005)", "Film", "Film Part 3 (1999)", "Film (2010) 4K")
+        val items = (0 until 64).map { i ->
+            val n = names[i % names.size]
+            prepareItems(listOf(magnet(n, "f$i.mkv" to (1000L + (i * 37) % 11) * MB).copy(id = i.toLong()))).single()
+        }
+        val sorted = sortVersions(items.shuffled(java.util.Random(7)))
+        assertEquals(64, sorted.size)
+        assertEquals(sorted.map { it.m.id }, sortVersions(sorted.reversed()).map { it.m.id })
+        assertEquals(1, itemPart(sorted.first()))
     }
 }

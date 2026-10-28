@@ -541,12 +541,12 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
               <button id="torrentModeBtn" class="mode-card" type="button" aria-pressed="false"><span class="mode-icon">⇧</span><span><strong>Torrent-файл</strong><small>Выберите файл .torrent</small></span></button>
             </div>
             <div id="magnetInputArea" class="input-area"><label for="url">Magnet-ссылка</label><div class="row"><input id="url" type="text" placeholder="magnet:?xt=urn:btih:…" maxlength="5000" autocomplete="off"><button id="submitBtn" type="submit">Добавить magnet</button></div></div>
-            <div id="torrentInputArea" class="input-area hidden"><label>Torrent-файл <span class="file-meta">(max 1 MB)</span></label><input id="torrentФайл" class="hidden" type="file" accept=".torrent,application/x-bittorrent"><div id="torrentDropzone" class="torrent-dropzone" role="button" tabindex="0"><div class="drop-icon">⇧</div><strong id="torrentDropTitle">Перетащите сюда файл .torrent</strong><p id="torrentDropHint">или нажмите, чтобы выбрать файл на устройстве</p><button id="chooseTorrentBtn" class="secondary" type="button">Выбрать файл</button></div><div id="torrentChosen" class="torrent-chosen hidden"><span class="torrent-file-icon">TORRENT</span><span id="torrentChosenName" class="torrent-chosen-name"></span><span id="torrentChosenSize" class="file-meta"></span><button id="removeTorrentBtn" class="secondary detach-btn" type="button" aria-label="Detach file" title="Detach file">×</button></div><button id="submitTorrentBtn" type="submit" class="submit-torrent hidden">Загрузить торрент</button></div>
+            <div id="torrentInputArea" class="input-area hidden"><label>Torrent-файл <span class="file-meta">(max 1 MB)</span></label><input id="torrentFile" class="hidden" type="file" accept=".torrent,application/x-bittorrent"><div id="torrentDropzone" class="torrent-dropzone" role="button" tabindex="0"><div class="drop-icon">⇧</div><strong id="torrentDropTitle">Перетащите сюда файл .torrent</strong><p id="torrentDropHint">или нажмите, чтобы выбрать файл на устройстве</p><button id="chooseTorrentBtn" class="secondary" type="button">Выбрать файл</button></div><div id="torrentChosen" class="torrent-chosen hidden"><span class="torrent-file-icon">TORRENT</span><span id="torrentChosenName" class="torrent-chosen-name"></span><span id="torrentChosenSize" class="file-meta"></span><button id="removeTorrentBtn" class="secondary detach-btn" type="button" aria-label="Detach file" title="Detach file">×</button></div><button id="submitTorrentBtn" type="submit" class="submit-torrent hidden">Загрузить торрент</button></div>
           </form>
           <div id="linkStatus" class="status" role="status"></div>
           <section id="historyPanel" class="history-panel"><div class="topline"><h3>История поиска и загрузок</h3><button id="clearHistory" class="secondary" type="button">Очистить</button></div><p class="file-meta">Сохраняется в этом браузере, в том числе после обновления страницы.</p><div id="searchHistory"></div></section>
         </div>
-        <div id="magnetPanel" class="panel hidden"><div id="magnetStatus" class="status"></div><div id="magnetФайлы" class="actions"></div></div>
+        <div id="magnetPanel" class="panel hidden"><div id="magnetStatus" class="status"></div><div id="magnetFiles" class="actions"></div></div>
       </section>
 
       <section id="searchTab" class="hidden">
@@ -576,7 +576,7 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
       <section id="libraryTab" class="hidden">
         <div class="library-search-bar library-search-top">
           <span class="search-lens" aria-hidden="true">⌕</span>
-          <input id="libraryПоиск" type="search" placeholder="Поиск по названию или файлу…" autocomplete="off" aria-label="Поиск по названию">
+          <input id="librarySearch" type="search" placeholder="Поиск по названию или файлу…" autocomplete="off" aria-label="Поиск по названию">
           <button id="clearLibrarySearch" type="button" class="clear-search-btn hidden" aria-label="Очистить поиск" title="Очистить">×</button>
         </div>
         <div id="continueHero" class="hero-banner hidden" aria-label="Продолжить просмотр"></div>
@@ -718,7 +718,7 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
       <div class="foot" data-i18n="footer.server_notice">Все запросы и медиафайлы безопасно обрабатываются нашим сервером.</div>
     </div>
 
-    <div id="libraryModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="library-modal"><div class="modal-head"><div><h2 id="modalTitle">Файлы</h2><p id="modalMeta"></p></div><div class="actions"><button id="closeLibraryModal" class="secondary" type="button">Закрыть</button></div></div><div id="modalФайлы" class="modal-files"></div></div></div>
+    <div id="libraryModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="library-modal"><div class="modal-head"><div><h2 id="modalTitle">Файлы</h2><p id="modalMeta"></p></div><div class="actions"><button id="closeLibraryModal" class="secondary" type="button">Закрыть</button></div></div><div id="modalFiles" class="modal-files"></div></div></div>
   </section>
   <div class="foot" data-i18n="footer.disclaimer">Используйте только контент и ссылки, к которым у вас есть разрешённый доступ.</div>
 </main>
@@ -899,9 +899,9 @@ const LIBRARY_SNAPSHOT_KEY = "moviePortal.librarySnapshot.v1";
 const posterCache = new Map();
 function readHistory(){try{const value=JSON.parse(localStorage.getItem(HISTORY_KEY)||"[]");return Array.isArray(value)?value:[];}catch{return [];}}
 function saveHistory(value){try{localStorage.setItem(HISTORY_KEY,JSON.stringify(value.slice(0,30)));}catch{}if(window.ensureHistoryPoll)window.ensureHistoryPoll();}
-function rememberПоиск(value){const history=readHistory().filter(item=>item.value!==value);history.unshift({value,at:Date.now(),title:value.startsWith("magnet:?")?"Загрузка по magnet-ссылке":"Проверка ссылки",status:"Отправлено"});saveHistory(history);renderHistory();}
+function rememberSearch(value){const history=readHistory().filter(item=>item.value!==value);history.unshift({value,at:Date.now(),title:value.startsWith("magnet:?")?"Загрузка по magnet-ссылке":"Проверка ссылки",status:"Отправлено"});saveHistory(history);renderHistory();}
 function updateHistory(value, patch){const history=readHistory();const item=history.find(entry=>entry.value===value);if(item)Object.assign(item,patch,{updatedAt:Date.now()});saveHistory(history);renderHistory();}
-function renderHistory(){const target=$("searchHistory");if(!target)return;target.replaceChildren();const history=readHistory();if(!history.length){const empty=document.createElement("p");empty.className="file-meta";empty.textContent="История поиска пуста.";target.append(empty);return;}for(const item of history){const row=document.createElement("div");row.className="history-item";const info=document.createElement("div");info.className="history-value";const titleRow=document.createElement("div");titleRow.className="history-title-row";const title=document.createElement("strong");title.textContent=item.title|| (item.value.startsWith("magnet:?")?"Загрузка по magnet-ссылке":"Проверка ссылки");title.style.display="block";titleRow.append(title);if(item.magnetId && !item.ready && !item.cancelled){const progress=document.createElement("div");progress.className="history-progress";const track=document.createElement("div");track.className="history-progress-track";track.setAttribute("role","progressbar");track.setAttribute("aria-valuemin","0");track.setAttribute("aria-valuemax","100");const fill=document.createElement("div");fill.className="history-progress-fill";const pct=item.percent==null?0:Math.max(0,Math.min(100,Number(item.percent)));fill.style.width=pct+"%";track.append(fill);const percent=document.createElement("span");percent.className="history-percent";percent.textContent=item.percent==null?"…":pct+"%";progress.append(track,percent);titleRow.append(progress);}const detail=document.createElement("div");detail.className="file-meta";detail.textContent=[item.status||"Отправлено",item.ready?"100%": ""].filter(Boolean).join(" · ");info.append(titleRow,detail);const actions=document.createElement("div");actions.className="history-actions";const activeСкачать=Boolean(item.magnetId && !item.ready && !item.cancelled && !item.failed);if(activeСкачать){const cancel=document.createElement("button");cancel.type="button";cancel.className="secondary";cancel.textContent="Отменить загрузку";cancel.addEventListener("click",async()=>{if(!confirm(tr("history.confirm_cancel", "Отменить загрузку и удалить раздачу из медиатеки? Это действие нельзя отменить.")))return;cancel.disabled=true;cancel.textContent=tr("history.cancelling", "Отмена…");try{await api(`/api/magnets/${item.magnetId}/cancel`,{method:"POST"});updateHistory(item.value,{status:"Отменено",cancelled:true});}catch(err){alert(err.message);cancel.disabled=false;cancel.textContent=tr("history.cancel_download", "Отменить загрузку");}});actions.append(cancel);}else{const reuse=document.createElement("button");reuse.type="button";reuse.className="secondary";reuse.textContent="Использовать снова";reuse.addEventListener("click",()=>{if(item.sourceType==="torrent-file"){setInputMode("torrent");$("linkStatus").textContent="Выберите файл .torrent повторно: браузер не позволяет восстановить вложение автоматически.";$("linkStatus").className="status";$("torrentDropzone").focus();}else{setInputMode("magnet");$("url").value=item.value;$("url").focus();}});actions.append(reuse);if(item.ready || item.cancelled || item.failed){const remove=document.createElement("button");remove.type="button";remove.className="secondary";remove.textContent="×";remove.title="Удалить из истории";remove.setAttribute("aria-label","Удалить из истории");remove.addEventListener("click",event=>{event.preventDefault();event.stopPropagation();saveHistory(readHistory().filter(entry=>entry.value!==item.value));renderHistory();});actions.append(remove);}}row.append(info,actions);target.append(row);}}
+function renderHistory(){const target=$("searchHistory");if(!target)return;target.replaceChildren();const history=readHistory();if(!history.length){const empty=document.createElement("p");empty.className="file-meta";empty.textContent="История поиска пуста.";target.append(empty);return;}for(const item of history){const row=document.createElement("div");row.className="history-item";const info=document.createElement("div");info.className="history-value";const titleRow=document.createElement("div");titleRow.className="history-title-row";const title=document.createElement("strong");title.textContent=item.title|| (item.value.startsWith("magnet:?")?"Загрузка по magnet-ссылке":"Проверка ссылки");title.style.display="block";titleRow.append(title);if(item.magnetId && !item.ready && !item.cancelled){const progress=document.createElement("div");progress.className="history-progress";const track=document.createElement("div");track.className="history-progress-track";track.setAttribute("role","progressbar");track.setAttribute("aria-valuemin","0");track.setAttribute("aria-valuemax","100");const fill=document.createElement("div");fill.className="history-progress-fill";const pct=item.percent==null?0:Math.max(0,Math.min(100,Number(item.percent)));fill.style.width=pct+"%";track.append(fill);const percent=document.createElement("span");percent.className="history-percent";percent.textContent=item.percent==null?"…":pct+"%";progress.append(track,percent);titleRow.append(progress);}const detail=document.createElement("div");detail.className="file-meta";detail.textContent=[item.status||"Отправлено",item.ready?"100%": ""].filter(Boolean).join(" · ");info.append(titleRow,detail);const actions=document.createElement("div");actions.className="history-actions";const activeDownload=Boolean(item.magnetId && !item.ready && !item.cancelled && !item.failed);if(activeDownload){const cancel=document.createElement("button");cancel.type="button";cancel.className="secondary";cancel.textContent="Отменить загрузку";cancel.addEventListener("click",async()=>{if(!confirm(tr("history.confirm_cancel", "Отменить загрузку и удалить раздачу из медиатеки? Это действие нельзя отменить.")))return;cancel.disabled=true;cancel.textContent=tr("history.cancelling", "Отмена…");try{await api(`/api/magnets/${item.magnetId}/cancel`,{method:"POST"});updateHistory(item.value,{status:"Отменено",cancelled:true});}catch(err){alert(err.message);cancel.disabled=false;cancel.textContent=tr("history.cancel_download", "Отменить загрузку");}});actions.append(cancel);}else{const reuse=document.createElement("button");reuse.type="button";reuse.className="secondary";reuse.textContent="Использовать снова";reuse.addEventListener("click",()=>{if(item.sourceType==="torrent-file"){setInputMode("torrent");$("linkStatus").textContent="Выберите файл .torrent повторно: браузер не позволяет восстановить вложение автоматически.";$("linkStatus").className="status";$("torrentDropzone").focus();}else{setInputMode("magnet");$("url").value=item.value;$("url").focus();}});actions.append(reuse);if(item.ready || item.cancelled || item.failed){const remove=document.createElement("button");remove.type="button";remove.className="secondary";remove.textContent="×";remove.title="Удалить из истории";remove.setAttribute("aria-label","Удалить из истории");remove.addEventListener("click",event=>{event.preventDefault();event.stopPropagation();saveHistory(readHistory().filter(entry=>entry.value!==item.value));renderHistory();});actions.append(remove);}}row.append(info,actions);target.append(row);}}
 $("clearHistory").addEventListener("click",()=>{saveHistory(readHistory().filter(item=>!(item.ready || item.cancelled || item.failed)));renderHistory();});
 let inputMode = "magnet";
 function setInputMode(mode){
@@ -909,19 +909,19 @@ function setInputMode(mode){
   $("magnetModeBtn").classList.toggle("selected",magnet); $("magnetModeBtn").setAttribute("aria-pressed",String(magnet));
   $("torrentModeBtn").classList.toggle("selected",!magnet); $("torrentModeBtn").setAttribute("aria-pressed",String(!magnet));
   $("magnetInputArea").classList.toggle("hidden",!magnet); $("torrentInputArea").classList.toggle("hidden",magnet);
-  if(magnet){$("torrentФайл").value="";renderChosenTorrent();} else {$("url").value="";}
+  if(magnet){$("torrentFile").value="";renderChosenTorrent();} else {$("url").value="";}
 }
-function renderChosenTorrent(){const file=$("torrentФайл").files?.[0]||null;$("torrentDropzone").classList.toggle("hidden",Boolean(file));$("torrentChosen").classList.toggle("hidden",!file);$("submitTorrentBtn").classList.toggle("hidden",!file);if(file){$("torrentChosenName").textContent=file.name;$("torrentChosenSize").textContent=(file.size/1024).toFixed(0)+" KB";}}
+function renderChosenTorrent(){const file=$("torrentFile").files?.[0]||null;$("torrentDropzone").classList.toggle("hidden",Boolean(file));$("torrentChosen").classList.toggle("hidden",!file);$("submitTorrentBtn").classList.toggle("hidden",!file);if(file){$("torrentChosenName").textContent=file.name;$("torrentChosenSize").textContent=(file.size/1024).toFixed(0)+" KB";}}
 $("magnetModeBtn").addEventListener("click",()=>setInputMode("magnet"));
 $("torrentModeBtn").addEventListener("click",()=>setInputMode("torrent"));
-$("chooseTorrentBtn").addEventListener("click",()=>$("torrentФайл").click());
-$("torrentDropzone").addEventListener("click",e=>{if(!e.target.closest("button"))$("torrentФайл").click();});
-$("torrentDropzone").addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();$("torrentФайл").click();}});
-$("torrentФайл").addEventListener("change",()=>{const file=$("torrentФайл").files?.[0];if(file&&file.size>1024*1024){$("torrentФайл").value="";renderChosenTorrent();$("linkStatus").textContent="Размер файла .torrent не должен превышать 1 МБ.";$("linkStatus").className="status error";return;}if(file&&!file.name.toLowerCase().endsWith(".torrent")){$("torrentФайл").value="";renderChosenTorrent();$("linkStatus").textContent="Выберите файл с расширением .torrent.";$("linkStatus").className="status error";return;}renderChosenTorrent();});
-$("removeTorrentBtn").addEventListener("click",()=>{$("torrentФайл").value="";renderChosenTorrent();});
+$("chooseTorrentBtn").addEventListener("click",()=>$("torrentFile").click());
+$("torrentDropzone").addEventListener("click",e=>{if(!e.target.closest("button"))$("torrentFile").click();});
+$("torrentDropzone").addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();$("torrentFile").click();}});
+$("torrentFile").addEventListener("change",()=>{const file=$("torrentFile").files?.[0];if(file&&file.size>1024*1024){$("torrentFile").value="";renderChosenTorrent();$("linkStatus").textContent="Размер файла .torrent не должен превышать 1 МБ.";$("linkStatus").className="status error";return;}if(file&&!file.name.toLowerCase().endsWith(".torrent")){$("torrentFile").value="";renderChosenTorrent();$("linkStatus").textContent="Выберите файл с расширением .torrent.";$("linkStatus").className="status error";return;}renderChosenTorrent();});
+$("removeTorrentBtn").addEventListener("click",()=>{$("torrentFile").value="";renderChosenTorrent();});
 for(const ev of ["dragenter","dragover"])$("torrentDropzone").addEventListener(ev,e=>{e.preventDefault();$("torrentDropzone").classList.add("dragover");});
 for(const ev of ["dragleave","drop"])$("torrentDropzone").addEventListener(ev,e=>{e.preventDefault();$("torrentDropzone").classList.remove("dragover");});
-$("torrentDropzone").addEventListener("drop",e=>{const file=e.dataTransfer?.files?.[0];if(!file)return;e.preventDefault();if(file.size>1024*1024){$("linkStatus").textContent="Размер файла .torrent не должен превышать 1 МБ.";$("linkStatus").className="status error";return;}if(!file.name.toLowerCase().endsWith(".torrent")){$("linkStatus").textContent="Выберите файл с расширением .torrent.";$("linkStatus").className="status error";return;}const transfer=new DataTransfer();transfer.items.add(file);$("torrentФайл").files=transfer.files;renderChosenTorrent();});
+$("torrentDropzone").addEventListener("drop",e=>{const file=e.dataTransfer?.files?.[0];if(!file)return;e.preventDefault();if(file.size>1024*1024){$("linkStatus").textContent="Размер файла .torrent не должен превышать 1 МБ.";$("linkStatus").className="status error";return;}if(!file.name.toLowerCase().endsWith(".torrent")){$("linkStatus").textContent="Выберите файл с расширением .torrent.";$("linkStatus").className="status error";return;}const transfer=new DataTransfer();transfer.items.add(file);$("torrentFile").files=transfer.files;renderChosenTorrent();});
 // «В раздаче есть видео» — то же правило, что в shared/…/core/torrent/TorrentInspector.kt (ПК и Android)
 const CHK_VIDEO_EXT=new Set(["mkv","mp4","m4v","avi","mov","webm","ts","m2ts","mts","wmv","vob","mpg","mpeg","flv","3gp","ogv","asf"]);
 const CHK_NON_VIDEO_EXT=new Set(["exe","msi","apk","pkg","deb","rpm","bin","cue","dmg","zip","rar","7z","tar","gz","cbr","cbz","pdf","epub","fb2","mp3","flac","wav","ape","aac","ogg","wma","doc","docx"]);
@@ -958,37 +958,37 @@ function torrentPaths(b){
 $("linkForm").addEventListener("submit", async e=>{
   e.preventDefault();
   // The active mode is authoritative, so one submit can never send both types.
-  const torrentФайл=inputMode==="torrent"?($("torrentФайл").files?.[0]||null):null;
+  const torrentFile=inputMode==="torrent"?($("torrentFile").files?.[0]||null):null;
   const value=inputMode==="magnet"?$("url").value.trim():"", btn=inputMode==="torrent"?$("submitTorrentBtn"):$("submitBtn");
-  if(inputMode==="torrent"&&!torrentФайл){$("linkStatus").textContent="Сначала выберите файл .torrent.";$("linkStatus").className="status error";return;}
-  if(torrentФайл&&torrentФайл.size>1024*1024){$("linkStatus").textContent="Размер файла .torrent не должен превышать 1 МБ.";$("linkStatus").className="status error";return;}
+  if(inputMode==="torrent"&&!torrentFile){$("linkStatus").textContent="Сначала выберите файл .torrent.";$("linkStatus").className="status error";return;}
+  if(torrentFile&&torrentFile.size>1024*1024){$("linkStatus").textContent="Размер файла .torrent не должен превышать 1 МБ.";$("linkStatus").className="status error";return;}
   if(inputMode==="magnet"&&!value){$("linkStatus").textContent="Введите magnet-ссылку.";$("linkStatus").className="status error";return;}
-  const historyValue=torrentФайл?`torrentfile:${torrentФайл.name}:${torrentФайл.size}:${torrentФайл.lastModified}`:value;
+  const historyValue=torrentFile?`torrentfile:${torrentFile.name}:${torrentFile.size}:${torrentFile.lastModified}`:value;
   btn.disabled=true; btn.textContent="Выполняется…";
   $("linkStatus").textContent="Обработка ссылки…"; $("linkStatus").className="status";
   $("magnetPanel").classList.add("hidden");
   try {
-    if(torrentФайл || value.startsWith("magnet:?")){
+    if(torrentFile || value.startsWith("magnet:?")){
       let submitted;
-      if (torrentФайл) {
-        const bytes = await torrentФайл.arrayBuffer();
+      if (torrentFile) {
+        const bytes = await torrentFile.arrayBuffer();
         const noVideoTorrent = noVideoReason(torrentPaths(new Uint8Array(bytes)));
         if (noVideoTorrent) throw new Error(noVideoTorrent);
-        submitted = await api("/api/torrents", { method:"POST", headers:{"Content-Type":"application/x-bittorrent","X-Torrent-Filename":encodeURIComponent(torrentФайл.name)}, body:bytes });
+        submitted = await api("/api/torrents", { method:"POST", headers:{"Content-Type":"application/x-bittorrent","X-Torrent-Filename":encodeURIComponent(torrentFile.name)}, body:bytes });
       } else {
         const noVideoMagnet = magnetNameReason(value);
         if (noVideoMagnet) throw new Error(noVideoMagnet);
         submitted = await api("/api/magnets",{method:"POST",body:JSON.stringify({magnet:value})});
       }
       // Only persist a search after the server accepted a real magnet/torrent.
-      rememberПоиск(historyValue);
+      rememberSearch(historyValue);
       const identity = submitted.sha256 || null;
       const existing = readHistory().find(entry => entry.value !== historyValue && ((identity && entry.sha256 === identity) || String(entry.magnetId || "") === String(submitted.id)));
       if (existing) {
         saveHistory(readHistory().filter(entry => entry.value !== historyValue));
-        updateHistory(existing.value,{magnetId:submitted.id,sha256:identity||existing.sha256,title:submitted.name||(torrentФайл?torrentФайл.name.replace(/\.torrent$/i,""):"Загрузка по magnet-ссылке"),status:"Проверка состояния",ready:false,percent:0,sourceType:torrentФайл?"torrent-file":"magnet",sourceName:torrentФайл?.name||null});
+        updateHistory(existing.value,{magnetId:submitted.id,sha256:identity||existing.sha256,title:submitted.name||(torrentFile?torrentFile.name.replace(/\.torrent$/i,""):"Загрузка по magnet-ссылке"),status:"Проверка состояния",ready:false,percent:0,sourceType:torrentFile?"torrent-file":"magnet",sourceName:torrentFile?.name||null});
       } else {
-        updateHistory(historyValue,{magnetId:submitted.id,sha256:identity,title:submitted.name||(torrentФайл?torrentФайл.name.replace(/\.torrent$/i,""):"Загрузка по magnet-ссылке"),status:"Проверка состояния",ready:false,percent:0,sourceType:torrentФайл?"torrent-file":"magnet",sourceName:torrentФайл?.name||null});
+        updateHistory(historyValue,{magnetId:submitted.id,sha256:identity,title:submitted.name||(torrentFile?torrentFile.name.replace(/\.torrent$/i,""):"Загрузка по magnet-ссылке"),status:"Проверка состояния",ready:false,percent:0,sourceType:torrentFile?"torrent-file":"magnet",sourceName:torrentFile?.name||null});
       }
       const activeHistoryValue = existing ? existing.value : historyValue;
       $("magnetPanel").classList.remove("hidden");
@@ -1026,7 +1026,7 @@ $("linkForm").addEventListener("submit", async e=>{
           $("linkStatus").textContent=noVideo+(removed?"":" · её удалит админ или автоочистка"); $("linkStatus").className="status error";
           return;
         }
-        const list=$("magnetФайлы"); list.replaceChildren();
+        const list=$("magnetFiles"); list.replaceChildren();
         if(!result.files || !result.files.length) {
           $("magnetStatus").textContent += tr("magnet.ready_no_files", null, "  — готово, но список файлов ещё подготавливается. Попробуйте обновить медиатеку через минуту.");
         } else {
@@ -1417,15 +1417,15 @@ $("refreshLibrary").addEventListener("click", () => {
   $("refreshLibrary").classList.add("loading");
   loadLibrary().finally(() => $("refreshLibrary").classList.remove("loading"));
 });
-$("libraryПоиск").addEventListener("input", () => {
-  if ($("clearLibrarySearch")) $("clearLibrarySearch").classList.toggle("hidden", !$("libraryПоиск").value.trim());
+$("librarySearch").addEventListener("input", () => {
+  if ($("clearLibrarySearch")) $("clearLibrarySearch").classList.toggle("hidden", !$("librarySearch").value.trim());
   renderLibrary(false);
 });
 if ($("clearLibrarySearch")) {
   $("clearLibrarySearch").addEventListener("click", () => {
-    $("libraryПоиск").value = "";
+    $("librarySearch").value = "";
     $("clearLibrarySearch").classList.add("hidden");
-    $("libraryПоиск").focus();
+    $("librarySearch").focus();
     renderLibrary(false);
   });
 }
@@ -1501,13 +1501,13 @@ function writeMediaInfoCache(key,value){try{const c=readMediaInfoCache();delete 
 // Два анализа одновременно (столько ffprobe держит сервер): один зависший файл не задерживает остальные плитки.
 const MEDIA_INFO_PARALLEL=2;let mediaInfoRunning=0;const mediaInfoWaiting=[];
 function withMediaInfoSlot(task){return new Promise((resolve,reject)=>{const run=()=>{mediaInfoRunning++;Promise.resolve().then(task).then(resolve,reject).finally(()=>{mediaInfoRunning--;const next=mediaInfoWaiting.shift();if(next)next();});};if(mediaInfoRunning<MEDIA_INFO_PARALLEL)run();else mediaInfoWaiting.push(run);});}
-function pickMainВидео(magnet){
+function pickMainVideo(magnet){
   const vids=(magnet.files||[]).filter(f=>f.type!=="folder" && /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso)$/i.test(f.path||""));
   const real=vids.filter(f=>!/\.iso$/i.test(f.path));
   return (real.length?real:vids).sort((a,b)=>(Number(b.size)||0)-(Number(a.size)||0))[0]||null;
 }
 function loadTileMediaInfo(magnet,line,fileArg){
-  const file=fileArg||pickMainВидео(magnet);
+  const file=fileArg||pickMainVideo(magnet);
   if(!file){return;}
   const key=magnet.id+"|"+file.path;
   line.dataset.key=key;
@@ -1548,25 +1548,62 @@ function parseEpisode(path){
 // Тип раздачи и сезон, которые владелец принял от ИИ (services/aititle.js; applyAiTitle в Model.kt), поверх разбора
 // по файлам: «сериал» — видео по порядку имён серий одного сезона, «сборник» — отдельные фильмы, «фильм» — главный файл;
 // сезон — только если сезон в раздаче один (сериал из нескольких сезонов по папкам он не трогает).
-const COLLECTION_REGEX=/(?:трилоги[яи]|дилоги[яи]|тетралоги[яи]|квадрологи[яи]|пенталоги[яи]|гексалоги[яи]|франшиз[аеы]|коллекци[яи]|антологи[яи]|саг[аеы]|киносаг[аеы]|сборник|боксет|boxset|box-set|trilogy|duology|dilogy|tetralogy|quadrilogy|anthology|collection|franchise|\b\d+\s*[-–—]\s*(?:в|in)\s*1\b|\bвсе\s+части\b|\bвсе\s+фильмы\b)/i;
+// Сборник фильмов (isCollection / collectionKind в Model.kt). Границы слов — по буквам любого алфавита: \b в JS без
+// флага u видит только латиницу, и «\bтрилогия\b» не совпадало никогда.
+// Сильные слова называют набор фильмов; слабые («сага», «коллекция», «антология») бывают и у сериалов («Сага о Винланде»,
+// «Complete Collection»), поэтому считаются, только если файлы — фильмы разных лет.
+const COLLECTION_STRONG=/(?<![\p{L}\p{N}])(?:трилоги[яи]|дилоги[яи]|тетралоги[яи]|квадр[ио]логи[яи]|пенталоги[яи]|гексалоги[яи]|франшиз[аеы]|киносаг[аеиы]|trilogy|duology|dilogy|tetralogy|quadrilogy|franchise|\d{1,2}\s*[-–—]?\s*(?:в|in)\s*1|все\s+части|все\s+фильмы|\d{1,2}\s+фильм(?:а|ов))(?![\p{L}\p{N}])/iu;
+const COLLECTION_WEAK=/(?<![\p{L}\p{N}])(?:коллекци[яи]|сборник|антологи[яи]|саг[аеиы]|boxset|box[- ]set|collection|anthology|saga)(?![\p{L}\p{N}])/iu;
+const COLLECTION_WORDS=new RegExp(COLLECTION_STRONG.source+"|"+COLLECTION_WEAK.source,"giu");
+const SERIES_HINT=/(?<![\p{L}\p{N}])(?:сезон\p{L}*|season\p{L}*|серии|серия|series|episodes?|эпизод\p{L}*|s\d{1,2}|ova|ona)(?![\p{L}\p{N}])/iu;
+const YEAR_RE=/\b(19\d{2}|20\d{2})\b/;
+// У каждого файла в имени год, и годы разные: фильмы франшизы, а не серии
+function filmsByYear(files){
+  const years=files.map(f=>YEAR_RE.exec(String(f.path||"").split("/").pop()));
+  return years.every(Boolean)&&new Set(years.map(y=>y[1])).size>=2;
+}
+// Имя раздачи говорит, что это набор фильмов, и не говорит про сезон
+function namedCollection(m,files){
+  const name=(m&&m.name)||"";
+  return !SERIES_HINT.test(name)&&(COLLECTION_STRONG.test(name)||(COLLECTION_WEAK.test(name)&&filmsByYear(files)));
+}
+// Принятый тип от ИИ решает сам («сериал» и «фильм» — не сборник); иначе фильмы с названиями или сильное слово без сезона
 function isCollection(p,m){
-  if(m&&m.aiTitle&&m.aiTitle.status==="accepted"&&m.aiTitle.kind==="collection") return true;
+  const ai=m&&m.aiTitle;
+  if(ai&&ai.status==="accepted"&&ai.kind) return ai.kind==="collection";
   if(!p||p.type!=="series") return false;
   if(p.seasons&&p.seasons[0]&&p.seasons[0].items&&p.seasons[0].items[0]&&p.seasons[0].items[0].title!=null) return true;
-  if(m&&m.name&&COLLECTION_REGEX.test(m.name)) return true;
-  return false;
+  const name=(m&&m.name)||"";
+  return COLLECTION_STRONG.test(name)&&!SERIES_HINT.test(name);
 }
+const KIND_RE=[
+  [/(?<![\p{L}\p{N}])(?:трилоги[яи]|trilogy)(?![\p{L}\p{N}])/iu,"Кинотрилогия"],
+  [/(?<![\p{L}\p{N}])(?:дилоги[яи]|duology|dilogy)(?![\p{L}\p{N}])/iu,"Дилогия"],
+  [/(?<![\p{L}\p{N}])(?:квадр[ио]логи[яи]|тетралоги[яи]|quadrilogy|tetralogy)(?![\p{L}\p{N}])/iu,"Кинотетралогия"]
+];
+const KIND_LATE_RE=[
+  [/(?<![\p{L}\p{N}])сборник(?![\p{L}\p{N}])/iu,"Сборник"],
+  [/(?<![\p{L}\p{N}])(?:антологи[яи]|anthology)(?![\p{L}\p{N}])/iu,"Антология"],
+  [/(?<![\p{L}\p{N}])(?:коллекци[яи]|collection|boxset|box[- ]set)(?![\p{L}\p{N}])/iu,"Коллекция"]
+];
+// Сначала слова имени («Дилогия» из трёх файлов — всё равно дилогия), потом число фильмов
 function collectionTypeLabel(filmCount, name) {
   name = name || "";
-  if (/\b(трилоги[яи]|trilogy)\b/i.test(name) || filmCount === 3) return "Кинотрилогия";
-  if (/\b(дилоги[яи]|duology|dilogy)\b/i.test(name) || filmCount === 2) return "Дилогия";
-  if (/\b(квадрологи[яи]|тетралоги[яи]|quadrilogy|tetralogy)\b/i.test(name) || filmCount === 4) return "Кинотетралогия";
-  if (/\b(сборник)\b/i.test(name)) return "Сборник";
-  if (/\b(антологи[яи]|anthology)\b/i.test(name)) return "Антология";
-  if (/\b(коллекци[яи]|collection|boxset)\b/i.test(name)) return "Коллекция";
+  for (const [re, label] of KIND_RE) if (re.test(name)) return label;
+  if (filmCount === 2) return "Дилогия";
+  if (filmCount === 3) return "Кинотрилогия";
+  if (filmCount === 4) return "Кинотетралогия";
+  for (const [re, label] of KIND_LATE_RE) if (re.test(name)) return label;
   return "Кинофраншиза";
 }
-function buildPlaylist(magnet){ return applyAiTitle(buildPlaylistByFiles(magnet), magnet); }
+// Плейлист раздачи считается один раз на объект медиатеки (плитка, тип, метки спрашивают его по нескольку раз);
+// принятый ответ ИИ меняет его — psSetAi сбрасывает кэш
+const playlistCache=new WeakMap();
+function buildPlaylist(magnet){
+  let pl=playlistCache.get(magnet);
+  if(!pl){ pl=applyAiTitle(buildPlaylistByFiles(magnet), magnet); playlistCache.set(magnet,pl); }
+  return pl;
+}
 function applyAiTitle(pl, m){
   const ai=m&&m.aiTitle;
   if(!pl||!ai||ai.status!=="accepted") return pl;
@@ -1576,15 +1613,15 @@ function applyAiTitle(pl, m){
   const noExtras=vids.filter(f=>!EXTRAS.test(f.path||"")), main=noExtras.length?noExtras:vids;
   const sorted=()=>main.slice().sort((a,b)=>basename(a.path).localeCompare(basename(b.path),undefined,{numeric:true,sensitivity:"base"}));
   let out=pl;
-  if(ai.kind==="movie"&&pl.type==="series"){ const f=pickMainВидео(m); if(f) out={type:"movie",file:f}; }
-  else if(ai.kind==="series"&&(pl.type==="movie"||isCollection(pl,m))&&main.length>=2){
+  if(ai.kind==="movie"&&pl.type==="series"){ const f=pickMainVideo(m); if(f) out={type:"movie",file:f}; }
+  else if(ai.kind==="series"&&(pl.type==="movie"||isCollection(pl))&&main.length>=2){
     const s=ai.season>0?ai.season:1;
     out={type:"series",seasons:[{season:s,items:sorted().map((file,i)=>({season:s,episode:i+1,file}))}]};
-  } else if(ai.kind==="collection"&&(pl.type==="movie"||(pl.type==="series"&&!isCollection(pl,m)))&&main.length>=2){
+  } else if(ai.kind==="collection"&&(pl.type==="movie"||(pl.type==="series"&&!isCollection(pl)))&&main.length>=2){
     out={type:"series",seasons:[{season:1,items:sorted().map((file,i)=>({season:1,episode:i+1,file,title:escapeTitle(basename(file.path))||("Фильм "+(i+1))}))}]};
   }
   const s=ai.season;
-  if(s>0&&out.type==="series"&&!isCollection(out,m)&&out.seasons.length===1&&out.seasons[0].season!==s)
+  if(s>0&&out.type==="series"&&!isCollection(out)&&out.seasons.length===1&&out.seasons[0].season!==s)
     out={type:"series",seasons:[{season:s,items:out.seasons[0].items.map(e=>({...e,season:s}))}]};
   return out;
 }
@@ -1642,19 +1679,20 @@ function buildPlaylistByFiles(magnet){
       }
     }
   }
-  const mainVideo = pickMainВидео(magnet);
+  const mainVideo = pickMainVideo(magnet);
   return {type: mainVideo ? "movie" : "none", file: mainVideo};
 }
 // ---- одна плитка на несколько версий (groupVersions / numberedEpisodesOf / titleKey в shared/.../core/Model.kt) ----
 const NUM_NOISE=/(?:2160|1080|720|480|576)[pi]|[xh][ .]?26[45]|\d+(?:[.,]\d+)?\s?(?:fps|kbps|mbps|bit|gb|mb)|(?<!\d)(?:19|20)\d{2}(?!\d)|(?<!\d)[1-9]\.[01](?!\d)/gi;
 const NUM_IN_NAME=/(?<!\d)\d{1,3}(?!\d)/g;
-const SERIES_HINT=/(?<![\p{L}\p{N}])(?:сезон\p{L}*|season\p{L}*|серии|серия|series|episodes?|эпизод\p{L}*|s\d{1,2}|ova|ona)(?![\p{L}\p{N}])/iu;
 function numberedEpisodesOf(magnet, vids){
   const EXTRAS=/(?:^|\/)(?:extras?|bonus|featurettes?|behind[ ._-]?the[ ._-]?scenes|trailers?|доп[^/]*|бонус[^/]*|допы)(?:\/|$)/i;
   const BLURAY_DIR=/(?:^|\/)(?:BDMV|STREAM|VIDEO_TS)(?:\/|$)/i;
   if(vids.length<2||vids.some(f=>BLURAY_DIR.test(f.path||""))) return null;
   const main=vids.filter(f=>!EXTRAS.test(f.path||""));
   if(main.length<2) return null;
+  // «Пила: Трилогия», «Коллекция 1996-2018» с фильмами по годам — фильмы, а не серии (их берёт collectionOf)
+  if(namedCollection(magnet, main)) return null;
   const basename=(path)=>String(path||"").replace(/\\/g,"/").split("/").pop();
   const parsed=main.map(f=>{
     const base=basename(f.path).replace(/\.[a-z0-9]{2,5}$/i,"").replace(/[._]+/g," ").replace(NUM_NOISE," ");
@@ -1670,7 +1708,6 @@ function numberedEpisodesOf(magnet, vids){
     const consecutive=sorted.every((v,i)=>!i||v-sorted[i-1]===1);
     const sizes=main.map(f=>Number(f.size)||0);
     const similar=Math.max(...sizes)<=Math.min(...sizes)*2;
-    if(COLLECTION_REGEX.test(magnet.name||"")&&!SERIES_HINT.test(magnet.name||"")) continue;
     if(!SERIES_HINT.test(magnet.name||"")&&!(main.length>=5&&consecutive&&similar)) continue;
     const items=main.map((file,i)=>({season:1,episode:nums[i],file})).sort((a,b)=>a.episode-b.episode);
     return {type:"series",seasons:[{season:1,items}]};
@@ -1880,7 +1917,7 @@ function psSyncAi(s){
   }
 }
 function psSetAi(id,ai){
-  for(const x of cachedLibrary) if(x.id===id){ x.aiTitle=ai; playableKindCache.delete(x); } // тип раздачи мог смениться
+  for(const x of cachedLibrary) if(x.id===id){ x.aiTitle=ai; playableKindCache.delete(x); playlistCache.delete(x); } // тип раздачи мог смениться
 }
 function psSaveAi(){
   try{ localStorage.setItem(LIBRARY_SNAPSHOT_KEY, JSON.stringify({ savedAt: Date.now(), magnets: cachedLibrary })); }catch{}
@@ -2056,7 +2093,7 @@ async function psLoad(s,token,file,label,playlistReq,magnet){
   }
   if(token===playSheetToken) sub.textContent=mUrl?"Можно смотреть":(err?.message||"Не удалось открыть фильм");
 }
-function playФайл(file,label,playlistReq,magnet){
+function playFile(file,label,playlistReq,magnet){
   if(!file||!file.sourceLink){showToast("Ссылка на файл ещё не готова — нажмите «Обновить» в библиотеке.",true);return;}
   openPlaySheet(file,label,playlistReq,magnet);
 }
@@ -2079,7 +2116,7 @@ function setupTilePlayback(magnet,tile,art,info){
   }else{current=pl.file;}
   playBtn.addEventListener("click",e=>{e.stopPropagation();
     const ep=pl.type==="series"?psEpisode(magnet,pl,current):null;
-    playФайл(current,ep?ep.label:baseTitle,ep?ep.req:null,magnet);});
+    playFile(current,ep?ep.label:baseTitle,ep?ep.req:null,magnet);});
   playBtn.addEventListener("keydown",e=>e.stopPropagation());
   art.append(playBtn);
   const stEl=info.querySelector(".tile-status"); if(stEl) stEl.after(mediaLine); else info.append(mediaLine);
@@ -2161,7 +2198,7 @@ function recordAnimation(query, isAnim) {
 function getPosterQueries(m) {
   const base = displayTitle(m);
   const queries = [...new Set([aiPosterQuery(m), base].filter(Boolean))];
-  const main = pickMainВидео(m);
+  const main = pickMainVideo(m);
   if (main) {
     const mainName = String(main.name || main.path || "").replace(/\\/g, "/").split("/").pop();
     const mainBase = escapeTitle(mainName);
@@ -2303,7 +2340,7 @@ function getItemSpecs(m) {
 function tileSig(m){ return JSON.stringify([(serverTagMap[m.id]||[]).join(),m.name,displayTitle(m),m.status,m.statusCode,m.size,m.downloaded,Boolean(m.favorite),Boolean(m.mine),m.canRemove!==false,(m.files||[]).length,libraryViewMode]); }
 
 function renderLibrary(animate=true) {
-  const target=$("libraryResults"), query=$("libraryПоиск") ? $("libraryПоиск").value.trim().toLowerCase() : "";
+  const target=$("libraryResults"), query=$("librarySearch") ? $("librarySearch").value.trim().toLowerCase() : "";
   const before=new Map(); for(const [id,t] of libraryTiles) if(t.tile.isConnected){ const r=t.tile.getBoundingClientRect(); before.set(id,{x:r.left,y:r.top}); }
   const prevTiles=libraryTiles, nodes=[]; libraryTiles=new Map();
 
@@ -2373,8 +2410,8 @@ function renderLibrary(animate=true) {
     for (const t of collapseTags(getItemTags(magnet))) { const x = document.createElement("span"); x.className = "tile-badge badge-tag " + (t.startsWith("Dolby") ? "badge-dv" : t === "HDR" ? "badge-hdr" : "badge-dts"); x.textContent = t; badges.append(x); }
     if (versions) { const vb = document.createElement("span"); vb.className = "tile-badge badge-type badge-ver"; vb.textContent = versionsWord(versions.length); badges.append(vb); }
     art.append(badges);
-    const videoФайл = (magnet.files || []).find(f => /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso)$/i.test(f.path || ""));
-    const posterQueries = [...new Set([aiPosterQuery(magnet), displayTitle(magnet), videoФайл ? escapeTitle(videoФайл.name || videoФайл.path.split("/").pop()) : ""].filter(Boolean))];
+    const videoFile = (magnet.files || []).find(f => /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso)$/i.test(f.path || ""));
+    const posterQueries = [...new Set([aiPosterQuery(magnet), displayTitle(magnet), videoFile ? escapeTitle(videoFile.name || videoFile.path.split("/").pop()) : ""].filter(Boolean))];
     whenVisible(tile, ()=>(async()=>{
       let url=null;
       for (const q of posterQueries) { url=await getPoster(q); if(url) break; }
@@ -2550,7 +2587,7 @@ document.addEventListener("click",e=>{
 function openLibraryModal(magnet) {
   $("modalTitle").textContent=magnet.name;
   $("modalMeta").textContent=`${magnet.status} · ID ${magnet.id} · ${formatBytes(magnet.size)} · ${magnet.files.length} file/folder entries`;
-  const target=$("modalФайлы"); target.replaceChildren();
+  const target=$("modalFiles"); target.replaceChildren();
   // Blu-ray main featurette shortcut: largest available M2TS stream.
   const mainM2ts=(magnet.files||[])
     .filter(f=>f.type!=="folder" && /\.m2ts$/i.test(String(f.path||f.name||"")) && f.sourceLink)
@@ -2564,7 +2601,7 @@ function openLibraryModal(magnet) {
     quickPlay.addEventListener("click",()=>openPlaySheet(mainM2ts,m2tsName));
     quickWrap.append(quickPlay);target.append(quickWrap);
   }
-  const query=$("libraryПоиск").value.trim().toLowerCase();
+  const query=$("librarySearch").value.trim().toLowerCase();
   const files=magnet.files.filter(f=>!query||f.path.toLowerCase().includes(query));
   if(!files.length){const empty=document.createElement("p");empty.className="file-meta";empty.textContent=tr("library.files_pending", null, "Файлы этой раздачи ещё подготавливаются. Пожалуйста, подождите немного.");target.append(empty);}
   const folderState = new Map();
@@ -2574,10 +2611,10 @@ function openLibraryModal(magnet) {
     const filePath=String(file.path||"");
     const row=document.createElement("div");row.className="file-row mosaic-item";row.style.setProperty("--tile-index", String(target.children.length));
     row.dataset.filePath=filePath;row.dataset.fileType=file.type==="folder"?"folder":"file";
-    const parentПапкаs=folderPaths.filter(folder=>folder!==filePath && filePath.startsWith(folder+"/"));
-    const depth=parentПапкаs.length;
+    const parentFolders=folderPaths.filter(folder=>folder!==filePath && filePath.startsWith(folder+"/"));
+    const depth=parentFolders.length;
     row.dataset.depth=String(depth);
-    row.dataset.parentПапкаs=JSON.stringify(parentПапкаs);
+    row.dataset.parentFolders=JSON.stringify(parentFolders);
     const left=document.createElement("div");left.className="file-path";left.style.paddingLeft=`${depth*18}px`;
     if(depth>0){const level=document.createElement("span");level.className="file-depth";level.textContent=`L${depth}`;level.title=`Уровень вложенности: ${depth}`;left.append(level);}
     const icon=document.createElement("span");icon.textContent=file.type==="folder"?"📁 ":(VIDEO_EXT.test(filePath)?"🎬 ":"📄 ");
@@ -2588,7 +2625,7 @@ function openLibraryModal(magnet) {
       toggle.addEventListener("click",()=>{
         const expanded=!folderState.get(filePath);folderState.set(filePath,expanded);
         toggle.textContent=expanded?"▾":"▸";toggle.setAttribute("aria-expanded",String(expanded));toggle.title=expanded?"Свернуть папку":"Раскрыть папку";
-        updateПапкаVisibility();
+        updateFolderVisibility();
       });
       left.append(toggle);
     }
@@ -2602,15 +2639,15 @@ function openLibraryModal(magnet) {
     }
     row.append(right);
   }
-  function updateПапкаVisibility(){
+  function updateFolderVisibility(){
     for(const row of rows){
-      const parents=JSON.parse(row.dataset.parentПапкаs||"[]");
+      const parents=JSON.parse(row.dataset.parentFolders||"[]");
       const visible=parents.every(folder=>folderState.get(folder)===true);
       row.classList.toggle("folder-collapsed",!visible);
       row.setAttribute("aria-hidden",String(!visible));
     }
   }
-  updateПапкаVisibility();
+  updateFolderVisibility();
   for(const row of rows) target.append(row);
   $("libraryModal").classList.remove("hidden");document.body.style.overflow="hidden";
 }
@@ -2693,6 +2730,6 @@ checkSession();
 </script>
 
 <script src="redesign.js?v=6" defer></script>
-<script src="home.js?v=7" defer></script>
+<script src="home.js?v=8" defer></script>
 </body>
 </html>

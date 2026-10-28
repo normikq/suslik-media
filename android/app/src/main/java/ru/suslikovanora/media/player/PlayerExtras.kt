@@ -15,4 +15,6 @@ object PlayerExtras {
     const val EPISODE_SIDES = "media_episode_sides"
     /** Uploaded voice-overs of the film and its playlist: name and delay by signed link (see [CustomAudioInfo]). */
     const val CUSTOM_AUDIO = "media_custom_audio"
+    /** The playlist is the films of a collection (shared isCollection), not episodes: the panel says «Фильмы». */
+    const val COLLECTION = "media_collection"
 }

@@ -131,28 +131,8 @@ private fun VersionRow(v: LibraryItem, lib: Library, inSection: Boolean, onClick
     val tags = lib.tagsOf(v).filter { it == "Dolby Vision" || it == "HDR" }
     val specs = if (tags.isNotEmpty()) baseSpecs + " • " + tags.joinToString(" • ") else baseSpecs
 
-    val heading = when {
-        series != null -> {
-            val sRange = itemSeasons(v)
-            val eps = series.seasons.sumOf { it.items.size }
-            val first = series.seasons.firstOrNull()?.items?.firstOrNull()
-            val isFilms = first?.title != null
-            val epWord = if (isFilms) "фильм." else if (eps % 10 in 2..4 && eps % 100 !in 12..14) "серии" else if (eps % 10 == 1 && eps % 100 != 11) "серия" else "серий"
-            if (inSection) {
-                if (sRange != null && sRange.first != sRange.second) {
-                    "Сезоны ${sRange.first}–${sRange.second} · $eps $epWord • $specs"
-                } else {
-                    "$eps $epWord • $specs"
-                }
-            } else {
-                seriesLine(series) + " • " + specs
-            }
-        }
-        else -> {
-            val y = releaseYear(v)
-            if (y != null && !inSection) "$y год • $specs" else specs
-        }
-    }
+    // what the release holds (shared versionLine: seasons, films, year) • quality
+    val heading = listOf(versionLine(v, inSection), specs).filter { it.isNotBlank() }.joinToString(" • ")
 
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(bg).border(1.dp, edge, RoundedCornerShape(14.dp))
