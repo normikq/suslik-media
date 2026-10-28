@@ -92,10 +92,14 @@
   }
 
   // Название самой франшизы: без «Трилогия», «8 фильмов» и части после «:» («Гарри Поттер»); от принятого названия ИИ
-  function collectionBase(magnet) {
-    var base = escapeTitle(displayTitle(magnet).replace(COLLECTION_WORDS, " ").split("/")[0] || "");
-    return base.split(":")[0].replace(FILM_COUNT_NOISE, "").replace(/\s+/g, " ").trim();
+  // Названия сборника («Гарри Поттер», «Harry Potter») без «Трилогия», «8 фильмов» и части после «:»
+  function collectionBases(magnet) {
+    return displayTitle(magnet).replace(COLLECTION_WORDS, " ").split("/").filter(function (part) { return part.trim(); }).map(function (part) {
+      return escapeTitle(part).split(":")[0].replace(FILM_COUNT_NOISE, "").replace(/\s+/g, " ").trim();
+    }).filter(Boolean);
   }
+
+  function collectionBase(magnet) { return collectionBases(magnet)[0] || ""; }
 
   // Постер одного фильма сборника (collectionFilePosterQueries в Model.kt): фильм с годом, фильм, франшиза: фильм, франшиза
   function collectionFilePosterQueries(magnet, fileOrPath) {
@@ -104,7 +108,7 @@
     var withYear = function (q) { return f.year ? q + " (" + f.year + ")" : q; };
     if (f.film) { add(withYear(f.film)); add(f.film); }
     if (base.length >= 2 && f.film && f.film.toLowerCase().indexOf(base.toLowerCase()) < 0) { add(withYear(base + ": " + f.film)); add(base + ": " + f.film); }
-    if (base.length >= 2) add(base);
+    collectionBases(magnet).forEach(function (b) { if (b.length >= 2) add(b); });
     add(escapeTitle(magnet.name || ""));
     return out.slice(0, MAX_FILM_QUERIES);
   }

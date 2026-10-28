@@ -286,10 +286,13 @@ fun cleanCollectionFilmTitle(raw: String): String {
 
 private val FILM_COUNT_NOISE = Regex(NB + """\d+\s*(?:фильм\p{L}*|сери\p{L}*|част\p{L}*)""" + NA, IC)
 
-/** The collection's own title without «Трилогия», «8 фильмов» and the part after «:» («Гарри Поттер»). */
-private fun collectionBase(baseTitle: String): String =
-    cleanTitle(baseTitle.replace(COLLECTION_WORDS, " ").split('/').firstOrNull().orEmpty())
-        .substringBefore(':').replace(FILM_COUNT_NOISE, "").replace(SPACES, " ").trim()
+/** The collection's own titles («Гарри Поттер», «Harry Potter») without «Трилогия», «8 фильмов» and the part after «:». */
+private fun collectionBases(baseTitle: String): List<String> =
+    baseTitle.replace(COLLECTION_WORDS, " ").split('/').map {
+        cleanTitle(it).substringBefore(':').replace(FILM_COUNT_NOISE, "").replace(SPACES, " ").trim()
+    }.filter { it.isNotBlank() }
+
+private fun collectionBase(baseTitle: String): String = collectionBases(baseTitle).firstOrNull().orEmpty()
 
 fun collectionFileTitle(m: Magnet, file: MFile, baseTitle: String = cleanTitle(m.name)): String {
     val raw = file.name.ifBlank { file.path.substringAfterLast('/') }
@@ -306,7 +309,7 @@ fun collectionFileTitle(m: Magnet, file: MFile, baseTitle: String = cleanTitle(m
 /**
  * Poster lookups for one film of a collection, best first and at most [MAX_FILM_QUERIES]: every miss is a few more
  * TMDB requests on the server, so no long list of combinations. The film with its year, the film, the franchise and film,
- * the franchise, the torrent.
+ * the franchise (each of its titles), the torrent.
  */
 fun collectionFilePosterQueries(m: Magnet, file: MFile, baseTitle: String = cleanTitle(m.name)): List<String> {
     val raw = file.name.ifBlank { file.path.substringAfterLast('/') }
@@ -318,7 +321,7 @@ fun collectionFilePosterQueries(m: Magnet, file: MFile, baseTitle: String = clea
     val out = LinkedHashSet<String>()
     if (film.isNotBlank()) { out += withYear(film); out += film }
     if (base.length >= 2 && film.isNotBlank() && !film.contains(base, ignoreCase = true)) { out += withYear("$base: $film"); out += "$base: $film" }
-    if (base.length >= 2) out += base
+    collectionBases(baseTitle).filter { it.length >= 2 }.forEach { out += it }
     out += cleanTitle(m.name)
     return out.take(MAX_FILM_QUERIES)
 }
