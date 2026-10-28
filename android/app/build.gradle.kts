@@ -71,8 +71,8 @@ android {
         applicationId = "ru.suslikovanora.media"
         minSdk = 24
         targetSdk = 35
-        versionCode = 70
-        versionName = "2.6.6"
+        versionCode = 71
+        versionName = "2.6.7"
         buildConfigField("boolean", "DIAG", "false")
         buildConfigField("String", "SITE_HOST", "\"$siteHost\"")
         manifestPlaceholders["appLabel"] = "Suslik Media — медиатека"

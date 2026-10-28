@@ -185,7 +185,7 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
 
     // Discord: the title the library shows and the season / episode, not the file name of the torrent
     fun presenceOf(f: MFile): Presence {
-        val base = item?.baseTitle ?: t.label.substringBefore(" · ")
+        val base = item?.let(lib::titleOf) ?: t.label.substringBefore(" · ")
         if (isCollection) {
             val i = films.indexOfFirst { it.file.path == f.path }
             val film = films.getOrNull(i) ?: return Presence(base)
