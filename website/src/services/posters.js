@@ -33,18 +33,38 @@ async function addBannerExtras(body, match) {
   if (ov) body.overview = ov.slice(0, 600);
 }
 
-// Дополнения баннера (кадр, логотип, описание по-русски — ещё 2 запроса к TMDB) нужны только «Продолжить просмотр»:
-// их просят с ?hero=1 (до 4 названий), обычные плитки медиатеки получают один поиск.
-const heroCache = new Map(); // query -> { at, body }
+// Сезон, который смотрят (&season=N): год выхода, описание и рейтинг этого сезона вместо сведений о первом.
+// У сезона нет своего описания или рейтинга (TMDB часто пуст по-русски) — остаются сведения сериала.
+function fetchSeason(match, season) {
+  const url = `https://api.themoviedb.org/3/tv/${match.id}/season/${season}`;
+  return axios.get(url, { params: { api_key: config.TMDB_API_KEY, language: "ru-RU" }, timeout: 5000 }).then(r => r.data).catch(() => null);
+}
+
+function applySeason(body, data, season) {
+  if (!data) return;
+  const year = String(data.air_date || "").slice(0, 4);
+  if (/^\d{4}$/.test(year)) body.year = year;
+  const ov = typeof data.overview === "string" ? data.overview.trim() : "";
+  if (ov) body.overview = ov.slice(0, 600);
+  if (Number(data.vote_average) > 0) body.rating = Math.round(Number(data.vote_average) * 10) / 10;
+  body.season = season;
+}
+
+// Дополнения баннера (кадр, логотип, описание по-русски — ещё 2 запроса к TMDB, с сезоном — 3) нужны только
+// «Продолжить просмотр»: их просят с ?hero=1 (до 4 названий), обычные плитки медиатеки получают один поиск.
+const heroCache = new Map(); // query|season -> { at, body }
 
 async function searchPoster(rawQuery, opts = {}) {
   const base = await searchBase(rawQuery);
   if (!opts.hero || !base.ref) return base.body;
-  const hit = heroCache.get(base.ck);
+  const season = base.ref.media_type === "tv" && Number.isInteger(opts.season) && opts.season > 0 && opts.season < 100 ? opts.season : 0;
+  const key = season ? `${base.ck}|s${season}` : base.ck;
+  const hit = heroCache.get(key);
   if (hit && Date.now() - hit.at < 24 * 3600 * 1000) return hit.body;
   const body = { ...base.body };
-  await addBannerExtras(body, base.ref);
-  heroCache.set(base.ck, { at: Date.now(), body });
+  const [, seasonData] = await Promise.all([addBannerExtras(body, base.ref), season ? fetchSeason(base.ref, season) : null]);
+  applySeason(body, seasonData, season);
+  heroCache.set(key, { at: Date.now(), body });
   if (heroCache.size > 300) heroCache.delete(heroCache.keys().next().value);
   return body;
 }

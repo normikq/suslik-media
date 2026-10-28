@@ -568,14 +568,16 @@ class Library {
     class HeroInfo(val backdrop: ImageBitmap?, val overview: String?, val year: String?, val rating: Double?, val logo: ImageBitmap? = null, val title: String? = null)
     private val heroes = java.util.concurrent.ConcurrentHashMap<String, HeroInfo>()
 
-    fun cachedHero(queries: List<String>): HeroInfo? = queries.firstNotNullOfOrNull { heroes[it.lowercase()] }
+    /** [season] > 0: that season's year, description and rating (the server asks TMDB for the season). */
+    fun cachedHero(queries: List<String>, season: Int = 0): HeroInfo? = queries.firstNotNullOfOrNull { heroes[heroKey(it, season)] }
+    private fun heroKey(q: String, season: Int) = if (season > 0) q.lowercase() + "|s" + season else q.lowercase()
 
     /** Null while the server cannot say (offline, an old server without these fields): the banner then shows what it has. */
-    suspend fun hero(queries: List<String>): HeroInfo? {
-        cachedHero(queries)?.let { return it }
+    suspend fun hero(queries: List<String>, season: Int = 0): HeroInfo? {
+        cachedHero(queries, season)?.let { return it }
         for (q in queries) {
             try {
-                val j = posterGate.withPermit { Api.get("/api/poster?hero=1&q=" + URLEncoder.encode(q, "UTF-8")) }
+                val j = posterGate.withPermit { Api.get("/api/poster?hero=1&q=" + URLEncoder.encode(q, "UTF-8") + (if (season > 0) "&season=$season" else "")) }
                 // only a wide frame: a portrait poster stretched across the banner looks broken (without a frame the banner stays dark)
                 val bd = j.optString("backdrop").takeIf { it.startsWith("/api/poster/img/") }
                 val img = bd?.let { loadHeroImage(it) }
@@ -588,7 +590,7 @@ class Library {
                 if (img == null && ov == null && title == null && rt == null) continue
 
                 val info = HeroInfo(img, ov, yr, rt, logo, title)
-                heroes[q.lowercase()] = info
+                heroes[heroKey(q, season)] = info
                 return info
             } catch (e: CancellationException) { throw e } catch (_: Exception) { }
         }

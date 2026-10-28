@@ -380,14 +380,16 @@ class LibraryStore(context: Context) {
     class HeroInfo(val backdrop: String?, val logo: String?, val overview: String?, val year: String?, val rating: Double?, val title: String? = null)
     private val heroes = java.util.concurrent.ConcurrentHashMap<String, HeroInfo>()
 
-    fun cachedHero(queries: List<String>): HeroInfo? = queries.firstNotNullOfOrNull { heroes[it.lowercase()] }
+    /** [season] > 0: that season's year, description and rating (the server asks TMDB for the season). */
+    fun cachedHero(queries: List<String>, season: Int = 0): HeroInfo? = queries.firstNotNullOfOrNull { heroes[heroKey(it, season)] }
+    private fun heroKey(q: String, season: Int) = if (season > 0) q.lowercase() + "|s" + season else q.lowercase()
 
     /** Null while the server cannot say (offline, an old server without these fields): the banner then stays plain. */
-    suspend fun hero(queries: List<String>): HeroInfo? {
-        cachedHero(queries)?.let { return it }
+    suspend fun hero(queries: List<String>, season: Int = 0): HeroInfo? {
+        cachedHero(queries, season)?.let { return it }
         for (q in queries) {
             try {
-                val j = posterGate.withPermit { Api.get("/api/poster?hero=1&q=" + URLEncoder.encode(q, "UTF-8")) }
+                val j = posterGate.withPermit { Api.get("/api/poster?hero=1&q=" + URLEncoder.encode(q, "UTF-8") + (if (season > 0) "&season=$season" else "")) }
                 if (j.has("animation")) recordAnimation(q.lowercase(), j)
                 val abs = { k: String -> j.optString(k).takeIf { it.startsWith("/api/poster/img/") }?.let { Api.BASE + it } }
                 val bd = abs("backdrop") // only a wide frame: a portrait poster across the banner looks broken
@@ -398,7 +400,7 @@ class LibraryStore(context: Context) {
                 if (bd == null && ov == null && title == null && rt == null) continue
 
                 val info = HeroInfo(bd, abs("logo"), ov, j.optString("year").ifBlank { null }, rt, title)
-                heroes[q.lowercase()] = info
+                heroes[heroKey(q, season)] = info
                 return info
             } catch (e: CancellationException) { throw e } catch (_: Exception) { }
         }

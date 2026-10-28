@@ -522,6 +522,16 @@ fun statusRu(m: Magnet): String = when {
 fun episodeLabel(base: String, s: Season, e: Episode): String = e.title ?:
     base + " · " + (if (s.season == 0) "Спец." else "S" + s.season.toString().padStart(2, '0')) + "E" + e.episode.toString().padStart(2, '0')
 
+/**
+ * The season of a show that holds [path]: the «Продолжить просмотр» banner shows that season (its year, description,
+ * episodes), not the first one of a merged show. Null for a film or a collection.
+ */
+fun watchedSeason(item: LibraryItem, path: String): Season? {
+    val p = item.playable as? Playable.Series ?: return null
+    if (isCollection(p, item.m)) return null
+    return p.seasons.firstOrNull { s -> s.items.any { it.file.path == path } }
+}
+
 /** Everything a tile needs, computed once per library load off the main thread (not while scrolling). */
 data class LibraryItem(
     val m: Magnet,
