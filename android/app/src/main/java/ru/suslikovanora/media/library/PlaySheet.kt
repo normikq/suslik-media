@@ -91,7 +91,9 @@ data class PlayRequest(
     /** Uploaded voice-overs: `{"<signed url>": {"title", "offsetMs"}}` (see player's CustomAudioInfo). */
     val customAudio: String? = null,
     /** Watch key of the chosen episode ([watchKeys] is the whole season); null — the first of [watchKeys]. */
-    val watchKey: String? = null
+    val watchKey: String? = null,
+    /** The playlist is the films of a collection (shared isCollection): the player says «Фильмы», not «Серии». */
+    val collection: Boolean = false
 )
 
 /**
@@ -116,6 +118,18 @@ fun PlaySheet(
     val isColl = item != null && isCollection(item.playable, item.m)
     val films = remember(series, isColl) {
         if (isColl && series != null) series.seasons.flatMap { it.items } else emptyList()
+    }
+    // The films' names for the picker: computed once per sheet, not on every recomposition
+    val filmNames = remember(films) {
+        films.mapIndexed { idx, ep ->
+            val raw = ep.title?.takeIf { it.isNotBlank() } ?: collectionFileTitle(item!!.m, ep.file, item.baseTitle)
+            val stripped = cleanCollectionFilmTitle(raw)
+            when {
+                stripped.isNotBlank() && stripped != "${idx + 1}" -> stripped
+                raw.isNotBlank() && raw != "${idx + 1}" -> raw
+                else -> tr("library.film_p", "p" to idx + 1)
+            }
+        }
     }
     val start = remember(initial, isColl, films) {
         var si = 0; var ei = 0
@@ -291,29 +305,13 @@ fun PlaySheet(
                     store.saveEpisode(target.magnetId, target.file.path)
                     val keys = if (playlist != null) target.season.filter { f -> f.link != null }.map { f -> watchKey(target.magnetId, f) }
                     else listOf(watchKey(target.magnetId, target.file))
-                    onPlay(PlayRequest(it, target.label, playlist, subUrls, keys, audioUrls, fromStart, if (playlist != null) episodeSidesJson(target, customByPath) else null, customJson(customByPath), watchKey(target.magnetId, target.file)))
+                    onPlay(PlayRequest(it, target.label, playlist, subUrls, keys, audioUrls, fromStart, if (playlist != null) episodeSidesJson(target, customByPath) else null, customJson(customByPath), watchKey(target.magnetId, target.file), isColl))
                 }
             }
 
             if (isColl && films.isNotEmpty()) {
-                val filmItems = films.mapIndexed { idx, ep ->
-                    val raw = ep.title?.takeIf { it.isNotBlank() } ?: collectionFileTitle(item!!.m, ep.file, item.baseTitle)
-                    val stripped = cleanCollectionFilmTitle(raw)
-                    val name = when {
-                        stripped.isNotBlank() && stripped != "${idx + 1}" -> stripped
-                        raw.isNotBlank() && raw != "${idx + 1}" -> raw
-                        else -> tr("library.film_p", "p" to idx + 1)
-                    }
-                    "${idx + 1}. $name" to { seasonIdx = 0; episodeIdx = idx }
-                }
-                val cf = films.getOrNull(episodeIdx) ?: films.first()
-                val currentRaw = cf.title?.takeIf { it.isNotBlank() } ?: (item?.let { collectionFileTitle(it.m, cf.file, it.baseTitle) } ?: "${episodeIdx + 1}")
-                val currentStripped = cleanCollectionFilmTitle(currentRaw)
-                val currentName = when {
-                    currentStripped.isNotBlank() && currentStripped != "${episodeIdx + 1}" -> currentStripped
-                    currentRaw.isNotBlank() && currentRaw != "${episodeIdx + 1}" -> currentRaw
-                    else -> tr("library.film_p", "p" to episodeIdx + 1)
-                }
+                val filmItems = filmNames.mapIndexed { idx, name -> "${idx + 1}. $name" to { seasonIdx = 0; episodeIdx = idx } }
+                val currentName = filmNames.getOrNull(episodeIdx) ?: filmNames.first()
                 Row(Modifier.fillMaxWidth().padding(top = 14.dp)) {
                     SheetSelector(tr("library.film"), "${episodeIdx + 1}. $currentName", Modifier.fillMaxWidth(), filmItems)
                 }

@@ -282,7 +282,7 @@ test("aititle: an answer stored before kind existed can be asked again", async (
   const fs2 = require("fs");
   const saved = { r: {}, i: {} };
   const key = ai.keyOf(film.name, film.files);
-  saved.r[key] = { base: "Тачки", season: null, model: "m", at: 1, status: "accepted", by: "u_1" };
+  saved.r[key] = { base: "Тачки", season: null, model: "m", at: 1, status: "suggested", by: "u_1" };
   saved.i[String(film.id)] = key;
   ai._reset();
   ai._load(saved);
@@ -292,6 +292,24 @@ test("aititle: an answer stored before kind existed can be asked again", async (
   const r = await ai.suggest(film, "u_2", NOW);
   assert.equal(r.cached, false);
   assert.deepEqual([r.aiTitle.base, r.aiTitle.kind, r.aiTitle.status, r.aiTitle.stale], ["Тачки 2", "movie", "suggested", false]);
+});
+
+test("aititle: an old answer the owner already accepted or rejected is kept (only force asks again)", async () => {
+  for (const status of ["accepted", "rejected"]) {
+    reset();
+    const key = ai.keyOf(film.name, film.files);
+    ai._reset();
+    ai._load({ r: { [key]: { base: "Тачки", season: null, model: "m", at: 1, status, by: "u_1" } }, i: { [String(film.id)]: key } });
+    assert.equal(ai.resultFor(film.id).stale, false, status);
+    const r = await ai.suggest(film, "u_2", NOW);
+    assert.equal(r.cached, true, status);
+    assert.deepEqual([r.aiTitle.base, r.aiTitle.status], ["Тачки", status]);
+    assert.equal(replies.length, 0);
+    replies.push(gemini({ base: "Тачки 2", season: null, kind: "movie" }));
+    const forced = await ai.suggest(film, "u_1", NOW, { noCooldown: true, force: true });
+    assert.equal(forced.cached, false);
+    assert.equal(forced.aiTitle.status, "suggested");
+  }
 });
 
 test("aititle: a season the release does not mark («Show 2 - 01», «Show - 01») is kept", () => {
@@ -428,4 +446,18 @@ test("aititle: concurrent requests with overlapping releases ask the model once 
   assert.equal(calls.length, 1);
   assert.equal(a.results.length, 2);
   assert.equal(b.results.length, 1);
+});
+
+test("aititle: a torrent another request is asking about goes to the model once, the rest after the wait", async () => {
+  reset();
+  replies.push(gemini({ base: "Тед Лассо", season: 2, kind: "series" }));
+  replies.push(gemini({ base: "Тачки 2", season: null, kind: "movie" }));
+  const first = ai.suggestMany([show], "u_1", NOW, { noCooldown: true });
+  const second = ai.suggestMany([show, film], "u_2", NOW, { noCooldown: true });
+  const [a, b] = await Promise.all([first, second]);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].body.contents[0].parts[0].text.includes("Cars.2.2011.mkv"), true);
+  assert.equal(calls[1].body.contents[0].parts[0].text.includes("Ted.Lasso"), false);
+  assert.deepEqual(a.results.map(x => x.aiTitle.base), ["Тед Лассо"]);
+  assert.deepEqual(b.results.map(x => x.aiTitle.base).sort(), ["Тачки 2", "Тед Лассо"]);
 });

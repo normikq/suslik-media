@@ -109,34 +109,8 @@ private fun VersionRow(v: LibraryItem, store: LibraryStore, inSection: Boolean, 
     val tags = store.tagsOf(v).filter { it == "Dolby Vision" || it == "HDR" }
     val specs = if (tags.isNotEmpty()) baseSpecs + " • " + tags.joinToString(" • ") else baseSpecs
 
-    val isColl = isCollection(v.playable, v.m)
-    val heading = when {
-        isColl -> {
-            val count = (series?.seasons?.flatMap { it.items })?.size ?: 0
-            val type = collectionTypeLabel(count, v.m.name)
-            "$type • ${filmCountRu(count)} • $specs"
-        }
-        series != null -> {
-            val sRange = itemSeasons(v)
-            val eps = series.seasons.sumOf { it.items.size }
-            val first = series.seasons.firstOrNull()?.items?.firstOrNull()
-            val isFilms = first?.title != null
-            val epWord = if (isFilms) "фильм." else if (eps % 10 in 2..4 && eps % 100 !in 12..14) "серии" else if (eps % 10 == 1 && eps % 100 != 11) "серия" else "серий"
-            if (inSection) {
-                if (sRange != null && sRange.first != sRange.second) {
-                    "Сезоны ${sRange.first}–${sRange.second} · $eps $epWord • $specs"
-                } else {
-                    "$eps $epWord • $specs"
-                }
-            } else {
-                seriesLine(series) + " • " + specs
-            }
-        }
-        else -> {
-            val y = releaseYear(v)
-            if (y != null && !inSection) "$y год • $specs" else specs
-        }
-    }
+    // what the release holds (shared versionLine: seasons, films, year) • quality
+    val heading = listOf(versionLine(v, inSection), specs).filter { it.isNotBlank() }.joinToString(" • ")
 
     val shape = RoundedCornerShape(14.dp)
     Column(

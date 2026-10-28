@@ -19,12 +19,6 @@
     };
   }
 
-  /** Название для группировки: принятое предложение ИИ, иначе по регуляркам (groupTitle в Model.kt). */
-  function groupTitle(it) {
-    var a = it.m.aiTitle;
-    return a && a.status === 'accepted' && a.base ? a.base : it.baseTitle;
-  }
-
   function parseLibrary(json) {
     var arr = json && json.magnets;
     if (!Array.isArray(arr)) return [];
@@ -133,8 +127,55 @@
   /** Что играть: по файлам, затем тип и сезон, принятые от ИИ (buildPlayable / applyAiTitle в Model.kt). */
   function buildPlayable(m) { return applyAiTitle(playableByFiles(m), m); }
 
-  function isCollection(p) {
-    return p.kind === 'series' && !!p.seasons[0] && !!p.seasons[0].items[0] && p.seasons[0].items[0].title != null;
+  // Сборник фильмов (isCollection / collectionKind в Model.kt). Без \p{L} и lookbehind (Chromium 56): слово ограничено
+  // началом или не-буквой слева и не-буквой справа. Сильные слова называют набор фильмов; слабые («сага», «коллекция»,
+  // «антология») бывают и у сериалов («Сага о Винланде»), поэтому считаются, только если файлы — фильмы разных лет.
+  var WL = 'a-zа-яё0-9';
+  var COLLECTION_STRONG = new RegExp('(^|[^' + WL + '])(?:трилоги[яи]|дилоги[яи]|тетралоги[яи]|квадр[ио]логи[яи]|пенталоги[яи]|гексалоги[яи]|франшиз[аеы]|киносаг[аеиы]|trilogy|duology|dilogy|tetralogy|quadrilogy|franchise|\\d{1,2}\\s*[-–—]?\\s*(?:в|in)\\s*1|все\\s+части|все\\s+фильмы|\\d{1,2}\\s+фильм(?:а|ов))(?![' + WL + '])', 'i');
+  var COLLECTION_WEAK = new RegExp('(^|[^' + WL + '])(?:коллекци[яи]|сборник|антологи[яи]|саг[аеиы]|boxset|box[- ]set|collection|anthology|saga)(?![' + WL + '])', 'i');
+  function word(re) { return new RegExp('(^|[^' + WL + '])(?:' + re + ')(?![' + WL + '])', 'i'); }
+  var KINDS = [
+    [word('трилоги[яи]|trilogy'), 'Кинотрилогия'], [word('дилоги[яи]|duology|dilogy'), 'Дилогия'],
+    [word('квадр[ио]логи[яи]|тетралоги[яи]|quadrilogy|tetralogy'), 'Кинотетралогия']
+  ];
+  var KINDS_LATE = [
+    [word('сборник'), 'Сборник'], [word('антологи[яи]|anthology'), 'Антология'], [word('коллекци[яи]|collection|boxset|box[- ]set'), 'Коллекция']
+  ];
+
+  /** У каждого файла в имени год, и годы разные: фильмы франшизы, а не серии. */
+  function filmsByYear(files) {
+    var years = files.map(function (f) { var y = YEAR_IN_NAME.exec(basename(f.path)); return y ? y[1] : null; });
+    return years.every(Boolean) && new Set(years).size >= 2;
+  }
+
+  /** Имя раздачи говорит, что это набор фильмов, и не говорит про сезон. */
+  function namedCollection(m, files) {
+    return !SERIES_HINT.test(m.name) && (COLLECTION_STRONG.test(m.name) || (COLLECTION_WEAK.test(m.name) && filmsByYear(files)));
+  }
+
+  /** Принятый тип от ИИ решает сам; иначе фильмы с названиями или сильное слово в имени без пометок сезона. */
+  function isCollection(p, m) {
+    var ai = m && m.aiTitle;
+    if (ai && ai.status === 'accepted' && ai.base && ai.kind) return ai.kind === 'collection';
+    if (p.kind !== 'series') return false;
+    if (p.seasons[0] && p.seasons[0].items[0] && p.seasons[0].items[0].title != null) return true;
+    return !!m && COLLECTION_STRONG.test(m.name) && !SERIES_HINT.test(m.name);
+  }
+
+  /** «Кинотрилогия», «Коллекция»…: сначала слова имени, потом число фильмов (collectionKind в Model.kt). */
+  function collectionLabel(filmCount, name) {
+    var i;
+    for (i = 0; i < KINDS.length; i++) if (KINDS[i][0].test(name)) return KINDS[i][1];
+    if (filmCount === 2) return 'Дилогия';
+    if (filmCount === 3) return 'Кинотрилогия';
+    if (filmCount === 4) return 'Кинотетралогия';
+    for (i = 0; i < KINDS_LATE.length; i++) if (KINDS_LATE[i][0].test(name)) return KINDS_LATE[i][1];
+    return 'Кинофраншиза';
+  }
+
+  function pluralRu(n, one, few, many) {
+    var m10 = n % 10, m100 = n % 100;
+    return m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && !(m100 >= 12 && m100 <= 14) ? few : many;
   }
 
   /**
@@ -260,6 +301,8 @@
     if (vids.length < 2 || vids.some(function (f) { return BLURAY_DIR.test(f.path); })) return null;
     var main = vids.filter(function (f) { return !EXTRAS.test(f.path); });
     if (main.length < 2) return null;
+    // «Пила: Трилогия», «Коллекция 1996-2018» с фильмами по годам — фильмы, а не серии (их берёт collectionOf)
+    if (namedCollection(m, main)) return null;
     var parsed = main.map(function (f) {
       var base = stripExt(basename(f.path)).replace(DOTS, ' ').replace(NUM_NOISE, ' ');
       return { base: base, nums: numbersIn(base) };
@@ -310,17 +353,17 @@
   var YEAR_IN_NAME = /\b(19\d{2}|20\d{2})\b/;
   var SEASON_RANGE_REGEX = /(?:season|сезон)[a-zа-яё]*[\s._-]*(\d{1,2})[\s._-]*[-–][\s._-]*(\d{1,2})|(\d{1,2})[\s._-]*[-–][\s._-]*(\d{1,2})[\s._-]*(?:season|сезон)[a-zа-яё]*/i;
 
+  var YEAR_BRACKETED = /[\(\[\{](19\d{2}|20\d{2})[\)\]\}]/;
+  var YEARS = /\b(19\d{2}|20\d{2})\b/g;
+  var LATEST_YEAR = new Date().getFullYear() + 2;
+
+  /** Год выпуска (1900…следующий год + 1): сначала «(2001)», потом отдельный год (extractYear в Model.kt). */
   function extractYear(name) {
     if (!name) return null;
-    var b = /[\(\[\{](19\d\d|20[0-2]\d)[\)\]\}]/.exec(name);
-    if (b) return parseInt(b[1], 10);
-    var all = name.match(/\b(19\d\d|20[0-2]\d)\b/g);
-    if (all) {
-      for (var i = 0; i < all.length; i++) {
-        var y = parseInt(all[i], 10);
-        if (y >= 1900 && y <= 2028) return y;
-      }
-    }
+    var b = YEAR_BRACKETED.exec(name);
+    if (b && +b[1] <= LATEST_YEAR) return +b[1];
+    var all = name.match(YEARS) || [];
+    for (var i = 0; i < all.length; i++) if (+all[i] <= LATEST_YEAR) return +all[i];
     return null;
   }
 
@@ -358,23 +401,31 @@
     }
   }
 
+  var PART_EXPLICIT = new RegExp('(^|[^' + WL + '])(?:часть|ч\\.|фильм|film|part|pt\\.?|глава|chapter)\\s*(\\d{1,2}|[ivx]{1,4})(?![' + WL + '])', 'i');
+  var PART_ORDINAL = new RegExp('(^|[^' + WL + '])(\\d{1,2})\\s*[-–]?\\s*(?:я|ая|ья|ей|й|ый|ой)?\\s*(?:часть|фильм)(?![' + WL + '])', 'i');
+  function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+  /**
+   * Номер части: «Part 2», «Часть 3», «2-я часть» или число / римская цифра сразу после названия («Rocky IV», «Тачки 2»).
+   * Римская цифра в другом месте имени — не часть: «X-Men» — не десятая (itemPart в Model.kt).
+   */
   function itemPart(item) {
     if (!item || !item.m) return null;
     var text = item.m.name || '';
-    var m = /\b(?:часть|ч|фильм|film|part|pt|глава|chapter)\s*(\d+|[ivx]+)\b/i.exec(text);
+    var m = PART_EXPLICIT.exec(text);
     if (m) {
-      var n = parseInt(m[1], 10);
+      var n = parseInt(m[2], 10);
       if (!isNaN(n)) return n;
-      var r = parseRoman(m[1]);
+      var r = parseRoman(m[2]);
       if (r) return r;
     }
-    var ord = /\b(\d+)\s*[-–]?\s*(?:я|ая|ья|ей)?\s*(?:часть|серия|фильм)\b/i.exec(text);
-    if (ord) return parseInt(ord[1], 10);
-    var rom = text.match(/\b([IVX]{1,4})\b/g);
-    if (rom) {
-      for (var i = 0; i < rom.length; i++) {
-        var rn = parseRoman(rom[i]);
-        if (rn && rn >= 1 && rn <= 10) return rn;
+    var ord = PART_ORDINAL.exec(text);
+    if (ord) return parseInt(ord[2], 10);
+    if (item.baseTitle) {
+      var after = new RegExp('(^|[^' + WL + '])' + escapeRe(item.baseTitle) + '\\s+(\\d{1,2}|[IVX]{1,4})(?![' + WL + '])', 'i').exec(text);
+      if (after) {
+        var a = parseInt(after[2], 10);
+        return isNaN(a) ? parseRoman(after[2]) : a;
       }
     }
     return null;
@@ -417,85 +468,41 @@
     return null;
   }
 
+  var LAST = Number.MAX_SAFE_INTEGER;
+
+  /**
+   * Сезоны по порядку (спецвыпуски после них, без сезона — в конце), потом часть, потом год (у кого нет — после), потом
+   * лучшее качество и больший размер (sortVersions в Model.kt). Ключ считается один раз на версию и сравнивается поле за
+   * полем: так порядок всегда последовательный (сравнение, что пропускает поле, если его нет у одной стороны, зацикливается).
+   */
   function sortVersions(list) {
     if (!list || list.length <= 1) return list ? list.slice() : [];
-    var copy = list.slice();
-    var hasSeries = copy.some(function (it) { return Boolean(itemSeasons(it)); });
-    copy.sort(function (a, b) {
-      if (hasSeries) {
-        var sa = itemSeasons(a), sb = itemSeasons(b);
-        if (sa && sb) {
-          var amin = sa.min === 0 ? 9999 : sa.min;
-          var bmin = sb.min === 0 ? 9999 : sb.min;
-          if (amin !== bmin) return amin - bmin;
-          var aRange = sa.max - sa.min, bRange = sb.max - sb.min;
-          if (aRange !== bRange) return aRange - bRange;
-        } else if (sa) return -1;
-        else if (sb) return 1;
-      } else {
-        var pa = itemPart(a), pb = itemPart(b);
-        if (pa != null && pb != null && pa !== pb) return pa - pb;
-        var ya = itemYear(a), yb = itemYear(b);
-        if (ya != null && yb != null && ya !== yb) return ya - yb;
-        if (pa != null && pb == null) return -1;
-        if (pb != null && pa == null) return 1;
-        if (ya != null && yb == null) return -1;
-        if (yb != null && ya == null) return 1;
-      }
-      var qa = qualityScore(a.m ? a.m.name : ''), qb = qualityScore(b.m ? b.m.name : '');
-      if (qa !== qb) return qb - qa;
-      var saSize = a.m ? a.m.size : 0, sbSize = b.m ? b.m.size : 0;
-      if (sbSize !== saSize) return sbSize - saSize;
-      return ((a.m && a.m.name) || '').localeCompare((b.m && b.m.name) || '');
+    var keys = list.map(function (it) {
+      var s = itemSeasons(it), p = itemPart(it), y = itemYear(it);
+      return [
+        s ? (s.min === 0 ? LAST - 1 : s.min) : LAST, s ? s.max - s.min : 0, p != null ? p : LAST, y != null ? y : LAST,
+        -qualityScore(it.m ? it.m.name : ''), -(it.m ? it.m.size : 0), it
+      ];
     });
-    return copy;
+    keys.sort(function (a, b) {
+      for (var i = 0; i < 6; i++) if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+      return ((a[6].m && a[6].m.name) || '').localeCompare((b[6].m && b[6].m.name) || '') || ((a[6].m && a[6].m.id) || 0) - ((b[6].m && b[6].m.id) || 0);
+    });
+    return keys.map(function (k) { return k[6]; });
   }
 
-  function versionSections(list) {
-    var sorted = sortVersions(list);
-    if (!sorted.length) return [];
-    var hasSeries = sorted.some(function (it) { return Boolean(itemSeasons(it)); });
-    var i, it;
-    if (hasSeries) {
-      var seasonKeys = sorted.map(function (item) {
-        var s = itemSeasons(item);
-        if (!s) return 'Дополнительно';
-        if (s.min === 0) return 'Спецвыпуски';
-        if (s.min === s.max) return 'Сезон ' + s.min;
-        return 'Сезоны ' + s.min + '–' + s.max;
-      });
-      var distinct = {};
-      seasonKeys.forEach(function (k) { distinct[k] = true; });
-      if (Object.keys(distinct).length <= 1) {
-        return [{ title: null, items: sorted }];
+  /** Первая строка версии в «Какую версию включить?» без качества: «Кинотрилогия • 3 фильма», «Сезоны 1–3 · 24 серии», «2021 год». */
+  function versionLine(v) {
+    var p = v.playable;
+    if (p && p.kind === 'series') {
+      if (isCollection(p, v.m)) {
+        var n = p.seasons.reduce(function (a, s) { return a + s.items.length; }, 0);
+        return collectionLabel(n, v.m.name) + ' • ' + n + ' ' + pluralRu(n, 'фильм', 'фильма', 'фильмов');
       }
-      var groups = {}, order = [];
-      for (i = 0; i < sorted.length; i++) {
-        var k = seasonKeys[i];
-        if (!groups[k]) { groups[k] = []; order.push(k); }
-        groups[k].push(sorted[i]);
-      }
-      return order.map(function (k) { return { title: k, items: groups[k] }; });
-    } else {
-      var years = {}, parts = {};
-      for (i = 0; i < sorted.length; i++) {
-        var y = itemYear(sorted[i]), p = itemPart(sorted[i]);
-        if (y != null) years[y] = true;
-        if (p != null) parts[p] = true;
-      }
-      if (Object.keys(years).length <= 1 && Object.keys(parts).length <= 1) {
-        return [{ title: null, items: sorted }];
-      }
-      var gMovies = {}, mOrder = [];
-      for (i = 0; i < sorted.length; i++) {
-        it = sorted[i];
-        var my = itemYear(it), mp = itemPart(it);
-        var mk = (my != null && mp != null) ? my + ' год · Часть ' + mp : (my != null ? my + ' год' : (mp != null ? 'Часть ' + mp : 'Другая версия'));
-        if (!gMovies[mk]) { gMovies[mk] = []; mOrder.push(mk); }
-        gMovies[mk].push(it);
-      }
-      return mOrder.map(function (k) { return { title: k, items: gMovies[k] }; });
+      return seriesLine(p);
     }
+    var y = itemYear(v);
+    return y ? y + ' год' : '';
   }
 
   /**
@@ -506,7 +513,7 @@
   function groupVersions(list, posterOf) {
     var byKey = {}, groups = [], shown = [];
     list.forEach(function (it) {
-      var base = groupTitle(it);
+      var base = it.baseTitle; // принятое название ИИ уже в baseTitle (prepareItems)
       if (it.playable.kind === 'none' || !it.m.ready || !base.trim()) { shown.push(it); return; }
       var kind = it.playable.kind === 'movie' ? 'm' : 's';
       // год принятого ответа ИИ важнее года в имени раздачи (groupVersions в Model.kt)
@@ -532,8 +539,7 @@
     var eps = p.seasons.reduce(function (a, s) { return a + s.items.length; }, 0);
     var first = p.seasons[0] && p.seasons[0].items[0];
     var films = !!(first && first.title);
-    var mod10 = eps % 10, mod100 = eps % 100;
-    var word = films ? 'фильм.' : mod10 >= 2 && mod10 <= 4 && !(mod100 >= 12 && mod100 <= 14) ? 'серии' : mod10 === 1 && mod100 !== 11 ? 'серия' : 'серий';
+    var word = films ? pluralRu(eps, 'фильм', 'фильма', 'фильмов') : pluralRu(eps, 'серия', 'серии', 'серий');
     var range = films || !nums.length ? '' : nums.length === 1 ? 'Сезон ' + nums[0] + ' · ' : 'Сезоны ' + Math.min.apply(null, nums) + '–' + Math.max.apply(null, nums) + ' · ';
     return range + eps + ' ' + word;
   }
@@ -674,8 +680,8 @@
 
   SM.model = {
     parseLibrary: parseLibrary, magnet: magnet, mainVideo: mainVideo, buildPlayable: buildPlayable,
-    cleanTitle: cleanTitle, titleKey: titleKey, groupTitle: groupTitle, groupVersions: groupVersions, seriesLine: seriesLine,
-    sortVersions: sortVersions, versionSections: versionSections, itemYear: itemYear, itemPart: itemPart,
+    cleanTitle: cleanTitle, titleKey: titleKey, groupVersions: groupVersions, seriesLine: seriesLine, versionLine: versionLine,
+    sortVersions: sortVersions, itemYear: itemYear, itemPart: itemPart, isCollection: isCollection, collectionLabel: collectionLabel,
     qualityScore: qualityScore, itemSeasons: itemSeasons,
     formatBytes: formatBytes, statusRu: statusRu, episodeLabel: episodeLabel,
     prepareItems: prepareItems, subtitlesFor: subtitlesFor, externalAudioFor: externalAudioFor,

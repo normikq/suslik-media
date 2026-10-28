@@ -31,7 +31,8 @@ const KINDS = new Set(["movie", "series", "collection"]);
 // Версия ответа: 2 — с типом раздачи (kind), 3 — сезон без пометок в раздаче («Show 2 - 01», «Show - 01»),
 // 4 — сезон из числа после названия (seasonFromName), 5 — без пометок верим модели, «Part 2» — не сезон (прогон
 // scripts/aititle-eval.js 27.10), 6 — оригинальное название и год (original, year) для поиска постера в TMDB.
-// Ответ старой версии можно спросить заново (stale в медиатеке).
+// Ответ старой версии можно спросить заново (stale в медиатеке), кроме принятого или отклонённого: решение владельца
+// не теряется от смены версии (переспросить его — только force).
 const VERSION = 6;
 const NONE_RETRY_MS = 3600 * 1000; // «нет ответа» можно спросить заново через час (остальные решения — только force)
 
@@ -254,11 +255,18 @@ function readyAt(owner, now = Date.now()) {
   return cooldownLeft(owner, now) > 0 ? cooldowns.get(owner) + config.AI_TITLE_COOLDOWN_MIN * 60000 : 0;
 }
 
+/** Ответ ещё годится: своей версии или уже решённый владельцем; «нет ответа» — не старше часа. */
+function isFresh(r, now) {
+  if (!r) return false;
+  if (r.status === "none") return (r.v || 1) >= VERSION && now - r.at <= NONE_RETRY_MS;
+  return (r.v || 1) >= VERSION || r.status === "accepted" || r.status === "rejected";
+}
+
 function publicView(r) {
   if (!r) return null;
   // ответы до 27.10 могли прийти с точками вместо пробелов («Kak.priruchit.lisu»)
   const base = String(r.base || "");
-  return { base: /\s/.test(base) ? base : base.replace(/[._]+/g, " ").trim(), season: r.season ?? null, kind: KINDS.has(r.kind) ? r.kind : null, original: r.original || null, year: r.year ?? null, source: "ai", model: r.model, at: r.at, status: r.status, stale: (r.v || 1) < VERSION };
+  return { base: /\s/.test(base) ? base : base.replace(/[._]+/g, " ").trim(), season: r.season ?? null, kind: KINDS.has(r.kind) ? r.kind : null, original: r.original || null, year: r.year ?? null, source: "ai", model: r.model, at: r.at, status: r.status, stale: (r.v || 1) < VERSION && r.status !== "accepted" && r.status !== "rejected" };
 }
 
 /** Сохранённый результат раздачи (или null). */
@@ -342,8 +350,8 @@ async function suggestMany(magnets, owner, now = Date.now(), { noCooldown = fals
     const id = String(m.id);
     const key = keyOf(m.name, m.files);
     out.set(id, key);
-    // ответ старой версии (без типа раздачи) — как будто его нет: спросить можно ещё раз
-    const fresh = k => { const r = results.get(k); return Boolean(r) && (r.v || 1) >= VERSION && !(r.status === "none" && now - r.at > NONE_RETRY_MS); };
+    // ответ старой версии (без типа раздачи) — как будто его нет: спросить можно ещё раз (решённый — нет, см. isFresh)
+    const fresh = k => isFresh(results.get(k), now);
     const known = force ? null : (fresh(byId.get(id)) ? byId.get(id) : (fresh(key) ? key : null));
     if (known) {
       out.set(id, known);
@@ -364,13 +372,16 @@ async function suggestMany(magnets, owner, now = Date.now(), { noCooldown = fals
     };
   };
   if (!todo.size) return answer(true);
-  // Раздачи, которые уже спрашивает другой запрос, второй раз в модель не уходят: ждём его и берём ответ
-  const running = [...todo.keys()].filter(k => inflight.has(k));
-  if (running.length) {
+  // Раздачи, которые уже спрашивает другой запрос, второй раз в модель не уходят: ждём его и берём ответ. Пока ждали,
+  // остальные могли уйти в модель третьим запросом или получить ответ — поэтому проверка повторяется до чистого списка.
+  for (;;) {
+    for (const k of [...todo.keys()]) if (!force && isFresh(results.get(k), Date.now())) todo.delete(k);
+    const running = [...todo.keys()].filter(k => inflight.has(k));
+    if (!running.length) break;
     await Promise.all(running.map(k => inflight.get(k).catch(() => {})));
     for (const k of running) todo.delete(k);
-    if (!todo.size) return answer(true);
   }
+  if (!todo.size) return answer(true);
   const left = noCooldown ? 0 : cooldownLeft(owner, now);
   if (left > 0) throw new AiError("cooldown", "ИИ можно спрашивать раз в " + config.AI_TITLE_COOLDOWN_MIN + " минут.", { retryAfterMs: left });
   rollDay(now);

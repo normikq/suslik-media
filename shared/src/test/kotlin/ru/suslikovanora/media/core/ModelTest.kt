@@ -518,13 +518,13 @@ class ModelTest {
     @Test
     fun groupVersionsUsesOnlyAcceptedAiTitle() {
         val accepted = prepareItems(parseLibrary(aiLibrary("accepted")))
-        assertEquals("Тачки 2", groupTitle(accepted[1]))
+        assertEquals("Тачки 2", accepted[1].baseTitle)
         val (shown, versions) = groupVersions(accepted)
         assertEquals(listOf(1L), shown.map { it.m.id })
         assertEquals(setOf(1L, 2L), versions[1L]?.map { it.m.id }?.toSet())
         for (status in listOf("suggested", "rejected", "none")) {
             val items = prepareItems(parseLibrary(aiLibrary(status)))
-            assertEquals(items[1].baseTitle, groupTitle(items[1]))
+            assertEquals(cleanTitle(items[1].m.name), items[1].baseTitle)
             assertEquals(listOf(1L, 2L), groupVersions(items).first.map { it.m.id }, status)
         }
     }
@@ -616,7 +616,7 @@ class ModelTest {
         val item = prepareItems(listOf(magnet)).single()
 
         assertTrue(isCollection(item.playable, magnet))
-        assertEquals("Кинотрилогия", collectionTypeLabel(3, magnet.name))
+        assertEquals(CollectionKind.Trilogy, collectionKind(3, magnet.name))
         assertEquals("3 фильма", filmCountRu(3))
 
         val queries1 = collectionFilePosterQueries(magnet, f1, item.baseTitle)

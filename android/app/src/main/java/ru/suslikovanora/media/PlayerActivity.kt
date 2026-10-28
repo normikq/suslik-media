@@ -1433,6 +1433,7 @@ class PlayerActivity : ComponentActivity() {
     private fun readSideExtras(i: Intent?) {
         trackSelector.readSideExtras(i)
         watchProgress.readIntent(i)
+        panel.collection = i?.getBooleanExtra(PlayerExtras.COLLECTION, false) == true
     }
 
     // ---- layout: upright phone = film on top + info below; sideways (or PiP) = the whole screen ----------------

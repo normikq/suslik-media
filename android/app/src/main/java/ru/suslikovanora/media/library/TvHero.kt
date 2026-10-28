@@ -142,10 +142,9 @@ fun TvContinueHero(all: List<ContinueEntry>, store: LibraryStore, onOpen: (PlayT
                         modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0x1AFFFFFF)).border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(8.dp)).padding(horizontal = 9.dp, vertical = 3.dp))
                     hero?.year?.let { chip(it) }
                     chip(itemTypeLabel(e.item))
-                    if (isCollection(e.item.playable, e.item.m)) {
-                        val filmCount = (e.item.playable as? Playable.Series)?.seasons?.flatMap { it.items }?.size ?: 0
-                        if (filmCount > 0) chip(filmCountRu(filmCount))
-                    } else {
+                    val bannerFilms = collectionFilms(e.item)
+                    if (bannerFilms.isNotEmpty()) chip(filmCountRu(bannerFilms.size))
+                    else {
                         (e.item.playable as? Playable.Series)?.let { p ->
                             chip(plural(p.seasons.size, tr("common.plural_sezon_1"), tr("common.plural_sezon_2"), tr("common.plural_sezon_5")) + " • " + plural(p.seasons.sumOf { it.items.size }, tr("common.plural_seriya_1"), tr("common.plural_seriya_2"), tr("common.plural_seriya_5")))
                         }

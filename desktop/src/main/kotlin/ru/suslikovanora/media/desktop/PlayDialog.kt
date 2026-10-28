@@ -99,19 +99,6 @@ import java.util.Locale
 
 // The play dialog of a library item (source, start place, voice-overs and subtitles); moved out of LibraryView.kt.
 
-private fun filmCountRu(count: Int): String = when {
-    count % 10 == 1 && count % 100 != 11 -> tr("library.count_film", "count" to count)
-    count % 10 in 2..4 && count % 100 !in 12..14 -> tr("library.count_filma", "count" to count)
-    else -> tr("library.count_filmov", "count" to count)
-}
-
-private fun collectionInfo(count: Int): Pair<String, String> = when (count) {
-    2 -> tr("library.dilogiya") to tr("library.dilogii")
-    3 -> tr("library.kinotrilogiya") to tr("library.trilogii")
-    4 -> tr("library.kinotetralogiya") to tr("library.tetralogii")
-    else -> tr("library.kinofranshiza") to tr("library.franshizy")
-}
-
 private fun extractTrilogyFilmInfo(
     baseTitle: String,
     ep: Episode,
@@ -120,7 +107,7 @@ private fun extractTrilogyFilmInfo(
     lib: Library
 ): Pair<String, String> {
     val raw = ep.file.name.ifBlank { ep.file.path.substringAfterLast('/') }
-    val year = Regex("""\b(19\d{2}|20\d{2})\b""").find(raw)?.groupValues?.get(1)
+    val year = extractYear(raw)?.toString()
     val cleaned = cleanCollectionFilmTitle(raw)
     val partTitle = if (baseTitle.isNotBlank() && cleaned.startsWith(baseTitle, ignoreCase = true)) {
         cleaned.substring(baseTitle.length).trim(' ', '-', ':', '·', '.', '–')
@@ -149,12 +136,8 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
         item?.playable ?: (if (t.following.isNotEmpty()) Playable.Series(listOf(Season(1, (listOf(t.file) + t.following).mapIndexed { i, f -> Episode(1, i + 1, f) }))) else Playable.Movie(t.file))
     }
     val series = playable as? Playable.Series
-    val isCollection = remember(series, magnet) {
-        series != null && series.seasons.isNotEmpty() && (
-            series.seasons.all { s -> s.items.all { it.title != null } } ||
-            Regex("""(трилоги|дилоги|тетралоги|франшиз|коллекци|trilogy|duology|anthology|collection)""", RegexOption.IGNORE_CASE).containsMatchIn(magnet.name)
-        )
-    }
+    // the same rule as the tile and the banner (shared isCollection), not a copy of its own
+    val isCollection = remember(playable, magnet) { series != null && series.seasons.isNotEmpty() && ru.suslikovanora.media.core.isCollection(playable, magnet) }
 
     // State for Trilogy / Collection mode
     val films = remember(series) { series?.seasons?.flatMap { it.items } ?: emptyList() }
@@ -283,11 +266,8 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
             if (isCollection) {
                 // ---- SCREEN 2: MOVIE TRILOGY / COLLECTION DESIGN ----
                 val filmCount = films.size
-                val (collectionTypeName, collectionGenitive) = collectionInfo(filmCount)
-                val years = films.mapNotNull { ep ->
-                    val raw = ep.file.name.ifBlank { ep.file.path.substringAfterLast('/') }
-                    Regex("""\b(19\d{2}|20\d{2})\b""").find(raw)?.groupValues?.get(1)?.toIntOrNull()
-                }
+                val collectionTypeName = tr(collectionKind(filmCount, magnet.name).trKey)
+                val years = films.mapNotNull { ep -> extractYear(ep.file.name.ifBlank { ep.file.path.substringAfterLast('/') }) }
                 val yearsRange = if (years.isNotEmpty()) {
                     val min = years.minOrNull()!!
                     val max = years.maxOrNull()!!

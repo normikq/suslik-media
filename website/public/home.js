@@ -77,80 +77,42 @@
     hero.fetching = false;
   }
 
-  var COLLECTION_REGEX = /(?:трилоги[яи]|дилоги[яи]|тетралоги[яи]|квадрологи[яи]|пенталоги[яи]|гексалоги[яи]|франшиз[аеы]|коллекци[яи]|антологи[яи]|саг[аеы]|киносаг[аеы]|сборник|боксет|boxset|box-set|trilogy|duology|dilogy|tetralogy|quadrilogy|anthology|collection|franchise|\b\d+\s*[-–—]\s*(?:в|in)\s*1\b|\bвсе\s+части\b|\bвсе\s+фильмы\b)/i;
-
-  function isCollectionPl(pl, m) {
-    if (m && m.aiTitle && m.aiTitle.status === "accepted" && m.aiTitle.kind === "collection") return true;
-    if (!pl || pl.type !== "series") return false;
-    if (pl.seasons && pl.seasons[0] && pl.seasons[0].items && pl.seasons[0].items[0] && pl.seasons[0].items[0].title != null) return true;
-    var name = (m && m.name) || "";
-    return COLLECTION_REGEX.test(name);
-  }
-
-  function collectionTypeLabel(filmCount, name) {
-    name = name || "";
-    if (/\b(трилоги[яи]|trilogy)\b/i.test(name) || filmCount === 3) return tr("library.kinotrilogiya", null, "Кинотрилогия");
-    if (/\b(дилоги[яи]|duology|dilogy)\b/i.test(name) || filmCount === 2) return tr("library.dilogiya", null, "Дилогия");
-    if (/\b(квадрологи[яи]|тетралоги[яи]|quadrilogy|tetralogy)\b/i.test(name) || filmCount === 4) return tr("library.kinotetralogiya", null, "Кинотетралогия");
-    if (/\b(сборник)\b/i.test(name)) return tr("library.sbornik", null, "Сборник");
-    if (/\b(антологи[яи]|anthology)\b/i.test(name)) return tr("library.antologiya", null, "Антология");
-    if (/\b(коллекци[яи]|collection|boxset)\b/i.test(name)) return tr("library.kollektsiya", null, "Коллекция");
-    return tr("library.kinofranshiza", null, "Кинофраншиза");
-  }
-
+  // Сборник фильмов — общие правила страницы (isCollection, collectionTypeLabel, COLLECTION_WORDS в index.html), не своя копия
   var TRACK_PREFIX = /^\s*(?:\[[^\]]*\]\s*|\([^\)]*\)\s*|(?:фильм|серия|часть|part|movie|vol|cd|диск)?\s*\d{1,3}[\s._-]*)+/i;
+  var FILM_COUNT_NOISE = /(?<![\p{L}\p{N}])\d+\s*(?:фильм\p{L}*|сери\p{L}*|част\p{L}*)(?![\p{L}\p{N}])/giu;
+  var MAX_FILM_QUERIES = 6; // каждый промах — ещё несколько запросов в TMDB на сервере
 
-  function collectionFilePosterQueries(magnet, fileOrPath) {
+  function fileParts(fileOrPath) {
     var path = typeof fileOrPath === "string" ? fileOrPath : (fileOrPath && (fileOrPath.path || fileOrPath.name)) || "";
     var raw = path.replace(/\\/g, "/").split("/").pop() || "";
     var withoutExt = raw.replace(/\.[a-z0-9]{2,5}$/i, "");
-    var stripped = withoutExt.replace(TRACK_PREFIX, "").trim();
+    var film = escapeTitle(withoutExt.replace(TRACK_PREFIX, "").trim() || withoutExt).split("/").map(function (s) { return s.trim(); }).filter(Boolean)[0] || "";
     var ym = withoutExt.match(/\b(19\d{2}|20\d{2})\b/) || path.match(/\b(19\d{2}|20\d{2})\b/);
-    var year = ym ? ym[1] : null;
-    var cleaned = escapeTitle(stripped || withoutExt);
-    var rawBase = (magnet.name || "").replace(COLLECTION_REGEX, " ");
-    var cleanBases = rawBase.split("/").map(function (s) { return escapeTitle(s); }).filter(function (s) { return s.length >= 2; });
-    var out = [];
+    return { raw: raw, film: film, year: ym ? ym[1] : null };
+  }
+
+  // Название самой франшизы: без «Трилогия», «8 фильмов» и части после «:» («Гарри Поттер»); от принятого названия ИИ
+  function collectionBase(magnet) {
+    var base = escapeTitle(displayTitle(magnet).replace(COLLECTION_WORDS, " ").split("/")[0] || "");
+    return base.split(":")[0].replace(FILM_COUNT_NOISE, "").replace(/\s+/g, " ").trim();
+  }
+
+  // Постер одного фильма сборника (collectionFilePosterQueries в Model.kt): фильм с годом, фильм, франшиза: фильм, франшиза
+  function collectionFilePosterQueries(magnet, fileOrPath) {
+    var f = fileParts(fileOrPath), base = collectionBase(magnet), out = [];
     var add = function (q) { if (q && out.indexOf(q) < 0) out.push(q); };
-
-    var parts = cleaned.split("/").map(function (s) { return s.trim(); }).filter(Boolean);
-    var candidates = parts.length ? parts : [cleaned];
-    candidates.forEach(function (c) {
-      if (year) add(c + " (" + year + ")");
-      add(c);
-    });
-
-    cleanBases.forEach(function (cb) {
-      candidates.forEach(function (c) {
-        if (c.toLowerCase().indexOf(cb.toLowerCase()) < 0) {
-          if (year) add(cb + ": " + c + " (" + year + ")");
-          add(cb + ": " + c);
-          if (year) add(cb + " " + c + " (" + year + ")");
-          add(cb + " " + c);
-        }
-      });
-    });
-
-    cleanBases.forEach(function (cb) {
-      if (year) add(cb + " (" + year + ")");
-      add(cb);
-    });
+    var withYear = function (q) { return f.year ? q + " (" + f.year + ")" : q; };
+    if (f.film) { add(withYear(f.film)); add(f.film); }
+    if (base.length >= 2 && f.film && f.film.toLowerCase().indexOf(base.toLowerCase()) < 0) { add(withYear(base + ": " + f.film)); add(base + ": " + f.film); }
+    if (base.length >= 2) add(base);
     add(escapeTitle(magnet.name || ""));
-    return out;
+    return out.slice(0, MAX_FILM_QUERIES);
   }
 
   function collectionFileTitle(magnet, fileOrPath) {
-    var path = typeof fileOrPath === "string" ? fileOrPath : (fileOrPath && (fileOrPath.path || fileOrPath.name)) || "";
-    var raw = path.replace(/\\/g, "/").split("/").pop() || "";
-    var withoutExt = raw.replace(/\.[a-z0-9]{2,5}$/i, "");
-    var stripped = withoutExt.replace(TRACK_PREFIX, "").trim();
-    var cleaned = escapeTitle(stripped || withoutExt);
-    var rawBase = (magnet.name || "").replace(COLLECTION_REGEX, " ");
-    var cleanBase = escapeTitle(rawBase.split("/")[0] || "");
-    if (cleaned && cleanBase && cleaned.toLowerCase().indexOf(cleanBase.toLowerCase()) < 0) {
-      return cleanBase + ": " + cleaned;
-    }
-    return cleaned || escapeTitle(raw);
+    var f = fileParts(fileOrPath), base = collectionBase(magnet);
+    if (f.film && base && f.film.toLowerCase().indexOf(base.toLowerCase()) < 0) return base + ": " + f.film;
+    return f.film || escapeTitle(f.raw);
   }
 
   function buildEntries() {
@@ -162,7 +124,7 @@
       var id = String(w.key).split("|")[0], path = String(w.key).slice(id.length + 1);
       var magnet = (cachedLibrary || []).find(function (m) { return String(m.id) === id; });
       if (!magnet || Number(magnet.statusCode) !== 4) return;
-      var pl = buildPlaylist(magnet), isColl = isCollectionPl(pl, magnet);
+      var pl = buildPlaylist(magnet), isColl = isCollection(pl, magnet);
       var sub = tr("common.movie", null, "Фильм"), epCount = null, filmTitle = null, queries = null;
       if (isColl) {
         var films = (pl.seasons && pl.seasons[0] && pl.seasons[0].items) || [];
@@ -179,10 +141,10 @@
         if (!found) return;
         sub = found.s.season === 0 ? tr("hero.special_episode", { episode: found.e.episode }, "Спецвыпуск " + found.e.episode) : tr("hero.season_episode", { season: found.s.season, episode: found.e.episode }, "Сезон " + found.s.season + ", серия " + found.e.episode);
         epCount = { seasons: pl.seasons.length, eps: pl.seasons.reduce(function (a, s) { return a + s.items.length; }, 0) };
-        queries = [escapeTitle(magnet.name)];
+        queries = [aiPosterQuery(magnet), displayTitle(magnet)].filter(Boolean);
       } else if (!pl.file) return;
       else {
-        queries = [escapeTitle(magnet.name)];
+        queries = [aiPosterQuery(magnet), displayTitle(magnet)].filter(Boolean);
       }
       out.push({
         magnet: magnet, path: path, pos: w.pos, len: w.len, at: w.at, fraction: fraction,
@@ -250,7 +212,7 @@
         saveLastEpisode(magnet.id, file.path);
       });
     } else file = pl.file;
-    if (file) playФайл(file, label, req, magnet);
+    if (file) playFile(file, label, req, magnet);
   }
 
   function renderHero() {
@@ -339,7 +301,7 @@
   function heroSync() {
     var box = $("continueHero");
     if (!box) return;
-    var query = $("libraryПоиск") ? $("libraryПоиск").value.trim() : "";
+    var query = $("librarySearch") ? $("librarySearch").value.trim() : "";
     var entries = hero.raw ? buildEntries() : [];
     var show = libraryVisible() && libraryCategory === "all" && !query && entries.length > 0;
     box.classList.toggle("hidden", !show);

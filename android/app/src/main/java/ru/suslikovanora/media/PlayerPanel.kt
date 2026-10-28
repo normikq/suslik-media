@@ -54,6 +54,8 @@ import ru.suslikovanora.media.ui.Unbounded
 class PlayerPanelState {
     var title by mutableStateOf("")
     var episodes by mutableStateOf<List<String>>(emptyList())
+    /** The playlist is the films of a collection (from the Intent, [ru.suslikovanora.media.player.PlayerExtras.COLLECTION]). */
+    var collection by mutableStateOf(false)
     var index by mutableIntStateOf(-1)
     var scale by mutableStateOf("")
     var bottomInsetPx by mutableIntStateOf(0)
@@ -71,7 +73,7 @@ class PlayerPanelState {
 @Composable
 fun PlayerInfoPanel(s: PlayerPanelState) {
     val bottom = with(LocalDensity.current) { s.bottomInsetPx.toDp() }
-    val isColl = ru.suslikovanora.media.core.COLLECTION_REGEX.containsMatchIn(s.title) || s.episodes.any { it.contains("фильм", ignoreCase = true) }
+    val isColl = s.collection
     Column(Modifier.fillMaxSize().background(Sm.night).padding(bottom = bottom)) {
         Column(Modifier.fillMaxWidth().padding(start = 18.dp, end = 18.dp, top = 16.dp)) {
             Text(s.title, color = Sm.text, fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 17.sp,

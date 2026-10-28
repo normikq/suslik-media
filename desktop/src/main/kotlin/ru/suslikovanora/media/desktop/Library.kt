@@ -43,7 +43,6 @@ private const val POSTER_CAP = 100L shl 20
 /** A poster picture not shown for this many days is deleted (it is downloaded again when the tile shows up). */
 private const val POSTER_UNUSED_DAYS = 7L
 
-/** Same behaviour as the Android LibraryStore, with files in %APPDATA%\SuslikMedia instead of SharedPreferences. */
 /** «Тачки 2» · фильм or «Тед Лассо» · сериал, сезон 2 — how a title suggested by the AI is shown. */
 fun aiLabel(ai: AiTitle): String {
     val kind = when (ai.kind) { "movie" -> tr("library.ai_tip_film"); "series" -> tr("library.ai_tip_serial"); "collection" -> tr("library.ai_tip_sbornik"); else -> null }
@@ -53,6 +52,9 @@ fun aiLabel(ai: AiTitle): String {
     return if (ai.season != null) tr("library.ai_sezon", "title" to title, "season" to ai.season) else title
 }
 
+private const val AI_IDS_PER_CALL = 10 // the server's limit (routes/aititle.js MAX_IDS)
+
+/** Same behaviour as the Android LibraryStore, with files in %APPDATA%\SuslikMedia instead of SharedPreferences. */
 class Library {
     private val snapshot = AppDir.file("library.json")
     private val libraryEtag = Store.of("library_etag") // version of the list above, for "not modified" answers
@@ -69,6 +71,7 @@ class Library {
     var status by mutableStateOf(tr("library.nazhmite_obnovit_chtoby_zagruz"))
         private set
     var statusKind by mutableStateOf(StatusKind.Info)
+        private set
     /** When this user may ask the AI again (ms, 0 — now): from the library answer, or the server's 429. */
     var aiReadyAt by mutableStateOf(0L)
         private set
@@ -292,7 +295,7 @@ class Library {
         aiBusy = true
         status = tr("library.ai_sprashivaem"); statusKind = StatusKind.Info
         try {
-            val r = Api.post("/api/library/ai-title", JSONObject().put("ids", org.json.JSONArray(list.map { it.id })))
+            val r = Api.post("/api/library/ai-title", JSONObject().put("ids", org.json.JSONArray(list.take(AI_IDS_PER_CALL).map { it.id })))
             aiReadyAt = r.optLong("aiTitleReadyAt", 0L) // у админа кулдауна нет: 0
             val res = r.optJSONArray("results") ?: org.json.JSONArray()
             val ids = ArrayList<Long>()
@@ -320,24 +323,31 @@ class Library {
     }
 
     /**
-     * id -> take the AI's title (true) or keep the regexes' one (false). Every torrent is saved even if one fails:
-     * stopping halfway split a tile (some versions renamed, some not). All changes land in one go at the end.
+     * id -> take the AI's title (true) or keep the regexes' one (false). Only what changes is sent, the whole tile in one
+     * request (the server takes up to 10 torrents per call): either the versions are renamed together or the tile stays as it was.
      */
     suspend fun saveAi(decisions: Map<Long, Boolean>) = withContext(kotlinx.coroutines.NonCancellable) {
-        // The window may close (and its scope end) while saving: all requests still go out, or the tile would be split.
+        // The window may close (and its scope end) while saving: the requests still go out, or the tile would be split.
+        val todo = decisions.filter { (id, accept) ->
+            val cur = items.firstOrNull { it.m.id == id }?.m?.aiTitle
+            cur != null && cur.status != (if (accept) "accepted" else "rejected")
+        }
         val done = HashMap<Long, AiTitle?>()
         var error: String? = null
-        for ((id, accept) in decisions) {
-            val cur = items.firstOrNull { it.m.id == id }?.m?.aiTitle ?: continue
-            if (cur.status == (if (accept) "accepted" else "rejected")) continue
+        for (chunk in todo.entries.chunked(AI_IDS_PER_CALL)) {
             try {
-                val r = Api.post("/api/library/$id/ai-title/decision", JSONObject().put("accept", accept))
-                done[id] = parseAiTitle(r.optJSONObject("aiTitle"))
+                val list = org.json.JSONArray()
+                chunk.forEach { (id, accept) -> list.put(JSONObject().put("id", id).put("accept", accept)) }
+                val res = Api.post("/api/library/ai-title/decision", JSONObject().put("decisions", list)).optJSONArray("results") ?: org.json.JSONArray()
+                for (i in 0 until res.length()) {
+                    val o = res.optJSONObject(i) ?: continue
+                    done[o.optLong("id")] = parseAiTitle(o.optJSONObject("aiTitle"))
+                }
             } catch (e: Exception) {
                 error = Api.describe(e)
             }
         }
-        if (done.isNotEmpty()) items = items.map { if (it.m.id in done) it.withAiTitle(done[it.m.id]) else it }
+        setAi(done)
         if (error != null) { status = error; statusKind = StatusKind.Error }
     }
 
@@ -566,8 +576,8 @@ class Library {
         for (q in queries) {
             try {
                 val j = posterGate.withPermit { Api.get("/api/poster?hero=1&q=" + URLEncoder.encode(q, "UTF-8")) }
+                // only a wide frame: a portrait poster stretched across the banner looks broken (without a frame the banner stays dark)
                 val bd = j.optString("backdrop").takeIf { it.startsWith("/api/poster/img/") }
-                    ?: j.optString("poster").takeIf { it.startsWith("/api/poster/img/") }
                 val img = bd?.let { loadHeroImage(it) }
                 val ov = j.optString("overview").ifBlank { null }
                 val yr = j.optString("year").ifBlank { null }

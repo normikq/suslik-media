@@ -390,7 +390,7 @@ class LibraryStore(context: Context) {
                 val j = posterGate.withPermit { Api.get("/api/poster?hero=1&q=" + URLEncoder.encode(q, "UTF-8")) }
                 if (j.has("animation")) recordAnimation(q.lowercase(), j)
                 val abs = { k: String -> j.optString(k).takeIf { it.startsWith("/api/poster/img/") }?.let { Api.BASE + it } }
-                val bd = abs("backdrop") ?: abs("poster")
+                val bd = abs("backdrop") // only a wide frame: a portrait poster across the banner looks broken
                 val ov = j.optString("overview").ifBlank { null }
                 val title = j.optString("title").ifBlank { null }
                 val rt = j.optDouble("rating", 0.0).takeIf { it > 0 }

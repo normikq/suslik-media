@@ -192,18 +192,8 @@ fun itemCategory(item: LibraryItem): Category {
 }
 
 fun itemTypeLabel(item: LibraryItem): String {
-    if (isCollection(item.playable, item.m)) {
-        val count = (item.playable as? Playable.Series)?.seasons?.flatMap { it.items }?.size ?: 0
-        return when (collectionTypeLabel(count, item.m.name)) {
-            "Кинотрилогия" -> tr("library.kinotrilogiya")
-            "Дилогия" -> tr("library.dilogiya")
-            "Кинотетралогия" -> tr("library.kinotetralogiya")
-            "Сборник" -> tr("library.sbornik")
-            "Антология" -> tr("library.antologiya")
-            "Коллекция" -> tr("library.kollektsiya")
-            else -> tr("library.kinofranshiza")
-        }
-    }
+    val films = collectionFilms(item)
+    if (films.isNotEmpty()) return tr(collectionKind(films.size, item.m.name).trKey)
     return when (itemCategory(item)) {
         Category.Anime -> tr("library.anime")
         Category.Cartoons -> tr("library.multfilm")
@@ -1265,6 +1255,14 @@ private fun nextEpisode(p: Playable.Series, file: MFile): MFile? {
     return if (i in 0 until all.size - 1) all[i + 1].file else null
 }
 
+/** «Фильм 2 · Властелин колец: Две крепости» — which film of a collection the banner continues. */
+private fun filmSub(item: LibraryItem, file: MFile): String {
+    val films = collectionFilms(item)
+    val idx = films.indexOfFirst { it.file.path == file.path }
+    val title = collectionFileTitle(item.m, file, item.baseTitle)
+    return if (films.size > 1 && idx >= 0) tr("library.film_p", "p" to (idx + 1)) + " · " + title else title
+}
+
 private fun continueEntries(items: List<LibraryItem>, lib: Library): List<ContinueEntry> = items.mapNotNull { item ->
     if (!item.m.ready) return@mapNotNull null
     val (file, w) = lib.lastWatched(item.m) ?: return@mapNotNull null
@@ -1274,12 +1272,7 @@ private fun continueEntries(items: List<LibraryItem>, lib: Library): List<Contin
     if (!w.watched) {
         val t = targetFor(item, file) ?: return@mapNotNull null
         val queries = continueItemPosterQueries(item, file)
-        val sub = if (isColl) {
-            val films = (item.playable as? Playable.Series)?.seasons?.flatMap { it.items } ?: emptyList()
-            val idx = films.indexOfFirst { it.file.path == file.path }
-            val filmTitle = collectionFileTitle(item.m, file, item.baseTitle)
-            if (films.size > 1 && idx >= 0) tr("library.film_p", "p" to (idx + 1)) + " · " + filmTitle else filmTitle
-        } else {
+        val sub = if (isColl) filmSub(item, file) else {
             t.label.removePrefix(item.baseTitle).removePrefix(" · ").ifBlank { tr("library.film") }
         }
         ContinueEntry(item, t, sub, w.fraction, w.pos, w.len, w.at, queries)
@@ -1289,13 +1282,7 @@ private fun continueEntries(items: List<LibraryItem>, lib: Library): List<Contin
         if (lib.watchInfo(watchKey(item.m.id, next))?.watched == true) return@mapNotNull null
         val t = targetFor(item, next) ?: return@mapNotNull null
         val queries = continueItemPosterQueries(item, next)
-        val sub = if (isColl) {
-            val films = series.seasons.flatMap { it.items }
-            val idx = films.indexOfFirst { it.file.path == next.path }
-            val filmTitle = collectionFileTitle(item.m, next, item.baseTitle)
-            val baseSub = if (films.size > 1 && idx >= 0) tr("library.film_p", "p" to (idx + 1)) + " · " + filmTitle else filmTitle
-            tr("library.dalshe") + baseSub
-        } else {
+        val sub = if (isColl) tr("library.dalshe") + filmSub(item, next) else {
             tr("library.dalshe") + t.label.removePrefix(item.baseTitle).removePrefix(" · ")
         }
         ContinueEntry(item, t, sub, 0f, 0L, 0L, w.at, queries)
@@ -1441,10 +1428,9 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
                             modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0x1AFFFFFF)).border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 4.dp))
                         hero?.year?.let { chip(it) }
                         chip(itemTypeLabel(e.item))
-                        if (isCollection(e.item.playable, e.item.m)) {
-                            val filmCount = (e.item.playable as? Playable.Series)?.seasons?.flatMap { it.items }?.size ?: 0
-                            if (filmCount > 0) chip(filmCountRu(filmCount))
-                        } else {
+                        val bannerFilms = collectionFilms(e.item)
+                        if (bannerFilms.isNotEmpty()) chip(filmCountRu(bannerFilms.size))
+                        else {
                             (e.item.playable as? Playable.Series)?.let { p ->
                                 val eps = p.seasons.sumOf { it.items.size }
                                 chip(plural(p.seasons.size, tr("common.plural_sezon_1"), tr("common.plural_sezon_2"), tr("common.plural_sezon_5")) + " • " + plural(eps, tr("common.plural_seriya_1"), tr("common.plural_seriya_2"), tr("common.plural_seriya_5")))
