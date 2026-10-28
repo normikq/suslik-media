@@ -65,6 +65,9 @@ const val MIN_H = 685
 fun main() {
     // Compose's DirectX renderer crashes on some new GPUs/drivers (seen on RTX 50xx); OpenGL is required for mpv OpenGL FBO.
     System.setProperty("skiko.renderApi", "OPENGL")
+    // Java2D keeps away from Direct3D too (dxcore.dll once fail-fasted the idle app); must be set before AWT starts.
+    System.setProperty("sun.java2d.d3d", "false")
+    System.setProperty("sun.java2d.noddraw", "true")
     // Without this JNA decodes UTF-8 text with the Windows code page - Russian names come out garbled.
     System.setProperty("jna.encoding", "UTF-8")
     // Already open: that window comes to the front, this start ends here (no second window).

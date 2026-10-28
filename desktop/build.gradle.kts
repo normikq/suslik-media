@@ -69,6 +69,9 @@ compose.desktop {
         // Small desktop app: compact GC, heap that shrinks back after spikes.
         jvmArgs += listOf(
             "-Dskiko.renderApi=OPENGL", // DirectX renderer crashes on some new GPUs
+            // Java2D would still open Direct3D (and dxcore.dll) for AWT although Compose draws with OpenGL; dxcore once
+            // fail-fasted the idle app (c0000409, 28.10). Nothing in the app draws with Java2D on the GPU.
+            "-Dsun.java2d.d3d=false", "-Dsun.java2d.noddraw=true",
             "-Xms32m", "-Xmx384m", "-XX:+UseSerialGC",
             "-XX:MinHeapFreeRatio=10", "-XX:MaxHeapFreeRatio=30",
             "-XX:MaxMetaspaceSize=128m", "-XX:ReservedCodeCacheSize=48m",
