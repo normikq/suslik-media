@@ -1250,9 +1250,13 @@ class PlayerActivity : ComponentActivity() {
             // Preloaded buffer: VLC network caching (time buffer ~6s) + BurstProxy disk buffer
             // Media3 knows what it has in memory itself; the reserve on disk comes after that.
             val diskBufferMs = BurstProxy.aheadMs(currentUrl, length)
-            ui.buffered = p.bufferedPositionMs.takeIf { it >= 0L }?.let { (it + diskBufferMs).coerceIn(time, length) } ?: run {
+            // At the end of an episode the clock can be past the length (VLC, a seek near the end, the old episode's
+            // clock against the new one's length): coerceIn(time, length) then threw and the player crashed back to
+            // the library, which also dropped a shared-viewing room. Same fix as the PC's in 4e7a9c0.
+            val from = minOf(time, length)
+            ui.buffered = p.bufferedPositionMs.takeIf { it >= 0L }?.let { (it + diskBufferMs).coerceIn(from, length) } ?: run {
                 val vlcTimeBufferMs = if (p.isPlaying || buffering) 6_000L else 0L
-                (time + vlcTimeBufferMs + diskBufferMs).coerceIn(time, length)
+                (time + vlcTimeBufferMs + diskBufferMs).coerceIn(from, length)
             }
         } else {
             ui.length = 0L
