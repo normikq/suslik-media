@@ -11,50 +11,61 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const axios = require("axios");
 
-// Название баннера «Продолжить просмотр» — по-русски из переводов TMDB; без перевода — из поиска (английское)
+// Название по-русски из переводов TMDB: title_ru — подпись плитки, title — ещё и запасное английское (баннер)
 const SEARCH = {
-  "dune": { id: 1, media_type: "movie", title: "Dune", original_title: "Dune", poster_path: "/d.jpg" },
-  "frieren": { id: 2, media_type: "tv", name: "Frieren: Beyond Journey's End", original_name: "葬送のフリーレン", poster_path: "/f.jpg" },
-  "brat": { id: 3, media_type: "movie", title: "Brother", original_title: "Брат", poster_path: "/b.jpg" },
-  "broken": { id: 4, media_type: "movie", title: "Broken", poster_path: "/x.jpg" }
+  "dune": { id: 1, media_type: "movie", title: "Dune", original_title: "Dune", original_language: "en", poster_path: "/d.jpg" },
+  "frieren": { id: 2, media_type: "tv", name: "Frieren: Beyond Journey's End", original_name: "葬送のフリーレン", original_language: "ja", poster_path: "/f.jpg" },
+  "brat": { id: 3, media_type: "movie", title: "Brother", original_title: "Брат", original_language: "ru", poster_path: "/b.jpg" },
+  "broken": { id: 4, media_type: "movie", title: "Broken", original_language: "en", poster_path: "/x.jpg" }
 };
-const DETAILS = {
-  "/movie/1": { original_language: "en", original_title: "Dune", translations: { translations: [
+const TRANSLATIONS = {
+  "/movie/1": [
     { iso_639_1: "ru", iso_3166_1: "UA", data: { title: "Дюна (UA)" } },
     { iso_639_1: "ru", iso_3166_1: "RU", data: { title: "Дюна", overview: "" } },
-    { iso_639_1: "en", iso_3166_1: "US", data: { title: "Dune" } }] } },
-  "/tv/2": { original_language: "ja", original_name: "葬送のフリーレン", translations: { translations: [
+    { iso_639_1: "en", iso_3166_1: "US", data: { title: "Dune" } }],
+  "/tv/2": [
     { iso_639_1: "ru", iso_3166_1: "RU", data: { name: "" } },
-    { iso_639_1: "en", iso_3166_1: "US", data: { name: "Frieren: Beyond Journey's End" } }] } },
-  "/movie/3": { original_language: "ru", original_title: "Брат", translations: { translations: [] } }
+    { iso_639_1: "en", iso_3166_1: "US", data: { name: "Frieren: Beyond Journey's End" } }],
+  "/movie/3": []
 };
+let brokenCalls = 0;
 
 axios.get = async (url, { params }) => {
-  if (url.endsWith("/search/multi")) return { data: { results: [SEARCH[params.query.toLowerCase()]].filter(Boolean) } };
-  if (url.endsWith("/images")) return { data: { backdrops: [], logos: [] } };
-  const key = url.replace("https://api.themoviedb.org/3", "");
-  if (DETAILS[key]) {
-    assert.equal(params.language, "ru-RU");
-    assert.equal(params.append_to_response, "translations");
-    return { data: DETAILS[key] };
+  if (url.endsWith("/search/multi")) {
+    assert.equal(params.language, undefined); // постеры не меняются: поиск без языка
+    return { data: { results: [SEARCH[params.query.toLowerCase()]].filter(Boolean) } };
   }
+  if (url.endsWith("/images")) return { data: { backdrops: [], logos: [] } };
+  const m = /\/3(\/\w+\/\d+)\/translations$/.exec(url);
+  if (m && TRANSLATIONS[m[1]]) return { data: { id: 1, translations: TRANSLATIONS[m[1]] } };
+  if (m && m[1] === "/movie/4") brokenCalls++;
+  if (/\/3\/\w+\/\d+$/.test(url)) return { data: {} };
   throw new Error("HTTP 500");
 };
 
 const { searchPoster } = require("../src/services/posters");
 
 test("posters: русское название из перевода ru-RU", async () => {
+  const b = await searchPoster("Dune");
+  assert.equal(b.title_ru, "Дюна");
+  assert.equal(b.title, "Дюна");
   assert.equal((await searchPoster("Dune", { hero: true })).title, "Дюна");
 });
 
-test("posters: перевода нет — название из поиска, а не японский оригинал", async () => {
-  assert.equal((await searchPoster("Frieren", { hero: true })).title, "Frieren: Beyond Journey's End");
+test("posters: перевода нет — title_ru пуст, в баннере название из поиска, а не японский оригинал", async () => {
+  const b = await searchPoster("Frieren", { hero: true });
+  assert.equal(b.title_ru, null);
+  assert.equal(b.title, "Frieren: Beyond Journey's End");
 });
 
 test("posters: русский фильм без перевода — оригинальное название", async () => {
-  assert.equal((await searchPoster("Brat", { hero: true })).title, "Брат");
+  assert.equal((await searchPoster("Brat")).title_ru, "Брат");
 });
 
-test("posters: TMDB не ответил на подробности — название из поиска", async () => {
-  assert.equal((await searchPoster("Broken", { hero: true })).title, "Broken");
+test("posters: переводы не пришли — название из поиска, ответ не запоминается", async () => {
+  const b = await searchPoster("Broken");
+  assert.equal(b.title, "Broken");
+  assert.equal(b.title_ru, null);
+  await searchPoster("Broken");
+  assert.equal(brokenCalls, 2);
 });

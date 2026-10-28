@@ -519,6 +519,16 @@ fun statusRu(m: Magnet): String = when {
     else -> m.status
 }
 
+/**
+ * The title under a tile: the AI's one once the user accepted it, else the Russian title TMDB gave for a poster query
+ * ([ruTitleOf] takes the lower-case query; the server's `title_ru`), else the release name. A collection keeps its own:
+ * TMDB finds one film of it.
+ */
+fun tileTitle(item: LibraryItem, ruTitleOf: (String) -> String?): String {
+    if (item.m.aiTitle?.accepted == true || isCollection(item.playable, item.m)) return item.baseTitle
+    return item.posterQueries.firstNotNullOfOrNull { q -> ruTitleOf(q.lowercase())?.takeIf { it.isNotBlank() } } ?: item.baseTitle
+}
+
 fun episodeLabel(base: String, s: Season, e: Episode): String = e.title ?:
     base + " · " + (if (s.season == 0) "Спец." else "S" + s.season.toString().padStart(2, '0')) + "E" + e.episode.toString().padStart(2, '0')
 

@@ -374,3 +374,14 @@ test('nameSeason и buildPlayable: сезон из имени раздачи, е
   const own = M.buildPlayable(mag([1, 2].map(i => file(i, `Show/Show.S01E0${i}.mkv`)), { name: 'Show S02' }));
   assert.deepEqual(own.seasons.map(s => s.season), [1]);
 });
+
+test('tileTitle: ИИ, потом русское название TMDB, потом название раздачи', () => {
+  const ru = { inception: 'Начало' };
+  const of = q => ru[q.toLowerCase()];
+  const [plain] = M.prepareItems([mag([file(0, 'Inception.mkv', 4000)], { id: 10, name: 'Inception.2010.1080p' })]);
+  assert.equal(M.tileTitle(plain, of), 'Начало');
+  assert.equal(M.tileTitle(plain, () => undefined), 'Inception');
+  const [ai] = M.prepareItems([mag([file(0, 'Inception.mkv', 4000)], { id: 11, name: 'Inception.2010.1080p',
+    aiTitle: { base: 'Начало (2010)', kind: 'movie', status: 'accepted' } })]);
+  assert.equal(M.tileTitle(ai, of), 'Начало (2010)');
+});
