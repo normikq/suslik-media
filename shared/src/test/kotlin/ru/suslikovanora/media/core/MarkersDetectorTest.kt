@@ -58,7 +58,9 @@ class MarkersDetectorTest {
     @Test fun serverPath() {
         assertEquals("/api/markers?title=Frieren&alt=%D0%A4%D1%80%D0%B8%D1%80%D0%B5%D0%BD&season=1&episode=3&duration=1420",
             MarkersDetector.serverPath("Frieren", "Фрирен", null, 3, 1_420_500))
-        assertNull(MarkersDetector.serverPath("Frieren", null, 1, null, 0))
+        // a film: no season / episode
+        assertEquals("/api/markers?title=Dune+%282021%29", MarkersDetector.serverPath("Dune (2021)", null, 1, null, 0))
+        assertNull(MarkersDetector.serverPath(" ", null, 1, 2, 0))
     }
 
     @Test fun introAtSkipsTheLastSeconds() {

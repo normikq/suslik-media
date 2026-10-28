@@ -100,13 +100,19 @@ data class PlayRequest(
 
 /**
  * What the player asks the server for the intro and credits of each episode (core.MarkersDetector.serverPath): the
- * original title (the AI's once accepted, otherwise the release's), the library's title, season and episode.
+ * original title (the AI's once accepted, otherwise the release's), the library's title, season and episode; for a film
+ * of a collection — its own name and year, without an episode.
  */
-private fun markersJson(item: LibraryItem, series: Playable.Series, files: List<MFile>): String {
+private fun markersJson(item: LibraryItem, series: Playable.Series, files: List<MFile>, collection: Boolean): String {
     val original = item.m.aiTitle?.takeIf { it.accepted }?.original?.takeIf { it.isNotBlank() } ?: cleanTitle(item.m.name)
     val out = org.json.JSONArray()
     for (f in files) {
         val hit = series.seasons.firstNotNullOfOrNull { s -> s.items.find { it.file.path == f.path }?.let { s to it } }
+        if (collection) {
+            val t = hit?.let { (_, e) -> MarkersDetector.filmTitle(f.name.ifBlank { f.path.substringAfterLast('/') }, e.title) }
+            out.put(t?.let { org.json.JSONObject().put("title", it) } ?: org.json.JSONObject.NULL)
+            continue
+        }
         out.put(hit?.let { (s, e) -> org.json.JSONObject().put("title", original).put("alt", item.baseTitle).put("season", s.season).put("episode", e.episode) }
             ?: org.json.JSONObject.NULL)
     }
@@ -324,7 +330,7 @@ fun PlaySheet(
                     else listOf(watchKey(target.magnetId, target.file))
                     val files = if (playlist != null) target.season.filter { f -> f.link != null } else listOf(target.file)
                     onPlay(PlayRequest(it, target.label, playlist, subUrls, keys, audioUrls, fromStart, if (playlist != null) episodeSidesJson(target, customByPath) else null, customJson(customByPath), watchKey(target.magnetId, target.file), isColl,
-                        if (isColl || item == null || series == null) null else markersJson(item, series, files)))
+                        if (item == null || series == null) null else markersJson(item, series, files, isColl)))
                 }
             }
 

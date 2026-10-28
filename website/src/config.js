@@ -11,6 +11,8 @@ const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toSt
 const ALLDEBRID_API_KEY = process.env.ALLDEBRID_API_KEY || "";
 const ALLDEBRID_API_BASE = process.env.ALLDEBRID_API_BASE || "https://api.alldebrid.com";
 const TMDB_API_KEY = process.env.TMDB_API_KEY || "";
+// TheIntroDB (заставки и титры, services/markers.js): без ключа — 5000 запросов в день с адреса сервера, с ключом — больше
+const THEINTRODB_API_KEY = process.env.THEINTRODB_API_KEY || "";
 const COOKIE_SECURE = process.env.COOKIE_SECURE === "true";
 const OWNER_LOCK = process.env.OWNER_LOCK !== "false";
 // Автоочистка библиотеки: не открывали N дней или раздач больше максимума (services/cleanup.js)
@@ -108,6 +110,7 @@ module.exports = {
   ALLDEBRID_API_KEY,
   ALLDEBRID_API_BASE,
   TMDB_API_KEY,
+  THEINTRODB_API_KEY,
   COOKIE_SECURE,
   OWNER_LOCK,
   TRUST_PROXY,

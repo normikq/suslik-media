@@ -27,8 +27,8 @@ data class PlayRequest(
     val markerQueries: List<MarkerQuery?> = emptyList()
 )
 
-/** A series episode for `GET /api/markers` (core.MarkersDetector.serverPath): titles to look up, season and episode. */
-data class MarkerQuery(val title: String?, val alt: String?, val season: Int?, val episode: Int)
+/** An episode (or, [episode] null, a film of a collection) for `GET /api/markers` (core.MarkersDetector.serverPath). */
+data class MarkerQuery(val title: String?, val alt: String?, val season: Int?, val episode: Int?)
 
 /** What Discord shows: the title from the library (the AI's one once accepted), not the torrent's file name, and the episode. */
 data class Presence(val title: String, val episode: String? = null)

@@ -219,9 +219,15 @@ async function fetchPosterImage(size, file) {
   return cached;
 }
 
+/** Фильм или сериал TMDB по названию («Dune (2021)» — с годом): { id, media_type } или null (тот же поиск и кэш, что у постеров). */
+async function tmdbRef(query) {
+  return (await searchBase(query)).ref || null;
+}
+
 module.exports = {
   POSTER_SIZES,
   searchPoster,
+  tmdbRef,
   getPosterImagePath,
   fetchPosterImage
 };

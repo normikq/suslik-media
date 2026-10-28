@@ -7,9 +7,9 @@ const { markersFor, parseQuery } = require("../services/markers");
 
 const router = express.Router();
 
-// Заставка и титры серии из открытых баз (services/markers.js), когда в самом файле нет глав с ними.
-// ?title=&alt=&season=&episode=&duration= (duration — в секундах, необязательно) →
-// { intro: { startMs, endMs } | null, credits: { startMs, endMs } | null, source: "aniskip" | null }
+// Заставка и титры серии или фильма из открытых баз (services/markers.js), когда в самом файле нет глав с ними.
+// ?title=&alt=&season=&episode=&duration= (duration — в секундах, необязательно; без episode — фильм) →
+// { intro: { startMs, endMs } | null, credits: { startMs, endMs } | null, source: "theintrodb" | "aniskip" | "theintrodb+aniskip" | null }
 async function handler(req, res) {
   const q = parseQuery(req.query);
   if (!q) return res.status(400).json({ error: "Некорректный запрос." });

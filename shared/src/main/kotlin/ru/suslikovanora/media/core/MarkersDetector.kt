@@ -73,18 +73,30 @@ object MarkersDetector {
     /** The intro still worth skipping at [timeMs]: inside it and more than 2 s of it left. */
     fun introAt(m: MediaMarkers, timeMs: Long): TimeRange? = m.intro?.takeIf { timeMs in it && it.endMs - timeMs > 2_000L }
 
-    /** `/api/markers?…` for the server; null — nothing to ask with (no title or no episode number). */
+    /**
+     * `/api/markers?…` for the server (TheIntroDB, AniSkip); [episode] null — a film (of a collection). Null — nothing to
+     * ask with (no title).
+     */
     fun serverPath(title: String?, alt: String?, season: Int?, episode: Int?, durationMs: Long): String? {
         val titles = listOfNotNull(title, alt).map { it.trim() }.filter { it.length >= 2 }.distinct()
-        if (titles.isEmpty() || episode == null || episode < 1) return null
+        if (titles.isEmpty()) return null
         val enc = { v: String -> URLEncoder.encode(v, "UTF-8") }
         return buildString {
             append("/api/markers?title=").append(enc(titles[0]))
             titles.getOrNull(1)?.let { append("&alt=").append(enc(it)) }
-            append("&season=").append(season?.takeIf { it > 0 } ?: 1)
-            append("&episode=").append(episode)
+            if (episode != null && episode > 0) {
+                append("&season=").append(season?.takeIf { it > 0 } ?: 1)
+                append("&episode=").append(episode)
+            }
             if (durationMs > 0) append("&duration=").append(durationMs / 1000)
         }
+    }
+
+    /** A film of a collection for the server: «Harry Potter and the Chamber of Secrets (2002)» from its file name. */
+    fun filmTitle(fileName: String, parsed: String? = null): String? {
+        val name = parsed?.takeIf { it.isNotBlank() }?.let { cleanCollectionFilmTitle(it) } ?: cleanCollectionFilmTitle(fileName)
+        if (name.length < 2 || name.all { it.isDigit() }) return null
+        return extractYear(fileName)?.let { y -> if (name.contains(y.toString())) name else "$name ($y)" } ?: name
     }
 
     /** The server's answer: `{ intro: {startMs, endMs} | null, credits: … }`. */

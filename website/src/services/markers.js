@@ -6,18 +6,24 @@ const axios = require("axios");
 const config = require("../config");
 const { makeJsonWriter } = require("../utils/json-writer");
 
-// ---- Заставки и титры из открытых баз (AniSkip) ----------------------------------------------------------------
-// Плеер сначала смотрит главы файла (shared/.../core/MarkersDetector.kt); если там ни заставки, ни титров — спрашивает
-// сервер: GET /api/markers?title=&alt=&season=&episode=&duration=. Название ищется в MyAnimeList через Jikan (только точное
-// совпадение с одним из названий тайтла, иначе обычный сериал попадёт на случайное аниме), по id MAL и номеру серии
-// AniSkip отдаёт опенинг и эндинг в секундах. Ответы хранятся в markers-cache.json по хешу «название|сезон|серия»:
-// найденное — насовсем, ненайденное — MISS_TTL_MS (базу пополняют пользователи AniSkip).
+// ---- Заставки и титры из открытых баз (TheIntroDB, AniSkip) ---------------------------------------------------------
+// Плеер сначала смотрит главы файла (shared/.../core/MarkersDetector.kt); если там нет заставки или титров — спрашивает
+// сервер: GET /api/markers?title=&alt=&season=&episode=&duration= (без episode — фильм).
+// 1. TheIntroDB (сериалы и фильмы): id TMDB по названию (тот же поиск, что у постеров, services/posters.js), затем
+//    https://api.theintrodb.org/v4/media?tmdb_id=&season=&episode=&duration_ms= — интервалы в миллисекундах.
+//    Ключ THEINTRODB_API_KEY необязателен (без него 5000 запросов в день).
+// 2. AniSkip (аниме, только серии) — для того, чего нет в TheIntroDB: название ищется в MyAnimeList через Jikan (только
+//    точное совпадение с одним из названий тайтла, иначе обычный сериал попадёт на случайное аниме), по id MAL и номеру
+//    серии AniSkip отдаёт опенинг и эндинг в секундах.
+// Ответы хранятся в markers-cache.json по хешу «название|сезон|серия»: найденное — насовсем, ненайденное — MISS_TTL_MS
+// (базы пополняют пользователи).
 const MISS_TTL_MS = 3 * 24 * 3600 * 1000;
 const ERROR_TTL_MS = 30 * 60 * 1000; // сеть или база не ответили: не спрашиваем снова каждую серию
 const MAX_ENTRIES = 20000;
 const TIMEOUT_MS = 6000;
 const JIKAN = "https://api.jikan.moe/v4/anime";
 const ANISKIP = "https://api.aniskip.com/v2/skip-times";
+const INTRODB = "https://api.theintrodb.org/v4/media";
 
 const store = new Map(); // ключ -> { i: [s, e] | null, c: [s, e] | null, src, at } | { miss: true, at }
 try {
@@ -34,7 +40,7 @@ function norm(s) {
 }
 
 function cacheKey(title, season, episode) {
-  return crypto.createHash("sha1").update(`${norm(title)}|${season || 1}|${episode}`).digest("hex");
+  return crypto.createHash("sha1").update(episode ? `${norm(title)}|${season || 1}|${episode}` : `${norm(title)}|movie`).digest("hex");
 }
 
 /** Варианты названия сезона в MAL: «Title Season 2», «Title 2nd Season», «Title II», «Title 2», «Title Part 2». */
@@ -78,6 +84,49 @@ function intervalsFrom(body, durationSec) {
   return out;
 }
 
+/**
+ * Интервалы из ответа TheIntroDB (`intro` / `credits` — списки { start_ms, end_ms }; null в начале — с 0, в конце — до
+ * конца видео; 0/0 — «точно нет»). Заставка — первая годная, титры — последние (после них бывает превью).
+ */
+function introDbIntervals(body, durationSec) {
+  const out = { i: null, c: null };
+  if (!body || typeof body !== "object") return out;
+  const len = durationSec > 0 ? Math.round(durationSec * 1000) : 0;
+  const ranges = (list, toEnd) => (Array.isArray(list) ? list : []).map(x => {
+    if (!x) return null;
+    const s = x.start_ms == null ? 0 : Number(x.start_ms);
+    let e = x.end_ms == null ? null : Number(x.end_ms);
+    if (!Number.isFinite(s) || s < 0) return null;
+    if (e == null) { if (!toEnd || x.start_ms == null) return null; e = len || s + 1; }
+    if (!Number.isFinite(e) || e <= s) return null;
+    if (len && s >= len) return null;
+    return [Math.round(s), Math.round(e)];
+  }).filter(Boolean);
+  out.i = ranges(body.intro, false)[0] || null;
+  const credits = ranges(body.credits, true);
+  out.c = credits.length ? credits[credits.length - 1] : null;
+  return out;
+}
+
+async function lookupTmdb(title) {
+  if (!config.TMDB_API_KEY) return null;
+  return require("./posters").tmdbRef(title);
+}
+
+async function fetchIntroDb(ref, season, episode, durationSec) {
+  const params = { tmdb_id: ref.id };
+  if (episode) { params.season = season || 1; params.episode = episode; }
+  if (durationSec > 0) params.duration_ms = Math.round(durationSec * 1000);
+  const headers = config.THEINTRODB_API_KEY ? { Authorization: `Bearer ${config.THEINTRODB_API_KEY}` } : {};
+  try {
+    const r = await axios.get(INTRODB, { params, headers, timeout: TIMEOUT_MS });
+    return introDbIntervals(r.data, durationSec);
+  } catch (err) {
+    if (err.response && err.response.status === 404) return { i: null, c: null };
+    throw err;
+  }
+}
+
 async function lookupMal(title, season) {
   const q = season > 1 ? `${title} season ${season}` : title;
   const r = await axios.get(JIKAN, { params: { q, limit: 10 }, timeout: TIMEOUT_MS });
@@ -114,19 +163,47 @@ function toResponse(e) {
 function parseQuery(q) {
   const titles = [q.title, q.alt].map(t => String(t || "").trim().slice(0, 200)).filter(t => norm(t).length >= 2);
   const season = q.season === undefined || q.season === "" ? 1 : Number(q.season);
-  const episode = Number(q.episode);
+  const episode = q.episode === undefined || q.episode === "" ? 0 : Number(q.episode); // 0 — фильм
   const duration = q.duration === undefined || q.duration === "" ? 0 : Number(q.duration);
   if (!titles.length || !Number.isInteger(season) || season < 0 || season > 100) return null;
-  if (!Number.isInteger(episode) || episode < 1 || episode > 5000) return null;
+  if (!Number.isInteger(episode) || episode < 0 || episode > 5000) return null;
   if (!Number.isFinite(duration) || duration < 0 || duration > 6 * 3600) return null;
   return { titles: [...new Set(titles)], season: season || 1, episode, duration };
 }
 
 /**
  * Заставка и титры серии: { intro: {startMs,endMs}|null, credits: …, source }.
- * [lookup] — для тестов: (title, season) => id MAL, (malId, episode, duration) => {i, c}.
+ * [lookup] — для тестов: tmdb(title) => { id, media_type }, introdb(ref, season, episode, duration) => {i, c},
+ * mal(title, season) => id MAL, skip(malId, episode, duration) => {i, c}.
  */
-async function markersFor({ titles, season, episode, duration }, now = Date.now(), lookup = { mal: lookupMal, skip: fetchAniSkip }) {
+const LOOKUP = { tmdb: lookupTmdb, introdb: fetchIntroDb, mal: lookupMal, skip: fetchAniSkip };
+
+/** Обе базы по очереди: TheIntroDB, затем AniSkip — для того, чего не нашлось. Ошибка одной не отменяет другую. */
+async function lookupBoth(title, season, episode, duration, lookup) {
+  const found = { i: null, c: null };
+  const src = [];
+  let failed = false;
+  try {
+    const ref = await lookup.tmdb(title);
+    if (ref && ref.id && ref.media_type === (episode ? "tv" : "movie")) {
+      const r = await lookup.introdb(ref, season, episode, duration);
+      if (r.i || r.c) { found.i = r.i; found.c = r.c; src.push("theintrodb"); }
+    }
+  } catch { failed = true; }
+  if (episode && (!found.i || !found.c)) {
+    try {
+      const mal = await lookup.mal(title, season);
+      const r = mal ? await lookup.skip(mal, episode, duration) : { i: null, c: null };
+      if ((!found.i && r.i) || (!found.c && r.c)) src.push("aniskip");
+      found.i = found.i || r.i;
+      found.c = found.c || r.c;
+    } catch { failed = true; }
+  }
+  return { ...found, src: src.join("+"), failed };
+}
+
+async function markersFor({ titles, season, episode, duration }, now = Date.now(), lookup = LOOKUP) {
+  lookup = { ...LOOKUP, ...lookup };
   for (const title of titles) {
     const key = cacheKey(title, season, episode);
     const hit = store.get(key);
@@ -136,13 +213,9 @@ async function markersFor({ titles, season, episode, duration }, now = Date.now(
     if (!job) {
       job = (async () => {
         try {
-          const mal = await lookup.mal(title, season);
-          const found = mal ? await lookup.skip(mal, episode, duration) : { i: null, c: null };
-          const entry = found.i || found.c ? { i: found.i, c: found.c, src: "aniskip", mal, at: now } : { miss: true, at: now };
-          store.set(key, entry);
-          return entry;
-        } catch {
-          const entry = { miss: true, err: true, at: now };
+          const found = await lookupBoth(title, season, episode, duration, lookup);
+          const entry = found.i || found.c ? { i: found.i, c: found.c, src: found.src, at: now }
+            : found.failed ? { miss: true, err: true, at: now } : { miss: true, at: now };
           store.set(key, entry);
           return entry;
         } finally {
@@ -161,4 +234,4 @@ async function markersFor({ titles, season, episode, duration }, now = Date.now(
 
 function _reset() { store.clear(); inflight.clear(); }
 
-module.exports = { markersFor, parseQuery, pickMalId, intervalsFrom, seasonNames, cacheKey, norm, _reset };
+module.exports = { markersFor, parseQuery, pickMalId, intervalsFrom, introDbIntervals, seasonNames, cacheKey, norm, _reset };

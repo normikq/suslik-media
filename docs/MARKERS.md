@@ -8,13 +8,19 @@
    видео, до начала следующей главы (нет следующей или она дальше 5 мин — 120 с). Титры — последняя глава по `CREDITS_REGEX`
    (credits, ending, титры, ED…) во второй половине, до конца файла. Глава с обоими словами («Opening Credits») не считается.
    ПК: `chapter-list` mpv. Android: только VLC (`MediaPlayer.getChapters`); Media3 глав MKV/MP4 не отдаёт.
-2. **Сервер** `GET /api/markers?title=&alt=&season=&episode=&duration=` (`/api/file/markers` — то же), только для серий
-   сериала и только если в главах нет заставки или титров. `website/src/services/markers.js`: название ищется в MyAnimeList
-   через Jikan (точное совпадение с одним из названий, для сезона N — «… Season N», «… 2nd Season», «… II»…), по id MAL
-   AniSkip отдаёт опенинг и эндинг. Кэш `markers-cache.json` (в `DATA_DIR`) по хешу «название|сезон|серия»: найденное —
-   насовсем, ненайденное — 3 дня, ошибка сети — 30 мин; не больше 20 000 записей.
-   Клиенты шлют `title` = оригинальное название ИИ (если принято) или название раздачи, `alt` = название плитки.
-   TheIntroSkip/TheIntroDB не подключён: публичное API не удалось проверить.
+2. **Сервер** `GET /api/markers?title=&alt=&season=&episode=&duration=` (`/api/file/markers` — то же; без `episode` —
+   фильм), только если в главах нет заставки или титров. `website/src/services/markers.js`, по очереди:
+   - **TheIntroDB** (сериалы и фильмы): id TMDB по названию — тот же поиск и кэш, что у постеров (`posters.tmdbRef`, нужен
+     `TMDB_API_KEY`); затем `https://api.theintrodb.org/v4/media?tmdb_id=&season=&episode=&duration_ms=`. Интервалы в мс,
+     `start_ms: null` — с начала, `end_ms: null` — до конца, 0/0 — «точно нет». Ключ `THEINTRODB_API_KEY` в `.env`
+     необязателен (Bearer; без него 5000 запросов в день с адреса сервера). Тип в TMDB должен совпасть: серия — `tv`, фильм — `movie`.
+   - **AniSkip** (аниме, только серии) — для того, чего не нашлось в TheIntroDB: название ищется в MyAnimeList через Jikan
+     (точное совпадение с одним из названий, для сезона N — «… Season N», «… 2nd Season», «… II»…), по id MAL AniSkip
+     отдаёт опенинг и эндинг.
+   Кэш `markers-cache.json` (в `DATA_DIR`) по хешу «название|сезон|серия» («название|movie»): найденное — насовсем,
+   ненайденное — 3 дня, ошибка сети — 30 мин; не больше 20 000 записей. `source` в ответе — `theintrodb`, `aniskip` или оба.
+   Клиенты шлют для серии `title` = оригинальное название ИИ (если принято) или название раздачи, `alt` = название плитки;
+   для фильма сборника — его название из имени файла с годом (`MarkersDetector.filmTitle`).
 
 ## Поведение плеера
 

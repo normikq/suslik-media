@@ -574,7 +574,7 @@ fun PlayerView(
         val fallback = queue.getOrNull(i)?.title.orEmpty()
         if (req.collection) return tr("player.sleduyuschiy_film_p", "p" to (req.presence.getOrNull(i)?.title ?: fallback))
         val q = req.markerQueries.getOrNull(i)
-        val se = q?.let { "S%02dE%02d".format(it.season ?: 1, it.episode) }
+        val se = q?.let { qq -> qq.episode?.let { "S%02dE%02d".format(qq.season ?: 1, it) } }
         return if (se != null || req.presence.size > 1) tr("player.sleduyuschaya_seriya_p", "p" to (se ?: req.presence.getOrNull(i)?.episode ?: fallback))
         else tr("player.sleduyuschaya_p", "p" to fallback)
     }
@@ -1224,7 +1224,7 @@ fun PlayerView(
         if (nextIn > 0) { if (userPaused) return@LaunchedEffect; delay(1000); nextIn-- } else if (nextIn == 0) playNext()
     }
 
-    // Intro and credits from the open databases when the file's chapters do not have them (series episodes only)
+    // Intro and credits from the open databases when the file's chapters do not have them (episodes, films of a collection)
     LaunchedEffect(index, started, length > 0L) {
         if (!started || length <= 0L || serverMarkers != null) return@LaunchedEffect
         val q = req.markerQueries.getOrNull(if (queue.size > 1) index else req.startIndex) ?: return@LaunchedEffect

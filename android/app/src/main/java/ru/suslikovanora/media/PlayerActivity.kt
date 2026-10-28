@@ -463,6 +463,7 @@ class PlayerActivity : ComponentActivity() {
         val file = MarkersDetector.fromChapters(fileChapters, len)
         if (file.intro != null && file.credits != null) return
         val q = markerQueries?.optJSONObject(markerQueryIndex()) ?: return
+        // no episode — a film of a collection
         val path = MarkersDetector.serverPath(q.optString("title").ifBlank { null }, q.optString("alt").ifBlank { null },
             q.optInt("season", 1), q.optInt("episode", 0).takeIf { it > 0 }, len) ?: return
         markersAskedFor = currentUrl
