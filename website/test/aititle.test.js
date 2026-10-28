@@ -38,8 +38,12 @@ function gemini(answer, usage = { promptTokenCount: 120, candidatesTokenCount: 2
   const items = Array.isArray(answer) ? answer : [{ n: 1, ...answer }];
   return { status: 200, body: { candidates: [{ content: { parts: [{ text: JSON.stringify({ items }) }] } }], usageMetadata: usage } };
 }
+const realFetch = globalThis.fetch;
 globalThis.fetch = async (url, init) => {
-  calls.push({ url, init, body: JSON.parse(init.body) });
+  if (typeof url === "string" && url.includes("127.0.0.1")) {
+    return realFetch(url, init);
+  }
+  calls.push({ url, init, body: JSON.parse(init?.body || "{}") });
   const r = replies.shift();
   if (!r) throw new Error("unexpected fetch");
   if (r.throw) throw r.throw;
@@ -428,4 +432,107 @@ test("aititle: concurrent requests with overlapping releases ask the model once 
   assert.equal(calls.length, 1);
   assert.equal(a.results.length, 2);
   assert.equal(b.results.length, 1);
+});
+
+test("aititle permissions: regular user can only use AI for own added movies, admin for all", () => {
+  const { recordOwner } = require("../src/services/downloads");
+  const { withRemovable } = require("../src/services/favorites");
+  const users = require("../src/services/users");
+
+  const regularUser = users.findOrCreateUser({ id: "1001", username: "alice" }, "allow");
+  const otherUser = users.findOrCreateUser({ id: "1002", username: "bob" }, "allow");
+  const adminUser = users.findOrCreateUser({ id: "9001", username: "boss" }, "admin");
+
+  const reqRegular = { user: regularUser, headers: {} };
+  const reqAdmin = { user: adminUser, headers: {} };
+
+  recordOwner("1001", regularUser.id, "1.1.1.1");
+  recordOwner("1002", otherUser.id, "2.2.2.2");
+
+  const libraryData = {
+    magnets: [
+      { id: 1001, name: "Alice Film", statusCode: 4 },
+      { id: 1002, name: "Bob Film", statusCode: 4 },
+      { id: 1003, name: "Orphan Film", statusCode: 4 },
+      { id: 1004, name: "Downloading Film", statusCode: 1 }
+    ]
+  };
+
+  const regularView = withRemovable(libraryData, reqRegular);
+  assert.equal(regularView.magnets.find(m => m.id === 1001).canAiTitle, true);
+  assert.equal(regularView.magnets.find(m => m.id === 1002).canAiTitle, false);
+  assert.equal(regularView.magnets.find(m => m.id === 1003).canAiTitle, false);
+  assert.equal(regularView.magnets.find(m => m.id === 1004).canAiTitle, false);
+
+  const adminView = withRemovable(libraryData, reqAdmin);
+  assert.equal(adminView.magnets.find(m => m.id === 1001).canAiTitle, true);
+  assert.equal(adminView.magnets.find(m => m.id === 1002).canAiTitle, true);
+  assert.equal(adminView.magnets.find(m => m.id === 1003).canAiTitle, true);
+  assert.equal(adminView.magnets.find(m => m.id === 1004).canAiTitle, false);
+});
+
+test("aititle routes: 403 when non-admin calls AI on someone else's movie, allowed for own movie and admin", async t => {
+  const express = require("express");
+  const { recordOwner } = require("../src/services/downloads");
+  const library = require("../src/services/library");
+  const router = require("../src/routes/aititle");
+
+  const origGetLibrary = library.getLibrary;
+  t.after(() => { library.getLibrary = origGetLibrary; });
+
+  library.getLibrary = async () => ({
+    data: {
+      magnets: [
+        { id: 5001, name: "Alice Show S01", statusCode: 4, files: [{ path: "a.mkv", type: "file" }] },
+        { id: 5002, name: "Bob Show S01", statusCode: 4, files: [{ path: "b.mkv", type: "file" }] }
+      ]
+    }
+  });
+
+  const users = require("../src/services/users");
+  const alice = users.findOrCreateUser({ id: "5001", username: "alice" }, "allow");
+  const bob = users.findOrCreateUser({ id: "5002", username: "bob" }, "allow");
+  const admin = users.findOrCreateUser({ id: "9002", username: "admin" }, "admin");
+
+  recordOwner("5001", alice.id, "1.1.1.1");
+  recordOwner("5002", bob.id, "2.2.2.2");
+
+  let currentUser = alice;
+  const app = express();
+  app.use(express.json());
+  app.use((req, res, next) => {
+    req.user = currentUser;
+    req.session = { authenticated: true, uid: currentUser.id };
+    next();
+  });
+  app.use(router);
+
+  const server = app.listen(0, "127.0.0.1");
+  t.after(() => server.close());
+  await new Promise(r => server.once("listening", r));
+  const port = server.address().port;
+
+  // Alice asks AI for Bob's show: 403
+  const resForbidden = await fetch(`http://127.0.0.1:${port}/api/library/5002/ai-title`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" }
+  });
+  assert.equal(resForbidden.status, 403);
+
+  // Alice asks AI with ids [5001, 5002]: 403 because 5002 is not hers
+  const resBatchForbidden = await fetch(`http://127.0.0.1:${port}/api/library/ai-title`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids: [5001, 5002] })
+  });
+  assert.equal(resBatchForbidden.status, 403);
+
+  // Admin asks AI for Bob's show: allowed
+  currentUser = admin;
+  replies.push(gemini({ base: "Bob Show", season: 1, kind: "series" }));
+  const resAdmin = await fetch(`http://127.0.0.1:${port}/api/library/5002/ai-title`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" }
+  });
+  assert.equal(resAdmin.status, 200);
 });
