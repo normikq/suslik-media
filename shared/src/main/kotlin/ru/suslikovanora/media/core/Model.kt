@@ -127,6 +127,14 @@ private val SXXEYY = Regex("""S(\d{1,2})[ ._-]?E(\d{1,3})""", IC)
 private val NXNN = Regex("""(?:^|[^\d])(\d{1,2})x(\d{2,3})(?!\d)""", IC)
 private val EP_WORD = Regex("""(?:^|[^a-z0-9а-я])(?:e|ep|episode|серия)[ ._-]?(\d{1,3})(?!\d)""", IC)
 private val LEAD_NUM = Regex("""^\s*(\d{1,3})(?=[ ._-])""")
+// One season in the release's name: «Show.S02.1080p», «Сезон: 2», «2-й сезон», «Season 2»; ranges («S01-S03», «Сезон: 1-3»,
+// «1-3 сезон») say nothing. Without lookbehind and \p{L}: the website and the TV (Chromium 56) use the same patterns.
+private val NAME_SEASON_RANGE = Regex(
+    """(?:season|сезон)[a-zа-яё]*[ ._:]*\d{1,2}[ ._]*[-–][ ._]*\d|\d[ ._]*[-–][ ._]*\d{1,2}[ ._]*(?:-?[a-zа-яё]{1,2}[ ._]*)?(?:season|сезон)|(?:^|[^a-zа-яё0-9])s\d{1,2}[ ._]*[-–][ ._]*s?\d""", IC
+)
+private val NAME_SEASON = Regex(
+    """(?:^|[^a-zа-яё0-9])s(\d{1,2})(?=e\d|[^a-zа-яё0-9]|$)|(?:season|сезон)[ ._:]*(\d{1,2})(?!\d)|(?:^|\D)(\d{1,2})[ ._]*(?:-?(?:й|ый|ий|st|nd|rd|th))?[ ._]*(?:season|сезон)(?![a-zа-яё0-9])""", IC
+)
 private val DOTS = Regex("[._]+")
 private val BRACKETS = Regex("""[\[\](){}]""")
 private val SPACES = Regex("""\s+""")
@@ -163,7 +171,18 @@ private fun seasonOf(path: String): Int? {
     return m?.groupValues?.get(1)?.toInt()
 }
 
-private fun parseEpisode(path: String): Pair<Int, Int>? {
+/**
+ * The season the release's name gives, if it names exactly one ([NAME_SEASON]). Episodes whose files do not say their
+ * season («Show.S02/Show.E01.mkv», «Сериал (2 сезон)/01 [1080p].mkv») take it instead of season 1, or a merged show
+ * would call its second season «Сезон 1» on the banner and in the version picker.
+ */
+fun nameSeason(name: String): Int? {
+    if (NAME_SEASON_RANGE.containsMatchIn(name)) return null
+    val nums = NAME_SEASON.findAll(name).mapNotNull { m -> m.groupValues.drop(1).firstOrNull { it.isNotEmpty() }?.toInt() }.toSet()
+    return nums.singleOrNull()?.takeIf { it > 0 }
+}
+
+private fun parseEpisode(path: String, defaultSeason: Int = 1): Pair<Int, Int>? {
     val p = path.replace('\\', '/')
     val name = p.substringAfterLast('/')
     val folderSeason = (ANY_SEASON.find(p) ?: DIR_S.find(p))?.groupValues?.get(1)?.toInt()
@@ -172,7 +191,7 @@ private fun parseEpisode(path: String): Pair<Int, Int>? {
     NXNN.find(name)
         ?.let { return it.groupValues[1].toInt() to it.groupValues[2].toInt() }
     EP_WORD.find(name)
-        ?.let { return (folderSeason ?: 1) to it.groupValues[1].toInt() }
+        ?.let { return (folderSeason ?: defaultSeason) to it.groupValues[1].toInt() }
     if (folderSeason != null) {
         LEAD_NUM.find(name)?.let { return folderSeason to it.groupValues[1].toInt() }
     }
@@ -385,7 +404,9 @@ private fun playableByFiles(m: Magnet): Playable {
         }
         return Playable.Series(seasons)
     }
-    val eps = vids.mapNotNull { f -> parseEpisode(f.path)?.let { (s, e) -> Episode(s, e, f) } }
+    // Files without their own season mark get the one the release's name gives
+    val named = nameSeason(m.name) ?: 1
+    val eps = vids.mapNotNull { f -> parseEpisode(f.path, named)?.let { (s, e) -> Episode(s, e, f) } }
     if (eps.size >= 2) {
         val seasons = eps.groupBy { it.season }.entries.sortedBy { it.key }.map { (s, items) ->
             Season(s, items.sortedWith(compareBy<Episode> { it.episode }.thenBy { it.file.path }))
@@ -393,7 +414,7 @@ private fun playableByFiles(m: Magnet): Playable {
         return Playable.Series(seasons)
     }
     // Episodes named only by a number ("Show - 01 [1080p].mkv"): a series, not a collection of films.
-    numberedEpisodesOf(m, vids)?.let { return it }
+    numberedEpisodesOf(m, vids, named)?.let { return it }
     // Collection (trilogy, several films / parts in one torrent, no episode numbers): every full-size film is listed.
     collectionOf(vids)?.let { return it }
     return mainVideo(m)?.let { Playable.Movie(it) } ?: Playable.None
@@ -408,7 +429,7 @@ private val SERIES_HINT = Regex("""(?<![\p{L}\p{N}])(?:сезон\p{L}*|season\p
  * in its name) or looks like a season: five or more files of similar size numbered one after another.
  * Without that a trilogy ("Film 1", "Film 2") stays a collection.
  */
-private fun numberedEpisodesOf(m: Magnet, vids: List<MFile>): Playable.Series? {
+private fun numberedEpisodesOf(m: Magnet, vids: List<MFile>, season: Int): Playable.Series? {
     if (vids.size < 2 || vids.any { BLURAY_DIR.containsMatchIn(it.path) }) return null
     val main = vids.filter { !EXTRAS.containsMatchIn(it.path) }
     if (main.size < 2) return null
@@ -430,8 +451,8 @@ private fun numberedEpisodesOf(m: Magnet, vids: List<MFile>): Playable.Series? {
         val similar = sizes.max() <= sizes.min() * 2
         val looksLikeSeason = main.size >= 5 && consecutive && similar
         if (!SERIES_HINT.containsMatchIn(m.name) && !looksLikeSeason) continue
-        val eps = main.mapIndexed { i, f -> Episode(1, nums[i], f) }.sortedBy { it.episode }
-        return Playable.Series(listOf(Season(1, eps)))
+        val eps = main.mapIndexed { i, f -> Episode(season, nums[i], f) }.sortedBy { it.episode }
+        return Playable.Series(listOf(Season(season, eps)))
     }
     return null
 }

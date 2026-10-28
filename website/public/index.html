@@ -1529,7 +1529,18 @@ function loadTileMediaInfo(magnet,line,fileArg){
 const VIDEO_EXT=/\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso)$/i;
 const IS_MOBILE=/Android|iPhone|iPad|iPod/i.test(navigator.userAgent||"");
 const LAST_EP_KEY="lastEpisodeV1";
-function parseEpisode(path){
+// Один сезон в имени раздачи («Show.S02.1080p», «Сезон: 2», «2-й сезон»); диапазон («S01-S03», «1-3 сезон») — ничего
+// (nameSeason в Model.kt). Серии, у которых в файлах сезона нет, берут его, а не 1: иначе 2 сезон в общей плитке — «Сезон 1».
+const NAME_SEASON_RANGE=/(?:season|сезон)[a-zа-яё]*[ ._:]*\d{1,2}[ ._]*[-–][ ._]*\d|\d[ ._]*[-–][ ._]*\d{1,2}[ ._]*(?:-?[a-zа-яё]{1,2}[ ._]*)?(?:season|сезон)|(?:^|[^a-zа-яё0-9])s\d{1,2}[ ._]*[-–][ ._]*s?\d/i;
+const NAME_SEASON=/(?:^|[^a-zа-яё0-9])s(\d{1,2})(?=e\d|[^a-zа-яё0-9]|$)|(?:season|сезон)[ ._:]*(\d{1,2})(?!\d)|(?:^|\D)(\d{1,2})[ ._]*(?:-?(?:й|ый|ий|st|nd|rd|th))?[ ._]*(?:season|сезон)(?![a-zа-яё0-9])/gi;
+function nameSeason(name){
+  name=String(name||"");
+  if(NAME_SEASON_RANGE.test(name)) return null;
+  const nums=new Set([...name.matchAll(NAME_SEASON)].map(m=>Number(m[1]||m[2]||m[3])));
+  const n=nums.size===1?[...nums][0]:0;
+  return n>0?n:null;
+}
+function parseEpisode(path,defaultSeason=1){
   const p=String(path||"").replace(/\\/g,"/"), name=p.split("/").pop();
   const seasonMatch=p.match(/(?:season|сезон)[ ._-]?(\d{1,2})/i)||p.match(/(?:^|\/)S(\d{1,2})(?:\/|$)/i);
   const folderSeason=seasonMatch?+seasonMatch[1]:null;
@@ -1538,7 +1549,7 @@ function parseEpisode(path){
   m=name.match(/(?:^|[^\d])(\d{1,2})x(\d{2,3})(?!\d)/i);
   if(m) return {season:+m[1],episode:+m[2]};
   m=name.match(/(?:^|[^a-z0-9а-я])(?:e|ep|episode|серия)[ ._-]?(\d{1,3})(?!\d)/i);
-  if(m) return {season:folderSeason||1,episode:+m[1]};
+  if(m) return {season:folderSeason||defaultSeason,episode:+m[1]};
   if(folderSeason!==null){
     m=name.match(/^\s*(\d{1,3})(?=[ ._-])/);
     if(m) return {season:folderSeason,episode:+m[1]};
@@ -1654,8 +1665,10 @@ function buildPlaylistByFiles(magnet){
     }));
     return {type:"series",seasons};
   }
+  // Файлы без своей пометки сезона берут сезон из имени раздачи
+  const named=nameSeason(magnet.name)||1;
   const eps=[];
-  for(const f of vids){const e=parseEpisode(f.path);if(e)eps.push({season:e.season,episode:e.episode,file:f});}
+  for(const f of vids){const e=parseEpisode(f.path,named);if(e)eps.push({season:e.season,episode:e.episode,file:f});}
   if(eps.length>=2){
     const seasons=new Map();
     for(const e of eps){if(!seasons.has(e.season))seasons.set(e.season,[]);seasons.get(e.season).push(e);}
@@ -1663,7 +1676,7 @@ function buildPlaylistByFiles(magnet){
     return {type:"series",seasons:list};
   }
   // Серии, названные только номером («Show - 01 [1080p].mkv»), — сериал, а не сборник фильмов.
-  const numbered = numberedEpisodesOf(magnet, vids);
+  const numbered = numberedEpisodesOf(magnet, vids, named);
   if (numbered) return numbered;
   const EXTRAS = /(?:^|\/)(?:extras?|bonus|featurettes?|behind[ ._-]?the[ ._-]?scenes|trailers?|доп[^/]*|бонус[^/]*|допы)(?:\/|$)/i;
   const BLURAY_DIR = /(?:^|\/)(?:BDMV|STREAM|VIDEO_TS)(?:\/|$)/i;
@@ -1685,7 +1698,7 @@ function buildPlaylistByFiles(magnet){
 // ---- одна плитка на несколько версий (groupVersions / numberedEpisodesOf / titleKey в shared/.../core/Model.kt) ----
 const NUM_NOISE=/(?:2160|1080|720|480|576)[pi]|[xh][ .]?26[45]|\d+(?:[.,]\d+)?\s?(?:fps|kbps|mbps|bit|gb|mb)|(?<!\d)(?:19|20)\d{2}(?!\d)|(?<!\d)[1-9]\.[01](?!\d)/gi;
 const NUM_IN_NAME=/(?<!\d)\d{1,3}(?!\d)/g;
-function numberedEpisodesOf(magnet, vids){
+function numberedEpisodesOf(magnet, vids, season=1){
   const EXTRAS=/(?:^|\/)(?:extras?|bonus|featurettes?|behind[ ._-]?the[ ._-]?scenes|trailers?|доп[^/]*|бонус[^/]*|допы)(?:\/|$)/i;
   const BLURAY_DIR=/(?:^|\/)(?:BDMV|STREAM|VIDEO_TS)(?:\/|$)/i;
   if(vids.length<2||vids.some(f=>BLURAY_DIR.test(f.path||""))) return null;
@@ -1709,8 +1722,8 @@ function numberedEpisodesOf(magnet, vids){
     const sizes=main.map(f=>Number(f.size)||0);
     const similar=Math.max(...sizes)<=Math.min(...sizes)*2;
     if(!SERIES_HINT.test(magnet.name||"")&&!(main.length>=5&&consecutive&&similar)) continue;
-    const items=main.map((file,i)=>({season:1,episode:nums[i],file})).sort((a,b)=>a.episode-b.episode);
-    return {type:"series",seasons:[{season:1,items}]};
+    const items=main.map((file,i)=>({season,episode:nums[i],file})).sort((a,b)=>a.episode-b.episode);
+    return {type:"series",seasons:[{season,items}]};
   }
   return null;
 }

@@ -356,3 +356,21 @@ test('сборник: слова имени без \\b и lookbehind, «Сага
   assert.equal(M.itemPart(items[0]), null);
   assert.equal(M.itemPart(items[1]), 2);
 });
+
+test('nameSeason и buildPlayable: сезон из имени раздачи, если в файлах его нет', () => {
+  assert.equal(M.nameSeason('Show.S02.1080p'), 2);
+  assert.equal(M.nameSeason('Сериал / Сезон: 2 / Серии: 1-10 из 10'), 2);
+  assert.equal(M.nameSeason('Сериал (2-й сезон) [2024]'), 2);
+  assert.equal(M.nameSeason('Show S01-S03'), null);
+  assert.equal(M.nameSeason('Сериал [1-3 сезон]'), null);
+  assert.equal(M.nameSeason('Сериал (2 сезона)'), null);
+  assert.equal(M.nameSeason('Cyberpunk 2077'), null);
+  const ep = M.buildPlayable(mag([1, 2, 3].map(i => file(i, `Show.S02.1080p/Show.E0${i}.mkv`)), { name: 'Show.S02.1080p' }));
+  assert.deepEqual(ep.seasons.map(s => s.season), [2]);
+  const num = M.buildPlayable(mag([1, 2, 3].map(i => file(i, `Сериал/Сериал - 0${i} [1080p].mkv`)), { name: 'Сериал (2 сезон) WEB-DL' }));
+  assert.deepEqual(num.seasons.map(s => s.season), [2]);
+  assert.equal(num.seasons[0].items[0].season, 2);
+  // Сезон в файлах важнее имени
+  const own = M.buildPlayable(mag([1, 2].map(i => file(i, `Show/Show.S01E0${i}.mkv`)), { name: 'Show S02' }));
+  assert.deepEqual(own.seasons.map(s => s.season), [1]);
+});

@@ -45,6 +45,28 @@ class SeriesGroupingTest {
     }
 
     @Test
+    fun seasonFromTheReleaseNameWhenFilesDoNotSayIt() {
+        assertEquals(2, nameSeason("Show.S02.1080p"))
+        assertEquals(2, nameSeason("Сериал / Сезон: 2 / Серии: 1-10 из 10"))
+        assertEquals(2, nameSeason("Сериал (2-й сезон) [2024]"))
+        assertEquals(null, nameSeason("Show S01-S03"))
+        assertEquals(null, nameSeason("Сериал [1-3 сезон]"))
+        assertEquals(null, nameSeason("Сериал (2 сезона)"))
+        assertEquals(null, nameSeason("Cyberpunk 2077"))
+        val ep = buildPlayable(magnet("Show.S02.1080p", *(1..3).map { "Show.S02.1080p/Show.E0$it.mkv" to 800 * MB }.toTypedArray()))
+        assertIs<Playable.Series>(ep)
+        assertEquals(listOf(2), ep.seasons.map { it.season })
+        val num = buildPlayable(magnet("Сериал (2 сезон) WEB-DL", *(1..3).map { "Сериал/Сериал - 0$it [1080p].mkv" to 800 * MB }.toTypedArray()))
+        assertIs<Playable.Series>(num)
+        assertEquals(listOf(2), num.seasons.map { it.season })
+        assertEquals(2, num.seasons.single().items.first().season)
+        // The files' own season wins over the name
+        val own = buildPlayable(magnet("Show S02", *(1..2).map { "Show/Show.S01E0$it.mkv" to 800 * MB }.toTypedArray()))
+        assertIs<Playable.Series>(own)
+        assertEquals(listOf(1), own.seasons.map { it.season })
+    }
+
+    @Test
     fun trilogyStaysACollection() {
         val p = buildPlayable(magnet(
             "Trilogy",

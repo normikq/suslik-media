@@ -66,6 +66,9 @@
   var NXNN = /(?:^|[^\d])(\d{1,2})x(\d{2,3})(?!\d)/i;
   var EP_WORD = /(?:^|[^a-z0-9а-я])(?:e|ep|episode|серия)[ ._-]?(\d{1,3})(?!\d)/i;
   var LEAD_NUM = /^\s*(\d{1,3})(?=[ ._-])/;
+  // Один сезон в имени раздачи («Show.S02.1080p», «Сезон: 2», «2-й сезон»); диапазон («S01-S03», «1-3 сезон») — ничего
+  var NAME_SEASON_RANGE = /(?:season|сезон)[a-zа-яё]*[ ._:]*\d{1,2}[ ._]*[-–][ ._]*\d|\d[ ._]*[-–][ ._]*\d{1,2}[ ._]*(?:-?[a-zа-яё]{1,2}[ ._]*)?(?:season|сезон)|(?:^|[^a-zа-яё0-9])s\d{1,2}[ ._]*[-–][ ._]*s?\d/i;
+  var NAME_SEASON = /(?:^|[^a-zа-яё0-9])s(\d{1,2})(?=e\d|[^a-zа-яё0-9]|$)|(?:season|сезон)[ ._:]*(\d{1,2})(?!\d)|(?:^|\D)(\d{1,2})[ ._]*(?:-?(?:й|ый|ий|st|nd|rd|th))?[ ._]*(?:season|сезон)(?![a-zа-яё0-9])/gi;
   var DOTS = /[._]+/g;
   var BRACKETS = /[\[\](){}]/g;
   var SPACES = /\s+/g;
@@ -100,13 +103,25 @@
     return m ? parseInt(m[1], 10) : null;
   }
 
-  function parseEpisode(path) {
+  /** Сезон из имени раздачи, если он там один (nameSeason в Model.kt): серии без сезона в файлах берут его, а не 1. */
+  function nameSeason(name) {
+    name = str(name);
+    if (NAME_SEASON_RANGE.test(name)) return null;
+    var nums = {}, m;
+    NAME_SEASON.lastIndex = 0;
+    while ((m = NAME_SEASON.exec(name))) nums[parseInt(m[1] || m[2] || m[3], 10)] = 1;
+    var keys = Object.keys(nums);
+    var n = keys.length === 1 ? parseInt(keys[0], 10) : 0;
+    return n > 0 ? n : null;
+  }
+
+  function parseEpisode(path, defaultSeason) {
     var p = norm(path), name = basename(p), m;
     var fs = ANY_SEASON.exec(p) || DIR_S.exec(p);
     var folderSeason = fs ? parseInt(fs[1], 10) : null;
     if ((m = SXXEYY.exec(name) || SXXEYY.exec(p))) return [parseInt(m[1], 10), parseInt(m[2], 10)];
     if ((m = NXNN.exec(name))) return [parseInt(m[1], 10), parseInt(m[2], 10)];
-    if ((m = EP_WORD.exec(name))) return [folderSeason != null ? folderSeason : 1, parseInt(m[1], 10)];
+    if ((m = EP_WORD.exec(name))) return [folderSeason != null ? folderSeason : (defaultSeason || 1), parseInt(m[1], 10)];
     if (folderSeason != null && (m = LEAD_NUM.exec(name))) return [folderSeason, parseInt(m[1], 10)];
     return null;
   }
@@ -231,9 +246,11 @@
         }) };
       }) };
     }
+    // Файлы без своей пометки сезона берут сезон из имени раздачи
+    var named = nameSeason(m.name) || 1;
     var eps = [];
     vids.forEach(function (f) {
-      var se = parseEpisode(f.path);
+      var se = parseEpisode(f.path, named);
       if (se) eps.push({ season: se[0], episode: se[1], file: f, title: null });
     });
     if (eps.length >= 2) {
@@ -249,7 +266,7 @@
         }) };
       }) };
     }
-    var numbered = numberedEpisodesOf(m, vids);
+    var numbered = numberedEpisodesOf(m, vids, named);
     if (numbered) return numbered;
     var col = collectionOf(vids);
     if (col) return col;
@@ -297,7 +314,7 @@
    * серии) или это похоже на сезон: пять и больше файлов похожего размера, пронумерованных подряд. Без этого трилогия
    * («Film 1», «Film 2») остаётся сборником.
    */
-  function numberedEpisodesOf(m, vids) {
+  function numberedEpisodesOf(m, vids, season) {
     if (vids.length < 2 || vids.some(function (f) { return BLURAY_DIR.test(f.path); })) return null;
     var main = vids.filter(function (f) { return !EXTRAS.test(f.path); });
     if (main.length < 2) return null;
@@ -319,9 +336,9 @@
       var sizes = main.map(function (f) { return f.size; });
       var similar = Math.max.apply(null, sizes) <= Math.min.apply(null, sizes) * 2;
       if (!SERIES_HINT.test(m.name) && !(main.length >= 5 && consecutive && similar)) continue;
-      var eps = main.map(function (f, i) { return { season: 1, episode: nums[i], file: f, title: null }; })
+      var eps = main.map(function (f, i) { return { season: season, episode: nums[i], file: f, title: null }; })
         .sort(function (a, b) { return a.episode - b.episode; });
-      return { kind: 'series', seasons: [{ season: 1, items: eps }] };
+      return { kind: 'series', seasons: [{ season: season, items: eps }] };
     }
     return null;
   }
@@ -682,7 +699,7 @@
     parseLibrary: parseLibrary, magnet: magnet, mainVideo: mainVideo, buildPlayable: buildPlayable,
     cleanTitle: cleanTitle, titleKey: titleKey, groupVersions: groupVersions, seriesLine: seriesLine, versionLine: versionLine,
     sortVersions: sortVersions, itemYear: itemYear, itemPart: itemPart, isCollection: isCollection, collectionLabel: collectionLabel,
-    qualityScore: qualityScore, itemSeasons: itemSeasons,
+    qualityScore: qualityScore, itemSeasons: itemSeasons, nameSeason: nameSeason,
     formatBytes: formatBytes, statusRu: statusRu, episodeLabel: episodeLabel,
     prepareItems: prepareItems, subtitlesFor: subtitlesFor, externalAudioFor: externalAudioFor,
     isVoiceOverOnly: isVoiceOverOnly, dubLabel: dubLabel, customName: customName, externalChoices: externalChoices, externalIn: externalIn,
