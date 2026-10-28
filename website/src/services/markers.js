@@ -154,21 +154,31 @@ function trim() {
   for (const [k] of old) store.delete(k);
 }
 
-function toResponse(e) {
+function toResponse(e, isMovie = false) {
   const range = r => (r ? { startMs: r[0], endMs: r[1] } : null);
-  return { intro: range(e && e.i), credits: range(e && e.c), source: e && (e.i || e.c) ? e.src || "aniskip" : null };
+  const credits = isMovie ? null : range(e && e.c);
+  return { intro: range(e && e.i), credits, source: e && (e.i || (!isMovie && e.c)) ? e.src || "aniskip" : null };
 }
 
 /** Проверка параметров запроса; null — некорректный. */
 function parseQuery(q) {
-  const titles = [q.title, q.alt].map(t => String(t || "").trim().slice(0, 200)).filter(t => norm(t).length >= 2);
+  const raw = [q.title, q.alt].map(t => String(t || "").trim().slice(0, 200)).filter(t => norm(t).length >= 2);
+  const titles = [];
+  for (const t of raw) {
+    if (!titles.includes(t)) titles.push(t);
+    // Разбиваем составные названия («Русское название / Original Title»)
+    for (const part of t.split(/\s*[\/|]\s*|\s+[-–—]\s+/)) {
+      const p = part.trim();
+      if (norm(p).length >= 2 && !titles.includes(p)) titles.push(p);
+    }
+  }
   const season = q.season === undefined || q.season === "" ? 1 : Number(q.season);
   const episode = q.episode === undefined || q.episode === "" ? 0 : Number(q.episode); // 0 — фильм
   const duration = q.duration === undefined || q.duration === "" ? 0 : Number(q.duration);
   if (!titles.length || !Number.isInteger(season) || season < 0 || season > 100) return null;
   if (!Number.isInteger(episode) || episode < 0 || episode > 5000) return null;
   if (!Number.isFinite(duration) || duration < 0 || duration > 6 * 3600) return null;
-  return { titles: [...new Set(titles)], season: season || 1, episode, duration };
+  return { titles, season: season || 1, episode, duration };
 }
 
 /**
@@ -195,24 +205,29 @@ async function lookupBoth(title, season, episode, duration, lookup) {
       }
     }
   } catch { failed = true; }
-  if (episode && isAnime && (!found.i || !found.c)) {
+  // Для аниме (сериалы и фильмы): если в TheIntroDB нет заставки, опрашиваем AniSkip
+  if (isAnime && (!found.i || (episode && !found.c))) {
     try {
       const mal = await lookup.mal(title, season);
-      const r = mal ? await lookup.skip(mal, episode, duration) : { i: null, c: null };
-      if ((!found.i && r.i) || (!found.c && r.c)) src.push("aniskip");
+      const ep = episode || 1; // для аниме-фильмов на AniSkip серия = 1
+      const r = mal ? await lookup.skip(mal, ep, duration) : { i: null, c: null };
+      if ((!found.i && r.i) || (episode && !found.c && r.c)) src.push("aniskip");
       found.i = found.i || r.i;
-      found.c = found.c || r.c;
+      if (episode) found.c = found.c || r.c;
     } catch { failed = true; }
   }
+  // Для одиночных фильмов титры никогда не берутся — только заставка
+  if (!episode) found.c = null;
   return { ...found, src: src.join("+"), failed };
 }
 
 async function markersFor({ titles, season, episode, duration }, now = Date.now(), lookup = LOOKUP) {
   lookup = { ...LOOKUP, ...lookup };
+  const isMovie = !episode;
   for (const title of titles) {
     const key = cacheKey(title, season, episode);
     const hit = store.get(key);
-    if (hit && !hit.miss) return toResponse(hit);
+    if (hit && !hit.miss) return toResponse(hit, isMovie);
     if (hit && hit.miss && now - hit.at < (hit.err ? ERROR_TTL_MS : MISS_TTL_MS)) continue;
     let job = inflight.get(key);
     if (!job) {
@@ -232,9 +247,9 @@ async function markersFor({ titles, season, episode, duration }, now = Date.now(
       inflight.set(key, job);
     }
     const entry = await job;
-    if (!entry.miss) return toResponse(entry);
+    if (!entry.miss) return toResponse(entry, isMovie);
   }
-  return toResponse(null);
+  return toResponse(null, isMovie);
 }
 
 function _reset() { store.clear(); inflight.clear(); }

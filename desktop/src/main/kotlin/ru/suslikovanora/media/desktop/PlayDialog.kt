@@ -207,7 +207,9 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
             val (s, e) = seasons.firstNotNullOfOrNull { s -> s.items.find { it.file.path == f.path }?.let { s to it } } ?: return null
             return MarkerQuery(original, item?.let(lib::titleOf), s.season, e.episode)
         }
-        return MarkerQuery(original, item?.let(lib::titleOf), null, null)
+        val libTitle = item?.let(lib::titleOf)?.takeIf { it.isNotBlank() }
+        val nameWithYear = MarkersDetector.filmTitle(f.name.ifBlank { magnet.name }, libTitle ?: original)
+        return MarkerQuery(nameWithYear ?: original, libTitle ?: original, null, null)
     }
 
     // The player's queue: the whole season (or collection) with links, so «previous» works from the episode it started

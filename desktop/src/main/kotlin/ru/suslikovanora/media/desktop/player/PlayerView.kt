@@ -553,7 +553,8 @@ fun PlayerView(
 
     // A state, not a plain value: the key handler (installed once) must see this file's marks
     val markers by remember { androidx.compose.runtime.derivedStateOf {
-        MarkersDetector.merge(MarkersDetector.fromChapters(chapters.map { Chapter(it.first, it.second) }, length), serverMarkers, length)
+        val m = MarkersDetector.merge(MarkersDetector.fromChapters(chapters.map { Chapter(it.first, it.second) }, length), serverMarkers, length)
+        if (queue.size <= 1 && !req.collection) m.copy(credits = null) else m
     } }
     fun introNow(): TimeRange? = MarkersDetector.introAt(markers, time)
     fun inIntro(): Boolean = introNow() != null
@@ -1229,14 +1230,16 @@ fun PlayerView(
         if (!started || length <= 0L || serverMarkers != null) return@LaunchedEffect
         val q = req.markerQueries.getOrNull(index) ?: req.markerQueries.getOrNull(req.startIndex) ?: return@LaunchedEffect
         delay(300) // chapters from mpv come quickly; short delay avoids initial lag
+        val isSingleMovie = queue.size <= 1 && !req.collection
         val file = MarkersDetector.fromChapters(chapters.map { Chapter(it.first, it.second) }, length)
-        if (file.intro != null && file.credits != null) return@LaunchedEffect
+        if (file.intro != null && (isSingleMovie || file.credits != null)) return@LaunchedEffect
         val path = MarkersDetector.serverPath(q.title, q.alt, q.season, q.episode, length) ?: return@LaunchedEffect
         // Local client cache: instant 0 ms markers without hitting the network on every open
         val cached = runCatching { Store.of("markers").get(path)?.let { MarkersDetector.parseServer(org.json.JSONObject(it)) } }.getOrNull()
         if (cached != null && !cached.isEmpty) {
-            PlayerLog.write("[markers] cache: intro ${cached.intro?.let { "${it.startMs / 1000}-${it.endMs / 1000}s" } ?: "-"}, credits ${cached.credits?.let { "${it.startMs / 1000}s" } ?: "-"}")
-            serverMarkers = cached
+            val finalCached = if (isSingleMovie) cached.copy(credits = null) else cached
+            PlayerLog.write("[markers] cache: intro ${finalCached.intro?.let { "${it.startMs / 1000}-${it.endMs / 1000}s" } ?: "-"}, credits ${finalCached.credits?.let { "${it.startMs / 1000}s" } ?: "-"}")
+            serverMarkers = finalCached
             return@LaunchedEffect
         }
         val reqIndex = index
@@ -1248,8 +1251,9 @@ fun PlayerView(
         }.getOrNull() }
         // Race condition guard: ignore old response if the user already switched to another episode
         if (!closing && index == reqIndex && currentUrl == reqUrl && found != null && !found.isEmpty) {
-            PlayerLog.write("[markers] server: intro ${found.intro?.let { "${it.startMs / 1000}-${it.endMs / 1000}s" } ?: "-"}, credits ${found.credits?.let { "${it.startMs / 1000}s" } ?: "-"}")
-            serverMarkers = found
+            val finalFound = if (isSingleMovie) found.copy(credits = null) else found
+            PlayerLog.write("[markers] server: intro ${finalFound.intro?.let { "${it.startMs / 1000}-${it.endMs / 1000}s" } ?: "-"}, credits ${finalFound.credits?.let { "${it.startMs / 1000}s" } ?: "-"}")
+            serverMarkers = finalFound
         }
     }
 

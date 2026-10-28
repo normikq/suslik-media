@@ -107,7 +107,8 @@ private fun markersJson(item: LibraryItem, series: Playable.Series?, files: List
     val original = item.m.aiTitle?.takeIf { it.accepted }?.original?.takeIf { it.isNotBlank() } ?: cleanTitle(item.m.name)
     val out = org.json.JSONArray()
     if (series == null) {
-        out.put(org.json.JSONObject().put("title", original).put("alt", item.baseTitle))
+        val nameWithYear = MarkersDetector.filmTitle(files.firstOrNull()?.name?.ifBlank { item.m.name } ?: item.m.name, item.baseTitle.ifBlank { original })
+        out.put(org.json.JSONObject().put("title", nameWithYear ?: original).put("alt", item.baseTitle))
         return out.toString()
     }
     for (f in files) {

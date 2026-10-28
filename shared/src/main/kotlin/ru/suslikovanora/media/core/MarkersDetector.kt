@@ -13,7 +13,7 @@ data class Chapter(val timeMs: Long, val title: String)
  */
 object MarkersDetector {
     // (?iu): Cyrillic too («Заставка», «ТИТРЫ»); \b stays Latin — it is only around «op» / «ed»
-    val INTRO_REGEX = Regex("""(?iu)(intro|opening|заставк|опенинг|вступлен|начальн|^op\b|\bop\s?\d*$)""", RegexOption.IGNORE_CASE)
+    val INTRO_REGEX = Regex("""(?iu)(intro|opening|заставк|опенинг|вступлен|начальн|main\s*titles?|^op\b|\bop\s?\d*$)""", RegexOption.IGNORE_CASE)
     val CREDITS_REGEX = Regex("""(?iu)(credits|outro|ending|эндинг|титр|конечн|^ed\b|\bed\s?\d*$)""", RegexOption.IGNORE_CASE)
 
     /** An intro chapter without a next one (or a very long one: a wrong name) is taken as this long. */
@@ -78,7 +78,15 @@ object MarkersDetector {
      * ask with (no title).
      */
     fun serverPath(title: String?, alt: String?, season: Int?, episode: Int?, durationMs: Long): String? {
-        val titles = listOfNotNull(title, alt).map { it.trim() }.filter { it.length >= 2 }.distinct()
+        val raw = listOfNotNull(title, alt).map { it.trim() }.filter { it.length >= 2 }
+        val titles = mutableListOf<String>()
+        for (t in raw) {
+            if (!titles.contains(t)) titles.add(t)
+            for (p in t.split(Regex("""\s*[/|]\s*|\s+[-–—]\s+"""))) {
+                val pt = p.trim()
+                if (pt.length >= 2 && !titles.contains(pt)) titles.add(pt)
+            }
+        }
         if (titles.isEmpty()) return null
         val enc = { v: String -> URLEncoder.encode(v, "UTF-8") }
         return buildString {

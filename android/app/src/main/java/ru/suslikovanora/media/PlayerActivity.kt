@@ -433,9 +433,17 @@ class PlayerActivity : ComponentActivity() {
         ui.creditsRange = null
     }
 
+    private fun isSingleMovie(): Boolean {
+        if (panel.collection || playlistQueue.size > 1) return false
+        val q = markerQueries?.optJSONObject(markerQueryIndex())
+        if (q != null && (q.optInt("episode", 0) > 0 || q.has("season"))) return false
+        return true
+    }
+
     private fun recomputeMarkers(length: Long) {
         markersLength = length
-        markers = MarkersDetector.merge(MarkersDetector.fromChapters(fileChapters, length), serverMarkers, length)
+        val merged = MarkersDetector.merge(MarkersDetector.fromChapters(fileChapters, length), serverMarkers, length)
+        markers = if (isSingleMovie()) merged.copy(credits = null) else merged
         ui.introRange = markers.intro
         ui.creditsRange = markers.credits
     }
@@ -464,10 +472,11 @@ class PlayerActivity : ComponentActivity() {
     private fun askServerMarkers() {
         val len = lengthOf(player)
         if (len <= 0L || markersAskedFor == currentUrl) return
+        val single = isSingleMovie()
         val file = MarkersDetector.fromChapters(fileChapters, len)
-        if (file.intro != null && file.credits != null) return
+        if (file.intro != null && (single || file.credits != null)) return
         val q = markerQueries?.optJSONObject(markerQueryIndex()) ?: return
-        // no episode — a film of a collection
+        // no episode — a film of a collection or a single movie
         val title = q.optString("title").ifBlank { null }
         val alt = q.optString("alt").ifBlank { null }
         val season = q.optInt("season", 1)
@@ -484,7 +493,7 @@ class PlayerActivity : ComponentActivity() {
             val cached = cachedJson?.let { MarkersDetector.parseServer(it) }
             if (cached != null && !cached.isEmpty) {
                 if (url == currentUrl) {
-                    serverMarkers = cached
+                    serverMarkers = if (single) cached.copy(credits = null) else cached
                     recomputeMarkers(lengthOf(player))
                 }
                 return
@@ -499,8 +508,9 @@ class PlayerActivity : ComponentActivity() {
             val found = runCatching { MarkersDetector.parseServer(raw) }.getOrNull()
             if (found == null || found.isEmpty) return@launch
             runCatching { prefs.edit().putString(cacheKey, raw.toString()).apply() }
-            AppLog.write("[markers] server: intro ${found.intro?.let { "${it.startMs / 1000}-${it.endMs / 1000}s" } ?: "-"}, credits ${found.credits?.let { "${it.startMs / 1000}s" } ?: "-"}")
-            serverMarkers = found
+            val finalFound = if (single) found.copy(credits = null) else found
+            AppLog.write("[markers] server: intro ${finalFound.intro?.let { "${it.startMs / 1000}-${it.endMs / 1000}s" } ?: "-"}, credits ${finalFound.credits?.let { "${it.startMs / 1000}s" } ?: "-"}")
+            serverMarkers = finalFound
             recomputeMarkers(lengthOf(player))
         }
     }
