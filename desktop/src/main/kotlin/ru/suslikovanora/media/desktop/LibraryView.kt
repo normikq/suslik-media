@@ -420,9 +420,10 @@ fun LibraryView(
 
     val all = lib.items
     val source = if (mineOnly) all.filter { it.m.mine } else all
-    val filtered = remember(source, query, category, sortBy, onlyReady, Animation.version) {
+    val filtered = remember(source, query, category, sortBy, onlyReady, Animation.version, lib.titleVersion) {
         val q = query.trim().lowercase()
-        var list = if (q.isEmpty()) source else source.filter { it.searchText.contains(q) }
+        // the Russian title from TMDB is searched too: «дюна» finds «Dune.2021.2160p»
+        var list = if (q.isEmpty()) source else source.filter { it.searchText.contains(q) || lib.titleOf(it).lowercase().contains(q) }
 
         if (onlyReady) {
             list = list.filter { it.m.ready }
@@ -433,7 +434,7 @@ fun LibraryView(
         }
 
         when (sortBy) {
-            SortBy.Name -> list.sortedWith(compareByDescending<LibraryItem> { it.m.favorite }.thenBy { it.baseTitle.lowercase() })
+            SortBy.Name -> list.sortedWith(compareByDescending<LibraryItem> { it.m.favorite }.thenBy { lib.titleOf(it).lowercase() })
             SortBy.Newest -> list.sortedWith(compareByDescending<LibraryItem> { it.m.favorite }.thenByDescending { it.m.id })
             SortBy.Size -> list.sortedWith(compareByDescending<LibraryItem> { it.m.favorite }.thenByDescending { it.m.size })
             SortBy.Favorite -> list.sortedByDescending { it.m.favorite }
@@ -950,7 +951,7 @@ private fun Tile(item: LibraryItem, lib: Library, versions: List<LibraryItem>, i
         ) {
             Column {
                 Text(
-                    item.baseTitle,
+                    lib.titleOf(item),
                     color = Color.White,
                     fontFamily = Onest,
                     fontWeight = FontWeight.SemiBold,
@@ -1112,7 +1113,7 @@ private fun ListRow(item: LibraryItem, lib: Library, onOpen: (PlayTarget) -> Uni
 
         // Title and Info
         Column(Modifier.weight(1f)) {
-            Text(item.baseTitle, color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 16.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(lib.titleOf(item), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 16.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text("${itemYear(item)} • ${itemTypeLabel(item)}", color = Color(0xFF8E96A8), fontFamily = Onest, fontSize = 14.sp, modifier = Modifier.padding(top = 2.dp))
             val specs = itemSpecs(item, media)
             Text(specs.first, color = Color(0xFFC0C7D5), fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 3.dp))
@@ -1293,7 +1294,7 @@ private fun continueEntries(items: List<LibraryItem>, lib: Library): List<Contin
 suspend fun warmContinue(items: List<LibraryItem>, lib: Library) {
     for (e in continueEntries(items, lib)) {
         val q = e.posterQueries
-        runCatching { lib.hero(q); lib.poster(q) }
+        runCatching { lib.hero(q, watchedSeason(e.item, e.target.file.path)?.season ?: 0); lib.poster(q) }
     }
 }
 
@@ -1301,6 +1302,11 @@ private fun plural(n: Int, one: String, few: String, many: String): String {
     val t = n % 100; val u = n % 10
     return "$n " + if (t in 11..14) many else when (u) { 1 -> one; 2, 3, 4 -> few; else -> many }
 }
+
+/** «Сезон 2 • 10 серий»: the season the banner continues (in a merged show it is not always the first). */
+private fun seasonChip(s: Season): String =
+    (if (s.season == 0) tr("library.specvypuski") else tr("library.sezon_season", "season" to s.season)) + " • " +
+        plural(s.items.size, tr("common.plural_seriya_1"), tr("common.plural_seriya_2"), tr("common.plural_seriya_5"))
 
 /** «Сезон 1, серия 4» for an episode of a series; null for a film. */
 private fun episodeSub(e: ContinueEntry): String? {
@@ -1350,8 +1356,9 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
         val e = entries.firstOrNull { it.item.m.id == chosen } ?: entries.firstOrNull() ?: lastShown ?: return@AnimatedVisibility
         androidx.compose.runtime.SideEffect { lastShown = e }
         val queries = e.posterQueries
-        var hero by remember(e.item.m.id, e.target.file.path) { mutableStateOf(lib.cachedHero(queries)) }
-        LaunchedEffect(e.item.m.id, e.target.file.path) { if (hero == null) hero = lib.hero(queries) }
+        val heroSeason = watchedSeason(e.item, e.target.file.path)?.season ?: 0
+        var hero by remember(e.item.m.id, e.target.file.path) { mutableStateOf(lib.cachedHero(queries, heroSeason)) }
+        LaunchedEffect(e.item.m.id, e.target.file.path) { if (hero == null) hero = lib.hero(queries, heroSeason) }
 
         // While the window is being dragged the heavy blurred glow is off (it would be recomputed on every step); it fades back 200 ms after the last step
         var resizing by remember { mutableStateOf(false) }
@@ -1411,7 +1418,7 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
                     val bannerTitle = if (isCollection(e.item.playable, e.item.m)) {
                         hero?.title ?: continueItemTitle(e.item, e.target.file)
                     } else {
-                        e.item.baseTitle
+                        lib.titleOf(e.item)
                     }
                     val logo = hero?.logo
                     if (logo != null) {
@@ -1431,7 +1438,9 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
                         val bannerFilms = collectionFilms(e.item)
                         if (bannerFilms.isNotEmpty()) chip(filmCountRu(bannerFilms.size))
                         else {
-                            (e.item.playable as? Playable.Series)?.let { p ->
+                            val s = watchedSeason(e.item, e.target.file.path)
+                            if (s != null) chip(seasonChip(s))
+                            else (e.item.playable as? Playable.Series)?.let { p ->
                                 val eps = p.seasons.sumOf { it.items.size }
                                 chip(plural(p.seasons.size, tr("common.plural_sezon_1"), tr("common.plural_sezon_2"), tr("common.plural_sezon_5")) + " • " + plural(eps, tr("common.plural_seriya_1"), tr("common.plural_seriya_2"), tr("common.plural_seriya_5")))
                             }

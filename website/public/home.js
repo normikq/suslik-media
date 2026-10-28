@@ -184,7 +184,8 @@
           ? tr("hero.special_episode", { episode: found.e.episode }, "Спецвыпуск " + found.e.episode)
           : tr("hero.season_episode", { season: found.s.season, episode: found.e.episode }, "Сезон " + found.s.season + ", серия " + found.e.episode);
         sub = isNext ? (tr("library.dalshe", null, "Дальше: ") + epText) : epText;
-        epCount = { seasons: pl.seasons.length, eps: pl.seasons.reduce(function (a, s) { return a + s.items.length; }, 0) };
+        // сведения сезона, который смотрят (в общей плитке это может быть не первый): «Сезон 2 • 10 серий», год и описание сезона
+        epCount = { season: found.s.season, eps: found.s.items.length };
         queries = typeof getPosterQueries === "function" ? getPosterQueries(magnet) : [baseTitle, escapeTitle(magnet.name)];
       } else if (!pl.file) return;
       else {
@@ -199,7 +200,7 @@
 
       candidates.push({
         magnet: magnet, path: targetPath, pos: entryPos, len: entryLen, at: w.at, fraction: entryFrac,
-        sub: sub, epCount: epCount, isCollection: isColl, filmTitle: filmTitle,
+        sub: sub, epCount: epCount, season: epCount ? epCount.season : 0, isCollection: isColl, filmTitle: filmTitle,
         filmCount: isColl ? ((pl.seasons && pl.seasons[0] && pl.seasons[0].items && pl.seasons[0].items.length) || 0) : 0,
         queries: queries, baseTitle: baseTitle, groupKey: groupKey
       });
@@ -217,17 +218,18 @@
     return out.slice(0, LIMIT);
   }
 
-  function getInfo(queries) {
+  function getInfo(queries, season) {
     if (!Array.isArray(queries)) queries = [queries];
+    var sfx = season > 0 ? "|s" + season : "";
     for (var i = 0; i < queries.length; i++) {
-      var q = queries[i], key = q.toLowerCase();
+      var q = queries[i], key = q.toLowerCase() + sfx;
       if (hero.info.has(key)) return hero.info.get(key);
     }
-    var q0 = queries[0] || "", key0 = q0.toLowerCase();
+    var q0 = queries[0] || "", key0 = q0.toLowerCase() + sfx;
     var p = (async function () {
       for (var j = 0; j < queries.length; j++) {
         try {
-          var res = await api("/api/poster?hero=1&q=" + encodeURIComponent(queries[j]));
+          var res = await api("/api/poster?hero=1&q=" + encodeURIComponent(queries[j]) + (season > 0 ? "&season=" + season : ""));
           if (res && (res.backdrop || res.overview || res.poster)) return res;
         } catch (e) {}
       }
@@ -295,7 +297,7 @@
     if (e.isCollection) {
       if (e.filmCount > 0) chips.append(el("span", "hb-chip", plural(e.filmCount, "фильм", "фильма", "фильмов")));
     } else if (e.epCount) {
-      chips.append(el("span", "hb-chip", plural(e.epCount.seasons, "сезон", "сезона", "сезонов") + " • " + plural(e.epCount.eps, "серия", "серии", "серий")));
+      chips.append(el("span", "hb-chip", (e.epCount.season === 0 ? "Спецвыпуски" : "Сезон " + e.epCount.season) + " • " + plural(e.epCount.eps, "серия", "серии", "серий")));
     }
     chips.append(rating);
 
@@ -327,7 +329,7 @@
 
     // широкий кадр, логотип, описание, год и рейтинг приходят с сервера (TMDB); пока их нет — баннер просто тёмный
     var token = e;
-    getInfo(e.queries).then(function (info) {
+    getInfo(e.queries, e.season).then(function (info) {
       if (!info || (hero.entries[hero.idx] || hero.entries[0]) !== token) return;
       if (!box.contains(bg)) return;
       if (info.backdrop && /^\/api\/poster\/img\//.test(info.backdrop)) {

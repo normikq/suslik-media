@@ -60,6 +60,7 @@ class Library {
     private val libraryEtag = Store.of("library_etag") // version of the list above, for "not modified" answers
     private val posterIndex = Store.of("posters")
     private val animIndex = Store.of("poster_anim") // query -> "time|1" (TMDB genre Animation) or "time|0"
+    private val titleIndex = Store.of("poster_title") // query -> "time|Русское название" or "time|" (TMDB has none)
     private val mediaIndex = Store.of("media_info")
     private val episodes = Store.of("last_episode")
     val watch = Store.of("watch")
@@ -229,6 +230,7 @@ class Library {
         val keptPaths = keys.filter(keep::keepsPoster).mapNotNullTo(HashSet()) { path(posterIndex.get(it)) }
         val gonePaths = keys.filterNot(keep::keepsPoster).mapNotNull { path(posterIndex.get(it)) }.filter { it !in keptPaths }
         prune(posterIndex, keep::keepsPoster)
+        prune(titleIndex, keep::keepsPoster)
         gonePaths.forEach { runCatching { posterFile(it).delete() } }
         prune(mediaIndex, keep::keepsKey)
         prune(watch, keep::keepsKey)
@@ -481,6 +483,34 @@ class Library {
     var posterVersion by mutableStateOf(0)
         private set
 
+    // The Russian title TMDB has for a poster query (the server's title_ru): a tile shows it unless the AI's one was accepted
+    private val ruTitles = androidx.compose.runtime.mutableStateMapOf<String, String>()
+    /** What the tile says under the poster (see [tileTitle]). */
+    fun titleOf(item: LibraryItem): String = tileTitle(item) { ruTitles[it] }
+    /** Grows when a title changes: the sorted / searched list depends on them. */
+    var titleVersion by mutableStateOf(0)
+        private set
+
+    private fun noteTitle(key: String, t: String) {
+        if (t.isEmpty()) { if (ruTitles.remove(key) != null) titleVersion++ }
+        else if (ruTitles.put(key, t) != t) titleVersion++
+    }
+
+    private fun recordTitle(key: String, j: JSONObject) {
+        val t = j.optString("title_ru").takeIf { j.has("title_ru") && !j.isNull("title_ru") }?.trim().orEmpty()
+        titleIndex.put(key, "${System.currentTimeMillis()}|$t")
+        noteTitle(key, t)
+    }
+
+    /** Loads the saved title; false when it is missing or old (a found title is kept 30 days, «none» 3). */
+    private fun titleKnown(key: String): Boolean {
+        val v = titleIndex.get(key) ?: return false
+        val t = v.substringAfter('|', "")
+        val at = v.substringBefore('|').toLongOrNull() ?: 0L
+        if (t.isNotEmpty()) noteTitle(key, t)
+        return System.currentTimeMillis() - at < (if (t.isEmpty()) 3L else 30L) * 86_400_000L
+    }
+
     fun posterPathOf(item: LibraryItem): String? = item.posterQueries.firstNotNullOfOrNull { posterPaths[it.lowercase()] }
 
     private fun notePoster(key: String, path: String) {
@@ -499,15 +529,17 @@ class Library {
             val needGenre = !(isCartoon(item) || isAnime(item))
             var genreKnown = !needGenre
             var posterKnown = false
+            var titleFresh = false
             for (q in item.posterQueries) {
                 val key = q.lowercase()
+                if (titleKnown(key)) titleFresh = true
                 animIndex.get(key)?.let { v ->
                     val at = v.substringBefore('|').toLongOrNull() ?: 0L
                     if (System.currentTimeMillis() - at < 60L * 86_400_000L) { Animation.flags[key] = v.substringAfter('|') == "1"; genreKnown = true }
                 }
                 posterIndex.get(key)?.substringAfter('|', "")?.takeIf { it.startsWith("/api/poster/img/") }?.let { notePoster(key, it); posterKnown = true }
             }
-            if (!genreKnown || !posterKnown) item.posterQueries.firstOrNull()?.let { todo += it }
+            if (!genreKnown || !posterKnown || !titleFresh) item.posterQueries.firstOrNull()?.let { todo += it }
         }
         Animation.version++
         var asked = 0
@@ -517,6 +549,7 @@ class Library {
                 val key = q.lowercase()
                 j.optString("poster").takeIf { it.startsWith("/api/poster/img/") }?.let { notePoster(key, it) }
                 if (j.has("animation")) recordAnimation(key, j) else serverSendsGenre = false
+                recordTitle(key, j)
             } catch (e: CancellationException) { throw e } catch (_: Exception) { }
             if (++asked % 5 == 0) Animation.version++
             kotlinx.coroutines.delay(120)
@@ -551,6 +584,7 @@ class Library {
                         val j = Api.get("/api/poster?q=" + URLEncoder.encode(query, "UTF-8"))
                         path = j.optString("poster").takeIf { it.startsWith("/api/poster/img/") }
                         recordAnimation(key, j)
+                        recordTitle(key, j)
                         posterIndex.put(key, "${System.currentTimeMillis()}|${path.orEmpty()}")
                     }
                     path?.let { notePoster(key, it); loadImage(it) }
@@ -568,14 +602,16 @@ class Library {
     class HeroInfo(val backdrop: ImageBitmap?, val overview: String?, val year: String?, val rating: Double?, val logo: ImageBitmap? = null, val title: String? = null)
     private val heroes = java.util.concurrent.ConcurrentHashMap<String, HeroInfo>()
 
-    fun cachedHero(queries: List<String>): HeroInfo? = queries.firstNotNullOfOrNull { heroes[it.lowercase()] }
+    /** [season] > 0: that season's year, description and rating (the server asks TMDB for the season). */
+    fun cachedHero(queries: List<String>, season: Int = 0): HeroInfo? = queries.firstNotNullOfOrNull { heroes[heroKey(it, season)] }
+    private fun heroKey(q: String, season: Int) = if (season > 0) q.lowercase() + "|s" + season else q.lowercase()
 
     /** Null while the server cannot say (offline, an old server without these fields): the banner then shows what it has. */
-    suspend fun hero(queries: List<String>): HeroInfo? {
-        cachedHero(queries)?.let { return it }
+    suspend fun hero(queries: List<String>, season: Int = 0): HeroInfo? {
+        cachedHero(queries, season)?.let { return it }
         for (q in queries) {
             try {
-                val j = posterGate.withPermit { Api.get("/api/poster?hero=1&q=" + URLEncoder.encode(q, "UTF-8")) }
+                val j = posterGate.withPermit { Api.get("/api/poster?hero=1&q=" + URLEncoder.encode(q, "UTF-8") + (if (season > 0) "&season=$season" else "")) }
                 // only a wide frame: a portrait poster stretched across the banner looks broken (without a frame the banner stays dark)
                 val bd = j.optString("backdrop").takeIf { it.startsWith("/api/poster/img/") }
                 val img = bd?.let { loadHeroImage(it) }
@@ -588,7 +624,7 @@ class Library {
                 if (img == null && ov == null && title == null && rt == null) continue
 
                 val info = HeroInfo(img, ov, yr, rt, logo, title)
-                heroes[q.lowercase()] = info
+                heroes[heroKey(q, season)] = info
                 return info
             } catch (e: CancellationException) { throw e } catch (_: Exception) { }
         }

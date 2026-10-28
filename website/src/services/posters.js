@@ -13,6 +13,19 @@ const posterInflight = new Map();
 
 const IMG_FILE = /^[A-Za-z0-9_-]+\.(?:jpg|png|webp)$/;
 
+// Название по-русски из переводов TMDB (сначала ru-RU, потом другие ru); у русского фильма без перевода — оригинал.
+// Перевода нет — пустая строка. [data] — ответ /{type}/{id}/translations, [match] — результат поиска.
+function russianTitle(data, match) {
+  const list = Array.isArray(data?.translations) ? data.translations : [];
+  const text = v => (typeof v === "string" ? v.trim() : "");
+  const ru = list.filter(t => t && t.iso_639_1 === "ru").sort((a, b) => (b.iso_3166_1 === "RU") - (a.iso_3166_1 === "RU"));
+  for (const t of ru) {
+    const name = text(t.data?.title) || text(t.data?.name);
+    if (name) return name.slice(0, 200);
+  }
+  return match?.original_language === "ru" ? text(match.original_title || match.original_name).slice(0, 200) : "";
+}
+
 // Для баннера: лучший широкий кадр БЕЗ текста на нём (iso_639_1 = null), логотип названия (русский, иначе английский),
 // описание по-русски. Любая ошибка — баннер остаётся с тем, что нашёл поиск.
 async function addBannerExtras(body, match) {
@@ -33,18 +46,38 @@ async function addBannerExtras(body, match) {
   if (ov) body.overview = ov.slice(0, 600);
 }
 
-// Дополнения баннера (кадр, логотип, описание по-русски — ещё 2 запроса к TMDB) нужны только «Продолжить просмотр»:
-// их просят с ?hero=1 (до 4 названий), обычные плитки медиатеки получают один поиск.
-const heroCache = new Map(); // query -> { at, body }
+// Сезон, который смотрят (&season=N): год выхода, описание и рейтинг этого сезона вместо сведений о первом.
+// У сезона нет своего описания или рейтинга (TMDB часто пуст по-русски) — остаются сведения сериала.
+function fetchSeason(match, season) {
+  const url = `https://api.themoviedb.org/3/tv/${match.id}/season/${season}`;
+  return axios.get(url, { params: { api_key: config.TMDB_API_KEY, language: "ru-RU" }, timeout: 5000 }).then(r => r.data).catch(() => null);
+}
+
+function applySeason(body, data, season) {
+  if (!data) return;
+  const year = String(data.air_date || "").slice(0, 4);
+  if (/^\d{4}$/.test(year)) body.year = year;
+  const ov = typeof data.overview === "string" ? data.overview.trim() : "";
+  if (ov) body.overview = ov.slice(0, 600);
+  if (Number(data.vote_average) > 0) body.rating = Math.round(Number(data.vote_average) * 10) / 10;
+  body.season = season;
+}
+
+// Дополнения баннера (кадр, логотип, описание по-русски — ещё 2 запроса к TMDB, с сезоном — 3) нужны только
+// «Продолжить просмотр»: их просят с ?hero=1 (до 4 названий), обычные плитки медиатеки получают один поиск.
+const heroCache = new Map(); // query|season -> { at, body }
 
 async function searchPoster(rawQuery, opts = {}) {
   const base = await searchBase(rawQuery);
   if (!opts.hero || !base.ref) return base.body;
-  const hit = heroCache.get(base.ck);
+  const season = base.ref.media_type === "tv" && Number.isInteger(opts.season) && opts.season > 0 && opts.season < 100 ? opts.season : 0;
+  const key = season ? `${base.ck}|s${season}` : base.ck;
+  const hit = heroCache.get(key);
   if (hit && Date.now() - hit.at < 24 * 3600 * 1000) return hit.body;
   const body = { ...base.body };
-  await addBannerExtras(body, base.ref);
-  heroCache.set(base.ck, { at: Date.now(), body });
+  const [, seasonData] = await Promise.all([addBannerExtras(body, base.ref), season ? fetchSeason(base.ref, season) : null]);
+  applySeason(body, seasonData, season);
+  heroCache.set(key, { at: Date.now(), body });
   if (heroCache.size > 300) heroCache.delete(heroCache.keys().next().value);
   return body;
 }
@@ -101,12 +134,26 @@ async function searchBase(rawQuery) {
   }
   if (!match) match = fallback;
 
+  // Название по-русски: поиск идёт без языка (с ru-RU TMDB отдал бы и другие постеры, а клиенты 30 дней помнят путь
+  // постера и по нему сливают версии), поэтому переводы — отдельным запросом. Сбой — ответ не запоминается.
+  let ruTitle = "";
+  let trFailed = false;
+  if (match) {
+    const tr = await axios.get(`https://api.themoviedb.org/3/${match.media_type}/${match.id}/translations`, {
+      params: { api_key: config.TMDB_API_KEY }, timeout: 5000
+    }).then(r => r.data).catch(() => null);
+    trFailed = !tr;
+    ruTitle = russianTitle(tr, match);
+  }
+
   const file = match ? String(match.poster_path).replace(/^\//, "") : "";
   const backdropFile = match && match.backdrop_path ? String(match.backdrop_path).replace(/^\//, "") : "";
   const body = {
     poster: /^[A-Za-z0-9_-]+\.(?:jpg|png|webp)$/.test(file) ? `/api/poster/img/w500/${file}` : null,
     poster_url: /^[A-Za-z0-9_-]+\.(?:jpg|png|webp)$/.test(file) ? `https://image.tmdb.org/t/p/w500/${file}` : null,
-    title: match?.title || match?.name || null,
+    title: ruTitle || match?.title || match?.name || null,
+    // только русское название (или null): подпись плитки, когда пользователь не принял название от ИИ
+    title_ru: ruTitle || null,
     type: match ? match.media_type : null,
     animation: !!match && Array.isArray(match.genre_ids) && match.genre_ids.includes(16), // 16 = Animation в TMDB
     // Для баннера «Продолжить просмотр» на ПК: широкая картинка, описание, год и рейтинг (у старых клиентов поля игнорируются)
@@ -125,7 +172,7 @@ async function searchBase(rawQuery) {
     throw err;
   }
 
-  posterLookupCache.set(ck, { at: Date.now(), body, ref });
+  if (!trFailed) posterLookupCache.set(ck, { at: Date.now(), body, ref });
   if (posterLookupCache.size > 3000) {
     posterLookupCache.delete(posterLookupCache.keys().next().value);
   }

@@ -67,6 +67,16 @@ class SeriesGroupingTest {
     }
 
     @Test
+    fun watchedSeasonIsTheOneHoldingTheFile() {
+        val show = prepareItems(listOf(magnet("Show", *(1..2).flatMap { s -> (1..3).map { "Show/Season $s/E0$it.mkv" to 800 * MB } }.toTypedArray()))).single()
+        assertEquals(2, watchedSeason(show, "Show/Season 2/E02.mkv")?.season)
+        assertEquals(3, watchedSeason(show, "Show/Season 2/E02.mkv")?.items?.size)
+        assertEquals(null, watchedSeason(show, "Show/none.mkv"))
+        val trilogy = prepareItems(listOf(magnet("Trilogy", "Film 1 (1999).mkv" to 4000 * MB, "Film 2 (2003).mkv" to 4200 * MB))).single()
+        assertEquals(null, watchedSeason(trilogy, "Film 1 (1999).mkv"))
+    }
+
+    @Test
     fun trilogyStaysACollection() {
         val p = buildPlayable(magnet(
             "Trilogy",

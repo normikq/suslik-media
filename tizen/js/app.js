@@ -333,7 +333,7 @@
   function continueCard(c) {
     var en = c.entries[c.index];
     var key = 'c' + c.it.m.id;
-    var poster = h('div', { class: 'poster' }, [h('span', { class: 'poster-title', text: c.it.baseTitle })]);
+    var poster = h('div', { class: 'poster' }, [h('span', { class: 'poster-title', text: posters.titleOf(c.it) })]);
     var el = h('div', { class: 'f card', tabindex: '-1', 'data-key': key, onclick: function () {
       state.focusKey = key;
       open(c.it, c.entries, c.index, { back: function () { shell('home', true); } });
@@ -356,7 +356,8 @@
     var m = it.m, main = model.mainVideo(m);
     var group = versions || [it];
     var check = main ? support.checkFile(main.path) : { level: 'ok' };
-    var poster = h('div', { class: 'poster' }, [h('span', { class: 'poster-title', text: it.baseTitle })]);
+    var name = posters.titleOf(it);
+    var poster = h('div', { class: 'poster' }, [h('span', { class: 'poster-title', text: name })]);
     var badges = [];
     if (!m.ready) badges.push(h('span', { class: 'badge', text: model.statusRu(m) + (m.downloading ? ' ' + Math.round(m.progress * 100) + '%' : '') }));
     if (check.level === 'no') badges.push(h('span', { class: 'badge bad', text: tr('library.badge_unsupported') }));
@@ -368,8 +369,8 @@
     var el = h('div', { class: 'f tile' + (m.ready ? '' : ' dim'), tabindex: '-1', 'data-key': key, onclick: function () {
       state.focusKey = key;
       if (!m.ready) { toast(tr('library.not_ready', { status: model.statusRu(m) })); return; }
-      if (group.length > 1) pickVersion(it.baseTitle, group); else details(it);
-    } }, [poster, h('div', { class: 'badges' }, badges), h('div', { class: 'tile-name', text: it.baseTitle })]);
+      if (group.length > 1) pickVersion(name, group); else details(it);
+    } }, [poster, h('div', { class: 'badges' }, badges), h('div', { class: 'tile-name', text: name })]);
     posterInto(poster, it);
     return el;
   }
@@ -417,6 +418,15 @@
     // Пути постеров помним и между запусками: по ним сливаются версии одного фильма (один постер = один фильм)
     var PATHS_KEY = 'sm.posterPaths';
     try { paths = JSON.parse(localStorage.getItem(PATHS_KEY) || '{}') || {}; } catch (e) { paths = {}; }
+    // Русские названия TMDB по запросу ('' — у TMDB нет): подпись плитки, если название ИИ не принято
+    var TITLES_KEY = 'sm.posterTitles', titles = {};
+    try { titles = JSON.parse(localStorage.getItem(TITLES_KEY) || '{}') || {}; } catch (e) { titles = {}; }
+    function noteTitle(q, r) {
+      titles[q] = r && typeof r.title_ru === 'string' ? r.title_ru.trim() : '';
+      try { localStorage.setItem(TITLES_KEY, JSON.stringify(titles)); } catch (e) { /* место кончилось */ }
+      return !!titles[q];
+    }
+    function titleOf(it) { return model.tileTitle(it, function (q) { return titles[q]; }); }
     var saveTimer = 0;
     function savePaths() {
       clearTimeout(saveTimer);
@@ -433,7 +443,7 @@
       var todo = [], seen = {};
       items.forEach(function (it) {
         var q = it.posterQueries[0];
-        if (it.m.ready && q && !seen[q] && pathOf(it.posterQueries) == null && paths[q] === undefined) { seen[q] = 1; todo.push(q); }
+        if (it.m.ready && q && !seen[q] && ((pathOf(it.posterQueries) == null && paths[q] === undefined) || titles[q] === undefined)) { seen[q] = 1; todo.push(q); }
       });
       todo = todo.slice(0, 40);
       if (!todo.length) return;
@@ -446,6 +456,7 @@
           var p = r.poster;
           paths[q] = typeof p === 'string' && p.indexOf('/api/poster/img/') === 0 ? p : null;
           if (paths[q]) { n++; savePaths(); }
+          if (noteTitle(q, r)) n++;
         }, function () {}).then(function () { setTimeout(next, 150); });
       })();
     }
@@ -469,6 +480,7 @@
         var p = r.poster;
         paths[q] = typeof p === 'string' && p.indexOf('/api/poster/img/') === 0 ? p : null;
         savePaths();
+        noteTitle(q, r);
         return paths[q];
       });
       return path.then(function (p) {
@@ -479,13 +491,14 @@
     return {
       has: function (q) { return !!cache[q]; },
       pathOf: pathOf,
+      titleOf: titleOf,
       fill: fill,
       want: function (q, cb) {
         if (cache[q]) { touch(q); cb(cache[q]); } else if (cache[q] !== null) { queue.push({ q: q, cb: cb }); pump(); }
       },
       /** Начался фильм: очередь постеров не делит канал с AVPlay. */
       drop: function () { queue = []; },
-      clear: function () { order.forEach(function (q) { if (cache[q]) URL.revokeObjectURL(cache[q]); }); cache = {}; paths = {}; order = []; queue = []; }
+      clear: function () { order.forEach(function (q) { if (cache[q]) URL.revokeObjectURL(cache[q]); }); cache = {}; paths = {}; titles = {}; order = []; queue = []; }
     };
   })();
 
@@ -524,13 +537,13 @@
       }).catch(function (e) { toast(api.describe(e)); });
     });
     actions.push(mineBtn);
-    var poster = h('div', { class: 'poster big' }, [h('span', { class: 'poster-title', text: it.baseTitle })]);
+    var poster = h('div', { class: 'poster big' }, [h('span', { class: 'poster-title', text: posters.titleOf(it) })]);
     posterInto(poster, it);
     nav.onBack = back;
     show(h('div', { class: 'details' }, [
       h('div', { class: 'details-side' }, [poster]),
       h('div', { class: 'details-main' }, [
-        h('h1', { text: it.baseTitle }),
+        h('h1', { text: posters.titleOf(it) }),
         h('p', { class: 'muted', text: m.name + ' · ' + model.formatBytes(m.size) + (p.kind === 'series' ? ' · серий: ' + entries.length : '') }),
         h('div', { class: 'actions' }, actions),
         h('div', { class: 'entries' }, entries.length > 1 ? rows : entries.length ? notesFor(m, entries[0].file) : rows)

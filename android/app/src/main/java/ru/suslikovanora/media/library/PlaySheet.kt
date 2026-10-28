@@ -251,7 +251,7 @@ fun PlaySheet(
                         }
                     }
                     Column(Modifier.weight(1f).padding(end = 36.dp)) {
-                        Text(item?.baseTitle ?: target.label, fontFamily = Unbounded, fontWeight = FontWeight.Bold, fontSize = 18.sp, lineHeight = 23.sp, color = Color.White, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                        Text(item?.let(store::titleOf) ?: target.label, fontFamily = Unbounded, fontWeight = FontWeight.Bold, fontSize = 18.sp, lineHeight = 23.sp, color = Color.White, maxLines = 3, overflow = TextOverflow.Ellipsis)
                         Row(Modifier.padding(top = 10.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                             @Composable fun chip(t: String) = Text(t, color = Color(0xFFD6DBE4), fontFamily = Onest, fontWeight = FontWeight.Medium, fontSize = 11.5.sp, maxLines = 1, softWrap = false,
                                 modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0x1AFFFFFF)).border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 3.dp))

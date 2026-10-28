@@ -53,6 +53,7 @@ class LibraryStore(context: Context) {
     private val snapshotFile = File(app.filesDir, "library.json")
     private val posterPrefs = app.getSharedPreferences("posters", Context.MODE_PRIVATE)
     private val animPrefs = app.getSharedPreferences("poster_anim", Context.MODE_PRIVATE)
+    private val titlePrefs = app.getSharedPreferences("poster_title", Context.MODE_PRIVATE) // query -> "time|Русское название" or "time|"
     private val episodePrefs = app.getSharedPreferences("last_episode", Context.MODE_PRIVATE)
 
     init {
@@ -295,6 +296,34 @@ class LibraryStore(context: Context) {
         if (posterPaths[key] != path) { posterPaths[key] = path; posterVersion++ }
     }
 
+    // The Russian title TMDB has for a poster query (the server's title_ru): a tile shows it unless the AI's one was accepted
+    private val ruTitles = androidx.compose.runtime.mutableStateMapOf<String, String>()
+    /** What the tile says under the poster (see [tileTitle]). */
+    fun titleOf(item: LibraryItem): String = tileTitle(item) { ruTitles[it] }
+    /** Grows when a title changes: the sorted / searched list depends on them. */
+    var titleVersion by mutableStateOf(0)
+        private set
+
+    private fun noteTitle(key: String, t: String) {
+        if (t.isEmpty()) { if (ruTitles.remove(key) != null) titleVersion++ }
+        else if (ruTitles.put(key, t) != t) titleVersion++
+    }
+
+    private fun recordTitle(key: String, j: JSONObject) {
+        val t = j.optString("title_ru").takeIf { j.has("title_ru") && !j.isNull("title_ru") }?.trim().orEmpty()
+        titlePrefs.edit().putString(key, "${System.currentTimeMillis()}|$t").apply()
+        noteTitle(key, t)
+    }
+
+    /** Loads the saved title; false when it is missing or old (a found title is kept 30 days, «none» 3). */
+    private fun titleKnown(key: String): Boolean {
+        val v = titlePrefs.getString(key, null) ?: return false
+        val t = v.substringAfter('|', "")
+        val at = v.substringBefore('|').toLongOrNull() ?: 0L
+        if (t.isNotEmpty()) noteTitle(key, t)
+        return System.currentTimeMillis() - at < (if (t.isEmpty()) 3L else 30L) * 86_400_000L
+    }
+
     fun cachedPoster(queries: List<String>): String? {
         for (q in queries) {
             posterMemory[q.lowercase()]?.let { return Api.BASE + it }
@@ -360,6 +389,7 @@ class LibraryStore(context: Context) {
                 Api.get("/api/poster?q=" + URLEncoder.encode(query, "UTF-8"))
             }
             if (j.has("animation")) recordAnimation(key, j)
+            recordTitle(key, j)
             url = j.optString("poster").takeIf { it.startsWith("/api/poster/img/") }
             posterPrefs.edit().putString(key, "${System.currentTimeMillis()}|${url.orEmpty()}").apply()
             posterMemory[key] = url
@@ -380,14 +410,16 @@ class LibraryStore(context: Context) {
     class HeroInfo(val backdrop: String?, val logo: String?, val overview: String?, val year: String?, val rating: Double?, val title: String? = null)
     private val heroes = java.util.concurrent.ConcurrentHashMap<String, HeroInfo>()
 
-    fun cachedHero(queries: List<String>): HeroInfo? = queries.firstNotNullOfOrNull { heroes[it.lowercase()] }
+    /** [season] > 0: that season's year, description and rating (the server asks TMDB for the season). */
+    fun cachedHero(queries: List<String>, season: Int = 0): HeroInfo? = queries.firstNotNullOfOrNull { heroes[heroKey(it, season)] }
+    private fun heroKey(q: String, season: Int) = if (season > 0) q.lowercase() + "|s" + season else q.lowercase()
 
     /** Null while the server cannot say (offline, an old server without these fields): the banner then stays plain. */
-    suspend fun hero(queries: List<String>): HeroInfo? {
-        cachedHero(queries)?.let { return it }
+    suspend fun hero(queries: List<String>, season: Int = 0): HeroInfo? {
+        cachedHero(queries, season)?.let { return it }
         for (q in queries) {
             try {
-                val j = posterGate.withPermit { Api.get("/api/poster?hero=1&q=" + URLEncoder.encode(q, "UTF-8")) }
+                val j = posterGate.withPermit { Api.get("/api/poster?hero=1&q=" + URLEncoder.encode(q, "UTF-8") + (if (season > 0) "&season=$season" else "")) }
                 if (j.has("animation")) recordAnimation(q.lowercase(), j)
                 val abs = { k: String -> j.optString(k).takeIf { it.startsWith("/api/poster/img/") }?.let { Api.BASE + it } }
                 val bd = abs("backdrop") // only a wide frame: a portrait poster across the banner looks broken
@@ -398,7 +430,7 @@ class LibraryStore(context: Context) {
                 if (bd == null && ov == null && title == null && rt == null) continue
 
                 val info = HeroInfo(bd, abs("logo"), ov, j.optString("year").ifBlank { null }, rt, title)
-                heroes[q.lowercase()] = info
+                heroes[heroKey(q, season)] = info
                 return info
             } catch (e: CancellationException) { throw e } catch (_: Exception) { }
         }
@@ -438,8 +470,10 @@ class LibraryStore(context: Context) {
             val needGenre = !(isCartoon(item) || isAnime(item))
             var genreKnown = !needGenre
             var posterKnown = false
+            var titleFresh = false
             for (q in item.posterQueries) {
                 val key = q.lowercase()
+                if (titleKnown(key)) titleFresh = true
                 posterPrefs.getString(key, null)?.substringAfter('|', "")?.takeIf { it.startsWith("/api/poster/img/") }?.let { notePoster(key, it); posterKnown = true }
                 animPrefs.getString(key, null)?.let { v ->
                     val at = v.substringBefore('|').toLongOrNull() ?: 0L
@@ -449,7 +483,7 @@ class LibraryStore(context: Context) {
                     }
                 }
             }
-            if (!genreKnown || !posterKnown) item.posterQueries.firstOrNull()?.let { todo += it }
+            if (!genreKnown || !posterKnown || !titleFresh) item.posterQueries.firstOrNull()?.let { todo += it }
         }
         Animation.version++
         var asked = 0
@@ -464,6 +498,7 @@ class LibraryStore(context: Context) {
                 }
                 if (url != null) notePoster(key, url)
                 if (j.has("animation")) recordAnimation(key, j)
+                recordTitle(key, j)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
@@ -596,6 +631,7 @@ class LibraryStore(context: Context) {
         val goneUrls = posters.filterKeys { !keep.keepsPoster(it) }.values.mapNotNull { url(it) }.filter { it !in keptUrls }
         prune(posterPrefs, keep::keepsPoster)
         prune(animPrefs, keep::keepsPoster)
+        prune(titlePrefs, keep::keepsPoster)
         runCatching { Posters.loader(app).diskCache?.let { cache -> goneUrls.forEach { u -> cache.remove(Api.BASE + u) } } }
         if (goneUrls.isNotEmpty()) posterShown.edit().apply { goneUrls.forEach { remove(Api.BASE + it) } }.apply()
         prune(mediaPrefs, keep::keepsKey)

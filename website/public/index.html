@@ -1778,6 +1778,20 @@ function groupLibraryVersions(list){
   for(const g of groups) if(g.length>1) versions.set(g[0].id,g);
   return {shown,versions};
 }
+// Подпись плитки: принятое название ИИ, иначе русское название TMDB по запросу постера (title_ru сервера), иначе
+// название раздачи. У сборника — своё: TMDB находит один его фильм. Как tileTitle в Model.kt.
+function tileTitle(m){
+  const ai=m&&m.aiTitle;
+  if((ai&&ai.status==="accepted"&&ai.base)||isCollection(buildPlaylist(m),m)) return displayTitle(m);
+  const db=posterDb();
+  for(const q of getPosterQueries(m)){ const h=db[q.toLowerCase()]; if(h&&h.r) return h.r; }
+  return displayTitle(m);
+}
+// Ответ о постере, сохранённый до русских названий (без r): спросить ещё раз
+function posterTitleUnknown(m){
+  const q=getPosterQueries(m)[0], h=q&&posterDb()[q.toLowerCase()];
+  return !!(h&&h.u&&h.r===undefined);
+}
 function posterPathOf(m){
   const db=posterDb();
   for(const q of getPosterQueries(m)){ const h=db[q.toLowerCase()]; if(h&&typeof h.u==="string"&&h.u.startsWith("/api/poster/img/")) return h.u; }
@@ -1789,7 +1803,7 @@ async function fillPosterPaths(){
   if(fillPostersRunning||!cachedLibrary||!cachedLibrary.length) return;
   fillPostersRunning=true;
   try{
-    const todo=[...new Set(cachedLibrary.filter(m=>Number(m.statusCode)===4&&!posterPathOf(m)).map(m=>getPosterQueries(m)[0]).filter(Boolean))].slice(0,80);
+    const todo=[...new Set(cachedLibrary.filter(m=>Number(m.statusCode)===4&&(!posterPathOf(m)||posterTitleUnknown(m))).map(m=>getPosterQueries(m)[0]).filter(Boolean))].slice(0,80);
     let n=0;
     for(const q of todo){ await getPoster(q); if(++n%10===0) renderLibrary(false); await wait(120); }
     if(n) renderLibrary(false);
@@ -1974,13 +1988,13 @@ async function psDecideAll(s,list){
 function psFillTitle(s){
   const m=s._magnet; if(!m) return;
   const cur=cachedLibrary.find(x=>x.id===m.id); if(cur) s._magnet=cur;
-  s.querySelector(".ps-title").textContent=displayTitle(s._magnet);
+  s.querySelector(".ps-title").textContent=tileTitle(s._magnet);
 }
 const psInfoCache=new Map();
 function psFill(s,magnet,file,label,token){
   s._magnet=magnet||null; psSyncShelf(s); psSyncAi(s);
   const base=magnet?displayTitle(magnet):label;
-  s.querySelector(".ps-title").textContent=base;
+  s.querySelector(".ps-title").textContent=magnet?tileTitle(magnet):label;
   const chips=s.querySelector(".ps-chips"), over=s.querySelector(".ps-overview"), img=s.querySelector(".ps-poster img"), prog=s.querySelector(".ps-progress");
   chips.replaceChildren(); over.textContent=""; img.removeAttribute("src"); prog.classList.add("hidden");
   const chip=(t,c)=>{const e=document.createElement("span");e.className=c||"ps-chip";e.textContent=t;chips.append(e);return e;};
@@ -2350,7 +2364,7 @@ function getItemSpecs(m) {
   return { quality, codec, type, cat };
 }
 
-function tileSig(m){ return JSON.stringify([(serverTagMap[m.id]||[]).join(),m.name,displayTitle(m),m.status,m.statusCode,m.size,m.downloaded,Boolean(m.favorite),Boolean(m.mine),m.canRemove!==false,(m.files||[]).length,libraryViewMode]); }
+function tileSig(m){ return JSON.stringify([(serverTagMap[m.id]||[]).join(),m.name,tileTitle(m),m.status,m.statusCode,m.size,m.downloaded,Boolean(m.favorite),Boolean(m.mine),m.canRemove!==false,(m.files||[]).length,libraryViewMode]); }
 
 function renderLibrary(animate=true) {
   const target=$("libraryResults"), query=$("librarySearch") ? $("librarySearch").value.trim().toLowerCase() : "";
@@ -2414,7 +2428,7 @@ function renderLibrary(animate=true) {
     tile.className="library-tile tile-enter"; tile.style.setProperty("--tile-index", String(animate&&!before.size ? fresh++ : 0));
     tile.addEventListener("animationend",e=>{ if(e.target===tile) tile.classList.remove("tile-enter"); });
     const art=document.createElement("div"); art.className="tile-art";
-    const title=document.createElement("div"); title.className="tile-title"; title.textContent=displayTitle(magnet); art.append(title);
+    const title=document.createElement("div"); title.className="tile-title"; title.textContent=tileTitle(magnet); art.append(title);
 
     const specs = getItemSpecs(magnet);
     const badges = document.createElement("div"); badges.className = "tile-badges";
@@ -2428,6 +2442,7 @@ function renderLibrary(animate=true) {
     whenVisible(tile, ()=>(async()=>{
       let url=null;
       for (const q of posterQueries) { url=await getPoster(q); if(url) break; }
+      const shown=tileTitle(magnet); title.textContent=shown; if(name) name.textContent=shown; // русское название TMDB пришло с постером
       if(url && art.isConnected && !art.querySelector("img")){
         const img=document.createElement("img"); img.alt="Постер: "+(posterQueries[0]||magnet.name); img.decoding="async";
         img.onerror=()=>{ img.remove(); art.classList.add("poster-missing"); };
@@ -2467,7 +2482,7 @@ function renderLibrary(animate=true) {
     else if(total>0 && Number(magnet.statusCode)<4){ const pct=Math.max(0,Math.min(100,done/total*100)); const track=document.createElement("div"); track.className="tile-progress-track"; const fill=document.createElement("div"); fill.className="tile-progress-fill"; fill.style.width=pct+"%"; track.append(fill); const label=document.createElement("div"); label.className="tile-progress-label"; label.textContent=Math.floor(pct)+"% · "+(magnet.status||"Обработка"); art.append(track,label); }
     const info=document.createElement("div"); info.className="tile-info";
     // Как на ПК и в Android: название без тегов раздачи (принятое от ИИ, если есть); полное имя — во всплывающей подсказке
-    const name=document.createElement("strong"); name.textContent=displayTitle(magnet); name.title=magnet.name||"";
+    const name=document.createElement("strong"); name.textContent=tileTitle(magnet); name.title=magnet.name||"";
     // «год • тип · размер» — как под плиткой в Android и в подробностях плитки на ПК
     const yearM=/(?:^|[^\d])((?:19|20)\d{2})(?!\d)/.exec(magnet.name||"");
     const sub=document.createElement("div"); sub.className="file-meta tile-sub";
@@ -2556,10 +2571,11 @@ function savePosterDb(){
 async function getPoster(title) {
   const key=title.toLowerCase(); if(posterCache.has(key)) return posterCache.get(key);
   const hit=posterDb()[key];
-  if (hit && Date.now()-hit.t < (hit.u ? 30 : 3)*864e5) { const p=Promise.resolve(hit.u||null); posterCache.set(key,p); return p; }
-  const task=api("/api/poster?q="+encodeURIComponent(title)).then(data=>{
+  if (hit && (hit.r!==undefined || !hit.u) && Date.now()-hit.t < (hit.u ? 30 : 3)*864e5) { const p=Promise.resolve(hit.u||null); posterCache.set(key,p); return p; }
+  // no-cache: ответ без title_ru мог остаться в кэше браузера (неделя)
+  const task=api("/api/poster?q="+encodeURIComponent(title),{cache:"no-cache"}).then(data=>{
     const u=typeof data.poster==="string" && data.poster.startsWith("/api/poster/img/") ? data.poster : (data.poster||null);
-    posterDb()[key]={u,t:Date.now()}; savePosterDb();
+    posterDb()[key]={u,t:Date.now(),r:typeof data.title_ru==="string"?data.title_ru.trim():""}; savePosterDb();
     if (data && typeof data.animation === "boolean") recordAnimation(title, data.animation);
     return u;
   }).catch(()=>null);

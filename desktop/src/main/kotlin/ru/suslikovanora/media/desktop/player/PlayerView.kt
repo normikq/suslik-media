@@ -790,15 +790,17 @@ fun PlayerView(
     LaunchedEffect(title, index, userPaused, started, length > 0L, lastSeekAt, discordPosterUrl, inParty, partyMembersCount) {
         if (closing || !started) return@LaunchedEffect
         delay(700)
+        // The library's title (line 1) and the season / episode (line 2); without them (a voice-over preview) the player's titles
         val (displayTitle, displaySubtitle) = smtcTitles()
-        val (discordTitle, discordSubtitle) = if (inParty) {
-            val titleText = if (queue.size > 1) "$displaySubtitle · $displayTitle" else displayTitle
-            val partyStatus = tr("discord.smotrit_vmeste", "count" to partyMembersCount)
-            titleText to (if (userPaused) "$partyStatus · " + tr("discord.pauza") else partyStatus)
-        } else {
-            val sub = if (queue.size > 1) displaySubtitle else tr("discord.film")
-            displayTitle to (if (userPaused) tr("discord.pauza") else sub)
+        val presence = req.presence.getOrNull(if (queue.size > 1) index else req.startIndex)
+            ?: if (queue.size > 1) Presence(displaySubtitle, displayTitle) else Presence(displayTitle)
+        val state = when {
+            inParty -> tr("discord.smotrit_vmeste", "count" to partyMembersCount) + (if (userPaused) " · " + tr("discord.pauza") else "")
+            userPaused -> tr("discord.pauza")
+            else -> null
         }
+        val discordTitle = presence.title
+        val discordSubtitle = listOfNotNull(presence.episode, state).joinToString(" · ").ifEmpty { tr("discord.film") }
         ru.suslikovanora.media.desktop.discord.DiscordRpc.update(
             title = discordTitle,
             subtitle = discordSubtitle,
@@ -807,7 +809,7 @@ fun PlayerView(
             lengthMs = length,
             posterUrl = discordPosterUrl,
             activityName = "Suslik Media",
-            largeText = if (queue.size > 1) "$displaySubtitle: $displayTitle" else displayTitle
+            largeText = presence.episode?.let { "${presence.title} · $it" } ?: presence.title
         )
     }
 

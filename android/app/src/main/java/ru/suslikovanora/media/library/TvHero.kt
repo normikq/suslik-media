@@ -55,6 +55,11 @@ private fun plural(n: Int, one: String, few: String, many: String): String {
     return "$n " + if (t in 11..14) many else when (u) { 1 -> one; 2, 3, 4 -> few; else -> many }
 }
 
+/** «Сезон 2 • 10 серий»: the season the banner continues (in a merged show it is not always the first). */
+private fun seasonChip(s: Season): String =
+    (if (s.season == 0) tr("library.specvypuski") else tr("library.sezon_season", "season" to s.season)) + " • " +
+        plural(s.items.size, tr("common.plural_seriya_1"), tr("common.plural_seriya_2"), tr("common.plural_seriya_5"))
+
 /** «Сезон 1, серия 4» for an episode of a series; null for a film. */
 private fun episodeSub(e: ContinueEntry): String? {
     val p = e.item.playable as? Playable.Series ?: return null
@@ -83,8 +88,9 @@ fun TvContinueHero(all: List<ContinueEntry>, store: LibraryStore, onOpen: (PlayT
     var focused by remember { mutableStateOf(false) }
     val e = entries.firstOrNull { it.item.m.id == chosen } ?: entries.first()
     val queries = e.posterQueries
-    var hero by remember(e.item.m.id, e.target.file.path) { mutableStateOf(store.cachedHero(queries)) }
-    LaunchedEffect(e.item.m.id, e.target.file.path) { if (hero == null) hero = store.hero(queries) }
+    val heroSeason = watchedSeason(e.item, e.target.file.path)?.season ?: 0
+    var hero by remember(e.item.m.id, e.target.file.path) { mutableStateOf(store.cachedHero(queries, heroSeason)) }
+    LaunchedEffect(e.item.m.id, e.target.file.path) { if (hero == null) hero = store.hero(queries, heroSeason) }
 
     // The banners change by themselves, one after another (not while the remote is on the banner)
     LaunchedEffect(entries.map { it.item.m.id }, chosen, focused) {
@@ -124,7 +130,7 @@ fun TvContinueHero(all: List<ContinueEntry>, store: LibraryStore, onOpen: (PlayT
                 val bannerTitle = if (isCollection(e.item.playable, e.item.m)) {
                     hero?.title ?: continueItemTitle(e.item, e.target.file)
                 } else {
-                    e.item.baseTitle
+                    store.titleOf(e.item)
                 }
                 val logo = hero?.logo
                 if (logo != null) {
@@ -145,7 +151,9 @@ fun TvContinueHero(all: List<ContinueEntry>, store: LibraryStore, onOpen: (PlayT
                     val bannerFilms = collectionFilms(e.item)
                     if (bannerFilms.isNotEmpty()) chip(filmCountRu(bannerFilms.size))
                     else {
-                        (e.item.playable as? Playable.Series)?.let { p ->
+                        val s = watchedSeason(e.item, e.target.file.path)
+                        if (s != null) chip(seasonChip(s))
+                        else (e.item.playable as? Playable.Series)?.let { p ->
                             chip(plural(p.seasons.size, tr("common.plural_sezon_1"), tr("common.plural_sezon_2"), tr("common.plural_sezon_5")) + " • " + plural(p.seasons.sumOf { it.items.size }, tr("common.plural_seriya_1"), tr("common.plural_seriya_2"), tr("common.plural_seriya_5")))
                         }
                     }
@@ -227,7 +235,7 @@ suspend fun warmHero(store: LibraryStore, context: android.content.Context) {
         val q = e.posterQueries
         runCatching {
             store.poster(q)?.let { loader.enqueue(ImageRequest.Builder(context).data(it).memoryCacheKey(it).build()) }
-            store.hero(q)?.let { h ->
+            store.hero(q, watchedSeason(e.item, e.target.file.path)?.season ?: 0)?.let { h ->
                 for (u in listOfNotNull(h.backdrop, h.logo)) loader.enqueue(ImageRequest.Builder(context).data(u).memoryCacheKey(u).build())
             }
         }

@@ -340,9 +340,10 @@ fun LibraryScreen(
     val tv = Tv.isTv(LocalContext.current)
     val all = store.items
     val source = if (mineOnly) all.filter { it.m.mine } else all
-    val filtered = remember(source, query, category, Animation.version) {
+    val filtered = remember(source, query, category, Animation.version, store.titleVersion) {
         val q = query.trim().lowercase()
-        var list = if (q.isEmpty()) source else source.filter { it.searchText.contains(q) }
+        // the Russian title from TMDB is searched too: «дюна» finds «Dune.2021.2160p»
+        var list = if (q.isEmpty()) source else source.filter { it.searchText.contains(q) || store.titleOf(it).lowercase().contains(q) }
         if (category != Category.All) {
             list = list.filter { itemCategory(it) == category }
         }
@@ -551,7 +552,7 @@ private fun ContinueCard(
             }
         }
         Text(
-            e.item.baseTitle,
+            store.titleOf(e.item),
             color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.sp,
             maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp)
         )
@@ -995,7 +996,7 @@ private fun PosterArtwork(
 ) {
     val context = LocalContext.current
     val m = item.m
-    val baseTitle = item.baseTitle
+    val baseTitle = store.titleOf(item)
 
     Box(
         Modifier.fillMaxWidth().aspectRatio(2f / 3f)
@@ -1092,8 +1093,8 @@ private fun TileDetails(
     val m = item.m
     val playable = item.playable
     Column(Modifier.padding(start = 2.dp, end = 2.dp, top = 8.dp)) {
-        // As on the PC: the plain title (the AI's one once accepted), not the release name with its tags
-        Text(item.baseTitle, color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp, lineHeight = 18.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        // As on the PC: the plain title (the AI's one once accepted, else TMDB's Russian one), not the release name with its tags
+        Text(store.titleOf(item), color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp, lineHeight = 18.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Text("${itemYear(item)} • ${itemTypeLabel(item)} · ${formatBytes(m.size)}", color = Sm.muted, fontFamily = Onest, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
         if (m.ready && media != null) {
             val specs = remember(item, media) { itemSpecs(item, media) }
