@@ -7,6 +7,8 @@ const { refineKinds, cleanTitle } = require("../tmdb-kind");
 test("posterQueryVariants cleans release names", () => {
   assert.deepEqual(posterQueryVariants("Severance"), ["Severance"]);
   assert.ok(posterQueryVariants("Severance Season 1").includes("Severance"));
+  assert.ok(posterQueryVariants("Менталист 1 сезон").includes("Менталист"));
+  assert.ok(posterQueryVariants("Show 2-й сезон").includes("Show"));
   assert.ok(posterQueryVariants("Show - S01-10").includes("Show"));
   assert.ok(posterQueryVariants("Erai-raws Show - 01 ~ 10").includes("Show"));
   assert.ok(posterQueryVariants("WALL-E").includes("WALL·E"));

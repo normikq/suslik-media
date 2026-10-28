@@ -3,7 +3,7 @@
 const express = require("express");
 const { apiLimiter } = require("../middleware/rate-limit");
 const { requireLogin, requireAdmin, deviceId } = require("../middleware/auth");
-const { getLibrary } = require("../services/library");
+const library = require("../services/library");
 const { ownerChecker, isLibraryAdmin } = require("../services/downloads");
 const aiTitle = require("../services/aititle");
 
@@ -21,7 +21,7 @@ async function ownMagnets(req, res, ids) {
   }
   let data;
   try {
-    ({ data } = await getLibrary());
+    ({ data } = await library.getLibrary());
   } catch {
     res.status(502).json({ error: "Не удалось загрузить медиатеку." });
     return null;
@@ -32,8 +32,13 @@ async function ownMagnets(req, res, ids) {
     res.status(404).json({ error: "Раздача не найдена или ещё не готова." });
     return null;
   }
+  const admin = isLibraryAdmin(req);
   const own = ownerChecker(req);
-  const mine = ready.filter(m => own(m.id));
+  if (!admin && ready.some(m => !own(m.id))) {
+    res.status(403).json({ error: "Определить через ИИ может только тот, кто добавил раздачу." });
+    return null;
+  }
+  const mine = admin ? ready : ready.filter(m => own(m.id));
   if (!mine.length) {
     res.status(403).json({ error: "Определить через ИИ может только тот, кто добавил раздачу." });
     return null;
