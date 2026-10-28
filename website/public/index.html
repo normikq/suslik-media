@@ -1799,7 +1799,7 @@ function openVersionPicker(versions){
   const back=document.createElement("div"); back.className="modal-backdrop"; back.setAttribute("role","dialog"); back.setAttribute("aria-modal","true");
   const box=document.createElement("div"); box.className="library-modal";
   const h=document.createElement("h2"); h.textContent="Какую версию включить?";
-  const sub=document.createElement("p"); sub.className="file-meta"; sub.textContent=escapeTitle(versions[0].name||"")+" · "+versionsWord(versions.length);
+  const sub=document.createElement("p"); sub.className="file-meta"; sub.textContent=displayTitle(versions[0])+" · "+versionsWord(versions.length);
   const list=document.createElement("div"); list.style.cssText="display:grid;gap:8px;margin:14px 0;max-height:60vh;overflow:auto";
   const close=()=>{ back.remove(); document.removeEventListener("keydown",onKey); };
   const onKey=e=>{ if(e.key==="Escape") close(); };
@@ -2453,7 +2453,8 @@ function renderLibrary(animate=true) {
     if(Number(magnet.statusCode)===4){ const ready=document.createElement("div"); ready.className="tile-progress-label"; ready.textContent="Готово"; art.append(ready); }
     else if(total>0 && Number(magnet.statusCode)<4){ const pct=Math.max(0,Math.min(100,done/total*100)); const track=document.createElement("div"); track.className="tile-progress-track"; const fill=document.createElement("div"); fill.className="tile-progress-fill"; fill.style.width=pct+"%"; track.append(fill); const label=document.createElement("div"); label.className="tile-progress-label"; label.textContent=Math.floor(pct)+"% · "+(magnet.status||"Обработка"); art.append(track,label); }
     const info=document.createElement("div"); info.className="tile-info";
-    const name=document.createElement("strong"); name.textContent=magnet.name;
+    // Как на ПК и в Android: название без тегов раздачи (принятое от ИИ, если есть); полное имя — во всплывающей подсказке
+    const name=document.createElement("strong"); name.textContent=displayTitle(magnet); name.title=magnet.name||"";
     // «год • тип · размер» — как под плиткой в Android и в подробностях плитки на ПК
     const yearM=/(?:^|[^\d])((?:19|20)\d{2})(?!\d)/.exec(magnet.name||"");
     const sub=document.createElement("div"); sub.className="file-meta tile-sub";

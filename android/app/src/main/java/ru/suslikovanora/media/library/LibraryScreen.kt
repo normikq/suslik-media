@@ -1092,7 +1092,8 @@ private fun TileDetails(
     val m = item.m
     val playable = item.playable
     Column(Modifier.padding(start = 2.dp, end = 2.dp, top = 8.dp)) {
-        Text(m.name, color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp, lineHeight = 18.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        // As on the PC: the plain title (the AI's one once accepted), not the release name with its tags
+        Text(item.baseTitle, color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp, lineHeight = 18.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Text("${itemYear(item)} • ${itemTypeLabel(item)} · ${formatBytes(m.size)}", color = Sm.muted, fontFamily = Onest, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
         if (m.ready && media != null) {
             val specs = remember(item, media) { itemSpecs(item, media) }
