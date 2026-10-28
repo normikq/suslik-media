@@ -171,6 +171,12 @@ class AiTitleSearchGroupingTest {
         canRemove = true, aiTitle = ai
     )
 
+    private fun magnet(name: String, vararg files: Pair<String, Long>) = Magnet(
+        id = 1, name = name, status = "Ready", statusCode = 4, size = files.sumOf { it.second }, downloaded = 0,
+        files = files.mapIndexed { i, (p, s) -> MFile(i, p.substringAfterLast('/'), p, false, s, "https://x/$i") },
+        canRemove = true
+    )
+
     private val accepted = AiTitle("Дюна", null, "m", 1L, "accepted", kind = "movie", original = "Dune", year = 2021)
 
     @Test
