@@ -113,6 +113,20 @@ fun parseLibrary(json: JSONObject): List<Magnet> {
     return out
 }
 
+/** A stretch of a video, [startMs] to [endMs]. */
+data class TimeRange(val startMs: Long, val endMs: Long) {
+    operator fun contains(t: Long) = t in startMs until endMs
+    val lengthMs get() = endMs - startMs
+}
+
+/** Where the opening and the end credits of a video are (core/MarkersDetector.kt: chapters of the file, then the server). */
+data class MediaMarkers(
+    val intro: TimeRange? = null,
+    val credits: TimeRange? = null // to the end of the video
+) {
+    val isEmpty get() = intro == null && credits == null
+}
+
 // ---- the same rules as the website (buildPlaylist / parseEpisode / escapeTitle) ----------------
 
 private val VIDEO_EXT = Regex("""\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso)$""", RegexOption.IGNORE_CASE)

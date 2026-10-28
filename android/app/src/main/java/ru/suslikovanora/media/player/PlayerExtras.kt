@@ -17,4 +17,9 @@ object PlayerExtras {
     const val CUSTOM_AUDIO = "media_custom_audio"
     /** The playlist is the films of a collection (shared isCollection), not episodes: the panel says «Фильмы». */
     const val COLLECTION = "media_collection"
+    /**
+     * Intro and credits from the server (core.MarkersDetector.serverPath): JSON array, one per [WATCH_KEYS] entry —
+     * `{title, alt, season, episode}` of a series episode, or null.
+     */
+    const val MARKERS = "media_markers"
 }

@@ -23,6 +23,7 @@ const tagsRoutes = require("./routes/tags");
 const tvRoutes = require("./routes/tvstream");
 const customAudioRoutes = require("./routes/custom-audio");
 const aiTitleRoutes = require("./routes/aititle");
+const markersRoutes = require("./routes/markers");
 
 function createApp() {
   const app = express();
@@ -93,6 +94,7 @@ function createApp() {
   app.use(tvRoutes);
   app.use(customAudioRoutes);
   app.use(aiTitleRoutes);
+  app.use(markersRoutes);
 
   // Static files
   app.use(

@@ -394,6 +394,7 @@ class MpvEngine(
             val title = str("track-list/$i/title")
             val lang = str("track-list/$i/lang")
             val selected = str("track-list/$i/selected") == "yes"
+            val forced = str("track-list/$i/forced") == "yes"
             val desc = buildString {
                 if (!title.isNullOrBlank()) append(title)
                 if (!lang.isNullOrBlank()) {
@@ -402,7 +403,7 @@ class MpvEngine(
                 }
                 if (isEmpty()) append("$type #$id")
             }
-            list += EngineTrack(id, desc, selected)
+            list += EngineTrack(id, desc, selected, title, lang, forced)
         }
         return list
     }

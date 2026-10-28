@@ -110,7 +110,9 @@ class PlayerUiState {
     var scaleIndex by mutableIntStateOf(0)
     var picker by mutableStateOf<String?>(null) // "audio", "spu", "more"
     var pickerItems by mutableStateOf<List<TrackChoice>>(emptyList())
-    var nextTitle by mutableStateOf<String?>(null) // «Следующая: …» with its countdown
+    var nextTitle by mutableStateOf<String?>(null) // «Следующая серия: S01E02» / «Следующий фильм: …» with its countdown
+    /** Inside the intro (core.MarkersDetector): the «Пропустить заставку» button bottom right. */
+    var introShown by mutableStateOf(false)
     /** A guest of the shared room: the timeline is a «live» line (the host seeks for everyone). */
     var live by mutableStateOf(false)
     var nextIn by mutableIntStateOf(0)
@@ -145,6 +147,7 @@ class PlayerUiState {
     var onVolume: (Int) -> Unit = {}
     var onNextNow: () -> Unit = {}
     var onNextCancel: () -> Unit = {}
+    var onSkipIntro: () -> Unit = {}
     /** Any touch on the panel: the hide timer starts again. */
     var onPoke: () -> Unit = {}
 }
@@ -166,6 +169,14 @@ fun PlayerOverlay(s: PlayerUiState) {
         ) { TopBar(s, pad) }
 
         Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
+            AnimatedVisibility(
+                visible = s.introShown && s.nextTitle == null,
+                enter = fadeIn(tween(220)) + slideInVertically(tween(260, easing = Sm.ease)) { it / 2 },
+                exit = fadeOut(tween(180)),
+                modifier = Modifier.align(Alignment.End)
+            ) {
+                SkipIntroButton(s, Modifier.padding(end = 16.dp + with(d) { ins[2].toDp() }, bottom = 10.dp + if (s.shown) 0.dp else with(d) { ins[3].toDp() }))
+            }
             AnimatedVisibility(
                 visible = s.nextTitle != null,
                 enter = fadeIn(tween(220)) + slideInVertically(tween(260, easing = Sm.ease)) { it / 2 },
@@ -401,6 +412,19 @@ private fun DelayRow(label: String, ms: Long, onChange: (Long) -> Unit) {
     }
 }
 
+/** «Пропустить заставку» over the intro (the Windows player's pill); the remote's OK presses it. */
+@Composable
+private fun SkipIntroButton(s: PlayerUiState, modifier: Modifier) {
+    Box(
+        modifier.clip(RoundedCornerShape(50)).background(Color(0xE6161B26))
+            .border(1.dp, Color(0x4DFFFFFF), RoundedCornerShape(50))
+            .clickable(role = Role.Button) { s.onSkipIntro() }
+            .padding(horizontal = 18.dp, vertical = 10.dp)
+    ) {
+        Text(tr("player.propustit_zastavku"), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1)
+    }
+}
+
 /** «Следующая: …  через N с  ▶  ✕» — the Windows player's capsule. */
 @Composable
 private fun NextCapsule(s: PlayerUiState, modifier: Modifier) {
@@ -411,7 +435,7 @@ private fun NextCapsule(s: PlayerUiState, modifier: Modifier) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Text(tr("overlay.sleduyuschaya_title", "title" to (s.nextTitle ?: "")), color = Sm.text, fontFamily = Onest, fontSize = 13.sp,
+        Text(s.nextTitle ?: "", color = Sm.text, fontFamily = Onest, fontSize = 13.sp,
             maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
         Box(
             Modifier.clip(RoundedCornerShape(6.dp)).background(Color.White.copy(alpha = 0.16f))

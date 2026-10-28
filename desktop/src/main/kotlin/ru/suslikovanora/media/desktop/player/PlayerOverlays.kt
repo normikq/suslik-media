@@ -188,6 +188,8 @@ fun PlayerBottomBar(
     onSeekTo: (Long) -> Unit,
     onPlayEntry: (Int) -> Unit,
     onSkipIntro: () -> Unit,
+    /** «Следующая серия: S01E02» / «Следующий фильм: …» for the countdown card. */
+    nextTitle: String = "",
     onClosePicker: () -> Unit,
     onOpenPicker: (String) -> Unit,
     onSelectTrack: (String, Int, String) -> Unit,
@@ -659,10 +661,11 @@ fun PlayerBottomBar(
                 }
             }
 
+            // The next episode / film: on its end credits (core.MarkersDetector) or at the end of the file, bottom right
             if (nextIn >= 0 && index < queue.size - 1) {
                 Box(
                     modifier = Modifier
-                        .align(Alignment.CenterHorizontally)
+                        .align(Alignment.End)
                         .padding(bottom = 10.dp)
                         .clip(RoundedCornerShape(50))
                         .background(Color(0xCC161B26))
@@ -674,7 +677,7 @@ fun PlayerBottomBar(
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Text(
-                            tr("player.sleduyuschaya_p", "p" to queue[index + 1].title),
+                            nextTitle.ifBlank { tr("player.sleduyuschaya_p", "p" to queue[index + 1].title) },
                             color = Sm.text,
                             fontFamily = Onest,
                             fontSize = 13.sp,

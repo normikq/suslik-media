@@ -182,7 +182,12 @@ class VlcEngine(private val context: Context) : PlayerEngine {
     override fun seekToFraction(fraction: Float) { player?.position = fraction }
 
     // ---- tracks ------------------------------------------------------------------------------
-    private fun Array<out MediaPlayer.TrackDescription>?.toTracks() = this?.map { EngineTrack(it.id, it.name.orEmpty()) }.orEmpty()
+    // «Дубляж - [Russian]»: the name before the brackets is the track's own title, in them — its language
+    private fun Array<out MediaPlayer.TrackDescription>?.toTracks() = this?.map { t ->
+        val name = t.name.orEmpty()
+        val lang = Regex("""\[([^\]]+)]\s*$""").find(name)?.groupValues?.get(1)
+        EngineTrack(t.id, name, name.substringBefore(" - [").trim().ifEmpty { null }, lang)
+    }.orEmpty()
 
     override fun audioTracks(): List<EngineTrack> = player?.audioTracks.toTracks()
     override val audioTrack: Int get() = player?.audioTrack ?: -1
@@ -190,6 +195,8 @@ class VlcEngine(private val context: Context) : PlayerEngine {
     override fun subtitleTracks(): List<EngineTrack> = player?.spuTracks.toTracks()
     override val subtitleTrack: Int get() = player?.spuTrack ?: -1
     override fun setSubtitleTrack(id: Int) { player?.setSpuTrack(id) }
+    override fun chapters(): List<ru.suslikovanora.media.core.Chapter> =
+        player?.getChapters(-1)?.mapIndexed { i, c -> ru.suslikovanora.media.core.Chapter(c.timeOffset, c.name?.takeIf { it.isNotBlank() } ?: "${i + 1}") }.orEmpty()
     override fun addAudioFile(url: String) {
         runCatching { player?.addSlave(IMedia.Slave.Type.Audio, Uri.parse(url), true) }
     }

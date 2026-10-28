@@ -195,6 +195,15 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
         return Presence(base, if (s.season == 0) tr("discord.specvypusk", "e" to e.episode) else tr("discord.sezon_seriya", "s" to s.season, "e" to e.episode))
     }
 
+    // Intro and credits from the open databases (server /api/markers): series episodes only, by the original title
+    // (the AI's once accepted, otherwise the release's) and the library's one
+    fun markerQueryOf(f: MFile): MarkerQuery? {
+        if (isCollection) return null
+        val (s, e) = seasons.firstNotNullOfOrNull { s -> s.items.find { it.file.path == f.path }?.let { s to it } } ?: return null
+        val original = magnet.aiTitle?.takeIf { it.accepted }?.original?.takeIf { it.isNotBlank() } ?: ru.suslikovanora.media.core.cleanTitle(magnet.name)
+        return MarkerQuery(original, item?.let(lib::titleOf), s.season, e.episode)
+    }
+
     // The player's queue: the whole season (or collection) with links, so «previous» works from the episode it started
     // with (it used to be this episode and the following ones only: back from the first one just went to 00:00).
     val followingFiles: List<MFile> = when {
@@ -431,7 +440,7 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                         }
                         onPlay(PlayRequest(url, currentTitle, playlist, subs, keys, audio, if (playlist != null) resolve else null, fromStart,
                             posterQueries = item?.posterQueries.orEmpty(), startIndex = if (playlist != null) queueStart else 0,
-                            presence = if (playlist != null) list.map(::presenceOf) else listOf(presenceOf(currentFile))))
+                            presence = if (playlist != null) list.map(::presenceOf) else listOf(presenceOf(currentFile)), collection = true))
                     },
                 )
 
@@ -459,7 +468,8 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                         }
                         onPlay(PlayRequest(url, currentTitle, playlist, subs, keys, audio, if (playlist != null) resolve else null, fromStart,
                             posterQueries = item?.posterQueries.orEmpty(), startIndex = if (playlist != null) queueStart else 0,
-                            presence = if (playlist != null) list.map(::presenceOf) else listOf(presenceOf(currentFile))))
+                            presence = if (playlist != null) list.map(::presenceOf) else listOf(presenceOf(currentFile)),
+                            markerQueries = if (playlist != null) list.map(::markerQueryOf) else listOf(markerQueryOf(currentFile))))
                     },
                 )
 

@@ -119,6 +119,18 @@ class PlayerActivity : ComponentActivity() {
     private var lastTime = 0L
     private val networkLost: Boolean get() = networkMonitor.isNetworkLost
 
+    // Заставка и титры открытого файла (core.MarkersDetector): главы файла (VLC), затем сервер (/api/markers, AniSkip)
+    private var markerQueries: org.json.JSONArray? = null // по одному на watch key: {title, alt, season, episode}
+    private var fileChapters: List<Chapter> = emptyList()
+    private var chaptersFor = ""
+    private var serverMarkers: MediaMarkers? = null
+    private var markersAskedFor = ""
+    private var markers = MediaMarkers()
+    private var markersLength = 0L
+    private var wasInCredits = false
+    private var introAutoDone: TimeRange? = null
+    private var introSeenAt = 0L
+
     private val networkMonitor by lazy {
         PlayerNetworkMonitor(this, object : PlayerNetworkMonitor.Callback {
             override fun hasPlayer(): Boolean = player != null
@@ -282,6 +294,7 @@ class PlayerActivity : ComponentActivity() {
             applyDelays(owner)
             updatePipParams(playing = true)
             trackSelector.onPlaying(owner, currentUrl, currentTitle)
+            loadMarkers(owner)
             updateSession()
             updateProgress(force = true)
         }
@@ -313,7 +326,7 @@ class PlayerActivity : ComponentActivity() {
                 supervisor.ended()
                 persistPosition(length, length) // watched to the end
                 // A guest of the room does not go on by itself: the host's next episode comes through the room
-                if (partyGuest() || !offerNextEpisode()) {
+                if (partyGuest() || !playlistQueue.offerNextEpisode(PlaybackSettings.nextCountdown(this@PlayerActivity))) {
                     ended = true
                     playWhenReady = false
                     playbackPosition = 0L
@@ -409,6 +422,106 @@ class PlayerActivity : ComponentActivity() {
             }
         }
         updateProgress(force = false)
+        checkMarkers()
+    }
+
+    private fun resetMarkers() {
+        fileChapters = emptyList(); chaptersFor = ""; serverMarkers = null; markersAskedFor = ""
+        markers = MediaMarkers(); markersLength = 0L; wasInCredits = false; introAutoDone = null; introSeenAt = 0L
+        ui.introShown = false
+    }
+
+    private fun recomputeMarkers(length: Long) {
+        markersLength = length
+        markers = MarkersDetector.merge(MarkersDetector.fromChapters(fileChapters, length), serverMarkers, length)
+    }
+
+    /** This file's place in the library's list ([PlayerExtras.MARKERS] goes with the watch keys). */
+    private fun markerQueryIndex(offset: Int = 0): Int {
+        val keys = watchProgress.keys
+        val i = keys.indexOf(watchProgress.currentWatchKey())
+        return if (i >= 0) i + offset else if (keys.size <= 1 && offset == 0) 0 else -1
+    }
+
+    /** The chapters a moment after the film starts (VLC reads them with the file), then the server if they lack a mark. */
+    private fun loadMarkers(owner: PlayerEngine) {
+        if (chaptersFor == currentUrl) return
+        chaptersFor = currentUrl
+        val url = currentUrl; val generation = owner.generation
+        handler.postDelayed({
+            if (url != currentUrl || player?.generation != generation) return@postDelayed
+            fileChapters = runCatching { owner.chapters() }.getOrDefault(emptyList())
+            if (fileChapters.isNotEmpty()) AppLog.write("[markers] ${fileChapters.size} chapters: " + fileChapters.take(12).joinToString { "${it.timeMs / 1000}s ${it.title}" })
+            recomputeMarkers(lengthOf(owner))
+            askServerMarkers()
+        }, 1_200L)
+    }
+
+    private fun askServerMarkers() {
+        val len = lengthOf(player)
+        if (len <= 0L || markersAskedFor == currentUrl) return
+        val file = MarkersDetector.fromChapters(fileChapters, len)
+        if (file.intro != null && file.credits != null) return
+        val q = markerQueries?.optJSONObject(markerQueryIndex()) ?: return
+        val path = MarkersDetector.serverPath(q.optString("title").ifBlank { null }, q.optString("alt").ifBlank { null },
+            q.optInt("season", 1), q.optInt("episode", 0).takeIf { it > 0 }, len) ?: return
+        markersAskedFor = currentUrl
+        val url = currentUrl
+        scope.launch {
+            val found = kotlinx.coroutines.withTimeoutOrNull(10_000L) {
+                runCatching { MarkersDetector.parseServer(ru.suslikovanora.media.net.Api.get(path)) }.getOrNull()
+            }
+            if (url != currentUrl || found == null || found.isEmpty) return@launch
+            AppLog.write("[markers] server: intro ${found.intro?.let { "${it.startMs / 1000}-${it.endMs / 1000}s" } ?: "-"}, credits ${found.credits?.let { "${it.startMs / 1000}s" } ?: "-"}")
+            serverMarkers = found
+            recomputeMarkers(lengthOf(player))
+        }
+    }
+
+    /**
+     * Each tick: the «Пропустить заставку» button inside the intro (auto-skip 1.5 s into it, once per file), and on
+     * entering the end credits the card of the next episode / film with its countdown — the file goes on playing.
+     */
+    private fun checkMarkers() {
+        val p = player ?: return
+        if (sideJob?.isActive == true) return
+        val len = lengthOf(p)
+        if (len > 0L && len != markersLength) recomputeMarkers(len)
+        if (markers.isEmpty) { if (ui.introShown) ui.introShown = false; return }
+        val t = perceivedPosition()
+        val intro = MarkersDetector.introAt(markers, t)
+        val guest = partyGuest()
+        ui.introShown = intro != null && !guest && !locked
+        val now = android.os.SystemClock.uptimeMillis()
+        if (intro != null && !guest && !userPaused && introAutoDone != intro && PlaybackSettings.autoSkipIntro(this)) {
+            if (introSeenAt == 0L) introSeenAt = now
+            else if (now - introSeenAt >= MarkersDetector.AUTO_SKIP_DELAY_MS) { introAutoDone = intro; skipIntro(auto = true) }
+        } else introSeenAt = 0L
+        val at = MarkersDetector.nextOfferAt(markers, len)
+        val inCredits = at != null && t >= at && t < len && !ended
+        if (inCredits && !wasInCredits && !guest && playlistQueue.hasNext && !playlistQueue.nextOffered && PlaybackSettings.offerNextOnCredits(this)) {
+            AppLog.write("[markers] credits at ${t / 1000}s: next in ${PlaybackSettings.nextCountdown(this)}s")
+            playlistQueue.offerNextEpisode(PlaybackSettings.nextCountdown(this), onCredits = true)
+        }
+        wasInCredits = inCredits
+    }
+
+    private fun skipIntro(auto: Boolean = false) {
+        val r = MarkersDetector.introAt(markers, perceivedPosition()) ?: return
+        if (guestBlocks("seek")) return
+        AppLog.write("skip intro ${r.startMs / 1000}-${r.endMs / 1000}s${if (auto) " (auto)" else ""}")
+        ui.introShown = false
+        seekTo(r.endMs)
+        if (auto) showSeekLabel(tr("player.zastavka_propuschena"))
+    }
+
+    /** «Следующая серия: S01E02» / «Следующий фильм: …» / «Следующая: <файл>» for the card. */
+    private fun nextLabel(entryTitle: String): String {
+        if (panel.collection) return tr("player.sleduyuschiy_film_p", "p" to cleanCollectionFilmTitle(entryTitle).ifBlank { entryTitle })
+        val q = markerQueries?.optJSONObject(markerQueryIndex(1))
+        val ep = q?.optInt("episode", 0) ?: 0
+        if (ep > 0) return tr("player.sleduyuschaya_seriya_p", "p" to "S%02dE%02d".format(q!!.optInt("season", 1), ep))
+        return tr("overlay.sleduyuschaya_title", "title" to entryTitle)
     }
 
     private val audioSession by lazy {
@@ -576,11 +689,12 @@ class PlayerActivity : ComponentActivity() {
         PlayerPlaylistQueue(handler, object : PlayerPlaylistQueue.Callback {
             override fun isActivityAlive(): Boolean = alive && !isDestroyed && !isFinishing
             override fun getCurrentUrl(): String = currentUrl
-            override fun onSaveCurrentPosition() {
-                player?.let { persistPosition(timeOf(it).coerceAtLeast(0L), lengthOf(it)) }
+            override fun onSaveCurrentPosition(finished: Boolean) {
+                player?.let { val len = lengthOf(it); if (finished && len > 0L) persistPosition(len, len) else persistPosition(timeOf(it).coerceAtLeast(0L), len) }
             }
             override fun onPlayEntry(entry: PlayerPlaylistQueue.Entry, index: Int) {
                 currentUrl = entry.url
+                resetMarkers()
                 lastKnownLength = 0L
                 lastKnownLengthUrl = ""
                 currentTitle = entry.title
@@ -617,15 +731,17 @@ class PlayerActivity : ComponentActivity() {
                 panel.episodes = episodes
                 panel.index = index
             }
-            override fun onNextEpisodeOffered() {
+            override fun onNextEpisodeOffered(onCredits: Boolean) {
+                if (onCredits) return // the credits go on playing under the card
                 ended = true
                 playWhenReady = false
                 root.keepScreenOn = true
                 setPlayIcon(false)
                 showControlsTemporarily()
             }
+            override fun isPaused(): Boolean = userPaused
             override fun onNextCountdown(title: String, seconds: Int) {
-                ui.nextTitle = title
+                ui.nextTitle = nextLabel(title)
                 ui.nextIn = seconds
             }
             override fun onNextCardDismissed() {
@@ -685,7 +801,7 @@ class PlayerActivity : ComponentActivity() {
     private fun userPrevious() { if (!guestBlocks("episode")) playlistQueue.playPrevious() }
 
     private fun hideNextCard() = playlistQueue.hideNextCard()
-    private fun offerNextEpisode(): Boolean = playlistQueue.offerNextEpisode()
+    private fun offerNextEpisode(): Boolean = playlistQueue.offerNextEpisode(PlaybackSettings.nextCountdown(this))
     private fun fetchPlaylist(url: String) = playlistQueue.fetchPlaylist(url)
 
     private fun positionKey(): String? = watchProgress.positionKey()
@@ -791,7 +907,9 @@ class PlayerActivity : ComponentActivity() {
         ui.onSubDelay = { ms -> setDelays(delays.copy(subtitleMs = PlaybackTweaks.clamp(ms))) }
         ui.onAudioDelay = { ms -> setDelays(delays.copy(audioMs = PlaybackTweaks.clamp(ms))) }
         ui.onVolume = { v -> setSystemVolume(v); ui.volume = v; controlsOverlay.keepShown() }
-        ui.onNextNow = { playlistQueue.hideNextCard(); userNext() }
+        // From the card: the current one counts as watched (it may be on its end credits)
+        ui.onNextNow = { playlistQueue.hideNextCard(); if (!guestBlocks("episode")) playlistQueue.playNext(finished = true) }
+        ui.onSkipIntro = { skipIntro(); showControlsTemporarily() }
         ui.onNextCancel = { playlistQueue.hideNextCard(); showControlsTemporarily() }
         ui.onPoke = { controlsOverlay.keepShown() }
         overlay = androidx.compose.ui.platform.ComposeView(this).apply {
@@ -834,6 +952,7 @@ class PlayerActivity : ComponentActivity() {
                 when {
                     locked -> showUnlockBadge()
                     ui.picker != null -> openPicker(null)
+                    ui.nextTitle != null -> { playlistQueue.hideNextCard(); showControlsTemporarily() } // «Отмена» карточки
                     tv && controlsOverlay.isVisible -> setControlsVisible(false) // TV: Back first hides the panel
                     else -> leave()
                 }
@@ -1438,6 +1557,8 @@ class PlayerActivity : ComponentActivity() {
         trackSelector.readSideExtras(i)
         watchProgress.readIntent(i)
         panel.collection = i?.getBooleanExtra(PlayerExtras.COLLECTION, false) == true
+        markerQueries = i?.getStringExtra(PlayerExtras.MARKERS)?.let { runCatching { org.json.JSONArray(it) }.getOrNull() }
+        resetMarkers()
     }
 
     // ---- layout: upright phone = film on top + info below; sideways (or PiP) = the whole screen ----------------

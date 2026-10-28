@@ -275,7 +275,7 @@ class MainActivity : ComponentActivity() {
                     initial = t,
                     store = store,
                     onDismiss = { playTarget = null },
-                    onPlay = { r -> playTarget = null; handlePlay(r.url, r.title, r.playlist, r.subUrls, r.watchKeys, r.audioUrls, r.fromStart, r.episodeSides, r.customAudio, r.watchKey, r.collection) }
+                    onPlay = { r -> playTarget = null; handlePlay(r.url, r.title, r.playlist, r.subUrls, r.watchKeys, r.audioUrls, r.fromStart, r.episodeSides, r.customAudio, r.watchKey, r.collection, r.markers) }
                 )
             }
         }
@@ -299,7 +299,7 @@ class MainActivity : ComponentActivity() {
         url: String, title: String?, playlist: String? = null,
         subUrls: List<String> = emptyList(), watchKeys: List<String> = emptyList(), audioUrls: List<String> = emptyList(),
         fromStart: Boolean = false, episodeSides: String? = null, customAudio: String? = null, watchKey: String? = null,
-        collection: Boolean = false
+        collection: Boolean = false, markers: String? = null
     ) {
         val current = watchKey ?: watchKeys.firstOrNull()
         val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return
@@ -325,6 +325,7 @@ class MainActivity : ComponentActivity() {
             episodeSides?.let { putExtra(PlayerActivity.EXTRA_EPISODE_SIDES, it) }
             putExtra(ru.suslikovanora.media.player.PlayerExtras.CUSTOM_AUDIO, customAudio)
             putExtra(ru.suslikovanora.media.player.PlayerExtras.COLLECTION, collection)
+            putExtra(ru.suslikovanora.media.player.PlayerExtras.MARKERS, markers)
         })
     }
 
