@@ -13,14 +13,29 @@ const posterInflight = new Map();
 
 const IMG_FILE = /^[A-Za-z0-9_-]+\.(?:jpg|png|webp)$/;
 
+// Название по-русски из переводов TMDB (сначала ru-RU, потом другие ru); у русского фильма без перевода — оригинал.
+// Перевода нет — пустая строка: остаётся название из поиска (английское).
+function russianTitle(details) {
+  const list = Array.isArray(details?.translations?.translations) ? details.translations.translations : [];
+  const text = v => (typeof v === "string" ? v.trim() : "");
+  const ru = list.filter(t => t && t.iso_639_1 === "ru").sort((a, b) => (b.iso_3166_1 === "RU") - (a.iso_3166_1 === "RU"));
+  for (const t of ru) {
+    const name = text(t.data?.title) || text(t.data?.name);
+    if (name) return name.slice(0, 200);
+  }
+  return details?.original_language === "ru" ? text(details.original_title || details.original_name).slice(0, 200) : "";
+}
+
 // Для баннера: лучший широкий кадр БЕЗ текста на нём (iso_639_1 = null), логотип названия (русский, иначе английский),
-// описание по-русски. Любая ошибка — баннер остаётся с тем, что нашёл поиск.
+// название и описание по-русски. Любая ошибка — баннер остаётся с тем, что нашёл поиск.
 async function addBannerExtras(body, match) {
   const base = `https://api.themoviedb.org/3/${match.media_type}/${match.id}`;
   const [images, details] = await Promise.all([
     axios.get(`${base}/images`, { params: { api_key: config.TMDB_API_KEY, include_image_language: "ru,en,null" }, timeout: 5000 }).then(r => r.data).catch(() => null),
-    axios.get(base, { params: { api_key: config.TMDB_API_KEY, language: "ru-RU" }, timeout: 5000 }).then(r => r.data).catch(() => null)
+    axios.get(base, { params: { api_key: config.TMDB_API_KEY, language: "ru-RU", append_to_response: "translations" }, timeout: 5000 }).then(r => r.data).catch(() => null)
   ]);
+  const ruTitle = russianTitle(details);
+  if (ruTitle) body.title = ruTitle;
   const name = f => (f && f.file_path ? String(f.file_path).replace(/^\//, "") : "");
   const score = f => (Number(f.vote_average) || 0) * 10 + Math.min(Number(f.vote_count) || 0, 20) / 20;
   const wide = (images?.backdrops || []).filter(f => !f.iso_639_1 && f.width >= 1280 && IMG_FILE.test(name(f))).sort((x, y) => score(y) - score(x));
