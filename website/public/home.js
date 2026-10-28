@@ -91,8 +91,7 @@
     return { raw: raw, film: film, year: ym ? ym[1] : null };
   }
 
-  // Название самой франшизы: без «Трилогия», «8 фильмов» и части после «:» («Гарри Поттер»); от принятого названия ИИ
-  // Названия сборника («Гарри Поттер», «Harry Potter») без «Трилогия», «8 фильмов» и части после «:»
+  // Названия сборника («Гарри Поттер», «Harry Potter») без «Трилогия», «8 фильмов» и части после «:»; от принятого названия ИИ
   function collectionBases(magnet) {
     return displayTitle(magnet).replace(COLLECTION_WORDS, " ").split("/").filter(function (part) { return part.trim(); }).map(function (part) {
       return escapeTitle(part).split(":")[0].replace(FILM_COUNT_NOISE, "").replace(/\s+/g, " ").trim();
