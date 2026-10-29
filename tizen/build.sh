@@ -6,13 +6,15 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-HOST=$(printf '%s' "${SITE_URL:-}" | sed -E 's#^https?://##; s#/.*$##')
+# Домен и, если сервер не в корне, путь: https://домен или https://домен/путь
+URL=$(printf '%s' "${SITE_URL:-}" | sed -E 's#[?#].*$##; s#^https?://##; s#/+$##')
+HOST=${URL%%/*}
 if [ -z "$HOST" ]; then echo "Не задан SITE_URL (адрес сайта)" >&2; exit 1; fi
 VERSION=$(sed -n 's/.*<widget[^>]* version="\([^"]*\)".*/\1/p' config.xml)
 
 rm -rf build && mkdir -p build/app
 cp -r config.xml index.html icon.png css js locales build/app/
-printf "window.SM = window.SM || {};\nwindow.SM.SITE_HOST = '%s';\n" "$HOST" > build/app/js/site.js
+printf "window.SM = window.SM || {};\nwindow.SM.SITE_URL = 'https://%s';\nwindow.SM.SITE_HOST = '%s';\n" "$URL" "$HOST" > build/app/js/site.js
 echo "Папка приложения: tizen/build/app (версия $VERSION)"
 
 if [ -n "${TIZEN_PROFILE:-}" ]; then

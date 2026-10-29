@@ -38,7 +38,13 @@ website/
 │   │   ├── search.js       /api/search, /api/search/add
 │   │   ├── mirror.js       /api/file/mirror-url, /api/file/proxy, /api/playlist
 │   │   ├── updates.js      /api/app/* (обновления, каналы beta/stable, changelog, отчёты)
-│   │   └── media.js        /api/media-metadata, /api/poster, /api/poster/img
+│   │   ├── media.js        /api/media-metadata, /api/poster, /api/poster/img
+│   │   ├── sync.js         /api/sync — прогресс и дорожки по аккаунту Discord
+│   │   ├── tags.js         /api/tags — метки Dolby Vision / HDR / DTS
+│   │   ├── tvstream.js     /api/file/tv-info, /api/file/tv — поток для Samsung TV (ffmpeg)
+│   │   ├── custom-audio.js /api/custom-audio — внешние озвучки (docs/CUSTOM-AUDIO-API.md)
+│   │   ├── aititle.js      /api/library/…/ai-title — «Определить через ИИ» (docs/AI-TITLE.md)
+│   │   └── markers.js      /api/markers — заставки и титры (docs/MARKERS.md)
 │   ├── services/           Бизнес-логика подсистем
 │   │   ├── alldebrid.js    Клиент AllDebrid API, деревья файлов, кэш структуры
 │   │   ├── discord.js      OAuth2 Discord (обмен кода, профиль, отзыв токена), проверка участника и ролей ботом
@@ -52,9 +58,16 @@ website/
 │   │   ├── updates.js      Версионирование, кэш changelog, чистка старых сборок, отчёты
 │   │   ├── metadata.js     ffprobe-анализ видеопотоков (битрейт, кодек, FPS)
 │   │   ├── posters.js      Поиск постеров TMDB и локальное кэширование картинок
+│   │   ├── mediatags.js    Метки по ffprobe (media-tags.json)
+│   │   ├── sync.js         Прогресс по аккаунту (sync.json), чистка через SYNC_IDLE_DAYS
+│   │   ├── cleanup.js      Автоочистка давно не открытых раздач (AUTO_CLEAN=false выключает)
+│   │   ├── tvstream.js     ffprobe/ffmpeg для ТВ: что ТВ не сыграет, перепаковка звука
+│   │   ├── custom-audio.js, audio-duration.js  Внешние озвучки
+│   │   ├── aititle.js      Gemini: название, тип, сезон (ai-titles.json)
+│   │   ├── markers.js      TheIntroDB / AniSkip (markers-cache.json)
 │   │   └── precompressed.js Предварительное сжатие index.html/redesign.css (gzip/br) и CSP
 │   └── utils/              Вспомогательные модули
-│       ├── helpers.js      clientIp, readCookie, safeHttpsUrl, cleanFileName, contentDisposition
+│       ├── helpers.js      clientIp, readCookie, safeHttpsUrl, cleanFileName, contentDisposition, basePath/publicBase (путь сервера)
 │       └── json-writer.js  Атомарная отложенная запись JSON с flush по сигналам SIGINT/SIGTERM
 ├── search.js               Мета-поиск торрентов: Prowlarr, Jackett, TPB (apibay), nyaa, yts
 ├── search-ru.js            Парсеры русскоязычных трекеров (rutor, rutracker, kinozal, NNM-Club)
@@ -65,21 +78,18 @@ website/
 │   ├── index.html          Веб-клиент (HTML/CSS/JS в одном файле)
 │   ├── redesign.css        Стили оформления «Проекторная»
 │   ├── redesign.js         Логика интерфейса и анимации сайта
+│   ├── home.js             Боковая панель, баннер «Продолжить просмотр», метки на постерах
+│   ├── searchcore.js       Разбор и фильтр раздач (копия tizen/js/searchcore.js — правим обе)
 │   ├── i18n.js             Клиентский модуль локализации (window.tr, автоподстановка data-i18n)
 │   ├── locales/            Файлы локализации веб-клиента (ru.json)
 │   └── fonts/              Шрифты Onest и Unbounded
 ├── scripts/
 │   └── check.js            Комплексная проверка синтаксиса всех модулей и страниц (npm run check)
-├── test/
-│   ├── classify.test.js    Модульные тесты классификатора раздач
-│   ├── poster-query.test.js Модульные тесты очистки названий для постеров
-│   ├── modules.test.js     Модульные тесты хелперов, версий, зеркала и инициализации
-│   ├── i18n.test.js        Тесты локализации и проверки чистоты пользовательских текстов
-│   └── discord.test.js     Тесты входа через Discord, устройств и комнат
+├── test/                   Модульные тесты (node --test): классификатор, постеры, вход и комнаты, синхронизация, ИИ,
+│                           заставки, озвучки, поток ТВ, локализация, путь сервера (base-path.test.js) и др.
 ├── NGINX-MIRROR.md         Конфигурация nginx для X-Accel-Redirect зеркала
 ├── TORAPI.md               Документация по работе с API трекеров и Cloudflare bypass
 ├── UPDATES.md              Схема раздачи обновлений и переключения beta/stable каналов
-├── RELEASE-CHECKLIST-RU.md Чеклист перед выпуском изменений сервера
 └── .env.example            Шаблон конфигурации переменных окружения
 ```
 
@@ -87,7 +97,9 @@ website/
 
 ## 3. Маршруты API (`src/routes/`)
 
-Все API-эндпоинты начинаются с префикса `/api/`.
+Все API-эндпоинты начинаются с `/api/`. Если сервер стоит под путём (`https://домен/путь/`), nginx срезает путь и сообщает
+его заголовком `X-Forwarded-Prefix`; адреса, которые сервер отдаёт клиентам (зеркало, плейлисты, озвучки, поток ТВ, Discord),
+собираются через `publicBase(req)` с этим путём. Подробно: `docs/MIGRATION.md`.
 
 ### 3.1. Аутентификация и сессии
 Вход двумя способами: через Discord (основной) и по общему паролю (запасной, выключается `PASSWORD_AUTH_ENABLED=false`).
@@ -105,7 +117,8 @@ website/
   `discord_client_id` (публичный ID приложения Discord — для активности в профиле на ПК).
 
 Роль пользователя перепроверяется ботом раз в 15 минут; без роли (`denied`) сессии и токены устройств перестают действовать.
-Роль `admin` сервер проверяет только при удалении раздач (`removeChecker`); `requireAdmin` не подключён — см. `docs/DISCORD.md` §0.
+Роль `admin` сервер проверяет при удалении чужих и готовых раздач (`removeChecker`) и в «Определить через ИИ» для чужих
+раздач и статистики (`requireAdmin` в `routes/aititle.js`).
 
 ### 3.1.1. Совместный просмотр (`/api/rooms`)
 Комнаты живут в памяти сервера (перезапуск — комнаты пропадают). Транспорт — Server-Sent Events, а не WebSocket.
@@ -189,11 +202,11 @@ website/
      [Node.js (Express)]
            │ 1. Проверка HMAC подписи
            │ 2. Резолв ссылки через AllDebrid API
-           │ 3. Ответ: X-Accel-Redirect: /alldebrid_stream/<path>
+           │ 3. Ответ: X-Accel-Redirect: /_alld/<https>/<хост>/<путь>
            ▼
         [nginx]
-           │ Внутренний location /alldebrid_stream/
-           │ proxy_pass к cdn.alldebrid.com (HTTP/1.1)
+           │ Внутренний location /_alld/ (от корня сервера, даже если сайт под путём)
+           │ proxy_pass к файл-хосту AllDebrid (HTTP/1.1)
            ▼
 [AllDebrid CDN сервер]
 ```
@@ -225,15 +238,19 @@ website/
 
 ## 6. Хранение данных на сервере
 
-Сервер не требует внешней базы данных (PostgreSQL/MongoDB) и использует плоские JSON-файлы с атомарной записью в каталоге `DATA_DIR` (по умолчанию `website/data/`):
+Сервер не требует внешней базы данных (PostgreSQL/MongoDB) и использует плоские JSON-файлы с атомарной записью в каталоге `DATA_DIR` (по умолчанию — сама папка `website/`):
 - `sessions.json` — активные пользовательские сессии (30 дней, продлеваются при заходе).
 - `users.json` — пользователи Discord: ID, ник, имя, ссылка на аватар, роль, даты. Токенов Discord нет.
 - `devices.json` — привязанные устройства: **хеш** токена → пользователь, имя устройства, даты.
 - `owners.json` — привязка добавленных раздач к уникальным идентификаторам устройств (`sdev` cookie).
-- `library-cache.json` — кэшированный список раздач AllDebrid для снижения частоты запросов к внешнему API.
+- `library-files-cache.json` — деревья файлов готовых раздач (меньше запросов к AllDebrid).
+- `shelf.json` («Мои фильмы»), `favorites.json`, `sync.json` (прогресс по аккаунту), `ai-titles.json`, `markers-cache.json`,
+  `audio-tracks.json` (внешние озвучки), `media-metadata-cache.json`, `usage.json`.
 - `poster-cache/` — локальные изображения постеров фильмов (и широкие кадры `w1280_…`, логотипы).
 - `media-tags.json` — метки Dolby Vision / HDR / DTS по ffprobe (`services/mediatags.js`), до удаления раздачи.
-- `updates/` — бинарные файлы сборок (`suslik-media-*.apk`, `Suslik Media-*.msi`), а также подкаталог `updates/beta/`.
+- `updates/` (`UPDATES_DIR`) — сборки (`suslik-media-*.apk`, `Suslik Media Setup-*.exe`), подкаталог `updates/beta/`, changelog и отчёты.
+
+При переезде на другой сервер переносится вся папка данных и `.env` (`docs/MIGRATION.md` §5).
 
 ---
 
@@ -253,13 +270,19 @@ website/
 | `PROWLARR_URL` / `KEY` | Интеграция с локальным сервером Prowlarr |
 | `COOKIE_SECURE` | Устанавливать в `true` при работе за HTTPS-прокси |
 | `PASSWORD_AUTH_ENABLED` | `false` — вход только через Discord: новые входы по паролю закрыты, вошедшие по паролю (сессии и привязанные из них устройства) выкидываются при следующем запросе |
-| `SITE_PREFIX` | Путь сайта за nginx, например `/media` (ссылки после входа и для устройств) |
+| `SITE_PREFIX` | Путь страницы сайта относительно базы, обычно `/media` (ссылки после входа и для устройств). Путь самого сервера сюда не пишут — его сообщает nginx (`X-Forwarded-Prefix`) |
 | `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` | Приложение Discord (OAuth2); без них вход через Discord выключен |
-| `DISCORD_BOT_TOKEN` / `DISCORD_GUILD_ID` | Бот и сервер Discord: проверка участника и ролей. **Без них и без белого списка пускают любого** |
+| `DISCORD_BOT_TOKEN` / `DISCORD_GUILD_ID` | Бот и сервер Discord: проверка участника и ролей. **Без них и без белого списка входит только `DISCORD_OWNER_ID`** |
 | `DISCORD_ROLE_ALLOW` / `DISCORD_ROLE_ADMIN` | ID ролей (через запятую): кого пускать / кто админ |
 | `DISCORD_ALLOWED_USERS` / `DISCORD_OWNER_ID` | Белый список ID; владелец — всегда админ, бот для него не нужен |
-| `DISCORD_REDIRECT_URI` | Адрес возврата, если не совпадает с `https://<домен>/api/auth/discord/callback` |
-| `TRUST_PROXY` | Устанавливать в `true` при работе за nginx |
+| `DISCORD_REDIRECT_URI` | Жёсткий адрес возврата. Лучше не задавать: тогда он собирается по запросу (`<домен><путь>/api/auth/discord/callback`), и вход работает на старом и новом адресе сразу |
+| `TRUST_PROXY` | `1` / `true` за nginx: протокол, адрес клиента и `X-Forwarded-Prefix` берутся из заголовков прокси |
+| `MIRROR_ACCEL`, `MIRROR_TTL_HOURS` | Видео через nginx (`NGINX-MIRROR.md`); срок подписи зеркала (12 ч) |
+| `GEMINI_API_KEY`, `AI_TITLE_*` | «Определить через ИИ» (без ключа кнопки нет) |
+| `THEINTRODB_API_KEY` | Необязательный ключ TheIntroDB для заставок |
+| `TV_STREAM`, `TV_STREAM_MAX`, `TV_STREAM_FORMAT`, `FFMPEG_PATH`, `FFPROBE_PATH` | Поток для ТВ и ffprobe |
+| `AUTO_CLEAN`, `LIBRARY_IDLE_DAYS`, `SYNC_IDLE_DAYS` | Автоочистка раздач и записей прогресса |
+| Трекеры | `RUTOR_URL`, `RUTRACKER_*`, `KINOZAL_*`, `NNMCLUB_*`, `JACKETT_*`, `TORAPI_URL` и др. — см. `.env.example`, `TORAPI.md` |
 
 ---
 
@@ -272,7 +295,7 @@ npm install
 # Проверка синтаксиса JS и HTML встроенных скриптов
 npm run check
 
-# Запуск тестов классификатора
+# Все модульные тесты (node --test)
 npm test
 
 # Локальный запуск сервера
@@ -307,3 +330,9 @@ npm start
 - `.env`: `GEMINI_API_KEY` (без него кнопки нет), `AI_TITLE_MODEL`, `AI_TITLE_COOLDOWN_MIN` (15), `AI_TITLE_DAILY_MAX` (200).
 - `public/index.html`: блок ИИ в карточке раздачи, «Принять / Отклонить / Принять все», принятое название — в плитке, поиске и слиянии версий.
 - Подробно: `docs/AI-TITLE.md`.
+
+## 12. Сервер под путём и переезд (30.10, на сервер не выложено)
+- `src/utils/helpers.js`: `basePath(req)` — путь из `X-Forwarded-Prefix` (только при `TRUST_PROXY` и только вида `/слово[/слово]`),
+  `publicBase(req)` = `https://<host><путь>`; ими собираются адреса в `routes/mirror.js`, `custom-audio.js`, `tvstream.js`, `auth.js`.
+- Сайт (`public/index.html`, `home.js`): `API_ROOT` — путь страницы без последнего `media/`, `apiUrl()` дописывает его к `/api/…`.
+- nginx старого адреса без пути: `proxy_set_header X-Forwarded-Prefix "";`. Новый адрес, пример конфигурации и план — `docs/MIGRATION.md`.

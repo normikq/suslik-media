@@ -6,6 +6,8 @@ object PlayerExtras {
     const val TITLE = "media_title"
     const val PLAYLIST = "media_playlist"
     const val FROM_START = "media_from_start"
+    /** Where to open (ms) instead of the remembered place: a room's guest starts where the host is now. */
+    const val START_MS = "media_start_ms"
     const val SUB_URLS = "media_sub_urls"
     const val AUDIO_URLS = "media_audio_urls"
     const val WATCH_KEYS = "media_watch_keys"

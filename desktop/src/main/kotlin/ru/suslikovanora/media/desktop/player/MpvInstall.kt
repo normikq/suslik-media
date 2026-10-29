@@ -29,7 +29,7 @@ object MpvInstall {
     private val pin = Properties().apply {
         runCatching { MpvInstall::class.java.getResourceAsStream("/libmpv.properties")?.use { load(it) } }
     }
-    private val url: String get() = pin.getProperty("path", "").let { if (it.isEmpty() || ru.suslikovanora.media.desktop.Api.HOST.isEmpty()) "" else ru.suslikovanora.media.desktop.Api.BASE + it }
+    private val url: String get() = pin.getProperty("path", "").let { if (it.isEmpty() || ru.suslikovanora.media.desktop.Api.BASE.isEmpty()) "" else ru.suslikovanora.media.desktop.Api.BASE + it }
     private val sha256: String get() = pin.getProperty("dllSha256", "").lowercase()
 
     /** Папка ресурсов установленного приложения; при запуске из IDE — рабочая папка. */

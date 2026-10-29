@@ -563,8 +563,14 @@ object EdgeBrowserBridge {
                 const ids = [];
                 for (const g of sel.querySelectorAll('optgroup')) {
                     const label = g.getAttribute('label') || '';
-                    if (!keep.test(label) || drop.test(label)) continue;
-                    for (const o of g.querySelectorAll('option')) if (/^\d+$/.test(o.value)) ids.push(o.value);
+                    if (drop.test(label)) continue;
+                    // Видео бывает и в чужих группах: «Разное → Видео» (f=807) — смотрим и название раздела
+                    const whole = keep.test(label);
+                    for (const o of g.querySelectorAll('option')) {
+                        if (!/^\d+$/.test(o.value)) continue;
+                        const name = o.textContent || '';
+                        if (whole || (keep.test(name) && !drop.test(name))) ids.push(o.value);
+                    }
                 }
                 return JSON.stringify(ids);
             })()
@@ -576,7 +582,7 @@ object EdgeBrowserBridge {
             }.getOrNull()?.optJSONObject("result")?.optJSONObject("result")?.optString("value").orEmpty()
             if (v.startsWith("[")) {
                 val arr = JSONArray(v)
-                val ids = (0 until arr.length()).map { arr.getString(it) }.distinct().take(400)
+                val ids = (0 until arr.length()).map { arr.getString(it) }.distinct()
                 if (ids.isNotEmpty()) videoForumIds = ids
                 return ids
             }
@@ -1029,7 +1035,7 @@ object EdgeBrowserBridge {
                                 if (!updatedCookies.isNullOrBlank()) {
                                     RuTrackerTracker.cookie = updatedCookies
                                 }
-                                return@withContext true to "✓ Авторизован как $user ($activeBrowserName)"
+                                return@withContext true to tr("trackers.authorized_as", "user" to user, "note" to RuTrackerTracker.browserNote())
                             }
                             if (res == "__LOGIN__") {
                                 return@withContext false to "Сессия не принята (обновите bb_session в $activeBrowserName)"

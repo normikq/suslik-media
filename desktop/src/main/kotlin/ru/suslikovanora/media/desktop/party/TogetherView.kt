@@ -150,7 +150,8 @@ private fun RoomPanel(lib: Library, onLibrary: () -> Unit, onOpen: (PlayTarget) 
                 }
                 // «Другой фильм» — и когда этого фильма нет: иначе создателю пришлось бы пересоздавать комнату
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (target != null) LampButton(tr("party.smotret_vmeste")) { onOpen(target) }
+                    // A guest picks nothing: the host's file opens by itself (PartyFollow), the button only opens it again
+                    if (target != null) LampButton(tr("party.smotret_vmeste")) { if (Party.isHost) onOpen(target) else Party.followed = null }
                     if (Party.isHost) OutlineButton(tr("party.drugoy_film")) { onLibrary() }
                 }
             }
@@ -172,4 +173,32 @@ private fun RoomPanel(lib: Library, onLibrary: () -> Unit, onOpen: (PlayTarget) 
     Spacer(Modifier.height(10.dp))
     Text(tr("party.podskazka_sinhron"),
         color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.clip(RoundedCornerShape(8.dp)))
+}
+
+/**
+ * A room's guest watches the host's file: no play dialog (another episode or version would leave the room behind) —
+ * the player opens by itself on the room's file at the room's place, from any page. Once per file: closed by the guest,
+ * it waits for «Смотреть вместе». The guest's progress is kept as usual (PlayerView.savePos, CloudSync).
+ */
+@Composable
+fun PartyFollow(lib: Library, playingKeys: List<String>, onPlay: (PlayRequest) -> Unit) {
+    var opening by remember { mutableStateOf<PlayTarget?>(null) }
+    val key = Party.file?.key
+    val guest = Party.inRoom && !Party.isHost
+    LaunchedEffect(guest, key, Party.followed, playingKeys, lib.items) {
+        // No film (the host closed it): the same film put again opens again
+        if (!guest || key == null) { opening = null; if (key == null) Party.followed = null; return@LaunchedEffect }
+        if (key == Party.followed) return@LaunchedEffect
+        // The host went on within the open playlist: the player follows by itself (PartySync)
+        if (key in playingKeys) { Party.followed = key; return@LaunchedEffect }
+        val magnetId = key.substringBefore('|').toLongOrNull()
+        val target = lib.items.firstOrNull { it.m.id == magnetId }?.let { targetFor(it, key.substringAfter('|')) } ?: return@LaunchedEffect
+        Party.followed = key
+        opening = target
+    }
+    opening?.let { t ->
+        // the room's place at the moment the links are ready, not when the dialog appeared
+        PlayDialog(t, lib, onDismiss = { opening = null }, autoStartMs = { if (Party.file?.key == key) Party.targetMs() else 0L },
+            onPlay = { opening = null; onPlay(it) })
+    }
 }

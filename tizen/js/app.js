@@ -650,7 +650,9 @@
     var t = document.querySelector('.tab[data-tab="party"]');
     if (t) t.textContent = tr('nav.together') + (party.inRoom() ? ' ●' : '');
     var f = party.room.file;
-    if (!party.isGuest() || !f) { if (!party.inRoom()) followed = null; return; }
+    // Фильма нет (ведущий закрыл): тот же фильм, поставленный снова, откроется снова
+    if (party.joinedKey !== undefined) { followed = party.joinedKey; party.joinedKey = undefined; }
+    if (!party.isGuest() || !f) { if (!party.inRoom() || !f) followed = null; return; }
     if (f.key === followed) return;
     var playing = SM.player.current();
     // Другая серия того же сериала: плеер переключится сам (party.attach); другой фильм — открываем здесь

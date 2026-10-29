@@ -95,7 +95,9 @@ data class PlayRequest(
     /** The playlist is the films of a collection (shared isCollection): the player says «Фильмы», not «Серии». */
     val collection: Boolean = false,
     /** Intro and credits from the server: JSON array along [watchKeys] (player.PlayerExtras.MARKERS). */
-    val markers: String? = null
+    val markers: String? = null,
+    /** Where to open (ms) instead of the remembered place (player.PlayerExtras.START_MS); null — as usual. */
+    val startMs: Long? = null
 )
 
 /**
@@ -135,6 +137,8 @@ fun PlaySheet(
     initial: PlayTarget,
     store: LibraryStore,
     onDismiss: () -> Unit,
+    /** Set: no choice at all — a room's guest opens the host's file at the host's place as soon as the links are ready. */
+    autoStartMs: (() -> Long)? = null,
     onPlay: (PlayRequest) -> Unit
 ) {
     val context = LocalContext.current
@@ -189,6 +193,8 @@ fun PlaySheet(
     var subUrls by remember(target) { mutableStateOf<List<String>>(emptyList()) }
     var audioUrls by remember(target) { mutableStateOf<List<String>>(emptyList()) }
     var customByPath by remember(target) { mutableStateOf<Map<String, List<CustomTrack>>>(emptyMap()) }
+    // Links, side files and the playlist are all fetched (or failed): what «Смотреть» waits for
+    var prepared by remember(target) { mutableStateOf(false) }
     // Where the player stopped last time (the same place the player itself resumes from); null = nothing to resume.
     val resumeAt = remember(target) {
         context.getSharedPreferences("positions", Context.MODE_PRIVATE).getLong("w:" + watchKey(target.magnetId, target.file), 0L)
@@ -210,7 +216,7 @@ fun PlaySheet(
 
     LaunchedEffect(target) {
         val link = target.file.link
-        if (link == null) { sub = tr("play.ssylka_na_fayl_esche"); return@LaunchedEffect }
+        if (link == null) { sub = tr("play.ssylka_na_fayl_esche"); prepared = true; return@LaunchedEffect }
         val name = target.file.name.ifBlank { target.file.path.substringAfterLast('/') }
         val enc = { v: String -> URLEncoder.encode(v, "UTF-8") }
         coroutineScope {
@@ -249,6 +255,21 @@ fun PlaySheet(
             }
             if (mirror == null) sub = mr.exceptionOrNull()?.let { Api.describe(it) } ?: tr("play.ne_udalos_otkryt")
         }
+        prepared = true
+    }
+
+    fun requestFor(url: String): PlayRequest {
+        store.saveEpisode(target.magnetId, target.file.path)
+        val keys = if (playlist != null) target.season.filter { f -> f.link != null }.map { f -> watchKey(target.magnetId, f) }
+        else listOf(watchKey(target.magnetId, target.file))
+        val files = if (playlist != null) target.season.filter { f -> f.link != null } else listOf(target.file)
+        return PlayRequest(url, target.label, playlist, subUrls, keys, audioUrls, fromStart, if (playlist != null) episodeSidesJson(target, customByPath) else null, customJson(customByPath), watchKey(target.magnetId, target.file), isColl,
+            if (item == null) null else markersJson(item, series, files, isColl))
+    }
+    LaunchedEffect(prepared) {
+        val at = autoStartMs ?: return@LaunchedEffect
+        val url = mirror
+        if (prepared && url != null) onPlay(requestFor(url).copy(startMs = at()))
     }
 
     ModalBottomSheet(
@@ -263,6 +284,16 @@ fun PlaySheet(
             Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
                 .padding(horizontal = 18.dp).padding(bottom = 18.dp).navigationBarsPadding()
         ) {
+            if (autoStartMs != null) {
+                // A room's guest: nothing to choose, the host's file opens by itself
+                Text(tr("party.otkryvaem_film_vedushchego"), color = Sm.muted, fontFamily = Onest, fontSize = 13.sp)
+                Text(item?.let(store::titleOf) ?: target.label, fontFamily = Unbounded, fontWeight = FontWeight.Bold, fontSize = 18.sp, lineHeight = 23.sp,
+                    color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+                Text(if (!prepared || mirror != null) tr("play.gotovim") else sub, fontFamily = Onest, fontSize = 13.sp, color = Sm.muted,
+                    modifier = Modifier.padding(top = 12.dp, bottom = 12.dp))
+                OutlineButton(tr("library.zakryt"), modifier = Modifier.fillMaxWidth(), onClick = onDismiss)
+                return@Column
+            }
             // poster and facts
             Box(Modifier.fillMaxWidth()) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -329,14 +360,7 @@ fun PlaySheet(
                 when { preparingPlaylist -> tr("play.gotovim_pleylist"); busy -> tr("play.gotovim_dorozhki"); else -> tr("add.smotret") },
                 enabled = mirror != null && !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)
             ) {
-                mirror?.let {
-                    store.saveEpisode(target.magnetId, target.file.path)
-                    val keys = if (playlist != null) target.season.filter { f -> f.link != null }.map { f -> watchKey(target.magnetId, f) }
-                    else listOf(watchKey(target.magnetId, target.file))
-                    val files = if (playlist != null) target.season.filter { f -> f.link != null } else listOf(target.file)
-                    onPlay(PlayRequest(it, target.label, playlist, subUrls, keys, audioUrls, fromStart, if (playlist != null) episodeSidesJson(target, customByPath) else null, customJson(customByPath), watchKey(target.magnetId, target.file), isColl,
-                        if (item == null) null else markersJson(item, series, files, isColl)))
-                }
+                mirror?.let { onPlay(requestFor(it)) }
             }
 
             if (isColl && films.isNotEmpty()) {

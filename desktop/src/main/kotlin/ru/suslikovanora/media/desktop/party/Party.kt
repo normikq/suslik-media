@@ -68,6 +68,9 @@ object Party {
     val myKey: String = PartyProtocol.clientKey(clientId)
     val clock = PartyClock()
 
+    /** The room's file a guest's app has already opened by itself (PartyFollow): closed by the guest — not opened again. */
+    var followed by mutableStateOf<String?>(null)
+
     /** I have just put this film into the room: my player starts the room from its own place (see PartySync). */
     @Volatile var startedByMe: String? = null
 
@@ -99,7 +102,7 @@ object Party {
     fun leave() {
         val id = roomId ?: return
         stopStream()
-        roomId = null; startedByMe = null
+        roomId = null; startedByMe = null; followed = null
         synchronized(this) { room = PartyRoom() }
         reportedBuffering = false
         scope.launch { runCatching { Api.post(PartyProtocol.leavePath(id), PartyProtocol.leaveBody(clientId)) } }
@@ -116,10 +119,17 @@ object Party {
     /** Players showing the room's film here (PartySync). */
     @Volatile var watching = 0
 
-    fun pauseIfNobodyWatches(posMs: Long) {
+    /**
+     * The host closed the film: the room is left without it, and the guests' players close too. A moment later and only
+     * if no player shows it by then: re-creating the player (subtitle size) or opening the next film is not closing.
+     */
+    fun closeIfNobodyWatches() {
         scope.launch {
             delay(1500)
-            if (watching == 0 && inRoom && state.playing) { PlayerLog.write("[party] host closed the film: pause"); pause(posMs) }
+            if (watching != 0 || !inRoom || !isHost || file == null) return@launch
+            PlayerLog.write("[party] host closed the film: the room has none now")
+            synchronized(this@Party) { room = room.clearFile() }
+            action(PartyProtocol.closeFile())
         }
     }
 
@@ -178,11 +188,13 @@ object Party {
 
     private suspend fun enter(update: RoomUpdate) {
         stopStream()
-        notice = null
+        notice = null; followed = null
         clock.reset()
         reportedBuffering = false
         // A fresh snapshot: another room's seq must not hide this one's state
         synchronized(this) { room = PartyRoom().merge(update) }
+        // Joining by code does not start the film already in the room: «Смотреть вместе» opens it; the host's next one opens by itself
+        followed = room.file?.key
         val id = update.id!!
         roomId = id
         // A few more clock samples: the shortest round trip wins

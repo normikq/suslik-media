@@ -5,10 +5,11 @@ plugins {
 }
 
 // Адрес сайта не хранится в репозитории: секрет SITE_URL в CI или suslik.siteUrl в ~/.gradle/gradle.properties.
-val siteHost: String = (System.getenv("SITE_URL")?.takeIf { it.isNotBlank() } ?: findProperty("suslik.siteUrl") as String? ?: "")
-    .trim().removePrefix("https://").removePrefix("http://").substringBefore('/')
+// Домен и, если сервер не в корне, путь: https://домен или https://домен/путь (разбирает SiteAddress.normalize в приложении).
+val siteUrl: String = (System.getenv("SITE_URL")?.takeIf { it.isNotBlank() } ?: findProperty("suslik.siteUrl") as String? ?: "")
+    .trim().substringBefore('?').substringBefore('#').trimEnd('/')
 gradle.taskGraph.whenReady {
-    if (siteHost.isEmpty() && allTasks.any { t -> listOf("package", "assemble", "run", "bundle").any { t.name.startsWith(it) } })
+    if (siteUrl.isEmpty() &&allTasks.any { t -> listOf("package", "assemble", "run", "bundle").any { t.name.startsWith(it) } })
         throw GradleException("Не задан адрес сайта: переменная окружения SITE_URL или suslik.siteUrl в ~/.gradle/gradle.properties")
 }
 
@@ -71,10 +72,10 @@ android {
         applicationId = "ru.suslikovanora.media"
         minSdk = 24
         targetSdk = 35
-        versionCode = 72
-        versionName = "2.6.9"
+        versionCode = 73
+        versionName = "2.7.0"
         buildConfigField("boolean", "DIAG", "false")
-        buildConfigField("String", "SITE_HOST", "\"$siteHost\"")
+        buildConfigField("String", "SITE_URL", "\"$siteUrl\"")
         manifestPlaceholders["appLabel"] = "Suslik Media — медиатека"
 
         // Package native VLC libraries only for 64-bit ARM Android devices.

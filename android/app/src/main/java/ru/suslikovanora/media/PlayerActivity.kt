@@ -818,6 +818,7 @@ class PlayerActivity : ComponentActivity() {
             override fun playIndex(i: Int) { if (i != playlistQueue.currentIndex) playlistQueue.playEntry(i) }
             override fun notice(text: String) = showSeekLabel(text)
             override fun onTick() { ui.live = partyGuest() }
+            override fun close() = leave()
         })
     }
 

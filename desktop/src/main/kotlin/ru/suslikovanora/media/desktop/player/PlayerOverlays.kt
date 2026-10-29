@@ -789,6 +789,11 @@ fun PlayerBottomBar(
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     HeroPlayButton(playing = playing, onClick = onTogglePause, enabled = !(playLocked && !playing), lockedTip = tr("party.pauzu_snimaet_sozdatel"))
+                    if (index > 0 && !live) {
+                        GlassIconButton(onClick = { onPlayEntry(index - 1) }, tooltip = tr("player.predyduschaya")) {
+                            NextEpisodeIcon(color = Sm.text, size = 16.dp, modifier = Modifier.graphicsLayer { scaleX = -1f })
+                        }
+                    }
                     if (index < queue.size - 1 && !live) {
                         GlassIconButton(onClick = { onPlayEntry(index + 1) }, tooltip = tr("player.sleduyuschaya")) {
                             NextEpisodeIcon(color = Sm.text, size = 16.dp)
@@ -824,6 +829,16 @@ fun PlayerBottomBar(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(buttonSpacing)
                         ) {
+                            // The previous episode: the mirrored «next» (the queue is the whole series, see PlayDialog)
+                            if (index > 0 && !live) {
+                                GlassIconButton(
+                                    onClick = { onPlayEntry(index - 1) },
+                                    tooltip = tr("player.predyduschaya_p", "p" to queue[index - 1].title),
+                                    size = btnSize
+                                ) {
+                                    NextEpisodeIcon(color = Sm.text, size = if (isCompact) 14.dp else 16.dp, modifier = Modifier.graphicsLayer { scaleX = -1f })
+                                }
+                            }
                             if (index < queue.size - 1 && !live) {
                                 GlassIconButton(
                                     onClick = { onPlayEntry(index + 1) },

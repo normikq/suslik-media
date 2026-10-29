@@ -65,7 +65,8 @@ class PlayerWatchProgress(
 
     /** Where a film opened from library starts: remembered place, or 0 when «С начала» was chosen. */
     fun startPosition(intent: Intent, url: String = callback.getCurrentUrl()): Long =
-        if (intent.getBooleanExtra(PlayerExtras.FROM_START, false)) 0L else savedPosition(url)
+        intent.getLongExtra(PlayerExtras.START_MS, -1L).takeIf { it >= 0L }
+            ?: if (intent.getBooleanExtra(PlayerExtras.FROM_START, false)) 0L else savedPosition(url)
 
     fun persistPosition(time: Long, length: Long, isEnded: Boolean, url: String = callback.getCurrentUrl()) {
         val key = positionKey(url) ?: return

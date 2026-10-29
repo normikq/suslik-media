@@ -88,10 +88,10 @@ object DeviceAuth {
     fun pollFailed(httpCode: Int): DevicePoll = if (httpCode == 410 || httpCode == 404) DevicePoll.Expired else DevicePoll.Pending
 
     /**
-     * Сессию, токен устройства и бета-код шлём только своему серверу [base] (`https://host`):
+     * Сессию, токен устройства и бета-код шлём только своему серверу [base] (`https://host[/путь]`):
      * аватары идут с CDN Discord, постеры — с чужих сайтов.
      */
-    fun isOwnServer(url: String, base: String): Boolean = url == base || url.startsWith("$base/")
+    fun isOwnServer(url: String, base: String): Boolean = ru.suslikovanora.media.core.SiteAddress.isOwn(url, base)
 }
 
 /** «Мои фильмы» (`services/shelf.js`): флаг `mine` у раздачи. */

@@ -59,6 +59,26 @@ object RuTrackerTracker : LocalTracker {
         get() = store.get("rutracker.cookie") ?: ""
         set(value) { store.put("rutracker.cookie", value.trim()) }
 
+    /** Браузер, из которого взяты куки (null — вставлены вручную или не известно). */
+    var cookieSource: BrowserType?
+        get() = store.get("rutracker.cookie_source")?.let { s -> runCatching { BrowserType.valueOf(s) }.getOrNull() }
+        set(value) { store.put("rutracker.cookie_source", value?.name ?: "") }
+
+    /**
+     * Приписка к «Авторизован как …». Проверка и поиск всегда идут через фоновый Chromium
+     * ([EdgeBrowserBridge.activeBrowserName]); если куки взяты из другого браузера (Firefox), называем оба.
+     */
+    fun browserNote(): String {
+        val via = if (EdgeBrowserBridge.isAnyAvailable) EdgeBrowserBridge.activeBrowserName else null
+        val from = cookieSource?.displayName
+        return when {
+            from != null && via != null && from != via -> tr("trackers.note_from_via", "from" to from, "via" to via)
+            from != null -> " · $from"
+            via != null -> " · $via"
+            else -> ""
+        }
+    }
+
     private val client: HttpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(10))
         .followRedirects(HttpClient.Redirect.NEVER)
@@ -166,8 +186,7 @@ object RuTrackerTracker : LocalTracker {
                 ?: Regex("""href="profile\.php\?mode=viewprofile[^>]*><b>([^<]+)</b>""").find(html)
 
             if (userMatch != null) {
-                val browserNote = if (EdgeBrowserBridge.isAnyAvailable) " · ${EdgeBrowserBridge.activeBrowserName}" else ""
-                return@withContext true to tr("trackers.authorized_as", "user" to userMatch.groupValues[1].trim(), "note" to browserNote)
+                return@withContext true to tr("trackers.authorized_as", "user" to userMatch.groupValues[1].trim(), "note" to browserNote())
             }
 
             if (html.contains("name=\"login_username\"")) {

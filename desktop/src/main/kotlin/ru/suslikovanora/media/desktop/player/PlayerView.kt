@@ -165,7 +165,7 @@ fun PlayerView(
 
     var title by remember { mutableStateOf(req.title) }
     var playing by remember { mutableStateOf(false) }
-    val initialPos = remember { if (req.fromStart) 0L else savedPos(startIndex) }
+    val initialPos = remember { req.startMs ?: if (req.fromStart) 0L else savedPos(startIndex) }
     var time by remember { mutableStateOf(initialPos) }
     var length by remember { mutableStateOf(0L) }
     var status by remember { mutableStateOf<String?>(tr("player.otkryvaem")) }
@@ -639,7 +639,7 @@ fun PlayerView(
         leaveJob?.cancel()
         leaveJob = scope.launch {
             delay(500)
-            val hold = !started || enginePaused || nextIn >= 0 || picker != null || seeking != null || infoOpen || inIntro()
+            val hold = !started || enginePaused || nextIn >= 0 || picker != null || seeking != null || infoOpen || (inIntro() && !partyGuest())
             if (!hold) barVisible = false
         }
     }
@@ -820,7 +820,8 @@ fun PlayerView(
             seekTo = { t -> time = t; lastGood = t; lastSeekAt = System.currentTimeMillis(); seekTo(t) },
             setRate = { r -> playerExecutor.execute { runCatching { eRate(r) } } },
             playIndex = { i -> playEntry(i) },
-            notice = { text -> flash(text) }
+            notice = { text -> flash(text) },
+            close = { close() }
         ))
 
     LaunchedEffect(title, index, queue.size, smtcPoster) {
@@ -1012,7 +1013,9 @@ fun PlayerView(
                 val end = length > 0 && lastGood >= length - 5_000L
                 if (end) {
                     savePos(length, length)
-                    if (index < queue.size - 1) { if (nextIn < 0) nextIn = PlaybackSettings.nextCountdown() } else status = tr("player.konec")
+                    // a room's guest: the host's player goes on to the next one, the room follows it (no countdown here)
+                    if (partyGuest()) Unit
+                    else if (index < queue.size - 1) { if (nextIn < 0) nextIn = PlaybackSettings.nextCountdown() } else status = tr("player.konec")
                 } else if (retries < 6) { retries++; status = tr("player.perepodklyuchenie"); reopen(lastGood) }
             }
         }
@@ -1099,7 +1102,7 @@ fun PlayerView(
             playEntry(startIndex)
             return@LaunchedEffect
         }
-        open(req.url, if (req.fromStart) 0L else savedPos(), req.audioUrls to req.subUrls)
+        open(req.url, req.startMs ?: if (req.fromStart) 0L else savedPos(), req.audioUrls to req.subUrls)
     }
 
     LaunchedEffect(index, queue.size) { if (index + 1 < queue.size) { delay(15_000); sidecars(index + 1) } }
@@ -1282,14 +1285,14 @@ fun PlayerView(
 
     LaunchedEffect(barVisible, lastMove, started, enginePaused, nextIn, picker, seeking, infoOpen, closing) {
         if (closing) return@LaunchedEffect // the pause for the flight back must not bring the panels up
-        val hold = !started || enginePaused || nextIn >= 0 || picker != null || seeking != null || infoOpen || inIntro()
+        val hold = !started || enginePaused || nextIn >= 0 || picker != null || seeking != null || infoOpen || (inIntro() && !partyGuest())
         if (hold) {
             barVisible = true
             return@LaunchedEffect
         }
         if (!barVisible) return@LaunchedEffect
         delay(2500)
-        val stillHold = !started || enginePaused || nextIn >= 0 || picker != null || seeking != null || infoOpen || inIntro()
+        val stillHold = !started || enginePaused || nextIn >= 0 || picker != null || seeking != null || infoOpen || (inIntro() && !partyGuest())
         if (!stillHold) {
             barVisible = false
         }
@@ -1658,7 +1661,7 @@ fun PlayerView(
             fullscreen = fullscreen,
             lastVolumeWheelAt = lastVolumeWheelAt,
             nextIn = nextIn,
-            inIntro = inIntro(),
+            inIntro = inIntro() && !partyGuest(), // a room's guest: the host skips the intro for everyone
             intro = markers.intro,
             credits = markers.credits,
             seeking = seeking,

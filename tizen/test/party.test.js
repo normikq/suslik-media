@@ -139,3 +139,15 @@ test('гостю — подсказка, что ведущий перемота�
   assert.deepEqual(t.notices, [{ type: 'seeked', posMs: 600000 }]);
   assert.equal(t.player.timeMs, 600000);
 });
+
+test('clearFile: ведущий закрыл фильм — старый ответ с фильмом его не возвращает', () => {
+  let r = R.clearFile(R.merge(R.empty(), P.parseRoom(roomJson(5, '42|a.mkv'))));
+  assert.equal(r.file, null);
+  r = R.merge(r, P.parseRoom(roomJson(6, '42|a.mkv')));
+  assert.equal(r.file, null, 'ответ на прежнее действие ещё с фильмом');
+  r = R.merge(r, P.parseRoom(roomJson(7, null)));
+  assert.equal(r.pendingFileKey, null);
+  assert.equal(r.file, null);
+  assert.equal(r.state.seq, 7);
+  assert.deepEqual(P.closeFile(), { type: 'change_file', file: null });
+});

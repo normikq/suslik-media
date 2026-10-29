@@ -158,4 +158,25 @@ class PartyProtocolTest {
         // Отказ сервера снимает ожидание
         assertNull(r0.putFile(next).fileRejected().pendingFileKey)
     }
+
+    /** Ведущий закрыл фильм: у комнаты его нет, старый ответ с фильмом его не возвращает; запрос — `file: null`. */
+    @Test
+    fun closedFileStaysClosed() {
+        val r0 = PartyRoom().merge(PartyProtocol.parseRoom(JSONObject(roomJson)))
+        var r = r0.clearFile()
+        assertNull(r.file)
+        r = r.merge(PartyProtocol.parseRoom(JSONObject(roomJson)))
+        assertNull(r.file)                       // ответ на прежнее действие ещё с фильмом
+        val confirmed = JSONObject(roomJson).apply {
+            put("file", JSONObject.NULL)
+            getJSONObject("state").put("seq", 10).put("playing", false)
+        }
+        r = r.merge(PartyProtocol.parseRoom(confirmed))
+        assertNull(r.pendingFileKey)
+        assertNull(r.file)
+        assertEquals(10L, r.state.seq)
+        val body = PartyProtocol.closeFile()
+        assertEquals("change_file", body.getString("type"))
+        assertTrue(body.isNull("file"))
+    }
 }

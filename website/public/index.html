@@ -726,8 +726,11 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
 <script>
 
 const $ = id => document.getElementById(id);
+// Сайт лежит в <база>/media/, API — в <база>/api/; база — корень домена или путь сервера (docs/MIGRATION.md)
+const API_ROOT = new URL(".", location.href).pathname.replace(/\/media\/$/, "/").replace(/\/$/, "");
+const apiUrl = p => typeof p === "string" && p.startsWith("/api/") ? API_ROOT + p : p;
 async function api(path, options={}) {
-  const response = await fetch(path, { credentials:"same-origin", ...options, headers:{"Content-Type":"application/json", ...(options.headers||{})} });
+  const response = await fetch(apiUrl(path), { credentials:"same-origin", ...options, headers:{"Content-Type":"application/json", ...(options.headers||{})} });
   const data = await response.json().catch(()=>({error:"Некорректный ответ сервера"}));
   if (!response.ok) throw new Error(data.error || `Не удалось выполнить запрос (${response.status})`);
   return data;
@@ -799,7 +802,7 @@ function discordStartUrl() {
   const p = new URLSearchParams(window.location.search);
   p.delete("auth_error");
   const q = p.toString();
-  return "/api/auth/discord/start?return=" + encodeURIComponent(window.location.pathname + (q ? "?" + q : ""));
+  return API_ROOT + "/api/auth/discord/start?return=" + encodeURIComponent(window.location.pathname + (q ? "?" + q : ""));
 }
 
 // Кому достанется устройство: при входе по паролю — общему доступу, а не вашему Discord-профилю
@@ -1168,7 +1171,7 @@ async function loadAppVersions() {
       ver.textContent = "Версия " + u.version; ver.classList.remove("muted");
       size.textContent = formatBytes(u.size);
       date.textContent = u.publishedAt ? new Date(u.publishedAt).toLocaleDateString() : "";
-      btn.href = u.url; btn.setAttribute("download", u.file || ""); btn.classList.remove("disabled"); btn.removeAttribute("aria-disabled");
+      btn.href = apiUrl(u.url); btn.setAttribute("download", u.file || ""); btn.classList.remove("disabled"); btn.removeAttribute("aria-disabled");
       btn.textContent = (p === "android" ? "Скачать .apk" : (/\.exe$/i.test(u.file || "") ? "Скачать .exe" : "Скачать .msi")) + " · " + u.version;
       notes.classList.toggle("hidden", !u.notes); notes.querySelector(".app-notes-text").textContent = u.notes || "";
     } catch (err) { ver.textContent = "Не удалось проверить"; ver.classList.add("muted"); }
@@ -1953,7 +1956,7 @@ function psSaveAi(){
 async function psAskAi(s,b,list){
   b.disabled=true; b.textContent="✨ Спрашиваем ИИ…";
   try{
-    const r=await fetch("/api/library/ai-title",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({ids:list.map(x=>x.id)})});
+    const r=await fetch(apiUrl("/api/library/ai-title"),{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({ids:list.map(x=>x.id)})});
     const d=await r.json().catch(()=>({}));
     if(r.status===429&&d.retryAfterSec){
       if(d.reason==="cooldown") aiTitleReadyAt=Date.now()+d.retryAfterSec*1000;
@@ -2004,7 +2007,7 @@ function psFill(s,magnet,file,label,token){
   if(ep) chip(ep);
   const rating=chip("","ps-rating hidden");
   const pq=(magnet&&aiPosterQuery(magnet))||base; // постер и описание — по оригиналу с годом, если ИИ его дал
-  getPoster(pq).then(u=>{if(u&&token===playSheetToken) img.src=u;}).catch(()=>{});
+  getPoster(pq).then(u=>{if(u&&token===playSheetToken) img.src=apiUrl(u);}).catch(()=>{});
   if(!psInfoCache.has(pq.toLowerCase())) psInfoCache.set(pq.toLowerCase(),api("/api/poster?hero=1&q="+encodeURIComponent(pq)).then(info=>{
     if(info && typeof info.animation === "boolean") recordAnimation(base, info.animation);
     return info;
@@ -2448,8 +2451,8 @@ function renderLibrary(animate=true) {
         img.onerror=()=>{ img.remove(); art.classList.add("poster-missing"); };
         // Плитка ~170–260 px: на телефоне хватает w342 (меньше трафика и декодирования), на ПК/retina — w500.
         const pm=/\/api\/poster\/img\/w500\/([A-Za-z0-9_-]+\.(?:jpg|png|webp))$/.exec(url);
-        if(pm){ img.srcset=`/api/poster/img/w342/${pm[1]} 342w, ${url} 500w`; img.sizes="(max-width:600px) 48vw, 260px"; }
-        img.src=url;
+        if(pm){ img.srcset=`${apiUrl("/api/poster/img/w342/"+pm[1])} 342w, ${apiUrl(url)} 500w`; img.sizes="(max-width:600px) 48vw, 260px"; }
+        img.src=apiUrl(url);
         try { if (img.decode) await img.decode(); else if (!img.complete) await new Promise(resolve=>{img.onload=resolve;img.onerror=resolve;}); } catch {}
         if (!img.complete || !img.naturalWidth) { img.remove(); art.classList.add("poster-missing"); return; }
         if (art.isConnected) { art.prepend(img); requestAnimationFrame(()=>{ if(img.isConnected) img.classList.add("poster-loaded"); }); }

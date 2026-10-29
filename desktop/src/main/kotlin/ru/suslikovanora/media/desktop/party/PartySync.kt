@@ -30,7 +30,8 @@ class SyncHooks(
     val seekTo: (Long) -> Unit,
     val setRate: (Float) -> Unit,        // engine speed (drift correction); the player's own speed is restored with userRate
     val playIndex: (Int) -> Unit,        // another episode of this playlist
-    val notice: (String) -> Unit = {}    // a short line over the picture: what the host did, whom the room waits for
+    val notice: (String) -> Unit = {},   // a short line over the picture: what the host did, whom the room waits for
+    val close: () -> Unit = {}           // the host closed the room's film: a guest's player closes too
 )
 
 /** The player for the shared sync engine: always the latest hooks (PlayerView passes new ones on recomposition). */
@@ -73,6 +74,7 @@ private object DesktopPartyLink : PartyLink {
 fun PartySync(key: String?, title: String, keys: List<String>, started: Boolean, closing: Boolean, hooks: SyncHooks) {
     val k by rememberUpdatedState(key)
     val ready by rememberUpdatedState(started && !closing)
+    val isClosing by rememberUpdatedState(closing)
     val h by rememberUpdatedState(hooks)
     val engine = remember {
         PartySyncEngine(DesktopPartyLink, log = { PlayerLog.write(it) }, notice = { n -> noticeText(n)?.let { h.notice(it) } })
@@ -101,14 +103,24 @@ fun PartySync(key: String?, title: String, keys: List<String>, started: Boolean,
         Party.watching++
         onDispose {
             Party.watching--
-            if (Party.isHost && Party.file?.key == k) Party.pauseIfNobodyWatches(engine.lastTimeMs)
+            if (Party.isHost && Party.file?.key == k) Party.closeIfNobodyWatches()
         }
     }
 
     LaunchedEffect(Unit) {
+        var showedRoomFilm = false
         while (true) {
             delay(PartySyncEngine.TICK_MS)
             val kk = k
+            // The host closed the film (the room has none now): a guest who watched it with them closes it too
+            if (Party.inRoom && kk != null && Party.file?.key == kk) showedRoomFilm = true
+            else if (!Party.inRoom || Party.file != null) showedRoomFilm = false
+            else if (showedRoomFilm && !Party.isHost && !isClosing) {
+                showedRoomFilm = false
+                PlayerLog.write("[party] host closed the film: closing the player")
+                h.close()
+                continue
+            }
             if (Party.inRoom && Party.file?.key == kk && kk != null && ready) {
                 episodeNotice[0]?.let { episodeNotice[0] = null; h.notice(it) }
                 engine.tick(player, kk, System.currentTimeMillis())

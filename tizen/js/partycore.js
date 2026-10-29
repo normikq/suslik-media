@@ -100,11 +100,13 @@
     othersBuffering: function (r, myKey) { return r.members.some(function (m) { return m.buffering && m.key !== myKey; }); },
     putFile: function (r, f) { return copy(r, { file: f, pendingFileKey: f.key }); },
     fileRejected: function (r) { return copy(r, { pendingFileKey: null }); },
+    /** Ведущий закрыл фильм (пустой ключ — «без фильма», ждём подтверждения, как у putFile). */
+    clearFile: function (r) { return copy(r, { file: null, pendingFileKey: '' }); },
     /** Ответ сервера с комнатой: состояние — только более новое по seq, участники — если пришёл их список. */
     merge: function (r, u) {
       var head = { id: u.id || r.id, hostId: u.hostId, hostKey: u.hostKey, hostName: u.hostName, hostOnly: u.hostOnly, members: u.members || r.members };
       // Ведущий поставил фильм, сервер ещё не подтвердил: фильм и время в старых ответах — прежние, не берём их
-      if (r.pendingFileKey != null && (u.file ? u.file.key : null) !== r.pendingFileKey) return copy(r, head);
+      if (r.pendingFileKey != null && (u.file ? u.file.key : '') !== r.pendingFileKey) return copy(r, head);
       head.file = u.file;
       head.state = u.state && u.state.seq >= r.state.seq ? u.state : r.state;
       head.pendingFileKey = null;
@@ -184,6 +186,8 @@
     seek: function (ms) { return { type: 'seek', pos: ms / 1000 }; },
     buffering: function (loading) { return { type: 'buffering', buffering: loading }; },
     changeFile: function (f) { return { type: 'change_file', file: { key: f.key, name: f.title, ad_id: f.adId } }; },
+    /** Ведущий закрыл фильм: у гостей плеер тоже закрывается (сервер ставит room.file = null). */
+    closeFile: function () { return { type: 'change_file', file: null }; },
     roomOf: function (res) { return res && res.room && typeof res.room === 'object' ? parseRoom(res.room) : null; },
     hostIdOf: function (res) { return res && res.room ? nonEmpty(res.room.host_id) : null; },
     memberIdOf: function (res) { return res && res.member ? nonEmpty(res.member.id) : null; },

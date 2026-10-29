@@ -484,7 +484,7 @@ fun LibraryView(
                 // 2. Continue watching section
                 if (query.isBlank() && category == Category.All && !mineOnly) {
                     item(span = { GridItemSpan(maxLineSpan) }, key = "continue", contentType = "continue") {
-                        ContinueRow(all, lib) { t -> target = t }
+                        ContinueRow(all, lib, atTop = { grid.firstVisibleItemIndex == 0 && grid.firstVisibleItemScrollOffset == 0 }) { t -> target = t }
                     }
                 }
 
@@ -532,7 +532,7 @@ fun LibraryView(
 
                 if (query.isBlank() && category == Category.All && !mineOnly) {
                     item(key = "continue", contentType = "continue") {
-                        ContinueRow(all, lib) { t -> target = t }
+                        ContinueRow(all, lib, atTop = { listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0 }) { t -> target = t }
                     }
                 }
 
@@ -1328,7 +1328,7 @@ private fun timeLeft(e: ContinueEntry): String? {
 
 /** «Продолжить просмотр»: a banner with the film watched last (wide picture, description, progress); the others are the cards on the right. */
 @Composable
-private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTarget) -> Unit) {
+private fun ContinueRow(items: List<LibraryItem>, lib: Library, atTop: () -> Boolean, onOpen: (PlayTarget) -> Unit) {
     val scope = rememberCoroutineScope()
     val wv = lib.watchVersion
     val entries = remember(items, wv) { continueEntries(items, lib) }
@@ -1366,7 +1366,26 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
         var resizeStamp by remember { mutableStateOf(0) }
         LaunchedEffect(resizeStamp) { if (resizeStamp > 0) { kotlinx.coroutines.delay(200); resizing = false } }
         val glow by animateFloatAsState(if (resizing) 0f else 0.55f, tween(if (resizing) 0 else 300))
-        Box(Modifier.padding(top = 6.dp, bottom = 22.dp).fillMaxWidth().height(360.dp).hoverable(bannerSrc)
+
+        // The glow is as tall as the picture at the banner's width: in a wide window it sticks out far above the banner
+        // and the top edge of the page cuts it with a straight line. Then the glow (not the banner) goes down just enough to fit.
+        // The room above is measured only on the unscrolled page (scrolling must not move the glow).
+        var roomAbovePx by remember { mutableStateOf(-1f) }
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        val backdrop = hero?.backdrop
+        val needTop = if (backdrop == null || roomAbovePx < 0f || lastWidth <= 0 || backdrop.width <= 0) 0.dp else with(density) {
+            val glowH = lastWidth * backdrop.height / backdrop.width.toFloat()
+            // the glow fades in over its top 30 % (clearly seen from about 15 %), and the blur adds a little more
+            val above = (glowH - 360.dp.toPx()) / 2f - glowH * 0.15f + 22.dp.toPx()
+            (above - roomAbovePx - 6.dp.toPx()).coerceAtLeast(0f).toDp()
+        }
+        val glowShift by androidx.compose.animation.core.animateDpAsState(needTop, tween(300, easing = Sm.ease))
+        Box(Modifier
+            .onGloballyPositioned { c ->
+                val vp = TileBounds.viewport
+                if (atTop() && vp != null && vp.isAttached) roomAbovePx = c.localToWindow(Offset.Zero).y - vp.localToWindow(Offset.Zero).y
+            }
+            .padding(top = 6.dp, bottom = 22.dp).fillMaxWidth().height(360.dp).hoverable(bannerSrc)
             .onSizeChanged {
                 val diff = if (lastWidth >= 0) kotlin.math.abs(it.width - lastWidth) else 0
                 if (lastWidth >= 0 && diff > 8) { resizing = true; resizeStamp++ }
@@ -1389,7 +1408,7 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
                 }) {
                     if (glow > 0f) Image(img, null, contentScale = ContentScale.FillWidth, alignment = Alignment.CenterEnd,
                         modifier = Modifier.fillMaxWidth().wrapContentHeight(Alignment.CenterVertically, unbounded = true)
-                            .graphicsLayer { alpha = glow; compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+                            .graphicsLayer { alpha = glow; translationY = glowShift.toPx(); compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
                             .drawWithContent { // soft edges: the picture melts into the page instead of ending in a straight line
                                 drawContent()
                                 val clear = Color.Transparent
@@ -1398,8 +1417,14 @@ private fun ContinueRow(items: List<LibraryItem>, lib: Library, onOpen: (PlayTar
                             }
                             .blur(22.dp, androidx.compose.ui.draw.BlurredEdgeTreatment.Unbounded))
                 }
-                // The wide picture on the right (a poster stretched to this width would be blurry: without a wide picture the banner stays plain)
-                Image(img, null, contentScale = ContentScale.Crop, alignment = Alignment.CenterEnd, filterQuality = androidx.compose.ui.graphics.FilterQuality.High,
+                // The wide picture on the right (a poster stretched to this width would be blurry: without a wide picture the banner stays plain).
+                // When the glow goes down, the frame of the sharp picture goes down with it, so the two still line up.
+                val overflowPx = if (lastWidth > 0 && img.width > 0) lastWidth * img.height / img.width.toFloat() - with(density) { 360.dp.toPx() } else 0f
+                val sharpAlign = if (overflowPx > 1f) {
+                    val bias = (-2f * with(density) { glowShift.toPx() } / overflowPx).coerceIn(-1f, 1f)
+                    androidx.compose.ui.BiasAlignment(1f, bias)
+                } else Alignment.CenterEnd
+                Image(img, null, contentScale = ContentScale.Crop, alignment = sharpAlign, filterQuality = androidx.compose.ui.graphics.FilterQuality.High,
                     modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(20.dp)))
             }
         }

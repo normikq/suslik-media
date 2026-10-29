@@ -14,7 +14,9 @@ if (-not $SiteUrl) {
         if ($line) { $SiteUrl = ($line -split '=', 2)[1].Trim() }
     }
 }
-$hostName = ($SiteUrl -replace '^https?://', '') -replace '/.*$', ''
+# Домен и, если сервер не в корне, путь: https://домен или https://домен/путь
+$siteBase = (("$SiteUrl".Trim() -replace '[?#].*$', '') -replace '^https?://', '') -replace '/+$', ''
+$hostName = $siteBase -replace '/.*$', ''
 if (-not $hostName) {
     Write-Host "Не задан адрес сайта: .\build.ps1 -SiteUrl https://<сайт> (или SITE_URL, или suslik.siteUrl в ~\.gradle\gradle.properties)" -ForegroundColor Red
     exit 1
@@ -30,7 +32,7 @@ foreach ($item in "config.xml", "index.html", "icon.png", "css", "js", "locales"
 }
 # UTF-8 без BOM, как у остальных файлов приложения
 [System.IO.File]::WriteAllText((Join-Path $app "js\site.js"),
-    "window.SM = window.SM || {};`nwindow.SM.SITE_HOST = '$hostName';`n", (New-Object System.Text.UTF8Encoding $false))
+    "window.SM = window.SM || {};`nwindow.SM.SITE_URL = 'https://$siteBase';`nwindow.SM.SITE_HOST = '$hostName';`n", (New-Object System.Text.UTF8Encoding $false))
 Write-Host "Папка приложения: $app (версия $version)" -ForegroundColor Green
 Write-Host "Дальше: открыть её в VS Code -> Tizen TV: Build Signed Package -> Tizen TV: Launch Application"
 

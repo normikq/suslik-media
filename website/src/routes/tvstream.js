@@ -6,7 +6,7 @@ const express = require("express");
 const config = require("../config");
 const { mirrorUrlLimiter, mirrorLimiter } = require("../middleware/rate-limit");
 const { requireLogin } = require("../middleware/auth");
-const { safeHttpsUrl, cleanFileName, clientIp } = require("../utils/helpers");
+const { safeHttpsUrl, cleanFileName, clientIp, publicBase } = require("../utils/helpers");
 const { isAllDebridFileLink, resolveDirect, mirrorLog, MIRROR_CSP, UnlockError } = require("../services/mirror");
 const { markLinkOpened } = require("../services/cleanup");
 const tv = require("../services/tvstream");
@@ -86,9 +86,8 @@ router.get("/api/file/tv-info", requireLogin, mirrorUrlLimiter, async (req, res)
   const raw = cleanFileName(typeof req.query.name === "string" ? req.query.name.split(/[\\/]/).pop() : "") || "video";
   const name = encodeURIComponent(raw.replace(/\.[a-z0-9]{2,5}$/i, "") + "." + config.TV_STREAM_FORMAT);
   const expires = String(Math.floor(Date.now() / 1000) + config.MIRROR_TTL);
-  const host = req.get("host");
   const def = tv.defaultAudio(info);
-  const base = `https://${host}/api/file/tv/${name}?link=${encodeURIComponent(link)}`;
+  const base = `${publicBase(req)}/api/file/tv/${name}?link=${encodeURIComponent(link)}`;
   res.json({
     stream: tv.needsTvStream(info),
     videoUnsupported: tv.videoUnsupported(info) ? info.video.codec : null,

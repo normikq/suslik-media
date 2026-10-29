@@ -125,9 +125,15 @@ private fun extractTrilogyFilmInfo(
     return title to details
 }
 
-/** Play dialog: one «Смотреть» through our server (the direct AllDebrid link stays on the server), styled for series and movie trilogies. */
+/** Entries the server puts into one playlist at most (website routes/mirror.js PLAYLIST_MAX_ITEMS). */
+private const val PLAYLIST_MAX = 200
+
+/**
+ * Play dialog: one «Смотреть» through our server (the direct AllDebrid link stays on the server), styled for series and movie trilogies.
+ * [autoStartMs] set: no choice at all — a room's guest opens the host's file at the host's place as soon as the links are ready.
+ */
 @Composable
-internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPlay: (PlayRequest) -> Unit) {
+internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, autoStartMs: (() -> Long)? = null, onPlay: (PlayRequest) -> Unit) {
     val item = remember(t) { t.item ?: lib.items.find { it.m.id == t.magnetId } }
     val magnet = remember(t, item) {
         item?.m ?: Magnet(t.magnetId, t.label, "", 4, 0L, 0L, listOf(t.file) + t.following, false)
@@ -214,11 +220,17 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
 
     // The player's queue: the whole season (or collection) with links, so «previous» works from the episode it started
     // with (it used to be this episode and the following ones only: back from the first one just went to 00:00).
+    // The whole series (every season), so «previous» / «next» and the room's host go on across seasons; the server takes up
+    // to PLAYLIST_MAX entries — a longer series gets that many around this episode.
     val followingFiles: List<MFile> = when {
         isCollection -> films.map { it.file }
-        series != null && currentSeason != null -> currentSeason.items.map { it.file }
+        series != null && currentSeason != null -> seasons.flatMap { s -> s.items.map { it.file } }
         else -> emptyList()
-    }.filter { it.link != null }
+    }.filter { it.link != null }.let { all ->
+        val at = all.indexOfFirst { it.path == currentFile.path }
+        if (all.size <= PLAYLIST_MAX || at < 0) all.take(PLAYLIST_MAX)
+        else (at - PLAYLIST_MAX / 2).coerceIn(0, all.size - PLAYLIST_MAX).let { from -> all.subList(from, from + PLAYLIST_MAX) }
+    }
     val queueStart = followingFiles.indexOfFirst { it.path == currentFile.path }.coerceAtLeast(0)
 
     val resumeAt = remember(t.magnetId, currentFile.path, lib.watchVersion) {
@@ -276,6 +288,28 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
     val extraDetails = (if (audio.isNotEmpty()) tr("library.ozvuchek_size", "size" to audio.size) else "") + (if (subs.isNotEmpty()) tr("library.subtitrov_size", "size" to subs.size) else "")
     val statusText = (if (mirror != null && !loading) tr("library.det_mozhno_smotret") else sub) + extraDetails
 
+    // The same request for a film, an episode (the whole season in the queue) and a film of a collection
+    fun requestFor(url: String): PlayRequest {
+        val list = followingFiles.filter { f -> f.link != null }
+        val keys = if (playlist != null) list.map { f -> watchKey(t.magnetId, f) } else listOf(watchKey(t.magnetId, currentFile))
+        val resolve: suspend (Int) -> Pair<List<String>, List<String>> = { i ->
+            list.getOrNull(i)?.let { f ->
+                val aud = externalAudioFor(magnet, f)
+                val sb = subtitlesFor(magnet, f)
+                mirrorUrls(aud) to mirrorUrls(sb)
+            } ?: (emptyList<String>() to emptyList())
+        }
+        return PlayRequest(url, currentTitle, playlist, subs, keys, audio, if (playlist != null) resolve else null, fromStart,
+            posterQueries = item?.posterQueries.orEmpty(), startIndex = if (playlist != null) queueStart else 0,
+            presence = if (playlist != null) list.map(::presenceOf) else listOf(presenceOf(currentFile)), collection = isCollection,
+            markerQueries = if (playlist != null) list.map(::markerQueryOf) else listOf(markerQueryOf(currentFile)))
+    }
+    LaunchedEffect(mirror, loading) {
+        val at = autoStartMs ?: return@LaunchedEffect
+        val url = mirror
+        if (!loading && url != null) onPlay(requestFor(url).copy(startMs = at()))
+    }
+
     var shown by remember(t) { mutableStateOf(false) }
     LaunchedEffect(t) { shown = true }
     val a by animateFloatAsState(if (shown) 1f else 0f, tween(260, easing = Sm.ease))
@@ -285,14 +319,25 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
             .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { onDismiss() },
         contentAlignment = Alignment.Center
     ) {
-        val dialogWidth = if (isCollection) 660.dp else if (series != null && currentSeason != null && currentEpisode != null) 540.dp else 620.dp
+        val dialogWidth = if (autoStartMs != null) 460.dp else if (isCollection) 660.dp else if (series != null && currentSeason != null && currentEpisode != null) 540.dp else 620.dp
         Column(
             Modifier.graphicsLayer { translationY = (1f - a) * 24f; scaleX = 0.97f + 0.03f * a; scaleY = 0.97f + 0.03f * a }
                 .widthIn(max = dialogWidth).glassSheet(RoundedCornerShape(22.dp))
                 .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {}
                 .padding(22.dp)
         ) {
-            if (isCollection) {
+            if (autoStartMs != null) {
+                // ---- A ROOM'S GUEST: nothing to choose, the host's file opens by itself ----
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(tr("party.otkryvaem_film_vedushchego"), color = Color(0xFF8E96A8), fontFamily = Onest, fontSize = 13.sp)
+                        Text(currentTitle, fontFamily = Unbounded, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Color.White,
+                            maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+                    }
+                    CloseCircleButton(onClick = onDismiss)
+                }
+                DetailStatus(if (loading || mirror != null) tr("library.gotovim") else sub)
+            } else if (isCollection) {
                 // ---- SCREEN 2: MOVIE TRILOGY / COLLECTION DESIGN ----
                 val filmCount = films.size
                 val collectionTypeName = tr(collectionKind(filmCount, magnet.name).trKey)
@@ -433,25 +478,7 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                     }
                 }
 
-                WatchButton(
-                    url = mirror,
-                    loading = loading,
-                    onPlay = { url ->
-                        val list = followingFiles.filter { f -> f.link != null }
-                        val keys = if (playlist != null) list.map { f -> watchKey(t.magnetId, f) } else listOf(watchKey(t.magnetId, currentFile))
-                        val resolve: suspend (Int) -> Pair<List<String>, List<String>> = { i ->
-                            list.getOrNull(i)?.let { f ->
-                                val aud = externalAudioFor(magnet, f)
-                                val sb = subtitlesFor(magnet, f)
-                                mirrorUrls(aud) to mirrorUrls(sb)
-                            } ?: (emptyList<String>() to emptyList())
-                        }
-                        onPlay(PlayRequest(url, currentTitle, playlist, subs, keys, audio, if (playlist != null) resolve else null, fromStart,
-                            posterQueries = item?.posterQueries.orEmpty(), startIndex = if (playlist != null) queueStart else 0,
-                            presence = if (playlist != null) list.map(::presenceOf) else listOf(presenceOf(currentFile)), collection = true,
-                            markerQueries = if (playlist != null) list.map(::markerQueryOf) else listOf(markerQueryOf(currentFile))))
-                    },
-                )
+                WatchButton(mirror, loading) { url -> onPlay(requestFor(url)) }
 
                 Spacer(Modifier.height(14.dp))
                 CloseBottomButton(onClick = onDismiss)
@@ -462,25 +489,7 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                 DetailStatus(statusText)
                 DetailStartRow(resumeAt, info, fromStart) { fromStart = it }
 
-                WatchButton(
-                    url = mirror,
-                    loading = loading,
-                    onPlay = { url ->
-                        val list = followingFiles.filter { f -> f.link != null }
-                        val keys = if (playlist != null) list.map { f -> watchKey(t.magnetId, f) } else listOf(watchKey(t.magnetId, currentFile))
-                        val resolve: suspend (Int) -> Pair<List<String>, List<String>> = { i ->
-                            list.getOrNull(i)?.let { f ->
-                                val aud = externalAudioFor(magnet, f)
-                                val sb = subtitlesFor(magnet, f)
-                                mirrorUrls(aud) to mirrorUrls(sb)
-                            } ?: (emptyList<String>() to emptyList())
-                        }
-                        onPlay(PlayRequest(url, currentTitle, playlist, subs, keys, audio, if (playlist != null) resolve else null, fromStart,
-                            posterQueries = item?.posterQueries.orEmpty(), startIndex = if (playlist != null) queueStart else 0,
-                            presence = if (playlist != null) list.map(::presenceOf) else listOf(presenceOf(currentFile)),
-                            markerQueries = if (playlist != null) list.map(::markerQueryOf) else listOf(markerQueryOf(currentFile))))
-                    },
-                )
+                WatchButton(mirror, loading) { url -> onPlay(requestFor(url)) }
 
                 val seasonItems = seasons.mapIndexed { idx, s ->
                     val sLabel = if (s.season == 0) tr("library.spec_materialy") else tr("library.season_sezon", "season" to s.season)
@@ -511,14 +520,7 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                 DetailStatus(statusText)
                 DetailStartRow(resumeAt, info, fromStart) { fromStart = it }
 
-                WatchButton(
-                    url = mirror,
-                    loading = loading,
-                    onPlay = { url ->
-                        onPlay(PlayRequest(url, currentTitle, null, subs, listOf(watchKey(t.magnetId, currentFile)), audio, fromStart = fromStart, posterQueries = item?.posterQueries.orEmpty(),
-                            presence = listOf(presenceOf(currentFile)), markerQueries = listOf(markerQueryOf(currentFile))))
-                    },
-                )
+                WatchButton(mirror, loading) { url -> onPlay(requestFor(url)) }
 
                 ShelfRow(live, lib, scope)
             }

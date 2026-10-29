@@ -75,6 +75,11 @@
 > }
 > ```
 
+> Если **весь сервер** под путём (`https://домен/suslik/…`, nginx передаёт Node `X-Forwarded-Prefix /suslik`):
+> в `@suslik_mirror_retry` нельзя `$request_uri` — в нём `/suslik`, а Node ждёт `/api/…`. Нужен
+> `map $request_uri $suslik_uri { ~^/suslik(?<rest>/.*)$ $rest; default $request_uri; }` (вне `server`) и
+> `proxy_pass http://127.0.0.1:3000$suslik_uri;`. Блок `/_alld/` остаётся от корня. Подробно: `docs/MIGRATION.md` §4.
+
 Проверьте и примените:
 
 ```bash

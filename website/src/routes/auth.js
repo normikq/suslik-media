@@ -20,13 +20,13 @@ const {
   listDevices,
   revokeDeviceById
 } = require("../services/users");
-const { readCookie } = require("../utils/helpers");
+const { readCookie, basePath } = require("../utils/helpers");
 
 const router = express.Router();
 
-// Главная сайта с учётом префикса (/media/ за nginx)
-function siteHome() {
-  return `${config.SITE_PREFIX || ""}/`;
+// Главная сайта с учётом пути сервера (X-Forwarded-Prefix) и префикса сайта (/media/ за nginx)
+function siteHome(req) {
+  return `${basePath(req)}${config.SITE_PREFIX || ""}/`;
 }
 
 // Куда вернуть после входа: только путь этого сайта, без чужих доменов
@@ -48,16 +48,16 @@ function refererPath(req) {
 }
 
 // Главная того сайта, откуда пришли: /media/link?code=… → /media/. Не зависит от SITE_PREFIX в .env
-function homeOf(returnPath) {
+function homeOf(req, returnPath) {
   const p = String(returnPath || "").split(/[?#]/)[0].replace(/link\/?$/, "");
   const home = p.endsWith("/") ? p : p.slice(0, p.lastIndexOf("/") + 1);
   // Идёт в href страницы «Доступ ограничен»: только простые символы пути
-  return home && home !== "/" && /^\/[A-Za-z0-9/_.~%-]*$/.test(home) ? home : siteHome();
+  return home && home !== "/" && /^\/[A-Za-z0-9/_.~%-]*$/.test(home) ? home : siteHome(req);
 }
 
 function getRedirectUri(req) {
   if (config.DISCORD_REDIRECT_URI) return config.DISCORD_REDIRECT_URI;
-  return `${req.protocol}://${req.get("host")}/api/auth/discord/callback`;
+  return `${req.protocol}://${req.get("host")}${basePath(req)}/api/auth/discord/callback`;
 }
 
 // Пометка входа для списка «Активные сессии»: с чего вошли и когда (адрес не пишем)
@@ -111,7 +111,7 @@ router.get("/api/auth/discord/start", (req, res) => {
 
   const state = crypto.randomBytes(24).toString("hex");
   req.session.oauth_state = state;
-  const returnTo = safeReturnPath(req.query.return) || refererPath(req) || siteHome();
+  const returnTo = safeReturnPath(req.query.return) || refererPath(req) || siteHome(req);
   req.session.oauth_return = returnTo;
 
   const tmpCookie = {
@@ -148,8 +148,8 @@ router.get("/api/auth/discord/callback", async (req, res) => {
   if (!savedReturn) {
     try { savedReturn = decodeURIComponent(readCookie(req, "s_oret")); } catch { savedReturn = ""; }
   }
-  const returnTo = safeReturnPath(savedReturn) || siteHome();
-  const home = homeOf(returnTo);
+  const returnTo = safeReturnPath(savedReturn) || siteHome(req);
+  const home = homeOf(req, returnTo);
   res.clearCookie("s_oret");
   if (req.session) delete req.session.oauth_return;
 
@@ -238,7 +238,7 @@ router.post("/api/auth/device", deviceAuthLimiter, (req, res) => {
       siteUrl = `${u.origin}${u.pathname}`.replace(/\/+$/, "");
     }
   } catch { /* нет или не адрес: берём адрес сервера */ }
-  const prefix = siteUrl ? "" : (config.SITE_PREFIX || "");
+  const prefix = siteUrl ? "" : `${basePath(req)}${config.SITE_PREFIX || ""}`;
   const base = siteUrl || `${protocol}://${host}${prefix}`;
   const verificationUrl = `${base}/link?code=${encodeURIComponent(pairing.user_code)}`;
 

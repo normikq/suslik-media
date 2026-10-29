@@ -87,8 +87,9 @@ class MainActivity : ComponentActivity() {
     private lateinit var search: SearchModel
     private var tab by mutableStateOf(Tab.Library)
     private var playTarget by mutableStateOf<PlayTarget?>(null)
+    /** A room's guest: the host's file, opened without the play sheet's choices (another episode would leave the room behind). */
+    private var followTarget by mutableStateOf<PlayTarget?>(null)
     private val uiScope = MainScope() // outlives tab switches: searches and download tracking keep going
-    private val siteHost = ru.suslikovanora.media.net.Api.HOST
     // Remote control (Android TV): Back first brings focus to the tabs below, only then leaves the app.
     private val navFocus = FocusRequester()
     private var navFocused = false
@@ -212,6 +213,20 @@ class MainActivity : ComponentActivity() {
         val guest = Party.isGuest
         val tvUi = Tv.isTv(this@MainActivity)
         LaunchedEffect(guest) { if (guest && tab in GUEST_LOCKED) tab = Tab.Together }
+        // A guest watches the host's file: it opens by itself at the room's place, once per file (closed by the guest,
+        // it waits for «Смотреть вместе»). The guest's progress is kept as usual (PlayerWatchProgress, CloudSync).
+        val roomKey = Party.file?.key
+        LaunchedEffect(guest, roomKey, Party.followed, Party.playingKeys, store.items) {
+            // No film (the host closed it): the same film put again opens again
+            if (!guest || roomKey == null) { followTarget = null; if (roomKey == null) Party.followed = null; return@LaunchedEffect }
+            if (roomKey == Party.followed) return@LaunchedEffect
+            // The host went on within the open playlist: the player follows by itself (PlayerPartySync)
+            if (roomKey in Party.playingKeys) { Party.followed = roomKey; return@LaunchedEffect }
+            val t = ru.suslikovanora.media.library.targetForKey(store.items, roomKey) ?: return@LaunchedEffect
+            Party.followed = roomKey
+            playTarget = null
+            followTarget = t
+        }
         CompositionLocalProvider(LocalHeaderHeight provides (if (tvUi) 0.dp else headerHeight)) {
         // Without the keyboard's inset: with it the whole screen was measured again at every frame of the keyboard animation
         Box(Modifier.fillMaxSize().ambientBackdrop().windowInsetsPadding(WindowInsets.safeDrawing.exclude(WindowInsets.ime))) {
@@ -270,6 +285,17 @@ class MainActivity : ComponentActivity() {
             WhatsNew(enabled = store.authenticated == true && update == null)
             update?.let { u -> UpdateDialog(u) { update = null } }
             if (settingsOpen) SettingsSheet { settingsOpen = false }
+            followTarget?.let { t ->
+                val key = roomKey
+                PlaySheet(
+                    initial = t,
+                    store = store,
+                    onDismiss = { followTarget = null },
+                    // the room's place at the moment the links are ready, not when the sheet appeared
+                    autoStartMs = { if (Party.file?.key == key) Party.targetMs() else 0L },
+                    onPlay = { r -> followTarget = null; handlePlay(r.url, r.title, r.playlist, r.subUrls, r.watchKeys, r.audioUrls, r.fromStart, r.episodeSides, r.customAudio, r.watchKey, r.collection, r.markers, r.startMs) }
+                )
+            }
             playTarget?.let { t ->
                 PlaySheet(
                     initial = t,
@@ -299,7 +325,7 @@ class MainActivity : ComponentActivity() {
         url: String, title: String?, playlist: String? = null,
         subUrls: List<String> = emptyList(), watchKeys: List<String> = emptyList(), audioUrls: List<String> = emptyList(),
         fromStart: Boolean = false, episodeSides: String? = null, customAudio: String? = null, watchKey: String? = null,
-        collection: Boolean = false, markers: String? = null
+        collection: Boolean = false, markers: String? = null, startMs: Long? = null
     ) {
         val current = watchKey ?: watchKeys.firstOrNull()
         val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return
@@ -311,7 +337,7 @@ class MainActivity : ComponentActivity() {
         current?.let { key -> if (Party.isHost) Party.putFilm(ru.suslikovanora.media.core.party.PartyFileRef(key, title ?: tr("main.video"))) }
         // A playlist may only come from our own site: it is fetched without any credentials.
         val playlistUri = playlist?.let { runCatching { Uri.parse(it) }.getOrNull() }
-            ?.takeIf { it.scheme == "https" && it.host == siteHost }
+            ?.takeIf { it.scheme == "https" && ru.suslikovanora.media.core.SiteAddress.isOwn(it.toString(), ru.suslikovanora.media.net.Api.BASE) }
         startActivity(Intent(this, PlayerActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP) // a second tap reuses the running player instead of stacking another
             putExtra(PlayerActivity.EXTRA_URL, uri.toString())
@@ -326,6 +352,7 @@ class MainActivity : ComponentActivity() {
             putExtra(ru.suslikovanora.media.player.PlayerExtras.CUSTOM_AUDIO, customAudio)
             putExtra(ru.suslikovanora.media.player.PlayerExtras.COLLECTION, collection)
             putExtra(ru.suslikovanora.media.player.PlayerExtras.MARKERS, markers)
+            putExtra(ru.suslikovanora.media.player.PlayerExtras.START_MS, startMs ?: -1L)
         })
     }
 

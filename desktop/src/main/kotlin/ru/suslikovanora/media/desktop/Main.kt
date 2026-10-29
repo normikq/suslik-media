@@ -294,6 +294,8 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
                   }
                   }
                 }
+                // A room's guest: the host's file opens by itself, without the play dialog
+                if (lib.authenticated != false) ru.suslikovanora.media.desktop.party.PartyFollow(lib, playing?.watchKeys.orEmpty()) { r -> requestPlay(r) }
             }
             playing?.let { req ->
                 val filmId = remember(req) { req.watchKeys.firstOrNull()?.substringBefore('|')?.toLongOrNull() }

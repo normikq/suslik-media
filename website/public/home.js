@@ -317,7 +317,7 @@
       (async function () {
         for (var q of x.queries) {
           var u = await getPoster(q);
-          if (u) { img.src = u; img.onload = function () { img.classList.add("loaded"); }; break; }
+          if (u) { img.src = apiUrl(u); img.onload = function () { img.classList.add("loaded"); }; break; }
         }
       })();
       var p = el("i", "hb-thumb-bar"); p.style.width = Math.round(Math.min(1, x.fraction) * 100) + "%";
@@ -334,11 +334,11 @@
       if (!box.contains(bg)) return;
       if (info.backdrop && /^\/api\/poster\/img\//.test(info.backdrop)) {
         var im = new Image();
-        im.onload = function () { bg.style.backgroundImage = "url(" + info.backdrop + ")"; bg.classList.add("ready"); };
-        im.src = info.backdrop;
+        im.onload = function () { bg.style.backgroundImage = "url(" + apiUrl(info.backdrop) + ")"; bg.classList.add("ready"); };
+        im.src = apiUrl(info.backdrop);
       }
       if (info.logo && /^\/api\/poster\/img\//.test(info.logo)) {
-        var logo = el("img", "hb-logo"); logo.alt = displayTitleText; logo.src = info.logo;
+        var logo = el("img", "hb-logo"); logo.alt = displayTitleText; logo.src = apiUrl(info.logo);
         logo.onload = function () { title.replaceWith(logo); };
       } else if (info.title && e.isCollection) {
         title.textContent = info.title;

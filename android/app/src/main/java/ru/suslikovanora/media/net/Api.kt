@@ -21,11 +21,14 @@ import ru.suslikovanora.media.tr
  * device cookie ("sdev") for ownership checks.
  */
 object Api {
-    /** Домен сайта приходит из сборки (BuildConfig, секрет SITE_URL), в репозитории его нет. */
-    const val HOST = ru.suslikovanora.media.BuildConfig.SITE_HOST
-    const val BASE = "https://$HOST"
+    /**
+     * Адрес сервера приходит из сборки (BuildConfig, секрет SITE_URL), в репозитории его нет: домен и, если сервер
+     * не в корне, путь (`https://домен/путь`). API — `BASE + "/api/…"`.
+     */
+    val BASE = SiteAddress.normalize(ru.suslikovanora.media.BuildConfig.SITE_URL)
+    val HOST = SiteAddress.host(BASE)
     /** The site's pages (the page where a sign-in code is confirmed lives under it). */
-    const val SITE = "$BASE/media/"
+    val SITE = "$BASE/media/"
 
     class HttpError(val code: Int, message: String) : Exception(message)
 
@@ -39,7 +42,7 @@ object Api {
     private object CookieBridge : Interceptor {
         override fun intercept(chain: Interceptor.Chain): Response {
             val req = chain.request()
-            val ours = req.url.host == HOST
+            val ours = SiteAddress.isOwn(req.url.toString(), BASE)
             val builder = req.newBuilder()
             if (ours) {
                 CookieManager.getInstance().getCookie(BASE)?.takeIf { it.isNotBlank() }?.let { builder.header("Cookie", it) }
@@ -75,7 +78,29 @@ object Api {
     /** Called once by the activities: enables the small HTTP cache (needs a Context for its folder). */
     fun init(ctx: android.content.Context) {
         appCtx = ctx.applicationContext
-        if (cacheDir == null) cacheDir = java.io.File(ctx.applicationContext.cacheDir, "http")
+        if (cacheDir == null) { cacheDir = java.io.File(ctx.applicationContext.cacheDir, "http"); moveCookies() }
+    }
+
+    /**
+     * Сервер переехал на другой адрес (новая сборка с другим SITE_URL): cookie сеанса и устройства («sdev») WebView хранит
+     * по адресу, поэтому переносим их со старого — иначе вход по паролю и «свои раздачи» пропали бы. Токен устройства
+     * (вход через Discord) от адреса не зависит. Сервер на обоих адресах один, и сеансы у него те же.
+     */
+    private fun moveCookies() {
+        val prefs = authPrefs() ?: return
+        val old = prefs.getString("site_base", null)
+        if (old == BASE || BASE.isEmpty()) return
+        runCatching {
+            val cm = CookieManager.getInstance()
+            if (old != null && cm.getCookie(BASE).isNullOrBlank()) {
+                cm.getCookie(old)?.split(';')?.map { it.trim() }?.filter { '=' in it }?.forEach {
+                    // Path=/ — как ставит сервер; срок продлевает сам сервер (сеанс — при каждом ответе)
+                    cm.setCookie(BASE, "$it; Path=/; Max-Age=34560000; Secure; HttpOnly; SameSite=Lax")
+                }
+                cm.flush()
+            }
+        }
+        prefs.edit().putString("site_base", BASE).apply()
     }
 
     /**

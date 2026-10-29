@@ -740,6 +740,7 @@
       title: function () { return c.opts.title; },
       playIndex: function (i) { if (cur === c) { var o = c.opts; close(true); o.onEntry(i); } },
       notice: function (t) { if (cur === c) c.opts.toast(t); },
+      close: function () { if (cur === c) close(); },
       log: note
     });
     el('p-party').className = 'show';

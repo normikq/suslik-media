@@ -18,14 +18,21 @@ namespace SuslikSetup
     static class Mpv
     {
         static readonly Dictionary<string, string> pin = Load();
-        /// <summary>Домен сайта вшивается при сборке (-p:SiteHost=…, секрет SITE_URL), путь — из libmpv.properties.</summary>
+        /// <summary>
+        /// Адрес сайта вшивается при сборке (-p:SiteUrl=https://домен[/путь], секрет SITE_URL; раньше — -p:SiteHost=домен),
+        /// путь к файлу — из libmpv.properties.
+        /// </summary>
         public static string Url
         {
             get
             {
-                var host = Assembly.GetExecutingAssembly().GetCustomAttributes<AssemblyMetadataAttribute>()
-                    .FirstOrDefault(a => a.Key == "SiteHost")?.Value ?? "";
-                return host.Length > 0 && pin.TryGetValue("path", out var p) ? "https://" + host + p : "";
+                var meta = Assembly.GetExecutingAssembly().GetCustomAttributes<AssemblyMetadataAttribute>().ToList();
+                var site = (meta.FirstOrDefault(a => a.Key == "SiteUrl")?.Value ?? "").Trim().TrimEnd('/');
+                var host = meta.FirstOrDefault(a => a.Key == "SiteHost")?.Value ?? "";
+                if (site.Length == 0 && host.Length > 0) site = "https://" + host;
+                else if (site.StartsWith("http://", StringComparison.OrdinalIgnoreCase)) site = "https://" + site.Substring(7);
+                else if (site.Length > 0 && !site.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) site = "https://" + site;
+                return site.Length > 0 && pin.TryGetValue("path", out var p) ? site + p : "";
             }
         }
         static string Sha256 => (pin.TryGetValue("dllSha256", out var v) ? v : "").ToLowerInvariant();
