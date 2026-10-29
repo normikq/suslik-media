@@ -93,8 +93,36 @@ data class PlayRequest(
     /** Watch key of the chosen episode ([watchKeys] is the whole season); null — the first of [watchKeys]. */
     val watchKey: String? = null,
     /** The playlist is the films of a collection (shared isCollection): the player says «Фильмы», not «Серии». */
-    val collection: Boolean = false
+    val collection: Boolean = false,
+    /** Intro and credits from the server: JSON array along [watchKeys] (player.PlayerExtras.MARKERS). */
+    val markers: String? = null
 )
+
+/**
+ * What the player asks the server for the intro and credits of each episode (core.MarkersDetector.serverPath): the
+ * original title (the AI's once accepted, otherwise the release's), the library's title, season and episode; for a film
+ * of a collection — its own name and year, without an episode.
+ */
+private fun markersJson(item: LibraryItem, series: Playable.Series?, files: List<MFile>, collection: Boolean): String {
+    val original = item.m.aiTitle?.takeIf { it.accepted }?.original?.takeIf { it.isNotBlank() } ?: cleanTitle(item.m.name)
+    val out = org.json.JSONArray()
+    if (series == null) {
+        val nameWithYear = MarkersDetector.filmTitle(files.firstOrNull()?.name?.ifBlank { item.m.name } ?: item.m.name, item.baseTitle.ifBlank { original })
+        out.put(org.json.JSONObject().put("title", nameWithYear ?: original).put("alt", item.baseTitle))
+        return out.toString()
+    }
+    for (f in files) {
+        val hit = series.seasons.firstNotNullOfOrNull { s -> s.items.find { it.file.path == f.path }?.let { s to it } }
+        if (collection) {
+            val t = hit?.let { (_, e) -> MarkersDetector.filmTitle(f.name.ifBlank { f.path.substringAfterLast('/') }, e.title) }
+            out.put(t?.let { org.json.JSONObject().put("title", it) } ?: org.json.JSONObject.NULL)
+            continue
+        }
+        out.put(hit?.let { (s, e) -> org.json.JSONObject().put("title", original).put("alt", item.baseTitle).put("season", s.season).put("episode", e.episode) }
+            ?: org.json.JSONObject.NULL)
+    }
+    return out.toString()
+}
 
 /**
  * One way to watch: through our server (for series a playlist with the rest of the season). The direct AllDebrid
@@ -305,7 +333,9 @@ fun PlaySheet(
                     store.saveEpisode(target.magnetId, target.file.path)
                     val keys = if (playlist != null) target.season.filter { f -> f.link != null }.map { f -> watchKey(target.magnetId, f) }
                     else listOf(watchKey(target.magnetId, target.file))
-                    onPlay(PlayRequest(it, target.label, playlist, subUrls, keys, audioUrls, fromStart, if (playlist != null) episodeSidesJson(target, customByPath) else null, customJson(customByPath), watchKey(target.magnetId, target.file), isColl))
+                    val files = if (playlist != null) target.season.filter { f -> f.link != null } else listOf(target.file)
+                    onPlay(PlayRequest(it, target.label, playlist, subUrls, keys, audioUrls, fromStart, if (playlist != null) episodeSidesJson(target, customByPath) else null, customJson(customByPath), watchKey(target.magnetId, target.file), isColl,
+                        if (item == null) null else markersJson(item, series, files, isColl)))
                 }
             }
 

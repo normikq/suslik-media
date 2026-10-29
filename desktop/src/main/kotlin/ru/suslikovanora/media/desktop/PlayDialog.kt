@@ -195,6 +195,23 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
         return Presence(base, if (s.season == 0) tr("discord.specvypusk", "e" to e.episode) else tr("discord.sezon_seriya", "s" to s.season, "e" to e.episode))
     }
 
+    // Intro and credits from the open databases (server /api/markers): an episode by the original title (the AI's once
+    // accepted, otherwise the release's) and the library's one; a film of a collection or movie by its name and year
+    fun markerQueryOf(f: MFile): MarkerQuery? {
+        if (isCollection) {
+            val film = films.find { it.file.path == f.path } ?: return null
+            return MarkerQuery(MarkersDetector.filmTitle(f.name.ifBlank { f.path.substringAfterLast('/') }, film.title), null, null, null)
+        }
+        val original = magnet.aiTitle?.takeIf { it.accepted }?.original?.takeIf { it.isNotBlank() } ?: ru.suslikovanora.media.core.cleanTitle(magnet.name)
+        if (series != null) {
+            val (s, e) = seasons.firstNotNullOfOrNull { s -> s.items.find { it.file.path == f.path }?.let { s to it } } ?: return null
+            return MarkerQuery(original, item?.let(lib::titleOf), s.season, e.episode)
+        }
+        val libTitle = item?.let(lib::titleOf)?.takeIf { it.isNotBlank() }
+        val nameWithYear = MarkersDetector.filmTitle(f.name.ifBlank { magnet.name }, libTitle ?: original)
+        return MarkerQuery(nameWithYear ?: original, libTitle ?: original, null, null)
+    }
+
     // The player's queue: the whole season (or collection) with links, so «previous» works from the episode it started
     // with (it used to be this episode and the following ones only: back from the first one just went to 00:00).
     val followingFiles: List<MFile> = when {
@@ -431,7 +448,8 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                         }
                         onPlay(PlayRequest(url, currentTitle, playlist, subs, keys, audio, if (playlist != null) resolve else null, fromStart,
                             posterQueries = item?.posterQueries.orEmpty(), startIndex = if (playlist != null) queueStart else 0,
-                            presence = if (playlist != null) list.map(::presenceOf) else listOf(presenceOf(currentFile))))
+                            presence = if (playlist != null) list.map(::presenceOf) else listOf(presenceOf(currentFile)), collection = true,
+                            markerQueries = if (playlist != null) list.map(::markerQueryOf) else listOf(markerQueryOf(currentFile))))
                     },
                 )
 
@@ -459,7 +477,8 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                         }
                         onPlay(PlayRequest(url, currentTitle, playlist, subs, keys, audio, if (playlist != null) resolve else null, fromStart,
                             posterQueries = item?.posterQueries.orEmpty(), startIndex = if (playlist != null) queueStart else 0,
-                            presence = if (playlist != null) list.map(::presenceOf) else listOf(presenceOf(currentFile))))
+                            presence = if (playlist != null) list.map(::presenceOf) else listOf(presenceOf(currentFile)),
+                            markerQueries = if (playlist != null) list.map(::markerQueryOf) else listOf(markerQueryOf(currentFile))))
                     },
                 )
 
@@ -497,7 +516,7 @@ internal fun PlayDialog(t: PlayTarget, lib: Library, onDismiss: () -> Unit, onPl
                     loading = loading,
                     onPlay = { url ->
                         onPlay(PlayRequest(url, currentTitle, null, subs, listOf(watchKey(t.magnetId, currentFile)), audio, fromStart = fromStart, posterQueries = item?.posterQueries.orEmpty(),
-                            presence = listOf(presenceOf(currentFile))))
+                            presence = listOf(presenceOf(currentFile)), markerQueries = listOf(markerQueryOf(currentFile))))
                     },
                 )
 

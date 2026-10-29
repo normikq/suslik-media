@@ -1,5 +1,6 @@
 package ru.suslikovanora.media.player
 
+import ru.suslikovanora.media.core.MarkersDetector
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -38,6 +39,8 @@ class PlayerTrackSelector(
 
     companion object {
         const val SPU_OFF = "__off__"
+        /** Субтитры фильма выбирают умные субтитры по звуку (после смены озвучки), пока их не выберут сами. */
+        const val SPU_SMART = "__smart__"
         private const val SIDECAR_NONE = "__none__"
         private const val PENDING_MS = 30_000L // a picked voice-over file not open by then: «＋» works again
     }
@@ -232,6 +235,33 @@ class PlayerTrackSelector(
         prefs.edit().apply { prefKeys().forEach { putString("track:sidecar:$it", SIDECAR_NONE) } }.apply()
         callback.onAudioTrackChanged()
         saveTrackPref("audio", track.name)
+        if (smartOn() && p != null) {
+            applySmartSubs(p, track.id)
+            prefs.edit().apply { prefKeys().forEach { putString("track:spu:$it", SPU_SMART) } }.apply()
+        }
+    }
+
+    private fun smartOn() = ru.suslikovanora.media.PlaybackSettings.smartSubs(context)
+    private fun EngineTrack.forSubs() = MarkersDetector.Track(id, title ?: name, lang, forced)
+
+    /**
+     * Умные субтитры для звука [audioId]: при русской речи — форсированные (надписи) или никаких, при иностранной —
+     * полные русские (core.MarkersDetector.pickSubtitle). Язык звука не понятен — субтитры не трогаются.
+     */
+    private fun applySmartSubs(p: PlayerEngine, audioId: Int = p.audioTrack) {
+        val audio = p.audioTracks().firstOrNull { it.id == audioId && it.id != -1 } ?: return
+        val subs = p.subtitleTracks().filter { it.id != -1 }
+        when (val c = MarkersDetector.pickSubtitle(audio.forSubs(), subs.map { it.forSubs() })) {
+            is MarkersDetector.SubChoice.Pick -> if (p.subtitleTrack != c.id) {
+                p.setSubtitleTrack(c.id); selectedSpuId = c.id
+                AppLog.write("[track] smart subtitles: «${subs.firstOrNull { it.id == c.id }?.name}» for «${audio.name}»")
+            }
+            MarkersDetector.SubChoice.Off -> if (p.subtitleTrack != -1) {
+                p.setSubtitleTrack(-1); selectedSpuId = -1
+                AppLog.write("[track] smart subtitles: off for «${audio.name}»")
+            }
+            MarkersDetector.SubChoice.Keep -> {}
+        }
     }
 
     /**
@@ -353,7 +383,10 @@ class PlayerTrackSelector(
     @Suppress("UNUSED_PARAMETER")
     private fun applyPreferredTracks(p: PlayerEngine, currentTitle: String) {
         val audio = pref("audio") ?: prefs.getString("track:audio:*", null)
-        val spu = pref("spu") ?: prefs.getString("track:spu:*", null)
+        val filmSpu = pref("spu")
+        val spu = filmSpu ?: prefs.getString("track:spu:*", null)
+        // Для этого фильма субтитры сами не выбирали: их выбирают умные субтитры по звуку
+        val smart = smartOn() && (filmSpu == null || filmSpu == SPU_SMART)
         // The remembered voice-over file is opened with the film ([sidecarsFor]), but neither engine makes its track the
         // current one by itself: the film's own track played and the file sat unused.
         val sidecar = activeSidecar?.takeIf { it != SIDECAR_NONE }
@@ -377,7 +410,9 @@ class PlayerTrackSelector(
                     callback.onAudioTrackChanged()
                 }
             }
-            if (spu == SPU_OFF) {
+            if (smart) applySmartSubs(p)
+            else if (spu == SPU_SMART) Unit
+            else if (spu == SPU_OFF) {
                 if (p.subtitleTrack != -1) {
                     p.setSubtitleTrack(-1)
                     selectedSpuId = -1

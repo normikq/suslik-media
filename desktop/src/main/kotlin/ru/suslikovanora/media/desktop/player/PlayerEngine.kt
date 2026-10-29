@@ -2,8 +2,12 @@ package ru.suslikovanora.media.desktop.player
 
 import java.awt.image.BufferedImage
 
-/** Дорожка (звук или субтитры). [id] — идентификатор движка, -1 = «выключено». */
-data class EngineTrack(val id: Int, val description: String, val selected: Boolean)
+/**
+ * Дорожка (звук или субтитры). [id] — идентификатор движка, -1 = «выключено».
+ * [title], [lang] и [forced] — как в файле: по ним умные субтитры (core.MarkersDetector.pickSubtitle) выбирают дорожку.
+ */
+data class EngineTrack(val id: Int, val description: String, val selected: Boolean,
+                       val title: String? = null, val lang: String? = null, val forced: Boolean = false)
 
 data class EngineChapter(val timeMs: Long, val title: String)
 

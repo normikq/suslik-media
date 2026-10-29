@@ -163,7 +163,12 @@ async function searchBase(rawQuery) {
     rating: match && Number(match.vote_average) > 0 ? Math.round(Number(match.vote_average) * 10) / 10 : null
   };
 
-  const ref = match && match.id ? { id: match.id, media_type: match.media_type } : null;
+  const ref = match && match.id ? {
+    id: match.id,
+    media_type: match.media_type,
+    original_language: match.original_language || null,
+    animation: !!match && Array.isArray(match.genre_ids) && match.genre_ids.includes(16)
+  } : null;
 
   // «Постера нет» после сбоя сети по части вариантов — не окончательный ответ: не запоминаем, клиент спросит снова.
   if (!match && failed) {
@@ -219,9 +224,15 @@ async function fetchPosterImage(size, file) {
   return cached;
 }
 
+/** Фильм или сериал TMDB по названию («Dune (2021)» — с годом): { id, media_type } или null (тот же поиск и кэш, что у постеров). */
+async function tmdbRef(query) {
+  return (await searchBase(query)).ref || null;
+}
+
 module.exports = {
   POSTER_SIZES,
   searchPoster,
+  tmdbRef,
   getPosterImagePath,
   fetchPosterImage
 };

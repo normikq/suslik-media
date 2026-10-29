@@ -550,7 +550,11 @@ class Media3Engine(private val context: Context) : PlayerEngine {
             if (g.type != type) return@forEachIndexed
             for (ti in 0 until g.length) {
                 n++
-                if (g.isTrackSupported(ti, true)) out += EngineTrack(gi * 100 + ti, trackName(g.getTrackFormat(ti), n))
+                if (g.isTrackSupported(ti, true)) {
+                    val f = g.getTrackFormat(ti)
+                    out += EngineTrack(gi * 100 + ti, trackName(f, n), f.label?.trim()?.ifEmpty { null },
+                        f.language?.takeIf { it != C.LANGUAGE_UNDETERMINED }, (f.selectionFlags and C.SELECTION_FLAG_FORCED) != 0)
+                }
             }
         }
         return out

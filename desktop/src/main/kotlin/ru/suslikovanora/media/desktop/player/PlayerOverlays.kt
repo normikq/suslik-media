@@ -180,6 +180,8 @@ fun PlayerBottomBar(
     lastVolumeWheelAt: Long,
     nextIn: Int,
     inIntro: Boolean,
+    intro: ru.suslikovanora.media.core.TimeRange? = null,
+    credits: ru.suslikovanora.media.core.TimeRange? = null,
     seeking: Float?,
     onScrubChange: (Float?) -> Unit,
     onPoke: () -> Unit,
@@ -188,6 +190,8 @@ fun PlayerBottomBar(
     onSeekTo: (Long) -> Unit,
     onPlayEntry: (Int) -> Unit,
     onSkipIntro: () -> Unit,
+    /** «Следующая серия: S01E02» / «Следующий фильм: …» for the countdown card. */
+    nextTitle: String = "",
     onClosePicker: () -> Unit,
     onOpenPicker: (String) -> Unit,
     onSelectTrack: (String, Int, String) -> Unit,
@@ -659,10 +663,11 @@ fun PlayerBottomBar(
                 }
             }
 
+            // The next episode / film: on its end credits (core.MarkersDetector) or at the end of the file, bottom right
             if (nextIn >= 0 && index < queue.size - 1) {
                 Box(
                     modifier = Modifier
-                        .align(Alignment.CenterHorizontally)
+                        .align(Alignment.End)
                         .padding(bottom = 10.dp)
                         .clip(RoundedCornerShape(50))
                         .background(Color(0xCC161B26))
@@ -674,7 +679,7 @@ fun PlayerBottomBar(
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Text(
-                            tr("player.sleduyuschaya_p", "p" to queue[index + 1].title),
+                            nextTitle.ifBlank { tr("player.sleduyuschaya_p", "p" to queue[index + 1].title) },
                             color = Sm.text,
                             fontFamily = Onest,
                             fontSize = 13.sp,
@@ -756,6 +761,8 @@ fun PlayerBottomBar(
                     length = length,
                     buffered = animBuffered.toLong(),
                     marks = chapters.map { it.first },
+                    intro = intro,
+                    credits = credits,
                     modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
                     onScrub = { t -> onScrubChange(t?.toFloat()); onPoke() },
                     onSeek = { t ->

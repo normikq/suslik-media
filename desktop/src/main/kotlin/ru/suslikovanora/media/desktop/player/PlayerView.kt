@@ -47,6 +47,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import ru.suslikovanora.media.core.BurstProxy
 import ru.suslikovanora.media.core.CatchUp
+import ru.suslikovanora.media.core.Chapter
+import ru.suslikovanora.media.core.MarkersDetector
+import ru.suslikovanora.media.core.MediaMarkers
+import ru.suslikovanora.media.core.TimeRange
 import ru.suslikovanora.media.core.PlaybackSupervisor
 import ru.suslikovanora.media.desktop.Store
 import ru.suslikovanora.media.desktop.Api
@@ -70,6 +74,8 @@ import ru.suslikovanora.media.desktop.signed
 private const val TOP_BAR_H = 75
 private const val BOTTOM_BAR_H = 460
 private const val BOTTOM_INPUT_H = 220
+// Сохранённый выбор субтитров «как решат умные субтитры» (после смены озвучки)
+private const val SMART_SUBS = "__smart__"
 
 /**
  * Player inside the main window. mpv draws its frames into the window's own OpenGL scene ([MpvVideoSurface]), so the
@@ -207,6 +213,10 @@ fun PlayerView(
     var rate by remember { mutableStateOf(ui.get("rate")?.toFloatOrNull()?.coerceIn(0.25f, 4f) ?: 1f) }
     var subDelay by remember { mutableStateOf(0L) }
     var chapters by remember { mutableStateOf(emptyList<Pair<Long, String>>()) }
+    // Заставка и титры этого файла: из глав ([chapters]) и с сервера (core.MarkersDetector, /api/markers)
+    var serverMarkers by remember { mutableStateOf<MediaMarkers?>(null) }
+    var nextDismissed by remember { mutableStateOf(false) } // «Отмена» на карточке следующей серии: досмотреть титры
+    var introAutoDone by remember { mutableStateOf<TimeRange?>(null) } // заставка, которую уже пропустили сами
     var infoOpen by remember { mutableStateOf(false) }
     var infoSource by remember { mutableStateOf("key") }
     var infoText by remember { mutableStateOf("") }
@@ -377,6 +387,21 @@ fun PlayerView(
         if (ct != null && d != 0L) PlayerLog.write("[custom-audio] ${ct.id} delay $d ms")
     }
 
+    fun EngineTrack.forSubs() = MarkersDetector.Track(id, title, lang, forced)
+
+    /**
+     * Умные субтитры для звука [audioId] (-1 — выбранный): при русской речи — форсированные (надписи) или никаких,
+     * при иностранной — полные русские (core.MarkersDetector.pickSubtitle). Поток плеера.
+     */
+    fun applySmartSubs(audioId: Int = -1) {
+        val audio = engine.audioTracks().let { l -> l.firstOrNull { if (audioId >= 0) it.id == audioId else it.selected } } ?: return
+        when (val c = MarkersDetector.pickSubtitle(audio.forSubs(), engine.subtitleTracks().map { it.forSubs() })) {
+            is MarkersDetector.SubChoice.Pick -> if (eSubCur() != c.id) { eSetSub(c.id); PlayerLog.write("[subs] smart: track ${c.id} for «${audio.description}»") }
+            MarkersDetector.SubChoice.Off -> if (eSubCur() != -1) { eSetSub(-1); PlayerLog.write("[subs] smart: off for «${audio.description}»") }
+            MarkersDetector.SubChoice.Keep -> {}
+        }
+    }
+
     fun applyPrefs() {
         // Предпросмотр озвучки: слушаем именно её
         val a = req.preview?.menuName ?: pref("audio"); val spu = pref("spu")
@@ -385,15 +410,19 @@ fun PlayerView(
             val cur = eAudioCur()
             eAudioTracks().firstOrNull { it.first == cur }?.second?.let { n -> SwingUtilities.invokeLater { applyCustomDelay(n) } }
             if (spu == "__off__") { if (eSubCur() != -1) eSetSub(-1) }
-            else if (spu != null) eSubTracks().firstOrNull { it.second == spu }?.let { if (eSubCur() != it.first) eSetSub(it.first) }
+            else if (spu != null && spu != SMART_SUBS) eSubTracks().firstOrNull { it.second == spu }?.let { if (eSubCur() != it.first) eSetSub(it.first) }
         }
+        // Субтитры для этого сериала не выбирали сами (или после смены озвучки их выбрали умные): по звуку
+        if ((spu == null || spu == SMART_SUBS) && PlaybackSettings.smartSubs()) applySmartSubs()
     }
 
-    fun playEntry(i: Int) {
+    /** [finished]: the current file goes to the library as watched to the end (left on its end credits). */
+    fun playEntry(i: Int, finished: Boolean = false) {
         if (i !in queue.indices) return
         seekByJob?.cancel(); seekByJob = null; pendingSeekByTarget = null
-        savePos(time, length)
+        if (finished && length > 0) savePos(length, length) else savePos(time, length)
         index = i; nextIn = -1; currentUrl = queue[i].url; title = queue[i].title; retries = 0
+        serverMarkers = null; nextDismissed = false; introAutoDone = null
         val url = currentUrl; val start = savedPos(i)
         playing = false; started = false; switching = true; time = start; lastGood = start; length = 0L; status = tr("player.sleduyuschaya_seriya")
         scope.launch {
@@ -522,9 +551,34 @@ fun PlayerView(
         flash(tr("player.glava_p_p", "n" to i + 1, "name" to chapters[i].second.ifBlank { tr("player.bez_nazvaniya") }))
     }
 
-    val introRe = Regex("""(?i)(intro|opening|заставк|опенинг|вступлен|начальн|^op\b|\bop\s?\d*$)""")
-    fun inIntro(): Boolean { val i = chapterAt(time); return i in 0 until chapters.size - 1 && introRe.containsMatchIn(chapters[i].second) }
-    fun skipIntro() { if (inIntro()) jumpChapter(1) }
+    // A state, not a plain value: the key handler (installed once) must see this file's marks
+    val markers by remember { androidx.compose.runtime.derivedStateOf {
+        val m = MarkersDetector.merge(MarkersDetector.fromChapters(chapters.map { Chapter(it.first, it.second) }, length), serverMarkers, length)
+        if (queue.size <= 1 && !req.collection) m.copy(credits = null) else m
+    } }
+    fun introNow(): TimeRange? = MarkersDetector.introAt(markers, time)
+    fun inIntro(): Boolean = introNow() != null
+    fun skipIntro(auto: Boolean = false) {
+        val r = introNow() ?: return
+        if (partyGuest()) { flash(tr("party.peremativaet_sozdatel")); return }
+        val t = r.endMs; time = t; lastGood = t; lastSeekAt = System.currentTimeMillis(); supRef.get()?.seeked()
+        PlayerLog.write("skip intro ${r.startMs / 1000}-${r.endMs / 1000}s${if (auto) " (auto)" else ""}")
+        seekTo(t)
+        if (auto) flash(tr("player.zastavka_propuschena"))
+    }
+    /** The next entry of the queue, from its end credits: this one counts as watched. */
+    fun playNext() { if (index + 1 < queue.size) playEntry(index + 1, finished = true) }
+    fun cancelNext() { nextIn = -1; nextDismissed = true }
+    /** «Следующая серия: S01E02» / «Следующий фильм: Две крепости» for the card on the credits and at the end. */
+    fun nextTitle(): String {
+        val i = index + 1
+        val fallback = queue.getOrNull(i)?.title.orEmpty()
+        if (req.collection) return tr("player.sleduyuschiy_film_p", "p" to (req.presence.getOrNull(i)?.title ?: fallback))
+        val q = req.markerQueries.getOrNull(i)
+        val se = q?.let { qq -> qq.episode?.let { "S%02dE%02d".format(qq.season ?: 1, it) } }
+        return if (se != null || req.presence.size > 1) tr("player.sleduyuschaya_seriya_p", "p" to (se ?: req.presence.getOrNull(i)?.episode ?: fallback))
+        else tr("player.sleduyuschaya_p", "p" to fallback)
+    }
 
     fun restartPlayer() {
         if (closing) return
@@ -653,7 +707,8 @@ fun PlayerView(
             if (e.type != KeyEventType.KeyDown) return@handler false
             poke()
             when (e.key) {
-                Key.Spacebar, Key.K -> togglePause()
+                Key.Spacebar, Key.Enter -> if (nextIn >= 0 && index + 1 < queue.size) playNext() else if (e.key == Key.Spacebar) togglePause() else toggleFullscreen()
+                Key.K -> togglePause()
                 Key.DirectionRight -> seekBy(if (e.isShiftPressed) 60_000L else 10_000L)
                 Key.DirectionLeft -> seekBy(if (e.isShiftPressed) -60_000L else -10_000L)
                 Key.DirectionUp -> {
@@ -678,11 +733,11 @@ fun PlayerView(
                     lastVolumeWheelAt = System.currentTimeMillis()
                     flash(tr("player.gromkost_v", "v" to v))
                 }
-                Key.F, Key.Enter, Key.F11 -> toggleFullscreen()
-                Key.Escape -> if (WindowMode.isFullscreen) {
+                Key.F, Key.F11 -> toggleFullscreen()
+                Key.Escape -> if (nextIn >= 0) cancelNext() else if (WindowMode.isFullscreen) {
                     WindowMode.setFullscreen(owner, false)
                 } else close()
-                Key.Backspace -> close()
+                Key.Backspace -> if (nextIn >= 0) cancelNext() else close()
                 Key.N -> if (!partyGuest()) playEntry(index + 1) else flash(tr("party.seriyu_vybiraet_sozdatel"))
                 Key.P -> if (!partyGuest()) playEntry(index - 1) else flash(tr("party.seriyu_vybiraet_sozdatel"))
                 Key.M -> { userMuted = !userMuted; val m = userMuted; runOnPlayer { eMute(m) } }
@@ -957,7 +1012,7 @@ fun PlayerView(
                 val end = length > 0 && lastGood >= length - 5_000L
                 if (end) {
                     savePos(length, length)
-                    if (index < queue.size - 1) nextIn = 10 else status = tr("player.konec")
+                    if (index < queue.size - 1) { if (nextIn < 0) nextIn = PlaybackSettings.nextCountdown() } else status = tr("player.konec")
                 } else if (retries < 6) { retries++; status = tr("player.perepodklyuchenie"); reopen(lastGood) }
             }
         }
@@ -1165,8 +1220,62 @@ fun PlayerView(
         }
     }
 
-    LaunchedEffect(nextIn) {
-        if (nextIn > 0) { delay(1000); nextIn-- } else if (nextIn == 0) playEntry(index + 1)
+    // On a pause the countdown waits (the end of the file is not a pause: it goes on)
+    LaunchedEffect(nextIn, userPaused) {
+        if (nextIn > 0) { if (userPaused) return@LaunchedEffect; delay(1000); nextIn-- } else if (nextIn == 0) playNext()
+    }
+
+    // Intro and credits from the open databases when the file's chapters do not have them (episodes, films of a collection)
+    LaunchedEffect(index, started, length > 0L) {
+        if (!started || length <= 0L || serverMarkers != null) return@LaunchedEffect
+        val q = req.markerQueries.getOrNull(index) ?: req.markerQueries.getOrNull(req.startIndex) ?: return@LaunchedEffect
+        delay(300) // chapters from mpv come quickly; short delay avoids initial lag
+        val isSingleMovie = queue.size <= 1 && !req.collection
+        val file = MarkersDetector.fromChapters(chapters.map { Chapter(it.first, it.second) }, length)
+        if (file.intro != null && (isSingleMovie || file.credits != null)) return@LaunchedEffect
+        val path = MarkersDetector.serverPath(q.title, q.alt, q.season, q.episode, length) ?: return@LaunchedEffect
+        // Local client cache: instant 0 ms markers without hitting the network on every open
+        val cached = runCatching { Store.of("markers").get(path)?.let { MarkersDetector.parseServer(org.json.JSONObject(it)) } }.getOrNull()
+        if (cached != null && !cached.isEmpty) {
+            val finalCached = if (isSingleMovie) cached.copy(credits = null) else cached
+            PlayerLog.write("[markers] cache: intro ${finalCached.intro?.let { "${it.startMs / 1000}-${it.endMs / 1000}s" } ?: "-"}, credits ${finalCached.credits?.let { "${it.startMs / 1000}s" } ?: "-"}")
+            serverMarkers = finalCached
+            return@LaunchedEffect
+        }
+        val reqIndex = index
+        val reqUrl = currentUrl
+        val found = withTimeoutOrNull(10_000) { runCatching {
+            val res = Api.get(path)
+            Store.of("markers").put(path, res.toString())
+            MarkersDetector.parseServer(res)
+        }.getOrNull() }
+        // Race condition guard: ignore old response if the user already switched to another episode
+        if (!closing && index == reqIndex && currentUrl == reqUrl && found != null && !found.isEmpty) {
+            val finalFound = if (isSingleMovie) found.copy(credits = null) else found
+            PlayerLog.write("[markers] server: intro ${finalFound.intro?.let { "${it.startMs / 1000}-${it.endMs / 1000}s" } ?: "-"}, credits ${finalFound.credits?.let { "${it.startMs / 1000}s" } ?: "-"}")
+            serverMarkers = finalFound
+        }
+    }
+
+    // Auto-skip: 1.5 s into the intro, once per file (back into it by hand — the button stays)
+    val introRange = introNow()
+    LaunchedEffect(introRange, started) {
+        val r = introRange ?: return@LaunchedEffect
+        if (!started || introAutoDone == r || !PlaybackSettings.autoSkipIntro() || partyGuest()) return@LaunchedEffect
+        delay(MarkersDetector.AUTO_SKIP_DELAY_MS)
+        if (closing || pausedAt > 0L || enginePaused || introNow() != r) return@LaunchedEffect
+        introAutoDone = r
+        skipIntro(auto = true)
+    }
+
+    // End credits of an episode / a film of a collection: the card of the next one with its countdown, not waiting for the end
+    val creditsAt = MarkersDetector.nextOfferAt(markers, length)
+    val inCredits = creditsAt != null && started && time >= creditsAt && time < length
+    LaunchedEffect(inCredits, index) {
+        if (!inCredits || nextIn >= 0 || nextDismissed || closing || index + 1 >= queue.size) return@LaunchedEffect
+        if (!PlaybackSettings.offerNextOnCredits() || partyGuest()) return@LaunchedEffect
+        PlayerLog.write("[markers] credits at ${time / 1000}s: next in ${PlaybackSettings.nextCountdown()}s")
+        nextIn = PlaybackSettings.nextCountdown()
     }
 
     val fullscreen = WindowMode.isFullscreen
@@ -1550,6 +1659,8 @@ fun PlayerView(
             lastVolumeWheelAt = lastVolumeWheelAt,
             nextIn = nextIn,
             inIntro = inIntro(),
+            intro = markers.intro,
+            credits = markers.credits,
             seeking = seeking,
             onScrubChange = { seeking = it },
             onPoke = { poke() },
@@ -1567,8 +1678,9 @@ fun PlayerView(
                 PlayerLog.write("seek to ${t / 1000}s")
                 seekTo(t)
             },
-            onPlayEntry = { playEntry(it) },
+            onPlayEntry = { if (it == index + 1 && nextIn >= 0) playNext() else playEntry(it) },
             onSkipIntro = { skipIntro() },
+            nextTitle = if (index + 1 < queue.size) nextTitle() else "",
             onClosePicker = { closePicker() },
             onOpenPicker = { openPicker(it) },
             onSelectTrack = { kind, id, name ->
@@ -1576,7 +1688,10 @@ fun PlayerView(
                 bufferingShown = 0
                 trackSwitches++
                 if (kind == "audio") {
-                    runOnPlayer { eSetAudio(id) }
+                    val smart = PlaybackSettings.smartSubs()
+                    runOnPlayer { eSetAudio(id); if (smart) applySmartSubs(id) }
+                    // Субтитры теперь выбираются по звуку и при следующем открытии — пока не выберут сами
+                    if (smart) ui.put("spu:${seriesKey()}", SMART_SUBS)
                     applyTrackNow()
                     applyCustomDelay(name)
                     ui.put("audio:${seriesKey()}", name)
@@ -1631,7 +1746,7 @@ fun PlayerView(
             },
             onMoreInfo = { toggleInfo("button") },
             onMoreChapter = { i -> jumpChapter(i - chapterAt(time)) },
-            onCancelNextIn = { nextIn = -1 },
+            onCancelNextIn = { cancelNext() },
             onMiniToggle = { setMini(false) },
             onClose = { close() },
             live = partyGuest(),

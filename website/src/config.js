@@ -11,6 +11,8 @@ const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toSt
 const ALLDEBRID_API_KEY = process.env.ALLDEBRID_API_KEY || "";
 const ALLDEBRID_API_BASE = process.env.ALLDEBRID_API_BASE || "https://api.alldebrid.com";
 const TMDB_API_KEY = process.env.TMDB_API_KEY || "";
+// TheIntroDB (заставки и титры, services/markers.js): без ключа — 5000 запросов в день с адреса сервера, с ключом — больше
+const THEINTRODB_API_KEY = process.env.THEINTRODB_API_KEY || "";
 const COOKIE_SECURE = process.env.COOKIE_SECURE === "true";
 const OWNER_LOCK = process.env.OWNER_LOCK !== "false";
 // Автоочистка библиотеки: не открывали N дней или раздач больше максимума (services/cleanup.js)
@@ -87,6 +89,7 @@ const USAGE_FILE = path.join(DATA_DIR, "usage.json"); // когда раздач
 const SYNC_FILE = path.join(DATA_DIR, "sync.json"); // прогресс и дорожки пользователей Discord (services/sync.js)
 const AUDIO_TRACKS_FILE = path.join(DATA_DIR, "audio-tracks.json"); // внешние озвучки, привязанные к фильмам (services/custom-audio.js)
 const AI_TITLE_FILE = path.join(DATA_DIR, "ai-titles.json"); // названия, предложенные ИИ, и кулдауны (services/aititle.js)
+const MARKERS_FILE = path.join(DATA_DIR, "markers-cache.json"); // заставки и титры из AniSkip (services/markers.js)
 // (Комнаты совместного просмотра живут только в памяти: после перезапуска приложения входят заново)
 
 if (!process.env.SESSION_SECRET) {
@@ -107,6 +110,7 @@ module.exports = {
   ALLDEBRID_API_KEY,
   ALLDEBRID_API_BASE,
   TMDB_API_KEY,
+  THEINTRODB_API_KEY,
   COOKIE_SECURE,
   OWNER_LOCK,
   TRUST_PROXY,
@@ -145,6 +149,7 @@ module.exports = {
   SYNC_FILE,
   AUDIO_TRACKS_FILE,
   AI_TITLE_FILE,
+  MARKERS_FILE,
   GEMINI_API_KEY,
   AI_TITLE_MODEL,
   AI_TITLE_COOLDOWN_MIN,

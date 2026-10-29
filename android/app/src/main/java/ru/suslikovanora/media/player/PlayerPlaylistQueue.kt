@@ -18,10 +18,14 @@ class PlayerPlaylistQueue(
     interface Callback {
         fun isActivityAlive(): Boolean
         fun getCurrentUrl(): String
-        fun onSaveCurrentPosition()
+        /** [finished]: the current file is left on its end credits and counts as watched to the end. */
+        fun onSaveCurrentPosition(finished: Boolean)
         fun onPlayEntry(entry: Entry, index: Int)
         fun onQueueUiUpdated(hasMultiple: Boolean, hasPrevious: Boolean, hasNext: Boolean, displayText: String?, episodes: List<String>, index: Int)
-        fun onNextEpisodeOffered()
+        /** The card came up at the end of the file (or on its end credits, [onCredits]: it goes on playing). */
+        fun onNextEpisodeOffered(onCredits: Boolean)
+        /** The countdown waits while the viewer holds a pause (on the credits). */
+        fun isPaused(): Boolean
         /** The card «Следующая: …» shows [title], starting in [seconds]. */
         fun onNextCountdown(title: String, seconds: Int)
         fun onNextCardDismissed()
@@ -29,13 +33,17 @@ class PlayerPlaylistQueue(
     }
 
     companion object {
-        private const val NEXT_COUNTDOWN_S = 10
+        const val NEXT_COUNTDOWN_S = 10
     }
 
     private var queue: List<Entry> = emptyList()
     private var queueIndex: Int = -1
 
     private var countdown = 0
+    private var countdownOnCredits = false
+    /** The countdown card is up (on the credits or at the end). */
+    var nextOffered = false
+        private set
 
     val size: Int get() = queue.size
     val currentIndex: Int get() = queueIndex
@@ -46,9 +54,10 @@ class PlayerPlaylistQueue(
 
     private val countdownRunnable = object : Runnable {
         override fun run() {
+            if (countdownOnCredits && callback.isPaused()) { handler.postDelayed(this, 500L); return }
             if (countdown <= 0) {
                 hideNextCard()
-                playEntry(queueIndex + 1)
+                playEntry(queueIndex + 1, finished = true)
                 return
             }
             queue.getOrNull(queueIndex + 1)?.let { callback.onNextCountdown(it.title, countdown) }
@@ -94,35 +103,42 @@ class PlayerPlaylistQueue(
         notifyUiUpdated()
     }
 
-    fun playEntry(index: Int) {
+    fun playEntry(index: Int, finished: Boolean = false) {
         hideNextCard()
         if (index < 0 || index >= queue.size) return
-        callback.onSaveCurrentPosition()
+        callback.onSaveCurrentPosition(finished)
         val entry = queue[index]
         queueIndex = index
         notifyUiUpdated()
         callback.onPlayEntry(entry, index)
     }
 
-    fun playNext() {
-        if (hasNext) playEntry(queueIndex + 1)
+    /** [finished]: from the card on the end credits — the current one counts as watched. */
+    fun playNext(finished: Boolean = false) {
+        if (hasNext) playEntry(queueIndex + 1, finished)
     }
 
     fun playPrevious() {
         if (hasPrevious) playEntry(queueIndex - 1)
     }
 
-    fun offerNextEpisode(): Boolean {
+    /** The card of the next entry with a countdown of [seconds] (0 — at once); [onCredits] — the file still plays. */
+    fun offerNextEpisode(seconds: Int = NEXT_COUNTDOWN_S, onCredits: Boolean = false): Boolean {
         if (queueIndex < 0 || queueIndex >= queue.size - 1) return false
-        countdown = NEXT_COUNTDOWN_S
+        // Already counting on the credits: the end of the file keeps that countdown
+        if (nextOffered && !onCredits) { countdownOnCredits = false; callback.onNextEpisodeOffered(false); return true }
+        countdown = seconds.coerceAtLeast(0)
+        countdownOnCredits = onCredits
+        nextOffered = true
         handler.removeCallbacks(countdownRunnable)
         handler.post(countdownRunnable)
-        callback.onNextEpisodeOffered()
+        callback.onNextEpisodeOffered(onCredits)
         return true
     }
 
     fun hideNextCard() {
         handler.removeCallbacks(countdownRunnable)
+        nextOffered = false
         callback.onNextCardDismissed()
     }
 

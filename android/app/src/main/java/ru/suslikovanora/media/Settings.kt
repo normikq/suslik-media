@@ -102,6 +102,19 @@ object PlaybackSettings {
     fun setFrameRateMode(ctx: Context, v: Int) = prefs(ctx).edit().putInt("frame_rate_mode", v).apply()
     /** The beta channel is really in use (chosen and a code saved); otherwise — the release channel. */
     fun betaChannel(ctx: Context) = betaOn(ctx) && betaCode(ctx).isNotBlank()
+
+    /** «Заставки и титры» (core.MarkersDetector): автопропуск заставки, карточка следующей серии / фильма на титрах. */
+    fun autoSkipIntro(ctx: Context) = prefs(ctx).getBoolean("auto_skip_intro", false)
+    fun setAutoSkipIntro(ctx: Context, on: Boolean) = prefs(ctx).edit().putBoolean("auto_skip_intro", on).apply()
+    fun offerNextOnCredits(ctx: Context) = prefs(ctx).getBoolean("next_on_credits", true)
+    fun setOfferNextOnCredits(ctx: Context, on: Boolean) = prefs(ctx).edit().putBoolean("next_on_credits", on).apply()
+    /** Обратный отсчёт до следующей серии / фильма, секунды; 0 — сразу. */
+    fun nextCountdown(ctx: Context) = prefs(ctx).getInt("next_countdown", MarkersDetector.COUNTDOWN_DEFAULT)
+        .takeIf { it in MarkersDetector.COUNTDOWN_CHOICES } ?: MarkersDetector.COUNTDOWN_DEFAULT
+    fun setNextCountdown(ctx: Context, v: Int) = prefs(ctx).edit().putInt("next_countdown", v).apply()
+    /** Умные субтитры: форсированные при русской речи, полные русские при иностранной. */
+    fun smartSubs(ctx: Context) = prefs(ctx).getBoolean("smart_subs", true)
+    fun setSmartSubs(ctx: Context, on: Boolean) = prefs(ctx).edit().putBoolean("smart_subs", on).apply()
 }
 
 /** «Настройки» over the main screen: the same card style and entrance as «Что нового». */
@@ -149,6 +162,7 @@ fun SettingsSheet(onClose: () -> Unit) {
                 }
                 EngineSection()
                 PictureSoundSection()
+                SkipSection()
                 TrafficSection()
                 StorageSection()
                 if (Diag.on) DiagSection() else ChannelSection()
@@ -260,6 +274,39 @@ private fun PictureSoundSection() {
         ).forEach { (v, label) ->
             ChannelOption(label, rate == v, Modifier.weight(1f)) { rate = v; PlaybackSettings.setFrameRateMode(ctx, v) }
         }
+    }
+}
+
+/** «Заставки и титры»: автопропуск заставки, следующая серия / фильм на титрах, обратный отсчёт, умные субтитры. */
+@Composable
+private fun SkipSection() {
+    val ctx = LocalContext.current
+    var auto by remember { mutableStateOf(PlaybackSettings.autoSkipIntro(ctx)) }
+    var offer by remember { mutableStateOf(PlaybackSettings.offerNextOnCredits(ctx)) }
+    var countdown by remember { mutableStateOf(PlaybackSettings.nextCountdown(ctx)) }
+    var smart by remember { mutableStateOf(PlaybackSettings.smartSubs(ctx)) }
+    Section(tr("settings.propuskat_zastavki"), tr("settings.zastavki_i_titry_tekst"), top = 18.dp)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ChannelOption(tr("settings.avtomaticheski"), auto, Modifier.weight(1f)) { auto = true; PlaybackSettings.setAutoSkipIntro(ctx, true) }
+        ChannelOption(tr("settings.knopkoy"), !auto, Modifier.weight(1f)) { auto = false; PlaybackSettings.setAutoSkipIntro(ctx, false) }
+    }
+    Section(tr("settings.sleduyuschaya_na_titrah"), tr("settings.sleduyuschaya_na_titrah_tekst"), top = 14.dp)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ChannelOption(tr("settings.predlagat"), offer, Modifier.weight(1f)) { offer = true; PlaybackSettings.setOfferNextOnCredits(ctx, true) }
+        ChannelOption(tr("settings.posle_kontsa"), !offer, Modifier.weight(1f)) { offer = false; PlaybackSettings.setOfferNextOnCredits(ctx, false) }
+    }
+    Section(tr("settings.obratnyy_otschet"), tr("settings.obratnyy_otschet_tekst"), top = 14.dp)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        MarkersDetector.COUNTDOWN_CHOICES.forEach { v ->
+            ChannelOption(if (v == 0) tr("settings.srazu") else tr("settings.n_sek", "n" to v), countdown == v, Modifier.weight(1f)) {
+                countdown = v; PlaybackSettings.setNextCountdown(ctx, v)
+            }
+        }
+    }
+    Section(tr("settings.umnye_subtitry"), tr("settings.umnye_subtitry_tekst"), top = 14.dp)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ChannelOption(tr("settings.vkl"), smart, Modifier.weight(1f)) { smart = true; PlaybackSettings.setSmartSubs(ctx, true) }
+        ChannelOption(tr("settings.vykl"), !smart, Modifier.weight(1f)) { smart = false; PlaybackSettings.setSmartSubs(ctx, false) }
     }
 }
 

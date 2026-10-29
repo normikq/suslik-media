@@ -2,8 +2,11 @@ package ru.suslikovanora.media.player
 
 import android.view.View
 
-/** Дорожка (звук или субтитры). [id] — идентификатор движка, -1 = «выключено». */
-data class EngineTrack(val id: Int, val name: String)
+/**
+ * Дорожка (звук или субтитры). [id] — идентификатор движка, -1 = «выключено».
+ * [title], [lang] и [forced] — как в файле (если движок их знает): по ним умные субтитры (core.MarkersDetector.pickSubtitle).
+ */
+data class EngineTrack(val id: Int, val name: String, val title: String? = null, val lang: String? = null, val forced: Boolean = false)
 
 /** Текущая видеодорожка: кодек, размер, частота кадров и форма пикселя (0, если неизвестно). */
 data class EngineVideoTrack(
@@ -116,6 +119,8 @@ interface PlayerEngine {
     fun subtitleTracks(): List<EngineTrack>
     val subtitleTrack: Int
     fun setSubtitleTrack(id: Int)
+    /** Главы файла (заставка и титры по их названиям, core.MarkersDetector); пусто — глав нет или движок их не знает (Media3). */
+    fun chapters(): List<ru.suslikovanora.media.core.Chapter> = emptyList()
     /** Внешняя озвучка, выбранная в меню во время просмотра; сразу становится текущей дорожкой. */
     fun addAudioFile(url: String)
     /**
