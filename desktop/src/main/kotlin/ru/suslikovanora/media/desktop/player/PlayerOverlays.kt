@@ -679,7 +679,7 @@ fun PlayerBottomBar(
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Text(
-                            nextTitle.ifBlank { tr("player.sleduyuschaya_p", "p" to queue[index + 1].title) },
+                            nextTitle.ifBlank { tr("player.sleduyuschaya_p", "p" to queue.getOrNull(index + 1)?.title.orEmpty()) },
                             color = Sm.text,
                             fontFamily = Onest,
                             fontSize = 13.sp,
@@ -829,11 +829,14 @@ fun PlayerBottomBar(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(buttonSpacing)
                         ) {
-                            // The previous episode: the mirrored «next» (the queue is the whole series, see PlayDialog)
-                            if (index > 0 && !live) {
+                            // The previous episode: the mirrored «next» (the queue is the whole series, see PlayDialog).
+                            // Until the season's playlist is loaded the queue holds only this file while index is already
+                            // the episode's place in the season: no button then (queue[index - 1] crashed, 30.10).
+                            val prevEntry = if (live) null else queue.getOrNull(index - 1)
+                            if (prevEntry != null) {
                                 GlassIconButton(
                                     onClick = { onPlayEntry(index - 1) },
-                                    tooltip = tr("player.predyduschaya_p", "p" to queue[index - 1].title),
+                                    tooltip = tr("player.predyduschaya_p", "p" to prevEntry.title),
                                     size = btnSize
                                 ) {
                                     NextEpisodeIcon(color = Sm.text, size = if (isCompact) 14.dp else 16.dp, modifier = Modifier.graphicsLayer { scaleX = -1f })
