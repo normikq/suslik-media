@@ -737,7 +737,7 @@
       player: function () { return cur === c && c.prepared ? sp : null; },
       key: function () { return c.key; },
       keys: function () { return keys; },
-      title: function () { return c.opts.title; },
+      title: function () { var en = c.opts.entries && c.opts.entries[c.opts.index]; return (en && en.room) || c.opts.title; },
       playIndex: function (i) { if (cur === c) { var o = c.opts; close(true); o.onEntry(i); } },
       notice: function (t) { if (cur === c) c.opts.toast(t); },
       close: function () { if (cur === c) close(); },
