@@ -174,6 +174,7 @@ fun PlayerView(
     var queue by remember { mutableStateOf(listOf(Entry(req.title, req.url))) }
     var currentUrl by remember { mutableStateOf(req.url) }
     var nextIn by remember { mutableStateOf(-1) }
+    var nextFrom by remember { mutableStateOf(-1L) } // where the card of the next one came up: rewound before it — no card
     var barVisible by remember { mutableStateOf(true) }
     var lastMove by remember { mutableStateOf(System.currentTimeMillis()) }
     var started by remember { mutableStateOf(false) }
@@ -1015,7 +1016,9 @@ fun PlayerView(
                     savePos(length, length)
                     // a room's guest: the host's player goes on to the next one, the room follows it (no countdown here)
                     if (partyGuest()) Unit
-                    else if (index < queue.size - 1) { if (nextIn < 0) nextIn = PlaybackSettings.nextCountdown() } else status = tr("player.konec")
+                    else if (index < queue.size - 1) {
+                        if (nextIn < 0) { nextIn = PlaybackSettings.nextCountdown(); nextFrom = (length - 5_000L).coerceAtLeast(0L) }
+                    } else status = tr("player.konec")
                 } else if (retries < 6) { retries++; status = tr("player.perepodklyuchenie"); reopen(lastGood) }
             }
         }
@@ -1279,6 +1282,14 @@ fun PlayerView(
         if (!PlaybackSettings.offerNextOnCredits() || partyGuest()) return@LaunchedEffect
         PlayerLog.write("[markers] credits at ${time / 1000}s: next in ${PlaybackSettings.nextCountdown()}s")
         nextIn = PlaybackSettings.nextCountdown()
+        nextFrom = creditsAt ?: time
+    }
+    // Rewound to before the card came up (the credits, the end): the countdown stops; the credits again — it comes again
+    val rewoundFromNext = nextIn >= 0 && nextFrom >= 0 && time < nextFrom - 1_000L
+    LaunchedEffect(rewoundFromNext) {
+        if (!rewoundFromNext) return@LaunchedEffect
+        PlayerLog.write("[markers] rewound before the next card: countdown stopped")
+        nextIn = -1; nextFrom = -1L
     }
 
     val fullscreen = WindowMode.isFullscreen

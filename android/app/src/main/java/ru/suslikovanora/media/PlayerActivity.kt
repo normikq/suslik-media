@@ -537,6 +537,11 @@ class PlayerActivity : ComponentActivity() {
         } else introSeenAt = 0L
         val at = MarkersDetector.nextOfferAt(markers, len)
         val inCredits = at != null && t >= at && t < len && !ended
+        // Rewound to before the credits while the card counts: it goes away (the credits again — it comes again)
+        if (at != null && t < at && playlistQueue.offeredOnCredits) {
+            AppLog.write("[markers] rewound before the credits: next card hidden")
+            playlistQueue.hideNextCard()
+        }
         if (inCredits && !wasInCredits && !guest && playlistQueue.hasNext && !playlistQueue.nextOffered && PlaybackSettings.offerNextOnCredits(this)) {
             AppLog.write("[markers] credits at ${t / 1000}s: next in ${PlaybackSettings.nextCountdown(this)}s")
             playlistQueue.offerNextEpisode(PlaybackSettings.nextCountdown(this), onCredits = true)

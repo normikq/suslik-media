@@ -44,6 +44,8 @@ class PlayerPlaylistQueue(
     /** The countdown card is up (on the credits or at the end). */
     var nextOffered = false
         private set
+    /** The card counts on the credits while the file plays (not at its end). */
+    val offeredOnCredits: Boolean get() = nextOffered && countdownOnCredits
 
     val size: Int get() = queue.size
     val currentIndex: Int get() = queueIndex
