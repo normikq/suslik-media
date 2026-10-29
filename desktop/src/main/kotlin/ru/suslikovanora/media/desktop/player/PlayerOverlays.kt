@@ -789,7 +789,7 @@ fun PlayerBottomBar(
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     HeroPlayButton(playing = playing, onClick = onTogglePause, enabled = !(playLocked && !playing), lockedTip = tr("party.pauzu_snimaet_sozdatel"))
-                    if (index > 0 && !live) {
+                    if (index - 1 in queue.indices && !live) {
                         GlassIconButton(onClick = { onPlayEntry(index - 1) }, tooltip = tr("player.predyduschaya")) {
                             NextEpisodeIcon(color = Sm.text, size = 16.dp, modifier = Modifier.graphicsLayer { scaleX = -1f })
                         }

@@ -9,7 +9,7 @@ plugins {
 val siteUrl: String = (System.getenv("SITE_URL")?.takeIf { it.isNotBlank() } ?: findProperty("suslik.siteUrl") as String? ?: "")
     .trim().substringBefore('?').substringBefore('#').trimEnd('/')
 gradle.taskGraph.whenReady {
-    if (siteUrl.isEmpty() &&allTasks.any { t -> listOf("package", "assemble", "run", "bundle").any { t.name.startsWith(it) } })
+    if (siteUrl.isEmpty() && allTasks.any { t -> listOf("package", "assemble", "run", "bundle").any { t.name.startsWith(it) } })
         throw GradleException("Не задан адрес сайта: переменная окружения SITE_URL или suslik.siteUrl в ~/.gradle/gradle.properties")
 }
 

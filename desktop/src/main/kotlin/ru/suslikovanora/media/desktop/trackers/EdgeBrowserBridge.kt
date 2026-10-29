@@ -590,6 +590,38 @@ object EdgeBrowserBridge {
         return emptyList() // список не получили — ищем без фильтра по разделам
     }
 
+    /** Longer GET addresses go as a POST form: servers answer 414 to request lines over ~8 KB (nginx by default). */
+    private const val MAX_GET_URL = 6000
+
+    /** tracker.php's search as its own form sends it (POST, `f[]` per forum, `nm` in the page's charset). */
+    private suspend fun postTrackerSearch(session: CdpTabSession, baseUrl: String, forums: List<String>, query: String) {
+        session.sendCmd("Page.navigate", JSONObject().put("url", "${baseUrl.removeSuffix("/")}/forum/tracker.php"))
+        val js = """
+            (() => {
+                if (document.readyState !== 'complete' || !/tracker\.php${'$'}/.test(location.pathname)) return 'wait';
+                const form = document.createElement('form');
+                form.method = 'post'; form.action = 'tracker.php'; form.acceptCharset = document.characterSet;
+                const add = (name, value) => {
+                    const i = document.createElement('input');
+                    i.type = 'hidden'; i.name = name; i.value = value; form.appendChild(i);
+                };
+                for (const f of ${JSONArray(forums)}) add('f[]', f);
+                add('nm', ${JSONObject.quote(query)});
+                document.body.appendChild(form);
+                window.__smPosted = true;
+                form.submit();
+                return 'sent';
+            })()
+        """.trimIndent()
+        repeat(15) {
+            delay(400)
+            val v = runCatching {
+                session.sendCmd("Runtime.evaluate", JSONObject().put("expression", js).put("returnByValue", true))
+            }.getOrNull()?.optJSONObject("result")?.optJSONObject("result")?.optString("value").orEmpty()
+            if (v == "sent") return
+        }
+    }
+
     /**
      * Executes tracker search via browser in hidden desktop and parses results into compact JSON array directly in DOM.
      * Extracts unescaped text content, exact byte sizes, seeds, and avoids sending large raw HTML blobs over CDP.
@@ -618,7 +650,9 @@ object EdgeBrowserBridge {
                         val forums = videoForumIds ?: loadVideoForumIds(session, baseUrl)
                         val fParam = if (forums.isNotEmpty()) "f=${forums.joinToString(",")}&" else ""
                         val targetUrl = "${baseUrl.removeSuffix("/")}/forum/tracker.php?${fParam}nm=$encoded"
-                        session.sendCmd("Page.navigate", JSONObject().put("url", targetUrl))
+                        if (targetUrl.length <= MAX_GET_URL) session.sendCmd("Page.navigate", JSONObject().put("url", targetUrl))
+                        // Many forums: a URL of many KB may get HTTP 414 — the same search as tracker.php's own form (POST, f[])
+                        else postTrackerSearch(session, baseUrl, forums, query)
 
                         var resultJson: String? = null
                         var lastState = ""
@@ -631,6 +665,7 @@ object EdgeBrowserBridge {
                                         "expression",
                                         """
                                         (() => {
+                                            if (window.__smPosted) return ''; // the form is being sent: still the old page
                                             const table = document.getElementById('tor-tbl');
                                             if (!table) {
                                                 if (document.querySelector('input[name="login_username"]')) return '__LOGIN__';

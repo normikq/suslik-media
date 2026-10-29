@@ -111,6 +111,9 @@ class PlayerPartySync(private val handler: Handler, private val cb: Callback) {
         }
         // The room's episode changed (the host picked another one): this player follows, once per change
         val rk = Party.file?.key
+        // The guest's player follows the room's file in its playlist: MainActivity must not open it again after the
+        // player closes (it does not recompose while the player is in front, and playingKeys are empty then)
+        if (!Party.isHost && rk != null && rk in keys && Party.followed != rk) Party.followed = rk
         // The host closed the film (the room has none now): a guest who watched it with them closes it too
         if (Party.inRoom && key != null && rk == key) showedRoomFilm = true
         else if (!Party.inRoom || rk != null) showedRoomFilm = false

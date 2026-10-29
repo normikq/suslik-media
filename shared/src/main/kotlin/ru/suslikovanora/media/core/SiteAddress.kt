@@ -32,8 +32,21 @@ object SiteAddress {
 
     /**
      * Адрес на нашем сервере: тот же домен и внутри пути [base]. Сюда (и только сюда) идут cookie сеанса, токен
-     * устройства и бета-код; аватары с CDN Discord и постеры чужих сайтов — нет.
+     * устройства и бета-код; аватары с CDN Discord и постеры чужих сайтов — нет. Схема и домен — без учёта регистра,
+     * путь — с учётом; адрес с `.`/`..` в пути (и в виде `%2e`, `%2f`) — не наш: сервер свернул бы его за пределы пути.
      */
-    fun isOwn(url: String, base: String): Boolean =
-        base.isNotEmpty() && (url == base || url.startsWith("$base/") || url.startsWith("$base?"))
+    fun isOwn(url: String, base: String): Boolean {
+        if (base.isEmpty()) return false
+        val bScheme = base.substringBefore("://", "")
+        val uScheme = url.substringBefore("://", "")
+        if (bScheme.isEmpty() || !uScheme.equals(bScheme, ignoreCase = true)) return false
+        val rest = url.substring(uScheme.length + 3)
+        val hostEnd = rest.indexOfFirst { it == '/' || it == '?' || it == '#' || it == '\\' }.let { if (it < 0) rest.length else it }
+        if (!rest.substring(0, hostEnd).equals(host(base), ignoreCase = true)) return false
+        val rawPath = rest.substring(hostEnd).substringBefore('#').substringBefore('?')
+        val decoded = runCatching { java.net.URLDecoder.decode(rawPath.replace("+", "%2B"), Charsets.UTF_8) }.getOrNull() ?: return false
+        if (decoded.split('/', '\\').any { it == "." || it == ".." }) return false
+        val own = path(base)
+        return rawPath == own || rawPath.startsWith("$own/")
+    }
 }

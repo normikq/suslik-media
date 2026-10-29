@@ -333,7 +333,10 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
                         key(req, playerGen) {
                             PlayerView(req, lib, win, keys, onTop, startIndex = playerStart,
                                 parentWindow = window,
-                                onRestart = { i -> playerStart = i; playerGen++ }) { closePlayer() }
+                                onRestart = { i ->
+                                    // Again at the remembered place (saved just before): not the room's old place or «С начала»
+                                    playerStart = i; playing = req.copy(startMs = null, fromStart = false); playerGen++
+                                }) { closePlayer() }
                         }
                     }
                 }
