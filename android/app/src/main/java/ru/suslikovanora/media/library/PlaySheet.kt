@@ -97,7 +97,9 @@ data class PlayRequest(
     /** Intro and credits from the server: JSON array along [watchKeys] (player.PlayerExtras.MARKERS). */
     val markers: String? = null,
     /** Where to open (ms) instead of the remembered place (player.PlayerExtras.START_MS); null — as usual. */
-    val startMs: Long? = null
+    val startMs: Long? = null,
+    /** Along [watchKeys]: what a room shows — the library's title and the episode (player.PlayerExtras.ROOM_TITLES). */
+    val roomTitles: List<String> = emptyList()
 )
 
 /**
@@ -258,13 +260,25 @@ fun PlaySheet(
         prepared = true
     }
 
+    // What the room shows (as Discord on the PC): the library's title and the episode; a film of a collection by its name
+    fun roomTitleOf(f: MFile): String {
+        val base = item?.let(store::titleOf)?.takeIf { it.isNotBlank() } ?: target.label
+        if (isColl) {
+            val i = films.indexOfFirst { it.file.path == f.path }
+            val name = filmNames.getOrNull(i) ?: return base
+            return if (name == tr("library.film_p", "p" to i + 1)) "$base · $name" else name
+        }
+        val (s, e) = series?.seasons?.firstNotNullOfOrNull { s -> s.items.find { it.file.path == f.path }?.let { s to it } } ?: return base
+        return "$base · " + if (s.season == 0) tr("library.specvypusk_n", "episode" to e.episode)
+            else tr("library.sezon_seriya", "season" to s.season, "episode" to e.episode)
+    }
     fun requestFor(url: String): PlayRequest {
         store.saveEpisode(target.magnetId, target.file.path)
         val keys = if (playlist != null) target.season.filter { f -> f.link != null }.map { f -> watchKey(target.magnetId, f) }
         else listOf(watchKey(target.magnetId, target.file))
         val files = if (playlist != null) target.season.filter { f -> f.link != null } else listOf(target.file)
         return PlayRequest(url, target.label, playlist, subUrls, keys, audioUrls, fromStart, if (playlist != null) episodeSidesJson(target, customByPath) else null, customJson(customByPath), watchKey(target.magnetId, target.file), isColl,
-            if (item == null) null else markersJson(item, series, files, isColl))
+            if (item == null) null else markersJson(item, series, files, isColl), roomTitles = files.map(::roomTitleOf))
     }
     LaunchedEffect(prepared) {
         val at = autoStartMs ?: return@LaunchedEffect

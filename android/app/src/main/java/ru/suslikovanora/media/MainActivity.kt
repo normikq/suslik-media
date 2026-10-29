@@ -293,7 +293,7 @@ class MainActivity : ComponentActivity() {
                     onDismiss = { followTarget = null },
                     // the room's place at the moment the links are ready, not when the sheet appeared
                     autoStartMs = { if (Party.file?.key == key) Party.targetMs() else 0L },
-                    onPlay = { r -> followTarget = null; handlePlay(r.url, r.title, r.playlist, r.subUrls, r.watchKeys, r.audioUrls, r.fromStart, r.episodeSides, r.customAudio, r.watchKey, r.collection, r.markers, r.startMs) }
+                    onPlay = { r -> followTarget = null; handlePlay(r.url, r.title, r.playlist, r.subUrls, r.watchKeys, r.audioUrls, r.fromStart, r.episodeSides, r.customAudio, r.watchKey, r.collection, r.markers, r.startMs, r.roomTitles) }
                 )
             }
             playTarget?.let { t ->
@@ -301,7 +301,7 @@ class MainActivity : ComponentActivity() {
                     initial = t,
                     store = store,
                     onDismiss = { playTarget = null },
-                    onPlay = { r -> playTarget = null; handlePlay(r.url, r.title, r.playlist, r.subUrls, r.watchKeys, r.audioUrls, r.fromStart, r.episodeSides, r.customAudio, r.watchKey, r.collection, r.markers) }
+                    onPlay = { r -> playTarget = null; handlePlay(r.url, r.title, r.playlist, r.subUrls, r.watchKeys, r.audioUrls, r.fromStart, r.episodeSides, r.customAudio, r.watchKey, r.collection, r.markers, roomTitles = r.roomTitles) }
                 )
             }
         }
@@ -325,7 +325,7 @@ class MainActivity : ComponentActivity() {
         url: String, title: String?, playlist: String? = null,
         subUrls: List<String> = emptyList(), watchKeys: List<String> = emptyList(), audioUrls: List<String> = emptyList(),
         fromStart: Boolean = false, episodeSides: String? = null, customAudio: String? = null, watchKey: String? = null,
-        collection: Boolean = false, markers: String? = null, startMs: Long? = null
+        collection: Boolean = false, markers: String? = null, startMs: Long? = null, roomTitles: List<String> = emptyList()
     ) {
         val current = watchKey ?: watchKeys.firstOrNull()
         val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return
@@ -334,7 +334,7 @@ class MainActivity : ComponentActivity() {
             return
         }
         // In a room, the host's film becomes the room's film (a guest's other film just plays for them alone)
-        current?.let { key -> if (Party.isHost) Party.putFilm(ru.suslikovanora.media.core.party.PartyFileRef(key, title ?: tr("main.video"))) }
+        current?.let { key -> if (Party.isHost) Party.putFilm(ru.suslikovanora.media.core.party.PartyFileRef(key, roomTitles.getOrNull(watchKeys.indexOf(key)) ?: title ?: tr("main.video"))) }
         // A playlist may only come from our own site: it is fetched without any credentials.
         val playlistUri = playlist?.let { runCatching { Uri.parse(it) }.getOrNull() }
             ?.takeIf { it.scheme == "https" && ru.suslikovanora.media.core.SiteAddress.isOwn(it.toString(), ru.suslikovanora.media.net.Api.BASE) }
@@ -352,6 +352,7 @@ class MainActivity : ComponentActivity() {
             putExtra(ru.suslikovanora.media.player.PlayerExtras.CUSTOM_AUDIO, customAudio)
             putExtra(ru.suslikovanora.media.player.PlayerExtras.COLLECTION, collection)
             putExtra(ru.suslikovanora.media.player.PlayerExtras.MARKERS, markers)
+            putStringArrayListExtra(ru.suslikovanora.media.player.PlayerExtras.ROOM_TITLES, ArrayList(roomTitles))
             putExtra(ru.suslikovanora.media.player.PlayerExtras.START_MS, startMs ?: -1L)
         })
     }

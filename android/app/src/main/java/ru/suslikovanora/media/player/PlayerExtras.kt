@@ -24,4 +24,6 @@ object PlayerExtras {
      * `{title, alt, season, episode}` of a series episode, or null.
      */
     const val MARKERS = "media_markers"
+    /** What a room shows for each [WATCH_KEYS] entry: «Название · Сезон 1, серия 2» (as Discord on the PC). */
+    const val ROOM_TITLES = "media_room_titles"
 }

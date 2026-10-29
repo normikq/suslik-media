@@ -120,6 +120,7 @@ class PlayerActivity : ComponentActivity() {
     private val networkLost: Boolean get() = networkMonitor.isNetworkLost
 
     // Заставка и титры открытого файла (core.MarkersDetector): главы файла (VLC), затем сервер (/api/markers, AniSkip)
+    private var roomTitles: List<String> = emptyList() // по одному на watch key: «Название · Сезон 1, серия 2» для комнаты
     private var markerQueries: org.json.JSONArray? = null // по одному на watch key: {title, alt, season, episode}
     private var fileChapters: List<Chapter> = emptyList()
     private var chaptersFor = ""
@@ -817,7 +818,7 @@ class PlayerActivity : ComponentActivity() {
         PlayerPartySync(handler, object : PlayerPartySync.Callback {
             override fun watchKey(): String? = watchProgress.currentWatchKey()
             override fun keys(): List<String> = watchProgress.keys
-            override fun title(): String = currentTitle
+            override fun title(): String = roomTitles.getOrNull(watchProgress.keys.indexOf(watchProgress.currentWatchKey())) ?: currentTitle
             override fun ready(): Boolean = alive && !leaving && !keptOnStop && player != null && sideJob?.isActive != true
             override fun canPlayIndex(): Boolean = playlistQueue.size > 0
             override fun playIndex(i: Int) { if (i != playlistQueue.currentIndex) playlistQueue.playEntry(i) }
@@ -1602,6 +1603,7 @@ class PlayerActivity : ComponentActivity() {
         watchProgress.readIntent(i)
         panel.collection = i?.getBooleanExtra(PlayerExtras.COLLECTION, false) == true
         markerQueries = i?.getStringExtra(PlayerExtras.MARKERS)?.let { runCatching { org.json.JSONArray(it) }.getOrNull() }
+        roomTitles = i?.getStringArrayListExtra(PlayerExtras.ROOM_TITLES).orEmpty()
         resetMarkers()
     }
 

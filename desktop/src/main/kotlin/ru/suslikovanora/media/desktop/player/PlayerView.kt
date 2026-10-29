@@ -807,7 +807,7 @@ fun PlayerView(
     val userPaused = pausedAt > 0L || enginePaused
 
     // Совместный просмотр: плеер идёт за комнатой, если в ней этот фильм (иначе ничего не делает)
-    ru.suslikovanora.media.desktop.party.PartySync(watchKey(), title, req.watchKeys, started, closing,
+    ru.suslikovanora.media.desktop.party.PartySync(watchKey(), req.presence.getOrNull(index)?.label ?: title, req.watchKeys, started, closing,
         ru.suslikovanora.media.desktop.party.SyncHooks(
             // Right after a seek mpv still reports the old place for a moment: then the bar's target counts
             timeMs = { if (System.currentTimeMillis() - lastSeekAt < 2500L) time else engine.timeMs.takeIf { it > 0L } ?: time },
@@ -866,7 +866,7 @@ fun PlayerView(
             lengthMs = length,
             posterUrl = discordPosterUrl,
             activityName = "Suslik Media",
-            largeText = presence.episode?.let { "${presence.title} · $it" } ?: presence.title
+            largeText = presence.label
         )
     }
 

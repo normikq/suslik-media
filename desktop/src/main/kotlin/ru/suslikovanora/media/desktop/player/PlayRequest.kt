@@ -33,4 +33,7 @@ data class PlayRequest(
 data class MarkerQuery(val title: String?, val alt: String?, val season: Int?, val episode: Int?)
 
 /** What Discord shows: the title from the library (the AI's one once accepted), not the torrent's file name, and the episode. */
-data class Presence(val title: String, val episode: String? = null)
+data class Presence(val title: String, val episode: String? = null) {
+    /** «Название · Сезон 1, серия 2»: the room's film for everyone in it, as Discord shows it. */
+    val label: String get() = episode?.let { "$title · $it" } ?: title
+}

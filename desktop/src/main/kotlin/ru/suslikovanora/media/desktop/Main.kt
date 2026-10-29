@@ -133,7 +133,7 @@ private fun app() = application(exitProcessOnExit = false) { // the exit itself:
     fun requestPlay(req: PlayRequest) {
         // In a room, the host's film becomes the room's film (a guest's other film just plays for them alone)
         val party = ru.suslikovanora.media.desktop.party.Party
-        req.watchKeys.getOrNull(req.startIndex)?.let { key -> if (party.isHost) party.putFilm(ru.suslikovanora.media.core.party.PartyFileRef(key, req.title)) }
+        req.watchKeys.getOrNull(req.startIndex)?.let { key -> if (party.isHost) party.putFilm(ru.suslikovanora.media.core.party.PartyFileRef(key, req.presence.getOrNull(req.startIndex)?.label ?: req.title)) }
         appScope.launch {
             if (!mpvWarm.isCompleted) preparing = true
             val ok = mpvWarm.await()
