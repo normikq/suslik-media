@@ -2881,3 +2881,21 @@ button.sess-btn.hidden { display: none; }
   height: 100%;
   position: relative;
 }
+.web-player-wait {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted, #9da4b5);
+  font-size: 15px;
+}
+/* Поток сервера: у Artplayer длина 0 и перемотка в начало — свои шкала и время; для файла как есть — наоборот */
+.web-player-body .art-control-wp-seek,
+.web-player-body .art-control-wp-time { display: none !important; }
+.web-player-body.wp-stream .art-control-progress,
+.web-player-body.wp-stream .art-control-time,
+.web-player-body.wp-stream .art-control-thumbnails { display: none !important; }
+.web-player-body.wp-stream .art-control-wp-seek { display: flex !important; align-items: center; width: 100%; padding: 0 2px; }
+.web-player-body.wp-stream .art-control-wp-time { display: flex !important; align-items: center; padding: 0 10px; font-size: 14px; white-space: nowrap; }
+.wp-seek { width: 100%; margin: 6px 0; accent-color: var(--accent, #b7a0ff); cursor: pointer; }

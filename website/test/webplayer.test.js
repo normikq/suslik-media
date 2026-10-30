@@ -42,7 +42,7 @@ test("webplayer: redesign.css contains web player styles", () => {
   assert.ok(css.includes(".ps-watch-browser"), "redesign.css must include .ps-watch-browser");
 });
 
-test("webplayer: tvstream supports AAC web audio transcoding and subtitles", () => {
+test("webplayer: tvstream supports AAC web audio transcoding; no embedded subtitle extraction", () => {
   const tv = require("../src/services/tvstream");
 
   // WEB_AUDIO_OK codecs
@@ -51,19 +51,6 @@ test("webplayer: tvstream supports AAC web audio transcoding and subtitles", () 
   assert.ok(tv.WEB_AUDIO_OK.has("opus"));
   assert.ok(!tv.WEB_AUDIO_OK.has("ac3"), "AC3 is not natively supported in browsers");
   assert.ok(!tv.WEB_AUDIO_OK.has("dts"), "DTS is not natively supported in browsers");
-
-  // Subtitle arguments
-  const sArgs = tv.subArgs("https://host/film.mkv", 3);
-  const sStr = sArgs.join(" ");
-  assert.match(sStr, /-map 0:3/, "SubArgs must map requested subtitle stream index");
-  assert.match(sStr, /-c:s webvtt/, "SubArgs must encode subtitle to webvtt");
-  assert.match(sStr, /-f webvtt pipe:1/, "SubArgs must output webvtt to pipe:1");
-
-  // Subtitle token verification
-  const exp = String(Math.floor(Date.now() / 1000) + 3600);
-  const subSig = tv.makeTvToken("https://host/film.mkv", "sub:3", exp, "aac");
-  assert.ok(tv.isValidTvToken("https://host/film.mkv", "sub:3", exp, subSig, "aac"), "Valid subtitle token passes");
-  assert.ok(!tv.isValidTvToken("https://host/film.mkv", "sub:2", exp, subSig, "aac"), "Different sub index rejected");
 
   // AAC audio transcoding in ffmpegArgs
   const info = {
@@ -75,6 +62,10 @@ test("webplayer: tvstream supports AAC web audio transcoding and subtitles", () 
   const str = args.join(" ");
   assert.match(str, /-c:a aac/, "ffmpegArgs must transcode AC3 to AAC when targetAudio is aac");
   assert.match(str, /-tag:v hvc1/, "mp4 format with hevc must add -tag:v hvc1 for browser compatibility");
+  // Extracting an embedded subtitle track makes ffmpeg read the whole film: the web player must not do it
+  assert.equal(tv.subArgs, undefined);
+  const route = fs.readFileSync(path.join(__dirname, "..", "src", "routes", "tvstream.js"), "utf8");
+  assert.ok(!route.includes("/api/file/sub"), "no /api/file/sub route");
 });
 
 test("webplayer: CSP allows script and media execution", () => {
@@ -83,7 +74,9 @@ test("webplayer: CSP allows script and media execution", () => {
 
   assert.ok(csp.includes("default-src 'self'"), "CSP must include default-src 'self'");
   assert.ok(csp.includes("media-src 'self' blob:"), "CSP must include media-src 'self' blob:");
-  assert.ok(csp.includes("https://cdn.jsdelivr.net"), "CSP must allow CDN if used");
+  assert.ok(!csp.includes("cdn.jsdelivr.net"), "Artplayer is served locally, no CDN in CSP");
+  assert.ok(html.includes("vendor/artplayer.js"), "index.html must load vendor/artplayer.js");
+  assert.ok(!html.includes("cdn.jsdelivr.net"), "index.html must not load scripts from a CDN");
 });
 
 test("webplayer: local vendor artplayer bundle exists", () => {

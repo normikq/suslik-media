@@ -262,26 +262,6 @@ function startFfmpeg(args, viewer) {
   return child;
 }
 
-/** Параметры ffmpeg для извлечения текстовых субтитров в формате WebVTT */
-function subArgs(url, subIndex) {
-  return [
-    "-hide_banner",
-    "-loglevel", "warning",
-    "-nostdin",
-    ...inputArgs(url),
-    "-i", url,
-    "-map", `0:${subIndex}`,
-    "-c:s", "webvtt",
-    "-f", "webvtt",
-    "pipe:1"
-  ];
-}
-
-/** Запуск процесса ffmpeg для конвертации текстовых субтитров в WebVTT */
-function startSubFfmpeg(args) {
-  return spawn(config.FFMPEG_PATH || "ffmpeg", args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
-}
-
 module.exports = {
   TV_AUDIO_OK,
   WEB_AUDIO_OK,
@@ -294,8 +274,6 @@ module.exports = {
   videoUnsupported,
   defaultAudio,
   ffmpegArgs,
-  subArgs,
-  startSubFfmpeg,
   probeFile,
   startFfmpeg,
   activeCount

@@ -3,7 +3,6 @@
 // Поток для телевизора (приложение Tizen): см. services/tvstream.js. Остальные клиенты сюда не ходят.
 
 const express = require("express");
-const { spawn } = require("child_process");
 const config = require("../config");
 const { mirrorUrlLimiter, mirrorLimiter } = require("../middleware/rate-limit");
 const { requireLogin } = require("../middleware/auth");
@@ -111,7 +110,8 @@ router.get("/api/file/tv-info", requireLogin, mirrorUrlLimiter, async (req, res)
 
 /**
  * Сведения о медиафайле для веб-плеера: все аудиодорожки (включая внешние из раздачи и от пользователей)
- * и субтитры. Для дорожек без нативной поддержки в браузере (AC3, DTS) выдаётся адрес потока с транскодированием в AAC.
+ * и длина. Адрес потока /api/file/tv (видео как есть, звук в AAC) — для каждой дорожки. Встроенные субтитры не отдаём:
+ * чтобы достать их из MKV, ffmpeg читает весь файл (десятки ГБ) и забирает канал у видео.
  */
 router.get("/api/file/media-info", requireLogin, mirrorUrlLimiter, async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
@@ -130,7 +130,6 @@ router.get("/api/file/media-info", requireLogin, mirrorUrlLimiter, async (req, r
   const name = encodeURIComponent(raw.replace(/\.[a-z0-9]{2,5}$/i, "") + ".mp4");
   const expires = String(Math.floor(Date.now() / 1000) + config.MIRROR_TTL);
   const base = `${publicBase(req)}/api/file/tv/${name}?link=${encodeURIComponent(link)}&ac=aac`;
-  const subBase = `${publicBase(req)}/api/file/sub?link=${encodeURIComponent(link)}`;
 
   const audioList = info.audio.map(a => ({
     index: a.index,
@@ -149,14 +148,6 @@ router.get("/api/file/media-info", requireLogin, mirrorUrlLimiter, async (req, r
     url: `${base}&x=${encodeURIComponent(extLink)}&xo=${x.offsetMs}&exp=${expires}&sig=${tv.makeTvToken(link, tv.externalKey(extLink, x.offsetMs), expires, "aac")}`
   }));
 
-  const subsList = info.subs.map(s => ({
-    index: s.index,
-    codec: s.codec,
-    language: s.language,
-    title: s.title,
-    url: `${subBase}&s=${s.index}&exp=${expires}&sig=${tv.makeTvToken(link, "sub:" + s.index, expires, "aac")}`
-  }));
-
   const def = tv.defaultAudio(info);
   const defOk = def && tv.WEB_AUDIO_OK.has(def.codec);
 
@@ -166,54 +157,8 @@ router.get("/api/file/media-info", requireLogin, mirrorUrlLimiter, async (req, r
     video: info.video,
     audio: audioList,
     external: extList,
-    subs: subsList,
     needsTranscode: !defOk || /mpegts/.test(info.container),
     audioDefault: def ? def.index : (audioList[0] ? audioList[0].index : 0)
-  });
-});
-
-/**
- * Извлечение текстовых субтитров из медиафайла в формате WebVTT для веб-плеера:
- * ?link&s=<stream_index>&exp&sig
- */
-router.get("/api/file/sub", mirrorLimiter, async (req, res) => {
-  if (!config.TV_STREAM) return res.status(404).send("Поток выключен на сервере.");
-  const link = linkOf(req);
-  const s = Number(req.query.s);
-  const exp = req.query.exp;
-  const sig = req.query.sig;
-  if (!link || !Number.isSafeInteger(s) || s < 0) return res.status(400).send("Некорректный запрос субтитров.");
-  if (!tv.isValidTvToken(link, "sub:" + s, String(exp || ""), String(sig || ""), "aac")) {
-    return res.status(401).send("Ссылка на субтитры устарела или недействительна.");
-  }
-  res.setHeader("Content-Type", "text/vtt; charset=utf-8");
-  res.setHeader("Cache-Control", "private, max-age=3600");
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("Content-Security-Policy", MIRROR_CSP);
-  if (req.method === "HEAD") return res.status(200).end();
-
-  let entry;
-  try {
-    entry = await resolveDirect(link, false);
-  } catch (err) {
-    return res.status(502).send(err instanceof UnlockError ? err.message : "Сервер не смог прочитать файл.");
-  }
-
-  let child;
-  try {
-    child = tv.startSubFfmpeg(tv.subArgs(entry.url, s));
-  } catch (e) {
-    return res.status(503).send("На сервере нет ffmpeg.");
-  }
-  if (!child) return res.status(503).send("На сервере нет ffmpeg.");
-
-  res.on("close", () => {
-    if (child.exitCode == null && !child.killed) child.kill("SIGKILL");
-  });
-
-  child.stdout.pipe(res);
-  child.on("error", () => {
-    if (!res.headersSent) res.status(503).send("Ошибка запуска ffmpeg для субтитров.");
   });
 });
 
@@ -291,7 +236,7 @@ router.get("/api/file/tv/:name", mirrorLimiter, async (req, res) => {
   const v = info.video;
   console.log(`[tv] видео ${v.codec} ${v.profile} ${v.width}x${v.height} ${v.pixFmt} ${v.transfer || "sdr"}${v.dv ? " DolbyVision P" + v.dv : ""}, контейнер ${info.container}`);
   const which = ext ? `озвучка отдельным файлом, сдвиг ${xo} мс` : `a=${a}`;
-  console.log(`[tv] старт ${format} ${which} (${audio.codec}${audio.ok ? ", копия" : " → ac3"}) t=${t} range=${range || "-"} ua="${req.get("user-agent") || "-"}"`);
+  console.log(`[tv] старт ${format} ${which} (${audio.codec}${audio.ok && targetAudio !== "aac" ? ", копия" : " → " + targetAudio}) t=${t} range=${range || "-"} ua="${req.get("user-agent") || "-"}"`);
   mirrorLog(req, `tv stream: ${ext ? `ext offset=${xo}` : `a=${a}`} (${audio.codec}${audio.ok ? ", copy" : " -> ac3"}) t=${t}`);
 
   const kill = () => { if (child.exitCode == null && !child.killed) child.kill("SIGKILL"); };
