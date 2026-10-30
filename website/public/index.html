@@ -77,7 +77,7 @@
 /* Smooth motion system */
 /* Stable mosaic reveal: cards stay still while images load, then fade from blur to sharp. */
 .library-tile.mosaic-pending{opacity:1;animation:none;transform:none;filter:none;pointer-events:none}
-.library-tile:not(.mosaic-pending){opacity:1;animation:mosaic-clear .48s ease-out both;animation-delay:calc(min(var(--tile-index,0),18)*32ms)}
+.library-tile.tile-enter{opacity:1;animation:mosaic-clear .48s ease-out both;animation-delay:calc(min(var(--tile-index,0),18)*32ms)}
 .library-tile.mosaic-pending .tile-art{background:#191b28;animation:none}
 .library-tile .tile-art img{opacity:0;filter:blur(12px);transition:opacity .55s ease,filter .75s ease}
 .library-tile .tile-art img.poster-loaded{opacity:1;filter:blur(0)}
@@ -1807,9 +1807,8 @@ async function fillPosterPaths(){
   fillPostersRunning=true;
   try{
     const todo=[...new Set(cachedLibrary.filter(m=>Number(m.statusCode)===4&&(!posterPathOf(m)||posterTitleUnknown(m))).map(m=>getPosterQueries(m)[0]).filter(Boolean))].slice(0,80);
-    let n=0;
-    for(const q of todo){ await getPoster(q); if(++n%10===0) renderLibrary(false); await wait(120); }
-    if(n) renderLibrary(false);
+    for(const q of todo){ await getPoster(q); await wait(120); }
+    if(todo.length) renderLibrary(false);
   }catch{} finally{ fillPostersRunning=false; }
 }
 function versionsWord(n){ return n+(n%10>=2&&n%10<=4&&!(n%100>=12&&n%100<=14)?" версии":" версий"); }
@@ -2549,9 +2548,6 @@ async function classifyAnimation() {
           if (data.animation) newlyFound++;
         }
       } catch {}
-      if (newlyFound > 0 && i % 5 === 0) {
-        renderLibrary(false);
-      }
       await new Promise(r => setTimeout(r, 120));
     }
     if (newlyFound > 0) {
@@ -2612,7 +2608,7 @@ function getItemSpecs(m) {
   return { quality, codec, type, cat };
 }
 
-function tileSig(m){ return JSON.stringify([(serverTagMap[m.id]||[]).join(),m.name,tileTitle(m),m.status,m.statusCode,m.size,m.downloaded,Boolean(m.favorite),Boolean(m.mine),m.canRemove!==false,(m.files||[]).length,libraryViewMode]); }
+function tileSig(m){ return JSON.stringify([(serverTagMap[m.id]||[]).join(),m.name,m.status,m.statusCode,m.size,m.downloaded,Boolean(m.favorite),Boolean(m.mine),m.canRemove!==false,(m.files||[]).length,libraryViewMode]); }
 
 function renderLibrary(animate=true) {
   const target=$("libraryResults"), query=$("librarySearch") ? $("librarySearch").value.trim().toLowerCase() : "";
@@ -2670,11 +2666,24 @@ function renderLibrary(animate=true) {
   for (const magnet of magnets) {
     const versions=versionsOf.get(magnet.id)||null;
     const sig=tileSig(magnet)+(versions?"|v"+versions.map(v=>v.id).join(","):""), old=prevTiles.get(magnet.id);
-    if(old && old.sig===sig){ nodes.push(old.tile); libraryTiles.set(magnet.id,old); continue; }
+    if(old && old.sig===sig){
+      const shown=tileTitle(magnet);
+      const titleEl=old.tile.querySelector(".tile-title");
+      if(titleEl && titleEl.textContent!==shown) titleEl.textContent=shown;
+      const nameEl=old.tile.querySelector(".tile-info strong");
+      if(nameEl && nameEl.textContent!==shown) nameEl.textContent=shown;
+      nodes.push(old.tile);
+      libraryTiles.set(magnet.id,old);
+      continue;
+    }
     const tile=document.createElement("div"); tile.setAttribute("role","button"); tile.tabIndex=0;
     // Анимация только у действительно новых плиток; при первом показе — каскадом, потом — сразу.
-    tile.className="library-tile tile-enter"; tile.style.setProperty("--tile-index", String(animate&&!before.size ? fresh++ : 0));
-    tile.addEventListener("animationend",e=>{ if(e.target===tile) tile.classList.remove("tile-enter"); });
+    const shouldAnimate=Boolean(animate&&!before.size);
+    tile.className="library-tile"+(shouldAnimate?" tile-enter":"");
+    if(shouldAnimate){
+      tile.style.setProperty("--tile-index", String(fresh++));
+      tile.addEventListener("animationend",e=>{ if(e.target===tile) tile.classList.remove("tile-enter"); });
+    }
     const art=document.createElement("div"); art.className="tile-art";
     const title=document.createElement("div"); title.className="tile-title"; title.textContent=tileTitle(magnet); art.append(title);
 
@@ -2687,6 +2696,21 @@ function renderLibrary(animate=true) {
     art.append(badges);
     const videoFile = (magnet.files || []).find(f => /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso)$/i.test(f.path || ""));
     const posterQueries = [...new Set([aiPosterQuery(magnet), displayTitle(magnet), videoFile ? escapeTitle(videoFile.name || videoFile.path.split("/").pop()) : ""].filter(Boolean))];
+
+    if(old && old.tile){
+      const prevImg=old.tile.querySelector(".tile-art img");
+      if(prevImg) art.prepend(prevImg);
+    }
+    const cachedPoster=posterPathOf(magnet);
+    if(cachedPoster && !art.querySelector("img")){
+      const img=document.createElement("img"); img.alt="Постер: "+(posterQueries[0]||magnet.name); img.decoding="async";
+      img.className="poster-loaded";
+      const pm=/\/api\/poster\/img\/w500\/([A-Za-z0-9_-]+\.(?:jpg|png|webp))$/.exec(cachedPoster);
+      if(pm){ img.srcset=`${apiUrl("/api/poster/img/w342/"+pm[1])} 342w, ${apiUrl(cachedPoster)} 500w`; img.sizes="(max-width:600px) 48vw, 260px"; }
+      img.src=apiUrl(cachedPoster);
+      img.onerror=()=>{ img.remove(); art.classList.add("poster-missing"); };
+      art.prepend(img);
+    }
     whenVisible(tile, ()=>(async()=>{
       let url=null;
       for (const q of posterQueries) { url=await getPoster(q); if(url) break; }
