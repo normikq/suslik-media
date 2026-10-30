@@ -12,6 +12,8 @@ const config = require("../config");
 
 // Звук, который AVPlay на Samsung 2018+ играет сам: такую дорожку не перекодируем, а копируем
 const TV_AUDIO_OK = new Set(["aac", "ac3", "eac3", "mp3", "mp2"]);
+// Звук, который браузеры декодируют «из коробки» в HTML5-видео (AC3/DTS в браузерах не поддерживаются)
+const WEB_AUDIO_OK = new Set(["aac", "mp3", "opus", "vorbis", "flac"]);
 // Текстовые субтитры MKV копируются в поток; картинки (PGS, VobSub) AVPlay всё равно не показывает
 const TEXT_SUBS = new Set(["subrip", "ass", "ssa"]);
 
@@ -23,11 +25,12 @@ function isTvClient(req) {
   return /samsung tv|tizen/i.test(name);
 }
 
-function makeTvToken(link, audio, expires) {
-  return crypto.createHmac("sha256", config.SESSION_SECRET).update(`tv:${expires}:${audio}:${link}`).digest("hex");
+function makeTvToken(link, audio, expires, targetAudio = "ac3") {
+  const extra = targetAudio === "aac" ? ":aac" : "";
+  return crypto.createHmac("sha256", config.SESSION_SECRET).update(`tv:${expires}:${audio}:${link}${extra}`).digest("hex");
 }
 
-function isValidTvToken(link, audio, expires, token) {
+function isValidTvToken(link, audio, expires, token, targetAudio = "ac3") {
   const now = Math.floor(Date.now() / 1000);
   if (
     !/^\d+$/.test(String(expires || "")) ||
@@ -39,7 +42,7 @@ function isValidTvToken(link, audio, expires, token) {
     return false;
   }
   try {
-    return crypto.timingSafeEqual(Buffer.from(makeTvToken(link, audio, expires), "hex"), Buffer.from(token, "hex"));
+    return crypto.timingSafeEqual(Buffer.from(makeTvToken(link, audio, expires, targetAudio), "hex"), Buffer.from(token, "hex"));
   } catch {
     return false;
   }
@@ -137,14 +140,14 @@ const secs = ms => String(Math.round(ms) / 1000);
  * [ext] — внешняя озвучка вместо дорожки фильма: { url, audio (дорожка из parseProbe её файла), offsetMs }.
  * offsetMs как на ПК: +2000 — звук начинается на 00:02 видео, −5000 — первые 5 с дорожки пропускаются.
  */
-function ffmpegArgs(url, startSec, info, audio, format, ext) {
-  const ts = format !== "mkv";
+function ffmpegArgs(url, startSec, info, audio, format, ext, targetAudio = "ac3") {
+  const ts = format === "ts" || (format !== "mkv" && format !== "mp4");
   // warning: в журнал попадают переподключения к файл-хосту и битые пакеты источника (артефакты на экране)
   const args = ["-hide_banner", "-loglevel", "warning", "-nostdin"];
   args.push(...inputArgs(url));
   if (startSec > 0) args.push("-ss", String(startSec));
   args.push("-i", url);
-  let copy = audio && audio.ok;
+  let copy = audio && (targetAudio === "aac" ? (audio.codec === "aac" || audio.codec === "mp3") : audio.ok);
   if (ext) {
     // Место в дорожке = место в видео − сдвиг. До начала звука (сдвиг +) — тишина: вход сдвигается на остаток
     const at = startSec * 1000 - (ext.offsetMs || 0);
@@ -155,24 +158,37 @@ function ffmpegArgs(url, startSec, info, audio, format, ext) {
     audio = ext.audio;
     // Копия звука из второго входа с -ss сдвигает видео позже звука на величину -ss (ffmpeg 6.1, проверено 23.10:
     // −5 с с 6-й секунды — звук на ~1 с раньше картинки, на ТВ слышно интро). Перекодированный звук ffmpeg режет точно
-    copy = audio.ok && !(at > 0);
+    copy = (audio.codec === "aac" || (targetAudio !== "aac" && audio.ok)) && !(at > 0);
   }
   args.push("-map", `0:${info.video.index}`, "-map", `${ext ? 1 : 0}:${audio.index}`);
-  if (!ts) for (const s of info.subs) args.push("-map", `0:${s.index}`); // текстовых субтитров MPEG-TS не несёт
+  if (!ts && format !== "mp4") for (const s of info.subs) args.push("-map", `0:${s.index}`); // текстовых субтитров MPEG-TS не несёт
   args.push("-c:v", "copy");
   if (copy) args.push("-c:a", "copy");
-  else {
+  else if (targetAudio === "aac") {
+    const ch = Math.min(audio.channels || 2, 6);
+    // Для браузера AAC: поддерживается всеми браузерами без исключения (в отличие от AC3/DTS)
+    args.push("-c:a", "aac", "-b:a", ch > 2 ? "384k" : "192k", "-ac", String(ch));
+  } else {
     const ch = Math.min(audio.channels || 2, 6);
     // AC3, а не AAC: кодируется дешевле, и телевизор передаёт 5.1 на саундбар по ARC/оптике
     args.push("-c:a", "ac3", "-b:a", ch > 2 ? "640k" : "192k", "-ac", String(ch));
   }
-  if (!ts && info.subs.length) args.push("-c:s", "copy");
+  if (!ts && format !== "mp4" && info.subs.length) args.push("-c:s", "copy");
   // Озвучка длиннее фильма (титры, хвост студии): поток кончается вместе с видео, а не играет звук на чёрном экране
   if (ext && info.durationMs > startSec * 1000) args.push("-t", secs(info.durationMs - startSec * 1000));
   args.push("-max_muxing_queue_size", "1024", "-avoid_negative_ts", "make_zero");
   // MPEG-TS: время с нуля, PAT/PMT в начале каждого ключевого кадра — плеер подхватывает поток с любого места
-  if (ts) args.push("-f", "mpegts", "-mpegts_flags", "+resend_headers", "pipe:1");
-  else args.push("-f", "matroska", "pipe:1");
+  if (format === "mp4") {
+    args.push("-f", "mp4", "-movflags", "frag_keyframe+empty_moov+default_base_moof");
+    if (info.video && (info.video.codec === "hevc" || info.video.codec === "h265")) {
+      args.push("-tag:v", "hvc1");
+    }
+    args.push("pipe:1");
+  } else if (ts) {
+    args.push("-f", "mpegts", "-mpegts_flags", "+resend_headers", "pipe:1");
+  } else {
+    args.push("-f", "matroska", "pipe:1");
+  }
   return args;
 }
 
@@ -248,6 +264,7 @@ function startFfmpeg(args, viewer) {
 
 module.exports = {
   TV_AUDIO_OK,
+  WEB_AUDIO_OK,
   isTvClient,
   makeTvToken,
   isValidTvToken,

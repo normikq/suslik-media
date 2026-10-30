@@ -8,6 +8,7 @@
   <link rel="icon" type="image/png" sizes="128x128" href="brand-mark.png">
   <link rel="apple-touch-icon" href="icon.png">
   <script src="i18n.js"></script>
+  <script src="vendor/artplayer.js?v=5.4.0" defer></script>
   <style>
     :root{color-scheme:dark;--bg:#0b0c10;--panel:#141720;--line:#292d3a;--text:#f3f4f8;--muted:#9da4b5;--accent:#b7a0ff;--accent2:#8b70ed}
     *{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at top,#19152a 0,#0b0c10 55%);color:var(--text);font:16px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh}
@@ -396,7 +397,7 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
 <script>/* App 1.2+: native library and bottom bar */try{if(Number(window.__suslikApp||0)>=3)document.documentElement.classList.add("suslik-native");}catch(e){}
 /* Пока не ответил /api/session, страница скрыта: иначе на секунду мелькает форма входа у тех, кто уже вошёл (снимается в showApp; страховка — через 4 с) */
 try{document.documentElement.classList.add("auth-pending");setTimeout(function(){document.documentElement.classList.remove("auth-pending");},4000);}catch(e){}</script>
-<link rel="stylesheet" href="redesign.css?v=42">
+<link rel="stylesheet" href="redesign.css?v=45">
 <style>
 .sr-badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
 .sr-badges .rb { background: #1c2230; color: #c7d0e0; border: 1px solid #2e3850; border-radius: 6px; padding: 2px 8px; font-size: 12px; font-weight: 700; }
@@ -2322,6 +2323,378 @@ async function psLoad(s,file,label,playlistReq,magnet){
   sub.classList.toggle("err",!mUrl);
   if(mUrl&&magnet&&s.dataset.kind!=="movie") saveLastEpisode(magnet.id,file.path);
 }
+// ---- Встроенный плеер (Artplayer) ----
+// Файл, который браузер играет сам (MP4/WebM; в Chrome и MKV) со звуком AAC/MP3/Opus, идёт по зеркалу: перемотка — байтами.
+// Остальное — потоком сервера /api/file/tv (видео как есть, звук в AAC). Поток идёт только с места &t= и без длины,
+// поэтому позиция = offset + время потока, длина — из media-info, а перемотка — новый поток с нового места.
+// &s= — метка плеера: новый поток того же плеера сразу гасит прошлый ffmpeg (их на сервере не больше TV_STREAM_MAX).
+let webPlayer = null;
+
+function formatPlayerLang(lang) {
+  const l = String(lang || "").toLowerCase();
+  if (!l) return "";
+  const names = {
+    rus: "Русский", ru: "Русский", eng: "Английский", en: "Английский", jpn: "Японский", ja: "Японский",
+    ukr: "Украинский", uk: "Украинский", fre: "Французский", fra: "Французский", fr: "Французский",
+    ger: "Немецкий", deu: "Немецкий", de: "Немецкий", ita: "Итальянский", it: "Итальянский",
+    spa: "Испанский", es: "Испанский", kor: "Корейский", ko: "Корейский", chi: "Китайский", zho: "Китайский", zh: "Китайский"
+  };
+  return names[l] || l.toUpperCase();
+}
+
+function wpClock(sec) {
+  sec = Math.max(0, Math.floor(sec || 0));
+  const p = n => String(n).padStart(2, "0");
+  const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60);
+  return (h ? h + ":" + p(m) : p(m)) + ":" + p(sec % 60);
+}
+
+// Отдать файл браузеру как есть: MP4/WebM — везде, MKV — только Chromium (Firefox и Safari Matroska не открывают)
+function wpDirectOk(file) {
+  const name = String((file && (file.name || file.path)) || "");
+  if (/\.(mp4|m4v|webm|mov)$/i.test(name)) return true;
+  return /\.mkv$/i.test(name) && Boolean(window.chrome);
+}
+
+// Время субтитров — от начала фильма, а поток начинается с offset: сдвигаем метки «-->», ушедшие в минус — в ноль
+function wpShiftVtt(text, offset) {
+  if (!offset) return text;
+  const stamp = /(?:(\d+):)?(\d{2}):(\d{2})\.(\d{3})/g;
+  return String(text).split("\n").map(line => line.indexOf("-->") < 0 ? line : line.replace(stamp, (_, h, m, s, ms) => {
+    const t = Math.max(0, (+h || 0) * 3600 + (+m) * 60 + (+s) + (+ms) / 1000 - offset);
+    const p = (n, w) => String(n).padStart(w, "0");
+    return p(Math.floor(t / 3600), 2) + ":" + p(Math.floor(t % 3600 / 60), 2) + ":" + p(Math.floor(t % 60), 2) + "." + p(Math.round(t % 1 * 1000) % 1000, 3);
+  })).join("\n");
+}
+
+// Русские .srt в раздачах часто в cp1251: если файл не UTF-8, читаем как windows-1251
+async function wpSubEncoding(url) {
+  try {
+    const buf = await (await fetch(url, { credentials: "same-origin" })).arrayBuffer();
+    new TextDecoder("utf-8", { fatal: true }).decode(buf);
+    return "utf-8";
+  } catch (_) {
+    return "windows-1251";
+  }
+}
+
+function closeWebPlayer() {
+  const wp = webPlayer;
+  if (!wp) return;
+  webPlayer = null;
+  wp.closed = true;
+  document.removeEventListener("keydown", wp.onKey, true);
+  try { wp.abort.abort(); } catch (_) {}
+  clearInterval(wp.tick);
+  wpSync(wp);
+  if (wp.art) {
+    // Сразу рвём соединение: сервер погасит ffmpeg, не дожидаясь сборки мусора
+    try { wp.art.video.removeAttribute("src"); wp.art.video.load(); } catch (_) {}
+    try { wp.art.destroy(); } catch (_) {}
+  }
+  $("webPlayerModal").classList.add("hidden");
+  document.body.style.overflow = "";
+}
+
+function wpPos(wp) {
+  const t = wp.art ? wp.art.currentTime : 0;
+  return wp.mode === "stream" ? wp.offset + t : t;
+}
+
+function wpLen(wp) {
+  if (wp.mode === "direct" && wp.art && wp.art.duration > 0) return wp.art.duration;
+  return wp.durSec;
+}
+
+function wpSync(wp) {
+  const { magnet, file } = wp;
+  if (!magnet || !file || !wp.started) return;
+  const posMs = Math.round(wpPos(wp) * 1000), lenMs = Math.round(wpLen(wp) * 1000);
+  if (!(lenMs > 0) || posMs < 0) return;
+  const now = Date.now();
+  wp.lastSyncAt = now;
+  const path = file.path || file.name;
+  const key = magnet.id + "|" + path;
+  if (watchMap) watchMap.set(key, { key, pos: posMs, len: lenMs, at: now });
+  api("/api/sync", {
+    method: "POST",
+    body: JSON.stringify({ watch: [{ key, magnetId: magnet.id, path, pos: posMs, len: lenMs, at: now }] })
+  }).catch(() => {});
+}
+
+// Источник: зеркало (direct) или поток сервера с дорожкой [track] (stream); [sec] — с какого места
+function wpSetSource(wp, mode, track, sec, play) {
+  const art = wp.art;
+  sec = Math.max(0, Math.floor(sec || 0));
+  if (wp.durSec && sec > wp.durSec - 2) sec = Math.max(0, Math.floor(wp.durSec - 2));
+  wp.mode = mode;
+  wp.track = track;
+  $("artplayerContainer").classList.toggle("wp-stream", mode === "stream");
+  if (mode === "stream") {
+    wp.offset = sec;
+    art.url = track.url + "&s=" + wp.viewer + (sec > 0 ? "&t=" + sec : "");
+  } else {
+    wp.offset = 0;
+    art.url = wp.directUrl;
+    if (sec > 0) art.once("video:loadedmetadata", () => { art.seek = sec; });
+  }
+  if (play) art.once("video:canplay", () => { if (!wp.closed) art.play().catch(() => {}); });
+  wpApplySub(wp);
+  wpPaintTime(wp);
+}
+
+function wpSeek(wp, sec) {
+  if (!wp.art) return;
+  const len = wpLen(wp);
+  sec = Math.max(0, len ? Math.min(sec, len - 1) : sec);
+  if (wp.mode === "direct") { wp.art.seek = sec; return; }
+  wpSetSource(wp, "stream", wp.track, sec, true);
+}
+
+// Свои шкала и время для потока: у Artplayer длина потока 0 и перемотка в нём уходит в начало
+function wpPaintTime(wp) {
+  if (!wp.art || wp.seeking) return;
+  const pos = wpPos(wp), len = wpLen(wp);
+  const bar = wp.art.template.$container.querySelector(".wp-seek");
+  const label = wp.art.template.$container.querySelector(".wp-time");
+  if (bar) { bar.max = String(Math.max(1, Math.floor(len))); bar.value = String(Math.floor(pos)); }
+  if (label) label.textContent = wpClock(pos) + " / " + (len ? wpClock(len) : "--:--");
+}
+
+async function wpApplySub(wp) {
+  const art = wp.art, sub = wp.sub;
+  if (!art) return;
+  if (!sub || !sub.url) { art.subtitle.show = false; return; }
+  try {
+    if (!sub.encoding) sub.encoding = await wpSubEncoding(sub.url);
+    if (wp.closed || wp.sub !== sub) return;
+    const offset = wp.mode === "stream" ? wp.offset : 0;
+    await art.subtitle.switch(sub.url, { name: sub.name, type: sub.type, encoding: sub.encoding, onVttLoad: vtt => wpShiftVtt(vtt, offset) });
+    art.subtitle.show = true;
+  } catch (_) {
+    showToast("Не удалось загрузить субтитры.", true);
+  }
+}
+
+async function openWebPlayer({ url, title, file, magnet, resumeTimeMs = 0 }) {
+  const modal = $("webPlayerModal"), container = $("artplayerContainer");
+  const audioSelect = $("webPlayerAudio"), subSelect = $("webPlayerSub");
+  if (!modal || !container) return;
+  if (typeof Artplayer === "undefined") {
+    showToast("Плеер не загрузился. Обновите страницу.", true);
+    return;
+  }
+  closeWebPlayer();
+  const wp = {
+    file, magnet, directUrl: url, art: null, closed: false, started: false, mode: "direct", track: null, sub: null,
+    offset: 0, durSec: 0, lastSyncAt: 0, seeking: false, fellBack: false, abort: new AbortController(),
+    viewer: Math.random().toString(36).slice(2, 12) || "web"
+  };
+  webPlayer = wp;
+  $("webPlayerTitle").textContent = title || "Воспроизведение";
+  modal.classList.remove("hidden");
+  document.body.style.overflow = "hidden";
+  container.classList.remove("wp-stream");
+  container.innerHTML = '<div class="web-player-wait">Готовим видео…</div>';
+  audioSelect.innerHTML = "<option>…</option>";
+  audioSelect.disabled = true;
+  subSelect.innerHTML = '<option value="off">Выкл</option>';
+  subSelect.disabled = true;
+  $("webPlayerClose").onclick = closeWebPlayer;
+
+  const files = magnet && Array.isArray(magnet.files) ? magnet.files : [];
+  const nameOf = f => String(f.name || f.path || "");
+  const extAudioFiles = files.filter(f => f.sourceLink && /\.(mka|ac3|dts|aac|mp3|m4a|ogg|flac|wav)$/i.test(nameOf(f)));
+  const extSubFiles = files.filter(f => f.sourceLink && /\.(srt|vtt|ass|ssa)$/i.test(nameOf(f)));
+
+  // Сначала — что за файл: иначе браузер начнёт тянуть MKV по зеркалу, а сервер параллельно ещё и ffprobe с ffmpeg
+  const q = new URLSearchParams();
+  q.set("link", file.sourceLink || file.link || "");
+  q.set("name", file.name || "");
+  if (magnet && magnet.id) q.set("magnetId", magnet.id);
+  if (file.path || file.name) q.set("path", file.path || file.name);
+  for (const af of extAudioFiles) q.append("ext", af.sourceLink);
+  let data = null;
+  try {
+    data = await api("/api/file/media-info?" + q.toString(), { signal: wp.abort.signal });
+  } catch (_) {}
+  if (wp.closed) return;
+
+  const tracks = [];
+  for (const a of (data && data.audio) || []) {
+    const lang = formatPlayerLang(a.language);
+    const details = [];
+    if (a.codec) details.push(a.codec.toUpperCase());
+    if (a.channels) details.push(a.channels === 6 ? "5.1" : a.channels === 8 ? "7.1" : a.channels === 2 ? "2.0" : a.channels + " ch");
+    tracks.push({
+      id: "a" + a.index,
+      name: (a.title || lang || "Дорожка " + (tracks.length + 1)) + (details.length ? " (" + details.join(", ") + ")" : ""),
+      url: a.url, webOk: a.webOk, isDefault: a.index === data.audioDefault
+    });
+  }
+  ((data && data.external) || []).forEach((x, i) => {
+    const parts = [x.title || formatPlayerLang(x.lang) || "Внешняя озвучка"];
+    if (x.offsetMs) parts.push("(" + (x.offsetMs > 0 ? "+" : "") + (x.offsetMs / 1000).toFixed(1) + " с)");
+    tracks.push({ id: "x" + i, name: "[Озвучка] " + parts.join(" "), url: x.url, webOk: false, isDefault: false });
+  });
+  const defTrack = tracks.find(t => t.isDefault) || tracks[0] || null;
+  // Без сведений о файле остаётся только зеркало
+  const directOk = !data || !defTrack || (!data.needsTranscode && wpDirectOk(file));
+  wp.durSec = data && data.durationMs ? data.durationMs / 1000 : 0;
+  let startSec = resumeTimeMs > 0 ? resumeTimeMs / 1000 : 0;
+  if (wp.durSec && startSec > wp.durSec - 30) startSec = 0; // досмотрен — с начала
+
+  if (data && data.video && /hevc|h265/i.test(data.video.codec || "")) {
+    const v = document.createElement("video");
+    if (!v.canPlayType('video/mp4; codecs="hvc1.1.6.L120.90"')) {
+      showToast("Видео в HEVC: этот браузер может его не показать. Если экран чёрный — откройте во внешнем плеере.", true);
+    }
+  }
+
+  container.innerHTML = "";
+  const art = new Artplayer({
+    container,
+    url: "",
+    title,
+    autoplay: true,
+    playbackRate: true,
+    aspectRatio: true,
+    setting: true,
+    pip: true,
+    fullscreen: true,
+    fullscreenWeb: true,
+    autoOrientation: true,
+    // Свои клавиши и без жестов: в потоке перемотка Artplayer уводит в начало
+    hotkey: false,
+    gesture: false,
+    theme: "#b7a0ff",
+    moreVideoAttr: { preload: "auto", playsInline: true },
+    controls: [
+      {
+        name: "wp-seek", position: "top", index: 15,
+        html: '<input type="range" class="wp-seek" min="0" max="1" value="0" step="1" aria-label="Перемотка">',
+        mounted: $el => {
+          const bar = $el.querySelector(".wp-seek");
+          bar.addEventListener("input", () => {
+            wp.seeking = true;
+            const label = art.template.$container.querySelector(".wp-time");
+            if (label) label.textContent = wpClock(+bar.value) + " / " + (wpLen(wp) ? wpClock(wpLen(wp)) : "--:--");
+          });
+          bar.addEventListener("change", () => { wp.seeking = false; wpSeek(wp, +bar.value); });
+        }
+      },
+      { name: "wp-time", position: "left", index: 25, html: '<span class="wp-time">00:00 / --:--</span>' }
+    ]
+  });
+  wp.art = art;
+
+  art.on("video:timeupdate", () => {
+    if (art.currentTime > 0) wp.started = true;
+    wpPaintTime(wp);
+    if (Date.now() - wp.lastSyncAt >= 10000) wpSync(wp);
+  });
+  art.on("video:pause", () => wpSync(wp));
+  art.on("video:ended", () => wpSync(wp));
+
+  // Ошибка источника. Artplayer сам переоткрывает тот же адрес (до 5 раз) и после этого шлёт "error":
+  // зеркало не открылось — один раз пробуем поток сервера; поток оборвался — продолжаем с того же места, а не с offset
+  let lastPos = startSec;
+  art.on("video:timeupdate", () => { if (wp.started) lastPos = wpPos(wp); });
+  art.on("error", (_, tries) => {
+    if (wp.closed) return;
+    if (wp.mode === "direct" && !wp.fellBack && defTrack) {
+      wp.fellBack = true;
+      showToast("Браузер не открыл файл как есть — включаем поток с сервера.");
+      wpSetSource(wp, "stream", wp.track || defTrack, lastPos, true);
+      return;
+    }
+    if (tries >= Artplayer.RECONNECT_TIME_MAX) {
+      showToast("Видео не запускается: формат не поддерживается браузером или сервер занят. Откройте во внешнем плеере.", true);
+    } else if (wp.mode === "stream") {
+      wpSetSource(wp, "stream", wp.track, lastPos, true);
+    }
+  });
+
+  wp.onKey = e => {
+    if (wp.closed || $("webPlayerModal").classList.contains("hidden")) return;
+    const tag = (e.target && e.target.tagName) || "";
+    if (tag === "SELECT" || (tag === "INPUT" && !e.target.classList.contains("wp-seek"))) return;
+    if (e.key === "Escape") {
+      if (art.fullscreen || art.fullscreenWeb) return;
+      e.preventDefault();
+      closeWebPlayer();
+    } else if (e.key === " ") { e.preventDefault(); art.toggle(); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); wpSeek(wp, wpPos(wp) - 10); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); wpSeek(wp, wpPos(wp) + 10); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); art.volume = Math.min(1, art.volume + 0.1); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); art.volume = Math.max(0, art.volume - 0.1); }
+    else if (e.key === "f" || e.key === "а") { e.preventDefault(); art.fullscreen = !art.fullscreen; }
+  };
+  document.addEventListener("keydown", wp.onKey, true);
+
+  // Первая загрузка: сразу с места, где остановились
+  if (directOk) wpSetSource(wp, "direct", defTrack, startSec, false);
+  else wpSetSource(wp, "stream", defTrack, startSec, false);
+
+  // Звук. Как есть браузер играет только дорожку по умолчанию; другая — через поток сервера
+  audioSelect.innerHTML = "";
+  if (!tracks.length) {
+    audioSelect.innerHTML = '<option value="">По умолчанию</option>';
+  } else {
+    for (const t of tracks) {
+      const opt = document.createElement("option");
+      opt.value = t.id;
+      opt.textContent = t.name;
+      opt.selected = t === defTrack;
+      audioSelect.appendChild(opt);
+    }
+    audioSelect.disabled = false;
+    audioSelect.onchange = () => {
+      const t = tracks.find(x => x.id === audioSelect.value);
+      if (!t || wp.closed) return;
+      const play = !art.paused || !wp.started;
+      const pos = wpPos(wp);
+      if (t === defTrack && directOk && !wp.fellBack) wpSetSource(wp, "direct", t, pos, play);
+      else wpSetSource(wp, "stream", t, pos, play);
+    };
+  }
+
+  // Субтитры — только внешние файлы раздачи. Встроенные в MKV не достаём: ffmpeg прочёл бы весь фильм (десятки ГБ)
+  // и забрал канал у видео
+  const subs = [{ id: "off", name: "Выкл" }];
+  extSubFiles.forEach((f, i) => {
+    const name = nameOf(f).split("/").pop();
+    const ext = (/\.(\w+)$/.exec(name) || [])[1] || "srt";
+    subs.push({ id: "s" + i, name, link: f.sourceLink, type: /^ssa$/i.test(ext) ? "ass" : ext.toLowerCase() });
+  });
+  subSelect.innerHTML = "";
+  for (const s of subs) {
+    const opt = document.createElement("option");
+    opt.value = s.id;
+    opt.textContent = s.name;
+    subSelect.appendChild(opt);
+  }
+  subSelect.disabled = subs.length < 2;
+  const pickSub = async id => {
+    const s = subs.find(x => x.id === id);
+    if (!s || s.id === "off") { wp.sub = null; wpApplySub(wp); return; }
+    try {
+      if (!s.url) s.url = await signedMirror(s.link, s.name);
+    } catch (_) {
+      showToast("Не удалось загрузить субтитры.", true);
+      return;
+    }
+    if (wp.closed || subSelect.value !== id) return;
+    wp.sub = s;
+    wpApplySub(wp);
+  };
+  subSelect.onchange = () => pickSub(subSelect.value);
+  // Русские субтитры включаем сами, если звук не русский
+  const rusAudio = defTrack && /рус/i.test(defTrack.name);
+  const rusSub = !rusAudio && subs.find(s => s.id !== "off" && /(^|[^a-z])(rus|ru)([^a-z]|$)|рус/i.test(s.name));
+  if (rusSub) { subSelect.value = rusSub.id; pickSub(rusSub.id); }
+}
+
 function ensurePlaySheet(){
   let s=document.getElementById("playSheet");
   if(s) return s;
@@ -2335,6 +2708,9 @@ function ensurePlaySheet(){
     '<div class="play-sheet-sub ps-status"></div>'+
     '<div class="ps-resume hidden"><div class="ps-resume-top"><span class="ps-resume-ic">'+PS_ICON_PLAY+'</span><span class="ps-resume-text"><b></b><small>здесь вы остановились</small></span></div>'+
       '<div class="ps-resume-bar"><span class="ps-bar"><i></i></span><em></em></div></div>'+
+    '<button type="button" class="sheet-btn ps-watch-browser disabled" style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%">' +
+    PS_ICON_PLAY + '<span>Смотреть в браузере</span>' +
+    '</button>' +
     '<a class="sheet-btn ps-watch disabled" data-act="player" rel="noopener noreferrer">'+PS_ICON_PLAY+'<span></span></a>'+
     '<div class="ps-pick hidden"></div>'+
     '<div class="ps-shelf"><button type="button" class="ps-btn secondary" data-act="mine"></button><button type="button" class="ps-btn secondary" data-act="fav"></button></div>'+
@@ -2353,13 +2729,35 @@ function ensurePlaySheet(){
 }
 function fillWatch(s,url,text,playlist){
   const player=s.querySelector('[data-act="player"]');
-  player.querySelector("span").textContent=text;
+  player.querySelector("span").textContent=IS_DESKTOP ? "Открыть в PotPlayer" : "Внешний плеер";
   delete player.dataset.playlist; delete player.dataset.mediaUrl;
-  if(!url){player.classList.add("disabled");player.removeAttribute("href");return;}
+  const browserBtn = s.querySelector(".ps-watch-browser");
+  if(!url){
+    player.classList.add("disabled");
+    player.removeAttribute("href");
+    if(browserBtn){ browserBtn.classList.add("disabled"); browserBtn.onclick=null; }
+    return;
+  }
   player.dataset.mediaUrl=url;
   if(playlist&&IS_DESKTOP) player.href="potplayer://"+playlist;
   else { player.href=playerHref(url); if(playlist) player.dataset.playlist=playlist; }
   player.classList.remove("disabled");
+  if(browserBtn){
+    browserBtn.classList.remove("disabled");
+    browserBtn.onclick=()=>{
+      const title=(s.querySelector(".play-sheet-title")||{}).textContent||"Видео";
+      const w=s._magnet&&s._file?watchOf(s._magnet.id,s._file):null;
+      openWebPlayer({
+        url:url,
+        title:title,
+        file:s._file,
+        magnet:s._magnet,
+        resumeTimeMs:w?w.pos:0
+      });
+      s.classList.remove("open");
+      document.body.style.overflow="";
+    };
+  }
 }
 async function openPlaySheet(file,label,playlistReq,magnet){
   const s=ensurePlaySheet(), token=++playSheetToken;
@@ -2900,7 +3298,7 @@ function openLibraryModal(magnet) {
     quickPlay.textContent="▶ Запустить основной фильм (M2TS · "+formatBytes(mainM2ts.size)+")";
     quickPlay.title=String(mainM2ts.path||mainM2ts.name||"");
     const m2tsName=String(mainM2ts.name||String(mainM2ts.path||"main.m2ts").split("/").pop()||"main.m2ts");
-    quickPlay.addEventListener("click",()=>openPlaySheet(mainM2ts,m2tsName));
+    quickPlay.addEventListener("click",()=>openPlaySheet(mainM2ts,m2tsName,null,magnet));
     quickWrap.append(quickPlay);target.append(quickWrap);
   }
   const query=$("librarySearch").value.trim().toLowerCase();
@@ -2937,7 +3335,7 @@ function openLibraryModal(magnet) {
     if(file.sourceLink){
       const name=String(file.path||file.name||"").split("/").pop();
       const watch=document.createElement("button");watch.type="button";watch.className="secondary";watch.textContent="▶ Смотреть";
-      watch.addEventListener("click",()=>openPlaySheet(file,name));right.append(watch);
+      watch.addEventListener("click",()=>openPlaySheet(file,name,null,magnet));right.append(watch);
     }
     row.append(right);
   }
@@ -3030,6 +3428,25 @@ checkSession();
   }).observe(document.documentElement, { childList: true, subtree: true });
 })();
 </script>
+
+<!-- Полноэкранный оверлей встроенного видеоплеера -->
+<div id="webPlayerModal" class="web-player-modal hidden">
+  <div class="web-player-header">
+    <div id="webPlayerTitle" class="web-player-title"></div>
+    <div class="web-player-controls">
+      <div class="web-player-select-wrap">
+        <label for="webPlayerAudio">Звук:</label>
+        <select id="webPlayerAudio" class="web-player-select" aria-label="Выбор аудиодорожки"></select>
+      </div>
+      <div class="web-player-select-wrap">
+        <label for="webPlayerSub">Субтитры:</label>
+        <select id="webPlayerSub" class="web-player-select" aria-label="Выбор субтитров"></select>
+      </div>
+    </div>
+    <button type="button" id="webPlayerClose" class="secondary" aria-label="Закрыть плеер">✕ Закрыть</button>
+  </div>
+  <div id="artplayerContainer" class="web-player-body"></div>
+</div>
 
 <script src="redesign.js?v=6" defer></script>
 <script src="home.js?v=8" defer></script>

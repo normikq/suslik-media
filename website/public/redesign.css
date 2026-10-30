@@ -2413,6 +2413,20 @@ html.auth-pending main { opacity: 0; pointer-events: none; }
 #playSheet a.ps-watch:hover { background: #3b74f0; border-color: #4d86ff; }
 #playSheet a.ps-watch.disabled { background: #161c28; border-color: #202736; color: #5a6478; pointer-events: none; }
 
+#playSheet button.ps-watch-browser,
+.sheet-btn.ps-watch-browser {
+  display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 8px; width: 100%; height: 52px; min-height: 0; padding: 0 16px; box-sizing: border-box;
+  border-radius: 12px; background: var(--accent, #b7a0ff); border: 1px solid rgba(183, 160, 255, 0.4); color: #171222; font: 600 14px var(--ui); cursor: pointer;
+  margin-bottom: 8px;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+}
+#playSheet button.ps-watch-browser svg,
+.sheet-btn.ps-watch-browser svg { width: 12px; height: 12px; flex: 0 0 auto; fill: currentColor; }
+#playSheet button.ps-watch-browser:hover,
+.sheet-btn.ps-watch-browser:hover { background: #c8b7ff; }
+#playSheet button.ps-watch-browser.disabled,
+.sheet-btn.ps-watch-browser.disabled { background: #161c28; border-color: #202736; color: #5a6478; pointer-events: none; opacity: 0.55; }
+
 #playSheet .ps-pick { display: flex; gap: 12px; margin-top: 14px; }
 #playSheet .ps-field { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; margin: 0; font: 400 13px var(--ui); color: #8e96a8; }
 #playSheet .ps-field select {
@@ -2523,6 +2537,8 @@ html.auth-pending main { opacity: 0; pointer-events: none; }
   #playSheet .ps-resume-bar em { font-size: 11.5px; }
   #playSheet a.ps-watch { height: 50px; font-size: 13.5px; border-color: rgba(96, 165, 250, 0.3); box-shadow: 0 6px 18px rgba(37, 99, 235, 0.35); }
   #playSheet a.ps-watch.disabled { background: rgba(37, 99, 235, 0.5); border-color: transparent; color: rgba(255, 255, 255, 0.55); box-shadow: none; }
+  #playSheet button.ps-watch-browser,
+  .sheet-btn.ps-watch-browser { height: 50px; font-size: 13.5px; }
   #playSheet .ps-pick { gap: 10px; }
   #playSheet .ps-field { font-size: 12.5px; }
   #playSheet .ps-field select { height: 48px; }
@@ -2770,3 +2786,116 @@ button.sess-btn.hidden { display: none; }
 .sess-row.stale { opacity: .6; }
 .sess-row.stale .sess-meta { color: #d6a46a; }
 @media (max-width: 900px) { .sessions-actions { width: 100%; flex-direction: column; } .sessions-actions button.sess-btn { width: 100%; } }
+
+/* ===== Встроенный веб-плеер (Artplayer) ===== */
+.web-player-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: rgba(0, 0, 0, 0.95);
+  display: flex;
+  flex-direction: column;
+}
+.web-player-header {
+  height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  background: rgba(20, 23, 32, 0.85);
+  border-bottom: 1px solid var(--line, #292d3a);
+}
+.web-player-title {
+  font-weight: 600;
+  color: var(--text, #f3f4f8);
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-right: 16px;
+  max-width: 40%;
+}
+.web-player-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+  margin-right: 16px;
+  flex-shrink: 0;
+}
+.web-player-select-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted, #8b92a5);
+}
+.web-player-select-wrap label {
+  font-weight: 500;
+  white-space: nowrap;
+}
+.web-player-select {
+  background: var(--bg-card, #1a1e29);
+  color: var(--text, #f3f4f8);
+  border: 1px solid var(--line, #292d3a);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 13px;
+  max-width: 220px;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+.web-player-select:hover,
+.web-player-select:focus {
+  border-color: var(--accent, #b7a0ff);
+}
+@media (max-width: 768px) {
+  .web-player-header {
+    height: auto;
+    min-height: 50px;
+    padding: 8px 12px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .web-player-title {
+    max-width: calc(100% - 95px);
+    font-size: 14px;
+    padding-right: 0;
+  }
+  .web-player-controls {
+    order: 3;
+    width: 100%;
+    margin: 0;
+    justify-content: flex-start;
+    gap: 8px;
+  }
+  .web-player-select {
+    max-width: 140px;
+    font-size: 12px;
+  }
+}
+.web-player-body {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+.web-player-wait {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted, #9da4b5);
+  font-size: 15px;
+}
+/* Поток сервера: у Artplayer длина 0 и перемотка в начало — свои шкала и время; для файла как есть — наоборот */
+.web-player-body .art-control-wp-seek,
+.web-player-body .art-control-wp-time { display: none !important; }
+.web-player-body.wp-stream .art-control-progress,
+.web-player-body.wp-stream .art-control-time,
+.web-player-body.wp-stream .art-control-thumbnails { display: none !important; }
+.web-player-body.wp-stream .art-control-wp-seek { display: flex !important; align-items: center; width: 100%; padding: 0 2px; }
+.web-player-body.wp-stream .art-control-wp-time { display: flex !important; align-items: center; padding: 0 10px; font-size: 14px; white-space: nowrap; }
+.wp-seek { width: 100%; margin: 6px 0; accent-color: var(--accent, #b7a0ff); cursor: pointer; }
