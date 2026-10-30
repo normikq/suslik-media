@@ -3,6 +3,7 @@
 // Поток для телевизора (приложение Tizen): см. services/tvstream.js. Остальные клиенты сюда не ходят.
 
 const express = require("express");
+const { spawn } = require("child_process");
 const config = require("../config");
 const { mirrorUrlLimiter, mirrorLimiter } = require("../middleware/rate-limit");
 const { requireLogin } = require("../middleware/auth");
@@ -109,8 +110,117 @@ router.get("/api/file/tv-info", requireLogin, mirrorUrlLimiter, async (req, res)
 });
 
 /**
+ * Сведения о медиафайле для веб-плеера: все аудиодорожки (включая внешние из раздачи и от пользователей)
+ * и субтитры. Для дорожек без нативной поддержки в браузере (AC3, DTS) выдаётся адрес потока с транскодированием в AAC.
+ */
+router.get("/api/file/media-info", requireLogin, mirrorUrlLimiter, async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  if (!config.TV_STREAM) return res.status(404).json({ error: "Поток выключен на сервере." });
+  const link = linkOf(req);
+  if (!link) return res.status(400).json({ error: "Некорректная ссылка на медиафайл." });
+  markLinkOpened(link);
+  let info, external;
+  try {
+    const entry = await resolveDirect(link, false);
+    [info, external] = await Promise.all([tv.probeFile(link, entry.url), externalsOf(req)]);
+  } catch (err) {
+    return res.status(502).json({ error: err instanceof UnlockError ? err.message : "Сервер не смог прочитать файл." });
+  }
+  const raw = cleanFileName(typeof req.query.name === "string" ? req.query.name.split(/[\\/]/).pop() : "") || "video";
+  const name = encodeURIComponent(raw.replace(/\.[a-z0-9]{2,5}$/i, "") + ".mp4");
+  const expires = String(Math.floor(Date.now() / 1000) + config.MIRROR_TTL);
+  const base = `${publicBase(req)}/api/file/tv/${name}?link=${encodeURIComponent(link)}&ac=aac`;
+  const subBase = `${publicBase(req)}/api/file/sub?link=${encodeURIComponent(link)}`;
+
+  const audioList = info.audio.map(a => ({
+    index: a.index,
+    codec: a.codec,
+    channels: a.channels,
+    language: a.language,
+    title: a.title,
+    isDefault: a.isDefault,
+    webOk: tv.WEB_AUDIO_OK.has(a.codec),
+    url: `${base}&a=${a.index}&exp=${expires}&sig=${tv.makeTvToken(link, a.index, expires, "aac")}`
+  }));
+
+  const extList = external.map(({ link: extLink, asked, ...x }) => ({
+    ...x,
+    ...(x.kind === "file" ? { link: asked } : {}),
+    url: `${base}&x=${encodeURIComponent(extLink)}&xo=${x.offsetMs}&exp=${expires}&sig=${tv.makeTvToken(link, tv.externalKey(extLink, x.offsetMs), expires, "aac")}`
+  }));
+
+  const subsList = info.subs.map(s => ({
+    index: s.index,
+    codec: s.codec,
+    language: s.language,
+    title: s.title,
+    url: `${subBase}&s=${s.index}&exp=${expires}&sig=${tv.makeTvToken(link, "sub:" + s.index, expires, "aac")}`
+  }));
+
+  const def = tv.defaultAudio(info);
+  const defOk = def && tv.WEB_AUDIO_OK.has(def.codec);
+
+  res.json({
+    durationMs: info.durationMs,
+    container: info.container,
+    video: info.video,
+    audio: audioList,
+    external: extList,
+    subs: subsList,
+    needsTranscode: !defOk || /mpegts/.test(info.container),
+    audioDefault: def ? def.index : (audioList[0] ? audioList[0].index : 0)
+  });
+});
+
+/**
+ * Извлечение текстовых субтитров из медиафайла в формате WebVTT для веб-плеера:
+ * ?link&s=<stream_index>&exp&sig
+ */
+router.get("/api/file/sub", mirrorLimiter, async (req, res) => {
+  if (!config.TV_STREAM) return res.status(404).send("Поток выключен на сервере.");
+  const link = linkOf(req);
+  const s = Number(req.query.s);
+  const exp = req.query.exp;
+  const sig = req.query.sig;
+  if (!link || !Number.isSafeInteger(s) || s < 0) return res.status(400).send("Некорректный запрос субтитров.");
+  if (!tv.isValidTvToken(link, "sub:" + s, String(exp || ""), String(sig || ""), "aac")) {
+    return res.status(401).send("Ссылка на субтитры устарела или недействительна.");
+  }
+  res.setHeader("Content-Type", "text/vtt; charset=utf-8");
+  res.setHeader("Cache-Control", "private, max-age=3600");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Content-Security-Policy", MIRROR_CSP);
+  if (req.method === "HEAD") return res.status(200).end();
+
+  let entry;
+  try {
+    entry = await resolveDirect(link, false);
+  } catch (err) {
+    return res.status(502).send(err instanceof UnlockError ? err.message : "Сервер не смог прочитать файл.");
+  }
+
+  let child;
+  try {
+    child = tv.startSubFfmpeg(tv.subArgs(entry.url, s));
+  } catch (e) {
+    return res.status(503).send("На сервере нет ffmpeg.");
+  }
+  if (!child) return res.status(503).send("На сервере нет ffmpeg.");
+
+  res.on("close", () => {
+    if (child.exitCode == null && !child.killed) child.kill("SIGKILL");
+  });
+
+  child.stdout.pipe(res);
+  child.on("error", () => {
+    if (!res.headersSent) res.status(503).send("Ошибка запуска ffmpeg для субтитров.");
+  });
+});
+
+/**
  * Сам поток: ?link&a&exp&sig (подпись), &t=<сек> — с какого места, &s=<метка плеера>. Внешняя озвучка вместо &a:
  * &x=<ссылка на файл озвучки>&xo=<сдвиг, мс> — ffmpeg берёт видео из фильма, звук из этого файла.
+ * &ac=aac — транскодирование в AAC для веб-плеера (если звук не поддерживается браузером).
  */
 router.get("/api/file/tv/:name", mirrorLimiter, async (req, res) => {
   if (!config.TV_STREAM) return res.status(404).send("Поток для телевизора выключен на сервере.");
@@ -118,11 +228,12 @@ router.get("/api/file/tv/:name", mirrorLimiter, async (req, res) => {
   const extLink = req.query.x != null ? adLink(req.query.x) : null;
   const xo = Number(req.query.xo || 0);
   const a = extLink ? null : Number(req.query.a);
+  const targetAudio = req.query.ac === "aac" ? "aac" : "ac3";
   // Что подписано: номер дорожки фильма или файл озвучки со сдвигом
   const signed = extLink
     ? (Number.isSafeInteger(xo) && Math.abs(xo) <= ca.MAX_OFFSET_MS ? tv.externalKey(extLink, xo) : null)
     : (Number.isSafeInteger(a) && a >= 0 ? a : null);
-  if (!link || signed == null || (req.query.x != null && !extLink) || !tv.isValidTvToken(link, signed, String(req.query.exp || ""), String(req.query.sig || ""))) {
+  if (!link || signed == null || (req.query.x != null && !extLink) || !tv.isValidTvToken(link, signed, String(req.query.exp || ""), String(req.query.sig || ""), targetAudio)) {
     return res.status(401).send("Ссылка устарела или недействительна.");
   }
   // Поток идёт только с начала (с места &t=): перематывать его байтами нельзя
@@ -133,8 +244,8 @@ router.get("/api/file/tv/:name", mirrorLimiter, async (req, res) => {
     res.setHeader("Content-Range", "bytes */*");
     return res.status(416).end();
   }
-  const format = /\.mkv$/i.test(req.params.name) ? "mkv" : "ts";
-  res.setHeader("Content-Type", format === "mkv" ? "video/x-matroska" : "video/mp2t");
+  const format = /\.mp4$/i.test(req.params.name) ? "mp4" : /\.mkv$/i.test(req.params.name) ? "mkv" : "ts";
+  res.setHeader("Content-Type", format === "mp4" ? "video/mp4" : format === "mkv" ? "video/x-matroska" : "video/mp2t");
   res.setHeader("Cache-Control", "private, no-store");
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Content-Security-Policy", MIRROR_CSP);
@@ -168,7 +279,7 @@ router.get("/api/file/tv/:name", mirrorLimiter, async (req, res) => {
 
   let closed = false;
   res.on("close", () => { closed = true; });
-  const child = tv.startFfmpeg(tv.ffmpegArgs(entry.url, Math.round(t * 10) / 10, info, audio, format, ext), viewer);
+  const child = tv.startFfmpeg(tv.ffmpegArgs(entry.url, Math.round(t * 10) / 10, info, audio, format, ext, targetAudio), viewer);
   if (!child) {
     console.warn(`[tv] 503: уже ${tv.activeCount()} ffmpeg`);
     return res.status(503).send("Сервер занят: телевизоров смотрит слишком много.");

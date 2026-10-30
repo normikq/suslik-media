@@ -397,7 +397,7 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
 <script>/* App 1.2+: native library and bottom bar */try{if(Number(window.__suslikApp||0)>=3)document.documentElement.classList.add("suslik-native");}catch(e){}
 /* Пока не ответил /api/session, страница скрыта: иначе на секунду мелькает форма входа у тех, кто уже вошёл (снимается в showApp; страховка — через 4 с) */
 try{document.documentElement.classList.add("auth-pending");setTimeout(function(){document.documentElement.classList.remove("auth-pending");},4000);}catch(e){}</script>
-<link rel="stylesheet" href="redesign.css?v=43">
+<link rel="stylesheet" href="redesign.css?v=44">
 <style>
 .sr-badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
 .sr-badges .rb { background: #1c2230; color: #c7d0e0; border: 1px solid #2e3850; border-radius: 6px; padding: 2px 8px; font-size: 12px; font-weight: 700; }
@@ -2324,12 +2324,32 @@ async function psLoad(s,file,label,playlistReq,magnet){
   if(mUrl&&magnet&&s.dataset.kind!=="movie") saveLastEpisode(magnet.id,file.path);
 }
 let currentArtPlayer = null;
+let currentWebPlayerAbort = null;
+
+function formatPlayerLang(lang) {
+  if (!lang) return "";
+  const l = String(lang).toLowerCase();
+  if (l === "rus" || l === "ru" || l === "russian") return "Русский";
+  if (l === "eng" || l === "en" || l === "english") return "Английский";
+  if (l === "jpn" || l === "ja" || l === "japanese") return "Японский";
+  if (l === "ukr" || l === "uk" || l === "ukrainian") return "Украинский";
+  if (l === "fre" || l === "fra" || l === "fr" || l === "french") return "Французский";
+  if (l === "ger" || l === "deu" || l === "de" || l === "german") return "Немецкий";
+  if (l === "ita" || l === "it" || l === "italian") return "Итальянский";
+  if (l === "spa" || l === "es" || l === "spanish") return "Испанский";
+  if (l === "kor" || l === "ko" || l === "korean") return "Корейский";
+  if (l === "chi" || l === "zho" || l === "zh" || l === "chinese") return "Китайский";
+  return lang.toUpperCase();
+}
+
 // Запуск встроенного веб-плеера
 function openWebPlayer(options) {
   const { url, title, file, magnet, resumeTimeMs = 0 } = options;
   const modal = document.getElementById("webPlayerModal");
   const container = document.getElementById("artplayerContainer");
   const titleEl = document.getElementById("webPlayerTitle");
+  const audioSelect = document.getElementById("webPlayerAudio");
+  const subSelect = document.getElementById("webPlayerSub");
   if (!modal || !container) return;
 
   if (typeof Artplayer === "undefined") {
@@ -2340,6 +2360,22 @@ function openWebPlayer(options) {
   titleEl.textContent = title || "Воспроизведение";
   modal.classList.remove("hidden");
   document.body.style.overflow = "hidden";
+
+  if (currentWebPlayerAbort) {
+    try { currentWebPlayerAbort.abort(); } catch (_) {}
+    currentWebPlayerAbort = null;
+  }
+  const abortController = new AbortController();
+  currentWebPlayerAbort = abortController;
+
+  if (audioSelect) {
+    audioSelect.innerHTML = '<option value="">Загрузка дорожек…</option>';
+    audioSelect.disabled = true;
+  }
+  if (subSelect) {
+    subSelect.innerHTML = '<option value="">Загрузка субтитров…</option>';
+    subSelect.disabled = true;
+  }
 
   // Уничтожаем предыдущий экземпляр при повторном открытии
   if (currentArtPlayer) {
@@ -2376,25 +2412,12 @@ function openWebPlayer(options) {
     }
   };
 
-  // Поиск внешних субтитров .srt / .vtt рядом с фильмом в раздаче
-  let subtitleUrl = null;
-  if (magnet && magnet.files) {
-    const subFile = magnet.files.find(f => /\.(srt|vtt)$/i.test(f.name || f.path || ""));
-    if (subFile && subFile.sourceLink) {
-      const subName = subFile.name || String(subFile.path || "subtitles.srt").split("/").pop();
-      // Подписанный URL для субтитров
-      signedMirror(subFile.sourceLink, subName).then(sUrl => {
-        if (currentArtPlayer && sUrl) {
-          currentArtPlayer.subtitle.url = sUrl;
-        }
-      }).catch(() => {});
-    }
-  }
+  let playbackUrl = url;
 
   // Инициализация Artplayer
   currentArtPlayer = new Artplayer({
     container: container,
-    url: url,
+    url: playbackUrl,
     title: title,
     playbackRate: true,
     aspectRatio: true,
@@ -2438,6 +2461,10 @@ function openWebPlayer(options) {
   const closeBtn = document.getElementById("webPlayerClose");
   const closePlayer = () => {
     document.removeEventListener("keydown", escHandler);
+    if (currentWebPlayerAbort) {
+      try { currentWebPlayerAbort.abort(); } catch (_) {}
+      currentWebPlayerAbort = null;
+    }
     syncProgress();
     if (currentArtPlayer) {
       currentArtPlayer.destroy();
@@ -2453,6 +2480,267 @@ function openWebPlayer(options) {
     }
   }
   document.addEventListener("keydown", escHandler);
+
+  // Поиск внешних субтитров и дорожек в раздаче
+  const extAudioFiles = (magnet && Array.isArray(magnet.files) ? magnet.files : []).filter(f =>
+    /\.(mka|ac3|dts|aac|mp3|m4a|ogg|flac|wav)$/i.test(f.name || f.path || "") && f.sourceLink
+  );
+  const extSubFiles = (magnet && Array.isArray(magnet.files) ? magnet.files : []).filter(f =>
+    /\.(srt|vtt)$/i.test(f.name || f.path || "") && f.sourceLink
+  );
+
+  const q = new URLSearchParams();
+  q.set("link", file.sourceLink || file.link || "");
+  q.set("name", file.name || "");
+  if (magnet && magnet.id) q.set("magnetId", magnet.id);
+  if (file.path || file.name) q.set("path", file.path || file.name);
+  for (const af of extAudioFiles) q.append("ext", af.sourceLink);
+
+  api(`/api/file/media-info?${q.toString()}`, { signal: abortController.signal })
+    .then(async data => {
+      if (abortController.signal.aborted || !currentArtPlayer) return;
+
+      const audioTracks = [];
+      const subTracks = [{ id: "off", name: "Выкл", url: "" }];
+
+      // Внешние субтитры (.srt / .vtt) из раздачи
+      for (const sf of extSubFiles) {
+        try {
+          const subName = sf.name || String(sf.path || "subtitles.srt").split("/").pop();
+          const sUrl = await signedMirror(sf.sourceLink, subName);
+          if (sUrl) {
+            subTracks.push({
+              id: "ext_" + sf.sourceLink,
+              name: "Внешние: " + subName,
+              url: sUrl
+            });
+          }
+        } catch (_) {}
+      }
+
+      // Внутренние текстовые субтитры MKV
+      if (Array.isArray(data.subs)) {
+        for (const s of data.subs) {
+          const lang = formatPlayerLang(s.language);
+          const label = (lang ? lang : "Субтитры") + (s.title ? ` (${s.title})` : ` #${s.index}`);
+          subTracks.push({
+            id: "internal_" + s.index,
+            name: label,
+            url: s.url
+          });
+        }
+      }
+
+      // Внутренние аудиодорожки
+      if (Array.isArray(data.audio) && data.audio.length) {
+        for (let i = 0; i < data.audio.length; i++) {
+          const a = data.audio[i];
+          const lang = formatPlayerLang(a.language);
+          const details = [];
+          if (a.codec) details.push(a.codec.toUpperCase());
+          if (a.channels) details.push(a.channels === 6 ? "5.1" : a.channels === 8 ? "7.1" : a.channels === 2 ? "2.0" : a.channels + " ch");
+          if (!a.webOk) details.push("AAC");
+          const name = (a.title ? a.title : (lang ? lang : `Дорожка ${i + 1}`)) + (details.length ? ` (${details.join(", ")})` : "");
+          audioTracks.push({
+            id: "internal_" + a.index,
+            name: name,
+            url: a.url,
+            rawUrl: a.webOk ? url : a.url,
+            webOk: a.webOk,
+            isDefault: a.index === data.audioDefault
+          });
+        }
+      }
+
+      // Внешние аудиодорожки
+      if (Array.isArray(data.external)) {
+        for (const x of data.external) {
+          const lang = formatPlayerLang(x.lang);
+          const parts = [];
+          if (x.title) parts.push(x.title);
+          else if (lang) parts.push(lang);
+          else parts.push("Внешняя озвучка");
+          if (x.offsetMs) {
+            const sec = (x.offsetMs / 1000).toFixed(1);
+            parts.push(`(${x.offsetMs > 0 ? "+" : ""}${sec} с)`);
+          }
+          audioTracks.push({
+            id: "ext_" + (x.id || x.link),
+            name: "[Озвучка] " + parts.join(" "),
+            url: x.url,
+            rawUrl: x.url,
+            webOk: false,
+            isDefault: false
+          });
+        }
+      }
+
+      if (!audioTracks.length) {
+        audioTracks.push({ id: "default", name: "По умолчанию", url: url, rawUrl: url, webOk: true, isDefault: true });
+      }
+
+      let selectedAudio = audioTracks.find(a => a.isDefault) || audioTracks[0];
+
+      // Важнейший фикс: если видео HEVC / звук AC3/DTS (needsTranscode=true), переключаем на AAC поток
+      if (data.needsTranscode && selectedAudio) {
+        const streamUrl = selectedAudio.url;
+        if (streamUrl && streamUrl !== playbackUrl) {
+          playbackUrl = streamUrl;
+          const curSec = Math.floor(currentArtPlayer.currentTime || (resumeTimeMs > 0 ? resumeTimeMs / 1000 : 0));
+          const seekUrl = curSec > 0 ? (streamUrl + "&t=" + curSec) : streamUrl;
+          currentArtPlayer.switchUrl(seekUrl);
+        }
+      }
+
+      // Заполняем селект аудиодорожек
+      if (audioSelect) {
+        audioSelect.innerHTML = "";
+        for (const a of audioTracks) {
+          const opt = document.createElement("option");
+          opt.value = a.id;
+          opt.textContent = a.name;
+          if (a.id === selectedAudio.id) opt.selected = true;
+          audioSelect.appendChild(opt);
+        }
+        audioSelect.disabled = false;
+
+        audioSelect.onchange = () => {
+          const chosen = audioTracks.find(a => a.id === audioSelect.value);
+          if (!chosen || !currentArtPlayer) return;
+          const curSec = Math.floor(currentArtPlayer.currentTime);
+          const isDirect = chosen.webOk && !data.needsTranscode && chosen.rawUrl === url;
+          const nextUrl = isDirect ? url : (chosen.url + (curSec > 0 ? "&t=" + curSec : ""));
+          currentArtPlayer.switchUrl(nextUrl);
+          if (isDirect && curSec > 0) {
+            currentArtPlayer.once("video:canplay", () => { currentArtPlayer.seek = curSec; });
+          }
+        };
+      }
+
+      // Заполняем селект субтитров
+      if (subSelect) {
+        subSelect.innerHTML = "";
+        for (const s of subTracks) {
+          const opt = document.createElement("option");
+          opt.value = s.id;
+          opt.textContent = s.name;
+          subSelect.appendChild(opt);
+        }
+        subSelect.disabled = false;
+
+        subSelect.onchange = () => {
+          const chosen = subTracks.find(s => s.id === subSelect.value);
+          if (!chosen || !currentArtPlayer) return;
+          if (!chosen.url) {
+            currentArtPlayer.subtitle.show = false;
+            currentArtPlayer.subtitle.url = "";
+          } else {
+            currentArtPlayer.subtitle.switch(chosen.url, { name: chosen.name });
+            currentArtPlayer.subtitle.show = true;
+          }
+        };
+
+        // Если есть русские субтитры в раздаче, включаем их по умолчанию
+        const defaultSub = subTracks.find(s => /rus|рус/i.test(s.name));
+        if (defaultSub && defaultSub.url) {
+          subSelect.value = defaultSub.id;
+          currentArtPlayer.subtitle.switch(defaultSub.url, { name: defaultSub.name });
+          currentArtPlayer.subtitle.show = true;
+        }
+      }
+
+      // Добавляем выбор в меню настроек Artplayer (шестерёнка)
+      if (currentArtPlayer && currentArtPlayer.setting && typeof currentArtPlayer.setting.add === "function") {
+        currentArtPlayer.setting.add({
+          name: "audio",
+          html: "Аудиодорожка",
+          width: 260,
+          tooltip: selectedAudio ? selectedAudio.name : "По умолчанию",
+          selector: audioTracks.map(a => ({
+            default: a.id === selectedAudio.id,
+            html: a.name,
+            value: a.id
+          })),
+          onSelect: function(item) {
+            if (audioSelect) audioSelect.value = item.value;
+            const chosen = audioTracks.find(a => a.id === item.value);
+            if (!chosen || !currentArtPlayer) return item.html;
+            const curSec = Math.floor(currentArtPlayer.currentTime);
+            const isDirect = chosen.webOk && !data.needsTranscode && chosen.rawUrl === url;
+            const nextUrl = isDirect ? url : (chosen.url + (curSec > 0 ? "&t=" + curSec : ""));
+            currentArtPlayer.switchUrl(nextUrl);
+            if (isDirect && curSec > 0) {
+              currentArtPlayer.once("video:canplay", () => { currentArtPlayer.seek = curSec; });
+            }
+            return item.html;
+          }
+        });
+
+        currentArtPlayer.setting.add({
+          name: "subtitle",
+          html: "Субтитры",
+          width: 260,
+          tooltip: subSelect && subSelect.value && subSelect.value !== "off" ? (subTracks.find(s => s.id === subSelect.value) || {}).name || "Выкл" : "Выкл",
+          selector: subTracks.map(s => ({
+            default: s.id === (subSelect ? subSelect.value : "off"),
+            html: s.name,
+            value: s.id
+          })),
+          onSelect: function(item) {
+            if (subSelect) subSelect.value = item.value;
+            const chosen = subTracks.find(s => s.id === item.value);
+            if (!chosen || !currentArtPlayer) return item.html;
+            if (!chosen.url) {
+              currentArtPlayer.subtitle.show = false;
+              currentArtPlayer.subtitle.url = "";
+            } else {
+              currentArtPlayer.subtitle.switch(chosen.url, { name: chosen.name });
+              currentArtPlayer.subtitle.show = true;
+            }
+            return item.html;
+          }
+        });
+      }
+    })
+    .catch(() => {
+      if (audioSelect) {
+        audioSelect.innerHTML = '<option value="default">По умолчанию</option>';
+        audioSelect.disabled = true;
+      }
+      if (subSelect) {
+        if (extSubFiles.length) {
+          subSelect.innerHTML = "";
+          const offOpt = document.createElement("option");
+          offOpt.value = "";
+          offOpt.textContent = "Выкл";
+          subSelect.appendChild(offOpt);
+          extSubFiles.forEach((sf, i) => {
+            const opt = document.createElement("option");
+            opt.value = "ext_" + i;
+            opt.textContent = "Внешние: " + (sf.name || "Субтитры");
+            subSelect.appendChild(opt);
+          });
+          subSelect.disabled = false;
+          subSelect.onchange = () => {
+            const idx = subSelect.value.replace("ext_", "");
+            const sf = extSubFiles[idx];
+            if (!sf || !currentArtPlayer) {
+              currentArtPlayer.subtitle.show = false;
+              return;
+            }
+            signedMirror(sf.sourceLink, sf.name || "sub.srt").then(sUrl => {
+              if (currentArtPlayer && sUrl) {
+                currentArtPlayer.subtitle.switch(sUrl, { name: sf.name });
+                currentArtPlayer.subtitle.show = true;
+              }
+            });
+          };
+        } else {
+          subSelect.innerHTML = '<option value="">Субтитры не найдены</option>';
+          subSelect.disabled = true;
+        }
+      }
+    });
 }
 
 function ensurePlaySheet(){
@@ -3193,6 +3481,16 @@ checkSession();
 <div id="webPlayerModal" class="web-player-modal hidden">
   <div class="web-player-header">
     <div id="webPlayerTitle" class="web-player-title"></div>
+    <div class="web-player-controls">
+      <div class="web-player-select-wrap">
+        <label for="webPlayerAudio">Звук:</label>
+        <select id="webPlayerAudio" class="web-player-select" aria-label="Выбор аудиодорожки"></select>
+      </div>
+      <div class="web-player-select-wrap">
+        <label for="webPlayerSub">Субтитры:</label>
+        <select id="webPlayerSub" class="web-player-select" aria-label="Выбор субтитров"></select>
+      </div>
+    </div>
     <button type="button" id="webPlayerClose" class="secondary" aria-label="Закрыть плеер">✕ Закрыть</button>
   </div>
   <div id="artplayerContainer" class="web-player-body"></div>

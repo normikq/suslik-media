@@ -18,6 +18,9 @@ test("webplayer: html contains artplayer script and modal markup", () => {
   assert.ok(html.includes('id="webPlayerTitle"'), "index.html must contain #webPlayerTitle");
   assert.ok(html.includes('id="webPlayerClose"'), "index.html must contain #webPlayerClose");
   assert.ok(html.includes('id="artplayerContainer"'), "index.html must contain #artplayerContainer");
+  assert.ok(html.includes('id="webPlayerAudio"'), "index.html must contain #webPlayerAudio select");
+  assert.ok(html.includes('id="webPlayerSub"'), "index.html must contain #webPlayerSub select");
+  assert.ok(html.includes("web-player-controls"), "index.html must contain .web-player-controls");
 
   // Browser watch button in PlaySheet
   assert.ok(html.includes("ps-watch-browser"), "index.html must contain ps-watch-browser button in PlaySheet");
@@ -33,8 +36,45 @@ test("webplayer: redesign.css contains web player styles", () => {
   assert.ok(css.includes(".web-player-modal"), "redesign.css must include .web-player-modal");
   assert.ok(css.includes(".web-player-header"), "redesign.css must include .web-player-header");
   assert.ok(css.includes(".web-player-title"), "redesign.css must include .web-player-title");
+  assert.ok(css.includes(".web-player-controls"), "redesign.css must include .web-player-controls");
+  assert.ok(css.includes(".web-player-select"), "redesign.css must include .web-player-select");
   assert.ok(css.includes(".web-player-body"), "redesign.css must include .web-player-body");
   assert.ok(css.includes(".ps-watch-browser"), "redesign.css must include .ps-watch-browser");
+});
+
+test("webplayer: tvstream supports AAC web audio transcoding and subtitles", () => {
+  const tv = require("../src/services/tvstream");
+
+  // WEB_AUDIO_OK codecs
+  assert.ok(tv.WEB_AUDIO_OK.has("aac"));
+  assert.ok(tv.WEB_AUDIO_OK.has("mp3"));
+  assert.ok(tv.WEB_AUDIO_OK.has("opus"));
+  assert.ok(!tv.WEB_AUDIO_OK.has("ac3"), "AC3 is not natively supported in browsers");
+  assert.ok(!tv.WEB_AUDIO_OK.has("dts"), "DTS is not natively supported in browsers");
+
+  // Subtitle arguments
+  const sArgs = tv.subArgs("https://host/film.mkv", 3);
+  const sStr = sArgs.join(" ");
+  assert.match(sStr, /-map 0:3/, "SubArgs must map requested subtitle stream index");
+  assert.match(sStr, /-c:s webvtt/, "SubArgs must encode subtitle to webvtt");
+  assert.match(sStr, /-f webvtt pipe:1/, "SubArgs must output webvtt to pipe:1");
+
+  // Subtitle token verification
+  const exp = String(Math.floor(Date.now() / 1000) + 3600);
+  const subSig = tv.makeTvToken("https://host/film.mkv", "sub:3", exp, "aac");
+  assert.ok(tv.isValidTvToken("https://host/film.mkv", "sub:3", exp, subSig, "aac"), "Valid subtitle token passes");
+  assert.ok(!tv.isValidTvToken("https://host/film.mkv", "sub:2", exp, subSig, "aac"), "Different sub index rejected");
+
+  // AAC audio transcoding in ffmpegArgs
+  const info = {
+    video: { index: 0, codec: "hevc" },
+    audio: [{ index: 1, codec: "ac3", channels: 6, ok: true }],
+    subs: []
+  };
+  const args = tv.ffmpegArgs("https://host/film.mkv", 0, info, info.audio[0], "mp4", null, "aac");
+  const str = args.join(" ");
+  assert.match(str, /-c:a aac/, "ffmpegArgs must transcode AC3 to AAC when targetAudio is aac");
+  assert.match(str, /-tag:v hvc1/, "mp4 format with hevc must add -tag:v hvc1 for browser compatibility");
 });
 
 test("webplayer: CSP allows script and media execution", () => {
