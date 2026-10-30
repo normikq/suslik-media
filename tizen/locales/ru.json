@@ -119,6 +119,8 @@
   "together.in_room_dialog_desc": "Фильм комнаты выбирает {host}.",
   "together.watch_room_film": "Смотреть фильм комнаты",
   "together.leave_and_open": "Выйти из комнаты и открыть",
+  "together.season_episode": "Сезон {season}, серия {episode}",
+  "together.special": "Спецвыпуск {episode}",
   "together.room_film_not_found": "Фильма комнаты нет в медиатеке (или он ещё загружается).",
   "settings.account": "Аккаунт",
   "settings.shared_login": " (общий вход)",

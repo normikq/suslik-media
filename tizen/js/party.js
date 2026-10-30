@@ -83,6 +83,8 @@
     reported = false; outbox = [];
     party.room = R.merge(R.empty(), update);
     party.roomId = update.id;
+    // Вход по коду не включает фильм, который уже в комнате: его открывает «Смотреть вместе», следующий фильм ведущего — сам (app.js)
+    party.joinedKey = party.room.file ? party.room.file.key : null;
     changed();
     // Ещё несколько точек для часов: побеждает самый быстрый ответ
     var id = update.id, n = 0;
@@ -107,10 +109,13 @@
   party.pause = function (ms) { action(P.pause(ms)); };
   party.seek = function (ms) { if (party.canControl()) action(P.seek(ms)); };
 
-  /** Ведущий закрыл фильм комнаты: через 1,5 с, если никто его не открыл снова, комната на паузу. */
-  party.pauseIfNobodyWatches = function (ms) {
+  /** Ведущий закрыл фильм комнаты: через 1,5 с, если никто его не открыл снова, у комнаты фильма нет — у гостей плеер закрывается. */
+  party.closeIfNobodyWatches = function () {
     setTimeout(function () {
-      if (party.watching === 0 && party.inRoom() && party.room.state.playing) party.pause(ms);
+      if (party.watching !== 0 || !party.inRoom() || !party.isHost() || !party.room.file) return;
+      party.room = R.clearFile(party.room);
+      action(P.closeFile());
+      changed();
     }, 1500);
   };
 
@@ -235,7 +240,7 @@
    */
   party.attach = function (cb) {
     var engine = new core.Engine(link, cb.log, function (n) { var t = noticeText(n); if (t) cb.notice(t); });
-    var lastKey = null, switchedTo = null, episodeNotice = null, timer = 0, lastPlayer = null;
+    var lastKey = null, switchedTo = null, episodeNotice = null, timer = 0, lastPlayer = null, showedRoomFilm = false;
     party.watching++;
     function step() {
       var p = cb.player(), key = cb.key(), keys = cb.keys();
@@ -248,6 +253,15 @@
       }
       // Ведущий выбрал другую серию: этот плеер переходит на неё, один раз
       var rk = party.room.file ? party.room.file.key : null;
+      // Ведущий закрыл фильм (у комнаты его нет): гость, который смотрел его вместе с ним, тоже закрывает
+      if (party.inRoom() && key && rk === key) showedRoomFilm = true;
+      else if (!party.inRoom() || rk != null) showedRoomFilm = false;
+      else if (showedRoomFilm && !party.isHost()) {
+        showedRoomFilm = false;
+        if (cb.log) cb.log('host closed the film: closing the player');
+        if (cb.close) cb.close();
+        return;
+      }
       if (rk == null || rk === key) switchedTo = null;
       else if (party.inRoom() && switchedTo !== rk && p) {
         var i = keys.indexOf(rk);
@@ -265,12 +279,12 @@
     }
     timer = setInterval(step, core.TICK_MS);
     return {
-      /** Плеер закрывается: если ведущий закрыл фильм комнаты, комната встаёт на паузу. */
+      /** Плеер закрывается: если ведущий закрыл фильм комнаты, у комнаты его больше нет. */
       stop: function () {
         clearInterval(timer);
         party.watching--;
         if (lastPlayer) engine.idle(lastPlayer);
-        if (party.isHost() && party.room.file && party.room.file.key === lastKey) party.pauseIfNobodyWatches(engine.lastTimeMs);
+        if (party.isHost() && party.room.file && party.room.file.key === lastKey) party.closeIfNobodyWatches();
       },
       /** Это фильм комнаты, а я гость: перематывать и переключать серии нельзя. */
       guestLocked: function () { return party.isGuest() && party.room.file != null && party.room.file.key === cb.key(); }

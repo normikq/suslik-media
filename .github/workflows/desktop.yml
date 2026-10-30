@@ -62,9 +62,9 @@ jobs:
       - name: Build installer
         run: |
           set -o pipefail
-          HOST=$(echo "$SITE_URL" | sed -E 's#^https?://##; s#/.*##')
-          [ -n "$HOST" ] || { echo "::error::Нет секрета SITE_URL"; exit 1; }
-          dotnet build setup/SuslikSetup.csproj -c Release -p:AppVersion=$V -p:AssemblyName=SuslikMediaSetup "-p:SiteHost=$HOST" \
+          URL="${SITE_URL%/}"   # домен и, если сервер не в корне, путь
+          [ -n "$URL" ] || { echo "::error::Нет секрета SITE_URL"; exit 1; }
+          dotnet build setup/SuslikSetup.csproj -c Release -p:AppVersion=$V -p:AssemblyName=SuslikMediaSetup "-p:SiteUrl=$URL" \
             "-p:MsiPath=$(cygpath -w "$GITHUB_WORKSPACE/$MSI")" -o "$RUNNER_TEMP/setup" 2>&1 | tail -5
           cp "$RUNNER_TEMP/setup/SuslikMediaSetup.exe" "../dist/Suslik Media Setup-$V.exe"
           rm -rf setup/obj setup/bin

@@ -50,6 +50,8 @@ class PlayerPartySync(private val handler: Handler, private val cb: Callback) {
         fun notice(text: String)
         /** Called every tick: the player's own look for a guest («● Вместе», locked seeking). */
         fun onTick()
+        /** The host closed the room's film: a guest's player closes too. */
+        fun close()
     }
 
     private val engine = PartySyncEngine(AndroidPartyLink, log = { AppLog.write(it) }, notice = { n -> noticeText(n)?.let(cb::notice) })
@@ -58,6 +60,8 @@ class PlayerPartySync(private val handler: Handler, private val cb: Callback) {
     private var switchedTo: String? = null
     private var episodeNotice: String? = null
     private var running = false
+    /** This player showed the room's film (a guest's player closes when the host closes it). */
+    private var showedRoomFilm = false
 
     private val tick = object : Runnable {
         override fun run() {
@@ -81,8 +85,9 @@ class PlayerPartySync(private val handler: Handler, private val cb: Callback) {
         running = false
         handler.removeCallbacks(tick)
         Party.watching--
+        Party.playingKeys = emptyList()
         player?.let { engine.idle(it) }
-        if (Party.isHost && Party.file?.key == lastKey) Party.pauseIfNobodyWatches(engine.lastTimeMs)
+        if (Party.isHost && Party.file?.key == lastKey) Party.closeIfNobodyWatches()
     }
 
     /** The host's player went behind the lock screen / another app: the room waits for them on pause. */
@@ -97,6 +102,7 @@ class PlayerPartySync(private val handler: Handler, private val cb: Callback) {
         val p = player ?: return
         val key = cb.watchKey()
         val keys = cb.keys()
+        if (keys != Party.playingKeys) Party.playingKeys = keys
         // The host went on to another episode: the room follows
         if (key != lastKey) {
             lastKey = key
@@ -105,6 +111,18 @@ class PlayerPartySync(private val handler: Handler, private val cb: Callback) {
         }
         // The room's episode changed (the host picked another one): this player follows, once per change
         val rk = Party.file?.key
+        // The guest's player follows the room's file in its playlist: MainActivity must not open it again after the
+        // player closes (it does not recompose while the player is in front, and playingKeys are empty then)
+        if (!Party.isHost && rk != null && rk in keys && Party.followed != rk) Party.followed = rk
+        // The host closed the film (the room has none now): a guest who watched it with them closes it too
+        if (Party.inRoom && key != null && rk == key) showedRoomFilm = true
+        else if (!Party.inRoom || rk != null) showedRoomFilm = false
+        else if (showedRoomFilm && !Party.isHost) {
+            showedRoomFilm = false
+            AppLog.write("[party] host closed the film: closing the player")
+            cb.close()
+            return
+        }
         if (rk == null || rk == key) switchedTo = null
         else if (Party.inRoom && switchedTo != rk && cb.ready() && cb.canPlayIndex()) {
             val i = keys.indexOf(rk)

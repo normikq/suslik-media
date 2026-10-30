@@ -33,18 +33,19 @@ tasks.test {
 }
 
 // Адрес сайта не хранится в репозитории: секрет SITE_URL в CI или suslik.siteUrl в ~/.gradle/gradle.properties.
-val siteHost: String = (System.getenv("SITE_URL")?.takeIf { it.isNotBlank() } ?: findProperty("suslik.siteUrl") as String? ?: "")
-    .trim().removePrefix("https://").removePrefix("http://").substringBefore('/')
+// Домен и, если сервер не в корне, путь: https://домен или https://домен/путь (разбирает SiteAddress.normalize в приложении).
+val siteUrl: String = (System.getenv("SITE_URL")?.takeIf { it.isNotBlank() } ?: findProperty("suslik.siteUrl") as String? ?: "")
+    .trim().substringBefore('?').substringBefore('#').trimEnd('/')
 // ID приложения Discord для активности в профиле (необязательно: обычно его присылает сервер после входа)
 val discordClientId: String = (System.getenv("DISCORD_CLIENT_ID") ?: findProperty("suslik.discordClientId") as String? ?: "")
     .trim().filter { it.isDigit() }
 gradle.taskGraph.whenReady {
-    if (siteHost.isEmpty() && allTasks.any { t -> listOf("package", "assemble", "run", "bundle").any { t.name.startsWith(it) } })
+    if (siteUrl.isEmpty() && allTasks.any { t -> listOf("package", "assemble", "run", "bundle").any { t.name.startsWith(it) } })
         throw GradleException("Не задан адрес сайта: переменная окружения SITE_URL или suslik.siteUrl в ~/.gradle/gradle.properties")
 }
 
 // One place for the version: the installer, and the app itself (update check) via -Dsuslik.version.
-val appVersion = "2.6.9"
+val appVersion = "2.7.0"
 // Windows Installer takes at most three numbers (2.0.0.1 → 2.0.0); ensure at least 3 parts for WiX (2.2 → 2.2.0)
 val msiVersion = appVersion.split(".").let { parts ->
     when (parts.size) {
@@ -81,7 +82,7 @@ compose.desktop {
             // the connection instead of a new TLS handshake (nginx keepalive_timeout 180s, see NGINX-MIRROR.md).
             "-Djdk.httpclient.keepalive.timeout=180",
             "-Dsuslik.version=$appVersion",
-            "-Dsuslik.host=$siteHost",
+            "-Dsuslik.site=$siteUrl",
             "-Dsuslik.diag=$diag",
             "-Dsuslik.discordClientId=$discordClientId",
             // AppCDS (Java 19+): on the first exit the JVM saves the classes it loaded into an archive next to the app;

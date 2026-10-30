@@ -4,7 +4,7 @@ const express = require("express");
 const config = require("../config");
 const { apiLimiter, mirrorUrlLimiter, mirrorLimiter } = require("../middleware/rate-limit");
 const { requireLogin } = require("../middleware/auth");
-const { safeHttpsUrl, cleanFileName, contentDisposition } = require("../utils/helpers");
+const { safeHttpsUrl, cleanFileName, contentDisposition, publicBase } = require("../utils/helpers");
 const { getMagnetFileList } = require("../services/alldebrid");
 const {
   makeMirrorToken,
@@ -31,7 +31,7 @@ router.get("/api/file/mirror-url", requireLogin, mirrorUrlLimiter, (req, res) =>
   const expires = String(Math.floor(Date.now() / 1000) + config.MIRROR_TTL);
   res.setHeader("Cache-Control", "no-store");
   res.json({
-    url: `https://${req.get("host")}/api/file/proxy${name ? "/" + encodeURIComponent(name) : ""}?link=${encodeURIComponent(link)}&exp=${expires}&sig=${makeMirrorToken(link, expires)}`
+    url: `${publicBase(req)}/api/file/proxy${name ? "/" + encodeURIComponent(name) : ""}?link=${encodeURIComponent(link)}&exp=${expires}&sig=${makeMirrorToken(link, expires)}`
   });
 });
 
@@ -59,7 +59,7 @@ router.post("/api/playlist", requireLogin, apiLimiter, async (req, res) => {
     const title = cleanFileName(typeof req.body?.title === "string" ? req.body.title : "") || "playlist";
     res.setHeader("Cache-Control", "no-store");
     res.json({
-      url: `https://${req.get("host")}/api/playlist/${magnetId}/${encodeURIComponent(title)}.m3u?f=${idxStr}&exp=${expires}&sig=${makePlaylistToken(magnetId, idxStr, expires)}`,
+      url: `${publicBase(req)}/api/playlist/${magnetId}/${encodeURIComponent(title)}.m3u?f=${idxStr}&exp=${expires}&sig=${makePlaylistToken(magnetId, idxStr, expires)}`,
       count: items.length
     });
   } catch {
@@ -83,7 +83,7 @@ router.get(
     try {
       const list = await getMagnetFileList(id);
       if (!list) return res.status(404).send("Файлы не найдены.");
-      const host = req.get("host");
+      const base = publicBase(req);
       const expires = String(Math.floor(Date.now() / 1000) + config.MIRROR_TTL);
       const lines = ["#EXTM3U"];
       for (const raw of idxStr.split(".")) {
@@ -94,7 +94,7 @@ router.get(
         const name = cleanFileName(f.path.split("/").pop()) || f.name;
         lines.push(
           `#EXTINF:-1,${name.replace(/\.[a-z0-9]{2,5}$/i, "")}`,
-          `https://${host}/api/file/proxy/${encodeURIComponent(name)}?link=${encodeURIComponent(link)}&exp=${expires}&sig=${makeMirrorToken(link, expires)}`
+          `${base}/api/file/proxy/${encodeURIComponent(name)}?link=${encodeURIComponent(link)}&exp=${expires}&sig=${makeMirrorToken(link, expires)}`
         );
       }
       res.setHeader("Content-Type", "audio/x-mpegurl; charset=utf-8");

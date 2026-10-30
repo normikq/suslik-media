@@ -16,10 +16,15 @@
 - Для сборки: **IntelliJ IDEA** (Community или Ultimate) или Android Studio, JDK 17 или 21.
 
 ## Запуск и сборка
+Адрес сервера в репозитории не хранится: `SITE_URL` из окружения (в CI — секрет) или `suslik.siteUrl` в
+`~/.gradle/gradle.properties` — домен и, если сервер не в корне, путь (`https://<домен>[/<путь>]`). В приложение он попадает как
+`-Dsuslik.site`, в установщик — `-p:SiteUrl`. Без него `run`/`package*` останавливаются с ошибкой.
+
 1. Открыть проект в IDE → дождаться синхронизации Gradle.
 2. Запуск: задача Gradle `desktop:run` (или в терминале `desktop/gradlew.bat run`).
 3. Сборка отладочного MSI: `.\install-desktop-debug.ps1` (собирает пакет с флагом `-Pdiag` и устанавливает `Suslik Debug`).
-4. Релизный установщик: `desktop/gradlew.bat packageMsi` → `desktop/build/compose/binaries/main/msi/`.
+4. Релизный MSI: `desktop/gradlew.bat packageMsi` → `desktop/build/compose/binaries/main/msi/`; установщик для людей и обновлений
+   (`Suslik Media Setup-<V>.exe`, MSI внутри) собирает `desktop.yml` из `desktop/setup` (см. `docs/DESKTOP.md` §9).
 
 ## Возможности плеера
 - Аппаратный 4K HDR вывод с аппаратным декодированием (`hwdec=auto-safe`).

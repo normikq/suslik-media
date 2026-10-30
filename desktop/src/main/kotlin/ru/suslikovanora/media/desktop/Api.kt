@@ -99,9 +99,13 @@ class Store private constructor(name: String) {
 
 /** The site's JSON API with its own cookie jar (session + device cookie), kept between runs. */
 object Api {
-    /** Домен сайта приходит из сборки (-Dsuslik.host, секрет SITE_URL), в репозитории его нет. */
-    val HOST: String = System.getProperty("suslik.host").orEmpty()
-    val BASE = "https://$HOST"
+    /**
+     * Адрес сервера приходит из сборки (-Dsuslik.site, секрет SITE_URL), в репозитории его нет: домен и, если сервер
+     * не в корне, путь (`https://домен/путь`). API — `BASE + "/api/…"`. Запасной -Dsuslik.host — только домен (так задавали раньше).
+     */
+    val BASE: String = ru.suslikovanora.media.core.SiteAddress.normalize(
+        System.getProperty("suslik.site")?.takeIf { it.isNotBlank() } ?: System.getProperty("suslik.host"))
+    val HOST: String = ru.suslikovanora.media.core.SiteAddress.host(BASE)
     val SITE = "$BASE/media/"
 
     class HttpError(val code: Int, message: String, val body: JSONObject? = null) : Exception(message)

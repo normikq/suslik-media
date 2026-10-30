@@ -24,11 +24,16 @@ data class PlayRequest(
     /** The [playlist] is the films of a collection: the end-credits card says «Следующий фильм». */
     val collection: Boolean = false,
     /** Per [playlist] entry (one for a single file): what to ask the server for the intro and credits; null — nothing. */
-    val markerQueries: List<MarkerQuery?> = emptyList()
+    val markerQueries: List<MarkerQuery?> = emptyList(),
+    /** Where to open (ms) instead of the remembered place: a room's guest starts where the host is now. */
+    val startMs: Long? = null
 )
 
 /** An episode (or, [episode] null, a film of a collection) for `GET /api/markers` (core.MarkersDetector.serverPath). */
 data class MarkerQuery(val title: String?, val alt: String?, val season: Int?, val episode: Int?)
 
 /** What Discord shows: the title from the library (the AI's one once accepted), not the torrent's file name, and the episode. */
-data class Presence(val title: String, val episode: String? = null)
+data class Presence(val title: String, val episode: String? = null) {
+    /** «Название · Сезон 1, серия 2»: the room's film for everyone in it, as Discord shows it. */
+    val label: String get() = episode?.let { "$title · $it" } ?: title
+}

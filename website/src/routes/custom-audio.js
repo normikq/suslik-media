@@ -4,7 +4,7 @@ const express = require("express");
 const config = require("../config");
 const { apiLimiter } = require("../middleware/rate-limit");
 const { requireLogin, deviceId } = require("../middleware/auth");
-const { cleanFileName } = require("../utils/helpers");
+const { cleanFileName, publicBase } = require("../utils/helpers");
 const { getMagnetFileList } = require("../services/alldebrid");
 const { makeMirrorToken } = require("../services/mirror");
 const { isLibraryAdmin, isOwner } = require("../services/downloads");
@@ -319,7 +319,7 @@ router.get("/api/custom-audio/:magnetId", requireLogin, apiLimiter, async (req, 
     return publicTrack(
       t,
       req,
-      `https://${req.get("host")}/api/file/proxy/${encodeURIComponent(name)}?link=${encodeURIComponent(link)}&exp=${expires}&sig=${makeMirrorToken(link, expires)}`
+      `${publicBase(req)}/api/file/proxy/${encodeURIComponent(name)}?link=${encodeURIComponent(link)}&exp=${expires}&sig=${makeMirrorToken(link, expires)}`
     );
   });
   res.set("Cache-Control", "no-store");

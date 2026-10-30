@@ -292,12 +292,19 @@
     return bar;
   }
 
-  /** Серии и фильмы раздачи по порядку: { label, file, season }. */
+  /**
+   * Серии и фильмы раздачи по порядку: { label, file, season, room }. room — подпись фильма в комнате «Вместе»,
+   * как в Discord на ПК: «Название · Сезон 1, серия 2»; фильм подборки — своим именем.
+   */
   function entriesOf(it) {
-    var p = it.playable, out = [];
-    if (p.kind === 'movie') out.push({ label: it.baseTitle, file: p.file });
+    var p = it.playable, out = [], name = posters.titleOf(it) || it.baseTitle;
+    if (p.kind === 'movie') out.push({ label: it.baseTitle, file: p.file, room: name });
     else if (p.kind === 'series') p.seasons.forEach(function (s) {
-      s.items.forEach(function (e) { out.push({ label: model.episodeLabel(it.baseTitle, s, e), file: e.file, season: s.season }); });
+      s.items.forEach(function (e) {
+        var room = e.title || name + ' · ' + (s.season === 0 ? tr('together.special', { episode: e.episode })
+          : tr('together.season_episode', { season: s.season, episode: e.episode }));
+        out.push({ label: model.episodeLabel(it.baseTitle, s, e), file: e.file, season: s.season, room: room });
+      });
     });
     return out;
   }
@@ -603,7 +610,7 @@
     }
     var check = support.checkFile(en.file.path);
     var go = function () {
-      if (party.isHost()) party.putFilm(key, en.label);
+      if (party.isHost()) party.putFilm(key, en.room || en.label);
       show(h('div')); // экран под плеером пустой: старый не держит фокус и подписки
       posters.drop();
       SM.player.play({
@@ -650,7 +657,9 @@
     var t = document.querySelector('.tab[data-tab="party"]');
     if (t) t.textContent = tr('nav.together') + (party.inRoom() ? ' ●' : '');
     var f = party.room.file;
-    if (!party.isGuest() || !f) { if (!party.inRoom()) followed = null; return; }
+    // Фильма нет (ведущий закрыл): тот же фильм, поставленный снова, откроется снова
+    if (party.joinedKey !== undefined) { followed = party.joinedKey; party.joinedKey = undefined; }
+    if (!party.isGuest() || !f) { if (!party.inRoom() || !f) followed = null; return; }
     if (f.key === followed) return;
     var playing = SM.player.current();
     // Другая серия того же сериала: плеер переключится сам (party.attach); другой фильм — открываем здесь

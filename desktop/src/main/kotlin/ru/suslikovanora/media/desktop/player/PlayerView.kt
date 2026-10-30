@@ -165,7 +165,7 @@ fun PlayerView(
 
     var title by remember { mutableStateOf(req.title) }
     var playing by remember { mutableStateOf(false) }
-    val initialPos = remember { if (req.fromStart) 0L else savedPos(startIndex) }
+    val initialPos = remember { req.startMs ?: if (req.fromStart) 0L else savedPos(startIndex) }
     var time by remember { mutableStateOf(initialPos) }
     var length by remember { mutableStateOf(0L) }
     var status by remember { mutableStateOf<String?>(tr("player.otkryvaem")) }
@@ -174,6 +174,7 @@ fun PlayerView(
     var queue by remember { mutableStateOf(listOf(Entry(req.title, req.url))) }
     var currentUrl by remember { mutableStateOf(req.url) }
     var nextIn by remember { mutableStateOf(-1) }
+    var nextFrom by remember { mutableStateOf(-1L) } // where the card of the next one came up: rewound before it — no card
     var barVisible by remember { mutableStateOf(true) }
     var lastMove by remember { mutableStateOf(System.currentTimeMillis()) }
     var started by remember { mutableStateOf(false) }
@@ -639,7 +640,7 @@ fun PlayerView(
         leaveJob?.cancel()
         leaveJob = scope.launch {
             delay(500)
-            val hold = !started || enginePaused || nextIn >= 0 || picker != null || seeking != null || infoOpen || inIntro()
+            val hold = !started || enginePaused || nextIn >= 0 || picker != null || seeking != null || infoOpen || (inIntro() && !partyGuest())
             if (!hold) barVisible = false
         }
     }
@@ -806,7 +807,7 @@ fun PlayerView(
     val userPaused = pausedAt > 0L || enginePaused
 
     // Совместный просмотр: плеер идёт за комнатой, если в ней этот фильм (иначе ничего не делает)
-    ru.suslikovanora.media.desktop.party.PartySync(watchKey(), title, req.watchKeys, started, closing,
+    ru.suslikovanora.media.desktop.party.PartySync(watchKey(), req.presence.getOrNull(index)?.label ?: title, req.watchKeys, started, closing,
         ru.suslikovanora.media.desktop.party.SyncHooks(
             // Right after a seek mpv still reports the old place for a moment: then the bar's target counts
             timeMs = { if (System.currentTimeMillis() - lastSeekAt < 2500L) time else engine.timeMs.takeIf { it > 0L } ?: time },
@@ -820,7 +821,8 @@ fun PlayerView(
             seekTo = { t -> time = t; lastGood = t; lastSeekAt = System.currentTimeMillis(); seekTo(t) },
             setRate = { r -> playerExecutor.execute { runCatching { eRate(r) } } },
             playIndex = { i -> playEntry(i) },
-            notice = { text -> flash(text) }
+            notice = { text -> flash(text) },
+            close = { close() }
         ))
 
     LaunchedEffect(title, index, queue.size, smtcPoster) {
@@ -864,7 +866,7 @@ fun PlayerView(
             lengthMs = length,
             posterUrl = discordPosterUrl,
             activityName = "Suslik Media",
-            largeText = presence.episode?.let { "${presence.title} · $it" } ?: presence.title
+            largeText = presence.label
         )
     }
 
@@ -1012,7 +1014,11 @@ fun PlayerView(
                 val end = length > 0 && lastGood >= length - 5_000L
                 if (end) {
                     savePos(length, length)
-                    if (index < queue.size - 1) { if (nextIn < 0) nextIn = PlaybackSettings.nextCountdown() } else status = tr("player.konec")
+                    // a room's guest: the host's player goes on to the next one, the room follows it (no countdown here)
+                    if (partyGuest()) Unit
+                    else if (index < queue.size - 1) {
+                        if (nextIn < 0) { nextIn = PlaybackSettings.nextCountdown(); nextFrom = (length - 5_000L).coerceAtLeast(0L) }
+                    } else status = tr("player.konec")
                 } else if (retries < 6) { retries++; status = tr("player.perepodklyuchenie"); reopen(lastGood) }
             }
         }
@@ -1099,7 +1105,7 @@ fun PlayerView(
             playEntry(startIndex)
             return@LaunchedEffect
         }
-        open(req.url, if (req.fromStart) 0L else savedPos(), req.audioUrls to req.subUrls)
+        open(req.url, req.startMs ?: if (req.fromStart) 0L else savedPos(), req.audioUrls to req.subUrls)
     }
 
     LaunchedEffect(index, queue.size) { if (index + 1 < queue.size) { delay(15_000); sidecars(index + 1) } }
@@ -1276,20 +1282,28 @@ fun PlayerView(
         if (!PlaybackSettings.offerNextOnCredits() || partyGuest()) return@LaunchedEffect
         PlayerLog.write("[markers] credits at ${time / 1000}s: next in ${PlaybackSettings.nextCountdown()}s")
         nextIn = PlaybackSettings.nextCountdown()
+        nextFrom = creditsAt ?: time
+    }
+    // Rewound to before the card came up (the credits, the end): the countdown stops; the credits again — it comes again
+    val rewoundFromNext = nextIn >= 0 && nextFrom >= 0 && time < nextFrom - 1_000L
+    LaunchedEffect(rewoundFromNext) {
+        if (!rewoundFromNext) return@LaunchedEffect
+        PlayerLog.write("[markers] rewound before the next card: countdown stopped")
+        nextIn = -1; nextFrom = -1L
     }
 
     val fullscreen = WindowMode.isFullscreen
 
     LaunchedEffect(barVisible, lastMove, started, enginePaused, nextIn, picker, seeking, infoOpen, closing) {
         if (closing) return@LaunchedEffect // the pause for the flight back must not bring the panels up
-        val hold = !started || enginePaused || nextIn >= 0 || picker != null || seeking != null || infoOpen || inIntro()
+        val hold = !started || enginePaused || nextIn >= 0 || picker != null || seeking != null || infoOpen || (inIntro() && !partyGuest())
         if (hold) {
             barVisible = true
             return@LaunchedEffect
         }
         if (!barVisible) return@LaunchedEffect
         delay(2500)
-        val stillHold = !started || enginePaused || nextIn >= 0 || picker != null || seeking != null || infoOpen || inIntro()
+        val stillHold = !started || enginePaused || nextIn >= 0 || picker != null || seeking != null || infoOpen || (inIntro() && !partyGuest())
         if (!stillHold) {
             barVisible = false
         }
@@ -1658,7 +1672,7 @@ fun PlayerView(
             fullscreen = fullscreen,
             lastVolumeWheelAt = lastVolumeWheelAt,
             nextIn = nextIn,
-            inIntro = inIntro(),
+            inIntro = inIntro() && !partyGuest(), // a room's guest: the host skips the intro for everyone
             intro = markers.intro,
             credits = markers.credits,
             seeking = seeking,

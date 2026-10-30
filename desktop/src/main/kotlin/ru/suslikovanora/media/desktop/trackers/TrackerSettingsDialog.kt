@@ -80,7 +80,9 @@ fun TrackerSettingsDialog(onDismiss: () -> Unit) {
             val detected = BrowserDetector.detect()
             browsers = detected
             val pref = EdgeBrowserBridge.preferredBrowserType
-            selectedBrowser = detected.firstOrNull { it.type == pref } ?: detected.firstOrNull()
+            val source = RuTrackerTracker.cookieSource
+            selectedBrowser = detected.firstOrNull { it.type == source }
+                ?: detected.firstOrNull { it.type == pref } ?: detected.firstOrNull()
         }
     }
 
@@ -244,6 +246,7 @@ fun TrackerSettingsDialog(onDismiss: () -> Unit) {
                                         RuTrackerTracker.cookie = it
                                         RuTrackerTracker.enabled = true
                                         EdgeBrowserBridge.preferredBrowserType = target.type
+                                        RuTrackerTracker.cookieSource = target.type
                                         ru.suslikovanora.media.desktop.Store.flushAll()
                                         browserStatus = true to tr("trackers.cookies_saved", "browser" to browserName)
                                         trackerRefresh++
@@ -260,8 +263,9 @@ fun TrackerSettingsDialog(onDismiss: () -> Unit) {
                                         rtEnabled = true
                                         RuTrackerTracker.cookie = it
                                         RuTrackerTracker.enabled = true
+                                        RuTrackerTracker.cookieSource = target.type
                                         ru.suslikovanora.media.desktop.Store.flushAll()
-                                        browserStatus = true to tr("trackers.cookies_found")
+                                        browserStatus = true to tr("trackers.cookies_saved", "browser" to browserName)
                                         trackerRefresh++
                                     }.onFailure {
                                         browserStatus = false to (it.message ?: tr("trackers.cookies_extract_failed"))
@@ -321,6 +325,7 @@ fun TrackerSettingsDialog(onDismiss: () -> Unit) {
                                 rtEnabled = true
                                 RuTrackerTracker.cookie = rtCookie
                                 RuTrackerTracker.enabled = true
+                                RuTrackerTracker.cookieSource = null
                                 ru.suslikovanora.media.desktop.Store.flushAll()
                                 trackerRefresh++
                             }
@@ -328,7 +333,7 @@ fun TrackerSettingsDialog(onDismiss: () -> Unit) {
                     )
                 }
                 Spacer(Modifier.height(4.dp))
-                Field(rtCookie, { rtCookie = it }, "bb_session=...; bb_data=...; cf_clearance=...")
+                Field(rtCookie, { rtCookie = it; RuTrackerTracker.cookieSource = null },"bb_session=...; bb_data=...; cf_clearance=...")
 
                 Spacer(Modifier.height(12.dp))
 

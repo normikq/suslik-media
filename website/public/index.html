@@ -77,7 +77,7 @@
 /* Smooth motion system */
 /* Stable mosaic reveal: cards stay still while images load, then fade from blur to sharp. */
 .library-tile.mosaic-pending{opacity:1;animation:none;transform:none;filter:none;pointer-events:none}
-.library-tile:not(.mosaic-pending){opacity:1;animation:mosaic-clear .48s ease-out both;animation-delay:calc(min(var(--tile-index,0),18)*32ms)}
+.library-tile.tile-enter{opacity:1;animation:mosaic-clear .48s ease-out both;animation-delay:calc(min(var(--tile-index,0),18)*32ms)}
 .library-tile.mosaic-pending .tile-art{background:#191b28;animation:none}
 .library-tile .tile-art img{opacity:0;filter:blur(12px);transition:opacity .55s ease,filter .75s ease}
 .library-tile .tile-art img.poster-loaded{opacity:1;filter:blur(0)}
@@ -396,7 +396,7 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
 <script>/* App 1.2+: native library and bottom bar */try{if(Number(window.__suslikApp||0)>=3)document.documentElement.classList.add("suslik-native");}catch(e){}
 /* Пока не ответил /api/session, страница скрыта: иначе на секунду мелькает форма входа у тех, кто уже вошёл (снимается в showApp; страховка — через 4 с) */
 try{document.documentElement.classList.add("auth-pending");setTimeout(function(){document.documentElement.classList.remove("auth-pending");},4000);}catch(e){}</script>
-<link rel="stylesheet" href="redesign.css?v=41">
+<link rel="stylesheet" href="redesign.css?v=42">
 <style>
 .sr-badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
 .sr-badges .rb { background: #1c2230; color: #c7d0e0; border: 1px solid #2e3850; border-radius: 6px; padding: 2px 8px; font-size: 12px; font-weight: 700; }
@@ -451,7 +451,7 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
   <section id="loginPanel" class="panel">
     <h2>Войти</h2><p>Войдите через Discord или по паролю доступа.</p>
     <div id="discordLoginArea" class="discord-login-box">
-      <a href="/api/auth/discord/start" class="btn-discord" id="discordLoginBtn">
+      <a href="../api/auth/discord/start" class="btn-discord" id="discordLoginBtn">
         <svg class="discord-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
           <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994.021-.041.001-.09-.041-.106a13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.929 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.894.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/>
         </svg>
@@ -469,7 +469,7 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
     <form id="deviceLinkForm">
       <input id="deviceCodeInput" type="text" placeholder="A3F-821" maxlength="12" required style="font-size:22px;text-align:center;letter-spacing:4px;text-transform:uppercase;margin:12px 0;width:100%;box-sizing:border-box;padding:10px;border-radius:8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.2);color:#fff;">
       <p id="deviceLinkWho" style="color:#94a3b8;font-size:13px;line-height:1.4;margin:0 0 10px;"></p>
-      <a id="deviceLinkDiscord" class="btn-discord" href="/api/auth/discord/start" hidden style="margin-bottom:12px;"><span>Войти через Discord</span></a>
+      <a id="deviceLinkDiscord" class="btn-discord" href="../api/auth/discord/start" hidden style="margin-bottom:12px;"><span>Войти через Discord</span></a>
       <div id="deviceLinkStatus" class="status" style="margin-bottom:12px;" role="status"></div>
       <div style="display:flex;gap:10px;justify-content:flex-end;">
         <button id="deviceLinkCancel" type="button" class="secondary">Отмена</button>
@@ -726,8 +726,11 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
 <script>
 
 const $ = id => document.getElementById(id);
+// Сайт лежит в <база>/media/, API — в <база>/api/; база — корень домена или путь сервера (docs/MIGRATION.md)
+const API_ROOT = new URL(".", location.href).pathname.replace(/\/media\/$/, "/").replace(/\/$/, "");
+const apiUrl = p => typeof p === "string" && p.startsWith("/api/") ? API_ROOT + p : p;
 async function api(path, options={}) {
-  const response = await fetch(path, { credentials:"same-origin", ...options, headers:{"Content-Type":"application/json", ...(options.headers||{})} });
+  const response = await fetch(apiUrl(path), { credentials:"same-origin", ...options, headers:{"Content-Type":"application/json", ...(options.headers||{})} });
   const data = await response.json().catch(()=>({error:"Некорректный ответ сервера"}));
   if (!response.ok) throw new Error(data.error || `Не удалось выполнить запрос (${response.status})`);
   return data;
@@ -799,7 +802,7 @@ function discordStartUrl() {
   const p = new URLSearchParams(window.location.search);
   p.delete("auth_error");
   const q = p.toString();
-  return "/api/auth/discord/start?return=" + encodeURIComponent(window.location.pathname + (q ? "?" + q : ""));
+  return API_ROOT + "/api/auth/discord/start?return=" + encodeURIComponent(window.location.pathname + (q ? "?" + q : ""));
 }
 
 // Кому достанется устройство: при входе по паролю — общему доступу, а не вашему Discord-профилю
@@ -1168,7 +1171,7 @@ async function loadAppVersions() {
       ver.textContent = "Версия " + u.version; ver.classList.remove("muted");
       size.textContent = formatBytes(u.size);
       date.textContent = u.publishedAt ? new Date(u.publishedAt).toLocaleDateString() : "";
-      btn.href = u.url; btn.setAttribute("download", u.file || ""); btn.classList.remove("disabled"); btn.removeAttribute("aria-disabled");
+      btn.href = apiUrl(u.url); btn.setAttribute("download", u.file || ""); btn.classList.remove("disabled"); btn.removeAttribute("aria-disabled");
       btn.textContent = (p === "android" ? "Скачать .apk" : (/\.exe$/i.test(u.file || "") ? "Скачать .exe" : "Скачать .msi")) + " · " + u.version;
       notes.classList.toggle("hidden", !u.notes); notes.querySelector(".app-notes-text").textContent = u.notes || "";
     } catch (err) { ver.textContent = "Не удалось проверить"; ver.classList.add("muted"); }
@@ -1804,43 +1807,174 @@ async function fillPosterPaths(){
   fillPostersRunning=true;
   try{
     const todo=[...new Set(cachedLibrary.filter(m=>Number(m.statusCode)===4&&(!posterPathOf(m)||posterTitleUnknown(m))).map(m=>getPosterQueries(m)[0]).filter(Boolean))].slice(0,80);
-    let n=0;
-    for(const q of todo){ await getPoster(q); if(++n%10===0) renderLibrary(false); await wait(120); }
-    if(n) renderLibrary(false);
+    for(const q of todo){ await getPoster(q); await wait(120); }
+    if(todo.length) renderLibrary(false);
   }catch{} finally{ fillPostersRunning=false; }
 }
 function versionsWord(n){ return n+(n%10>=2&&n%10<=4&&!(n%100>=12&&n%100<=14)?" версии":" версий"); }
-function versionLine(m){
-  const pl=(()=>{try{return buildPlaylist(m);}catch{return null;}})();
-  const q=/2160p|4k/i.test(m.name)?"4K":/720p/i.test(m.name)?"720p":"1080p";
-  if(!pl||pl.type!=="series") return q;
-  const nums=pl.seasons.map(s=>s.season).filter(n=>n>0);
-  const eps=pl.seasons.reduce((a,s)=>a+s.items.length,0);
-  const films=Boolean(pl.seasons[0]&&pl.seasons[0].items[0]&&pl.seasons[0].items[0].title);
-  const word=films?"фильм.":eps%10>=2&&eps%10<=4&&!(eps%100>=12&&eps%100<=14)?"серии":eps%10===1&&eps%100!==11?"серия":"серий";
-  const range=films||!nums.length?"":nums.length===1?"Сезон "+nums[0]+" · ":"Сезоны "+Math.min(...nums)+"–"+Math.max(...nums)+" · ";
-  return range+eps+" "+word+" • "+q;
+// ---- «Какую версию включить?»: как VersionPicker на ПК (versionSections / versionLine в shared/.../core/Model.kt) ----
+const pluralRu=(n,one,few,many)=>n%10===1&&n%100!==11?one:n%10>=2&&n%10<=4&&!(n%100>=12&&n%100<=14)?few:many;
+const filmCountRu=n=>n+" "+pluralRu(n,"фильм","фильма","фильмов");
+const episodesRu=n=>n+" "+pluralRu(n,"серия","серии","серий");
+const LATEST_YEAR=new Date().getFullYear()+2;
+// Год выхода из имени: «(2001)» важнее, потом отдельно стоящий год
+function extractYear(name){
+  const s=String(name||"");
+  const b=/[(\[{](19\d{2}|20\d{2})[)\]}]/.exec(s); if(b&&Number(b[1])<=LATEST_YEAR) return Number(b[1]);
+  for(const m of s.matchAll(/\b(19\d{2}|20\d{2})\b/g)) if(Number(m[1])<=LATEST_YEAR) return Number(m[1]);
+  return null;
 }
-// «Какую версию включить?»: окно со строкой на раздачу; выбор открывает обычное окно раздачи.
-function openVersionPicker(versions){
-  const back=document.createElement("div"); back.className="modal-backdrop"; back.setAttribute("role","dialog"); back.setAttribute("aria-modal","true");
-  const box=document.createElement("div"); box.className="library-modal";
-  const h=document.createElement("h2"); h.textContent="Какую версию включить?";
-  const sub=document.createElement("p"); sub.className="file-meta"; sub.textContent=displayTitle(versions[0])+" · "+versionsWord(versions.length);
-  const list=document.createElement("div"); list.style.cssText="display:grid;gap:8px;margin:14px 0;max-height:60vh;overflow:auto";
-  const close=()=>{ back.remove(); document.removeEventListener("keydown",onKey); };
-  const onKey=e=>{ if(e.key==="Escape") close(); };
-  for(const m of versions){
-    const b=document.createElement("button"); b.type="button"; b.className="secondary"; b.style.cssText="text-align:left;padding:12px 14px";
-    const head=document.createElement("strong"); head.textContent=versionLine(m)+" · "+formatBytes(m.size);
-    const nm=document.createElement("div"); nm.className="file-meta"; nm.textContent=m.name;
-    b.append(head,nm); b.addEventListener("click",()=>{ close(); openLibraryModal(m); }); list.append(b);
+function releaseYear(m){
+  const ai=m&&m.aiTitle; if(ai&&ai.status==="accepted"&&ai.year) return Number(ai.year);
+  return extractYear(m.name)||extractYear(displayTitle(m))||(m.files||[]).map(f=>extractYear(f.name||f.path)).find(Boolean)||null;
+}
+const PART_EXPLICIT=/(?<![\p{L}\p{N}])(?:часть|ч\.|фильм|film|part|pt\.?|глава|chapter)\s*(\d{1,2}|[ivx]{1,4})(?![\p{L}\p{N}])/iu;
+const PART_ORDINAL=/(?<![\p{L}\p{N}])(\d{1,2})\s*[-–]?\s*(?:я|ая|ья|ей|й|ый|ой)?\s*(?:часть|фильм)(?![\p{L}\p{N}])/iu;
+const ROMAN={I:1,II:2,III:3,IV:4,V:5,VI:6,VII:7,VIII:8,IX:9,X:10};
+const partNumber=raw=>/^\d+$/.test(raw)?Number(raw):ROMAN[String(raw).toUpperCase()]||null;
+// Номер части: «Part 2», «Часть 3», «2-я часть» или число / римская цифра сразу после названия («Rocky IV»)
+function itemPart(m){
+  const text=m.name||"";
+  let x=PART_EXPLICIT.exec(text); if(x&&partNumber(x[1])) return partNumber(x[1]);
+  x=PART_ORDINAL.exec(text); if(x) return Number(x[1]);
+  const base=displayTitle(m).trim();
+  if(base){
+    x=new RegExp("(?<![\\p{L}\\p{N}])"+base.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"\\s+(\\d{1,2}|[IVX]{1,4})(?![\\p{L}\\p{N}])","iu").exec(text);
+    if(x&&partNumber(x[1])) return partNumber(x[1]);
   }
-  const cancel=document.createElement("button"); cancel.type="button"; cancel.className="secondary"; cancel.textContent="Закрыть"; cancel.addEventListener("click",close);
-  box.append(h,sub,list,cancel); back.append(box);
+  return null;
+}
+function qualityScore(name){
+  const s=String(name||"").toLowerCase();
+  return /2160p|4k|3840/.test(s)?4:/1080[pi]|1920/.test(s)?3:/720p|1280/.test(s)?2:/480p|576p|dvd/.test(s)?1:0;
+}
+// Сезоны раздачи [первый, последний] или null (не сериал; сборник фильмов — тоже null)
+function itemSeasons(m){
+  const ai=m.aiTitle; if(ai&&ai.status==="accepted"&&Number.isInteger(ai.season)) return [ai.season,ai.season];
+  let pl=null; try{ pl=buildPlaylist(m); }catch{}
+  if(pl&&pl.type==="series"){
+    const first=pl.seasons[0]&&pl.seasons[0].items[0];
+    if(first&&first.title!=null) return null;
+    const nums=pl.seasons.map(s=>s.season); if(nums.length) return [Math.min(...nums),Math.max(...nums)];
+  }
+  const name=m.name||"";
+  const r=/(?:season|сезон)[s\p{L}]*[\s._-]*(\d{1,2})[\s._-]*[-–][\s._-]*(\d{1,2})|(\d{1,2})[\s._-]*[-–][\s._-]*(\d{1,2})[\s._-]*(?:season|сезон)[s\p{L}]*/iu.exec(name);
+  if(r) return [Number(r[1]||r[3]),Number(r[2]||r[4])];
+  const one=/(?:season|сезон)[ ._-]?(\d{1,2})/iu.exec(name)||/S(\d{1,2})[ ._-]?E(\d{1,3})/i.exec(name);
+  if(one) return [Number(one[1]),Number(one[1])];
+  if(pl&&pl.type==="movie"&&pl.file){
+    const p=String(pl.file.path||"").replace(/\\/g,"/");
+    const d=p.match(/(?:^|\/)(?:season|сезон)[ ._-]?(\d{1,2})(?:\/|$)/i)||p.match(/(?:^|\/)S(\d{1,2})(?:\/|$)/i);
+    if(d) return [Number(d[1]),Number(d[1])];
+    const e=parseEpisode(p); if(e) return [e.season,e.season];
+  }
+  return null;
+}
+// Сезоны по порядку (спецвыпуски после них, без сезона — в конце), часть, год, лучшее качество, больший размер
+function sortedVersionKeys(versions){
+  const big=Number.MAX_SAFE_INTEGER;
+  const keys=versions.map(m=>({m,seasons:itemSeasons(m),part:itemPart(m),year:releaseYear(m),quality:qualityScore(m.name)}));
+  const fields=[
+    k=>k.seasons?(k.seasons[0]===0?big-1:k.seasons[0]):big,
+    k=>k.seasons?k.seasons[1]-k.seasons[0]:0,
+    k=>k.part==null?big:k.part,
+    k=>k.year==null?big:k.year,
+    k=>-k.quality,
+    k=>-(Number(k.m.size)||0)
+  ];
+  return keys.sort((a,b)=>{
+    for(const f of fields){ const d=f(a)-f(b); if(d) return d; }
+    return String(a.m.name||"").localeCompare(String(b.m.name||""))||(Number(a.m.id)||0)-(Number(b.m.id)||0);
+  });
+}
+// Разделы «Сезон 1», «Сезон 2» или «2001 год»; одна раздача на всех — один раздел без заголовка
+function versionSections(versions){
+  if(!versions.length) return [];
+  const keys=sortedVersionKeys(versions), sorted=keys.map(k=>k.m);
+  let titles;
+  if(keys.some(k=>k.seasons)){
+    titles=keys.map(k=>{const s=k.seasons;return !s?"Дополнительно":s[0]===0?"Спецвыпуски":s[0]===s[1]?"Сезон "+s[0]:"Сезоны "+s[0]+"–"+s[1];});
+  } else {
+    if(new Set(keys.map(k=>k.year).filter(x=>x!=null)).size<=1&&new Set(keys.map(k=>k.part).filter(x=>x!=null)).size<=1) return [{title:null,items:sorted}];
+    titles=keys.map(k=>k.year!=null&&k.part!=null?k.year+" год · Часть "+k.part:k.year!=null?k.year+" год":k.part!=null?"Часть "+k.part:"Другая версия");
+  }
+  if(new Set(titles).size<=1) return [{title:null,items:sorted}];
+  const groups=new Map();
+  sorted.forEach((m,i)=>{ if(!groups.has(titles[i])) groups.set(titles[i],[]); groups.get(titles[i]).push(m); });
+  return [...groups].map(([title,items])=>({title,items}));
+}
+// Первая часть строки версии без качества: «Кинотрилогия • 3 фильма», «Сезоны 1–3 · 24 серии», «2021 год»; в разделе — только то,
+// чего не сказал его заголовок
+function versionLine(m,inSection){
+  let pl=null; try{ pl=buildPlaylist(m); }catch{}
+  if(pl&&pl.type==="series"){
+    const eps=pl.seasons.reduce((a,s)=>a+s.items.length,0);
+    if(isCollection(pl,m)) return collectionTypeLabel(eps,m.name||"")+" • "+filmCountRu(eps);
+    if(!inSection){
+      const first=pl.seasons[0]&&pl.seasons[0].items[0];
+      if(first&&first.title!=null) return filmCountRu(eps);
+      const nums=pl.seasons.map(s=>s.season).filter(n=>n>0);
+      return (!nums.length?"":nums.length===1?"Сезон "+nums[0]+" · ":"Сезоны "+Math.min(...nums)+"–"+Math.max(...nums)+" · ")+episodesRu(eps);
+    }
+    const r=itemSeasons(m);
+    return r&&r[0]!==r[1]?"Сезоны "+r[0]+"–"+r[1]+" · "+episodesRu(eps):episodesRu(eps);
+  }
+  if(inSection) return "";
+  const y=releaseYear(m); return y?y+" год":"";
+}
+// Качество и кодек по имени раздачи (itemSpecs на ПК) и метки картинки: «4K • H265 • Dolby Vision»
+function versionSpecs(m){
+  const n=String(m.name||"").toLowerCase();
+  const q=/2160p|4k/.test(n)?"4K":/1080p/.test(n)?"1080p":/720p/.test(n)?"720p":"1080p";
+  const c=/x265|hevc|h\.?265/.test(n)?"H265":/x264|h\.?264/.test(n)?"H264":/av1/.test(n)?"AV1":q==="4K"?"H265":"H264";
+  return [q,c,...getItemTags(m).filter(t=>t==="Dolby Vision"||t==="HDR")].join(" • ");
+}
+// Сколько посмотрено: сериал — последняя открытая серия, фильм — его файл
+function versionWatch(m){
+  let pl=null; try{ pl=buildPlaylist(m); }catch{}
+  if(pl&&pl.type==="series"){ const lw=lastWatched(m); return lw?lw.w:null; }
+  return pl&&pl.file?watchOf(m.id,pl.file):null;
+}
+function openVersionPicker(versions){
+  const back=document.createElement("div"); back.className="modal-backdrop vp-back"; back.setAttribute("role","dialog"); back.setAttribute("aria-modal","true");
+  const box=document.createElement("div"); box.className="vp-card";
+  const grip=document.createElement("div"); grip.className="ps-grip"; grip.setAttribute("aria-hidden","true");
+  const h=document.createElement("h2"); h.className="vp-title"; h.textContent="Какую версию включить?";
+  const sub=document.createElement("p"); sub.className="vp-sub"; sub.textContent=tileTitle(versions[0])+" · "+versionsWord(versions.length);
+  const list=document.createElement("div"); list.className="vp-list";
+  const close=()=>{ back.remove(); document.removeEventListener("keydown",onKey); if(!document.querySelector(".play-sheet.open")) document.body.style.overflow=""; };
+  const onKey=e=>{ if(e.key==="Escape") close(); };
+  const bars=[];
+  for(const section of versionSections(versions)){
+    if(section.title){
+      const sec=document.createElement("div"); sec.className="vp-sec";
+      const t=document.createElement("span"); t.textContent=section.title; sec.append(t); list.append(sec);
+    }
+    for(const m of section.items){
+      const b=document.createElement("button"); b.type="button"; b.className="vp-row secondary";
+      const head=document.createElement("div"); head.className="vp-head";
+      const line=document.createElement("span"); line.className="vp-line"; line.textContent=[versionLine(m,section.title!=null),versionSpecs(m)].filter(Boolean).join(" • ");
+      const size=document.createElement("span"); size.className="vp-size"; size.textContent=formatBytes(m.size);
+      const nm=document.createElement("div"); nm.className="vp-name"; nm.textContent=m.name; nm.title=m.name;
+      const bar=document.createElement("div"); bar.className="vp-bar hidden"; bar.append(document.createElement("i"));
+      head.append(line,size); b.append(head,nm,bar); bars.push([m,bar]);
+      b.addEventListener("click",()=>{ close(); openMagnet(m); });
+      list.append(b);
+    }
+  }
+  const foot=document.createElement("div"); foot.className="vp-foot";
+  const cancel=document.createElement("button"); cancel.type="button"; cancel.className="vp-close secondary"; cancel.textContent="Закрыть"; cancel.addEventListener("click",close);
+  foot.append(cancel); box.append(grip,h,sub,list,foot); back.append(box);
   back.addEventListener("click",e=>{ if(e.target===back) close(); });
-  document.addEventListener("keydown",onKey); document.body.append(back);
-  const first=list.querySelector("button"); if(first) first.focus();
+  document.addEventListener("keydown",onKey); document.body.append(back); document.body.style.overflow="hidden";
+  const first=list.querySelector("button"); if(first) first.focus({preventScroll:true});
+  loadWatch().then(()=>{
+    for(const [m,bar] of bars){
+      const w=versionWatch(m), f=watchFraction(w);
+      if(!w||f<=0.01) continue;
+      bar.firstChild.style.width=(watchDone(w)?100:f*100)+"%"; bar.classList.remove("hidden");
+    }
+  });
 }
 function readLastEpisode(id){try{return (JSON.parse(localStorage.getItem(LAST_EP_KEY)||"{}")||{})[id]||null;}catch{return null;}}
 function saveLastEpisode(id,path){try{const c=JSON.parse(localStorage.getItem(LAST_EP_KEY)||"{}")||{};c[id]=path;localStorage.setItem(LAST_EP_KEY,JSON.stringify(c));}catch{}}
@@ -1866,13 +2000,78 @@ function playerHref(url){
   return "potplayer://"+url;
 }
 function playerLabel(){return IS_ANDROID?"▶ Плеер":(IS_IOS?"▶ VLC":"▶ PotPlayer");}
+// ---- Окно фильма: как PlayDialog на ПК (desktop/.../PlayDialog.kt), на узком экране — шторка PlaySheet из Android ----
 const PS_ICON_MINE='<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18l-6-4-6 4z"/></svg>';
 const PS_ICON_FAV='<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg>';
+const PS_ICON_PLAY='<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M7 4.6v14.8a1 1 0 0 0 1.5.86l12.2-7.4a1 1 0 0 0 0-1.72L8.5 3.74A1 1 0 0 0 7 4.6z"/></svg>';
+const PS_ICON_CLOSE='<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+const PS_ICON_INFO='<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>';
+/** Пунктов в одном плейлисте сервера не больше (routes/mirror.js PLAYLIST_MAX_ITEMS). */
+const PLAYLIST_MAX=200;
+// Прогресс по аккаунту (/api/sync, только при входе через Discord): «id|путь» -> {pos, len, at}. Не чаще раза в минуту.
+let watchMap=null, watchMapAt=0, watchTask=null;
+function loadWatch(){
+  if(watchMap&&Date.now()-watchMapAt<60000) return Promise.resolve(watchMap);
+  if(!watchTask) watchTask=api("/api/sync?since=0").then(d=>{const m=new Map();for(const w of d.watch||[])m.set(String(w.key),w);return m;})
+    .catch(()=>watchMap||new Map()).then(m=>{watchMap=m;watchMapAt=Date.now();watchTask=null;return m;});
+  return watchTask;
+}
+function watchOf(id,file){ return watchMap&&file&&file.path!=null?watchMap.get(id+"|"+file.path)||null:null; }
+const watchFraction=w=>w&&w.len>0?Math.max(0,Math.min(1,w.pos/w.len)):0;
+const watchDone=w=>Boolean(w&&w.len>0&&w.pos>=w.len-15000);
+// Файл раздачи, который смотрели последним (lastWatched на ПК)
+function lastWatched(m){
+  let best=null;
+  for(const f of m.files||[]){ if(f.type==="folder") continue; const w=watchOf(m.id,f); if(w&&(!best||w.at>best.w.at)) best={file:f,w}; }
+  return best;
+}
+function clockText(ms){ const t=Math.max(0,Math.floor(ms/1000)),h=Math.floor(t/3600),m=Math.floor(t%3600/60),s=t%60,p=n=>String(n).padStart(2,"0"); return h?h+":"+p(m)+":"+p(s):p(m)+":"+p(s); }
+function durationText(ms){ const min=Math.max(1,Math.floor(ms/60000)); return min>=60?Math.floor(min/60)+" ч "+min%60+" мин":min+" мин"; }
+const TRACK_PREFIX=/^\s*(?:\[[^\]]*\]\s*|\([^)]*\)\s*|(?:фильм|серия|часть|part|movie|vol|cd|диск)?\s*\d{1,3}[\s._-]*)+/i;
+// Название и подробности фильма сборника (extractTrilogyFilmInfo на ПК): «Тайная комната», «2002 • 2:41:03»
+function psFilmInfo(magnet,ep,i){
+  const raw=ep.file.name||String(ep.file.path||"").split("/").pop();
+  const noExt=raw.replace(/\.[a-z0-9]{2,5}$/i,"");
+  const cleaned=escapeTitle(noExt.replace(TRACK_PREFIX,"").trim()||noExt);
+  const base=displayTitle(magnet);
+  let title=base&&cleaned.toLowerCase().startsWith(base.toLowerCase())?cleaned.slice(base.length).replace(/^[\s\-:·.–]+|[\s\-:·.–]+$/g,""):"";
+  title=title||cleaned||(ep.title?escapeTitle(String(ep.title).replace(TRACK_PREFIX,"")):"")||"Фильм "+(i+1);
+  const w=watchOf(magnet.id,ep.file);
+  return {title,details:[extractYear(raw),w&&w.len>0?clockText(w.len):formatBytes(Number(ep.file.size)||0)].filter(Boolean).join(" • ")};
+}
+// Что играет файл сериала или сборника: подпись и плейлист с него до конца — через все сезоны (на ПК очередь тоже на весь
+// сериал; внешний плеер начинает с первого пункта, поэтому раньше выбранного в плейлисте ничего нет)
+function psTarget(magnet,pl,file){
+  if(!magnet||!pl||pl.type!=="series"||!file) return null;
+  const all=pl.seasons.flatMap(s=>s.items.map(e=>({s,e})));
+  const at=all.findIndex(x=>x.e.file===file||x.e.file.path===file.path); if(at<0) return null;
+  const {s,e}=all[at];
+  const label=isCollection(pl,magnet)?tileTitle(magnet)+" • "+psFilmInfo(magnet,e,at).title
+    :displayTitle(magnet)+" · "+(s.season===0?"Спец.":"S"+String(s.season).padStart(2,"0"))+"E"+String(e.episode).padStart(2,"0");
+  const items=all.slice(at,at+PLAYLIST_MAX).map(x=>({index:magnet.files.indexOf(x.e.file),link:x.e.file.sourceLink})).filter(x=>x.index>=0&&x.link);
+  return {label,req:{magnetId:magnet.id,items}};
+}
+// Что открывает плитка или выбранная версия (versionTarget на ПК): фильм; сериал и сборник — с того, где остановились
+// (по аккаунту, иначе последнее открытое в этом браузере), иначе с первого
+function startFile(magnet,pl){
+  if(pl.type!=="series") return pl.file||null;
+  const all=pl.seasons.flatMap(s=>s.items);
+  const lw=lastWatched(magnet), saved=lw?lw.file.path:readLastEpisode(magnet.id);
+  return ((saved&&all.find(e=>e.file.path===saved))||all[0]).file;
+}
+async function openMagnet(magnet){
+  let pl; try{ pl=buildPlaylist(magnet); }catch{ return; }
+  await loadWatch();
+  const file=startFile(magnet,pl);
+  if(!file){ openLibraryModal(magnet); return; }
+  const t=psTarget(magnet,pl,file);
+  playFile(file,t?t.label:displayTitle(magnet),t?t.req:null,magnet);
+}
 function psSyncShelf(s){
   const m=s._magnet;
   for(const b of s.querySelectorAll(".ps-shelf > .ps-btn[data-act]")){
     const mine=b.dataset.act==="mine", on=Boolean(m&&(mine?m.mine:m.favorite));
-    b.hidden=!m; b.classList.toggle("on",on);
+    b.hidden=!m; b.classList.toggle("on",on); b.setAttribute("aria-pressed",String(on));
     b.innerHTML=(mine?PS_ICON_MINE:PS_ICON_FAV)+"<span>"+(mine?(on?"Из моей медиатеки":"В мою медиатеку"):(on?"Из избранного":"В избранное"))+"</span>";
   }
 }
@@ -1891,6 +2090,7 @@ async function psToggle(s,kind){
 }
 // «Определить через ИИ» (services/aititle.js). Все раздачи плитки (версии и сезоны, слитые по названию) — одним
 // запросом: кнопка, пока у своих раздач плитки нет ответа; потом предложение по каждой — «Принять» / «Отклонить».
+// На ПК это в меню плитки по правой кнопке; у сайта такого меню нет, поэтому строка внизу окна фильма.
 let libraryVersionsOf=new Map(); // id первой раздачи плитки -> все её версии (из groupLibraryVersions)
 function psGroupOf(m){
   if(!m) return [];
@@ -1905,7 +2105,7 @@ function psSyncAi(s){
   const box=s.querySelector(".ps-ai"), m=s._magnet;
   box.replaceChildren();
   const group=psGroupOf(m).map(x=>cachedLibrary.find(y=>y.id===x.id)||x);
-  const btn=(text,fn,cls)=>{const b=document.createElement("button");b.type="button";b.className="ps-btn"+(cls?" "+cls:"");b.textContent=text;b.addEventListener("click",fn);return b;};
+  const btn=(text,fn,cls)=>{const b=document.createElement("button");b.type="button";b.className="ps-ai-btn secondary"+(cls?" "+cls:"");b.textContent=text;b.addEventListener("click",fn);return b;};
   const note=(t,cls)=>{const p=document.createElement("div");p.className="ps-ai-note"+(cls?" "+cls:"");p.textContent=t;return p;};
   // stale — ответ до появления типа раздачи: его можно спросить заново
   // none старше часа сервер спросит заново
@@ -1916,16 +2116,16 @@ function psSyncAi(s){
   const many=group.length>1;
   for(const x of shown){
     const a=x.aiTitle, row=document.createElement("div"); row.className="ps-ai-row";
-    if(many) row.append(note(escapeTitle(x.name),"ps-ai-src"));
-    if(a.status==="none") row.append(note("ИИ не смог определить эту раздачу."));
-    else {
-      row.append(note((a.status==="accepted"?"Название от ИИ: ":"ИИ предлагает: ")+aiWhat(a)));
-      if(x.canAiTitle){
-        const bs=document.createElement("div"); bs.className="ps-shelf";
-        if(a.status==="suggested") bs.append(btn("Принять",()=>psDecideAi(s,x,true),"on"),btn("Отклонить",()=>psDecideAi(s,x,false)));
-        else bs.append(btn("Отменить",()=>psDecideAi(s,x,false)));
-        row.append(bs);
-      }
+    const text=document.createElement("div"); text.className="ps-ai-text";
+    if(many) text.append(note(escapeTitle(x.name),"ps-ai-src"));
+    if(a.status==="none") text.append(note("ИИ не смог определить эту раздачу."));
+    else text.append(note((a.status==="accepted"?"Название от ИИ: ":"ИИ предлагает: ")+aiWhat(a)));
+    row.append(text);
+    if(a.status!=="none"&&x.canAiTitle){
+      const bs=document.createElement("div"); bs.className="ps-ai-btns";
+      if(a.status==="suggested") bs.append(btn("Принять",()=>psDecideAi(s,x,true),"on"),btn("Отклонить",()=>psDecideAi(s,x,false)));
+      else bs.append(btn("Отменить",()=>psDecideAi(s,x,false)));
+      row.append(bs);
     }
     box.append(row);
   }
@@ -1933,7 +2133,7 @@ function psSyncAi(s){
   if(pending.length>1) box.append(btn("Принять все ("+pending.length+")",()=>psDecideAll(s,pending),"on"));
   if(ask.length){
     const left=aiTitleReadyAt-Date.now();
-    const b=btn("✨ Определить через ИИ"+(ask.length>1?" ("+ask.length+" раздачи)":""),()=>psAskAi(s,b,ask));
+    const b=btn("✨ Определить название через ИИ"+(ask.length>1?" ("+ask.length+" раздачи)":""),()=>psAskAi(s,b,ask),"ps-ai-ask");
     if(left>0){
       b.disabled=true;b.textContent="✨ ИИ — через "+Math.ceil(left/60000)+" мин";
       // пока карточка открыта, кнопка сама оживает по окончании кулдауна
@@ -1953,7 +2153,7 @@ function psSaveAi(){
 async function psAskAi(s,b,list){
   b.disabled=true; b.textContent="✨ Спрашиваем ИИ…";
   try{
-    const r=await fetch("/api/library/ai-title",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({ids:list.map(x=>x.id)})});
+    const r=await fetch(apiUrl("/api/library/ai-title"),{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({ids:list.map(x=>x.id)})});
     const d=await r.json().catch(()=>({}));
     if(r.status===429&&d.retryAfterSec){
       if(d.reason==="cooldown") aiTitleReadyAt=Date.now()+d.retryAfterSec*1000;
@@ -1988,23 +2188,38 @@ async function psDecideAll(s,list){
 function psFillTitle(s){
   const m=s._magnet; if(!m) return;
   const cur=cachedLibrary.find(x=>x.id===m.id); if(cur) s._magnet=cur;
-  s.querySelector(".ps-title").textContent=tileTitle(s._magnet);
+  const t=tileTitle(s._magnet);
+  s.querySelector(".ps-title").textContent=t; s.querySelector(".ps-coll-title").textContent=t;
 }
 const psInfoCache=new Map();
-function psFill(s,magnet,file,label,token){
-  s._magnet=magnet||null; psSyncShelf(s); psSyncAi(s);
+// Шапка: постер, название, год, тип, длительность, рейтинг, описание; у сборника на ПК — своя (подпись и список фильмов)
+function psHead(s,magnet,label,token){
   const base=magnet?displayTitle(magnet):label;
-  s.querySelector(".ps-title").textContent=magnet?tileTitle(magnet):label;
-  const chips=s.querySelector(".ps-chips"), over=s.querySelector(".ps-overview"), img=s.querySelector(".ps-poster img"), prog=s.querySelector(".ps-progress");
-  chips.replaceChildren(); over.textContent=""; img.removeAttribute("src"); prog.classList.add("hidden");
-  const chip=(t,c)=>{const e=document.createElement("span");e.className=c||"ps-chip";e.textContent=t;chips.append(e);return e;};
-  const ep=label&&label.length>base.length&&label.startsWith(base)?label.slice(base.length).replace(/^\s*[·•]\s*/,""):"";
-  const yearChip=chip("","ps-chip hidden");
-  try{const sp=magnet&&getItemSpecs(magnet); if(sp&&sp.type) chip(sp.type);}catch{}
-  if(ep) chip(ep);
-  const rating=chip("","ps-rating hidden");
+  const title=magnet?tileTitle(magnet):label;
+  s.querySelector(".ps-title").textContent=title; s.querySelector(".ps-coll-title").textContent=title;
+  const chips=s.querySelector(".ps-chips"), over=s.querySelector(".ps-overview");
+  chips.replaceChildren(); over.textContent="";
+  s._poster=null; for(const img of s.querySelectorAll(".ps-poster img")) img.removeAttribute("src");
+  const chip=(t,c)=>{const e=document.createElement("span");e.className=c||"ps-chip";e.textContent=t;if(!t)e.classList.add("hidden");chips.append(e);return e;};
+  const yearChip=chip(magnet?String(releaseYear(magnet)||""):"");
+  let type=""; try{ type=magnet?getItemSpecs(magnet).type:""; }catch{}
+  chip(type);
+  const films=s.dataset.kind==="collection"?s._pl.seasons.flatMap(x=>x.items):[];
+  if(films.length) chip(filmCountRu(films.length),"ps-chip ps-chip-films");
+  s._durChip=chip("");
+  const rating=chip("","ps-rating");
+  if(films.length){
+    const kind=collectionTypeLabel(films.length,magnet.name||"");
+    const years=films.map(e=>extractYear(e.file.name||String(e.file.path||"").split("/").pop())).filter(Boolean);
+    const lo=Math.min(...years), hi=Math.max(...years);
+    s.querySelector(".ps-coll-sub").textContent=kind+" • "+filmCountRu(films.length)+(years.length?" • "+(lo===hi?lo:lo+"–"+hi):"");
+    s.querySelector(".ps-coll-note span").textContent=(kind==="Сборник"?"Найден ":"Найдена ")+kind.toLowerCase()+". Выберите фильм для просмотра.";
+  }
   const pq=(magnet&&aiPosterQuery(magnet))||base; // постер и описание — по оригиналу с годом, если ИИ его дал
-  getPoster(pq).then(u=>{if(u&&token===playSheetToken) img.src=u;}).catch(()=>{});
+  getPoster(pq).then(u=>{
+    if(!u||token!==playSheetToken) return;
+    s._poster=apiUrl(u); for(const img of s.querySelectorAll(".ps-poster img, .ps-film-art img")) img.src=s._poster;
+  }).catch(()=>{});
   if(!psInfoCache.has(pq.toLowerCase())) psInfoCache.set(pq.toLowerCase(),api("/api/poster?hero=1&q="+encodeURIComponent(pq)).then(info=>{
     if(info && typeof info.animation === "boolean") recordAnimation(base, info.animation);
     return info;
@@ -2015,69 +2230,119 @@ function psFill(s,magnet,file,label,token){
     if(info.year){yearChip.textContent=info.year;yearChip.classList.remove("hidden");}
     if(info.rating){rating.textContent="★ "+Number(info.rating).toFixed(1);rating.classList.remove("hidden");}
   });
-  // where the film was left (accounts with Discord sync only)
-  if(magnet&&file&&file.path) api("/api/sync?since=0").then(d=>{
-    if(token!==playSheetToken) return;
-    const w=(d.watch||[]).find(x=>String(x.key)===magnet.id+"|"+file.path);
-    if(!w||!(w.len>0)||w.pos<5000||w.pos>w.len-15000) return;
-    const t=Math.floor(w.pos/1000), hh=Math.floor(t/3600), mm=Math.floor(t%3600/60), ss=t%60, p2=n=>String(n).padStart(2,"0");
-    prog.querySelector("span").textContent="Остановились на "+(hh?hh+":"+p2(mm):mm)+":"+p2(ss)+" · "+Math.round(w.pos/w.len*100)+"%";
-    prog.querySelector("i").style.width=Math.round(w.pos/w.len*100)+"%";
-    prog.classList.remove("hidden");
-  }).catch(()=>{});
 }
-// Label and playlist request of an episode: «Название · S01E02» and this episode plus the rest of its season.
-function psEpisode(magnet,pl,file){
-  for(const s of pl.seasons){
-    const i=s.items.findIndex(e=>e.file===file||e.file.path===file.path); if(i<0) continue;
-    const item=s.items[i];
-    const label=displayTitle(magnet)+" · "+(s.season===0?"Спец.":"S"+String(s.season).padStart(2,"0"))+"E"+String(item.episode).padStart(2,"0");
-    const items=s.items.slice(i).map(x=>({index:magnet.files.indexOf(x.file),link:x.file.sourceLink})).filter(x=>x.index>=0&&x.link);
-    return {label,req:{magnetId:magnet.id,items},season:s,index:i};
+// Сериал: «Сезон» и «Серия»; сборник: на ПК список фильмов, на телефоне поле «Фильм», как в Android
+function psBuildPicker(s,magnet,pl){
+  const box=s.querySelector(".ps-pick"), films=s.querySelector(".ps-films");
+  box.replaceChildren(); films.replaceChildren(); s._selects=null;
+  const kind=s.dataset.kind;
+  if(kind!=="series"&&kind!=="collection"){box.classList.add("hidden");return;}
+  const mk=(title)=>{const l=document.createElement("label");l.className="ps-field";const t=document.createElement("span");t.textContent=title;const sel=document.createElement("select");sel.setAttribute("aria-label",title);l.append(t,sel);box.append(l);return sel;};
+  const opt=(sel,value,text)=>{const o=document.createElement("option");o.value=String(value);o.textContent=text;sel.append(o);};
+  const pick=file=>psPick(s,magnet,pl,file);
+  if(kind==="collection"){
+    const list=pl.seasons.flatMap(x=>x.items), sel=mk("Фильм");
+    list.forEach((ep,i)=>{
+      const info=psFilmInfo(magnet,ep,i);
+      opt(sel,i,(i+1)+". "+info.title);
+      const row=document.createElement("button"); row.type="button"; row.className="ps-film secondary"; row.setAttribute("role","radio"); row._ep=ep; row._i=i;
+      row.innerHTML='<span class="ps-film-art"><img alt="" decoding="async"></span><span class="ps-film-num"></span><span class="ps-film-text"><b></b><small></small></span><span class="ps-film-radio"></span>';
+      row.querySelector(".ps-film-num").textContent=String(i+1);
+      row.querySelector("b").textContent=info.title; row.querySelector("small").textContent=info.details;
+      if(s._poster) row.querySelector("img").src=s._poster;
+      row.addEventListener("click",()=>pick(ep.file));
+      films.append(row);
+    });
+    sel.addEventListener("change",()=>{const ep=list[Number(sel.value)];if(ep)pick(ep.file);});
+    s._selects={film:sel,list};
+  } else {
+    const sf=mk("Сезон"), ef=mk("Серия");
+    for(const x of pl.seasons) opt(sf,x.season,x.season===0?"Спец. материалы":x.season+" сезон");
+    const fill=season=>{ef.replaceChildren();season.items.forEach((e,i)=>opt(ef,i,e.title?e.episode+". "+e.title:e.episode+" серия"));};
+    sf.addEventListener("change",()=>{const season=pl.seasons.find(x=>String(x.season)===sf.value)||pl.seasons[0];fill(season);pick(season.items[0].file);});
+    ef.addEventListener("change",()=>{const season=pl.seasons.find(x=>String(x.season)===sf.value)||pl.seasons[0];const it=season.items[Number(ef.value)];if(it)pick(it.file);});
+    s._selects={season:sf,episode:ef,fill};
   }
-  return null;
+  box.classList.remove("hidden");
 }
-// Season and episode selects inside the sheet (a series only): picking another episode loads it again.
-function psBuildPicker(s,magnet,pl,file){
-  const box=s.querySelector(".ps-pick"); box.replaceChildren();
-  if(!magnet||!pl||pl.type!=="series"){box.classList.add("hidden");return;}
-  const cur=psEpisode(magnet,pl,file); if(!cur){box.classList.add("hidden");return;}
-  const mk=(title)=>{const l=document.createElement("label");l.className="ps-field";const t=document.createElement("span");t.textContent=title;const sel=document.createElement("select");sel.setAttribute("aria-label",title);l.append(t,sel);return {l,sel};};
-  const sf=mk("Сезон"), ef=mk("Серия");
-  for(const x of pl.seasons){const o=document.createElement("option");o.value=String(x.season);o.textContent=x.season===0?"Спецвыпуски":"Сезон "+x.season;sf.sel.append(o);}
-  const fill=(season,idx)=>{
-    ef.sel.replaceChildren();
-    const seen=new Map();
-    season.items.forEach((e,i)=>{const o=document.createElement("option");o.value=String(i);const n=seen.get(e.episode)||0;seen.set(e.episode,n+1);o.textContent="Серия "+e.episode+(n?" ("+(n+1)+")":"");ef.sel.append(o);});
-    ef.sel.value=String(idx);
-  };
-  sf.sel.value=String(cur.season.season); fill(cur.season,cur.index);
-  const go=()=>{
-    const season=pl.seasons.find(x=>String(x.season)===sf.sel.value)||pl.seasons[0];
-    const item=season.items[Number(ef.sel.value)]||season.items[0];
-    saveLastEpisode(magnet.id,item.file.path);
-    const ep=psEpisode(magnet,pl,item.file);
-    psLoad(s,++playSheetToken,item.file,ep.label,ep.req,magnet,false);
-  };
-  sf.sel.addEventListener("change",()=>{const season=pl.seasons.find(x=>String(x.season)===sf.sel.value)||pl.seasons[0];fill(season,0);go();});
-  ef.sel.addEventListener("change",go);
-  box.append(sf.l,ef.l); box.classList.remove("hidden");
+// Выбранное в полях и в списке фильмов — то, что сейчас откроется
+function psSyncSelection(s){
+  const sel=s._selects, f=s._file; if(!sel||!f) return;
+  if(sel.film){
+    const i=sel.list.findIndex(e=>e.file.path===f.path);
+    sel.film.value=String(Math.max(0,i));
+    for(const row of s.querySelectorAll(".ps-film")){ const on=row._i===i; row.classList.toggle("on",on); row.setAttribute("aria-checked",String(on)); }
+    return;
+  }
+  for(const season of s._pl.seasons){
+    const i=season.items.findIndex(e=>e.file.path===f.path); if(i<0) continue;
+    sel.season.value=String(season.season); sel.fill(season); sel.episode.value=String(i); return;
+  }
+}
+function psPick(s,magnet,pl,file){
+  const t=psTarget(magnet,pl,file); if(!t) return;
+  psLoad(s,file,t.label,t.req,magnet);
+}
+// Где остановились (по аккаунту): карточка «С 10:54» с полосой, длительность в шапке, длительность фильмов сборника
+function psWatchInfo(s){
+  const m=s._magnet, f=s._file, card=s.querySelector(".ps-resume");
+  const w=m&&f?watchOf(m.id,f):null;
+  const resume=Boolean(w&&w.pos>=5000&&!watchDone(w));
+  card.classList.toggle("hidden",!resume);
+  if(resume){
+    const pct=Math.round(watchFraction(w)*100);
+    card.querySelector("b").textContent="С "+clockText(w.pos);
+    card.querySelector(".ps-bar i").style.width=pct+"%"; card.querySelector("em").textContent=pct+"%";
+  }
+  if(s._durChip){ const len=w&&w.len>0?w.len:0; s._durChip.textContent=len?durationText(len):""; s._durChip.classList.toggle("hidden",!len); }
+  if(m) for(const row of s.querySelectorAll(".ps-film")) row.querySelector("small").textContent=psFilmInfo(m,row._ep,row._i).details;
+}
+let psFileToken=0;
+async function psLoad(s,file,label,playlistReq,magnet){
+  const open=playSheetToken, mine=++psFileToken, live=()=>open===playSheetToken&&mine===psFileToken;
+  s._file=file; s._label=label;
+  psSyncShelf(s); psSyncAi(s); psSyncSelection(s); psWatchInfo(s);
+  const sub=s.querySelector(".ps-status"); sub.textContent="Готовим к просмотру…"; sub.classList.remove("err");
+  fillWatch(s,null,"Готовим к просмотру…");
+  const name=file.name||String(file.path||"video").split("/").pop();
+  let mUrl=null,err=null,playlist=null;
+  try{mUrl=await signedMirror(file.sourceLink,name);}catch(e){err=e;}
+  if(!live()) return;
+  // PotPlayer и приложение Android: этот файл и все следующие (серии до конца сериала, фильмы сборника)
+  if(mUrl&&(IS_DESKTOP||nativeApp())&&playlistReq&&playlistReq.items.length>1){
+    sub.textContent="Готовим плейлист…";
+    try{
+      const r=await api("/api/playlist",{method:"POST",body:JSON.stringify({magnetId:playlistReq.magnetId,title:label,items:playlistReq.items})});
+      playlist=r&&r.url||null;
+    }catch{}
+    if(!live()) return;
+  }
+  fillWatch(s,mUrl,"Смотреть",playlist);
+  sub.textContent=mUrl?"Можно смотреть":(err?.message||"Не удалось открыть фильм");
+  sub.classList.toggle("err",!mUrl);
+  if(mUrl&&magnet&&s.dataset.kind!=="movie") saveLastEpisode(magnet.id,file.path);
 }
 function ensurePlaySheet(){
   let s=document.getElementById("playSheet");
   if(s) return s;
   s=document.createElement("div");s.id="playSheet";s.className="play-sheet";s.setAttribute("role","dialog");s.setAttribute("aria-modal","true");
   // One way to watch: through our server. The direct media link stays on the server (security audit 25.10).
-  s.innerHTML='<div class="play-sheet-card ps-card"><button type="button" class="ps-close sheet-cancel" aria-label="Закрыть">×</button>'+
+  s.innerHTML='<div class="play-sheet-card ps-card"><div class="ps-grip" aria-hidden="true"></div>'+
+    '<button type="button" class="ps-close secondary sheet-cancel" aria-label="Закрыть">'+PS_ICON_CLOSE+'</button>'+
     '<div class="ps-top"><div class="ps-poster"><img alt="" decoding="async"></div><div class="ps-info"><div class="play-sheet-title ps-title"></div><div class="ps-chips"></div><p class="ps-overview"></p></div></div>'+
+    '<div class="ps-coll"><div class="ps-poster"><img alt="" decoding="async"></div><div class="ps-coll-main"><div class="ps-coll-title"></div><div class="ps-coll-sub"></div>'+
+      '<div class="ps-coll-note">'+PS_ICON_INFO+'<span></span></div><div class="ps-films" role="radiogroup" aria-label="Фильм"></div></div></div>'+
     '<div class="play-sheet-sub ps-status"></div>'+
-    '<div class="ps-progress hidden"><div class="ps-bar"><i></i></div><span></span></div>'+
-    '<a class="sheet-btn ps-watch disabled" data-act="player" rel="noopener noreferrer">▶ Смотреть</a>'+
+    '<div class="ps-resume hidden"><div class="ps-resume-top"><span class="ps-resume-ic">'+PS_ICON_PLAY+'</span><span class="ps-resume-text"><b></b><small>здесь вы остановились</small></span></div>'+
+      '<div class="ps-resume-bar"><span class="ps-bar"><i></i></span><em></em></div></div>'+
+    '<a class="sheet-btn ps-watch disabled" data-act="player" rel="noopener noreferrer">'+PS_ICON_PLAY+'<span></span></a>'+
     '<div class="ps-pick hidden"></div>'+
-    '<div class="ps-shelf"><button type="button" class="ps-btn" data-act="mine"></button><button type="button" class="ps-btn" data-act="fav"></button></div><div class="ps-ai hidden"></div></div>';
+    '<div class="ps-shelf"><button type="button" class="ps-btn secondary" data-act="mine"></button><button type="button" class="ps-btn secondary" data-act="fav"></button></div>'+
+    '<div class="ps-ai hidden"></div>'+
+    '<button type="button" class="ps-close-bottom secondary sheet-cancel">Закрыть</button></div>';
   const close=()=>{playSheetToken++;s.classList.remove("open");document.body.style.overflow="";};
   s.addEventListener("click",e=>{if(e.target===s)close();});
-  s.querySelector(".sheet-cancel").addEventListener("click",close);
+  s.querySelectorAll(".sheet-cancel").forEach(b=>b.addEventListener("click",close));
   s.querySelectorAll(".ps-shelf .ps-btn").forEach(b=>b.addEventListener("click",()=>psToggle(s,b.dataset.act)));
   s.querySelectorAll("a.sheet-btn").forEach(a=>a.addEventListener("click",e=>{
     if(a.classList.contains("disabled")||!a.getAttribute("href")){e.preventDefault();return;}
@@ -2086,39 +2351,30 @@ function ensurePlaySheet(){
   document.addEventListener("keydown",e=>{if(e.key==="Escape"&&s.classList.contains("open"))close();});
   document.body.append(s);return s;
 }
-function fillWatch(s,url){
+function fillWatch(s,url,text,playlist){
   const player=s.querySelector('[data-act="player"]');
-  delete player.dataset.playlist;
-  if(!url){player.classList.add("disabled");player.removeAttribute("href");delete player.dataset.mediaUrl;return;}
-  player.href=playerHref(url);player.dataset.mediaUrl=url;player.classList.remove("disabled");
+  player.querySelector("span").textContent=text;
+  delete player.dataset.playlist; delete player.dataset.mediaUrl;
+  if(!url){player.classList.add("disabled");player.removeAttribute("href");return;}
+  player.dataset.mediaUrl=url;
+  if(playlist&&IS_DESKTOP) player.href="potplayer://"+playlist;
+  else { player.href=playerHref(url); if(playlist) player.dataset.playlist=playlist; }
+  player.classList.remove("disabled");
 }
 async function openPlaySheet(file,label,playlistReq,magnet){
   const s=ensurePlaySheet(), token=++playSheetToken;
   s.classList.add("open");document.body.style.overflow="hidden";
   let pl=null; try{ pl=magnet?buildPlaylist(magnet):null; }catch{}
-  psBuildPicker(s,magnet,pl,file);
-  psLoad(s,token,file,label,playlistReq,magnet,true);
-}
-async function psLoad(s,token,file,label,playlistReq,magnet){
-  psFill(s,magnet,file,label,token);
-  const sub=s.querySelector(".play-sheet-sub");sub.textContent="Готовим к просмотру…";
-  fillWatch(s,null);
-  const name=file.name||String(file.path||"video").split("/").pop();
-  let mUrl=null,err=null;
-  try{mUrl=await signedMirror(file.sourceLink,name);}catch(e){err=e;}
-  if(token!==playSheetToken) return;
-  fillWatch(s,mUrl);
-  // PotPlayer (desktop) and the Android app: this episode plus every following one to the end of the season.
-  if(mUrl&&(IS_DESKTOP||nativeApp())&&playlistReq&&playlistReq.items.length>1){
-    const mp=s.querySelector('[data-act="player"]');mp.classList.add("disabled");sub.textContent="Готовим плейлист…";
-    try{
-      const pl=await api("/api/playlist",{method:"POST",body:JSON.stringify({magnetId:playlistReq.magnetId,title:label,items:playlistReq.items})});
-      if(token!==playSheetToken) return;
-      if(pl&&pl.url){ if(IS_DESKTOP) mp.href="potplayer://"+pl.url; else mp.dataset.playlist=pl.url; }
-    }catch{}
-    if(token===playSheetToken)mp.classList.remove("disabled");
-  }
-  if(token===playSheetToken) sub.textContent=mUrl?"Можно смотреть":(err?.message||"Не удалось открыть фильм");
+  // подпись и плейлист сериала или сборника — всегда свои, как их строит выбор серии в окне
+  const t=psTarget(magnet,pl,file);
+  if(t){ label=t.label; playlistReq=t.req; }
+  s.dataset.kind=!magnet?"file":t?(isCollection(pl,magnet)?"collection":"series"):"movie";
+  s._pl=pl; s._magnet=magnet||null; s._file=null;
+  s.querySelector(".ps-card").scrollTop=0;
+  psHead(s,magnet,label,token);
+  psBuildPicker(s,magnet,pl);
+  psLoad(s,file,label,playlistReq,magnet);
+  if(magnet&&!watchMap) loadWatch().then(()=>{ if(token===playSheetToken) psWatchInfo(s); });
 }
 function playFile(file,label,playlistReq,magnet){
   if(!file||!file.sourceLink){showToast("Ссылка на файл ещё не готова — нажмите «Обновить» в библиотеке.",true);return;}
@@ -2128,22 +2384,13 @@ function makeSelect(label){const s=document.createElement("select");s.setAttribu
 function setupTilePlayback(magnet,tile,art,info){
   const pl=buildPlaylist(magnet);
   if(pl.type==="movie"&&!pl.file) return;
-  const baseTitle=displayTitle(magnet);
   const mediaLine=document.createElement("div");mediaLine.className="file-meta tile-media";
   const playBtn=document.createElement("button");playBtn.type="button";playBtn.className="tile-play";playBtn.textContent="▶";
   playBtn.setAttribute("aria-label","Смотреть");
   playBtn.title="Смотреть";
-  let current=null;
-  if(pl.type==="series"){
-    // the episode last opened (or the first one); the season and episode are picked in the play sheet
-    let startItem=pl.seasons[0].items[0];
-    const saved=readLastEpisode(magnet.id);
-    if(saved){for(const s of pl.seasons){const it=s.items.find(e=>e.file.path===saved);if(it){startItem=it;break;}}}
-    current=startItem.file;
-  }else{current=pl.file;}
-  playBtn.addEventListener("click",e=>{e.stopPropagation();
-    const ep=pl.type==="series"?psEpisode(magnet,pl,current):null;
-    playFile(current,ep?ep.label:baseTitle,ep?ep.req:null,magnet);});
+  // the episode last opened (or the first one) for the media line; the click asks the account where it was left (startFile)
+  const current=startFile(magnet,pl);
+  playBtn.addEventListener("click",e=>{e.stopPropagation();openMagnet(magnet);});
   playBtn.addEventListener("keydown",e=>e.stopPropagation());
   art.append(playBtn);
   const stEl=info.querySelector(".tile-status"); if(stEl) stEl.after(mediaLine); else info.append(mediaLine);
@@ -2301,9 +2548,6 @@ async function classifyAnimation() {
           if (data.animation) newlyFound++;
         }
       } catch {}
-      if (newlyFound > 0 && i % 5 === 0) {
-        renderLibrary(false);
-      }
       await new Promise(r => setTimeout(r, 120));
     }
     if (newlyFound > 0) {
@@ -2364,7 +2608,7 @@ function getItemSpecs(m) {
   return { quality, codec, type, cat };
 }
 
-function tileSig(m){ return JSON.stringify([(serverTagMap[m.id]||[]).join(),m.name,tileTitle(m),m.status,m.statusCode,m.size,m.downloaded,Boolean(m.favorite),Boolean(m.mine),m.canRemove!==false,(m.files||[]).length,libraryViewMode]); }
+function tileSig(m){ return JSON.stringify([(serverTagMap[m.id]||[]).join(),m.name,m.status,m.statusCode,m.size,m.downloaded,Boolean(m.favorite),Boolean(m.mine),m.canRemove!==false,(m.files||[]).length,libraryViewMode]); }
 
 function renderLibrary(animate=true) {
   const target=$("libraryResults"), query=$("librarySearch") ? $("librarySearch").value.trim().toLowerCase() : "";
@@ -2422,11 +2666,24 @@ function renderLibrary(animate=true) {
   for (const magnet of magnets) {
     const versions=versionsOf.get(magnet.id)||null;
     const sig=tileSig(magnet)+(versions?"|v"+versions.map(v=>v.id).join(","):""), old=prevTiles.get(magnet.id);
-    if(old && old.sig===sig){ nodes.push(old.tile); libraryTiles.set(magnet.id,old); continue; }
+    if(old && old.sig===sig){
+      const shown=tileTitle(magnet);
+      const titleEl=old.tile.querySelector(".tile-title");
+      if(titleEl && titleEl.textContent!==shown) titleEl.textContent=shown;
+      const nameEl=old.tile.querySelector(".tile-info strong");
+      if(nameEl && nameEl.textContent!==shown) nameEl.textContent=shown;
+      nodes.push(old.tile);
+      libraryTiles.set(magnet.id,old);
+      continue;
+    }
     const tile=document.createElement("div"); tile.setAttribute("role","button"); tile.tabIndex=0;
     // Анимация только у действительно новых плиток; при первом показе — каскадом, потом — сразу.
-    tile.className="library-tile tile-enter"; tile.style.setProperty("--tile-index", String(animate&&!before.size ? fresh++ : 0));
-    tile.addEventListener("animationend",e=>{ if(e.target===tile) tile.classList.remove("tile-enter"); });
+    const shouldAnimate=Boolean(animate&&!before.size);
+    tile.className="library-tile"+(shouldAnimate?" tile-enter":"");
+    if(shouldAnimate){
+      tile.style.setProperty("--tile-index", String(fresh++));
+      tile.addEventListener("animationend",e=>{ if(e.target===tile) tile.classList.remove("tile-enter"); });
+    }
     const art=document.createElement("div"); art.className="tile-art";
     const title=document.createElement("div"); title.className="tile-title"; title.textContent=tileTitle(magnet); art.append(title);
 
@@ -2439,6 +2696,21 @@ function renderLibrary(animate=true) {
     art.append(badges);
     const videoFile = (magnet.files || []).find(f => /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso)$/i.test(f.path || ""));
     const posterQueries = [...new Set([aiPosterQuery(magnet), displayTitle(magnet), videoFile ? escapeTitle(videoFile.name || videoFile.path.split("/").pop()) : ""].filter(Boolean))];
+
+    if(old && old.tile){
+      const prevImg=old.tile.querySelector(".tile-art img");
+      if(prevImg) art.prepend(prevImg);
+    }
+    const cachedPoster=posterPathOf(magnet);
+    if(cachedPoster && !art.querySelector("img")){
+      const img=document.createElement("img"); img.alt="Постер: "+(posterQueries[0]||magnet.name); img.decoding="async";
+      img.className="poster-loaded";
+      const pm=/\/api\/poster\/img\/w500\/([A-Za-z0-9_-]+\.(?:jpg|png|webp))$/.exec(cachedPoster);
+      if(pm){ img.srcset=`${apiUrl("/api/poster/img/w342/"+pm[1])} 342w, ${apiUrl(cachedPoster)} 500w`; img.sizes="(max-width:600px) 48vw, 260px"; }
+      img.src=apiUrl(cachedPoster);
+      img.onerror=()=>{ img.remove(); art.classList.add("poster-missing"); };
+      art.prepend(img);
+    }
     whenVisible(tile, ()=>(async()=>{
       let url=null;
       for (const q of posterQueries) { url=await getPoster(q); if(url) break; }
@@ -2448,8 +2720,8 @@ function renderLibrary(animate=true) {
         img.onerror=()=>{ img.remove(); art.classList.add("poster-missing"); };
         // Плитка ~170–260 px: на телефоне хватает w342 (меньше трафика и декодирования), на ПК/retina — w500.
         const pm=/\/api\/poster\/img\/w500\/([A-Za-z0-9_-]+\.(?:jpg|png|webp))$/.exec(url);
-        if(pm){ img.srcset=`/api/poster/img/w342/${pm[1]} 342w, ${url} 500w`; img.sizes="(max-width:600px) 48vw, 260px"; }
-        img.src=url;
+        if(pm){ img.srcset=`${apiUrl("/api/poster/img/w342/"+pm[1])} 342w, ${apiUrl(url)} 500w`; img.sizes="(max-width:600px) 48vw, 260px"; }
+        img.src=apiUrl(url);
         try { if (img.decode) await img.decode(); else if (!img.complete) await new Promise(resolve=>{img.onload=resolve;img.onerror=resolve;}); } catch {}
         if (!img.complete || !img.naturalWidth) { img.remove(); art.classList.add("poster-missing"); return; }
         if (art.isConnected) { art.prepend(img); requestAnimationFrame(()=>{ if(img.isConnected) img.classList.add("poster-loaded"); }); }

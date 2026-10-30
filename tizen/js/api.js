@@ -6,8 +6,9 @@
 (function (g) {
   'use strict';
   var SM = g.SM = g.SM || {};
-  var HOST = SM.SITE_HOST || '';
-  var BASE = 'https://' + HOST;
+  // SITE_URL — домен и, если сервер не в корне, путь (https://домен/путь); раньше сборка писала только SITE_HOST
+  var BASE = String(SM.SITE_URL || (SM.SITE_HOST ? 'https://' + SM.SITE_HOST : '')).replace(/\/+$/, '');
+  var HOST = BASE.replace(/^https?:\/\//, '').split('/')[0];
   var TOKEN_KEY = 'device_token';
 
   function HttpError(code, message) { this.code = code; this.message = message; }

@@ -86,9 +86,12 @@ data class PartyRoom(
     /** Сервер не принял смену фильма: снова верим его ответам. */
     fun fileRejected(): PartyRoom = copy(pendingFileKey = null)
 
+    /** Ведущий закрыл фильм: у комнаты фильма нет (ждём подтверждения, как у [putFile]; пустой ключ — «без фильма»). */
+    fun clearFile(): PartyRoom = copy(file = null, pendingFileKey = NO_FILE)
+
     /** Ответ сервера с комнатой (создание, вход, действие, `state_changed`). */
     fun merge(u: RoomUpdate): PartyRoom {
-        if (pendingFileKey != null && u.file?.key != pendingFileKey) {
+        if (pendingFileKey != null && (u.file?.key ?: NO_FILE) != pendingFileKey) {
             // Старый ответ: участники и ведущий — свежие, фильм и время — ещё прежние
             return copy(id = u.id ?: id, hostId = u.hostId, hostKey = u.hostKey, hostName = u.hostName,
                 hostOnly = u.hostOnly, members = u.members ?: members)
@@ -117,6 +120,8 @@ data class PartyRoom(
 
     companion object {
         const val SHARED_USER = "shared"
+        /** [pendingFileKey] закрытого фильма (у настоящего фильма ключ не пустой: см. [PartyProtocol.parseRoom]). */
+        const val NO_FILE = ""
     }
 }
 
@@ -174,6 +179,8 @@ object PartyProtocol {
     fun seek(posMs: Long): JSONObject = JSONObject().put("type", "seek").put("pos", posMs / 1000.0)
     fun buffering(loading: Boolean): JSONObject = JSONObject().put("type", "buffering").put("buffering", loading)
     fun changeFile(f: PartyFileRef): JSONObject = JSONObject().put("type", "change_file").put("file", fileJson(f))
+    /** Ведущий закрыл фильм: у гостей плеер тоже закрывается (сервер ставит `room.file = null`). */
+    fun closeFile(): JSONObject = JSONObject().put("type", "change_file").put("file", JSONObject.NULL)
     fun withClient(body: JSONObject, clientId: String): JSONObject = body.put("client_id", clientId)
 
     fun fileJson(f: PartyFileRef): JSONObject = JSONObject().put("key", f.key).put("name", f.title).put("ad_id", f.adId)

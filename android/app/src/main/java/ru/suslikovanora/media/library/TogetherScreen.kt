@@ -161,7 +161,8 @@ private fun FilmPanel(store: LibraryStore, onLibrary: () -> Unit, onOpen: (PlayT
         if (target == null) Text(tr("party.net_v_mediateke"), color = Sm.bad, fontFamily = Onest, fontSize = 13.sp, modifier = Modifier.padding(bottom = 10.dp))
         // «Другой фильм» — also when this film is missing: otherwise the creator would have to make a new room
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (target != null) LampButton(tr("party.smotret_vmeste")) { onOpen(target) }
+            // A guest picks nothing: the host's file opens by itself (MainActivity), the button only opens it again
+            if (target != null) LampButton(tr("party.smotret_vmeste")) { if (Party.isHost) onOpen(target) else Party.followed = null }
             if (Party.isHost) OutlineButton(tr("party.drugoy_film")) { onLibrary() }
         }
     }
