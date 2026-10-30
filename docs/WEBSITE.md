@@ -336,3 +336,10 @@ npm start
   `publicBase(req)` = `https://<host><путь>`; ими собираются адреса в `routes/mirror.js`, `custom-audio.js`, `tvstream.js`, `auth.js`.
 - Сайт (`public/index.html`, `home.js`): `API_ROOT` — путь страницы без последнего `media/`, `apiUrl()` дописывает его к `/api/…`.
 - nginx старого адреса без пути: `proxy_set_header X-Forwarded-Prefix "";`. Новый адрес, пример конфигурации и план — `docs/MIGRATION.md`.
+
+## 13. Встроенный браузерный плеер (Artplayer)
+- **Гибридный запуск видео**:
+  - Основной вариант — «Смотреть в браузере» через плеер Artplayer (`#webPlayerModal`, `#artplayerContainer`). Поддерживает Range-запросы (206 Partial Content), перемотку, полноэкранный режим, PiP, жесты и внешние субтитры (.srt/.vtt) из раздачи.
+  - Сохранение и восстановление прогресса просмотра через `/api/sync` (синхронизация с аккаунтом Discord каждые 10 секунд и при закрытии/паузе плеера).
+  - Запасной вариант — кнопка «Открыть в PotPlayer» / «Внешний плеер» для тяжелых Remux или кодеков, не поддерживаемых браузером (DTS, TrueHD).
+- **Библиотека плеера**: `website/public/vendor/artplayer.js` и CDN (`cdn.jsdelivr.net`), CSP в `precompressed.js` разрешает скрипты и медиапотоки.

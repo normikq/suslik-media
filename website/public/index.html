@@ -8,6 +8,7 @@
   <link rel="icon" type="image/png" sizes="128x128" href="brand-mark.png">
   <link rel="apple-touch-icon" href="icon.png">
   <script src="i18n.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/artplayer/dist/artplayer.js"></script>
   <style>
     :root{color-scheme:dark;--bg:#0b0c10;--panel:#141720;--line:#292d3a;--text:#f3f4f8;--muted:#9da4b5;--accent:#b7a0ff;--accent2:#8b70ed}
     *{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at top,#19152a 0,#0b0c10 55%);color:var(--text);font:16px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh}
@@ -396,7 +397,7 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
 <script>/* App 1.2+: native library and bottom bar */try{if(Number(window.__suslikApp||0)>=3)document.documentElement.classList.add("suslik-native");}catch(e){}
 /* Пока не ответил /api/session, страница скрыта: иначе на секунду мелькает форма входа у тех, кто уже вошёл (снимается в showApp; страховка — через 4 с) */
 try{document.documentElement.classList.add("auth-pending");setTimeout(function(){document.documentElement.classList.remove("auth-pending");},4000);}catch(e){}</script>
-<link rel="stylesheet" href="redesign.css?v=42">
+<link rel="stylesheet" href="redesign.css?v=43">
 <style>
 .sr-badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
 .sr-badges .rb { background: #1c2230; color: #c7d0e0; border: 1px solid #2e3850; border-radius: 6px; padding: 2px 8px; font-size: 12px; font-weight: 700; }
@@ -2322,6 +2323,138 @@ async function psLoad(s,file,label,playlistReq,magnet){
   sub.classList.toggle("err",!mUrl);
   if(mUrl&&magnet&&s.dataset.kind!=="movie") saveLastEpisode(magnet.id,file.path);
 }
+let currentArtPlayer = null;
+// Запуск встроенного веб-плеера
+function openWebPlayer(options) {
+  const { url, title, file, magnet, resumeTimeMs = 0 } = options;
+  const modal = document.getElementById("webPlayerModal");
+  const container = document.getElementById("artplayerContainer");
+  const titleEl = document.getElementById("webPlayerTitle");
+  if (!modal || !container) return;
+
+  if (typeof Artplayer === "undefined") {
+    showToast("Библиотека плеера не загрузилась. Попробуйте обновить страницу.", true);
+    return;
+  }
+
+  titleEl.textContent = title || "Воспроизведение";
+  modal.classList.remove("hidden");
+  document.body.style.overflow = "hidden";
+
+  // Уничтожаем предыдущий экземпляр при повторном открытии
+  if (currentArtPlayer) {
+    currentArtPlayer.destroy();
+    currentArtPlayer = null;
+  }
+
+  // Синхронизация прогресса с сервером
+  let lastSyncAt = 0;
+  const syncProgress = () => {
+    if (!currentArtPlayer || !magnet || !file) return;
+    const curMs = Math.round(currentArtPlayer.currentTime * 1000);
+    const durMs = Math.round(currentArtPlayer.duration * 1000);
+    if (durMs > 0 && curMs >= 0) {
+      const now = Date.now();
+      lastSyncAt = now;
+      const key = magnet.id + "|" + (file.path || file.name);
+      if (watchMap) {
+        watchMap.set(key, { key, pos: curMs, len: durMs, at: now });
+      }
+      api("/api/sync", {
+        method: "POST",
+        body: JSON.stringify({
+          watch: [{
+            key: key,
+            magnetId: magnet.id,
+            path: file.path || file.name,
+            pos: curMs,
+            len: durMs,
+            at: now
+          }]
+        })
+      }).catch(() => {});
+    }
+  };
+
+  // Поиск внешних субтитров .srt / .vtt рядом с фильмом в раздаче
+  let subtitleUrl = null;
+  if (magnet && magnet.files) {
+    const subFile = magnet.files.find(f => /\.(srt|vtt)$/i.test(f.name || f.path || ""));
+    if (subFile && subFile.sourceLink) {
+      const subName = subFile.name || String(subFile.path || "subtitles.srt").split("/").pop();
+      // Подписанный URL для субтитров
+      signedMirror(subFile.sourceLink, subName).then(sUrl => {
+        if (currentArtPlayer && sUrl) {
+          currentArtPlayer.subtitle.url = sUrl;
+        }
+      }).catch(() => {});
+    }
+  }
+
+  // Инициализация Artplayer
+  currentArtPlayer = new Artplayer({
+    container: container,
+    url: url,
+    title: title,
+    playbackRate: true,
+    aspectRatio: true,
+    setting: true,
+    pip: true,
+    fullscreen: true,
+    fullscreenWeb: true,
+    autoOrientation: true,
+    theme: "#b7a0ff",
+    autoPlayback: true,
+    icons: {
+      loading: '<div style="color: #b7a0ff">Загрузка видео…</div>',
+    }
+  });
+
+  // Ошибка воспроизведения (неподдерживаемый кодек и т. д.)
+  currentArtPlayer.on("error", () => {
+    showToast("Браузер не поддерживает кодек этого видео. Откройте в PotPlayer или VLC.", true);
+  });
+
+  // Восстановление позиции просмотра
+  if (resumeTimeMs > 0) {
+    currentArtPlayer.on("video:canplay", () => {
+      const seekSec = Math.floor(resumeTimeMs / 1000);
+      if (currentArtPlayer.currentTime < 5 && seekSec > 0) {
+        currentArtPlayer.seek = seekSec;
+      }
+    }, { once: true });
+  }
+
+  // Синхронизация прогресса с сервером (раз в 10 секунд)
+  currentArtPlayer.on("video:timeupdate", () => {
+    const now = Date.now();
+    if (now - lastSyncAt < 10000 || !magnet || !file) return;
+    syncProgress();
+  });
+  currentArtPlayer.on("video:pause", syncProgress);
+  currentArtPlayer.on("video:ended", syncProgress);
+
+  // Закрытие плеера
+  const closeBtn = document.getElementById("webPlayerClose");
+  const closePlayer = () => {
+    document.removeEventListener("keydown", escHandler);
+    syncProgress();
+    if (currentArtPlayer) {
+      currentArtPlayer.destroy();
+      currentArtPlayer = null;
+    }
+    modal.classList.add("hidden");
+    document.body.style.overflow = "";
+  };
+  closeBtn.onclick = closePlayer;
+  function escHandler(e) {
+    if (e.key === "Escape" && !modal.classList.contains("hidden")) {
+      closePlayer();
+    }
+  }
+  document.addEventListener("keydown", escHandler);
+}
+
 function ensurePlaySheet(){
   let s=document.getElementById("playSheet");
   if(s) return s;
@@ -2335,6 +2468,9 @@ function ensurePlaySheet(){
     '<div class="play-sheet-sub ps-status"></div>'+
     '<div class="ps-resume hidden"><div class="ps-resume-top"><span class="ps-resume-ic">'+PS_ICON_PLAY+'</span><span class="ps-resume-text"><b></b><small>здесь вы остановились</small></span></div>'+
       '<div class="ps-resume-bar"><span class="ps-bar"><i></i></span><em></em></div></div>'+
+    '<button type="button" class="sheet-btn ps-watch-browser disabled" style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%">' +
+    PS_ICON_PLAY + '<span>Смотреть в браузере</span>' +
+    '</button>' +
     '<a class="sheet-btn ps-watch disabled" data-act="player" rel="noopener noreferrer">'+PS_ICON_PLAY+'<span></span></a>'+
     '<div class="ps-pick hidden"></div>'+
     '<div class="ps-shelf"><button type="button" class="ps-btn secondary" data-act="mine"></button><button type="button" class="ps-btn secondary" data-act="fav"></button></div>'+
@@ -2353,13 +2489,35 @@ function ensurePlaySheet(){
 }
 function fillWatch(s,url,text,playlist){
   const player=s.querySelector('[data-act="player"]');
-  player.querySelector("span").textContent=text;
+  player.querySelector("span").textContent=IS_DESKTOP ? "Открыть в PotPlayer" : "Внешний плеер";
   delete player.dataset.playlist; delete player.dataset.mediaUrl;
-  if(!url){player.classList.add("disabled");player.removeAttribute("href");return;}
+  const browserBtn = s.querySelector(".ps-watch-browser");
+  if(!url){
+    player.classList.add("disabled");
+    player.removeAttribute("href");
+    if(browserBtn){ browserBtn.classList.add("disabled"); browserBtn.onclick=null; }
+    return;
+  }
   player.dataset.mediaUrl=url;
   if(playlist&&IS_DESKTOP) player.href="potplayer://"+playlist;
   else { player.href=playerHref(url); if(playlist) player.dataset.playlist=playlist; }
   player.classList.remove("disabled");
+  if(browserBtn){
+    browserBtn.classList.remove("disabled");
+    browserBtn.onclick=()=>{
+      const title=(s.querySelector(".play-sheet-title")||{}).textContent||"Видео";
+      const w=s._magnet&&s._file?watchOf(s._magnet.id,s._file):null;
+      openWebPlayer({
+        url:url,
+        title:title,
+        file:s._file,
+        magnet:s._magnet,
+        resumeTimeMs:w?w.pos:0
+      });
+      s.classList.remove("open");
+      document.body.style.overflow="";
+    };
+  }
 }
 async function openPlaySheet(file,label,playlistReq,magnet){
   const s=ensurePlaySheet(), token=++playSheetToken;
@@ -2900,7 +3058,7 @@ function openLibraryModal(magnet) {
     quickPlay.textContent="▶ Запустить основной фильм (M2TS · "+formatBytes(mainM2ts.size)+")";
     quickPlay.title=String(mainM2ts.path||mainM2ts.name||"");
     const m2tsName=String(mainM2ts.name||String(mainM2ts.path||"main.m2ts").split("/").pop()||"main.m2ts");
-    quickPlay.addEventListener("click",()=>openPlaySheet(mainM2ts,m2tsName));
+    quickPlay.addEventListener("click",()=>openPlaySheet(mainM2ts,m2tsName,null,magnet));
     quickWrap.append(quickPlay);target.append(quickWrap);
   }
   const query=$("librarySearch").value.trim().toLowerCase();
@@ -2937,7 +3095,7 @@ function openLibraryModal(magnet) {
     if(file.sourceLink){
       const name=String(file.path||file.name||"").split("/").pop();
       const watch=document.createElement("button");watch.type="button";watch.className="secondary";watch.textContent="▶ Смотреть";
-      watch.addEventListener("click",()=>openPlaySheet(file,name));right.append(watch);
+      watch.addEventListener("click",()=>openPlaySheet(file,name,null,magnet));right.append(watch);
     }
     row.append(right);
   }
@@ -3030,6 +3188,15 @@ checkSession();
   }).observe(document.documentElement, { childList: true, subtree: true });
 })();
 </script>
+
+<!-- Полноэкранный оверлей встроенного видеоплеера -->
+<div id="webPlayerModal" class="web-player-modal hidden">
+  <div class="web-player-header">
+    <div id="webPlayerTitle" class="web-player-title"></div>
+    <button type="button" id="webPlayerClose" class="secondary" aria-label="Закрыть плеер">✕ Закрыть</button>
+  </div>
+  <div id="artplayerContainer" class="web-player-body"></div>
+</div>
 
 <script src="redesign.js?v=6" defer></script>
 <script src="home.js?v=8" defer></script>

@@ -2413,6 +2413,20 @@ html.auth-pending main { opacity: 0; pointer-events: none; }
 #playSheet a.ps-watch:hover { background: #3b74f0; border-color: #4d86ff; }
 #playSheet a.ps-watch.disabled { background: #161c28; border-color: #202736; color: #5a6478; pointer-events: none; }
 
+#playSheet button.ps-watch-browser,
+.sheet-btn.ps-watch-browser {
+  display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 8px; width: 100%; height: 52px; min-height: 0; padding: 0 16px; box-sizing: border-box;
+  border-radius: 12px; background: var(--accent, #b7a0ff); border: 1px solid rgba(183, 160, 255, 0.4); color: #171222; font: 600 14px var(--ui); cursor: pointer;
+  margin-bottom: 8px;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+}
+#playSheet button.ps-watch-browser svg,
+.sheet-btn.ps-watch-browser svg { width: 12px; height: 12px; flex: 0 0 auto; fill: currentColor; }
+#playSheet button.ps-watch-browser:hover,
+.sheet-btn.ps-watch-browser:hover { background: #c8b7ff; }
+#playSheet button.ps-watch-browser.disabled,
+.sheet-btn.ps-watch-browser.disabled { background: #161c28; border-color: #202736; color: #5a6478; pointer-events: none; opacity: 0.55; }
+
 #playSheet .ps-pick { display: flex; gap: 12px; margin-top: 14px; }
 #playSheet .ps-field { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; margin: 0; font: 400 13px var(--ui); color: #8e96a8; }
 #playSheet .ps-field select {
@@ -2523,6 +2537,8 @@ html.auth-pending main { opacity: 0; pointer-events: none; }
   #playSheet .ps-resume-bar em { font-size: 11.5px; }
   #playSheet a.ps-watch { height: 50px; font-size: 13.5px; border-color: rgba(96, 165, 250, 0.3); box-shadow: 0 6px 18px rgba(37, 99, 235, 0.35); }
   #playSheet a.ps-watch.disabled { background: rgba(37, 99, 235, 0.5); border-color: transparent; color: rgba(255, 255, 255, 0.55); box-shadow: none; }
+  #playSheet button.ps-watch-browser,
+  .sheet-btn.ps-watch-browser { height: 50px; font-size: 13.5px; }
   #playSheet .ps-pick { gap: 10px; }
   #playSheet .ps-field { font-size: 12.5px; }
   #playSheet .ps-field select { height: 48px; }
@@ -2770,3 +2786,37 @@ button.sess-btn.hidden { display: none; }
 .sess-row.stale { opacity: .6; }
 .sess-row.stale .sess-meta { color: #d6a46a; }
 @media (max-width: 900px) { .sessions-actions { width: 100%; flex-direction: column; } .sessions-actions button.sess-btn { width: 100%; } }
+
+/* ===== Встроенный веб-плеер (Artplayer) ===== */
+.web-player-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: rgba(0, 0, 0, 0.95);
+  display: flex;
+  flex-direction: column;
+}
+.web-player-header {
+  height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  background: rgba(20, 23, 32, 0.85);
+  border-bottom: 1px solid var(--line, #292d3a);
+}
+.web-player-title {
+  font-weight: 600;
+  color: var(--text, #f3f4f8);
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-right: 16px;
+}
+.web-player-body {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  position: relative;
+}

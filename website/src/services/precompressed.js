@@ -26,7 +26,7 @@ function pageCsp(html) {
   }
   return [
     "default-src 'self'",
-    `script-src 'self' ${[...hashSet].join(" ")}`,
+    `script-src 'self' ${[...hashSet].join(" ")} https://cdn.jsdelivr.net`.trim(),
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https://cdn.discordapp.com",
     "font-src 'self' data:",
