@@ -2352,49 +2352,233 @@ html.auth-pending main { opacity: 0; pointer-events: none; }
 .library-controls .btn-refresh .refresh-spinner { font-size: 0; }
 @media (max-width: 760px) { .lib-actions { margin-left: 0; width: 100%; } .lib-seg { flex-wrap: wrap; } }
 
-/* ===== Окно фильма ===== */
-.ps-card { position: relative; width: min(640px, 100%) !important; gap: 0 !important; padding: 22px !important; background: rgba(12, 18, 36, 0.94) !important; border-radius: 22px !important; }
-.ps-close { position: absolute; top: 16px; right: 16px; width: 34px; height: 34px; min-height: 0 !important; padding: 0 !important; border-radius: 50% !important; font-size: 20px !important; line-height: 1; display: grid; place-items: center; background: rgba(255, 255, 255, 0.08) !important; border: 1px solid rgba(255, 255, 255, 0.14) !important; color: #c3c9d6 !important; cursor: pointer; }
-.ps-close:hover { background: rgba(255, 255, 255, 0.16) !important; color: #fff !important; }
-.ps-top { display: flex; gap: 20px; }
-.ps-poster { flex: 0 0 150px; height: 225px; border-radius: 14px; overflow: hidden; background: linear-gradient(#222838, #10131b); border: 1px solid rgba(255, 255, 255, 0.12); }
-.ps-poster img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.ps-poster img:not([src]) { visibility: hidden; }
-.ps-info { flex: 1; min-width: 0; padding-right: 40px; }
-.ps-title { font: 700 22px/1.25 var(--display, system-ui) !important; }
-.ps-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
-.ps-chip { padding: 4px 10px; border-radius: 8px; font: 500 12.5px system-ui; color: #d6dbe4; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.15); }
-.ps-rating { font: 600 13px system-ui; color: #facc15; }
-.ps-overview { margin: 14px 0 0; font: 400 14px/1.5 system-ui; color: #c3c9d6; display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; }
-.ps-status { margin: 18px 0 8px !important; }
-.ps-progress { display: flex; align-items: center; gap: 12px; margin: 0 0 12px; padding: 12px 14px; border-radius: 14px; background: #12203f; border: 1px solid #3b82f6; }
-.ps-progress.hidden { display: none; }
-.ps-bar { flex: 0 0 38%; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.2); overflow: hidden; }
-.ps-bar i { display: block; height: 100%; background: #2563eb; }
-.ps-progress span { font: 500 13px system-ui; color: #c3c9d6; }
-a.ps-watch { min-height: 52px; background: linear-gradient(135deg, #2563eb, #3b82f6) !important; border-color: #4d86ff !important; }
-.ps-shelf { display: flex; gap: 12px; margin-top: 12px; }
-.ps-btn { flex: 1; min-height: 48px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 12px !important; background: #141824 !important; border: 1px solid #242a3a !important; color: #fff !important; font: 600 14px system-ui !important; cursor: pointer; box-shadow: none !important; }
-.ps-btn:hover { background: #1c2232 !important; border-color: #323b50 !important; }
-.ps-btn.on { background: #16203a !important; border-color: rgba(59, 130, 246, 0.35) !important; }
-.ps-btn[data-act="fav"].on svg { color: #ff6b8a; fill: #ff6b8a; }
-.ps-btn[data-act="mine"].on svg { color: #7fb2ff; fill: #7fb2ff; }
-.ps-btn[hidden] { display: none; }
-.ps-ai { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
-.ps-ai.hidden { display: none; }
-.ps-ai .ps-shelf { margin-top: 0; }
-.ps-ai-note { color: #c9d2e6; font: 500 14px system-ui; }
-.ps-ai-row { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; border-top: 1px solid #1c2232; }
-.ps-ai-src { color: #8e96a8 !important; font-size: 12px !important; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ps-btn:disabled { opacity: .55; cursor: default; }
-@media (max-width: 560px) { .ps-top { flex-direction: column; } .ps-poster { flex-basis: auto; width: 120px; height: 180px; } .ps-info { padding-right: 0; } .ps-shelf { flex-direction: column; } }
+/* ===== Окно фильма: как PlayDialog на ПК (токены desktop/.../ui/Theme.kt), на узком экране — шторка PlaySheet из Android =====
+   #playSheet в селекторах — чтобы общие правила кнопок (синий градиент у всех button) сюда не попадали */
+#playSheet { background: rgba(9, 11, 16, 0.8); -webkit-backdrop-filter: none; backdrop-filter: none; font-family: var(--ui); }
+#playSheet.open { animation: fadeIn 0.26s var(--ease) both; }
+#playSheet .ps-card {
+  position: relative; display: block; width: min(620px, 100%); max-height: calc(100vh - 48px); overflow: auto; padding: 22px; gap: 0;
+  background: rgba(11, 16, 32, 0.94); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 22px; box-shadow: 0 30px 90px rgba(0, 0, 0, 0.6);
+  -webkit-backdrop-filter: none; backdrop-filter: none; scrollbar-width: thin; scrollbar-color: rgba(142, 150, 168, 0.35) transparent;
+}
+#playSheet.open .ps-card { animation: psRise 0.26s var(--ease) both; }
+@keyframes psRise { from { opacity: 0; transform: translateY(24px) scale(0.97); } to { opacity: 1; transform: none; } }
+#playSheet[data-kind="series"] .ps-card { width: min(540px, 100%); }
+#playSheet[data-kind="collection"] .ps-card { width: min(660px, 100%); }
+#playSheet .ps-grip { display: none; }
+#playSheet .hidden { display: none !important; }
+#playSheet button { font-family: var(--ui); transform: none !important; filter: none !important; box-shadow: none !important; }
 
-.ps-pick { display: flex; gap: 12px; margin-top: 14px; }
-.ps-pick.hidden { display: none; }
-.ps-field { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; font: 500 12.5px system-ui; color: #8e96a8; }
-.ps-field select { width: 100%; height: 48px; padding: 0 34px 0 14px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.14); background: rgba(255, 255, 255, 0.05) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%238e96a8' stroke-width='2'/%3E%3C/svg%3E") no-repeat right 14px center/12px 8px; color: #fff; font: 500 14px system-ui; -webkit-appearance: none; appearance: none; color-scheme: dark; cursor: pointer; text-overflow: ellipsis; }
-.ps-field select:focus { outline: none; border-color: #3b82f6; }
-.ps-field select option { background: #1b1730; color: #fff; }
+#playSheet .ps-close {
+  position: absolute; top: 22px; right: 22px; z-index: 2; width: 32px; height: 32px; min-height: 0; padding: 0; display: grid; place-items: center;
+  border-radius: 50% !important; background: #181e2b !important; border: 1px solid #262f40 !important; color: #b0b9c9 !important; cursor: pointer;
+}
+#playSheet .ps-close:hover { background: #262f42 !important; border-color: #3b4863 !important; color: #fff !important; }
+
+#playSheet .ps-top { display: flex; gap: 20px; }
+#playSheet .ps-poster { flex: 0 0 150px; height: 225px; border-radius: 14px; overflow: hidden; background: linear-gradient(rgba(255, 255, 255, 0.09), #10131b); border: 1px solid rgba(255, 255, 255, 0.09); }
+#playSheet .ps-poster img { width: 100%; height: 100%; object-fit: cover; display: block; }
+#playSheet .ps-poster img:not([src]), #playSheet .ps-film-art img:not([src]) { visibility: hidden; }
+#playSheet .ps-info { flex: 1; min-width: 0; padding-right: 40px; }
+#playSheet .ps-title { font: 700 22px/28px var(--display); color: #fff; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+#playSheet .ps-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+#playSheet .ps-chip { padding: 4px 10px; border-radius: 8px; font: 500 12.5px var(--ui); color: #d6dbe4; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.15); white-space: nowrap; }
+#playSheet .ps-chip-films { display: none; }
+#playSheet .ps-rating { font: 600 13px var(--ui); color: #facc15; white-space: nowrap; }
+#playSheet .ps-overview { margin: 14px 0 0; font: 400 14px/21px var(--ui); color: #c3c9d6; display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; }
+#playSheet .ps-overview:empty { display: none; }
+
+#playSheet .ps-status { margin: 18px 0 8px; font: 400 13px var(--ui); color: #8e96a8; }
+#playSheet .ps-status.err { color: #ff9b8f; }
+
+/* «С 10:54»: как левая карточка «С … / С начала» на ПК, с полосой просмотра */
+#playSheet .ps-resume { margin: 0 0 12px; padding: 14px; border-radius: 16px; background: #12203f; border: 1.5px solid #3b82f6; }
+#playSheet .ps-resume-top { display: flex; align-items: center; gap: 12px; }
+#playSheet .ps-resume-ic { flex: 0 0 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: #2563eb; color: #fff; }
+#playSheet .ps-resume-ic svg { width: 14px; height: 14px; }
+#playSheet .ps-resume-text { display: flex; flex-direction: column; min-width: 0; }
+#playSheet .ps-resume-text b { font: 600 15px var(--ui); color: #fff; }
+#playSheet .ps-resume-text small { font: 400 12px var(--ui); color: #8e96a8; }
+#playSheet .ps-resume-bar { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+#playSheet .ps-bar { flex: 1; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.2); overflow: hidden; }
+#playSheet .ps-bar i { display: block; height: 100%; border-radius: 2px; background: #2563eb; }
+#playSheet .ps-resume-bar em { font: 400 12px var(--ui); font-style: normal; color: #c3c9d6; }
+
+#playSheet a.ps-watch {
+  display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 8px; width: 100%; height: 52px; min-height: 0; padding: 0 16px; box-sizing: border-box;
+  border-radius: 12px; background: #2563eb; border: 1px solid rgba(96, 165, 250, 0.3); color: #fff; font: 600 14px var(--ui); text-decoration: none; opacity: 1;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+}
+#playSheet a.ps-watch svg { width: 12px; height: 12px; flex: 0 0 auto; }
+#playSheet a.ps-watch:hover { background: #3b74f0; border-color: #4d86ff; }
+#playSheet a.ps-watch.disabled { background: #161c28; border-color: #202736; color: #5a6478; pointer-events: none; }
+
+#playSheet .ps-pick { display: flex; gap: 12px; margin-top: 14px; }
+#playSheet .ps-field { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; margin: 0; font: 400 13px var(--ui); color: #8e96a8; }
+#playSheet .ps-field select {
+  width: 100%; height: 46px; padding: 0 36px 0 14px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.09); color: #fff; font: 400 14px var(--ui);
+  background: rgba(42, 58, 92, 0.3) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='13' height='8'%3E%3Cpath d='M1.5 1.5l5 5 5-5' fill='none' stroke='%238e96a8' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 14px center/13px 8px;
+  -webkit-appearance: none; appearance: none; color-scheme: dark; cursor: pointer; text-overflow: ellipsis; transition: background-color 0.2s, border-color 0.2s;
+}
+#playSheet .ps-field select:hover { background-color: #161a26; border-color: #323b50; }
+#playSheet .ps-field select:focus-visible { outline: none; border-color: #3b82f6; }
+#playSheet .ps-field select option { background: #181d2a; color: #fff; }
+
+#playSheet .ps-shelf { display: flex; gap: 12px; margin-top: 12px; }
+#playSheet .ps-btn {
+  flex: 1; min-width: 0; height: 48px; min-height: 0; padding: 0 10px; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  border-radius: 12px !important; background: #141824 !important; border: 1px solid #242a3a !important; color: #fff !important; font: 600 14px var(--ui) !important; cursor: pointer;
+}
+#playSheet .ps-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#playSheet .ps-btn svg { flex: 0 0 auto; color: #c4cbd8; }
+#playSheet .ps-btn:hover { background: #1c2232 !important; border-color: #323b50 !important; }
+#playSheet .ps-btn.on { background: #16203a !important; border-color: rgba(59, 130, 246, 0.33) !important; }
+#playSheet .ps-btn.on:hover { background: #1c2232 !important; border-color: #323b50 !important; }
+#playSheet .ps-btn[data-act="mine"].on svg { color: #7fb2ff; fill: #7fb2ff; }
+#playSheet .ps-btn[data-act="fav"].on svg { color: #ff6b8a; fill: #ff6b8a; }
+#playSheet .ps-btn[hidden], #playSheet[data-kind="file"] .ps-shelf { display: none; }
+
+/* Название от ИИ: на ПК — меню плитки; здесь тихая строка внизу окна */
+#playSheet .ps-ai { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid #1c2232; }
+#playSheet .ps-ai-row { display: flex; align-items: center; gap: 10px; }
+#playSheet .ps-ai-text { flex: 1; min-width: 0; }
+#playSheet .ps-ai-note { color: #c3c9d6; font: 400 13px/18px var(--ui); }
+#playSheet .ps-ai-src { color: #8e96a8; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#playSheet .ps-ai-btns { display: flex; gap: 8px; flex: 0 0 auto; }
+#playSheet .ps-ai-btn {
+  height: 34px; min-height: 0; padding: 0 12px; border-radius: 10px !important; font: 500 13px var(--ui) !important; cursor: pointer; white-space: nowrap;
+  background: #141720 !important; border: 1px solid #242a38 !important; color: #fff !important;
+}
+#playSheet .ps-ai-btn:hover:not(:disabled) { background: #1c202b !important; border-color: #3e475c !important; }
+#playSheet .ps-ai-btn.on { background: #2563eb !important; border-color: rgba(96, 165, 250, 0.3) !important; }
+#playSheet .ps-ai-btn.on:hover:not(:disabled) { background: #3b74f0 !important; border-color: #4d86ff !important; }
+#playSheet .ps-ai-btn.ps-ai-ask { align-self: flex-start; background: transparent !important; border-color: transparent !important; color: #8e96a8 !important; padding: 0 2px; height: 28px; }
+#playSheet .ps-ai-btn.ps-ai-ask:hover:not(:disabled) { background: transparent !important; border-color: transparent !important; color: #fff !important; }
+#playSheet .ps-ai-btn:disabled { opacity: 0.55; cursor: default; }
+
+/* Сборник на ПК: постер слева, справа подпись, подсказка и список фильмов; внизу «Закрыть» */
+#playSheet .ps-coll { display: none; gap: 18px; }
+#playSheet .ps-coll .ps-poster { flex: 0 0 155px; height: 245px; }
+#playSheet .ps-coll-main { flex: 1; min-width: 0; }
+#playSheet .ps-coll-title { padding-right: 44px; font: 700 20px/26px var(--display); color: #fff; overflow-wrap: anywhere; }
+#playSheet .ps-coll-sub { margin-top: 4px; padding-right: 44px; font: 400 13.5px var(--ui); color: #8e96a8; }
+#playSheet .ps-coll-note { display: flex; align-items: center; gap: 8px; margin: 10px 0; padding: 8px 12px; border-radius: 10px; background: rgba(42, 58, 92, 0.3); border: 1px solid rgba(255, 255, 255, 0.09); font: 400 12.5px var(--ui); color: #c0c7d6; }
+#playSheet .ps-coll-note svg { flex: 0 0 auto; color: #60a5fa; }
+#playSheet .ps-films { display: flex; flex-direction: column; gap: 7px; max-height: 240px; overflow: auto; padding-right: 4px; scrollbar-width: thin; scrollbar-color: rgba(142, 150, 168, 0.35) transparent; }
+#playSheet .ps-film {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 10px; width: 100%; min-height: 0; padding: 7px 10px; text-align: left; cursor: pointer;
+  border-radius: 12px !important; background: rgba(42, 58, 92, 0.3) !important; border: 1px solid rgba(255, 255, 255, 0.09) !important; color: #fff !important;
+}
+#playSheet .ps-film:hover { background: rgba(28, 40, 68, 0.68) !important; border-color: rgba(96, 165, 250, 0.4) !important; }
+#playSheet .ps-film.on { background: rgba(37, 99, 235, 0.25) !important; border-color: rgba(96, 165, 250, 0.3) !important; }
+#playSheet .ps-film-art { flex: 0 0 34px; height: 44px; border-radius: 6px; overflow: hidden; background: #181d2a; border: 1px solid #262e40; }
+#playSheet .ps-film-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+#playSheet .ps-film-num { flex: 0 0 24px; height: 24px; border-radius: 6px; display: grid; place-items: center; background: #1d2638; font: 700 12px var(--ui); color: #fff; }
+#playSheet .ps-film-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+#playSheet .ps-film-text b { font: 600 13.5px var(--ui); color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#playSheet .ps-film-text small { font: 400 12px var(--ui); color: #7e879b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#playSheet .ps-film-radio { flex: 0 0 20px; height: 20px; border-radius: 50%; border: 1.5px solid #384359; box-sizing: border-box; display: grid; place-items: center; }
+#playSheet .ps-film.on .ps-film-radio { border-color: #4a80f5; }
+#playSheet .ps-film.on .ps-film-radio::after { content: ""; width: 10px; height: 10px; border-radius: 50%; background: #4a80f5; }
+#playSheet .ps-close-bottom {
+  display: none; width: 100%; height: 44px; min-height: 0; margin-top: 14px; border-radius: 12px !important; cursor: pointer;
+  background: #141824 !important; border: 1px solid #242a3a !important; color: #fff !important; font: 600 14px var(--ui) !important;
+}
+#playSheet .ps-close-bottom:hover { background: #1c2232 !important; border-color: #323b50 !important; }
+
+@media (min-width: 700px) {
+  #playSheet[data-kind="collection"] .ps-top,
+  #playSheet[data-kind="collection"] .ps-pick,
+  #playSheet[data-kind="collection"] .ps-shelf,
+  #playSheet[data-kind="collection"] .ps-status:not(.err) { display: none; }
+  #playSheet[data-kind="collection"] .ps-coll { display: flex; margin-bottom: 16px; }
+  #playSheet[data-kind="collection"] .ps-close-bottom { display: block; }
+}
+
+/* Узкий экран: шторка снизу, как PlaySheet в Android */
+@media (max-width: 699px) {
+  #playSheet { align-items: flex-end; }
+  #playSheet .ps-card,
+  #playSheet[data-kind] .ps-card { width: 100%; max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); padding: 0 18px calc(18px + env(safe-area-inset-bottom)); border-radius: 24px 24px 0 0; border-width: 1px 0 0; }
+  #playSheet.open .ps-card { animation: psSheetUp 0.3s var(--ease) both; }
+  #playSheet .ps-grip { display: block; width: 32px; height: 4px; margin: 22px auto; border-radius: 2px; background: rgba(196, 203, 216, 0.4); }
+  #playSheet .ps-close { top: 48px; right: 18px; }
+  #playSheet .ps-top { gap: 14px; }
+  #playSheet .ps-poster { flex-basis: 104px; height: 156px; border-radius: 12px; }
+  #playSheet .ps-info { padding-right: 36px; }
+  #playSheet .ps-title { font-size: 18px; line-height: 23px; }
+  #playSheet .ps-chips { flex-wrap: nowrap; gap: 6px; margin-top: 10px; overflow-x: auto; scrollbar-width: none; }
+  #playSheet .ps-chips::-webkit-scrollbar { display: none; }
+  #playSheet .ps-chip { padding: 3px 8px; font-size: 11.5px; }
+  #playSheet[data-kind="collection"] .ps-chip-films { display: inline; }
+  #playSheet .ps-rating { font-size: 12.5px; }
+  #playSheet .ps-overview { margin-top: 10px; font-size: 13px; line-height: 18px; -webkit-line-clamp: 4; }
+  #playSheet .ps-status { margin: 16px 0 8px; }
+  #playSheet .ps-resume { padding: 13px 14px; }
+  #playSheet .ps-resume-top { gap: 11px; }
+  #playSheet .ps-resume-ic { flex-basis: 38px; height: 38px; }
+  #playSheet .ps-resume-text b { font-size: 14.5px; }
+  #playSheet .ps-resume-text small { color: #93c5fd; }
+  #playSheet .ps-resume-bar { gap: 8px; }
+  #playSheet .ps-resume-bar em { font-size: 11.5px; }
+  #playSheet a.ps-watch { height: 50px; font-size: 13.5px; border-color: rgba(96, 165, 250, 0.3); box-shadow: 0 6px 18px rgba(37, 99, 235, 0.35); }
+  #playSheet a.ps-watch.disabled { background: rgba(37, 99, 235, 0.5); border-color: transparent; color: rgba(255, 255, 255, 0.55); box-shadow: none; }
+  #playSheet .ps-pick { gap: 10px; }
+  #playSheet .ps-field { font-size: 12.5px; }
+  #playSheet .ps-field select { height: 48px; }
+  #playSheet .ps-shelf { gap: 10px; }
+  #playSheet .ps-btn { gap: 7px; padding: 0 8px; font-size: 13px !important; }
+  #playSheet .ps-ai-row { flex-direction: column; align-items: stretch; gap: 6px; }
+}
+@keyframes psSheetUp { from { transform: translateY(100%); } to { transform: none; } }
+@media (prefers-reduced-motion: reduce) { #playSheet.open, #playSheet.open .ps-card, .vp-back, .vp-card { animation: none !important; } }
+
+/* ===== «Какую версию включить?»: как VersionPicker на ПК, на узком экране — VersionSheet из Android ===== */
+.modal-backdrop.vp-back { background: rgba(9, 11, 16, 0.8) !important; -webkit-backdrop-filter: none !important; backdrop-filter: none !important; font-family: var(--ui); }
+.vp-card {
+  width: min(560px, 100%); max-height: calc(100vh - 48px); display: flex; flex-direction: column; box-sizing: border-box; padding: 22px;
+  background: rgba(11, 16, 32, 0.94); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 22px; box-shadow: 0 30px 90px rgba(0, 0, 0, 0.6);
+  animation: psRise 0.26s var(--ease) both;
+}
+.vp-card .ps-grip { display: none; }
+.vp-card .vp-title { margin: 0; font: 500 20px/1.3 var(--display); color: #eef0f5; letter-spacing: 0; }
+.vp-card .vp-sub { margin: 4px 0 14px; font: 400 13.5px var(--ui); color: #8e96a8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vp-card .vp-list { display: flex; flex-direction: column; gap: 8px; max-height: 440px; min-height: 0; overflow: auto; scrollbar-width: thin; scrollbar-color: rgba(142, 150, 168, 0.35) transparent; }
+.vp-card .vp-sec { display: flex; align-items: center; gap: 10px; padding: 6px 0 2px; font: 700 11.5px var(--ui); letter-spacing: 1px; text-transform: uppercase; color: #8e96a8; }
+.vp-card .vp-sec::after { content: ""; flex: 1; height: 1px; background: #252a37; }
+.vp-card button.vp-row {
+  flex: 0 0 auto; display: block; width: 100%; min-height: 0; padding: 11px 14px; text-align: left; cursor: pointer; transform: none !important; box-shadow: none !important;
+  border-radius: 14px !important; background: rgba(42, 58, 92, 0.3) !important; border: 1px solid rgba(255, 255, 255, 0.09) !important; color: #fff !important; font-family: var(--ui);
+}
+.vp-card button.vp-row:hover, .vp-card button.vp-row:focus-visible { background: rgba(28, 40, 68, 0.68) !important; border-color: rgba(96, 165, 250, 0.4) !important; outline: none; }
+.vp-card .vp-head { display: flex; align-items: center; gap: 10px; }
+.vp-card .vp-line { flex: 1; min-width: 0; font: 600 14.5px var(--ui); color: #fff; }
+.vp-card .vp-size { flex: 0 0 auto; font: 400 13px var(--ui); color: #8e96a8; }
+.vp-card .vp-name { margin-top: 3px; font: 400 12px var(--ui); color: #8e96a8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vp-card .vp-bar { margin-top: 8px; height: 3px; border-radius: 2px; background: #202636; overflow: hidden; }
+.vp-card .vp-bar.hidden { display: none; }
+.vp-card .vp-bar i { display: block; height: 3px; background: #2563eb; }
+.vp-card .vp-foot { display: flex; justify-content: flex-end; margin-top: 16px; }
+.vp-card button.vp-close {
+  min-height: 38px; padding: 9px 14px; cursor: pointer; transform: none !important; box-shadow: none !important;
+  border-radius: 12px !important; background: #141720 !important; border: 1px solid #242a38 !important; color: #fff !important; font: 500 13.5px var(--ui) !important;
+}
+.vp-card button.vp-close:hover { background: #1c202b !important; border-color: #3e475c !important; }
+@media (max-width: 699px) {
+  .modal-backdrop.vp-back { align-items: flex-end; padding: 0 !important; }
+  .vp-card { width: 100%; max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); padding: 0 18px calc(16px + env(safe-area-inset-bottom)); border-radius: 24px 24px 0 0; border-width: 1px 0 0; background: #10131b; animation: psSheetUp 0.3s var(--ease) both; }
+  .vp-card .ps-grip { display: block; width: 32px; height: 4px; margin: 22px auto; border-radius: 2px; background: rgba(196, 203, 216, 0.4); }
+  .vp-card .vp-title { font-size: 17px; }
+  .vp-card .vp-sub { margin-bottom: 12px; font-size: 13px; }
+  .vp-card .vp-list { max-height: none; }
+  .vp-card .vp-sec { font-size: 11px; }
+  .vp-card .vp-sec::after { background: rgba(255, 255, 255, 0.13); }
+  .vp-card button.vp-row { background: rgba(255, 255, 255, 0.08) !important; }
+  .vp-card .vp-line { font-size: 14px; }
+  .vp-card .vp-size { font-size: 12.5px; }
+  .vp-card .vp-name { font-size: 11.5px; }
+  .vp-card .vp-foot { display: none; }
+}
 
 
 /* ===== Плитка как в приложениях: закладка «Мои» и сердце «Избранное» в углу, значки справа ===== */
