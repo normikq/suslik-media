@@ -1,0 +1,38 @@
+[package]
+name = "suslik-desktop"
+description = "Suslik Media для Windows на Rust (egui + mpv)"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "suslik-media"
+path = "src/main.rs"
+
+[dependencies]
+suslik-core = { path = "../suslik-core" }
+# glow: OpenGL — тот же контекст потом отдаём mpv (render API), как сейчас MpvVideo.kt отдаёт GL Skiko.
+eframe = { version = "0.29", default-features = false, features = ["glow", "default_fonts", "persistence"] }
+ureq = "2"
+serde_json.workspace = true
+flate2 = "1.1.10"
+sha1 = "0.10"
+# постеры: TMDB отдаёт JPEG, бывают PNG и WebP
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+# время в журнале плеера (местное, как у Kotlin-версии)
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# libmpv грузится сама при первом фильме (её может не быть: установщик докачивает)
+libloading = "0.8"
+# HTTPS к зеркалу для запаса (BurstProxy): те же rustls и корни, что у ureq
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+webpki-roots = "0.26"
+
+# Выбор .torrent — обычный диалог Windows.
+[target.'cfg(windows)'.dependencies]
+rfd = "0.15"
+
+[features]
+# Отладочная сборка «Suslik Debug»: своя папка данных %APPDATA%\SuslikMediaDebug (как -Pdiag у Kotlin-версии).
+diag = []
+
+[dev-dependencies]

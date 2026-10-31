@@ -1,0 +1,39 @@
+name: Desktop (Rust)
+
+# ПК-версия на Rust (desktop-rs/): тесты общей логики на Linux и проверочная сборка exe на Windows.
+# Ничего не публикует; exe — артефакт задания только при ручном запуске.
+on:
+  push:
+    paths: ["desktop-rs/**", "desktop/src/main/resources/changelog.json", ".github/workflows/desktop-rs.yml"]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: desktop-rs } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { components: "clippy, rustfmt" }
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: desktop-rs }
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+  windows:
+    runs-on: windows-latest
+    defaults: { run: { working-directory: desktop-rs } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: desktop-rs }
+      - name: Build
+        env: { SITE_URL: "${{ secrets.SITE_URL }}" }
+        run: cargo build --release
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: suslik-media-rust-exe
+          path: desktop-rs/target/release/suslik-media.exe
