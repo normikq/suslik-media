@@ -7,6 +7,7 @@
 
 #include <QWindow>
 class QVariantAnimation;
+class QTimer;
 
 /// Полный экран, мини-плеер и «поверх окон» (WindowMode.kt) средствами Qt, без Win32.
 /// Полный экран — окно без рамки во весь монитор и на 1 пиксель выше него: Windows не переводит такое окно в
@@ -45,6 +46,8 @@ public:
     /// стоит на месте. beginResize — при нажатии, resizeStep — при каждом движении мыши (позиция курсора — экранная).
     Q_INVOKABLE void beginResize(int edges);
     Q_INVOKABLE void resizeStep();
+    /// Кнопку отпустили: окно плавно доезжает до последнего размера.
+    Q_INVOKABLE void endResize();
     /// Плеер закрыт: обычное окно (без полного экрана и мини).
     Q_INVOKABLE void reset();
 
@@ -54,6 +57,8 @@ signals:
 private:
     void frameless(bool on);
     void fly(const QRect &to);
+    void roundCorners(bool on);
+    void smoothTick();
 
     QPointer<QWindow> m_w;
     bool m_full = false, m_mini = false, m_onTop = false, m_topBeforeMini = false;
@@ -65,6 +70,8 @@ private:
     QRect m_resizeFrom;
     QPoint m_resizeCursor;
     QVariantAnimation *m_anim = nullptr;
+    QTimer *m_smooth = nullptr;
+    double m_curW = 0, m_targetW = 0;
 };
 
 } // namespace suslik::app

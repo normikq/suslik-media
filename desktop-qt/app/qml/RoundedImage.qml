@@ -12,7 +12,8 @@ Item {
     property real zoom: 1          // > 1 — картинка крупнее (наведение), края срезаются
     property bool fadeIn: true     // появляется плавно, когда раскодирована
 
-    Image { id: img; visible: false; asynchronous: true; smooth: true }
+    // mipmap: постер 360×540 в плитке ~180 px — без него при уменьшении и при наведении (zoom) картинка мерцает и «дёргается»
+    Image { id: img; visible: false; asynchronous: true; smooth: true; mipmap: true }
 
     ShaderEffect {
         anchors.fill: parent

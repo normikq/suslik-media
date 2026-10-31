@@ -9,7 +9,7 @@ Item {
     signal flyTo(int tab, var rect, string poster)   // постер летит в раздел боковой панели
 
     readonly property bool hovered: hover.hovered
-    height: width * 1.5
+    height: Math.round(width * 1.5)
 
     HoverHandler { id: hover }
 

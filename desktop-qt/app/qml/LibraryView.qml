@@ -141,22 +141,60 @@ Item {
 
             Item { width: 1; height: 4 }
 
-            Grid {
+            // Сетка своими силами: ширина и места плиток — целые пиксели (текст и постеры не «плывут» и не двоятся при
+            // изменении размера), а когда плитка переходит в другой ряд или столбец, она переезжает плавно (как animateItem)
+            Item {
                 id: grid
                 visible: lp.viewMode === 0
                 width: parent.width
-                columns: lp.columns
-                columnSpacing: 14
-                rowSpacing: 20
-                readonly property real tileW: (width - (columns - 1) * columnSpacing) / columns
+                readonly property int cols: Math.max(1, lp.columns)
+                readonly property int gap: 14
+                readonly property int rowGap: 20
+                readonly property int tileW: Math.floor((width - (cols - 1) * gap) / cols)
+                readonly property int tileH: Math.round(tileW * 1.5)
+                readonly property int count: lp.viewMode === 0 ? lp.tiles.length : 0
+                height: count ? Math.ceil(count / cols) * (tileH + rowGap) - rowGap : 0
                 Repeater {
                     model: lp.viewMode === 0 ? lp.tiles : []
                     Tile {
+                        id: cell
                         required property var modelData
+                        required property int index
+                        readonly property int col: index % grid.cols
+                        readonly property int row: Math.floor(index / grid.cols)
                         t: modelData
                         page: lp
+                        x: col * (grid.tileW + grid.gap)
+                        y: row * (grid.tileH + grid.rowGap)
                         width: grid.tileW
+                        height: grid.tileH
                         onFlyTo: (tab, rect, poster) => v.flyTo(tab, rect, poster)
+
+                        // переезд: плитка остаётся на старом месте и съезжает на новое (смещение копится, если
+                        // столбцы снова поменялись посреди переезда)
+                        property real placedX: NaN
+                        property real placedY: NaN
+                        property bool moved: false
+                        onColChanged: { moved = true; Qt.callLater(place) }
+                        onRowChanged: { moved = true; Qt.callLater(place) }
+                        onXChanged: Qt.callLater(place)
+                        onYChanged: Qt.callLater(place)
+                        function place() {
+                            if (moved && !isNaN(placedX) && !Theme.simple) {
+                                shift.x += placedX - x
+                                shift.y += placedY - y
+                                slide.restart()
+                            }
+                            moved = false
+                            placedX = x; placedY = y
+                        }
+                        Component.onCompleted: { placedX = x; placedY = y }
+                        transform: Translate { id: shift }
+                        ParallelAnimation {
+                            id: slide
+                            NumberAnimation { target: shift; property: "x"; to: 0; duration: 420; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease }
+                            NumberAnimation { target: shift; property: "y"; to: 0; duration: 420; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease }
+                        }
                     }
                 }
             }

@@ -188,7 +188,7 @@ Item {
         property point pressAt
         property bool moved: false
         property bool resizing: false
-        onReleased: resizing = false
+        onReleased: { if (resizing) windowMode.endResize(); resizing = false }
         onCanceled: resizing = false
         onPositionChanged: (m) => {
             pv.poke()
