@@ -56,9 +56,9 @@ pub fn apply(ctx: &egui::Context) {
     }
     v.widgets.inactive.weak_bg_fill = FILM;
     v.widgets.inactive.bg_fill = FILM;
-    v.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, LINE);
+    v.widgets.inactive.bg_stroke = egui::Stroke::new(1.0_f32, LINE);
     v.widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(0x22, 0x27, 0x34);
-    v.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(0x3E, 0x47, 0x5C));
+    v.widgets.hovered.bg_stroke = egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(0x3E, 0x47, 0x5C));
     v.window_rounding = egui::Rounding::same(14.0);
     v.menu_rounding = egui::Rounding::same(RADIUS);
     ctx.set_visuals(v);
