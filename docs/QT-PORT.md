@@ -34,3 +34,4 @@
 ## Ход работ
 
 - 31.10 — каркас: CMake, ядро (`SiteAddress`, `MirrorLink`, `Versions`, `Changelog`, `clockText`) с тестами, окно-заглушка на QML, CI.
+- 31.10 — `Model` (медиатека, сериалы, сборники, версии, субтитры и озвучки) с тестами из `ModelTest` и `SeriesGroupingTest`.
