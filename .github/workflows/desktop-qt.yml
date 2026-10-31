@@ -16,6 +16,10 @@ on:
         description: "Собрать и отладочную «Suslik Debug Qt» (артефакт, на сайт не идёт)"
         type: boolean
         default: false
+      wintests:
+        description: "Только тесты ядра на Windows, каждый тест по отдельности (поиск зависаний)"
+        type: boolean
+        default: false
 
 jobs:
   test:
@@ -28,6 +32,41 @@ jobs:
         run: cmake -S desktop-qt -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug && cmake --build build
       - name: Тесты
         run: ctest --test-dir build --output-on-failure
+
+  # Тесты ядра на Windows по одной функции (до 30 с каждая), вывод — в файл (при зависании stdout теряется)
+  wintests:
+    if: github.event_name == 'workflow_dispatch' && inputs.wintests
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          arch: win64_msvc2022_64
+          cache: true
+      - name: Сборка тестов
+        shell: bash
+        run: |
+          cmake -S desktop-qt -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSM_BUILD_APP=OFF
+          cmake --build build
+      - name: Каждая функция отдельно
+        shell: bash
+        env:
+          QT_LOGGING_RULES: "qt.network.*=true"
+          QT_FORCE_STDERR_LOGGING: "1"
+        run: |
+          for t in ApiClientTest BurstProxyTest; do
+            for f in $(build/tests/$t.exe -functions | sed 's/()//'); do
+              echo "::group::$t $f"
+              start=$(date +%s)
+              timeout 30 build/tests/$t.exe "$f" -v2 -o out.txt,txt -o -,txt > /dev/null 2> err.txt; rc=$?
+              echo "rc=$rc за $(( $(date +%s) - start )) с"
+              tail -n 60 out.txt; tail -n 40 err.txt
+              echo "::endgroup::"
+              [ $rc = 0 ] || echo "::warning::$t $f rc=$rc"
+            done
+          done
 
   windows:
     if: github.event_name == 'workflow_dispatch' && inputs.windows
