@@ -5,7 +5,9 @@
 #include "src/PlayModel.h"
 #include "src/AddModel.h"
 #include "src/AudioAttach.h"
+#include "src/Settings.h"
 #include "src/SingleInstance.h"
+#include "src/Updater.h"
 #include "src/Ui.h"
 
 #include "suslik/core/ApiClient.h"
@@ -60,10 +62,15 @@ int main(int argc, char *argv[]) {
     const QString site = core::SiteAddress::normalize(
         qEnvironmentVariableIsSet("SUSLIK_SITE") ? qEnvironmentVariable("SUSLIK_SITE") : QStringLiteral(SM_SITE_URL));
 
+    // после обновления — кэши прошлой версии долой (до того, как хранилища откроются)
+    app::Updater::clearCachesOnUpdate(QStringLiteral(SM_VERSION));
+
     core::ApiClient api(site);
     core::CloudSync sync(api);
     app::Library library(api, sync);
     app::Ui ui(QStringLiteral(SM_VERSION), !site.isEmpty());
+    app::Updater updater(api, QStringLiteral(SM_VERSION));
+    app::Prefs prefs(api, updater);
     // Прогресс с телефона или ТВ — сразу в плитки «Продолжить».
     QObject::connect(&sync, &core::CloudSync::changed, &library, [&library](int) { library.bumpWatch(); });
 
@@ -77,6 +84,8 @@ int main(int argc, char *argv[]) {
     engine.addImageProvider(QStringLiteral("suslik"), new app::ImageProvider(library));
     engine.rootContext()->setContextProperty(QStringLiteral("Ui"), &ui);
     engine.rootContext()->setContextProperty(QStringLiteral("lib"), &library);
+    engine.rootContext()->setContextProperty(QStringLiteral("prefs"), &prefs);
+    engine.rootContext()->setContextProperty(QStringLiteral("updater"), &updater);
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app, [] { QCoreApplication::exit(1); },
                      Qt::QueuedConnection);
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)

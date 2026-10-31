@@ -1,11 +1,13 @@
 #include "Ui.h"
 #include "TitleBar.h"
+#include "AppDir.h"
 
 #include "suslik/core/Store.h"
 #include "suslik/core/Strings.h"
 
 #include <QClipboard>
 #include <QDesktopServices>
+#include <QDir>
 #include <QGuiApplication>
 #include <QLocale>
 #include <QUrl>
@@ -22,6 +24,8 @@ bool Ui::diag() const {
     return false;
 #endif
 }
+
+QString Ui::appDir() const { return QDir::toNativeSeparators(AppDir::dir()); }
 
 QString Ui::tx(const QString &key, const QVariantMap &params) const {
     QString s = Strings::get(key);

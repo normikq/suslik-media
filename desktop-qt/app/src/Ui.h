@@ -12,6 +12,8 @@ class Ui : public QObject {
     Q_PROPERTY(QString version READ version CONSTANT)
     Q_PROPERTY(bool diag READ diag CONSTANT)
     Q_PROPERTY(bool siteConfigured READ siteConfigured CONSTANT)
+    /// Папка данных (журнал отладочной сборки и т. п.).
+    Q_PROPERTY(QString appDir READ appDir CONSTANT)
 public:
     Ui(const QString &version, bool siteConfigured, QObject *parent = nullptr)
         : QObject(parent), m_version(version), m_site(siteConfigured) {}
@@ -21,6 +23,7 @@ public:
     bool siteConfigured() const { return m_site; }
 
     /// Ui.tx("player.next", {title: name}) ← «Следующая: {title}».
+    QString appDir() const;
     Q_INVOKABLE QString tx(const QString &key, const QVariantMap &params = {}) const;
     /// «8,4 ГБ», «512 МБ».
     Q_INVOKABLE QString size(qint64 bytes) const;

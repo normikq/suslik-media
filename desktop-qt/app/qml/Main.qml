@@ -91,6 +91,12 @@ Window {
     FavFlight { id: flight; anchors.fill: parent; sidebar: sidebar }
     Dialogs { id: dialogs; anchors.fill: parent }
     SettingsSheet { id: settingsSheet; anchors.fill: parent }
+    WhatsNew { anchors.fill: parent }
+
+    // после входа: есть ли обновление; «Что нового» — когда медиатека уже на экране
+    readonly property bool signedIn: lib.authenticated === 1
+    onSignedInChanged: if (signedIn) { updater.check(); whatsNewDelay.start() }
+    Timer { id: whatsNewDelay; interval: 700; onTriggered: updater.loadWhatsNew() }
 
     // проверка вёрстки без мыши: SM_OPEN=play:<id>:<путь> | versions:<id>,<id> | settings | add[:film|audio:<magnet>]
     Timer {
@@ -100,7 +106,7 @@ Window {
             const a = Ui.env("SM_OPEN").split(":")
             if (a[0] === "play") dialogs.play_(Number(a[1]), a.slice(2).join(":"))
             else if (a[0] === "versions") dialogs.versions(libraryPage.model, "Версии", a[1].split(",").map(Number))
-            else if (a[0] === "settings") settingsSheet.open = true
+            else if (a[0] === "settings") { settingsSheet.open = true; if (a[1]) settingsSheet.scrollTo(Number(a[1])) }
             else if (a[0] === "add") {
                 win.select(3)
                 if (a[1] === "audio") { addPage.mode = 1; addPage.audioModel.addInput(a.slice(2).join(":")) }

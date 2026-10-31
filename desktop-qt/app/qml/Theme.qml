@@ -17,6 +17,8 @@ QtObject {
 
     // «Матовое стекло»
     readonly property color backdrop: "#060911"
+    readonly property color lamp: "#FFB02E"
+    readonly property color lampInk: "#1C1200"
     readonly property color accent: "#2563EB"
     readonly property color accentHover: "#3B74F0"
     readonly property color accentEdge: "#4D60A5FA"

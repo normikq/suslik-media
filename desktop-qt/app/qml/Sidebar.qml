@@ -154,6 +154,7 @@ Rectangle {
             anchors.bottom: parent.bottom
             width: parent.width
             spacing: 10
+            UpdateButton { } // только когда на сервере есть новее
             ProfileCard { width: parent.width; expanded: side.expanded; onLogout: side.logout() }
             // свернуть / развернуть: стрелка показывает, куда уедет панель
             Btn {

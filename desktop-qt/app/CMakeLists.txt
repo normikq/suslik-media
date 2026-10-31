@@ -13,6 +13,8 @@ qt_add_executable(suslik_media WIN32
   src/PlayModel.cpp src/PlayModel.h src/PlayRequest.h
   src/AddModel.cpp src/AddModel.h
   src/AudioAttach.cpp src/AudioAttach.h
+  src/Settings.cpp src/Settings.h
+  src/Updater.cpp src/Updater.h
 )
 set_target_properties(suslik_media PROPERTIES OUTPUT_NAME "SuslikMediaQt")
 
@@ -65,7 +67,7 @@ target_compile_definitions(suslik_media PRIVATE
 )
 target_link_libraries(suslik_media PRIVATE suslik_core Qt6::Gui Qt6::Quick)
 if(WIN32)
-  target_link_libraries(suslik_media PRIVATE dwmapi)
+  target_link_libraries(suslik_media PRIVATE dwmapi msi)
 endif()
 if(MSVC)
   target_compile_options(suslik_media PRIVATE /utf-8)
