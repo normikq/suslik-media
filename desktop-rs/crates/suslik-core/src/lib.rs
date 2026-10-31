@@ -6,6 +6,7 @@
 
 pub mod auth;
 pub mod burst_proxy;
+pub mod catch_up;
 pub mod changelog;
 pub mod http1;
 pub mod jrx;
@@ -15,11 +16,13 @@ pub mod mirror_link;
 pub mod model;
 pub mod party;
 pub mod playback_presets;
+pub mod playback_supervisor;
 pub mod properties;
 pub mod search;
 pub mod site_address;
 pub mod time_text;
 pub mod torrent;
+pub mod ts_clock;
 pub mod url_codec;
 pub mod versions;
 

@@ -108,7 +108,8 @@ fn log(msg: &str) {
     f(msg);
 }
 
-fn reset_connections() {
+/// Сбросить соединения пула сейчас (см. [`set_reset_connections`]).
+pub fn reset_connections() {
     let f = G.reset_connections.read().unwrap().clone();
     f();
 }

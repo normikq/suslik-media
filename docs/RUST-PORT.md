@@ -47,8 +47,17 @@ CI: `.github/workflows/desktop-rs.yml` — fmt, clippy, тесты на Linux и
    «есть ли видео» (`torrent`, перенос `TorrentInspectorTest`). Шрифты Onest и Unbounded из `desktop/`.
    Ещё не перенесено: «Продолжить просмотр», «Определить через ИИ», RuTracker с ПК (Edge), озвучка к фильму,
    настройки трекеров, вид «Список»; нажатие на плитку пока открывает карточку «что будет играть» (плеер — этап 6).
-5. **`BurstProxy`.** Локальный прокси 127.0.0.1 с окнами-запасом (`tokio`), `PlaybackSupervisor`, `TsClock`,
-   `CatchUp` — с переносом `BurstProxyTest` целиком. Самая рискованная часть: поведение должно совпасть до мелочей.
+5. ✅ **`BurstProxy`.** `burst_proxy` — построчный перенос `BurstProxy.kt`: окна-кольца на диске, рывки low/high по
+   битрейту, короткий разгон, мостики при поиске ключевого кадра, хвост файла в памяти, сторож зависаний, смена и
+   потеря сети, экран выключен, обновление подписи (`refresh_url`), `hold` для «копим запас», хранение закрытого
+   фильма. Вместо `tokio` — обычные потоки, как у Kotlin (пул потоков Java): у каждого окна `Mutex` с файлом и
+   `Condvar` вместо `synchronized`/`wait`, поля, которые читают без замка, — атомарные; порядок замков «источник →
+   окно». К зеркалу — свой HTTP/1.1-клиент `http1` с пулом соединений (ограниченные `bytes=a-b` не платят за новый
+   TLS); `Cancel` закрывает сокет из другого потока — так сторож обрывает и повисшее рукопожатие. TLS (rustls)
+   подключит приложение в этапе 6 через `Connector`. Ещё `playback_supervisor`, `ts_clock` (`TsClock` и `TsPlayback`),
+   `catch_up`. Тесты `BurstProxyTest` (все 23, против настоящего HTTP-источника с Range, медленной отдачей, зависанием
+   и истёкшей подписью), `PlaybackSupervisorTest`, `TsClockTest` и надзор/«копим запас» из `CoreTest` перенесены
+   (185 тестов в `suslik-core`).
 6. **Плеер.** mpv render API в GL egui, панели и горячие клавиши (`docs/DESKTOP.md` §5), озвучки и субтитры,
    заставки и титры, мини-плеер и полноэкранный режим, SMTC, запрет сна (`DisplayAwake`).
 7. **«Вместе» и Discord.** `PartySyncEngine`, комнаты, активность Discord (IPC).
@@ -70,3 +79,8 @@ CI: `.github/workflows/desktop-rs.yml` — fmt, clippy, тесты на Linux и
 - `Library` пишет те же файлы, что `Library.kt`: `library.json`, `library_etag`, `posters`, `poster_title`, `poster_anim`,
   `media_info`, `last_episode`, `continue_hidden`, `watch` и картинки `posters\<SHA-1 пути>.img`. Чистка после
   обновления удаляет те же ключи (`LibraryKeep`), запас на диске — когда переедет `BurstProxy`.
+- `burst_proxy` повторяет Kotlin-версию в числах и решениях (константы, пороги, формулы low/high/разгона, строки
+  журнала `reserve: …` и `snapshot()` — те же, чтобы журналы двух версий читались одинаково). Своё: часы монотонные
+  (перевод системных часов не трогает сторожей), «нет сети» — по виду ошибки ОС (`ConnectionRefused`,
+  `HostUnreachable`, `NetworkUnreachable`, `AddrNotAvailable`; ошибка DNS считается `HostUnreachable`), свободное место
+  — `fs4::available_space`.
