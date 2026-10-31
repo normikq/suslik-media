@@ -170,8 +170,11 @@ Sheet {
         width: parent.width
         spacing: 12
         bottomPadding: 12
+        // обе карточки одной высоты (у «Продолжить» ещё полоска прогресса)
         StartOption {
+            id: resumeOpt
             width: (parent.width - 12) / 2
+            height: Math.max(natural, againOpt.natural)
             title: m.resumeLabel
             hint: Ui.tx("library.prodolzhit_s_proshlogo_mesta")
             on: !m.fromStart
@@ -180,7 +183,9 @@ Sheet {
             onClicked: m.fromStart = false
         }
         StartOption {
+            id: againOpt
             width: (parent.width - 12) / 2
+            height: Math.max(natural, resumeOpt.natural)
             title: Ui.tx("library.det_s_nachala")
             hint: Ui.tx("library.det_smotret_zanovo")
             on: m.fromStart
@@ -264,7 +269,8 @@ Sheet {
         property string glyph
         property real progress: -1
         hoverUp: 1
-        height: soCol.implicitHeight + 28
+        readonly property real natural: soCol.implicitHeight + 28
+        height: natural
         Rectangle {
             anchors.fill: parent; radius: 16
             color: so.on ? "#12203F" : Theme.glassFill
@@ -273,7 +279,8 @@ Sheet {
         }
         Column {
             id: soCol
-            x: 14; y: 14; width: parent.width - 28
+            x: 14; width: parent.width - 28
+            anchors.verticalCenter: parent.verticalCenter
             Row {
                 width: parent.width
                 spacing: 12

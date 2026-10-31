@@ -559,11 +559,13 @@ QStringList Library::tagsOf(const LibraryItem &item) const {
 }
 
 QVariantMap Library::categoryCounts(bool mine) const {
-    int c[6] = {0, 0, 0, 0, 0, 0};
+    // Считаются плитки, а не раздачи: версии одного фильма — одна плитка (так же группирует LibraryPage).
+    QList<LibraryItem> by[6];
     for (const auto &i : m_items)
-        if (!mine || i.m.mine) ++c[int(category(i))];
+        if (!mine || i.m.mine) by[int(category(i))] << i;
     QVariantMap out;
-    for (int k = 1; k < 6; ++k) out.insert(QString::number(k), c[k]);
+    for (int k = 1; k < 6; ++k)
+        out.insert(QString::number(k), int(groupVersions(by[k], [this](const LibraryItem &i) { return posterPathOf(i); }).first.size()));
     return out;
 }
 

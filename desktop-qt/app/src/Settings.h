@@ -52,8 +52,6 @@ class Prefs : public QObject {
     /// Строка под «Каналом обновлений» и под «Памятью».
     Q_PROPERTY(QString channelState READ channelState NOTIFY channelStateChanged)
     Q_PROPERTY(QString storageState READ storageState NOTIFY storageChanged)
-    /// Видеодвижок: где лежит libmpv (пусто — нет).
-    Q_PROPERTY(QString mpvPath READ mpvPath CONSTANT)
 
 public:
     Prefs(core::ApiClient &api, Updater &updater, QObject *parent = nullptr);
@@ -83,7 +81,6 @@ public:
     QString storageState() const { return m_storageState; }
     bool clearing() const { return m_clearing; }
     QString channelState() const { return m_channelState; }
-    QString mpvPath() const;
 
     /// Окно открылось: посчитать, сколько занимает кэш.
     Q_INVOKABLE void measureStorage();

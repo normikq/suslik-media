@@ -180,11 +180,13 @@ Item {
         anchors.fill: parent
         hoverEnabled: true
         acceptedButtons: Qt.LeftButton
-        cursorShape: pv.barsShown || pv.mini ? Qt.ArrowCursor : Qt.BlankCursor
+        property int cornerShape: Qt.ArrowCursor
+        cursorShape: pv.mini ? cornerShape : pv.barsShown ? Qt.ArrowCursor : Qt.BlankCursor
         property point pressAt
         property bool moved: false
         onPositionChanged: (m) => {
             pv.poke()
+            if (pv.mini && !pressed) cornerShape = cornerCursor(m.x, m.y)
             if (pv.mini && pressed && !moved && Math.hypot(m.x - pressAt.x, m.y - pressAt.y) > 4) { moved = true; windowMode.startMove() }
         }
         onPressed: (m) => {
@@ -200,12 +202,18 @@ Item {
         }
         onWheel: (w) => { if (w.angleDelta.y !== 0) { player.stepVolume(w.angleDelta.y > 0 ? 5 : -5); pv.poke() } }
         Timer { id: clickTimer; interval: 260; onTriggered: player.togglePause() }
+        // мини-плеер тянется только за углы (по диагонали): пропорции держит WindowMode
         function edgeAt(x, y) {
-            const m = 8
-            let e = 0
-            if (x < m) e |= Qt.LeftEdge; else if (x > width - m) e |= Qt.RightEdge
-            if (y < m) e |= Qt.TopEdge; else if (y > height - m) e |= Qt.BottomEdge
-            return e
+            const m = 16
+            let h = 0, v = 0
+            if (x < m) h = Qt.LeftEdge; else if (x > width - m) h = Qt.RightEdge
+            if (y < m) v = Qt.TopEdge; else if (y > height - m) v = Qt.BottomEdge
+            return h && v ? (h | v) : 0
+        }
+        function cornerCursor(x, y) {
+            const e = edgeAt(x, y)
+            if (!e) return Qt.ArrowCursor
+            return (e === (Qt.LeftEdge | Qt.TopEdge) || e === (Qt.RightEdge | Qt.BottomEdge)) ? Qt.SizeFDiagCursor : Qt.SizeBDiagCursor
         }
     }
 

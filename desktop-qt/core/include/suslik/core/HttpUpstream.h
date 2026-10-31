@@ -18,6 +18,10 @@ public:
     /// Бросить соединения пула во всех потоках (BurstProxy::setResetConnections): каждый поток берёт новый
     /// менеджер при следующем запросе.
     void resetConnections();
+    /// Поток загрузки заканчивает работу: закрыть его менеджер запросов здесь же, пока поток жив. Иначе его разбирает
+    /// thread_local при выходе потока, когда Qt уже отпустил поток (на Windows): соединения не закрывались, источник
+    /// ждал следующего запроса, а Qt предупреждал «Timers cannot be stopped from another thread».
+    static void releaseThread();
 
     struct State;
 private:

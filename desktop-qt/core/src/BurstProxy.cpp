@@ -1,4 +1,5 @@
 #include "suslik/core/BurstProxy.h"
+#include "suslik/core/HttpUpstream.h"
 #include "suslik/core/MirrorLink.h"
 #include "suslik/core/UrlCoding.h"
 #include "QtWait.h"
@@ -368,6 +369,7 @@ struct BurstProxy::Impl : std::enable_shared_from_this<BurstProxy::Impl> {
     void execute(std::function<void()> f) {
         std::thread([self = shared_from_this(), f = std::move(f)] {
             try { f(); } catch (...) {}
+            HttpUpstream::releaseThread(); // соединения этого потока — закрыть, пока поток жив
         }).detach();
     }
     /// resetConnections не в потоке вызывающего, потом after.

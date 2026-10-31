@@ -115,15 +115,6 @@ void Prefs::setNextCountdown(int v) { store().put(S("next_countdown"), QString::
 void Prefs::setSmartSubs(bool on) { store().put(S("smart_subs_off"), on ? std::nullopt : std::optional<QString>(S("1"))); emit changed(); }
 void Prefs::setDiscordOn(bool on) { store().put(S("discord_rpc"), on ? S("1") : S("0")); emit changed(); }
 
-QString Prefs::mpvPath() const {
-    // libmpv-2.dll кладёт установщик рядом с приложением (шаг 4); скачанный — в папке данных.
-    for (const QString &dir : {QCoreApplication::applicationDirPath(), AppDir::dir()}) {
-        const QString f = QDir(dir).filePath(S("libmpv-2.dll"));
-        if (QFile::exists(f)) return QDir::toNativeSeparators(f);
-    }
-    return {};
-}
-
 void Prefs::measureStorage() {
     m_storageText.clear();
     emit storageChanged();

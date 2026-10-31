@@ -20,7 +20,8 @@ Item {
         anchors.fill: parent
         color: Theme.scrim
         opacity: sh.a
-        MouseArea { anchors.fill: parent; hoverEnabled: true; onClicked: sh.dismissed(); onWheel: (w) => w.accepted = true }
+        // все кнопки мыши: правая иначе проходила насквозь и открывала меню плитки под окном
+        MouseArea { anchors.fill: parent; hoverEnabled: true; acceptedButtons: Qt.AllButtons; onClicked: sh.dismissed(); onWheel: (w) => w.accepted = true }
     }
     Rectangle {
         id: card
@@ -33,7 +34,7 @@ Item {
         radius: 22
         color: Theme.sheet
         border.color: Theme.sheetEdge
-        MouseArea { anchors.fill: parent; onWheel: (w) => w.accepted = true } // щелчки по карточке её не закрывают
+        MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; onWheel: (w) => w.accepted = true } // щелчки по карточке её не закрывают
         Column {
             id: body
             x: sh.pad; y: sh.pad

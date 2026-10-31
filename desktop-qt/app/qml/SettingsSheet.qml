@@ -67,13 +67,13 @@ Sheet {
             EngineOption {
                 width: form.width
                 title: Ui.tx("settings.dvizhok_mpv")
-                subtitle: prefs.mpvPath !== "" ? Ui.tx("settings.dvizhok_mpv_hint") : Ui.tx("settings.dvizhok_mpv_nedostupen")
+                subtitle: mpvInstall.path !== "" ? Ui.tx("settings.dvizhok_mpv_hint") : Ui.tx("settings.dvizhok_mpv_nedostupen")
             }
             Text {
                 width: form.width
                 topPadding: 6
-                text: prefs.mpvPath !== "" ? Ui.tx("settings.dvizhok_mpv_put", { path: prefs.mpvPath }) : Ui.tx("settings.dvizhok_mpv_otsutstvuet")
-                color: prefs.mpvPath !== "" ? Theme.muted : Theme.bad
+                text: mpvInstall.path !== "" ? Ui.tx("settings.dvizhok_mpv_put", { path: mpvInstall.path }) : Ui.tx("settings.dvizhok_mpv_otsutstvuet")
+                color: mpvInstall.path !== "" ? Theme.muted : Theme.bad
                 wrapMode: Text.WrapAnywhere
                 font.family: Theme.onest; font.pixelSize: 12
             }

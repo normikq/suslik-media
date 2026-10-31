@@ -2,6 +2,9 @@
 #include "QtWait.h"
 
 #include <QDateTime>
+#include <QCoreApplication>
+#include <QEventLoop>
+#include <QTimer>
 #include <QNetworkAccessManager>
 #include <QNetworkProxy>
 #include <QNetworkReply>
@@ -106,6 +109,17 @@ HttpUpstream::HttpUpstream() : d(std::make_shared<State>()) {}
 void HttpUpstream::setAnswerTimeoutMs(qint64 ms) { d->answerTimeoutMs = ms; }
 
 void HttpUpstream::resetConnections() { ++d->generation; }
+
+void HttpUpstream::releaseThread() {
+    if (!t_nam.nam) return;
+    t_nam.nam.reset();
+    // отложенное удаление ответов и соединений этого потока — пока у потока есть диспетчер событий
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QEventLoop loop;
+    QTimer::singleShot(0, &loop, &QEventLoop::quit);
+    loop.exec();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+}
 
 Upstream HttpUpstream::upstream() const {
     HttpUpstream self = *this;
