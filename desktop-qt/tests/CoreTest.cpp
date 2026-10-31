@@ -1,4 +1,5 @@
 #include "suslik/core/Changelog.h"
+#include "suslik/core/PlaybackPresets.h"
 #include "suslik/core/TimeText.h"
 #include "suslik/core/Versions.h"
 #include <QTest>
@@ -64,6 +65,21 @@ private slots:
         QCOMPARE(clockText(303000), S("05:03"));
         QCOMPARE(clockText(3903000), S("1:05:03"));
         QCOMPARE(clockText(-5), S("00:00"));
+        QCOMPARE(clockText(303999), S("05:03"));
+    }
+
+    void presetsClampAndValues() {
+        using namespace PlaybackPresets;
+        QCOMPARE(clampBurst(-5), 0);
+        QCOMPARE(clampBurst(0), 0);
+        QCOMPARE(clampBurst(96), 96);
+        QCOMPARE(clampBurst(160), 160);
+        QCOMPARE(clampBurst(256), 256);
+        QCOMPARE(clampBurst(512), 256);
+        QList<int> values;
+        for (const auto &p : burst(S("на диске"))) values << p.value;
+        QCOMPARE(values, (QList<int>{0, 32, 64, 96, 128, 160, 256}));
+        QVERIFY(burst(S("на диске"))[0].hint.contains(S("без запаса на диске")));
     }
 };
 
