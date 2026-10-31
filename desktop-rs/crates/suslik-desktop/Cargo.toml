@@ -13,3 +13,12 @@ path = "src/main.rs"
 suslik-core = { path = "../suslik-core" }
 # glow: OpenGL — тот же контекст потом отдаём mpv (render API), как сейчас MpvVideo.kt отдаёт GL Skiko.
 eframe = { version = "0.29", default-features = false, features = ["glow", "default_fonts", "persistence"] }
+ureq = "2"
+serde_json.workspace = true
+flate2 = "1.1.10"
+
+[features]
+# Отладочная сборка «Suslik Debug»: своя папка данных %APPDATA%\SuslikMediaDebug (как -Pdiag у Kotlin-версии).
+diag = []
+
+[dev-dependencies]

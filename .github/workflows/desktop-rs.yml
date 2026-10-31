@@ -19,7 +19,7 @@ jobs:
         with: { workspaces: desktop-rs }
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test -p suslik-core
+      - run: cargo test --workspace
 
   windows:
     runs-on: windows-latest

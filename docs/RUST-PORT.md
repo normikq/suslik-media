@@ -33,9 +33,11 @@ CI: `.github/workflows/desktop-rs.yml` — fmt, clippy, тесты на Linux и
    `PartyProtocolTest`, `PartyTest`, `PartySyncEngineTest` перенесены целиком (114 тестов в `suslik-core`).
    Осталось из чистой логики: `LibraryKeep`, `MarkersDetector`, `auth/`, `sync/`, `audio/`, `torrent/` — переедут
    вместе с этапами, где они нужны.
-3. **Сеть и хранилище.** HTTP-клиент (`ureq`/`reqwest` на rustls, HTTP/1.1), повтор на новом соединении как в
-   `Api.call`, cookie сеанса только для своего сервера (`site_address::is_own`), настройки и прогресс в
-   `%APPDATA%\SuslikMedia` (совместимо с Kotlin-версией, чтобы переход не терял прогресс).
+3. ✅ **Сеть и хранилище.** `properties` (формат `.properties` Java), `auth` (сеанс, код устройства, «Мои фильмы»,
+   перенос `AuthTest`). В приложении: `Store` — те же файлы в `%APPDATA%\SuslikMedia` (`SuslikMediaDebug` у отладочной),
+   запись с задержкой 0,4 с через `.tmp` и `.bak`; `Api` на `ureq` (rustls, HTTP/1.1): cookie, `X-Device-Token` и
+   `X-Beta-Code` только своему серверу, ETag/304, gzip, ошибки сервера по-русски. Окно на старте проверяет `/api/session`.
+   Повтор на новом соединении (`Api.call` Android) у Kotlin-ПК нет — добавим, если понадобится по журналам.
 4. **Вход и медиатека.** Вход по коду устройства, боковая панель, сетка медиатеки с постерами, поиск, добавление.
 5. **`BurstProxy`.** Локальный прокси 127.0.0.1 с окнами-запасом (`tokio`), `PlaybackSupervisor`, `TsClock`,
    `CatchUp` — с переносом `BurstProxyTest` целиком. Самая рискованная часть: поведение должно совпасть до мелочей.
@@ -55,3 +57,5 @@ CI: `.github/workflows/desktop-rs.yml` — fmt, clippy, тесты на Linux и
   с `UNICODE_CHARACTER_CLASS` идут без перевода (`rx!(…, unicode)`). Заглядывания даёт `fancy-regex`.
 - JSON читается так же снисходительно, как `org.json` (`json.rs`: число в строке — число, `null` — значение по умолчанию).
 - Пороги, заданные длиной строки, считаются в UTF-16, как в Kotlin (`search::kt_len`).
+- Хранилище читает и пишет те же `.properties`, что Kotlin-версия (`java.util.Properties`): ISO-8859-1, `\uXXXX`,
+  экранированные пробелы и `=`/`:` в ключах. Вход, настройки и прогресс переходят без потерь в обе стороны.
