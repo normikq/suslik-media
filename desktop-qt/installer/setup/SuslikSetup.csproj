@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Установщик и окно удаления Qt-версии Suslik Media (WPF, .NET Framework 4.7.2 — есть в Windows 10/11 из коробки).
+    Перенос desktop/setup (тот же вид и те же функции) под desktop-qt: своя программа, папка, данные и UpgradeCode (Product.cs).
+    Одна программа в двух сборках (см. .github/workflows/desktop-qt.yml):
+      SuslikUninstall.exe — без MSI, кладётся в само приложение (рядом с SuslikMediaQt.exe) и открывается из «Установленных приложений»;
+      Suslik Media Qt Setup.exe — с MSI внутри (-p:MsiPath=…): мастер установки. Видеодвижок libmpv он скачивает с нашего сервера.
+    Шрифты, значок и libmpv.properties — те же файлы, что у Kotlin-версии (desktop/), без копий, как в app/CMakeLists.txt.
+    Сборка: dotnet build -c Release [-p:MsiPath=…] [-p:SiteUrl=https://домен[/путь]] [-p:AssemblyName=…] [-p:AppVersion=2.3.1]
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net472</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>SuslikSetup</AssemblyName>
+    <RootNamespace>SuslikSetup</RootNamespace>
+    <ApplicationIcon>..\..\..\desktop\icon.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AppVersion Condition="'$(AppVersion)' == ''">0.0.0</AppVersion>
+    <InformationalVersion>$(AppVersion)</InformationalVersion>
+    <Product>Suslik Media</Product>
+    <Company>Suslik Media</Company>
+    <AssemblyTitle>Установщик Suslik Media</AssemblyTitle>
+    <DebugType>none</DebugType>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <SatelliteResourceLanguages>ru</SatelliteResourceLanguages>
+    <SmRes>..\..\..\desktop\src\main\resources\</SmRes>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup>
+    <Resource Include="$(SmRes)fonts\onest_regular.ttf;$(SmRes)fonts\onest_medium.ttf;$(SmRes)fonts\onest_semibold.ttf" Link="fonts\%(Filename)%(Extension)" />
+    <Resource Include="$(SmRes)icons\icon-256.png" Link="img\icon.png" />
+    <EmbeddedResource Include="$(SmRes)libmpv.properties" LogicalName="libmpv.properties" />
+    <!-- Адрес сайта с путём (-p:SiteUrl=https://домен[/путь], из секрета SITE_URL): в репозитории его нет. SiteHost — только домен, как раньше. -->
+    <AssemblyMetadata Include="SiteUrl" Value="$(SiteUrl)" />
+    <AssemblyMetadata Include="SiteHost" Value="$(SiteHost)" />
+    <EmbeddedResource Include="$(MsiPath)" LogicalName="package.msi" Condition="'$(MsiPath)' != ''" />
+  </ItemGroup>
+</Project>

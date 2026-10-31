@@ -57,7 +57,35 @@ qint64 folderBytes(const QString &path) {
 }
 } // namespace
 
-Updater::Updater(ApiClient &api, const QString &current, QObject *parent) : QObject(parent), m_api(api), m_current(current) {}
+Updater::Updater(ApiClient &api, const QString &current, QObject *parent) : QObject(parent), m_api(api), m_current(current) {
+    QTimer::singleShot(2000, this, [this] { registerUninstaller(); });
+}
+
+QString Updater::uninstaller() {
+#if defined(Q_OS_WIN) && !defined(SM_DIAG)
+    // Только установленная копия: папка из архива сборки (без MSI) в «Установленные приложения» не попадает.
+    wchar_t product[39] = {};
+    if (MsiEnumRelatedProductsW(kUpgradeCode, 0, 0, product) != ERROR_SUCCESS) return {};
+    const QString f = QDir(QCoreApplication::applicationDirPath()).filePath(S("SuslikUninstall.exe"));
+    return QFile::exists(f) ? f : QString();
+#else
+    return {};
+#endif
+}
+
+void Updater::registerUninstaller() {
+    const QString exe = uninstaller();
+    if (exe.isEmpty() || m_current == S("0")) return;
+    const QString key = m_current + QLatin1Char('|') + QDir::toNativeSeparators(exe);
+    if (Store::of(S("setup")).get(S("registered")) == key) return;
+    auto *p = new QProcess(this);
+    connect(p, &QProcess::finished, this, [p, key](int code, QProcess::ExitStatus status) {
+        if (status == QProcess::NormalExit && code == 0) Store::of(S("setup")).put(S("registered"), key);
+        p->deleteLater();
+    });
+    connect(p, &QProcess::errorOccurred, p, [p](QProcess::ProcessError e) { if (e == QProcess::FailedToStart) p->deleteLater(); });
+    p->start(exe, {S("/register"), m_current});
+}
 
 QVariantMap Updater::available() const {
     if (!m_available) return {};
@@ -200,8 +228,10 @@ void Updater::installAndExit(const QString &file, bool replace) {
             for (DWORD i = 0; MsiEnumRelatedProductsW(kUpgradeCode, 0, i, product) == ERROR_SUCCESS; ++i)
                 script += S("Start-Process msiexec -ArgumentList '/x %1 /passive /norestart' -Wait\n").arg(QString::fromWCharArray(product));
         }
-        script += S("$p = Start-Process msiexec -ArgumentList '/i \"%1\" /passive /norestart INSTALLDIR=\"%2\"' -Wait -PassThru\n")
-                      .arg(q(QDir::toNativeSeparators(file)), q(dir));
+        // Своя запись в «Установленных приложениях» у окна удаления (SuslikUninstall.exe): запись самого MSI прячем.
+        const QString arp = uninstaller().isEmpty() ? QString() : S(" ARPSYSTEMCOMPONENT=1");
+        script += S("$p = Start-Process msiexec -ArgumentList '/i \"%1\" /passive /norestart INSTALLDIR=\"%2\"%3' -Wait -PassThru\n")
+                      .arg(q(QDir::toNativeSeparators(file)), q(dir), arp);
         script += S("if ($p.ExitCode -eq 0 -or $p.ExitCode -eq 3010) { Start-Process '%1' }\n").arg(q(exe));
         // В base64 (UTF-16LE): командной строке тогда не нужны кавычки.
         const QByteArray utf16(reinterpret_cast<const char *>(script.utf16()), script.size() * 2);

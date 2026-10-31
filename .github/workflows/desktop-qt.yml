@@ -81,6 +81,8 @@ jobs:
           arch: win64_msvc2022_64
           modules: qtshadertools
           cache: true
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: "8.0.x" }
       - name: Сборка
         shell: bash
         env:
@@ -99,12 +101,37 @@ jobs:
           mkdir -p dist/qml/Suslik
           cp build/app/Suslik/qmldir build/app/Suslik/*.qmltypes dist/qml/Suslik/
           cp desktop-qt/app/qml/*.qml dist/qml/Suslik/
-      # MSI для людей: ставится для себя (без прав администратора) рядом со старой версией; libmpv в нём нет
+      # Окно удаления (installer/setup без MSI внутри) — в саму программу, рядом с SuslikMediaQt.exe
+      - name: Окно удаления
+        shell: bash
+        run: |
+          set -o pipefail
+          dotnet build desktop-qt/installer/setup/SuslikSetup.csproj -c Release -p:AppVersion=$V -p:AssemblyName=SuslikUninstall \
+            -o "$RUNNER_TEMP/uninstall" 2>&1 | tail -5
+          cp "$RUNNER_TEMP/uninstall/SuslikUninstall.exe" dist/
+          rm -rf desktop-qt/installer/setup/obj desktop-qt/installer/setup/bin
+      # MSI: ставится для себя (без прав администратора) рядом со старой версией; libmpv в нём нет
       - name: MSI
         shell: bash
         run: |
           mkdir -p msi
           desktop-qt/installer/build-msi.sh dist "$V" "msi/Suslik Media Qt-$V.msi"
+      # Файл для людей — «Suslik Media Qt Setup.exe»: тот же мастер, что у Kotlin-версии (desktop/setup), с MSI внутри.
+      # Им же обновляется программа (запускает его с /update). Видеодвижок libmpv он качает с нашего сервера (libmpv.properties).
+      - name: Установщик
+        shell: bash
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+        run: |
+          set -o pipefail
+          URL="${SITE_URL%/}"   # домен и, если сервер не в корне, путь
+          [ -n "$URL" ] || { echo "::error::Нет секрета SITE_URL"; exit 1; }
+          dotnet build desktop-qt/installer/setup/SuslikSetup.csproj -c Release -p:AppVersion=$V -p:AssemblyName=SuslikMediaQtSetup \
+            "-p:SiteUrl=$URL" "-p:MsiPath=$(cygpath -w "$GITHUB_WORKSPACE/msi/Suslik Media Qt-$V.msi")" -o "$RUNNER_TEMP/setup" 2>&1 | tail -5
+          mkdir -p setup
+          cp "$RUNNER_TEMP/setup/SuslikMediaQtSetup.exe" "setup/Suslik Media Qt Setup-$V.exe"
+          rm -rf desktop-qt/installer/setup/obj desktop-qt/installer/setup/bin
+          ls -la setup
       # видеодвижок: та же сборка libmpv, что раздаёт сервер (desktop/.../libmpv.properties), проверка по SHA-256.
       # В установщике её не будет (качает MpvInstall), здесь — чтобы архив сборки сразу играл видео.
       - name: libmpv
@@ -144,6 +171,10 @@ jobs:
         with:
           name: suslik-media-qt-msi
           path: msi/*.msi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: suslik-media-qt-setup
+          path: setup/*.exe
       # «Suslik Debug Qt»: своя папка данных и свой UpgradeCode (ставится рядом), подробный журнал mpv, F8 — метка
       - name: Отладочная сборка
         if: inputs.debug

@@ -6,7 +6,7 @@
 |---|---|
 | `core/` | Ядро без интерфейса, перенос `shared/` (только Qt Core/Network): адрес сервера, зеркало, версии, changelog… |
 | `app/` | Приложение на Qt Quick (QML): медиатека, плеер на libmpv |
-| `installer/` | MSI (WiX 3) |
+| `installer/` | MSI (WiX 3) и `setup/` — стилизованный установщик и окно удаления (перенос `desktop/setup`, WPF) |
 | `tests/` | Тесты ядра (Qt Test) — те же случаи, что в `shared/src/test` |
 
 ## Сборка
@@ -24,3 +24,5 @@ ctest --test-dir build --output-on-failure
 
 CI — `.github/workflows/desktop-qt.yml`: тесты на каждый пуш в `desktop-qt/`, сборка для Windows вручную: папка программы `suslik-media-qt-windows`, установщик `suslik-media-qt-msi`,
 с `debug` — отладочный `suslik-media-qt-debug-msi`. MSI собирает `installer/build-msi.sh` (WiX 3).
+Файл для людей — `Suslik Media Qt Setup-<V>.exe` (артефакт `suslik-media-qt-setup`): тот же мастер, что у Kotlin-версии, с MSI внутри; ставит в `%LOCALAPPDATA%\Programs\Suslik Media Qt`,
+качает видеодвижок в `%APPDATA%\SuslikMediaQt\mpv`, кладёт рядом с программой `SuslikUninstall.exe` (окно удаления с очисткой данных). Снимки его окон — `setup-preview.yml` (артефакт `setup-preview-qt`).

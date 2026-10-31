@@ -56,6 +56,11 @@ public:
     static void cleanup();
     /// После обновления — кэши прошлой версии долой (прогресс, вход и настройки остаются). До открытия хранилищ.
     static void clearCachesOnUpdate(const QString &current);
+    /// Окно удаления (installer/setup → SuslikUninstall.exe рядом с программой) ведёт свою запись в «Установленных
+    /// приложениях». После самообновления через MSI установщик не запускался — просим его обновить запись, раз на версию
+    /// (Uninstaller.kt). Нет файла (сборка без него) — ничего.
+    static QString uninstaller();
+    void registerUninstaller();
 
 signals:
     void availableChanged();
