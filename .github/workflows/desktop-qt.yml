@@ -1,0 +1,56 @@
+name: Desktop Qt
+
+# Новая ПК-версия на C++/Qt (desktop-qt/, план — docs/QT-PORT.md).
+# На пуш с изменениями в desktop-qt/ — только тесты ядра на Linux (Qt из apt, пара минут).
+# Сборка для Windows (MSVC + Qt 6.8) — только вручную, как android.yml и desktop.yml.
+on:
+  push:
+    paths: ["desktop-qt/**", ".github/workflows/desktop-qt.yml"]
+  workflow_dispatch:
+    inputs:
+      windows:
+        description: "Собрать для Windows"
+        type: boolean
+        default: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Qt и сборщик
+        run: sudo apt-get update -q && sudo apt-get install -y -q qt6-base-dev qt6-declarative-dev ninja-build
+      - name: Сборка
+        run: cmake -S desktop-qt -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug && cmake --build build
+      - name: Тесты
+        run: ctest --test-dir build --output-on-failure
+
+  windows:
+    if: github.event_name == 'workflow_dispatch' && inputs.windows
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          arch: win64_msvc2022_64
+          cache: true
+      - name: Сборка
+        shell: bash
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+        run: |
+          cmake -S desktop-qt -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+          ctest --test-dir build --output-on-failure
+      - name: Упаковка
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp build/app/SuslikMediaQt.exe dist/
+          windeployqt --release --qmldir desktop-qt/app/qml --no-translations dist/SuslikMediaQt.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: suslik-media-qt-windows
+          path: dist/

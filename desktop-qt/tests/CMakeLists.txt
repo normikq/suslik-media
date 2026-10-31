@@ -1,0 +1,15 @@
+# Тесты ядра (Qt Test) — те же случаи, что в shared/src/test. Запуск: ctest --output-on-failure
+find_package(Qt6 REQUIRED COMPONENTS Test)
+
+function(sm_test name)
+  add_executable(${name} ${name}.cpp)
+  target_link_libraries(${name} PRIVATE suslik_core Qt6::Test)
+  if(MSVC)
+    target_compile_options(${name} PRIVATE /utf-8)
+  endif()
+  add_test(NAME ${name} COMMAND ${name})
+endfunction()
+
+sm_test(SiteAddressTest)
+sm_test(MirrorLinkTest)
+sm_test(CoreTest)
