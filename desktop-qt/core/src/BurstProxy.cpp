@@ -1438,7 +1438,12 @@ std::optional<std::pair<QByteArray, qint64>> BurstProxy::Impl::readRange(const Q
 std::optional<std::pair<QByteArray, qint64>> BurstProxy::readRange(const QString &url, qint64 from, int len) {
     // В отдельном потоке: у запроса свои события и свой менеджер соединений, поток вызывающего (часто главный) их не держит.
     auto impl = d;
-    return std::async(std::launch::async, [impl, url, from, len] { return impl->readRange(url, from, len); }).get();
+    // MSVC берёт поток для std::async из пула Windows: менеджер запросов закрыть здесь, иначе он живёт с потоком пула
+    return std::async(std::launch::async, [impl, url, from, len] {
+        auto r = impl->readRange(url, from, len);
+        HttpUpstream::releaseThread();
+        return r;
+    }).get();
 }
 
 bool BurstProxy::slowerThanFilm(const QString &url) const {
