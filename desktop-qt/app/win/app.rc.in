@@ -1,0 +1,28 @@
+// Значок и сведения о версии SuslikMediaQt.exe (Проводник, «Свойства», панель задач). Собирается из app/CMakeLists.txt.
+#include <winver.h>
+
+IDI_ICON1 ICON "@SM_ICON@"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+PRODUCTVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "041904B0"
+    BEGIN
+      VALUE "CompanyName", "Suslik Media"
+      VALUE "FileDescription", "@SM_PRODUCT@"
+      VALUE "FileVersion", "@PROJECT_VERSION@"
+      VALUE "ProductName", "@SM_PRODUCT@"
+      VALUE "ProductVersion", "@PROJECT_VERSION@"
+      VALUE "OriginalFilename", "SuslikMediaQt.exe"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0419, 1200
+  END
+END

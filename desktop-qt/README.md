@@ -5,7 +5,8 @@
 | Папка | Что |
 |---|---|
 | `core/` | Ядро без интерфейса, перенос `shared/` (только Qt Core/Network): адрес сервера, зеркало, версии, changelog… |
-| `app/` | Приложение на Qt Quick (QML). Пока окно-заглушка |
+| `app/` | Приложение на Qt Quick (QML): медиатека, плеер на libmpv |
+| `installer/` | MSI (WiX 3) |
 | `tests/` | Тесты ядра (Qt Test) — те же случаи, что в `shared/src/test` |
 
 ## Сборка
@@ -21,4 +22,5 @@ ctest --test-dir build --output-on-failure
 Адрес сервера в репозиторий не пишем: `SITE_URL` из окружения или `-DSM_SITE_URL`. Для отладки его можно переопределить переменной `SUSLIK_SITE` при запуске.
 Только тесты, без Qt Quick: `-DSM_BUILD_APP=OFF`.
 
-CI — `.github/workflows/desktop-qt.yml`: тесты на каждый пуш в `desktop-qt/`, сборка для Windows вручную (артефакт `suslik-media-qt-windows`).
+CI — `.github/workflows/desktop-qt.yml`: тесты на каждый пуш в `desktop-qt/`, сборка для Windows вручную: папка программы `suslik-media-qt-windows`, установщик `suslik-media-qt-msi`,
+с `debug` — отладочный `suslik-media-qt-debug-msi`. MSI собирает `installer/build-msi.sh` (WiX 3).

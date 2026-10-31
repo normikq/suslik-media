@@ -12,6 +12,10 @@ on:
         description: "Собрать для Windows"
         type: boolean
         default: true
+      debug:
+        description: "Собрать и отладочную «Suslik Debug Qt» (артефакт, на сайт не идёт)"
+        type: boolean
+        default: false
 
 jobs:
   test:
@@ -44,6 +48,7 @@ jobs:
         run: |
           cmake -S desktop-qt -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build
+          echo "V=$(sed -n 's/^project(SuslikMediaQt VERSION \([0-9.]*\).*/\1/p' desktop-qt/CMakeLists.txt)" >> "$GITHUB_ENV"
       - name: Упаковка
         shell: bash
         run: |
@@ -54,6 +59,12 @@ jobs:
           mkdir -p dist/qml/Suslik
           cp build/app/Suslik/qmldir build/app/Suslik/*.qmltypes dist/qml/Suslik/
           cp desktop-qt/app/qml/*.qml dist/qml/Suslik/
+      # MSI для людей: ставится для себя (без прав администратора) рядом со старой версией; libmpv в нём нет
+      - name: MSI
+        shell: bash
+        run: |
+          mkdir -p msi
+          desktop-qt/installer/build-msi.sh dist "$V" "msi/Suslik Media Qt-$V.msi"
       # видеодвижок: та же сборка libmpv, что раздаёт сервер (desktop/.../libmpv.properties), проверка по SHA-256.
       # В установщике её не будет (качает MpvInstall), здесь — чтобы архив сборки сразу играл видео.
       - name: libmpv
@@ -89,6 +100,29 @@ jobs:
         with:
           name: suslik-media-qt-windows
           path: dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: suslik-media-qt-msi
+          path: msi/*.msi
+      # «Suslik Debug Qt»: своя папка данных и свой UpgradeCode (ставится рядом), подробный журнал mpv, F8 — метка
+      - name: Отладочная сборка
+        if: inputs.debug
+        shell: bash
+        run: |
+          cmake -S desktop-qt -B build-diag -G Ninja -DCMAKE_BUILD_TYPE=Release -DSM_DIAG=ON -DSM_BUILD_TESTS=OFF
+          cmake --build build-diag --target suslik_media
+          mkdir -p dist-diag
+          cp build-diag/app/SuslikMediaQt.exe dist-diag/
+          windeployqt --release --qmldir desktop-qt/app/qml --no-translations dist-diag/SuslikMediaQt.exe
+          desktop-qt/installer/build-msi.sh dist-diag "$V" "msi/Suslik Debug Qt-$V.msi" diag
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+      - uses: actions/upload-artifact@v4
+        if: inputs.debug
+        with:
+          name: suslik-media-qt-debug-msi
+          path: msi/Suslik Debug Qt-*.msi
+          retention-days: 7
       # тесты после выгрузки: программу можно скачать и проверить, даже если тест упал (задание всё равно красное)
       - name: Тесты
         shell: bash
