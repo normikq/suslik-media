@@ -15,6 +15,7 @@ add_library(suslik_core STATIC
   src/CloudSync.cpp
   src/MarkersDetector.cpp
   src/CustomAudio.cpp
+  src/TorrentInspector.cpp
   src/JsonOpt.h
   include/suslik/core/ApiClient.h
   include/suslik/core/CloudSync.h

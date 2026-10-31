@@ -37,4 +37,4 @@
 - 31.10 — `Model` (медиатека, сериалы, сборники, версии, субтитры и озвучки) с тестами из `ModelTest` и `SeriesGroupingTest`.
 - 31.10 — вход и код устройства (`Auth`), синхронизация прогресса и дорожек (`WatchSync`) с тестами.
 - 31.10 — сетевая часть ПК: `ApiClient` (cookie и токен только своему серверу, ETag, тексты ошибок), `Store` (файлы `.properties` того же формата, что у Kotlin-версии, с `.bak`), `Strings` (`strings/ru.json`, функция `tx`), `CloudSync`. Тесты — с локальным HTTP-сервером.
-- 31.10 — заставки и титры, умные субтитры (`MarkersDetector`), внешние озвучки (`CustomAudio`), `PlaybackPresets`, `LibraryKeep` с тестами.
+- 31.10 — заставки и титры, умные субтитры (`MarkersDetector`), внешние озвучки (`CustomAudio`), `PlaybackPresets`, `LibraryKeep`, проверка .torrent и магнетов (`TorrentInspector`) с тестами.
