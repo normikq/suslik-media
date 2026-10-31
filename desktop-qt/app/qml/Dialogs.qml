@@ -14,6 +14,8 @@ Item {
         function onAiPanelRequested(ids, message) { aiDialog.show(ids, message) }
     }
 
+    function say(text) { toast.show(text) }
+
     VersionPicker { id: versionPicker }
     PlayDialog { id: playDialog; onPlay: toast.show("Плеер появится на шаге 3 — ссылки уже готовы") }  // временно, до переноса плеера }
     AiDialog { id: aiDialog }

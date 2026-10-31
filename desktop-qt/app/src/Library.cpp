@@ -1,4 +1,5 @@
 #include "Library.h"
+#include "AudioAttach.h"
 #include "AppDir.h"
 
 #include "suslik/core/ApiClient.h"
@@ -237,6 +238,11 @@ void Library::afterSignIn() {
     refresh();
 }
 
+void Library::refreshThen(std::function<void()> done) {
+    m_refreshWaiters.push_back(std::move(done));
+    refresh();
+}
+
 void Library::refresh() {
     if (m_loading) return;
     m_loading = true;
@@ -245,6 +251,15 @@ void Library::refresh() {
     const std::optional<QString> known = m_items.isEmpty() ? std::nullopt : m_libraryEtag.get(S("etag"));
     m_api.getIfChanged(S("/api/library"), known, [this](const ApiResult &r) {
         m_loading = false;
+        // кто ждал свежего списка — после этого ответа (как бы он ни кончился)
+        struct Notify {
+            Library *l;
+            ~Notify() {
+                auto w = std::move(l->m_refreshWaiters);
+                l->m_refreshWaiters.clear();
+                for (auto &f : w) f();
+            }
+        } notify{this};
         if (!r.ok()) {
             if (r.error.kind == ApiError::Kind::Http && r.error.code == 401) setAuth(0);
             setStatus(ApiClient::describe(r.error), 2);
@@ -257,6 +272,7 @@ void Library::refresh() {
         const QList<Magnet> list = parseLibrary(r.json);
         m_aiReadyAt = aiTitleReadyAt(r.json);
         publish(list);
+        AudioDesk::cleanupPending(*this); // озвучки, не привязанные в прошлый раз
         cleanUp(); // что оставили фильмы, ушедшие из медиатеки (постеры, прогресс, запас…)
         QFile f(AppDir::file(S("library.json")));
         if (f.open(QIODevice::WriteOnly)) f.write(QJsonDocument(r.json).toJson(QJsonDocument::Compact));

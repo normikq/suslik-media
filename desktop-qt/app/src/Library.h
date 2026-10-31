@@ -78,6 +78,8 @@ public:
     Q_INVOKABLE void openPairingPage();
     Q_INVOKABLE void logout();
     Q_INVOKABLE void refresh();
+    /// Обновить и потом вызвать done (свежий список нужен, например, проверке озвучки).
+    void refreshThen(std::function<void()> done);
 
     // ---- действия с раздачами ----
     Q_INVOKABLE void setFavorite(qint64 id, bool on);
@@ -206,6 +208,7 @@ private:
     std::deque<std::pair<qint64, MFile>> m_mediaQueue;
     bool m_mediaBusy = false;
     QStringList m_classifyTodo;
+    std::vector<std::function<void()>> m_refreshWaiters;
     int m_tagsRound = 0;
 };
 

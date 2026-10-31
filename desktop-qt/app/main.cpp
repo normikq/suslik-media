@@ -3,6 +3,8 @@
 #include "src/Library.h"
 #include "src/LibraryPage.h"
 #include "src/PlayModel.h"
+#include "src/AddModel.h"
+#include "src/AudioAttach.h"
 #include "src/SingleInstance.h"
 #include "src/Ui.h"
 
@@ -67,6 +69,8 @@ int main(int argc, char *argv[]) {
 
     qmlRegisterType<app::LibraryPage>("Suslik.Native", 1, 0, "LibraryPage");
     qmlRegisterType<app::PlayModel>("Suslik.Native", 1, 0, "PlayModel");
+    qmlRegisterType<app::AddModel>("Suslik.Native", 1, 0, "AddModel");
+    qmlRegisterType<app::AudioAttachModel>("Suslik.Native", 1, 0, "AudioAttachModel");
     qmlRegisterUncreatableType<app::Library>("Suslik.Native", 1, 0, "Library", QStringLiteral("one per app"));
 
     QQmlApplicationEngine engine;

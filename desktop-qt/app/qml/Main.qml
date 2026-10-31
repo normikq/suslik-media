@@ -51,7 +51,7 @@ Window {
             clip: true
             Page { index: 0; LibraryView { id: libraryPage; anchors.fill: parent; mine: false; onVersionsRequested: (t, ids) => dialogs.versions(model, t, ids); onPlayRequested: (id, p) => dialogs.play_(id, p); onFlyTo: (tab, r, p) => flight.launch(tab, r, p) } }
             Page { index: 1; LibraryView { id: minePage; anchors.fill: parent; mine: true; onVersionsRequested: (t, ids) => dialogs.versions(model, t, ids); onPlayRequested: (id, p) => dialogs.play_(id, p); onFlyTo: (tab, r, p) => flight.launch(tab, r, p) } }
-            Page { index: 3; AddView { anchors.fill: parent } }
+            Page { index: 3; AddView { id: addPage; anchors.fill: parent; active: win.tab === 3; onPreviewRequested: (video, a, offset, title) => dialogs.say(title + " — плеер появится на шаге 3") } }
         }
     }
 
@@ -92,7 +92,7 @@ Window {
     Dialogs { id: dialogs; anchors.fill: parent }
     SettingsSheet { id: settingsSheet; anchors.fill: parent }
 
-    // проверка вёрстки без мыши: SM_OPEN=play:<id>:<путь> | versions:<id>,<id> | settings | add
+    // проверка вёрстки без мыши: SM_OPEN=play:<id>:<путь> | versions:<id>,<id> | settings | add[:film|audio:<magnet>]
     Timer {
         running: Ui.env("SM_OPEN") !== ""
         interval: 2500
@@ -101,7 +101,11 @@ Window {
             if (a[0] === "play") dialogs.play_(Number(a[1]), a.slice(2).join(":"))
             else if (a[0] === "versions") dialogs.versions(libraryPage.model, "Версии", a[1].split(",").map(Number))
             else if (a[0] === "settings") settingsSheet.open = true
-            else if (a[0] === "add") win.select(3)
+            else if (a[0] === "add") {
+                win.select(3)
+                if (a[1] === "audio") { addPage.mode = 1; addPage.audioModel.addInput(a.slice(2).join(":")) }
+                else if (a[1] === "film") addPage.addLinks(a.slice(2).join(":"))
+            }
             else if (a[0] === "mine") win.select(1)
             else if (a[0] === "list") libraryPage.model.viewMode = 1
         }

@@ -1,6 +1,8 @@
 #pragma once
 #include "PlayRequest.h"
 
+#include "Library.h"
+
 #include <QObject>
 #include <QVariantList>
 
@@ -8,7 +10,6 @@
 /// ссылки зеркала, озвучки, субтитры и очередь готовятся до того, как кнопка включится.
 namespace suslik::app {
 
-class Library;
 
 class PlayModel : public QObject {
     Q_OBJECT
