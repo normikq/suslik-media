@@ -5,7 +5,10 @@
 //! Пока обе версии живут рядом, правила надо менять в обеих.
 
 pub mod changelog;
+pub mod jrx;
+mod json;
 pub mod mirror_link;
+pub mod model;
 pub mod playback_presets;
 pub mod site_address;
 pub mod time_text;
