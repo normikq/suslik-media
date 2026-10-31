@@ -50,6 +50,29 @@ jobs:
           mkdir -p dist
           cp build/app/SuslikMediaQt.exe dist/
           windeployqt --release --qmldir desktop-qt/app/qml --no-translations dist/SuslikMediaQt.exe
+          # собственный модуль Suslik (Main.qml, Theme.qml, qmldir, типы): вшит в программу, копия рядом — запасной путь
+          mkdir -p dist/qml/Suslik
+          cp build/app/Suslik/qmldir build/app/Suslik/*.qmltypes dist/qml/Suslik/
+          cp desktop-qt/app/qml/*.qml dist/qml/Suslik/
+      # программа открывает окно (без сервера — экран входа) и снимает его; не открылась — сборка красная
+      - name: Проверка запуска
+        shell: bash
+        env:
+          SUSLIK_SITE: http://127.0.0.1:9
+          SUSLIK_APPDIR: ${{ runner.temp }}/sm-appdir
+          SM_SHOT: ${{ runner.temp }}/sm-shot/start.png
+          SM_SHOT_MS: "6000"
+          QT_FORCE_STDERR_LOGGING: "1"
+        run: |
+          mkdir -p "$(dirname "$SM_SHOT")"
+          timeout 60 dist/SuslikMediaQt.exe 2>&1 | tee start.log; rc=${PIPESTATUS[0]}
+          echo "exit code: $rc"
+          test "$rc" = 0 && test -s "$SM_SHOT"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: suslik-media-qt-start-shot
+          path: ${{ runner.temp }}/sm-shot/
       - uses: actions/upload-artifact@v4
         with:
           name: suslik-media-qt-windows

@@ -28,6 +28,8 @@ set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 qt_add_qml_module(suslik_media
   URI Suslik
   VERSION 1.0
+  # В ресурсах — там, где движок QML ищет модули по умолчанию (qrc:/qt/qml): loadFromModule находит его без путей.
+  RESOURCE_PREFIX /qt/qml
   QML_FILES ${SM_QML}
 )
 # Скруглённые углы слоёв (постеры, баннер): маленький шейдер, собирается в .qsb для всех графических API.

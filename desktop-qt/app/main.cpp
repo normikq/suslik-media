@@ -81,6 +81,8 @@ int main(int argc, char *argv[]) {
     qmlRegisterUncreatableType<app::Library>("Suslik.Native", 1, 0, "Library", QStringLiteral("one per app"));
 
     QQmlApplicationEngine engine;
+    // Модуль Suslik вшит в программу; копия рядом (qml\Suslik) — запасной путь для упакованной сборки.
+    engine.addImportPath(QCoreApplication::applicationDirPath() + QStringLiteral("/qml"));
     engine.addImageProvider(QStringLiteral("suslik"), new app::ImageProvider(library));
     engine.rootContext()->setContextProperty(QStringLiteral("Ui"), &ui);
     engine.rootContext()->setContextProperty(QStringLiteral("lib"), &library);
@@ -91,7 +93,7 @@ int main(int argc, char *argv[]) {
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
     engine.loadFromModule("Suslik", "Main");
 #else
-    engine.load(QUrl(QStringLiteral("qrc:/Suslik/Main.qml"))); // Qt 6.4 (тесты на Linux)
+    engine.load(QUrl(QStringLiteral("qrc:/qt/qml/Suslik/Main.qml"))); // Qt 6.4 (тесты на Linux)
 #endif
     if (engine.rootObjects().isEmpty()) return 1;
     auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
