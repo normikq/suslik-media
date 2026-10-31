@@ -15,7 +15,7 @@ if(NOT DEFINED SM_SITE_URL)
   set(SM_SITE_URL "$ENV{SITE_URL}")
 endif()
 
-find_package(Qt6 6.4 REQUIRED COMPONENTS Core)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Core Network)
 
 add_subdirectory(core)
 if(SM_BUILD_APP)
