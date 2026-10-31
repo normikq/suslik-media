@@ -20,6 +20,7 @@ Item {
     property real hoverAt: -1          // время под мышью на полосе
     property real scrubAt: -1          // тянут ползунок
     readonly property bool hold: !player.started || player.paused || player.nextIn >= 0 || picker !== "" || scrubAt >= 0 || player.infoOpen || player.inIntro
+                                 || topHover.hovered || colHover.hovered
     readonly property bool barsShown: barVisible || hold || mini && barVisible
 
     function poke() { barVisible = true; hideTimer.restart() }
@@ -169,6 +170,10 @@ Item {
         function onFinished(ok) { if (ok && player.open) player.retry() }
     }
 
+    // курсор ушёл из окна — панели прячутся. HoverHandler не перехватывает наведение, поэтому переход с видео на панель
+    // (у неё своя MouseArea) не считается уходом: раньше панели от этого дёргались
+    HoverHandler { id: pvHover; onHoveredChanged: if (!hovered && !pv.hold) pv.barVisible = false }
+
     // мышь над видео: щелчок — пауза, двойной — полный экран, колесо — громкость; в мини-плеере — тянуть окно
     MouseArea {
         id: videoMouse
@@ -182,7 +187,6 @@ Item {
             pv.poke()
             if (pv.mini && pressed && !moved && Math.hypot(m.x - pressAt.x, m.y - pressAt.y) > 4) { moved = true; windowMode.startMove() }
         }
-        onExited: if (!pv.hold) pv.barVisible = false
         onPressed: (m) => {
             pressAt = Qt.point(m.x, m.y); moved = false
             pv.poke()
@@ -223,6 +227,8 @@ Item {
             }
         }
         MouseArea { anchors.fill: parent; hoverEnabled: true; onPositionChanged: pv.poke(); onPressed: pv.poke() }
+        // курсор на панели — панели не прячутся
+        HoverHandler { id: topHover; enabled: pv.barsShown && !pv.mini }
         Row {
             anchors.left: parent.left; anchors.leftMargin: 24
             anchors.verticalCenter: parent.verticalCenter
@@ -279,6 +285,7 @@ Item {
 
         Column {
             id: col
+            HoverHandler { id: colHover; enabled: pv.barsShown }
             anchors.bottom: parent.bottom; anchors.bottomMargin: 14
             anchors.left: parent.left; anchors.right: parent.right
             anchors.leftMargin: pv.narrow ? 12 : 24; anchors.rightMargin: pv.narrow ? 12 : 24
@@ -336,6 +343,15 @@ Item {
                         Text { height: 32; verticalAlignment: Text.AlignVCenter; text: Ui.tx("player.p_subdelay_ms", { ms: (player.subDelay > 0 ? "+" : "") + player.subDelay }); color: "white"; font.family: Theme.onest; font.pixelSize: 13 }
                         Chip_ { label: Ui.tx("player.s_2"); onClicked: player.shiftSubs(100) }
                         Chip_ { visible: player.subDelay !== 0; label: Ui.tx("player.sbros"); onClicked: player.shiftSubs(-player.subDelay) }
+                    }
+                    // задержка звука: раньше — только клавишами [ ] и \\
+                    MoreRow {
+                        label: Ui.tx("player.zaderzhka_zvuka")
+                        Chip_ { label: Ui.tx("player.s"); onClicked: player.shiftAudio(-100) }
+                        Text { height: 32; verticalAlignment: Text.AlignVCenter; text: Ui.tx("player.p_subdelay_ms", { ms: (player.audioDelay > 0 ? "+" : "") + player.audioDelay }); color: "white"; font.family: Theme.onest; font.pixelSize: 13 }
+                        Chip_ { label: Ui.tx("player.s_2"); onClicked: player.shiftAudio(100) }
+                        Chip_ { visible: player.audioDelay !== 0; label: Ui.tx("player.sbros"); onClicked: player.shiftAudio(-player.audioDelay) }
+                        Chip_ { visible: player.saveDelayText !== ""; label: player.saveDelayText; onClicked: player.saveDelay() }
                     }
                     MoreRow {
                         label: Ui.tx("player.rezhimy")
@@ -665,8 +681,8 @@ Item {
         property string label
         width: parent ? parent.width : 0
         height: Math.max(32, flow.implicitHeight)
-        Text { width: 92; height: 32; verticalAlignment: Text.AlignVCenter; text: parent.label; color: "#99FFFFFF"; font.family: Theme.onest; font.pixelSize: 13 }
-        Flow { id: flow; x: 92; width: parent.width - 92; spacing: 6 }
+        Text { width: 118; height: 32; verticalAlignment: Text.AlignVCenter; text: parent.label; color: "#99FFFFFF"; font.family: Theme.onest; font.pixelSize: 13 }
+        Flow { id: flow; x: 118; width: parent.width - 118; spacing: 6 }
     }
 
     // Панель над полосой (меню, сведения): появляется сдвигом снизу

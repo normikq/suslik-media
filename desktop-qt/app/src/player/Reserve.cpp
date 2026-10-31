@@ -61,18 +61,33 @@ std::optional<qint64> readSome(const QString &url, const QString &range) {
 }
 } // namespace
 
+namespace {
+// В куче, а не статиком: закрывается явно (shutdown) до выхода из main, пока Qt ещё жив. Статик разбирался бы
+// после QGuiApplication — его потоки дёргали бы уже закрытый Qt, и программа могла не завершиться.
+BurstProxy *g_proxy = nullptr;
+HttpUpstream *g_up = nullptr;
+QPointer<ApiClient> g_api;
+} // namespace
+
 BurstProxy &proxy(ApiClient *api) {
-    static BurstProxy p;
-    static HttpUpstream up;
-    static QPointer<ApiClient> apiRef;
-    if (api) apiRef = api;
+    if (api) g_api = api;
+    if (!g_proxy) {
+        g_proxy = new BurstProxy;
+        if (!g_up) g_up = new HttpUpstream; // не удаляется: держит только соединения, ОС закроет их сама
+    }
+    BurstProxy &p = *g_proxy;
     if (!p.initialized()) {
         p.setLog([](const QString &m) { PlayerLog::write(m); });
-        p.setResetConnections([] { up.resetConnections(); });
-        p.setRefreshUrl([](const QString &old) { return renew(apiRef, old); });
-        p.init(reserveDir(), up.upstream());
+        p.setResetConnections([] { g_up->resetConnections(); });
+        p.setRefreshUrl([](const QString &old) { return renew(g_api, old); });
+        p.init(reserveDir(), g_up->upstream());
     }
     return p;
+}
+
+void shutdown() {
+    delete g_proxy;
+    g_proxy = nullptr;
 }
 
 void warmUp(const QString &url, qint64 bytes) {

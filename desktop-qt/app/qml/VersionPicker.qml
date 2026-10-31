@@ -48,7 +48,7 @@ Sheet {
                             width: list.width
                             height: rc.implicitHeight + 22
                             hoverUp: 1
-                            onClicked: { vp.open = false; vp.page.chooseVersion(modelData.id) }
+                            onClicked: { const id = modelData.id, p = vp.page; vp.open = false; p.chooseVersion(id) }
                             Glass { anchors.fill: parent; hovered: row.hovered }
                             Column {
                                 id: rc

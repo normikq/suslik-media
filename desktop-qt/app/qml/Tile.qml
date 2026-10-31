@@ -58,41 +58,6 @@ Item {
                     GradientStop { position: 0.5; color: "#CC0B0E14" }
                     GradientStop { position: 1; color: "#FD0B0E14" }
                 }
-                Column {
-                    id: info
-                    x: 12; y: 11
-                    width: parent.width - 24
-                    Text {
-                        width: parent.width
-                        text: tile.t.title || ""
-                        color: "white"
-                        font.family: Theme.onest; font.weight: Font.DemiBold; font.pixelSize: 14
-                        lineHeight: 17; lineHeightMode: Text.FixedHeight
-                        maximumLineCount: 2; wrapMode: Text.Wrap; elide: Text.ElideRight
-                    }
-                    Item {
-                        id: details
-                        readonly property bool shown: tile.hovered || !tile.t.ready
-                        width: parent.width
-                        height: shown ? detailsCol.implicitHeight : 0
-                        opacity: shown ? 1 : 0
-                        clip: true
-                        Behavior on height { NumberAnimation { duration: details.shown ? 240 : 200; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease } }
-                        Behavior on opacity { NumberAnimation { duration: details.shown ? 200 : 140 } }
-                        Column {
-                            id: detailsCol
-                            width: parent.width
-                            Text { topPadding: 2; bottomPadding: 5; text: tile.t.subtitle || ""; color: "#9BA4B5"; font.family: Theme.onest; font.pixelSize: 12 }
-                            Rectangle {
-                                width: st.implicitWidth + 14; height: st.implicitHeight + 4
-                                radius: 6; color: "#181B24"; border.color: "#2A3040"
-                                Text { id: st; anchors.centerIn: parent; text: tile.t.status || ""; color: "white"; font.family: Theme.onest; font.weight: Font.Medium; font.pixelSize: 11 }
-                            }
-                            Text { topPadding: 5; width: parent.width; elide: Text.ElideRight; text: tile.t.specs1 || ""; color: "#C0C7D5"; font.family: Theme.onest; font.pixelSize: 11 }
-                            Text { topPadding: 1; width: parent.width; elide: Text.ElideRight; text: tile.t.specs2 || ""; color: "#7A8294"; font.family: Theme.onest; font.pixelSize: 11 }
-                        }
-                    }
-                }
             }
             // полоска внизу: прогресс просмотра или загрузки
             Rectangle {
@@ -108,6 +73,43 @@ Item {
                         GradientStop { position: 0.5; color: "#38BDF8" }
                         GradientStop { position: 1; color: "#7DD3FC" }
                     }
+                }
+            }
+        }
+        Column {
+            id: info
+            // текст — поверх слоя со скруглением: в слое (текстура) он размывался
+            x: 12
+            anchors.bottom: parent.bottom; anchors.bottomMargin: 11
+            width: parent.width - 24
+            Text {
+                width: parent.width
+                text: tile.t.title || ""
+                color: "white"
+                font.family: Theme.onest; font.weight: Font.DemiBold; font.pixelSize: 14
+                lineHeight: 17; lineHeightMode: Text.FixedHeight
+                maximumLineCount: 2; wrapMode: Text.Wrap; elide: Text.ElideRight
+            }
+            Item {
+                id: details
+                readonly property bool shown: tile.hovered || !tile.t.ready
+                width: parent.width
+                height: shown ? detailsCol.implicitHeight : 0
+                opacity: shown ? 1 : 0
+                clip: true
+                Behavior on height { NumberAnimation { duration: details.shown ? 240 : 200; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease } }
+                Behavior on opacity { NumberAnimation { duration: details.shown ? 200 : 140 } }
+                Column {
+                    id: detailsCol
+                    width: parent.width
+                    Text { topPadding: 2; bottomPadding: 5; text: tile.t.subtitle || ""; color: "#9BA4B5"; font.family: Theme.onest; font.pixelSize: 12 }
+                    Rectangle {
+                        width: st.implicitWidth + 14; height: st.implicitHeight + 4
+                        radius: 6; color: "#181B24"; border.color: "#2A3040"
+                        Text { id: st; anchors.centerIn: parent; text: tile.t.status || ""; color: "white"; font.family: Theme.onest; font.weight: Font.Medium; font.pixelSize: 11 }
+                    }
+                    Text { topPadding: 5; width: parent.width; elide: Text.ElideRight; text: tile.t.specs1 || ""; color: "#C0C7D5"; font.family: Theme.onest; font.pixelSize: 11 }
+                    Text { topPadding: 1; width: parent.width; elide: Text.ElideRight; text: tile.t.specs2 || ""; color: "#7A8294"; font.family: Theme.onest; font.pixelSize: 11 }
                 }
             }
         }

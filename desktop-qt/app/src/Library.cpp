@@ -269,6 +269,11 @@ void Library::refresh() {
         }
         if (r.code == 304) {
             setStatus(tx(S("library.zagruzheno_size_torrent_ov"), {{"size", QString::number(m_items.size())}}), 1);
+            // медиатека с диска та же — жанры (мультфильмы) и отметки всё равно поднять: без этого после
+            // перезапуска мультфильмы узнавались только по названию
+            classifyAnimation();
+            m_tagsRound = 0;
+            refreshTags(0);
             return;
         }
         const QList<Magnet> list = parseLibrary(r.json);
@@ -690,10 +695,14 @@ void Library::classifyAnimation() {
     bump();
     todo.removeDuplicates();
     m_classifyTodo = todo.mid(0, 80);
+    if (m_classifyRunning) return; // идущая цепочка возьмёт новый список
+    m_classifyRunning = true;
     // по одному запросу раз в 120 мс, без спешки
     auto step = std::make_shared<std::function<void()>>();
-    *step = [this, step] {
-        if (m_classifyTodo.isEmpty() || m_auth != 1) return;
+    *step = [this, weak = std::weak_ptr<std::function<void()>>(step)] {
+        if (m_classifyTodo.isEmpty() || m_auth != 1) { m_classifyRunning = false; return; }
+        const auto step = weak.lock();
+        if (!step) { m_classifyRunning = false; return; }
         const QString q = m_classifyTodo.takeFirst();
         const QString key = q.toLower();
         m_api.get(S("/api/poster?q=") + formEncode(q), [this, key, step](const ApiResult &r) {
@@ -706,6 +715,7 @@ void Library::classifyAnimation() {
             QTimer::singleShot(120, this, [step] { (*step)(); });
         });
     };
+    m_classifyStep = step; // держит цепочку живой
     (*step)();
 }
 

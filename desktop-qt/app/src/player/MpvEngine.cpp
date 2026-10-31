@@ -98,7 +98,7 @@ mpv::Handle MpvEngine::handle() {
     a->observe_property(p, 6, "eof-reached", MPV_FORMAT_FLAG);
     a->observe_property(p, 7, "cache-buffering-state", MPV_FORMAT_INT64);
     a->observe_property(p, 8, "track-list", MPV_FORMAT_NONE);
-    a->observe_property(p, 9, "video-params/w", MPV_FORMAT_INT64);
+    a->observe_property(p, 9, "video-params/dw", MPV_FORMAT_INT64);
     a->observe_property(p, 10, "chapter-list", MPV_FORMAT_NONE);
     // Последний отпустивший (движок или вывод кадров) закрывает ядро.
     m_h = mpv::Handle(p, [a](mpv_handle *h) { a->terminate_destroy(h); });
@@ -192,7 +192,7 @@ void MpvEngine::onProperty(const mpv_event_property &p) {
         if (*static_cast<int *>(p.data) != 0 && m_loaded) emit finished();
     } else if (name == "track-list" || name == "chapter-list") {
         readTracks();
-    } else if (name == "video-params/w") {
+    } else if (name == "video-params/dw") {
         updateVideoSize();
     }
 }
@@ -236,7 +236,7 @@ void MpvEngine::readTracks() {
 }
 
 void MpvEngine::updateVideoSize() {
-    const int w = property(S("video-params/w")).toInt(), h = property(S("video-params/h")).toInt();
+    const int w = property(S("video-params/dw")).toInt(), h = property(S("video-params/dh")).toInt(); // размер на экране (с учётом пропорций пикселя)
     if (w != m_videoW || h != m_videoH) { m_videoW = w; m_videoH = h; emit videoSizeChanged(); }
 }
 

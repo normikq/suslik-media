@@ -58,7 +58,8 @@ public:
 inline ApiResult wait(const std::function<void(ApiClient::Callback)> &call) {
     std::optional<ApiResult> out;
     call([&](const ApiResult &r) { out = r; });
-    for (int i = 0; i < 500 && !out; ++i) QTest::qWait(10);
+    // до 20 с: на Windows отказ в соединении приходит только через ~2 с на попытку (повторы SYN), и Qt пробует ещё раз
+    for (int i = 0; i < 2000 && !out; ++i) QTest::qWait(10);
     return out.value_or(ApiResult{});
 }
 } // namespace testutil

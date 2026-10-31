@@ -1,4 +1,5 @@
 #pragma once
+#include <QAbstractNativeEventFilter>
 #include <QObject>
 #include <QPointer>
 #include <QRect>
@@ -13,15 +14,18 @@ class QVariantAnimation;
 /// нижнем углу, по пропорциям фильма, поверх окон; уезжает туда за 320 мс.
 namespace suslik::app {
 
-class WindowMode : public QObject {
+class WindowMode : public QObject, public QAbstractNativeEventFilter {
     Q_OBJECT
     Q_PROPERTY(bool fullscreen READ fullscreen NOTIFY changed)
     Q_PROPERTY(bool mini READ mini NOTIFY changed)
     Q_PROPERTY(bool onTop READ onTop NOTIFY changed)
 
 public:
-    explicit WindowMode(QObject *parent = nullptr) : QObject(parent) {}
+    explicit WindowMode(QObject *parent = nullptr);
+    ~WindowMode() override;
     void setWindow(QWindow *w) { m_w = w; }
+    /// Windows: мини-плеер при растягивании за край держит пропорции фильма (WM_SIZING), без чёрных полос.
+    bool nativeEventFilter(const QByteArray &type, void *message, qintptr *result) override;
 
     bool fullscreen() const { return m_full; }
     bool mini() const { return m_mini; }
@@ -52,6 +56,7 @@ private:
     QRect m_before;
     bool m_maximizedBefore = false;
     QSize m_minBefore;
+    double m_aspect = 16.0 / 9.0;
     QVariantAnimation *m_anim = nullptr;
 };
 

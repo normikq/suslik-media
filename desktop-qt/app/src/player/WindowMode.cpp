@@ -1,12 +1,58 @@
 #include "WindowMode.h"
 
+#include <QCoreApplication>
 #include <QGuiApplication>
 #include <QScreen>
 #include <QVariantAnimation>
 #include <QWindow>
+#include <algorithm>
 #include <cmath>
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
+
 namespace suslik::app {
+
+namespace {
+/// Пропорции фильма для мини-плеера: от вертикальных до сверхшироких, без сужения — иначе чёрные полосы.
+double clampAspect(double a) { return std::isfinite(a) && a > 0 ? std::clamp(a, 0.4, 4.0) : 16.0 / 9.0; }
+} // namespace
+
+WindowMode::WindowMode(QObject *parent) : QObject(parent) {
+    if (QCoreApplication::instance()) QCoreApplication::instance()->installNativeEventFilter(this);
+}
+
+WindowMode::~WindowMode() {
+    if (QCoreApplication::instance()) QCoreApplication::instance()->removeNativeEventFilter(this);
+}
+
+bool WindowMode::nativeEventFilter(const QByteArray &type, void *message, qintptr *result) {
+#ifdef Q_OS_WIN
+    if (!m_mini || !m_w || type != "windows_generic_MSG") return false;
+    auto *msg = static_cast<MSG *>(message);
+    if (msg->message != WM_SIZING || msg->hwnd != reinterpret_cast<HWND>(m_w->winId())) return false;
+    auto *r = reinterpret_cast<RECT *>(msg->lParam);
+    const int edge = int(msg->wParam);
+    const double a = m_aspect;
+    long w = r->right - r->left, h = r->bottom - r->top;
+    if (edge == WMSZ_TOP || edge == WMSZ_BOTTOM) {
+        w = std::lround(h * a); // тянут по высоте — ширина следом, вправо
+        r->right = r->left + w;
+    } else {
+        h = std::lround(w / a); // по ширине или за угол — высота следом
+        if (edge == WMSZ_TOPLEFT || edge == WMSZ_TOPRIGHT) r->top = r->bottom - h;
+        else r->bottom = r->top + h;
+    }
+    if (result) *result = TRUE;
+    return true;
+#else
+    Q_UNUSED(type)
+    Q_UNUSED(message)
+    Q_UNUSED(result)
+    return false;
+#endif
+}
 
 void WindowMode::frameless(bool on) {
     m_w->setFlag(Qt::FramelessWindowHint, on);
@@ -67,12 +113,13 @@ void WindowMode::setMini(bool on, double aspect) {
         m_before = m_w->geometry();
         m_minBefore = m_w->minimumSize();
         m_topBeforeMini = m_onTop;
-        const double a = std::clamp(aspect, 1.2, 2.4);
-        const int w = std::clamp(int(std::sqrt(590.0 * 330.0 * a)), 400, 620);
+        const double a = clampAspect(aspect);
+        m_aspect = a;
+        const int w = std::clamp(int(std::sqrt(590.0 * 330.0 * a)), 260, 620);
         const int h = int(std::round(w / a));
         QScreen *s = m_w->screen() ? m_w->screen() : QGuiApplication::primaryScreen();
         const QRect work = s->availableGeometry();
-        m_w->setMinimumSize(QSize(160, 100));
+        m_w->setMinimumSize(QSize(120, 80));
         m_w->setWindowStates(Qt::WindowNoState);
         frameless(true);
         m_mini = true;
@@ -93,8 +140,9 @@ void WindowMode::setMini(bool on, double aspect) {
 }
 
 void WindowMode::fitMini(double aspect) {
+    m_aspect = clampAspect(aspect);
     if (!m_w || !m_mini || (m_anim && m_anim->state() == QAbstractAnimation::Running)) return;
-    const int h = int(std::round(m_w->width() / std::clamp(aspect, 1.2, 2.4)));
+    const int h = int(std::round(m_w->width() / m_aspect));
     if (std::abs(m_w->height() - h) > 2) m_w->resize(m_w->width(), h);
 }
 

@@ -84,6 +84,19 @@ void MpvInstall::start() {
     });
 }
 
+void MpvInstall::cancel() {
+    if (!m_reply) return;
+    QNetworkReply *r = m_reply;
+    m_reply = nullptr;
+    r->disconnect(this);
+    r->abort();
+    r->deleteLater();
+    if (m_part) { m_part->close(); m_part->remove(); m_part->deleteLater(); m_part = nullptr; }
+    delete m_hash; m_hash = nullptr;
+    m_progress = -1;
+    PlayerLog::write(S("libmpv: download cancelled (quit)"));
+}
+
 void MpvInstall::fail(const QString &message, const QString &log) {
     PlayerLog::write(S("libmpv: download from %1 failed: %2").arg(m_url, log));
     if (m_part) { m_part->close(); m_part->remove(); m_part->deleteLater(); m_part = nullptr; }

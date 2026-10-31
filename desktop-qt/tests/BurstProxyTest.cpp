@@ -258,6 +258,7 @@ private slots:
         });
         proxy->setResetConnections([http]() mutable { http.resetConnections(); });
         proxy->setCapBytes(16 * MB); // меньше файла: кольцо проворачивается
+        if (qEnvironmentVariableIsSet("SM_TEST_LOG")) proxy->setLog([](const QString &m) { qInfo().noquote() << "[proxy]" << m; });
     }
 
     void cleanup() {

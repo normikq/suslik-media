@@ -8,6 +8,11 @@
 #include "src/Settings.h"
 #include "src/SingleInstance.h"
 #include "src/Updater.h"
+#include "src/player/Reserve.h"
+
+#include <chrono>
+#include <cstdlib>
+#include <thread>
 #include "src/Ui.h"
 #include "src/player/MpvEngine.h"
 #include "src/player/MpvVideo.h"
@@ -144,5 +149,16 @@ int main(int argc, char *argv[]) {
     app::PlayerLog::write(QStringLiteral("[sys] Suslik Media Qt %1 started").arg(QStringLiteral(SM_VERSION)));
     const int rc = app.exec();
     core::Store::flushAll();
+    app::PlayerLog::write(QStringLiteral("[sys] quit"));
+    // Страховка: что-то повисло при закрытии (сеть, потоки запаса) — процесс всё равно уходит. Иначе зависший
+    // процесс держал бы «одну копию программы», и новый запуск только будил бы его.
+    std::thread([rc] {
+        std::this_thread::sleep_for(std::chrono::seconds(8));
+        app::PlayerLog::write(QStringLiteral("[sys] quit took > 8 s, terminating"));
+        std::_Exit(rc);
+    }).detach();
+    mpvInstall.cancel();
+    player.close();
+    app::Reserve::shutdown();
     return rc;
 }

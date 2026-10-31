@@ -53,16 +53,17 @@ jobs:
       - name: Каждая функция отдельно
         shell: bash
         env:
-          QT_LOGGING_RULES: "qt.network.*=true"
           QT_FORCE_STDERR_LOGGING: "1"
+          SM_TEST_LOG: "1"
         run: |
-          for t in ApiClientTest BurstProxyTest; do
+          set +e
+          for t in BurstProxyTest ApiClientTest; do
             for f in $(build/tests/$t.exe -functions | sed 's/()//'); do
               echo "::group::$t $f"
               start=$(date +%s)
               timeout 30 build/tests/$t.exe "$f" -v2 -o out.txt,txt -o -,txt > /dev/null 2> err.txt; rc=$?
               echo "rc=$rc за $(( $(date +%s) - start )) с"
-              tail -n 60 out.txt; tail -n 40 err.txt
+              tail -n 80 out.txt; tail -n 60 err.txt
               echo "::endgroup::"
               [ $rc = 0 ] || echo "::warning::$t $f rc=$rc"
             done

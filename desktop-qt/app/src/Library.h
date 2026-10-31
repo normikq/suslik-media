@@ -10,6 +10,7 @@
 #include <QVariantMap>
 #include <deque>
 #include <functional>
+#include <memory>
 #include <optional>
 
 namespace suslik::core {
@@ -211,6 +212,8 @@ private:
     std::deque<std::pair<qint64, MFile>> m_mediaQueue;
     bool m_mediaBusy = false;
     QStringList m_classifyTodo;
+    bool m_classifyRunning = false;
+    std::shared_ptr<std::function<void()>> m_classifyStep;
     std::vector<std::function<void()>> m_refreshWaiters;
     int m_tagsRound = 0;
 };
