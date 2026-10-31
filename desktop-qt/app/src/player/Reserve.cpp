@@ -85,6 +85,8 @@ BurstProxy &proxy(ApiClient *api) {
     return p;
 }
 
+int dropRetired() { return g_proxy ? g_proxy->dropRetired() : 0; }
+
 void shutdown() {
     delete g_proxy;
     g_proxy = nullptr;

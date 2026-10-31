@@ -2,6 +2,8 @@
 #include "Library.h"
 
 #include <QBuffer>
+#include <QDateTime>
+#include <QFile>
 #include <QCoreApplication>
 #include <QImageReader>
 #include <QMetaObject>
@@ -71,11 +73,14 @@ public:
             r.setAutoTransform(true);
             const QSize full = r.size();
             if (glow && full.isValid()) r.setScaledSize(full.scaled(GLOW_W, GLOW_W * 4, Qt::KeepAspectRatio));
-            else if (want.isValid() && full.isValid() && (full.width() > want.width() || full.height() > want.height())) {
-                QSize s = full.scaled(want.width() > 0 ? want.width() : full.width(), want.height() > 0 ? want.height() : full.height(),
-                                      Qt::KeepAspectRatioByExpanding);
-                if (s.width() > full.width() || s.height() > full.height()) s = full;
-                r.setScaledSize(s);
+            else if (full.isValid() && full.width() > 0 && full.height() > 0 && (want.width() > 0 || want.height() > 0)) {
+                // задана одна сторона (баннер: только ширина) — вторая по пропорциям. Раньше вторая бралась от полного
+                // кадра, и KeepAspectRatioByExpanding оставлял 4K-кадр как есть (33 МБ в памяти вместо 8)
+                QSize s;
+                if (want.width() > 0 && want.height() > 0) s = full.scaled(want, Qt::KeepAspectRatioByExpanding);
+                else if (want.width() > 0) s = QSize(want.width(), std::max(1, int(qint64(full.height()) * want.width() / full.width())));
+                else s = QSize(std::max(1, int(qint64(full.width()) * want.height() / full.height())), want.height());
+                if (s.width() < full.width() && s.height() < full.height()) r.setScaledSize(s); // только уменьшать
             }
             QImage img = r.read();
             if (glow && !img.isNull()) img = glowOf(img);
@@ -101,12 +106,26 @@ QQuickImageResponse *ImageProvider::requestImageResponse(const QString &id, cons
     bool glow = false;
     if (path.startsWith(QLatin1String("glow:"))) { glow = true; path = path.mid(5); }
     if (!path.startsWith(QLatin1Char('/'))) path.prepend(QLatin1Char('/'));
-    // Library — объект главного потока: просим там.
-    QMetaObject::invokeMethod(&m_lib, [this, guard, path, requestedSize, glow] {
-        m_lib.image(path, [guard, requestedSize, glow](const QByteArray &bytes) {
-            if (guard) guard->decode(bytes, requestedSize, glow);
-        });
-    }, Qt::QueuedConnection);
+    // Уже на диске — читается здесь же, в потоке пула (не в главном: чтение файла не тормозит интерфейс).
+    // Нет — Library (объект главного потока) скачает.
+    QThreadPool::globalInstance()->start([this, guard, path, requestedSize, glow] {
+        QFile f(Library::posterFile(path));
+        if (f.open(QIODevice::ReadOnly)) {
+            const QByteArray b = f.readAll();
+            f.close();
+            f.setFileTime(QDateTime::currentDateTime(), QFileDevice::FileModificationTime); // показан — недавно нужен
+            if (!b.isEmpty()) {
+                QMetaObject::invokeMethod(qApp, [guard, b, requestedSize, glow] { if (guard) guard->decode(b, requestedSize, glow); },
+                                          Qt::QueuedConnection);
+                return;
+            }
+        }
+        QMetaObject::invokeMethod(&m_lib, [this, guard, path, requestedSize, glow] {
+            m_lib.image(path, [guard, requestedSize, glow](const QByteArray &bytes) {
+                if (guard) guard->decode(bytes, requestedSize, glow);
+            });
+        }, Qt::QueuedConnection);
+    });
     return resp;
 }
 

@@ -69,7 +69,7 @@ Item {
                 sourceSize.width: 1920
                 asynchronous: true
                 smooth: true
-                mipmap: true
+                mipmap: false // mipmap — +33 % памяти к большому кадру
                 // кадр выше баннера: двигается вместе со свечением, чтобы они совпадали
                 readonly property real fullH: implicitWidth > 0 ? frame.width * implicitHeight / implicitWidth : 0
                 readonly property bool tall: fullH >= 360

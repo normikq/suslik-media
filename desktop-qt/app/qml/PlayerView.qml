@@ -8,7 +8,10 @@ Item {
     id: pv
     anchors.fill: parent
     visible: opacity > 0
-    opacity: player.open && !player.closing ? 1 : 0
+    // появляется плавно: экран создаётся при открытии фильма (Loader), сначала прозрачный
+    property bool shown: false
+    Component.onCompleted: { shown = Qt.binding(() => player.open && !player.closing); if (shown) keys.forceActiveFocus() }
+    opacity: shown ? 1 : 0
     Behavior on opacity { NumberAnimation { duration: 260; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease } }
 
     readonly property bool mini: windowMode.mini
@@ -184,16 +187,20 @@ Item {
         cursorShape: pv.mini ? cornerShape : pv.barsShown ? Qt.ArrowCursor : Qt.BlankCursor
         property point pressAt
         property bool moved: false
+        property bool resizing: false
+        onReleased: resizing = false
+        onCanceled: resizing = false
         onPositionChanged: (m) => {
             pv.poke()
             if (pv.mini && !pressed) cornerShape = cornerCursor(m.x, m.y)
+            if (resizing) { windowMode.resizeStep(); return }
             if (pv.mini && pressed && !moved && Math.hypot(m.x - pressAt.x, m.y - pressAt.y) > 4) { moved = true; windowMode.startMove() }
         }
         onPressed: (m) => {
             pressAt = Qt.point(m.x, m.y); moved = false
             pv.poke()
             if (pv.picker !== "") pv.picker = ""
-            if (pv.mini) { const e = edgeAt(m.x, m.y); if (e) { windowMode.startResize(e); moved = true } }
+            if (pv.mini) { const e = edgeAt(m.x, m.y); if (e) { windowMode.beginResize(e); resizing = true; moved = true } }
         }
         onClicked: if (!moved) clickTimer.restart()
         onDoubleClicked: {

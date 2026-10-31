@@ -1,6 +1,7 @@
 #include "WindowMode.h"
 
 #include <QCoreApplication>
+#include <QCursor>
 #include <QGuiApplication>
 #include <QScreen>
 #include <QVariantAnimation>
@@ -149,6 +150,33 @@ void WindowMode::fitMini(double aspect) {
 void WindowMode::startMove() { if (m_w) m_w->startSystemMove(); }
 
 void WindowMode::startResize(int edges) { if (m_w) m_w->startSystemResize(Qt::Edges(edges)); }
+
+void WindowMode::beginResize(int edges) {
+    if (!m_w || !m_mini) return;
+    if (m_anim) m_anim->stop();
+    m_resizeEdges = edges;
+    m_resizeFrom = m_w->geometry();
+    m_resizeCursor = QCursor::pos();
+}
+
+void WindowMode::resizeStep() {
+    if (!m_w || !m_mini || !m_resizeEdges) return;
+    const QPoint d = QCursor::pos() - m_resizeCursor;
+    const bool left = m_resizeEdges & Qt::LeftEdge, top = m_resizeEdges & Qt::TopEdge;
+    const double a = m_aspect;
+    // ширина по горизонтали и по вертикали (через пропорции) — берётся бо́льшая: угол идёт за курсором
+    const double byW = m_resizeFrom.width() + (left ? -d.x() : d.x());
+    const double byH = (m_resizeFrom.height() + (top ? -d.y() : d.y())) * a;
+    QScreen *s = m_w->screen() ? m_w->screen() : QGuiApplication::primaryScreen();
+    const QRect work = s->availableGeometry();
+    const double maxW = std::min<double>(work.width(), work.height() * a);
+    const double minW = std::max(200.0, 120.0 * a);
+    const int w = int(std::lround(std::clamp(std::max(byW, byH), minW, std::max(minW, maxW))));
+    const int h = int(std::lround(w / a));
+    const int x = left ? m_resizeFrom.right() + 1 - w : m_resizeFrom.left();
+    const int y = top ? m_resizeFrom.bottom() + 1 - h : m_resizeFrom.top();
+    m_w->setGeometry(x, y, w, h);
+}
 
 void WindowMode::reset() {
     if (m_mini) setMini(false);

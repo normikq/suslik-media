@@ -86,13 +86,17 @@ Library::Library(ApiClient &api, CloudSync &sync, QObject *parent)
 
 void Library::bump() {
     // Несколько изменений подряд — один пересчёт страниц.
+    // Не чаще раза в 400 мс: фоновые ответы (жанры, постеры, названия — каждые 120 мс) иначе пересобирали
+    // страницы медиатеки несколько раз в секунду.
     if (m_bumpQueued) return;
     m_bumpQueued = true;
-    QMetaObject::invokeMethod(this, [this] {
+    const qint64 wait = std::max<qint64>(0, m_bumpAt + 400 - QDateTime::currentMSecsSinceEpoch());
+    QTimer::singleShot(int(wait), this, [this] {
         m_bumpQueued = false;
+        m_bumpAt = QDateTime::currentMSecsSinceEpoch();
         ++m_version;
         emit versionChanged();
-    }, Qt::QueuedConnection);
+    });
 }
 
 void Library::setStatus(const QString &s, int kind) {
@@ -348,7 +352,7 @@ void Library::prunePosterFiles() {
     }
 }
 
-QString Library::posterFile(const QString &path) const {
+QString Library::posterFile(const QString &path) {
     const QString name = QString::fromLatin1(QCryptographicHash::hash(path.toUtf8(), QCryptographicHash::Sha1).toHex());
     QDir().mkpath(AppDir::file(S("posters")));
     return QDir(AppDir::file(S("posters"))).filePath(name + S(".img"));

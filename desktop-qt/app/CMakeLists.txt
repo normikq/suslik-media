@@ -49,7 +49,7 @@ qt_add_qml_module(suslik_media
 # Скруглённые углы слоёв (постеры, баннер): маленький шейдер, собирается в .qsb для всех графических API.
 qt_add_shaders(suslik_media sm_shaders
   PREFIX /sm
-  FILES shaders/rounded.frag
+  FILES shaders/rounded.frag shaders/roundedimage.frag
 )
 
 # Шрифты, значки и строки — те же файлы, что у Kotlin-версии (desktop/src/main/resources), без копий.

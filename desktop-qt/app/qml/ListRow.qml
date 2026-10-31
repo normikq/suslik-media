@@ -15,19 +15,17 @@ Btn {
         border.color: row.hovered ? "#40485C" : "#242A38"
         Behavior on color { ColorAnimation { duration: 200 } }
     }
-    Rounded {
+    Item {
         id: thumb
         x: 14; y: 10; width: 52; height: parent.height - 20
-        radius: 8
-        Rectangle { anchors.fill: parent; color: "#222735" }
+        Rectangle { anchors.fill: parent; radius: 8; color: "#222735" }
         Text { anchors.centerIn: parent; visible: img.status !== Image.Ready; text: "▶"; color: Theme.muted; font.pixelSize: 16 }
-        Image {
+        RoundedImage {
             id: img
             anchors.fill: parent
+            radius: 8
             source: row.t.poster ? "image://suslik" + row.t.poster : ""
             sourceSize: Qt.size(104, 152)
-            fillMode: Image.PreserveAspectCrop
-            asynchronous: true
         }
     }
     Column {

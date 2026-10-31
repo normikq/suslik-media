@@ -41,6 +41,10 @@ public:
     /// Мини-плеер: тянуть окно мышью (системное перемещение) и менять размер с края.
     Q_INVOKABLE void startMove();
     Q_INVOKABLE void startResize(int edges);
+    /// Мини-плеер: растягивание за угол своими силами — размер всегда по пропорциям фильма, противоположный угол
+    /// стоит на месте. beginResize — при нажатии, resizeStep — при каждом движении мыши (позиция курсора — экранная).
+    Q_INVOKABLE void beginResize(int edges);
+    Q_INVOKABLE void resizeStep();
     /// Плеер закрыт: обычное окно (без полного экрана и мини).
     Q_INVOKABLE void reset();
 
@@ -57,6 +61,9 @@ private:
     bool m_maximizedBefore = false;
     QSize m_minBefore;
     double m_aspect = 16.0 / 9.0;
+    int m_resizeEdges = 0;
+    QRect m_resizeFrom;
+    QPoint m_resizeCursor;
     QVariantAnimation *m_anim = nullptr;
 };
 
