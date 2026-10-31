@@ -169,9 +169,9 @@ void WindowMode::resizeStep() {
     const double byH = (m_resizeFrom.height() + (top ? -d.y() : d.y())) * a;
     QScreen *s = m_w->screen() ? m_w->screen() : QGuiApplication::primaryScreen();
     const QRect work = s->availableGeometry();
-    const double maxW = std::min<double>(work.width(), work.height() * a);
-    const double minW = std::max(200.0, 120.0 * a);
-    const int w = int(std::lround(std::clamp(std::max(byW, byH), minW, std::max(minW, maxW))));
+    const double maxW = (std::min<double>)(work.width(), work.height() * a);
+    const double minW = (std::max)(200.0, 120.0 * a);
+    const int w = int(std::lround(std::clamp((std::max)(byW, byH), minW, (std::max)(minW, maxW))));
     const int h = int(std::lround(w / a));
     const int x = left ? m_resizeFrom.right() + 1 - w : m_resizeFrom.left();
     const int y = top ? m_resizeFrom.bottom() + 1 - h : m_resizeFrom.top();
