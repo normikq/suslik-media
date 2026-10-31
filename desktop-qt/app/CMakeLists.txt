@@ -1,5 +1,5 @@
 # Приложение: интерфейс на QML поверх ядра (core/). План — docs/QT-PORT.md.
-find_package(Qt6 6.4 REQUIRED COMPONENTS Gui Quick)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Gui Quick ShaderTools)
 
 qt_add_executable(suslik_media WIN32
   main.cpp
@@ -13,13 +13,22 @@ qt_add_executable(suslik_media WIN32
 )
 set_target_properties(suslik_media PROPERTIES OUTPUT_NAME "SuslikMediaQt")
 
-set(SM_QML
-  qml/Main.qml
-)
+file(GLOB SM_QML RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS qml/*.qml)
+# Файлы лежат в qml/, но в модуле — в корне: иначе неявный импорт папки прячет синглтон Theme.
+foreach(f IN LISTS SM_QML)
+  get_filename_component(n ${f} NAME)
+  set_source_files_properties(${f} PROPERTIES QT_RESOURCE_ALIAS ${n})
+endforeach()
+set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 qt_add_qml_module(suslik_media
   URI Suslik
   VERSION 1.0
   QML_FILES ${SM_QML}
+)
+# Скруглённые углы слоёв (постеры, баннер): маленький шейдер, собирается в .qsb для всех графических API.
+qt_add_shaders(suslik_media sm_shaders
+  PREFIX /sm
+  FILES shaders/rounded.frag
 )
 
 # Шрифты, значки и строки — те же файлы, что у Kotlin-версии (desktop/src/main/resources), без копий.

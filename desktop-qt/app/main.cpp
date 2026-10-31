@@ -76,7 +76,7 @@ int main(int argc, char *argv[]) {
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
     engine.loadFromModule("Suslik", "Main");
 #else
-    engine.load(QUrl(QStringLiteral("qrc:/Suslik/qml/Main.qml"))); // Qt 6.4 (тесты на Linux)
+    engine.load(QUrl(QStringLiteral("qrc:/Suslik/Main.qml"))); // Qt 6.4 (тесты на Linux)
 #endif
     if (engine.rootObjects().isEmpty()) return 1;
     auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
@@ -84,6 +84,15 @@ int main(int argc, char *argv[]) {
         window->setColor(QColor(0x09, 0x0B, 0x10));
         ui.styleTitleBar(window);
         QObject::connect(&single, &app::SingleInstance::showRequested, window, [&ui, window] { ui.raise(window); });
+    }
+
+    // Снимок окна для проверки вёрстки без экрана (SM_SHOT=файл.png, SM_SHOT_MS — через сколько мс).
+    if (window && qEnvironmentVariableIsSet("SM_SHOT")) {
+        const int ms = qEnvironmentVariableIsSet("SM_SHOT_MS") ? qEnvironmentVariableIntValue("SM_SHOT_MS") : 3000;
+        QTimer::singleShot(ms, window, [window] {
+            window->grabWindow().save(qEnvironmentVariable("SM_SHOT"));
+            QCoreApplication::quit();
+        });
     }
 
     sync.start();
