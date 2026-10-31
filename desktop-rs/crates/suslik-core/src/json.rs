@@ -30,6 +30,14 @@ pub fn opt_i64(v: &Value, k: &str, default: i64) -> i64 {
     }
 }
 
+pub fn opt_f64(v: &Value, k: &str, default: f64) -> f64 {
+    match opt(v, k) {
+        Some(Value::Number(n)) => n.as_f64().unwrap_or(default),
+        Some(Value::String(s)) => s.trim().parse().unwrap_or(default),
+        _ => default,
+    }
+}
+
 pub fn opt_i32(v: &Value, k: &str, default: i32) -> i32 {
     opt_i64(v, k, default as i64) as i32
 }

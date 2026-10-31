@@ -9,6 +9,7 @@ pub mod jrx;
 mod json;
 pub mod mirror_link;
 pub mod model;
+pub mod party;
 pub mod playback_presets;
 pub mod search;
 pub mod site_address;

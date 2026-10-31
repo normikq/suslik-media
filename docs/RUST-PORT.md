@@ -27,8 +27,12 @@ CI: `.github/workflows/desktop-rs.yml` — fmt, clippy, тесты на Linux и
 
 1. ✅ **Каркас.** Рабочая область, `suslik-core`: `SiteAddress`, `MirrorLink`, `Versions`/`UpdateChannel`, `clockText`,
    `Changelog`, `PlaybackPresets`. Окно egui с темой «Проекторная» и «Что нового».
-2. **Модель и разбор.** `Model.kt` (медиатека, слияние версий и сериалов), `search/` (разбор и фильтр раздач),
-   `LibraryKeep`, `MarkersDetector`, `party/PartyProtocol` (разбор SSE), `auth/`, `sync/` — чистая логика с тестами.
+2. ✅ **Модель, поиск, «Вместе».** `model` (`Model.kt`: медиатека, что играть, ответ ИИ, слияние и порядок версий,
+   субтитры и озвучки), `search` (`ReleaseParser`, `SearchHit`, `SearchFilter`), `party` (часы и дрейф, протокол комнаты
+   и SSE, `PartySyncEngine`). Тесты `ModelTest`, `SeriesGroupingTest`, `ReleaseParserTest`, `SearchFilterTest`,
+   `PartyProtocolTest`, `PartyTest`, `PartySyncEngineTest` перенесены целиком (114 тестов в `suslik-core`).
+   Осталось из чистой логики: `LibraryKeep`, `MarkersDetector`, `auth/`, `sync/`, `audio/`, `torrent/` — переедут
+   вместе с этапами, где они нужны.
 3. **Сеть и хранилище.** HTTP-клиент (`ureq`/`reqwest` на rustls, HTTP/1.1), повтор на новом соединении как в
    `Api.call`, cookie сеанса только для своего сервера (`site_address::is_own`), настройки и прогресс в
    `%APPDATA%\SuslikMedia` (совместимо с Kotlin-версией, чтобы переход не терял прогресс).
@@ -44,5 +48,10 @@ CI: `.github/workflows/desktop-rs.yml` — fmt, clippy, тесты на Linux и
 
 ## Сверено с Kotlin
 
-`url_codec` кодирует и раскодирует строго как `java.net.URLEncoder`/`URLDecoder`: от этого зависят ключ файла
-в запасе и путь продления подписи зеркала.
+- `url_codec` кодирует и раскодирует строго как `java.net.URLEncoder`/`URLDecoder`: от этого зависят ключ файла
+  в запасе и путь продления подписи зеркала.
+- Регулярные выражения переносятся текстом как есть (одни и те же на сайте, Android, ТВ и ПК); `jrx` переводит только
+  то, что в Java значит другое: `\d`, `\s`, `\w`, `\b` там только ASCII, в Rust — Unicode. Шаблоны `ReleaseParser`
+  с `UNICODE_CHARACTER_CLASS` идут без перевода (`rx!(…, unicode)`). Заглядывания даёт `fancy-regex`.
+- JSON читается так же снисходительно, как `org.json` (`json.rs`: число в строке — число, `null` — значение по умолчанию).
+- Пороги, заданные длиной строки, считаются в UTF-16, как в Kotlin (`search::kt_len`).
