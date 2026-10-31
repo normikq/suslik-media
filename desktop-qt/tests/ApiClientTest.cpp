@@ -89,11 +89,14 @@ private slots:
     }
 
     void noServerIsANetworkError() {
-        QTcpServer probe;
-        probe.listen(QHostAddress::LocalHost);
-        const quint16 port = probe.serverPort();
-        probe.close();
-        ApiClient api(S("http://127.0.0.1:%1").arg(port));
+        // сервер принимает соединение и сразу закрывает его, не ответив. Закрытый порт не годится:
+        // на Windows отказ приходит через секунды, а после других тестов соединение может зависнуть
+        QTcpServer mute;
+        mute.listen(QHostAddress::LocalHost);
+        connect(&mute, &QTcpServer::newConnection, &mute, [&mute] {
+            while (QTcpSocket *s = mute.nextPendingConnection()) { s->abort(); s->deleteLater(); }
+        });
+        ApiClient api(S("http://127.0.0.1:%1").arg(mute.serverPort()));
         const ApiResult r = wait([&](auto cb) { api.get(S("/api/session"), cb); });
         QVERIFY(r.error.kind == ApiError::Kind::Network);
         QCOMPARE(r.error.message, S("Нет связи с сервером"));
