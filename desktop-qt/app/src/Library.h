@@ -63,6 +63,7 @@ public:
     int count() const { return int(m_items.size()); }
     qint64 aiReadyAt() const { return m_aiReadyAt; }
 
+    ApiClient &api() const { return m_api; }
     const QList<LibraryItem> &items() const { return m_items; }
     const LibraryItem *item(qint64 id) const;
     /// Раздачи только с озвучкой: в медиатеке их нет, предпросмотру «Озвучки» нужны их файлы.
@@ -87,6 +88,10 @@ public:
     void askAi(const QList<qint64> &ids);
     /// id → принять (true) или оставить своё название (false). Одним запросом на плитку.
     void saveAi(const QHash<qint64, bool> &decisions);
+    /// Окно ответов ИИ: [{id, label, name, canTick, ticked}] — отмечено: взять название ИИ.
+    Q_INVOKABLE QVariantList aiRows(const QVariantList &ids) const;
+    /// {"id": true/false} из окна ответов.
+    Q_INVOKABLE void saveAiDecisions(const QVariantMap &decisions);
 
     // ---- категории и подписи ----
     Category category(const LibraryItem &item) const;

@@ -49,8 +49,8 @@ Window {
             id: pages
             anchors { left: sidebar.right; right: parent.right; top: parent.top; bottom: parent.bottom }
             clip: true
-            Page { index: 0; LibraryView { id: libraryPage; anchors.fill: parent; mine: false; onVersionsRequested: (t, ids) => dialogs.versions(t, ids); onPlayRequested: (id, p) => dialogs.play(id, p); onFlyTo: (tab, r, p) => flight.launch(tab, r, p) } }
-            Page { index: 1; LibraryView { id: minePage; anchors.fill: parent; mine: true; onVersionsRequested: (t, ids) => dialogs.versions(t, ids); onPlayRequested: (id, p) => dialogs.play(id, p); onFlyTo: (tab, r, p) => flight.launch(tab, r, p) } }
+            Page { index: 0; LibraryView { id: libraryPage; anchors.fill: parent; mine: false; onVersionsRequested: (t, ids) => dialogs.versions(model, t, ids); onPlayRequested: (id, p) => dialogs.play_(id, p); onFlyTo: (tab, r, p) => flight.launch(tab, r, p) } }
+            Page { index: 1; LibraryView { id: minePage; anchors.fill: parent; mine: true; onVersionsRequested: (t, ids) => dialogs.versions(model, t, ids); onPlayRequested: (id, p) => dialogs.play_(id, p); onFlyTo: (tab, r, p) => flight.launch(tab, r, p) } }
             Page { index: 3; AddView { anchors.fill: parent } }
         }
     }
@@ -91,6 +91,21 @@ Window {
     FavFlight { id: flight; anchors.fill: parent; sidebar: sidebar }
     Dialogs { id: dialogs; anchors.fill: parent }
     SettingsSheet { id: settingsSheet; anchors.fill: parent }
+
+    // проверка вёрстки без мыши: SM_OPEN=play:<id>:<путь> | versions:<id>,<id> | settings | add
+    Timer {
+        running: Ui.env("SM_OPEN") !== ""
+        interval: 2500
+        onTriggered: {
+            const a = Ui.env("SM_OPEN").split(":")
+            if (a[0] === "play") dialogs.play_(Number(a[1]), a.slice(2).join(":"))
+            else if (a[0] === "versions") dialogs.versions(libraryPage.model, "Версии", a[1].split(",").map(Number))
+            else if (a[0] === "settings") settingsSheet.open = true
+            else if (a[0] === "add") win.select(3)
+            else if (a[0] === "mine") win.select(1)
+            else if (a[0] === "list") libraryPage.model.viewMode = 1
+        }
+    }
 
     Shortcut {
         sequence: "F11"

@@ -33,6 +33,8 @@ public:
     /// Окно выйти вперёд (второй запуск).
     Q_INVOKABLE void raise(QWindow *w) const;
     Q_INVOKABLE void styleTitleBar(QWindow *w) const;
+    /// Переменная окружения (проверка вёрстки: SM_OPEN открывает окно сразу после запуска).
+    Q_INVOKABLE QString env(const QString &name) const { return qEnvironmentVariable(name.toUtf8().constData()); }
 
 private:
     QString m_version;

@@ -2,6 +2,7 @@
 #include "src/ImageProvider.h"
 #include "src/Library.h"
 #include "src/LibraryPage.h"
+#include "src/PlayModel.h"
 #include "src/SingleInstance.h"
 #include "src/Ui.h"
 
@@ -65,6 +66,7 @@ int main(int argc, char *argv[]) {
     QObject::connect(&sync, &core::CloudSync::changed, &library, [&library](int) { library.bumpWatch(); });
 
     qmlRegisterType<app::LibraryPage>("Suslik.Native", 1, 0, "LibraryPage");
+    qmlRegisterType<app::PlayModel>("Suslik.Native", 1, 0, "PlayModel");
     qmlRegisterUncreatableType<app::Library>("Suslik.Native", 1, 0, "Library", QStringLiteral("one per app"));
 
     QQmlApplicationEngine engine;

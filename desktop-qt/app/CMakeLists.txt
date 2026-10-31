@@ -10,6 +10,7 @@ qt_add_executable(suslik_media WIN32
   src/LibraryPage.cpp src/LibraryPage.h
   src/ImageProvider.cpp src/ImageProvider.h
   src/Ui.cpp src/Ui.h
+  src/PlayModel.cpp src/PlayModel.h src/PlayRequest.h
 )
 set_target_properties(suslik_media PROPERTIES OUTPUT_NAME "SuslikMediaQt")
 

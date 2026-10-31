@@ -434,4 +434,55 @@ void LibraryPage::showAi(qint64 id) {
     emit m_lib->aiPanelRequested(known, QString());
 }
 
+QVariantList LibraryPage::versionRows(const QVariantList &ids) const {
+    QList<LibraryItem> vs;
+    for (const auto &v : ids)
+        if (const LibraryItem *it = m_lib->item(v.toLongLong())) vs << *it;
+    QVariantList out;
+    for (const VersionSection &sec : versionSections(vs)) {
+        QVariantList rows;
+        for (const LibraryItem &v : sec.items) {
+            std::optional<WatchInfo> w;
+            if (v.playable.isSeries()) { if (auto lw = m_lib->lastWatched(v.m)) w = lw->second; }
+            else if (v.playable.isMovie()) w = m_lib->watchInfo(watchKey(v.m.id, v.playable.file));
+            QStringList base = itemSpecs(v, std::nullopt).first.split(S(" • ")).mid(0, 2);
+            for (const QString &t : m_lib->tagsOf(v))
+                if (t == S("Dolby Vision") || t == S("HDR")) base << t;
+            QStringList heading;
+            for (const QString &h : {versionLine(v, sec.title.has_value()), base.join(S(" • "))})
+                if (!h.trimmed().isEmpty()) heading << h;
+            QVariantMap r;
+            r[S("id")] = v.m.id;
+            r[S("heading")] = heading.join(S(" • "));
+            r[S("size")] = formatBytes(v.m.size);
+            r[S("name")] = v.m.name;
+            r[S("fraction")] = w && w->fraction() > 0.01f ? (w->watched() ? 1.0 : double(w->fraction())) : 0.0;
+            rows << r;
+        }
+        QVariantMap sm;
+        sm[S("title")] = sec.title.value_or(QString());
+        sm[S("rows")] = rows;
+        out << sm;
+    }
+    return out;
+}
+
+QString LibraryPage::versionsLabel(int n) const { return versionsWord(n); }
+
+void LibraryPage::chooseVersion(qint64 id) {
+    const LibraryItem *item = m_lib->item(id);
+    if (!item) return;
+    if (item->playable.isMovie()) { emit playRequested(id, item->playable.file.path); return; }
+    if (!item->playable.isSeries() || item->playable.seasons.isEmpty()) return;
+    std::optional<QString> saved;
+    if (auto lw = m_lib->lastWatched(item->m)) saved = lw->first.path;
+    else saved = m_lib->lastEpisode(id);
+    QString path = item->playable.seasons.first().items.first().file.path;
+    if (saved)
+        for (const Season &s : item->playable.seasons)
+            for (const Episode &e : s.items)
+                if (e.file.path == *saved) path = e.file.path;
+    emit playRequested(id, path);
+}
+
 } // namespace suslik::app

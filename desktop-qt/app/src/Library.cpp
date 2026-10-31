@@ -447,6 +447,43 @@ void Library::saveAi(const QHash<qint64, bool> &decisions) {
     }
 }
 
+namespace {
+QString aiLabel(const AiTitle &ai) {
+    const QString kind = ai.kind == QLatin1String("movie") ? tx(S("library.ai_tip_film"))
+                         : ai.kind == QLatin1String("series") ? tx(S("library.ai_tip_serial"))
+                         : ai.kind == QLatin1String("collection") ? tx(S("library.ai_tip_sbornik")) : QString();
+    // оригинал и год — по ним ищется постер: «Дюна» (Dune, 2021) · фильм
+    QStringList orig;
+    if (ai.original && *ai.original != ai.base) orig << *ai.original;
+    if (ai.year) orig << QString::number(*ai.year);
+    const QString title = S("«") + ai.base + S("»") + (orig.isEmpty() ? QString() : S(" (") + orig.join(S(", ")) + S(")")) +
+                          (kind.isEmpty() ? QString() : S(" · ") + kind);
+    return ai.season ? tx(S("library.ai_sezon"), {{"title", title}, {"season", QString::number(*ai.season)}}) : title;
+}
+} // namespace
+
+QVariantList Library::aiRows(const QVariantList &ids) const {
+    QVariantList out;
+    for (const auto &v : ids) {
+        const LibraryItem *i = item(v.toLongLong());
+        if (!i || !i->m.aiTitle) continue;
+        const AiTitle &ai = *i->m.aiTitle;
+        out << QVariantMap{{S("id"), i->m.id},
+                           {S("label"), ai.status == QLatin1String("none") ? tx(S("library.ai_ne_smog")) : aiLabel(ai)},
+                           {S("name"), i->m.name},
+                           {S("canTick"), i->m.canAiTitle && ai.status != QLatin1String("none")},
+                           // предложенное и принятое отмечены сразу: «Сохранить» принимает найденное ИИ
+                           {S("ticked"), ai.status != QLatin1String("rejected")}};
+    }
+    return out;
+}
+
+void Library::saveAiDecisions(const QVariantMap &decisions) {
+    QHash<qint64, bool> d;
+    for (auto it = decisions.cbegin(); it != decisions.cend(); ++it) d.insert(it.key().toLongLong(), it.value().toBool());
+    saveAi(d);
+}
+
 // ---- категории и подписи ----
 bool Library::isAnime(const LibraryItem &item) {
     const QString text = (item.m.name + QLatin1Char(' ') + item.baseTitle).toLower();

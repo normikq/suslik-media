@@ -69,6 +69,12 @@ public:
     Q_INVOKABLE void setMineGroup(qint64 id, bool on);
     Q_INVOKABLE void setFavoriteGroup(qint64 id, bool on);
     Q_INVOKABLE void askAi(qint64 id);
+    /// «Какую версию включить?»: разделы [{title, rows: [{id, heading, size, name, fraction}]}].
+    Q_INVOKABLE QVariantList versionRows(const QVariantList &ids) const;
+    /// Выбрали версию: фильм играет, сериал — с места, где остановились (или с первой серии).
+    Q_INVOKABLE void chooseVersion(qint64 id);
+    /// «3 версии».
+    Q_INVOKABLE QString versionsLabel(int n) const;
     Q_INVOKABLE void showAi(qint64 id);
 
 signals:
