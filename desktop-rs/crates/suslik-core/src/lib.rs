@@ -5,7 +5,9 @@
 //! Пока обе версии живут рядом, правила надо менять в обеих.
 
 pub mod auth;
+pub mod burst_proxy;
 pub mod changelog;
+pub mod http1;
 pub mod jrx;
 pub mod json;
 pub mod library_keep;
