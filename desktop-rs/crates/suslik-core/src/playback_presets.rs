@@ -35,6 +35,9 @@ pub fn clamp_burst(mb: i32) -> i32 {
     mb.clamp(0, BURST_MAX)
 }
 
+/// Буфер плеера по умолчанию, мс (`cache_ms` в настройках).
+pub const CACHE_DEFAULT: i32 = 3000;
+
 pub const BITRATE_HINT: &str = "Подсказка: битрейт (Мбит/с) ≈ размер файла в ГБ × 2,2 ÷ длительность в часах.";
 
 #[cfg(test)]

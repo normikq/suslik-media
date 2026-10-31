@@ -51,6 +51,7 @@ pub struct Fetched {
     pub etag: Option<String>,
 }
 
+#[derive(Clone)]
 pub struct Api {
     /// `https://host[/путь]` из `SITE_URL` сборки.
     pub base: String,

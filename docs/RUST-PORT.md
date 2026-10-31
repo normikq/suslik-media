@@ -58,8 +58,21 @@ CI: `.github/workflows/desktop-rs.yml` — fmt, clippy, тесты на Linux и
    `catch_up`. Тесты `BurstProxyTest` (все 23, против настоящего HTTP-источника с Range, медленной отдачей, зависанием
    и истёкшей подписью), `PlaybackSupervisorTest`, `TsClockTest` и надзор/«копим запас» из `CoreTest` перенесены
    (185 тестов в `suslik-core`).
-6. **Плеер.** mpv render API в GL egui, панели и горячие клавиши (`docs/DESKTOP.md` §5), озвучки и субтитры,
+6. ◐ **Плеер.** mpv render API в GL egui, панели и горячие клавиши (`docs/DESKTOP.md` §5), озвучки и субтитры,
    заставки и титры, мини-плеер и полноэкранный режим, SMTC, запрет сна (`DisplayAwake`).
+   Сделано (часть 1): `player/mpv.rs` — libmpv через `libloading` (`libmpv-2.dll` рядом с программой, в `mpv\`
+   или в папке данных; на Linux `libmpv.so.2`), `player/engine.rs` — ядро с теми же настройками, что `MpvEngine.kt`,
+   события в своём потоке; `player/video.rs` — render API в свою текстуру и FBO, текстура показана в egui
+   (`register_native_glow_texture`), перед кадром mpv состояние GL по умолчанию (как `defaultsForMpv`), render context
+   освобождается на потоке окна до `mpv_terminate_destroy`. На программном OpenGL (llvmpipe и т. п.) включается
+   `gpu-dumb-mode`: многопроходная схема там через раз давала чёрный кадр. `reserve.rs` — `BurstProxy` с TLS (rustls)
+   и обновлением подписи через `/api/file/mirror-url`; `player/view.rs` — экран плеера: пауза, перемотка (полоса с
+   запасом), громкость, аудиодорожки и субтитры (выбор запоминается на сериал, как в `player_ui`), скорость, полный
+   экран, сведения (I), надзор `PlaybackSupervisor` и «копим запас», место просмотра в `watch` каждые 10 с и при
+   закрытии. На карточке фильма — серия, «С N:NN» и «С начала». `player.log` в папке данных.
+   Осталось: внешние озвучки и субтитры, следующая серия и очередь, заставки и титры, «умные» субтитры, ночной
+   режим и размер субтитров в меню, мини-плеер, SMTC, `DisplayAwake`, скачивание mpv, снимок при переоткрытии,
+   синхронизация прогресса с сервером.
 7. **«Вместе» и Discord.** `PartySyncEngine`, комнаты, активность Discord (IPC).
 8. **Установщик и обновление.** MSI (WiX через `cargo-wix`) с тем же upgradeUuid, самообновление по каналам,
    отладочная сборка «Suslik Debug» с журналом `player.log` и теми же тегами.

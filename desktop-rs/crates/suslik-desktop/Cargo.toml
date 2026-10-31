@@ -19,6 +19,13 @@ flate2 = "1.1.10"
 sha1 = "0.10"
 # постеры: TMDB отдаёт JPEG, бывают PNG и WebP
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+# время в журнале плеера (местное, как у Kotlin-версии)
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# libmpv грузится сама при первом фильме (её может не быть: установщик докачивает)
+libloading = "0.8"
+# HTTPS к зеркалу для запаса (BurstProxy): те же rustls и корни, что у ureq
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+webpki-roots = "0.26"
 
 # Выбор .torrent — обычный диалог Windows.
 [target.'cfg(windows)'.dependencies]

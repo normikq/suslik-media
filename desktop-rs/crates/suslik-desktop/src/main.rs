@@ -1,5 +1,5 @@
-//! Suslik Media для ПК на Rust. Сейчас: вход, боковая панель и медиатека; поиск по трекерам, плеер mpv и остальное
-//! переезжают сюда по шагам из `docs/RUST-PORT.md`.
+//! Suslik Media для ПК на Rust. Сейчас: вход, боковая панель, медиатека, поиск по трекерам и плеер mpv с запасом на
+//! диске; остальное переезжает сюда по шагам из `docs/RUST-PORT.md`.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod adding;
@@ -7,6 +7,9 @@ mod api;
 mod app_dir;
 mod catalog;
 mod library;
+mod player;
+mod player_log;
+mod reserve;
 mod store;
 mod strings;
 mod theme;
@@ -52,6 +55,11 @@ struct App {
     add: AddView,
     /// «Что нового» — один раз после обновления (тот же `whatsnew.properties`, что у Kotlin-версии).
     whats_new: Option<Vec<changelog::Release>>,
+    /// Открытый плеер (вместо всего окна) и текстура видео, которая живёт между фильмами.
+    player: Option<player::view::Player>,
+    surface: Option<player::video::Surface>,
+    player_error: Option<String>,
+    ctx: egui::Context,
 }
 
 impl App {
@@ -84,6 +92,39 @@ impl App {
             search: SearchView::default(),
             add: AddView::default(),
             whats_new,
+            player: None,
+            surface: None,
+            player_error: None,
+            ctx: cc.egui_ctx.clone(),
+        }
+    }
+
+    fn play(&mut self, req: Option<player::view::PlayRequest>, lib: &Library, ctx: &egui::Context) {
+        let Some(req) = req else { return };
+        match player::view::Player::new(req, lib, ctx) {
+            Ok(p) => self.player = Some(p),
+            Err(e) => {
+                player_log::write(&format!("player: {e}"));
+                self.player_error = Some(e);
+            }
+        }
+    }
+
+    fn player_error(&mut self, ctx: &egui::Context) {
+        let Some(e) = self.player_error.clone() else { return };
+        let mut open = true;
+        let mut ok = false;
+        egui::Window::new(tr("player.ne_udalos_vosproizvesti_potok", &[]))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.label(e);
+                ok = ui.button("OK").clicked();
+            });
+        if ok || !open {
+            self.player_error = None;
         }
     }
 
@@ -117,7 +158,7 @@ impl App {
 }
 
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let Some(lib) = self.lib.clone() else {
             egui::CentralPanel::default().show(ctx, |ui| {
                 ui.heading("Suslik Media");
@@ -135,6 +176,12 @@ impl eframe::App for App {
             });
             return;
         }
+        if let Some(p) = self.player.as_mut() {
+            if !p.show(ctx, frame, &lib, &mut self.surface) {
+                self.player = None;
+            }
+            return;
+        }
         egui::SidePanel::left("nav")
             .exact_width(236.0)
             .resizable(false)
@@ -144,20 +191,28 @@ impl eframe::App for App {
                 sidebar::SidebarAction::Logout => lib.logout(),
                 sidebar::SidebarAction::None => {}
             });
+        let mut req = None;
         egui::CentralPanel::default().frame(egui::Frame::none().fill(theme::NIGHT)).show(ctx, |ui| {
             match self.nav.tab {
-                Tab::Library => self.library.show(ui, &lib, self.nav.category_of(false)),
-                Tab::Mine => self.mine.show(ui, &lib, self.nav.category_of(true)),
+                Tab::Library => req = self.library.show(ui, &lib, self.nav.category_of(false)),
+                Tab::Mine => req = self.mine.show(ui, &lib, self.nav.category_of(true)),
                 Tab::Search => self.search.show(ui, &lib),
                 Tab::Add => self.add.show(ui, &lib),
             }
         });
+        self.play(req, &lib, ctx);
+        self.player_error(ctx);
         if auth == Some(true) {
             self.whats_new(ctx);
         }
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // render context освобождается, пока жив GL-контекст окна (иначе mpv роняет процесс)
+        if let (Some(mut p), Some(lib)) = (self.player.take(), self.lib.clone()) {
+            p.close(&self.ctx, &lib);
+        }
+        suslik_core::burst_proxy::drop_all();
         store::Store::flush_all();
     }
 }

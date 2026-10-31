@@ -1,15 +1,16 @@
 //! Страница медиатеки (`LibraryView.kt`): поиск по названию, сортировка, «Только готовые», сетка постеров по страницам
 //! (три ряда), плитка с избранным и «Моими фильмами», версии одного фильма в одной плитке.
 //!
-//! Плеер переезжает на этапе 6: пока по нажатию на плитку открывается карточка с тем, что будет играть.
+//! Нажатие на плитку открывает карточку: что играть (серию можно выбрать), «Смотреть» / «Продолжить» / «С начала».
 
 use crate::catalog::{self, item_category, item_specs, item_type_label, item_year, versions_word, Category};
 use crate::library::{LibState, Library, StatusKind};
+use crate::player::view::PlayRequest;
 use crate::strings::tr;
 use crate::theme;
 use eframe::egui::{self, Color32, Pos2, Rect, RichText, Sense, Vec2};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use suslik_core::model::{
     episode_label, format_bytes, group_versions, sort_versions, status_ru, version_line, watch_key, LibraryItem, MFile,
     Playable,
@@ -58,6 +59,9 @@ struct Shown {
     versions: HashMap<i64, Vec<LibraryItem>>,
 }
 
+/// Ответ сервера на «Смотреть»: адрес зеркала или текст ошибки (из потока запроса).
+type Starting = Arc<Mutex<Option<Result<PlayRequest, String>>>>;
+
 pub struct LibraryView {
     mine: bool,
     query: String,
@@ -68,6 +72,11 @@ pub struct LibraryView {
     /// Карточка «что будет играть» и выбор версии.
     open: Option<LibraryItem>,
     pick: Option<Vec<LibraryItem>>,
+    /// Выбранная в карточке серия (путь файла).
+    episode: Option<String>,
+    /// Адрес зеркала запрошен: ответ придёт сюда.
+    starting: Option<Starting>,
+    start_error: Option<String>,
 }
 
 /// Ряд плиток: постеры 180 px, 14 px между ними, по 36 px полей; страница — три ряда.
@@ -86,6 +95,9 @@ impl LibraryView {
             shown: None,
             open: None,
             pick: None,
+            episode: None,
+            starting: None,
+            start_error: None,
         }
     }
 
@@ -135,7 +147,8 @@ impl LibraryView {
         self.shown = Some(Shown { key, tiles, versions });
     }
 
-    pub fn show(&mut self, ui: &mut egui::Ui, lib: &Library, category: Category) {
+    /// Страница; `Some` — фильм к показу (адрес зеркала уже получен).
+    pub fn show(&mut self, ui: &mut egui::Ui, lib: &Library, category: Category) -> Option<PlayRequest> {
         {
             let st = lib.state();
             self.update_shown(&st, category);
@@ -194,7 +207,7 @@ impl LibraryView {
             }
         }
         self.version_picker(ui.ctx(), lib);
-        self.play_card(ui.ctx(), lib);
+        self.play_card(ui.ctx(), lib)
     }
 
     fn header(&mut self, ui: &mut egui::Ui, lib: &Library, total: usize) {
@@ -265,10 +278,79 @@ impl LibraryView {
         }
     }
 
-    /// Пока плеера нет: что будет играть и откуда продолжить.
-    fn play_card(&mut self, ctx: &egui::Context, lib: &Library) {
-        let Some(item) = self.open.clone() else { return };
+    /// Серия, которую предложить: выбранная в карточке, иначе последняя открытая / с прогрессом, иначе первая.
+    fn current_file(&self, lib: &Library, item: &LibraryItem) -> Option<(MFile, String)> {
+        match &item.playable {
+            Playable::Movie(f) => Some((f.clone(), item.base_title.clone())),
+            Playable::Series(seasons) => {
+                let want = self
+                    .episode
+                    .clone()
+                    .or_else(|| lib.last_watched(&item.m).map(|w| w.0.path))
+                    .or_else(|| lib.last_episode(item.m.id));
+                let all = seasons.iter().flat_map(|s| s.items.iter().map(move |e| (s, e)));
+                let (s, e) =
+                    all.clone().find(|(_, e)| Some(&e.file.path) == want.as_ref()).or_else(|| all.clone().next())?;
+                Some((e.file.clone(), episode_label(&item.base_title, s, e)))
+            }
+            Playable::None => None,
+        }
+    }
+
+    /// Адрес зеркала для файла — в фоне; карточка ждёт ответа.
+    fn start(&mut self, lib: &Library, item: &LibraryItem, f: &MFile, title: String, from_start: bool) {
+        let Some(link) = f.link.clone() else {
+            self.start_error = Some(tr("library.ssylka_na_fayl_esche", &[]));
+            return;
+        };
+        lib.save_episode(item.m.id, &f.path);
+        let slot = Arc::new(Mutex::new(None));
+        self.starting = Some(slot.clone());
+        self.start_error = None;
+        let name =
+            if f.name.trim().is_empty() { f.path.rsplit('/').next().unwrap_or("").to_string() } else { f.name.clone() };
+        let path = format!(
+            "/api/file/mirror-url?link={}&name={}",
+            suslik_core::url_codec::encode(&link),
+            suslik_core::url_codec::encode(&name)
+        );
+        let key = watch_key(item.m.id, f);
+        let lib2 = lib.clone();
+        let _ = std::thread::Builder::new().name("mirror-url".into()).spawn(move || {
+            let res = match lib2.api().get(&path) {
+                Ok(v) => match v.get("url").and_then(|u| u.as_str()).filter(|u| !u.is_empty()) {
+                    Some(url) => Ok(PlayRequest { url: url.to_string(), title, watch_key: Some(key), from_start }),
+                    None => Err(tr("library.ne_udalos_otkryt", &[])),
+                },
+                Err(e) => Err(e.describe()),
+            };
+            *slot.lock().unwrap() = Some(res);
+            lib2.repaint_now();
+        });
+    }
+
+    /// Карточка «что играть»: серия, качество, место, кнопки.
+    fn play_card(&mut self, ctx: &egui::Context, lib: &Library) -> Option<PlayRequest> {
+        let item = self.open.clone()?;
+        if let Some(slot) = &self.starting {
+            let done = slot.lock().unwrap().take();
+            match done {
+                Some(Ok(req)) => {
+                    self.starting = None;
+                    self.open = None;
+                    self.episode = None;
+                    return Some(req);
+                }
+                Some(Err(e)) => {
+                    self.starting = None;
+                    self.start_error = Some(e);
+                }
+                None => {}
+            }
+        }
         let mut keep = true;
+        let mut go: Option<(MFile, String, bool)> = None;
+        let mut pick_episode = None;
         let title = lib.state().title_of(&item);
         egui::Window::new(title).collapsible(false).resizable(false).open(&mut keep).default_width(460.0).show(
             ctx,
@@ -276,54 +358,100 @@ impl LibraryView {
                 let m = &item.m;
                 ui.label(RichText::new(&m.name).color(theme::MUTED).size(12.0));
                 ui.add_space(8.0);
-                let file: Option<(MFile, String)> = match &item.playable {
-                    Playable::Movie(f) => Some((f.clone(), item.base_title.clone())),
-                    Playable::Series(seasons) => {
-                        let saved = lib.last_watched(m).map(|w| w.0.path).or_else(|| lib.last_episode(m.id));
-                        let s = seasons
-                            .iter()
-                            .find(|s| s.items.iter().any(|e| Some(&e.file.path) == saved.as_ref()))
-                            .or(seasons.first());
-                        s.and_then(|s| {
-                            let e =
-                                s.items.iter().find(|e| Some(&e.file.path) == saved.as_ref()).or(s.items.first())?;
-                            Some((e.file.clone(), episode_label(&item.base_title, s, e)))
-                        })
-                    }
-                    Playable::None => None,
-                };
-                match file {
+                let current = self.current_file(lib, &item);
+                if let (Playable::Series(seasons), Some((cur, label))) = (&item.playable, &current) {
+                    egui::ComboBox::from_id_salt(("episode", m.id)).width(400.0).selected_text(label).show_ui(
+                        ui,
+                        |ui| {
+                            for s in seasons {
+                                for e in &s.items {
+                                    let l = episode_label(&item.base_title, s, e);
+                                    let w = lib.watch_info(&watch_key(m.id, &e.file));
+                                    let mark = match w {
+                                        Some(w) if w.watched() => "  ✔",
+                                        Some(w) if w.fraction() > 0.01 => "  ▶",
+                                        _ => "",
+                                    };
+                                    if ui.selectable_label(e.file.path == cur.path, format!("{l}{mark}")).clicked() {
+                                        pick_episode = Some(e.file.path.clone());
+                                    }
+                                }
+                            }
+                        },
+                    );
+                    ui.add_space(4.0);
+                }
+                match &current {
                     Some((f, label)) => {
-                        ui.label(RichText::new(label).strong());
+                        if matches!(item.playable, Playable::Movie(_)) {
+                            ui.label(RichText::new(label).strong());
+                        }
                         ui.label(format!("{} · {}", f.name, format_bytes(f.size)));
-                        lib.want_media_line(m.id, &f);
-                        if let Some(line) = lib.cached_media_line(m.id, &f) {
+                        lib.want_media_line(m.id, f);
+                        if let Some(line) = lib.cached_media_line(m.id, f) {
                             ui.label(RichText::new(line).color(theme::MUTED));
                         }
-                        if let Some(w) = lib.watch_info(&watch_key(m.id, &f)) {
-                            if w.fraction() > 0.01 && !w.watched() {
-                                ui.label(format!(
-                                    "▶ {} / {}",
-                                    suslik_core::clock_text(w.pos),
-                                    suslik_core::clock_text(w.len)
-                                ));
+                        ui.add_space(10.0);
+                        let busy = self.starting.is_some();
+                        let resume =
+                            lib.watch_info(&watch_key(m.id, f)).filter(|w| w.fraction() > 0.01 && !w.watched());
+                        ui.horizontal(|ui| {
+                            let big = egui::vec2(0.0, 38.0);
+                            if let Some(w) = &resume {
+                                let t = tr("play.s_p", &[("p", &suslik_core::clock_text(w.pos))]);
+                                if ui
+                                    .add_enabled(!busy, egui::Button::new(RichText::new(t).strong()).min_size(big))
+                                    .clicked()
+                                {
+                                    go = Some((f.clone(), label.clone(), false));
+                                }
+                                if ui
+                                    .add_enabled(
+                                        !busy,
+                                        egui::Button::new(tr("play.s_nachala", &[]).trim_start_matches('⟲').trim())
+                                            .min_size(big),
+                                    )
+                                    .clicked()
+                                {
+                                    go = Some((f.clone(), label.clone(), true));
+                                }
+                            } else if ui
+                                .add_enabled(
+                                    !busy,
+                                    egui::Button::new(RichText::new(tr("library.smotret", &[])).strong()).min_size(big),
+                                )
+                                .clicked()
+                            {
+                                go = Some((f.clone(), label.clone(), false));
                             }
+                            if busy {
+                                ui.spinner();
+                            }
+                        });
+                        if let Some(e) = &self.start_error {
+                            ui.colored_label(theme::BAD, e);
                         }
                     }
                     None => {
                         ui.label(status_ru(m));
                     }
                 }
-                ui.add_space(10.0);
-                ui.label(
-                    RichText::new("Плеер переезжает в Rust-версию на этапе 6. Пока смотреть — в обычной ПК-версии.")
-                        .color(theme::LAMP),
-                );
             },
         );
+        if let Some(p) = pick_episode {
+            self.episode = Some(p);
+            self.start_error = None;
+        }
+        if let Some((f, label, from_start)) = go {
+            self.start(lib, &item, &f, label, from_start);
+        }
         if !keep {
             self.open = None;
+            self.episode = None;
+            self.starting = None;
+            self.start_error = None;
         }
+        None
     }
 }
 

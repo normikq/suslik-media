@@ -582,6 +582,21 @@ impl Library {
         Some(WatchInfo { pos: p[0].parse().ok()?, len: p[1].parse().unwrap_or(0), at: p[2].parse().unwrap_or(0) })
     }
 
+    /// Место в фильме (как `savePos` в `PlayerView.kt`): меньше 5 с не пишется, за 15 с до конца — досмотрен.
+    pub fn save_watch(&self, key: &str, t: i64, len: i64) {
+        if t < 5_000 {
+            return;
+        }
+        let done = len > 0 && t > len - 15_000;
+        let pos = if done { len } else { t };
+        self.0.watch.put(key, Some(&format!("{pos}|{}|{}", len.max(0), now_ms())));
+    }
+
+    /// Серия, которую открыли последней (карточка сериала предлагает её).
+    pub fn save_episode(&self, id: i64, path: &str) {
+        self.0.episodes.put(&id.to_string(), Some(path));
+    }
+
     pub fn last_watched(&self, m: &Magnet) -> Option<(MFile, WatchInfo)> {
         let mut best: Option<(MFile, WatchInfo)> = None;
         for f in m.files.iter().filter(|f| !f.is_folder) {
