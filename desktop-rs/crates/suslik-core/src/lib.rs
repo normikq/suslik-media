@@ -10,6 +10,7 @@ mod json;
 pub mod mirror_link;
 pub mod model;
 pub mod playback_presets;
+pub mod search;
 pub mod site_address;
 pub mod time_text;
 pub mod url_codec;

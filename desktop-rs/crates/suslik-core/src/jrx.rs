@@ -64,12 +64,23 @@ pub fn translate(pattern: &str, ic: bool) -> String {
     out
 }
 
+/// Шаблон Java с `CASE_INSENSITIVE | UNICODE_CHARACTER_CLASS` (`ReleaseParser.uRegex`): классы и `\b` там
+/// уже Unicode, как в Rust по умолчанию, поэтому шаблон идёт как есть.
+pub fn compile_unicode(pattern: &str) -> Regex {
+    Regex::new(&format!("(?i){pattern}")).unwrap_or_else(|e| panic!("bad pattern {pattern}: {e}"))
+}
+
 /// Статический шаблон: `rx!(r"…")` или `rx!(r"…", ic)` (без учёта регистра).
 #[macro_export]
 macro_rules! rx {
     ($p:expr) => {{
         static R: std::sync::LazyLock<fancy_regex::Regex> =
             std::sync::LazyLock::new(|| $crate::jrx::compile($p, false));
+        &*R
+    }};
+    ($p:expr, unicode) => {{
+        static R: std::sync::LazyLock<fancy_regex::Regex> =
+            std::sync::LazyLock::new(|| $crate::jrx::compile_unicode($p));
         &*R
     }};
     ($p:expr, ic) => {{
