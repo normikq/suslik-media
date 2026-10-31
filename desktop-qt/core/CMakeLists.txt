@@ -17,6 +17,9 @@ add_library(suslik_core STATIC
   src/CustomAudio.cpp
   src/TorrentInspector.cpp
   src/PlaybackSupervisor.cpp
+  src/BurstProxy.cpp
+  src/HttpUpstream.cpp
+  src/CatchUp.cpp
   src/JsonOpt.h
   include/suslik/core/ApiClient.h
   include/suslik/core/CloudSync.h

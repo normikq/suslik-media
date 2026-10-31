@@ -39,3 +39,7 @@
 - 31.10 — сетевая часть ПК: `ApiClient` (cookie и токен только своему серверу, ETag, тексты ошибок), `Store` (файлы `.properties` того же формата, что у Kotlin-версии, с `.bak`), `Strings` (`strings/ru.json`, функция `tx`), `CloudSync`. Тесты — с локальным HTTP-сервером.
 - 31.10 — заставки и титры, умные субтитры (`MarkersDetector`), внешние озвучки (`CustomAudio`), `PlaybackPresets`, `LibraryKeep`, проверка .torrent и магнетов (`TorrentInspector`) с тестами.
 - 31.10 — `PlaybackSupervisor` (сторож воспроизведения: застывшая картинка, тишина, стоящие часы, бюджеты) с тестами из `CoreTest` и `PlaybackSupervisorTest`. `TsClock`/`TsPlayback` на ПК не нужны (только Android).
+- 31.10 — `BurstProxy` (запас на диске) и `CatchUp` с тестами из `BurstProxyTest` (24 теста против настоящего HTTP-источника). Отличия от Kotlin-версии:
+  прокси — обычный объект (не синглтон), его держит приложение; загрузка — `HttpUpstream` на `QNetworkAccessManager`, свой в каждом потоке
+  загрузчика (рывки одного окна идут по одному соединению, разные окна — по разным); ожидание сокетов — событиями Qt (`core/src/QtWait.h`), без
+  `waitForReadyRead`, который на Windows ненадёжен; отмена запроса — флагом, замечается за 0,1 с. `readRange` идёт в отдельном потоке.

@@ -1,4 +1,5 @@
-// Перенос SupervisorTest (shared/.../CoreTest.kt) и PlaybackSupervisorTest.kt.
+// Перенос SupervisorTest и CatchUpTest (shared/.../CoreTest.kt) и PlaybackSupervisorTest.kt.
+#include "suslik/core/CatchUp.h"
 #include "suslik/core/PlaybackSupervisor.h"
 
 #include <QTest>
@@ -214,6 +215,16 @@ private slots:
         s.sup.opening(S("b")); s.sup.buffering(100.f);
         s.ticks(60, 0);
         QVERIFY(s.reopens.size() > 3);
+    }
+
+    // ---- CatchUpTest ----
+    void catchUpNothingWithoutAReserve() {
+        BurstProxy proxy;
+        qint64 clock = 1000000;
+        CatchUp c(proxy, [](const QString &) {}, [&] { return clock; });
+        QVERIFY(!c.maybeStart(S("https://x/not-in-the-reserve.mkv"), true));
+        QVERIFY(!c.active());
+        QVERIFY(!c.end(S("https://x/not-in-the-reserve.mkv"), true)); // не активен: нечего заканчивать
     }
 };
 
