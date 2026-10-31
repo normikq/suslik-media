@@ -1,4 +1,5 @@
 #include "suslik/core/Model.h"
+#include "JsonOpt.h"
 
 #include <QDate>
 #include <QJsonArray>
@@ -13,6 +14,8 @@
 // а [\p{L}\p{N}] и регистр без учёта (в UTF-режиме) — по всему Юникоду, как Kotlin с IGNORE_CASE (UNICODE_CASE).
 
 namespace suslik::core {
+
+using namespace json;
 
 namespace {
 
@@ -432,45 +435,6 @@ QString videoBase(const MFile &video) {
 }
 
 QList<MFile> take8(const QList<MFile> &l) { return l.mid(0, 8); }
-
-// ---- JSON как org.json: optString/optLong/optInt/optBoolean ----
-
-QString optString(const QJsonObject &o, const QString &key) {
-    const QJsonValue v = o.value(key);
-    switch (v.type()) {
-    case QJsonValue::String: return v.toString();
-    case QJsonValue::Double: {
-        const double d = v.toDouble();
-        return d == double(qint64(d)) ? QString::number(qint64(d)) : QString::number(d);
-    }
-    case QJsonValue::Bool: return v.toBool() ? QStringLiteral("true") : QStringLiteral("false");
-    case QJsonValue::Null: return QStringLiteral("null");
-    default: return QString();
-    }
-}
-
-qint64 optLong(const QJsonObject &o, const QString &key, qint64 def = 0) {
-    const QJsonValue v = o.value(key);
-    if (v.isDouble()) return qint64(v.toDouble());
-    if (v.isString()) {
-        bool ok = false;
-        const double d = v.toString().trimmed().toDouble(&ok);
-        if (ok) return qint64(d);
-    }
-    return def;
-}
-
-bool optBool(const QJsonObject &o, const QString &key, bool def) {
-    const QJsonValue v = o.value(key);
-    if (v.isBool()) return v.toBool();
-    if (v.isString()) {
-        if (v.toString().compare(QLatin1String("true"), Qt::CaseInsensitive) == 0) return true;
-        if (v.toString().compare(QLatin1String("false"), Qt::CaseInsensitive) == 0) return false;
-    }
-    return def;
-}
-
-bool hasValue(const QJsonObject &o, const QString &key) { return o.contains(key) && !o.value(key).isNull(); }
 
 } // namespace
 

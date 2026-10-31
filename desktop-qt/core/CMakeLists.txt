@@ -7,6 +7,8 @@ add_library(suslik_core STATIC
   src/Changelog.cpp
   src/UrlCoding.cpp
   src/Model.cpp
+  src/Auth.cpp
+  src/WatchSync.cpp
 )
 target_include_directories(suslik_core PUBLIC include)
 target_link_libraries(suslik_core PUBLIC Qt6::Core)
