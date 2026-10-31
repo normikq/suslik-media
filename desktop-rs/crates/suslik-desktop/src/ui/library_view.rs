@@ -217,11 +217,7 @@ impl LibraryView {
         }
         ui.add_space(12.0);
         ui.horizontal(|ui| {
-            ui.add(
-                egui::TextEdit::singleline(&mut self.query)
-                    .hint_text(tr("library.poisk_po_nazvaniyu", &[]))
-                    .desired_width(360.0),
-            );
+            ui.add(theme::field(&mut self.query).hint_text(tr("library.poisk_po_nazvaniyu", &[])).desired_width(360.0));
             ui.label(RichText::new(count_films(total)).color(theme::MUTED));
         });
         let (text, color) = match notice {

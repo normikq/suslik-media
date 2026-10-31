@@ -114,12 +114,12 @@ impl AddView {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     let field = ui.add(
-                        egui::TextEdit::singleline(&mut self.magnet)
+                        theme::field(&mut self.magnet)
                             .hint_text(tr("audio.magnet_ili_torrent", &[]))
                             .desired_width(ui.available_width() - 260.0),
                     );
                     let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    if ui.add(egui::Button::new(tr("add.dobavit", &[])).min_size(egui::vec2(100.0, 30.0))).clicked()
+                    if ui.add(egui::Button::new(tr("add.dobavit", &[])).min_size(egui::vec2(100.0, 36.0))).clicked()
                         || enter
                     {
                         self.submit_magnet(lib);

@@ -43,5 +43,35 @@ pub fn apply(ctx: &egui::Context) {
     v.selection.bg_fill = ACCENT;
     v.widgets.noninteractive.bg_stroke.color = LINE;
     v.hyperlink_color = LAMP;
+    // Кнопки, поля и меню — скруглённые, как у Kotlin-версии (12 dp у кнопок и полей, 14 у окон).
+    let r = egui::Rounding::same(RADIUS);
+    for w in [
+        &mut v.widgets.noninteractive,
+        &mut v.widgets.inactive,
+        &mut v.widgets.hovered,
+        &mut v.widgets.active,
+        &mut v.widgets.open,
+    ] {
+        w.rounding = r;
+    }
+    v.widgets.inactive.weak_bg_fill = FILM;
+    v.widgets.inactive.bg_fill = FILM;
+    v.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, LINE);
+    v.widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(0x22, 0x27, 0x34);
+    v.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(0x3E, 0x47, 0x5C));
+    v.window_rounding = egui::Rounding::same(14.0);
+    v.menu_rounding = egui::Rounding::same(RADIUS);
     ctx.set_visuals(v);
+    ctx.style_mut(|s| {
+        s.spacing.button_padding = egui::vec2(14.0, 7.0);
+        s.spacing.interact_size.y = 30.0;
+    });
+}
+
+/// Скругление кнопок и полей ввода.
+pub const RADIUS: f32 = 10.0;
+
+/// Поле ввода в стиле приложения: скруглённое, с отступами внутри.
+pub fn field(text: &mut String) -> egui::TextEdit<'_> {
+    egui::TextEdit::singleline(text).margin(egui::vec2(12.0, 8.0))
 }

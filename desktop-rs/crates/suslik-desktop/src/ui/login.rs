@@ -59,7 +59,7 @@ impl LoginView {
                         });
                         ui.add_space(10.0);
                         let field = ui.add(
-                            egui::TextEdit::singleline(&mut self.password)
+                            theme::field(&mut self.password)
                                 .password(true)
                                 .hint_text(tr("library.parol_dostupa", &[]))
                                 .desired_width(f32::INFINITY),

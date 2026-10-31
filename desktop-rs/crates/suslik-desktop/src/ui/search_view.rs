@@ -168,13 +168,13 @@ impl SearchView {
                 let busy = self.found.lock().unwrap().busy;
                 ui.horizontal(|ui| {
                     let field = ui.add(
-                        egui::TextEdit::singleline(&mut self.query)
+                        theme::field(&mut self.query)
                             .hint_text(tr("search.nazvanie_filma_ili_seriala", &[]))
                             .desired_width(ui.available_width() - 110.0),
                     );
                     let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     let label = tr(if busy { "search.ischem" } else { "search.nayti" }, &[]);
-                    if ui.add_enabled(!busy, egui::Button::new(label).min_size(egui::vec2(96.0, 30.0))).clicked()
+                    if ui.add_enabled(!busy, egui::Button::new(label).min_size(egui::vec2(96.0, 36.0))).clicked()
                         || enter
                     {
                         self.run(lib);
@@ -268,11 +268,7 @@ impl SearchView {
             }
             ui.checkbox(&mut c.only_seeded, tr("search.tolko_s_sidami", &[]));
             ui.checkbox(&mut c.only_ru, tr("search.only_ru", &[]));
-            ui.add(
-                egui::TextEdit::singleline(&mut c.refine)
-                    .hint_text(tr("search.utochnit_p_p_rus", &[]))
-                    .desired_width(200.0),
-            );
+            ui.add(theme::field(&mut c.refine).hint_text(tr("search.utochnit_p_p_rus", &[])).desired_width(200.0));
         });
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(tr("search.preset", &[])).color(theme::MUTED));
