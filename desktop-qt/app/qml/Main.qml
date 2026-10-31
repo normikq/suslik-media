@@ -31,7 +31,8 @@ Window {
         id: shell
         anchors.fill: parent
         opacity: lib.authenticated === 0 ? 0 : 1
-        visible: opacity > 0
+        // под открытым плеером медиатеку не рисуем
+        visible: opacity > 0 && !(playerView.opacity === 1 && player.open)
         Behavior on opacity { NumberAnimation { duration: 420; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease } }
 
         Sidebar {
@@ -51,7 +52,7 @@ Window {
             clip: true
             Page { index: 0; LibraryView { id: libraryPage; anchors.fill: parent; mine: false; onVersionsRequested: (t, ids) => dialogs.versions(model, t, ids); onPlayRequested: (id, p) => dialogs.play_(id, p); onFlyTo: (tab, r, p) => flight.launch(tab, r, p) } }
             Page { index: 1; LibraryView { id: minePage; anchors.fill: parent; mine: true; onVersionsRequested: (t, ids) => dialogs.versions(model, t, ids); onPlayRequested: (id, p) => dialogs.play_(id, p); onFlyTo: (tab, r, p) => flight.launch(tab, r, p) } }
-            Page { index: 3; AddView { id: addPage; anchors.fill: parent; active: win.tab === 3; onPreviewRequested: (video, a, offset, title) => dialogs.say(title + " — плеер появится на шаге 3") } }
+            Page { index: 3; AddView { id: addPage; anchors.fill: parent; active: win.tab === 3; onPreviewRequested: (video, a, offset, title) => player.startPreview(video, a, offset, title) } }
         }
     }
 
@@ -92,6 +93,7 @@ Window {
     Dialogs { id: dialogs; anchors.fill: parent }
     SettingsSheet { id: settingsSheet; anchors.fill: parent }
     WhatsNew { anchors.fill: parent }
+    PlayerView { id: playerView; z: 50 }
 
     // после входа: есть ли обновление; «Что нового» — когда медиатека уже на экране
     readonly property bool signedIn: lib.authenticated === 1
@@ -114,11 +116,13 @@ Window {
             }
             else if (a[0] === "mine") win.select(1)
             else if (a[0] === "list") libraryPage.model.viewMode = 1
+            else if (a[0] === "video") player.startPreview(a.slice(1).join(":"), "", 0, "Проверка видео")
         }
     }
 
     Shortcut {
         sequence: "F11"
-        onActivated: win.visibility = win.visibility === Window.FullScreen ? Window.Windowed : Window.FullScreen
+        enabled: !player.open
+        onActivated: windowMode.toggleFullscreen()
     }
 }

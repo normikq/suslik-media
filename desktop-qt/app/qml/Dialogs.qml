@@ -17,10 +17,10 @@ Item {
     function say(text) { toast.show(text) }
 
     VersionPicker { id: versionPicker }
-    PlayDialog { id: playDialog; onPlay: toast.show("Плеер появится на шаге 3 — ссылки уже готовы") }  // временно, до переноса плеера }
+    PlayDialog { id: playDialog; onPlay: player.start(playDialog.model) }
     AiDialog { id: aiDialog }
 
-    // Короткая подсказка снизу (пока плеера нет — что он будет в следующем шаге).
+    // Короткая подсказка снизу.
     Rectangle {
         id: toast
         function show(text) { label.text = text; opacity = 1; hide.restart() }

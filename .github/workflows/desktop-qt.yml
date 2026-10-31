@@ -54,6 +54,18 @@ jobs:
           mkdir -p dist/qml/Suslik
           cp build/app/Suslik/qmldir build/app/Suslik/*.qmltypes dist/qml/Suslik/
           cp desktop-qt/app/qml/*.qml dist/qml/Suslik/
+      # видеодвижок: та же сборка libmpv, что раздаёт сервер (desktop/.../libmpv.properties), проверка по SHA-256.
+      # В установщике её не будет (качает MpvInstall), здесь — чтобы архив сборки сразу играл видео.
+      - name: libmpv
+        shell: bash
+        run: |
+          P=desktop/src/main/resources/libmpv.properties
+          V=$(sed -n 's/^version=//p' $P); SHA=$(sed -n 's/^dllSha256=//p' $P)
+          A=$(sed -n 's/.*(\(mpv-dev-x86_64-[^)]*\.7z\)).*/\1/p' $P)
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/mpv.7z" "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/$V/$A"
+          7z e -y -o"$RUNNER_TEMP/mpv" "$RUNNER_TEMP/mpv.7z" libmpv-2.dll >/dev/null
+          echo "$SHA  $RUNNER_TEMP/mpv/libmpv-2.dll" | sha256sum -c -
+          cp "$RUNNER_TEMP/mpv/libmpv-2.dll" dist/
       # программа открывает окно (без сервера — экран входа) и снимает его; не открылась — сборка красная
       - name: Проверка запуска
         shell: bash

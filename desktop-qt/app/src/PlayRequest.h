@@ -1,6 +1,7 @@
 #pragma once
 #include "suslik/core/Model.h"
 
+#include <QHash>
 #include <QStringList>
 #include <optional>
 
@@ -34,6 +35,7 @@ struct PlayRequest {
     bool collection = false;
     QList<MarkerQuery> markerQueries;
     std::optional<qint64> startMs;
+    QHash<QString, QString> sidePaths;  ///< адрес зеркала озвучки или субтитров → путь в раздаче (язык часто в папке)
 };
 
 } // namespace suslik::app

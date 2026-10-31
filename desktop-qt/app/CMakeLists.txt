@@ -1,5 +1,5 @@
 # Приложение: интерфейс на QML поверх ядра (core/). План — docs/QT-PORT.md.
-find_package(Qt6 6.4 REQUIRED COMPONENTS Gui Quick ShaderTools)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Gui Quick OpenGL ShaderTools)
 
 qt_add_executable(suslik_media WIN32
   main.cpp
@@ -15,7 +15,21 @@ qt_add_executable(suslik_media WIN32
   src/AudioAttach.cpp src/AudioAttach.h
   src/Settings.cpp src/Settings.h
   src/Updater.cpp src/Updater.h
+  src/player/Mpv.cpp src/player/Mpv.h
+  src/player/MpvEngine.cpp src/player/MpvEngine.h
+  src/player/MpvVideo.cpp src/player/MpvVideo.h
+  src/player/MpvInstall.cpp src/player/MpvInstall.h
+  src/player/PlayerLog.cpp src/player/PlayerLog.h
+  src/player/PlayerModel.cpp src/player/PlayerModel.h
+  src/player/Reserve.cpp src/player/Reserve.h
+  src/player/WindowMode.cpp src/player/WindowMode.h
+  src/player/DisplayAwake.cpp src/player/DisplayAwake.h
+  src/player/DiscordRpc.cpp src/player/DiscordRpc.h
+  src/player/MediaControls.cpp src/player/MediaControls.h
+  src/player/MediaSession.cpp src/player/MediaSession.h
 )
+# Заголовки libmpv (ISC): сама библиотека грузится при запуске фильма.
+target_include_directories(suslik_media PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../third_party)
 set_target_properties(suslik_media PROPERTIES OUTPUT_NAME "SuslikMediaQt")
 
 file(GLOB SM_QML RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS qml/*.qml)
@@ -46,6 +60,7 @@ qt_add_resources(suslik_media sm_shared_res
   FILES
     ${SM_RES}/strings/ru.json
     ${SM_RES}/changelog.json
+    ${SM_RES}/libmpv.properties
     ${SM_RES}/fonts/onest_regular.ttf
     ${SM_RES}/fonts/onest_medium.ttf
     ${SM_RES}/fonts/onest_semibold.ttf
@@ -67,10 +82,12 @@ target_compile_definitions(suslik_media PRIVATE
   SM_SITE_URL="${SM_SITE_URL}"
   $<$<BOOL:${SM_DIAG}>:SM_DIAG>
 )
-target_link_libraries(suslik_media PRIVATE suslik_core Qt6::Gui Qt6::Quick)
+target_link_libraries(suslik_media PRIVATE suslik_core Qt6::Gui Qt6::Quick Qt6::OpenGL)
 if(WIN32)
-  target_link_libraries(suslik_media PRIVATE dwmapi msi)
+  # windowsapp — системные медиа-кнопки (C++/WinRT)
+  target_link_libraries(suslik_media PRIVATE dwmapi msi windowsapp)
 endif()
 if(MSVC)
   target_compile_options(suslik_media PRIVATE /utf-8)
+  set_source_files_properties(src/player/MediaControls.cpp PROPERTIES COMPILE_OPTIONS "/bigobj")
 endif()

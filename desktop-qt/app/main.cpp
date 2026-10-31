@@ -9,6 +9,13 @@
 #include "src/SingleInstance.h"
 #include "src/Updater.h"
 #include "src/Ui.h"
+#include "src/player/MpvEngine.h"
+#include "src/player/MpvVideo.h"
+#include "src/player/MediaSession.h"
+#include "src/player/MpvInstall.h"
+#include "src/player/PlayerLog.h"
+#include "src/player/PlayerModel.h"
+#include "src/player/WindowMode.h"
 
 #include "suslik/core/ApiClient.h"
 #include "suslik/core/CloudSync.h"
@@ -23,6 +30,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickWindow>
+#include <QSGRendererInterface>
 #include <QTimer>
 
 using namespace suslik;
@@ -35,6 +43,8 @@ QByteArray resource(const QString &path) {
 } // namespace
 
 int main(int argc, char *argv[]) {
+    // mpv рисует кадры через OpenGL прямо в сцену окна (MpvVideo): окно тоже на OpenGL, без копий кадров между API.
+    QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
     QGuiApplication app(argc, argv);
     QGuiApplication::setApplicationName(QStringLiteral("Suslik Media"));
     QGuiApplication::setApplicationVersion(QStringLiteral(SM_VERSION));
@@ -72,12 +82,21 @@ int main(int argc, char *argv[]) {
     app::Updater updater(api, QStringLiteral(SM_VERSION));
     app::Prefs prefs(api, updater);
     // Прогресс с телефона или ТВ — сразу в плитки «Продолжить».
+    // Плеер один на программу: экран плеера поверх медиатеки, mpv создаётся при первом фильме.
+    app::PlayerModel player;
+    player.setLibrary(&library);
+    app::WindowMode windowMode;
+    app::MpvInstall mpvInstall(site);
+    app::MediaSession media(player, library);
     QObject::connect(&sync, &core::CloudSync::changed, &library, [&library](int) { library.bumpWatch(); });
 
     qmlRegisterType<app::LibraryPage>("Suslik.Native", 1, 0, "LibraryPage");
     qmlRegisterType<app::PlayModel>("Suslik.Native", 1, 0, "PlayModel");
     qmlRegisterType<app::AddModel>("Suslik.Native", 1, 0, "AddModel");
     qmlRegisterType<app::AudioAttachModel>("Suslik.Native", 1, 0, "AudioAttachModel");
+    qmlRegisterUncreatableType<app::PlayerModel>("Suslik.Native", 1, 0, "PlayerModel", QStringLiteral("one per app"));
+    qmlRegisterType<app::MpvEngine>("Suslik.Native", 1, 0, "MpvEngine");
+    qmlRegisterType<app::MpvVideo>("Suslik.Native", 1, 0, "MpvVideo");
     qmlRegisterUncreatableType<app::Library>("Suslik.Native", 1, 0, "Library", QStringLiteral("one per app"));
 
     QQmlApplicationEngine engine;
@@ -88,6 +107,9 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty(QStringLiteral("lib"), &library);
     engine.rootContext()->setContextProperty(QStringLiteral("prefs"), &prefs);
     engine.rootContext()->setContextProperty(QStringLiteral("updater"), &updater);
+    engine.rootContext()->setContextProperty(QStringLiteral("player"), &player);
+    engine.rootContext()->setContextProperty(QStringLiteral("windowMode"), &windowMode);
+    engine.rootContext()->setContextProperty(QStringLiteral("mpvInstall"), &mpvInstall);
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app, [] { QCoreApplication::exit(1); },
                      Qt::QueuedConnection);
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
@@ -100,6 +122,8 @@ int main(int argc, char *argv[]) {
     if (window) {
         window->setColor(QColor(0x09, 0x0B, 0x10));
         ui.styleTitleBar(window);
+        windowMode.setWindow(window);
+        media.attach(window);
         QObject::connect(&single, &app::SingleInstance::showRequested, window, [&ui, window] { ui.raise(window); });
     }
 
@@ -115,6 +139,9 @@ int main(int argc, char *argv[]) {
     sync.start();
     library.start();
     QTimer::singleShot(4000, &library, [&library] { library.prunePosterFiles(); });
+    // libmpv нет (самообновление со старой версии без неё) — докачать заранее, не дожидаясь фильма
+    QTimer::singleShot(3000, &mpvInstall, [&mpvInstall] { if (!mpvInstall.ready()) mpvInstall.start(); });
+    app::PlayerLog::write(QStringLiteral("[sys] Suslik Media Qt %1 started").arg(QStringLiteral(SM_VERSION)));
     const int rc = app.exec();
     core::Store::flushAll();
     return rc;

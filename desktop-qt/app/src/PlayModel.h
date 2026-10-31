@@ -113,6 +113,7 @@ private:
     QString m_status;
     std::optional<QString> m_mirror, m_playlist;
     QStringList m_subs, m_audio;
+    QHash<QString, QString> m_sidePaths;
     int m_gen = 0;
     PlayRequest m_request;
 };

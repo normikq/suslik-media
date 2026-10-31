@@ -158,6 +158,8 @@ void Library::checkSession(std::function<void(std::optional<bool>)> done) {
     m_api.get(S(SessionInfo::PATH), [this, done](const ApiResult &r) {
         if (!r.ok()) { done(std::nullopt); return; }
         const SessionInfo s = SessionInfo::parse(r.json);
+        // приложение Discord нашего сервера (активность «Смотрит»): запоминаем между запусками
+        if (s.discordClientId) Store::of(QStringLiteral("settings")).put(QStringLiteral("discord_client_id"), s.discordClientId->trimmed());
         applyProfile(s.authenticated ? s.user : std::nullopt);
         m_sync.setUserId(s.authenticated && s.user ? std::optional<QString>(s.user->id) : std::nullopt);
         setAuth(s.authenticated ? 1 : 0);
@@ -830,6 +832,12 @@ std::optional<WatchInfo> Library::watchInfo(const QString &key) const {
     const qint64 pos = p[0].toLongLong(&ok);
     if (!ok) return std::nullopt;
     return WatchInfo{pos, p[1].toLongLong(), p[2].toLongLong()};
+}
+
+void Library::noteWatch(const QString &key, qint64 pos, qint64 len) {
+    const qint64 at = QDateTime::currentMSecsSinceEpoch();
+    m_watch.put(key, QStringLiteral("%1|%2|%3").arg(pos).arg(std::max<qint64>(len, 0)).arg(at));
+    m_sync.noteWatch(key, pos, std::max<qint64>(len, 0), at);
 }
 
 std::optional<std::pair<MFile, WatchInfo>> Library::lastWatched(const Magnet &m) const {

@@ -128,6 +128,9 @@ public:
 
     // ---- прогресс ----
     std::optional<WatchInfo> watchInfo(const QString &key) const;
+    /// Плеер: место в файле (в медиатеку и в облако).
+    void noteWatch(const QString &key, qint64 pos, qint64 len);
+    CloudSync &sync() const { return m_sync; }
     std::optional<std::pair<MFile, WatchInfo>> lastWatched(const Magnet &m) const;
     qint64 continueHiddenAt(qint64 id) const;
     Q_INVOKABLE void hideContinue(const QVariantList &ids);

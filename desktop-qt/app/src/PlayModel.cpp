@@ -300,7 +300,7 @@ void PlayModel::fetch() {
     const int gen = ++m_gen;
     m_loading = true;
     m_mirror.reset(); m_playlist.reset();
-    m_subs.clear(); m_audio.clear();
+    m_subs.clear(); m_audio.clear(); m_sidePaths.clear();
     m_status = tx(S("library.gotovim"));
     emit changed();
     const MFile file = currentFile();
@@ -333,10 +333,12 @@ void PlayModel::fetch() {
     const QList<MFile> queue = queueFiles();
     const QString title = currentTitle();
     ApiClient *apiP = &api;
-    auto finish = [self, gen, st, queue, title, apiP]() {
+    auto finish = [self, gen, st, queue, title, apiP, subs, audio]() {
         if (!self || self->m_gen != gen) return;
-        for (const auto &u : st->subs) if (u) self->m_subs << *u;
-        for (const auto &u : st->audio) if (u) self->m_audio << *u;
+        for (int i = 0; i < st->subs.size(); ++i)
+            if (const auto &u = st->subs[i]) { self->m_subs << *u; self->m_sidePaths.insert(*u, subs[i].path); }
+        for (int i = 0; i < st->audio.size(); ++i)
+            if (const auto &u = st->audio[i]) { self->m_audio << *u; self->m_sidePaths.insert(*u, audio[i].path); }
         auto done = [self, gen, st](std::optional<QString> pl) {
             if (!self || self->m_gen != gen) return;
             self->m_playlist = pl;
@@ -422,6 +424,7 @@ void PlayModel::play() {
     r.playlist = m_playlist;
     r.subUrls = m_subs;
     r.audioUrls = m_audio;
+    r.sidePaths = m_sidePaths;
     r.magnetId = m_id;
     r.fromStart = m_fromStart;
     r.collection = m_collection;
