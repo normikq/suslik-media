@@ -16,6 +16,13 @@ eframe = { version = "0.29", default-features = false, features = ["glow", "defa
 ureq = "2"
 serde_json.workspace = true
 flate2 = "1.1.10"
+sha1 = "0.10"
+# постеры: TMDB отдаёт JPEG, бывают PNG и WebP
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+
+# Выбор .torrent — обычный диалог Windows.
+[target.'cfg(windows)'.dependencies]
+rfd = "0.15"
 
 [features]
 # Отладочная сборка «Suslik Debug»: своя папка данных %APPDATA%\SuslikMediaDebug (как -Pdiag у Kotlin-версии).

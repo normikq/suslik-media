@@ -7,7 +7,8 @@
 pub mod auth;
 pub mod changelog;
 pub mod jrx;
-mod json;
+pub mod json;
+pub mod library_keep;
 pub mod mirror_link;
 pub mod model;
 pub mod party;
@@ -16,6 +17,7 @@ pub mod properties;
 pub mod search;
 pub mod site_address;
 pub mod time_text;
+pub mod torrent;
 pub mod url_codec;
 pub mod versions;
 

@@ -16,7 +16,12 @@ pub fn tr(key: &str, params: &[(&str, &str)]) -> String {
     for (name, value) in params {
         s = s.replace(&format!("{{{name}}}"), value);
     }
-    s
+    glyphs(&s)
+}
+
+/// Значки, которых нет в шрифтах окна (у Kotlin-версии их брала Windows): ближайшие из тех, что есть.
+pub fn glyphs(s: &str) -> String {
+    s.replace('✓', "✔").replace('✕', "✖").replace('＋', "+")
 }
 
 #[cfg(test)]

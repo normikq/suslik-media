@@ -6,7 +6,7 @@
 //! - `IGNORE_CASE` у Kotlin включает и `UNICODE_CASE`, то есть кириллица без учёта регистра — как `(?i)` в Rust;
 //! - заглядывания `(?<!…)`/`(?=…)` даёт `fancy_regex`.
 
-use fancy_regex::{Captures, Regex};
+pub use fancy_regex::{Captures, Regex};
 
 const WORD: &str = "A-Za-z0-9_";
 const SPACE: &str = r"\t\n\x0B\f\r ";
@@ -74,17 +74,17 @@ pub fn compile_unicode(pattern: &str) -> Regex {
 #[macro_export]
 macro_rules! rx {
     ($p:expr) => {{
-        static R: std::sync::LazyLock<fancy_regex::Regex> =
+        static R: std::sync::LazyLock<$crate::jrx::Regex> =
             std::sync::LazyLock::new(|| $crate::jrx::compile($p, false));
         &*R
     }};
     ($p:expr, unicode) => {{
-        static R: std::sync::LazyLock<fancy_regex::Regex> =
+        static R: std::sync::LazyLock<$crate::jrx::Regex> =
             std::sync::LazyLock::new(|| $crate::jrx::compile_unicode($p));
         &*R
     }};
     ($p:expr, ic) => {{
-        static R: std::sync::LazyLock<fancy_regex::Regex> = std::sync::LazyLock::new(|| $crate::jrx::compile($p, true));
+        static R: std::sync::LazyLock<$crate::jrx::Regex> = std::sync::LazyLock::new(|| $crate::jrx::compile($p, true));
         &*R
     }};
 }

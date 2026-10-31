@@ -12,7 +12,29 @@ pub const LAMP: Color32 = Color32::from_rgb(0xFF, 0xB0, 0x2E);
 pub const ACCENT: Color32 = Color32::from_rgb(0x25, 0x63, 0xEB);
 pub const BAD: Color32 = Color32::from_rgb(0xFF, 0x9B, 0x8F);
 
+/// Шрифты Kotlin-версии: Onest — текст, Unbounded — заголовки. Шрифты egui остаются запасными (значки, эмодзи).
+const ONEST: &[u8] = include_bytes!("../../../../desktop/src/main/resources/fonts/onest_regular.ttf");
+const UNBOUNDED: &[u8] = include_bytes!("../../../../desktop/src/main/resources/fonts/unbounded_medium.ttf");
+
+/// Заголовок страницы шрифтом Unbounded.
+pub fn heading(size: f32) -> egui::FontId {
+    egui::FontId::new(size, egui::FontFamily::Name("unbounded".into()))
+}
+
+fn fonts(ctx: &egui::Context) {
+    let mut f = egui::FontDefinitions::default();
+    f.font_data.insert("onest".into(), egui::FontData::from_static(ONEST));
+    f.font_data.insert("unbounded".into(), egui::FontData::from_static(UNBOUNDED));
+    let fallback = f.families.get(&egui::FontFamily::Proportional).cloned().unwrap_or_default();
+    f.families.entry(egui::FontFamily::Proportional).or_default().insert(0, "onest".into());
+    let mut heading = vec!["unbounded".to_string(), "onest".to_string()];
+    heading.extend(fallback);
+    f.families.insert(egui::FontFamily::Name("unbounded".into()), heading);
+    ctx.set_fonts(f);
+}
+
 pub fn apply(ctx: &egui::Context) {
+    fonts(ctx);
     let mut v = egui::Visuals::dark();
     v.panel_fill = NIGHT;
     v.window_fill = BOOTH;

@@ -10,7 +10,7 @@ use serde_json::Value;
 use std::io::Read;
 use std::sync::Arc;
 use std::time::Duration;
-use suslik_core::{auth, site_address, url_codec};
+use suslik_core::{auth, url_codec};
 
 #[derive(Debug)]
 pub enum ApiError {
@@ -18,10 +18,13 @@ pub enum ApiError {
     Http {
         code: u16,
         message: String,
+        /// Тело ответа: нужно «Определить через ИИ» (429 с `retryAfterSec`), переедет вместе с ним.
+        #[allow(dead_code)]
         body: Option<Value>,
     },
     Timeout,
-    Network(String),
+    /// Причина — для журнала отладочной сборки (этап 8).
+    Network(#[allow(dead_code)] String),
 }
 
 impl ApiError {
@@ -178,12 +181,6 @@ impl Api {
         }
     }
 
-    /// Текст по любому адресу (без входа); `None` при любой ошибке.
-    pub fn text(&self, url: &str) -> Option<String> {
-        let res = self.agent.get(url).timeout(Duration::from_secs(20)).call().ok()?;
-        (res.status() == 200).then(|| res.into_string().ok()).flatten()
-    }
-
     /// JSON сжат gzip (Java сама его не просит, а список медиатеки без сжатия в разы больше).
     fn fetch(&self, req: ureq::Request, etag: Option<&str>, body: Option<Vec<u8>>) -> Result<Fetched, ApiError> {
         let mut req = req.set("Accept-Encoding", "gzip");
@@ -244,9 +241,4 @@ fn transport(t: ureq::Transport) -> ApiError {
     } else {
         ApiError::Network(t.to_string())
     }
-}
-
-/// Адрес сервера из сборки: `SITE_URL` (как `-Dsuslik.site`), разобранный `site_address::normalize`.
-pub fn build_base() -> String {
-    site_address::normalize(option_env!("SITE_URL"))
 }
