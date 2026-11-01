@@ -74,6 +74,7 @@ Item {
                         font.family: Theme.unbounded; font.weight: Font.Medium; font.pixelSize: 24
                     }
                     Text {
+                        id: totalText
                         anchors { left: title.right; leftMargin: 12; verticalCenter: parent.verticalCenter; verticalCenterOffset: 3 }
                         text: lp.total
                         color: Theme.muted
@@ -83,7 +84,7 @@ Item {
                     PillButton {
                         id: discoverBtn
                         anchors { right: search.left; rightMargin: 10; verticalCenter: parent.verticalCenter }
-                        visible: x > title.x + title.implicitWidth + 64
+                        visible: x > totalText.x + totalText.implicitWidth + 24
                         text: Ui.tx("discover.library_shortcut")
                         icon: "sparkle"
                         onClicked: v.discoverRequested()

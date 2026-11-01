@@ -4,6 +4,7 @@
 #include "suslik/core/Search.h"
 
 #include <QHash>
+#include <QSet>
 #include <QObject>
 #include <QVariantList>
 
@@ -106,12 +107,21 @@ public:
     /// Подбор по настроению. fresh — не из памяти сервера и другие фильмы («Кинорулетка», «Ещё варианты»).
     Q_INVOKABLE void runAi(const QString &query, bool fresh = false);
 
-    /// Фильм подборки в медиатеке: id раздачи и файл, который играть, или пусто.
-    struct LibraryMatch { qint64 id = 0; };
-    /// Сверка: тот же постер TMDB; или то же название (русское, оригинальное, из раздачи) и год ±1.
-    static std::optional<LibraryMatch> matchLibrary(const QList<LibraryItem> &items, const QVariantMap &film,
-                                                    const std::function<QString(const LibraryItem &)> &titleOf,
-                                                    const std::function<std::optional<QString>(const LibraryItem &)> &posterOf);
+    /// Раздача медиатеки для сверки с подборкой: нормализованные названия, имя раздачи, год, файл постера TMDB.
+    struct LibraryKeys {
+        qint64 id = 0;
+        QSet<QString> names;
+        QString text; ///< « имя раздачи » с пробелами по краям — поиск целых слов
+        std::optional<int> year;
+        QString posterFile;
+    };
+    static QList<LibraryKeys> libraryKeys(const QList<LibraryItem> &items, const std::function<QString(const LibraryItem &)> &titleOf,
+                                          const std::function<std::optional<QString>(const LibraryItem &)> &posterOf);
+    /// Сверка фильма подборки: тот же постер TMDB; или то же название (русское, оригинальное, из раздачи) и год ±1;
+    /// или название целыми словами в имени раздачи и тот же год. Id раздачи или пусто.
+    static std::optional<qint64> matchLibrary(const QList<LibraryKeys> &lib, const QVariantMap &film);
+    /// Что искать на трекерах по «Найти раздачу»: русский фильм — русским названием, остальные — оригиналом.
+    static QString trackerTitle(const QString &title, const QString &original, const QString &lang);
     /// Нормализация для сверки названий: строчные, «ё» → «е», только буквы и цифры через пробел.
     static QString normTitle(const QString &s);
     /// Окно «Трекеры» закрыто: включённые источники могли поменяться.
@@ -133,7 +143,8 @@ private:
     void setNote(const QString &id, const QString &text, bool ok);
     void follow(const QString &hitId, qint64 id, bool readyNow, int round = 0, qint64 started = 0);
     void ready(const QString &hitId, qint64 id, const QString &note);
-    void rematch();
+    /// force — новый ответ сервера; без него (медиатека изменилась) карточки пересоздаются, только если что-то поменялось.
+    void rematch(bool force);
 
     Library *m_lib = nullptr;
     core::SearchFilterCriteria m_criteria;

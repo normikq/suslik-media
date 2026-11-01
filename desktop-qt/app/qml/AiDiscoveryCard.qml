@@ -14,6 +14,8 @@ Item {
     /// Высота под постер, две строки названия, год, жанры и три строки причины: все карточки ряда одной высоты.
     readonly property int fullHeight: posterH + 202
     implicitHeight: fullHeight
+    // наведённая карточка с увеличением и рамкой — поверх соседей
+    z: hover.hovered ? 2 : 1
 
     HoverHandler { id: hover }
 
@@ -87,7 +89,9 @@ Item {
         // ---- название, год, причина ----
         Column {
             id: info
-            anchors { top: posterBox.bottom; left: parent.left; right: parent.right; topMargin: 10; leftMargin: 12; rightMargin: 12 }
+            anchors { top: posterBox.bottom; left: parent.left; right: parent.right; bottom: btn.top; topMargin: 10; leftMargin: 12; rightMargin: 12; bottomMargin: 8 }
+            // крупный шрифт Windows или длинный текст — обрезается над кнопкой, а не наползает на неё
+            clip: true
             spacing: 3
             Text {
                 width: parent.width

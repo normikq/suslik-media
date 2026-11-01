@@ -16,6 +16,7 @@ const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 const TIMEOUT_MS = 20000;
 const MAX_QUERY = 300;
 const MAX_ITEMS = 10;
+const TMDB_PARALLEL = 4; // одновременных поисков постера на подборку: до 2 запросов к TMDB каждый
 const CACHE_MS = 30 * 60 * 1000;
 const CACHE_MAX = 300;
 const OWNER_RE = /^(?:[a-f0-9]{32}|u_\d{1,25})$/;
@@ -29,7 +30,8 @@ const PROMPT = [
   "Если запрос просит случайную подборку — выбери разнообразные сильные фильмы разных стран, жанров и десятилетий.",
   "Для каждого верни:",
   "title — русское прокатное название (если его нет — оригинальное);",
-  "original — оригинальное название латиницей, как в TMDB и IMDb (не латиницей — официальное английское);",
+  "original — оригинальное название, как в TMDB и IMDb: у фильма или сериала на русском языке (советского, российского) —",
+  "русское (\"Брат\", а не \"Brother\"); у остальных — латиницей (не латиницей — официальное английское);",
   "year — год выхода (у сериала — год первого сезона);",
   "kind — \"movie\" или \"series\";",
   "reason — живая фраза по-русски до 15 слов для пользователя: почему это подходит под его запрос, без спойлеров,",
@@ -83,6 +85,12 @@ const norm = s => oneLine(s).toLowerCase().replace(/ё/g, "е").replace(/[^\p{L}
 function rollDay(now) {
   const d = new Date(now).toISOString().slice(0, 10);
   if (day.d !== d) day = { d, calls: 0, fail: 0, inTok: 0, outTok: 0 };
+}
+
+/** Записи кулдауна, которые уже истекли, — долой (иначе Map растёт с каждым новым устройством). */
+function pruneCooldowns(now) {
+  const ms = config.AI_DISCOVERY_COOLDOWN_SEC * 1000;
+  for (const [o, at] of cooldowns) if (at + ms <= now) cooldowns.delete(o);
 }
 
 /** Через сколько мс владелец снова может спросить (0 — уже можно). */
@@ -168,21 +176,43 @@ async function callModel(query, fresh) {
   return { parsed, usage };
 }
 
-/** Постер, рейтинг и описание из TMDB по «Original (год)»; ошибка или нет ключа — фильм без постера. */
-async function enrich(it, lookup) {
+/** Постер, рейтинг и описание из TMDB по «Original (год)»; ошибка или нет ключа — фильм без постера.
+ *  lang — язык оригинала по TMDB (тот же поиск из кэша): по нему ПК ищет русский фильм на трекерах по-русски. */
+async function enrich(it, lookup, refLookup) {
+  const q = `${it.original} (${it.year})`;
   let p = null;
   try {
-    p = await lookup(`${it.original} (${it.year})`);
+    p = await lookup(q);
+  } catch {}
+  let lang = null;
+  try {
+    const ref = refLookup ? await refLookup(q) : null;
+    if (ref && typeof ref.original_language === "string") lang = ref.original_language;
   } catch {}
   const poster = p && typeof p.poster === "string" ? p.poster.replace(/^\/api\/poster\/img\/w\d+\//, "/api/poster/img/w342/") : null;
   return {
     ...it,
     poster,
+    lang,
     rating: p && Number(p.rating) > 0 ? p.rating : null,
     overview: p && typeof p.overview === "string" ? p.overview : null,
     // русское название по TMDB — для сверки с медиатекой, когда модель дала другое прокатное
     tmdbTitle: p && typeof p.title_ru === "string" ? p.title_ru : null
   };
+}
+
+/** Как Promise.all(list.map(fn)), но не больше limit одновременно; порядок сохраняется. */
+async function mapLimit(list, limit, fn) {
+  const out = new Array(list.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < list.length) {
+      const i = next++;
+      out[i] = await fn(list[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, list.length) }, worker));
+  return out;
 }
 
 /**
@@ -191,11 +221,12 @@ async function enrich(it, lookup) {
  * Бросает AiError: "disabled", "empty" (короткий запрос), "cooldown" (retryAfterMs), "daily" (retryAfterMs),
  * "busy", "bad". lookup — поиск постера (для тестов), по умолчанию posters.searchPoster.
  */
-async function discover(rawQuery, owner, now = Date.now(), { fresh = false, lookup = posters.searchPoster } = {}) {
+async function discover(rawQuery, owner, now = Date.now(), { fresh = false, lookup = posters.searchPoster, refLookup = lookup === posters.searchPoster ? posters.tmdbRef : null } = {}) {
   if (!enabled()) throw new AiError("disabled", "Подбор через ИИ на сервере не настроен.");
   const query = oneLine(rawQuery).slice(0, MAX_QUERY);
-  if (query.length < 2) throw new AiError("empty", "Опишите, что хочется посмотреть.");
   const key = norm(query);
+  // «:)» и «??» — после нормализации пусто: модели нечего подбирать, а в кэше был бы общий ключ ""
+  if (key.length < 2) throw new AiError("empty", "Опишите, что хочется посмотреть.");
   if (!fresh) {
     const hit = cache.get(key);
     if (hit && now - hit.at < CACHE_MS) return { items: hit.items, cached: true };
@@ -204,6 +235,7 @@ async function discover(rawQuery, owner, now = Date.now(), { fresh = false, look
   const left = OWNER_RE.test(owner) ? cooldownLeft(owner, now) : 0;
   if (left > 0) throw new AiError("cooldown", "Подождите пару секунд перед новым подбором.", { retryAfterMs: left });
   rollDay(now);
+  pruneCooldowns(now);
   if (config.AI_DISCOVERY_DAILY_MAX > 0 && day.calls >= config.AI_DISCOVERY_DAILY_MAX) {
     const tomorrow = Date.parse(day.d + "T00:00:00Z") + 24 * 3600 * 1000;
     throw new AiError("daily", "Дневной лимит подборов исчерпан. Попробуйте завтра.", { retryAfterMs: Math.max(1000, tomorrow - now) });
@@ -215,8 +247,12 @@ async function discover(rawQuery, owner, now = Date.now(), { fresh = false, look
     try {
       out = await callModel(query, fresh);
     } catch (err) {
-      day.calls = Math.max(0, day.calls - 1); // сбой сервиса не списывается
-      cooldowns.delete(owner);
+      // перегрузка, таймаут и сеть не списываются; ошибка ключа или запроса (400/403) — списывается и держит кулдаун,
+      // иначе зациклившийся клиент без конца бьёт в Google API
+      if (err.code === "busy") {
+        day.calls = Math.max(0, day.calls - 1);
+        cooldowns.delete(owner);
+      } else day.fail++;
       throw err;
     }
     if (out.usage) {
@@ -228,7 +264,7 @@ async function discover(rawQuery, owner, now = Date.now(), { fresh = false, look
       day.fail++;
       throw new AiError("bad", "ИИ не смог ничего подобрать. Попробуйте описать иначе.");
     }
-    const full = await Promise.all(items.map(it => enrich(it, lookup)));
+    const full = await mapLimit(items, TMDB_PARALLEL, it => enrich(it, lookup, refLookup));
     cache.set(key, { at: now, items: full });
     if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
     return full;
@@ -253,4 +289,4 @@ function _reset() {
   inflight.clear();
 }
 
-module.exports = { AiError, enabled, validateItem, parseItems, cooldownLeft, discover, stats, _reset, PROMPT, RESPONSE_SCHEMA };
+module.exports = { AiError, enabled, validateItem, parseItems, cooldownLeft, discover, stats, mapLimit, _reset, PROMPT, RESPONSE_SCHEMA, _cooldownCount: () => cooldowns.size };

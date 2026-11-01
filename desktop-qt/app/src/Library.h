@@ -210,6 +210,7 @@ private:
     QHash<qint64, QStringList> m_serverTags;    // id → отметки сервера
     QSet<QString> m_posterAsked;                // запрос уже ушёл (или ответ известен в этом запуске)
     QHash<QString, std::vector<std::function<void(const QByteArray &)>>> m_imageWaiters;
+    QSet<QString> m_imagePersist; ///< качающиеся картинки, которые кто-то из ждущих просил положить на диск
     QHash<QString, Hero> m_heroes;
     QSet<QString> m_heroAsked;
     QSet<QString> m_mediaAsked;

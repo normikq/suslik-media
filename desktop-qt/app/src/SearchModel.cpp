@@ -362,14 +362,25 @@ void SearchModel::setLibrary(Library *l) {
     if (m_lib) disconnect(m_lib, nullptr, this, nullptr);
     m_lib = l;
     // раздача докачалась или удалена — «Смотреть» и «Найти раздачу» пересчитываются
-    if (m_lib) connect(m_lib, &Library::versionChanged, this, [this] { if (!m_aiRaw.isEmpty()) rematch(); });
+    if (m_lib) connect(m_lib, &Library::versionChanged, this, [this] { if (!m_aiRaw.isEmpty() && !m_aiBusy) rematch(false); });
 }
 
 QString SearchModel::normTitle(const QString &s) {
-    static const QRegularExpression notWord(S("[^\\p{L}\\p{N}]+"));
-    QString t = s.toLower();
-    t.replace(QChar(0x0451), QChar(0x0435)); // ё → е
-    return t.replace(notWord, S(" ")).trimmed();
+    // один проход по символам (без регулярного выражения: сверка зовёт это для каждой раздачи медиатеки)
+    QString out;
+    out.reserve(s.size());
+    bool gap = false;
+    for (QChar c : s) {
+        if (c.isLetterOrNumber()) {
+            if (gap && !out.isEmpty()) out += QLatin1Char(' ');
+            gap = false;
+            c = c.toLower();
+            out += c == QChar(0x0451) ? QChar(0x0435) : c; // ё → е
+        } else {
+            gap = true;
+        }
+    }
+    return out;
 }
 
 namespace {
@@ -386,11 +397,45 @@ QString playPath(const Library *lib, const LibraryItem &item) {
 }
 
 QString fileOf(const QString &path) { return path.mid(path.lastIndexOf(QLatin1Char('/')) + 1); }
+
+bool hasCyrillic(const QString &s) {
+    for (QChar c : s)
+        if (c.script() == QChar::Script_Cyrillic) return true;
+    return false;
+}
 } // namespace
 
-std::optional<SearchModel::LibraryMatch> SearchModel::matchLibrary(
-    const QList<LibraryItem> &items, const QVariantMap &film, const std::function<QString(const LibraryItem &)> &titleOf,
-    const std::function<std::optional<QString>(const LibraryItem &)> &posterOf) {
+QString SearchModel::trackerTitle(const QString &title, const QString &original, const QString &lang) {
+    // Раздачи русских и советских фильмов на трекерах названы по-русски: «Брат 1997», а не «Brother 1997».
+    // Язык оригинала даёт TMDB; оригинал кириллицей — тоже признак. Зарубежные ищутся по оригиналу.
+    if (original.isEmpty() || hasCyrillic(original)) return original.isEmpty() ? title : original;
+    if (lang == QLatin1String("ru") || lang == QLatin1String("uk") || lang == QLatin1String("be")) return title;
+    return original;
+}
+
+QList<SearchModel::LibraryKeys> SearchModel::libraryKeys(const QList<LibraryItem> &items,
+                                                         const std::function<QString(const LibraryItem &)> &titleOf,
+                                                         const std::function<std::optional<QString>(const LibraryItem &)> &posterOf) {
+    QList<LibraryKeys> out;
+    for (const LibraryItem &item : items) {
+        if (!item.m.ready() || item.playable.isNone()) continue;
+        LibraryKeys k;
+        k.id = item.m.id;
+        k.year = releaseYear(item);
+        if (posterOf)
+            if (const auto p = posterOf(item)) k.posterFile = fileOf(*p);
+        QStringList names{item.baseTitle};
+        if (titleOf) names << titleOf(item);
+        if (const AiTitle *ai = item.m.acceptedAi(); ai && ai->original) names << *ai->original;
+        for (const QString &n : names)
+            if (const QString t = normTitle(n); !t.isEmpty()) k.names.insert(t);
+        k.text = S(" ") + normTitle(item.m.name) + S(" ");
+        out << k;
+    }
+    return out;
+}
+
+std::optional<qint64> SearchModel::matchLibrary(const QList<LibraryKeys> &lib, const QVariantMap &film) {
     const int year = film.value(S("year")).toInt();
     const QString poster = fileOf(film.value(S("poster")).toString());
     QSet<QString> keys;
@@ -401,31 +446,17 @@ std::optional<SearchModel::LibraryMatch> SearchModel::matchLibrary(
         if (!year || !y) return !needYear;
         return std::abs(*y - year) <= 1;
     };
-    const LibraryItem *byName = nullptr, *byText = nullptr;
-    for (const LibraryItem &item : items) {
-        if (!item.m.ready() || item.playable.isNone()) continue;
+    std::optional<qint64> byName, byText;
+    for (const LibraryKeys &item : lib) {
         // тот же постер TMDB — тот же фильм, как бы ни называлась раздача
-        if (!poster.isEmpty() && posterOf) {
-            if (const auto p = posterOf(item); p && fileOf(*p) == poster) return LibraryMatch{item.m.id};
-        }
-        const auto iy = releaseYear(item);
-        if (!byName) {
-            QStringList names{item.baseTitle};
-            if (titleOf) names << titleOf(item);
-            if (const AiTitle *ai = item.m.acceptedAi(); ai && ai->original) names << *ai->original;
-            for (const QString &n : names)
-                if (keys.contains(normTitle(n)) && yearFits(iy, false)) { byName = &item; break; }
-        }
+        if (!poster.isEmpty() && item.posterFile == poster) return item.id;
+        if (!byName && yearFits(item.year, false) && item.names.intersects(keys)) byName = item.id;
         // «Нечто / The Thing (1982) BDRip» — название целыми словами в имени раздачи и тот же год
-        if (!byName && !byText && yearFits(iy, true)) {
-            const QString text = S(" ") + normTitle(item.m.name) + S(" ");
+        if (!byName && !byText && yearFits(item.year, true))
             for (const QString &k : keys)
-                if (k.size() >= 5 && text.contains(S(" ") + k + S(" "))) { byText = &item; break; }
-        }
+                if (k.size() >= 5 && item.text.contains(S(" ") + k + S(" "))) { byText = item.id; break; }
     }
-    const LibraryItem *hit = byName ? byName : byText;
-    if (!hit) return std::nullopt;
-    return LibraryMatch{hit->m.id};
+    return byName ? byName : byText;
 }
 
 int SearchModel::aiInLibrary() const {
@@ -435,22 +466,25 @@ int SearchModel::aiInLibrary() const {
     return n;
 }
 
-void SearchModel::rematch() {
+void SearchModel::rematch(bool force) {
     QVariantList out;
     const Library *lib = m_lib;
     auto titleOf = [lib](const LibraryItem &it) -> QString { return lib ? lib->titleOf(it) : it.baseTitle; };
     auto posterOf = [lib](const LibraryItem &it) -> std::optional<QString> { return lib ? lib->posterPathOf(it) : std::nullopt; };
     const QList<LibraryItem> empty;
-    const QList<LibraryItem> &items = m_lib ? m_lib->items() : empty;
+    // названия медиатеки нормализуются один раз на сверку, а не для каждого фильма подборки
+    const QList<LibraryKeys> keys = libraryKeys(m_lib ? m_lib->items() : empty, titleOf, posterOf);
     for (const auto &v : m_aiRaw) {
         QVariantMap film = v.toMap();
-        const auto m = matchLibrary(items, film, titleOf, posterOf);
-        const LibraryItem *item = m && m_lib ? m_lib->item(m->id) : nullptr;
+        const auto m = matchLibrary(keys, film);
+        const LibraryItem *item = m && m_lib ? m_lib->item(*m) : nullptr;
         film[S("inLibrary")] = item != nullptr;
         film[S("magnetId")] = item ? item->m.id : 0;
         film[S("path")] = item ? playPath(m_lib, *item) : QString();
         out << film;
     }
+    // медиатека меняется часто (прогресс, докачка): если для подборки ничего не поменялось, карточки не пересоздаются
+    if (!force && out == m_aiHits) return;
     m_aiHits = out;
     const int lib_ = aiInLibrary();
     const int n = int(m_aiHits.size());
@@ -475,8 +509,7 @@ void SearchModel::runAi(const QString &rawQuery, bool fresh) {
     m_aiQuery = q;
     m_aiStatus = tx(S("discover.thinking"));
     m_aiStatusOk = true;
-    m_aiRaw.clear();
-    m_aiHits.clear();
+    // прежняя подборка остаётся: при ошибке (кулдаун, лимит, сервис занят) она снова на экране, сверху — причина
     emit aiChanged();
     QPointer<SearchModel> self(this);
     QJsonObject body{{S("query"), q.left(300)}};
@@ -503,7 +536,7 @@ void SearchModel::runAi(const QString &rawQuery, bool fresh) {
             raw << QVariantMap{
                 {S("title"), title},
                 {S("original"), original.compare(title, Qt::CaseInsensitive) == 0 ? QString() : original},
-                {S("searchTitle"), original.isEmpty() ? title : original},
+                {S("searchTitle"), trackerTitle(title, original, o.value(S("lang")).toString())},
                 {S("year"), o.value(S("year")).toInt()},
                 {S("series"), o.value(S("kind")).toString() == S("series")},
                 {S("reason"), o.value(S("reason")).toString().trimmed()},
@@ -521,7 +554,7 @@ void SearchModel::runAi(const QString &rawQuery, bool fresh) {
             emit self->aiChanged();
             return;
         }
-        self->rematch();
+        self->rematch(true);
     });
 }
 

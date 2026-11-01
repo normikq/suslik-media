@@ -112,3 +112,43 @@ test("проверка ответа: без года, выдуманный го�
   await assert.rejects(ai.discover("пусто", OWNER, NOW, { lookup }), e => e.code === "bad");
   await assert.rejects(ai.discover(" ", OWNER, NOW, { lookup }), e => e.code === "empty");
 });
+
+test("ошибка ключа (400/403) списывается и держит кулдаун; «:)» — пустой запрос", async () => {
+  replies.push({ status: 403, body: {} });
+  await assert.rejects(ai.discover("драма", OWNER, NOW, { lookup }), e => e.code === "bad");
+  assert.equal(ai.stats(NOW).today.calls, 1);
+  await assert.rejects(ai.discover("комедия", OWNER, NOW + 1000, { lookup }), e => e.code === "cooldown");
+  await assert.rejects(ai.discover(":)", "u_7", NOW, { lookup }), e => e.code === "empty");
+  await assert.rejects(ai.discover("??", "u_7", NOW, { lookup }), e => e.code === "empty");
+  assert.equal(calls.length, 1);
+});
+
+test("истёкшие кулдауны вычищаются", async () => {
+  replies.push(gemini([THING]));
+  await ai.discover("первый", "u_1", NOW, { lookup });
+  replies.push(gemini([THING]));
+  await ai.discover("второй", "u_2", NOW + 60000, { lookup });
+  assert.equal(ai._cooldownCount(), 1);
+});
+
+test("TMDB: не больше 4 поисков одновременно, порядок сохраняется", async () => {
+  let now = 0, peak = 0;
+  const out = await ai.mapLimit([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 4, async x => {
+    peak = Math.max(peak, ++now);
+    await new Promise(r => setTimeout(r, 5));
+    now--;
+    return x * 2;
+  });
+  assert.equal(peak, 4);
+  assert.deepEqual(out, [2, 4, 6, 8, 10, 12, 14, 16, 18, 20]);
+});
+
+test("промпт: у русского фильма оригинал по-русски", () => {
+  assert.match(ai.PROMPT, /"Брат", а не "Brother"/);
+});
+
+test("язык оригинала из TMDB приходит клиенту", async () => {
+  replies.push(gemini([{ title: "Брат", original: "Брат", year: 1997, kind: "movie", reason: "Девяностые." }]));
+  const out = await ai.discover("девяностые", OWNER, NOW, { lookup, refLookup: async () => ({ original_language: "ru" }) });
+  assert.equal(out.items[0].lang, "ru");
+});

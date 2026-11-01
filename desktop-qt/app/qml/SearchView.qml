@@ -34,6 +34,12 @@ Item {
         toTop()
         s.run(q)
     }
+    /// «По названию»: наверх и курсор в поле поиска раздач.
+    function openTrackerSearch() {
+        s.aiMode = false
+        toTop()
+        Qt.callLater(() => queryField.input.forceActiveFocus())
+    }
     function runVibe(q, fresh) { aiField.text = q; s.runAi(q, fresh) }
 
     Flickable {
@@ -354,9 +360,9 @@ Item {
                         y: Math.floor(index / aiGrid.cols) * (aiGrid.cardH + aiGrid.gap)
                         width: aiGrid.cardW; height: aiGrid.cardH
                         // плавное появление по очереди
-                        opacity: 0
-                        Component.onCompleted: appear.start()
-                        NumberAnimation on opacity { id: appear; running: false; from: 0; to: 1; duration: Theme.simple ? 0 : 320 + Math.min(index, 8) * 45; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease }
+                        opacity: Theme.simple ? 1 : 0
+                        Component.onCompleted: if (!Theme.simple) appear.start()
+                        NumberAnimation on opacity { id: appear; running: false; from: 0; to: 1; duration: 320 + Math.min(index, 8) * 45; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease }
                         onPlayRequested: (id, path) => v.playRequested(id, path)
                         onSearchTrackers: (q) => v.findOnTrackers(q)
                     }
@@ -367,7 +373,7 @@ Item {
                 visible: s.aiMode && !s.aiBusy && s.aiHits.length > 0
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: Ui.tx("discover.more")
-                onClicked: s.runAi(s.aiQuery, true)
+                onClicked: { v.toTop(); s.runAi(s.aiQuery, true) }
             }
         }
     }
@@ -398,7 +404,7 @@ Item {
         Row {
             id: msRow
             x: 4; anchors.verticalCenter: parent.verticalCenter
-            Segment { id: trSeg; icon: "search"; text: Ui.tx("discover.mode_tracker"); on: !s.aiMode; onClicked: s.aiMode = false }
+            Segment { id: trSeg; icon: "search"; text: Ui.tx("discover.mode_tracker"); on: !s.aiMode; onClicked: v.openTrackerSearch() }
             Segment { id: aiSeg; icon: "sparkle"; text: Ui.tx("discover.mode_ai"); on: s.aiMode; lampIcon: true; onClicked: v.openAi("") }
         }
     }

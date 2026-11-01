@@ -75,13 +75,14 @@ router.post("/api/search/add", requireLogin, apiLimiter, async (req, res) => {
 });
 
 // «Подбор по настроению»: { query, fresh? } -> { items: [{ title, original, year, kind, reason, genres, poster, rating,
-// overview, tmdbTitle }], cached }. poster — путь зеркала /api/poster/img/w342/… или null.
+// overview, tmdbTitle, lang }], cached }. lang — язык оригинала по TMDB ("ru" и т. п.) или null. poster — путь зеркала /api/poster/img/w342/… или null.
 // 429 { reason: "cooldown" | "daily", retryAfterSec }; 503 { reason: "busy" | "disabled" }; 400 { reason: "empty" }.
+// Владелец кулдауна — пользователь или устройство (cookie sdev ставится здесь же, если её ещё нет).
 router.post("/api/search/ai-discovery", requireLogin, apiLimiter, async (req, res) => {
   res.set("Cache-Control", "private, no-store");
   const query = typeof req.body?.query === "string" ? req.body.query : "";
   try {
-    res.json(await aiDiscovery.discover(query, deviceId(req, null), Date.now(), { fresh: req.body?.fresh === true }));
+    res.json(await aiDiscovery.discover(query, deviceId(req, res), Date.now(), { fresh: req.body?.fresh === true }));
   } catch (err) {
     if (err instanceof aiDiscovery.AiError) {
       if (err.code === "cooldown" || err.code === "daily") {
