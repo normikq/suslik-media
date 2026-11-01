@@ -751,7 +751,7 @@
     ];
     if (F.filtersOpen) kids.push(viewFilters());
     if (!F.asked) {
-      kids.push(h('div', { class: 'empty', text: 'Поиск по трекерам сервера и по RuTracker через Suslik Media на ПК у кого-то из здесь присутствующих.' }));
+      kids.push(h('div', { class: 'empty', text: 'Поиск по трекерам сервера и по RuTracker через ПК, который вошёл в эту комнату.' }));
       return h('div', {}, kids);
     }
     var lines = [];

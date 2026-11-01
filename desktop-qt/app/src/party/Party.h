@@ -97,9 +97,6 @@ public:
     void seek(qint64 posMs) override { if (canSeek()) action(core::PartyProtocol::seek(posMs)); }
     void reportBuffering(bool loading) override;
 
-    /// Поток «помощника»: пока приложение вошло, Discord Activity может попросить этот ПК поискать на RuTracker.
-    void setHelper(bool on);
-
 signals:
     void changed();
     /// Вошли по ссылке из Discord: окну — открыть «Вместе» (ведущему — и фильм комнаты, если он уже выбран).
@@ -141,11 +138,6 @@ private:
     QList<std::pair<QString, QJsonObject>> m_outbox;
     bool m_sending = false;
 
-    QPointer<QNetworkReply> m_helper;
-    QByteArray m_helperBuf;
-    bool m_helperOn = false;
-    int m_helperGen = 0, m_helperFailures = 0;
-    void startHelper();
     QPointer<QNetworkReply> m_stream;
     QByteArray m_streamBuf;
     int m_failures = 0;

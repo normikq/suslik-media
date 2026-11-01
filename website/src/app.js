@@ -74,7 +74,7 @@ function createApp() {
   app.use("/api/playlist", express.json({ limit: "200kb" }));
   app.use("/api/app/changelog", express.json({ limit: "200kb" }));
   app.use("/api/sync", express.json({ limit: "512kb" })); // первая выгрузка прогресса — до 500 записей
-  app.use("/api/rutracker/helper/reply", express.json({ limit: "512kb" })); // до 100 раздач RuTracker от ПК (routes/activity.js)
+  app.use(/^\/api\/rooms\/[^/]+\/rutracker\/reply$/, express.json({ limit: "512kb" })); // до 100 раздач RuTracker от ПК (routes/activity.js)
   app.use(express.json({ limit: "20kb" }));
   app.use(express.urlencoded({ extended: false, limit: "20kb" }));
 

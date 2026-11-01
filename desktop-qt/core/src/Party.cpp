@@ -252,12 +252,8 @@ std::optional<RemoteTrackerRequest> PartyProtocol::remoteRequestOf(const QString
     return std::nullopt;
 }
 
-QString PartyProtocol::remoteEventsPath(const QString &clientId) {
-    return S("/api/rutracker/helper/events?client_id=") + QString::fromLatin1(QUrl::toPercentEncoding(clientId));
-}
-
-QString PartyProtocol::remoteReplyPath() {
-    return S("/api/rutracker/helper/reply");
+QString PartyProtocol::remoteReplyPath(const QString &roomId) {
+    return S("/api/rooms/") + QString::fromLatin1(QUrl::toPercentEncoding(roomId)) + S("/rutracker/reply");
 }
 
 std::optional<PartyEvent> PartyProtocol::parseEvent(const QString &text) {

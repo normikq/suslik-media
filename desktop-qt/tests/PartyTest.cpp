@@ -234,8 +234,7 @@ private slots:
         QVERIFY(!PartyProtocol::remoteRequestOf(S(R"(data: {"event":"rutracker_request","data":{"kind":"search","query":"x"}})")));
         QVERIFY(!PartyProtocol::remoteRequestOf(S(R"(data: {"event":"state_changed","data":{}})")));
         QVERIFY(!PartyProtocol::parseEventLine(S(R"(data: {"event":"rutracker_request","data":{"request_id":"rq_1","kind":"search","query":"x"}})")));
-        QCOMPARE(PartyProtocol::remoteReplyPath(), S("/api/rutracker/helper/reply"));
-        QCOMPARE(PartyProtocol::remoteEventsPath(S("pc_1")), S("/api/rutracker/helper/events?client_id=pc_1"));
+        QCOMPARE(PartyProtocol::remoteReplyPath(S("842190")), S("/api/rooms/842190/rutracker/reply"));
     }
 
     void pendingFileIsNotOverwrittenByStaleAnswers() {
