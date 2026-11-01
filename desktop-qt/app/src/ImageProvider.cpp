@@ -63,6 +63,8 @@ public:
 
     /// Раскодировать в пуле потоков (большие кадры баннера не тормозят интерфейс), потом finished() в главном.
     /// glow — свечение баннера: маленькая размытая копия с прозрачными краями (растягивается в QML, размытие даром).
+    std::function<void(qint64)> decoded;
+
     void decode(const QByteArray &bytes, QSize want, bool glow) {
         if (bytes.isEmpty()) { m_error = QStringLiteral("no image"); emit finished(); return; }
         QPointer<Response> self(this);
@@ -89,6 +91,7 @@ public:
                 self->m_image = img;
                 if (img.isNull()) self->m_error = QStringLiteral("bad image");
                 emit self->finished();
+                if (!img.isNull() && self->decoded) self->decoded(img.sizeInBytes());
             }, Qt::QueuedConnection);
         });
     }
@@ -101,6 +104,7 @@ public:
 
 QQuickImageResponse *ImageProvider::requestImageResponse(const QString &id, const QSize &requestedSize) {
     auto *resp = new Response;
+    resp->decoded = m_decoded;
     QPointer<Response> guard(resp);
     QString path = id;
     bool glow = false;

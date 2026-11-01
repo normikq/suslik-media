@@ -45,14 +45,6 @@
 #include <QSGRendererInterface>
 #include <QTimer>
 
-#ifdef Q_OS_WIN
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#include <psapi.h>
-#endif
-
 using namespace suslik;
 
 namespace {
@@ -117,6 +109,8 @@ int main(int argc, char *argv[]) {
         if (library.authenticated() == 0) party.leave(); // вышли из аккаунта — и из комнаты
     });
     app::MediaSession media(player, library);
+    // Очистка памяти — при включении плеера (медиатека под ним не рисуется, её текстуры и мусор JS не нужны)
+    QObject::connect(&player, &app::PlayerModel::openChanged, &ui, [&player, &ui] { if (player.isOpen() && !player.closing()) ui.trimMemory(); });
     QObject::connect(&sync, &core::CloudSync::changed, &library, [&library](int) { library.bumpWatch(); });
 
     qmlRegisterType<app::LibraryPage>("Suslik.Native", 1, 0, "LibraryPage");
@@ -134,7 +128,7 @@ int main(int argc, char *argv[]) {
     ui.setEngine(&engine);
     // Модуль Suslik вшит в программу; копия рядом (qml\Suslik) — запасной путь для упакованной сборки.
     engine.addImportPath(QCoreApplication::applicationDirPath() + QStringLiteral("/qml"));
-    engine.addImageProvider(QStringLiteral("suslik"), new app::ImageProvider(library));
+    engine.addImageProvider(QStringLiteral("suslik"), new app::ImageProvider(library, [&ui](qint64 bytes) { ui.noteImageBytes(bytes); }));
     engine.addImageProvider(QStringLiteral("icon"), new app::IconProvider);
     engine.rootContext()->setContextProperty(QStringLiteral("Ui"), &ui);
     engine.rootContext()->setContextProperty(QStringLiteral("lib"), &library);
@@ -173,10 +167,6 @@ int main(int argc, char *argv[]) {
     sync.start();
     library.start();
     QTimer::singleShot(4000, &library, [&library] { library.prunePosterFiles(); });
-#ifdef Q_OS_WIN
-    // Сброс временных страниц аллокатора после старта и парсинга базы: снижает Working Set до минимума в ОЗУ
-    QTimer::singleShot(6000, [] { EmptyWorkingSet(GetCurrentProcess()); });
-#endif
     // libmpv нет (самообновление со старой версии без неё) — докачать заранее, не дожидаясь фильма
     QTimer::singleShot(3000, &mpvInstall, [&mpvInstall] { if (!mpvInstall.ready()) mpvInstall.start(); });
     app::PlayerLog::write(QStringLiteral("[sys] Suslik Media Qt %1 started").arg(QStringLiteral(SM_VERSION)));
