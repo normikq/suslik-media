@@ -9,14 +9,15 @@ namespace SuslikSetup
 {
     /// <summary>
     /// Что и куда ставится, где приложение хранит данные, запись в «Установленных приложениях».
-    /// Qt-версия (desktop-qt): своя программа, папка, данные и UpgradeCode — ставится рядом со старой Kotlin-версией и её не трогает.
+    /// Qt-версия (desktop-qt): своя программа, папка, данные и UpgradeCode. С 3.0.0 она заменяет Kotlin-версию:
+    /// установщик удаляет старую (OldVersion), её данные остаются — программа переносит их при первом запуске (AppDir::migrateFromKotlin).
     /// </summary>
     static class Product
     {
         /// <summary>Название в окне мастера — как у Kotlin-версии.</summary>
         public const string Name = "Suslik Media";
-        /// <summary>Название в «Установленных приложениях» и папка установки — как у MSI (installer/build-msi.sh).</summary>
-        public const string DisplayName = "Suslik Media Qt";
+        /// <summary>Название в «Установленных приложениях» — как у MSI (installer/build-msi.sh), папка установки — своя.</summary>
+        public const string DisplayName = "Suslik Media";
         public const string FolderName = "Suslik Media Qt";
         public const string ExeName = "SuslikMediaQt.exe";
         /// <summary>UpgradeCode из installer/build-msi.sh и app/src/Updater.cpp: один на все версии.</summary>
@@ -135,6 +136,74 @@ namespace SuslikSetup
             for (var d = start; !string.IsNullOrEmpty(d); d = Path.GetDirectoryName(d))
                 if (File.Exists(Path.Combine(d, ExeName))) return d;
             return null;
+        }
+
+        // ---------- старая Kotlin-версия (desktop/setup/Product.cs) ----------
+
+        /// <summary>Kotlin-версия, которую заменяет эта программа: её MSI, процесс и запись в «Установленных приложениях».</summary>
+        public static class OldVersion
+        {
+            public const string UpgradeCode = "{6F1D2B9E-4C7A-4F3E-9A51-2D8C5E7B3A10}";
+            const string ProcessName = "Suslik Media";
+            const string ArpKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\SuslikMedia";
+
+            public static bool Installed => Msi.RelatedProducts(UpgradeCode).Count > 0;
+
+            /// <summary>Папка старой копии (её записывал SuslikUninstall.exe старой версии), иначе null.</summary>
+            public static string Folder
+            {
+                get
+                {
+                    using (var k = Registry.CurrentUser.OpenSubKey(ArpKey))
+                        if (k?.GetValue("InstallLocation") is string d && Directory.Exists(d)) return d;
+                    return null;
+                }
+            }
+
+            public static void CloseRunning()
+            {
+                foreach (var p in Process.GetProcessesByName(ProcessName))
+                {
+                    try
+                    {
+                        if (!p.CloseMainWindow() || !p.WaitForExit(8000)) { p.Kill(); p.WaitForExit(5000); }
+                    }
+                    catch { }
+                }
+            }
+
+            /// <summary>
+            /// Удаляет старую копию (данные в %APPDATA%\SuslikMedia не трогает: из них новая программа берёт вход, прогресс и настройки).
+            /// null — удалено или её не было, иначе текст ошибки (установка новой всё равно продолжается).
+            /// </summary>
+            public static string Remove(Action<double, string> progress, Func<bool> cancelled, string log)
+            {
+                var products = Msi.RelatedProducts(UpgradeCode);
+                if (products.Count == 0) return null;
+                var folder = Folder;
+                CloseRunning();
+                string error = null;
+                foreach (var code in products)
+                {
+                    var r = Msi.Uninstall(code, progress, cancelled, log);
+                    if (r != Msi.ERROR_SUCCESS && r != Msi.ERROR_SUCCESS_REBOOT_REQUIRED)
+                        error = (Msi.LastError ?? $"Windows Installer вернул код {r}.").Trim();
+                }
+                if (error != null) return error;
+                try { Registry.CurrentUser.DeleteSubKeyTree(ArpKey, false); } catch { }
+                // Видеодвижок, который старая версия докачала в свою папку: MSI о нём не знает
+                if (!string.IsNullOrEmpty(folder) && Directory.Exists(folder) && !File.Exists(Path.Combine(folder, ProcessName + ".exe")))
+                {
+                    try
+                    {
+                        foreach (var f in Directory.GetFiles(folder, "libmpv*", SearchOption.AllDirectories))
+                            try { File.Delete(f); } catch { }
+                    }
+                    catch { }
+                    DeleteFolderIfOnlyEmptyDirs(folder);
+                }
+                return null;
+            }
         }
 
         // ---------- очистка ----------

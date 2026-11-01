@@ -4,7 +4,7 @@
     Перенос desktop/setup (тот же вид и те же функции) под desktop-qt: своя программа, папка, данные и UpgradeCode (Product.cs).
     Одна программа в двух сборках (см. .github/workflows/desktop-qt.yml):
       SuslikUninstall.exe — без MSI, кладётся в само приложение (рядом с SuslikMediaQt.exe) и открывается из «Установленных приложений»;
-      Suslik Media Qt Setup.exe — с MSI внутри (-p:MsiPath=…): мастер установки. Видеодвижок libmpv он скачивает с нашего сервера.
+      Suslik Media Setup.exe — с MSI внутри (-p:MsiPath=…): мастер установки; убирает Kotlin-версию (Work.cs). Видеодвижок libmpv он скачивает с нашего сервера.
     Шрифты, значок и libmpv.properties — те же файлы, что у Kotlin-версии (desktop/), без копий, как в app/CMakeLists.txt.
     Сборка: dotnet build -c Release [-p:MsiPath=…] [-p:SiteUrl=https://домен[/путь]] [-p:AssemblyName=…] [-p:AppVersion=2.3.1]
   -->

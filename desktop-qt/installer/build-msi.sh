@@ -9,7 +9,7 @@ ICON="$HERE/../../desktop/icon.ico"
 if [ -n "$DIAG" ]; then
   PRODUCT="Suslik Debug Qt"; UPGRADE="{F79D44DC-CEC2-4619-824F-32180E6B7698}"; FOLDER="Suslik Debug Qt"
 else
-  PRODUCT="Suslik Media Qt"; UPGRADE="{BFBB56B9-7E7F-4AF8-BA0B-C1BA1A054E70}"; FOLDER="Suslik Media Qt"
+  PRODUCT="Suslik Media"; UPGRADE="{BFBB56B9-7E7F-4AF8-BA0B-C1BA1A054E70}"; FOLDER="Suslik Media Qt"
 fi
 W=$(mktemp -d)
 mkdir -p "$W/src"

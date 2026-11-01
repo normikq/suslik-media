@@ -3,6 +3,9 @@ name: Desktop Qt
 # Новая ПК-версия на C++/Qt (desktop-qt/, план — docs/QT-PORT.md).
 # На пуш с изменениями в desktop-qt/ — только тесты ядра на Linux (Qt из apt, пара минут).
 # Сборка для Windows (MSVC + Qt 6.8) — только вручную, как android.yml и desktop.yml.
+# С 3.0.0 Qt-версия заменяет Kotlin-версию (desktop.yml): publish выкладывает на сайт только установщик
+# «Suslik Media Setup-<V>.exe» на ту же платформу desktop — старая версия получает его как обычное обновление,
+# а установщик удаляет её (installer/setup/Work.cs). MSI, архив программы и отладочная сборка на сайт не идут.
 on:
   push:
     paths: ["desktop-qt/**", ".github/workflows/desktop-qt.yml"]
@@ -12,6 +15,15 @@ on:
         description: "Собрать для Windows"
         type: boolean
         default: true
+      publish:
+        description: "Выложить установщик exe на сайт (папка updates/, платформа desktop)"
+        type: boolean
+        default: false
+      channel:
+        description: "Кому: beta — только тестировщику (по коду), stable — всем"
+        type: choice
+        options: [beta, stable]
+        default: beta
       debug:
         description: "Собрать и отладочную «Suslik Debug Qt» (артефакт, на сайт не идёт)"
         type: boolean
@@ -74,7 +86,7 @@ jobs:
           done
 
   windows:
-    if: github.event_name == 'workflow_dispatch' && inputs.windows
+    if: github.event_name == 'workflow_dispatch' && (inputs.windows || inputs.publish)
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
@@ -120,8 +132,9 @@ jobs:
         run: |
           mkdir -p msi
           desktop-qt/installer/build-msi.sh dist "$V" "msi/Suslik Media Qt-$V.msi"
-      # Файл для людей — «Suslik Media Qt Setup.exe»: тот же мастер, что у Kotlin-версии (desktop/setup), с MSI внутри.
-      # Им же обновляется программа (запускает его с /update). Видеодвижок libmpv он качает с нашего сервера (libmpv.properties).
+      # Файл для людей — «Suslik Media Setup-<V>.exe», то же имя, что у Kotlin-версии: тот же мастер (desktop/setup), с MSI внутри.
+      # Им же обновляется программа (запускает его с /update), и им же Kotlin-версия переходит на эту. Видеодвижок libmpv он качает
+      # с нашего сервера (libmpv.properties).
       - name: Установщик
         shell: bash
         env:
@@ -133,7 +146,8 @@ jobs:
           dotnet build desktop-qt/installer/setup/SuslikSetup.csproj -c Release -p:AppVersion=$V -p:AssemblyName=SuslikMediaQtSetup \
             "-p:SiteUrl=$URL" "-p:MsiPath=$(cygpath -w "$GITHUB_WORKSPACE/msi/Suslik Media Qt-$V.msi")" -o "$RUNNER_TEMP/setup" 2>&1 | tail -5
           mkdir -p setup
-          cp "$RUNNER_TEMP/setup/SuslikMediaQtSetup.exe" "setup/Suslik Media Qt Setup-$V.exe"
+          cp "$RUNNER_TEMP/setup/SuslikMediaQtSetup.exe" "setup/Suslik Media Setup-$V.exe"
+          echo "SETUP=setup/Suslik Media Setup-$V.exe" >> "$GITHUB_ENV"
           rm -rf desktop-qt/installer/setup/obj desktop-qt/installer/setup/bin
           ls -la setup
       # видеодвижок: та же сборка libmpv, что раздаёт сервер (desktop/.../libmpv.properties), проверка по SHA-256.
@@ -216,3 +230,27 @@ jobs:
             tail -n 150 out.txt; tail -n 60 err.txt
             echo "::endgroup::"
           done
+      # На сайт — только установщик exe и «Что нового» (desktop/src/main/resources/changelog.json, его же показывает программа).
+      # Идёт последним: если не прошли сборка, проверка запуска или тесты, ничего не выкладывается.
+      - name: Выложить на сайт
+        if: inputs.publish
+        shell: bash
+        env:
+          UPDATE_TOKEN: ${{ secrets.UPDATE_TOKEN }}
+          SITE_URL: ${{ secrets.SITE_URL }}
+          CHANNEL: ${{ inputs.channel || 'beta' }}
+        run: |
+          URL="${SITE_URL%/}"
+          [ -n "$URL" ] || { echo "::error::Нет секрета SITE_URL"; exit 1; }
+          [ -n "$UPDATE_TOKEN" ] || { echo "::error::Нет секрета UPDATE_TOKEN"; exit 1; }
+          [ -s "$SETUP" ] || { echo "::error::Нет установщика: $SETUP"; exit 1; }
+          # Сервер без бета-канала отдал бы сборку всем, не обращая внимания на X-Channel: тогда отказываемся (как в desktop.yml)
+          if [ "$CHANNEL" = "beta" ]; then
+            code=$(curl -s -o /dev/null -w "%{http_code}" -H "X-Update-Token: $UPDATE_TOKEN" "$URL/api/app/reports?limit=1")
+            if [ "$code" != "200" ]; then echo "::error::Сервер ещё без бета-канала — публикация отменена"; exit 1; fi
+          fi
+          curl -fsS -H "X-Update-Token: $UPDATE_TOKEN" -H "X-File-Name: $(basename "$SETUP")" -H "X-Channel: $CHANNEL" \
+               -H "Content-Type: application/octet-stream" --data-binary @"$SETUP" "$URL/api/app/upload"
+          curl -fsS -H "X-Update-Token: $UPDATE_TOKEN" -H "Content-Type: application/json" \
+               --data-binary @desktop/src/main/resources/changelog.json "$URL/api/app/changelog?platform=desktop"
+          echo "::notice::Выложен $(basename "$SETUP") ($CHANNEL)"

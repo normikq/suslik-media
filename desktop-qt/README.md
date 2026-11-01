@@ -24,5 +24,8 @@ ctest --test-dir build --output-on-failure
 
 CI — `.github/workflows/desktop-qt.yml`: тесты на каждый пуш в `desktop-qt/`, сборка для Windows вручную: папка программы `suslik-media-qt-windows`, установщик `suslik-media-qt-msi`,
 с `debug` — отладочный `suslik-media-qt-debug-msi`. MSI собирает `installer/build-msi.sh` (WiX 3).
-Файл для людей — `Suslik Media Qt Setup-<V>.exe` (артефакт `suslik-media-qt-setup`): тот же мастер, что у Kotlin-версии, с MSI внутри; ставит в `%LOCALAPPDATA%\Programs\Suslik Media Qt`,
-качает видеодвижок в `%APPDATA%\SuslikMediaQt\mpv`, кладёт рядом с программой `SuslikUninstall.exe` (окно удаления с очисткой данных). Снимки его окон — `setup-preview.yml` (артефакт `setup-preview-qt`).
+Файл для людей — `Suslik Media Setup-<V>.exe` (артефакт `suslik-media-qt-setup`): тот же мастер, что у Kotlin-версии, с MSI внутри; удаляет Kotlin-версию
+(её данные остаются, программа переносит их при первом запуске), ставит в `%LOCALAPPDATA%\Programs\Suslik Media Qt`,
+качает видеодвижок в `%APPDATA%\SuslikMediaQt\mpv`, кладёт рядом с программой `SuslikUninstall.exe` (окно удаления с очисткой данных).
+Выпуск (с 3.0.0 Qt-версия заменяет Kotlin-версию): `gh api -X POST repos/normikq/suslik-media/actions/workflows/desktop-qt.yml/dispatches -f ref=main -f 'inputs[publish]=true' -f 'inputs[channel]=beta'` —
+на сайт идёт только этот exe (платформа `desktop`, та же, что у Kotlin-версии) и «Что нового»; всем — `promote.yml` с `desktop`. Снимки его окон — `setup-preview.yml` (артефакт `setup-preview-qt`).
