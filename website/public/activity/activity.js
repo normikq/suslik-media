@@ -173,24 +173,43 @@
   }
 
   // ---- постеры: /api/poster?q= → путь → картинка с ключом (blob) ----
+  // Как на ПК (Library::posterPath): запросы плитки по очереди — принятое название ИИ «Original (год)», потом
+  // название и имя файла; у первого постера нет — спрашиваем следующий. «Постера нет» помним 3 дня, найденный — 30.
   var posters = (function () {
-    var paths = {}, titles = {}, urls = {}, waits = {}, queue = [], active = 0;
-    try { paths = JSON.parse(localStorage.getItem('sm.act.paths') || '{}') || {}; titles = JSON.parse(localStorage.getItem('sm.act.titles') || '{}') || {}; } catch (e) { /* без хранилища */ }
+    var DAY = 864e5, known = {}, titles = {}, urls = {}, waits = {}, queue = [], active = 0;
+    try {
+      known = JSON.parse(localStorage.getItem('sm.act.posters') || '{}') || {};
+      titles = JSON.parse(localStorage.getItem('sm.act.titles') || '{}') || {};
+    } catch (e) { /* без хранилища */ }
+    function fresh(q) {
+      var k = known[q];
+      return k && Date.now() - k.at < (k.p ? 30 : 3) * DAY ? k : null;
+    }
     function save() {
-      try { localStorage.setItem('sm.act.paths', JSON.stringify(paths)); localStorage.setItem('sm.act.titles', JSON.stringify(titles)); } catch (e) { /* без хранилища */ }
+      try { localStorage.setItem('sm.act.posters', JSON.stringify(known)); localStorage.setItem('sm.act.titles', JSON.stringify(titles)); } catch (e) { /* без хранилища */ }
     }
     function pathOf(qs) {
-      for (var i = 0; i < qs.length; i++) if (typeof paths[qs[i]] === 'string') return paths[qs[i]];
+      for (var i = 0; i < qs.length; i++) { var k = fresh(qs[i]); if (k && k.p) return k.p; }
       return null;
     }
-    function load(q) {
-      var path = paths[q] !== undefined ? Promise.resolve(paths[q]) : api('api/poster?q=' + encodeURIComponent(q)).then(function (r) {
-        paths[q] = typeof r.poster === 'string' && r.poster.indexOf('/api/poster/img/') === 0 ? r.poster : null;
+    function ask(q) {
+      var k = fresh(q);
+      if (k) return Promise.resolve(k.p);
+      return api('api/poster?q=' + encodeURIComponent(q)).then(function (r) {
+        var p = typeof r.poster === 'string' && r.poster.indexOf('/api/poster/img/') === 0 ? r.poster : null;
+        known[q] = { p: p, at: Date.now() };
         titles[q] = typeof r.title_ru === 'string' ? r.title_ru.trim() : '';
         save();
-        return paths[q];
+        return p;
       });
-      return path.then(function (p) {
+    }
+    // Первый запрос, у которого есть постер; сбой сети — не «постера нет»: в следующий раз спросим снова
+    function pathFor(qs, i) {
+      if (i >= qs.length) return Promise.resolve(null);
+      return ask(qs[i]).then(function (p) { return p || pathFor(qs, i + 1); });
+    }
+    function load(qs) {
+      return pathFor(qs, 0).then(function (p) {
         if (!p) return null;
         return fetch(p.replace(/^\//, ''), { headers: { Authorization: 'Bearer ' + S.token } }).then(function (res) {
           if (!res.ok) throw new Error('poster');
@@ -198,28 +217,29 @@
         }).then(function (b) { return URL.createObjectURL(b); });
       });
     }
-    function done(q, u) {
-      urls[q] = u;
-      (waits[q] || []).forEach(function (cb) { if (u) cb(u); });
-      delete waits[q];
+    function done(key, u, failed) {
+      if (!failed) urls[key] = u;
+      (waits[key] || []).forEach(function (cb) { if (u) cb(u); });
+      delete waits[key];
       active--;
       pump();
     }
     function pump() {
       while (active < 3 && queue.length) {
-        var q = queue.shift();
+        var job = queue.shift();
         active++;
-        load(q).then(done.bind(null, q), done.bind(null, q, null));
+        load(job.qs).then(function (key) { return function (u) { done(key, u, false); }; }(job.key),
+          function (key) { return function () { done(key, null, true); }; }(job.key));
       }
     }
     /** Картинка постера для [it] в [cb] (сразу, если уже есть). */
     function want(it, cb) {
-      var q = it.posterQueries[0];
-      if (!q) return;
-      if (urls[q] !== undefined) { if (urls[q]) cb(urls[q]); return; }
-      if (waits[q]) { waits[q].push(cb); return; }
-      waits[q] = [cb];
-      queue.push(q);
+      var qs = it.posterQueries || [], key = qs.join('\n');
+      if (!qs.length) return;
+      if (urls[key] !== undefined) { if (urls[key]) cb(urls[key]); return; }
+      if (waits[key]) { waits[key].push(cb); return; }
+      waits[key] = [cb];
+      queue.push({ key: key, qs: qs });
       pump();
     }
     return { pathOf: pathOf, want: want, titles: titles };
