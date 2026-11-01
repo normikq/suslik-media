@@ -5,6 +5,7 @@
 // Само видео идёт в приложениях (ПК, Android, ТВ): раздачи тяжёлые, iframe Discord их не потянет.
 
 const express = require("express");
+const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const config = require("../config");
@@ -32,13 +33,37 @@ const PAGE_CSP = [
   DISCORD_FRAME_ANCESTORS
 ].join("; ");
 
+// Скрипты и стили с ?v= сервер отдаёт «навсегда» (app.js, immutable), поэтому v — хеш содержимого файла:
+// новая выкладка меняет адрес, и Discord не держит старый activity.js. Считается один раз за запуск сервера.
+const assetHashes = new Map();
+function assetHash(rel) {
+  if (!assetHashes.has(rel)) {
+    let v = "0";
+    try { v = crypto.createHash("sha256").update(fs.readFileSync(path.join(config.PUBLIC_DIR, "activity", rel))).digest("hex").slice(0, 10); } catch { /* нет файла */ }
+    assetHashes.set(rel, v);
+  }
+  return assetHashes.get(rel);
+}
+function withAssetVersions(html) {
+  return html.replace(/(activity\/)([\w.-]+\.(?:js|css))\?v=\w+/g, (_, dir, rel) => `${dir}${rel}?v=${assetHash(rel)}`);
+}
+
+const pages = new Map();
+function pageHtml(file) {
+  if (!pages.has(file)) {
+    let html = "";
+    try { html = withAssetVersions(fs.readFileSync(path.join(config.PUBLIC_DIR, file), "utf8")); } catch { /* нет файла */ }
+    pages.set(file, html);
+  }
+  return pages.get(file);
+}
+
 function sendPage(res, file, csp) {
+  const html = pageHtml(file);
+  if (!html) return res.status(404).end();
   res.setHeader("Content-Security-Policy", csp);
   res.setHeader("Cache-Control", "no-cache");
-  res.type("html");
-  res.sendFile(path.join(config.PUBLIC_DIR, file), err => {
-    if (err && !res.headersSent) res.status(404).end();
-  });
+  res.type("html").send(html);
 }
 
 // Discord открывает корень сопоставления адресов с frame_id и instance_id («/?activity» — напрямую, для проверки).
@@ -181,7 +206,7 @@ router.post("/api/activity/rooms/:id/vote", requireLogin, roomLimiter, (req, res
 let joinTemplate = null;
 function joinPage() {
   if (joinTemplate === null) {
-    try { joinTemplate = fs.readFileSync(path.join(config.PUBLIC_DIR, "activity", "join.html"), "utf8"); } catch { joinTemplate = ""; }
+    try { joinTemplate = withAssetVersions(fs.readFileSync(path.join(config.PUBLIC_DIR, "activity", "join.html"), "utf8")); } catch { joinTemplate = ""; }
   }
   return joinTemplate;
 }

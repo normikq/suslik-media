@@ -135,7 +135,10 @@ test("сервер: страница Activity встраивается толь�
     assert.equal(page.headers.get("x-frame-options"), null);
     assert.match(page.headers.get("content-security-policy"), /frame-ancestors 'self' https:\/\/discord\.com https:\/\/\*\.discord\.com https:\/\/\*\.discordsays\.com/);
     assert.match(page.headers.get("content-security-policy"), /script-src 'self'(;|$)/);
-    assert.match(await page.text(), /activity\/activity\.js/);
+    const pageText = await page.text();
+    // ?v= — хеш файла, а не постоянная «1»: иначе Discord годами держит старый скрипт (immutable)
+    assert.match(pageText, /activity\/activity\.js\?v=[0-9a-f]{10}"/);
+    assert.doesNotMatch(pageText, /\?v=1"/);
 
     const site = await fetch(`${base}/`);
     assert.equal(site.headers.get("x-frame-options"), "DENY");
@@ -168,6 +171,7 @@ test("сервер: страница Activity встраивается толь�
     const html = await join.text();
     assert.match(html, /suslik:\/\/room\/842190script/);
     assert.doesNotMatch(html, /<script>/);
+    assert.match(html, /activity\/join\.js\?v=[0-9a-f]{10}"/);
     assert.match(join.headers.get("content-security-policy"), /frame-ancestors 'none'/);
   } finally {
     server.close();
