@@ -20,12 +20,14 @@ qt_add_executable(suslik_media WIN32
   src/trackers/BrowserBridge.cpp src/trackers/BrowserBridge.h
   src/trackers/RuTrackerClient.cpp src/trackers/RuTrackerClient.h
   src/trackers/TrackerSettingsModel.cpp src/trackers/TrackerSettingsModel.h
+  src/party/Party.cpp src/party/Party.h
+  src/party/PartySync.cpp src/party/PartySync.h
   src/player/Mpv.cpp src/player/Mpv.h
   src/player/MpvEngine.cpp src/player/MpvEngine.h
   src/player/MpvVideo.cpp src/player/MpvVideo.h
   src/player/MpvInstall.cpp src/player/MpvInstall.h
   src/player/PlayerLog.cpp src/player/PlayerLog.h
-  src/player/PlayerModel.cpp src/player/PlayerModel.h
+  src/player/PlayerModel.cpp src/player/PlayerModel.h src/player/PlayerParty.cpp
   src/player/Reserve.cpp src/player/Reserve.h
   src/player/WindowMode.cpp src/player/WindowMode.h
   src/player/DisplayAwake.cpp src/player/DisplayAwake.h

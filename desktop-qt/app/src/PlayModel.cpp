@@ -439,6 +439,7 @@ void PlayModel::play() {
     r.magnetId = m_id;
     r.fromStart = m_fromStart;
     r.collection = m_collection;
+    r.startMs = m_startMs;
     if (it) r.posterQueries = it->posterQueries;
     if (m_playlist) {
         r.queue = queueFiles();
@@ -457,6 +458,14 @@ void PlayModel::play() {
     }
     m_request = r;
     emit playRequested();
+}
+
+void PlayModel::playAt(qint64 startMs) {
+    if (!canWatch()) return;
+    m_fromStart = false;
+    m_startMs = std::max<qint64>(0, startMs);
+    play();
+    m_startMs.reset();
 }
 
 } // namespace suslik::app

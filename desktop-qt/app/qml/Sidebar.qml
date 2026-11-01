@@ -30,6 +30,9 @@ Rectangle {
     function land(t) { glowTab = t; glowOff.restart() }
     Timer { id: glowOff; interval: 650; onTriggered: side.glowTab = -1 }
 
+    // гость комнаты «Вместе» смотрит фильм комнаты: медиатека закрыта, пока он не выйдет из неё
+    readonly property bool guest: party.guest
+    readonly property string lockNote: guest ? Ui.tx("sidebar.vy_v_komnate") : ""
     readonly property bool inLibrary: tab === 0
     readonly property bool inMine: tab === 1
     readonly property var counts: { lib.version; return lib.categoryCounts(inMine) }
@@ -104,12 +107,14 @@ Rectangle {
                     id: homeItem
                     width: parent.width; expanded: side.expanded; icon: "home"
                     text: Ui.tx("sidebar.glavnaya"); active: side.inLibrary && side.category === 0; glowing: side.glowTab === 0
+                    enabled_: !side.guest; note: side.lockNote
                     onClicked: { if (side.inLibrary) side.chooseCategory(0); side.select(0) }
                 }
                 NavItem {
                     id: mineItem
                     width: parent.width; expanded: side.expanded; icon: "bookmark"; iconFilled: true
                     text: Ui.tx("sidebar.moya_mediateka"); active: side.inMine && side.category === 0; glowing: side.glowTab === 1
+                    enabled_: !side.guest; note: side.lockNote
                     onClicked: { if (side.inMine) side.chooseCategory(0); side.select(1) }
                 }
                 NavItem {
@@ -123,8 +128,10 @@ Rectangle {
                     onClicked: side.select(3)
                 }
                 NavItem {
-                    width: parent.width; expanded: side.expanded; icon: "people"; enabled_: false; note: Ui.tx("sidebar.skoro")
-                    text: Ui.tx("sidebar.sovmestnyy_prosmotr")
+                    width: parent.width; expanded: side.expanded; icon: "people"
+                    text: Ui.tx("sidebar.sovmestnyy_prosmotr"); active: side.tab === 4
+                    note: party.inRoom ? Ui.tx("sidebar.v_komnate_n", { n: Math.max(1, party.memberCount) }) : ""
+                    onClicked: side.select(4)
                 }
                 SectionTitle { text: Ui.tx("sidebar.kollektsiya") }
                 Repeater {
@@ -135,6 +142,7 @@ Rectangle {
                         width: nav.width; expanded: side.expanded; icon: modelData[1]
                         text: Ui.tx(modelData[2])
                         count: side.counts[String(modelData[0])] || 0
+                        enabled_: !side.guest; note: side.lockNote
                         active: (side.inLibrary || side.inMine) && side.category === modelData[0]
                         // остаётся на своей странице (медиатека или «Моя медиатека»)
                         onClicked: { side.chooseCategory(modelData[0]); side.select(side.inMine ? 1 : 0) }

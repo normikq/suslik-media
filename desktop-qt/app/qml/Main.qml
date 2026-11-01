@@ -53,6 +53,7 @@ Window {
             Page { index: 0; LibraryView { id: libraryPage; anchors.fill: parent; mine: false; onVersionsRequested: (t, ids) => dialogs.versions(model, t, ids); onPlayRequested: (id, p) => dialogs.play_(id, p); onFlyTo: (tab, r, p) => flight.launch(tab, r, p) } }
             Page { index: 1; LibraryView { id: minePage; anchors.fill: parent; mine: true; onVersionsRequested: (t, ids) => dialogs.versions(model, t, ids); onPlayRequested: (id, p) => dialogs.play_(id, p); onFlyTo: (tab, r, p) => flight.launch(tab, r, p) } }
             Page { index: 2; SearchView { id: searchPage; anchors.fill: parent; active: win.tab === 2 } }
+            Page { index: 4; TogetherView { anchors.fill: parent; onLibrary: win.select(0); onPlayRequested: (id, path) => dialogs.play_(id, path) } }
             Page { index: 3; AddView { id: addPage; anchors.fill: parent; active: win.tab === 3; onPreviewRequested: (video, a, offset, title) => player.startPreview(video, a, offset, title) } }
         }
     }
@@ -91,6 +92,10 @@ Window {
     }
 
     FavFlight { id: flight; anchors.fill: parent; sidebar: sidebar }
+    // гость комнаты «Вместе»: медиатека закрыта (Sidebar), остаётся страница комнаты; фильм ведущего открывается сам
+    readonly property bool partyGuest: party.guest
+    onPartyGuestChanged: if (partyGuest && (tab === 0 || tab === 1)) select(4)
+    PartyFollow { anchors.fill: parent }
     Dialogs { id: dialogs; anchors.fill: parent }
     SettingsSheet { id: settingsSheet; anchors.fill: parent }
     WhatsNew { anchors.fill: parent }
@@ -111,7 +116,7 @@ Window {
     Timer { id: whatsNewDelay; interval: 700; onTriggered: updater.loadWhatsNew() }
 
     // проверка вёрстки без мыши: SM_OPEN=play:<id>:<путь> | versions:<id>,<id> | settings | add[:film|audio:<magnet>]
-    // | search:<запрос> | trackers[:вкладка]
+    // | search:<запрос> | trackers[:вкладка] | together[:create|<код>]
     Timer {
         running: Ui.env("SM_OPEN") !== ""
         interval: 2500
@@ -127,6 +132,7 @@ Window {
             }
             else if (a[0] === "mine") win.select(1)
             else if (a[0] === "search") { win.select(2); searchPage.search(a.slice(1).join(":")) }
+            else if (a[0] === "together") { win.select(4); if (a[1] === "create") party.create(); else if (a[1]) party.join(a[1]) }
             else if (a[0] === "trackers") { win.select(2); searchPage.openTrackers(Number(a[1] || 0)) }
             else if (a[0] === "list") libraryPage.model.viewMode = 1
             else if (a[0] === "video") player.startPreview(a.slice(1).join(":"), "", 0, "Проверка видео")

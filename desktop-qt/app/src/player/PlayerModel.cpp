@@ -455,6 +455,8 @@ void PlayerModel::reopenAt(qint64 t) {
 
 void PlayerModel::playEntry(int i) {
     if (i < 0 || i >= m_queue.size() || m_queue[i].url.isEmpty()) return;
+    // гость комнаты: серию выбирает ведущий (плеер гостя идёт за ним сам)
+    if (!m_byRoom && partyGuest()) { flash(tx(S("party.seriyu_vybiraet_sozdatel"))); return; }
     const bool finishedHere = i == m_index + 1 && m_nextIn >= 0;
     m_seekTimer.stop();
     m_pendingSeek.reset();
@@ -643,7 +645,9 @@ void PlayerModel::evFinished() {
     const bool end = m_length > 0 && m_lastGood >= m_length - 5000;
     if (end) {
         savePos(m_length, m_length);
-        if (m_index < m_queue.size() - 1) {
+        // гость комнаты: плеер ведущего перейдёт к следующей, комната — за ним (без отсчёта здесь)
+        if (partyGuest()) {
+        } else if (m_index < m_queue.size() - 1) {
             if (m_nextIn < 0) {
                 m_nextIn = PlaybackSettings::nextCountdown();
                 m_nextFrom = std::max<qint64>(0, m_length - 5000);
@@ -672,6 +676,7 @@ void PlayerModel::evError(const QString &message) {
 
 void PlayerModel::togglePause() {
     if (!m_open || m_closing) return;
+    if (m_pausedAt != 0 && !m_byRoom && playLocked()) { flash(tx(S("party.pauzu_snimaet_sozdatel"))); return; }
     if (m_pausedAt == 0) {
         m_playing = false;
         m_pausedAt = now();
@@ -696,6 +701,7 @@ void PlayerModel::togglePause() {
 
 void PlayerModel::seekBy(qint64 d) {
     if (!m_started && m_length <= 0) return;
+    if (partyGuest()) { flash(tx(S("party.peremativaet_sozdatel"))); return; }
     const qint64 base = m_pendingSeek.value_or(m_time);
     qint64 t = std::max<qint64>(0, base + d);
     if (m_length > 0) t = std::min(t, std::max<qint64>(0, m_length - 2000));
@@ -709,6 +715,7 @@ void PlayerModel::seekTo(qint64 t) {
     m_seekTimer.stop();
     m_pendingSeek.reset();
     m_scrubbing = false;
+    if (!m_byRoom && partyGuest()) return; // у гостя полоса — «прямой эфир»
     m_bufferingShown = 0;
     m_time = m_lastGood = std::max<qint64>(0, t);
     m_lastSeekAt = now();
@@ -733,6 +740,7 @@ void PlayerModel::reseekHere() {
 void PlayerModel::jumpChapter(int d) {
     const QVariantList ch = m_engine->chapters();
     if (ch.size() < 2) return;
+    if (partyGuest()) { flash(tx(S("party.peremativaet_sozdatel"))); return; }
     const int i = std::clamp(chapterAt(m_time) + d, 0, int(ch.size()) - 1);
     const QVariantMap c = ch[i].toMap();
     seekTo(c.value(S("timeMs")).toLongLong());
@@ -1055,6 +1063,8 @@ QVariantList PlayerModel::chapters() const { return m_engine->chapters(); }
 void PlayerModel::skipIntroImpl(bool autoSkip) {
     const auto r = introNow();
     if (!r) return;
+    // гость комнаты: заставку пропускает ведущий за всех
+    if (partyGuest()) { if (!autoSkip) flash(tx(S("party.peremativaet_sozdatel"))); return; }
     PlayerLog::write(S("skip intro %1-%2s%3").arg(r->startMs / 1000).arg(r->endMs / 1000).arg(autoSkip ? S(" (auto)") : QString()));
     seekTo(r->endMs);
     if (autoSkip) flash(tx(S("player.zastavka_propuschena")));
@@ -1099,7 +1109,8 @@ void PlayerModel::fetchMarkers() {
 void PlayerModel::checkCredits() {
     const auto at = MarkersDetector::nextOfferAt(markers(), m_length);
     const bool inCredits = at && m_started && m_time >= *at && m_time < m_length;
-    if (inCredits && m_nextIn < 0 && !m_nextDismissed && !m_closing && m_index + 1 < m_queue.size() && PlaybackSettings::offerNextOnCredits()) {
+    if (inCredits && m_nextIn < 0 && !m_nextDismissed && !m_closing && m_index + 1 < m_queue.size() && PlaybackSettings::offerNextOnCredits() &&
+        !partyGuest()) {
         PlayerLog::write(S("[markers] credits at %1s: next in %2s").arg(m_time / 1000).arg(PlaybackSettings::nextCountdown()));
         m_nextIn = PlaybackSettings::nextCountdown();
         m_nextFrom = *at;
