@@ -77,7 +77,13 @@ int main(int argc, char *argv[]) {
         QFontDatabase::addApplicationFont(QStringLiteral(":/res/fonts/%1.ttf").arg(QString::fromLatin1(f)));
     QFont base(QStringLiteral("Onest"));
     base.setPixelSize(14);
+    // Сглаженные буквы, как в Kotlin-версии (Skia): без подгонки к пиксельной сетке, дробные позиции.
+    // С подгонкой (по умолчанию в Windows) буквы тонкие и угловатые.
+    base.setHintingPreference(QFont::PreferNoHinting);
     QGuiApplication::setFont(base);
+    // Весь текст — растеризатором системы (DirectWrite) с этим сглаживанием. Прежний способ по умолчанию
+    // (distance field) давал на боковой панели более тонкие и бледные буквы, чем на плитках.
+    QQuickWindow::setTextRenderType(QQuickWindow::NativeTextRendering);
 
     QIcon icon;
     for (int sz : {16, 24, 32, 48, 64, 128, 256}) icon.addFile(QStringLiteral(":/res/icons/icon-%1.png").arg(sz), QSize(sz, sz));
