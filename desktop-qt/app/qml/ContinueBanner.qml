@@ -13,18 +13,14 @@ Item {
         for (const x of entries) if (x.id === chosen) return x
         return entries.length > 0 ? entries[0] : lastShown
     }
-    // карточка — место фильма для вылета плеера (ExitFlight.kt: TileBounds.cont)
-    property var trackedId: 0
-    function retrack() {
-        const id = e && e.id ? e.id : 0
-        if (id === trackedId) return
-        Theme.untrack(Theme.conts, trackedId, frame)
-        trackedId = id
-        Theme.track(Theme.conts, id, frame)
+    onEChanged: {
+        if (e) {
+            lastShown = e
+            if (e.id) Theme.registerTile(e.id, frame)
+        }
     }
-    onEChanged: { if (e) lastShown = e; retrack() }
-    Component.onCompleted: retrack()
-    Component.onDestruction: Theme.untrack(Theme.conts, trackedId, frame)
+    Component.onCompleted: if (b.e && b.e.id) Theme.registerTile(b.e.id, frame)
+    Component.onDestruction: if (b.e && b.e.id) Theme.unregisterTile(b.e.id, frame)
 
     readonly property bool shown: entries.length > 0
     height: shown ? 360 + 6 + 22 : 0
@@ -251,7 +247,8 @@ Item {
                         Text { text: Ui.tx("library.prodolzhit"); color: "white"; font.family: Theme.onest; font.weight: Font.DemiBold; font.pixelSize: 15 }
                     }
                     onClicked: if (b.e) {
-                        Theme.fromContinue = true
+                        Theme.lastRect = Theme.getGlobalRect(frame)
+                        Theme.lastId = b.e.id
                         b.page.openContinue(b.e.id, b.e.path)
                     }
                 }
@@ -268,7 +265,7 @@ Item {
                 id: thumbs
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
-                spacing: 0 // промежуток — внутри миниатюры: при уходе она сжимается вместе с ним, без рывка в конце
+                spacing: 10
                 Repeater {
                     model: b.entries
                     Thumb {
@@ -284,10 +281,8 @@ Item {
                         Timer {
                             id: removeTimer
                             interval: 340
-                            onTriggered: { lib.hideContinue([itemThumb.modelData.id]); restoreTimer.restart() }
+                            onTriggered: lib.hideContinue([itemThumb.modelData.id])
                         }
-                        // не убралась (ряд не обновился) — вернуть на место
-                        Timer { id: restoreTimer; interval: 2000; onTriggered: itemThumb.removing = false }
                     }
                 }
             }
@@ -305,7 +300,7 @@ Item {
         signal remove()
         readonly property bool active: shown && !removing
 
-        width: active ? 106 : 0
+        width: active ? 96 : 0
         height: 147
         opacity: active ? 1 : 0
         visible: width > 0
@@ -315,7 +310,6 @@ Item {
 
         HoverHandler { id: th_hover }
         Item {
-            x: 10
             width: 96; height: 144
             y: th_hover.hovered ? 0 : 3
             Behavior on y { NumberAnimation { duration: 220; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease } }

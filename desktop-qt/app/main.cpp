@@ -45,6 +45,14 @@
 #include <QSGRendererInterface>
 #include <QTimer>
 
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <psapi.h>
+#endif
+
 using namespace suslik;
 
 namespace {
@@ -165,6 +173,10 @@ int main(int argc, char *argv[]) {
     sync.start();
     library.start();
     QTimer::singleShot(4000, &library, [&library] { library.prunePosterFiles(); });
+#ifdef Q_OS_WIN
+    // Сброс временных страниц аллокатора после старта и парсинга базы: снижает Working Set до минимума в ОЗУ
+    QTimer::singleShot(6000, [] { EmptyWorkingSet(GetCurrentProcess()); });
+#endif
     // libmpv нет (самообновление со старой версии без неё) — докачать заранее, не дожидаясь фильма
     QTimer::singleShot(3000, &mpvInstall, [&mpvInstall] { if (!mpvInstall.ready()) mpvInstall.start(); });
     app::PlayerLog::write(QStringLiteral("[sys] Suslik Media Qt %1 started").arg(QStringLiteral(SM_VERSION)));

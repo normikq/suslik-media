@@ -57,20 +57,18 @@ public:
         }
     }
 
-    // GUI-поток стоит: ядро можно взять у движка (libmpv могли докачать после открытия экрана, ядро — пересоздать).
-    // Только готовое ядро: отпущенное после закрытия здесь не создаётся заново.
     void synchronize(QQuickFramebufferObject *item) override {
         auto *v = static_cast<MpvVideo *>(item);
-        if (!v || !v->engine()) return;
-        mpv::Handle h = v->engine()->current();
-        if (!h || (m_ctx && m_h.get() == h.get())) return;
-        if (m_ctx) {
-            const mpv::Api *a = mpv::api();
-            a->render_context_set_update_callback(m_ctx, nullptr, nullptr);
-            a->render_context_free(m_ctx);
-            m_ctx = nullptr;
+        if (!v || !v->engine() || !v->engine()->available()) return;
+        if (!m_ctx || m_h.get() != v->engine()->handle().get()) {
+            if (m_ctx) {
+                const mpv::Api *a = mpv::api();
+                a->render_context_set_update_callback(m_ctx, nullptr, nullptr);
+                a->render_context_free(m_ctx);
+                m_ctx = nullptr;
+            }
+            start(v->engine()->handle());
         }
-        start(std::move(h));
     }
 
     QOpenGLFramebufferObject *createFramebufferObject(const QSize &size) override {
@@ -127,7 +125,7 @@ void MpvVideo::setEngine(MpvEngine *e) {
 }
 
 QQuickFramebufferObject::Renderer *MpvVideo::createRenderer() const {
-    return new MpvRenderer(m_engine ? m_engine->current() : mpv::Handle{}, const_cast<MpvVideo *>(this));
+    return new MpvRenderer(m_engine ? m_engine->handle() : mpv::Handle{}, const_cast<MpvVideo *>(this));
 }
 
 } // namespace suslik::app

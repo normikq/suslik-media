@@ -21,6 +21,14 @@
 #include <QRegularExpression>
 #include <QUrl>
 
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <psapi.h>
+#endif
+
 namespace suslik::app {
 
 using namespace suslik::core;
@@ -122,9 +130,6 @@ PlayerModel::PlayerModel(QObject *parent)
     connect(&m_infoTimer, &QTimer::timeout, this, &PlayerModel::refreshInfo);
     m_seekTimer.setSingleShot(true);
     m_seekTimer.setInterval(250);
-    m_closeTimer.setSingleShot(true);
-    m_closeTimer.setInterval(900); // полёт закрытия — 600 мс
-    connect(&m_closeTimer, &QTimer::timeout, this, [this] { if (m_closing) finishClose(); });
     connect(&m_seekTimer, &QTimer::timeout, this, [this] {
         if (!m_pendingSeek) return;
         const qint64 t = *m_pendingSeek;
@@ -215,8 +220,6 @@ void PlayerModel::retry() {
 }
 
 void PlayerModel::begin() {
-    // новый фильм, пока прежний ещё улетает: прежний сеанс сначала закрывается до конца
-    if (m_closing) finishClose();
     Reserve::proxy(m_lib ? &m_lib->api() : nullptr);
     m_engine->handle(); // ядро mpv — до первого кадра: вывод в окне берёт его готовым
     m_open = true;
@@ -520,14 +523,15 @@ void PlayerModel::close() {
     m_engine->setPaused(true);
     emit openChanged();
     emit nextChanged();
-    // экран плеера улетает в постер (Main.qml), по концу полёта QML зовёт finishClose(); если полёт не дошёл
-    // до конца (окно свёрнуто — анимации стоят), закрытие довершит этот таймер
-    m_closeTimer.start();
+    // экран плеера уезжает; ядро останавливается сразу, запас освобождается в фоне.
+    // Если QML не вызвал finishClose() (например, при simple_motion), таймер завершит закрытие.
+    QTimer::singleShot(750, this, [this] {
+        if (m_closing) finishClose();
+    });
 }
 
 void PlayerModel::finishClose() {
-    if (!m_closing) return;
-    m_closeTimer.stop();
+    if (!m_closing && !m_open) return;
     for (QTimer *t : {&m_tickTimer, &m_superTimer, &m_bufTimer, &m_infoTimer, &m_flashTimer, &m_prefsTimer, &m_ensureAudioTimer,
                       &m_autoSkipTimer, &m_statsTimer, &m_trackWatch})
         t->stop();
@@ -536,6 +540,10 @@ void PlayerModel::finishClose() {
     // свою ссылку, когда экран плеера уйдёт (Loader в Main.qml)
     m_engine->release();
     Reserve::proxy().clear();
+#ifdef Q_OS_WIN
+    // После закрытия фильма: возврат страниц декодера и кэша mpv операционной системе
+    QTimer::singleShot(1000, [] { EmptyWorkingSet(GetCurrentProcess()); });
+#endif
     ui().put(S("volume"), num(m_volume));
     m_open = false;
     m_closing = false;
