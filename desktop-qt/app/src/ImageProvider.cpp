@@ -64,8 +64,6 @@ public:
     QQuickTextureFactory *textureFactory() const override { return QQuickTextureFactory::textureFactoryForImage(m_image); }
     QString errorString() const override { return m_error; }
 
-    /// Раскодировать в пуле потоков (большие кадры баннера не тормозят интерфейс), потом finished() в главном.
-    /// glow — свечение баннера: маленькая размытая копия с прозрачными краями (растягивается в QML, размытие даром).
     /// Готовая картинка из кэша: finished() — следующим ходом главного потока (QML ещё не подписался).
     void ready(const QImage &img) {
         m_image = img;
@@ -73,6 +71,9 @@ public:
         QMetaObject::invokeMethod(qApp, [self] { if (self) emit self->finished(); }, Qt::QueuedConnection);
     }
 
+    /// Раскодировать в пуле потоков (большие кадры баннера не тормозят интерфейс), потом finished() в главном.
+    /// glow — свечение баннера: маленькая размытая копия с прозрачными краями (растягивается в QML, размытие даром).
+    /// Готовую картинку кладёт в PosterCache под key.
     void decode(const QByteArray &bytes, QSize want, bool glow, const QString &key) {
         if (bytes.isEmpty()) { m_error = QStringLiteral("no image"); emit finished(); return; }
         QPointer<Response> self(this);
