@@ -82,8 +82,11 @@ Changelog (русский) — `android/app/src/main/assets/changelog.json`, `de
   (ПК `PartyFollow`, Android `MainActivity.followTarget`); ведущий закрыл плеер — у гостей он закрывается; на ПК кнопка «Предыдущая» и очередь на весь сериал, правки поиска по трекерам.
   Плюс подготовка к переезду сервера (`docs/MIGRATION.md`): клиенты берут из `SITE_URL` домен и путь (`core/SiteAddress.kt`), Android переносит cookie WebView со старого адреса,
   сервер собирает адреса с путём из `X-Forwarded-Prefix`. На устройствах не проверено.
+- **ПК Qt, PR #73** (в `claude/project-thread-thor8q`, 01.11): «Подбор по настроению» — ИИ (Gemini + TMDB) подбирает фильмы во вкладке поиска,
+  карточки сверены с медиатекой (`docs/AI-DISCOVERY.md`); исправлено падение при удалении сериала, открывавшегося в окне запуска (`PlayModel`).
+  На Windows и с настоящим Gemini не проверено.
 - **Сервер.** Код `website/` впереди выложенного. По заметкам не выложены: метки `/api/tags` и баннер (24.10), «Определить через ИИ» (`docs/AI-TITLE.md`),
-  заставки `/api/markers` (`docs/MARKERS.md`), озвучки для ТВ (`docs/CUSTOM-AUDIO-API.md` §8), путь сервера (`docs/MIGRATION.md`). Что выложено на самом деле — уточнять у владельца.
+  заставки `/api/markers` (`docs/MARKERS.md`), озвучки для ТВ (`docs/CUSTOM-AUDIO-API.md` §8), путь сервера (`docs/MIGRATION.md`), подбор по настроению `/api/search/ai-discovery` (`docs/AI-DISCOVERY.md`). Что выложено на самом деле — уточнять у владельца.
 - **Платформы.** ПК — только mpv (VLC убран в 2.4.3), рисует в сцене окна (`docs/DESKTOP.md` §4.1). Android — libVLC и Media3. Samsung TV (`tizen/`) — UE40NU7100 владельца:
   DTS/TrueHD не играет, сервер не перекодирует, приложение предупреждает; ставится только с подписью профилем «mixed» (`tizen/README.md`).
 - Журнал ПК из консоли Claude читать только через `//localhost/C$/Users/nanar/AppData/Roaming/...` (`%APPDATA%` у пакета Claude — старая копия).
@@ -95,6 +98,8 @@ Changelog (русский) — `android/app/src/main/assets/changelog.json`, `de
 - Снимок `[battery]` из Suslik Debug на Android 17 не пишется (нужен PACKAGE_USAGE_STATS) — брать `dumpsys batterystats` по adb.
 - ПК владельца: `gh` установлен (`C:\Program Files\GitHub CLI`, добавить в PATH); в `android/` нет `gradlew` — Gradle 8.10.2 в `~/.gradle/wrapper/dists`, JAVA_HOME = `C:\Program Files\Java\jdk-21.0.12`,
   ANDROID_HOME = `C:\Users\nanar\AppData\Local\Android\Sdk`. Локальная diag-сборка подписана другим ключом, чем CI (ставится только после удаления).
+- Discord Activity «Вместе» в голосовом канале (`docs/DISCORD-ACTIVITY.md`): сервер, страница, ссылки `suslik://room/<код>` на ПК и Android — в коде,
+  не выложено и в Discord не проверено; настройка в Developer Portal — руками владельца.
 - Discord: не сделаны комнаты «Вместе» на сайте, раздел «Мои устройства», срок жизни токенов устройств — `docs/TODO.md`.
 - Идеи в запасе: кеш начала файла/индекса, кнопка «Переустановить релиз» на Android, HLS/ремукс (для оценки нужны `nproc`, `free -h`, `df -h` сервера),
   деление `BurstProxy`/`PlayerActivity`/`PlayerView` (аудит 16.10).

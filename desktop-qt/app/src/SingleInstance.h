@@ -13,11 +13,14 @@ class SingleInstance : public QObject {
 public:
     explicit SingleInstance(QObject *parent = nullptr);
     ~SingleInstance() override;
-    /// true — эта копия единственная (работаем дальше); false — другая уже открыта и ей сказано показаться.
-    bool acquire();
+    /// true — эта копия единственная (работаем дальше); false — другая уже открыта и ей сказано показаться
+    /// (и передана ссылка [link] — suslik://room/…, если запуск был по ней).
+    bool acquire(const QString &link = QString());
 signals:
     /// Кто-то запустил приложение ещё раз: показать окно.
     void showRequested();
+    /// Второй запуск по ссылке suslik://… (кнопка «Открыть в приложении» в Discord Activity).
+    void linkRequested(const QString &link);
 private:
     QLockFile *m_lock = nullptr;
     QLocalServer *m_server = nullptr;

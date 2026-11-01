@@ -5,6 +5,7 @@ namespace suslik::app {
 class Library;
 
 /// image://suslik/<путь сервера> — постеры, кадры и логотипы с диска или сервера (Library::image).
+/// image://suslik/tmp:<путь> — временная картинка (постер подборки ИИ): только в памяти (PosterCache), на диск не пишется.
 /// Картинка уменьшается до запрошенного sourceSize при раскодировании: в памяти не держим больше, чем видно.
 class ImageProvider : public QQuickAsyncImageProvider {
 public:

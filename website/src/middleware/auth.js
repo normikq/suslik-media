@@ -8,6 +8,7 @@ const { makeJsonWriter } = require("../utils/json-writer");
 const { readCookie } = require("../utils/helpers");
 
 const { SHARED_USER, getUser, touchUser, verifyDeviceToken, hasDeviceHash, hashToken } = require("../services/users");
+const { isActivityToken, verifyActivityToken } = require("../services/activity");
 
 // Sessions survive a server restart (the default MemoryStore forgets everyone and grows without bound).
 // One shared password means very few sessions, so a JSON file is plenty for this server.
@@ -147,6 +148,15 @@ function sharedAccessOff(user) {
 function resolveAuth(req) {
   // 1. Проверка по токену устройства (для нативных клиентов без cookies)
   const deviceToken = req.get("X-Device-Token") || (req.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+  // 1а. Ключ Discord Activity (services/activity.js): страница в iframe Discord, без cookie
+  if (isActivityToken(deviceToken)) {
+    const user = verifyActivityToken(deviceToken);
+    if (!user) return false;
+    req.user = user;
+    req.activity = true;
+    touchUser(user.id);
+    return true;
+  }
   if (deviceToken) {
     const verified = verifyDeviceToken(deviceToken);
     if (verified && verified.user && !sharedAccessOff(verified.user)) {

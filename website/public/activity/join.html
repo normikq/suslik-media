@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Suslik Media — комната {{PRETTY}}</title>
+  <link rel="stylesheet" href="../activity/activity.css?v=1">
+</head>
+<body>
+  <div class="boot" id="join" data-code="{{CODE}}">
+    <div class="brand"><span class="brand-mark"></span><span>Suslik Media</span></div>
+    <div class="panel" style="max-width:440px;width:100%;text-align:center">
+      <div class="h">Комната «Вместе»</div>
+      <div class="tv-code">{{PRETTY}}</div>
+      <p class="muted" style="line-height:1.5">Сейчас откроется приложение Suslik Media: оно войдёт в комнату и включит фильм с того же места, что у всех.</p>
+      <p><a class="btn lamp" id="open" href="suslik://room/{{CODE}}">Открыть в приложении</a></p>
+      <p class="small muted" style="line-height:1.5">Телевизор: «Вместе» → «Войти по коду» → {{PRETTY}}.<br>
+        Приложения нет? Его можно скачать <a href="../" style="color:#9ec0ff">на сайте</a> (Windows и Android).</p>
+    </div>
+  </div>
+  <script src="../activity/join.js?v=1"></script>
+</body>
+</html>

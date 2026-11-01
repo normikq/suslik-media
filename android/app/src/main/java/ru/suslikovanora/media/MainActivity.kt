@@ -94,6 +94,8 @@ class MainActivity : ComponentActivity() {
     private val navFocus = FocusRequester()
     private var navFocused = false
     private var settingsOpen by mutableStateOf(false)
+    /** suslik://room/<код> (Discord Activity), ждёт входа в аккаунт: потом — в комнату и на её страницу. */
+    private var pendingRoomLink by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -131,6 +133,11 @@ class MainActivity : ComponentActivity() {
 
     /** magnet: links opened from a browser / shared from another app land in «Ссылка», ready to add. */
     private fun handleIncoming(intent: Intent?) {
+        val data = intent?.data
+        if (intent?.action == Intent.ACTION_VIEW && data?.scheme.equals("suslik", ignoreCase = true)) {
+            if (data?.host.equals("room", ignoreCase = true)) pendingRoomLink = data.toString()
+            return
+        }
         val text = when (intent?.action) {
             Intent.ACTION_VIEW -> intent.dataString
             Intent.ACTION_SEND -> intent.getStringExtra(Intent.EXTRA_TEXT)
@@ -208,6 +215,14 @@ class MainActivity : ComponentActivity() {
                             Tab.Search -> SearchScreen(search, searchList, onLogout = logout)
                         }
                     }
+        }
+        // «Открыть в приложении» из Discord Activity: в комнату (когда вход в аккаунт уже есть) и на её страницу
+        LaunchedEffect(pendingRoomLink, store.authenticated) {
+            val link = pendingRoomLink ?: return@LaunchedEffect
+            if (store.authenticated != true) return@LaunchedEffect
+            pendingRoomLink = null
+            Party.openLink(link)?.let { Party.notice = it }
+            selectTab(Tab.Together)
         }
         // A guest of a room stays on the room's page: the library (and «Мои фильмы») are closed until they leave it
         val guest = Party.isGuest

@@ -169,6 +169,16 @@ object PartyProtocol {
     /** Код комнаты, как его ввёл человек: только буквы и цифры, в нижнем регистре. Пусто — кода нет. */
     fun normalizeCode(code: String): String = code.trim().lowercase().filter { it.isLetterOrDigit() }
 
+    /** Код комнаты из ссылки suslik://room/<код> (кнопка «Открыть в приложении» в Discord Activity); не та ссылка — null. */
+    fun roomFromLink(link: String): String? {
+        val t = link.trim()
+        val prefix = "suslik://room/"
+        if (!t.startsWith(prefix, ignoreCase = true)) return null
+        val rest = t.substring(prefix.length).substringBefore('/').substringBefore('?').substringBefore('#')
+        val code = normalizeCode(java.net.URLDecoder.decode(rest.replace("+", "%2B"), "UTF-8"))
+        return code.takeIf { it.isNotEmpty() && it.length <= 24 }
+    }
+
     // Тела запросов. client_id в действия добавляет отправитель (см. [withClient]).
     fun createBody(clientId: String): JSONObject = JSONObject().put("controls", "all").put("client_id", clientId)
     fun joinBody(clientId: String): JSONObject = JSONObject().put("client_id", clientId)

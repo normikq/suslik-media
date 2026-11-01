@@ -127,7 +127,8 @@ QQuickImageResponse *ImageProvider::requestImageResponse(const QString &id, cons
     auto *resp = new Response;
     QPointer<Response> guard(resp);
     QString path = id;
-    bool glow = false;
+    bool glow = false, temp = false;
+    if (path.startsWith(QLatin1String("tmp:"))) { temp = true; path = path.mid(4); }
     if (path.startsWith(QLatin1String("glow:"))) { glow = true; path = path.mid(5); }
     if (!path.startsWith(QLatin1Char('/'))) path.prepend(QLatin1Char('/'));
     const QString key = QStringLiteral("%1#%2x%3%4").arg(path).arg(requestedSize.width()).arg(requestedSize.height())
@@ -138,7 +139,7 @@ QQuickImageResponse *ImageProvider::requestImageResponse(const QString &id, cons
     }
     // Уже на диске — читается и раскодируется сразу здесь же, в потоке пула (без переключений в главный поток).
     // Нет — Library (объект главного потока) скачает.
-    QThreadPool::globalInstance()->start([this, guard, path, requestedSize, glow, key] {
+    QThreadPool::globalInstance()->start([this, guard, path, requestedSize, glow, key, temp] {
         QFile f(Library::posterFile(path));
         if (f.open(QIODevice::ReadOnly)) {
             const QByteArray b = f.readAll();
@@ -149,10 +150,10 @@ QQuickImageResponse *ImageProvider::requestImageResponse(const QString &id, cons
                 return;
             }
         }
-        QMetaObject::invokeMethod(&m_lib, [this, guard, path, requestedSize, glow, key] {
+        QMetaObject::invokeMethod(&m_lib, [this, guard, path, requestedSize, glow, key, temp] {
             m_lib.image(path, [guard, requestedSize, glow, key](const QByteArray &bytes) {
                 if (guard) guard->decodeAsync(bytes, requestedSize, glow, key);
-            });
+            }, !temp);
         }, Qt::QueuedConnection);
     });
     return resp;

@@ -206,6 +206,12 @@ private slots:
 
     void commandsAndKeys() {
         QCOMPARE(PartyProtocol::normalizeCode(S("  AB-12 cd ")), S("ab12cd"));
+        // Ссылка из Discord Activity
+        QCOMPARE(PartyProtocol::roomFromLink(S("suslik://room/842190")), S("842190"));
+        QCOMPARE(PartyProtocol::roomFromLink(S(" SUSLIK://room/842-190/ ")), S("842190"));
+        QCOMPARE(PartyProtocol::roomFromLink(S("suslik://room/a1b2c3d4e5f6?x=1")), S("a1b2c3d4e5f6"));
+        QCOMPARE(PartyProtocol::roomFromLink(S("https://example.com/room/842190")), QString());
+        QCOMPARE(PartyProtocol::roomFromLink(S("suslik://room/")), QString());
         QCOMPARE(PartyProtocol::clientKey(S("pc_test")), S("9703bd8de4eb8d02"));
         QVERIFY(PartyProtocol::newClientId(S("an")).startsWith(S("an_")));
         QCOMPARE(PartyProtocol::newClientId(S("pc")).length(), 15);
@@ -216,6 +222,19 @@ private slots:
         const auto file = PartyProtocol::changeFile(PartyFileRef{S("42|a.mkv"), S("A")}).value(S("file")).toObject();
         QCOMPARE(qint64(file.value(S("ad_id")).toDouble()), 42);
         QCOMPARE(PartyProtocol::eventsPath(S("x"), S("pc_1")), S("/api/rooms/x/events?client_id=pc_1"));
+        // Запрос Discord Activity к ПК: поиск на RuTracker и добавление найденного
+        const auto rq = PartyProtocol::remoteRequestOf(S(R"(data: {"event":"rutracker_request","data":{"request_id":"rq_1","kind":"search","query":" Dune ","by":"Алиса"}})"));
+        QVERIFY(rq);
+        QCOMPARE(rq->query, S("Dune"));
+        QCOMPARE(rq->by, S("Алиса"));
+        const auto add = PartyProtocol::remoteRequestOf(S(R"(data: {"event":"rutracker_request","data":{"request_id":"rq_2","kind":"add","topic_id":"6123456","target":"9703bd8de4eb8d02"}})"));
+        QVERIFY(add);
+        QCOMPARE(add->topicId, S("6123456"));
+        QVERIFY(!PartyProtocol::remoteRequestOf(S(R"(data: {"event":"rutracker_request","data":{"request_id":"rq_3","kind":"add","topic_id":"1"}})")));
+        QVERIFY(!PartyProtocol::remoteRequestOf(S(R"(data: {"event":"rutracker_request","data":{"kind":"search","query":"x"}})")));
+        QVERIFY(!PartyProtocol::remoteRequestOf(S(R"(data: {"event":"state_changed","data":{}})")));
+        QVERIFY(!PartyProtocol::parseEventLine(S(R"(data: {"event":"rutracker_request","data":{"request_id":"rq_1","kind":"search","query":"x"}})")));
+        QCOMPARE(PartyProtocol::remoteReplyPath(S("842190")), S("/api/rooms/842190/rutracker/reply"));
     }
 
     void pendingFileIsNotOverwrittenByStaleAnswers() {

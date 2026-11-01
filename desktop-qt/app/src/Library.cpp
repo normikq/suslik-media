@@ -655,7 +655,7 @@ void Library::lookupPoster(const QString &query) {
     });
 }
 
-void Library::image(const QString &path, std::function<void(const QByteArray &)> cb) {
+void Library::image(const QString &path, std::function<void(const QByteArray &)> cb, bool persist) {
     const QString file = posterFile(path);
     QFile f(file);
     if (f.open(QIODevice::ReadOnly)) {
@@ -667,9 +667,13 @@ void Library::image(const QString &path, std::function<void(const QByteArray &)>
     }
     auto &waiters = m_imageWaiters[path];
     waiters.push_back(std::move(cb));
+    // временный постер подборки может качаться, когда тот же постер понадобился медиатеке: тогда — на диск
+    if (persist) m_imagePersist.insert(path);
     if (waiters.size() > 1) return; // уже качается
+    // временная картинка (подборка ИИ) — только в память: папка постеров медиатеки не растёт от каждого подбора
     m_api.bytes(path, [this, path, file](const ApiResult &r) {
-        if (r.ok() && !r.bytes.isEmpty()) {
+        const bool keep = m_imagePersist.remove(path);
+        if (keep && r.ok() && !r.bytes.isEmpty()) {
             QFile out(file);
             if (out.open(QIODevice::WriteOnly)) out.write(r.bytes);
         }

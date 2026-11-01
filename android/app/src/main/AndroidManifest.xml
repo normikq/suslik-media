@@ -44,6 +44,13 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="magnet" />
             </intent-filter>
+            <!-- suslik://room/<код>: «Открыть в приложении» из Discord Activity — вход в комнату «Вместе». -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="suslik" android:host="room" />
+            </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
