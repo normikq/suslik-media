@@ -97,14 +97,14 @@ public:
         QMetaObject::invokeMethod(qApp, [self] { if (self) emit self->finished(); }, Qt::QueuedConnection);
     }
 
-    /// Завершить с готовой картинкой в главном потоке.
-    void finishWith(const QImage &img) {
-        QPointer<Response> self(this);
-        QMetaObject::invokeMethod(qApp, [self, img] {
-            if (!self) return;
-            self->m_image = img;
-            if (img.isNull()) self->m_error = QStringLiteral("bad image");
-            emit self->finished();
+    /// Готовая картинка из потока пула — в главный поток. guard проверяется только там: QPointer не потокобезопасен,
+    /// а QML может отменить и удалить запрос (плитка ушла) прямо во время раскодирования.
+    static void finishLater(const QPointer<Response> &guard, const QImage &img) {
+        QMetaObject::invokeMethod(qApp, [guard, img] {
+            if (!guard) return;
+            guard->m_image = img;
+            if (img.isNull()) guard->m_error = QStringLiteral("bad image");
+            emit guard->finished();
         }, Qt::QueuedConnection);
     }
 
@@ -113,8 +113,7 @@ public:
         if (bytes.isEmpty()) { m_error = QStringLiteral("no image"); emit finished(); return; }
         QPointer<Response> self(this);
         QThreadPool::globalInstance()->start([self, bytes, want, glow, key] {
-            const QImage img = decodeImage(bytes, want, glow, key);
-            if (self) self->finishWith(img);
+            finishLater(self, decodeImage(bytes, want, glow, key));
         });
     }
 
@@ -146,8 +145,7 @@ QQuickImageResponse *ImageProvider::requestImageResponse(const QString &id, cons
             f.close();
             f.setFileTime(QDateTime::currentDateTime(), QFileDevice::FileModificationTime); // показан — недавно нужен
             if (!b.isEmpty()) {
-                const QImage img = decodeImage(b, requestedSize, glow, key);
-                if (guard) guard->finishWith(img);
+                Response::finishLater(guard, decodeImage(b, requestedSize, glow, key));
                 return;
             }
         }

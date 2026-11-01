@@ -412,7 +412,7 @@ void PlayerModel::fetchSubtitles(quint64 gen, const QStringList &urls, const QSt
     m_subsFetching = int(urls.size());
     emit tracksExtraChanged();
     if (urls.isEmpty()) return;
-    // копии прошлого фильма больше не нужны
+    // копии прошлых серий удаляет finishClose (mpv может ещё держать их открытыми)
     QDir dir(QDir::temp().filePath(S("suslik-qt-subs")));
     QDir().mkpath(dir.path());
     struct State {

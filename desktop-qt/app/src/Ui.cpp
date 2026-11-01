@@ -80,11 +80,13 @@ void Ui::trimMemory() const {
         m_engine->trimComponentCache();
     }
     QPixmapCache::clear();
-    PosterCache::instance().clear();
 }
+
+void Ui::dropPosterCache() const { PosterCache::instance().clear(); }
 
 void Ui::unloadMemory() const {
     trimMemory();
+    dropPosterCache();
 #ifdef Q_OS_WIN
     EmptyWorkingSet(GetCurrentProcess());
 #endif

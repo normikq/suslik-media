@@ -42,6 +42,9 @@ public:
     Q_INVOKABLE void trimMemory() const;
     /// Полная выгрузка: сборка мусора + сброс физических страниц процесса в ОС (при сворачивании > 30 с).
     Q_INVOKABLE void unloadMemory() const;
+    /// Кэш раскодированных постеров (PosterCache) — долой: при открытии плеера и в unloadMemory. Не на вкладках
+    /// и страницах — иначе возврат на прошлую страницу снова читает и раскодирует постеры с диска.
+    Q_INVOKABLE void dropPosterCache() const;
     /// Переменная окружения (проверка вёрстки: SM_OPEN открывает окно сразу после запуска).
     Q_INVOKABLE QString env(const QString &name) const { return qEnvironmentVariable(name.toUtf8().constData()); }
 

@@ -150,7 +150,7 @@ Window {
                 presenceAnim.stop()
                 if (Theme.simple) {
                     win.playerPresence = 1
-                    Ui.trimMemory()
+                    Ui.trimMemory(); Ui.dropPosterCache()
                 } else {
                     presenceAnim.from = win.playerPresence
                     presenceAnim.to = 1
@@ -185,7 +185,7 @@ Window {
                 Ui.trimMemory()
             } else if (win.playerPresence === 1) {
                 // При открытии экрана плеера — лёгкая сборка мусора медиатеки под ним (без сброса страниц ОС)
-                Ui.trimMemory()
+                Ui.trimMemory(); Ui.dropPosterCache()
             }
         }
     }
