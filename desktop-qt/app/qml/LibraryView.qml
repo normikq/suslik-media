@@ -25,10 +25,7 @@ Item {
 
     // новая страница — с самого верха
     readonly property int curPage: lp.page
-    onCurPageChanged: {
-        flick.contentY = 0
-        Ui.trimMemory()
-    }
+    onCurPageChanged: flick.contentY = 0
 
     Flickable {
         id: flick

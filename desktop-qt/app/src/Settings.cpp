@@ -1,3 +1,4 @@
+#include "PosterCache.h"
 #include "Settings.h"
 #include "player/Reserve.h"
 #include "AppDir.h"
@@ -139,6 +140,7 @@ void Prefs::clearCache() {
     const qint64 before = m_lastTotal;
     QPointer<Prefs> self(this);
     Reserve::dropRetired();
+    PosterCache::instance().clear(); // память — вместе с файлами постеров
     QThreadPool::globalInstance()->start([self, before] {
         // Настройки открываются только без фильма: весь запас на диске — от закрытых фильмов.
         QDir(reserveDir()).removeRecursively();

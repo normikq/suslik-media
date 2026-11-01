@@ -12,7 +12,6 @@ Window {
 
     property int tab: 0
     property int prevTab: 0
-    onTabChanged: Ui.trimMemory()
     function select(t) {
         if (t !== tab) { prevTab = tab; tab = t }
         if (t === 0 || t === 1) lib.refresh()

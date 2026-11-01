@@ -148,6 +148,7 @@ Item {
     Image {
         anchors.fill: parent
         source: player.poster !== "" ? "image://suslik" + player.poster : ""
+        sourceSize.height: 1080   // постер во всю высоту: больше не нужно (без размера — исходник целиком)
         fillMode: Image.PreserveAspectFit
         asynchronous: true
         smooth: true

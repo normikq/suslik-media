@@ -1,5 +1,6 @@
 #include "ImageProvider.h"
 #include "Library.h"
+#include "PosterCache.h"
 
 #include <QBuffer>
 #include <QDateTime>
@@ -18,6 +19,8 @@ namespace suslik::app {
 namespace {
 
 constexpr int GLOW_W = 96;
+/// Размер не задан — не больше этого по длинной стороне (кадр 4K не займёт десятки мегабайт).
+constexpr int MAX_SIDE = 1920;
 
 /// Размытие (три прохода «коробкой» 3×3) и края, тающие в фон: сверху и снизу по 30 %, по бокам по 12 % (как у прежней версии).
 QImage glowOf(QImage src) {
@@ -63,10 +66,17 @@ public:
 
     /// Раскодировать в пуле потоков (большие кадры баннера не тормозят интерфейс), потом finished() в главном.
     /// glow — свечение баннера: маленькая размытая копия с прозрачными краями (растягивается в QML, размытие даром).
-    void decode(const QByteArray &bytes, QSize want, bool glow) {
+    /// Готовая картинка из кэша: finished() — следующим ходом главного потока (QML ещё не подписался).
+    void ready(const QImage &img) {
+        m_image = img;
+        QPointer<Response> self(this);
+        QMetaObject::invokeMethod(qApp, [self] { if (self) emit self->finished(); }, Qt::QueuedConnection);
+    }
+
+    void decode(const QByteArray &bytes, QSize want, bool glow, const QString &key) {
         if (bytes.isEmpty()) { m_error = QStringLiteral("no image"); emit finished(); return; }
         QPointer<Response> self(this);
-        QThreadPool::globalInstance()->start([self, bytes, want, glow] {
+        QThreadPool::globalInstance()->start([self, bytes, want, glow, key] {
             QBuffer buf;
             buf.setData(bytes);
             QImageReader r(&buf);
@@ -81,9 +91,12 @@ public:
                 else if (want.width() > 0) s = QSize(want.width(), std::max(1, int(qint64(full.height()) * want.width() / full.width())));
                 else s = QSize(std::max(1, int(qint64(full.width()) * want.height() / full.height())), want.height());
                 if (s.width() < full.width() && s.height() < full.height()) r.setScaledSize(s); // только уменьшать
+            } else if (full.isValid() && std::max(full.width(), full.height()) > MAX_SIDE) {
+                r.setScaledSize(full.scaled(MAX_SIDE, MAX_SIDE, Qt::KeepAspectRatio));
             }
             QImage img = r.read();
             if (glow && !img.isNull()) img = glowOf(img);
+            PosterCache::instance().put(key, img);
             QMetaObject::invokeMethod(qApp, [self, img] {
                 if (!self) return;
                 self->m_image = img;
@@ -106,23 +119,29 @@ QQuickImageResponse *ImageProvider::requestImageResponse(const QString &id, cons
     bool glow = false;
     if (path.startsWith(QLatin1String("glow:"))) { glow = true; path = path.mid(5); }
     if (!path.startsWith(QLatin1Char('/'))) path.prepend(QLatin1Char('/'));
+    const QString key = QStringLiteral("%1#%2x%3%4").arg(path).arg(requestedSize.width()).arg(requestedSize.height())
+                            .arg(glow ? QStringLiteral("g") : QString());
+    if (auto img = PosterCache::instance().get(key)) {
+        resp->ready(*img);
+        return resp;
+    }
     // Уже на диске — читается здесь же, в потоке пула (не в главном: чтение файла не тормозит интерфейс).
     // Нет — Library (объект главного потока) скачает.
-    QThreadPool::globalInstance()->start([this, guard, path, requestedSize, glow] {
+    QThreadPool::globalInstance()->start([this, guard, path, requestedSize, glow, key] {
         QFile f(Library::posterFile(path));
         if (f.open(QIODevice::ReadOnly)) {
             const QByteArray b = f.readAll();
             f.close();
             f.setFileTime(QDateTime::currentDateTime(), QFileDevice::FileModificationTime); // показан — недавно нужен
             if (!b.isEmpty()) {
-                QMetaObject::invokeMethod(qApp, [guard, b, requestedSize, glow] { if (guard) guard->decode(b, requestedSize, glow); },
+                QMetaObject::invokeMethod(qApp, [guard, b, requestedSize, glow, key] { if (guard) guard->decode(b, requestedSize, glow, key); },
                                           Qt::QueuedConnection);
                 return;
             }
         }
-        QMetaObject::invokeMethod(&m_lib, [this, guard, path, requestedSize, glow] {
-            m_lib.image(path, [guard, requestedSize, glow](const QByteArray &bytes) {
-                if (guard) guard->decode(bytes, requestedSize, glow);
+        QMetaObject::invokeMethod(&m_lib, [this, guard, path, requestedSize, glow, key] {
+            m_lib.image(path, [guard, requestedSize, glow, key](const QByteArray &bytes) {
+                if (guard) guard->decode(bytes, requestedSize, glow, key);
             });
         }, Qt::QueuedConnection);
     });

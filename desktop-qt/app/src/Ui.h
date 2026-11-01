@@ -38,7 +38,8 @@ public:
     /// Окно выйти вперёд (второй запуск).
     Q_INVOKABLE void raise(QWindow *w) const;
     Q_INVOKABLE void styleTitleBar(QWindow *w) const;
-    /// Сброс неиспользуемой памяти в Windows (смена страниц, вкладок, закрытие панелей).
+    /// Мягкий сброс: неиспользуемые скомпилированные компоненты QML. Рабочий набор процесса не трогает
+    /// (EmptyWorkingSet лишь выталкивал страницы в подкачку, и они тут же возвращались с подтормаживанием).
     Q_INVOKABLE void trimMemory() const;
     /// Переменная окружения (проверка вёрстки: SM_OPEN открывает окно сразу после запуска).
     Q_INVOKABLE QString env(const QString &name) const { return qEnvironmentVariable(name.toUtf8().constData()); }
