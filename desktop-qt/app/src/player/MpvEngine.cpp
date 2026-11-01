@@ -108,7 +108,9 @@ mpv::Handle MpvEngine::handle() {
     m_h = mpv::Handle(p, [a](mpv_handle *h) { a->terminate_destroy(h); });
     a->set_wakeup_callback(p, [](void *ctx) {
         auto *self = static_cast<MpvEngine *>(ctx);
-        QMetaObject::invokeMethod(self, [self] { self->drain(); }, Qt::QueuedConnection);
+        // пачка событий — один drain(): пока он ждёт в очереди, новые пробуждения его не дублируют
+        if (!self->m_drainQueued.exchange(true))
+            QMetaObject::invokeMethod(self, [self] { self->drain(); }, Qt::QueuedConnection);
     }, this);
     return m_h;
 }
@@ -122,6 +124,7 @@ void MpvEngine::release() {
 }
 
 void MpvEngine::drain() {
+    m_drainQueued = false; // события, пришедшие после этой строки, поставят новый drain()
     if (!m_h) return;
     const mpv::Api *a = mpv::api();
     // Не больше сотни событий за раз: окно остаётся отзывчивым, остальное — следующим кругом.
@@ -130,7 +133,7 @@ void MpvEngine::drain() {
         if (ev->event_id == MPV_EVENT_NONE) return;
         onEvent(*ev);
     }
-    if (m_h) QMetaObject::invokeMethod(this, [this] { drain(); }, Qt::QueuedConnection);
+    if (m_h && !m_drainQueued.exchange(true)) QMetaObject::invokeMethod(this, [this] { drain(); }, Qt::QueuedConnection);
 }
 
 void MpvEngine::onEvent(const mpv_event &ev) {

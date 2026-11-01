@@ -49,6 +49,7 @@ public:
     }
 
     ~MpvRenderer() override {
+        QObject::disconnect(m_swapConn);
         if (m_ctx) {
             const mpv::Api *a = mpv::api();
             a->render_context_set_update_callback(m_ctx, nullptr, nullptr);
@@ -61,6 +62,12 @@ public:
     // Только готовое ядро: отпущенное после закрытия здесь не создаётся заново.
     void synchronize(QQuickFramebufferObject *item) override {
         auto *v = static_cast<MpvVideo *>(item);
+        // Кадр показан (swap окна) — сообщить mpv: точнее расчёт времени кадров и пропусков.
+        // frameSwapped — в потоке отрисовки, как и этот объект; связь прямая, рвётся в деструкторе.
+        if (!m_swapConn && item && item->window())
+            m_swapConn = QObject::connect(item->window(), &QQuickWindow::frameSwapped, [this] {
+                if (m_ctx && m_rendered) { m_rendered = false; mpv::api()->render_context_report_swap(m_ctx); }
+            });
         if (!v || !v->engine()) return;
         mpv::Handle h = v->engine()->current();
         if (!h || (m_ctx && m_h.get() == h.get())) return;
@@ -102,7 +109,11 @@ public:
             {MPV_RENDER_PARAM_BLOCK_FOR_TARGET_TIME, &block},
             {MPV_RENDER_PARAM_INVALID, nullptr}
         };
+        // Состояние GL от сцены Qt Quick (scissor от clip, смешивание, привязанные текстуры) — сбросить до mpv:
+        // FBO mpv привяжет сам (target выше)
+        QQuickOpenGLUtils::resetOpenGLState();
         a->render_context_render(m_ctx, params);
+        m_rendered = true;
         // mpv меняет состояние GL — восстанавливаем состояние для сцены Qt Quick
         QQuickOpenGLUtils::resetOpenGLState();
     }
@@ -111,6 +122,8 @@ private:
     mpv::Handle m_h;
     QPointer<MpvVideo> m_item;
     mpv_render_context *m_ctx = nullptr;
+    QMetaObject::Connection m_swapConn;
+    bool m_rendered = false; // кадр mpv нарисован в этом проходе — после swap сообщить report_swap
 };
 
 } // namespace

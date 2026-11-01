@@ -2,6 +2,7 @@
 #include "Mpv.h"
 
 #include <QObject>
+#include <atomic>
 #include <QVariantList>
 #include <QVariantMap>
 
@@ -131,7 +132,8 @@ private:
     QString m_openUrl;
     quint64 m_openGen = 0;
     QList<SideTrack> m_sideAudio, m_sideSubs;
-    bool m_drainQueued = false;
+    /// drain() уже в очереди: из потока mpv (wakeup) — не ставить второй.
+    std::atomic<bool> m_drainQueued{false};
 };
 
 } // namespace suslik::app
