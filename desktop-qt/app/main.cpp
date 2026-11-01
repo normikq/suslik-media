@@ -45,6 +45,14 @@
 #include <QSGRendererInterface>
 #include <QTimer>
 
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <psapi.h>
+#endif
+
 using namespace suslik;
 
 namespace {
@@ -81,9 +89,6 @@ int main(int argc, char *argv[]) {
     // С подгонкой (по умолчанию в Windows) буквы тонкие и угловатые.
     base.setHintingPreference(QFont::PreferNoHinting);
     QGuiApplication::setFont(base);
-    // Весь текст — растеризатором системы (DirectWrite) с этим сглаживанием. Прежний способ по умолчанию
-    // (distance field) давал на боковой панели более тонкие и бледные буквы, чем на плитках.
-    QQuickWindow::setTextRenderType(QQuickWindow::NativeTextRendering);
 
     QIcon icon;
     for (int sz : {16, 24, 32, 48, 64, 128, 256}) icon.addFile(QStringLiteral(":/res/icons/icon-%1.png").arg(sz), QSize(sz, sz));
@@ -157,6 +162,23 @@ int main(int argc, char *argv[]) {
         windowMode.setWindow(window);
         media.attach(window);
         QObject::connect(&single, &app::SingleInstance::showRequested, window, [&ui, window] { ui.raise(window); });
+
+        // Если окно свёрнуто > 30 секунд — выгрузка страниц процесса в ОС
+        auto *minTimer = new QTimer(window);
+        minTimer->setInterval(30000);
+        minTimer->setSingleShot(true);
+        QObject::connect(minTimer, &QTimer::timeout, &ui, [&ui, window] {
+            if (window->windowStates() & Qt::WindowMinimized) {
+                ui.unloadMemory();
+            }
+        });
+        QObject::connect(window, &QWindow::windowStateChanged, minTimer, [window, minTimer](Qt::WindowState state) {
+            if (state == Qt::WindowMinimized || (window->windowStates() & Qt::WindowMinimized)) {
+                minTimer->start();
+            } else {
+                minTimer->stop();
+            }
+        });
     }
 
     // Снимок окна для проверки вёрстки без экрана (SM_SHOT=файл.png, SM_SHOT_MS — через сколько мс).
@@ -171,6 +193,10 @@ int main(int argc, char *argv[]) {
     sync.start();
     library.start();
     QTimer::singleShot(4000, &library, [&library] { library.prunePosterFiles(); });
+#ifdef Q_OS_WIN
+    // Сброс временных страниц аллокатора после старта и парсинга базы: снижает Working Set до минимума в ОЗУ
+    QTimer::singleShot(6000, [] { EmptyWorkingSet(GetCurrentProcess()); });
+#endif
     // libmpv нет (самообновление со старой версии без неё) — докачать заранее, не дожидаясь фильма
     QTimer::singleShot(3000, &mpvInstall, [&mpvInstall] { if (!mpvInstall.ready()) mpvInstall.start(); });
     app::PlayerLog::write(QStringLiteral("[sys] Suslik Media Qt %1 started").arg(QStringLiteral(SM_VERSION)));

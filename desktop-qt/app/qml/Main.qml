@@ -13,8 +13,30 @@ Window {
     property int tab: 0
     property int prevTab: 0
     function select(t) {
-        if (t !== tab) { prevTab = tab; tab = t }
-        if (t === 0 || t === 1) lib.refresh()
+        if (t !== tab) {
+            prevTab = tab
+            tab = t
+        }
+    }
+
+    onTabChanged: trimTimer.restart()
+    Timer {
+        id: trimTimer
+        interval: 500
+        repeat: false
+        onTriggered: Ui.trimMemory()
+    }
+
+    // Когда приложение свёрнуто > 30 секунд: выгрузка страниц процесса в ОС
+    readonly property bool isMinimized: win.visibility === Window.Minimized
+    onIsMinimizedChanged: {
+        if (isMinimized) minimizeTimer.restart(); else minimizeTimer.stop()
+    }
+    Timer {
+        id: minimizeTimer
+        interval: 30000
+        repeat: false
+        onTriggered: if (win.isMinimized) Ui.unloadMemory()
     }
 
     Backdrop { anchors.fill: parent }
@@ -125,10 +147,15 @@ Window {
                 win.playerFilm = player.magnetId
                 win.playerFrom = Theme.target(win.playerFilm)
                 presenceAnim.stop()
-                presenceAnim.from = win.playerPresence
-                presenceAnim.to = 1
-                presenceAnim.duration = 560
-                presenceAnim.start()
+                if (Theme.simple) {
+                    win.playerPresence = 1
+                    playerOpenTrimTimer.restart()
+                } else {
+                    presenceAnim.from = win.playerPresence
+                    presenceAnim.to = 1
+                    presenceAnim.duration = 560
+                    presenceAnim.start()
+                }
             } else if (player.closing && !win.playerLeaving) {
                 win.playerLeaving = true      // медиатека снова видна: её постеры можно найти
                 win.playerHome = Theme.target(win.playerFilm)
@@ -150,9 +177,26 @@ Window {
         property: "playerPresence"
         easing.type: Easing.BezierSpline
         easing.bezierCurve: Theme.fly
-        onFinished: if (win.playerPresence === 0 && win.playerLeaving) {
-            win.playerLeaving = false
-            if (player.closing) player.finishClose()
+        onFinished: {
+            if (win.playerPresence === 0 && win.playerLeaving) {
+                win.playerLeaving = false
+                if (player.closing) player.finishClose()
+                Ui.trimMemory()
+            } else if (win.playerPresence === 1) {
+                playerOpenTrimTimer.restart()
+            }
+        }
+    }
+
+    // При открытии плеера: медиатека под ним скрыта — выгрузка неиспользуемой памяти
+    Timer {
+        id: playerOpenTrimTimer
+        interval: 1000
+        repeat: false
+        onTriggered: {
+            if (player.open && !player.closing && win.playerPresence === 1) {
+                Ui.unloadMemory()
+            }
         }
     }
 

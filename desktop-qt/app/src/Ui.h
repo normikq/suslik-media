@@ -41,6 +41,8 @@ public:
     /// Мягкий сброс: неиспользуемые скомпилированные компоненты QML. Рабочий набор процесса не трогает
     /// (EmptyWorkingSet лишь выталкивал страницы в подкачку, и они тут же возвращались с подтормаживанием).
     Q_INVOKABLE void trimMemory() const;
+    /// Полная выгрузка: сборка мусора + сброс физических страниц процесса в ОС (при запуске плеера или сворачивании > 30 с).
+    Q_INVOKABLE void unloadMemory() const;
     /// Переменная окружения (проверка вёрстки: SM_OPEN открывает окно сразу после запуска).
     Q_INVOKABLE QString env(const QString &name) const { return qEnvironmentVariable(name.toUtf8().constData()); }
 

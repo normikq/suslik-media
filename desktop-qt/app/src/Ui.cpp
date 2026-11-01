@@ -14,6 +14,15 @@
 #include <QWindow>
 #include <QTimer>
 #include <QQmlApplicationEngine>
+#include <QPixmapCache>
+
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <psapi.h>
+#endif
 
 namespace suslik::app {
 
@@ -65,7 +74,18 @@ void Ui::raise(QWindow *w) const {
 void Ui::styleTitleBar(QWindow *w) const { TitleBar::style(w); }
 
 void Ui::trimMemory() const {
-    if (m_engine) m_engine->trimComponentCache();
+    if (m_engine) {
+        m_engine->collectGarbage();
+        m_engine->trimComponentCache();
+    }
+    QPixmapCache::clear();
+}
+
+void Ui::unloadMemory() const {
+    trimMemory();
+#ifdef Q_OS_WIN
+    EmptyWorkingSet(GetCurrentProcess());
+#endif
 }
 
 } // namespace suslik::app

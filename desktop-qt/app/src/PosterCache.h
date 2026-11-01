@@ -14,7 +14,7 @@ namespace suslik::app {
 /// Ключ — путь, запрошенный размер и вид (свечение), см. ImageProvider.
 class PosterCache {
 public:
-    static constexpr qsizetype MAX_BYTES = 32LL << 20; // ≈ 95 постеров 240×360
+    static constexpr qsizetype MAX_BYTES = 48LL << 20; // ≈ 140 постеров 240×360 или 100 постеров + 4 баннера
 
     static PosterCache &instance() {
         static PosterCache c;
