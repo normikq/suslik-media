@@ -414,7 +414,6 @@ void PlayerModel::fetchSubtitles(quint64 gen, const QStringList &urls, const QSt
     if (urls.isEmpty()) return;
     // копии прошлого фильма больше не нужны
     QDir dir(QDir::temp().filePath(S("suslik-qt-subs")));
-    dir.removeRecursively();
     QDir().mkpath(dir.path());
     struct State {
         int left = 0;
@@ -540,6 +539,7 @@ void PlayerModel::finishClose() {
     // свою ссылку, когда экран плеера уйдёт (Loader в Main.qml)
     m_engine->release();
     Reserve::proxy().clear();
+    QDir(QDir::temp().filePath(S("suslik-qt-subs"))).removeRecursively();
     ui().put(S("volume"), num(m_volume));
     m_open = false;
     m_closing = false;

@@ -48,10 +48,12 @@ bool SingleInstance::acquire() {
     if (m_server->listen(socketName())) {
         connect(m_server, &QLocalServer::newConnection, this, [this] {
             while (QLocalSocket *c = m_server->nextPendingConnection()) {
-                connect(c, &QLocalSocket::readyRead, this, [this, c] {
+                auto checkRead = [this, c] {
                     if (c->canReadLine() && c->readLine().trimmed() == "show") emit showRequested();
-                });
+                };
+                connect(c, &QLocalSocket::readyRead, this, checkRead);
                 connect(c, &QLocalSocket::disconnected, c, &QObject::deleteLater);
+                if (c->canReadLine()) checkRead();
             }
         });
     }

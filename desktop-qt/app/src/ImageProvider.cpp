@@ -59,6 +59,32 @@ QImage glowOf(QImage src) {
     return res;
 }
 
+/// Раскодировать и масштабировать картинку, положить в кэш.
+QImage decodeImage(const QByteArray &bytes, QSize want, bool glow, const QString &key) {
+    if (bytes.isEmpty()) return {};
+    QBuffer buf;
+    buf.setData(bytes);
+    QImageReader r(&buf);
+    r.setAutoTransform(true);
+    const QSize full = r.size();
+    if (glow && full.isValid()) r.setScaledSize(full.scaled(GLOW_W, GLOW_W * 4, Qt::KeepAspectRatio));
+    else if (full.isValid() && full.width() > 0 && full.height() > 0 && (want.width() > 0 || want.height() > 0)) {
+        // задана одна сторона (баннер: только ширина) — вторая по пропорциям. Раньше вторая бралась от полного
+        // кадра, и KeepAspectRatioByExpanding оставлял 4K-кадр как есть (33 МБ в памяти вместо 8)
+        QSize s;
+        if (want.width() > 0 && want.height() > 0) s = full.scaled(want, Qt::KeepAspectRatioByExpanding);
+        else if (want.width() > 0) s = QSize(want.width(), std::max(1, int(qint64(full.height()) * want.width() / full.width())));
+        else s = QSize(std::max(1, int(qint64(full.width()) * want.height() / full.height())), want.height());
+        if (s.width() < full.width() && s.height() < full.height()) r.setScaledSize(s); // только уменьшать
+    } else if (full.isValid() && std::max(full.width(), full.height()) > MAX_SIDE) {
+        r.setScaledSize(full.scaled(MAX_SIDE, MAX_SIDE, Qt::KeepAspectRatio));
+    }
+    QImage img = r.read();
+    if (glow && !img.isNull()) img = glowOf(img);
+    if (!img.isNull()) PosterCache::instance().put(key, img);
+    return img;
+}
+
 class Response : public QQuickImageResponse {
 public:
     QQuickTextureFactory *textureFactory() const override { return QQuickTextureFactory::textureFactoryForImage(m_image); }
@@ -71,39 +97,24 @@ public:
         QMetaObject::invokeMethod(qApp, [self] { if (self) emit self->finished(); }, Qt::QueuedConnection);
     }
 
-    /// Раскодировать в пуле потоков (большие кадры баннера не тормозят интерфейс), потом finished() в главном.
-    /// glow — свечение баннера: маленькая размытая копия с прозрачными краями (растягивается в QML, размытие даром).
-    /// Готовую картинку кладёт в PosterCache под key.
-    void decode(const QByteArray &bytes, QSize want, bool glow, const QString &key) {
+    /// Завершить с готовой картинкой в главном потоке.
+    void finishWith(const QImage &img) {
+        QPointer<Response> self(this);
+        QMetaObject::invokeMethod(qApp, [self, img] {
+            if (!self) return;
+            self->m_image = img;
+            if (img.isNull()) self->m_error = QStringLiteral("bad image");
+            emit self->finished();
+        }, Qt::QueuedConnection);
+    }
+
+    /// Раскодировать в пуле потоков (когда байты скачаны из сети в главном потоке).
+    void decodeAsync(const QByteArray &bytes, QSize want, bool glow, const QString &key) {
         if (bytes.isEmpty()) { m_error = QStringLiteral("no image"); emit finished(); return; }
         QPointer<Response> self(this);
         QThreadPool::globalInstance()->start([self, bytes, want, glow, key] {
-            QBuffer buf;
-            buf.setData(bytes);
-            QImageReader r(&buf);
-            r.setAutoTransform(true);
-            const QSize full = r.size();
-            if (glow && full.isValid()) r.setScaledSize(full.scaled(GLOW_W, GLOW_W * 4, Qt::KeepAspectRatio));
-            else if (full.isValid() && full.width() > 0 && full.height() > 0 && (want.width() > 0 || want.height() > 0)) {
-                // задана одна сторона (баннер: только ширина) — вторая по пропорциям. Раньше вторая бралась от полного
-                // кадра, и KeepAspectRatioByExpanding оставлял 4K-кадр как есть (33 МБ в памяти вместо 8)
-                QSize s;
-                if (want.width() > 0 && want.height() > 0) s = full.scaled(want, Qt::KeepAspectRatioByExpanding);
-                else if (want.width() > 0) s = QSize(want.width(), std::max(1, int(qint64(full.height()) * want.width() / full.width())));
-                else s = QSize(std::max(1, int(qint64(full.width()) * want.height() / full.height())), want.height());
-                if (s.width() < full.width() && s.height() < full.height()) r.setScaledSize(s); // только уменьшать
-            } else if (full.isValid() && std::max(full.width(), full.height()) > MAX_SIDE) {
-                r.setScaledSize(full.scaled(MAX_SIDE, MAX_SIDE, Qt::KeepAspectRatio));
-            }
-            QImage img = r.read();
-            if (glow && !img.isNull()) img = glowOf(img);
-            PosterCache::instance().put(key, img);
-            QMetaObject::invokeMethod(qApp, [self, img] {
-                if (!self) return;
-                self->m_image = img;
-                if (img.isNull()) self->m_error = QStringLiteral("bad image");
-                emit self->finished();
-            }, Qt::QueuedConnection);
+            const QImage img = decodeImage(bytes, want, glow, key);
+            if (self) self->finishWith(img);
         });
     }
 
@@ -126,7 +137,7 @@ QQuickImageResponse *ImageProvider::requestImageResponse(const QString &id, cons
         resp->ready(*img);
         return resp;
     }
-    // Уже на диске — читается здесь же, в потоке пула (не в главном: чтение файла не тормозит интерфейс).
+    // Уже на диске — читается и раскодируется сразу здесь же, в потоке пула (без переключений в главный поток).
     // Нет — Library (объект главного потока) скачает.
     QThreadPool::globalInstance()->start([this, guard, path, requestedSize, glow, key] {
         QFile f(Library::posterFile(path));
@@ -135,14 +146,14 @@ QQuickImageResponse *ImageProvider::requestImageResponse(const QString &id, cons
             f.close();
             f.setFileTime(QDateTime::currentDateTime(), QFileDevice::FileModificationTime); // показан — недавно нужен
             if (!b.isEmpty()) {
-                QMetaObject::invokeMethod(qApp, [guard, b, requestedSize, glow, key] { if (guard) guard->decode(b, requestedSize, glow, key); },
-                                          Qt::QueuedConnection);
+                const QImage img = decodeImage(b, requestedSize, glow, key);
+                if (guard) guard->finishWith(img);
                 return;
             }
         }
         QMetaObject::invokeMethod(&m_lib, [this, guard, path, requestedSize, glow, key] {
             m_lib.image(path, [guard, requestedSize, glow, key](const QByteArray &bytes) {
-                if (guard) guard->decode(bytes, requestedSize, glow, key);
+                if (guard) guard->decodeAsync(bytes, requestedSize, glow, key);
             });
         }, Qt::QueuedConnection);
     });

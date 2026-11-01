@@ -13,8 +13,11 @@ namespace suslik::core::detail {
 template <class Obj, class... Sig>
 void waitFor(Obj *o, int ms, Sig... sigs) {
     QEventLoop loop;
+    QTimer timer;
+    timer.setSingleShot(true);
+    QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
     (QObject::connect(o, sigs, &loop, &QEventLoop::quit), ...);
-    QTimer::singleShot(ms, &loop, &QEventLoop::quit);
+    timer.start(ms);
     loop.exec();
 }
 

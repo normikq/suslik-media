@@ -1,6 +1,7 @@
 #include "Ui.h"
 #include "TitleBar.h"
 #include "AppDir.h"
+#include "PosterCache.h"
 
 #include "suslik/core/Store.h"
 #include "suslik/core/Strings.h"
@@ -79,6 +80,7 @@ void Ui::trimMemory() const {
         m_engine->trimComponentCache();
     }
     QPixmapCache::clear();
+    PosterCache::instance().clear();
 }
 
 void Ui::unloadMemory() const {
