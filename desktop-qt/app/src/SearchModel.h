@@ -85,6 +85,8 @@ public:
     Q_INVOKABLE void add(const QString &hitId);
     /// Окно «Трекеры» закрыто: включённые источники могли поменяться.
     Q_INVOKABLE void trackersChanged() { refilter(false); }
+    /// Выход из вкладки поиска — фоновый браузер больше не нужен
+    Q_INVOKABLE void leave();
 
     /// Страницы со вставками «…» (-1): для 10 страниц и пятой — 1, …, 4, 5, 6, …, 10 (Pagination.kt).
     static QList<int> computePageRange(int current, int total);

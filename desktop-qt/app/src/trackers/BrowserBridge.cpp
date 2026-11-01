@@ -31,6 +31,7 @@
 
 #ifdef Q_OS_WIN
 #include <windows.h>
+#include <tlhelp32.h>
 #endif
 
 namespace suslik::app {
@@ -245,6 +246,105 @@ QList<DetectedBrowser> detectBrowsers() {
 
 namespace {
 
+#ifdef Q_OS_WIN
+static std::atomic<DWORD> s_activeVisiblePid{0};
+
+struct SM_UNICODE_STRING {
+    USHORT Length;
+    USHORT MaximumLength;
+    PWSTR Buffer;
+};
+
+using pfnNtQueryInformationProcess = NTSTATUS(NTAPI *)(
+    HANDLE ProcessHandle,
+    ULONG ProcessInformationClass,
+    PVOID ProcessInformation,
+    ULONG ProcessInformationLength,
+    PULONG ReturnLength
+);
+
+QString getProcessCommandLine(DWORD pid) {
+    static auto pNtQuery = []() -> pfnNtQueryInformationProcess {
+        HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+        if (!ntdll) ntdll = LoadLibraryW(L"ntdll.dll");
+        return ntdll ? reinterpret_cast<pfnNtQueryInformationProcess>(GetProcAddress(ntdll, "NtQueryInformationProcess")) : nullptr;
+    }();
+    if (!pNtQuery) return {};
+
+    HANDLE hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!hProc) return {};
+
+    ULONG retLen = 0;
+    // ProcessCommandLineInformation = 60
+    pNtQuery(hProc, 60, nullptr, 0, &retLen);
+    if (retLen == 0) {
+        CloseHandle(hProc);
+        return {};
+    }
+
+    QByteArray buf(int(retLen), 0);
+    NTSTATUS status = pNtQuery(hProc, 60, buf.data(), retLen, &retLen);
+    CloseHandle(hProc);
+
+    if (status != 0) return {};
+    auto *uStr = reinterpret_cast<SM_UNICODE_STRING *>(buf.data());
+    if (!uStr->Buffer || uStr->Length == 0) return {};
+    return QString::fromWCharArray(uStr->Buffer, int(uStr->Length / sizeof(wchar_t)));
+}
+
+void cleanOrphanTrackerProcesses() {
+    static const QStringList kProfiles = {
+        S("edge_tracker_profile"),
+        S("chrome_tracker_profile"),
+        S("yandex_tracker_profile"),
+        S("brave_tracker_profile"),
+        S("opera_tracker_profile"),
+        S("opera_gx_tracker_profile"),
+        S("vivaldi_tracker_profile"),
+        S("chromium_tracker_profile"),
+        S("_tracker_profile")
+    };
+
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return;
+
+    PROCESSENTRY32W pe{};
+    pe.dwSize = sizeof pe;
+    QList<DWORD> pidsToKill;
+    const DWORD myPid = GetCurrentProcessId();
+    const DWORD activeVis = s_activeVisiblePid.load();
+
+    if (Process32FirstW(snap, &pe)) {
+        do {
+            if (pe.th32ProcessID == 0 || pe.th32ProcessID == myPid) continue;
+            if (activeVis != 0 && (pe.th32ProcessID == activeVis || pe.th32ParentProcessID == activeVis)) continue;
+            const QString cmd = getProcessCommandLine(pe.th32ProcessID);
+            if (cmd.isEmpty()) continue;
+            for (const auto &prof : kProfiles) {
+                if (cmd.contains(prof, Qt::CaseInsensitive)) {
+                    pidsToKill.append(pe.th32ProcessID);
+                    break;
+                }
+            }
+        } while (Process32NextW(snap, &pe));
+    }
+    CloseHandle(snap);
+
+    for (DWORD pid : pidsToKill) {
+        if (activeVis != 0 && pid == activeVis) continue;
+        PlayerLog::write(S("[trackers] cleanOrphanTrackerProcesses: terminating orphan pid %1").arg(pid));
+        HANDLE h = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
+        if (h) {
+            TerminateProcess(h, 0);
+            CloseHandle(h);
+        }
+        QProcess::execute(S("taskkill"), {S("/F"), S("/PID"), QString::number(pid)});
+    }
+}
+#else
+void cleanOrphanTrackerProcesses() {}
+#endif
+
 /// Процесс браузера и всё, что его держит: Job Object (закрыть — и все процессы браузера закрыты), скрытый рабочий стол.
 struct Proc {
     qint64 pid = 0;
@@ -268,14 +368,50 @@ struct Proc {
     }
     void kill() {
 #ifdef Q_OS_WIN
-        if (job) { TerminateJobObject(job, 0); CloseHandle(job); job = nullptr; }
-        if (process) {
-            if (WaitForSingleObject(process, 0) == WAIT_TIMEOUT) {
-                // без Job Object: дерево процессов добивает taskkill
-                QProcess::execute(S("taskkill"), {S("/F"), S("/T"), S("/PID"), QString::number(pid)});
-                TerminateProcess(process, 0);
+        // 1. Собираем всё дерево дочерних процессов (GPU, renderers, utility, crashpad)
+        QSet<DWORD> toKill;
+        if (pid > 0) {
+            toKill.insert(DWORD(pid));
+            HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            if (snap != INVALID_HANDLE_VALUE) {
+                PROCESSENTRY32W pe{};
+                pe.dwSize = sizeof pe;
+                QHash<DWORD, QList<DWORD>> children;
+                if (Process32FirstW(snap, &pe)) {
+                    do {
+                        children[pe.th32ParentProcessID].append(pe.th32ProcessID);
+                    } while (Process32NextW(snap, &pe));
+                }
+                CloseHandle(snap);
+
+                QList<DWORD> q;
+                q.append(DWORD(pid));
+                while (!q.isEmpty()) {
+                    DWORD parent = q.takeFirst();
+                    for (DWORD child : children.value(parent)) {
+                        if (!toKill.contains(child)) {
+                            toKill.insert(child);
+                            q.append(child);
+                        }
+                    }
+                }
             }
-            CloseHandle(process); process = nullptr;
+        }
+        if (job) { TerminateJobObject(job, 0); CloseHandle(job); job = nullptr; }
+        for (DWORD p : toKill) {
+            HANDLE h = OpenProcess(PROCESS_TERMINATE, FALSE, p);
+            if (h) {
+                TerminateProcess(h, 0);
+                CloseHandle(h);
+            }
+        }
+        if (pid > 0) {
+            QProcess::execute(S("taskkill"), {S("/F"), S("/T"), S("/PID"), QString::number(pid)});
+        }
+        if (process) {
+            TerminateProcess(process, 0);
+            CloseHandle(process);
+            process = nullptr;
         }
         if (thread) { CloseHandle(thread); thread = nullptr; }
         if (desk) { CloseDesktop(desk); desk = nullptr; }
@@ -286,6 +422,9 @@ struct Proc {
             delete qp; qp = nullptr;
         }
         pid = 0;
+#ifdef Q_OS_WIN
+        cleanOrphanTrackerProcesses();
+#endif
     }
 };
 
@@ -301,7 +440,7 @@ HANDLE killOnCloseJob(HANDLE process) {
     HANDLE job = CreateJobObjectW(nullptr, nullptr);
     if (!job) return nullptr;
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION info{};
-    info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK;
     SetInformationJobObject(job, JobObjectExtendedLimitInformation, &info, sizeof info);
     if (!AssignProcessToJobObject(job, process)) { CloseHandle(job); return nullptr; }
     return job;
@@ -333,8 +472,10 @@ bool launch(Proc &p, const QString &exe, QStringList args, Launch mode) {
     p.thread = pi.hThread;
     p.pid = pi.dwProcessId;
     p.desk = desk;
-    // в Job Object — до того, как браузер успеет запустить свои процессы
-    p.job = killOnCloseJob(pi.hProcess);
+    // в Job Object — только для фонового/безголового запуска, чтобы не ломать песочницу и жизненный цикл видимого Edge
+    if (mode != Launch::Visible) {
+        p.job = killOnCloseJob(pi.hProcess);
+    }
     ResumeThread(pi.hThread);
     return true;
 #else
@@ -357,9 +498,21 @@ int freePort() {
     return port;
 }
 
-QStringList browserArgs(int port, const QString &profile) {
-    return {S("--remote-debugging-port=%1").arg(port), S("--disable-blink-features=AutomationControlled"),
-            S("--user-data-dir=") + QDir::toNativeSeparators(profile), S("--no-first-run"), S("--no-default-browser-check")};
+QStringList browserArgs(int port, const QString &profile, bool visible = false) {
+    QStringList args = {
+        S("--remote-debugging-port=%1").arg(port),
+        S("--disable-blink-features=AutomationControlled"),
+        S("--user-data-dir=") + QDir::toNativeSeparators(profile),
+        S("--no-first-run"),
+        S("--no-default-browser-check")
+    };
+    if (!visible) {
+        args << S("--disable-background-mode")
+             << S("--no-service-autorun")
+             << S("--disable-breakpad")
+             << S("--password-store=basic");
+    }
+    return args;
 }
 
 /// Строка JS из значения: «"текст"» с экранированием.
@@ -381,18 +534,31 @@ public:
     static constexpr int MAX_GET_URL = 6000;
 
     std::atomic<bool> aborting{false};
+    bool m_stopRequested = false;
+
+    Worker() {
+        m_idle.setParent(this);
+        m_idle.setSingleShot(true);
+        connect(&m_idle, &QTimer::timeout, this, [this] { scheduleStop(); });
+    }
 
     void enqueue(std::function<void()> job) {
+        m_stopRequested = false;
         m_queue.push_back(std::move(job));
         if (!m_running) pump();
     }
 
     void scheduleStop() {
-        if (!m_running && m_queue.empty()) stopInternal();
+        m_stopRequested = true;
+        if (!m_running && m_queue.empty()) {
+            m_stopRequested = false;
+            stopInternal();
+        }
     }
 
     void shutdownNow() {
         aborting = true;
+        m_stopRequested = true;
         m_queue.clear();
         stopInternal(false);
     }
@@ -402,7 +568,7 @@ public:
     struct SearchOut { std::optional<QString> json; QString error; };
     SearchOut search(const QString &baseUrl, const QString &query, const CookieList &cookies) {
         QElapsedTimer clock; clock.start();
-        const auto over = [&] { return clock.elapsed() > 25000 || aborting; };
+        const auto over = [&] { return clock.elapsed() > 25000 || aborting || m_stopRequested; };
         QString err;
         const int port = ensureRunning(&err);
         if (!port) return {std::nullopt, {}};
@@ -505,7 +671,7 @@ public:
             "if (document.querySelector('input[name=\"login_username\"]')) return '__LOGIN__'; "
             "if (/just a moment|один момент/i.test(document.title) || document.querySelector('#challenge-form, .cf-turnstile, iframe[src*=\"challenges.cloudflare.com\"]')) return '__CF__'; "
             "return ''; })()");
-        for (int i = 0; i < 28 && !aborting; ++i) {
+        for (int i = 0; i < 28 && !aborting && !m_stopRequested; ++i) {
             sleepMs(500);
             const QString v = evalString(tab.cdp, js);
             if (v.startsWith(S("USER:"))) {
@@ -540,7 +706,7 @@ public:
         args << S("about:blank");
         if (!launch(tmp, exe, args, Launch::Headless)) return std::nullopt;
         std::optional<QString> res;
-        for (int i = 0; i < 25 && !aborting; ++i) {
+        for (int i = 0; i < 25 && !aborting && !m_stopRequested; ++i) {
             sleepMs(150);
             Cdp cdp;
             if (!openBrowserSession(cdp, port)) continue;
@@ -553,41 +719,84 @@ public:
     }
 
     std::pair<bool, QString> login(BrowserType type, const QString &baseUrl, const std::function<void(QString)> &status) {
+        PlayerLog::write(S("[trackers] login() started for %1, baseUrl=%2").arg(Browsers::displayName(type)).arg(baseUrl));
         const QString exe = Browsers::executable(type);
         const QString name = Browsers::displayName(type);
         if (exe.isEmpty()) return {false, tx(S("trackers.browser_not_found"), {{"browser", name}})};
         if (const auto have = existing(type, baseUrl); have && have->contains(S("bb_session"))) {
+            PlayerLog::write(S("[trackers] login() found valid existing cookies in profile"));
             BrowserBridge::setPreferredType(type);
             return {true, *have};
         }
         stopInternal(); // фоновый браузер держит профиль
+        sleepMs(300);   // даём ОС гарантированно освободить файловые блокировки SingletonLock профиля
 
         Proc proc;
         const int port = freePort();
-        QStringList args = browserArgs(port, BrowserBridge::profileDir(type));
+        QStringList args = browserArgs(port, BrowserBridge::profileDir(type), true);
         args << trimSlash(baseUrl) + S("/forum/login.php");
+        PlayerLog::write(S("[trackers] launching visible %1 on port %2").arg(name).arg(port));
         status(tx(S("trackers.browser_opening"), {{"browser", name}}));
-        if (!launch(proc, exe, args, Launch::Visible)) return {false, tx(S("trackers.browser_connect_failed"), {{"browser", name}})};
+        if (!launch(proc, exe, args, Launch::Visible)) {
+            PlayerLog::write(S("[trackers] launch visible %1 failed").arg(name));
+            return {false, tx(S("trackers.browser_connect_failed"), {{"browser", name}})};
+        }
+#ifdef Q_OS_WIN
+        s_activeVisiblePid = DWORD(proc.pid);
+#endif
+        PlayerLog::write(S("[trackers] visible %1 launched (pid %2), connecting to CDP...").arg(name).arg(proc.pid));
         Cdp cdp;
         bool connected = false;
         for (int i = 0; i < 30 && !connected && !aborting; ++i) { sleepMs(200); connected = openBrowserSession(cdp, port); }
-        if (!connected) { proc.kill(); return {false, tx(S("trackers.browser_connect_failed"), {{"browser", name}})}; }
+        if (!connected) {
+            PlayerLog::write(S("[trackers] visible %1 failed to connect to CDP on port %2").arg(name).arg(port));
+#ifdef Q_OS_WIN
+            s_activeVisiblePid = 0;
+#endif
+            proc.kill();
+            return {false, tx(S("trackers.browser_connect_failed"), {{"browser", name}})};
+        }
+        PlayerLog::write(S("[trackers] visible %1 CDP connected, waiting for user login...").arg(name));
         status(tx(S("trackers.browser_login_prompt"), {{"browser", name}}));
+        int consecutiveClosed = 0;
         for (int i = 0; i < 360 && !aborting; ++i) { // до 3 минут
             sleepMs(500);
-            if (!proc.running()) { proc.kill(); return {false, tx(S("trackers.browser_window_closed"))}; }
+            const bool running = proc.running();
+            const bool wsConnected = (cdp.ws.state() == QAbstractSocket::ConnectedState);
+            if (!running && !wsConnected) {
+                // И процесс корня завершён, и веб-сокет CDP отключился
+                ++consecutiveClosed;
+                if (consecutiveClosed >= 2) {
+                    PlayerLog::write(S("[trackers] visible %1 closed by user (proc dead and CDP disconnected)").arg(name));
+#ifdef Q_OS_WIN
+                    s_activeVisiblePid = 0;
+#endif
+                    proc.kill();
+                    return {false, tx(S("trackers.browser_window_closed"))};
+                }
+            } else {
+                consecutiveClosed = 0;
+            }
             const auto r = cdp.send(S("Storage.getCookies"), {});
             if (!r) continue;
             const auto header = RuTracker::formatTrackerCookies(r->value(S("result")).toObject().value(S("cookies")).toArray(), baseUrl);
             if (header && header->contains(S("bb_session"))) {
+                PlayerLog::write(S("[trackers] visible %1 login successful! Captured cookies: %2").arg(name).arg(*header));
                 status(tx(S("trackers.browser_login_success")));
                 BrowserBridge::setPreferredType(type);
                 cdp.send(S("Browser.close"), {}, 1500);
                 proc.waitExit(1500);
+#ifdef Q_OS_WIN
+                s_activeVisiblePid = 0;
+#endif
                 proc.kill();
                 return {true, *header};
             }
         }
+        PlayerLog::write(S("[trackers] visible %1 login loop ended (timeout or aborting=%1)").arg(name).arg(aborting.load()));
+#ifdef Q_OS_WIN
+        s_activeVisiblePid = 0;
+#endif
         proc.kill();
         return {false, tx(S("trackers.browser_timeout"))};
     }
@@ -809,6 +1018,7 @@ private:
     /// Просим браузер закрыться самому (допишет cookie и cf_clearance в профиль), потом закрываем всё.
     void stopInternal(bool graceful = true) {
         m_idle.stop();
+        m_stopRequested = false;
         if (m_port && graceful && m_proc.running()) {
             const auto r = http(S("http://127.0.0.1:%1/json/version").arg(m_port), "GET", 300);
             if (r.ok && r.code == 200) {
@@ -835,13 +1045,13 @@ private:
         }
         m_running = false;
         if (!aborting) {
-            // Браузер закрывается через 15 с без нового поиска
-            if (!m_idleWired) {
-                m_idle.setSingleShot(true);
-                QObject::connect(&m_idle, &QTimer::timeout, this, [this] { scheduleStop(); });
-                m_idleWired = true;
+            if (m_stopRequested) {
+                m_stopRequested = false;
+                stopInternal();
+            } else {
+                // Браузер закрывается через 15 с без нового поиска
+                m_idle.start(IDLE_SHUTDOWN_MS);
             }
-            m_idle.start(IDLE_SHUTDOWN_MS);
         }
     }
 
@@ -849,7 +1059,6 @@ private:
     Proc m_proc;
     int m_port = 0;
     QTimer m_idle;
-    bool m_idleWired = false;
     std::deque<std::function<void()>> m_queue;
     bool m_running = false;
     std::optional<QStringList> m_videoForums;
@@ -863,6 +1072,9 @@ BrowserBridge &BrowserBridge::instance() {
 }
 
 BrowserBridge::BrowserBridge() {
+#ifdef Q_OS_WIN
+    cleanOrphanTrackerProcesses();
+#endif
     m_thread = new QThread;
     m_thread->setObjectName(S("browser-bridge"));
     m_worker = new Worker;
@@ -972,6 +1184,15 @@ void BrowserBridge::shutdown() {
     }
     m_worker = nullptr;
     m_thread = nullptr;
+#ifdef Q_OS_WIN
+    cleanOrphanTrackerProcesses();
+#endif
+}
+
+void BrowserBridge::cleanOrphanProcesses() {
+#ifdef Q_OS_WIN
+    cleanOrphanTrackerProcesses();
+#endif
 }
 
 } // namespace suslik::app

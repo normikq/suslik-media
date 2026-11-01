@@ -9,6 +9,10 @@ Item {
 
     SearchModel { id: s; library: lib }
 
+    onActiveChanged: {
+        if (!active) s.leave()
+    }
+
     function toTop() { flick.contentY = 0 }
     /// Проверка вёрстки (SM_OPEN=search:…): запрос как будто введён и нажат «Найти».
     function search(q) { queryField.text = q; s.run(q) }

@@ -1,5 +1,6 @@
 #include "SearchModel.h"
 #include "AddModel.h"
+#include "trackers/BrowserBridge.h"
 #include "trackers/RuTrackerClient.h"
 
 #include "suslik/core/ApiClient.h"
@@ -351,6 +352,10 @@ void SearchModel::follow(const QString &hitId, qint64 id, bool readyNow, int rou
             self->follow(hitId, id, false, round + 1, started);
         });
     });
+}
+
+void SearchModel::leave() {
+    BrowserBridge::instance().stopAsync();
 }
 
 } // namespace suslik::app

@@ -1,5 +1,6 @@
 #include "TrackerSettingsModel.h"
 #include "RuTrackerClient.h"
+#include "../player/PlayerLog.h"
 
 #include "suslik/core/Store.h"
 #include "suslik/core/Strings.h"
@@ -122,6 +123,7 @@ void TrackerSettingsModel::capture() {
     if (m_busy || m_selected < 0 || m_selected >= m_browsers.size()) return;
     const DetectedBrowser target = m_browsers[m_selected];
     const QString name = Browsers::displayName(target.type);
+    PlayerLog::write(S("[trackers] TrackerSettingsModel::capture() selected=%1, browser=%2").arg(m_selected).arg(name));
     m_busy = true;
     m_browserStatus.clear();
     emit changed();
@@ -136,6 +138,7 @@ void TrackerSettingsModel::capture() {
             },
             [self, target, name](bool ok, const QString &result) {
                 if (!self) return;
+                PlayerLog::write(S("[trackers] TrackerSettingsModel::capture result: ok=%1, msg=%2").arg(ok).arg(result));
                 self->m_busy = false;
                 if (ok) {
                     BrowserBridge::setPreferredType(target.type);

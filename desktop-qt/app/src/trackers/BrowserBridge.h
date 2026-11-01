@@ -74,10 +74,12 @@ public:
     /// Окно браузера со страницей входа; cookie забираются, как только появится bb_session (до 3 мин).
     void loginAndCapture(BrowserType t, const QString &baseUrl, QObject *ctx, std::function<void(QString status)> onStatus,
                          std::function<void(bool ok, QString cookieOrError)> cb);
-    /// Закрыть фоновый браузер, когда он больше не нужен (окно «Трекеры» закрыто).
+    /// Закрыть фоновый браузер, когда он больше не нужен (окно «Трекеры» закрыто или вышли из вкладки «Поиск раздач»).
     void stopAsync();
     /// Выход из программы: браузер закрывается сразу.
     void shutdown();
+    /// Принудительно закрыть зависшие процессы профилей трекера (Edge, Chrome, Яндекс...).
+    static void cleanOrphanProcesses();
 
 private:
     BrowserBridge();
