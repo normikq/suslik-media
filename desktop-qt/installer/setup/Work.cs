@@ -41,6 +41,15 @@ namespace SuslikSetup
                     Msi.Uninstall(other, (f, a) => { }, () => ct.IsCancellationRequested, App.Log);
                 }
 
+                // Старая Kotlin-версия: её заменяет эта программа. Удаляем до установки — у ярлыков то же имя «Suslik Media»,
+                // и удаление после установки забрало бы новые. Не удалилась — ставим всё равно, она просто останется рядом.
+                if (Product.OldVersion.Installed)
+                {
+                    files(0, "Удаление прежней версии Suslik Media…");
+                    var old = Product.OldVersion.Remove((f, a) => files(0, "Удаление прежней версии Suslik Media…"), () => ct.IsCancellationRequested, App.Log);
+                    if (old != null) try { File.AppendAllText(App.Log, $"{DateTime.Now:s} прежняя версия не удалилась: {old}\r\n"); } catch { }
+                }
+
                 var cmd = $"ARPSYSTEMCOMPONENT=1 INSTALLDIR=\"{folder.TrimEnd('\\')}\" REBOOT=ReallySuppress";
                 if (installed.Contains(code)) cmd += " REINSTALL=ALL REINSTALLMODE=vomus"; // та же версия: переустановить
                 var r = Msi.Install(package, cmd, files, () => ct.IsCancellationRequested, App.Log);

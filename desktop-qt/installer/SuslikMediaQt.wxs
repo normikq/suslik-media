@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   Установщик Qt-версии (WiX 3). Ставится для текущего пользователя, без прав администратора,
-  в %LOCALAPPDATA%\Programs\<имя>, рядом со старой Kotlin-версией (у неё свой UpgradeCode и своя папка).
+  в %LOCALAPPDATA%\Programs\<папка>. У Kotlin-версии свой UpgradeCode и своя папка: с 3.0.0 её удаляет «Suslik Media Setup.exe»
+  перед установкой (installer/setup/Work.cs), сам MSI её не трогает. Название в «Пуске» — «Suslik Media», как у неё.
   Файлы программы — из heat (files.wxs), собирает build-msi.sh. libmpv-2.dll в MSI нет: её докачивает программа (MpvInstall).
   Переменные: Version, Product, UpgradeCode, Folder, Icon, Src.
 -->
@@ -40,7 +41,7 @@
                   WorkingDirectory="INSTALLDIR" Icon="app.ico" />
         <RemoveFolder Id="RemoveProgramsDir" Directory="ProgramsDir" On="uninstall" />
         <RemoveFolder Id="RemoveInstallDir" On="uninstall" />
-        <RegistryValue Root="HKCU" Key="Software\Suslik Media\$(var.Product)" Name="installed" Type="integer" Value="1" KeyPath="yes" />
+        <RegistryValue Root="HKCU" Key="Software\Suslik Media\$(var.Folder)" Name="installed" Type="integer" Value="1" KeyPath="yes" />
       </Component>
     </DirectoryRef>
 

@@ -40,7 +40,7 @@ Store &prefs() { return Store::of(S("updates")); }
 Store &seen() { return Store::of(S("whatsnew")); }
 
 #ifdef Q_OS_WIN
-/// UpgradeCode установщика новой версии (свой, чтобы ставиться рядом со старой; см. docs/QT-PORT.md, шаг 4).
+/// UpgradeCode установщика Qt-версии (свой; Kotlin-версию при установке убирает установщик, см. docs/QT-PORT.md, шаг 4).
 #ifdef SM_DIAG
 constexpr const wchar_t *kUpgradeCode = L"{F79D44DC-CEC2-4619-824F-32180E6B7698}";
 #else
@@ -103,8 +103,9 @@ qint64 Updater::tempBytes() { return folderBytes(tempDir()); }
 void Updater::cleanup() { QDir(tempDir()).removeRecursively(); }
 
 void Updater::latest(std::function<void(std::optional<Info>)> done) {
-    // Своя платформа: установщик старой версии сюда не попадёт (сервер различает их, пока — шаг 4).
-    m_api.get(S("/api/app/update?platform=desktop-qt"), [this, done](const ApiResult &r) {
+    // С 3.0.0 Qt-версия заменяет Kotlin-версию: та же платформа «desktop» на сервере, установщик там один
+    // (desktop-qt.yml выкладывает «Suslik Media Setup-<V>.exe»; старая версия обновляется им же и удаляется, Work.cs).
+    m_api.get(S("/api/app/update?platform=desktop"), [this, done](const ApiResult &r) {
         if (!r.ok() || !r.json.value(S("available")).toBool()) { done(std::nullopt); return; }
         Info i;
         i.version = r.json.value(S("version")).toString();
