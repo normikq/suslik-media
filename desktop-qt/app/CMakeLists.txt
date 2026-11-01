@@ -1,5 +1,5 @@
 # Приложение: интерфейс на QML поверх ядра (core/). План — docs/QT-PORT.md.
-find_package(Qt6 6.4 REQUIRED COMPONENTS Gui Quick OpenGL ShaderTools)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Gui Quick OpenGL ShaderTools WebSockets)
 
 qt_add_executable(suslik_media WIN32
   main.cpp
@@ -16,6 +16,10 @@ qt_add_executable(suslik_media WIN32
   src/AudioAttach.cpp src/AudioAttach.h
   src/Settings.cpp src/Settings.h
   src/Updater.cpp src/Updater.h
+  src/SearchModel.cpp src/SearchModel.h
+  src/trackers/BrowserBridge.cpp src/trackers/BrowserBridge.h
+  src/trackers/RuTrackerClient.cpp src/trackers/RuTrackerClient.h
+  src/trackers/TrackerSettingsModel.cpp src/trackers/TrackerSettingsModel.h
   src/player/Mpv.cpp src/player/Mpv.h
   src/player/MpvEngine.cpp src/player/MpvEngine.h
   src/player/MpvVideo.cpp src/player/MpvVideo.h
@@ -83,7 +87,7 @@ target_compile_definitions(suslik_media PRIVATE
   SM_SITE_URL="${SM_SITE_URL}"
   $<$<BOOL:${SM_DIAG}>:SM_DIAG>
 )
-target_link_libraries(suslik_media PRIVATE suslik_core Qt6::Gui Qt6::Quick Qt6::OpenGL)
+target_link_libraries(suslik_media PRIVATE suslik_core Qt6::Gui Qt6::Quick Qt6::OpenGL Qt6::WebSockets)
 if(WIN32)
   # Значок и версия в самом .exe; путь к значку — с прямыми слешами (rc.exe понимает)
   set(SM_ICON "${CMAKE_CURRENT_SOURCE_DIR}/../../desktop/icon.ico")

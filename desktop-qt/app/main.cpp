@@ -5,6 +5,9 @@
 #include "src/PlayModel.h"
 #include "src/AddModel.h"
 #include "src/AudioAttach.h"
+#include "src/SearchModel.h"
+#include "src/trackers/BrowserBridge.h"
+#include "src/trackers/TrackerSettingsModel.h"
 #include "src/Settings.h"
 #include "src/SingleInstance.h"
 #include "src/Updater.h"
@@ -104,6 +107,8 @@ int main(int argc, char *argv[]) {
     qmlRegisterType<app::PlayModel>("Suslik.Native", 1, 0, "PlayModel");
     qmlRegisterType<app::AddModel>("Suslik.Native", 1, 0, "AddModel");
     qmlRegisterType<app::AudioAttachModel>("Suslik.Native", 1, 0, "AudioAttachModel");
+    qmlRegisterType<app::SearchModel>("Suslik.Native", 1, 0, "SearchModel");
+    qmlRegisterType<app::TrackerSettingsModel>("Suslik.Native", 1, 0, "TrackerSettingsModel");
     qmlRegisterUncreatableType<app::PlayerModel>("Suslik.Native", 1, 0, "PlayerModel", QStringLiteral("one per app"));
     qmlRegisterType<app::MpvEngine>("Suslik.Native", 1, 0, "MpvEngine");
     qmlRegisterType<app::MpvVideo>("Suslik.Native", 1, 0, "MpvVideo");
@@ -165,6 +170,7 @@ int main(int argc, char *argv[]) {
     }).detach();
     mpvInstall.cancel();
     player.close();
+    app::BrowserBridge::instance().shutdown(); // фоновый браузер RuTracker
     app::Reserve::shutdown();
     return rc;
 }

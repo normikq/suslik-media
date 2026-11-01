@@ -112,10 +112,10 @@ Rectangle {
                     text: Ui.tx("sidebar.moya_mediateka"); active: side.inMine && side.category === 0; glowing: side.glowTab === 1
                     onClicked: { if (side.inMine) side.chooseCategory(0); side.select(1) }
                 }
-                // поиск по трекерам и совместный просмотр — позже: вкладки видны, но не нажимаются
                 NavItem {
-                    width: parent.width; expanded: side.expanded; icon: "search"; enabled_: false; note: Ui.tx("sidebar.skoro")
-                    text: Ui.tx("search.poisk_razdach")
+                    width: parent.width; expanded: side.expanded; icon: "search"
+                    text: Ui.tx("search.poisk_razdach"); active: side.tab === 2
+                    onClicked: side.select(2)
                 }
                 NavItem {
                     width: parent.width; expanded: side.expanded; icon: "link"
