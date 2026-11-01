@@ -1,37 +1,28 @@
-import QtQuick
+﻿import QtQuick
 
-// Картинка со скруглёнными углами и кадрированием «заполнить» (PreserveAspectCrop) без слоя: шейдер берёт текстуру
-// Image напрямую. Rounded (layer.enabled) заводит на каждый элемент отдельную текстуру-слой — для десятков плиток
-// это десятки FBO в памяти видеокарты.
+// Image в Rounded (layer.enabled) тратит на каждый постер отдельный текстурный слой — при десятках плиток
+// видеопамять уходит гигабайтами и Qt начинает мерцать. Здесь постер рисуется одним плоским ShaderEffect:
+// углы срезаются прямо из текстуры постера, без промежуточного буфера кадров.
 Item {
-    id: ri
-    property alias source: img.source
-    property alias sourceSize: img.sourceSize
-    readonly property alias status: img.status
+    id: r
     property real radius: 14
+    property alias source: img.source
+    property alias status: img.status
+    property alias sourceSize: img.sourceSize
     property real zoom: 1          // > 1 — картинка крупнее (наведение), края срезаются
     property bool fadeIn: true     // появляется плавно, когда раскодирована
 
-    // cache: true — повторно использовать текстуру постера без перечитывания с диска; mipmap: false — не дублировать текстуры (+33 % памяти)
-    Image { id: img; visible: false; asynchronous: true; smooth: true; mipmap: false; cache: true }
+    // mipmap: постер 360×540 в плитке ~180 px — без него при уменьшении и при наведении (zoom) картинка мерцает и «дёргается»
+    Image { id: img; visible: false; asynchronous: true; smooth: true; mipmap: true; cache: true }
 
     ShaderEffect {
         anchors.fill: parent
-        visible: img.status === Image.Ready
-        opacity: !ri.fadeIn || img.status === Image.Ready ? 1 : 0
-        Behavior on opacity { enabled: ri.fadeIn; NumberAnimation { duration: 200 } }
-        property variant source: img
-        property size size: Qt.size(width, height)
-        property real radius: ri.radius
-        property vector4d uvRect: {
-            const iw = img.implicitWidth, ih = img.implicitHeight
-            if (iw <= 0 || ih <= 0 || width <= 0 || height <= 0) return Qt.vector4d(0, 0, 1, 1)
-            const a = width / height, b = iw / ih
-            let sx = 1, sy = 1
-            if (b > a) sx = a / b; else sy = b / a
-            sx /= ri.zoom; sy /= ri.zoom
-            return Qt.vector4d((1 - sx) / 2, (1 - sy) / 2, sx, sy)
-        }
+        opacity: r.fadeIn && img.status === Image.Ready ? 1 : (r.fadeIn ? 0 : 1)
+        Behavior on opacity { NumberAnimation { duration: 200 } }
+        property real radius: r.radius
+        property size size: Qt.size(r.width, r.height)
+        property real zoom: r.zoom
+        property var source: img
         fragmentShader: "qrc:/sm/shaders/roundedimage.frag.qsb"
         onStatusChanged: if (status === ShaderEffect.Error) console.warn("roundedimage:", log)
     }

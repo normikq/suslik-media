@@ -1,4 +1,4 @@
-#include "ImageProvider.h"
+﻿#include "ImageProvider.h"
 #include "Library.h"
 
 #include <QBuffer>
@@ -17,43 +17,87 @@ namespace suslik::app {
 
 namespace {
 
-constexpr int GLOW_W = 96;
+constexpr int GLOW_W = 320;
 
-/// Размытие (три прохода «коробкой» 3×3) и края, тающие в фон: сверху и снизу по 30 %, по бокам по 12 % (как у прежней версии).
+inline double smoothstep(double edge0, double edge1, double x) {
+    const double t = std::clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+
+inline double rampSmooth(double t, double edge) {
+    if (t < edge) return smoothstep(0.0, edge, t);
+    if (t > 1.0 - edge) return smoothstep(1.0, 1.0 - edge, t);
+    return 1.0;
+}
+
+/// Мягкое свечение баннера: края плавно тают в фон (сверху/снизу 30 %, по бокам 12 %) и размываются 3 проходами
 QImage glowOf(QImage src) {
-    QImage img = src.convertToFormat(QImage::Format_ARGB32);
-    const int w = img.width(), h = img.height();
-    for (int pass = 0; pass < 3; ++pass) {
-        QImage out(w, h, QImage::Format_ARGB32);
-        for (int y = 0; y < h; ++y) {
-            auto *o = reinterpret_cast<QRgb *>(out.scanLine(y));
-            for (int x = 0; x < w; ++x) {
-                int r = 0, g = 0, b = 0, n = 0;
-                for (int dy = -1; dy <= 1; ++dy) {
-                    const int yy = std::clamp(y + dy, 0, h - 1);
-                    const auto *line = reinterpret_cast<const QRgb *>(img.constScanLine(yy));
-                    for (int dx = -1; dx <= 1; ++dx) {
-                        const QRgb c = line[std::clamp(x + dx, 0, w - 1)];
-                        r += qRed(c); g += qGreen(c); b += qBlue(c); ++n;
-                    }
-                }
-                o[x] = qRgb(r / n, g / n, b / n);
-            }
-        }
-        img = out;
-    }
-    auto ramp = [](double t, double edge) { return t < edge ? t / edge : t > 1 - edge ? (1 - t) / edge : 1.0; };
-    QImage res(w, h, QImage::Format_ARGB32_Premultiplied);
+    const int w = src.width(), h = src.height();
+    if (w <= 0 || h <= 0) return src;
+
+    src = src.convertToFormat(QImage::Format_ARGB32);
+    QImage cur(w, h, QImage::Format_ARGB32_Premultiplied);
     for (int y = 0; y < h; ++y) {
-        const auto *in = reinterpret_cast<const QRgb *>(img.constScanLine(y));
-        auto *o = reinterpret_cast<QRgb *>(res.scanLine(y));
-        const double ay = ramp((y + 0.5) / h, 0.3);
+        const auto *in = reinterpret_cast<const QRgb *>(src.constScanLine(y));
+        auto *o = reinterpret_cast<QRgb *>(cur.scanLine(y));
+        const double ay = rampSmooth((y + 0.5) / h, 0.30);
         for (int x = 0; x < w; ++x) {
-            const double a = std::clamp(ay * ramp((x + 0.5) / w, 0.12), 0.0, 1.0);
+            const double a = std::clamp(ay * rampSmooth((x + 0.5) / w, 0.12), 0.0, 1.0);
             o[x] = qPremultiply(qRgba(qRed(in[x]), qGreen(in[x]), qBlue(in[x]), int(a * 255)));
         }
     }
-    return res;
+
+    constexpr int RAD = 4;
+    constexpr int DIAM = 2 * RAD + 1;
+    QImage tmp(w, h, QImage::Format_ARGB32_Premultiplied);
+
+    for (int pass = 0; pass < 3; ++pass) {
+        // Горизонтальный проход
+        for (int y = 0; y < h; ++y) {
+            const auto *inLine = reinterpret_cast<const QRgb *>(cur.constScanLine(y));
+            auto *outLine = reinterpret_cast<QRgb *>(tmp.scanLine(y));
+            int sumA = 0, sumR = 0, sumG = 0, sumB = 0;
+            for (int dx = -RAD; dx <= RAD; ++dx) {
+                const int xx = std::clamp(dx, 0, w - 1);
+                const QRgb c = inLine[xx];
+                sumA += qAlpha(c); sumR += qRed(c); sumG += qGreen(c); sumB += qBlue(c);
+            }
+            outLine[0] = qRgba(sumR / DIAM, sumG / DIAM, sumB / DIAM, sumA / DIAM);
+            for (int x = 1; x < w; ++x) {
+                const int addX = std::clamp(x + RAD, 0, w - 1);
+                const int subX = std::clamp(x - RAD - 1, 0, w - 1);
+                const QRgb cAdd = inLine[addX];
+                const QRgb cSub = inLine[subX];
+                sumA += qAlpha(cAdd) - qAlpha(cSub);
+                sumR += qRed(cAdd) - qRed(cSub);
+                sumG += qGreen(cAdd) - qGreen(cSub);
+                sumB += qBlue(cAdd) - qBlue(cSub);
+                outLine[x] = qRgba(sumR / DIAM, sumG / DIAM, sumB / DIAM, sumA / DIAM);
+            }
+        }
+        // Вертикальный проход
+        for (int x = 0; x < w; ++x) {
+            int sumA = 0, sumR = 0, sumG = 0, sumB = 0;
+            for (int dy = -RAD; dy <= RAD; ++dy) {
+                const int yy = std::clamp(dy, 0, h - 1);
+                const QRgb c = reinterpret_cast<const QRgb *>(tmp.constScanLine(yy))[x];
+                sumA += qAlpha(c); sumR += qRed(c); sumG += qGreen(c); sumB += qBlue(c);
+            }
+            reinterpret_cast<QRgb *>(cur.scanLine(0))[x] = qRgba(sumR / DIAM, sumG / DIAM, sumB / DIAM, sumA / DIAM);
+            for (int y = 1; y < h; ++y) {
+                const int addY = std::clamp(y + RAD, 0, h - 1);
+                const int subY = std::clamp(y - RAD - 1, 0, h - 1);
+                const QRgb cAdd = reinterpret_cast<const QRgb *>(tmp.constScanLine(addY))[x];
+                const QRgb cSub = reinterpret_cast<const QRgb *>(tmp.constScanLine(subY))[x];
+                sumA += qAlpha(cAdd) - qAlpha(cSub);
+                sumR += qRed(cAdd) - qRed(cSub);
+                sumG += qGreen(cAdd) - qGreen(cSub);
+                sumB += qBlue(cAdd) - qBlue(cSub);
+                reinterpret_cast<QRgb *>(cur.scanLine(y))[x] = qRgba(sumR / DIAM, sumG / DIAM, sumB / DIAM, sumA / DIAM);
+            }
+        }
+    }
+    return cur;
 }
 
 class Response : public QQuickImageResponse {
@@ -62,7 +106,7 @@ public:
     QString errorString() const override { return m_error; }
 
     /// Раскодировать в пуле потоков (большие кадры баннера не тормозят интерфейс), потом finished() в главном.
-    /// glow — свечение баннера: маленькая размытая копия с прозрачными краями (растягивается в QML, размытие даром).
+    /// glow — свечение баннера: размытая копия с прозрачными краями (растягивается в QML, размытие даром).
     void decode(const QByteArray &bytes, QSize want, bool glow) {
         if (bytes.isEmpty()) { m_error = QStringLiteral("no image"); emit finished(); return; }
         QPointer<Response> self(this);
@@ -74,8 +118,6 @@ public:
             const QSize full = r.size();
             if (glow && full.isValid()) r.setScaledSize(full.scaled(GLOW_W, GLOW_W * 4, Qt::KeepAspectRatio));
             else if (full.isValid() && full.width() > 0 && full.height() > 0 && (want.width() > 0 || want.height() > 0)) {
-                // задана одна сторона (баннер: только ширина) — вторая по пропорциям. Раньше вторая бралась от полного
-                // кадра, и KeepAspectRatioByExpanding оставлял 4K-кадр как есть (33 МБ в памяти вместо 8)
                 QSize s;
                 if (want.width() > 0 && want.height() > 0) s = full.scaled(want, Qt::KeepAspectRatioByExpanding);
                 else if (want.width() > 0) s = QSize(want.width(), std::max(1, int(qint64(full.height()) * want.width() / full.width())));

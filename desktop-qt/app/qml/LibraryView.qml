@@ -1,15 +1,10 @@
-import QtQuick
+﻿import QtQuick
 import Suslik.Native
 
 // Страница медиатеки (LibraryView.kt): заголовок с поиском, «Продолжить просмотр», вид и сортировка, постеры по страницам.
 Item {
     id: v
     property bool mine: false
-    // Плитки скрытой вкладки создаются не сразу, а через пару секунд простоя (без постеров — они грузятся,
-    // когда плитку впервые видно): первый переход на вкладку не создаёт сетку посреди анимации
-    property bool wasEverVisible: visible
-    onVisibleChanged: if (visible) wasEverVisible = true
-    Timer { interval: 2500; running: !v.wasEverVisible && lib.authenticated === 1; onTriggered: v.wasEverVisible = true }
     property alias category: lp.category
     readonly property alias model: lp
     signal versionsRequested(string title, var ids)
@@ -44,6 +39,28 @@ Item {
                 const dy = ev.pixelDelta.y !== 0 ? ev.pixelDelta.y : ev.angleDelta.y / 120 * 110
                 flick.contentY = Math.max(0, Math.min(flick.contentHeight - flick.height, flick.contentY - dy))
             }
+        }
+
+        // Фоновое свечение баннера «Продолжить просмотр» (LibraryView.kt: ContinueRow glow):
+        // Расположено под Column (под заголовком, карточкой баннера и сеткой).
+        // Занимает всю ширину flick, мягко тает сверху, снизу и по бокам.
+        Image {
+            id: bannerGlow
+            visible: continueBanner.shown && continueBanner.visible && continueBanner.backdrop !== "" && !Theme.simple
+            source: continueBanner.backdrop !== "" ? "image://suslik/glow:" + continueBanner.backdrop : ""
+            asynchronous: true
+            smooth: true
+            x: 0
+            width: flick.width
+            readonly property real imgAspect: continueBanner.imgAspect
+            readonly property real fullH: Math.max(360, width * imgAspect)
+            height: fullH
+            // cardY — положение баннера в Flickable при contentY = 0
+            readonly property real cardY: content.y + continueBanner.y + 6
+            y: cardY + (360 - fullH) / 2 + continueBanner.glowShift
+            fillMode: Image.Stretch
+            opacity: status === Image.Ready && continueBanner.shown ? 0.55 : 0
+            Behavior on opacity { NumberAnimation { duration: 350 } }
         }
 
         Column {
@@ -101,10 +118,11 @@ Item {
             }
 
             ContinueBanner {
+                id: continueBanner
                 width: parent.width
                 page: lp
                 visible: !v.mine && lp.query.trim() === "" && lp.category === 0 && shown
-                roomAbove: 28 + y
+                roomAbove: content.y + y
             }
 
             // вид, сортировка, «только готовые» — одним меню справа
@@ -146,8 +164,7 @@ Item {
 
             Item { width: 1; height: 4 }
 
-            // Сетка своими силами: ширина и места плиток — целые пиксели (текст и постеры не «плывут» и не двоятся при
-            // изменении размера), а когда плитка переходит в другой ряд или столбец, она переезжает плавно (как animateItem)
+            // Сетка: ширина и места плиток — целые пиксели (текст и постеры не «плывут» и не двоятся при изменении размера)
             Item {
                 id: grid
                 visible: lp.viewMode === 0
@@ -160,7 +177,7 @@ Item {
                 readonly property int count: lp.viewMode === 0 ? lp.tiles.length : 0
                 height: count ? Math.ceil(count / cols) * (tileH + rowGap) - rowGap : 0
                 Repeater {
-                    model: (v.wasEverVisible && lp.viewMode === 0) ? lp.tiles : []
+                    model: lp.viewMode === 0 ? lp.tiles : []
                     Tile {
                         id: cell
                         required property var modelData
@@ -174,32 +191,6 @@ Item {
                         width: grid.tileW
                         height: grid.tileH
                         onFlyTo: (tab, rect, poster) => v.flyTo(tab, rect, poster)
-
-                        // переезд: плитка плавно съезжает на новое место только при смене ряда/столбца.
-                        // Обычное растяжение по x/y при ресайзе окна анимировать не нужно — иначе плитки дёргаются.
-                        property real placedX: NaN
-                        property real placedY: NaN
-                        property bool moved: false
-                        onColChanged: { moved = true; Qt.callLater(place) }
-                        onRowChanged: { moved = true; Qt.callLater(place) }
-                        onXChanged: if (!moved) { placedX = x }
-                        onYChanged: if (!moved) { placedY = y }
-                        function place() {
-                            if (moved && !isNaN(placedX) && !Theme.simple) {
-                                shift.x += placedX - x
-                                shift.y += placedY - y
-                                slide.restart()
-                            }
-                            moved = false
-                            placedX = x; placedY = y
-                        }
-                        Component.onCompleted: { placedX = x; placedY = y }
-                        transform: Translate { id: shift }
-                        ParallelAnimation {
-                            id: slide
-                            NumberAnimation { target: shift; property: "x"; to: 0; duration: 420; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease }
-                            NumberAnimation { target: shift; property: "y"; to: 0; duration: 420; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease }
-                        }
                     }
                 }
             }
@@ -208,7 +199,7 @@ Item {
                 width: parent.width
                 spacing: 12
                 Repeater {
-                    model: (v.wasEverVisible && lp.viewMode === 1) ? lp.tiles : []
+                    model: lp.viewMode === 1 ? lp.tiles : []
                     ListRow { required property var modelData; t: modelData; page: lp; width: parent.width }
                 }
             }

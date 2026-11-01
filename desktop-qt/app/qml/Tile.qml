@@ -1,4 +1,4 @@
-import QtQuick
+﻿import QtQuick
 
 // Плитка-постер (LibraryView.kt: Tile): наведение поднимает и чуть увеличивает, детали появляются снизу,
 // в углах — «Мои фильмы» и избранное, справа сверху — версии и отметки (Dolby Vision, HDR, DTS); правая кнопка — меню.
@@ -7,10 +7,6 @@ Item {
     property var t: ({})
     property var page
     signal flyTo(int tab, var rect, string poster)   // постер летит в раздел боковой панели
-
-    // постер грузится, когда плитку впервые видно (сетку скрытой вкладки создают заранее, без картинок)
-    property bool everShown: false
-    onVisibleChanged: if (visible) everShown = true
 
     // место постера для вылета плеера (ExitFlight.kt: trackBounds); сменился фильм — старая запись уходит
     property var trackedId: 0
@@ -21,7 +17,7 @@ Item {
         trackedId = id
         Theme.track(Theme.posters, id, tile)
     }
-    Component.onCompleted: { everShown = visible; retrack() }
+    Component.onCompleted: retrack()
     Component.onDestruction: Theme.untrack(Theme.posters, trackedId, tile)
     onTChanged: retrack()
 
@@ -34,6 +30,8 @@ Item {
         id: card
         anchors.fill: parent
         transform: Translate { y: tile.hovered ? -6 : 0; Behavior on y { NumberAnimation { duration: 280; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease } } }
+        scale: tile.hovered ? 1.025 : 1
+        Behavior on scale { NumberAnimation { duration: 280; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease } }
 
         // Без слоя: фон и затемнения — Rectangle со скруглением, постер — RoundedImage (шейдер по текстуре)
         Rectangle { anchors.fill: parent; radius: 14; color: "#13161F" }
@@ -47,8 +45,8 @@ Item {
             id: poster
             anchors.fill: parent
             radius: 14
-            source: tile.everShown && tile.t.poster ? "image://suslik" + tile.t.poster : ""
-            sourceSize: Qt.size(240, 360)
+            source: tile.t.poster ? "image://suslik" + tile.t.poster : ""
+            sourceSize: Qt.size(360, 540)
             zoom: tile.hovered ? 1.06 : 1
             Behavior on zoom { NumberAnimation { duration: 360; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease } }
         }
