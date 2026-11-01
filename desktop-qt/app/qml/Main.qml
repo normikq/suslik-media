@@ -139,10 +139,6 @@ Window {
     property var playerFrom: null     // где был постер в момент открытия (медиатека ещё не отступила)
     property var playerHome: null     // куда улетать: читается на каждом кадре закрытия, последнее найденное держится
 
-    // Старт видеопотока (NOTIFY stateChanged): при переходе false → true запускаем таймер выгрузки
-    readonly property bool playerStarted: player.started
-    onPlayerStartedChanged: if (playerStarted && player.open && !player.closing) playerStartedUnloadTimer.restart()
-
     Connections {
         target: player
         function onOpenChanged() {
@@ -162,7 +158,6 @@ Window {
                     presenceAnim.start()
                 }
             } else if (player.closing && !win.playerLeaving) {
-                playerStartedUnloadTimer.stop()
                 win.playerLeaving = true      // медиатека снова видна: её постеры можно найти
                 win.playerHome = Theme.target(win.playerFilm)
                 presenceAnim.stop()
@@ -191,18 +186,6 @@ Window {
             } else if (win.playerPresence === 1) {
                 // При открытии экрана плеера — лёгкая сборка мусора медиатеки под ним (без сброса страниц ОС)
                 Ui.trimMemory()
-            }
-        }
-    }
-
-    // Выгрузка страниц неиспользуемой медиатеки через 3 с после старта видеопотока (когда буфер mpv набран и воспроизведение стабильно)
-    Timer {
-        id: playerStartedUnloadTimer
-        interval: 3000
-        repeat: false
-        onTriggered: {
-            if (player.started && player.open && !player.closing && win.playerPresence === 1) {
-                Ui.unloadMemory()
             }
         }
     }

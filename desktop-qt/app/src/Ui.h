@@ -40,7 +40,7 @@ public:
     Q_INVOKABLE void styleTitleBar(QWindow *w) const;
     /// Мягкий сброс: сборка мусора QML, очистка кэша компонентов и пиксмапов интерфейса (без сброса страниц ОС).
     Q_INVOKABLE void trimMemory() const;
-    /// Полная выгрузка: сборка мусора + сброс физических страниц процесса в ОС (через 3 с после старта фильма или при сворачивании > 30 с).
+    /// Полная выгрузка: сборка мусора + сброс физических страниц процесса в ОС (при сворачивании > 30 с).
     Q_INVOKABLE void unloadMemory() const;
     /// Переменная окружения (проверка вёрстки: SM_OPEN открывает окно сразу после запуска).
     Q_INVOKABLE QString env(const QString &name) const { return qEnvironmentVariable(name.toUtf8().constData()); }
