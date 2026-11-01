@@ -28,9 +28,10 @@ async function exchangeOAuthCode(code, redirectUri) {
     client_id: config.DISCORD_CLIENT_ID,
     client_secret: config.DISCORD_CLIENT_SECRET,
     grant_type: "authorization_code",
-    code: String(code),
-    redirect_uri: redirectUri
+    code: String(code)
   });
+  // Код из Discord Activity (commands.authorize) обменивается без redirect_uri
+  if (redirectUri) params.set("redirect_uri", redirectUri);
 
   const res = await axios.post(`${DISCORD_API_BASE}/oauth2/token`, params.toString(), {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },

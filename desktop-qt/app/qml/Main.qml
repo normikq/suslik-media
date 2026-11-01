@@ -129,6 +129,31 @@ Window {
     readonly property bool partyGuest: party.guest
     onPartyGuestChanged: if (partyGuest && (tab === 0 || tab === 1)) select(4)
     PartyFollow { anchors.fill: parent }
+    // Вошли по ссылке из Discord Activity: страница комнаты; ведущему — сразу фильм комнаты (гостю его откроет PartyFollow)
+    // При холодном запуске медиатека ещё грузится: ключ ждёт её в pendingRoomKey и открывается по versionChanged
+    property string pendingRoomKey: ""
+    function playRoomKey() {
+        const key = win.pendingRoomKey
+        if (key === "" || !party.isHost || party.fileKey !== key) { win.pendingRoomKey = ""; return }
+        const bar = key.indexOf("|")
+        const id = Number(key.substring(0, bar)), path = key.substring(bar + 1)
+        if (!lib.hasFile(id, path)) return
+        win.pendingRoomKey = ""
+        dialogs.play_(id, path)
+    }
+    Connections {
+        target: party
+        function onRoomLinkOpened() {
+            win.select(4)
+            win.pendingRoomKey = party.isHost ? party.fileKey : ""
+            win.playRoomKey()
+        }
+    }
+    Connections {
+        target: lib
+        enabled: win.pendingRoomKey !== ""
+        function onVersionChanged() { win.playRoomKey() }
+    }
     Dialogs { id: dialogs; anchors.fill: parent }
     SettingsSheet { id: settingsSheet; anchors.fill: parent }
     WhatsNew { anchors.fill: parent }
