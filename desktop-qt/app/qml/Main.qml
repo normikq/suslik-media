@@ -16,6 +16,7 @@ Window {
         if (t !== tab) {
             prevTab = tab
             tab = t
+            if (t === 0 || t === 1) lib.refresh()
         }
     }
 
@@ -140,6 +141,11 @@ Window {
 
     Connections {
         target: player
+        function onStartedChanged() {
+            if (player.started && player.open && !player.closing) {
+                playerStartedUnloadTimer.restart()
+            }
+        }
         function onOpenChanged() {
             if (player.open && !player.closing) {
                 win.playerLeaving = false
@@ -149,7 +155,7 @@ Window {
                 presenceAnim.stop()
                 if (Theme.simple) {
                     win.playerPresence = 1
-                    playerOpenTrimTimer.restart()
+                    Ui.trimMemory()
                 } else {
                     presenceAnim.from = win.playerPresence
                     presenceAnim.to = 1
@@ -157,6 +163,7 @@ Window {
                     presenceAnim.start()
                 }
             } else if (player.closing && !win.playerLeaving) {
+                playerStartedUnloadTimer.stop()
                 win.playerLeaving = true      // медиатека снова видна: её постеры можно найти
                 win.playerHome = Theme.target(win.playerFilm)
                 presenceAnim.stop()
@@ -183,18 +190,19 @@ Window {
                 if (player.closing) player.finishClose()
                 Ui.trimMemory()
             } else if (win.playerPresence === 1) {
-                playerOpenTrimTimer.restart()
+                // При открытии экрана плеера — лёгкая сборка мусора медиатеки под ним (без сброса страниц ОС)
+                Ui.trimMemory()
             }
         }
     }
 
-    // При открытии плеера: медиатека под ним скрыта — выгрузка неиспользуемой памяти
+    // Выгрузка страниц неиспользуемой медиатеки через 3 с после старта видеопотока (когда буфер mpv набран и воспроизведение стабильно)
     Timer {
-        id: playerOpenTrimTimer
-        interval: 1000
+        id: playerStartedUnloadTimer
+        interval: 3000
         repeat: false
         onTriggered: {
-            if (player.open && !player.closing && win.playerPresence === 1) {
+            if (player.started && player.open && !player.closing && win.playerPresence === 1) {
                 Ui.unloadMemory()
             }
         }
