@@ -50,7 +50,9 @@
     if (ready) return ready;
     if (!inDiscord) return (ready = Promise.reject(new Error('not_in_discord')));
     source = g.parent.opener || g.parent;
-    target = document.referrer ? document.referrer : '*';
+    // postMessage сам берёт origin из адреса; приводим явно, чтобы не зависеть от разбора
+    target = '*';
+    try { if (document.referrer) target = new URL(document.referrer).origin; } catch (e) { /* остаётся '*' */ }
     g.addEventListener('message', onMessage);
     ready = new Promise(function (resolve, reject) {
       readyResolve = resolve;

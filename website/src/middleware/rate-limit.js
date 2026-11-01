@@ -138,7 +138,7 @@ const roomLimiter = rateLimit({
 // Вход из Discord Activity: ещё без ключа, а адрес у всех один — прокси Discord. Каждый запуск Activity входит заново
 const activityAuthLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 60,
+  limit: 400,
   standardHeaders: "draft-7",
   legacyHeaders: false,
   handler: (req, res, next, options) => res.status(options.statusCode).json({ error: "Слишком много входов. Попробуйте через несколько минут." })

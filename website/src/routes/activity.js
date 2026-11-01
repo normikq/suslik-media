@@ -144,6 +144,7 @@ router.get("/api/activity/rooms/:id/events", requireLogin, (req, res) => {
     if (!resolveAuth(req)) return res.end();
     send(": ping\n\n");
   }, 20000);
+  pingTimer.unref?.();
   res.on("close", () => {
     clearInterval(pingTimer);
     removeListener();
@@ -185,6 +186,8 @@ function joinPage() {
   return joinTemplate;
 }
 router.get("/join/:code", apiLimiter, (req, res) => {
+  // /join/842-190/ → без слэша: иначе относительные ../activity/… уходят мимо
+  if (req.path.endsWith("/")) return res.redirect(301, `${basePath(req)}${config.SITE_PREFIX || ""}${req.path.replace(/\/+$/, "")}`);
   const code = String(req.params.code || "").replace(/[^0-9a-z]/gi, "").toLowerCase().slice(0, 24);
   const html = joinPage();
   if (!code || !html) return res.status(404).type("text").send("Нет такой комнаты.");

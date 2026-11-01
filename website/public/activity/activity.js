@@ -217,8 +217,16 @@
         }).then(function (b) { return URL.createObjectURL(b); });
       });
     }
+    // Не больше 200 картинок в памяти: дольше всех не нужные освобождаются (как у ТВ)
+    var order = [], LIMIT = 200;
+    function remember(key, u) {
+      urls[key] = u;
+      if (!u) return;
+      order.push(key);
+      while (order.length > LIMIT) { var old = order.shift(); if (urls[old]) URL.revokeObjectURL(urls[old]); delete urls[old]; }
+    }
     function done(key, u, failed) {
-      if (!failed) urls[key] = u;
+      if (!failed) remember(key, u);
       (waits[key] || []).forEach(function (cb) { if (u) cb(u); });
       delete waits[key];
       active--;
