@@ -106,6 +106,8 @@ public:
     QStringList tagsOf(const LibraryItem &item) const;
     /// Сколько фильмов в каждой категории (на странице «Моя медиатека» — среди своих).
     Q_INVOKABLE QVariantMap categoryCounts(bool mine) const;
+    /// Есть ли в медиатеке этот файл раздачи (фильм комнаты «Вместе» по ключу magnetId|путь).
+    Q_INVOKABLE bool hasFile(qint64 magnetId, const QString &path) const;
 
     // ---- постеры ----
     /// Путь картинки сервера (/api/poster/img/…) для плитки, если уже известен; иначе запрашивает и потом повышает version.

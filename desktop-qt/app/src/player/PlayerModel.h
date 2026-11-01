@@ -70,6 +70,9 @@ class PlayerModel : public QObject, private core::PlaybackSupervisor::Actions {
     /// Под звуковыми дорожками: «Запомнить задержку для всех (…)» и «Удалить озвучку» (пусто — кнопки нет).
     Q_PROPERTY(QString saveDelayText READ saveDelayText NOTIFY tracksExtraChanged)
     Q_PROPERTY(QString deleteTrackText READ deleteTrackText NOTIFY tracksExtraChanged)
+    /// Гость комнаты «Вместе» с её фильмом: перемотку, паузу (пока её держит ведущий) и серии выбирает ведущий.
+    Q_PROPERTY(bool partyGuest READ partyGuest NOTIFY partyChanged)
+    Q_PROPERTY(bool playLocked READ playLocked NOTIFY partyChanged)
 
 public:
     explicit PlayerModel(QObject *parent = nullptr);
@@ -159,6 +162,29 @@ public:
     Q_INVOKABLE QString clock(qint64 ms) const;
     Q_INVOKABLE QString rateText(double r) const;
 
+    // ---- совместный просмотр (party/PartySync) ----
+    bool partyGuest() const;
+    /// Гость, а ведущий держит паузу (или комната ждёт загрузку): снять её гость не может.
+    bool playLocked() const;
+    QString currentWatchKey() const { return watchKey(); }
+    /// Открыт ли этот файл в очереди плеера (гость комнаты: ведущий перешёл к серии, которая уже в ней).
+    Q_INVOKABLE bool hasWatchKey(const QString &key) const { return m_open && !m_closing && m_req.watchKeys.contains(key); }
+    QStringList watchKeys() const { return m_req.watchKeys; }
+    /// Как фильм зовётся в комнате: подпись из медиатеки или название.
+    QString entryLabel() const;
+    /// Где картинка (сразу после перемотки mpv ещё показывает старое место — тогда цель полосы).
+    qint64 syncTimeMs() const;
+    bool syncBusy() const { return m_scrubbing || m_pendingSeek.has_value(); }
+    qint64 engineMs() const;
+    qint64 seekStamp() const { return m_lastSeekAt; }
+    bool running() const;
+    void roomSetPaused(bool paused);
+    void roomSeekTo(qint64 t);
+    void roomPlayEntry(int i);
+    /// Скорость самого движка (подстройка дрейфа); своя скорость плеера — rate().
+    void engineRate(double r);
+    void showNotice(const QString &text) { flash(text); }
+
     /// Для SMTC и Discord: строка 1 и 2.
     std::pair<QString, QString> mediaTitles() const;
     Presence presence() const;
@@ -177,6 +203,7 @@ signals:
     void nextChanged();
     void infoChanged();
     void tracksExtraChanged();
+    void partyChanged();
     /// Короткая надпись поверх (громкость, скорость…).
     void flashed(const QString &text);
     /// Плеер закрылся (окно убирает экран плеера).
@@ -277,6 +304,7 @@ private:
     qint64 m_bufferingSince = 0;
     int m_bufferingShown = 0;
     bool m_scrubbing = false;
+    bool m_byRoom = false;   ///< действие пришло от комнаты «Вместе», а не от человека
     std::optional<qint64> m_pendingSeek;
     std::optional<core::MediaMarkers> m_serverMarkers;
     bool m_markersAsked = false;

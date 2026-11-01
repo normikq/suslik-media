@@ -22,7 +22,7 @@ Item {
     property bool barVisible: true
     property real hoverAt: -1          // время под мышью на полосе
     property real scrubAt: -1          // тянут ползунок
-    readonly property bool hold: !player.started || player.paused || player.nextIn >= 0 || picker !== "" || scrubAt >= 0 || player.infoOpen || player.inIntro
+    readonly property bool hold: !player.started || player.paused || player.nextIn >= 0 || picker !== "" || scrubAt >= 0 || player.infoOpen || (player.inIntro && !player.partyGuest)
                                  || topHover.hovered || colHover.hovered
     readonly property bool barsShown: barVisible || hold || mini && barVisible
 
@@ -337,7 +337,7 @@ Item {
 
             // «Пропустить заставку (S)»
             Item {
-                width: parent.width; height: player.inIntro && !pv.mini ? 46 : 0
+                width: parent.width; height: player.inIntro && !player.partyGuest && !pv.mini ? 46 : 0
                 visible: height > 0
                 Pill {
                     anchors.right: parent.right; anchors.top: parent.top
@@ -494,17 +494,37 @@ Item {
                 Rectangle {
                     id: nowBox
                     anchors.verticalCenter: parent.verticalCenter
-                    width: Math.max(52, nowText.implicitWidth + 12); height: nowText.implicitHeight + 4; radius: 6
+                    width: Math.max(52, (player.partyGuest ? 13 + liveWidth.implicitWidth : nowText.implicitWidth) + 12); height: nowText.implicitHeight + 4; radius: 6
+                    TextMetrics { id: liveWidth; text: Ui.tx("party.vmeste"); font.family: Theme.onest; font.weight: Font.DemiBold; font.pixelSize: 13 }
                     color: pv.hoverAt >= 0 || pv.scrubAt >= 0 ? "#29FFFFFF" : "transparent"
+                    // гость комнаты «Вместе»: полоса — «прямой эфир», ведёт ведущий
+                    Row {
+                        visible: player.partyGuest
+                        anchors.centerIn: parent
+                        spacing: 6
+                        Rectangle { anchors.verticalCenter: parent.verticalCenter; width: 7; height: 7; radius: 3.5; color: "#E5484D" }
+                        Text { text: Ui.tx("party.vmeste"); color: "white"; font.family: Theme.onest; font.weight: Font.DemiBold; font.pixelSize: 13 }
+                    }
                     Text {
                         id: nowText
+                        visible: !player.partyGuest
                         anchors.centerIn: parent
                         text: player.clock(pv.hoverAt >= 0 ? pv.hoverAt : pv.scrubAt >= 0 ? pv.scrubAt : player.time)
                         color: "white"; font.family: Theme.onest; font.pixelSize: 13
                         font.weight: pv.hoverAt >= 0 || pv.scrubAt >= 0 ? Font.Bold : Font.Medium
                     }
                 }
+                // как у стрима: полоса заполнена до конца, перемотки нет
+                Rectangle {
+                    visible: player.partyGuest
+                    anchors.left: nowBox.right; anchors.right: lenText.left
+                    anchors.leftMargin: 8; anchors.rightMargin: 8
+                    anchors.verticalCenter: parent.verticalCenter
+                    height: 4; radius: 2
+                    color: "#E5484D"
+                }
                 SeekBar_ {
+                    visible: !player.partyGuest
                     anchors.left: nowBox.right; anchors.right: lenText.left
                     anchors.leftMargin: 8; anchors.rightMargin: 8
                     anchors.verticalCenter: parent.verticalCenter
@@ -513,7 +533,7 @@ Item {
                     id: lenText
                     anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
                     width: Math.max(52, implicitWidth + 12); horizontalAlignment: Text.AlignRight
-                    text: player.length > 0 ? player.clock(player.length) : "--:--"
+                    text: player.partyGuest ? player.clock(player.time) : player.length > 0 ? player.clock(player.length) : "--:--"
                     color: Theme.muted; font.family: Theme.onest; font.weight: Font.Medium; font.pixelSize: 13
                 }
             }
@@ -526,8 +546,8 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 10
                     PlayButton { size: 42 }
-                    GlassBtn { visible: player.prevTitle !== ""; size: 42; tip: Ui.tx("player.predyduschaya"); onClicked: player.playEntry(player.index - 1); PlayerIcon { anchors.centerIn: parent; name: "prev"; size: 16 } }
-                    GlassBtn { visible: player.nextEntryTitle !== ""; size: 42; tip: Ui.tx("player.sleduyuschaya"); onClicked: player.playEntry(player.index + 1); PlayerIcon { anchors.centerIn: parent; name: "next"; size: 16 } }
+                    GlassBtn { visible: player.prevTitle !== "" && !player.partyGuest; size: 42; tip: Ui.tx("player.predyduschaya"); onClicked: player.playEntry(player.index - 1); PlayerIcon { anchors.centerIn: parent; name: "prev"; size: 16 } }
+                    GlassBtn { visible: player.nextEntryTitle !== "" && !player.partyGuest; size: 42; tip: Ui.tx("player.sleduyuschaya"); onClicked: player.playEntry(player.index + 1); PlayerIcon { anchors.centerIn: parent; name: "next"; size: 16 } }
                 }
                 Row {
                     anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
@@ -547,13 +567,13 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: pv.narrow ? 4 : pv.compact ? 6 : 10
                     GlassBtn {
-                        visible: player.prevTitle !== ""; size: pv.btn
+                        visible: player.prevTitle !== "" && !player.partyGuest; size: pv.btn
                         tip: Ui.tx("player.predyduschaya_p", { p: player.prevTitle })
                         onClicked: player.playEntry(player.index - 1)
                         PlayerIcon { anchors.centerIn: parent; name: "prev"; size: pv.compact ? 14 : 16 }
                     }
                     GlassBtn {
-                        visible: player.nextEntryTitle !== ""; size: pv.btn
+                        visible: player.nextEntryTitle !== "" && !player.partyGuest; size: pv.btn
                         tip: Ui.tx("player.sleduyuschaya_p", { p: player.nextEntryTitle })
                         onClicked: player.playEntry(player.index + 1)
                         PlayerIcon { anchors.centerIn: parent; name: "next"; size: pv.compact ? 14 : 16 }
@@ -570,9 +590,9 @@ Item {
                     id: centerGroup
                     anchors.centerIn: parent
                     spacing: pv.compact ? 8 : 12
-                    GlassBtn { size: pv.compact ? 38 : 42; tip: Ui.tx("player.nazad_na_sek"); onClicked: player.seekBy(-10000); SeekIcon { forward: false } }
+                    GlassBtn { visible: !player.partyGuest; size: pv.compact ? 38 : 42; tip: Ui.tx("player.nazad_na_sek"); onClicked: player.seekBy(-10000); SeekIcon { forward: false } }
                     PlayButton { size: pv.narrow ? 40 : pv.compact ? 44 : 48 }
-                    GlassBtn { size: pv.compact ? 38 : 42; tip: Ui.tx("player.vpered_na_sek"); onClicked: player.seekBy(10000); SeekIcon { forward: true } }
+                    GlassBtn { visible: !player.partyGuest; size: pv.compact ? 38 : 42; tip: Ui.tx("player.vpered_na_sek"); onClicked: player.seekBy(10000); SeekIcon { forward: true } }
                 }
                 Row {
                     anchors.right: parent.right; anchors.rightMargin: 4
@@ -650,7 +670,11 @@ Item {
 
     component PlayButton: GlassBtn {
         readonly property bool showPause: player.playing && !player.paused
-        tip: showPause ? Ui.tx("player.pauza_probel") : Ui.tx("player.vosproizvedenie_probel")
+        // гость: пока ведущий держит паузу, снять её нельзя
+        readonly property bool locked: player.playLocked && !showPause
+        enabled_: !locked
+        opacity: locked ? 0.45 : 1
+        tip: locked ? Ui.tx("party.pauzu_snimaet_sozdatel") : showPause ? Ui.tx("player.pauza_probel") : Ui.tx("player.vosproizvedenie_probel")
         onClicked: player.togglePause()
         Row {
             anchors.centerIn: parent

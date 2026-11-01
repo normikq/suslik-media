@@ -5,6 +5,11 @@
 #include "src/PlayModel.h"
 #include "src/AddModel.h"
 #include "src/AudioAttach.h"
+#include "src/SearchModel.h"
+#include "src/trackers/BrowserBridge.h"
+#include "src/trackers/TrackerSettingsModel.h"
+#include "src/party/Party.h"
+#include "src/party/PartySync.h"
 #include "src/Settings.h"
 #include "src/SingleInstance.h"
 #include "src/Updater.h"
@@ -97,6 +102,12 @@ int main(int argc, char *argv[]) {
     player.setLibrary(&library);
     app::WindowMode windowMode;
     app::MpvInstall mpvInstall(site);
+    // «Вместе»: комната и плеер в ней (до MediaSession — у Discord «Смотрит вместе»)
+    app::Party party(api);
+    app::PartySync partySync(player, party);
+    QObject::connect(&library, &app::Library::authenticatedChanged, &party, [&library, &party] {
+        if (library.authenticated() == 0) party.leave(); // вышли из аккаунта — и из комнаты
+    });
     app::MediaSession media(player, library);
     QObject::connect(&sync, &core::CloudSync::changed, &library, [&library](int) { library.bumpWatch(); });
 
@@ -104,6 +115,8 @@ int main(int argc, char *argv[]) {
     qmlRegisterType<app::PlayModel>("Suslik.Native", 1, 0, "PlayModel");
     qmlRegisterType<app::AddModel>("Suslik.Native", 1, 0, "AddModel");
     qmlRegisterType<app::AudioAttachModel>("Suslik.Native", 1, 0, "AudioAttachModel");
+    qmlRegisterType<app::SearchModel>("Suslik.Native", 1, 0, "SearchModel");
+    qmlRegisterType<app::TrackerSettingsModel>("Suslik.Native", 1, 0, "TrackerSettingsModel");
     qmlRegisterUncreatableType<app::PlayerModel>("Suslik.Native", 1, 0, "PlayerModel", QStringLiteral("one per app"));
     qmlRegisterType<app::MpvEngine>("Suslik.Native", 1, 0, "MpvEngine");
     qmlRegisterType<app::MpvVideo>("Suslik.Native", 1, 0, "MpvVideo");
@@ -122,6 +135,7 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty(QStringLiteral("player"), &player);
     engine.rootContext()->setContextProperty(QStringLiteral("windowMode"), &windowMode);
     engine.rootContext()->setContextProperty(QStringLiteral("mpvInstall"), &mpvInstall);
+    engine.rootContext()->setContextProperty(QStringLiteral("party"), &party);
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app, [] { QCoreApplication::exit(1); },
                      Qt::QueuedConnection);
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
@@ -166,6 +180,7 @@ int main(int argc, char *argv[]) {
     }).detach();
     mpvInstall.cancel();
     player.close();
+    app::BrowserBridge::instance().shutdown(); // фоновый браузер RuTracker
     app::Reserve::shutdown();
     return rc;
 }

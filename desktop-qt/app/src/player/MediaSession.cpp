@@ -6,6 +6,7 @@
 #include "PlayerModel.h"
 #include "../AppDir.h"
 #include "../Library.h"
+#include "../party/Party.h"
 
 #include "suslik/core/Strings.h"
 
@@ -36,6 +37,13 @@ MediaSession::MediaSession(PlayerModel &player, Library &lib, QObject *parent)
     connect(&m_player, &PlayerModel::openChanged, this, &MediaSession::onOpen);
     connect(&m_player, &PlayerModel::entryChanged, this, &MediaSession::onEntry);
     connect(&m_player, &PlayerModel::stateChanged, this, &MediaSession::onState);
+    // «Смотрит вместе (N)»: изменился состав комнаты или фильм в ней
+    if (Party *party = Party::instance()) {
+        connect(party, &Party::changed, this, [this, party] {
+            const int n = party->inRoom() && party->fileKey() == m_player.currentWatchKey() ? std::max(1, party->memberCount()) : 0;
+            if (n != m_partyCount) { m_partyCount = n; scheduleDiscord(); }
+        });
+    }
     connect(&m_player, &PlayerModel::seeked, this, [this] {
         m_smtc->setTimeline(m_player.time(), m_player.length());
         scheduleDiscord();
@@ -99,7 +107,12 @@ void MediaSession::sendDiscord() {
     a.title = p.title;
     QStringList sub;
     if (p.episode) sub << *p.episode;
-    if (paused) sub << core::tx(S("discord.pauza"));
+    const Party *party = Party::instance();
+    const bool inParty = party && party->inRoom() && party->fileKey() == m_player.currentWatchKey();
+    if (inParty)
+        sub << core::tx(S("discord.smotrit_vmeste"), {{"count", QString::number(std::max(1, party->memberCount()))}}) +
+                   (paused ? S(" · ") + core::tx(S("discord.pauza")) : QString());
+    else if (paused) sub << core::tx(S("discord.pauza"));
     a.subtitle = sub.isEmpty() ? core::tx(S("discord.film")) : sub.join(S(" · "));
     a.playing = !paused;
     a.timeMs = m_player.time();

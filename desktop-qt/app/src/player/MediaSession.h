@@ -36,6 +36,7 @@ private:
     qint64 m_lastSec = -1;
     QString m_posterFile, m_posterUrl;
     int m_posterGen = 0;
+    int m_partyCount = 0;
 };
 
 } // namespace suslik::app

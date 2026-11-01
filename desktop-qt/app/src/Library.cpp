@@ -888,4 +888,16 @@ void Library::hideContinue(const QVariantList &ids) {
 std::optional<QString> Library::lastEpisode(qint64 id) const { return m_episodes.get(QString::number(id)); }
 void Library::saveEpisode(qint64 id, const QString &path) { m_episodes.put(QString::number(id), path); }
 
+bool Library::hasFile(qint64 magnetId, const QString &path) const {
+    for (const LibraryItem &it : m_items) {
+        if (it.m.id != magnetId) continue;
+        if (it.playable.isMovie()) return it.playable.file.path == path;
+        for (const Season &s : it.playable.seasons)
+            for (const Episode &e : s.items)
+                if (e.file.path == path) return true;
+        return false;
+    }
+    return false;
+}
+
 } // namespace suslik::app
