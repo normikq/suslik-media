@@ -1,0 +1,348 @@
+<Application x:Class="SuslikSetup.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             ShutdownMode="OnExplicitShutdown">
+    <Application.Resources>
+        <!-- Цвета: тёмная «ночь» приложения и голубой акцент с макета -->
+        <Color x:Key="AccentColor">#5AB0FF</Color>
+        <SolidColorBrush x:Key="Bg" Color="#0B0F19" />
+        <SolidColorBrush x:Key="Rail" Color="#090C15" />
+        <SolidColorBrush x:Key="Tile" Color="#111A2B" />
+        <SolidColorBrush x:Key="Line" Color="#1C2536" />
+        <SolidColorBrush x:Key="Line2" Color="#2B3850" />
+        <SolidColorBrush x:Key="Text" Color="#EEF2F8" />
+        <SolidColorBrush x:Key="Sub" Color="#9AB0CC" />
+        <SolidColorBrush x:Key="Muted" Color="#7D899F" />
+        <SolidColorBrush x:Key="Accent" Color="#5AB0FF" />
+        <SolidColorBrush x:Key="AccentHi" Color="#8CCBFF" />
+        <SolidColorBrush x:Key="Ok" Color="#7FE0B0" />
+        <SolidColorBrush x:Key="Bad" Color="#FF8A7E" />
+        <FontFamily x:Key="Onest">pack://application:,,,/fonts/#Onest, Segoe UI</FontFamily>
+        <CubicEase x:Key="EaseOut" EasingMode="EaseOut" />
+
+        <!-- Главная кнопка: голубой градиент, мягкое свечение, при наведении светится сильнее, при нажатии чуть сжимается -->
+        <Style x:Key="PrimaryButton" TargetType="Button">
+            <Setter Property="Foreground" Value="#06121F" />
+            <Setter Property="FontFamily" Value="{StaticResource Onest}" />
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Height" Value="50" />
+            <Setter Property="MinWidth" Value="170" />
+            <Setter Property="Padding" Value="26,0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="RenderTransformOrigin" Value="0.5,0.5" />
+            <Setter Property="RenderTransform"><Setter.Value><ScaleTransform /></Setter.Value></Setter>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid>
+                            <Border x:Name="glow" CornerRadius="12" Background="{TemplateBinding Background}" Opacity="0.35" Margin="4,6,4,-2">
+                                <Border.Effect><BlurEffect Radius="22" /></Border.Effect>
+                            </Border>
+                            <Border x:Name="bg" CornerRadius="12" Background="{TemplateBinding Background}">
+                                <Border x:Name="shine" CornerRadius="12" Background="#FFFFFF" Opacity="0" />
+                            </Border>
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}" />
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Trigger.EnterActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="glow" Storyboard.TargetProperty="Opacity" To="0.75" Duration="0:0:0.22" EasingFunction="{StaticResource EaseOut}" />
+                                            <DoubleAnimation Storyboard.TargetName="shine" Storyboard.TargetProperty="Opacity" To="0.12" Duration="0:0:0.22" />
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.EnterActions>
+                                <Trigger.ExitActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="glow" Storyboard.TargetProperty="Opacity" To="0.35" Duration="0:0:0.35" EasingFunction="{StaticResource EaseOut}" />
+                                            <DoubleAnimation Storyboard.TargetName="shine" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.35" />
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.ExitActions>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Trigger.EnterActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleX" To="0.97" Duration="0:0:0.08" />
+                                            <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleY" To="0.97" Duration="0:0:0.08" />
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.EnterActions>
+                                <Trigger.ExitActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleX" To="1" Duration="0:0:0.18" EasingFunction="{StaticResource EaseOut}" />
+                                            <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleY" To="1" Duration="0:0:0.18" EasingFunction="{StaticResource EaseOut}" />
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.ExitActions>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.4" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="Background">
+                <Setter.Value>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                        <GradientStop Color="#7DC3FF" Offset="0" />
+                        <GradientStop Color="#4A9DF5" Offset="1" />
+                    </LinearGradientBrush>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Красная главная кнопка для «Удалить» -->
+        <Style x:Key="DangerButton" TargetType="Button" BasedOn="{StaticResource PrimaryButton}">
+            <Setter Property="Foreground" Value="#1F0806" />
+            <Setter Property="Background">
+                <Setter.Value>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                        <GradientStop Color="#FF9C90" Offset="0" />
+                        <GradientStop Color="#F0645A" Offset="1" />
+                    </LinearGradientBrush>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Вторичная кнопка: прозрачная с тонкой рамкой, при наведении рамка и фон светлеют -->
+        <Style x:Key="GhostButton" TargetType="Button">
+            <Setter Property="Foreground" Value="{StaticResource Text}" />
+            <Setter Property="FontFamily" Value="{StaticResource Onest}" />
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="FontWeight" Value="Medium" />
+            <Setter Property="Height" Value="50" />
+            <Setter Property="MinWidth" Value="150" />
+            <Setter Property="Padding" Value="24,0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="RenderTransformOrigin" Value="0.5,0.5" />
+            <Setter Property="RenderTransform"><Setter.Value><ScaleTransform /></Setter.Value></Setter>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bg" CornerRadius="12" BorderThickness="1" Background="#0E1421">
+                            <Border.BorderBrush><SolidColorBrush x:Name="edge" Color="#2E3A52" /></Border.BorderBrush>
+                            <Grid>
+                                <Border x:Name="shine" CornerRadius="11" Background="#FFFFFF" Opacity="0" />
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}" />
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Trigger.EnterActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <ColorAnimation Storyboard.TargetName="edge" Storyboard.TargetProperty="Color" To="#5E7AA6" Duration="0:0:0.2" />
+                                            <DoubleAnimation Storyboard.TargetName="shine" Storyboard.TargetProperty="Opacity" To="0.05" Duration="0:0:0.2" />
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.EnterActions>
+                                <Trigger.ExitActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <ColorAnimation Storyboard.TargetName="edge" Storyboard.TargetProperty="Color" To="#2E3A52" Duration="0:0:0.3" />
+                                            <DoubleAnimation Storyboard.TargetName="shine" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.3" />
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.ExitActions>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Trigger.EnterActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleX" To="0.97" Duration="0:0:0.08" />
+                                            <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleY" To="0.97" Duration="0:0:0.08" />
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.EnterActions>
+                                <Trigger.ExitActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleX" To="1" Duration="0:0:0.18" />
+                                            <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleY" To="1" Duration="0:0:0.18" />
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.ExitActions>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.4" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Кнопки заголовка: свернуть / закрыть -->
+        <Style x:Key="TitleButton" TargetType="Button">
+            <Setter Property="Width" Value="46" />
+            <Setter Property="Height" Value="36" />
+            <Setter Property="Foreground" Value="{StaticResource Sub}" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bg" CornerRadius="8" Background="Transparent">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bg" Property="Background" Value="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}" />
+                                <Setter Property="Foreground" Value="White" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.3" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="Tag" Value="#1C2638" />
+        </Style>
+
+        <!-- Галочка: скруглённый квадрат, при включении заливается акцентом и рисуется отметка -->
+        <Style x:Key="Check" TargetType="CheckBox">
+            <Setter Property="Foreground" Value="{StaticResource Text}" />
+            <Setter Property="FontFamily" Value="{StaticResource Onest}" />
+            <Setter Property="FontSize" Value="15" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <Grid Background="Transparent">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid Width="24" Height="24" VerticalAlignment="Top" Margin="0,1,0,0">
+                                <Border x:Name="box" CornerRadius="7" BorderThickness="1.5" BorderBrush="#3A4A66" Background="#0E1522" />
+                                <Border x:Name="fill" CornerRadius="7" Opacity="0" RenderTransformOrigin="0.5,0.5">
+                                    <Border.RenderTransform><ScaleTransform ScaleX="0.6" ScaleY="0.6" /></Border.RenderTransform>
+                                    <Border.Background>
+                                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                            <GradientStop Color="#7DC3FF" Offset="0" />
+                                            <GradientStop Color="#4A9DF5" Offset="1" />
+                                        </LinearGradientBrush>
+                                    </Border.Background>
+                                    <Border.Effect><DropShadowEffect Color="#5AB0FF" BlurRadius="14" ShadowDepth="0" Opacity="0.55" /></Border.Effect>
+                                    <Path Data="M6,12.5 L10.2,16.5 L18,8" Stroke="#06121F" StrokeThickness="2.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                                </Border>
+                            </Grid>
+                            <ContentPresenter Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center" />
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Trigger.EnterActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="fill" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.16" />
+                                            <DoubleAnimation Storyboard.TargetName="fill" Storyboard.TargetProperty="RenderTransform.ScaleX" To="1" Duration="0:0:0.28">
+                                                <DoubleAnimation.EasingFunction><BackEase Amplitude="0.5" EasingMode="EaseOut" /></DoubleAnimation.EasingFunction>
+                                            </DoubleAnimation>
+                                            <DoubleAnimation Storyboard.TargetName="fill" Storyboard.TargetProperty="RenderTransform.ScaleY" To="1" Duration="0:0:0.28">
+                                                <DoubleAnimation.EasingFunction><BackEase Amplitude="0.5" EasingMode="EaseOut" /></DoubleAnimation.EasingFunction>
+                                            </DoubleAnimation>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.EnterActions>
+                                <Trigger.ExitActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="fill" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.14" />
+                                            <DoubleAnimation Storyboard.TargetName="fill" Storyboard.TargetProperty="RenderTransform.ScaleX" To="0.6" Duration="0:0:0.14" />
+                                            <DoubleAnimation Storyboard.TargetName="fill" Storyboard.TargetProperty="RenderTransform.ScaleY" To="0.6" Duration="0:0:0.14" />
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.ExitActions>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="box" Property="BorderBrush" Value="#5E7AA6" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Поле пути: тёмное стекло, в фокусе голубая рамка -->
+        <Style x:Key="PathBox" TargetType="TextBox">
+            <Setter Property="Foreground" Value="{StaticResource Text}" />
+            <Setter Property="CaretBrush" Value="{StaticResource AccentHi}" />
+            <Setter Property="SelectionBrush" Value="#3A7BD5" />
+            <Setter Property="FontFamily" Value="{StaticResource Onest}" />
+            <Setter Property="FontSize" Value="15" />
+            <Setter Property="Height" Value="50" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="b" CornerRadius="12" BorderThickness="1" BorderBrush="#2B3850" Background="#0D1320" Padding="14,0">
+                            <ScrollViewer x:Name="PART_ContentHost" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="b" Property="BorderBrush" Value="#3E5274" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="b" Property="BorderBrush" Value="#5AB0FF" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="H1" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource Onest}" />
+            <Setter Property="FontSize" Value="42" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{StaticResource Text}" />
+        </Style>
+        <Style x:Key="Lead" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource Onest}" />
+            <Setter Property="FontSize" Value="19" />
+            <Setter Property="Foreground" Value="{StaticResource Sub}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Margin" Value="0,8,0,0" />
+        </Style>
+        <Style x:Key="Body" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource Onest}" />
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="LineHeight" Value="25" />
+            <Setter Property="Foreground" Value="#B8C6DA" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+        <Style x:Key="Small" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource Onest}" />
+            <Setter Property="FontSize" Value="13.5" />
+            <Setter Property="Foreground" Value="{StaticResource Muted}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+        <Style x:Key="IconTile" TargetType="Border">
+            <Setter Property="Width" Value="54" />
+            <Setter Property="Height" Value="54" />
+            <Setter Property="CornerRadius" Value="13" />
+            <Setter Property="Background" Value="#111A2B" />
+            <Setter Property="BorderBrush" Value="#22304A" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+        <Style x:Key="IconPath" TargetType="Path">
+            <Setter Property="Stroke" Value="{StaticResource Accent}" />
+            <Setter Property="StrokeThickness" Value="2" />
+            <Setter Property="StrokeStartLineCap" Value="Round" />
+            <Setter Property="StrokeEndLineCap" Value="Round" />
+            <Setter Property="StrokeLineJoin" Value="Round" />
+            <Setter Property="Width" Value="24" />
+            <Setter Property="Height" Value="24" />
+            <Setter Property="Stretch" Value="None" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+    </Application.Resources>
+</Application>

@@ -1,0 +1,218 @@
+name: Desktop Qt
+
+# Новая ПК-версия на C++/Qt (desktop-qt/, план — docs/QT-PORT.md).
+# На пуш с изменениями в desktop-qt/ — только тесты ядра на Linux (Qt из apt, пара минут).
+# Сборка для Windows (MSVC + Qt 6.8) — только вручную, как android.yml и desktop.yml.
+on:
+  push:
+    paths: ["desktop-qt/**", ".github/workflows/desktop-qt.yml"]
+  workflow_dispatch:
+    inputs:
+      windows:
+        description: "Собрать для Windows"
+        type: boolean
+        default: true
+      debug:
+        description: "Собрать и отладочную «Suslik Debug Qt» (артефакт, на сайт не идёт)"
+        type: boolean
+        default: false
+      wintests:
+        description: "Только тесты ядра на Windows, каждый тест по отдельности (поиск зависаний)"
+        type: boolean
+        default: false
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Qt и сборщик
+        run: sudo apt-get update -q && sudo apt-get install -y -q qt6-base-dev qt6-declarative-dev qt6-shadertools-dev ninja-build
+      - name: Сборка
+        run: cmake -S desktop-qt -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug && cmake --build build
+      - name: Тесты
+        run: ctest --test-dir build --output-on-failure
+
+  # Тесты ядра на Windows по одной функции (до 30 с каждая), вывод — в файл (при зависании stdout теряется)
+  wintests:
+    if: github.event_name == 'workflow_dispatch' && inputs.wintests
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          arch: win64_msvc2022_64
+          cache: true
+      - name: Сборка тестов
+        shell: bash
+        run: |
+          cmake -S desktop-qt -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSM_BUILD_APP=OFF
+          cmake --build build
+      - name: Каждая функция отдельно
+        shell: bash
+        env:
+          QT_FORCE_STDERR_LOGGING: "1"
+          SM_TEST_LOG: "1"
+        run: |
+          set +e
+          for t in BurstProxyTest ApiClientTest; do
+            for f in $(build/tests/$t.exe -functions | sed 's/()//'); do
+              echo "::group::$t $f"
+              start=$(date +%s)
+              timeout 30 build/tests/$t.exe "$f" -v2 -o out.txt,txt -o -,txt > /dev/null 2> err.txt; rc=$?
+              echo "rc=$rc за $(( $(date +%s) - start )) с"
+              tail -n 80 out.txt; tail -n 60 err.txt
+              echo "::endgroup::"
+              [ $rc = 0 ] || echo "::warning::$t $f rc=$rc"
+            done
+            echo "::group::$t целиком"
+            timeout 120 build/tests/$t.exe -v2 -o out.txt,txt > /dev/null 2> err.txt; echo "rc=$?"
+            tail -n 120 out.txt; tail -n 60 err.txt
+            echo "::endgroup::"
+          done
+
+  windows:
+    if: github.event_name == 'workflow_dispatch' && inputs.windows
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          arch: win64_msvc2022_64
+          modules: qtshadertools
+          cache: true
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: "8.0.x" }
+      - name: Сборка
+        shell: bash
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+        run: |
+          cmake -S desktop-qt -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+          echo "V=$(sed -n 's/^project(SuslikMediaQt VERSION \([0-9.]*\).*/\1/p' desktop-qt/CMakeLists.txt)" >> "$GITHUB_ENV"
+      - name: Упаковка
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp build/app/SuslikMediaQt.exe dist/
+          windeployqt --release --qmldir desktop-qt/app/qml --no-translations dist/SuslikMediaQt.exe
+          # собственный модуль Suslik (Main.qml, Theme.qml, qmldir, типы): вшит в программу, копия рядом — запасной путь
+          mkdir -p dist/qml/Suslik
+          cp build/app/Suslik/qmldir build/app/Suslik/*.qmltypes dist/qml/Suslik/
+          cp desktop-qt/app/qml/*.qml dist/qml/Suslik/
+      # Окно удаления (installer/setup без MSI внутри) — в саму программу, рядом с SuslikMediaQt.exe
+      - name: Окно удаления
+        shell: bash
+        run: |
+          set -o pipefail
+          dotnet build desktop-qt/installer/setup/SuslikSetup.csproj -c Release -p:AppVersion=$V -p:AssemblyName=SuslikUninstall \
+            -o "$RUNNER_TEMP/uninstall" 2>&1 | tail -5
+          cp "$RUNNER_TEMP/uninstall/SuslikUninstall.exe" dist/
+          rm -rf desktop-qt/installer/setup/obj desktop-qt/installer/setup/bin
+      # MSI: ставится для себя (без прав администратора) рядом со старой версией; libmpv в нём нет
+      - name: MSI
+        shell: bash
+        run: |
+          mkdir -p msi
+          desktop-qt/installer/build-msi.sh dist "$V" "msi/Suslik Media Qt-$V.msi"
+      # Файл для людей — «Suslik Media Qt Setup.exe»: тот же мастер, что у Kotlin-версии (desktop/setup), с MSI внутри.
+      # Им же обновляется программа (запускает его с /update). Видеодвижок libmpv он качает с нашего сервера (libmpv.properties).
+      - name: Установщик
+        shell: bash
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+        run: |
+          set -o pipefail
+          URL="${SITE_URL%/}"   # домен и, если сервер не в корне, путь
+          [ -n "$URL" ] || { echo "::error::Нет секрета SITE_URL"; exit 1; }
+          dotnet build desktop-qt/installer/setup/SuslikSetup.csproj -c Release -p:AppVersion=$V -p:AssemblyName=SuslikMediaQtSetup \
+            "-p:SiteUrl=$URL" "-p:MsiPath=$(cygpath -w "$GITHUB_WORKSPACE/msi/Suslik Media Qt-$V.msi")" -o "$RUNNER_TEMP/setup" 2>&1 | tail -5
+          mkdir -p setup
+          cp "$RUNNER_TEMP/setup/SuslikMediaQtSetup.exe" "setup/Suslik Media Qt Setup-$V.exe"
+          rm -rf desktop-qt/installer/setup/obj desktop-qt/installer/setup/bin
+          ls -la setup
+      # видеодвижок: та же сборка libmpv, что раздаёт сервер (desktop/.../libmpv.properties), проверка по SHA-256.
+      # В установщике её не будет (качает MpvInstall), здесь — чтобы архив сборки сразу играл видео.
+      - name: libmpv
+        shell: bash
+        run: |
+          P=desktop/src/main/resources/libmpv.properties
+          V=$(sed -n 's/^version=//p' $P); SHA=$(sed -n 's/^dllSha256=//p' $P)
+          A=$(sed -n 's/.*(\(mpv-dev-x86_64-[^)]*\.7z\)).*/\1/p' $P)
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/mpv.7z" "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/$V/$A"
+          7z e -y -o"$RUNNER_TEMP/mpv" "$RUNNER_TEMP/mpv.7z" libmpv-2.dll >/dev/null
+          echo "$SHA  $RUNNER_TEMP/mpv/libmpv-2.dll" | sha256sum -c -
+          cp "$RUNNER_TEMP/mpv/libmpv-2.dll" dist/
+      # программа открывает окно (без сервера — экран входа) и снимает его; не открылась — сборка красная
+      - name: Проверка запуска
+        shell: bash
+        env:
+          SUSLIK_SITE: http://127.0.0.1:9
+          SUSLIK_APPDIR: ${{ runner.temp }}/sm-appdir
+          SM_SHOT: ${{ runner.temp }}/sm-shot/start.png
+          SM_SHOT_MS: "6000"
+          QT_FORCE_STDERR_LOGGING: "1"
+        run: |
+          mkdir -p "$(dirname "$SM_SHOT")"
+          timeout 60 dist/SuslikMediaQt.exe 2>&1 | tee start.log; rc=${PIPESTATUS[0]}
+          echo "exit code: $rc"
+          test "$rc" = 0 && test -s "$SM_SHOT"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: suslik-media-qt-start-shot
+          path: ${{ runner.temp }}/sm-shot/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: suslik-media-qt-windows
+          path: dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: suslik-media-qt-msi
+          path: msi/*.msi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: suslik-media-qt-setup
+          path: setup/*.exe
+      # «Suslik Debug Qt»: своя папка данных и свой UpgradeCode (ставится рядом), подробный журнал mpv, F8 — метка
+      - name: Отладочная сборка
+        if: inputs.debug
+        shell: bash
+        run: |
+          cmake -S desktop-qt -B build-diag -G Ninja -DCMAKE_BUILD_TYPE=Release -DSM_DIAG=ON -DSM_BUILD_TESTS=OFF
+          cmake --build build-diag --target suslik_media
+          mkdir -p dist-diag
+          cp build-diag/app/SuslikMediaQt.exe dist-diag/
+          windeployqt --release --qmldir desktop-qt/app/qml --no-translations dist-diag/SuslikMediaQt.exe
+          desktop-qt/installer/build-msi.sh dist-diag "$V" "msi/Suslik Debug Qt-$V.msi" diag
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+      - uses: actions/upload-artifact@v4
+        if: inputs.debug
+        with:
+          name: suslik-media-qt-debug-msi
+          path: msi/Suslik Debug Qt-*.msi
+          retention-days: 7
+      # тесты после выгрузки: программу можно скачать и проверить, даже если тест упал (задание всё равно красное)
+      - name: Тесты
+        shell: bash
+        run: ctest --test-dir build --output-on-failure --timeout 90
+      # тест упал на Windows: подробный ход упавших тестов (каждая проверка и сетевые события Qt), не дольше 2 мин на тест
+      - name: Подробно об упавших тестах
+        if: failure()
+        shell: bash
+        env:
+          QT_LOGGING_RULES: "qt.network.*=true"
+        run: |
+          for t in $(ctest --test-dir build -N --rerun-failed 2>/dev/null | sed -n 's/.*Test *#[0-9]*: *//p'); do
+            echo "::group::$t"
+            # вывод в файл: при зависании (timeout убивает процесс) буфер stdout теряется
+            timeout 120 build/tests/$t.exe -v2 -o out.txt,txt > /dev/null 2> err.txt || true
+            tail -n 150 out.txt; tail -n 60 err.txt
+            echo "::endgroup::"
+          done

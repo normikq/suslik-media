@@ -1,0 +1,227 @@
+#include "WindowMode.h"
+
+#include <QCoreApplication>
+#include <QCursor>
+#include <QGuiApplication>
+#include <QScreen>
+#include <QVariantAnimation>
+#include <QWindow>
+#include <algorithm>
+#include <cmath>
+
+#include <QTimer>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#include <dwmapi.h>
+#endif
+
+namespace suslik::app {
+
+namespace {
+/// Пропорции фильма для мини-плеера: от вертикальных до сверхшироких, без сужения — иначе чёрные полосы.
+double clampAspect(double a) { return std::isfinite(a) && a > 0 ? std::clamp(a, 0.4, 4.0) : 16.0 / 9.0; }
+} // namespace
+
+WindowMode::WindowMode(QObject *parent) : QObject(parent) {
+    if (QCoreApplication::instance()) QCoreApplication::instance()->installNativeEventFilter(this);
+}
+
+WindowMode::~WindowMode() {
+    if (QCoreApplication::instance()) QCoreApplication::instance()->removeNativeEventFilter(this);
+}
+
+bool WindowMode::nativeEventFilter(const QByteArray &type, void *message, qintptr *result) {
+#ifdef Q_OS_WIN
+    if (!m_mini || !m_w || type != "windows_generic_MSG") return false;
+    auto *msg = static_cast<MSG *>(message);
+    if (msg->message != WM_SIZING || msg->hwnd != reinterpret_cast<HWND>(m_w->winId())) return false;
+    auto *r = reinterpret_cast<RECT *>(msg->lParam);
+    const int edge = int(msg->wParam);
+    const double a = m_aspect;
+    long w = r->right - r->left, h = r->bottom - r->top;
+    if (edge == WMSZ_TOP || edge == WMSZ_BOTTOM) {
+        w = std::lround(h * a); // тянут по высоте — ширина следом, вправо
+        r->right = r->left + w;
+    } else {
+        h = std::lround(w / a); // по ширине или за угол — высота следом
+        if (edge == WMSZ_TOPLEFT || edge == WMSZ_TOPRIGHT) r->top = r->bottom - h;
+        else r->bottom = r->top + h;
+    }
+    if (result) *result = TRUE;
+    return true;
+#else
+    Q_UNUSED(type)
+    Q_UNUSED(message)
+    Q_UNUSED(result)
+    return false;
+#endif
+}
+
+void WindowMode::frameless(bool on) {
+    m_w->setFlag(Qt::FramelessWindowHint, on);
+}
+
+void WindowMode::roundCorners(bool on) {
+#ifdef Q_OS_WIN
+    // Windows 11: скругление рисует сама система (сглаженное, с тенью); в Windows 10 атрибута нет — углы прямые
+    const DWORD pref = on ? 3 /*DWMWCP_ROUNDSMALL*/ : 0 /*DWMWCP_DEFAULT*/;
+    DwmSetWindowAttribute(reinterpret_cast<HWND>(m_w->winId()), 33 /*DWMWA_WINDOW_CORNER_PREFERENCE*/, &pref, sizeof pref);
+#else
+    Q_UNUSED(on)
+#endif
+}
+
+void WindowMode::setFullscreen(bool on) {
+    if (!m_w || on == m_full) return;
+    if (on) {
+        if (m_mini) setMini(false);
+        m_maximizedBefore = m_w->windowStates() & Qt::WindowMaximized;
+        m_before = m_w->geometry();
+        QScreen *s = m_w->screen() ? m_w->screen() : QGuiApplication::primaryScreen();
+        frameless(true);
+        m_w->setWindowStates(Qt::WindowNoState);
+        const QRect g = s->geometry();
+#ifdef Q_OS_WIN
+        m_w->setGeometry(g.adjusted(0, 0, 0, 1)); // на пиксель выше экрана: не эксклюзивный режим
+#else
+        m_w->setGeometry(g);
+#endif
+        m_w->show();
+    } else {
+        frameless(false);
+        m_w->setGeometry(m_before);
+        if (m_maximizedBefore) m_w->setWindowStates(Qt::WindowMaximized);
+        m_w->show();
+    }
+    m_full = on;
+    emit changed();
+}
+
+void WindowMode::setOnTop(bool on) {
+    if (!m_w || on == m_onTop) return;
+    m_w->setFlag(Qt::WindowStaysOnTopHint, on);
+    m_w->show();
+    m_onTop = on;
+    emit changed();
+}
+
+void WindowMode::fly(const QRect &to) {
+    if (!m_anim) {
+        m_anim = new QVariantAnimation(this);
+        m_anim->setDuration(320);
+        m_anim->setEasingCurve(QEasingCurve::OutCubic);
+        connect(m_anim, &QVariantAnimation::valueChanged, this, [this](const QVariant &v) { if (m_w) m_w->setGeometry(v.toRect()); });
+    }
+    m_anim->stop();
+    m_anim->setStartValue(m_w->geometry());
+    m_anim->setEndValue(to);
+    m_anim->start();
+}
+
+void WindowMode::setMini(bool on, double aspect) {
+    if (!m_w || on == m_mini) return;
+    if (on) {
+        if (m_full) setFullscreen(false);
+        m_maximizedBefore = m_w->windowStates() & Qt::WindowMaximized;
+        m_before = m_w->geometry();
+        m_minBefore = m_w->minimumSize();
+        m_topBeforeMini = m_onTop;
+        const double a = clampAspect(aspect);
+        m_aspect = a;
+        const int w = std::clamp(int(std::sqrt(590.0 * 330.0 * a)), 260, 620);
+        const int h = int(std::round(w / a));
+        QScreen *s = m_w->screen() ? m_w->screen() : QGuiApplication::primaryScreen();
+        const QRect work = s->availableGeometry();
+        m_w->setMinimumSize(QSize(120, 80));
+        m_w->setWindowStates(Qt::WindowNoState);
+        frameless(true);
+        m_mini = true;
+        setOnTop(true);
+        m_w->show();
+        roundCorners(true);
+        fly(QRect(work.right() - w - 24, work.bottom() - h - 24, w, h));
+    } else {
+        if (m_anim) m_anim->stop();
+        if (m_smooth) m_smooth->stop();
+        m_resizeEdges = 0;
+        roundCorners(false);
+        frameless(false);
+        m_mini = false;
+        setOnTop(m_topBeforeMini);
+        m_w->setMinimumSize(m_minBefore);
+        m_w->setGeometry(m_before);
+        if (m_maximizedBefore) m_w->setWindowStates(Qt::WindowMaximized);
+        m_w->show();
+    }
+    emit changed();
+}
+
+void WindowMode::fitMini(double aspect) {
+    m_aspect = clampAspect(aspect);
+    if (!m_w || !m_mini || (m_anim && m_anim->state() == QAbstractAnimation::Running)) return;
+    const int h = int(std::round(m_w->width() / m_aspect));
+    if (std::abs(m_w->height() - h) > 2) m_w->resize(m_w->width(), h);
+}
+
+void WindowMode::startMove() { if (m_w) m_w->startSystemMove(); }
+
+void WindowMode::startResize(int edges) { if (m_w) m_w->startSystemResize(Qt::Edges(edges)); }
+
+void WindowMode::beginResize(int edges) {
+    if (!m_w || !m_mini) return;
+    if (m_anim) m_anim->stop();
+    // продолжение плавного шага: начало — с того места, куда окно уже доехало
+    m_resizeEdges = edges;
+    m_resizeFrom = m_w->geometry();
+    m_resizeCursor = QCursor::pos();
+    m_curW = m_targetW = m_resizeFrom.width();
+}
+
+void WindowMode::resizeStep() {
+    if (!m_w || !m_mini || !m_resizeEdges) return;
+    const QPoint d = QCursor::pos() - m_resizeCursor;
+    const bool left = m_resizeEdges & Qt::LeftEdge, top = m_resizeEdges & Qt::TopEdge;
+    const double a = m_aspect;
+    // ширина по горизонтали и по вертикали (через пропорции) — берётся бо́льшая: угол идёт за курсором
+    const double byW = m_resizeFrom.width() + (left ? -d.x() : d.x());
+    const double byH = (m_resizeFrom.height() + (top ? -d.y() : d.y())) * a;
+    QScreen *s = m_w->screen() ? m_w->screen() : QGuiApplication::primaryScreen();
+    const QRect work = s->availableGeometry();
+    const double maxW = (std::min<double>)(work.width(), work.height() * a);
+    const double minW = (std::max)(200.0, 120.0 * a);
+    m_targetW = std::clamp((std::max)(byW, byH), minW, (std::max)(minW, maxW));
+    // окно догоняет курсор плавно, не чаще кадра: меньше перерисовок и без рывков от каждого движения мыши
+    if (!m_smooth) {
+        m_smooth = new QTimer(this);
+        m_smooth->setTimerType(Qt::PreciseTimer);
+        m_smooth->setInterval(16);
+        connect(m_smooth, &QTimer::timeout, this, [this] { smoothTick(); });
+    }
+    if (!m_smooth->isActive()) { smoothTick(); m_smooth->start(); }
+}
+
+void WindowMode::smoothTick() {
+    if (!m_w || !m_mini || !m_resizeEdges) { if (m_smooth) m_smooth->stop(); return; }
+    const double diff = m_targetW - m_curW;
+    m_curW = std::abs(diff) < 1.0 ? m_targetW : m_curW + diff * 0.45;
+    const bool left = m_resizeEdges & Qt::LeftEdge, top = m_resizeEdges & Qt::TopEdge;
+    const int w = int(std::lround(m_curW));
+    const int h = int(std::lround(w / m_aspect));
+    const int x = left ? m_resizeFrom.right() + 1 - w : m_resizeFrom.left();
+    const int y = top ? m_resizeFrom.bottom() + 1 - h : m_resizeFrom.top();
+    if (m_w->geometry() != QRect(x, y, w, h)) m_w->setGeometry(x, y, w, h);
+    if (m_curW == m_targetW) m_smooth->stop();
+}
+
+void WindowMode::endResize() {
+    // отпустили кнопку: окно доезжает до последней цели само, таймер остановится сам
+    if (m_smooth && !m_smooth->isActive() && m_curW != m_targetW) m_smooth->start();
+}
+
+void WindowMode::reset() {
+    if (m_mini) setMini(false);
+    if (m_full) setFullscreen(false);
+}
+
+} // namespace suslik::app
