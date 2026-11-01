@@ -1,8 +1,10 @@
 "use strict";
 
-// RuTracker из Discord Activity через ПК в комнате (docs/DISCORD-ACTIVITY.md, «Поиск раздач»).
-// У сервера своего аккаунта RuTracker может не быть, а у ПК он есть (свои cookie, фоновый браузер). Activity просит
-// сервер, сервер шлёт в поток комнаты rutracker_request, ПК ищет у себя и отвечает POST …/rutracker/reply.
+// RuTracker из Discord Activity через ПК (docs/DISCORD-ACTIVITY.md, «Поиск раздач»).
+// У сервера своего аккаунта RuTracker может не быть, а у ПК он есть (свои cookie, фоновый браузер). Каждый
+// вошедший ПК (Qt) держит лёгкий поток «помощника» (GET /api/rutracker/helper/events) — в комнате он или нет.
+// Activity просит сервер, сервер шлёт rutracker_request помощникам тех, кто сейчас в этой комнате (у пульта или
+// в плеере), ПК ищет у себя и отвечает POST /api/rutracker/helper/reply.
 // «add» — раздача без magnet: .torrent качает тот же ПК (target — отпечаток его client_id) и сам кладёт в AllDebrid.
 
 const crypto = require("crypto");
@@ -15,9 +17,21 @@ const MAX_HITS = 100;
 
 const pending = new Map(); // request_id → { roomId, kind, target, userId, done, timer }
 
-/** ПК в комнате (client_id приложения Qt и прежнего ПК начинается с «pc»). */
-function pcMembers(room) {
-  return [...room.members.values()].filter(m => /^pc/i.test(String(m.client_id || "")));
+const helpers = new Map(); // отпечаток client_id → { key, clientId, userId, name, send }
+
+/** Поток помощника ПК; возвращает «отключить». Новый поток того же ПК заменяет старый. */
+function addHelper(user, clientId, send) {
+  const key = rooms.clientKey(clientId);
+  const h = { key, clientId, userId: user.id, name: user.name, send };
+  helpers.set(key, h);
+  return () => { if (helpers.get(key) === h) helpers.delete(key); };
+}
+
+/** Помощники тех, кто сейчас в комнате: у пульта Activity или в плеере. */
+function roomHelpers(room, target) {
+  const users = new Set(room.watchers ? room.watchers.keys() : []);
+  for (const m of room.members.values()) users.add(m.id);
+  return [...helpers.values()].filter(h => users.has(h.userId) && (!target || h.key === target));
 }
 
 function str(v, max) {
@@ -59,12 +73,12 @@ function finish(id, value) {
 }
 
 /**
- * Запрос к ПК комнаты. Promise всегда выполняется: { ok, ... } от ПК или { ok:false, reason } —
- * "no_pc" (в комнате нет ПК), "busy" (слишком много запросов), "timeout" (ни один ПК не ответил).
+ * Запрос к ПК. Promise всегда выполняется: { ok, ... } от ПК или { ok:false, reason } —
+ * "no_pc" (ни у кого в комнате не включён ПК), "busy" (слишком много запросов), "timeout" (ПК не ответили).
  */
 function ask(room, user, kind, data) {
-  const pcs = pcMembers(room).filter(m => !data.target || rooms.clientKey(m.client_id) === data.target);
-  if (!pcs.length) return Promise.resolve({ ok: false, reason: "no_pc" });
+  const hs = roomHelpers(room, data.target);
+  if (!hs.length) return Promise.resolve({ ok: false, reason: "no_pc" });
   let inRoom = 0;
   for (const p of pending.values()) if (p.roomId === room.id) inRoom++;
   if (inRoom >= MAX_PENDING_PER_ROOM) return Promise.resolve({ ok: false, reason: "busy" });
@@ -72,8 +86,11 @@ function ask(room, user, kind, data) {
   return new Promise(resolve => {
     const timer = setTimeout(() => finish(requestId, { ok: false, reason: "timeout" }), kind === "add" ? ADD_MS : SEARCH_MS);
     timer.unref?.();
-    pending.set(requestId, { roomId: room.id, kind, target: data.target || null, userId: user.id, done: resolve, timer, asked: pcs.length, errors: [] });
-    rooms.broadcast(room.id, "rutracker_request", { request_id: requestId, kind, by: user.name, ...data });
+    pending.set(requestId, { roomId: room.id, kind, allowed: new Set(hs.map(h => h.key)), done: resolve, timer, asked: hs.length, errors: [] });
+    const msg = JSON.stringify({ event: "rutracker_request", data: { request_id: requestId, kind, by: user.name, ...data }, time: Date.now() });
+    for (const h of hs) {
+      try { h.send(msg); } catch { /* оборванный поток уберёт «close» */ }
+    }
   });
 }
 
@@ -87,16 +104,15 @@ function add(room, user, { target, topicId, title }) {
 
 /**
  * Ответ ПК: body { client_id, request_id, error?, hits? (search), id?, ready? (add) }.
- * Принимается только от ПК этой комнаты под тем же аккаунтом, что и его client_id; для add — только от нужного ПК.
+ * Принимается только от помощника, которого спрашивали, и под тем же аккаунтом, что и его поток.
  */
-function reply(roomId, user, body) {
+function reply(user, body) {
   const p = pending.get(String(body?.request_id || ""));
-  if (!p || p.roomId !== roomId) return { ok: false, status: 404, error: "Запрос устарел." };
-  const room = rooms.getRoom(roomId);
-  const member = room && room.members.get(String(body.client_id || ""));
-  if (!member || member.id !== user.id || !/^pc/i.test(member.client_id)) return { ok: false, status: 403, error: "Вы не в этой комнате." };
-  const key = rooms.clientKey(member.client_id);
-  if (p.target && p.target !== key) return { ok: false, status: 403, error: "Запрос другому компьютеру." };
+  if (!p) return { ok: false, status: 404, error: "Запрос устарел." };
+  const clientId = String(body.client_id || "");
+  const key = rooms.clientKey(clientId);
+  const h = key && helpers.get(key);
+  if (!h || h.clientId !== clientId || h.userId !== user.id || !p.allowed.has(key)) return { ok: false, status: 403, error: "Запрос другому компьютеру." };
   const error = str(body.error, 300);
   if (p.kind === "search") {
     if (error) {
@@ -106,7 +122,7 @@ function reply(roomId, user, body) {
       return { ok: true };
     }
     const hits = (Array.isArray(body.hits) ? body.hits : []).slice(0, MAX_HITS).map(cleanHit).filter(Boolean);
-    finish(body.request_id, { ok: true, hits, pc: { key, name: member.name } });
+    finish(body.request_id, { ok: true, hits, pc: { key, name: h.name } });
     return { ok: true };
   }
   const id = Number(body.id);
@@ -119,4 +135,4 @@ function _reset() {
   for (const id of [...pending.keys()]) finish(id, { ok: false, reason: "timeout" });
 }
 
-module.exports = { search, add, reply, cleanHit, pcMembers, _reset };
+module.exports = { search, add, reply, addHelper, cleanHit, _reset };

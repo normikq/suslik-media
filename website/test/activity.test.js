@@ -114,25 +114,28 @@ test("голосование без голосов фильм не меняет;
   assert.equal(room.poll, null);
 });
 
-test("RuTracker через ПК: запрос в поток комнаты, ответ только от ПК комнаты, «add» — тому ПК, что нашёл", async () => {
+test("RuTracker через ПК: запрос помощникам тех, кто в комнате; ответ — только от спрошенного ПК; «add» — тому, кто нашёл", async () => {
   const pcSearch = require("../src/services/pc-search");
   const room = rooms.getOrCreateChannelRoom("999999999999999999", alice);
   assert.deepEqual(await pcSearch.search(room, alice, "Dune"), { ok: false, reason: "no_pc" });
 
-  rooms.joinRoom(room.id, bob, "pc_bob1");
-  rooms.joinRoom(room.id, carol, "android_carol");
-  const sent = [];
-  const stop = rooms.addListener(room.id, msg => sent.push(JSON.parse(msg)));
+  const sent = { bob: [], carol: [], alice: [] };
+  // ПК Боба не в комнате, но Боб у пульта Activity; ПК Кэрол запущен, но Кэрол здесь нет
+  const offBob = pcSearch.addHelper(bob, "pc_bob1", t => sent.bob.push(JSON.parse(t)));
+  const offCarol = pcSearch.addHelper(carol, "pc_carol", t => sent.carol.push(JSON.parse(t)));
+  assert.deepEqual(await pcSearch.search(room, alice, "Dune"), { ok: false, reason: "no_pc" });
+  const leaveBob = rooms.addWatcher(room, bob);
   const wait = pcSearch.search(room, alice, "Dune");
-  const req = sent.find(m => m.event === "rutracker_request");
+  assert.equal(sent.carol.length, 0);
+  const req = sent.bob[0];
+  assert.equal(req.event, "rutracker_request");
   assert.equal(req.data.kind, "search");
   assert.equal(req.data.query, "Dune");
   const rid = req.data.request_id;
-  // Чужой: не участник, не тот аккаунт, не ПК
-  assert.equal(pcSearch.reply(room.id, alice, { request_id: rid, client_id: "pc_bob1", hits: [] }).status, 403);
-  assert.equal(pcSearch.reply(room.id, carol, { request_id: rid, client_id: "android_carol", hits: [] }).status, 403);
-  assert.equal(pcSearch.reply("000000", bob, { request_id: rid, client_id: "pc_bob1", hits: [] }).status, 404);
-  assert.equal(pcSearch.reply(room.id, bob, {
+  assert.equal(pcSearch.reply(alice, { request_id: rid, client_id: "pc_bob1", hits: [] }).status, 403); // не тот аккаунт
+  assert.equal(pcSearch.reply(carol, { request_id: rid, client_id: "pc_carol", hits: [] }).status, 403); // не спрашивали
+  assert.equal(pcSearch.reply(bob, { request_id: "rq_nope", client_id: "pc_bob1", hits: [] }).status, 404);
+  assert.equal(pcSearch.reply(bob, {
     request_id: rid, client_id: "pc_bob1",
     hits: [
       { title: "Дюна / Dune (2021) BDRip 1080p", size: 1e10, seeders: 50, topic_id: "6123456", badges: ["1080p", 5] },
@@ -146,27 +149,35 @@ test("RuTracker через ПК: запрос в поток комнаты, от
   assert.equal(got.hits.length, 2);
   assert.equal(got.hits[0].topic_id, "6123456");
   assert.deepEqual(got.hits[0].badges, ["1080p"]);
-  assert.equal(got.pc.key, rooms.clientKey("pc_bob1"));
-  assert.equal(pcSearch.reply(room.id, bob, { request_id: rid, client_id: "pc_bob1", hits: [] }).status, 404); // уже ответили
+  assert.deepEqual(got.pc, { key: rooms.clientKey("pc_bob1"), name: bob.name });
+  assert.equal(pcSearch.reply(bob, { request_id: rid, client_id: "pc_bob1", hits: [] }).status, 404); // уже ответили
 
   // Ошибка единственного ПК — сразу ответ, без таймаута
   const failing = pcSearch.search(room, alice, "Nope");
-  const rid2 = sent.filter(m => m.event === "rutracker_request").pop().data.request_id;
-  pcSearch.reply(room.id, bob, { request_id: rid2, client_id: "pc_bob1", error: "RuTracker не настроен на этом ПК." });
+  pcSearch.reply(bob, { request_id: sent.bob.pop().data.request_id, client_id: "pc_bob1", error: "RuTracker не настроен на этом ПК." });
   assert.deepEqual(await failing, { ok: false, reason: "failed", error: "RuTracker не настроен на этом ПК." });
 
   // add: только нужному ПК
   assert.equal((await pcSearch.add(room, alice, { target: "чужой", topicId: "1", title: "x" })).reason, "no_pc");
   const adding = pcSearch.add(room, alice, { target: got.pc.key, topicId: "6123456", title: "Дюна" });
-  const ar = sent.filter(m => m.event === "rutracker_request").pop().data;
+  const ar = sent.bob.pop().data;
   assert.equal(ar.kind, "add");
   assert.equal(ar.topic_id, "6123456");
   assert.equal(ar.target, got.pc.key);
-  pcSearch.reply(room.id, bob, { request_id: ar.request_id, client_id: "pc_bob1", id: 4242, ready: true });
+  pcSearch.reply(bob, { request_id: ar.request_id, client_id: "pc_bob1", id: 4242, ready: true });
   assert.deepEqual(await adding, { ok: true, id: 4242, ready: true });
-  stop();
-  rooms.leaveRoom(room.id, "pc_bob1", true);
+
+  // ПК Кэрол в плеере комнаты — тоже спрашивается; ушёл помощник — не спрашивается
+  rooms.joinRoom(room.id, carol, "android_carol");
+  const both = pcSearch.search(room, alice, "Both");
+  assert.equal(sent.carol.length, 1);
+  offBob();
+  pcSearch.reply(carol, { request_id: sent.carol[0].data.request_id, client_id: "pc_carol", hits: [] });
+  assert.equal((await both).ok, true);
+  offCarol();
+  assert.equal((await pcSearch.search(room, alice, "Dune")).reason, "no_pc");
   rooms.leaveRoom(room.id, "android_carol", true);
+  leaveBob();
 });
 
 test("ключ Activity: живёт, отзывается, неизвестный не пускает", () => {
@@ -227,9 +238,11 @@ test("сервер: страница Activity встраивается толь�
     const rtj = await rt.json();
     assert.equal(rtj.ok, false);
     assert.equal(rtj.reason, "no_pc");
-    const big = await fetch(`${base}/api/rooms/${room.id}/rutracker/reply`, { method: "POST", headers: auth,
+    const big = await fetch(`${base}/api/rutracker/helper/reply`, { method: "POST", headers: auth,
       body: JSON.stringify({ request_id: "rq_x", client_id: "pc_1", hits: Array(100).fill({ title: "x".repeat(300), topic_id: "1" }) }) });
     assert.equal(big.status, 404); // тело больше 20 КБ принято, запрос просто устарел
+    const helperFromActivity = await fetch(`${base}/api/rutracker/helper/events?client_id=pc_x`, { headers: auth });
+    assert.equal(helperFromActivity.status, 400); // помощник — только приложение на ПК
 
     const join = await fetch(`${base}/join/842-190"><script>`);
     assert.equal(join.status, 200);

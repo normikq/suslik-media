@@ -37,16 +37,17 @@ const PAGE_CSP = [
 // Скрипты и стили с ?v= сервер отдаёт «навсегда» (app.js, immutable), поэтому v — хеш содержимого файла:
 // новая выкладка меняет адрес, и Discord не держит старый activity.js. Считается один раз за запуск сервера.
 const assetHashes = new Map();
-function assetHash(rel) {
+function assetHash(rel) { // rel — от public/: «activity/activity.js», «searchcore.js»
   if (!assetHashes.has(rel)) {
     let v = "0";
-    try { v = crypto.createHash("sha256").update(fs.readFileSync(path.join(config.PUBLIC_DIR, "activity", rel))).digest("hex").slice(0, 10); } catch { /* нет файла */ }
+    try { v = crypto.createHash("sha256").update(fs.readFileSync(path.join(config.PUBLIC_DIR, rel))).digest("hex").slice(0, 10); } catch { /* нет файла */ }
     assetHashes.set(rel, v);
   }
   return assetHashes.get(rel);
 }
 function withAssetVersions(html) {
-  return html.replace(/(activity\/)([\w.-]+\.(?:js|css))\?v=\w+/g, (_, dir, rel) => `${dir}${rel}?v=${assetHash(rel)}`);
+  return html.replace(/((?:src|href)=")((?:\.\.\/)?)((?:activity\/)?[\w.-]+\.(?:js|css))\?v=\w+/g,
+    (_, attr, up, rel) => `${attr}${up}${rel}?v=${assetHash(rel)}`);
 }
 
 const pages = new Map();
@@ -204,7 +205,7 @@ router.post("/api/activity/rooms/:id/vote", requireLogin, roomLimiter, (req, res
 
 // 5. Поиск раздач: серверные трекеры Activity берёт обычным /api/search, а RuTracker — у ПК комнаты (services/pc-search.js)
 const PC_REASONS = {
-  no_pc: "В комнате нет ПК с Suslik Media: RuTracker ищет приложение на компьютере.",
+  no_pc: "Ни у кого здесь не запущен Suslik Media на ПК: RuTracker ищет приложение на компьютере (нужна новая версия).",
   busy: "ПК уже ищет. Подождите несколько секунд.",
   timeout: "ПК в комнате не ответил.",
   failed: "ПК не смог выполнить запрос."
@@ -236,9 +237,34 @@ router.post("/api/activity/rooms/:id/rutracker/add", requireLogin, apiLimiter, a
   const title = typeof req.body?.title === "string" ? req.body.title.trim().slice(0, 200) : "";
   pcAnswer(res, await pcSearch.add(room, req.user, { target, topicId, title }));
 });
-// Ответ ПК (приложение Qt): только участник этой комнаты со своим client_id
-router.post("/api/rooms/:id/rutracker/reply", requireLogin, roomLimiter, (req, res) => {
-  const r = pcSearch.reply(String(req.params.id), req.user, req.body);
+// Поток «помощника» ПК (приложение Qt): открыт, пока приложение запущено и вошло, — в комнате ПК или нет
+router.get("/api/rutracker/helper/events", requireLogin, (req, res) => {
+  const clientId = typeof req.query.client_id === "string" ? req.query.client_id : "";
+  if (req.activity || !/^pc[\w-]{1,62}$/i.test(clientId)) return res.status(400).json({ error: "Только для приложения на ПК." });
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
+  res.on("error", () => {});
+  const send = text => {
+    if (!res.destroyed && !res.writableEnded) res.write(`data: ${text}\n\n`);
+  };
+  const remove = pcSearch.addHelper(req.user, clientId, send);
+  res.write(": ok\n\n");
+  const pingTimer = setInterval(() => {
+    if (!resolveAuth(req)) return res.end();
+    res.write(": ping\n\n");
+  }, 20000);
+  pingTimer.unref?.();
+  res.on("close", () => {
+    clearInterval(pingTimer);
+    remove();
+  });
+});
+// Ответ ПК: только тот помощник, которого спрашивали, под своим аккаунтом
+router.post("/api/rutracker/helper/reply", requireLogin, roomLimiter, (req, res) => {
+  const r = pcSearch.reply(req.user, req.body);
   if (!r.ok) return res.status(r.status || 400).json({ error: r.error });
   res.json({ ok: true });
 });

@@ -30,15 +30,20 @@ Activity — страница сайта внутри Discord (iframe). Это �
   страница — `suslik://room/<код>` (на Android — `intent://…;package=ru.suslikovanora.media`). ПК регистрирует
   ссылку сам при запуске (`HKCU\Software\Classes\suslik`, `desktop-qt/app/src/UrlScheme.cpp`), установщик убирает
   её при удалении. Android — intent-filter в `AndroidManifest.xml`. ТВ — код вручную: «Вместе» → «Войти по коду».
-- **Поиск раздач.** «Медиатека» → «На трекерах»: трекеры сервера (обычный `/api/search`) и RuTracker через ПК в
-  комнате. У сервера своего входа на RuTracker может не быть, у ПК он есть (cookie, фоновый браузер), поэтому
-  Activity просит сервер (`POST /api/activity/rooms/:id/rutracker/search`), сервер шлёт в поток комнаты
-  `rutracker_request`, ПК ищет у себя и отвечает `POST /api/rooms/:id/rutracker/reply` (первый ответ, ждём 25 с;
-  ПК без RuTracker сразу отвечает ошибкой). Раздачу с magnet Activity добавляет сама (`/api/magnets`), без magnet —
-  просит тот же ПК (`…/rutracker/add`, адресно по отпечатку его client_id): он качает .torrent и кладёт в AllDebrid.
-  Дальше Activity ждёт облако, обновляет медиатеку и включает фильм в комнате или предлагает его (у сериала —
-  открывает выбор серии). Ответ ПК принимается только от ПК этой комнаты под его же аккаунтом, поля чистятся
-  (`services/pc-search.js`). В ПК — `Party::onRemoteRequest`; старый ПК на Kotlin не отвечает (ждём до 25 с).
+- **Поиск раздач.** «Медиатека» → «На трекерах»: трекеры сервера (обычный `/api/search`) и RuTracker через ПК.
+  Разбор релизов, метки (4K, HDR, WEB-DL, озвучка, битрейт), пресеты, фильтры и сортировка — тот же
+  `public/searchcore.js`, что у сайта и ТВ. Трекеры включаются и выключаются (помнится в браузере), по 20 раздач
+  на страницу.
+- **RuTracker через ПК.** У сервера своего входа на RuTracker может не быть, у ПК он есть (cookie, фоновый браузер).
+  Каждый вошедший ПК (Qt) держит лёгкий поток «помощника» `GET /api/rutracker/helper/events` — в комнате он или нет.
+  Activity просит сервер (`POST /api/activity/rooms/:id/rutracker/search`), сервер шлёт `rutracker_request`
+  помощникам тех, кто сейчас в этой комнате (у пульта или в плеере), ПК ищет у себя и отвечает
+  `POST /api/rutracker/helper/reply` (первый ответ, ждём до 25 с; ПК без RuTracker сразу отвечает ошибкой).
+  Раздачу с magnet Activity добавляет сама (`/api/magnets`), без magnet — просит тот же ПК (`…/rutracker/add`,
+  адресно по отпечатку его client_id): он качает .torrent и кладёт в AllDebrid. Дальше Activity ждёт облако,
+  обновляет медиатеку и включает фильм в комнате или предлагает его (у сериала — выбор серии). Ответ принимается
+  только от спрошенного ПК под его же аккаунтом, поля чистятся (`services/pc-search.js`). В ПК —
+  `Party::setHelper`/`onRemoteRequest`; старый ПК на Kotlin помощником не бывает.
 
 Почему ключ, а не cookie: страница живёт в iframe на `<id>.discordsays.com`, для браузера это сторонний сайт, и
 cookie там режутся. Ключ `sa_…` идёт заголовком `Authorization: Bearer` (как у приложений), поэтому и проверка

@@ -6,7 +6,7 @@
  */
 (function () {
   'use strict';
-  var D = window.SMDiscord, model = window.SM.model;
+  var D = window.SMDiscord, model = window.SM.model, SC = window.SM.searchcore;
   var app = document.getElementById('app');
 
   var S = {
@@ -15,7 +15,8 @@
     items: [], shown: [], versions: {}, byId: {},
     tab: 'now', query: '', sheet: null,
     // поиск раздач: mode — 'library' или 'trackers'; server — /api/search, pc — RuTracker с ПК комнаты
-    find: { mode: 'library', q: '', asked: '', server: null, serverErr: '', pc: null, busy: 0, notes: {} },
+    find: { mode: 'library', q: '', asked: '', server: null, serverErr: '', providers: [], pc: null, busy: 0, notes: {},
+      page: 0, filtersOpen: false, f: null },
     stream: null, streamOk: false, pollTimer: 0, retry: 0
   };
 
@@ -37,7 +38,11 @@
     copy: '<rect x="8.5" y="8.5" width="11.5" height="11.5" rx="2.2"/><path d="M15.5 8.5V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7.5a2 2 0 002 2h2.5"/>',
     loading: '<path d="M12 3a9 9 0 109 9"/>',
     globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.6 4 5.8 4 9s-1.4 6.4-4 9c-2.6-2.6-4-5.8-4-9s1.4-6.4 4-9z"/>',
-    seeds: '<path d="M12 19V6M6.5 11.5L12 6l5.5 5.5"/>'
+    seeds: '<path d="M12 19V6M6.5 11.5L12 6l5.5 5.5"/>',
+    filter: '<path d="M4 6h16M7 12h10M10 18h4"/>',
+    check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+    back: '<path d="M15 5l-7 7 7 7"/>',
+    fwd: '<path d="M9 5l7 7-7 7"/>'
   };
   function icon(name) {
     var s = document.createElement('span');
@@ -516,37 +521,77 @@
   // Серверные трекеры — обычный /api/search; RuTracker — у ПК комнаты (его cookie): сервер пересылает запрос в поток
   // комнаты, ПК отвечает. Добавленная раздача ждёт AllDebrid, потом «Включить в комнате» или «Предложить».
   function btihOf(magnet) { var m = /btih:([0-9a-z]+)/i.exec(magnet || ''); return m ? m[1].toLowerCase() : ''; }
+  // Фильтры поиска помнятся в браузере (как на ПК): пресет, качество, тип, сортировка, сиды, RU, выключенные трекеры
+  var FILTER_KEY = 'sm.act.find';
+  var FILTER_DEFAULT = { preset: 'ALL', resolution: '', kind: 'video', sort: 'DEFAULT', onlySeeded: false, onlyRu: false, refine: '', off: [] };
+  function filters() {
+    var F = S.find;
+    if (!F.f) {
+      var saved = {};
+      try { saved = JSON.parse(localStorage.getItem(FILTER_KEY) || '{}') || {}; } catch (e) { /* без хранилища */ }
+      F.f = {};
+      Object.keys(FILTER_DEFAULT).forEach(function (k) { F.f[k] = k in saved && typeof saved[k] === typeof FILTER_DEFAULT[k] ? saved[k] : FILTER_DEFAULT[k]; });
+      if (!Array.isArray(F.f.off)) F.f.off = [];
+    }
+    return F.f;
+  }
+  function setFilter(k, v) {
+    filters()[k] = v;
+    S.find.page = 0;
+    try { localStorage.setItem(FILTER_KEY, JSON.stringify(S.find.f)); } catch (e) { /* без хранилища */ }
+    render();
+  }
+  var PC_SOURCE = 'RuTracker (ПК)';
+  function trackerOn(name) { return filters().off.indexOf(name) < 0; }
+  function toggleTracker(name) {
+    var off = filters().off.slice(), i = off.indexOf(name);
+    if (i >= 0) off.splice(i, 1); else off.push(name);
+    setFilter('off', off);
+  }
+
+  function btihOf(magnet) { var m = /btih:([0-9a-z]+)/i.exec(magnet || ''); return m ? m[1].toLowerCase() : ''; }
   function searchTrackers() {
     var F = S.find, q = F.q.trim();
     if (q.length < 2) { toast('Введите хотя бы два символа.', true); return; }
-    var gen = ++F.busy;
-    F.asked = q; F.server = null; F.serverErr = ''; F.pc = { wait: true }; F.notes = {};
+    var gen = ++F.busy, cleaned = SC.cleanQuery(q) || q;
+    F.asked = q; F.server = null; F.serverErr = ''; F.notes = {}; F.page = 0;
+    F.pc = trackerOn(PC_SOURCE) ? { wait: true } : { off: true };
     render();
-    api('api/search?q=' + encodeURIComponent(q)).then(function (r) {
+    api('api/search?q=' + encodeURIComponent(cleaned)).then(function (r) {
       if (gen !== F.busy) return;
-      F.server = Array.isArray(r.results) ? r.results : [];
+      F.server = (Array.isArray(r.results) ? r.results : []).map(function (x) {
+        var hit = SC.toHit(x);
+        if (!hit) return null;
+        hit.uid = 's:' + x.id;
+        hit.sources = Array.isArray(x.sources) && x.sources.length ? x.sources : [String(x.provider || '').split(' · ')[0]];
+        return hit;
+      }).filter(Boolean);
+      F.providers = Array.isArray(r.providers) ? r.providers : [];
       render();
     }, function (e) { if (gen !== F.busy) return; F.server = []; F.serverErr = errText(e); render(); });
-    api('api/activity/rooms/' + S.room.id + '/rutracker/search', { query: q }).then(function (r) {
+    if (F.pc.off) return;
+    api('api/activity/rooms/' + S.room.id + '/rutracker/search', { query: cleaned }).then(function (r) {
       if (gen !== F.busy) return;
-      F.pc = r.ok ? { hits: r.hits || [], pc: r.pc } : { error: r.error || 'ПК не ответил.' };
+      F.pc = r.ok ? { hits: (r.hits || []).map(function (x, i) {
+        var hit = SC.toHit({ id: 'p' + i, title: x.title, size: x.size, seeders: x.seeders, leechers: x.leechers, ru: true, kind: x.kind,
+          provider: PC_SOURCE, date: x.date, magnet: x.magnet });
+        hit.uid = 'p:' + (x.topic_id || btihOf(x.magnet) || i);
+        hit.pc = r.pc; hit.topic_id = x.topic_id; hit.sources = [PC_SOURCE];
+        hit.source = 'RuTracker · ПК ' + (r.pc && r.pc.name || '');
+        return hit;
+      }), pc: r.pc } : { error: r.error || 'ПК не ответил.' };
       render();
     }, function (e) { if (gen !== F.busy) return; F.pc = { error: errText(e) }; render(); });
   }
-  /** Раздачи одним списком: сначала RuTracker с ПК (если сервер не нашёл ту же), потом сервер. */
+  /** Раздачи после фильтров: RuTracker с ПК (если сервер не нашёл ту же) и сервер; выключенные трекеры — мимо. */
   function trackerHits() {
-    var F = S.find, out = [], seen = {};
-    (F.server || []).forEach(function (r) { if (r.infoHash) seen[String(r.infoHash).toLowerCase()] = 1; });
-    if (F.pc && F.pc.hits) F.pc.hits.forEach(function (r) {
-      var b = btihOf(r.magnet);
-      if (b && seen[b]) return;
-      out.push({ uid: 'p:' + (r.topic_id || b), pc: F.pc.pc, title: r.title, size: r.size, seeders: r.seeders, badges: r.badges || [],
-        magnet: r.magnet, topic_id: r.topic_id, source: 'RuTracker · ПК ' + (F.pc.pc && F.pc.pc.name || '') });
-    });
-    (F.server || []).forEach(function (r) {
-      out.push({ uid: 's:' + r.id, id: r.id, title: r.title, size: r.size, seeders: r.seeders, badges: [], source: r.provider || 'Трекер' });
-    });
-    return out;
+    var F = S.find, f = filters(), all = [], seen = {};
+    (F.server || []).forEach(function (h) { var b = btihOf(h.magnet); if (b) seen[b] = 1; });
+    if (F.pc && F.pc.hits) F.pc.hits.forEach(function (h) { var b = btihOf(h.magnet); if (!(b && seen[b])) all.push(h); });
+    all = all.concat(F.server || []);
+    all = all.filter(function (h) { return h.sources.some(trackerOn); });
+    return SC.filter(all, { query: F.asked, kind: f.kind, preset: f.preset, resolution: f.resolution || null,
+      onlySeeded: f.onlySeeded, onlyRu: f.onlyRu, refine: f.refine, sort: f.sort });
   }
   function note(uid, text, bad) { S.find.notes[uid] = { text: text, bad: !!bad }; render(); }
   function addHit(hit, how) {
@@ -601,45 +646,129 @@
       toast('Выберите серию или файл.');
     }
   }
+  var PAGE = 20;
+  function select(value, options, onChange, label) {
+    return h('select', { class: 'sel', 'aria-label': label, on: { change: function (e) { onChange(e.target.value); } } }, options.map(function (o) {
+      return h('option', { value: o[0], selected: o[0] === value, text: o[1] });
+    }));
+  }
+  function check(on, text, onChange) {
+    return h('label', { class: 'check' }, [h('input', { type: 'checkbox', checked: on, on: { change: function (e) { onChange(e.target.checked); } } }), text]);
+  }
+  function activeFilters() {
+    var f = filters(), n = 0;
+    if (f.resolution) n++;
+    if (f.kind !== 'video') n++;
+    if (f.sort !== 'DEFAULT') n++;
+    if (f.onlySeeded) n++;
+    if (f.onlyRu) n++;
+    if (f.refine.trim()) n++;
+    return n + f.off.length;
+  }
+  function viewFilters() {
+    var F = S.find, f = filters();
+    var trackers = F.providers.map(function (p) { return { name: p.name, count: p.count, ok: p.ok, error: p.error }; });
+    trackers.push({ name: PC_SOURCE, count: F.pc && F.pc.hits ? F.pc.hits.length : null, ok: !(F.pc && F.pc.error), error: F.pc && F.pc.error });
+    return h('div', { class: 'filters' }, [
+      h('div', { class: 'filter-row' }, [
+        select(f.resolution, [['', 'Любое качество'], ['4K', '4K'], ['1080p', '1080p'], ['720p', '720p']], function (v) { setFilter('resolution', v); }, 'Качество'),
+        select(f.kind, [['video', 'Фильмы и сериалы'], ['movie', 'Только фильмы'], ['series', 'Только сериалы'], ['cartoon', 'Только мультфильмы'], ['all', 'Всё подряд']],
+          function (v) { setFilter('kind', v); }, 'Тип'),
+        select(f.sort, [['DEFAULT', 'Сначала подходящие'], ['SEEDS_DESC', 'По сидам'], ['SIZE_ASC', 'Сначала лёгкие'], ['SIZE_DESC', 'Сначала тяжёлые'], ['BITRATE_ASC', 'Битрейт ниже']],
+          function (v) { setFilter('sort', v); }, 'Сортировка')
+      ]),
+      h('div', { class: 'filter-row' }, [
+        check(f.onlySeeded, 'Только с сидами', function (v) { setFilter('onlySeeded', v); }),
+        check(f.onlyRu, 'Только русские трекеры', function (v) { setFilter('onlyRu', v); }),
+        h('label', { class: 'search refine' }, [h('input', { type: 'search', placeholder: 'Уточнить: дубляж, hevc, remux…', value: f.refine,
+          on: { change: function (e) { setFilter('refine', e.target.value); } } })])
+      ]),
+      h('div', { class: 'h', style: 'margin:12px 0 8px', text: 'Трекеры' }),
+      h('div', { class: 'chips' }, trackers.map(function (t) {
+        var on = trackerOn(t.name);
+        return h('button', { class: 'chip tracker' + (on ? ' on' : '') + (t.ok ? '' : ' failed'), type: 'button', title: t.error || (on ? 'Выключить' : 'Включить'),
+          on: { click: function () { toggleTracker(t.name); } } }, [on ? icon('check') : icon('close'), t.name + (t.count != null && t.ok ? ' · ' + t.count : '')]);
+      })),
+      F.providers.length ? null : h('div', { class: 'small muted', text: 'Список трекеров появится после первого поиска.' })
+    ]);
+  }
+  function pager(total) {
+    var F = S.find, pages = Math.ceil(total / PAGE);
+    if (pages <= 1) return null;
+    var go = function (p) { F.page = p; render(); var pg = document.querySelector('.page'); if (pg) window.scrollTo(0, 0); };
+    var nums = [];
+    for (var i = 0; i < pages; i++) {
+      if (i === 0 || i === pages - 1 || Math.abs(i - F.page) <= 1) nums.push(i);
+      else if (nums[nums.length - 1] !== -1) nums.push(-1);
+    }
+    return h('div', { class: 'pager' }, [
+      btn('small', 'back', null, function () { go(F.page - 1); }, { disabled: F.page === 0, title: 'Назад' })
+    ].concat(nums.map(function (n) {
+      return n < 0 ? h('span', { class: 'muted', text: '…' }) :
+        h('button', { class: 'chip' + (n === F.page ? ' on' : ''), type: 'button', on: { click: function () { go(n); } } }, [String(n + 1)]);
+    })).concat([btn('small', 'fwd', null, function () { go(F.page + 1); }, { disabled: F.page >= pages - 1, title: 'Дальше' })]));
+  }
+  function hitCard(r, host) {
+    var n = S.find.notes[r.uid], busy = n && !n.bad && n.text !== 'Готово: в медиатеке.';
+    var clean = r.release.cleanTitle || r.title;
+    var badges = SC.badges(r.release).map(function (b) { return h('span', { class: 'rb ' + b.tone, text: b.text }); });
+    var meta = [
+      h('span', { class: 'tag' + (r.pc ? ' lamp' : '') }, [icon(r.pc ? 'devices' : 'globe'), r.source]),
+      h('span', { class: 'seeds' + (r.seeders > 0 ? ' live' : '') }, [icon('seeds'), String(r.seeders || 0)]),
+      r.size ? h('span', { text: model.formatBytes(r.size) }) : null,
+      r.kind === 'series' ? h('span', { text: 'сериал' }) : r.kind === 'cartoon' ? h('span', { text: 'мультфильм' }) : null,
+      r.date ? h('span', { text: r.date }) : null
+    ];
+    return h('div', { class: 'hit' }, [
+      h('div', { class: 'hit-title', text: clean }),
+      clean !== r.title ? h('div', { class: 'hit-raw', text: r.title }) : null,
+      badges.length ? h('div', { class: 'hit-badges' }, badges) : null,
+      h('div', { class: 'hit-meta' }, meta),
+      n ? h('div', { class: 'small ' + (n.bad ? 'bad' : 'muted'), text: n.text }) : null,
+      busy ? null : h('div', { class: 'row' }, [
+        host ? btn('lamp small', 'play', 'Включить в комнате', function () { addHit(r, 'play'); }) : null,
+        S.room.poll ? null : btn('small', 'vote', 'Предложить', function () { addHit(r, 'suggest'); })
+      ])
+    ]);
+  }
   function viewTrackers() {
-    var F = S.find, host = isHost();
+    var F = S.find, f = filters(), host = isHost();
     var input = h('input', { id: 'q', type: 'search', placeholder: 'Название фильма или сериала', value: F.q, autocomplete: 'off',
       on: { input: function (e) { F.q = e.target.value; }, keydown: function (e) { if (e.key === 'Enter') searchTrackers(); } } });
-    var kids = [h('div', { class: 'search-row' }, [
-      h('label', { class: 'search' }, [icon('search'), input]),
-      btn('lamp', 'search', 'Найти', searchTrackers)
-    ])];
+    var nf = activeFilters();
+    var kids = [
+      h('div', { class: 'search-row' }, [
+        h('label', { class: 'search' }, [icon('search'), input]),
+        btn('lamp', 'search', 'Найти', searchTrackers)
+      ]),
+      h('div', { class: 'chips presets' }, [
+        ['ALL', 'Все'], ['BALANCED', 'Оптимальные · 1080p'], ['MAX_QUALITY', 'Макс. качество'], ['MOBILE', 'Для мобильной сети']
+      ].map(function (p) {
+        return h('button', { class: 'chip' + (f.preset === p[0] ? ' on' : ''), type: 'button', on: { click: function () { setFilter('preset', p[0]); } } }, [p[1]]);
+      }).concat([h('div', { class: 'grow' }),
+        h('button', { class: 'chip' + (F.filtersOpen ? ' on' : ''), type: 'button', on: { click: function () { F.filtersOpen = !F.filtersOpen; render(); } } },
+          [icon('filter'), 'Фильтры' + (nf ? ' · ' + nf : '')])]))
+    ];
+    if (F.filtersOpen) kids.push(viewFilters());
     if (!F.asked) {
-      kids.push(h('div', { class: 'empty', text: 'Поиск по трекерам сервера и по RuTracker через ПК в комнате (если там кто-то сидит с приложением).' }));
+      kids.push(h('div', { class: 'empty', text: 'Поиск по трекерам сервера и по RuTracker через Suslik Media на ПК у кого-то из здесь присутствующих.' }));
       return h('div', {}, kids);
     }
     var lines = [];
     lines.push(F.server === null ? 'Трекеры сервера: ищем…' : F.serverErr ? 'Трекеры сервера: ' + F.serverErr : 'Трекеры сервера: ' + F.server.length);
-    lines.push(F.pc && F.pc.wait ? 'RuTracker с ПК: ищем…' : F.pc && F.pc.error ? 'RuTracker с ПК: ' + F.pc.error :
+    lines.push(F.pc.off ? 'RuTracker с ПК: выключен в фильтрах' : F.pc.wait ? 'RuTracker с ПК: ищем…' : F.pc.error ? 'RuTracker с ПК: ' + F.pc.error :
       'RuTracker с ПК ' + (F.pc.pc && F.pc.pc.name || '') + ': ' + F.pc.hits.length);
+    var hits = trackerHits(), total = (F.server || []).length + (F.pc && F.pc.hits ? F.pc.hits.length : 0);
+    if (hits.length < total) lines.push('Под фильтры подходит ' + hits.length + ' из ' + total);
     kids.push(h('div', { class: 'small muted find-status' }, lines.map(function (l) { return h('div', { text: l }); })));
-    var hits = trackerHits();
     if (!hits.length) {
-      if (F.server !== null && !(F.pc && F.pc.wait)) kids.push(h('div', { class: 'empty', text: 'Раздач не нашлось.' }));
+      if (F.server !== null && !F.pc.wait) kids.push(h('div', { class: 'empty', text: total ? 'Под фильтры ничего не подходит.' : 'Раздач не нашлось.' }));
       return h('div', {}, kids);
     }
-    kids.push(h('div', { class: 'hits' }, hits.slice(0, 80).map(function (r) {
-      var n = F.notes[r.uid], busy = n && !n.bad && n.text !== 'Готово: в медиатеке.';
-      var meta = [
-        h('span', { class: 'tag' + (r.pc ? ' lamp' : '') }, [icon(r.pc ? 'devices' : 'globe'), r.source]),
-        h('span', { class: 'seeds' + (r.seeders > 0 ? ' live' : '') }, [icon('seeds'), String(r.seeders || 0)]),
-        r.size ? h('span', { text: model.formatBytes(r.size) }) : null
-      ].concat(r.badges.map(function (b) { return h('span', { class: 'tag', text: b }); }));
-      return h('div', { class: 'hit' }, [
-        h('div', { class: 'hit-title', text: r.title }),
-        h('div', { class: 'hit-meta' }, meta),
-        n ? h('div', { class: 'small ' + (n.bad ? 'bad' : 'muted'), text: n.text }) : null,
-        busy ? null : h('div', { class: 'row' }, [
-          host ? btn('lamp small', 'play', 'Включить в комнате', function () { addHit(r, 'play'); }) : null,
-          S.room.poll ? null : btn('small', 'vote', 'Предложить', function () { addHit(r, 'suggest'); })
-        ])
-      ]);
-    })));
+    var pages = Math.ceil(hits.length / PAGE);
+    if (F.page >= pages) F.page = pages - 1;
+    kids.push(h('div', { class: 'hits' }, hits.slice(F.page * PAGE, F.page * PAGE + PAGE).map(function (r) { return hitCard(r, host); })));
+    kids.push(pager(hits.length));
     return h('div', {}, kids);
   }
 

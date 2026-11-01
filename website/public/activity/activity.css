@@ -187,3 +187,31 @@ button { font: inherit; color: inherit; }
 .seeds .ico { width: 13px; height: 13px; }
 .seeds.live { color: var(--ok); }
 .bad { color: var(--bad); }
+.presets { align-items: center; }
+.presets .grow { flex: 1; }
+.filters { padding: 12px 14px; border-radius: 12px; background: var(--glass-fill); border: 1px solid var(--glass-edge); margin-bottom: 14px; }
+.filter-row { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 10px; }
+.sel { background: var(--film); color: var(--text); border: 1px solid var(--glass-edge); border-radius: 10px; padding: 7px 10px; font: inherit; font-size: 13px; }
+.check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); cursor: pointer; }
+.check input { accent-color: var(--electric); width: 16px; height: 16px; }
+.search.refine { flex: 1; min-width: 200px; margin: 0; padding: 0 12px; }
+.search.refine input { padding: 7px 0; font-size: 13px; }
+.chip.tracker:not(.on) { opacity: 0.55; text-decoration: line-through; }
+.chip.tracker.failed { border-color: rgba(255, 155, 143, 0.5); }
+.hit-raw { font-size: 12px; color: var(--dim); line-height: 1.35; word-break: break-word; }
+.hit-badges { display: flex; flex-wrap: wrap; gap: 5px; }
+.rb { background: #1c2230; color: #c7d0e0; border: 1px solid #2e3850; border-radius: 6px; padding: 1px 7px; font-size: 11px; font-weight: 700; }
+.rb.res4k { background: #281e10; color: #ffb02e; border-color: #6e501c; }
+.rb.res { background: #101b2e; color: #7fafff; border-color: #243a66; }
+.rb.codec { background: #0f2218; color: #7fe0b0; border-color: #204d36; }
+.rb.hdr { background: #241d14; color: #ffc069; border-color: #5a4422; }
+.rb.cam { background: #2a1010; color: #ff8b85; border-color: #662222; }
+.rb.remux { background: #221430; color: #d49bff; border-color: #4c276e; }
+.rb.coll { background: #261d3b; color: #d6b4fc; border-color: #533b85; }
+.rb.voice { background: #14202b; color: #86b8e6; border-color: #233a50; }
+.rb.light { color: #5fd08a; }
+.rb.medium { color: #f3c34b; }
+.rb.heavy { color: #ff7a72; }
+.pager { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px; margin: 16px 0 6px; }
+.pager .chip { min-width: 36px; }
+.btn.small.icon-only, .pager .btn { padding: 6px 10px; }

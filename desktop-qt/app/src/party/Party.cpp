@@ -297,7 +297,6 @@ void Party::startStream(const QString &id) {
             const QString line = QString::fromUtf8(m_streamBuf.left(nl)).trimmed();
             m_streamBuf.remove(0, nl + 1);
             if (const auto e = PartyProtocol::parseEventLine(line)) onEvent(*e);
-            else if (const auto rq = PartyProtocol::remoteRequestOf(line)) onRemoteRequest(*rq);
         }
     });
     connect(reply, &QNetworkReply::finished, this, [this, reply, id, gen, status] {
@@ -346,9 +345,56 @@ void Party::stopStream() {
     if (m_connected) { m_connected = false; emit changed(); }
 }
 
+// ---- помощник Discord Activity ----
+
+void Party::setHelper(bool on) {
+    if (on == m_helperOn) return;
+    m_helperOn = on;
+    ++m_helperGen;
+    if (m_helper) { QNetworkReply *r = m_helper; m_helper = nullptr; r->abort(); r->deleteLater(); }
+    m_helperFailures = 0;
+    if (on) startHelper();
+}
+
+void Party::startHelper() {
+    const int gen = ++m_helperGen;
+    QNetworkRequest req = m_api.request(PartyProtocol::remoteEventsPath(m_clientId));
+    req.setRawHeader("Accept", "text/event-stream");
+    req.setRawHeader("Accept-Encoding", "identity");
+    req.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
+    req.setTransferTimeout(60000); // «: ping» каждые 20 с
+    QNetworkReply *reply = m_api.network()->get(req);
+    m_helper = reply;
+    m_helperBuf.clear();
+    connect(reply, &QNetworkReply::readyRead, this, [this, reply, gen] {
+        if (gen != m_helperGen) return;
+        m_helperFailures = 0;
+        m_helperBuf += reply->readAll();
+        int nl;
+        while ((nl = m_helperBuf.indexOf('\n')) >= 0) {
+            const QString line = QString::fromUtf8(m_helperBuf.left(nl)).trimmed();
+            m_helperBuf.remove(0, nl + 1);
+            if (const auto rq = PartyProtocol::remoteRequestOf(line)) onRemoteRequest(*rq);
+        }
+    });
+    connect(reply, &QNetworkReply::finished, this, [this, reply, gen] {
+        reply->deleteLater();
+        if (gen != m_helperGen || !m_helperOn) return;
+        m_helper = nullptr;
+        const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        // старый сервер (404) и отказ (400/401/403) — не долбим: раз в 10 минут
+        const int delay = (code == 404 || code == 400 || code == 401 || code == 403)
+                              ? 600000 : int(std::min<qint64>(qint64(2000) << std::min(m_helperFailures, 4), 30000));
+        ++m_helperFailures;
+        QPointer<Party> self(this);
+        QTimer::singleShot(delay, this, [self, gen] {
+            if (self && self->m_helperOn && self->m_helperGen == gen && !self->m_helper) self->startHelper();
+        });
+    });
+}
+
 void Party::onRemoteRequest(const RemoteTrackerRequest &rq) {
-    if (!m_roomId) return;
-    const QString path = PartyProtocol::remoteReplyPath(*m_roomId);
+    const QString path = PartyProtocol::remoteReplyPath();
     QPointer<Party> self(this);
     auto send = [self, path, clientId = m_clientId, id = rq.id](QJsonObject body) {
         if (!self) return;

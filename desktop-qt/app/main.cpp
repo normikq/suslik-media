@@ -117,7 +117,9 @@ int main(int argc, char *argv[]) {
     app::PartySync partySync(player, party);
     QObject::connect(&library, &app::Library::authenticatedChanged, &party, [&library, &party] {
         if (library.authenticated() == 0) party.leave(); // вышли из аккаунта — и из комнаты
+        party.setHelper(library.authenticated() == 1);   // Discord Activity может попросить поискать на RuTracker
     });
+    party.setHelper(library.authenticated() == 1);
     // Ссылка из Discord: в комнату — когда вход в аккаунт уже есть (при запуске он проверяется не сразу)
     auto runLink = [&library, &party, &pendingLink] {
         if (pendingLink.isEmpty() || library.authenticated() != 1) return;
