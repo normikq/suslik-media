@@ -107,6 +107,26 @@ object Party {
         } catch (e: Exception) { Api.describe(e) }
     }
 
+    /**
+     * suslik://room/<код> из Discord Activity: в эту комнату (из прежней — сначала выйдя: сервер не пускает одно устройство
+     * в две). Гостю фильм ведущего откроется сам (без «Смотреть вместе»). null — получилось, иначе текст ошибки.
+     */
+    suspend fun openLink(link: String): String? {
+        val id = PartyProtocol.roomFromLink(link) ?: return null
+        AppLog.write("[party] link to room $id")
+        if (roomId == id) { followed = null; return null }
+        roomId?.let { old ->
+            stopStream()
+            roomId = null; startedByMe = null; followed = null
+            synchronized(this) { room = PartyRoom() }
+            reportedBuffering = false
+            runCatching { Api.post(PartyProtocol.leavePath(old), PartyProtocol.leaveBody(clientId)) }
+        }
+        val error = join(id)
+        if (error == null) followed = null
+        return error
+    }
+
     fun leave() {
         val id = roomId ?: return
         stopStream()

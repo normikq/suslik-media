@@ -128,6 +128,16 @@ namespace SuslikSetup
         public static void Unregister()
         {
             try { Registry.CurrentUser.DeleteSubKeyTree(ArpKey, false); } catch { }
+            // Ссылки suslik://room/… (Discord Activity): запись делает само приложение (UrlScheme.cpp); убираем, если она наша
+            try
+            {
+                string command;
+                using (var k = Registry.CurrentUser.OpenSubKey(@"Software\Classes\suslik\shell\open\command"))
+                    command = k?.GetValue("") as string;
+                if (command != null && command.IndexOf(ExeName, StringComparison.OrdinalIgnoreCase) >= 0)
+                    Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\suslik", false);
+            }
+            catch { }
         }
 
         /// <summary>SuslikUninstall.exe лежит рядом с SuslikMediaQt.exe; на всякий случай поднимаемся до папки с программой.</summary>

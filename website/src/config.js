@@ -63,6 +63,8 @@ const DISCORD_ALLOWED_USERS = (process.env.DISCORD_ALLOWED_USERS || "").split(",
 const DISCORD_OWNER_ID = process.env.DISCORD_OWNER_ID || "";
 const DISCORD_REDIRECT_URI = process.env.DISCORD_REDIRECT_URI || "";
 const DISCORD_ENABLED = Boolean(DISCORD_CLIENT_ID && DISCORD_CLIENT_SECRET);
+// Discord Activity: внешний адрес сайта для ссылок «Открыть в приложении» (внутри Activity видно только discordsays.com)
+const ACTIVITY_SITE_URL = (process.env.ACTIVITY_SITE_URL || "").trim().replace(/\/+$/, "");
 const PASSWORD_AUTH_ENABLED = process.env.PASSWORD_AUTH_ENABLED !== "false" && Boolean(SITE_PASSWORD);
 
 // Where small runtime files live (sessions, library cache, metadata cache). Defaults to the website folder.
@@ -176,5 +178,6 @@ module.exports = {
   DISCORD_OWNER_ID,
   DISCORD_REDIRECT_URI,
   DISCORD_ENABLED,
+  ACTIVITY_SITE_URL,
   PASSWORD_AUTH_ENABLED
 };

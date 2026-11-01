@@ -1,6 +1,21 @@
 "use strict";
 
-const rateLimit = require("express-rate-limit");
+const crypto = require("crypto");
+const expressRateLimit = require("express-rate-limit");
+const { ipKeyGenerator } = expressRateLimit;
+
+// Счёт по адресу; запросы Discord Activity — по её ключу: они все приходят с адресов прокси Discord,
+// и по адресу друзья в одном голосовом канале делили бы один лимит
+function clientKey(req) {
+  const auth = String(req.get("Authorization") || "");
+  const m = /^Bearer\s+(sa_[0-9a-f]{20,80})$/i.exec(auth);
+  if (m) return "sa:" + crypto.createHash("sha256").update(m[1]).digest("hex").slice(0, 32);
+  return ipKeyGenerator(req.ip || "");
+}
+
+function rateLimit(options) {
+  return expressRateLimit({ keyGenerator: clientKey, ...options });
+}
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -120,7 +135,17 @@ const roomLimiter = rateLimit({
   handler: (req, res, next, options) => res.status(options.statusCode).json({ error: "Слишком много команд комнате." })
 });
 
+// Вход из Discord Activity: ещё без ключа, а адрес у всех один — прокси Discord. Каждый запуск Activity входит заново
+const activityAuthLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 60,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  handler: (req, res, next, options) => res.status(options.statusCode).json({ error: "Слишком много входов. Попробуйте через несколько минут." })
+});
+
 module.exports = {
+  activityAuthLimiter,
   deviceAuthLimiter,
   devicePollLimiter,
   roomLimiter,

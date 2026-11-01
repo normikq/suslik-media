@@ -32,8 +32,8 @@ function getEstimatedPos(state) {
   return Math.max(0, state.pos + elapsedSec);
 }
 
-function createRoom(hostUser, file = null, controls = "all", hostClientId = null) {
-  const id = crypto.randomBytes(6).toString("hex"); // 12 hex chars
+function createRoom(hostUser, file = null, controls = "all", hostClientId = null, fixedId = null) {
+  const id = fixedId || crypto.randomBytes(6).toString("hex"); // 12 hex chars
 
   const room = {
     id,
@@ -53,7 +53,13 @@ function createRoom(hostUser, file = null, controls = "all", hostClientId = null
     },
     members: new Map(), // clientId -> { id, name, avatar, buffering, last_seen }
     created_at: Date.now(),
-    empty_since: Date.now() // 0 — в комнате кто-то есть
+    empty_since: Date.now(), // 0 — в комнате кто-то есть
+    // Комната голосового канала Discord (Activity): id канала, кто смотрит Activity (не участники плеера),
+    // предложенные фильмы и голосование
+    channel_id: null,
+    watchers: new Map(), // user.id -> { id, name, avatar, streams }
+    candidates: [], // [{ key, name, by, by_name, at }]
+    poll: null // { ends_at, votes: Map(user.id -> key), timer }
   };
 
   rooms.set(id, room);
@@ -81,7 +87,9 @@ function getRoomPublicData(room) {
       server_time: Date.now()
     },
     members: Array.from(room.members.values()).map(publicMember),
-    member_count: room.members.size
+    member_count: room.members.size,
+    // Только у комнаты голосового канала (Activity); приложения эти поля не читают
+    ...(room.channel_id ? { channel: true, ...activityPublicData(room) } : {})
   };
 }
 
@@ -250,16 +258,18 @@ function hostPresent(room) {
   for (const m of room.members.values()) {
     if (isRoomHost(room, { id: m.id }, m.client_id)) return true;
   }
-  return false;
+  // В Activity ведущий может быть только «у пульта» (без плеера): он всё равно на месте
+  return room.watchers.has(room.host_id);
 }
 
 // true — ведущий сменился (и все об этом узнали)
 function promoteIfHostGone(room) {
-  if (rooms.get(room.id) !== room || room.members.size === 0 || hostPresent(room)) return false;
-  const next = room.members.values().next().value; // Map хранит порядок входа
+  if (rooms.get(room.id) !== room || (room.members.size === 0 && room.watchers.size === 0) || hostPresent(room)) return false;
+  // Map хранит порядок входа: сначала тот, кто в комнате с плеером, иначе первый у пульта Activity
+  const next = room.members.size > 0 ? room.members.values().next().value : room.watchers.values().next().value;
   room.host_id = next.id;
   room.host_name = next.name;
-  room.host_client_id = next.client_id;
+  room.host_client_id = next.client_id || null;
   broadcast(room.id, "state_changed", getRoomPublicData(room));
   return true;
 }
@@ -282,7 +292,7 @@ function leaveRoom(roomId, clientId, force = false) {
     if (member.streams === 0) {
       room.members.delete(clientId);
       broadcast(roomId, "member_left", { key: clientKey(clientId), total: room.members.size });
-      if (room.members.size === 0) room.empty_since = Date.now();
+      if (room.members.size === 0 && room.watchers.size === 0) room.empty_since = Date.now();
       else if (!hostPresent(room)) setTimeout(() => promoteIfHostGone(room), HOST_GRACE_MS).unref?.();
       pauseIfEmpty(room);
       // Ушёл тот, кого ждали: комната идёт дальше
@@ -294,9 +304,11 @@ function leaveRoom(roomId, clientId, force = false) {
 // Удаляет комнаты, пустые дольше EMPTY_ROOM_TTL_MS (в том числе созданные, но так и не открытые)
 function sweepRooms(now = Date.now()) {
   for (const [id, room] of rooms) {
-    if (room.members.size === 0 && room.empty_since && now - room.empty_since > EMPTY_ROOM_TTL_MS) {
+    if (room.members.size === 0 && room.watchers.size === 0 && room.empty_since && now - room.empty_since > EMPTY_ROOM_TTL_MS) {
       rooms.delete(id);
       roomListeners.delete(id);
+      if (room.poll && room.poll.timer) clearTimeout(room.poll.timer);
+      if (room.channel_id && channelRooms.get(room.channel_id) === id) channelRooms.delete(room.channel_id);
     }
   }
 }
@@ -397,6 +409,188 @@ function handleRoomAction(roomId, user, action) {
   return { ok: true, room: roomData };
 }
 
+
+// ---- Комната голосового канала Discord (Activity) ----
+// Одна комната на голосовой канал: первый, кто открыл Activity, — ведущий. id комнаты — шесть цифр: это и есть код
+// для ТВ и приложений («842-190»: приложения при входе убирают всё, кроме букв и цифр). Тот, кто смотрит Activity,
+// не участник плеера (иначе его же ПК не вошёл бы: «один аккаунт — одна комната»), а «у пульта» (watchers).
+
+const channelRooms = new Map(); // channel_id -> room id
+const POLL_MS = 45 * 1000;
+const MAX_CANDIDATES = 8;
+
+function shortRoomId() {
+  for (let i = 0; i < 50; i++) {
+    const id = String(crypto.randomInt(100000, 1000000));
+    if (!rooms.has(id)) return id;
+  }
+  return crypto.randomBytes(6).toString("hex");
+}
+
+function getOrCreateChannelRoom(channelId, user) {
+  const ch = String(channelId || "");
+  if (!/^\d{5,25}$/.test(ch) || !user || !user.id) return null;
+  const existing = rooms.get(channelRooms.get(ch));
+  if (existing) return existing;
+  const room = createRoom(user, null, "all", null, shortRoomId());
+  room.channel_id = ch;
+  channelRooms.set(ch, room.id);
+  return room;
+}
+
+function activityPublicData(room) {
+  const poll = room.poll;
+  let tally = null;
+  let votes = null;
+  if (poll) {
+    tally = {};
+    votes = {};
+    for (const [uid, key] of poll.votes) {
+      tally[key] = (tally[key] || 0) + 1;
+      votes[uid] = key;
+    }
+  }
+  return {
+    watchers: Array.from(room.watchers.values()).map(({ streams, ...w }) => w),
+    candidates: room.candidates.map(c => ({ ...c })),
+    poll: poll ? { ends_at: poll.ends_at, tally, votes } : null
+  };
+}
+
+function activityChanged(room) {
+  broadcast(room.id, "activity_changed", { ...activityPublicData(room), host_id: room.host_id, host_name: room.host_name });
+}
+
+// Открыт поток событий Activity: человек «у пульта». Возвращает функцию «ушёл» (можно звать сколько угодно раз)
+function addWatcher(room, user) {
+  const w = room.watchers.get(user.id) || { id: user.id, name: user.name, avatar: user.avatar || "", streams: 0 };
+  w.streams++;
+  room.watchers.set(user.id, w);
+  room.empty_since = 0;
+  if (w.streams === 1) activityChanged(room);
+  let gone = false;
+  return () => {
+    if (gone) return;
+    gone = true;
+    w.streams--;
+    if (w.streams > 0) return;
+    room.watchers.delete(user.id);
+    if (room.members.size === 0 && room.watchers.size === 0) room.empty_since = Date.now();
+    else if (!hostPresent(room)) setTimeout(() => promoteIfHostGone(room), HOST_GRACE_MS).unref?.();
+    activityChanged(room);
+  };
+}
+
+function cleanFile(file) {
+  if (!file || typeof file !== "object") return null;
+  const key = typeof file.key === "string" ? file.key.slice(0, 1000) : "";
+  const bar = key.indexOf("|");
+  const adId = Number(key.slice(0, bar));
+  if (bar <= 0 || !Number.isSafeInteger(adId) || adId <= 0 || bar === key.length - 1) return null;
+  const name = typeof file.name === "string" && file.name.trim() ? file.name.trim().slice(0, 300) : key.slice(bar + 1);
+  return { key, name, ad_id: adId };
+}
+
+function channelRoomOrError(roomId) {
+  const room = getRoom(roomId);
+  if (!room) return { error: "Комната не найдена." };
+  if (!room.channel_id) return { error: "Это не комната голосового канала." };
+  return { room };
+}
+
+// «Предложить к просмотру»: любой, кто в комнате; пока идёт голосование, список не меняется
+function suggestFile(roomId, user, file) {
+  const { room, error } = channelRoomOrError(roomId);
+  if (!room) return { ok: false, error };
+  if (room.poll) return { ok: false, error: "Голосование уже идёт: дождитесь итога." };
+  const f = cleanFile(file);
+  if (!f) return { ok: false, error: "Не тот файл." };
+  if (!room.candidates.some(c => c.key === f.key)) {
+    if (room.candidates.length >= MAX_CANDIDATES) return { ok: false, error: `Не больше ${MAX_CANDIDATES} фильмов в списке.` };
+    room.candidates.push({ key: f.key, name: f.name, by: user.id, by_name: user.name, at: Date.now() });
+    activityChanged(room);
+  }
+  return { ok: true };
+}
+
+// Убрать из списка: кто предложил или ведущий
+function unsuggestFile(roomId, user, key) {
+  const { room, error } = channelRoomOrError(roomId);
+  if (!room) return { ok: false, error };
+  if (room.poll) return { ok: false, error: "Голосование уже идёт: дождитесь итога." };
+  const c = room.candidates.find(x => x.key === key);
+  if (!c) return { ok: true };
+  if (c.by !== user.id && !isRoomHost(room, user, null)) return { ok: false, error: "Убрать фильм может тот, кто его предложил, или ведущий." };
+  room.candidates = room.candidates.filter(x => x !== c);
+  activityChanged(room);
+  return { ok: true };
+}
+
+function startPoll(roomId, user, ms = POLL_MS) {
+  const { room, error } = channelRoomOrError(roomId);
+  if (!room) return { ok: false, error };
+  if (!isRoomHost(room, user, null)) return { ok: false, error: "Голосование начинает ведущий." };
+  if (room.poll) return { ok: true };
+  if (room.candidates.length < 2) return { ok: false, error: "Для голосования нужно хотя бы два фильма." };
+  const timer = setTimeout(() => finishPoll(room), ms);
+  timer.unref?.();
+  room.poll = { ends_at: Date.now() + ms, votes: new Map(), timer };
+  activityChanged(room);
+  return { ok: true };
+}
+
+function vote(roomId, user, key) {
+  const { room, error } = channelRoomOrError(roomId);
+  if (!room) return { ok: false, error };
+  if (!room.poll) return { ok: false, error: "Голосование уже закончилось." };
+  if (!room.candidates.some(c => c.key === key)) return { ok: false, error: "Такого фильма нет в списке." };
+  room.poll.votes.set(user.id, key);
+  activityChanged(room);
+  return { ok: true };
+}
+
+// Итог: больше всех голосов; поровну — тот, кого предложили раньше. Победитель сразу ставится в комнату
+function pollWinner(room) {
+  const tally = new Map();
+  for (const key of room.poll.votes.values()) tally.set(key, (tally.get(key) || 0) + 1);
+  let best = null;
+  let bestVotes = 0;
+  for (const c of room.candidates) {
+    const n = tally.get(c.key) || 0;
+    if (n > bestVotes) {
+      best = c;
+      bestVotes = n;
+    }
+  }
+  return best ? { candidate: best, votes: bestVotes } : null;
+}
+
+function finishPoll(room) {
+  if (rooms.get(room.id) !== room || !room.poll) return null;
+  clearTimeout(room.poll.timer);
+  const win = pollWinner(room);
+  room.poll = null;
+  if (win) {
+    room.candidates = [];
+    handleRoomAction(room.id, { id: room.host_id }, { type: "change_file", file: cleanFile(win.candidate), client_id: room.host_client_id });
+  }
+  broadcast(room.id, "poll_result", win ? { key: win.candidate.key, name: win.candidate.name, votes: win.votes } : { key: null });
+  activityChanged(room);
+  return win;
+}
+
+function cancelPoll(roomId, user) {
+  const { room, error } = channelRoomOrError(roomId);
+  if (!room) return { ok: false, error };
+  if (!isRoomHost(room, user, null)) return { ok: false, error: "Голосование отменяет ведущий." };
+  if (room.poll) {
+    clearTimeout(room.poll.timer);
+    room.poll = null;
+    activityChanged(room);
+  }
+  return { ok: true };
+}
+
 module.exports = {
   createRoom,
   getRoom,
@@ -411,5 +605,14 @@ module.exports = {
   leaveRoom,
   sweepRooms,
   promoteIfHostGone,
-  handleRoomAction
+  handleRoomAction,
+  getOrCreateChannelRoom,
+  addWatcher,
+  suggestFile,
+  unsuggestFile,
+  startPoll,
+  vote,
+  finishPoll,
+  cancelPoll,
+  cleanFile
 };

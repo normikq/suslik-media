@@ -122,20 +122,51 @@ void Party::create() {
     });
 }
 
-void Party::join(const QString &code) {
+void Party::join(const QString &code) { joinThen(code, {}); }
+
+void Party::joinThen(const QString &code, std::function<void()> after) {
     if (m_busy) return;
     const QString id = PartyProtocol::normalizeCode(code);
     if (id.isEmpty()) { m_error = tx(S("party.vvedite_kod")); emit changed(); return; }
     m_busy = true;
     m_error.clear();
     emit changed();
-    timedPost(PartyProtocol::joinPath(id), PartyProtocol::joinBody(m_clientId), [this](const ApiResult &r) {
+    timedPost(PartyProtocol::joinPath(id), PartyProtocol::joinBody(m_clientId), [this, after](const ApiResult &r) {
         if (!r.ok()) { finishRun(ApiClient::describe(r.error)); return; }
         const auto u = PartyProtocol::roomOf(r.json);
         if (!u || !u->id) { finishRun(tx(S("party.server_ne_prislal_komnatu"))); return; }
         if (const auto m = PartyProtocol::memberIdOf(r.json)) m_myUserId = m;
         enter(*u);
         finishRun({});
+        if (after) after();
+    });
+}
+
+void Party::openLink(const QString &link) {
+    const QString code = PartyProtocol::roomFromLink(link);
+    if (code.isEmpty() || m_busy) return;
+    log(S("link to room %1").arg(code));
+    // Гость по ссылке не ждёт «Смотреть вместе»: фильм ведущего откроется сам (PartyFollow)
+    auto opened = [this] {
+        m_followed.clear();
+        emit changed();
+        emit roomLinkOpened();
+    };
+    if (m_roomId && *m_roomId == code) { opened(); return; }
+    if (!m_roomId) { joinThen(code, opened); return; }
+    // Сначала выйти из прежней комнаты (сервер не пустит одно устройство в две), потом войти
+    const QString old = *m_roomId;
+    stopStream();
+    m_roomId.reset();
+    m_startedByMe.reset();
+    m_followed.clear();
+    m_room = PartyRoom();
+    m_reportedBuffering = false;
+    m_outbox.clear();
+    emit changed();
+    QPointer<Party> self(this);
+    m_api.post(PartyProtocol::leavePath(old), PartyProtocol::leaveBody(m_clientId), [self, code, opened](const ApiResult &) {
+        if (self) self->joinThen(code, opened);
     });
 }
 

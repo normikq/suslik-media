@@ -1,6 +1,9 @@
 // Перенос shared/.../core/party: PartyModels.kt, PartyProtocol.kt, PartySyncEngine.kt.
 #include "suslik/core/Party.h"
 
+#include <QRegularExpression>
+#include <QUrl>
+
 #include "JsonOpt.h"
 
 #include <QCryptographicHash>
@@ -148,6 +151,17 @@ QString PartyProtocol::normalizeCode(const QString &code) {
     for (const QChar c : code.trimmed().toLower())
         if (c.isLetterOrNumber()) out += c;
     return out;
+}
+
+QString PartyProtocol::roomFromLink(const QString &link) {
+    const QString t = link.trimmed();
+    static const QString prefix = QStringLiteral("suslik://room/");
+    if (!t.startsWith(prefix, Qt::CaseInsensitive)) return {};
+    QString rest = t.mid(prefix.size());
+    const qsizetype cut = rest.indexOf(QRegularExpression(QStringLiteral("[/?#]")));
+    if (cut >= 0) rest.truncate(cut);
+    const QString code = normalizeCode(QUrl::fromPercentEncoding(rest.toUtf8()));
+    return code.size() <= 24 ? code : QString();
 }
 
 QJsonObject PartyProtocol::createBody(const QString &clientId) { return {{S("controls"), S("all")}, {S("client_id"), clientId}}; }

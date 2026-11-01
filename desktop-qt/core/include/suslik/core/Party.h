@@ -132,6 +132,8 @@ public:
     static QString clientKey(const QString &clientId);
     /// Код комнаты как его ввёл человек: только буквы и цифры, в нижнем регистре.
     static QString normalizeCode(const QString &code);
+    /// Код комнаты из ссылки suslik://room/<код> (кнопка «Открыть в приложении» в Discord Activity); не та ссылка — пусто.
+    static QString roomFromLink(const QString &link);
 
     static QJsonObject createBody(const QString &clientId);
     static QJsonObject joinBody(const QString &clientId);

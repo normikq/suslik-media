@@ -3,12 +3,29 @@
 const config = require("../config");
 const { readCookie } = require("../utils/helpers");
 
+// Discord Activity встраивает страницу в iframe: discord.com (и ptb/canary), внутри — прокси <id>.discordsays.com
+const DISCORD_FRAME_ANCESTORS = "frame-ancestors 'self' https://discord.com https://*.discord.com https://*.discordsays.com";
+
+// Страница Activity: Discord открывает корень сопоставления адресов (URL Mapping «/») с frame_id и instance_id;
+// «/?activity» — та же страница напрямую, для проверки в браузере
+function isActivityPage(req) {
+  if ((req.method !== "GET" && req.method !== "HEAD") || req.path !== "/") return false;
+  const q = req.query || {};
+  return (typeof q.frame_id === "string" && typeof q.instance_id === "string") || q.activity !== undefined;
+}
+
 function securityHeaders(req, res, next) {
   res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("X-Frame-Options", "DENY");
-  res.setHeader("Content-Security-Policy", "frame-ancestors 'none'");
+  if (isActivityPage(req)) {
+    // Только эту страницу можно встроить, и только в Discord. Без X-Frame-Options (он не знает списков)
+    // и без Cross-Origin-Opener-Policy (окно Activity в отдельном окне Discord общается с главным)
+    res.setHeader("Content-Security-Policy", DISCORD_FRAME_ANCESTORS);
+  } else {
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Content-Security-Policy", "frame-ancestors 'none'");
+    res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+  }
   res.setHeader("Referrer-Policy", "same-origin");
-  res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
   res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
   // HSTS только по https (за nginx с TRUST_PROXY=1 req.secure это видит). Без includeSubDomains: на домене есть и другие службы.
   if (req.secure) res.setHeader("Strict-Transport-Security", "max-age=15552000");
@@ -44,6 +61,8 @@ function sameOriginWrites(req, res, next) {
 }
 
 module.exports = {
+  DISCORD_FRAME_ANCESTORS,
+  isActivityPage,
   securityHeaders,
   sameOriginWrites,
   setupTrustProxy

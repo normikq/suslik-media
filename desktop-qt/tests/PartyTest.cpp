@@ -206,6 +206,12 @@ private slots:
 
     void commandsAndKeys() {
         QCOMPARE(PartyProtocol::normalizeCode(S("  AB-12 cd ")), S("ab12cd"));
+        // Ссылка из Discord Activity
+        QCOMPARE(PartyProtocol::roomFromLink(S("suslik://room/842190")), S("842190"));
+        QCOMPARE(PartyProtocol::roomFromLink(S(" SUSLIK://room/842-190/ ")), S("842190"));
+        QCOMPARE(PartyProtocol::roomFromLink(S("suslik://room/a1b2c3d4e5f6?x=1")), S("a1b2c3d4e5f6"));
+        QCOMPARE(PartyProtocol::roomFromLink(S("https://example.com/room/842190")), QString());
+        QCOMPARE(PartyProtocol::roomFromLink(S("suslik://room/")), QString());
         QCOMPARE(PartyProtocol::clientKey(S("pc_test")), S("9703bd8de4eb8d02"));
         QVERIFY(PartyProtocol::newClientId(S("an")).startsWith(S("an_")));
         QCOMPARE(PartyProtocol::newClientId(S("pc")).length(), 15);

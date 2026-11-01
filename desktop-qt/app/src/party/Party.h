@@ -67,6 +67,9 @@ public:
 
     Q_INVOKABLE void create();
     Q_INVOKABLE void join(const QString &code);
+    /// Ссылка suslik://room/<код> (Discord Activity): войти в эту комнату (из другой — выйдя), гостю — сразу фильм
+    /// ведущего, и показать страницу «Вместе» (roomLinkOpened).
+    void openLink(const QString &link);
     Q_INVOKABLE void leave();
     /// Где комната сейчас, мс (по якорю сервера и откалиброванным часам).
     Q_INVOKABLE qint64 roomMs() const { return targetMs(); }
@@ -96,6 +99,8 @@ public:
 
 signals:
     void changed();
+    /// Вошли по ссылке из Discord: окну — открыть «Вместе» (ведущему — и фильм комнаты, если он уже выбран).
+    void roomLinkOpened();
 
 private:
     using Done = std::function<void(const core::ApiResult &)>;
@@ -111,6 +116,7 @@ private:
     void pump();
     void setRoom(const core::PartyRoom &r) { m_room = r; emit changed(); }
     void finishRun(const QString &error);
+    void joinThen(const QString &code, std::function<void()> after);
 
     static inline Party *s_instance = nullptr;
     core::ApiClient &m_api;

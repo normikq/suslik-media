@@ -24,6 +24,7 @@ const tvRoutes = require("./routes/tvstream");
 const customAudioRoutes = require("./routes/custom-audio");
 const aiTitleRoutes = require("./routes/aititle");
 const markersRoutes = require("./routes/markers");
+const activity = require("./routes/activity");
 
 function createApp() {
   const app = express();
@@ -35,6 +36,9 @@ function createApp() {
 
   // Behind nginx/Caddy set TRUST_PROXY=1 so req.protocol/host and client IP reflect the public HTTPS request.
   setupTrustProxy(app);
+
+  // Discord Activity открывает корень сайта (с frame_id): ей — своя страница, а не сайт
+  app.get("/", activity.activityPage);
 
   // Страница и стили сайта сжимаются один раз (gzip и brotli), а не на каждый запрос
   app.get(["/", "/index.html", "/redesign.css"], (req, res, next) => {
@@ -95,6 +99,7 @@ function createApp() {
   app.use(customAudioRoutes);
   app.use(aiTitleRoutes);
   app.use(markersRoutes);
+  app.use(activity.router);
 
   // Static files
   app.use(
