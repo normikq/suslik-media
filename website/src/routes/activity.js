@@ -10,13 +10,14 @@ const fs = require("fs");
 const path = require("path");
 const config = require("../config");
 const { requireLogin, resolveAuth } = require("../middleware/auth");
-const { activityAuthLimiter, roomLimiter, apiLimiter } = require("../middleware/rate-limit");
+const { activityAuthLimiter, roomLimiter, apiLimiter, searchLimiter } = require("../middleware/rate-limit");
 const { DISCORD_FRAME_ANCESTORS, isActivityPage } = require("../middleware/security");
 const { exchangeOAuthCode, fetchMe, revokeOAuthToken, checkGuildMember } = require("../services/discord");
 const { findOrCreateUser } = require("../services/users");
 const { issueActivityToken, revokeActivityToken } = require("../services/activity");
 const { basePath } = require("../utils/helpers");
 const rooms = require("../services/rooms");
+const pcSearch = require("../services/pc-search");
 
 const router = express.Router();
 
@@ -201,7 +202,48 @@ router.post("/api/activity/rooms/:id/poll/cancel", requireLogin, roomLimiter, (r
 router.post("/api/activity/rooms/:id/vote", requireLogin, roomLimiter, (req, res) =>
   reply(res, rooms.vote(req.params.id, req.user, String(req.body?.key || ""))));
 
-// 5. Страница «Открыть в приложении»: Activity открывает её в браузере (commands.openExternalLink), а она —
+// 5. Поиск раздач: серверные трекеры Activity берёт обычным /api/search, а RuTracker — у ПК комнаты (services/pc-search.js)
+const PC_REASONS = {
+  no_pc: "В комнате нет ПК с Suslik Media: RuTracker ищет приложение на компьютере.",
+  busy: "ПК уже ищет. Подождите несколько секунд.",
+  timeout: "ПК в комнате не ответил.",
+  failed: "ПК не смог выполнить запрос."
+};
+function channelRoom(req, res) {
+  const room = rooms.getRoom(req.params.id);
+  if (!room || !room.channel_id) { res.status(404).json({ error: "Комната не найдена." }); return null; }
+  return room;
+}
+function pcAnswer(res, r) {
+  res.setHeader("Cache-Control", "no-store");
+  if (r.ok) return res.json(r);
+  res.json({ ok: false, reason: r.reason, error: r.error || PC_REASONS[r.reason] || PC_REASONS.failed });
+}
+router.post("/api/activity/rooms/:id/rutracker/search", requireLogin, searchLimiter, async (req, res) => {
+  const room = channelRoom(req, res);
+  if (!room) return;
+  const query = typeof req.body?.query === "string" ? req.body.query.trim().slice(0, 200) : "";
+  if (query.length < 2) return res.status(400).json({ error: "Введите хотя бы два символа." });
+  pcAnswer(res, await pcSearch.search(room, req.user, query));
+});
+// Раздача RuTracker без magnet: .torrent есть только у того ПК, что её нашёл, — он её и добавляет
+router.post("/api/activity/rooms/:id/rutracker/add", requireLogin, apiLimiter, async (req, res) => {
+  const room = channelRoom(req, res);
+  if (!room) return;
+  const target = typeof req.body?.pc === "string" ? req.body.pc.slice(0, 64) : "";
+  const topicId = /^\d{1,12}$/.test(String(req.body?.topic_id ?? "")) ? String(req.body.topic_id) : "";
+  if (!target || !topicId) return res.status(400).json({ error: "Нет номера раздачи." });
+  const title = typeof req.body?.title === "string" ? req.body.title.trim().slice(0, 200) : "";
+  pcAnswer(res, await pcSearch.add(room, req.user, { target, topicId, title }));
+});
+// Ответ ПК (приложение Qt): только участник этой комнаты со своим client_id
+router.post("/api/rooms/:id/rutracker/reply", requireLogin, roomLimiter, (req, res) => {
+  const r = pcSearch.reply(String(req.params.id), req.user, req.body);
+  if (!r.ok) return res.status(r.status || 400).json({ error: r.error });
+  res.json({ ok: true });
+});
+
+// 6. Страница «Открыть в приложении»: Activity открывает её в браузере (commands.openExternalLink), а она —
 // suslik://room/<код> (ПК и Android). Здесь же код для ТВ и ссылки на скачивание. Входа не нужно: только код.
 let joinTemplate = null;
 function joinPage() {

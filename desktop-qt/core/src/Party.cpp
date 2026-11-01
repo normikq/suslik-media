@@ -239,6 +239,23 @@ std::optional<PartyEvent> PartyProtocol::parseEventLine(const QString &line) {
     return parseEvent(line.mid(5).trimmed());
 }
 
+std::optional<RemoteTrackerRequest> PartyProtocol::remoteRequestOf(const QString &line) {
+    if (!line.startsWith(S("data:"))) return std::nullopt;
+    const auto doc = QJsonDocument::fromJson(line.mid(5).trimmed().toUtf8());
+    if (!doc.isObject() || json::str(doc.object(), S("event")) != S("rutracker_request")) return std::nullopt;
+    const QJsonObject d = doc.object().value(S("data")).toObject();
+    RemoteTrackerRequest r{json::str(d, S("request_id")), json::str(d, S("kind")), json::str(d, S("query")).trimmed(),
+                           json::str(d, S("topic_id")), json::str(d, S("title")), json::str(d, S("target")), json::str(d, S("by"))};
+    if (r.id.isEmpty()) return std::nullopt;
+    if (r.kind == S("search") && !r.query.isEmpty()) return r;
+    if (r.kind == S("add") && !r.topicId.isEmpty() && !r.target.isEmpty()) return r;
+    return std::nullopt;
+}
+
+QString PartyProtocol::remoteReplyPath(const QString &roomId) {
+    return S("/api/rooms/") + QString::fromLatin1(QUrl::toPercentEncoding(roomId)) + S("/rutracker/reply");
+}
+
 std::optional<PartyEvent> PartyProtocol::parseEvent(const QString &text) {
     QJsonParseError err{};
     const auto doc = QJsonDocument::fromJson(text.toUtf8(), &err);

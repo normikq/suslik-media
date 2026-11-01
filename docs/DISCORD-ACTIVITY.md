@@ -30,6 +30,15 @@ Activity — страница сайта внутри Discord (iframe). Это �
   страница — `suslik://room/<код>` (на Android — `intent://…;package=ru.suslikovanora.media`). ПК регистрирует
   ссылку сам при запуске (`HKCU\Software\Classes\suslik`, `desktop-qt/app/src/UrlScheme.cpp`), установщик убирает
   её при удалении. Android — intent-filter в `AndroidManifest.xml`. ТВ — код вручную: «Вместе» → «Войти по коду».
+- **Поиск раздач.** «Медиатека» → «На трекерах»: трекеры сервера (обычный `/api/search`) и RuTracker через ПК в
+  комнате. У сервера своего входа на RuTracker может не быть, у ПК он есть (cookie, фоновый браузер), поэтому
+  Activity просит сервер (`POST /api/activity/rooms/:id/rutracker/search`), сервер шлёт в поток комнаты
+  `rutracker_request`, ПК ищет у себя и отвечает `POST /api/rooms/:id/rutracker/reply` (первый ответ, ждём 25 с;
+  ПК без RuTracker сразу отвечает ошибкой). Раздачу с magnet Activity добавляет сама (`/api/magnets`), без magnet —
+  просит тот же ПК (`…/rutracker/add`, адресно по отпечатку его client_id): он качает .torrent и кладёт в AllDebrid.
+  Дальше Activity ждёт облако, обновляет медиатеку и включает фильм в комнате или предлагает его (у сериала —
+  открывает выбор серии). Ответ ПК принимается только от ПК этой комнаты под его же аккаунтом, поля чистятся
+  (`services/pc-search.js`). В ПК — `Party::onRemoteRequest`; старый ПК на Kotlin не отвечает (ждём до 25 с).
 
 Почему ключ, а не cookie: страница живёт в iframe на `<id>.discordsays.com`, для браузера это сторонний сайт, и
 cookie там режутся. Ключ `sa_…` идёт заголовком `Authorization: Bearer` (как у приложений), поэтому и проверка

@@ -1,11 +1,16 @@
 #include "Party.h"
 #include "../player/PlayerLog.h"
+#include "../trackers/RuTrackerClient.h"
 
 #include "suslik/core/ApiClient.h"
 #include "suslik/core/Strings.h"
 #include "suslik/core/TimeText.h"
+#include "suslik/core/Trackers.h"
 
 #include <QDateTime>
+#include <QJsonArray>
+#include <QPointer>
+#include <QRegularExpression>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 
@@ -292,6 +297,7 @@ void Party::startStream(const QString &id) {
             const QString line = QString::fromUtf8(m_streamBuf.left(nl)).trimmed();
             m_streamBuf.remove(0, nl + 1);
             if (const auto e = PartyProtocol::parseEventLine(line)) onEvent(*e);
+            else if (const auto rq = PartyProtocol::remoteRequestOf(line)) onRemoteRequest(*rq);
         }
     });
     connect(reply, &QNetworkReply::finished, this, [this, reply, id, gen, status] {
@@ -338,6 +344,55 @@ void Party::stopStream() {
         r->deleteLater();
     }
     if (m_connected) { m_connected = false; emit changed(); }
+}
+
+void Party::onRemoteRequest(const RemoteTrackerRequest &rq) {
+    if (!m_roomId) return;
+    const QString path = PartyProtocol::remoteReplyPath(*m_roomId);
+    QPointer<Party> self(this);
+    auto send = [self, path, clientId = m_clientId, id = rq.id](QJsonObject body) {
+        if (!self) return;
+        body.insert(S("client_id"), clientId);
+        body.insert(S("request_id"), id);
+        self->m_api.post(path, body, [](const ApiResult &) {});
+    };
+    if (rq.kind == S("search")) {
+        if (!RuTracker::isReady() || !TrackerSettings::isEnabled(S("rutracker"))) {
+            send({{S("error"), S("На этом ПК RuTracker не настроен (Настройки → Трекеры).")}});
+            return;
+        }
+        log(S("RuTracker search for the Activity (%1)").arg(rq.by));
+        rutracker::search(rq.query, this, [send](const QList<SearchHit> &hits, const QString &error) {
+            if (!error.isEmpty()) { send({{S("error"), error}}); return; }
+            QJsonArray arr;
+            for (const auto &h : hits) {
+                if (ReleaseParser::isNonVideo(h.title) || arr.size() >= 100) continue;
+                QJsonObject o{{S("title"), h.title}, {S("size"), double(h.size)}, {S("seeders"), h.seeders},
+                              {S("leechers"), h.leechers}, {S("date"), h.date}, {S("kind"), h.kind},
+                              {S("badges"), QJsonArray::fromStringList(h.release.badges())}};
+                if (h.topicId) o.insert(S("topic_id"), *h.topicId);
+                if (h.magnet) o.insert(S("magnet"), *h.magnet);
+                arr.append(o);
+            }
+            send({{S("hits"), arr}});
+        });
+        return;
+    }
+    // «add»: раздачу нашёл этот ПК, у сервера её .torrent нет — качаем со своими cookie и кладём в AllDebrid
+    if (rq.kind != S("add") || rq.target != m_myKey) return;
+    log(S("RuTracker topic %1 for the Activity (%2)").arg(rq.topicId, rq.by));
+    rutracker::downloadTorrent(rq.topicId, this, [self, send, rq](const QByteArray &bytes) {
+        if (!self) return;
+        if (bytes.isEmpty()) { send({{S("error"), S("ПК не смог скачать .torrent с RuTracker.")}}); return; }
+        static const QRegularExpression bad(S("[^a-zA-Z0-9а-яА-ЯёЁ ._-]"));
+        QString name = ReleaseParser::cleanReleaseTitle(rq.title).trimmed();
+        if (name.isEmpty()) name = S("rutracker-") + rq.topicId;
+        name = name.replace(bad, S("_")).left(80) + S(".torrent");
+        self->m_api.postTorrent(bytes, name, [send](const ApiResult &r) {
+            if (!r.ok()) { send({{S("error"), ApiClient::describe(r.error)}}); return; }
+            send({{S("id"), double(r.json.value(S("id")).toInteger())}, {S("ready"), r.json.value(S("ready")).toBool()}});
+        });
+    });
 }
 
 void Party::onEvent(const PartyEvent &e) {

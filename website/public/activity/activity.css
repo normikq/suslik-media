@@ -173,3 +173,17 @@ button { font: inherit; color: inherit; }
 .toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 30; padding: 12px 18px; border-radius: 14px; background: var(--sheet); border: 1px solid rgba(255, 255, 255, 0.18); box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5); max-width: calc(100vw - 32px); display: flex; align-items: center; gap: 10px; }
 .toast[hidden] { display: none; }
 .toast.bad { border-color: rgba(255, 155, 143, 0.5); }
+
+/* Поиск раздач на трекерах */
+.chip .ico { width: 14px; height: 14px; margin-right: 6px; vertical-align: -2px; }
+.search-row { display: flex; gap: 8px; align-items: stretch; margin-bottom: 10px; }
+.search-row .search { flex: 1; margin-bottom: 0; }
+.find-status { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-bottom: 12px; }
+.hits { display: flex; flex-direction: column; gap: 8px; }
+.hit { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border-radius: 12px; background: var(--glass-fill); border: 1px solid var(--glass-edge); }
+.hit-title { font-weight: 600; line-height: 1.35; word-break: break-word; }
+.hit-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 12px; color: var(--muted); }
+.seeds { display: inline-flex; align-items: center; gap: 3px; }
+.seeds .ico { width: 13px; height: 13px; }
+.seeds.live { color: var(--ok); }
+.bad { color: var(--bad); }

@@ -222,6 +222,19 @@ private slots:
         const auto file = PartyProtocol::changeFile(PartyFileRef{S("42|a.mkv"), S("A")}).value(S("file")).toObject();
         QCOMPARE(qint64(file.value(S("ad_id")).toDouble()), 42);
         QCOMPARE(PartyProtocol::eventsPath(S("x"), S("pc_1")), S("/api/rooms/x/events?client_id=pc_1"));
+        // Запрос Discord Activity к ПК: поиск на RuTracker и добавление найденного
+        const auto rq = PartyProtocol::remoteRequestOf(S(R"(data: {"event":"rutracker_request","data":{"request_id":"rq_1","kind":"search","query":" Dune ","by":"Алиса"}})"));
+        QVERIFY(rq);
+        QCOMPARE(rq->query, S("Dune"));
+        QCOMPARE(rq->by, S("Алиса"));
+        const auto add = PartyProtocol::remoteRequestOf(S(R"(data: {"event":"rutracker_request","data":{"request_id":"rq_2","kind":"add","topic_id":"6123456","target":"9703bd8de4eb8d02"}})"));
+        QVERIFY(add);
+        QCOMPARE(add->topicId, S("6123456"));
+        QVERIFY(!PartyProtocol::remoteRequestOf(S(R"(data: {"event":"rutracker_request","data":{"request_id":"rq_3","kind":"add","topic_id":"1"}})")));
+        QVERIFY(!PartyProtocol::remoteRequestOf(S(R"(data: {"event":"rutracker_request","data":{"kind":"search","query":"x"}})")));
+        QVERIFY(!PartyProtocol::remoteRequestOf(S(R"(data: {"event":"state_changed","data":{}})")));
+        QVERIFY(!PartyProtocol::parseEventLine(S(R"(data: {"event":"rutracker_request","data":{"request_id":"rq_1","kind":"search","query":"x"}})")));
+        QCOMPARE(PartyProtocol::remoteReplyPath(S("842190")), S("/api/rooms/842190/rutracker/reply"));
     }
 
     void pendingFileIsNotOverwrittenByStaleAnswers() {

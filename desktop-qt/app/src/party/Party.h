@@ -112,6 +112,8 @@ private:
     void stopStream();
     void retryStream(const QString &id);
     void onEvent(const core::PartyEvent &e);
+    /// Discord Activity просит этот ПК поискать на RuTracker или добавить найденную раздачу (website/src/services/pc-search.js)
+    void onRemoteRequest(const core::RemoteTrackerRequest &rq);
     void action(const QJsonObject &body);
     void pump();
     void setRoom(const core::PartyRoom &r) { m_room = r; emit changed(); }

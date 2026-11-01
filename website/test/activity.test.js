@@ -114,6 +114,61 @@ test("голосование без голосов фильм не меняет;
   assert.equal(room.poll, null);
 });
 
+test("RuTracker через ПК: запрос в поток комнаты, ответ только от ПК комнаты, «add» — тому ПК, что нашёл", async () => {
+  const pcSearch = require("../src/services/pc-search");
+  const room = rooms.getOrCreateChannelRoom("999999999999999999", alice);
+  assert.deepEqual(await pcSearch.search(room, alice, "Dune"), { ok: false, reason: "no_pc" });
+
+  rooms.joinRoom(room.id, bob, "pc_bob1");
+  rooms.joinRoom(room.id, carol, "android_carol");
+  const sent = [];
+  const stop = rooms.addListener(room.id, msg => sent.push(JSON.parse(msg)));
+  const wait = pcSearch.search(room, alice, "Dune");
+  const req = sent.find(m => m.event === "rutracker_request");
+  assert.equal(req.data.kind, "search");
+  assert.equal(req.data.query, "Dune");
+  const rid = req.data.request_id;
+  // Чужой: не участник, не тот аккаунт, не ПК
+  assert.equal(pcSearch.reply(room.id, alice, { request_id: rid, client_id: "pc_bob1", hits: [] }).status, 403);
+  assert.equal(pcSearch.reply(room.id, carol, { request_id: rid, client_id: "android_carol", hits: [] }).status, 403);
+  assert.equal(pcSearch.reply("000000", bob, { request_id: rid, client_id: "pc_bob1", hits: [] }).status, 404);
+  assert.equal(pcSearch.reply(room.id, bob, {
+    request_id: rid, client_id: "pc_bob1",
+    hits: [
+      { title: "Дюна / Dune (2021) BDRip 1080p", size: 1e10, seeders: 50, topic_id: "6123456", badges: ["1080p", 5] },
+      { title: "magnet", magnet: "magnet:?xt=urn:btih:" + "a".repeat(40) + "&dn=x" },
+      { title: "<плохой>", magnet: "javascript:alert(1)" },
+      { topic_id: "1" }
+    ]
+  }).ok, true);
+  const got = await wait;
+  assert.equal(got.ok, true);
+  assert.equal(got.hits.length, 2);
+  assert.equal(got.hits[0].topic_id, "6123456");
+  assert.deepEqual(got.hits[0].badges, ["1080p"]);
+  assert.equal(got.pc.key, rooms.clientKey("pc_bob1"));
+  assert.equal(pcSearch.reply(room.id, bob, { request_id: rid, client_id: "pc_bob1", hits: [] }).status, 404); // уже ответили
+
+  // Ошибка единственного ПК — сразу ответ, без таймаута
+  const failing = pcSearch.search(room, alice, "Nope");
+  const rid2 = sent.filter(m => m.event === "rutracker_request").pop().data.request_id;
+  pcSearch.reply(room.id, bob, { request_id: rid2, client_id: "pc_bob1", error: "RuTracker не настроен на этом ПК." });
+  assert.deepEqual(await failing, { ok: false, reason: "failed", error: "RuTracker не настроен на этом ПК." });
+
+  // add: только нужному ПК
+  assert.equal((await pcSearch.add(room, alice, { target: "чужой", topicId: "1", title: "x" })).reason, "no_pc");
+  const adding = pcSearch.add(room, alice, { target: got.pc.key, topicId: "6123456", title: "Дюна" });
+  const ar = sent.filter(m => m.event === "rutracker_request").pop().data;
+  assert.equal(ar.kind, "add");
+  assert.equal(ar.topic_id, "6123456");
+  assert.equal(ar.target, got.pc.key);
+  pcSearch.reply(room.id, bob, { request_id: ar.request_id, client_id: "pc_bob1", id: 4242, ready: true });
+  assert.deepEqual(await adding, { ok: true, id: 4242, ready: true });
+  stop();
+  rooms.leaveRoom(room.id, "pc_bob1", true);
+  rooms.leaveRoom(room.id, "android_carol", true);
+});
+
 test("ключ Activity: живёт, отзывается, неизвестный не пускает", () => {
   const { token } = issueActivityToken(alice.id);
   assert.match(token, /^sa_[0-9a-f]{48}$/);
@@ -165,6 +220,16 @@ test("сервер: страница Activity встраивается толь�
     });
     assert.equal(put.status, 200);
     assert.equal((await put.json()).room.file.key, "5|Film.mkv");
+
+    // RuTracker через ПК: без ПК в комнате — сразу понятный ответ, а не ожидание
+    const rt = await fetch(`${base}/api/activity/rooms/${room.id}/rutracker/search`, { method: "POST", headers: auth, body: JSON.stringify({ query: "Dune" }) });
+    assert.equal(rt.status, 200);
+    const rtj = await rt.json();
+    assert.equal(rtj.ok, false);
+    assert.equal(rtj.reason, "no_pc");
+    const big = await fetch(`${base}/api/rooms/${room.id}/rutracker/reply`, { method: "POST", headers: auth,
+      body: JSON.stringify({ request_id: "rq_x", client_id: "pc_1", hits: Array(100).fill({ title: "x".repeat(300), topic_id: "1" }) }) });
+    assert.equal(big.status, 404); // тело больше 20 КБ принято, запрос просто устарел
 
     const join = await fetch(`${base}/join/842-190"><script>`);
     assert.equal(join.status, 200);

@@ -89,6 +89,12 @@ struct PartyEvent {
     QString key;                       ///< MemberLeft
 };
 
+/// Discord Activity просит ПК комнаты поискать на RuTracker («search») или добавить найденную раздачу без magnet
+/// («add», только ПК с отпечатком target). Событие потока rutracker_request (website/src/services/pc-search.js).
+struct RemoteTrackerRequest {
+    QString id, kind, query, topicId, title, target, by;
+};
+
 /// Снимок комнаты, как его видит приложение. Меняется только через merge и reduce.
 struct PartyRoom {
     static inline const QString SHARED_USER = QStringLiteral("shared");
@@ -156,6 +162,10 @@ public:
     /// Строка потока SSE: не `data:` или незнакомое событие — пусто.
     static std::optional<PartyEvent> parseEventLine(const QString &line);
     static std::optional<PartyEvent> parseEvent(const QString &text);
+    /// Строка потока с rutracker_request — запрос; иначе (и без id, с незнакомым kind) — пусто.
+    static std::optional<RemoteTrackerRequest> remoteRequestOf(const QString &line);
+    /// Путь ответа ПК на такой запрос.
+    static QString remoteReplyPath(const QString &roomId);
 };
 
 /// Плеер, которым управляет комната.

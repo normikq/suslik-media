@@ -594,6 +594,7 @@ function cancelPoll(roomId, user) {
 module.exports = {
   createRoom,
   getRoom,
+  broadcast,
   getRoomPublicData,
   addListener,
   joinRoom,
