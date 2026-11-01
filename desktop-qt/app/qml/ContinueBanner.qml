@@ -1,4 +1,4 @@
-﻿import QtQuick
+import QtQuick
 
 // «Продолжить просмотр» (LibraryView.kt: ContinueRow): широкий кадр фильма, логотип или название, описание, прогресс,
 // «Продолжить»; справа — постеры остальных начатых фильмов. Баннеры сменяются сами раз в 9 с (не под курсором).
@@ -46,11 +46,6 @@ Item {
         }
     }
 
-    // Экспортируем для фонового свечения страницы (LibraryView.qml: bannerGlow)
-    readonly property alias backdrop: frame.backdrop
-    readonly property alias imgAspect: frame.imgAspect
-    readonly property alias glowShift: frame.glowShift
-
     Item {
         id: frame
         y: 6
@@ -59,6 +54,8 @@ Item {
 
         // Пропорции кадра (по умолчанию 16:9 для кинокадров)
         readonly property real imgAspect: {
+            if (glow.status === Image.Ready && glow.implicitWidth > 0 && glow.implicitHeight > 0)
+                return glow.implicitHeight / glow.implicitWidth
             if (sharp.status === Image.Ready && sharp.implicitWidth > 0 && sharp.implicitHeight > 0)
                 return sharp.implicitHeight / sharp.implicitWidth
             return 9.0 / 16.0
@@ -70,14 +67,31 @@ Item {
         // Расстояние от верха баннера до верхнего края окна Windows (LibraryView.kt: roomAbovePx + 6.dp)
         readonly property real distToWindowTop: (b && b.roomAbove > 28 ? b.roomAbove : 90) + frame.y
 
-        // В широком окне кадр уходит далеко вверх над баннером:
-        readonly property real above: (fullH - 360) / 2
+        // В широком окне кадр уходит далеко вверх над баннером.
+        // Верхние 30 % кадра тают в прозрачность (видимая часть начинается примерно с 15 %).
+        // Вычисляем, насколько видимая часть выступает выше баннера:
+        readonly property real above: (fullH - 360) / 2 - fullH * 0.15 + 22
 
-        // Если верх свечения выходит за верхнюю рамку окна Windows,
-        // опускаем свечение и четкий кадр ровно настолько, чтобы они уместились:
+        // Если видимый верх свечения выходит за верхнюю рамку окна Windows,
+        // опускаем свечение и четкий кадр ровно настолько, чтобы они уместились (LibraryView.kt: needTop / glowShift):
         property real glowShift: Math.max(0, above - distToWindowTop)
         Behavior on glowShift { NumberAnimation { duration: 300; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease } }
 
+        // свечение: тот же кадр, размытый, с тающими краями, выходит за края баннера на фон страницы
+        Image {
+            id: glow
+            visible: frame.backdrop !== "" && !Theme.simple
+            source: frame.backdrop !== "" ? "image://suslik/glow:" + frame.backdrop : ""
+            asynchronous: true
+            smooth: true
+            x: 0
+            width: frame.width
+            height: frame.fullH
+            y: (360 - frame.fullH) / 2 + frame.glowShift
+            fillMode: Image.Stretch
+            opacity: status === Image.Ready ? 0.55 : 0
+            Behavior on opacity { NumberAnimation { duration: 350 } }
+        }
         Rounded {
             anchors.fill: parent
             radius: 20
