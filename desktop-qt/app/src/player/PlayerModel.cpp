@@ -520,6 +520,9 @@ void PlayerModel::finishClose() {
                       &m_autoSkipTimer, &m_statsTimer, &m_trackWatch})
         t->stop();
     m_engine->stop();
+    // ядро mpv (кэш демуксера, потоки) — отпустить: в медиатеке плеер не держит память. Вывод кадров отпустит
+    // свою ссылку, когда экран плеера уйдёт (Loader в Main.qml)
+    m_engine->release();
     Reserve::proxy().clear();
     ui().put(S("volume"), num(m_volume));
     m_open = false;
@@ -528,7 +531,14 @@ void PlayerModel::finishClose() {
     ++m_gen;
     m_status.clear();
     m_catchingUp = false;
+    // данные сеанса — не подмешивать в следующий фильм
+    m_sidecars.clear();
+    m_sidePaths.clear();
+    m_queue.clear();
+    m_custom.clear();
+    m_serverMarkers.reset();
     emit openChanged();
+    emit entryChanged();
     emit stateChanged();
     emit statusChanged();
     emit closed();

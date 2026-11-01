@@ -124,10 +124,11 @@ Sheet {
                             Row {
                                 x: 10; anchors.verticalCenter: parent.verticalCenter
                                 spacing: 10
-                                Rounded {
-                                    width: 34; height: 44; radius: 6
-                                    Rectangle { anchors.fill: parent; color: "#181D2A" }
-                                    Image { anchors.fill: parent; source: m.poster ? "image://suslik" + m.poster : ""; sourceSize: Qt.size(68, 88); fillMode: Image.PreserveAspectCrop; asynchronous: true }
+                                Item {
+                                    width: 34; height: 44
+                                    readonly property string p: fr.modelData.poster || m.poster
+                                    Rectangle { anchors.fill: parent; radius: 6; color: "#181D2A" }
+                                    RoundedImage { anchors.fill: parent; radius: 6; source: parent.p ? "image://suslik" + parent.p : ""; sourceSize: Qt.size(68, 88) }
                                 }
                                 Rectangle {
                                     width: 24; height: 24; radius: 6; color: "#1D2638"

@@ -9,7 +9,7 @@ Item {
     signal flyTo(int tab, var rect, string poster)   // постер летит в раздел боковой панели
 
     readonly property bool hovered: hover.hovered
-    height: width * 1.5
+    height: Math.round(width * 1.5)
 
     HoverHandler { id: hover }
 
@@ -20,65 +20,63 @@ Item {
         scale: tile.hovered ? 1.025 : 1
         Behavior on scale { NumberAnimation { duration: 280; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease } }
 
-        Rounded {
+        // Без слоя: фон и затемнения — Rectangle со скруглением, постер — RoundedImage (шейдер по текстуре)
+        Rectangle { anchors.fill: parent; radius: 14; color: "#13161F" }
+        Rectangle {
             anchors.fill: parent
             radius: 14
-            Rectangle { anchors.fill: parent; color: "#13161F" }
-            Rectangle {
-                anchors.fill: parent
-                visible: poster.status !== Image.Ready
-                gradient: Gradient { GradientStop { position: 0; color: "#222838" } GradientStop { position: 1; color: "#10131B" } }
+            visible: poster.status !== Image.Ready
+            gradient: Gradient { GradientStop { position: 0; color: "#222838" } GradientStop { position: 1; color: "#10131B" } }
+        }
+        RoundedImage {
+            id: poster
+            anchors.fill: parent
+            radius: 14
+            source: tile.t.poster ? "image://suslik" + tile.t.poster : ""
+            sourceSize: Qt.size(360, 540)
+            zoom: tile.hovered ? 1.06 : 1
+            Behavior on zoom { NumberAnimation { duration: 360; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease } }
+        }
+        // тень сверху под кнопками в углу
+        Rectangle {
+            width: parent.width; height: 60
+            radius: 14
+            gradient: Gradient { GradientStop { position: 0; color: "#99000000" } GradientStop { position: 1; color: "transparent" } }
+        }
+        // низ: тёмный переход под названием и деталями
+        Rectangle {
+            id: bottom
+            anchors.bottom: parent.bottom
+            width: parent.width
+            height: info.height + 22
+            radius: 14
+            gradient: Gradient {
+                GradientStop { position: 0; color: "transparent" }
+                GradientStop { position: 0.5; color: "#CC0B0E14" }
+                GradientStop { position: 1; color: "#FD0B0E14" }
             }
-            Image {
-                id: poster
-                anchors.fill: parent
-                source: tile.t.poster ? "image://suslik" + tile.t.poster : ""
-                sourceSize: Qt.size(360, 540)
-                fillMode: Image.PreserveAspectCrop
-                asynchronous: true
-                smooth: true
-                opacity: status === Image.Ready ? 1 : 0
-                Behavior on opacity { NumberAnimation { duration: 200 } }
-                scale: tile.hovered ? 1.06 : 1
-                Behavior on scale { NumberAnimation { duration: 360; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease } }
-            }
-            // тень сверху под кнопками в углу
+        }
+        // полоска внизу: прогресс просмотра или загрузки
+        Rectangle {
+            visible: (tile.t.bar || 0) > 0
+            // внутри скруглённых углов: отступ по краям
+            anchors.bottom: parent.bottom; anchors.bottomMargin: 3
+            x: 10; width: parent.width - 20; height: 3
+            radius: 1.5
+            color: "#55000000"
             Rectangle {
-                width: parent.width; height: 60
-                gradient: Gradient { GradientStop { position: 0; color: "#99000000" } GradientStop { position: 1; color: "transparent" } }
-            }
-            // низ: тёмный переход, название и (при наведении или пока не готово) детали
-            Rectangle {
-                id: bottom
-                anchors.bottom: parent.bottom
-                width: parent.width
-                height: info.height + 22
+                width: parent.width * Math.min(1, tile.t.bar || 0); height: parent.height
+                radius: 1.5
                 gradient: Gradient {
-                    GradientStop { position: 0; color: "transparent" }
-                    GradientStop { position: 0.5; color: "#CC0B0E14" }
-                    GradientStop { position: 1; color: "#FD0B0E14" }
-                }
-            }
-            // полоска внизу: прогресс просмотра или загрузки
-            Rectangle {
-                visible: (tile.t.bar || 0) > 0
-                anchors.bottom: parent.bottom
-                width: parent.width; height: 3
-                color: "#55000000"
-                Rectangle {
-                    width: parent.width * Math.min(1, tile.t.bar || 0); height: parent.height
-                    gradient: Gradient {
-                        orientation: Gradient.Horizontal
-                        GradientStop { position: 0; color: "#0284C7" }
-                        GradientStop { position: 0.5; color: "#38BDF8" }
-                        GradientStop { position: 1; color: "#7DD3FC" }
-                    }
+                    orientation: Gradient.Horizontal
+                    GradientStop { position: 0; color: "#0284C7" }
+                    GradientStop { position: 0.5; color: "#38BDF8" }
+                    GradientStop { position: 1; color: "#7DD3FC" }
                 }
             }
         }
         Column {
             id: info
-            // текст — поверх слоя со скруглением: в слое (текстура) он размывался
             x: 12
             anchors.bottom: parent.bottom; anchors.bottomMargin: 11
             width: parent.width - 24

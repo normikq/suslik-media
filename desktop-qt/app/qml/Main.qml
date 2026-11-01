@@ -32,7 +32,7 @@ Window {
         anchors.fill: parent
         opacity: lib.authenticated === 0 ? 0 : 1
         // под открытым плеером медиатеку не рисуем
-        visible: opacity > 0 && !(playerView.opacity === 1 && player.open)
+        visible: opacity > 0 && !(playerLoader.item !== null && playerLoader.item.opacity === 1 && player.open)
         Behavior on opacity { NumberAnimation { duration: 420; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease } }
 
         Sidebar {
@@ -93,7 +93,16 @@ Window {
     Dialogs { id: dialogs; anchors.fill: parent }
     SettingsSheet { id: settingsSheet; anchors.fill: parent }
     WhatsNew { anchors.fill: parent }
-    PlayerView { id: playerView; z: 50 }
+    // Экран плеера (и вывод кадров mpv) живёт только пока открыт фильм и ещё виден при закрытии: в медиатеке
+    // нет ни ядра mpv, ни его кэша, ни контекста вывода
+    Loader {
+        id: playerLoader
+        anchors.fill: parent
+        z: 50
+        focus: active
+        active: player.open || (item !== null && item.opacity > 0)
+        sourceComponent: Component { PlayerView {} }
+    }
 
     // после входа: есть ли обновление; «Что нового» — когда медиатека уже на экране
     readonly property bool signedIn: lib.authenticated === 1

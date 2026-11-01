@@ -216,7 +216,18 @@ QVariantList PlayModel::films() const {
     const auto list = filmList();
     for (int i = 0; i < list.size(); ++i) {
         const auto [title, details] = filmInfo(list[i], i);
-        out << QVariantMap{{S("title"), title}, {S("details"), details}};
+        // свой постер у каждой части: поиск по названию файла (с годом, потом без); нет — постер сборника
+        QString poster;
+        if (m_lib) {
+            const QString raw = fileName(list[i].file);
+            const QString name = cleanCollectionFilmTitle(raw);
+            const auto year = extractYear(raw);
+            QStringList queries;
+            if (year) queries << name + QLatin1Char(' ') + num(*year);
+            if (!name.isEmpty()) queries << name;
+            poster = m_lib->posterPath(queries);
+        }
+        out << QVariantMap{{S("title"), title}, {S("details"), details}, {S("poster"), poster}};
     }
     return out;
 }

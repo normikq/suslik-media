@@ -1,4 +1,5 @@
 #include "Settings.h"
+#include "player/Reserve.h"
 #include "AppDir.h"
 #include "Updater.h"
 
@@ -137,6 +138,7 @@ void Prefs::clearCache() {
     emit storageChanged();
     const qint64 before = m_lastTotal;
     QPointer<Prefs> self(this);
+    Reserve::dropRetired();
     QThreadPool::globalInstance()->start([self, before] {
         // Настройки открываются только без фильма: весь запас на диске — от закрытых фильмов.
         QDir(reserveDir()).removeRecursively();

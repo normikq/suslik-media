@@ -86,13 +86,18 @@ Library::Library(ApiClient &api, CloudSync &sync, QObject *parent)
 
 void Library::bump() {
     // Несколько изменений подряд — один пересчёт страниц.
+    // Не чаще раза в 400 мс: фоновые ответы (жанры, постеры, названия — каждые 120 мс) иначе пересобирали
+    // страницы медиатеки несколько раз в секунду.
+    if (m_quiet) { m_quietDirty = true; return; } // пачка ответов: пересчёт один раз в конце
     if (m_bumpQueued) return;
     m_bumpQueued = true;
-    QMetaObject::invokeMethod(this, [this] {
+    const qint64 wait = std::max<qint64>(0, m_bumpAt + 400 - QDateTime::currentMSecsSinceEpoch());
+    QTimer::singleShot(int(wait), this, [this] {
         m_bumpQueued = false;
+        m_bumpAt = QDateTime::currentMSecsSinceEpoch();
         ++m_version;
         emit versionChanged();
-    }, Qt::QueuedConnection);
+    });
 }
 
 void Library::setStatus(const QString &s, int kind) {
@@ -348,7 +353,7 @@ void Library::prunePosterFiles() {
     }
 }
 
-QString Library::posterFile(const QString &path) const {
+QString Library::posterFile(const QString &path) {
     const QString name = QString::fromLatin1(QCryptographicHash::hash(path.toUtf8(), QCryptographicHash::Sha1).toHex());
     QDir().mkpath(AppDir::file(S("posters")));
     return QDir(AppDir::file(S("posters"))).filePath(name + S(".img"));
@@ -702,18 +707,27 @@ void Library::classifyAnimation() {
     // по одному запросу раз в 120 мс, без спешки
     auto step = std::make_shared<std::function<void()>>();
     *step = [this, weak = std::weak_ptr<std::function<void()>>(step)] {
-        if (m_classifyTodo.isEmpty() || m_auth != 1) { m_classifyRunning = false; return; }
+        if (m_classifyTodo.isEmpty() || m_auth != 1) {
+            m_classifyRunning = false;
+            if (m_quietDirty) { m_quietDirty = false; bump(); }
+            return;
+        }
         const auto step = weak.lock();
         if (!step) { m_classifyRunning = false; return; }
         const QString q = m_classifyTodo.takeFirst();
         const QString key = q.toLower();
         m_api.get(S("/api/poster?q=") + formEncode(q), [this, key, step](const ApiResult &r) {
             if (r.ok()) {
+                // ответы копятся: страницы медиатеки пересчитываются раз в 12 ответов (~1,5 с) и в конце цепочки,
+                // а не после каждого
+                ++m_quiet;
                 const QString p = r.json.value(S("poster")).toString();
                 if (p.startsWith(QLatin1String("/api/poster/img/"))) notePoster(key, p);
                 recordAnimation(key, r.json);
                 recordTitle(key, r.json);
+                --m_quiet;
             }
+            if (m_quietDirty && (++m_classifyDone % 12 == 0 || m_classifyTodo.isEmpty())) { m_quietDirty = false; bump(); }
             QTimer::singleShot(120, this, [step] { (*step)(); });
         });
     };

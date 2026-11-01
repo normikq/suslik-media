@@ -5,6 +5,7 @@
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTest>
+#include <memory>
 #include <optional>
 
 namespace testutil {
@@ -22,8 +23,10 @@ public:
         server.listen(QHostAddress::LocalHost);
         connect(&server, &QTcpServer::newConnection, this, [this] {
             while (QTcpSocket *s = server.nextPendingConnection()) {
-                auto *buf = new QByteArray;
-                connect(s, &QTcpSocket::readyRead, s, [this, s, buf] {
+                auto buf = std::make_shared<QByteArray>();
+                auto done = std::make_shared<bool>(false);
+                connect(s, &QTcpSocket::readyRead, s, [this, s, buf, done] {
+                    if (*done) { s->readAll(); return; }
                     *buf += s->readAll();
                     const auto end = buf->indexOf("\r\n\r\n");
                     if (end < 0) return;
@@ -45,8 +48,8 @@ public:
                     const QByteArray body = resp.mid(he + 4);
                     resp = resp.left(he) + "\r\nContent-Length: " + QByteArray::number(body.size()) + "\r\nConnection: close\r\n\r\n" + body;
                     s->write(resp);
+                    *done = true;
                     s->disconnectFromHost();
-                    delete buf;
                 });
                 connect(s, &QTcpSocket::disconnected, s, &QObject::deleteLater);
             }

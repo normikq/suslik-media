@@ -139,6 +139,8 @@ public:
     void saveEpisode(qint64 id, const QString &path);
     /// Прогресс изменился (плеер, другое устройство): плитки пересчитываются.
     Q_INVOKABLE void bumpWatch() { bump(); }
+    /// Файл картинки в кэше на диске; без состояния — можно звать из любого потока.
+    static QString posterFile(const QString &path);
 
     /// Чистка папки постеров: старше 7 дней и сверх 100 МБ.
     void prunePosterFiles();
@@ -177,7 +179,6 @@ private:
     void recordTitle(const QString &key, const QJsonObject &j);
     void recordAnimation(const QString &key, const QJsonObject &j);
     void notePoster(const QString &key, const QString &path);
-    QString posterFile(const QString &path) const;
     void lookupPoster(const QString &query);
     void runMediaQueue();
     void updateMagnet(qint64 id, const std::function<void(Magnet &)> &f);
@@ -199,6 +200,7 @@ private:
     bool m_aiBusy = false;
     int m_version = 0;
     bool m_bumpQueued = false;
+    qint64 m_bumpAt = 0; // когда страницы пересчитывались в последний раз
 
     QHash<QString, bool> m_animation;           // запрос постера (нижний регистр) → TMDB: Animation
     QHash<QString, QString> m_posterPaths;      // запрос → путь картинки
@@ -213,6 +215,9 @@ private:
     bool m_mediaBusy = false;
     QStringList m_classifyTodo;
     bool m_classifyRunning = false;
+    int m_classifyDone = 0;
+    int m_quiet = 0;          // > 0 — bump() только отмечает изменение (m_quietDirty)
+    bool m_quietDirty = false;
     std::shared_ptr<std::function<void()>> m_classifyStep;
     std::vector<std::function<void()>> m_refreshWaiters;
     int m_tagsRound = 0;

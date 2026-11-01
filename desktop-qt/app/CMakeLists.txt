@@ -9,6 +9,7 @@ qt_add_executable(suslik_media WIN32
   src/Library.cpp src/Library.h
   src/LibraryPage.cpp src/LibraryPage.h
   src/ImageProvider.cpp src/ImageProvider.h
+  src/IconProvider.cpp src/IconProvider.h
   src/Ui.cpp src/Ui.h
   src/PlayModel.cpp src/PlayModel.h src/PlayRequest.h
   src/AddModel.cpp src/AddModel.h
@@ -49,7 +50,7 @@ qt_add_qml_module(suslik_media
 # Скруглённые углы слоёв (постеры, баннер): маленький шейдер, собирается в .qsb для всех графических API.
 qt_add_shaders(suslik_media sm_shaders
   PREFIX /sm
-  FILES shaders/rounded.frag
+  FILES shaders/rounded.frag shaders/roundedimage.frag
 )
 
 # Шрифты, значки и строки — те же файлы, что у Kotlin-версии (desktop/src/main/resources), без копий.

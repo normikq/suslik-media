@@ -1,5 +1,6 @@
 #include "MpvEngine.h"
 #include "../AppDir.h"
+#include "../Settings.h"
 
 #include "suslik/core/Strings.h"
 
@@ -76,6 +77,8 @@ mpv::Handle MpvEngine::handle() {
     opt("cache-pause", S("yes"));
     opt("cache-pause-initial", S("yes"));
     opt("cache-pause-wait", S("1"));
+    // без отката назад при смене субтитров и перемотке: иначе большие запросы диапазонов назад по HTTP
+    opt("demuxer-mkv-subtitle-preroll", S("no"));
     opt("demuxer-mkv-subtitle-preroll-secs", S("1"));
     // Ключевые кадры позади — в памяти (смена дорожки и короткая перемотка без сети); долгий запас — на диске (BurstProxy).
     opt("demuxer-max-bytes", S("96MiB"));
@@ -289,6 +292,10 @@ void MpvEngine::open(const QString &url, qint64 startMs, bool nightMode, const Q
     m_sideSubs = subs;
     m_pendingAudio = int(audio.size());
     m_pendingSubs = int(subs.size());
+    // Буфер mpv — из настроек («Буфер», как в Kotlin-версии): без этих двух mpv копит, сколько влезет в demuxer-max-bytes
+    const QString secs = num(std::max(1.0, PlaybackSettings::cacheMs() / 1000.0));
+    set("cache-secs", secs);
+    set("demuxer-readahead-secs", secs);
     set("pause", S("no"));
     set("start", startMs > 0 ? num(startMs / 1000.0) : S("0"));
     set("alang", audioLang);
@@ -336,7 +343,23 @@ void MpvEngine::setPaused(bool paused) {
     set("pause", paused ? S("yes") : S("no"));
     emit stateChanged();
 }
-void MpvEngine::stop() { if (m_h) command({S("stop")}); }
+void MpvEngine::stop() {
+    if (m_h) command({S("stop")});
+    // сеанс кончился: прежние время, дорожки, главы и размер кадра больше не действуют
+    ++m_openGen;
+    m_loaded = m_playingSent = m_cacheWait = false;
+    m_time = m_length = 0;
+    m_cachePercent = 0;
+    m_videoW = m_videoH = 0;
+    m_audio.clear(); m_subs.clear(); m_chapters.clear();
+    m_pendingAudio = m_pendingSubs = 0;
+    m_sideAudio.clear(); m_sideSubs.clear();
+    emit stateChanged();
+    emit timeChanged();
+    emit lengthChanged();
+    emit tracksChanged();
+    emit videoSizeChanged();
+}
 void MpvEngine::seekTo(qint64 ms) {
     m_cachePercent = 0;
     command({S("seek"), num(ms / 1000.0), S("absolute")});

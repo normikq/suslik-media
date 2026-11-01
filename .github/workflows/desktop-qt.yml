@@ -67,6 +67,10 @@ jobs:
               echo "::endgroup::"
               [ $rc = 0 ] || echo "::warning::$t $f rc=$rc"
             done
+            echo "::group::$t целиком"
+            timeout 120 build/tests/$t.exe -v2 -o out.txt,txt > /dev/null 2> err.txt; echo "rc=$?"
+            tail -n 120 out.txt; tail -n 60 err.txt
+            echo "::endgroup::"
           done
 
   windows:
@@ -207,6 +211,8 @@ jobs:
         run: |
           for t in $(ctest --test-dir build -N --rerun-failed 2>/dev/null | sed -n 's/.*Test *#[0-9]*: *//p'); do
             echo "::group::$t"
-            timeout 120 build/tests/$t.exe -v2 2>&1 | tail -n 150 || true
+            # вывод в файл: при зависании (timeout убивает процесс) буфер stdout теряется
+            timeout 120 build/tests/$t.exe -v2 -o out.txt,txt > /dev/null 2> err.txt || true
+            tail -n 150 out.txt; tail -n 60 err.txt
             echo "::endgroup::"
           done
