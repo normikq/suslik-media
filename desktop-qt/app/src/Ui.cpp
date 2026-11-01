@@ -73,13 +73,7 @@ void Ui::raise(QWindow *w) const {
 
 void Ui::styleTitleBar(QWindow *w) const { TitleBar::style(w); }
 
-void Ui::noteImageBytes(qint64 bytes) {
-    m_imageBytes += bytes;
-    if (m_imageBytes >= IMAGE_TRIM_BYTES) trimMemory();
-}
-
-void Ui::trimMemory() {
-    m_imageBytes = 0;
+void Ui::trimMemory() const {
     if (m_engine) {
         m_engine->collectGarbage();
     }

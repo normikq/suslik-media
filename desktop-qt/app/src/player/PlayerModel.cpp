@@ -21,6 +21,14 @@
 #include <QRegularExpression>
 #include <QUrl>
 
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <psapi.h>
+#endif
+
 namespace suslik::app {
 
 using namespace suslik::core;
@@ -536,6 +544,10 @@ void PlayerModel::finishClose() {
     // свою ссылку, когда экран плеера уйдёт (Loader в Main.qml)
     m_engine->release();
     Reserve::proxy().clear();
+#ifdef Q_OS_WIN
+    // После закрытия фильма: возврат страниц декодера и кэша mpv операционной системе
+    QTimer::singleShot(1000, [] { EmptyWorkingSet(GetCurrentProcess()); });
+#endif
     ui().put(S("volume"), num(m_volume));
     m_open = false;
     m_closing = false;

@@ -38,12 +38,8 @@ public:
     /// Окно выйти вперёд (второй запуск).
     Q_INVOKABLE void raise(QWindow *w) const;
     Q_INVOKABLE void styleTitleBar(QWindow *w) const;
-    /// Сброс неиспользуемой памяти. Поводов три: смена вкладки в боковой панели, включение плеера
-    /// и рубеж в IMAGE_TRIM_BYTES раскодированных картинок (постеров) с прошлого сброса.
-    Q_INVOKABLE void trimMemory();
-    /// Раскодирована картинка (ImageProvider): копит объём и на рубеже сбрасывает память.
-    void noteImageBytes(qint64 bytes);
-    static constexpr qint64 IMAGE_TRIM_BYTES = 150LL << 20;
+    /// Сброс неиспользуемой памяти в Windows (смена страниц, вкладок, закрытие панелей).
+    Q_INVOKABLE void trimMemory() const;
     /// Переменная окружения (проверка вёрстки: SM_OPEN открывает окно сразу после запуска).
     Q_INVOKABLE QString env(const QString &name) const { return qEnvironmentVariable(name.toUtf8().constData()); }
 
@@ -51,7 +47,6 @@ private:
     QString m_version;
     bool m_site;
     QQmlApplicationEngine *m_engine = nullptr;
-    qint64 m_imageBytes = 0; // раскодировано картинок с прошлого сброса
 };
 
 } // namespace suslik::app
