@@ -79,6 +79,7 @@ public:
     Q_INVOKABLE void setSubDelayMs(qint64 ms);
     Q_INVOKABLE void setSubScale(int percent);
     Q_INVOKABLE void setNightMode(bool on);
+    Q_INVOKABLE void setPanScan(double val);
     Q_INVOKABLE void setAudioTrack(int id);
     Q_INVOKABLE void setSubTrack(int id);
     Q_INVOKABLE void removeAudioTrack(int id);

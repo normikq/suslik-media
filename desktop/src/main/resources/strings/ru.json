@@ -385,6 +385,8 @@
   "player.net_seti_zhdem_podklyuchenie": "Нет сети — ждём подключение…",
   "player.nochnoy_rezhim": "  ·  ночной режим",
   "player.nochnoy_zvuk": "🌙 Ночной звук",
+  "player.format_21_9": "Формат 21:9 (C)",
+  "player.format_iskhodnyy": "Исходный формат (C)",
   "player.nochnoy_zvuk_vklyuchen": "Ночной звук включен",
   "player.nochnoy_zvuk_vyklyuchen": "Ночной звук выключен",
   "player.obychnyy_rezhim_o": "Обычный режим (O)",
