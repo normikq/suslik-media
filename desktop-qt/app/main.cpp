@@ -9,6 +9,7 @@
 #include "src/SingleInstance.h"
 #include "src/Updater.h"
 #include "src/player/Reserve.h"
+#include "src/IconProvider.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -30,6 +31,7 @@
 
 #include <QFile>
 #include <QFontDatabase>
+#include <QPixmapCache>
 #include <QGuiApplication>
 #include <QIcon>
 #include <QQmlApplicationEngine>
@@ -51,6 +53,9 @@ int main(int argc, char *argv[]) {
     // mpv рисует кадры через OpenGL прямо в сцену окна (MpvVideo): окно тоже на OpenGL, без копий кадров между API.
     QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
     QGuiApplication app(argc, argv);
+    // QPixmapCache (картинки виджетов и стилей) — не больше 32 МБ. Картинки QML живут в своём кеше и отпускаются,
+    // когда их никто не показывает.
+    QPixmapCache::setCacheLimit(32 * 1024);
     QGuiApplication::setApplicationName(QStringLiteral("Suslik Media"));
     QGuiApplication::setApplicationVersion(QStringLiteral(SM_VERSION));
     QGuiApplication::setOrganizationName(QStringLiteral("Suslik"));
@@ -108,6 +113,7 @@ int main(int argc, char *argv[]) {
     // Модуль Suslik вшит в программу; копия рядом (qml\Suslik) — запасной путь для упакованной сборки.
     engine.addImportPath(QCoreApplication::applicationDirPath() + QStringLiteral("/qml"));
     engine.addImageProvider(QStringLiteral("suslik"), new app::ImageProvider(library));
+    engine.addImageProvider(QStringLiteral("icon"), new app::IconProvider);
     engine.rootContext()->setContextProperty(QStringLiteral("Ui"), &ui);
     engine.rootContext()->setContextProperty(QStringLiteral("lib"), &library);
     engine.rootContext()->setContextProperty(QStringLiteral("prefs"), &prefs);

@@ -9,6 +9,7 @@ qt_add_executable(suslik_media WIN32
   src/Library.cpp src/Library.h
   src/LibraryPage.cpp src/LibraryPage.h
   src/ImageProvider.cpp src/ImageProvider.h
+  src/IconProvider.cpp src/IconProvider.h
   src/Ui.cpp src/Ui.h
   src/PlayModel.cpp src/PlayModel.h src/PlayRequest.h
   src/AddModel.cpp src/AddModel.h

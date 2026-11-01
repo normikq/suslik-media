@@ -215,6 +215,9 @@ private:
     bool m_mediaBusy = false;
     QStringList m_classifyTodo;
     bool m_classifyRunning = false;
+    int m_classifyDone = 0;
+    int m_quiet = 0;          // > 0 — bump() только отмечает изменение (m_quietDirty)
+    bool m_quietDirty = false;
     std::shared_ptr<std::function<void()>> m_classifyStep;
     std::vector<std::function<void()>> m_refreshWaiters;
     int m_tagsRound = 0;
