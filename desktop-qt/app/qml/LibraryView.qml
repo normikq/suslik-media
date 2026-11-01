@@ -5,11 +5,8 @@ import Suslik.Native
 Item {
     id: v
     property bool mine: false
-    // Плитки скрытой вкладки создаются не сразу, а через пару секунд простоя (без постеров — они грузятся,
-    // когда плитку впервые видно): первый переход на вкладку не создаёт сетку посреди анимации
     property bool wasEverVisible: visible
     onVisibleChanged: if (visible) wasEverVisible = true
-    Timer { interval: 2500; running: !v.wasEverVisible && lib.authenticated === 1; onTriggered: v.wasEverVisible = true }
     property alias category: lp.category
     readonly property alias model: lp
     signal versionsRequested(string title, var ids)

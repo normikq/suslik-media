@@ -8,10 +8,6 @@ Item {
     property var page
     signal flyTo(int tab, var rect, string poster)   // постер летит в раздел боковой панели
 
-    // постер грузится, когда плитку впервые видно (сетку скрытой вкладки создают заранее, без картинок)
-    property bool everShown: false
-    onVisibleChanged: if (visible) everShown = true
-
     // место постера для вылета плеера (ExitFlight.kt: trackBounds); сменился фильм — старая запись уходит
     property var trackedId: 0
     function retrack() {
@@ -21,7 +17,7 @@ Item {
         trackedId = id
         Theme.track(Theme.posters, id, tile)
     }
-    Component.onCompleted: { everShown = visible; retrack() }
+    Component.onCompleted: retrack()
     Component.onDestruction: Theme.untrack(Theme.posters, trackedId, tile)
     onTChanged: retrack()
 
@@ -47,7 +43,7 @@ Item {
             id: poster
             anchors.fill: parent
             radius: 14
-            source: tile.everShown && tile.t.poster ? "image://suslik" + tile.t.poster : ""
+            source: tile.t.poster ? "image://suslik" + tile.t.poster : ""
             sourceSize: Qt.size(240, 360)
             zoom: tile.hovered ? 1.06 : 1
             Behavior on zoom { NumberAnimation { duration: 360; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease } }
@@ -100,6 +96,7 @@ Item {
                 text: tile.t.title || ""
                 color: "white"
                 font.family: Theme.onest; font.weight: Font.DemiBold; font.pixelSize: 14
+                renderType: Text.NativeRendering
                 lineHeight: 17; lineHeightMode: Text.FixedHeight
                 maximumLineCount: 2; wrapMode: Text.Wrap; elide: Text.ElideRight
             }
@@ -115,14 +112,14 @@ Item {
                 Column {
                     id: detailsCol
                     width: parent.width
-                    Text { topPadding: 2; bottomPadding: 5; text: tile.t.subtitle || ""; color: "#9BA4B5"; font.family: Theme.onest; font.pixelSize: 12 }
+                    Text { topPadding: 2; bottomPadding: 5; text: tile.t.subtitle || ""; color: "#9BA4B5"; font.family: Theme.onest; font.pixelSize: 12; renderType: Text.NativeRendering }
                     Rectangle {
                         width: st.implicitWidth + 14; height: st.implicitHeight + 4
                         radius: 6; color: "#181B24"; border.color: "#2A3040"
-                        Text { id: st; anchors.centerIn: parent; text: tile.t.status || ""; color: "white"; font.family: Theme.onest; font.weight: Font.Medium; font.pixelSize: 11 }
+                        Text { id: st; anchors.centerIn: parent; text: tile.t.status || ""; color: "white"; font.family: Theme.onest; font.weight: Font.Medium; font.pixelSize: 11; renderType: Text.NativeRendering }
                     }
-                    Text { topPadding: 5; width: parent.width; elide: Text.ElideRight; text: tile.t.specs1 || ""; color: "#C0C7D5"; font.family: Theme.onest; font.pixelSize: 11 }
-                    Text { topPadding: 1; width: parent.width; elide: Text.ElideRight; text: tile.t.specs2 || ""; color: "#7A8294"; font.family: Theme.onest; font.pixelSize: 11 }
+                    Text { topPadding: 5; width: parent.width; elide: Text.ElideRight; text: tile.t.specs1 || ""; color: "#C0C7D5"; font.family: Theme.onest; font.pixelSize: 11; renderType: Text.NativeRendering }
+                    Text { topPadding: 1; width: parent.width; elide: Text.ElideRight; text: tile.t.specs2 || ""; color: "#7A8294"; font.family: Theme.onest; font.pixelSize: 11; renderType: Text.NativeRendering }
                 }
             }
         }
