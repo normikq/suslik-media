@@ -54,6 +54,7 @@ class PlayerModel : public QObject, private core::PlaybackSupervisor::Actions {
     Q_PROPERTY(qint64 subDelay READ subDelay NOTIFY optionsChanged)
     Q_PROPERTY(qint64 audioDelay READ audioDelay NOTIFY optionsChanged)
     Q_PROPERTY(bool nightMode READ nightMode NOTIFY optionsChanged)
+    Q_PROPERTY(bool crop219 READ crop219 NOTIFY optionsChanged)
     /// [{timeMs, title}]
     Q_PROPERTY(QVariantList chapters READ chapters NOTIFY markersChanged)
     Q_PROPERTY(int chapterIndex READ chapterIndex NOTIFY timeChanged)
@@ -107,6 +108,7 @@ public:
     qint64 subDelay() const { return m_subDelay; }
     qint64 audioDelay() const { return m_audioDelay; }
     bool nightMode() const { return m_night; }
+    bool crop219() const { return m_crop219; }
     QVariantList chapters() const;
     int chapterIndex() const { return chapterAt(m_time); }
     QVariantList introRange() const;
@@ -150,6 +152,8 @@ public:
     Q_INVOKABLE void shiftSubs(qint64 ms);
     Q_INVOKABLE void shiftAudio(qint64 ms);
     Q_INVOKABLE void toggleNight();
+    Q_INVOKABLE void toggleCrop219();
+    Q_INVOKABLE void setCrop219(bool on);
     Q_INVOKABLE void toggleInfo();
     Q_INVOKABLE void saveDelay();
     Q_INVOKABLE void deleteTrack();
@@ -294,6 +298,7 @@ private:
     double m_rate = 1;
     int m_subScale = 100;
     bool m_night = false;
+    bool m_crop219 = false;
     qint64 m_audioDelay = 0, m_subDelay = 0;
     qint64 m_time = 0, m_length = 0, m_lastGood = 0, m_bufferedMs = 0;
     QString m_status;

@@ -81,10 +81,11 @@ mpv::Handle MpvEngine::handle() {
     opt("demuxer-mkv-subtitle-preroll", S("no"));
     opt("demuxer-mkv-subtitle-preroll-secs", S("1"));
     // Ключевые кадры позади — в памяти (смена дорожки и короткая перемотка без сети); долгий запас — на диске (BurstProxy).
-    opt("demuxer-max-bytes", S("32MiB"));
-    opt("demuxer-max-back-bytes", S("8MiB"));
+    opt("demuxer-max-bytes", S("48MiB"));
+    opt("demuxer-max-back-bytes", S("16MiB"));
     opt("gapless-audio", S("yes"));
     opt("audio-stream-silence", S("yes"));
+    opt("audio-buffer", S("0.5")); // запас буфера звука: окно при ресайзе не прерывает звук
     opt("network-timeout", S("30"));
     opt("stream-lavf-o", S("reconnect=1,reconnect_streamed=1,reconnect_delay_max=5"));
     opt("audio-client-name", S("Suslik Media"));
@@ -101,13 +102,15 @@ mpv::Handle MpvEngine::handle() {
     a->observe_property(p, 6, "eof-reached", MPV_FORMAT_FLAG);
     a->observe_property(p, 7, "cache-buffering-state", MPV_FORMAT_INT64);
     a->observe_property(p, 8, "track-list", MPV_FORMAT_NONE);
-    a->observe_property(p, 9, "video-params/dw", MPV_FORMAT_INT64);
+    a->observe_property(p, 9, "video-params", MPV_FORMAT_NONE);
     a->observe_property(p, 10, "chapter-list", MPV_FORMAT_NONE);
     // Последний отпустивший (движок или вывод кадров) закрывает ядро.
     m_h = mpv::Handle(p, [a](mpv_handle *h) { a->terminate_destroy(h); });
     a->set_wakeup_callback(p, [](void *ctx) {
         auto *self = static_cast<MpvEngine *>(ctx);
-        QMetaObject::invokeMethod(self, [self] { self->drain(); }, Qt::QueuedConnection);
+        // пачка событий — один drain(): пока он ждёт в очереди, новые пробуждения его не дублируют
+        if (!self->m_drainQueued.exchange(true))
+            QMetaObject::invokeMethod(self, [self] { self->drain(); }, Qt::QueuedConnection);
     }, this);
     return m_h;
 }
@@ -121,6 +124,7 @@ void MpvEngine::release() {
 }
 
 void MpvEngine::drain() {
+    m_drainQueued = false; // события, пришедшие после этой строки, поставят новый drain()
     if (!m_h) return;
     const mpv::Api *a = mpv::api();
     // Не больше сотни событий за раз: окно остаётся отзывчивым, остальное — следующим кругом.
@@ -129,7 +133,7 @@ void MpvEngine::drain() {
         if (ev->event_id == MPV_EVENT_NONE) return;
         onEvent(*ev);
     }
-    if (m_h) QMetaObject::invokeMethod(this, [this] { drain(); }, Qt::QueuedConnection);
+    if (m_h && !m_drainQueued.exchange(true)) QMetaObject::invokeMethod(this, [this] { drain(); }, Qt::QueuedConnection);
 }
 
 void MpvEngine::onEvent(const mpv_event &ev) {
@@ -144,6 +148,7 @@ void MpvEngine::onEvent(const mpv_event &ev) {
         break;
     }
     case MPV_EVENT_PLAYBACK_RESTART:
+        updateVideoSize();
         emit seekDone();
         emit stateChanged();
         break;
@@ -195,7 +200,7 @@ void MpvEngine::onProperty(const mpv_event_property &p) {
         if (*static_cast<int *>(p.data) != 0 && m_loaded) emit finished();
     } else if (name == "track-list" || name == "chapter-list") {
         readTracks();
-    } else if (name == "video-params/dw") {
+    } else if (name == "video-params") {
         updateVideoSize();
     }
 }
@@ -239,8 +244,12 @@ void MpvEngine::readTracks() {
 }
 
 void MpvEngine::updateVideoSize() {
-    const int w = property(S("video-params/dw")).toInt(), h = property(S("video-params/dh")).toInt(); // размер на экране (с учётом пропорций пикселя)
-    if (w != m_videoW || h != m_videoH) { m_videoW = w; m_videoH = h; emit videoSizeChanged(); }
+    int w = property(S("video-params/dw")).toInt(), h = property(S("video-params/dh")).toInt(); // размер на экране (с учётом пропорций пикселя)
+    if (w <= 0 || h <= 0) {
+        w = property(S("video-params/w")).toInt();
+        h = property(S("video-params/h")).toInt();
+    }
+    if (w > 0 && h > 0 && (w != m_videoW || h != m_videoH)) { m_videoW = w; m_videoH = h; emit videoSizeChanged(); }
 }
 
 QString MpvEngine::property(const QString &name) {
@@ -284,6 +293,7 @@ void MpvEngine::open(const QString &url, qint64 startMs, bool nightMode, const Q
     m_loaded = false;
     m_playingSent = false;
     m_time = m_length = 0;
+    m_videoW = m_videoH = 0;
     m_cacheWait = false;
     m_cachePercent = 0;
     ++m_openGen;
@@ -375,6 +385,7 @@ void MpvEngine::setAudioDelayMs(qint64 ms) { set("audio-delay", num(ms / 1000.0)
 void MpvEngine::setSubDelayMs(qint64 ms) { set("sub-delay", num(ms / 1000.0)); }
 void MpvEngine::setSubScale(int percent) { set("sub-scale", QString::number(percent / 100.0)); }
 void MpvEngine::setNightMode(bool on) { set("af", on ? S(kNightFilter) : QString()); }
+void MpvEngine::setPanScan(double val) { set("panscan", QString::number(val, 'f', 2)); }
 void MpvEngine::setAudioTrack(int id) { set("aid", id < 0 ? S("no") : QString::number(id)); }
 void MpvEngine::setSubTrack(int id) { set("sid", id < 0 ? S("no") : QString::number(id)); }
 void MpvEngine::removeAudioTrack(int id) { if (id >= 0) command({S("audio-remove"), QString::number(id)}); }

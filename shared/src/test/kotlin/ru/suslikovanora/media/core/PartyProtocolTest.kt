@@ -118,6 +118,12 @@ class PartyProtocolTest {
     @Test
     fun commandsAndKeys() {
         assertEquals("ab12cd", PartyProtocol.normalizeCode("  AB-12 cd "))
+        // Ссылка из Discord Activity
+        assertEquals("842190", PartyProtocol.roomFromLink("suslik://room/842190"))
+        assertEquals("842190", PartyProtocol.roomFromLink(" SUSLIK://room/842-190/ "))
+        assertEquals("a1b2c3d4e5f6", PartyProtocol.roomFromLink("suslik://room/a1b2c3d4e5f6?x=1"))
+        assertNull(PartyProtocol.roomFromLink("https://example.com/room/842190"))
+        assertNull(PartyProtocol.roomFromLink("suslik://room/"))
         // Отпечаток как в rooms.js: sha256("pc_test").hex.slice(0, 16)
         assertEquals("9703bd8de4eb8d02", PartyProtocol.clientKey("pc_test"))
         assertTrue(PartyProtocol.newClientId("an").startsWith("an_"))

@@ -12,6 +12,7 @@
 #include "src/party/PartySync.h"
 #include "src/Settings.h"
 #include "src/SingleInstance.h"
+#include "src/UrlScheme.h"
 #include "src/Updater.h"
 #include "src/player/Reserve.h"
 #include "src/IconProvider.h"
@@ -45,14 +46,6 @@
 #include <QSGRendererInterface>
 #include <QTimer>
 
-#ifdef Q_OS_WIN
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#include <psapi.h>
-#endif
-
 using namespace suslik;
 
 namespace {
@@ -73,9 +66,15 @@ int main(int argc, char *argv[]) {
     QGuiApplication::setApplicationVersion(QStringLiteral(SM_VERSION));
     QGuiApplication::setOrganizationName(QStringLiteral("Suslik"));
 
-    // Уже открыто: то окно выходит вперёд, этот запуск на этом кончается.
+    // Запуск по ссылке suslik://room/<код> (Discord Activity): войти в эту комнату.
+    QString pendingLink;
+    for (const QString &a : app.arguments().mid(1))
+        if (a.startsWith(QStringLiteral("suslik:"), Qt::CaseInsensitive)) { pendingLink = a; break; }
+
+    // Уже открыто: то окно выходит вперёд (и получает ссылку), этот запуск на этом кончается.
     app::SingleInstance single;
-    if (!single.acquire()) return 0;
+    if (!single.acquire(pendingLink)) return 0;
+    app::UrlScheme::registerSelf();
 
     core::Store::setDirectory(app::AppDir::dir());
     app::AppDir::migrateFromKotlin();
@@ -85,6 +84,9 @@ int main(int argc, char *argv[]) {
         QFontDatabase::addApplicationFont(QStringLiteral(":/res/fonts/%1.ttf").arg(QString::fromLatin1(f)));
     QFont base(QStringLiteral("Onest"));
     base.setPixelSize(14);
+    // Сглаженные буквы, как в Kotlin-версии (Skia): без подгонки к пиксельной сетке, дробные позиции.
+    // С подгонкой (по умолчанию в Windows) буквы тонкие и угловатые.
+    base.setHintingPreference(QFont::PreferNoHinting);
     QGuiApplication::setFont(base);
 
     QIcon icon;
@@ -115,6 +117,17 @@ int main(int argc, char *argv[]) {
     app::PartySync partySync(player, party);
     QObject::connect(&library, &app::Library::authenticatedChanged, &party, [&library, &party] {
         if (library.authenticated() == 0) party.leave(); // вышли из аккаунта — и из комнаты
+    });
+    // Ссылка из Discord: в комнату — когда вход в аккаунт уже есть (при запуске он проверяется не сразу)
+    auto runLink = [&library, &party, &pendingLink] {
+        if (pendingLink.isEmpty() || library.authenticated() != 1) return;
+        party.openLink(pendingLink);
+        pendingLink.clear();
+    };
+    QObject::connect(&library, &app::Library::authenticatedChanged, &party, runLink);
+    QObject::connect(&single, &app::SingleInstance::linkRequested, &party, [&pendingLink, runLink](const QString &link) {
+        pendingLink = link;
+        runLink();
     });
     app::MediaSession media(player, library);
     QObject::connect(&sync, &core::CloudSync::changed, &library, [&library](int) { library.bumpWatch(); });
@@ -172,11 +185,8 @@ int main(int argc, char *argv[]) {
 
     sync.start();
     library.start();
+    QTimer::singleShot(0, &party, runLink);
     QTimer::singleShot(4000, &library, [&library] { library.prunePosterFiles(); });
-#ifdef Q_OS_WIN
-    // Сброс временных страниц аллокатора после старта и парсинга базы: снижает Working Set до минимума в ОЗУ
-    QTimer::singleShot(6000, [] { EmptyWorkingSet(GetCurrentProcess()); });
-#endif
     // libmpv нет (самообновление со старой версии без неё) — докачать заранее, не дожидаясь фильма
     QTimer::singleShot(3000, &mpvInstall, [&mpvInstall] { if (!mpvInstall.ready()) mpvInstall.start(); });
     app::PlayerLog::write(QStringLiteral("[sys] Suslik Media Qt %1 started").arg(QStringLiteral(SM_VERSION)));

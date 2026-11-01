@@ -27,6 +27,10 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
 const AI_TITLE_MODEL = process.env.AI_TITLE_MODEL || "gemini-3.5-flash-lite";
 const AI_TITLE_COOLDOWN_MIN = Math.max(0, Number(process.env.AI_TITLE_COOLDOWN_MIN ?? 15));
 const AI_TITLE_DAILY_MAX = Math.max(0, Number(process.env.AI_TITLE_DAILY_MAX ?? 200));
+// «Подбор по настроению» (services/aidiscovery.js): тот же ключ Gemini, своя модель, кулдаун в секундах и дневной лимит.
+const AI_DISCOVERY_MODEL = process.env.AI_DISCOVERY_MODEL || AI_TITLE_MODEL;
+const AI_DISCOVERY_COOLDOWN_SEC = Math.max(0, Number(process.env.AI_DISCOVERY_COOLDOWN_SEC ?? 5));
+const AI_DISCOVERY_DAILY_MAX = Math.max(0, Number(process.env.AI_DISCOVERY_DAILY_MAX ?? 500));
 const TRUST_PROXY = process.env.TRUST_PROXY;
 const BETA_CODE = process.env.BETA_CODE || "";
 const UPDATE_TOKEN = process.env.UPDATE_TOKEN || "";
@@ -59,6 +63,8 @@ const DISCORD_ALLOWED_USERS = (process.env.DISCORD_ALLOWED_USERS || "").split(",
 const DISCORD_OWNER_ID = process.env.DISCORD_OWNER_ID || "";
 const DISCORD_REDIRECT_URI = process.env.DISCORD_REDIRECT_URI || "";
 const DISCORD_ENABLED = Boolean(DISCORD_CLIENT_ID && DISCORD_CLIENT_SECRET);
+// Discord Activity: внешний адрес сайта для ссылок «Открыть в приложении» (внутри Activity видно только discordsays.com)
+const ACTIVITY_SITE_URL = (process.env.ACTIVITY_SITE_URL || "").trim().replace(/\/+$/, "");
 const PASSWORD_AUTH_ENABLED = process.env.PASSWORD_AUTH_ENABLED !== "false" && Boolean(SITE_PASSWORD);
 
 // Where small runtime files live (sessions, library cache, metadata cache). Defaults to the website folder.
@@ -154,6 +160,9 @@ module.exports = {
   AI_TITLE_MODEL,
   AI_TITLE_COOLDOWN_MIN,
   AI_TITLE_DAILY_MAX,
+  AI_DISCOVERY_MODEL,
+  AI_DISCOVERY_COOLDOWN_SEC,
+  AI_DISCOVERY_DAILY_MAX,
   SYNC_IDLE_DAYS,
   AUTO_CLEAN,
   LIBRARY_IDLE_DAYS,
@@ -169,5 +178,6 @@ module.exports = {
   DISCORD_OWNER_ID,
   DISCORD_REDIRECT_URI,
   DISCORD_ENABLED,
+  ACTIVITY_SITE_URL,
   PASSWORD_AUTH_ENABLED
 };

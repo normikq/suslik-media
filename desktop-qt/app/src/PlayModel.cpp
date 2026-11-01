@@ -77,7 +77,7 @@ MFile PlayModel::currentFile() const {
         const auto films = filmList();
         if (!films.isEmpty()) return films[std::clamp(m_film, 0, int(films.size()) - 1)].file;
     }
-    if (m_series) {
+    if (m_series && !it->playable.seasons.isEmpty()) {
         const auto &seasons = it->playable.seasons;
         const Season &s = seasons[std::clamp(m_season, 0, int(seasons.size()) - 1)];
         if (!s.items.isEmpty()) return s.items[std::clamp(m_episode, 0, int(s.items.size()) - 1)].file;
@@ -141,7 +141,8 @@ QString PlayModel::currentTitle() const {
         const int i = std::clamp(m_film, 0, int(films.size()) - 1);
         return base + S(" • ") + filmInfo(films[i], i).first;
     }
-    if (m_series) {
+    // раздачу удалили или пересобрали (m_series — от прошлого load): привязки окна пересчитываются и после этого
+    if (m_series && it && !it->playable.seasons.isEmpty()) {
         const auto &seasons = it->playable.seasons;
         const Season &s = seasons[std::clamp(m_season, 0, int(seasons.size()) - 1)];
         if (!s.items.isEmpty()) {
@@ -242,7 +243,7 @@ QStringList PlayModel::seasons() const {
 
 QString PlayModel::seasonValue() const {
     const LibraryItem *it = item();
-    if (!it || !m_series) return {};
+    if (!it || !m_series || it->playable.seasons.isEmpty()) return {};
     const Season &s = it->playable.seasons[std::clamp(m_season, 0, int(it->playable.seasons.size()) - 1)];
     return s.season == 0 ? tx(S("library.spec")) : tx(S("library.season_sezon"), {{"season", num(s.season)}});
 }
@@ -250,7 +251,7 @@ QString PlayModel::seasonValue() const {
 QStringList PlayModel::episodes() const {
     QStringList out;
     const LibraryItem *it = item();
-    if (!it || !m_series) return out;
+    if (!it || !m_series || it->playable.seasons.isEmpty()) return out;
     const Season &s = it->playable.seasons[std::clamp(m_season, 0, int(it->playable.seasons.size()) - 1)];
     for (const Episode &e : s.items)
         out << (e.title ? S("%1. %2").arg(e.episode).arg(*e.title) : tx(S("library.episode_seriya"), {{"episode", num(e.episode)}}));
@@ -259,7 +260,7 @@ QStringList PlayModel::episodes() const {
 
 QString PlayModel::episodeValue() const {
     const LibraryItem *it = item();
-    if (!it || !m_series) return {};
+    if (!it || !m_series || it->playable.seasons.isEmpty()) return {};
     const Season &s = it->playable.seasons[std::clamp(m_season, 0, int(it->playable.seasons.size()) - 1)];
     if (s.items.isEmpty()) return {};
     return tx(S("library.episode_seriya"), {{"episode", num(s.items[std::clamp(m_episode, 0, int(s.items.size()) - 1)].episode)}});

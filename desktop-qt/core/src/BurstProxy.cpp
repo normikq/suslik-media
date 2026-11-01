@@ -841,6 +841,7 @@ void Window::fetch() {
     { std::lock_guard g(m_respMutex); m_response = res; }
     m_downloading = true;
     Finally done{[&] {
+        m_file.flush();
         res->close();
         {
             std::lock_guard g(m_respMutex);
@@ -1144,7 +1145,10 @@ qint64 BurstProxy::Impl::diskBytesIn(const QString &d) {
     if (d.isEmpty()) return 0;
     qint64 sum = 0;
     QDirIterator it(d, QDir::Files | QDir::Hidden | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
-    while (it.hasNext()) { it.next(); sum += it.fileInfo().size(); }
+    while (it.hasNext()) {
+        it.next();
+        sum += QFile(it.filePath()).size();
+    }
     return sum;
 }
 

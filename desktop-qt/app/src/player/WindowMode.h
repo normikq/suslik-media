@@ -1,5 +1,6 @@
 #pragma once
 #include <QAbstractNativeEventFilter>
+#include <QElapsedTimer>
 #include <QObject>
 #include <QPointer>
 #include <QRect>
@@ -59,7 +60,7 @@ private:
     void frameless(bool on);
     void fly(const QRect &to);
     void roundCorners(bool on);
-    void smoothTick();
+    void applyResize();
     /// Windows: смена рамки окна на время перерисовки прячется (DWM cloak), иначе на миг видна белая
     /// «классическая» рамка. change — сразу, after — когда окно снова видно (кадр без рамки уже нарисован).
     void cloakWhile(const std::function<void()> &change, const std::function<void()> &after = {});
@@ -76,6 +77,8 @@ private:
     QPoint m_resizeCursor;
     QVariantAnimation *m_anim = nullptr;
     QTimer *m_smooth = nullptr;
+    QElapsedTimer m_resizeTimer;
+    qint64 m_lastResizeMs = 0;
     double m_curW = 0, m_targetW = 0;
 };
 

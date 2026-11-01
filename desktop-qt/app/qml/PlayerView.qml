@@ -39,7 +39,9 @@ Item {
     function toggleFullscreen() { windowMode.toggleFullscreen(); player.surfaceChanged() }
     function setMini(on) {
         const w = player.engine.videoWidth, h = player.engine.videoHeight
-        windowMode.setMini(on, w > 0 && h > 0 ? w / h : 16 / 9)
+        const fileAspect = w > 0 && h > 0 ? w / h : 16 / 9
+        const aspect = player.crop219 ? (21 / 9) : fileAspect
+        windowMode.setMini(on, aspect)
         picker = ""
         player.surfaceChanged()
     }
@@ -66,7 +68,20 @@ Item {
         target: player.engine
         function onVideoSizeChanged() {
             const w = player.engine.videoWidth, h = player.engine.videoHeight
-            if (w > 0 && h > 0) windowMode.fitMini(w / h)
+            if (w > 0 && h > 0) {
+                const fileAspect = w / h
+                windowMode.fitMini(player.crop219 ? (21 / 9) : fileAspect)
+            }
+        }
+    }
+    Connections {
+        target: player
+        function onCrop219Changed() {
+            if (windowMode.mini) {
+                const w = player.engine.videoWidth, h = player.engine.videoHeight
+                const fileAspect = w > 0 && h > 0 ? w / h : 16 / 9
+                windowMode.fitMini(player.crop219 ? (21 / 9) : fileAspect)
+            }
         }
     }
 
@@ -127,6 +142,7 @@ Item {
             case Qt.Key_PageUp: player.jumpChapter(-1); break
             case Qt.Key_S: player.skipIntro(); break
             case Qt.Key_I: player.toggleInfo(); break
+            case Qt.Key_C: player.toggleCrop219(); break
             case Qt.Key_O: pv.setMini(!windowMode.mini); break
             case Qt.Key_T: if (!windowMode.mini) windowMode.setOnTop(!windowMode.onTop); break
             case Qt.Key_F8: if (Ui.diag) player.mark(); else return; break
@@ -138,16 +154,24 @@ Item {
 
     // ---- видео ----
     Rectangle { anchors.fill: parent; color: "black" }
-    MpvVideo {
-        id: video
+    Item {
         anchors.fill: parent
-        engine: player.engine
-        visible: player.open
+        clip: true
+        MpvVideo {
+            id: video
+            width: videoMouse.resizing && videoMouse.resizeStartW > 0 ? videoMouse.resizeStartW : parent.width
+            height: videoMouse.resizing && videoMouse.resizeStartH > 0 ? videoMouse.resizeStartH : parent.height
+            scale: videoMouse.resizing && videoMouse.resizeStartW > 0 ? (parent.width / videoMouse.resizeStartW) : 1.0
+            transformOrigin: Item.TopLeft
+            engine: player.engine
+            visible: player.open
+        }
     }
     // До первого кадра — постер фильма во всю высоту, потом он гаснет поверх видео.
     Image {
         anchors.fill: parent
         source: player.poster !== "" ? "image://suslik" + player.poster : ""
+        sourceSize.height: 1080   // постер во всю высоту: больше не нужно (без размера — исходник целиком)
         fillMode: Image.PreserveAspectFit
         asynchronous: true
         smooth: true
@@ -205,8 +229,10 @@ Item {
         property point pressAt
         property bool moved: false
         property bool resizing: false
+        property real resizeStartW: 1
+        property real resizeStartH: 1
         onReleased: { if (resizing) windowMode.endResize(); resizing = false }
-        onCanceled: resizing = false
+        onCanceled: { if (resizing) windowMode.endResize(); resizing = false }
         onPositionChanged: (m) => {
             pv.poke()
             if (pv.mini && !pressed) cornerShape = cornerCursor(m.x, m.y)
@@ -217,7 +243,16 @@ Item {
             pressAt = Qt.point(m.x, m.y); moved = false
             pv.poke()
             if (pv.picker !== "") pv.picker = ""
-            if (pv.mini) { const e = edgeAt(m.x, m.y); if (e) { windowMode.beginResize(e); resizing = true; moved = true } }
+            if (pv.mini) {
+                const e = edgeAt(m.x, m.y)
+                if (e) {
+                    resizeStartW = width
+                    resizeStartH = height
+                    windowMode.beginResize(e)
+                    resizing = true
+                    moved = true
+                }
+            }
         }
         onClicked: if (!moved) clickTimer.restart()
         onDoubleClicked: {
@@ -226,18 +261,22 @@ Item {
         }
         onWheel: (w) => { if (w.angleDelta.y !== 0) { player.stepVolume(w.angleDelta.y > 0 ? 5 : -5); pv.poke() } }
         Timer { id: clickTimer; interval: 260; onTriggered: player.togglePause() }
-        // мини-плеер тянется только за углы (по диагонали): пропорции держит WindowMode
+        // мини-плеер масштабируется за любые края и углы (пропорции держит WindowMode)
         function edgeAt(x, y) {
-            const m = 16
+            const m = 14
             let h = 0, v = 0
             if (x < m) h = Qt.LeftEdge; else if (x > width - m) h = Qt.RightEdge
             if (y < m) v = Qt.TopEdge; else if (y > height - m) v = Qt.BottomEdge
-            return h && v ? (h | v) : 0
+            return h | v
         }
         function cornerCursor(x, y) {
             const e = edgeAt(x, y)
             if (!e) return Qt.ArrowCursor
-            return (e === (Qt.LeftEdge | Qt.TopEdge) || e === (Qt.RightEdge | Qt.BottomEdge)) ? Qt.SizeFDiagCursor : Qt.SizeBDiagCursor
+            if (e === (Qt.LeftEdge | Qt.TopEdge) || e === (Qt.RightEdge | Qt.BottomEdge)) return Qt.SizeFDiagCursor
+            if (e === (Qt.RightEdge | Qt.TopEdge) || e === (Qt.LeftEdge | Qt.BottomEdge)) return Qt.SizeBDiagCursor
+            if (e & (Qt.LeftEdge | Qt.RightEdge)) return Qt.SizeHorCursor
+            if (e & (Qt.TopEdge | Qt.BottomEdge)) return Qt.SizeVerCursor
+            return Qt.ArrowCursor
         }
     }
 
@@ -390,6 +429,7 @@ Item {
                         Chip_ { label: Ui.tx("player.nochnoy_zvuk"); on: player.nightMode; onClicked: player.toggleNight() }
                         Chip_ { label: Ui.tx("player.poverh_okon_t"); on: windowMode.onTop; onClicked: windowMode.setOnTop(!windowMode.onTop) }
                         Chip_ { label: Ui.tx("player.mini_pleer_o"); on: windowMode.mini; onClicked: pv.setMini(!windowMode.mini) }
+                        Chip_ { label: "21:9"; on: player.crop219; onClicked: player.toggleCrop219() }
                         Chip_ { label: Ui.tx("player.informaciya_i"); on: player.infoOpen; onClicked: player.toggleInfo() }
                     }
                     MoreRow {
@@ -552,6 +592,20 @@ Item {
                 Row {
                     anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
                     spacing: 10
+                    GlassBtn {
+                        size: 42
+                        active: player.crop219
+                        tip: player.crop219 ? Ui.tx("player.format_iskhodnyy") : Ui.tx("player.format_21_9")
+                        onClicked: player.toggleCrop219()
+                        Text {
+                            anchors.centerIn: parent
+                            text: "21:9"
+                            color: player.crop219 ? "#FFFFFF" : "#B3FFFFFF"
+                            font.family: Theme.onest
+                            font.pixelSize: 11
+                            font.weight: Font.DemiBold
+                        }
+                    }
                     GlassBtn { size: 42; tip: Ui.tx("player.obychnyy_rezhim_o"); onClicked: pv.setMini(false); PlayerIcon { anchors.centerIn: parent; name: "mini"; size: 16 } }
                     GlassBtn { size: 42; tip: Ui.tx("player.zakryt_esc"); onClicked: pv.closePlayer(); PlayerIcon { anchors.centerIn: parent; name: "cross"; size: 11 } }
                 }
@@ -777,44 +831,57 @@ Item {
         property real grow: active ? 1 : 0
         Behavior on grow { NumberAnimation { duration: 160 } }
         readonly property real pos: pv.scrubAt >= 0 ? pv.scrubAt : player.time
-        readonly property real th: 4 + 3 * grow
+        readonly property int th: Math.round(4 + 3 * grow)
+        readonly property int lineY: Math.round((sb.height - th) / 2)
+        readonly property int dotX: Math.round(sb.width * sb.frac(sb.pos))
+        readonly property int r: Math.round(5 + 3 * grow)
         function frac(t) { return len > 0 ? Math.max(0, Math.min(1, t / len)) : 0 }
-        Rectangle { y: (sb.height - sb.th) / 2; width: sb.width; height: sb.th; radius: sb.th / 2; color: Theme.line2 }
-        Rectangle { y: (sb.height - sb.th) / 2; width: sb.width * sb.frac(player.bufferedMs); height: sb.th; radius: sb.th / 2; color: "#80B4B8C4"
-            Behavior on width { NumberAnimation { duration: 260 } } }
+
+        // Фоновая полоса
+        Rectangle { y: sb.lineY; width: sb.width; height: sb.th; radius: sb.th / 2; color: Theme.line2 }
+        // Буфер
+        Rectangle {
+            visible: player.bufferedMs > 0 && sb.len > 0
+            y: sb.lineY; width: Math.round(sb.width * sb.frac(player.bufferedMs)); height: sb.th; radius: sb.th / 2
+            color: "#80B4B8C4"
+        }
+        // Заставка
         Rectangle {
             visible: player.introRange.length === 2 && sb.len > 0
-            x: visible ? sb.width * sb.frac(player.introRange[0]) : 0
-            width: visible ? sb.width * (sb.frac(player.introRange[1]) - sb.frac(player.introRange[0])) : 0
-            y: (sb.height - sb.th) / 2; height: sb.th; radius: sb.th / 2; color: "#80F5A623"
+            x: Math.round(visible ? sb.width * sb.frac(player.introRange[0]) : 0)
+            width: Math.round(visible ? sb.width * (sb.frac(player.introRange[1]) - sb.frac(player.introRange[0])) : 0)
+            y: sb.lineY; height: sb.th; radius: sb.th / 2; color: "#80F5A623"
         }
+        // Титры
         Rectangle {
             visible: player.creditsRange.length === 2 && sb.len > 0
-            x: visible ? sb.width * sb.frac(player.creditsRange[0]) : 0
-            width: visible ? sb.width * (sb.frac(player.creditsRange[1]) - sb.frac(player.creditsRange[0])) : 0
-            y: (sb.height - sb.th) / 2; height: sb.th; radius: sb.th / 2; color: "#808E96A8"
+            x: Math.round(visible ? sb.width * sb.frac(player.creditsRange[0]) : 0)
+            width: Math.round(visible ? sb.width * (sb.frac(player.creditsRange[1]) - sb.frac(player.creditsRange[0])) : 0)
+            y: sb.lineY; height: sb.th; radius: sb.th / 2; color: "#808E96A8"
         }
-        Rectangle { y: (sb.height - sb.th) / 2; width: sb.width * sb.frac(sb.pos); height: sb.th; radius: sb.th / 2; color: "white" }
+        // Воспроизведённая часть
+        Rectangle { y: sb.lineY; width: sb.dotX; height: sb.th; radius: sb.th / 2; color: "white" }
+        // Главы
         Repeater {
             model: player.chapters
             Rectangle {
                 required property var modelData
                 visible: modelData.timeMs > 0 && modelData.timeMs < sb.len
-                x: sb.width * sb.frac(modelData.timeMs) - 1.5
-                y: (sb.height - sb.th) / 2 - 1; width: 3; height: sb.th + 2; color: Theme.booth
+                x: Math.round(sb.width * sb.frac(modelData.timeMs) - 1.5)
+                y: sb.lineY - 1; width: 3; height: sb.th + 2; color: Theme.booth
             }
         }
         // точка под мышью
         Rectangle {
-            visible: ma.containsMouse && !ma.pressed && Math.abs(ma.mouseX - sb.width * sb.frac(sb.pos)) > 10
-            x: ma.mouseX - 2.8; y: sb.height / 2 - 2.8; width: 5.6; height: 5.6; radius: 2.8
+            visible: ma.containsMouse && !ma.pressed && Math.abs(ma.mouseX - sb.dotX) > 10
+            x: Math.round(ma.mouseX - 3); y: Math.round(sb.height / 2 - 3); width: 6; height: 6; radius: 3
             color: Qt.rgba(1, 1, 1, 0.75 * sb.grow)
         }
+        // ползунок
         Rectangle {
-            readonly property real r: 5 + 3 * sb.grow
-            x: sb.width * sb.frac(sb.pos) - r; y: sb.height / 2 - r; width: r * 2; height: r * 2; radius: r
+            x: sb.dotX - sb.r; y: Math.round(sb.height / 2 - sb.r); width: sb.r * 2; height: sb.r * 2; radius: sb.r
             color: "white"
-            Rectangle { anchors.centerIn: parent; width: parent.width + 16 * sb.grow; height: width; radius: width / 2; color: Qt.rgba(1, 1, 1, 0.22 * sb.grow); z: -1 }
+            Rectangle { anchors.centerIn: parent; width: parent.width + Math.round(16 * sb.grow); height: width; radius: width / 2; color: Qt.rgba(1, 1, 1, 0.22 * sb.grow); z: -1 }
         }
         MouseArea {
             id: ma

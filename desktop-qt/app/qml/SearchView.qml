@@ -3,16 +3,44 @@ import Suslik.Native
 
 // «Поиск раздач» (SearchView.kt): запрос по всем трекерам сервера и RuTracker с ПК, фильтры, значки раздачи, страницы,
 // «＋ В библиотеку». Окно «Трекеры» — какие источники искать и вход на RuTracker.
+// «По настроению»: ИИ подбирает фильмы со всего мира (сервер: Gemini + TMDB), карточки AiDiscoveryCard сверены с
+// медиатекой — «Смотреть» сразу или «Найти раздачу» обычным поиском по трекерам.
 Item {
     id: v
     property bool active: false
+    signal playRequested(var magnetId, string path)
 
     SearchModel { id: s; library: lib }
+
+    onActiveChanged: {
+        if (!active) s.leave()
+    }
 
     function toTop() { flick.contentY = 0 }
     /// Проверка вёрстки (SM_OPEN=search:…): запрос как будто введён и нажат «Найти».
     function search(q) { queryField.text = q; s.run(q) }
     function openTrackers(tab) { trackers.tab = tab; trackers.show() }
+    /// Вкладка открыта с подбором по настроению (кнопка медиатеки, SM_OPEN=discover[:запрос]).
+    function openAi(q) {
+        s.aiMode = true
+        toTop()
+        if (q) { aiField.text = q; s.runAi(q, false) }
+        else Qt.callLater(() => aiField.input.forceActiveFocus())
+    }
+    /// «Найти раздачу» из карточки: обычный поиск по трекерам оригинальным названием и годом.
+    function findOnTrackers(q) {
+        s.aiMode = false
+        queryField.text = q
+        toTop()
+        s.run(q)
+    }
+    /// «По названию»: наверх и курсор в поле поиска раздач.
+    function openTrackerSearch() {
+        s.aiMode = false
+        toTop()
+        Qt.callLater(() => queryField.input.forceActiveFocus())
+    }
+    function runVibe(q, fresh) { aiField.text = q; s.runAi(q, fresh) }
 
     Flickable {
         id: flick
@@ -36,19 +64,105 @@ Item {
 
             Panel {
                 width: parent.width
-                Text {
-                    text: Ui.tx("search.poisk_razdach")
-                    color: Theme.text
-                    font.family: Theme.unbounded; font.weight: Font.Medium; font.pixelSize: 22
+                Item {
+                    width: parent.width
+                    height: Math.max(pageTitle.implicitHeight, modeSwitch.height)
+                    Text {
+                        id: pageTitle
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: parent.width - modeSwitch.width - 16
+                        text: s.aiMode ? Ui.tx("discover.title") : Ui.tx("search.poisk_razdach")
+                        color: Theme.text
+                        elide: Text.ElideRight
+                        font.family: Theme.unbounded; font.weight: Font.Medium; font.pixelSize: 22
+                    }
+                    ModeSwitch { id: modeSwitch; anchors { right: parent.right; verticalCenter: parent.verticalCenter } }
                 }
                 Text {
                     width: parent.width
                     topPadding: 4; bottomPadding: 14
-                    text: Ui.tx("search.odin_zapros_srazu_po")
+                    text: s.aiMode ? Ui.tx("discover.subtitle") : Ui.tx("search.odin_zapros_srazu_po")
                     color: Theme.muted; wrapMode: Text.WordWrap
                     font.family: Theme.onest; font.pixelSize: 14
                 }
+
+                // ---- по настроению: поле с янтарной искрой, «Подобрать», быстрые настроения ----
                 Row {
+                    visible: s.aiMode
+                    width: parent.width
+                    spacing: 10
+                    Field {
+                        id: aiField
+                        width: parent.width - aiBtn.width - 10
+                        placeholder: Ui.tx("discover.placeholder")
+                        input.anchors.rightMargin: 42
+                        onAccepted: s.runAi(text, false)
+                        Icon {
+                            id: lamp
+                            anchors { right: parent.right; rightMargin: 14; verticalCenter: parent.verticalCenter }
+                            name: "sparkle"; size: 18; color: Theme.lamp
+                            // горит ровно; пока ИИ думает — мерцает искрой
+                            SequentialAnimation on opacity {
+                                running: s.aiBusy && !Theme.simple
+                                loops: Animation.Infinite
+                                onRunningChanged: if (!running) lamp.opacity = 1
+                                NumberAnimation { to: 0.35; duration: 420; easing.type: Easing.InOutSine }
+                                NumberAnimation { to: 1; duration: 420; easing.type: Easing.InOutSine }
+                            }
+                            SequentialAnimation on scale {
+                                running: s.aiBusy && !Theme.simple
+                                loops: Animation.Infinite
+                                onRunningChanged: if (!running) lamp.scale = 1
+                                NumberAnimation { to: 1.22; duration: 420; easing.type: Easing.InOutSine }
+                                NumberAnimation { to: 0.92; duration: 420; easing.type: Easing.InOutSine }
+                            }
+                        }
+                    }
+                    LampButton {
+                        id: aiBtn
+                        height: 44
+                        text: s.aiBusy ? Ui.tx("discover.running") : Ui.tx("discover.run")
+                        enabled_: !s.aiBusy
+                        onClicked: s.runAi(aiField.text, false)
+                    }
+                }
+                Flow {
+                    visible: s.aiMode
+                    width: parent.width
+                    topPadding: 12
+                    spacing: 8
+                    Text {
+                        height: 34
+                        verticalAlignment: Text.AlignVCenter
+                        rightPadding: 2
+                        text: Ui.tx("discover.vibes")
+                        color: Theme.muted
+                        font.family: Theme.onest; font.pixelSize: 13
+                    }
+                    Repeater {
+                        model: [["cup", "cozy"], ["spiral", "mind"], ["lightning", "suspense"], ["smile", "light"],
+                                ["planet", "space"], ["heart", "drama"], ["dice", "random"]]
+                        delegate: VibeChip {
+                            icon: modelData[0]
+                            text: Ui.tx("discover.vibe_" + modelData[1])
+                            enabled_: !s.aiBusy
+                            onClicked: v.runVibe(Ui.tx("discover.vibe_" + modelData[1] + "_q"), modelData[1] === "random")
+                        }
+                    }
+                }
+                Text {
+                    visible: s.aiMode && s.aiStatus !== ""
+                    width: parent.width
+                    topPadding: 12
+                    text: s.aiStatus
+                    color: s.aiStatusOk ? (s.aiBusy ? Theme.muted : Theme.ok) : Theme.bad
+                    wrapMode: Text.WordWrap
+                    font.family: Theme.onest; font.pixelSize: 14
+                }
+
+                // ---- по названию: трекеры ----
+                Row {
+                    visible: !s.aiMode
                     width: parent.width
                     spacing: 10
                     Field {
@@ -95,7 +209,7 @@ Item {
 
                 // ответы трекеров
                 Flow {
-                    visible: s.providers.length > 0 || s.ruSearching
+                    visible: !s.aiMode && (s.providers.length > 0 || s.ruSearching)
                     width: parent.width
                     topPadding: 12
                     spacing: 6
@@ -111,7 +225,7 @@ Item {
                     }
                 }
                 Text {
-                    visible: s.status !== ""
+                    visible: !s.aiMode && s.status !== ""
                     width: parent.width
                     topPadding: 10
                     text: s.status
@@ -121,10 +235,10 @@ Item {
                 }
 
                 // строка 1: что искать, только с сидами, только RU, уточнение
-                Item { visible: s.hitCount > 0; width: 1; height: 12 }
+                Item { visible: !s.aiMode && s.hitCount > 0; width: 1; height: 12 }
                 Item {
                     id: row1
-                    visible: s.hitCount > 0
+                    visible: !s.aiMode && s.hitCount > 0
                     width: parent.width
                     // поле «Уточнить» — справа от переключателей, а если там тесно (меньше 220) — строкой ниже
                     readonly property bool wrap: chipsRow.width + 8 + 220 > width
@@ -152,10 +266,10 @@ Item {
                 }
 
                 // строка 2: набор, качество, сортировка (не помещается — сортировка ниже)
-                Item { visible: s.hitCount > 0; width: 1; height: 10 }
+                Item { visible: !s.aiMode && s.hitCount > 0; width: 1; height: 10 }
                 Item {
                     id: row2
-                    visible: s.hitCount > 0
+                    visible: !s.aiMode && s.hitCount > 0
                     width: parent.width
                     readonly property bool wrap: presetRow.width + sortRow.width + 16 > width
                     height: wrap ? presetRow.height + 8 + sortRow.height : Math.max(presetRow.height, sortRow.height)
@@ -195,7 +309,7 @@ Item {
                     }
                 }
                 Text {
-                    visible: s.hitCount !== s.shownCount
+                    visible: !s.aiMode && s.hitCount !== s.shownCount
                     topPadding: 8
                     text: Ui.tx("search.skryto_filtrami_p", { p: s.hitCount - s.shownCount })
                     color: Theme.muted
@@ -204,22 +318,183 @@ Item {
             }
             Item { width: 1; height: 10 }
 
-            Pagination { visible: s.shownCount > 0 && s.totalPages > 1; width: parent.width }
-            Item { visible: s.shownCount > 0 && s.totalPages > 1; width: 1; height: 10 }
+            Pagination { visible: !s.aiMode && s.shownCount > 0 && s.totalPages > 1; width: parent.width }
+            Item { visible: !s.aiMode && s.shownCount > 0 && s.totalPages > 1; width: 1; height: 10 }
 
             Repeater {
-                model: s.rows
+                model: s.aiMode ? [] : s.rows
                 delegate: HitRow { width: content.width; hit: modelData }
             }
 
-            Item { visible: s.shownCount > 0 && s.totalPages > 1; width: 1; height: 14 }
-            Pagination { visible: s.shownCount > 0 && s.totalPages > 1; width: parent.width }
+            Item { visible: !s.aiMode && s.shownCount > 0 && s.totalPages > 1; width: 1; height: 14 }
+            Pagination { visible: !s.aiMode && s.shownCount > 0 && s.totalPages > 1; width: parent.width }
+
+            // ---- подборка ИИ: сетка карточек (пока ИИ думает — мерцающие заготовки) ----
+            Item { visible: s.aiMode; width: 1; height: 8 }
+            Item {
+                id: aiGrid
+                visible: s.aiMode
+                width: parent.width
+                readonly property int gap: 14
+                readonly property int cols: Math.max(1, Math.floor((width + gap) / (196 + gap)))
+                readonly property int cardW: Math.floor((width - (cols - 1) * gap) / cols)
+                readonly property int cardH: Math.round(cardW * 1.5) + 202
+                readonly property int count: s.aiBusy ? 6 : s.aiHits.length
+                height: count ? Math.ceil(count / cols) * (cardH + gap) - gap : 0
+                Repeater {
+                    model: s.aiMode && s.aiBusy ? 6 : 0
+                    delegate: Shimmer {
+                        x: (index % aiGrid.cols) * (aiGrid.cardW + aiGrid.gap)
+                        y: Math.floor(index / aiGrid.cols) * (aiGrid.cardH + aiGrid.gap)
+                        width: aiGrid.cardW; height: aiGrid.cardH
+                        posterH: Math.round(aiGrid.cardW * 1.5)
+                    }
+                }
+                Repeater {
+                    model: s.aiMode && !s.aiBusy ? s.aiHits : []
+                    delegate: AiDiscoveryCard {
+                        required property var modelData
+                        required property int index
+                        movie: modelData
+                        x: (index % aiGrid.cols) * (aiGrid.cardW + aiGrid.gap)
+                        y: Math.floor(index / aiGrid.cols) * (aiGrid.cardH + aiGrid.gap)
+                        width: aiGrid.cardW; height: aiGrid.cardH
+                        // плавное появление по очереди
+                        opacity: Theme.simple ? 1 : 0
+                        Component.onCompleted: if (!Theme.simple) appear.start()
+                        NumberAnimation on opacity { id: appear; running: false; from: 0; to: 1; duration: 320 + Math.min(index, 8) * 45; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease }
+                        onPlayRequested: (id, path) => v.playRequested(id, path)
+                        onSearchTrackers: (q) => v.findOnTrackers(q)
+                    }
+                }
+            }
+            Item { visible: s.aiMode && !s.aiBusy && s.aiHits.length > 0; width: 1; height: 18 }
+            OutlineButton {
+                visible: s.aiMode && !s.aiBusy && s.aiHits.length > 0
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: Ui.tx("discover.more")
+                onClicked: { v.toTop(); s.runAi(s.aiQuery, true) }
+            }
         }
     }
 
     TrackerSettingsDialog { id: trackers; onClosed: s.trackersChanged() }
 
     // ---- части ----
+
+    /// «По названию | По настроению»: стеклянный переключатель, активная половина — светлее, у ИИ — янтарная искра.
+    component ModeSwitch: Rectangle {
+        id: ms
+        width: msRow.width + 8; height: 40
+        radius: 13
+        color: "#12151D"
+        border.color: Theme.line
+        Rectangle {
+            id: knob
+            y: 4; height: parent.height - 8
+            x: s.aiMode ? aiSeg.x + 4 : trSeg.x + 4
+            width: s.aiMode ? aiSeg.width : trSeg.width
+            radius: 10
+            color: "#282E3C"
+            border.color: s.aiMode ? Qt.rgba(1, 176 / 255, 46 / 255, 0.45) : "#3A4356"
+            Behavior on x { enabled: !Theme.simple; NumberAnimation { duration: 260; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease } }
+            Behavior on width { enabled: !Theme.simple; NumberAnimation { duration: 260; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease } }
+            Behavior on border.color { ColorAnimation { duration: 260 } }
+        }
+        Row {
+            id: msRow
+            x: 4; anchors.verticalCenter: parent.verticalCenter
+            Segment { id: trSeg; icon: "search"; text: Ui.tx("discover.mode_tracker"); on: !s.aiMode; onClicked: v.openTrackerSearch() }
+            Segment { id: aiSeg; icon: "sparkle"; text: Ui.tx("discover.mode_ai"); on: s.aiMode; lampIcon: true; onClicked: v.openAi("") }
+        }
+    }
+
+    component Segment: Btn {
+        id: seg
+        property string text
+        property string icon
+        property bool on: false
+        property bool lampIcon: false
+        hoverUp: 1
+        width: segRow.width + 26; height: 32
+        Row {
+            id: segRow
+            anchors.centerIn: parent
+            spacing: 7
+            Icon { anchors.verticalCenter: parent.verticalCenter; name: seg.icon; size: 14; color: seg.on && seg.lampIcon ? Theme.lamp : seg.on || seg.hovered ? "white" : Theme.muted }
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: seg.text
+                color: seg.on || seg.hovered ? "white" : Theme.muted
+                font.family: Theme.onest; font.weight: seg.on ? Font.DemiBold : Font.Medium; font.pixelSize: 13
+                Behavior on color { ColorAnimation { duration: 200 } }
+            }
+        }
+    }
+
+    /// Быстрое настроение: белый значок и подпись (как Chip, только со значком).
+    component VibeChip: Btn {
+        id: vc
+        property string text
+        property string icon
+        hoverUp: 1.03
+        opacity: enabled_ ? 1 : 0.5
+        width: vcRow.width + 26; height: 34
+        Rectangle {
+            anchors.fill: parent
+            radius: 17
+            color: vc.hovered && vc.enabled_ ? "#1F2432" : "#141720"
+            border.color: vc.hovered && vc.enabled_ ? "#3E475C" : "#242A38"
+            Behavior on color { ColorAnimation { duration: 200 } }
+            Behavior on border.color { ColorAnimation { duration: 200 } }
+        }
+        Row {
+            id: vcRow
+            anchors.centerIn: parent
+            spacing: 7
+            Icon { anchors.verticalCenter: parent.verticalCenter; name: vc.icon; size: 14; color: "white" }
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: vc.text
+                color: vc.hovered ? "white" : "#D6DBE4"
+                font.family: Theme.onest; font.weight: Font.Medium; font.pixelSize: 13
+            }
+        }
+    }
+
+    /// Заготовка карточки, пока ИИ подбирает: те же размеры, по постеру и строкам бежит блик.
+    component Shimmer: Rectangle {
+        id: sh
+        property int posterH: 300
+        radius: 16
+        color: Theme.film
+        border.color: Theme.line
+        clip: true
+        Rectangle { x: 1; y: 1; width: parent.width - 2; height: sh.posterH; radius: 15; color: "#141822" }
+        Column {
+            x: 12; y: sh.posterH + 14
+            spacing: 9
+            Rectangle { width: sh.width * 0.7; height: 12; radius: 6; color: "#20242F" }
+            Rectangle { width: sh.width * 0.45; height: 10; radius: 5; color: "#1C202A" }
+            Rectangle { width: sh.width - 24; height: 9; radius: 4.5; color: "#2A2416" }
+            Rectangle { width: sh.width * 0.6; height: 9; radius: 4.5; color: "#2A2416" }
+        }
+        Rectangle { x: 12; width: parent.width - 24; y: parent.height - 48; height: 36; radius: 10; color: "#1B1F2A" }
+        Rectangle {
+            id: glare
+            visible: !Theme.simple
+            width: sh.width * 0.6; height: sh.height * 1.4
+            y: -sh.height * 0.2
+            rotation: 18
+            gradient: Gradient {
+                orientation: Gradient.Horizontal
+                GradientStop { position: 0; color: "transparent" }
+                GradientStop { position: 0.5; color: "#12FFFFFF" }
+                GradientStop { position: 1; color: "transparent" }
+            }
+            NumberAnimation on x { running: glare.visible; loops: Animation.Infinite; from: -sh.width; to: sh.width * 1.4; duration: 1400; easing.type: Easing.InOutQuad }
+        }
+    }
 
     component Label: Text {
         anchors.verticalCenter: parent.verticalCenter

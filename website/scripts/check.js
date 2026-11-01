@@ -27,7 +27,10 @@ const files = [
   "tmdb-kind.js",
   "poster-query.js",
   path.join("public", "redesign.js"),
-  path.join("public", "home.js")
+  path.join("public", "home.js"),
+  path.join("public", "activity", "activity.js"),
+  path.join("public", "activity", "discord.js"),
+  path.join("public", "activity", "join.js")
 ];
 let failed = false;
 

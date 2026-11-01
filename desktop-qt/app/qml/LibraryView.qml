@@ -12,6 +12,8 @@ Item {
     signal versionsRequested(string title, var ids)
     signal playRequested(var magnetId, string path)
     signal flyTo(int tab, var rect, string poster)
+    /// «Что посмотреть?» — во вкладку поиска с подбором по настроению
+    signal discoverRequested()
 
     LibraryPage {
         id: lp
@@ -27,7 +29,13 @@ Item {
     readonly property int curPage: lp.page
     onCurPageChanged: {
         flick.contentY = 0
-        Ui.trimMemory()
+        pageTrimTimer.restart()
+    }
+    Timer {
+        id: pageTrimTimer
+        interval: 350
+        repeat: false
+        onTriggered: Ui.trimMemory()
     }
 
     Flickable {
@@ -66,10 +74,20 @@ Item {
                         font.family: Theme.unbounded; font.weight: Font.Medium; font.pixelSize: 24
                     }
                     Text {
+                        id: totalText
                         anchors { left: title.right; leftMargin: 12; verticalCenter: parent.verticalCenter; verticalCenterOffset: 3 }
                         text: lp.total
                         color: Theme.muted
                         font.family: Theme.onest; font.weight: Font.Medium; font.pixelSize: 13
+                    }
+                    // «Что посмотреть?»: прячется, если заголовку тесно
+                    PillButton {
+                        id: discoverBtn
+                        anchors { right: search.left; rightMargin: 10; verticalCenter: parent.verticalCenter }
+                        visible: x > totalText.x + totalText.implicitWidth + 24
+                        text: Ui.tx("discover.library_shortcut")
+                        icon: "sparkle"
+                        onClicked: v.discoverRequested()
                     }
                     Field {
                         id: search
@@ -142,6 +160,8 @@ Item {
                 Icon { anchors.horizontalCenter: parent.horizontalCenter; name: "bookmark"; size: 40; color: Theme.muted }
                 Text { anchors.horizontalCenter: parent.horizontalCenter; topPadding: 14; text: Ui.tx("library.izbrannoe_pusto"); color: "white"; font.family: Theme.onest; font.weight: Font.DemiBold; font.pixelSize: 16 }
                 Text { anchors.horizontalCenter: parent.horizontalCenter; topPadding: 4; text: Ui.tx("library.izbrannoe_pusto_podskazka"); color: Theme.muted; font.family: Theme.onest; font.pixelSize: 14 }
+                Item { width: 1; height: 18 }
+                LampButton { anchors.horizontalCenter: parent.horizontalCenter; text: Ui.tx("discover.library_empty_button"); onClicked: v.discoverRequested() }
             }
 
             Item { width: 1; height: 4 }

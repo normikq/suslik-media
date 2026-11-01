@@ -12,10 +12,32 @@ Window {
 
     property int tab: 0
     property int prevTab: 0
-    onTabChanged: Ui.trimMemory()
     function select(t) {
-        if (t !== tab) { prevTab = tab; tab = t }
-        if (t === 0 || t === 1) lib.refresh()
+        if (t !== tab) {
+            prevTab = tab
+            tab = t
+            if (t === 0 || t === 1) lib.refresh()
+        }
+    }
+
+    onTabChanged: trimTimer.restart()
+    Timer {
+        id: trimTimer
+        interval: 500
+        repeat: false
+        onTriggered: Ui.trimMemory()
+    }
+
+    // Когда приложение свёрнуто > 30 секунд: выгрузка страниц процесса в ОС
+    readonly property bool isMinimized: win.visibility === Window.Minimized
+    onIsMinimizedChanged: {
+        if (isMinimized) minimizeTimer.restart(); else minimizeTimer.stop()
+    }
+    Timer {
+        id: minimizeTimer
+        interval: 30000
+        repeat: false
+        onTriggered: if (win.isMinimized) Ui.unloadMemory()
     }
 
     Backdrop { anchors.fill: parent }
@@ -60,9 +82,9 @@ Window {
                 id: pages
                 anchors { left: sidebar.right; right: parent.right; top: parent.top; bottom: parent.bottom }
                 clip: true
-                Page { index: 0; LibraryView { id: libraryPage; anchors.fill: parent; mine: false; onVersionsRequested: (t, ids) => dialogs.versions(model, t, ids); onPlayRequested: (id, p) => dialogs.play_(id, p); onFlyTo: (tab, r, p) => flight.launch(tab, r, p) } }
-                Page { index: 1; LibraryView { id: minePage; anchors.fill: parent; mine: true; onVersionsRequested: (t, ids) => dialogs.versions(model, t, ids); onPlayRequested: (id, p) => dialogs.play_(id, p); onFlyTo: (tab, r, p) => flight.launch(tab, r, p) } }
-                Page { index: 2; SearchView { id: searchPage; anchors.fill: parent; active: win.tab === 2 } }
+                Page { index: 0; LibraryView { id: libraryPage; anchors.fill: parent; mine: false; onVersionsRequested: (t, ids) => dialogs.versions(model, t, ids); onPlayRequested: (id, p) => dialogs.play_(id, p); onFlyTo: (tab, r, p) => flight.launch(tab, r, p); onDiscoverRequested: { win.select(2); searchPage.openAi("") } } }
+                Page { index: 1; LibraryView { id: minePage; anchors.fill: parent; mine: true; onVersionsRequested: (t, ids) => dialogs.versions(model, t, ids); onPlayRequested: (id, p) => dialogs.play_(id, p); onFlyTo: (tab, r, p) => flight.launch(tab, r, p); onDiscoverRequested: { win.select(2); searchPage.openAi("") } } }
+                Page { index: 2; SearchView { id: searchPage; anchors.fill: parent; active: win.tab === 2; onPlayRequested: (id, p) => dialogs.play_(id, p) } }
                 Page { index: 4; TogetherView { anchors.fill: parent; onLibrary: win.select(0); onPlayRequested: (id, path) => dialogs.play_(id, path) } }
                 Page { index: 3; AddView { id: addPage; anchors.fill: parent; active: win.tab === 3; onPreviewRequested: (video, a, offset, title) => player.startPreview(video, a, offset, title) } }
             }
@@ -107,6 +129,31 @@ Window {
     readonly property bool partyGuest: party.guest
     onPartyGuestChanged: if (partyGuest && (tab === 0 || tab === 1)) select(4)
     PartyFollow { anchors.fill: parent }
+    // Вошли по ссылке из Discord Activity: страница комнаты; ведущему — сразу фильм комнаты (гостю его откроет PartyFollow)
+    // При холодном запуске медиатека ещё грузится: ключ ждёт её в pendingRoomKey и открывается по versionChanged
+    property string pendingRoomKey: ""
+    function playRoomKey() {
+        const key = win.pendingRoomKey
+        if (key === "" || !party.isHost || party.fileKey !== key) { win.pendingRoomKey = ""; return }
+        const bar = key.indexOf("|")
+        const id = Number(key.substring(0, bar)), path = key.substring(bar + 1)
+        if (!lib.hasFile(id, path)) return
+        win.pendingRoomKey = ""
+        dialogs.play_(id, path)
+    }
+    Connections {
+        target: party
+        function onRoomLinkOpened() {
+            win.select(4)
+            win.pendingRoomKey = party.isHost ? party.fileKey : ""
+            win.playRoomKey()
+        }
+    }
+    Connections {
+        target: lib
+        enabled: win.pendingRoomKey !== ""
+        function onVersionChanged() { win.playRoomKey() }
+    }
     Dialogs { id: dialogs; anchors.fill: parent }
     SettingsSheet { id: settingsSheet; anchors.fill: parent }
     WhatsNew { anchors.fill: parent }
@@ -126,10 +173,15 @@ Window {
                 win.playerFilm = player.magnetId
                 win.playerFrom = Theme.target(win.playerFilm)
                 presenceAnim.stop()
-                presenceAnim.from = win.playerPresence
-                presenceAnim.to = 1
-                presenceAnim.duration = 560
-                presenceAnim.start()
+                if (Theme.simple) {
+                    win.playerPresence = 1
+                    Ui.trimMemory(); Ui.dropPosterCache()
+                } else {
+                    presenceAnim.from = win.playerPresence
+                    presenceAnim.to = 1
+                    presenceAnim.duration = 560
+                    presenceAnim.start()
+                }
             } else if (player.closing && !win.playerLeaving) {
                 win.playerLeaving = true      // медиатека снова видна: её постеры можно найти
                 win.playerHome = Theme.target(win.playerFilm)
@@ -151,9 +203,15 @@ Window {
         property: "playerPresence"
         easing.type: Easing.BezierSpline
         easing.bezierCurve: Theme.fly
-        onFinished: if (win.playerPresence === 0 && win.playerLeaving) {
-            win.playerLeaving = false
-            if (player.closing) player.finishClose()
+        onFinished: {
+            if (win.playerPresence === 0 && win.playerLeaving) {
+                win.playerLeaving = false
+                if (player.closing) player.finishClose()
+                Ui.trimMemory()
+            } else if (win.playerPresence === 1) {
+                // При открытии экрана плеера — лёгкая сборка мусора медиатеки под ним (без сброса страниц ОС)
+                Ui.trimMemory(); Ui.dropPosterCache()
+            }
         }
     }
 
@@ -239,7 +297,7 @@ Window {
     Timer { id: whatsNewDelay; interval: 700; onTriggered: updater.loadWhatsNew() }
 
     // проверка вёрстки без мыши: SM_OPEN=play:<id>:<путь> | versions:<id>,<id> | settings | add[:film|audio:<magnet>]
-    // | search:<запрос> | trackers[:вкладка] | together[:create|<код>]
+    // | search:<запрос> | discover[:запрос] | trackers[:вкладка] | together[:create|<код>]
     Timer {
         running: Ui.env("SM_OPEN") !== ""
         interval: 2500
@@ -255,6 +313,7 @@ Window {
             }
             else if (a[0] === "mine") win.select(1)
             else if (a[0] === "search") { win.select(2); searchPage.search(a.slice(1).join(":")) }
+            else if (a[0] === "discover") { win.select(2); searchPage.openAi(a.slice(1).join(":")) }
             else if (a[0] === "together") { win.select(4); if (a[1] === "create") party.create(); else if (a[1]) party.join(a[1]) }
             else if (a[0] === "trackers") { win.select(2); searchPage.openTrackers(Number(a[1] || 0)) }
             else if (a[0] === "list") libraryPage.model.viewMode = 1

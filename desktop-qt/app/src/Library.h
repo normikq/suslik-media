@@ -114,8 +114,8 @@ public:
     QString posterPath(const QStringList &queries);
     /// Путь постера, по которому одинаковые фильмы с разными названиями сводятся в одну плитку.
     std::optional<QString> posterPathOf(const LibraryItem &item) const;
-    /// Картинка сервера: с диска или скачать (и положить на диск). Пусто — нет.
-    void image(const QString &path, std::function<void(const QByteArray &)> cb);
+    /// Картинка сервера: с диска или скачать (и положить на диск, если persist). Пусто — нет.
+    void image(const QString &path, std::function<void(const QByteArray &)> cb, bool persist = true);
 
     /// «Продолжить просмотр»: широкий кадр, описание, год, оценка, логотип названия.
     struct Hero {
@@ -210,6 +210,7 @@ private:
     QHash<qint64, QStringList> m_serverTags;    // id → отметки сервера
     QSet<QString> m_posterAsked;                // запрос уже ушёл (или ответ известен в этом запуске)
     QHash<QString, std::vector<std::function<void(const QByteArray &)>>> m_imageWaiters;
+    QSet<QString> m_imagePersist; ///< качающиеся картинки, которые кто-то из ждущих просил положить на диск
     QHash<QString, Hero> m_heroes;
     QSet<QString> m_heroAsked;
     QSet<QString> m_mediaAsked;

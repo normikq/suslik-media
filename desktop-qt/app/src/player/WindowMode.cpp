@@ -151,6 +151,7 @@ void WindowMode::fly(const QRect &to) {
         m_anim->setDuration(320);
         m_anim->setEasingCurve(QEasingCurve::OutCubic);
         connect(m_anim, &QVariantAnimation::valueChanged, this, [this](const QVariant &v) { if (m_w) m_w->setGeometry(v.toRect()); });
+        connect(m_anim, &QVariantAnimation::finished, this, [this] { if (m_mini) fitMini(m_aspect); });
     }
     m_anim->stop();
     m_anim->setStartValue(m_w->geometry());
@@ -203,9 +204,19 @@ void WindowMode::setMini(bool on, double aspect) {
 
 void WindowMode::fitMini(double aspect) {
     m_aspect = clampAspect(aspect);
-    if (!m_w || !m_mini || (m_anim && m_anim->state() == QAbstractAnimation::Running)) return;
+    if (!m_w || !m_mini) return;
+    if (m_anim && m_anim->state() == QAbstractAnimation::Running) {
+        const QRect cur = m_anim->endValue().toRect();
+        const int h = int(std::round(cur.width() / m_aspect));
+        const int y = cur.bottom() + 1 - h;
+        m_anim->setEndValue(QRect(cur.x(), y, cur.width(), h));
+        return;
+    }
     const int h = int(std::round(m_w->width() / m_aspect));
-    if (std::abs(m_w->height() - h) > 2) m_w->resize(m_w->width(), h);
+    if (std::abs(m_w->height() - h) > 2) {
+        const int y = m_w->y() + (m_w->height() - h);
+        m_w->setGeometry(m_w->x(), y, m_w->width(), h);
+    }
 }
 
 void WindowMode::startMove() { if (m_w) m_w->startSystemMove(); }
@@ -215,52 +226,87 @@ void WindowMode::startResize(int edges) { if (m_w) m_w->startSystemResize(Qt::Ed
 void WindowMode::beginResize(int edges) {
     if (!m_w || !m_mini) return;
     if (m_anim) m_anim->stop();
-    // продолжение плавного шага: начало — с того места, куда окно уже доехало
+    if (m_smooth) m_smooth->stop();
     m_resizeEdges = edges;
     m_resizeFrom = m_w->geometry();
     m_resizeCursor = QCursor::pos();
     m_curW = m_targetW = m_resizeFrom.width();
+    m_resizeTimer.start();
+    m_lastResizeMs = -1000;
 }
 
 void WindowMode::resizeStep() {
     if (!m_w || !m_mini || !m_resizeEdges) return;
     const QPoint d = QCursor::pos() - m_resizeCursor;
     const bool left = m_resizeEdges & Qt::LeftEdge, top = m_resizeEdges & Qt::TopEdge;
+    const bool hasH = (m_resizeEdges & (Qt::LeftEdge | Qt::RightEdge)) != 0;
+    const bool hasV = (m_resizeEdges & (Qt::TopEdge | Qt::BottomEdge)) != 0;
     const double a = m_aspect;
-    // ширина по горизонтали и по вертикали (через пропорции) — берётся бо́льшая: угол идёт за курсором
-    const double byW = m_resizeFrom.width() + (left ? -d.x() : d.x());
-    const double byH = (m_resizeFrom.height() + (top ? -d.y() : d.y())) * a;
+    const double ux = left ? -d.x() : d.x();
+    const double uy = top ? -d.y() : d.y();
+
+    double deltaW = 0.0;
+    if (hasH && hasV) {
+        // Угол: проекция смещения курсора на диагональ пропорций фильма (16:9 / 21:9)
+        deltaW = (a * (a * ux + uy)) / (a * a + 1.0);
+    } else if (hasH) {
+        // Боковая сторона: тянут по горизонтали — высота следует пропорциям
+        deltaW = ux;
+    } else if (hasV) {
+        // Верх/низ: тянут по вертикали — ширина следует пропорциям
+        deltaW = uy * a;
+    }
+
     QScreen *s = m_w->screen() ? m_w->screen() : QGuiApplication::primaryScreen();
     const QRect work = s->availableGeometry();
     const double maxW = (std::min<double>)(work.width(), work.height() * a);
     const double minW = (std::max)(200.0, 120.0 * a);
-    m_targetW = std::clamp((std::max)(byW, byH), minW, (std::max)(minW, maxW));
-    // окно догоняет курсор плавно, не чаще кадра: меньше перерисовок и без рывков от каждого движения мыши
-    if (!m_smooth) {
-        m_smooth = new QTimer(this);
-        m_smooth->setTimerType(Qt::PreciseTimer);
-        m_smooth->setInterval(16);
-        connect(m_smooth, &QTimer::timeout, this, [this] { smoothTick(); });
+    m_targetW = std::clamp(m_resizeFrom.width() + deltaW, minW, (std::max)(minW, maxW));
+
+    const qint64 now = m_resizeTimer.elapsed();
+    if (now - m_lastResizeMs >= 16) {
+        m_lastResizeMs = now;
+        applyResize();
+    } else {
+        if (!m_smooth) {
+            m_smooth = new QTimer(this);
+            m_smooth->setSingleShot(true);
+            m_smooth->setTimerType(Qt::PreciseTimer);
+            connect(m_smooth, &QTimer::timeout, this, [this] {
+                if (m_resizeEdges && m_curW != m_targetW) {
+                    m_lastResizeMs = m_resizeTimer.elapsed();
+                    applyResize();
+                }
+            });
+        }
+        if (!m_smooth->isActive()) {
+            m_smooth->start(16);
+        }
     }
-    if (!m_smooth->isActive()) { smoothTick(); m_smooth->start(); }
 }
 
-void WindowMode::smoothTick() {
-    if (!m_w || !m_mini || !m_resizeEdges) { if (m_smooth) m_smooth->stop(); return; }
-    const double diff = m_targetW - m_curW;
-    m_curW = std::abs(diff) < 1.0 ? m_targetW : m_curW + diff * 0.45;
+void WindowMode::applyResize() {
+    if (!m_w || !m_mini || !m_resizeEdges) return;
+    m_curW = m_targetW;
     const bool left = m_resizeEdges & Qt::LeftEdge, top = m_resizeEdges & Qt::TopEdge;
     const int w = int(std::lround(m_curW));
     const int h = int(std::lround(w / m_aspect));
     const int x = left ? m_resizeFrom.right() + 1 - w : m_resizeFrom.left();
     const int y = top ? m_resizeFrom.bottom() + 1 - h : m_resizeFrom.top();
-    if (m_w->geometry() != QRect(x, y, w, h)) m_w->setGeometry(x, y, w, h);
-    if (m_curW == m_targetW) m_smooth->stop();
+    const QRect next(x, y, w, h);
+    if (m_w->geometry() != next) {
+        m_w->setGeometry(next);
+    }
 }
 
 void WindowMode::endResize() {
-    // отпустили кнопку: окно доезжает до последней цели само, таймер остановится сам
-    if (m_smooth && !m_smooth->isActive() && m_curW != m_targetW) m_smooth->start();
+    if (m_resizeEdges) {
+        if (m_smooth) m_smooth->stop();
+        if (m_curW != m_targetW) {
+            applyResize();
+        }
+        m_resizeEdges = 0;
+    }
 }
 
 void WindowMode::reset() {

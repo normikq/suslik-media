@@ -1,6 +1,7 @@
 #include "Ui.h"
 #include "TitleBar.h"
 #include "AppDir.h"
+#include "PosterCache.h"
 
 #include "suslik/core/Store.h"
 #include "suslik/core/Strings.h"
@@ -76,12 +77,18 @@ void Ui::styleTitleBar(QWindow *w) const { TitleBar::style(w); }
 void Ui::trimMemory() const {
     if (m_engine) {
         m_engine->collectGarbage();
+        m_engine->trimComponentCache();
     }
     QPixmapCache::clear();
+}
+
+void Ui::dropPosterCache() const { PosterCache::instance().clear(); }
+
+void Ui::unloadMemory() const {
+    trimMemory();
+    dropPosterCache();
 #ifdef Q_OS_WIN
-    QTimer::singleShot(250, [] {
-        EmptyWorkingSet(GetCurrentProcess());
-    });
+    EmptyWorkingSet(GetCurrentProcess());
 #endif
 }
 

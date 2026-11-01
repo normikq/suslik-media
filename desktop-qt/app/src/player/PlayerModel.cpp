@@ -21,14 +21,6 @@
 #include <QRegularExpression>
 #include <QUrl>
 
-#ifdef Q_OS_WIN
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#include <psapi.h>
-#endif
-
 namespace suslik::app {
 
 using namespace suslik::core;
@@ -232,6 +224,8 @@ void PlayerModel::begin() {
     m_started = m_playing = m_switching = false;
     m_pausedAt = 0;
     m_muted = false;
+    m_crop219 = false;
+    m_engine->setPanScan(0.0);
     m_index = m_req.startIndex;
     m_sidecars.clear();
     m_sidecarWaiters.clear();
@@ -418,9 +412,8 @@ void PlayerModel::fetchSubtitles(quint64 gen, const QStringList &urls, const QSt
     m_subsFetching = int(urls.size());
     emit tracksExtraChanged();
     if (urls.isEmpty()) return;
-    // копии прошлого фильма больше не нужны
+    // копии прошлых серий удаляет finishClose (mpv может ещё держать их открытыми)
     QDir dir(QDir::temp().filePath(S("suslik-qt-subs")));
-    dir.removeRecursively();
     QDir().mkpath(dir.path());
     struct State {
         int left = 0;
@@ -540,14 +533,13 @@ void PlayerModel::finishClose() {
                       &m_autoSkipTimer, &m_statsTimer, &m_trackWatch})
         t->stop();
     m_engine->stop();
+    m_crop219 = false;
+    m_engine->setPanScan(0.0);
     // ядро mpv (кэш демуксера, потоки) — отпустить: в медиатеке плеер не держит память. Вывод кадров отпустит
     // свою ссылку, когда экран плеера уйдёт (Loader в Main.qml)
     m_engine->release();
     Reserve::proxy().clear();
-#ifdef Q_OS_WIN
-    // После закрытия фильма: возврат страниц декодера и кэша mpv операционной системе
-    QTimer::singleShot(1000, [] { EmptyWorkingSet(GetCurrentProcess()); });
-#endif
+    QDir(QDir::temp().filePath(S("suslik-qt-subs"))).removeRecursively();
     ui().put(S("volume"), num(m_volume));
     m_open = false;
     m_closing = false;
@@ -885,6 +877,18 @@ void PlayerModel::toggleNight() {
     m_engine->setNightMode(m_night);
     emit optionsChanged();
     flash(m_night ? tx(S("player.nochnoy_zvuk_vklyuchen")) : tx(S("player.nochnoy_zvuk_vyklyuchen")));
+}
+
+void PlayerModel::toggleCrop219() {
+    setCrop219(!m_crop219);
+}
+
+void PlayerModel::setCrop219(bool on) {
+    if (m_crop219 == on) return;
+    m_crop219 = on;
+    m_engine->setPanScan(m_crop219 ? 1.0 : 0.0);
+    emit optionsChanged();
+    flash(m_crop219 ? QStringLiteral("21:9") : tx(S("player.format_iskhodnyy")));
 }
 
 void PlayerModel::toggleInfo() {

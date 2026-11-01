@@ -99,7 +99,7 @@ Item {
             Image {
                 id: sharp
                 source: frame.backdrop !== "" ? "image://suslik" + frame.backdrop : ""
-                sourceSize.width: 1920
+                sourceSize.width: 1280
                 asynchronous: true
                 smooth: true
                 mipmap: false // mipmap — +33 % памяти к большому кадру

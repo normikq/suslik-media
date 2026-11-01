@@ -2,6 +2,7 @@
 #include "Mpv.h"
 
 #include <QObject>
+#include <atomic>
 #include <QVariantList>
 #include <QVariantMap>
 
@@ -79,6 +80,7 @@ public:
     Q_INVOKABLE void setSubDelayMs(qint64 ms);
     Q_INVOKABLE void setSubScale(int percent);
     Q_INVOKABLE void setNightMode(bool on);
+    Q_INVOKABLE void setPanScan(double val);
     Q_INVOKABLE void setAudioTrack(int id);
     Q_INVOKABLE void setSubTrack(int id);
     Q_INVOKABLE void removeAudioTrack(int id);
@@ -130,7 +132,8 @@ private:
     QString m_openUrl;
     quint64 m_openGen = 0;
     QList<SideTrack> m_sideAudio, m_sideSubs;
-    bool m_drainQueued = false;
+    /// drain() уже в очереди: из потока mpv (wakeup) — не ставить второй.
+    std::atomic<bool> m_drainQueued{false};
 };
 
 } // namespace suslik::app

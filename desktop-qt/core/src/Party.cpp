@@ -1,6 +1,9 @@
 // Перенос shared/.../core/party: PartyModels.kt, PartyProtocol.kt, PartySyncEngine.kt.
 #include "suslik/core/Party.h"
 
+#include <QRegularExpression>
+#include <QUrl>
+
 #include "JsonOpt.h"
 
 #include <QCryptographicHash>
@@ -150,6 +153,17 @@ QString PartyProtocol::normalizeCode(const QString &code) {
     return out;
 }
 
+QString PartyProtocol::roomFromLink(const QString &link) {
+    const QString t = link.trimmed();
+    static const QString prefix = QStringLiteral("suslik://room/");
+    if (!t.startsWith(prefix, Qt::CaseInsensitive)) return {};
+    QString rest = t.mid(prefix.size());
+    const qsizetype cut = rest.indexOf(QRegularExpression(QStringLiteral("[/?#]")));
+    if (cut >= 0) rest.truncate(cut);
+    const QString code = normalizeCode(QUrl::fromPercentEncoding(rest.toUtf8()));
+    return code.size() <= 24 ? code : QString();
+}
+
 QJsonObject PartyProtocol::createBody(const QString &clientId) { return {{S("controls"), S("all")}, {S("client_id"), clientId}}; }
 QJsonObject PartyProtocol::joinBody(const QString &clientId) { return {{S("client_id"), clientId}}; }
 QJsonObject PartyProtocol::leaveBody(const QString &clientId) { return {{S("client_id"), clientId}}; }
@@ -223,6 +237,23 @@ PartyMember PartyProtocol::parseMember(const QJsonObject &m) {
 std::optional<PartyEvent> PartyProtocol::parseEventLine(const QString &line) {
     if (!line.startsWith(S("data:"))) return std::nullopt;
     return parseEvent(line.mid(5).trimmed());
+}
+
+std::optional<RemoteTrackerRequest> PartyProtocol::remoteRequestOf(const QString &line) {
+    if (!line.startsWith(S("data:"))) return std::nullopt;
+    const auto doc = QJsonDocument::fromJson(line.mid(5).trimmed().toUtf8());
+    if (!doc.isObject() || json::str(doc.object(), S("event")) != S("rutracker_request")) return std::nullopt;
+    const QJsonObject d = doc.object().value(S("data")).toObject();
+    RemoteTrackerRequest r{json::str(d, S("request_id")), json::str(d, S("kind")), json::str(d, S("query")).trimmed(),
+                           json::str(d, S("topic_id")), json::str(d, S("title")), json::str(d, S("target")), json::str(d, S("by"))};
+    if (r.id.isEmpty()) return std::nullopt;
+    if (r.kind == S("search") && !r.query.isEmpty()) return r;
+    if (r.kind == S("add") && !r.topicId.isEmpty() && !r.target.isEmpty()) return r;
+    return std::nullopt;
+}
+
+QString PartyProtocol::remoteReplyPath(const QString &roomId) {
+    return S("/api/rooms/") + QString::fromLatin1(QUrl::toPercentEncoding(roomId)) + S("/rutracker/reply");
 }
 
 std::optional<PartyEvent> PartyProtocol::parseEvent(const QString &text) {

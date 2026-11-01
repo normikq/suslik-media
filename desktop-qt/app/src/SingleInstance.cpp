@@ -23,7 +23,7 @@ SingleInstance::~SingleInstance() {
     delete m_lock;
 }
 
-bool SingleInstance::acquire() {
+bool SingleInstance::acquire(const QString &link) {
     m_lock = new QLockFile(AppDir::file(QStringLiteral("instance.lock")));
     m_lock->setStaleLockTime(0); // замок мёртвой копии снимается (QLockFile проверяет, жив ли процесс)
     if (!m_lock->tryLock(100)) {
@@ -33,7 +33,10 @@ bool SingleInstance::acquire() {
             QLocalSocket s;
             s.connectToServer(socketName());
             if (s.waitForConnected(500)) {
-                s.write("show\n");
+                // Ссылка — одной строкой: «open <ссылка>»; переводы строк из неё выкидываются
+                QString l = link;
+                l.remove(QLatin1Char('\n')).remove(QLatin1Char('\r'));
+                s.write(l.isEmpty() ? QByteArray("show\n") : "open " + l.left(512).toUtf8() + "\n");
                 s.waitForBytesWritten(1000);
                 s.disconnectFromServer();
                 return false;
@@ -48,10 +51,19 @@ bool SingleInstance::acquire() {
     if (m_server->listen(socketName())) {
         connect(m_server, &QLocalServer::newConnection, this, [this] {
             while (QLocalSocket *c = m_server->nextPendingConnection()) {
-                connect(c, &QLocalSocket::readyRead, this, [this, c] {
-                    if (c->canReadLine() && c->readLine().trimmed() == "show") emit showRequested();
-                });
+                auto checkRead = [this, c] {
+                    while (c->canReadLine()) {
+                        const QByteArray line = c->readLine(1024).trimmed();
+                        if (line == "show") emit showRequested();
+                        else if (line.startsWith("open ")) {
+                            emit showRequested();
+                            emit linkRequested(QString::fromUtf8(line.mid(5)));
+                        }
+                    }
+                };
+                connect(c, &QLocalSocket::readyRead, this, checkRead);
                 connect(c, &QLocalSocket::disconnected, c, &QObject::deleteLater);
+                if (c->canReadLine()) checkRead();
             }
         });
     }
