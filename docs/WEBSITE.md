@@ -279,6 +279,7 @@ website/
 | `TRUST_PROXY` | `1` / `true` за nginx: протокол, адрес клиента и `X-Forwarded-Prefix` берутся из заголовков прокси |
 | `MIRROR_ACCEL`, `MIRROR_TTL_HOURS` | Видео через nginx (`NGINX-MIRROR.md`); срок подписи зеркала (12 ч) |
 | `GEMINI_API_KEY`, `AI_TITLE_*` | «Определить через ИИ» (без ключа кнопки нет) |
+| `AI_DISCOVERY_MODEL`, `AI_DISCOVERY_COOLDOWN_SEC`, `AI_DISCOVERY_DAILY_MAX` | «Подбор по настроению» (`POST /api/search/ai-discovery`; тот же `GEMINI_API_KEY`, постеры — `TMDB_API_KEY`) |
 | `THEINTRODB_API_KEY` | Необязательный ключ TheIntroDB для заставок |
 | `TV_STREAM`, `TV_STREAM_MAX`, `TV_STREAM_FORMAT`, `FFMPEG_PATH`, `FFPROBE_PATH` | Поток для ТВ и ffprobe |
 | `AUTO_CLEAN`, `LIBRARY_IDLE_DAYS`, `SYNC_IDLE_DAYS` | Автоочистка раздач и записей прогресса |

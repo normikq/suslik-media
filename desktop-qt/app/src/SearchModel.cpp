@@ -10,6 +10,7 @@
 
 #include <QDateTime>
 #include <QJsonArray>
+#include <QJsonValue>
 #include <QLocale>
 #include <QPointer>
 #include <QRegularExpression>
@@ -351,6 +352,176 @@ void SearchModel::follow(const QString &hitId, qint64 id, bool readyNow, int rou
             self->setNote(hitId, (s.trimmed().isEmpty() ? tx(S("add.obrabotka")) : s) + (total > 0 ? S(" · %1%").arg(got * 100 / total) : QString()), true);
             self->follow(hitId, id, false, round + 1, started);
         });
+    });
+}
+
+// ---- «Подбор по настроению» ----
+
+void SearchModel::setLibrary(Library *l) {
+    if (m_lib == l) return;
+    if (m_lib) disconnect(m_lib, nullptr, this, nullptr);
+    m_lib = l;
+    // раздача докачалась или удалена — «Смотреть» и «Найти раздачу» пересчитываются
+    if (m_lib) connect(m_lib, &Library::versionChanged, this, [this] { if (!m_aiRaw.isEmpty()) rematch(); });
+}
+
+QString SearchModel::normTitle(const QString &s) {
+    static const QRegularExpression notWord(S("[^\\p{L}\\p{N}]+"));
+    QString t = s.toLower();
+    t.replace(QChar(0x0451), QChar(0x0435)); // ё → е
+    return t.replace(notWord, S(" ")).trimmed();
+}
+
+namespace {
+/// Что играть по «Смотреть»: фильм — его файл; сериал — последняя смотренная или сохранённая серия, иначе первая.
+QString playPath(const Library *lib, const LibraryItem &item) {
+    const Playable &p = item.playable;
+    if (p.isMovie()) return p.file.path;
+    if (!p.isSeries() || p.seasons.isEmpty() || p.seasons.first().items.isEmpty()) return {};
+    if (lib) {
+        if (const auto last = lib->lastWatched(item.m)) return last->first.path;
+        if (const auto ep = lib->lastEpisode(item.m.id)) return *ep;
+    }
+    return p.seasons.first().items.first().file.path;
+}
+
+QString fileOf(const QString &path) { return path.mid(path.lastIndexOf(QLatin1Char('/')) + 1); }
+} // namespace
+
+std::optional<SearchModel::LibraryMatch> SearchModel::matchLibrary(
+    const QList<LibraryItem> &items, const QVariantMap &film, const std::function<QString(const LibraryItem &)> &titleOf,
+    const std::function<std::optional<QString>(const LibraryItem &)> &posterOf) {
+    const int year = film.value(S("year")).toInt();
+    const QString poster = fileOf(film.value(S("poster")).toString());
+    QSet<QString> keys;
+    for (const char *f : {"title", "original", "tmdbTitle"})
+        if (const QString k = normTitle(film.value(S(f)).toString()); !k.isEmpty()) keys.insert(k);
+    if (keys.isEmpty()) return std::nullopt;
+    auto yearFits = [year](const std::optional<int> &y, bool needYear) {
+        if (!year || !y) return !needYear;
+        return std::abs(*y - year) <= 1;
+    };
+    const LibraryItem *byName = nullptr, *byText = nullptr;
+    for (const LibraryItem &item : items) {
+        if (!item.m.ready() || item.playable.isNone()) continue;
+        // тот же постер TMDB — тот же фильм, как бы ни называлась раздача
+        if (!poster.isEmpty() && posterOf) {
+            if (const auto p = posterOf(item); p && fileOf(*p) == poster) return LibraryMatch{item.m.id};
+        }
+        const auto iy = releaseYear(item);
+        if (!byName) {
+            QStringList names{item.baseTitle};
+            if (titleOf) names << titleOf(item);
+            if (const AiTitle *ai = item.m.acceptedAi(); ai && ai->original) names << *ai->original;
+            for (const QString &n : names)
+                if (keys.contains(normTitle(n)) && yearFits(iy, false)) { byName = &item; break; }
+        }
+        // «Нечто / The Thing (1982) BDRip» — название целыми словами в имени раздачи и тот же год
+        if (!byName && !byText && yearFits(iy, true)) {
+            const QString text = S(" ") + normTitle(item.m.name) + S(" ");
+            for (const QString &k : keys)
+                if (k.size() >= 5 && text.contains(S(" ") + k + S(" "))) { byText = &item; break; }
+        }
+    }
+    const LibraryItem *hit = byName ? byName : byText;
+    if (!hit) return std::nullopt;
+    return LibraryMatch{hit->m.id};
+}
+
+int SearchModel::aiInLibrary() const {
+    int n = 0;
+    for (const auto &v : m_aiHits)
+        if (v.toMap().value(S("inLibrary")).toBool()) ++n;
+    return n;
+}
+
+void SearchModel::rematch() {
+    QVariantList out;
+    const Library *lib = m_lib;
+    auto titleOf = [lib](const LibraryItem &it) -> QString { return lib ? lib->titleOf(it) : it.baseTitle; };
+    auto posterOf = [lib](const LibraryItem &it) -> std::optional<QString> { return lib ? lib->posterPathOf(it) : std::nullopt; };
+    const QList<LibraryItem> empty;
+    const QList<LibraryItem> &items = m_lib ? m_lib->items() : empty;
+    for (const auto &v : m_aiRaw) {
+        QVariantMap film = v.toMap();
+        const auto m = matchLibrary(items, film, titleOf, posterOf);
+        const LibraryItem *item = m && m_lib ? m_lib->item(m->id) : nullptr;
+        film[S("inLibrary")] = item != nullptr;
+        film[S("magnetId")] = item ? item->m.id : 0;
+        film[S("path")] = item ? playPath(m_lib, *item) : QString();
+        out << film;
+    }
+    m_aiHits = out;
+    const int lib_ = aiInLibrary();
+    const int n = int(m_aiHits.size());
+    m_aiStatus = tx(S("discover.found"), {{"count", QString::number(n)},
+                                          {"word", pluralRu(n, tx(S("discover.word_one")), tx(S("discover.word_few")), tx(S("discover.word_many")))}}) +
+                 (lib_ > 0 ? tx(S("discover.found_in_library"), {{"count", QString::number(lib_)}}) : QString());
+    m_aiStatusOk = true;
+    emit aiChanged();
+}
+
+void SearchModel::runAi(const QString &rawQuery, bool fresh) {
+    const QString q = rawQuery.simplified();
+    if (!m_lib || m_aiBusy) return;
+    if (q.size() < 2) {
+        m_aiStatus = tx(S("discover.need_query"));
+        m_aiStatusOk = false;
+        emit aiChanged();
+        return;
+    }
+    const int gen = ++m_aiGen;
+    m_aiBusy = true;
+    m_aiQuery = q;
+    m_aiStatus = tx(S("discover.thinking"));
+    m_aiStatusOk = true;
+    m_aiRaw.clear();
+    m_aiHits.clear();
+    emit aiChanged();
+    QPointer<SearchModel> self(this);
+    QJsonObject body{{S("query"), q.left(300)}};
+    if (fresh) body.insert(S("fresh"), true);
+    m_lib->api().post(S("/api/search/ai-discovery"), body, [self, gen](const ApiResult &r) {
+        if (!self || self->m_aiGen != gen) return;
+        self->m_aiBusy = false;
+        if (!r.ok()) {
+            self->m_aiStatus = r.error.code == 404 ? tx(S("discover.server_old")) : ApiClient::describe(r.error);
+            self->m_aiStatusOk = false;
+            emit self->aiChanged();
+            return;
+        }
+        QVariantList raw;
+        for (const QJsonValue &v : r.json.value(S("items")).toArray()) {
+            const QJsonObject o = v.toObject();
+            const QString title = o.value(S("title")).toString().trimmed();
+            if (title.isEmpty()) continue;
+            QStringList genres;
+            for (const QJsonValue &g : o.value(S("genres")).toArray())
+                if (const QString t = g.toString().trimmed(); !t.isEmpty()) genres << t;
+            const double rating = o.value(S("rating")).toDouble();
+            const QString original = o.value(S("original")).toString().trimmed();
+            raw << QVariantMap{
+                {S("title"), title},
+                {S("original"), original.compare(title, Qt::CaseInsensitive) == 0 ? QString() : original},
+                {S("searchTitle"), original.isEmpty() ? title : original},
+                {S("year"), o.value(S("year")).toInt()},
+                {S("series"), o.value(S("kind")).toString() == S("series")},
+                {S("reason"), o.value(S("reason")).toString().trimmed()},
+                {S("genres"), genres.join(S(" · "))},
+                {S("poster"), o.value(S("poster")).toString()},
+                {S("rating"), rating > 0 ? QLocale().toString(rating, 'f', 1) : QString()},
+                {S("tmdbTitle"), o.value(S("tmdbTitle")).toString()},
+            };
+        }
+        self->m_aiRaw = raw;
+        if (raw.isEmpty()) {
+            self->m_aiHits.clear();
+            self->m_aiStatus = tx(S("discover.nothing"));
+            self->m_aiStatusOk = false;
+            emit self->aiChanged();
+            return;
+        }
+        self->rematch();
     });
 }
 

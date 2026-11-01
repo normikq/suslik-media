@@ -114,8 +114,8 @@ public:
     QString posterPath(const QStringList &queries);
     /// Путь постера, по которому одинаковые фильмы с разными названиями сводятся в одну плитку.
     std::optional<QString> posterPathOf(const LibraryItem &item) const;
-    /// Картинка сервера: с диска или скачать (и положить на диск). Пусто — нет.
-    void image(const QString &path, std::function<void(const QByteArray &)> cb);
+    /// Картинка сервера: с диска или скачать (и положить на диск, если persist). Пусто — нет.
+    void image(const QString &path, std::function<void(const QByteArray &)> cb, bool persist = true);
 
     /// «Продолжить просмотр»: широкий кадр, описание, год, оценка, логотип названия.
     struct Hero {

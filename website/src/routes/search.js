@@ -4,11 +4,12 @@ const express = require("express");
 const crypto = require("crypto");
 const config = require("../config");
 const { searchLimiter, apiLimiter } = require("../middleware/rate-limit");
-const { requireLogin } = require("../middleware/auth");
+const { requireLogin, requireAdmin, deviceId } = require("../middleware/auth");
 const { cleanFileName, adFail } = require("../utils/helpers");
 const { reserveDownloadSlot } = require("../services/downloads");
 const { adUploadMagnet, adUploadTorrent, fetchTorrentFromIndexer } = require("../services/alldebrid");
 const torrentSearch = require("../../search");
+const aiDiscovery = require("../services/aidiscovery");
 
 const router = express.Router();
 
@@ -71,6 +72,35 @@ router.post("/api/search/add", requireLogin, apiLimiter, async (req, res) => {
     slot.release();
     res.status(err.status || 502).json({ error: err.message || "Не удалось добавить результат в библиотеку." });
   }
+});
+
+// «Подбор по настроению»: { query, fresh? } -> { items: [{ title, original, year, kind, reason, genres, poster, rating,
+// overview, tmdbTitle }], cached }. poster — путь зеркала /api/poster/img/w342/… или null.
+// 429 { reason: "cooldown" | "daily", retryAfterSec }; 503 { reason: "busy" | "disabled" }; 400 { reason: "empty" }.
+router.post("/api/search/ai-discovery", requireLogin, apiLimiter, async (req, res) => {
+  res.set("Cache-Control", "private, no-store");
+  const query = typeof req.body?.query === "string" ? req.body.query : "";
+  try {
+    res.json(await aiDiscovery.discover(query, deviceId(req, null), Date.now(), { fresh: req.body?.fresh === true }));
+  } catch (err) {
+    if (err instanceof aiDiscovery.AiError) {
+      if (err.code === "cooldown" || err.code === "daily") {
+        const sec = Math.max(1, Math.ceil(err.retryAfterMs / 1000));
+        res.set("Retry-After", String(sec));
+        return res.status(429).json({ error: err.message, reason: err.code, retryAfterSec: sec });
+      }
+      if (err.code === "empty") return res.status(400).json({ error: err.message, reason: err.code });
+      if (err.code === "busy" || err.code === "disabled") return res.status(503).json({ error: err.message, reason: err.code });
+      return res.status(502).json({ error: err.message, reason: "bad" });
+    }
+    console.error("[aidiscovery]", err.message);
+    res.status(500).json({ error: "Непредвиденная ошибка сервера." });
+  }
+});
+
+router.get("/api/search/ai-discovery/stats", requireAdmin, (req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.json(aiDiscovery.stats());
 });
 
 module.exports = router;

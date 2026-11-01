@@ -7,14 +7,26 @@
 #include <QObject>
 #include <QVariantList>
 
+#include <functional>
+#include <optional>
+
 /// «Поиск раздач» (SearchView.kt): запрос к серверу и, если включён, к RuTracker с этого ПК; выдача сервера показывается
 /// сразу, RuTracker дописывается, когда ответит. Фильтры, сортировка и страницы — core::SearchFilterCriteria.
 /// «＋ В библиотеку» — раздача уходит в AllDebrid, её состояние пишется под строкой до готовности.
+/// «Подбор по настроению» (aiMode): запрос уходит на сервер (/api/search/ai-discovery, Gemini + TMDB), фильмы
+/// сверяются с медиатекой — что уже есть, можно сразу смотреть, остальное — найти раздачу одним нажатием.
 namespace suslik::app {
 
 class SearchModel : public QObject {
     Q_OBJECT
     Q_PROPERTY(Library *library READ library WRITE setLibrary)
+    Q_PROPERTY(bool aiMode READ aiMode WRITE setAiMode NOTIFY aiChanged)
+    Q_PROPERTY(bool aiBusy READ aiBusy NOTIFY aiChanged)
+    Q_PROPERTY(QString aiStatus READ aiStatus NOTIFY aiChanged)
+    Q_PROPERTY(bool aiStatusOk READ aiStatusOk NOTIFY aiChanged)
+    Q_PROPERTY(QString aiQuery READ aiQuery NOTIFY aiChanged)
+    Q_PROPERTY(QVariantList aiHits READ aiHits NOTIFY aiChanged)
+    Q_PROPERTY(int aiInLibrary READ aiInLibrary NOTIFY aiChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY changed)
     Q_PROPERTY(bool ruSearching READ ruSearching NOTIFY changed)
     Q_PROPERTY(QString status READ status NOTIFY changed)
@@ -45,7 +57,15 @@ public:
     explicit SearchModel(QObject *parent = nullptr) : QObject(parent) {}
 
     Library *library() const { return m_lib; }
-    void setLibrary(Library *l) { m_lib = l; }
+    void setLibrary(Library *l);
+    bool aiMode() const { return m_aiMode; }
+    void setAiMode(bool on) { if (m_aiMode != on) { m_aiMode = on; emit aiChanged(); } }
+    bool aiBusy() const { return m_aiBusy; }
+    QString aiStatus() const { return m_aiStatus; }
+    bool aiStatusOk() const { return m_aiStatusOk; }
+    QString aiQuery() const { return m_aiQuery; }
+    QVariantList aiHits() const { return m_aiHits; }
+    int aiInLibrary() const;
     bool busy() const { return m_busy; }
     bool ruSearching() const { return m_ruSearching; }
     QString status() const { return m_status; }
@@ -83,6 +103,17 @@ public:
 
     Q_INVOKABLE void run(const QString &query);
     Q_INVOKABLE void add(const QString &hitId);
+    /// Подбор по настроению. fresh — не из памяти сервера и другие фильмы («Кинорулетка», «Ещё варианты»).
+    Q_INVOKABLE void runAi(const QString &query, bool fresh = false);
+
+    /// Фильм подборки в медиатеке: id раздачи и файл, который играть, или пусто.
+    struct LibraryMatch { qint64 id = 0; };
+    /// Сверка: тот же постер TMDB; или то же название (русское, оригинальное, из раздачи) и год ±1.
+    static std::optional<LibraryMatch> matchLibrary(const QList<LibraryItem> &items, const QVariantMap &film,
+                                                    const std::function<QString(const LibraryItem &)> &titleOf,
+                                                    const std::function<std::optional<QString>(const LibraryItem &)> &posterOf);
+    /// Нормализация для сверки названий: строчные, «ё» → «е», только буквы и цифры через пробел.
+    static QString normTitle(const QString &s);
     /// Окно «Трекеры» закрыто: включённые источники могли поменяться.
     Q_INVOKABLE void trackersChanged() { refilter(false); }
     /// Выход из вкладки поиска — фоновый браузер больше не нужен
@@ -93,6 +124,7 @@ public:
 
 signals:
     void changed();
+    void aiChanged();
 
 private:
     int safePage() const { return std::clamp(m_page, 1, totalPages()); }
@@ -101,6 +133,7 @@ private:
     void setNote(const QString &id, const QString &text, bool ok);
     void follow(const QString &hitId, qint64 id, bool readyNow, int round = 0, qint64 started = 0);
     void ready(const QString &hitId, qint64 id, const QString &note);
+    void rematch();
 
     Library *m_lib = nullptr;
     core::SearchFilterCriteria m_criteria;
@@ -117,6 +150,12 @@ private:
     bool m_statusOk = true;
     int m_page = 1, m_pageSize = 25;
     int m_gen = 0;
+
+    bool m_aiMode = false, m_aiBusy = false, m_aiStatusOk = true;
+    QString m_aiStatus, m_aiQuery;
+    QVariantList m_aiRaw;  ///< ответ сервера, без сверки
+    QVariantList m_aiHits; ///< со сверкой: inLibrary, magnetId, path
+    int m_aiGen = 0;
 };
 
 } // namespace suslik::app

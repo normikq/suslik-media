@@ -159,6 +159,64 @@ void paintUi(Pen2D &d, const QString &name, double w, double h, bool filled) {
     } else if (name == QLatin1String("check")) {
         poly({0.2, 0.52, 0.42, 0.74, 0.82, 0.28}, false, false, 1.9 * k);
     }
+    // ---- «Подбор по настроению»: вместо эмодзи — значки той же толщины ----
+    else if (name == QLatin1String("sparkle")) { // ИИ: большая и маленькая четырёхлучевые искры
+        auto spark = [&](double cx, double cy, double r) {
+            const double c = r * 0.14;
+            QPainterPath p = path(); p.moveTo(cx, cy - r);
+            p.quadTo(cx + c, cy - c, cx + r, cy); p.quadTo(cx + c, cy + c, cx, cy + r);
+            p.quadTo(cx - c, cy + c, cx - r, cy); p.quadTo(cx - c, cy - c, cx, cy - r);
+            p.closeSubpath(); d.fill(p);
+        };
+        spark(w * 0.42, h * 0.58, w * 0.38);
+        spark(w * 0.80, h * 0.20, w * 0.17);
+    } else if (name == QLatin1String("star")) { // рейтинг: пять лучей
+        QPainterPath p = path();
+        for (int i = 0; i < 10; ++i) {
+            const double a = -PI / 2 + i * PI / 5, r = (i % 2 ? 0.2 : 0.47) * w;
+            const QPointF pt(w * 0.5 + r * std::cos(a), h * 0.54 + r * std::sin(a));
+            if (i == 0) p.moveTo(pt); else p.lineTo(pt);
+        }
+        p.closeSubpath();
+        if (filled) d.fill(p); else d.stroke(p, 1.4 * k);
+    } else if (name == QLatin1String("cup")) { // уютный вечер: чашка с паром
+        QPainterPath b = path(); b.moveTo(w * 0.14, h * 0.44); b.lineTo(w * 0.70, h * 0.44); b.lineTo(w * 0.66, h * 0.78);
+        b.quadTo(w * 0.64, h * 0.90, w * 0.52, h * 0.90); b.lineTo(w * 0.32, h * 0.90); b.quadTo(w * 0.20, h * 0.90, w * 0.18, h * 0.78);
+        b.closeSubpath(); d.stroke(b, 1.6 * k);
+        arc(w * 0.58, h * 0.50, w * 0.28, h * 0.22, -90, 180, 1.5 * k);
+        for (double x : {0.34, 0.52}) {
+            QPainterPath s = path(); s.moveTo(w * x, h * 0.34);
+            s.cubicTo(w * (x - 0.08), h * 0.26, w * (x + 0.08), h * 0.20, w * x, h * 0.10); d.stroke(s, 1.4 * k);
+        }
+    } else if (name == QLatin1String("spiral")) { // сломать мозг: спираль
+        QPainterPath p = path();
+        const double cx = w / 2, cy = h / 2;
+        for (int i = 0; i <= 64; ++i) {
+            const double t = i * 3.2 * PI / 64, r = w * (0.03 + 0.135 * t / PI);
+            const QPointF pt(cx + r * std::cos(t), cy + r * std::sin(t));
+            if (i == 0) p.moveTo(pt); else p.lineTo(pt);
+        }
+        d.stroke(p, 1.6 * k);
+    } else if (name == QLatin1String("smile")) { // разгрузить голову: улыбка
+        d.circle(w / 2, h / 2, w * 0.42, false, 1.5 * k);
+        d.circle(w * 0.36, h * 0.40, w * 0.05, true); d.circle(w * 0.64, h * 0.40, w * 0.05, true);
+        arc(w * 0.30, h * 0.34, w * 0.40, w * 0.36, 25, 130, 1.5 * k);
+    } else if (name == QLatin1String("planet")) { // космос: планета с кольцом (задняя половина кольца — за планетой)
+        const double cx = w / 2, cy = h / 2, r = w * 0.25;
+        QTransform t; t.translate(cx, cy); t.rotate(-20); t.scale(1, 0.3);
+        auto ring = [&](double start, double sweep) {
+            QPainterPath p = path(); Pen2D::arc(p, 0, 0, w * 0.46, start * PI / 180, (start + sweep) * PI / 180); d.stroke(t.map(p), 1.4 * k);
+        };
+        QPainterPath outside = path(); outside.addRect(QRectF(0, 0, w, h));
+        QPainterPath disk = path(); disk.addEllipse(QPointF(cx, cy), r + 1.2 * k, r + 1.2 * k);
+        d.g.save(); d.g.setClipPath(outside.subtracted(disk)); ring(180, 180); d.g.restore();
+        d.circle(cx, cy, r, false, 1.5 * k);
+        ring(0, 180);
+    } else if (name == QLatin1String("dice")) { // кинорулетка: кубик
+        rrect(w * 0.12, h * 0.12, w * 0.76, h * 0.76, w * 0.18, 1.5 * k);
+        for (const auto &pt : {std::pair{0.33, 0.33}, {0.67, 0.33}, {0.5, 0.5}, {0.33, 0.67}, {0.67, 0.67}})
+            d.circle(w * pt.first, h * pt.second, w * 0.065, true);
+    }
 }
 
 void paintPlayer(Pen2D &d, const QString &name, double w, double h, int volume, bool muted) {

@@ -27,6 +27,10 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
 const AI_TITLE_MODEL = process.env.AI_TITLE_MODEL || "gemini-3.5-flash-lite";
 const AI_TITLE_COOLDOWN_MIN = Math.max(0, Number(process.env.AI_TITLE_COOLDOWN_MIN ?? 15));
 const AI_TITLE_DAILY_MAX = Math.max(0, Number(process.env.AI_TITLE_DAILY_MAX ?? 200));
+// «Подбор по настроению» (services/aidiscovery.js): тот же ключ Gemini, своя модель, кулдаун в секундах и дневной лимит.
+const AI_DISCOVERY_MODEL = process.env.AI_DISCOVERY_MODEL || AI_TITLE_MODEL;
+const AI_DISCOVERY_COOLDOWN_SEC = Math.max(0, Number(process.env.AI_DISCOVERY_COOLDOWN_SEC ?? 5));
+const AI_DISCOVERY_DAILY_MAX = Math.max(0, Number(process.env.AI_DISCOVERY_DAILY_MAX ?? 500));
 const TRUST_PROXY = process.env.TRUST_PROXY;
 const BETA_CODE = process.env.BETA_CODE || "";
 const UPDATE_TOKEN = process.env.UPDATE_TOKEN || "";
@@ -154,6 +158,9 @@ module.exports = {
   AI_TITLE_MODEL,
   AI_TITLE_COOLDOWN_MIN,
   AI_TITLE_DAILY_MAX,
+  AI_DISCOVERY_MODEL,
+  AI_DISCOVERY_COOLDOWN_SEC,
+  AI_DISCOVERY_DAILY_MAX,
   SYNC_IDLE_DAYS,
   AUTO_CLEAN,
   LIBRARY_IDLE_DAYS,
