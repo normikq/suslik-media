@@ -58,6 +58,8 @@ public:
 
     /// Ядро (создаётся при первом обращении). Пустой — libmpv нет или она не запустилась.
     mpv::Handle handle();
+    /// Ядро, если оно уже есть (без создания): вывод кадров берёт его из потока отрисовки
+    mpv::Handle current() const { return m_h; }
 
     /// Открыть url с позиции startMs. Внешние субтитры (уже скачанные) и озвучки добавляются, когда файл открыт.
     void open(const QString &url, qint64 startMs, bool nightMode, const QString &audioLang, const QString &subLang,

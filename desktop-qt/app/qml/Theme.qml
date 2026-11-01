@@ -44,43 +44,57 @@ QtObject {
     property bool simple: Ui.setting("simple_motion") === "1"
     function setSimple(on) { simple = on; Ui.setSetting("simple_motion", on ? "1" : "") }
 
-    // Хранилище координат постеров и карточек для анимации вылета/отлёта плеера (ExitFlight)
-    property var tiles: ({})
-    property var lastRect: null
-    property var lastId: 0
+    // Где каждый фильм лежит в медиатеке (ExitFlight.kt: TileBounds): постеры и карточка «Продолжить просмотр».
+    // На один фильм может быть несколько элементов (медиатека и «Мои фильмы», плитка и баннер) — хранится список.
+    property var posters: ({})
+    property var conts: ({})
+    // фильм открыли из «Продолжить просмотр»: улетать сначала туда
+    property bool fromContinue: false
 
-    function registerTile(id, item) {
-        if (id && item) tiles[id] = item
+    function track(map, id, item) {
+        if (!id || !item) return
+        const l = map[id] || []
+        if (l.indexOf(item) < 0) l.push(item)
+        map[id] = l
+    }
+    function untrack(map, id, item) {
+        const l = id ? map[id] : null
+        if (!l) return
+        const i = l.indexOf(item)
+        if (i >= 0) l.splice(i, 1)
+        if (l.length === 0) delete map[id]
     }
 
-    function unregisterTile(id, item) {
-        if (tiles[id] === item) delete tiles[id]
-    }
-
-    function getGlobalRect(item) {
-        if (!item) return null
-        try {
-            const pt = item.mapToItem(null, 0, 0)
-            if (!pt || isNaN(pt.x) || isNaN(pt.y)) return null
-            const w = item.width
-            const h = item.height
-            if (!w || !h || isNaN(w) || isNaN(h)) return null
-            return { x: pt.x, y: pt.y, width: w, height: h }
-        } catch (e) {
-            return null
-        }
-    }
-
-    function getTargetRect(id, win) {
-        let it = id ? tiles[id] : null
-        let r = getGlobalRect(it)
-        if (!r && lastRect) r = lastRect
-        if (!r || isNaN(r.x) || isNaN(r.y) || !r.width || !r.height) return null
-        // Проверка, что постер не уехал за пределы экрана
-        if (win && (r.y + r.height * 0.3 < 0 || r.y + r.height * 0.7 > win.height ||
-                    r.x + r.width * 0.3 < 0 || r.x + r.width * 0.7 > win.width)) {
-            return null
+    // Место элемента в окне, если он виден хотя бы на 60 % по каждой стороне в своей области прокрутки
+    // (ближайший предок с clip); иначе null — другая вкладка, прокручен, скрыт.
+    function visibleRect(item) {
+        if (!item || !item.visible || item.width <= 1 || item.height <= 1) return null
+        const a = item.mapToItem(null, 0, 0)
+        const b = item.mapToItem(null, item.width, item.height)
+        const r = { x: a.x, y: a.y, width: b.x - a.x, height: b.y - a.y }
+        if (!(r.width > 1 && r.height > 1)) return null
+        let vp = item.parent
+        while (vp && !vp.clip) vp = vp.parent
+        if (vp) {
+            const va = vp.mapToItem(null, 0, 0)
+            const vb = vp.mapToItem(null, vp.width, vp.height)
+            const iw = Math.min(r.x + r.width, vb.x) - Math.max(r.x, va.x)
+            const ih = Math.min(r.y + r.height, vb.y) - Math.max(r.y, va.y)
+            if (iw < r.width * 0.6 || ih < r.height * 0.6) return null
         }
         return r
+    }
+
+    function firstVisible(l) {
+        if (!l) return null
+        for (const it of l) { const r = visibleRect(it); if (r) return r }
+        return null
+    }
+
+    // Видимое место фильма в окне (TileBounds.target) или null
+    function target(id) {
+        if (!id) return null
+        const a = firstVisible(conts[id]), b = firstVisible(posters[id])
+        return fromContinue ? (a || b) : (b || a)
     }
 }

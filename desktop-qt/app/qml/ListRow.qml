@@ -3,6 +3,10 @@ import QtQuick
 // Строка вида «Список» (LibraryView.kt: ListRow).
 Btn {
     id: row
+    // постер — когда строку впервые видно (список скрытой вкладки создают заранее)
+    property bool everShown: false
+    onVisibleChanged: if (visible) everShown = true
+    Component.onCompleted: everShown = visible
     property var t: ({})
     property var page
     hoverUp: 1
@@ -24,7 +28,7 @@ Btn {
             id: img
             anchors.fill: parent
             radius: 8
-            source: row.t.poster ? "image://suslik" + row.t.poster : ""
+            source: row.everShown && row.t.poster ? "image://suslik" + row.t.poster : ""
             sourceSize: Qt.size(104, 152)
         }
     }

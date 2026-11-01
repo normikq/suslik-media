@@ -12,7 +12,6 @@ Window {
 
     property int tab: 0
     property int prevTab: 0
-    onTabChanged: Ui.trimMemory()
     function select(t) {
         if (t !== tab) { prevTab = tab; tab = t }
         if (t === 0 || t === 1) lib.refresh()
@@ -32,28 +31,38 @@ Window {
         id: shell
         anchors.fill: parent
         opacity: lib.authenticated === 0 ? 0 : 1
-        // под открытым плеером медиатеку не рисуем
-        visible: opacity > 0 && win.playerPresence < 1
+        // под открытым плеером медиатеку не рисуем (при закрытии она снова на месте — плеер летит в её постер)
+        visible: opacity > 0 && (win.playerPresence < 1 || win.playerLeaving)
         Behavior on opacity { NumberAnimation { duration: 420; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease } }
 
-        Sidebar {
-            id: sidebar
-            height: parent.height
-            tab: win.tab
-            category: win.tab === 1 ? minePage.category : libraryPage.category
-            onSelect: (t) => win.select(t)
-            onChooseCategory: (c) => { if (win.tab === 1) minePage.category = c; else libraryPage.category = c }
-            onSettings: settingsSheet.open = true
-            onLogout: lib.logout()
-        }
-
+        // Main.kt: пока плеер на экране, медиатека отступает (меньше и бледнее) и выходит вперёд при возврате;
+        // в упрощённых анимациях просто стоит, пока плеер её не закроет
         Item {
-            id: pages
-            anchors { left: sidebar.right; right: parent.right; top: parent.top; bottom: parent.bottom }
-            clip: true
-            Page { index: 0; LibraryView { id: libraryPage; anchors.fill: parent; mine: false; onVersionsRequested: (t, ids) => dialogs.versions(model, t, ids); onPlayRequested: (id, p) => dialogs.play_(id, p); onFlyTo: (tab, r, p) => flight.launch(tab, r, p) } }
-            Page { index: 1; LibraryView { id: minePage; anchors.fill: parent; mine: true; onVersionsRequested: (t, ids) => dialogs.versions(model, t, ids); onPlayRequested: (id, p) => dialogs.play_(id, p); onFlyTo: (tab, r, p) => flight.launch(tab, r, p) } }
-            Page { index: 3; AddView { id: addPage; anchors.fill: parent; active: win.tab === 3; onPreviewRequested: (video, a, offset, title) => player.startPreview(video, a, offset, title) } }
+            id: libLayer
+            anchors.fill: parent
+            readonly property real p: win.playerPresence
+            scale: Theme.simple ? 1 : 0.93 + 0.07 * (1 - p)
+            opacity: Theme.simple ? (p >= 1 ? 0 : 1) : Math.max(0, Math.min(1, 1 - p * 1.15))
+
+            Sidebar {
+                id: sidebar
+                height: parent.height
+                tab: win.tab
+                category: win.tab === 1 ? minePage.category : libraryPage.category
+                onSelect: (t) => win.select(t)
+                onChooseCategory: (c) => { if (win.tab === 1) minePage.category = c; else libraryPage.category = c }
+                onSettings: settingsSheet.open = true
+                onLogout: lib.logout()
+            }
+
+            Item {
+                id: pages
+                anchors { left: sidebar.right; right: parent.right; top: parent.top; bottom: parent.bottom }
+                clip: true
+                Page { index: 0; LibraryView { id: libraryPage; anchors.fill: parent; mine: false; onVersionsRequested: (t, ids) => dialogs.versions(model, t, ids); onPlayRequested: (id, p) => dialogs.play_(id, p); onFlyTo: (tab, r, p) => flight.launch(tab, r, p) } }
+                Page { index: 1; LibraryView { id: minePage; anchors.fill: parent; mine: true; onVersionsRequested: (t, ids) => dialogs.versions(model, t, ids); onPlayRequested: (id, p) => dialogs.play_(id, p); onFlyTo: (tab, r, p) => flight.launch(tab, r, p) } }
+                Page { index: 3; AddView { id: addPage; anchors.fill: parent; active: win.tab === 3; onPreviewRequested: (video, a, offset, title) => player.startPreview(video, a, offset, title) } }
+            }
         }
     }
 
@@ -94,46 +103,40 @@ Window {
     Dialogs { id: dialogs; anchors.fill: parent }
     SettingsSheet { id: settingsSheet; anchors.fill: parent }
     WhatsNew { anchors.fill: parent }
-    // Экран плеера: плавный вылет из постера и отлёт обратно (ExitFlight.kt)
+    // Экран плеера: вылет из постера и отлёт обратно (Main.kt + ExitFlight.kt). playerPresence: 0 — медиатека, 1 — плеер.
     property real playerPresence: 0
-    property var playerTarget: null
-    property var playerHome: null
     property bool playerLeaving: false
+    property var playerFilm: 0        // фильм, чей постер ищем
+    property var playerFrom: null     // где был постер в момент открытия (медиатека ещё не отступила)
+    property var playerHome: null     // куда улетать: читается на каждом кадре закрытия, последнее найденное держится
 
     Connections {
         target: player
         function onOpenChanged() {
             if (player.open && !player.closing) {
-                playerLeaving = false
-                const t = Theme.getTargetRect(player.magnetId, win) || Theme.lastRect
-                playerTarget = t
-                playerHome = t
+                win.playerLeaving = false
+                win.playerHome = null
+                win.playerFilm = player.magnetId
+                win.playerFrom = Theme.target(win.playerFilm)
                 presenceAnim.stop()
-                if (Theme.simple) {
-                    win.playerPresence = 1
-                } else {
-                    presenceAnim.from = win.playerPresence
-                    presenceAnim.to = 1
-                    presenceAnim.duration = 560
-                    presenceAnim.start()
-                }
-            } else if (player.closing) {
-                playerLeaving = true
-                const live = Theme.getTargetRect(player.magnetId, win)
-                playerTarget = live || playerHome
+                presenceAnim.from = win.playerPresence
+                presenceAnim.to = 1
+                presenceAnim.duration = 560
+                presenceAnim.start()
+            } else if (player.closing && !win.playerLeaving) {
+                win.playerLeaving = true      // медиатека снова видна: её постеры можно найти
+                win.playerHome = Theme.target(win.playerFilm)
                 presenceAnim.stop()
-                if (Theme.simple) {
-                    win.playerPresence = 0
-                    player.finishClose()
-                } else {
-                    presenceAnim.from = win.playerPresence
-                    presenceAnim.to = 0
-                    presenceAnim.duration = 600
-                    presenceAnim.start()
-                }
+                presenceAnim.from = win.playerPresence
+                presenceAnim.to = 0
+                presenceAnim.duration = 600
+                presenceAnim.start()
             }
         }
     }
+    // постер ищется заново на каждом кадре: медиатека ещё выходит вперёд, ряд «Продолжить» мог переставиться,
+    // окно возвращается из полного экрана; кадр, где его не нашли, держит последнее место
+    onPlayerPresenceChanged: if (playerLeaving) { const t = Theme.target(playerFilm); if (t) playerHome = t }
 
     NumberAnimation {
         id: presenceAnim
@@ -141,10 +144,10 @@ Window {
         property: "playerPresence"
         easing.type: Easing.BezierSpline
         easing.bezierCurve: Theme.fly
-        onFinished: {
-            if (win.playerPresence === 0 && player.closing) {
-                player.finishClose()
-            }
+        onFinished: if (win.playerPresence === 0 && win.playerLeaving) {
+            win.playerLeaving = false
+            if (player.closing) player.finishClose()
+            Ui.trimMemory()
         }
     }
 
@@ -152,16 +155,21 @@ Window {
         id: flightContainer
         z: 50
         anchors.fill: parent
-        visible: win.playerPresence > 0
-        enabled: win.playerPresence === 1
+        visible: win.playerPresence > 0 || player.open
+
+        // весь полёт глотает мышь: медиатека под плеером не реагирует (Main.kt: pointerInput)
+        MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.AllButtons
+            hoverEnabled: true
+            onWheel: (w) => w.accepted = true
+        }
 
         readonly property real p: win.playerPresence
         readonly property real e: Math.max(0.0, Math.min(1.0, 1.0 - p))
-        readonly property var target: win.playerTarget
-        readonly property bool hasTarget: target !== null && target !== undefined &&
-                                          !isNaN(target.x) && !isNaN(target.y) &&
-                                          !isNaN(target.width) && !isNaN(target.height) &&
-                                          target.width > 20 && target.height > 20
+        // выход — в живое место постера, вход — из места в момент открытия; нет постера — запасная анимация
+        readonly property var target: win.playerLeaving ? win.playerHome : win.playerFrom
+        readonly property bool hasTarget: !!target && target.width > 1 && target.height > 1
 
         readonly property real ww: Math.max(100.0, win.width)
         readonly property real wh: Math.max(100.0, win.height)
@@ -170,8 +178,8 @@ Window {
         readonly property real sFallback: win.playerLeaving ? (0.86 + 0.14 * p) : (1.035 - 0.035 * p)
         readonly property real s: Math.max(0.01, hasTarget ? sTarget : sFallback)
 
-        readonly property real flightW: Math.max(20.0, hasTarget ? (ww + (target.width - ww) * e) : (ww * s))
-        readonly property real flightH: Math.max(20.0, hasTarget ? (wh + (target.height - wh) * e) : (wh * s))
+        readonly property real flightW: Math.max(1.0, hasTarget ? (ww + (target.width - ww) * e) : (ww * s))
+        readonly property real flightH: Math.max(1.0, hasTarget ? (wh + (target.height - wh) * e) : (wh * s))
         readonly property real flightLeft: hasTarget ? (target.x * e) : ((1.0 - s) * ww * 0.5)
         readonly property real flightTop: hasTarget ? (target.y * e) : ((1.0 - s) * wh * 0.5)
 
@@ -180,8 +188,10 @@ Window {
         readonly property real lx: (ww - lw) * 0.5
         readonly property real ly: (wh - lh) * 0.5
 
-        readonly property real flightRadius: hasTarget ? (e * 14.0) : (28.0 * e)
-        readonly property real flightOpacity: hasTarget ? Math.min(1.0, Math.max(0.0, p / 0.28)) : Math.min(1.0, Math.max(0.0, p * 1.6))
+        // запасной вход — без скругления, просто проявляется (Main.kt)
+        readonly property real flightRadius: hasTarget ? 14.0 * e : win.playerLeaving ? 28.0 * e : 0
+        readonly property real flightOpacity: hasTarget ? Math.min(1.0, Math.max(0.0, p / 0.28))
+                                              : win.playerLeaving ? Math.min(1.0, Math.max(0.0, p * 1.6)) : p
 
         Item {
             id: flightClipper
@@ -191,6 +201,8 @@ Window {
             height: flightContainer.flightH
             clip: true
             opacity: flightContainer.flightOpacity
+            // улетающий плеер кнопки не нажимает (мышь достаётся MouseArea выше и пропадает)
+            enabled: !win.playerLeaving
 
             layer.enabled: flightContainer.flightRadius > 0.5 && flightClipper.width > 20 && flightClipper.height > 20
             layer.smooth: true
