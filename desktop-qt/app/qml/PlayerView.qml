@@ -75,10 +75,27 @@ Item {
         id: keys
         anchors.fill: parent
         focus: player.open
+        // Клавиши по месту на клавиатуре, а не по букве: в русской раскладке «К», «А», «Х» работают как K, F, [.
+        // Скан-коды набора 1 (Windows; в Linux код клавиши X11/Wayland = evdev + 8, а evdev здесь совпадает с набором 1).
+        readonly property var physical: ({
+            0x10: Qt.Key_Q, 0x11: Qt.Key_W, 0x12: Qt.Key_E, 0x13: Qt.Key_R, 0x14: Qt.Key_T, 0x15: Qt.Key_Y, 0x16: Qt.Key_U,
+            0x17: Qt.Key_I, 0x18: Qt.Key_O, 0x19: Qt.Key_P, 0x1A: Qt.Key_BracketLeft, 0x1B: Qt.Key_BracketRight,
+            0x1E: Qt.Key_A, 0x1F: Qt.Key_S, 0x20: Qt.Key_D, 0x21: Qt.Key_F, 0x22: Qt.Key_G, 0x23: Qt.Key_H, 0x24: Qt.Key_J,
+            0x25: Qt.Key_K, 0x26: Qt.Key_L, 0x27: Qt.Key_Semicolon, 0x28: Qt.Key_Apostrophe, 0x2B: Qt.Key_Backslash,
+            0x2C: Qt.Key_Z, 0x2D: Qt.Key_X, 0x2E: Qt.Key_C, 0x2F: Qt.Key_V, 0x30: Qt.Key_B, 0x31: Qt.Key_N, 0x32: Qt.Key_M,
+            0x33: Qt.Key_Comma, 0x34: Qt.Key_Period, 0x35: Qt.Key_Slash
+        })
+        function keyOf(e) {
+            const os = Qt.platform.os
+            const sc = os === "windows" ? e.nativeScanCode : (os === "linux" ? e.nativeScanCode - 8 : -1)
+            const k = physical[sc]
+            if (k === undefined) return e.key
+            return k === Qt.Key_Backslash && (e.modifiers & Qt.ShiftModifier) ? Qt.Key_Bar : k
+        }
         Keys.onPressed: (e) => {
             pv.poke()
             const shift = e.modifiers & Qt.ShiftModifier
-            switch (e.key) {
+            switch (keyOf(e)) {
             case Qt.Key_Space: if (player.nextIn >= 0) player.playNext(); else player.togglePause(); break
             case Qt.Key_Return: case Qt.Key_Enter: if (player.nextIn >= 0) player.playNext(); else pv.toggleFullscreen(); break
             case Qt.Key_K: player.togglePause(); break
@@ -187,16 +204,20 @@ Item {
         cursorShape: pv.mini ? cornerShape : pv.barsShown ? Qt.ArrowCursor : Qt.BlankCursor
         property point pressAt
         property bool moved: false
+        property bool resizing: false
+        onReleased: { if (resizing) windowMode.endResize(); resizing = false }
+        onCanceled: resizing = false
         onPositionChanged: (m) => {
             pv.poke()
             if (pv.mini && !pressed) cornerShape = cornerCursor(m.x, m.y)
+            if (resizing) { windowMode.resizeStep(); return }
             if (pv.mini && pressed && !moved && Math.hypot(m.x - pressAt.x, m.y - pressAt.y) > 4) { moved = true; windowMode.startMove() }
         }
         onPressed: (m) => {
             pressAt = Qt.point(m.x, m.y); moved = false
             pv.poke()
             if (pv.picker !== "") pv.picker = ""
-            if (pv.mini) { const e = edgeAt(m.x, m.y); if (e) { moved = true; windowMode.startResize(e) } }
+            if (pv.mini) { const e = edgeAt(m.x, m.y); if (e) { windowMode.beginResize(e); resizing = true; moved = true } }
         }
         onClicked: if (!moved) clickTimer.restart()
         onDoubleClicked: {

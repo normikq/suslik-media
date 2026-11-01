@@ -325,7 +325,7 @@ private:
     int m_trackSwitchGen = 0;
 
     QTimer m_tickTimer, m_superTimer, m_bufTimer, m_infoTimer, m_seekTimer, m_flashTimer, m_prefsTimer, m_ensureAudioTimer,
-        m_autoSkipTimer, m_statsTimer, m_trackWatch;
+        m_autoSkipTimer, m_statsTimer, m_trackWatch, m_closeTimer;
     QString m_flashText;
     int m_trackWatchLeft = 0;
     int m_trackWatchShown = 0;

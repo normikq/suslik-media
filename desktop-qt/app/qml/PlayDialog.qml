@@ -14,11 +14,7 @@ Sheet {
     PlayModel {
         id: m
         library: lib
-        onPlayRequested: {
-            Theme.lastRect = Theme.getTargetRect(m.magnetId, win) || Theme.lastRect
-            d.open = false
-            d.play()
-        }
+        onPlayRequested: { d.open = false; d.play() }
     }
 
     // ---- фильм и сериал: постер слева, название, факты, описание ----

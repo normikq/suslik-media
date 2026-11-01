@@ -32,7 +32,13 @@ Party::~Party() {
 QVariantList Party::members() const {
     QVariantList out;
     for (const PartyMember &m : m_room.members) {
-        const QString label = m.name + (m.key == m_myKey ? tx(S("party.vy")) : QString()) +
+        // Имя из Discord может быть справа налево или с управляющими знаками: тогда вся строка разворачивалась и
+        // прижималась вправо. Строка — всегда слева направо (LRM), имя — отдельным островком (FSI…PDI), без переносов.
+        QString name = m.name;
+        for (QChar &c : name)
+            if (c == u'\n' || c == u'\r' || c == u'\t') c = u' ';
+        const QString label = QStringLiteral("\u200E\u2068") + name.trimmed() + QStringLiteral("\u2069") +
+                              (m.key == m_myKey ? tx(S("party.vy")) : QString()) +
                               (m_room.isCreator(m) ? tx(S("party.sozdatel")) : QString()) +
                               (m.buffering ? tx(S("party.zagruzhaetsya")) : QString());
         out << QVariantMap{{S("name"), m.name}, {S("label"), label}, {S("avatar"), m.avatar.value_or(QString())}};

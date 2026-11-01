@@ -215,6 +215,8 @@ Item {
                                 Text {
                                     anchors { left: av.right; leftMargin: 10; right: parent.right; verticalCenter: parent.verticalCenter }
                                     text: modelData.label
+                                    horizontalAlignment: Text.AlignLeft // явно: строка с именем справа налево не уезжает вправо
+                                    maximumLineCount: 1
                                     color: Theme.text; elide: Text.ElideRight
                                     font.family: Theme.onest; font.pixelSize: 14
                                 }
