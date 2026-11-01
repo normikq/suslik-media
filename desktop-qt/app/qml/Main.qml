@@ -139,13 +139,12 @@ Window {
     property var playerFrom: null     // где был постер в момент открытия (медиатека ещё не отступила)
     property var playerHome: null     // куда улетать: читается на каждом кадре закрытия, последнее найденное держится
 
+    // Старт видеопотока (NOTIFY stateChanged): при переходе false → true запускаем таймер выгрузки
+    readonly property bool playerStarted: player.started
+    onPlayerStartedChanged: if (playerStarted && player.open && !player.closing) playerStartedUnloadTimer.restart()
+
     Connections {
         target: player
-        function onStartedChanged() {
-            if (player.started && player.open && !player.closing) {
-                playerStartedUnloadTimer.restart()
-            }
-        }
         function onOpenChanged() {
             if (player.open && !player.closing) {
                 win.playerLeaving = false
