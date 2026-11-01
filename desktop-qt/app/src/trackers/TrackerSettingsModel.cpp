@@ -138,7 +138,8 @@ void TrackerSettingsModel::capture() {
             },
             [self, target, name](bool ok, const QString &result) {
                 if (!self) return;
-                PlayerLog::write(S("[trackers] TrackerSettingsModel::capture result: ok=%1, msg=%2").arg(ok).arg(result));
+                PlayerLog::write(S("[trackers] TrackerSettingsModel::capture result: ok=%1, %2").arg(ok)
+                                     .arg(ok ? S("cookie %1 chars").arg(result.size()) : result)); // cookie в журнал не пишем
                 self->m_busy = false;
                 if (ok) {
                     BrowserBridge::setPreferredType(target.type);

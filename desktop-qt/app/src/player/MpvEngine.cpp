@@ -81,8 +81,8 @@ mpv::Handle MpvEngine::handle() {
     opt("demuxer-mkv-subtitle-preroll", S("no"));
     opt("demuxer-mkv-subtitle-preroll-secs", S("1"));
     // Ключевые кадры позади — в памяти (смена дорожки и короткая перемотка без сети); долгий запас — на диске (BurstProxy).
-    opt("demuxer-max-bytes", S("96MiB"));
-    opt("demuxer-max-back-bytes", S("24MiB"));
+    opt("demuxer-max-bytes", S("48MiB"));
+    opt("demuxer-max-back-bytes", S("16MiB"));
     opt("gapless-audio", S("yes"));
     opt("audio-stream-silence", S("yes"));
     opt("audio-buffer", S("0.5")); // запас буфера звука: окно при ресайзе не прерывает звук
@@ -104,8 +104,6 @@ mpv::Handle MpvEngine::handle() {
     a->observe_property(p, 8, "track-list", MPV_FORMAT_NONE);
     a->observe_property(p, 9, "video-params", MPV_FORMAT_NONE);
     a->observe_property(p, 10, "chapter-list", MPV_FORMAT_NONE);
-    a->observe_property(p, 11, "video-params/dw", MPV_FORMAT_NONE);
-    a->observe_property(p, 12, "video-params/dh", MPV_FORMAT_NONE);
     // Последний отпустивший (движок или вывод кадров) закрывает ядро.
     m_h = mpv::Handle(p, [a](mpv_handle *h) { a->terminate_destroy(h); });
     a->set_wakeup_callback(p, [](void *ctx) {
@@ -199,7 +197,7 @@ void MpvEngine::onProperty(const mpv_event_property &p) {
         if (*static_cast<int *>(p.data) != 0 && m_loaded) emit finished();
     } else if (name == "track-list" || name == "chapter-list") {
         readTracks();
-    } else if (name == "video-params" || name == "video-params/dw" || name == "video-params/dh") {
+    } else if (name == "video-params") {
         updateVideoSize();
     }
 }

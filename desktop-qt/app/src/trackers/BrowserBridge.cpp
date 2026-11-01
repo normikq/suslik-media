@@ -337,8 +337,10 @@ void cleanOrphanTrackerProcesses() {
         if (h) {
             TerminateProcess(h, 0);
             CloseHandle(h);
+        } else {
+            // нет прав открыть процесс — тогда taskkill (отдельный процесс, ждём его: только в этом редком случае)
+            QProcess::execute(S("taskkill"), {S("/F"), S("/PID"), QString::number(pid)});
         }
-        QProcess::execute(S("taskkill"), {S("/F"), S("/PID"), QString::number(pid)});
     }
 }
 #else
@@ -404,9 +406,6 @@ struct Proc {
                 TerminateProcess(h, 0);
                 CloseHandle(h);
             }
-        }
-        if (pid > 0) {
-            QProcess::execute(S("taskkill"), {S("/F"), S("/T"), S("/PID"), QString::number(pid)});
         }
         if (process) {
             TerminateProcess(process, 0);
@@ -781,7 +780,7 @@ public:
             if (!r) continue;
             const auto header = RuTracker::formatTrackerCookies(r->value(S("result")).toObject().value(S("cookies")).toArray(), baseUrl);
             if (header && header->contains(S("bb_session"))) {
-                PlayerLog::write(S("[trackers] visible %1 login successful! Captured cookies: %2").arg(name).arg(*header));
+                PlayerLog::write(S("[trackers] visible %1 login successful (cookie %2 chars)").arg(name).arg(header->size())); // сами cookie в журнал не пишем
                 status(tx(S("trackers.browser_login_success")));
                 BrowserBridge::setPreferredType(type);
                 cdp.send(S("Browser.close"), {}, 1500);
@@ -793,7 +792,7 @@ public:
                 return {true, *header};
             }
         }
-        PlayerLog::write(S("[trackers] visible %1 login loop ended (timeout or aborting=%1)").arg(name).arg(aborting.load()));
+        PlayerLog::write(S("[trackers] visible %1 login loop ended (timeout or aborting=%2)").arg(name).arg(aborting.load()));
 #ifdef Q_OS_WIN
         s_activeVisiblePid = 0;
 #endif
