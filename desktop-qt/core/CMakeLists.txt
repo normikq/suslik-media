@@ -20,6 +20,9 @@ add_library(suslik_core STATIC
   src/BurstProxy.cpp
   src/HttpUpstream.cpp
   src/CatchUp.cpp
+  src/Search.cpp
+  src/Party.cpp
+  src/Trackers.cpp
   src/JsonOpt.h
   include/suslik/core/ApiClient.h
   include/suslik/core/CloudSync.h

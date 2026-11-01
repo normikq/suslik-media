@@ -5,6 +5,8 @@ import Suslik.Native
 Item {
     id: v
     property bool mine: false
+    property bool wasEverVisible: visible
+    onVisibleChanged: if (visible) wasEverVisible = true
     property alias category: lp.category
     readonly property alias model: lp
     signal versionsRequested(string title, var ids)
@@ -23,7 +25,10 @@ Item {
 
     // новая страница — с самого верха
     readonly property int curPage: lp.page
-    onCurPageChanged: flick.contentY = 0
+    onCurPageChanged: {
+        flick.contentY = 0
+        Ui.trimMemory()
+    }
 
     Flickable {
         id: flick
@@ -155,7 +160,7 @@ Item {
                 readonly property int count: lp.viewMode === 0 ? lp.tiles.length : 0
                 height: count ? Math.ceil(count / cols) * (tileH + rowGap) - rowGap : 0
                 Repeater {
-                    model: lp.viewMode === 0 ? lp.tiles : []
+                    model: (v.wasEverVisible && lp.viewMode === 0) ? lp.tiles : []
                     Tile {
                         id: cell
                         required property var modelData
@@ -170,15 +175,15 @@ Item {
                         height: grid.tileH
                         onFlyTo: (tab, rect, poster) => v.flyTo(tab, rect, poster)
 
-                        // переезд: плитка остаётся на старом месте и съезжает на новое (смещение копится, если
-                        // столбцы снова поменялись посреди переезда)
+                        // переезд: плитка плавно съезжает на новое место только при смене ряда/столбца.
+                        // Обычное растяжение по x/y при ресайзе окна анимировать не нужно — иначе плитки дёргаются.
                         property real placedX: NaN
                         property real placedY: NaN
                         property bool moved: false
                         onColChanged: { moved = true; Qt.callLater(place) }
                         onRowChanged: { moved = true; Qt.callLater(place) }
-                        onXChanged: Qt.callLater(place)
-                        onYChanged: Qt.callLater(place)
+                        onXChanged: if (!moved) { placedX = x }
+                        onYChanged: if (!moved) { placedY = y }
                         function place() {
                             if (moved && !isNaN(placedX) && !Theme.simple) {
                                 shift.x += placedX - x
@@ -203,7 +208,7 @@ Item {
                 width: parent.width
                 spacing: 12
                 Repeater {
-                    model: lp.viewMode === 1 ? lp.tiles : []
+                    model: (v.wasEverVisible && lp.viewMode === 1) ? lp.tiles : []
                     ListRow { required property var modelData; t: modelData; page: lp; width: parent.width }
                 }
             }

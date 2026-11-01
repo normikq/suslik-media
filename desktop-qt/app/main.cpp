@@ -5,6 +5,11 @@
 #include "src/PlayModel.h"
 #include "src/AddModel.h"
 #include "src/AudioAttach.h"
+#include "src/SearchModel.h"
+#include "src/trackers/BrowserBridge.h"
+#include "src/trackers/TrackerSettingsModel.h"
+#include "src/party/Party.h"
+#include "src/party/PartySync.h"
 #include "src/Settings.h"
 #include "src/SingleInstance.h"
 #include "src/Updater.h"
@@ -40,6 +45,14 @@
 #include <QSGRendererInterface>
 #include <QTimer>
 
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <psapi.h>
+#endif
+
 using namespace suslik;
 
 namespace {
@@ -50,12 +63,12 @@ QByteArray resource(const QString &path) {
 } // namespace
 
 int main(int argc, char *argv[]) {
-    // mpv рисует кадры через OpenGL прямо в сцену окна (MpvVideo): окно тоже на OpenGL, без копий кадров между API.
+    // Единый нативный стек OpenGL для Qt Quick и libmpv: прямой рендеринг видео в FBO сцены,
+    // минимальное потребление ОЗУ (без дублирования DirectX/OpenGL драйверов) и абсолютная стабильность.
     QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
     QGuiApplication app(argc, argv);
-    // QPixmapCache (картинки виджетов и стилей) — не больше 32 МБ. Картинки QML живут в своём кеше и отпускаются,
-    // когда их никто не показывает.
-    QPixmapCache::setCacheLimit(32 * 1024);
+    // QPixmapCache (картинки виджетов и значки) — 4 МБ достаточно (постеры живут в кэше текстур QML).
+    QPixmapCache::setCacheLimit(4 * 1024);
     QGuiApplication::setApplicationName(QStringLiteral("Suslik Media"));
     QGuiApplication::setApplicationVersion(QStringLiteral(SM_VERSION));
     QGuiApplication::setOrganizationName(QStringLiteral("Suslik"));
@@ -97,6 +110,12 @@ int main(int argc, char *argv[]) {
     player.setLibrary(&library);
     app::WindowMode windowMode;
     app::MpvInstall mpvInstall(site);
+    // «Вместе»: комната и плеер в ней (до MediaSession — у Discord «Смотрит вместе»)
+    app::Party party(api);
+    app::PartySync partySync(player, party);
+    QObject::connect(&library, &app::Library::authenticatedChanged, &party, [&library, &party] {
+        if (library.authenticated() == 0) party.leave(); // вышли из аккаунта — и из комнаты
+    });
     app::MediaSession media(player, library);
     QObject::connect(&sync, &core::CloudSync::changed, &library, [&library](int) { library.bumpWatch(); });
 
@@ -104,12 +123,15 @@ int main(int argc, char *argv[]) {
     qmlRegisterType<app::PlayModel>("Suslik.Native", 1, 0, "PlayModel");
     qmlRegisterType<app::AddModel>("Suslik.Native", 1, 0, "AddModel");
     qmlRegisterType<app::AudioAttachModel>("Suslik.Native", 1, 0, "AudioAttachModel");
+    qmlRegisterType<app::SearchModel>("Suslik.Native", 1, 0, "SearchModel");
+    qmlRegisterType<app::TrackerSettingsModel>("Suslik.Native", 1, 0, "TrackerSettingsModel");
     qmlRegisterUncreatableType<app::PlayerModel>("Suslik.Native", 1, 0, "PlayerModel", QStringLiteral("one per app"));
     qmlRegisterType<app::MpvEngine>("Suslik.Native", 1, 0, "MpvEngine");
     qmlRegisterType<app::MpvVideo>("Suslik.Native", 1, 0, "MpvVideo");
     qmlRegisterUncreatableType<app::Library>("Suslik.Native", 1, 0, "Library", QStringLiteral("one per app"));
 
     QQmlApplicationEngine engine;
+    ui.setEngine(&engine);
     // Модуль Suslik вшит в программу; копия рядом (qml\Suslik) — запасной путь для упакованной сборки.
     engine.addImportPath(QCoreApplication::applicationDirPath() + QStringLiteral("/qml"));
     engine.addImageProvider(QStringLiteral("suslik"), new app::ImageProvider(library));
@@ -121,6 +143,7 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty(QStringLiteral("player"), &player);
     engine.rootContext()->setContextProperty(QStringLiteral("windowMode"), &windowMode);
     engine.rootContext()->setContextProperty(QStringLiteral("mpvInstall"), &mpvInstall);
+    engine.rootContext()->setContextProperty(QStringLiteral("party"), &party);
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app, [] { QCoreApplication::exit(1); },
                      Qt::QueuedConnection);
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
@@ -150,6 +173,10 @@ int main(int argc, char *argv[]) {
     sync.start();
     library.start();
     QTimer::singleShot(4000, &library, [&library] { library.prunePosterFiles(); });
+#ifdef Q_OS_WIN
+    // Сброс временных страниц аллокатора после старта и парсинга базы: снижает Working Set до минимума в ОЗУ
+    QTimer::singleShot(6000, [] { EmptyWorkingSet(GetCurrentProcess()); });
+#endif
     // libmpv нет (самообновление со старой версии без неё) — докачать заранее, не дожидаясь фильма
     QTimer::singleShot(3000, &mpvInstall, [&mpvInstall] { if (!mpvInstall.ready()) mpvInstall.start(); });
     app::PlayerLog::write(QStringLiteral("[sys] Suslik Media Qt %1 started").arg(QStringLiteral(SM_VERSION)));
@@ -165,6 +192,7 @@ int main(int argc, char *argv[]) {
     }).detach();
     mpvInstall.cancel();
     player.close();
+    app::BrowserBridge::instance().shutdown(); // фоновый браузер RuTracker
     app::Reserve::shutdown();
     return rc;
 }

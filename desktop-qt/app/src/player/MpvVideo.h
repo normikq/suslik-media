@@ -4,20 +4,21 @@
 #include <QPointer>
 #include <QQuickFramebufferObject>
 
-/// Видео в сцене QML (MpvVideo.kt): mpv рисует кадр прямо в кадровый буфер этого элемента (render API, OpenGL),
-/// панели и оверлеи — обычные элементы поверх. Окно рисуется через OpenGL (main.cpp).
 namespace suslik::app {
 
+/// Видео в сцене QML: нативный рендеринг mpv в OpenGL Framebuffer Object Qt Quick.
+/// Единый OpenGL контекст исключает междрайверные накладные расходы и гарантирует минимальное потребление ОЗУ.
 class MpvVideo : public QQuickFramebufferObject {
     Q_OBJECT
     Q_PROPERTY(suslik::app::MpvEngine *engine READ engine WRITE setEngine NOTIFY engineChanged)
 
 public:
     explicit MpvVideo(QQuickItem *parent = nullptr);
-    Renderer *createRenderer() const override;
 
     MpvEngine *engine() const { return m_engine; }
     void setEngine(MpvEngine *e);
+
+    Renderer *createRenderer() const override;
 
 signals:
     void engineChanged();

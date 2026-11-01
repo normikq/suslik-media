@@ -21,6 +21,14 @@
 #include <QRegularExpression>
 #include <QUrl>
 
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <psapi.h>
+#endif
+
 namespace suslik::app {
 
 using namespace suslik::core;
@@ -122,6 +130,9 @@ PlayerModel::PlayerModel(QObject *parent)
     connect(&m_infoTimer, &QTimer::timeout, this, &PlayerModel::refreshInfo);
     m_seekTimer.setSingleShot(true);
     m_seekTimer.setInterval(250);
+    m_closeTimer.setSingleShot(true);
+    m_closeTimer.setInterval(900); // полёт закрытия — 600 мс
+    connect(&m_closeTimer, &QTimer::timeout, this, [this] { if (m_closing) finishClose(); });
     connect(&m_seekTimer, &QTimer::timeout, this, [this] {
         if (!m_pendingSeek) return;
         const qint64 t = *m_pendingSeek;
@@ -212,6 +223,8 @@ void PlayerModel::retry() {
 }
 
 void PlayerModel::begin() {
+    // новый фильм, пока прежний ещё улетает: прежний сеанс сначала закрывается до конца
+    if (m_closing) finishClose();
     Reserve::proxy(m_lib ? &m_lib->api() : nullptr);
     m_engine->handle(); // ядро mpv — до первого кадра: вывод в окне берёт его готовым
     m_open = true;
@@ -455,6 +468,8 @@ void PlayerModel::reopenAt(qint64 t) {
 
 void PlayerModel::playEntry(int i) {
     if (i < 0 || i >= m_queue.size() || m_queue[i].url.isEmpty()) return;
+    // гость комнаты: серию выбирает ведущий (плеер гостя идёт за ним сам)
+    if (!m_byRoom && partyGuest()) { flash(tx(S("party.seriyu_vybiraet_sozdatel"))); return; }
     const bool finishedHere = i == m_index + 1 && m_nextIn >= 0;
     m_seekTimer.stop();
     m_pendingSeek.reset();
@@ -499,6 +514,8 @@ void PlayerModel::cancelNext() {
     emit nextChanged();
 }
 
+qint64 PlayerModel::magnetId() const { return m_req.magnetId; }
+
 void PlayerModel::close() {
     if (!m_open || m_closing) return;
     m_closing = true;
@@ -511,11 +528,14 @@ void PlayerModel::close() {
     m_engine->setPaused(true);
     emit openChanged();
     emit nextChanged();
-    // экран плеера уезжает; ядро останавливается сразу, запас освобождается в фоне
-    QTimer::singleShot(0, this, &PlayerModel::finishClose);
+    // экран плеера улетает в постер (Main.qml), по концу полёта QML зовёт finishClose(); если полёт не дошёл
+    // до конца (окно свёрнуто — анимации стоят), закрытие довершит этот таймер
+    m_closeTimer.start();
 }
 
 void PlayerModel::finishClose() {
+    if (!m_closing) return;
+    m_closeTimer.stop();
     for (QTimer *t : {&m_tickTimer, &m_superTimer, &m_bufTimer, &m_infoTimer, &m_flashTimer, &m_prefsTimer, &m_ensureAudioTimer,
                       &m_autoSkipTimer, &m_statsTimer, &m_trackWatch})
         t->stop();
@@ -524,6 +544,10 @@ void PlayerModel::finishClose() {
     // свою ссылку, когда экран плеера уйдёт (Loader в Main.qml)
     m_engine->release();
     Reserve::proxy().clear();
+#ifdef Q_OS_WIN
+    // После закрытия фильма: возврат страниц декодера и кэша mpv операционной системе
+    QTimer::singleShot(1000, [] { EmptyWorkingSet(GetCurrentProcess()); });
+#endif
     ui().put(S("volume"), num(m_volume));
     m_open = false;
     m_closing = false;
@@ -643,7 +667,9 @@ void PlayerModel::evFinished() {
     const bool end = m_length > 0 && m_lastGood >= m_length - 5000;
     if (end) {
         savePos(m_length, m_length);
-        if (m_index < m_queue.size() - 1) {
+        // гость комнаты: плеер ведущего перейдёт к следующей, комната — за ним (без отсчёта здесь)
+        if (partyGuest()) {
+        } else if (m_index < m_queue.size() - 1) {
             if (m_nextIn < 0) {
                 m_nextIn = PlaybackSettings::nextCountdown();
                 m_nextFrom = std::max<qint64>(0, m_length - 5000);
@@ -672,6 +698,7 @@ void PlayerModel::evError(const QString &message) {
 
 void PlayerModel::togglePause() {
     if (!m_open || m_closing) return;
+    if (m_pausedAt != 0 && !m_byRoom && playLocked()) { flash(tx(S("party.pauzu_snimaet_sozdatel"))); return; }
     if (m_pausedAt == 0) {
         m_playing = false;
         m_pausedAt = now();
@@ -696,6 +723,7 @@ void PlayerModel::togglePause() {
 
 void PlayerModel::seekBy(qint64 d) {
     if (!m_started && m_length <= 0) return;
+    if (partyGuest()) { flash(tx(S("party.peremativaet_sozdatel"))); return; }
     const qint64 base = m_pendingSeek.value_or(m_time);
     qint64 t = std::max<qint64>(0, base + d);
     if (m_length > 0) t = std::min(t, std::max<qint64>(0, m_length - 2000));
@@ -709,6 +737,7 @@ void PlayerModel::seekTo(qint64 t) {
     m_seekTimer.stop();
     m_pendingSeek.reset();
     m_scrubbing = false;
+    if (!m_byRoom && partyGuest()) return; // у гостя полоса — «прямой эфир»
     m_bufferingShown = 0;
     m_time = m_lastGood = std::max<qint64>(0, t);
     m_lastSeekAt = now();
@@ -733,6 +762,7 @@ void PlayerModel::reseekHere() {
 void PlayerModel::jumpChapter(int d) {
     const QVariantList ch = m_engine->chapters();
     if (ch.size() < 2) return;
+    if (partyGuest()) { flash(tx(S("party.peremativaet_sozdatel"))); return; }
     const int i = std::clamp(chapterAt(m_time) + d, 0, int(ch.size()) - 1);
     const QVariantMap c = ch[i].toMap();
     seekTo(c.value(S("timeMs")).toLongLong());
@@ -1055,6 +1085,8 @@ QVariantList PlayerModel::chapters() const { return m_engine->chapters(); }
 void PlayerModel::skipIntroImpl(bool autoSkip) {
     const auto r = introNow();
     if (!r) return;
+    // гость комнаты: заставку пропускает ведущий за всех
+    if (partyGuest()) { if (!autoSkip) flash(tx(S("party.peremativaet_sozdatel"))); return; }
     PlayerLog::write(S("skip intro %1-%2s%3").arg(r->startMs / 1000).arg(r->endMs / 1000).arg(autoSkip ? S(" (auto)") : QString()));
     seekTo(r->endMs);
     if (autoSkip) flash(tx(S("player.zastavka_propuschena")));
@@ -1099,7 +1131,8 @@ void PlayerModel::fetchMarkers() {
 void PlayerModel::checkCredits() {
     const auto at = MarkersDetector::nextOfferAt(markers(), m_length);
     const bool inCredits = at && m_started && m_time >= *at && m_time < m_length;
-    if (inCredits && m_nextIn < 0 && !m_nextDismissed && !m_closing && m_index + 1 < m_queue.size() && PlaybackSettings::offerNextOnCredits()) {
+    if (inCredits && m_nextIn < 0 && !m_nextDismissed && !m_closing && m_index + 1 < m_queue.size() && PlaybackSettings::offerNextOnCredits() &&
+        !partyGuest()) {
         PlayerLog::write(S("[markers] credits at %1s: next in %2s").arg(m_time / 1000).arg(PlaybackSettings::nextCountdown()));
         m_nextIn = PlaybackSettings::nextCountdown();
         m_nextFrom = *at;

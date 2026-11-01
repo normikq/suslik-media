@@ -85,6 +85,8 @@ public:
     Q_INVOKABLE void toggleFavorite();
     /// «Смотреть»: собирает запрос плеера и отдаёт его (playRequested).
     Q_INVOKABLE void play();
+    /// Гость комнаты «Вместе»: включить с места комнаты (мс), без выбора.
+    Q_INVOKABLE void playAt(qint64 startMs);
 
     const PlayRequest &request() const { return m_request; }
 
@@ -116,6 +118,7 @@ private:
     QHash<QString, QString> m_sidePaths;
     int m_gen = 0;
     PlayRequest m_request;
+    std::optional<qint64> m_startMs; ///< playAt: место комнаты
 };
 
 } // namespace suslik::app

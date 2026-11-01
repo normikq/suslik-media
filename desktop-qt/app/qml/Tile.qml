@@ -8,6 +8,19 @@ Item {
     property var page
     signal flyTo(int tab, var rect, string poster)   // постер летит в раздел боковой панели
 
+    // место постера для вылета плеера (ExitFlight.kt: trackBounds); сменился фильм — старая запись уходит
+    property var trackedId: 0
+    function retrack() {
+        const id = tile.t && tile.t.id ? tile.t.id : 0
+        if (id === trackedId) return
+        Theme.untrack(Theme.posters, trackedId, tile)
+        trackedId = id
+        Theme.track(Theme.posters, id, tile)
+    }
+    Component.onCompleted: retrack()
+    Component.onDestruction: Theme.untrack(Theme.posters, trackedId, tile)
+    onTChanged: retrack()
+
     readonly property bool hovered: hover.hovered
     height: Math.round(width * 1.5)
 
@@ -17,8 +30,6 @@ Item {
         id: card
         anchors.fill: parent
         transform: Translate { y: tile.hovered ? -6 : 0; Behavior on y { NumberAnimation { duration: 280; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease } } }
-        scale: tile.hovered ? 1.025 : 1
-        Behavior on scale { NumberAnimation { duration: 280; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease } }
 
         // Без слоя: фон и затемнения — Rectangle со скруглением, постер — RoundedImage (шейдер по текстуре)
         Rectangle { anchors.fill: parent; radius: 14; color: "#13161F" }
@@ -33,7 +44,7 @@ Item {
             anchors.fill: parent
             radius: 14
             source: tile.t.poster ? "image://suslik" + tile.t.poster : ""
-            sourceSize: Qt.size(360, 540)
+            sourceSize: Qt.size(240, 360)
             zoom: tile.hovered ? 1.06 : 1
             Behavior on zoom { NumberAnimation { duration: 360; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease } }
         }
@@ -85,6 +96,7 @@ Item {
                 text: tile.t.title || ""
                 color: "white"
                 font.family: Theme.onest; font.weight: Font.DemiBold; font.pixelSize: 14
+                renderType: Text.NativeRendering
                 lineHeight: 17; lineHeightMode: Text.FixedHeight
                 maximumLineCount: 2; wrapMode: Text.Wrap; elide: Text.ElideRight
             }
@@ -100,14 +112,14 @@ Item {
                 Column {
                     id: detailsCol
                     width: parent.width
-                    Text { topPadding: 2; bottomPadding: 5; text: tile.t.subtitle || ""; color: "#9BA4B5"; font.family: Theme.onest; font.pixelSize: 12 }
+                    Text { topPadding: 2; bottomPadding: 5; text: tile.t.subtitle || ""; color: "#9BA4B5"; font.family: Theme.onest; font.pixelSize: 12; renderType: Text.NativeRendering }
                     Rectangle {
                         width: st.implicitWidth + 14; height: st.implicitHeight + 4
                         radius: 6; color: "#181B24"; border.color: "#2A3040"
-                        Text { id: st; anchors.centerIn: parent; text: tile.t.status || ""; color: "white"; font.family: Theme.onest; font.weight: Font.Medium; font.pixelSize: 11 }
+                        Text { id: st; anchors.centerIn: parent; text: tile.t.status || ""; color: "white"; font.family: Theme.onest; font.weight: Font.Medium; font.pixelSize: 11; renderType: Text.NativeRendering }
                     }
-                    Text { topPadding: 5; width: parent.width; elide: Text.ElideRight; text: tile.t.specs1 || ""; color: "#C0C7D5"; font.family: Theme.onest; font.pixelSize: 11 }
-                    Text { topPadding: 1; width: parent.width; elide: Text.ElideRight; text: tile.t.specs2 || ""; color: "#7A8294"; font.family: Theme.onest; font.pixelSize: 11 }
+                    Text { topPadding: 5; width: parent.width; elide: Text.ElideRight; text: tile.t.specs1 || ""; color: "#C0C7D5"; font.family: Theme.onest; font.pixelSize: 11; renderType: Text.NativeRendering }
+                    Text { topPadding: 1; width: parent.width; elide: Text.ElideRight; text: tile.t.specs2 || ""; color: "#7A8294"; font.family: Theme.onest; font.pixelSize: 11; renderType: Text.NativeRendering }
                 }
             }
         }
@@ -147,7 +159,10 @@ Item {
             cursorShape: tile.t.canPlay ? Qt.PointingHandCursor : Qt.ArrowCursor
             onClicked: (m) => {
                 if (m.button === Qt.RightButton) menu.popup()
-                else if (tile.t.canPlay) tile.page.open(tile.t.id)
+                else if (tile.t.canPlay) {
+                    Theme.fromContinue = false
+                    tile.page.open(tile.t.id)
+                }
             }
         }
 

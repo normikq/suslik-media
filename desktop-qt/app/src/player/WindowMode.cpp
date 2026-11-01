@@ -2,6 +2,8 @@
 
 #include <QCoreApplication>
 #include <QCursor>
+#include <QQuickWindow>
+#include <memory>
 #include <QGuiApplication>
 #include <QScreen>
 #include <QVariantAnimation>
@@ -60,6 +62,43 @@ bool WindowMode::nativeEventFilter(const QByteArray &type, void *message, qintpt
 
 void WindowMode::frameless(bool on) {
     m_w->setFlag(Qt::FramelessWindowHint, on);
+}
+
+void WindowMode::cloakWhile(const std::function<void()> &change, const std::function<void()> &after) {
+#ifdef Q_OS_WIN
+    const HWND before = reinterpret_cast<HWND>(m_w->winId());
+    BOOL on = TRUE;
+    const bool cloaked = SUCCEEDED(DwmSetWindowAttribute(before, 13 /*DWMWA_CLOAK*/, &on, sizeof on));
+    change();
+    if (!cloaked) { if (after) after(); return; }
+    const int gen = ++m_cloakGen;
+    auto uncloak = [this, before, gen, after] {
+        if (gen != m_cloakGen) return;
+        ++m_cloakGen;
+        BOOL off = FALSE;
+        DwmSetWindowAttribute(before, 13, &off, sizeof off);
+        if (m_w) {
+            const HWND now = reinterpret_cast<HWND>(m_w->winId());
+            if (now != before) DwmSetWindowAttribute(now, 13, &off, sizeof off);
+        }
+        if (after) after();
+    };
+    // показать, когда Qt Quick дважды нарисовал окно уже в новой рамке; самое позднее — через 150 мс
+    if (auto *qw = qobject_cast<QQuickWindow *>(m_w.data())) {
+        auto conn = std::make_shared<QMetaObject::Connection>();
+        auto frames = std::make_shared<int>(0);
+        *conn = connect(qw, &QQuickWindow::frameSwapped, this, [conn, frames, uncloak] {
+            if (++*frames < 2) return;
+            QObject::disconnect(*conn);
+            uncloak();
+        }, Qt::QueuedConnection);
+        qw->update();
+    }
+    QTimer::singleShot(150, this, uncloak);
+#else
+    change();
+    if (after) after();
+#endif
 }
 
 void WindowMode::roundCorners(bool on) {
@@ -133,26 +172,31 @@ void WindowMode::setMini(bool on, double aspect) {
         const int h = int(std::round(w / a));
         QScreen *s = m_w->screen() ? m_w->screen() : QGuiApplication::primaryScreen();
         const QRect work = s->availableGeometry();
-        m_w->setMinimumSize(QSize(120, 80));
-        m_w->setWindowStates(Qt::WindowNoState);
-        frameless(true);
+        const QRect to(work.right() - w - 24, work.bottom() - h - 24, w, h);
         m_mini = true;
-        setOnTop(true);
-        m_w->show();
-        roundCorners(true);
-        fly(QRect(work.right() - w - 24, work.bottom() - h - 24, w, h));
+        // рамка снимается, пока окно спрятано: без белой рамки на миг; в угол едет уже видимое окно
+        cloakWhile([this] {
+            m_w->setMinimumSize(QSize(120, 80));
+            m_w->setWindowStates(Qt::WindowNoState);
+            frameless(true);
+            setOnTop(true);
+            m_w->show();
+            roundCorners(true);
+        }, [this, to] { if (m_mini) fly(to); });
     } else {
         if (m_anim) m_anim->stop();
         if (m_smooth) m_smooth->stop();
         m_resizeEdges = 0;
-        roundCorners(false);
-        frameless(false);
         m_mini = false;
-        setOnTop(m_topBeforeMini);
-        m_w->setMinimumSize(m_minBefore);
-        m_w->setGeometry(m_before);
-        if (m_maximizedBefore) m_w->setWindowStates(Qt::WindowMaximized);
-        m_w->show();
+        cloakWhile([this] {
+            roundCorners(false);
+            frameless(false);
+            setOnTop(m_topBeforeMini);
+            m_w->setMinimumSize(m_minBefore);
+            m_w->setGeometry(m_before);
+            if (m_maximizedBefore) m_w->setWindowStates(Qt::WindowMaximized);
+            m_w->show();
+        });
     }
     emit changed();
 }

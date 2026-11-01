@@ -6,6 +6,7 @@
 #include <QSize>
 
 #include <QWindow>
+#include <functional>
 class QVariantAnimation;
 class QTimer;
 
@@ -59,6 +60,10 @@ private:
     void fly(const QRect &to);
     void roundCorners(bool on);
     void smoothTick();
+    /// Windows: смена рамки окна на время перерисовки прячется (DWM cloak), иначе на миг видна белая
+    /// «классическая» рамка. change — сразу, after — когда окно снова видно (кадр без рамки уже нарисован).
+    void cloakWhile(const std::function<void()> &change, const std::function<void()> &after = {});
+    int m_cloakGen = 0;
 
     QPointer<QWindow> m_w;
     bool m_full = false, m_mini = false, m_onTop = false, m_topBeforeMini = false;

@@ -35,8 +35,14 @@ QString dir() {
 QString file(const QString &n) { return QDir(dir()).filePath(n); }
 
 int migrateFromKotlin() {
-    if (QFile::exists(file(QStringLiteral("migrated.txt")))) return 0;
     const QString old = QDir(base()).filePath(QStringLiteral("SuslikMedia"));
+    // Трекеры (RuTracker с ПК, выбор источников) появились позже первого переноса: их — отдельно, пока своих нет
+    {
+        const QString f = QStringLiteral("local_trackers.properties");
+        const QString from = QDir(old).filePath(f), to = file(f);
+        if (QFile::exists(from) && !QFile::exists(to)) QFile::copy(from, to);
+    }
+    if (QFile::exists(file(QStringLiteral("migrated.txt")))) return 0;
     int n = 0;
     if (QDir(old).exists()) {
         // Вход, прогресс, выбор дорожек, избранное на этом устройстве, настройки. Кэши (постеры, медиатека) скачаются заново.

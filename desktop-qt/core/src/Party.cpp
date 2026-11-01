@@ -1,0 +1,428 @@
+// Перенос shared/.../core/party: PartyModels.kt, PartyProtocol.kt, PartySyncEngine.kt.
+#include "suslik/core/Party.h"
+
+#include "JsonOpt.h"
+
+#include <QCryptographicHash>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QUuid>
+#include <cmath>
+#include <cstdlib>
+
+namespace suslik::core {
+
+#define S QStringLiteral
+
+namespace {
+std::optional<QString> nonBlank(const QString &s) { return s.trimmed().isEmpty() ? std::nullopt : std::optional<QString>(s); }
+double optDouble(const QJsonObject &o, const QString &k, double def) {
+    const QJsonValue v = o.value(k);
+    if (v.isDouble()) return v.toDouble();
+    if (v.isString()) { bool ok = false; const double d = v.toString().toDouble(&ok); if (ok) return d; }
+    return def;
+}
+} // namespace
+
+// ---- часы и дрейф ----
+
+void PartyClock::addSample(qint64 localSend, qint64 localRecv, qint64 serverTime) {
+    const qint64 rtt = std::max<qint64>(0, localRecv - localSend);
+    if (rtt < m_bestRtt) {
+        m_bestRtt = rtt;
+        m_offset = serverTime - (localSend + rtt / 2);
+    }
+}
+
+void PartyClock::reset() {
+    m_offset = 0;
+    m_bestRtt = std::numeric_limits<qint64>::max();
+}
+
+DriftAction DriftController::evaluate(float localPosSec, float targetPosSec) {
+    const float drift = localPosSec - targetPosSec;
+    if (std::abs(drift) < TOLERANCE_SEC) return {};
+    if (drift > HARD_SEEK_THRESHOLD_SEC || drift < -HARD_SEEK_THRESHOLD_SEC) return {DriftAction::Kind::HardSeek, 1.f, targetPosSec};
+    if (drift > 0.f) return {DriftAction::Kind::SlowDown, 0.95f, 0.f};
+    return {DriftAction::Kind::SpeedUp, 1.05f, 0.f};
+}
+
+// ---- данные комнаты ----
+
+qint64 PartyFileRef::adId() const {
+    bool ok = false;
+    const qint64 v = key.section(QLatin1Char('|'), 0, 0).toLongLong(&ok);
+    return ok ? v : 0;
+}
+
+qint64 PartyState::targetMs(qint64 serverNowMs) const {
+    const double base = pos * 1000.0;
+    if (!playing || waiting) return qint64(base);
+    const qint64 elapsed = std::max<qint64>(0, serverNowMs - anchorServerMs);
+    return qint64(base + double(elapsed) * rate);
+}
+
+bool PartyRoom::isHost(const std::optional<QString> &myUserId, const QString &myKey) const {
+    return myUserId && hostId && *myUserId == *hostId && (*hostId != SHARED_USER || !hostKey || *hostKey == myKey);
+}
+
+bool PartyRoom::isCreator(const PartyMember &m) const {
+    return hostId && m.userId == *hostId && (*hostId != SHARED_USER || !hostKey || m.key == *hostKey);
+}
+
+bool PartyRoom::othersBuffering(const QString &myKey) const {
+    for (const auto &m : members)
+        if (m.buffering && m.key != myKey) return true;
+    return false;
+}
+
+PartyRoom PartyRoom::putFile(const PartyFileRef &f) const {
+    PartyRoom r = *this;
+    r.file = f;
+    r.pendingFileKey = f.key;
+    return r;
+}
+
+PartyRoom PartyRoom::fileRejected() const {
+    PartyRoom r = *this;
+    r.pendingFileKey.reset();
+    return r;
+}
+
+PartyRoom PartyRoom::clearFile() const {
+    PartyRoom r = *this;
+    r.file.reset();
+    r.pendingFileKey = NO_FILE;
+    return r;
+}
+
+PartyRoom PartyRoom::merge(const RoomUpdate &u) const {
+    PartyRoom r = *this;
+    if (pendingFileKey && (u.file ? u.file->key : NO_FILE) != *pendingFileKey) {
+        // Старый ответ: участники и ведущий — свежие, фильм и время — ещё прежние
+        if (u.id) r.id = u.id;
+        r.hostId = u.hostId; r.hostKey = u.hostKey; r.hostName = u.hostName; r.hostOnly = u.hostOnly;
+        if (u.members) r.members = *u.members;
+        return r;
+    }
+    if (u.id) r.id = u.id;
+    r.hostId = u.hostId; r.hostKey = u.hostKey; r.hostName = u.hostName; r.hostOnly = u.hostOnly;
+    r.file = u.file;
+    if (u.state && u.state->seq >= state.seq) r.state = *u.state;
+    if (u.members) r.members = *u.members;
+    r.pendingFileKey.reset();
+    return r;
+}
+
+PartyRoom PartyRoom::reduce(const PartyEvent &e) const {
+    switch (e.kind) {
+    case PartyEvent::Kind::Init: return e.room ? merge(*e.room) : *this;
+    case PartyEvent::Kind::StateChanged: return e.room ? merge(*e.room) : *this;
+    case PartyEvent::Kind::MemberJoined: {
+        PartyRoom r = *this;
+        r.members.removeIf([&](const PartyMember &m) { return m.key == e.member.key; });
+        r.members.append(e.member);
+        return r;
+    }
+    case PartyEvent::Kind::MemberLeft: {
+        PartyRoom r = *this;
+        r.members.removeIf([&](const PartyMember &m) { return m.key == e.key; });
+        return r;
+    }
+    }
+    return *this;
+}
+
+// ---- протокол ----
+
+QString PartyProtocol::newClientId(const QString &prefix) {
+    return prefix + QLatin1Char('_') + QUuid::createUuid().toString(QUuid::Id128).left(12);
+}
+
+QString PartyProtocol::clientKey(const QString &clientId) {
+    return QString::fromLatin1(QCryptographicHash::hash(clientId.toUtf8(), QCryptographicHash::Sha256).toHex().left(16));
+}
+
+QString PartyProtocol::normalizeCode(const QString &code) {
+    QString out;
+    for (const QChar c : code.trimmed().toLower())
+        if (c.isLetterOrNumber()) out += c;
+    return out;
+}
+
+QJsonObject PartyProtocol::createBody(const QString &clientId) { return {{S("controls"), S("all")}, {S("client_id"), clientId}}; }
+QJsonObject PartyProtocol::joinBody(const QString &clientId) { return {{S("client_id"), clientId}}; }
+QJsonObject PartyProtocol::leaveBody(const QString &clientId) { return {{S("client_id"), clientId}}; }
+QJsonObject PartyProtocol::play(qint64 posMs) { return {{S("type"), S("play")}, {S("pos"), double(posMs) / 1000.0}}; }
+QJsonObject PartyProtocol::pause(qint64 posMs) { return {{S("type"), S("pause")}, {S("pos"), double(posMs) / 1000.0}}; }
+QJsonObject PartyProtocol::seek(qint64 posMs) { return {{S("type"), S("seek")}, {S("pos"), double(posMs) / 1000.0}}; }
+QJsonObject PartyProtocol::buffering(bool loading) { return {{S("type"), S("buffering")}, {S("buffering"), loading}}; }
+QJsonObject PartyProtocol::changeFile(const PartyFileRef &f) { return {{S("type"), S("change_file")}, {S("file"), fileJson(f)}}; }
+QJsonObject PartyProtocol::closeFile() { return {{S("type"), S("change_file")}, {S("file"), QJsonValue::Null}}; }
+QJsonObject PartyProtocol::withClient(QJsonObject body, const QString &clientId) { body.insert(S("client_id"), clientId); return body; }
+QJsonObject PartyProtocol::fileJson(const PartyFileRef &f) { return {{S("key"), f.key}, {S("name"), f.title}, {S("ad_id"), double(f.adId())}}; }
+
+std::optional<RoomUpdate> PartyProtocol::roomOf(const QJsonObject &res) {
+    const QJsonValue v = res.value(S("room"));
+    if (!v.isObject()) return std::nullopt;
+    return parseRoom(v.toObject());
+}
+
+std::optional<QString> PartyProtocol::hostIdOf(const QJsonObject &res) {
+    const QJsonValue v = res.value(S("room"));
+    return v.isObject() ? nonBlank(json::str(v.toObject(), S("host_id"))) : std::nullopt;
+}
+
+std::optional<QString> PartyProtocol::memberIdOf(const QJsonObject &res) {
+    const QJsonValue v = res.value(S("member"));
+    return v.isObject() ? nonBlank(json::str(v.toObject(), S("id"))) : std::nullopt;
+}
+
+RoomUpdate PartyProtocol::parseRoom(const QJsonObject &room) {
+    RoomUpdate u;
+    u.id = nonBlank(json::str(room, S("id")));
+    u.hostId = nonBlank(json::str(room, S("host_id")));
+    u.hostKey = nonBlank(json::str(room, S("host_key")));
+    u.hostName = json::str(room, S("host_name"));
+    u.hostOnly = json::str(room, S("controls")) == S("host");
+    const QJsonValue fv = room.value(S("file"));
+    if (fv.isObject()) {
+        const QJsonObject f = fv.toObject();
+        const QString key = json::str(f, S("key"));
+        if (!key.trimmed().isEmpty()) u.file = PartyFileRef{key, json::str(f, S("name"))};
+    }
+    const QJsonValue sv = room.value(S("state"));
+    if (sv.isObject()) {
+        const QJsonObject s = sv.toObject();
+        u.state = PartyState{json::optBool(s, S("playing")), optDouble(s, S("pos"), 0), optDouble(s, S("rate"), 1),
+                             json::optLong(s, S("anchor_server_ms")), json::optLong(s, S("seq")), json::optBool(s, S("waiting"))};
+        u.serverTime = json::optLong(s, S("server_time"));
+    }
+    const QJsonValue mv = room.value(S("members"));
+    if (mv.isArray()) {
+        QList<PartyMember> list;
+        for (const auto &m : mv.toArray())
+            if (m.isObject()) list << parseMember(m.toObject());
+        u.members = list;
+    }
+    return u;
+}
+
+PartyMember PartyProtocol::parseMember(const QJsonObject &m) {
+    PartyMember p;
+    p.key = json::str(m, S("key"));
+    p.userId = json::str(m, S("id"));
+    p.name = json::str(m, S("name"));
+    if (p.name.trimmed().isEmpty()) p.name = S("Гость");
+    p.buffering = json::optBool(m, S("buffering"));
+    const QString avatar = json::str(m, S("avatar"));
+    if (avatar.startsWith(S("https://"))) p.avatar = avatar;
+    return p;
+}
+
+std::optional<PartyEvent> PartyProtocol::parseEventLine(const QString &line) {
+    if (!line.startsWith(S("data:"))) return std::nullopt;
+    return parseEvent(line.mid(5).trimmed());
+}
+
+std::optional<PartyEvent> PartyProtocol::parseEvent(const QString &text) {
+    QJsonParseError err{};
+    const auto doc = QJsonDocument::fromJson(text.toUtf8(), &err);
+    if (err.error != QJsonParseError::NoError || !doc.isObject()) return std::nullopt;
+    const QJsonObject msg = doc.object();
+    const QString event = json::str(msg, S("event"));
+    const QJsonObject data = msg.value(S("data")).toObject();
+    PartyEvent e;
+    if (event == S("init")) {
+        e.kind = PartyEvent::Kind::Init;
+        const QJsonValue member = msg.value(S("member"));
+        if (member.isObject()) e.myUserId = nonBlank(json::str(member.toObject(), S("id")));
+        if (msg.value(S("room")).isObject()) e.room = parseRoom(msg.value(S("room")).toObject());
+        return e;
+    }
+    if (event == S("state_changed")) {
+        if (!msg.value(S("data")).isObject()) return std::nullopt;
+        e.kind = PartyEvent::Kind::StateChanged;
+        e.room = parseRoom(data);
+        return e;
+    }
+    if (event == S("member_joined")) {
+        if (!data.value(S("member")).isObject()) return std::nullopt;
+        e.kind = PartyEvent::Kind::MemberJoined;
+        e.member = parseMember(data.value(S("member")).toObject());
+        return e;
+    }
+    if (event == S("member_left")) {
+        const auto key = nonBlank(json::str(data, S("key")));
+        if (!key) return std::nullopt;
+        e.kind = PartyEvent::Kind::MemberLeft;
+        e.key = *key;
+        return e;
+    }
+    return std::nullopt;
+}
+
+// ---- синхронизация плеера ----
+
+PartySyncEngine::PartySyncEngine(PartyLink &link, std::function<void(const QString &)> log, std::function<void(const PartyNotice &)> notice)
+    : m_link(link), m_log(std::move(log)), m_notice(std::move(notice)) {}
+
+void PartySyncEngine::idle(SyncPlayer &player) {
+    if (!m_seenSeek) m_seenSeek = player.seekStamp();
+    restoreRate(player);
+    m_lastSeq = -1; m_pendingAt = 0; m_stalledSince = 0; m_lastEngineMs = std::numeric_limits<qint64>::min();
+    m_applied.reset(); m_waitSince = 0; m_waitNoticed = false;
+    m_link.reportBuffering(false);
+}
+
+void PartySyncEngine::tick(SyncPlayer &player, const QString &key, qint64 now) {
+    if (!m_seenSeek) m_seenSeek = player.seekStamp();
+    if (player.busy()) return; // полосу тянут: место отправим после отпускания
+    const qint64 t = player.timeMs();
+    const bool p = player.paused();
+    m_lastTimeMs = t;
+
+    // Пользователь перемотал здесь: комната идёт туда же. Ловим по метке перемотки плеера, а не по скачку времени.
+    const qint64 stamp = player.seekStamp();
+    if (stamp != *m_seenSeek) {
+        m_seenSeek = stamp;
+        const qint64 expected = m_prevP ? m_prevT : m_prevT + qint64(double(now - m_prevAt) * player.userRate() * m_drift);
+        if (m_lastSeq >= 0 && std::llabs(t - expected) > 1500 && m_link.canSeek()) { // смена дорожки тоже ставит метку: без скачка
+            log(S("[party] local seek at %1").arg(t));
+            restoreRate(player);
+            if (p) m_link.pause(t); else m_link.play(t);
+            m_lastSeq = m_link.state().seq + 1;
+            // Новое место грузится секунды: «грузимся» (комната ждёт, а не убегает) и не гонимся за ней
+            m_pendingAt = now; m_pendingTo = t; m_pendingT = -1;
+            m_ownUntil = now + OWN_MS;
+            m_prevT = t; m_prevP = p; m_prevAt = now;
+            m_link.reportBuffering(!p);
+            return;
+        }
+    }
+
+    // Наша перемотка к комнате: готова, когда движок снова идёт вперёд (далеко от цели — через 3 с)
+    if (m_pendingAt > 0) {
+        const qint64 e = player.engineMs();
+        const qint64 d = e - m_pendingT;
+        const bool moved = m_pendingT >= 0 && d >= 100 && d <= 2000 && player.running() &&
+                           (std::llabs(e - m_pendingTo) < 5000 || now - m_pendingAt > 3000);
+        if (moved || p || now - m_pendingAt > 30000) {
+            log(S("[party] seek done in %1 ms").arg(now - m_pendingAt));
+            m_pendingAt = 0; m_ownUntil = now + OWN_MS;
+        } else {
+            m_pendingT = e;
+        }
+    }
+    // Сами грузимся, хотя должны играть: через 1 с комната ждёт и нас. Стоящее время без паузы — тоже загрузка.
+    const qint64 e = player.engineMs();
+    if (p || e != m_lastEngineMs) { m_lastEngineMs = e; m_engineMovedAt = now; }
+    const bool frozen = now - m_engineMovedAt >= FROZEN_MS;
+    if (!p && m_pendingAt == 0 && (!player.running() || frozen))
+        m_stalledSince = m_stalledSince > 0 ? m_stalledSince : (frozen ? m_engineMovedAt : now);
+    else
+        m_stalledSince = 0;
+    const bool loading = m_pendingAt > 0 || (m_stalledSince > 0 && now - m_stalledSince > 1000);
+    m_link.reportBuffering(loading && m_link.state().playing);
+
+    // 1. Я только что поставил этот фильм в комнату: комната стартует с моего места
+    if (m_link.takeStartedByMe(key)) {
+        if (p) m_link.pause(t); else m_link.play(t);
+        m_lastSeq = m_link.state().seq + 1; m_ownUntil = now + OWN_MS;
+        if (!p && !player.running()) { m_pendingAt = now; m_pendingTo = t; m_pendingT = -1; }
+        m_prevT = t; m_prevP = p; m_prevAt = now;
+        return;
+    }
+
+    // 2. Пауза / пуск здесь: сообщаем комнате сразу
+    if (m_lastSeq >= 0 && !loading && p != m_prevP) {
+        if (m_link.canControl()) {
+            log(S("[party] local %1 at %2").arg(p ? S("pause") : S("play")).arg(t));
+            if (p) m_link.pause(t); else m_link.play(t);
+            m_lastSeq = m_link.state().seq + 1; // наше изменение вернётся: это не новость
+            m_ownUntil = now + OWN_MS;
+            m_prevT = t; m_prevP = p; m_prevAt = now;
+            return;
+        }
+        // Гость: пауза только у него; пуск возвращает его к месту ведущего
+        m_localHold = p;
+        log(p ? S("[party] guest pause (local only)") : S("[party] guest goes on: back to the room"));
+        if (!p) m_lastSeq = -1;
+    }
+
+    // 3. Следуем за комнатой
+    const PartyState s = m_link.state();
+    const qint64 target = m_link.targetMs();
+    const bool othersLoading = m_link.othersBuffering();
+    const bool wantPaused = !s.playing || (s.waiting && !loading && othersLoading) || m_localHold;
+    qint64 nt = t;
+    bool np = p;
+    if (s.playing && s.waiting && othersLoading) {
+        if (m_waitSince == 0) m_waitSince = now;
+        else if (!m_waitNoticed && now - m_waitSince >= WAIT_NOTICE_MS) {
+            m_waitNoticed = true;
+            if (m_notice) m_notice({PartyNotice::Kind::Waiting, 0});
+        }
+    } else {
+        m_waitSince = 0; m_waitNoticed = false;
+    }
+    if (m_lastSeq < 0 || s.seq > m_lastSeq) {
+        const std::optional<PartyState> before = m_lastSeq >= 0 ? m_applied : std::nullopt;
+        m_applied = s;
+        if (before && !m_link.canControl())
+            if (auto n = noticeOf(*before, s); n && m_notice) m_notice(*n);
+        m_lastSeq = s.seq;
+        restoreRate(player);
+        const bool alreadyGoing = m_pendingAt > 0 && std::llabs(m_pendingTo - target) < 1000;
+        const bool needSeek = std::llabs(t - target) > 1000 && !alreadyGoing;
+        // Комната играет, но ждёт других, а нам ещё перематываться: грузим без паузы
+        const bool pauseNow = needSeek && s.playing && !m_localHold ? false : wantPaused;
+        if (p != pauseNow && !(loading && !pauseNow)) { player.applyPaused(pauseNow); np = pauseNow; }
+        if (needSeek) nt = seekRoom(player, target, now);
+        m_ownUntil = now + OWN_MS;
+        log(S("[party] apply seq=%1 playing=%2 waiting=%3 target=%4 local=%5")
+                .arg(s.seq).arg(s.playing ? S("true") : S("false")).arg(s.waiting ? S("true") : S("false")).arg(target).arg(t));
+    } else if (s.playing && s.waiting && !loading && !p && othersLoading) {
+        // Готовы, но комната ждёт кого-то ещё: стоим здесь
+        player.applyPaused(true); np = true; m_ownUntil = now + 1000;
+        log(S("[party] ready, waiting for the others at %1").arg(t));
+    } else if (s.playing && !s.waiting && !p && !loading && now > m_ownUntil && player.running() && player.userRate() == 1.f) {
+        const DriftAction a = DriftController::evaluate(float(t) / 1000.f, float(target) / 1000.f);
+        switch (a.kind) {
+        case DriftAction::Kind::None: restoreRate(player); break;
+        case DriftAction::Kind::SlowDown:
+        case DriftAction::Kind::SpeedUp:
+            if (m_drift != a.rate) { m_drift = a.rate; player.setRate(a.rate); }
+            break;
+        case DriftAction::Kind::HardSeek:
+            restoreRate(player); nt = seekRoom(player, target, now); m_ownUntil = now + OWN_MS;
+            log(S("[party] drift seek local=%1 target=%2").arg(t).arg(target));
+            break;
+        }
+    }
+    m_prevT = nt; m_prevP = np; m_prevAt = now;
+}
+
+std::optional<PartyNotice> PartySyncEngine::noticeOf(const PartyState &before, const PartyState &s) const {
+    const qint64 ran = before.playing && !before.waiting
+                           ? qint64(double(std::max<qint64>(0, s.anchorServerMs - before.anchorServerMs)) * before.rate) : 0;
+    const qint64 expected = qint64(before.pos * 1000) + ran;
+    const qint64 pos = qint64(s.pos * 1000);
+    if (std::llabs(pos - expected) > SEEK_NOTICE_MS) return PartyNotice{PartyNotice::Kind::Seeked, pos};
+    if (before.playing && !s.playing) return PartyNotice{PartyNotice::Kind::Paused, 0};
+    if (!before.playing && s.playing) return PartyNotice{PartyNotice::Kind::Resumed, 0};
+    return std::nullopt;
+}
+
+void PartySyncEngine::restoreRate(SyncPlayer &player) {
+    if (m_drift != 1.f) { m_drift = 1.f; player.setRate(player.userRate()); }
+}
+
+qint64 PartySyncEngine::seekRoom(SyncPlayer &player, qint64 target, qint64 now) {
+    player.seekTo(target);
+    m_pendingAt = now; m_pendingTo = target; m_pendingT = -1;
+    m_seenSeek = player.seekStamp();
+    return target;
+}
+
+} // namespace suslik::core
