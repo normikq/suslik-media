@@ -385,11 +385,28 @@
     var url = S.site + '/join/' + encodeURIComponent(S.room.id);
     D.openExternal(url).catch(function () { toast('Откройте в браузере: ' + url); });
   }
+  // В iframe Discord navigator.clipboard закрыт (нет allow="clipboard-write"), поэтому сначала старый
+  // execCommand('copy') — он работает по нажатию и в iframe; не вышло — clipboard; совсем никак — код в подсказке
+  function copyText(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    if (ok) return Promise.resolve();
+    try { return navigator.clipboard.writeText(text); } catch (e) { return Promise.reject(e); }
+  }
   function copyCode() {
     var code = prettyCode(S.room.id);
-    var done = function () { toast('Код скопирован: ' + code); };
-    try { navigator.clipboard.writeText(code).then(done, function () { toast('Код комнаты: ' + code); }); } catch (e) { toast('Код комнаты: ' + code); }
+    copyText(code).then(function () { toast('Код скопирован: ' + code); },
+      function () { toast('Скопировать не дал Discord. Код комнаты: ' + code); });
   }
+
 
   // ---- отрисовка ----
   function render() {
