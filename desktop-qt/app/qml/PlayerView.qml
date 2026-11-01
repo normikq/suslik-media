@@ -7,12 +7,12 @@ import Suslik.Native
 Item {
     id: pv
     anchors.fill: parent
-    visible: opacity > 0
-    // появляется плавно: экран создаётся при открытии фильма (Loader), сначала прозрачный
-    property bool shown: false
-    Component.onCompleted: { shown = Qt.binding(() => player.open && !player.closing); if (shown) keys.forceActiveFocus() }
-    opacity: shown ? 1 : 0
-    Behavior on opacity { NumberAnimation { duration: 260; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease } }
+    visible: true
+    Component.onCompleted: keys.forceActiveFocus()
+    Connections {
+        target: player
+        function onOpenChanged() { if (player.open && !player.closing) keys.forceActiveFocus() }
+    }
 
     readonly property bool mini: windowMode.mini
     readonly property bool compact: width < 880
@@ -187,20 +187,16 @@ Item {
         cursorShape: pv.mini ? cornerShape : pv.barsShown ? Qt.ArrowCursor : Qt.BlankCursor
         property point pressAt
         property bool moved: false
-        property bool resizing: false
-        onReleased: { if (resizing) windowMode.endResize(); resizing = false }
-        onCanceled: resizing = false
         onPositionChanged: (m) => {
             pv.poke()
             if (pv.mini && !pressed) cornerShape = cornerCursor(m.x, m.y)
-            if (resizing) { windowMode.resizeStep(); return }
             if (pv.mini && pressed && !moved && Math.hypot(m.x - pressAt.x, m.y - pressAt.y) > 4) { moved = true; windowMode.startMove() }
         }
         onPressed: (m) => {
             pressAt = Qt.point(m.x, m.y); moved = false
             pv.poke()
             if (pv.picker !== "") pv.picker = ""
-            if (pv.mini) { const e = edgeAt(m.x, m.y); if (e) { windowMode.beginResize(e); resizing = true; moved = true } }
+            if (pv.mini) { const e = edgeAt(m.x, m.y); if (e) { moved = true; windowMode.startResize(e) } }
         }
         onClicked: if (!moved) clickTimer.restart()
         onDoubleClicked: {

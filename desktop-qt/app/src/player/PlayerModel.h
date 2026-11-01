@@ -33,6 +33,7 @@ class PlayerModel : public QObject, private core::PlaybackSupervisor::Actions {
     Q_PROPERTY(QString heading READ heading NOTIFY entryChanged)
     Q_PROPERTY(QString poster READ poster NOTIFY entryChanged)
     Q_PROPERTY(int index READ index NOTIFY entryChanged)
+    Q_PROPERTY(qint64 magnetId READ magnetId NOTIFY entryChanged)
     Q_PROPERTY(int queueSize READ queueSize NOTIFY entryChanged)
     Q_PROPERTY(QString prevTitle READ prevTitle NOTIFY entryChanged)
     Q_PROPERTY(QString nextEntryTitle READ nextEntryTitle NOTIFY entryChanged)
@@ -83,6 +84,7 @@ public:
     QString heading() const;
     QString poster() const { return m_poster; }
     int index() const { return m_index; }
+    qint64 magnetId() const;
     int queueSize() const { return int(m_queue.size()); }
     QString prevTitle() const;
     QString nextEntryTitle() const;
@@ -120,6 +122,8 @@ public:
     Q_INVOKABLE void startPreview(const QString &video, const QString &audio, qint64 offsetMs, const QString &title);
     /// Закрыть (место сохраняется).
     Q_INVOKABLE void close();
+    /// Завершить закрытие (после анимации вылета)
+    Q_INVOKABLE void finishClose();
     /// Ещё раз открыть с того же места (видеодвижок докачан, сеть вернулась).
     Q_INVOKABLE void retry();
 
@@ -234,7 +238,6 @@ private:
     core::MediaMarkers markers() const;
     std::optional<core::TimeRange> introNow() const;
     void skipIntroImpl(bool autoSkip);
-    void finishClose();
     QString sideFileName(const QString &url) const;
     std::pair<QString, QString> sideName(const QString &sideUrl, const QString &videoUrl) const;
     QStringList preferFirst(const QStringList &urls, const std::optional<QString> &saved, const QString &videoUrl) const;

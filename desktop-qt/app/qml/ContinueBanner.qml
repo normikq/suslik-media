@@ -13,7 +13,14 @@ Item {
         for (const x of entries) if (x.id === chosen) return x
         return entries.length > 0 ? entries[0] : lastShown
     }
-    onEChanged: if (e) lastShown = e
+    onEChanged: {
+        if (e) {
+            lastShown = e
+            if (e.id) Theme.registerTile(e.id, frame)
+        }
+    }
+    Component.onCompleted: if (b.e && b.e.id) Theme.registerTile(b.e.id, frame)
+    Component.onDestruction: if (b.e && b.e.id) Theme.unregisterTile(b.e.id, frame)
 
     readonly property bool shown: entries.length > 0
     height: shown ? 360 + 6 + 22 : 0
@@ -41,23 +48,45 @@ Item {
         width: parent.width; height: 360
         readonly property string backdrop: b.e ? b.e.backdrop : ""
 
+        // Пропорции кадра (по умолчанию 16:9 для кинокадров)
+        readonly property real imgAspect: {
+            if (glow.status === Image.Ready && glow.implicitWidth > 0 && glow.implicitHeight > 0)
+                return glow.implicitHeight / glow.implicitWidth
+            if (sharp.status === Image.Ready && sharp.implicitWidth > 0 && sharp.implicitHeight > 0)
+                return sharp.implicitHeight / sharp.implicitWidth
+            return 9.0 / 16.0
+        }
+
+        // Высота кадра при ширине баннера
+        readonly property real fullH: Math.max(360, width * imgAspect)
+
+        // Расстояние от верха баннера до верхнего края окна Windows (LibraryView.kt: roomAbovePx + 6.dp)
+        readonly property real distToWindowTop: (b && b.roomAbove > 28 ? b.roomAbove : 90) + frame.y
+
+        // В широком окне кадр уходит далеко вверх над баннером.
+        // Верхние 30 % кадра тают в прозрачность (видимая часть начинается примерно с 15 %).
+        // Вычисляем, насколько видимая часть выступает выше баннера:
+        readonly property real above: (fullH - 360) / 2 - fullH * 0.15 + 22
+
+        // Если видимый верх свечения выходит за верхнюю рамку окна Windows,
+        // опускаем свечение и четкий кадр ровно настолько, чтобы они уместились (LibraryView.kt: needTop / glowShift):
+        property real glowShift: Math.max(0, above - distToWindowTop)
+        Behavior on glowShift { NumberAnimation { duration: 300; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease } }
+
         // свечение: тот же кадр, размытый, с тающими краями, выходит за края баннера на фон страницы
         Image {
             id: glow
-            visible: frame.backdrop !== "" && status === Image.Ready && !Theme.simple
+            visible: frame.backdrop !== "" && !Theme.simple
             source: frame.backdrop !== "" ? "image://suslik/glow:" + frame.backdrop : ""
             asynchronous: true
             smooth: true
+            x: 0
             width: frame.width
-            readonly property real glowH: implicitWidth > 0 ? frame.width * implicitHeight / implicitWidth : 360
-            height: glowH
-            // в широком окне свечение выше баннера: тогда оно (не баннер) опускается ровно настолько, чтобы влезть
-            readonly property real shift: {
-                const above = (glowH - 360) / 2 - glowH * 0.15 + 22
-                return Math.max(0, above - b.roomAbove - 6)
-            }
-            y: (360 - glowH) / 2 + shift
-            opacity: 0.55
+            height: frame.fullH
+            y: (360 - frame.fullH) / 2 + frame.glowShift
+            fillMode: Image.Stretch
+            opacity: status === Image.Ready ? 0.55 : 0
+            Behavior on opacity { NumberAnimation { duration: 350 } }
         }
         Rounded {
             anchors.fill: parent
@@ -70,15 +99,11 @@ Item {
                 asynchronous: true
                 smooth: true
                 mipmap: false // mipmap — +33 % памяти к большому кадру
-                // кадр выше баннера: двигается вместе со свечением, чтобы они совпадали
-                readonly property real fullH: implicitWidth > 0 ? frame.width * implicitHeight / implicitWidth : 0
-                readonly property bool tall: fullH >= 360
                 x: 0
                 width: frame.width
-                y: tall ? Math.min(0, Math.max(360 - fullH, (360 - fullH) / 2 + glow.shift)) : 0
-                height: tall ? fullH : 360
-                fillMode: tall ? Image.Stretch : Image.PreserveAspectCrop
-                horizontalAlignment: Image.AlignRight
+                height: frame.fullH
+                y: (360 - frame.fullH) / 2 + frame.glowShift
+                fillMode: Image.Stretch
                 opacity: status === Image.Ready ? 1 : 0
                 Behavior on opacity { NumberAnimation { duration: 350 } }
             }
@@ -221,7 +246,11 @@ Item {
                         Text { text: "▶"; color: "white"; font.pixelSize: 13; anchors.verticalCenter: parent.verticalCenter }
                         Text { text: Ui.tx("library.prodolzhit"); color: "white"; font.family: Theme.onest; font.weight: Font.DemiBold; font.pixelSize: 15 }
                     }
-                    onClicked: if (b.e) b.page.openContinue(b.e.id, b.e.path)
+                    onClicked: if (b.e) {
+                        Theme.lastRect = Theme.getGlobalRect(frame)
+                        Theme.lastId = b.e.id
+                        b.page.openContinue(b.e.id, b.e.path)
+                    }
                 }
             }
         }
@@ -240,11 +269,20 @@ Item {
                 Repeater {
                     model: b.entries
                     Thumb {
+                        id: itemThumb
                         required property var modelData
                         x_: modelData
-                        visible: !b.e || modelData.id !== b.e.id
+                        shown: !b.e || modelData.id !== b.e.id
                         onChoose: { b.chosen = modelData.id; advance.restart() }
-                        onRemove: lib.hideContinue([modelData.id])
+                        onRemove: {
+                            removing = true
+                            removeTimer.restart()
+                        }
+                        Timer {
+                            id: removeTimer
+                            interval: 340
+                            onTriggered: lib.hideContinue([itemThumb.modelData.id])
+                        }
                     }
                 }
             }
@@ -254,9 +292,22 @@ Item {
     component Thumb: Item {
         id: th
         property var x_
+        property bool shown: true
+        property bool removing: false
+        property bool ready: false
+        Component.onCompleted: ready = true
         signal choose()
         signal remove()
-        width: 96; height: 147
+        readonly property bool active: shown && !removing
+
+        width: active ? 96 : 0
+        height: 147
+        opacity: active ? 1 : 0
+        visible: width > 0
+        clip: true
+        Behavior on width { enabled: th.ready && !Theme.simple; NumberAnimation { duration: 320; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease } }
+        Behavior on opacity { enabled: th.ready && !Theme.simple; NumberAnimation { duration: 260 } }
+
         HoverHandler { id: th_hover }
         Item {
             width: 96; height: 144

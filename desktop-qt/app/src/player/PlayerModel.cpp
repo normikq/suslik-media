@@ -21,6 +21,14 @@
 #include <QRegularExpression>
 #include <QUrl>
 
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <psapi.h>
+#endif
+
 namespace suslik::app {
 
 using namespace suslik::core;
@@ -499,6 +507,8 @@ void PlayerModel::cancelNext() {
     emit nextChanged();
 }
 
+qint64 PlayerModel::magnetId() const { return m_req.magnetId; }
+
 void PlayerModel::close() {
     if (!m_open || m_closing) return;
     m_closing = true;
@@ -511,11 +521,15 @@ void PlayerModel::close() {
     m_engine->setPaused(true);
     emit openChanged();
     emit nextChanged();
-    // экран плеера уезжает; ядро останавливается сразу, запас освобождается в фоне
-    QTimer::singleShot(0, this, &PlayerModel::finishClose);
+    // экран плеера уезжает; ядро останавливается сразу, запас освобождается в фоне.
+    // Если QML не вызвал finishClose() (например, при simple_motion), таймер завершит закрытие.
+    QTimer::singleShot(750, this, [this] {
+        if (m_closing) finishClose();
+    });
 }
 
 void PlayerModel::finishClose() {
+    if (!m_closing && !m_open) return;
     for (QTimer *t : {&m_tickTimer, &m_superTimer, &m_bufTimer, &m_infoTimer, &m_flashTimer, &m_prefsTimer, &m_ensureAudioTimer,
                       &m_autoSkipTimer, &m_statsTimer, &m_trackWatch})
         t->stop();
@@ -524,6 +538,10 @@ void PlayerModel::finishClose() {
     // свою ссылку, когда экран плеера уйдёт (Loader в Main.qml)
     m_engine->release();
     Reserve::proxy().clear();
+#ifdef Q_OS_WIN
+    // После закрытия фильма: возврат страниц декодера и кэша mpv операционной системе
+    QTimer::singleShot(1000, [] { EmptyWorkingSet(GetCurrentProcess()); });
+#endif
     ui().put(S("volume"), num(m_volume));
     m_open = false;
     m_closing = false;

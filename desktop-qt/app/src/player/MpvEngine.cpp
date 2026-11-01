@@ -81,8 +81,8 @@ mpv::Handle MpvEngine::handle() {
     opt("demuxer-mkv-subtitle-preroll", S("no"));
     opt("demuxer-mkv-subtitle-preroll-secs", S("1"));
     // Ключевые кадры позади — в памяти (смена дорожки и короткая перемотка без сети); долгий запас — на диске (BurstProxy).
-    opt("demuxer-max-bytes", S("96MiB"));
-    opt("demuxer-max-back-bytes", S("24MiB"));
+    opt("demuxer-max-bytes", S("32MiB"));
+    opt("demuxer-max-back-bytes", S("8MiB"));
     opt("gapless-audio", S("yes"));
     opt("audio-stream-silence", S("yes"));
     opt("network-timeout", S("30"));

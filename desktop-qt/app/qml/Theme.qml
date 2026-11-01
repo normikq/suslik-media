@@ -43,4 +43,44 @@ QtObject {
     // «Упрощённые анимации» (Настройки): без стекла и переливов, без сдвигов страниц
     property bool simple: Ui.setting("simple_motion") === "1"
     function setSimple(on) { simple = on; Ui.setSetting("simple_motion", on ? "1" : "") }
+
+    // Хранилище координат постеров и карточек для анимации вылета/отлёта плеера (ExitFlight)
+    property var tiles: ({})
+    property var lastRect: null
+    property var lastId: 0
+
+    function registerTile(id, item) {
+        if (id && item) tiles[id] = item
+    }
+
+    function unregisterTile(id, item) {
+        if (tiles[id] === item) delete tiles[id]
+    }
+
+    function getGlobalRect(item) {
+        if (!item) return null
+        try {
+            const pt = item.mapToItem(null, 0, 0)
+            if (!pt || isNaN(pt.x) || isNaN(pt.y)) return null
+            const w = item.width
+            const h = item.height
+            if (!w || !h || isNaN(w) || isNaN(h)) return null
+            return { x: pt.x, y: pt.y, width: w, height: h }
+        } catch (e) {
+            return null
+        }
+    }
+
+    function getTargetRect(id, win) {
+        let it = id ? tiles[id] : null
+        let r = getGlobalRect(it)
+        if (!r && lastRect) r = lastRect
+        if (!r || isNaN(r.x) || isNaN(r.y) || !r.width || !r.height) return null
+        // Проверка, что постер не уехал за пределы экрана
+        if (win && (r.y + r.height * 0.3 < 0 || r.y + r.height * 0.7 > win.height ||
+                    r.x + r.width * 0.3 < 0 || r.x + r.width * 0.7 > win.width)) {
+            return null
+        }
+        return r
+    }
 }

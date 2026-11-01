@@ -3,6 +3,7 @@
 #include <QVariantMap>
 
 class QWindow;
+class QQmlApplicationEngine;
 
 /// Помощник интерфейса для QML: строки (tx), открыть ссылку, размеры файлов, буфер обмена, окно.
 namespace suslik::app {
@@ -18,6 +19,7 @@ public:
     Ui(const QString &version, bool siteConfigured, QObject *parent = nullptr)
         : QObject(parent), m_version(version), m_site(siteConfigured) {}
 
+    void setEngine(QQmlApplicationEngine *e) { m_engine = e; }
     QString version() const { return m_version; }
     bool diag() const;
     bool siteConfigured() const { return m_site; }
@@ -36,12 +38,15 @@ public:
     /// Окно выйти вперёд (второй запуск).
     Q_INVOKABLE void raise(QWindow *w) const;
     Q_INVOKABLE void styleTitleBar(QWindow *w) const;
+    /// Сброс неиспользуемой памяти в Windows (смена страниц, вкладок, закрытие панелей).
+    Q_INVOKABLE void trimMemory() const;
     /// Переменная окружения (проверка вёрстки: SM_OPEN открывает окно сразу после запуска).
     Q_INVOKABLE QString env(const QString &name) const { return qEnvironmentVariable(name.toUtf8().constData()); }
 
 private:
     QString m_version;
     bool m_site;
+    QQmlApplicationEngine *m_engine = nullptr;
 };
 
 } // namespace suslik::app

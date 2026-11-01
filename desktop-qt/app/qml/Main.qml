@@ -12,6 +12,7 @@ Window {
 
     property int tab: 0
     property int prevTab: 0
+    onTabChanged: Ui.trimMemory()
     function select(t) {
         if (t !== tab) { prevTab = tab; tab = t }
         if (t === 0 || t === 1) lib.refresh()
@@ -32,7 +33,7 @@ Window {
         anchors.fill: parent
         opacity: lib.authenticated === 0 ? 0 : 1
         // под открытым плеером медиатеку не рисуем
-        visible: opacity > 0 && !(playerLoader.item !== null && playerLoader.item.opacity === 1 && player.open)
+        visible: opacity > 0 && win.playerPresence < 1
         Behavior on opacity { NumberAnimation { duration: 420; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease } }
 
         Sidebar {
@@ -93,15 +94,125 @@ Window {
     Dialogs { id: dialogs; anchors.fill: parent }
     SettingsSheet { id: settingsSheet; anchors.fill: parent }
     WhatsNew { anchors.fill: parent }
-    // Экран плеера (и вывод кадров mpv) живёт только пока открыт фильм и ещё виден при закрытии: в медиатеке
-    // нет ни ядра mpv, ни его кэша, ни контекста вывода
-    Loader {
-        id: playerLoader
-        anchors.fill: parent
+    // Экран плеера: плавный вылет из постера и отлёт обратно (ExitFlight.kt)
+    property real playerPresence: 0
+    property var playerTarget: null
+    property var playerHome: null
+    property bool playerLeaving: false
+
+    Connections {
+        target: player
+        function onOpenChanged() {
+            if (player.open && !player.closing) {
+                playerLeaving = false
+                const t = Theme.getTargetRect(player.magnetId, win) || Theme.lastRect
+                playerTarget = t
+                playerHome = t
+                presenceAnim.stop()
+                if (Theme.simple) {
+                    win.playerPresence = 1
+                } else {
+                    presenceAnim.from = win.playerPresence
+                    presenceAnim.to = 1
+                    presenceAnim.duration = 560
+                    presenceAnim.start()
+                }
+            } else if (player.closing) {
+                playerLeaving = true
+                const live = Theme.getTargetRect(player.magnetId, win)
+                playerTarget = live || playerHome
+                presenceAnim.stop()
+                if (Theme.simple) {
+                    win.playerPresence = 0
+                    player.finishClose()
+                } else {
+                    presenceAnim.from = win.playerPresence
+                    presenceAnim.to = 0
+                    presenceAnim.duration = 600
+                    presenceAnim.start()
+                }
+            }
+        }
+    }
+
+    NumberAnimation {
+        id: presenceAnim
+        target: win
+        property: "playerPresence"
+        easing.type: Easing.BezierSpline
+        easing.bezierCurve: Theme.fly
+        onFinished: {
+            if (win.playerPresence === 0 && player.closing) {
+                player.finishClose()
+            }
+        }
+    }
+
+    Item {
+        id: flightContainer
         z: 50
-        focus: active
-        active: player.open || (item !== null && item.opacity > 0)
-        sourceComponent: Component { PlayerView {} }
+        anchors.fill: parent
+        visible: win.playerPresence > 0
+        enabled: win.playerPresence === 1
+
+        readonly property real p: win.playerPresence
+        readonly property real e: Math.max(0.0, Math.min(1.0, 1.0 - p))
+        readonly property var target: win.playerTarget
+        readonly property bool hasTarget: target !== null && target !== undefined &&
+                                          !isNaN(target.x) && !isNaN(target.y) &&
+                                          !isNaN(target.width) && !isNaN(target.height) &&
+                                          target.width > 20 && target.height > 20
+
+        readonly property real ww: Math.max(100.0, win.width)
+        readonly property real wh: Math.max(100.0, win.height)
+
+        readonly property real sTarget: hasTarget ? 1.0 + (Math.max(target.width / ww, target.height / wh) - 1.0) * e : 1.0
+        readonly property real sFallback: win.playerLeaving ? (0.86 + 0.14 * p) : (1.035 - 0.035 * p)
+        readonly property real s: Math.max(0.01, hasTarget ? sTarget : sFallback)
+
+        readonly property real flightW: Math.max(20.0, hasTarget ? (ww + (target.width - ww) * e) : (ww * s))
+        readonly property real flightH: Math.max(20.0, hasTarget ? (wh + (target.height - wh) * e) : (wh * s))
+        readonly property real flightLeft: hasTarget ? (target.x * e) : ((1.0 - s) * ww * 0.5)
+        readonly property real flightTop: hasTarget ? (target.y * e) : ((1.0 - s) * wh * 0.5)
+
+        readonly property real lw: flightW / s
+        readonly property real lh: flightH / s
+        readonly property real lx: (ww - lw) * 0.5
+        readonly property real ly: (wh - lh) * 0.5
+
+        readonly property real flightRadius: hasTarget ? (e * 14.0) : (28.0 * e)
+        readonly property real flightOpacity: hasTarget ? Math.min(1.0, Math.max(0.0, p / 0.28)) : Math.min(1.0, Math.max(0.0, p * 1.6))
+
+        Item {
+            id: flightClipper
+            x: flightContainer.flightLeft
+            y: flightContainer.flightTop
+            width: flightContainer.flightW
+            height: flightContainer.flightH
+            clip: true
+            opacity: flightContainer.flightOpacity
+
+            layer.enabled: flightContainer.flightRadius > 0.5 && flightClipper.width > 20 && flightClipper.height > 20
+            layer.smooth: true
+            layer.effect: ShaderEffect {
+                property real radius: flightContainer.flightRadius
+                property size size: Qt.size(flightClipper.width, flightClipper.height)
+                fragmentShader: "qrc:/sm/shaders/rounded.frag.qsb"
+            }
+
+            Loader {
+                id: playerLoader
+                width: win.width
+                height: win.height
+                x: -flightContainer.s * flightContainer.lx
+                y: -flightContainer.s * flightContainer.ly
+                scale: flightContainer.s
+                transformOrigin: Item.TopLeft
+                focus: active
+                active: player.open || win.playerPresence > 0
+                sourceComponent: Component { PlayerView {} }
+            }
+        }
     }
 
     // после входа: есть ли обновление; «Что нового» — когда медиатека уже на экране
