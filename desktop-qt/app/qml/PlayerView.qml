@@ -62,6 +62,13 @@ Item {
         target: player
         function onOpenChanged() {
             if (player.open && !player.closing) { pv.picker = ""; pv.barVisible = true; hideTimer.restart(); keys.forceActiveFocus() }
+            // плеер закрылся сам, пока он мини (ведущий закрыл фильм комнаты; свои закрытия сначала выходят из мини):
+            // уходит только мини-плеер — окно возвращает прежний размер и сворачивается, медиатека не встаёт поверх
+            else if (player.closing && windowMode.mini) {
+                pv.picker = ""
+                windowMode.reset()
+                windowMode.minimize()
+            }
         }
     }
     Connections {

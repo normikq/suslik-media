@@ -1707,11 +1707,29 @@ class PlayerActivity : ComponentActivity() {
     private fun leave() {
         if (leaving) return
         leaving = true
+        if (inPip) { closeMini(); return }
         if (isFull()) { finishQuietly(); return }
         val ease = android.view.animation.AccelerateInterpolator(1.6f)
         stage.animate().translationY(-stage.height * 0.35f).setDuration(240).setInterpolator(ease).start()
         infoPanel.animate().alpha(0f).translationY(dp(36).toFloat()).setDuration(240).setInterpolator(ease)
             .withEndAction { finishQuietly() }.start()
+    }
+
+    /**
+     * The mini player closes by itself (the host closed the room's film): only the mini window goes, the app stays
+     * in the background. A plain finish() here brings the library up — in the mini window itself on Android 8–10
+     * (the whole task sits there) and full screen on 11+ (the system returns to the task the player came from).
+     */
+    private fun closeMini() {
+        AppLog.write("[ui] mini player closed by itself: the app stays in the background")
+        if (Build.VERSION.SDK_INT >= 30) {
+            // 11+: the mini player lives in a task of its own; removing it leaves the library's task untouched
+            finishAndRemoveTask()
+        } else {
+            // 8–10: the mini window holds the whole task, the library included: send it back first, then close
+            moveTaskToBack(true)
+            finish()
+        }
     }
 
     private fun finishQuietly() {

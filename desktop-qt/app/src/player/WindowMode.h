@@ -52,6 +52,8 @@ public:
     Q_INVOKABLE void endResize();
     /// Плеер закрыт: обычное окно (без полного экрана и мини).
     Q_INVOKABLE void reset();
+    /// Свернуть окно в панель задач (развёрнутое остаётся развёрнутым при возврате).
+    Q_INVOKABLE void minimize();
 
 signals:
     void changed();
