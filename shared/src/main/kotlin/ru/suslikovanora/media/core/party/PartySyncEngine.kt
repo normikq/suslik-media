@@ -16,11 +16,11 @@ interface SyncPlayer {
     val paused: Boolean
     /** Кадры идут: не открывается и не буферизуется. */
     val running: Boolean
-    /** Скорость, выбранная в плеере. */
+    /** Скорость, выбранная в плеере. В фильме комнаты не действует: там идёт скорость комнаты ([PartyState.rate]). */
     val userRate: Float
     fun applyPaused(paused: Boolean)
     fun seekTo(ms: Long)
-    /** Скорость движка (подстройка дрейфа); свою скорость плеера возвращаем через [userRate]. */
+    /** Скорость движка (скорость комнаты и подстройка дрейфа); вне комнаты возвращаем [userRate]. */
     fun setRate(rate: Float)
 }
 
@@ -74,6 +74,7 @@ class PartySyncEngine(
     private var prevP = true
     private var prevAt = 0L
     private var drift = 1f
+    private var engineRate: Float? = null // что стоит у движка по нашей команде; null — своя скорость плеера
     private var pendingAt = 0L        // наша перемотка к месту комнаты: когда началась
     private var pendingTo = 0L
     private var pendingT = -1L
@@ -93,7 +94,9 @@ class PartySyncEngine(
     /** Плеер не в фильме комнаты: вернуть свою скорость, забыть команды, сказать «не грузимся». */
     fun idle(player: SyncPlayer) {
         if (seenSeek == null) seenSeek = player.seekStamp
-        restoreRate(player)
+        drift = 1f
+        engineRate?.let { if (it != player.userRate) player.setRate(player.userRate) }
+        engineRate = null
         lastSeq = -1L; pendingAt = 0L; stalledSince = 0L; lastEngineMs = Long.MIN_VALUE
         applied = null; waitSince = 0L; waitNoticed = false
         link.reportBuffering(false)
@@ -103,6 +106,9 @@ class PartySyncEngine(
     fun tick(player: SyncPlayer, key: String, now: Long) {
         if (seenSeek == null) seenSeek = player.seekStamp
         if (player.busy) return // полосу тянут: место отправим после отпускания
+        // В фильме комнаты все идут со скоростью комнаты: своя скорость плеера (1,25× из настроек) уводила бы его
+        // вперёд, а выравнивание дрейфа при ней не работало
+        if (engineRate == null) applyRate(player, 1f)
         val t = player.timeMs
         val p = player.paused
         lastTimeMs = t
@@ -112,7 +118,7 @@ class PartySyncEngine(
         val stamp = player.seekStamp
         if (stamp != seenSeek) {
             seenSeek = stamp
-            val expected = if (prevP) prevT else prevT + ((now - prevAt) * player.userRate * drift).toLong()
+            val expected = if (prevP) prevT else prevT + ((now - prevAt) * (engineRate ?: player.userRate)).toLong()
             if (lastSeq >= 0 && abs(t - expected) > 1_500L && link.canSeek) { // (смена дорожки тоже ставит метку: без скачка)
                 log("[party] local seek at $t")
                 restoreRate(player)
@@ -213,11 +219,11 @@ class PartySyncEngine(
             // комната сейчас перестанет ждать (ответ на наше «готов»), пауза в это время была бы рывком на 0,4 с
             player.applyPaused(true); np = true; ownUntil = now + 1_000L
             log("[party] ready, waiting for the others at $t")
-        } else if (s.playing && !s.waiting && !p && !loading && now > ownUntil && player.running && player.userRate == 1f) {
+        } else if (s.playing && !s.waiting && !p && !loading && now > ownUntil && player.running) {
             when (val a = DriftController.evaluate(t / 1000f, target / 1000f)) {
                 DriftAction.None -> restoreRate(player)
-                is DriftAction.SlowDown -> if (drift != a.rate) { drift = a.rate; player.setRate(a.rate) }
-                is DriftAction.SpeedUp -> if (drift != a.rate) { drift = a.rate; player.setRate(a.rate) }
+                is DriftAction.SlowDown -> if (drift != a.rate) applyRate(player, a.rate)
+                is DriftAction.SpeedUp -> if (drift != a.rate) applyRate(player, a.rate)
                 is DriftAction.HardSeek -> {
                     restoreRate(player); nt = seekRoom(player, target, now); ownUntil = now + OWN_MS
                     log("[party] drift seek local=$t target=$target")
@@ -240,8 +246,15 @@ class PartySyncEngine(
         }
     }
 
-    private fun restoreRate(player: SyncPlayer) {
-        if (drift != 1f) { drift = 1f; player.setRate(player.userRate) }
+    /** Без подстройки дрейфа: скорость комнаты. */
+    private fun restoreRate(player: SyncPlayer) = applyRate(player, 1f)
+
+    /** Скорость движка: скорость комнаты × подстройка дрейфа [d] (0,95–1,05). */
+    private fun applyRate(player: SyncPlayer, d: Float) {
+        drift = d
+        val r = (link.state.rate.toFloat().takeIf { it in 0.25f..4f } ?: 1f) * d
+        if (r != (engineRate ?: player.userRate)) player.setRate(r)
+        engineRate = r
     }
 
     private fun seekRoom(player: SyncPlayer, target: Long, now: Long): Long {

@@ -344,6 +344,8 @@
   "party.priglashenie": "Смотрим вместе в Suslik Media! Код комнаты: {code}",
   "party.prodolzhaet": "{who} продолжает",
   "party.seriyu_vybiraet_sozdatel": "Серию выбирает создатель комнаты",
+  "party.skorost_v_komnate": "В комнате у всех обычная скорость",
+  "party.svoy_film_gostyu": "Вы в комнате: фильм выбирает её создатель. Чтобы смотреть своё, выйдите из комнаты",
   "party.server_ne_prislal_komnatu": "Сервер не прислал комнату.",
   "party.skopirovano": "Скопировано",
   "party.skopirovat": "Скопировать код",

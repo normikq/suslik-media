@@ -467,7 +467,7 @@ test("rooms: 1 account = 1 active room (cannot join from another device into sam
   leaveRoom(room2.id, "pc_2", true);
 });
 
-test("rooms: same device cannot be in two different rooms at the same time", () => {
+test("rooms: a device that enters another room leaves the previous one (its old stream may still be open)", () => {
   const { createRoom, joinRoom, leaveRoom } = require("../src/services/rooms");
   const shared = { id: "shared", name: "Общий доступ" };
   const r1 = createRoom(shared, null, "all", "tv_1");
@@ -476,15 +476,38 @@ test("rooms: same device cannot be in two different rooms at the same time", () 
   const j1 = joinRoom(r1.id, shared, "tv_1");
   assert.equal(j1.ok, true);
 
-  // То же устройство tv_1 пытается войти в r2, пока активно в r1
+  // То же устройство tv_1 (перезапуск, обрыв ещё не замечен) входит в r2: из r1 оно вышло
   const j2 = joinRoom(r2.id, shared, "tv_1");
-  assert.equal(j2.ok, false);
-  assert.equal(j2.error, "Это устройство уже подключено к другой комнате.");
+  assert.equal(j2.ok, true);
+  assert.equal(r1.members.has("tv_1"), false);
+  assert.equal(r2.members.has("tv_1"), true);
 
   // Другое устройство tv_2 с тем же shared аккаунтом может войти в r1
   const j3 = joinRoom(r1.id, shared, "tv_2");
   assert.equal(j3.ok, true);
 
-  leaveRoom(r1.id, "tv_1", true);
+  leaveRoom(r2.id, "tv_1", true);
   leaveRoom(r1.id, "tv_2", true);
+});
+
+test("rooms: the same Discord account comes back from the same device after a restart", () => {
+  const { createRoom, joinRoom, leaveRoom } = require("../src/services/rooms");
+  const user = { id: "u_60", name: "Restarted" };
+  const room = createRoom(user, null, "all", "an_aaaaaaaaaaaa");
+  assert.equal(joinRoom(room.id, user, "an_aaaaaaaaaaaa").ok, true); // старый поток ещё открыт
+  assert.equal(joinRoom(room.id, user, "an_aaaaaaaaaaaa").ok, true); // приложение перезапущено: тот же client_id
+  const other = createRoom({ id: "u_61", name: "Other" }, null, "all", "pc_u61");
+  assert.equal(joinRoom(other.id, user, "an_aaaaaaaaaaaa").ok, true); // и в другую комнату — тоже
+  assert.equal(room.members.has("an_aaaaaaaaaaaa"), false);
+  leaveRoom(other.id, "an_aaaaaaaaaaaa", true);
+});
+
+test("rooms: a shared-password room without the creator's device has no host", () => {
+  const { createRoom, isRoomHost } = require("../src/services/rooms");
+  const shared = { id: "shared", name: "Общий доступ" };
+  const room = createRoom(shared, null, "all", null);
+  assert.equal(isRoomHost(room, shared, "pc_any"), false);
+  assert.equal(isRoomHost(room, shared, null), false);
+  const film = { key: "4|d.mkv", name: "D" };
+  assert.equal(handleRoomAction(room.id, shared, { type: "change_file", file: film, client_id: "pc_any" }).ok, false);
 });

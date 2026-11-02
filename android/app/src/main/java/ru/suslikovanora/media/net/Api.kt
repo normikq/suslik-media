@@ -33,7 +33,8 @@ object Api {
     class HttpError(val code: Int, message: String) : Exception(message)
 
     @Volatile private var lastFlush = 0L
-    @Volatile private var appCtx: android.content.Context? = null
+    @Volatile var appCtx: android.content.Context? = null
+        private set
     /** Tester code («Настройки → Бета-версии»): sent with every request to our server, unlocks beta updates. */
     private fun betaCode(): String? = appCtx?.getSharedPreferences("settings", android.content.Context.MODE_PRIVATE)
         ?.takeIf { !it.getBoolean("beta_off", false) } // «Канал обновлений: Релиз»

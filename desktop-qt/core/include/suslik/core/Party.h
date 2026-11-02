@@ -10,7 +10,8 @@
 /// Перенос shared/.../core/party (PartyModels.kt, PartyProtocol.kt, PartySyncEngine.kt) — без сети: сеть у приложения.
 namespace suslik::core {
 
-/// Часы комнаты: смещение локального времени относительно сервера по самому короткому кругу запроса.
+/// Часы комнаты: смещение локального времени относительно сервера по самому короткому кругу запроса среди точек
+/// за последние WINDOW_MS (старые забываются: уплывшие за долгий просмотр часы догоняются новыми точками).
 class PartyClock {
 public:
     void addSample(qint64 localSend, qint64 localRecv, qint64 serverTime);
@@ -19,7 +20,13 @@ public:
     qint64 bestRttMs() const { return m_bestRtt; }
     void reset();
 
+    static constexpr qint64 WINDOW_MS = 10 * 60 * 1000;
+    /// Раз во столько приложение, пока в комнате, берёт ещё одну точку (GET комнаты).
+    static constexpr qint64 RESAMPLE_MS = 60 * 1000;
+
 private:
+    struct Sample { qint64 at, rtt, offset; };
+    QList<Sample> m_samples;
     qint64 m_offset = 0;
     qint64 m_bestRtt = std::numeric_limits<qint64>::max();
 };
@@ -183,10 +190,11 @@ public:
     virtual bool paused() const = 0;
     /// Кадры идут: не открывается и не буферизуется.
     virtual bool running() const = 0;
+    /// Скорость, выбранная в плеере. В фильме комнаты не действует: там идёт скорость комнаты.
     virtual float userRate() const = 0;
     virtual void applyPaused(bool paused) = 0;
     virtual void seekTo(qint64 ms) = 0;
-    /// Скорость движка (подстройка дрейфа).
+    /// Скорость движка (скорость комнаты и подстройка дрейфа); вне комнаты возвращаем userRate().
     virtual void setRate(float rate) = 0;
 };
 
@@ -236,7 +244,8 @@ public:
 
 private:
     std::optional<PartyNotice> noticeOf(const PartyState &before, const PartyState &s) const;
-    void restoreRate(SyncPlayer &player);
+    void restoreRate(SyncPlayer &player) { applyRate(player, 1.f); }
+    void applyRate(SyncPlayer &player, float d);
     qint64 seekRoom(SyncPlayer &player, qint64 target, qint64 now);
     void log(const QString &s) const { if (m_log) m_log(s); }
 
@@ -249,6 +258,7 @@ private:
     bool m_prevP = true;
     qint64 m_prevAt = 0;
     float m_drift = 1.f;
+    std::optional<float> m_engineRate; ///< что стоит у движка по нашей команде; нет — своя скорость плеера
     qint64 m_pendingAt = 0, m_pendingTo = 0, m_pendingT = -1;
     qint64 m_stalledSince = 0;
     qint64 m_lastEngineMs = std::numeric_limits<qint64>::min();

@@ -135,7 +135,43 @@ async function checkGuildMember(discordId) {
   return { allowed: false, reason: "not_in_whitelist" };
 }
 
+// ---- «Позвать в чат канала» (Discord Activity) ----
+// Сообщение-приглашение в текстовый чат голосового канала: код для ТВ и кнопка-ссылка /join/<код> для ПК и телефона.
+// Цвет — «лампа» Проекторной (#ffb02e), как кнопки приложений.
+const INVITE_COLOR = 0xffb02e;
+
+function inviteMessage({ code, film, by, link }) {
+  const pretty = /^\d{6}$/.test(code) ? `${code.slice(0, 3)}-${code.slice(3)}` : code;
+  const lines = [];
+  if (film) lines.push(`Фильм: **${String(film).replace(/[*_`~|\\]/g, "").slice(0, 200)}**`, "");
+  lines.push(`• **На ТВ:** «Вместе» → «Войти по коду» → \`${pretty}\``);
+  if (link) lines.push("• **На ПК и телефоне:** кнопкой ниже");
+  const embed = { title: `Комната «Вместе» · код ${pretty}`, description: lines.join("\n"), color: INVITE_COLOR };
+  if (by) embed.footer = { text: `Зовёт ${String(by).slice(0, 80)}` };
+  // Кнопка-ссылка Discord принимает только https
+  const https = /^https:\/\//i.test(link || "");
+  if (https) embed.url = link;
+  return {
+    content: "🍿 **Присоединяйтесь к совместному просмотру!**",
+    embeds: [embed],
+    components: https ? [{ type: 1, components: [{ type: 2, style: 5, label: "Войти в комнату", url: link }] }] : [],
+    allowed_mentions: { parse: [] }
+  };
+}
+
+/** Сообщение ботом в канал. Бросает ошибку axios (403 — у бота нет прав писать в этот канал). */
+async function sendChannelMessage(channelId, message) {
+  if (!config.DISCORD_BOT_TOKEN) throw Object.assign(new Error("Бот Discord не настроен."), { code: "no_bot" });
+  const res = await axios.post(`${DISCORD_API_BASE}/channels/${channelId}/messages`, message, {
+    headers: { Authorization: `Bot ${config.DISCORD_BOT_TOKEN}`, "Content-Type": "application/json" },
+    timeout: 8000
+  });
+  return res.data;
+}
+
 module.exports = {
+  inviteMessage,
+  sendChannelMessage,
   getAvatarUrl,
   exchangeOAuthCode,
   fetchMe,

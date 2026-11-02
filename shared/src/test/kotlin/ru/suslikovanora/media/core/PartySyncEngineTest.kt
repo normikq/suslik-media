@@ -316,4 +316,24 @@ class PartySyncEngineTest {
         repeat(10) { now += 400; e.tick(p, key, now) }
         assertEquals(listOf<PartyNotice>(PartyNotice.Waiting), notes)
     }
+
+    /** Своя скорость плеера (1,25× из настроек) в фильме комнаты не действует, дрейф выравнивается; вне комнаты — снова своя. */
+    @Test
+    fun roomRateOverridesUserRate() {
+        val p = FakePlayer(); val l = FakeLink(host = true)
+        p.userRate = 1.25f
+        l.state = PartyState(true, 10.0, 1.0, 0L, seq = 1); l.target = 10_000L
+        p.timeMs = 10_000L; p.engineMs = 10_000L; p.paused = false
+        val e = PartySyncEngine(l)
+        var now = 1_000L
+        e.tick(p, key, now)
+        assertEquals(listOf(1f), p.rates)          // скорость комнаты
+        while (now < 4_000L) { now += 400; p.play(400); l.target += 400; e.tick(p, key, now) }
+        l.target = p.timeMs + 800L
+        now += 400; p.play(400); l.target += 400; e.tick(p, key, now) // отстаём на 0,8 с: подстройка работает и при 1,25×
+        assertEquals(listOf(1f, 1.05f), p.rates)
+        e.idle(p)                                   // плеер не в фильме комнаты: своя скорость
+        assertEquals(listOf(1f, 1.05f, 1.25f), p.rates)
+        assertTrue(l.sent.isEmpty())
+    }
 }

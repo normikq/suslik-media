@@ -742,7 +742,13 @@ class PlayerActivity : ComponentActivity() {
                 lastKnownLength = 0L
                 lastKnownLengthUrl = ""
                 currentTitle = entry.title
-                playbackPosition = savedPosition()
+                // The room switched a guest to this episode (the host went on to it): from the room's place, not from
+                // where the guest once left it here (that place would load first, and then the room would seek again)
+                val roomKey = ru.suslikovanora.media.party.Party.file?.key
+                playbackPosition = if (roomKey != null && roomKey == roomEntryKey && watchProgress.keys.getOrNull(index) == roomKey &&
+                    ru.suslikovanora.media.party.Party.isGuest) ru.suslikovanora.media.party.Party.targetMs().coerceAtLeast(0L)
+                else savedPosition()
+                roomEntryKey = null
                 lastTime = playbackPosition
                 ended = false
                 userPaused = false
@@ -799,6 +805,8 @@ class PlayerActivity : ComponentActivity() {
     }
 
     // ---- shared viewing: the room's film plays here in step with the others (PlayerPartySync, core PartySyncEngine) ----
+    /** The room is switching this player to the episode with this watch key (it opens at the room's place). */
+    private var roomEntryKey: String? = null
     private var seekStamp = 0L // every seek (the user's or the room's) changes it: the room tells its own from the user's
 
     private val syncPlayer = object : ru.suslikovanora.media.core.party.SyncPlayer {
@@ -821,7 +829,9 @@ class PlayerActivity : ComponentActivity() {
             override fun title(): String = roomTitles.getOrNull(watchProgress.keys.indexOf(watchProgress.currentWatchKey())) ?: currentTitle
             override fun ready(): Boolean = alive && !leaving && !keptOnStop && player != null && sideJob?.isActive != true
             override fun canPlayIndex(): Boolean = playlistQueue.size > 0
-            override fun playIndex(i: Int) { if (i != playlistQueue.currentIndex) playlistQueue.playEntry(i) }
+            override fun playIndex(i: Int) {
+                if (i != playlistQueue.currentIndex) { roomEntryKey = watchProgress.keys.getOrNull(i); playlistQueue.playEntry(i) }
+            }
             override fun notice(text: String) = showSeekLabel(text)
             override fun onTick() { ui.live = partyGuest() }
             override fun close() = leave()

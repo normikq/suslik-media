@@ -59,7 +59,8 @@ function createRoom(hostUser, file = null, controls = "all", hostClientId = null
     channel_id: null,
     watchers: new Map(), // user.id -> { id, name, avatar, streams }
     candidates: [], // [{ key, name, by, by_name, at }]
-    poll: null // { ends_at, votes: Map(user.id -> key), timer }
+    poll: null, // { ends_at, votes: Map(user.id -> key), timer }
+    spin: null // «Рулетка»: { key, name, started_at, ends_at, timer } — барабан крутится у всех, потом победитель включается
   };
 
   rooms.set(id, room);
@@ -133,8 +134,10 @@ function memberOf(user, clientId) {
   };
 }
 
-// Поиск активной комнаты, где уже подключен пользователь или устройство.
+// Поиск активной комнаты, где уже подключен пользователь с другого устройства.
 // Правило: 1 аккаунт = 1 активная комната (нельзя заходить с другого устройства, пока активно первое).
+// То же устройство (тот же client_id: приложения хранят его между запусками) — не помеха: оно перешло в другую комнату
+// или вернулось после перезапуска, пока сервер ещё не заметил обрыв старого потока. Прежнее место снимает moveDevice.
 function findUserActiveRoom(user, clientId = null, targetRoomId = null) {
   const userId = user && user.id ? String(user.id) : null;
   const isAccount = Boolean(userId && userId !== "shared" && userId !== "guest");
@@ -146,6 +149,7 @@ function findUserActiveRoom(user, clientId = null, targetRoomId = null) {
     for (const member of room.members.values()) {
       if (!member) continue;
       if (member.streams !== undefined && member.streams <= 0) continue;
+      if (normClientId && member.client_id === normClientId) continue;
 
       const memberUserId = member.id ? String(member.id) : null;
 
@@ -171,21 +175,19 @@ function findUserActiveRoom(user, clientId = null, targetRoomId = null) {
         }
       }
 
-      // 2. Проверка по client_id устройства: одно устройство не может быть в двух разных комнатах
-      if (normClientId && member.client_id === normClientId) {
-        if (!targetRoomId || room.id !== targetRoomId) {
-          return {
-            inRoom: true,
-            room,
-            member,
-            reason: "same_device_other_room"
-          };
-        }
-      }
     }
   }
 
   return null;
+}
+
+// Одно устройство — одна комната: вошло в другую — из прежних оно вышло (старый поток мог ещё не оборваться)
+function moveDevice(clientId, targetRoomId) {
+  const cid = typeof clientId === "string" && clientId ? clientId.trim().slice(0, 64) : null;
+  if (!cid) return;
+  for (const room of Array.from(rooms.values())) {
+    if (room.id !== targetRoomId && room.members.has(cid)) leaveRoom(room.id, cid, true);
+  }
 }
 
 // Участник комнаты — это открытый поток событий (SSE): закрылся последний поток устройства — его нет в комнате.
@@ -199,11 +201,10 @@ function joinRoom(roomId, user, clientId = null) {
     const error =
       active.reason === "other_device_same_room"
         ? "Этот аккаунт уже подключен к комнате с другого устройства."
-        : active.reason === "same_device_other_room"
-          ? "Это устройство уже подключено к другой комнате."
-          : "Этот аккаунт уже находится в активной комнате.";
+        : "Этот аккаунт уже находится в активной комнате.";
     return { ok: false, error, room: null, member: null };
   }
+  moveDevice(clientId, roomId);
 
   const fresh = memberOf(user, clientId);
   const existing = room.members.get(fresh.client_id);
@@ -276,8 +277,9 @@ function promoteIfHostGone(room) {
 
 function isRoomHost(room, user, clientId) {
   if (!user || user.id !== room.host_id) return false;
-  // Общий пароль: один id на всех, ведущий — устройство, создавшее комнату
-  if (room.host_id === "shared" && room.host_client_id) return clientId === room.host_client_id;
+  // Общий пароль: один id на всех, ведущий — только устройство, создавшее комнату. Комната без него (создана без
+  // client_id) ведущего не имеет: иначе ведущими были бы все, кто вошёл по общему паролю
+  if (room.host_id === "shared") return Boolean(room.host_client_id) && clientId === room.host_client_id;
   return true;
 }
 
@@ -308,6 +310,7 @@ function sweepRooms(now = Date.now()) {
       rooms.delete(id);
       roomListeners.delete(id);
       if (room.poll && room.poll.timer) clearTimeout(room.poll.timer);
+      if (room.spin && room.spin.timer) clearTimeout(room.spin.timer);
       if (room.channel_id && channelRooms.get(room.channel_id) === id) channelRooms.delete(room.channel_id);
     }
   }
@@ -418,6 +421,18 @@ function handleRoomAction(roomId, user, action) {
 const channelRooms = new Map(); // channel_id -> room id
 const POLL_MS = 45 * 1000;
 const MAX_CANDIDATES = 8;
+// Все, кто у пульта, проголосовали: ждать конца 45 секунд незачем — итог через несколько секунд (можно ещё передумать)
+const ALL_VOTED_MS = 5 * 1000;
+// Барабан «Рулетки» крутится столько у всех, потом победитель включается в комнате.
+// Ведущий может выбрать длительность сам: от 2 до 30 секунд
+const SPIN_MS = 4000;
+const SPIN_MIN_S = 2, SPIN_MAX_S = 30;
+/** Длительность барабана в мс из выбора ведущего (секунды); не число — по умолчанию. */
+function spinMs(seconds) {
+  const s = Number(seconds);
+  if (seconds == null || seconds === "" || !Number.isFinite(s)) return SPIN_MS;
+  return Math.round(Math.min(SPIN_MAX_S, Math.max(SPIN_MIN_S, s)) * 1000);
+}
 
 function shortRoomId() {
   for (let i = 0; i < 50; i++) {
@@ -453,8 +468,16 @@ function activityPublicData(room) {
   return {
     watchers: Array.from(room.watchers.values()).map(({ streams, ...w }) => w),
     candidates: room.candidates.map(c => ({ ...c })),
-    poll: poll ? { ends_at: poll.ends_at, tally, votes } : null
+    poll: poll ? { ends_at: poll.ends_at, tally, votes, all_voted: allVoted(room) } : null,
+    spin: room.spin ? { key: room.spin.key, name: room.spin.name, started_at: room.spin.started_at, ends_at: room.spin.ends_at } : null
   };
+}
+
+// Проголосовали все, кто сейчас у пульта (голосуют только из Activity)
+function allVoted(room) {
+  if (!room.poll || room.watchers.size === 0) return false;
+  for (const id of room.watchers.keys()) if (!room.poll.votes.has(id)) return false;
+  return true;
 }
 
 function activityChanged(room) {
@@ -503,6 +526,7 @@ function suggestFile(roomId, user, file) {
   const { room, error } = channelRoomOrError(roomId);
   if (!room) return { ok: false, error };
   if (room.poll) return { ok: false, error: "Голосование уже идёт: дождитесь итога." };
+  if (room.spin) return { ok: false, error: "Крутится рулетка: дождитесь итога." };
   const f = cleanFile(file);
   if (!f) return { ok: false, error: "Не тот файл." };
   if (!room.candidates.some(c => c.key === f.key)) {
@@ -518,6 +542,7 @@ function unsuggestFile(roomId, user, key) {
   const { room, error } = channelRoomOrError(roomId);
   if (!room) return { ok: false, error };
   if (room.poll) return { ok: false, error: "Голосование уже идёт: дождитесь итога." };
+  if (room.spin) return { ok: false, error: "Крутится рулетка: дождитесь итога." };
   const c = room.candidates.find(x => x.key === key);
   if (!c) return { ok: true };
   if (c.by !== user.id && !isRoomHost(room, user, null)) return { ok: false, error: "Убрать фильм может тот, кто его предложил, или ведущий." };
@@ -531,6 +556,7 @@ function startPoll(roomId, user, ms = POLL_MS) {
   if (!room) return { ok: false, error };
   if (!isRoomHost(room, user, null)) return { ok: false, error: "Голосование начинает ведущий." };
   if (room.poll) return { ok: true };
+  if (room.spin) return { ok: false, error: "Крутится рулетка: дождитесь итога." };
   if (room.candidates.length < 2) return { ok: false, error: "Для голосования нужно хотя бы два фильма." };
   const timer = setTimeout(() => finishPoll(room), ms);
   timer.unref?.();
@@ -545,6 +571,13 @@ function vote(roomId, user, key) {
   if (!room.poll) return { ok: false, error: "Голосование уже закончилось." };
   if (!room.candidates.some(c => c.key === key)) return { ok: false, error: "Такого фильма нет в списке." };
   room.poll.votes.set(user.id, key);
+  // Все у пульта проголосовали — итог через ALL_VOTED_MS, а не в конце минуты
+  if (allVoted(room) && room.poll.ends_at - Date.now() > ALL_VOTED_MS) {
+    clearTimeout(room.poll.timer);
+    room.poll.ends_at = Date.now() + ALL_VOTED_MS;
+    room.poll.timer = setTimeout(() => finishPoll(room), ALL_VOTED_MS);
+    room.poll.timer.unref?.();
+  }
   activityChanged(room);
   return { ok: true };
 }
@@ -579,6 +612,49 @@ function finishPoll(room) {
   return win;
 }
 
+// «Итог сейчас»: ведущий не ждёт конца таймера
+function finishPollNow(roomId, user) {
+  const { room, error } = channelRoomOrError(roomId);
+  if (!room) return { ok: false, error };
+  if (!isRoomHost(room, user, null)) return { ok: false, error: "Подвести итог может ведущий." };
+  if (!room.poll) return { ok: false, error: "Голосование уже закончилось." };
+  if (room.poll.votes.size === 0) return { ok: false, error: "Ещё никто не проголосовал." };
+  finishPoll(room);
+  return { ok: true };
+}
+
+// «Рулетка»: ведущий выбирает случайно из предложенных. Победителя выбирает сервер (у всех один и тот же),
+// у всех SPIN_MS крутится барабан, потом фильм включается в комнате — как итог голосования
+function spinRoulette(roomId, user, ms = SPIN_MS) {
+  const { room, error } = channelRoomOrError(roomId);
+  if (!room) return { ok: false, error };
+  if (!isRoomHost(room, user, null)) return { ok: false, error: "Рулетку крутит ведущий." };
+  if (room.spin) return { ok: true };
+  if (room.poll) return { ok: false, error: "Сначала закончите голосование." };
+  if (room.candidates.length < 2) return { ok: false, error: "Для рулетки нужно хотя бы два фильма." };
+  const win = room.candidates[crypto.randomInt(room.candidates.length)];
+  const timer = setTimeout(() => finishSpin(room), ms);
+  timer.unref?.();
+  const now = Date.now();
+  room.spin = { key: win.key, name: win.name, started_at: now, ends_at: now + ms, timer };
+  activityChanged(room);
+  return { ok: true, key: win.key };
+}
+
+function finishSpin(room) {
+  if (rooms.get(room.id) !== room || !room.spin) return null;
+  clearTimeout(room.spin.timer);
+  const win = room.candidates.find(c => c.key === room.spin.key);
+  room.spin = null;
+  if (win) {
+    room.candidates = [];
+    handleRoomAction(room.id, { id: room.host_id }, { type: "change_file", file: cleanFile(win), client_id: room.host_client_id });
+  }
+  broadcast(room.id, "poll_result", win ? { key: win.key, name: win.name, votes: null, roulette: true } : { key: null, roulette: true });
+  activityChanged(room);
+  return win || null;
+}
+
 function cancelPoll(roomId, user) {
   const { room, error } = channelRoomOrError(roomId);
   if (!room) return { ok: false, error };
@@ -599,6 +675,7 @@ module.exports = {
   addListener,
   joinRoom,
   findUserActiveRoom,
+  moveDevice,
   previewMember,
   publicMember,
   clientKey,
@@ -614,6 +691,10 @@ module.exports = {
   startPoll,
   vote,
   finishPoll,
+  finishPollNow,
+  spinRoulette,
+  spinMs,
+  finishSpin,
   cancelPoll,
   cleanFile
 };

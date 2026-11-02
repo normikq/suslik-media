@@ -8,7 +8,20 @@
   'use strict';
   var SM = g.SM, api = SM.api, core = SM.partycore, P = core.protocol, R = core.room;
 
-  var clientId = P.newClientId('tv');
+  // Пропуск этого ТВ в комнатах, один и тот же после перезапуска: создатель комнаты при общем пароле остаётся её
+  // ведущим, а вход в ту же комнату не упирается в «уже подключён с другого устройства», пока сервер не заметил обрыв
+  var CLIENT_KEY = 'party:client_id';
+  var clientId = (function () {
+    try {
+      var v = localStorage.getItem(CLIENT_KEY);
+      if (v && /^tv_[0-9a-f]{12}$/.test(v)) return v;
+      v = P.newClientId('tv');
+      localStorage.setItem(CLIENT_KEY, v);
+      return v;
+    } catch (e) { return P.newClientId('tv'); }
+  })();
+  /** Монотонные часы для комнаты: перевод системного времени не сдвигает место комнаты. */
+  function mono() { return g.performance && typeof g.performance.now === 'function' ? Math.floor(g.performance.now()) : Date.now(); }
   var party = {
     room: R.empty(),
     roomId: null,
@@ -29,16 +42,16 @@
   party.isGuest = function () { return party.inRoom() && !party.isHost(); };
   party.canControl = function () { return party.inRoom() && party.isHost(); };
   party.isCreator = function (m) { return R.isCreator(party.room, m); };
-  party.targetMs = function () { return core.targetMs(party.room.state, party.clock.serverNow()); };
+  party.targetMs = function () { return core.targetMs(party.room.state, party.clock.serverNow(mono())); };
   party.othersBuffering = function () { return R.othersBuffering(party.room, party.myKey); };
   party.onChange = function (f) { party.listeners.push(f); return function () { party.listeners = party.listeners.filter(function (x) { return x !== f; }); }; };
 
   /** Запрос, ответ которого везёт server_time: ещё одна точка для часов. */
   function timed(promise) {
-    var t0 = Date.now();
+    var t0 = mono();
     return promise.then(function (res) {
       var u = P.roomOf(res);
-      if (u && u.serverTime > 0) party.clock.addSample(t0, Date.now(), u.serverTime);
+      if (u && u.serverTime > 0) party.clock.addSample(t0, mono(), u.serverTime);
       return res;
     });
   }
@@ -92,8 +105,18 @@
       if (n++ >= 3 || party.roomId !== id) return Promise.resolve();
       return timed(api.get(P.roomPath(id))).catch(function () {}).then(more);
     }
-    return more().then(function () { if (party.roomId === id) startStream(id); });
+    return more().then(function () {
+      if (party.roomId !== id) return;
+      startStream(id);
+      // Пока в комнате — точка для часов раз в минуту (гость сам ничего не шлёт, а часы за часы просмотра уплывают)
+      clearInterval(clockTimer);
+      clockTimer = setInterval(function () {
+        if (party.roomId !== id) { clearInterval(clockTimer); return; }
+        timed(api.get(P.roomPath(id))).catch(function () {});
+      }, core.CLOCK_RESAMPLE_MS);
+    });
   }
+  var clockTimer = 0;
 
   /** Ведущий ставит фильм в комнату (сервер ставит его на паузу в начале; мой плеер запустит). */
   party.putFilm = function (key, title) {
@@ -204,6 +227,7 @@
 
   function stopStream() {
     clearTimeout(retryTimer);
+    clearInterval(clockTimer);
     if (xhr) { var x = xhr; xhr = null; try { x.abort(); } catch (e) { /* уже закрыт */ } }
     party.connected = false;
   }

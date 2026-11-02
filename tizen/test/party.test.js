@@ -77,6 +77,17 @@ test('targetMs: идёт от якоря, стоит на паузе и в ож�
   assert.equal(clock.serverNow(1000), 11000);
 });
 
+test('часы забывают старые точки: уплывшие часы догоняются новыми', () => {
+  const clock = new C.Clock();
+  clock.addSample(1000, 1020, 5000);
+  clock.addSample(300000, 300100, 304550);
+  assert.equal(clock.offsetMs, 3990);
+  const late = 1020 + C.CLOCK_WINDOW_MS + 1;
+  clock.addSample(late - 60, late, late + 4470);
+  assert.equal(clock.bestRttMs, 60);
+  assert.equal(clock.offsetMs, 4500);
+});
+
 // ---- движок: комната и плеер-заглушки ----
 
 function setup(opts) {

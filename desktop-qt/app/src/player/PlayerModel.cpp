@@ -4,6 +4,7 @@
 #include "../Library.h"
 #include "../PlayModel.h"
 #include "../Settings.h"
+#include "../party/Party.h"
 
 #include "suslik/core/ApiClient.h"
 #include "suslik/core/CloudSync.h"
@@ -475,7 +476,10 @@ void PlayerModel::playEntry(int i) {
     m_serverMarkers.reset();
     m_nextDismissed = false;
     m_introAutoDone.reset();
-    const qint64 start = savedPos(i);
+    // Серию включила комната (ведущий перешёл к ней): с места комнаты, а не с места, где здесь её когда-то бросили —
+    // иначе сначала грузилось бы чужое место, а потом движок комнаты перематывал бы ещё раз
+    const Party *party = Party::instance();
+    const qint64 start = m_byRoom && party && party->inRoom() && !party->isHost() ? std::max<qint64>(0, party->roomMs()) : savedPos(i);
     m_playing = m_started = false;
     m_switching = true;
     m_time = m_lastGood = start;
@@ -593,7 +597,7 @@ void PlayerModel::evPlayingNow() {
         m_ensureAudioTimer.start();
         if (m_audioDelay != 0) m_engine->setAudioDelayMs(m_audioDelay);
         if (m_subDelay != 0) m_engine->setSubDelayMs(m_subDelay);
-        if (m_rate != 1) m_engine->setRate(m_rate);
+        if (m_rate != 1 && !partyFilm()) m_engine->setRate(m_rate); // в фильме комнаты скорость ставит PartySync
     }
     if (m_pausedAt > 0) {
         m_playing = false;
@@ -829,6 +833,8 @@ void PlayerModel::toggleMute() {
 }
 
 void PlayerModel::setSpeed(double r) {
+    // В комнате все идут с одной скоростью: своя увела бы этот плеер вперёд или назад от остальных
+    if (partyFilm()) { flash(tx(S("party.skorost_v_komnate"))); return; }
     m_rate = r;
     putUi(S("rate"), r == 1 ? std::nullopt : std::optional<QString>(QString::number(r)));
     m_engine->setRate(r);

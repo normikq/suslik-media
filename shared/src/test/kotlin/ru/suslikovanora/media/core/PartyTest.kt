@@ -30,6 +30,19 @@ class PartyTest {
         assertEquals(3990L, clock.offsetMs)
     }
 
+    /** Старые точки забываются: часы, уплывшие за долгий просмотр, догоняются новыми. */
+    @Test
+    fun partyClockForgetsOldSamples() {
+        val clock = PartyClock()
+        clock.addSample(localSendTime = 1_000L, localRecvTime = 1_020L, serverTime = 5_000L) // rtt 20, offset 3990
+        clock.addSample(localSendTime = 300_000L, localRecvTime = 300_100L, serverTime = 304_550L) // rtt 100: хуже
+        assertEquals(3990L, clock.offsetMs)
+        val late = 1_020L + PartyClock.WINDOW_MS + 1L
+        clock.addSample(localSendTime = late - 60L, localRecvTime = late, serverTime = late + 4_470L) // первая устарела
+        assertEquals(60L, clock.bestRttMs)
+        assertEquals(4_500L, clock.offsetMs)
+    }
+
     @Test
     fun driftControllerDecisions() {
         // Drift within 0.3s -> None
