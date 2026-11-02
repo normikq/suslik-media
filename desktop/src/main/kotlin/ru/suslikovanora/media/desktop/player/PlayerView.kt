@@ -678,7 +678,8 @@ fun PlayerView(
         WindowMode.toggleFullscreen(owner)
     }
 
-    fun close() {
+    /** [fromRoom] — the host closed the room's film: a mini player only goes away, the app is not put in front (minimized). */
+    fun close(fromRoom: Boolean = false) {
         if (closing) return
         closing = true
         seekByJob?.cancel(); seekByJob = null; pendingSeekByTarget = null
@@ -692,7 +693,13 @@ fun PlayerView(
             // copy takes its place as soon as it is ready (before, the flight waited up to 180 ms for it). The video layer
             // still goes well before the player is removed (the flight is 600 ms).
             runOnPlayer { ePause(true) }
-            if (mini) setMini(false)
+            if (mini) {
+                setMini(false)
+                if (fromRoom) (owner as? java.awt.Frame)?.let { f ->
+                    PlayerLog.write("[ui] mini player closed by the room: the window is minimized")
+                    f.extendedState = f.extendedState or java.awt.Frame.ICONIFIED
+                }
+            }
             MediaControls.stop()
             onClose()
             // Always a fresh frame: one kept from the previous episode would fly back instead of this one.
@@ -822,7 +829,7 @@ fun PlayerView(
             setRate = { r -> playerExecutor.execute { runCatching { eRate(r) } } },
             playIndex = { i -> playEntry(i) },
             notice = { text -> flash(text) },
-            close = { close() }
+            close = { close(fromRoom = true) }
         ))
 
     LaunchedEffect(title, index, queue.size, smtcPoster) {

@@ -314,4 +314,8 @@ void WindowMode::reset() {
     if (m_full) setFullscreen(false);
 }
 
+void WindowMode::minimize() {
+    if (m_w) m_w->setWindowStates(m_w->windowStates() | Qt::WindowMinimized);
+}
+
 } // namespace suslik::app
