@@ -243,6 +243,34 @@ button { font: inherit; color: inherit; }
 .btn.glow { animation: glow 1.4s ease-in-out infinite; }
 @keyframes glow { 50% { box-shadow: 0 0 0 4px rgba(255, 176, 46, 0.25), 0 8px 30px rgba(255, 176, 46, 0.5); } }
 .cand.lit { border-color: var(--lamp); background: var(--lamp-soft); box-shadow: 0 0 22px rgba(255, 176, 46, 0.25); }
+.cand.lit .mini { box-shadow: 0 0 0 2px rgba(255, 176, 46, 0.7); }
+/* Барабан встал: победитель — золотая карточка с бликом и пульсом, остальные гаснут */
+.cands.reel .cand { transition: opacity 0.35s var(--ease), filter 0.35s var(--ease); }
+.cands.landed .cand:not(.winner) { opacity: 0.38; filter: saturate(0.5); }
+.cand.winner {
+  border-color: var(--lamp);
+  background: linear-gradient(100deg, rgba(255, 176, 46, 0.26), rgba(255, 176, 46, 0.08) 60%, rgba(255, 210, 122, 0.16));
+  box-shadow: 0 0 0 1px rgba(255, 176, 46, 0.5), 0 0 34px rgba(255, 176, 46, 0.38);
+  animation: win-pop 0.55s var(--ease), win-pulse 1.3s ease-in-out 0.55s infinite;
+}
+.cand.winner::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(105deg, transparent 30%, rgba(255, 240, 200, 0.35) 48%, transparent 66%);
+  transform: translateX(-110%); animation: win-shine 1.2s 0.1s ease-out 2;
+}
+.cand.winner .mini { box-shadow: 0 0 0 2px var(--lamp), 0 0 20px rgba(255, 176, 46, 0.55); }
+.cand.winner .cname { color: #ffe2a8; }
+.win-badge { display: inline-flex; align-items: center; gap: 5px; flex: none; padding: 5px 11px 5px 8px; border-radius: 999px; background: var(--lamp); color: var(--lamp-ink); font-family: var(--display); font-weight: 700; font-size: 12px; animation: win-pop 0.5s 0.1s var(--ease) both; }
+.win-badge .ico { width: 14px; height: 14px; }
+@keyframes win-pop { 0% { transform: scale(0.96); } 45% { transform: scale(1.035); } 100% { transform: scale(1); } }
+@keyframes win-pulse { 50% { box-shadow: 0 0 0 1px rgba(255, 176, 46, 0.7), 0 0 52px rgba(255, 176, 46, 0.55); } }
+@keyframes win-shine { to { transform: translateX(110%); } }
+.confetti { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 60; }
+@media (prefers-reduced-motion: reduce) {
+  .cand.winner, .cand.winner::after, .win-badge { animation: none; }
+  .cand.winner::after { display: none; }
+  .cands.reel .cand { transition: none; }
+}
 
 /* «Посоветовать фильм» */
 .ai-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
