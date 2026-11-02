@@ -60,7 +60,7 @@ function createRoom(hostUser, file = null, controls = "all", hostClientId = null
     watchers: new Map(), // user.id -> { id, name, avatar, streams }
     candidates: [], // [{ key, name, by, by_name, at }]
     poll: null, // { ends_at, votes: Map(user.id -> key), timer }
-    spin: null // «Рулетка»: { key, name, ends_at, timer } — барабан крутится у всех, потом победитель включается
+    spin: null // «Рулетка»: { key, name, started_at, ends_at, timer } — барабан крутится у всех, потом победитель включается
   };
 
   rooms.set(id, room);
@@ -423,7 +423,7 @@ const MAX_CANDIDATES = 8;
 // Все, кто у пульта, проголосовали: ждать конца 45 секунд незачем — итог через несколько секунд (можно ещё передумать)
 const ALL_VOTED_MS = 5 * 1000;
 // Барабан «Рулетки» крутится столько у всех, потом победитель включается в комнате
-const SPIN_MS = 3200;
+const SPIN_MS = 4000;
 
 function shortRoomId() {
   for (let i = 0; i < 50; i++) {
@@ -460,7 +460,7 @@ function activityPublicData(room) {
     watchers: Array.from(room.watchers.values()).map(({ streams, ...w }) => w),
     candidates: room.candidates.map(c => ({ ...c })),
     poll: poll ? { ends_at: poll.ends_at, tally, votes, all_voted: allVoted(room) } : null,
-    spin: room.spin ? { key: room.spin.key, name: room.spin.name, ends_at: room.spin.ends_at } : null
+    spin: room.spin ? { key: room.spin.key, name: room.spin.name, started_at: room.spin.started_at, ends_at: room.spin.ends_at } : null
   };
 }
 
@@ -626,7 +626,8 @@ function spinRoulette(roomId, user, ms = SPIN_MS) {
   const win = room.candidates[crypto.randomInt(room.candidates.length)];
   const timer = setTimeout(() => finishSpin(room), ms);
   timer.unref?.();
-  room.spin = { key: win.key, name: win.name, ends_at: Date.now() + ms, timer };
+  const now = Date.now();
+  room.spin = { key: win.key, name: win.name, started_at: now, ends_at: now + ms, timer };
   activityChanged(room);
   return { ok: true, key: win.key };
 }

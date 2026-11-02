@@ -61,7 +61,9 @@
     sparkles: '<path d="M11 3.5l1.9 5.1 5.1 1.9-5.1 1.9L11 17.5l-1.9-5.1L4 10.5l5.1-1.9z"/><path d="M18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/>',
     chat: '<path d="M4.5 5.5h15a1 1 0 011 1v9a1 1 0 01-1 1H10l-4.5 3.5v-3.5h-1a1 1 0 01-1-1v-9a1 1 0 011-1z"/><path d="M8.5 10h7M8.5 13h4.5"/>',
     star: '<path d="M12 3.8l2.5 5.2 5.7.8-4.1 4 1 5.6L12 16.7l-5.1 2.7 1-5.6-4.1-4 5.7-.8z" fill="currentColor" stroke="none"/>',
-    flag: '<path d="M5.5 21V4.5"/><path d="M5.5 4.5h11.5l-2.4 4 2.4 4H5.5"/>'
+    flag: '<path d="M5.5 21V4.5"/><path d="M5.5 4.5h11.5l-2.4 4 2.4 4H5.5"/>',
+    sound: '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 010 6M18 6.5a7.5 7.5 0 010 11"/>',
+    mute: '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/>'
   };
   function icon(name) {
     var s = document.createElement('span');
@@ -558,6 +560,8 @@
       }
       case 'poll_result': {
         var p = msg.data || {};
+        // Барабан уже крутится у нас: победителя он покажет сам, в момент остановки (и потом переведёт на «Сейчас»)
+        if (p.roulette && reel && reel.key === p.key) break;
         if (p.key) {
           toast((p.roulette ? 'Рулетка выбрала «' : 'Победил «') + (p.name || 'фильм') + '» — включаем в комнате.');
           S.tab = 'now';
@@ -642,6 +646,7 @@
 
   // ---- отрисовка ----
   function render() {
+    syncReel();
     if (!S.room) return;
     var top = h('div', { class: 'top' }, [
       h('div', { class: 'brand' }, [h('span', { class: 'brand-mark' }), h('span', { text: 'Вместе' })]),
@@ -660,7 +665,10 @@
     if (S.sheet) app.appendChild(viewSheet());
     if (focusSearch) { var q = document.getElementById(focusId); if (q) { q.focus(); q.setSelectionRange(caret, caret); } }
     presence.update();
-    if (S.room.spin && !spinning) { spinning = true; requestAnimationFrame(function f() { spinFrame(); if (S.room && S.room.spin) requestAnimationFrame(f); else spinning = false; }); }
+    if (reel && reel.phase === 'spin' && !spinning) {
+      spinning = true;
+      requestAnimationFrame(function f() { if (reelFrame()) requestAnimationFrame(f); else spinning = false; });
+    }
   }
   var spinning = false;
 
@@ -673,7 +681,7 @@
     return h('div', { class: 'tabs' }, [
       tab('now', 'film', 'Сейчас'),
       tab('library', 'grid', 'Медиатека'),
-      tab('poll', S.room.spin ? 'dice' : 'vote', S.room.spin ? 'Рулетка' : S.room.poll ? 'Голосуем' : 'Голосование', S.room.poll || S.room.spin ? '!' : n)
+      tab('poll', S.room.spin || reel ? 'dice' : 'vote', S.room.spin || reel ? 'Рулетка' : S.room.poll ? 'Голосуем' : 'Голосование', S.room.poll || S.room.spin || reel ? '!' : n)
     ]);
   }
 
@@ -1340,7 +1348,10 @@
   }
 
   function viewPoll() {
-    var r = S.room, host = isHost(), p = r.poll, spin = r.spin, cands = r.candidates || [];
+    var r = S.room, host = isHost(), p = r.poll, spin = r.spin || reel, cands = r.candidates || [];
+    // Барабан рисуется по своему снимку списка: сервер очищает предложенные сразу после итога
+    if (reel) { p = null; cands = reel.cands; }
+    var lit = reel ? reelIndex() : -1, landed = !!reel && reel.phase === 'win';
     var myVote = p && p.votes && S.me ? p.votes[S.me.id] : null;
     var total = 0;
     if (p && p.tally) Object.keys(p.tally).forEach(function (k) { total += p.tally[k]; });
@@ -1349,11 +1360,13 @@
       var mini = h('div', { class: 'mini' });
       if (info) posterInto(mini, info.it, true);
       var mine = myVote === c.key;
-      var row = h('div', { class: 'cand' + (mine ? ' mine' : ''), 'data-key': c.key }, [
+      var isWin = landed && c.key === reel.key;
+      var row = h('div', { class: 'cand' + (mine ? ' mine' : '') + (isWin ? ' winner' : '') + (!landed && cands.indexOf(c) === lit ? ' lit' : ''), 'data-key': c.key }, [
         p ? h('div', { class: 'bar', style: 'width:' + (total ? Math.round(n / total * 100) : 0) + '%' }) : null,
         mini,
         h('div', { class: 'cbody' }, [h('div', { class: 'cname', text: info ? info.entry.label : c.name }), h('div', { class: 'small muted', text: 'Предложил(а): ' + (c.by_name || '—') })]),
         p ? h('div', { class: 'votes', text: String(n) }) : null,
+        isWin ? h('span', { class: 'win-badge' }, [icon('star'), 'Выпал']) : null,
         spin ? null : p ? btn(mine ? 'blue small' : 'small', 'vote', mine ? 'Ваш голос' : 'Голосую', function () { roomCall('vote', { key: c.key }); })
           : (host || (S.me && c.by === S.me.id)) ? btn('icon small', 'close', null, function () { roomCall('unsuggest', { key: c.key }); }, { title: 'Убрать из списка' }) : null
       ]);
@@ -1361,9 +1374,12 @@
     });
     var head;
     if (spin) {
+      var win = landed ? (resolve(reel.key) || null) : null;
       head = h('div', { class: 'row' }, [
-        h('div', {}, [h('div', { class: 'h', text: 'Рулетка' }), h('div', { class: 'muted', text: 'Крутим барабан… Выпавший фильм сразу включится в комнате.' })]),
-        h('div', { class: 'spacer' }), icon('dice')
+        h('div', {}, landed
+          ? [h('div', { class: 'h', text: 'Выпало: «' + (win ? win.entry.label : reel.name || 'фильм') + '»' }), h('div', { class: 'muted', text: 'Включаем в комнате…' })]
+          : [h('div', { class: 'h', text: 'Рулетка' }), h('div', { class: 'muted', text: 'Крутим барабан… Выпавший фильм сразу включится в комнате.' })]),
+        h('div', { class: 'spacer' }), muteButton(), icon('dice')
       ]);
     } else if (p) {
       head = h('div', { class: 'row' }, [
@@ -1382,27 +1398,206 @@
         h('div', { class: 'spacer' }),
         host ? btn('lamp', 'vote', 'Начать голосование', function () { roomCall('poll'); }, { disabled: cands.length < 2 }) : null,
         host ? btn('', 'dice', 'Рулетка', function () { roomCall('roulette'); }, { disabled: cands.length < 2, title: 'Случайный фильм из предложенных' }) : null,
-        btn('', 'plus', 'Предложить', function () { S.tab = 'library'; render(); })
+        btn('', 'plus', 'Предложить', function () { S.tab = 'library'; render(); }),
+        muteButton()
       ]);
     }
     return h('div', { class: 'panel' }, [head, h('div', { style: 'height:14px' }),
-      rows.length ? h('div', { class: 'cands' + (spin ? ' spinning' : '') }, rows) : h('div', { class: 'empty', text: 'Пока ничего не предложено. Откройте фильм в медиатеке и нажмите «Предложить».' })]);
+      rows.length ? h('div', { class: 'cands' + (reel ? ' reel' : '') + (landed ? ' landed' : '') }, rows) : h('div', { class: 'empty', text: 'Пока ничего не предложено. Откройте фильм в медиатеке и нажмите «Предложить».' })]);
   }
 
-  // Барабан рулетки: подсветка бежит по предложенным, замедляясь, и встаёт на выпавшем к ends_at (у всех одинаково)
-  var SPIN_MS = 3200;
-  function spinFrame() {
-    var sp = S.room && S.room.spin;
-    if (!sp) return;
-    var rows = document.querySelectorAll('.cands.spinning .cand');
-    if (rows.length) {
-      var keys = [], win = 0;
-      for (var i = 0; i < rows.length; i++) { keys.push(rows[i].getAttribute('data-key')); if (keys[i] === sp.key) win = i; }
-      var t = Math.min(1, Math.max(0, 1 - (sp.ends_at - serverNow()) / SPIN_MS));
-      var steps = rows.length * 4 + win, eased = 1 - Math.pow(1 - t, 3);
-      var at = Math.min(steps, Math.floor(eased * steps)) % rows.length;
-      for (var j = 0; j < rows.length; j++) rows[j].classList.toggle('lit', j === at);
+  // ---- «Рулетка»: барабан, звук и эффект победителя ----
+  // Победителя и время выбирает сервер (spin: key, started_at, ends_at). Барабан у всех идёт по часам сервера и встаёт
+  // на выпавшем ровно в ends_at: в этот же миг — звук, подсветка и конфетти, без ожидания события об итоге.
+  // Шаги подсветки заранее расписаны по времени: каждый следующий длиннее (замедление), последний ~0,4 с — видно,
+  // как барабан «доползает» до фильма. Сервер сразу после итога чистит список, поэтому барабан рисует свой снимок.
+  var OLD_SPIN_MS = 3200; // сервер без started_at
+  var reel = null, reelSeen = '';
+
+  /** Моменты смены подсветки (мс от старта): геометрически растущие шаги, последний ровно в dur. */
+  function reelPlan(dur) {
+    var d0 = 55, dl = Math.max(260, Math.min(460, dur * 0.11));
+    if (dur <= dl * 2) return [dur];
+    var N = Math.max(3, Math.round(1 + Math.log(dl / d0) / Math.log((dur - d0) / (dur - dl))));
+    if (N * d0 >= dur) N = Math.max(1, Math.floor(dur / d0 / 2));
+    var lo = 1.000001, hi = 3, r = 1;
+    for (var it = 0; it < 60; it++) {
+      r = (lo + hi) / 2;
+      if (d0 * (Math.pow(r, N) - 1) / (r - 1) > dur) hi = r; else lo = r;
     }
+    var times = [], t = 0;
+    for (var i = 0; i < N; i++) { t += d0 * Math.pow(r, i); times.push(Math.round(t)); }
+    times[N - 1] = dur;
+    return times;
+  }
+
+  function syncReel() {
+    var sp = S.room && S.room.spin;
+    if (!sp || !sp.key || !sp.ends_at) return;
+    var id = sp.key + '@' + sp.ends_at;
+    if (reel ? reel.id === id : reelSeen === id) return; // этот барабан уже идёт или уже показан
+    if (reel) clearTimeout(reel.timer);
+    var cands = (S.room.candidates || []).slice(), win = -1;
+    cands.forEach(function (c, i) { if (c.key === sp.key) win = i; });
+    if (win < 0) { cands.push({ key: sp.key, name: sp.name }); win = cands.length - 1; }
+    var start = sp.started_at || sp.ends_at - OLD_SPIN_MS, times = reelPlan(Math.max(300, sp.ends_at - start)), n = cands.length;
+    reel = { id: id, key: sp.key, name: sp.name, start: start, times: times, n: n, cands: cands,
+      first: ((win - times.length) % n + n) % n, k: 0, phase: 'spin', timer: 0 };
+    reel.k = reelStep(); // открыли посреди вращения — без пачки щелчков за пропущенное
+    reelSeen = id;
+    S.tab = 'poll'; S.sheet = null;
+  }
+  function reelStep() {
+    var el = serverNow() - reel.start, k = 0;
+    while (k < reel.times.length && reel.times[k] <= el) k++;
+    return k;
+  }
+  function reelIndex() { return (reel.first + (reel.phase === 'win' ? reel.times.length : reel.k)) % reel.n; }
+
+  /** Кадр барабана; false — встал (или его нет). */
+  function reelFrame() {
+    if (!reel || reel.phase !== 'spin') return false;
+    var k = reelStep(), N = reel.times.length;
+    if (k >= N) { landReel(); return false; }
+    if (k !== reel.k) {
+      reel.k = k;
+      var at = reelIndex(), rows = document.querySelectorAll('.cands.reel .cand');
+      for (var j = 0; j < rows.length; j++) rows[j].classList.toggle('lit', j === at);
+      sfx.tick(k / N); // один щелчок на шаг, даже если кадры шли редко
+    }
+    return true;
+  }
+
+  function landReel() {
+    reel.phase = 'win';
+    sfx.win();
+    var info = resolve(reel.key);
+    toast('Рулетка выбрала «' + (info ? info.entry.label : reel.name || 'фильм') + '» — включаем в комнате.');
+    render();
+    var el = document.querySelector('.cand.winner');
+    if (el) confetti(el.getBoundingClientRect());
+    var r = reel;
+    r.timer = setTimeout(function () {
+      if (reel !== r) return;
+      reel = null;
+      if (S.tab === 'poll') S.tab = 'now';
+      render();
+    }, reducedMotion() ? 1800 : 3000);
+  }
+
+  function reducedMotion() { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; } }
+
+  /** Конфетти над карточкой победителя: один холст поверх страницы на ~1,7 с, потом удаляется. */
+  function confetti(rect) {
+    if (reducedMotion() || !rect.width) return;
+    var cv = document.createElement('canvas'), dpr = Math.min(2, window.devicePixelRatio || 1);
+    var W = window.innerWidth, H = window.innerHeight, c = cv.getContext('2d');
+    if (!c) return;
+    cv.className = 'confetti';
+    cv.width = W * dpr; cv.height = H * dpr;
+    document.body.appendChild(cv);
+    c.scale(dpr, dpr);
+    var colors = ['#ffb02e', '#ffd27a', '#60a5fa', '#7fe0b0', '#eef0f5', '#ff9b8f'], parts = [];
+    var cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+    for (var i = 0; i < 90; i++) {
+      var a = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 1.15, v = 4 + Math.random() * 8;
+      parts.push({ x: cx + (Math.random() - 0.5) * rect.width * 0.8, y: cy, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 2,
+        w: 4 + Math.random() * 5, h: 7 + Math.random() * 6, r: Math.random() * 6.28, vr: (Math.random() - 0.5) * 0.4, col: colors[i % colors.length] });
+    }
+    var t0 = performance.now(), last = t0, LIFE = 1700;
+    requestAnimationFrame(function f(now) {
+      var el = now - t0, k = Math.min(3, (now - last) / 16.7);
+      last = now;
+      c.clearRect(0, 0, W, H);
+      if (el > LIFE || !cv.isConnected) { cv.remove(); return; }
+      c.globalAlpha = el > LIFE - 450 ? (LIFE - el) / 450 : 1;
+      for (var i = 0; i < parts.length; i++) {
+        var p = parts[i], fl = Math.abs(Math.cos(p.r * 1.7));
+        p.vy += 0.3 * k; p.vx *= Math.pow(0.985, k); p.vy *= Math.pow(0.985, k);
+        p.x += p.vx * k; p.y += p.vy * k; p.r += p.vr * k;
+        c.save(); c.translate(p.x, p.y); c.rotate(p.r);
+        c.fillStyle = p.col; c.fillRect(-p.w / 2, -p.h * fl / 2, p.w, p.h * fl + 0.6);
+        c.restore();
+      }
+      requestAnimationFrame(f);
+    });
+  }
+
+  /** Звуки рулетки: синтез WebAudio, без файлов. Браузер разрешает звук после первого нажатия на странице. */
+  var sfx = (function () {
+    var ctx = null, out = null, noise = null, muted = false;
+    try { muted = localStorage.getItem('sm.act.mute') === '1'; } catch (e) { /* без хранилища */ }
+    function get() {
+      if (!ctx) {
+        var C = window.AudioContext || window.webkitAudioContext;
+        if (!C) return null;
+        try { ctx = new C(); } catch (e) { return null; }
+        out = ctx.createGain();
+        out.gain.value = 0.5; // общая громкость — умеренная
+        out.connect(ctx.destination);
+        noise = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.05), ctx.sampleRate);
+        var d = noise.getChannelData(0);
+        for (var i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
+      }
+      if (ctx.state === 'suspended') ctx.resume().catch(function () {});
+      return ctx;
+    }
+    function unlock() { get(); }
+    ['pointerdown', 'keydown', 'touchend'].forEach(function (e) { document.addEventListener(e, unlock, { capture: true, passive: true }); });
+    function ready() { if (muted) return null; var c = get(); return c && c.state === 'running' ? c : null; }
+    function tone(c, f, t, dur, type, vol, f2) {
+      var o = c.createOscillator(), g = c.createGain();
+      o.type = type;
+      o.frequency.setValueAtTime(f, t);
+      if (f2) o.frequency.exponentialRampToValueAtTime(f2, t + dur);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(vol, t + 0.006);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g); g.connect(out);
+      o.start(t); o.stop(t + dur + 0.03);
+    }
+    return {
+      muted: function () { return muted; },
+      setMuted: function (m) {
+        muted = !!m;
+        try { localStorage.setItem('sm.act.mute', muted ? '1' : '0'); } catch (e) { /* без хранилища */ }
+      },
+      /** Щелчок храповика; p — доля пути (0…1): к концу ниже и глуше. */
+      tick: function (p) {
+        var c = ready();
+        if (!c) return;
+        var t = c.currentTime, s = c.createBufferSource(), bp = c.createBiquadFilter(), g = c.createGain();
+        s.buffer = noise;
+        bp.type = 'bandpass'; bp.frequency.value = 3200 - 1400 * p; bp.Q.value = 1.6;
+        g.gain.setValueAtTime(0.5, t);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.035);
+        s.connect(bp); bp.connect(g); g.connect(out);
+        s.start(t); s.stop(t + 0.05);
+        tone(c, 900 - 300 * p, t, 0.04, 'triangle', 0.1, 500);
+      },
+      /** Победа: короткое восходящее арпеджио и «искры» сверху. */
+      win: function () {
+        var c = ready();
+        if (!c) return;
+        var t = c.currentTime + 0.01;
+        tone(c, 140, t, 0.18, 'sine', 0.3, 70);
+        [523.25, 659.25, 783.99, 1046.5].forEach(function (f, i) {
+          tone(c, f, t + i * 0.085, i === 3 ? 0.9 : 0.32, 'triangle', 0.2);
+        });
+        [2093, 2637, 3136, 2637, 3520].forEach(function (f, i) {
+          tone(c, f, t + 0.34 + i * 0.07, 0.35, 'sine', 0.045);
+        });
+      }
+    };
+  })();
+
+  function muteButton() {
+    var m = sfx.muted();
+    return btn('icon small', m ? 'mute' : 'sound', null, function () {
+      sfx.setMuted(!m);
+      if (m) sfx.tick(0);
+      render();
+    }, { title: m ? 'Включить звук рулетки' : 'Выключить звук рулетки', 'aria-pressed': m ? 'true' : 'false' });
   }
 
   // Раз в секунду — только часы и таймер, без перерисовки страницы

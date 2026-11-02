@@ -150,6 +150,7 @@ test("рулетка: победителя выбирает сервер, у в�
   const pub = rooms.getRoomPublicData(room);
   assert.equal(pub.spin.key, r.key);
   assert.ok(pub.spin.ends_at > Date.now());
+  assert.equal(pub.spin.ends_at - pub.spin.started_at, 60000); // клиент крутит барабан ровно столько
   // Пока крутится: список и голосование стоят
   assert.equal(rooms.suggestFile(room.id, carol, { key: "42|c.mkv", name: "C" }).ok, false);
   assert.equal(rooms.unsuggestFile(room.id, alice, "40|a.mkv").ok, false);
