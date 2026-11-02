@@ -134,8 +134,10 @@ function memberOf(user, clientId) {
   };
 }
 
-// Поиск активной комнаты, где уже подключен пользователь или устройство.
+// Поиск активной комнаты, где уже подключен пользователь с другого устройства.
 // Правило: 1 аккаунт = 1 активная комната (нельзя заходить с другого устройства, пока активно первое).
+// То же устройство (тот же client_id: приложения хранят его между запусками) — не помеха: оно перешло в другую комнату
+// или вернулось после перезапуска, пока сервер ещё не заметил обрыв старого потока. Прежнее место снимает moveDevice.
 function findUserActiveRoom(user, clientId = null, targetRoomId = null) {
   const userId = user && user.id ? String(user.id) : null;
   const isAccount = Boolean(userId && userId !== "shared" && userId !== "guest");
@@ -147,6 +149,7 @@ function findUserActiveRoom(user, clientId = null, targetRoomId = null) {
     for (const member of room.members.values()) {
       if (!member) continue;
       if (member.streams !== undefined && member.streams <= 0) continue;
+      if (normClientId && member.client_id === normClientId) continue;
 
       const memberUserId = member.id ? String(member.id) : null;
 
@@ -172,21 +175,19 @@ function findUserActiveRoom(user, clientId = null, targetRoomId = null) {
         }
       }
 
-      // 2. Проверка по client_id устройства: одно устройство не может быть в двух разных комнатах
-      if (normClientId && member.client_id === normClientId) {
-        if (!targetRoomId || room.id !== targetRoomId) {
-          return {
-            inRoom: true,
-            room,
-            member,
-            reason: "same_device_other_room"
-          };
-        }
-      }
     }
   }
 
   return null;
+}
+
+// Одно устройство — одна комната: вошло в другую — из прежних оно вышло (старый поток мог ещё не оборваться)
+function moveDevice(clientId, targetRoomId) {
+  const cid = typeof clientId === "string" && clientId ? clientId.trim().slice(0, 64) : null;
+  if (!cid) return;
+  for (const room of Array.from(rooms.values())) {
+    if (room.id !== targetRoomId && room.members.has(cid)) leaveRoom(room.id, cid, true);
+  }
 }
 
 // Участник комнаты — это открытый поток событий (SSE): закрылся последний поток устройства — его нет в комнате.
@@ -200,11 +201,10 @@ function joinRoom(roomId, user, clientId = null) {
     const error =
       active.reason === "other_device_same_room"
         ? "Этот аккаунт уже подключен к комнате с другого устройства."
-        : active.reason === "same_device_other_room"
-          ? "Это устройство уже подключено к другой комнате."
-          : "Этот аккаунт уже находится в активной комнате.";
+        : "Этот аккаунт уже находится в активной комнате.";
     return { ok: false, error, room: null, member: null };
   }
+  moveDevice(clientId, roomId);
 
   const fresh = memberOf(user, clientId);
   const existing = room.members.get(fresh.client_id);
@@ -277,8 +277,9 @@ function promoteIfHostGone(room) {
 
 function isRoomHost(room, user, clientId) {
   if (!user || user.id !== room.host_id) return false;
-  // Общий пароль: один id на всех, ведущий — устройство, создавшее комнату
-  if (room.host_id === "shared" && room.host_client_id) return clientId === room.host_client_id;
+  // Общий пароль: один id на всех, ведущий — только устройство, создавшее комнату. Комната без него (создана без
+  // client_id) ведущего не имеет: иначе ведущими были бы все, кто вошёл по общему паролю
+  if (room.host_id === "shared") return Boolean(room.host_client_id) && clientId === room.host_client_id;
   return true;
 }
 
@@ -665,6 +666,7 @@ module.exports = {
   addListener,
   joinRoom,
   findUserActiveRoom,
+  moveDevice,
   previewMember,
   publicMember,
   clientKey,

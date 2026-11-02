@@ -142,6 +142,7 @@ private:
     QByteArray m_streamBuf;
     int m_failures = 0;
     int m_streamGen = 0;
+    QTimer m_clockTimer;
 };
 
 } // namespace suslik::app

@@ -21,13 +21,13 @@ const router = express.Router();
 // 1. Создание новой комнаты совместного просмотра
 router.post("/api/rooms", requireLogin, roomLimiter, (req, res) => {
   const { file, controls, client_id } = req.body || {};
+  // При общем пароле ведущего отличает только устройство: без client_id комнату не создать (все приложения его шлют)
+  if (req.user && req.user.id === "shared" && !(typeof client_id === "string" && client_id.trim())) {
+    return res.status(400).json({ error: "Не хватает client_id устройства: обновите приложение." });
+  }
   const active = findUserActiveRoom(req.user, client_id, null);
   if (active) {
-    const error =
-      active.reason === "same_device_other_room"
-        ? "Это устройство уже подключено к другой комнате."
-        : "Этот аккаунт уже находится в активной комнате.";
-    return res.status(400).json({ error });
+    return res.status(400).json({ error: "Этот аккаунт уже находится в активной комнате." });
   }
   const room = createRoom(req.user, file, controls, client_id);
   res.json({ ok: true, room: getRoomPublicData(room) });
@@ -51,9 +51,7 @@ router.post("/api/rooms/:id/join", requireLogin, roomLimiter, (req, res) => {
     const error =
       active.reason === "other_device_same_room"
         ? "Этот аккаунт уже подключен к комнате с другого устройства."
-        : active.reason === "same_device_other_room"
-          ? "Это устройство уже подключено к другой комнате."
-          : "Этот аккаунт уже находится в активной комнате.";
+        : "Этот аккаунт уже находится в активной комнате.";
     return res.status(400).json({ error });
   }
 
@@ -129,7 +127,8 @@ router.get("/api/rooms/:id/events", requireLogin, (req, res) => {
   res.on("close", () => {
     clearInterval(pingTimer);
     removeListener();
-    if (joined && joined.member) {
+    // Только своё место: устройство могло уже перейти в другую комнату и вернуться сюда новым участником (moveDevice)
+    if (joined && joined.member && room.members.get(joined.member.client_id) === joined.member) {
       leaveRoom(room.id, joined.member.client_id);
     }
   });

@@ -400,7 +400,7 @@ Item {
                         label: Ui.tx("player.skorost")
                         Repeater {
                             model: [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
-                            Chip_ { required property real modelData; label: player.rateText(modelData); on: Math.abs(modelData - player.rate) < 0.01; onClicked: player.setSpeed(modelData) }
+                            Chip_ { required property real modelData; label: player.rateText(modelData); on: Math.abs(modelData - (player.partyFilm ? 1 : player.rate)) < 0.01; onClicked: player.setSpeed(modelData) }
                         }
                     }
                     MoreRow {
@@ -658,12 +658,12 @@ Item {
                     GlassBtn { size: pv.btn; active: pv.picker === "spu"; onClicked: pv.openPicker("spu"); PlayerIcon { anchors.centerIn: parent; name: "subs"; size: pv.compact ? 20 : 22 } }
                     GlassBtn {
                         size: pv.btn; active: pv.picker === "more"; onClicked: pv.openPicker("more")
-                        width: player.rate !== 1 && !pv.narrow ? pv.btn + 22 : pv.btn
+                        width: player.rate !== 1 && !player.partyFilm && !pv.narrow ? pv.btn + 22 : pv.btn
                         radius: height / 2
                         Row {
                             anchors.centerIn: parent
                             PlayerIcon { anchors.verticalCenter: parent.verticalCenter; name: "gear"; size: pv.compact ? 18 : 20 }
-                            Text { visible: player.rate !== 1 && !pv.narrow; anchors.verticalCenter: parent.verticalCenter; text: " " + player.rateText(player.rate); color: "white"; font.family: Theme.onest; font.pixelSize: 10; font.bold: true }
+                            Text { visible: player.rate !== 1 && !player.partyFilm && !pv.narrow; anchors.verticalCenter: parent.verticalCenter; text: " " + player.rateText(player.rate); color: "white"; font.family: Theme.onest; font.pixelSize: 10; font.bold: true }
                         }
                     }
                     VolumeCapsule { vertical: pv.compact }

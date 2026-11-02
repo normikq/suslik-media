@@ -73,6 +73,8 @@ class PlayerModel : public QObject, private core::PlaybackSupervisor::Actions {
     Q_PROPERTY(QString deleteTrackText READ deleteTrackText NOTIFY tracksExtraChanged)
     /// Гость комнаты «Вместе» с её фильмом: перемотку, паузу (пока её держит ведущий) и серии выбирает ведущий.
     Q_PROPERTY(bool partyGuest READ partyGuest NOTIFY partyChanged)
+    /// Плеер показывает фильм комнаты (ведущий или гость): скорость — комнаты, своя не действует.
+    Q_PROPERTY(bool partyFilm READ partyFilm NOTIFY partyChanged)
     Q_PROPERTY(bool playLocked READ playLocked NOTIFY partyChanged)
 
 public:
@@ -168,6 +170,7 @@ public:
 
     // ---- совместный просмотр (party/PartySync) ----
     bool partyGuest() const;
+    bool partyFilm() const;
     /// Гость, а ведущий держит паузу (или комната ждёт загрузку): снять её гость не может.
     bool playLocked() const;
     QString currentWatchKey() const { return watchKey(); }

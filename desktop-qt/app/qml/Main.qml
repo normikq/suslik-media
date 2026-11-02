@@ -86,7 +86,7 @@ Window {
                 Page { index: 1; LibraryView { id: minePage; anchors.fill: parent; mine: true; onVersionsRequested: (t, ids) => dialogs.versions(model, t, ids); onPlayRequested: (id, p) => dialogs.play_(id, p); onFlyTo: (tab, r, p) => flight.launch(tab, r, p); onDiscoverRequested: { win.select(2); searchPage.openAi("") } } }
                 Page { index: 2; SearchView { id: searchPage; anchors.fill: parent; active: win.tab === 2; onPlayRequested: (id, p) => dialogs.play_(id, p) } }
                 Page { index: 4; TogetherView { anchors.fill: parent; onLibrary: win.select(0); onPlayRequested: (id, path) => dialogs.play_(id, path) } }
-                Page { index: 3; AddView { id: addPage; anchors.fill: parent; active: win.tab === 3; onPreviewRequested: (video, a, offset, title) => player.startPreview(video, a, offset, title) } }
+                Page { index: 3; AddView { id: addPage; anchors.fill: parent; active: win.tab === 3; onPreviewRequested: (video, a, offset, title) => { if (party.guest) dialogs.say(Ui.tx("party.svoy_film_gostyu")); else player.startPreview(video, a, offset, title) } } }
             }
         }
     }

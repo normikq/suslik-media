@@ -4,31 +4,47 @@ import kotlin.math.abs
 
 /**
  * Синхронизация часов клиента с сервером комнаты совместного просмотра.
- * Хранит минимальный RTT и вычисляет смещение локального времени относительно серверного:
- * offset = serverTime - (localTime0 + rtt / 2).
+ * Смещение берётся по точке с самым коротким кругом (RTT) среди точек за последние [WINDOW_MS]:
+ * offset = serverTime - (localTime0 + rtt / 2). Старые точки забываются, поэтому часы, уплывшие за долгий просмотр,
+ * догоняются новыми точками (приложение берёт их раз в [RESAMPLE_MS]). Локальные часы лучше монотонные: перевод
+ * системного времени (NTP) тогда не сдвигает место комнаты.
  */
 class PartyClock {
+    private class Sample(val at: Long, val rtt: Long, val offset: Long)
+    private val samples = ArrayList<Sample>()
+
     @Volatile var offsetMs: Long = 0L
         private set
 
     @Volatile var bestRttMs: Long = Long.MAX_VALUE
         private set
 
+    @Synchronized
     fun addSample(localSendTime: Long, localRecvTime: Long, serverTime: Long) {
         val rtt = (localRecvTime - localSendTime).coerceAtLeast(0L)
-        if (rtt < bestRttMs) {
-            bestRttMs = rtt
-            offsetMs = serverTime - (localSendTime + rtt / 2L)
-        }
+        samples += Sample(localRecvTime, rtt, serverTime - (localSendTime + rtt / 2L))
+        samples.removeAll { localRecvTime - it.at > WINDOW_MS || it.at > localRecvTime }
+        val best = samples.minByOrNull { it.rtt } ?: return
+        bestRttMs = best.rtt
+        offsetMs = best.offset
     }
 
     fun serverNow(localNow: Long = System.currentTimeMillis()): Long {
         return localNow + offsetMs
     }
 
+    @Synchronized
     fun reset() {
+        samples.clear()
         offsetMs = 0L
         bestRttMs = Long.MAX_VALUE
+    }
+
+    companion object {
+        /** Точки старше этого не в счёт. */
+        const val WINDOW_MS = 10 * 60 * 1000L
+        /** Раз во столько приложение, пока в комнате, берёт ещё одну точку (GET комнаты). */
+        const val RESAMPLE_MS = 60 * 1000L
     }
 }
 

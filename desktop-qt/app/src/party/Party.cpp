@@ -3,11 +3,13 @@
 #include "../trackers/RuTrackerClient.h"
 
 #include "suslik/core/ApiClient.h"
+#include "suslik/core/Store.h"
 #include "suslik/core/Strings.h"
 #include "suslik/core/TimeText.h"
 #include "suslik/core/Trackers.h"
 
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QJsonArray>
 #include <QPointer>
 #include <QRegularExpression>
@@ -20,13 +22,34 @@ using namespace suslik::core;
 
 namespace {
 QString S(const char *s) { return QString::fromUtf8(s); }
-qint64 nowMs() { return QDateTime::currentMSecsSinceEpoch(); }
+// Монотонные часы для комнаты: перевод системного времени (NTP) не сдвигает место комнаты
+qint64 nowMs() {
+    static QElapsedTimer t = [] { QElapsedTimer x; x.start(); return x; }();
+    return t.elapsed();
+}
 void log(const QString &s) { PlayerLog::write(S("[party] ") + s); }
+
+// Пропуск этого ПК в комнатах, один и тот же после перезапуска: создатель комнаты при общем пароле остаётся её ведущим,
+// а вход в ту же комнату не упирается в «уже подключён с другого устройства», пока сервер не заметил обрыв
+QString savedClientId() {
+    Store &st = Store::of(S("party"));
+    static const QRegularExpression ok(S("^pc_[0-9a-f]{12}$"));
+    if (const auto v = st.get(S("client_id")); v && ok.match(*v).hasMatch()) return *v;
+    const QString id = PartyProtocol::newClientId(S("pc"));
+    st.put(S("client_id"), id);
+    return id;
+}
 } // namespace
 
 Party::Party(ApiClient &api, QObject *parent)
-    : QObject(parent), m_api(api), m_clientId(PartyProtocol::newClientId(S("pc"))), m_myKey(PartyProtocol::clientKey(m_clientId)) {
+    : QObject(parent), m_api(api), m_clientId(savedClientId()), m_myKey(PartyProtocol::clientKey(m_clientId)) {
     s_instance = this;
+    // Пока в комнате — точка для часов раз в минуту: гость сам ничего не шлёт, а часы за часы просмотра уплывают
+    m_clockTimer.setInterval(int(PartyClock::RESAMPLE_MS));
+    connect(&m_clockTimer, &QTimer::timeout, this, [this] {
+        if (!m_roomId) { m_clockTimer.stop(); return; }
+        timedGet(PartyProtocol::roomPath(*m_roomId), [](const ApiResult &) {});
+    });
 }
 
 Party::~Party() {
@@ -194,7 +217,7 @@ void Party::enter(const RoomUpdate &u) {
     auto more = std::make_shared<std::function<void(int)>>();
     *more = [self, id, more](int left) {
         if (!self || self->m_roomId != id) return;
-        if (left == 0) { self->startStream(id); return; }
+        if (left == 0) { self->startStream(id); self->m_clockTimer.start(); return; }
         self->timedGet(PartyProtocol::roomPath(id), [more, left](const ApiResult &) { (*more)(left - 1); });
     };
     (*more)(3);

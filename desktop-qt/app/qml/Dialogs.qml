@@ -7,7 +7,11 @@ Item {
     signal play(var request)
 
     function versions(p, title, ids) { versionPicker.page = p; versionPicker.title = title; versionPicker.ids = ids; versionPicker.open = true }
-    function play_(magnetId, path) { playDialog.show(magnetId, path) }
+    // Гость комнаты смотрит фильм ведущего: свой фильм (из поиска раздач) — только выйдя из комнаты
+    function play_(magnetId, path) {
+        if (party.guest) { say(Ui.tx("party.svoy_film_gostyu")); return }
+        playDialog.show(magnetId, path)
+    }
 
     Connections {
         target: lib
