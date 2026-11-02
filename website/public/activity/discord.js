@@ -1,6 +1,6 @@
 /*
  * Связь с клиентом Discord изнутри Activity (iframe): то же, что делает @discord/embedded-app-sdk (2.x), но без сборщика —
- * рукопожатие, ожидание READY и команды postMessage-ом. Нужны только AUTHORIZE и OPEN_EXTERNAL_LINK.
+ * рукопожатие, ожидание READY и команды postMessage-ом. Нужны AUTHORIZE, AUTHENTICATE, SET_ACTIVITY и OPEN_EXTERNAL_LINK.
  * Протокол: [opcode, payload]; 0 — рукопожатие, 1 — кадр (команда/ответ/событие), 2 — закрытие, 3 — HELLO (старый).
  */
 (function (g) {
@@ -82,6 +82,10 @@
     authorize: function (clientId, scopes) {
       return command('AUTHORIZE', { client_id: clientId, response_type: 'code', state: '', prompt: 'none', scope: scopes });
     },
+    /** Вход клиента Discord токеном OAuth2: нужен командам со scope (SET_ACTIVITY — rpc.activities.write). */
+    authenticate: function (accessToken) { return command('AUTHENTICATE', { access_token: accessToken }); },
+    /** Статус в профиле и в голосовом канале («Смотрит …»); null — убрать свой. */
+    setActivity: function (activity) { return command('SET_ACTIVITY', { activity: activity }); },
     /** Ссылка во внешнем браузере (Discord спросит «Покинуть Discord?»). */
     openExternal: function (url) { return command('OPEN_EXTERNAL_LINK', { url: url }); },
     onClose: function (f) { onClose = f; }

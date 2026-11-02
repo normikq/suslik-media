@@ -114,6 +114,69 @@ test("голосование без голосов фильм не меняет;
   assert.equal(room.poll, null);
 });
 
+test("«Итог сейчас» — только ведущему; все у пульта проголосовали — итог через 5 с", () => {
+  const room = rooms.getOrCreateChannelRoom("121212121212121212", alice);
+  const leaveA = rooms.addWatcher(room, alice);
+  const leaveB = rooms.addWatcher(room, bob);
+  rooms.suggestFile(room.id, alice, { key: "30|a.mkv", name: "A" });
+  rooms.suggestFile(room.id, bob, { key: "31|b.mkv", name: "B" });
+  rooms.startPoll(room.id, alice, 60000);
+  assert.equal(rooms.finishPollNow(room.id, alice).ok, false); // никто не голосовал
+  rooms.vote(room.id, bob, "31|b.mkv");
+  assert.equal(rooms.getRoomPublicData(room).poll.all_voted, false);
+  assert.ok(room.poll.ends_at - Date.now() > 50000);
+  rooms.vote(room.id, alice, "31|b.mkv");
+  assert.equal(rooms.getRoomPublicData(room).poll.all_voted, true);
+  assert.ok(room.poll.ends_at - Date.now() <= 5000);
+  assert.equal(rooms.finishPollNow(room.id, bob).ok, false); // не ведущий
+  assert.equal(rooms.finishPollNow(room.id, alice).ok, true);
+  assert.equal(room.poll, null);
+  assert.equal(room.file.key, "31|b.mkv");
+  assert.equal(rooms.finishPollNow(room.id, alice).ok, false); // уже закончилось
+  leaveA();
+  leaveB();
+});
+
+test("рулетка: победителя выбирает сервер, у всех одно, потом фильм включается", () => {
+  const room = rooms.getOrCreateChannelRoom("131313131313131313", alice);
+  assert.equal(rooms.spinRoulette(room.id, alice).ok, false); // меньше двух
+  rooms.suggestFile(room.id, alice, { key: "40|a.mkv", name: "A" });
+  rooms.suggestFile(room.id, bob, { key: "41|b.mkv", name: "B" });
+  assert.equal(rooms.spinRoulette(room.id, bob).ok, false); // не ведущий
+  const sent = [];
+  const stop = rooms.addListener(room.id, msg => sent.push(JSON.parse(msg)));
+  const r = rooms.spinRoulette(room.id, alice, 60000);
+  assert.equal(r.ok, true);
+  const pub = rooms.getRoomPublicData(room);
+  assert.equal(pub.spin.key, r.key);
+  assert.ok(pub.spin.ends_at > Date.now());
+  // Пока крутится: список и голосование стоят
+  assert.equal(rooms.suggestFile(room.id, carol, { key: "42|c.mkv", name: "C" }).ok, false);
+  assert.equal(rooms.unsuggestFile(room.id, alice, "40|a.mkv").ok, false);
+  assert.equal(rooms.startPoll(room.id, alice).ok, false);
+  const win = rooms.finishSpin(room);
+  assert.equal(win.key, r.key);
+  assert.equal(room.file.key, r.key);
+  assert.equal(room.spin, null);
+  assert.equal(room.candidates.length, 0);
+  const result = sent.find(m => m.event === "poll_result");
+  assert.equal(result.data.roulette, true);
+  assert.equal(result.data.key, r.key);
+  stop();
+});
+
+test("приглашение в чат: код для ТВ, кнопка только с https, без упоминаний", () => {
+  const { inviteMessage } = require("../src/services/discord");
+  const m = inviteMessage({ code: "381667", film: "Дюна **2**", by: "Глеб", link: "https://example.org/join/381667" });
+  assert.match(m.embeds[0].title, /381-667/);
+  assert.match(m.embeds[0].description, /Дюна 2/);
+  assert.equal(m.components[0].components[0].url, "https://example.org/join/381667");
+  assert.deepEqual(m.allowed_mentions, { parse: [] });
+  const plain = inviteMessage({ code: "381667", link: "http://localhost/join/381667" });
+  assert.deepEqual(plain.components, []);
+  assert.equal(plain.embeds[0].url, undefined);
+});
+
 test("RuTracker через ПК: запрос в поток комнаты, ответ только от ПК комнаты, «add» — тому ПК, что нашёл", async () => {
   const pcSearch = require("../src/services/pc-search");
   const room = rooms.getOrCreateChannelRoom("999999999999999999", alice);
@@ -220,6 +283,20 @@ test("сервер: страница Activity встраивается толь�
     });
     assert.equal(put.status, 200);
     assert.equal((await put.json()).room.file.key, "5|Film.mkv");
+
+    // «Позвать в чат»: только тот, кто у пульта; без бота — ссылка для копирования
+    const notHere = await fetch(`${base}/api/activity/rooms/${room.id}/invite`, { method: "POST", headers: auth, body: "{}" });
+    assert.equal(notHere.status, 403);
+    const leave = rooms.addWatcher(rooms.getRoom(room.id), bob);
+    const inv = await (await fetch(`${base}/api/activity/rooms/${room.id}/invite`, { method: "POST", headers: auth, body: "{}" })).json();
+    assert.equal(inv.fallback, true);
+    assert.equal(inv.reason, "no_bot");
+    assert.match(inv.link, new RegExp(`/join/${room.id}$`));
+    leave();
+    const fin = await fetch(`${base}/api/activity/rooms/${room.id}/poll/finish`, { method: "POST", headers: auth, body: "{}" });
+    assert.equal(fin.status, 400); // голосования нет
+    const spin = await fetch(`${base}/api/activity/rooms/${room.id}/roulette`, { method: "POST", headers: auth, body: "{}" });
+    assert.equal(spin.status, 400); // меньше двух фильмов
 
     // RuTracker через ПК: без ПК в комнате — сразу понятный ответ, а не ожидание
     const rt = await fetch(`${base}/api/activity/rooms/${room.id}/rutracker/search`, { method: "POST", headers: auth, body: JSON.stringify({ query: "Dune" }) });

@@ -59,7 +59,8 @@ function createRoom(hostUser, file = null, controls = "all", hostClientId = null
     channel_id: null,
     watchers: new Map(), // user.id -> { id, name, avatar, streams }
     candidates: [], // [{ key, name, by, by_name, at }]
-    poll: null // { ends_at, votes: Map(user.id -> key), timer }
+    poll: null, // { ends_at, votes: Map(user.id -> key), timer }
+    spin: null // «Рулетка»: { key, name, ends_at, timer } — барабан крутится у всех, потом победитель включается
   };
 
   rooms.set(id, room);
@@ -308,6 +309,7 @@ function sweepRooms(now = Date.now()) {
       rooms.delete(id);
       roomListeners.delete(id);
       if (room.poll && room.poll.timer) clearTimeout(room.poll.timer);
+      if (room.spin && room.spin.timer) clearTimeout(room.spin.timer);
       if (room.channel_id && channelRooms.get(room.channel_id) === id) channelRooms.delete(room.channel_id);
     }
   }
@@ -418,6 +420,10 @@ function handleRoomAction(roomId, user, action) {
 const channelRooms = new Map(); // channel_id -> room id
 const POLL_MS = 45 * 1000;
 const MAX_CANDIDATES = 8;
+// Все, кто у пульта, проголосовали: ждать конца 45 секунд незачем — итог через несколько секунд (можно ещё передумать)
+const ALL_VOTED_MS = 5 * 1000;
+// Барабан «Рулетки» крутится столько у всех, потом победитель включается в комнате
+const SPIN_MS = 3200;
 
 function shortRoomId() {
   for (let i = 0; i < 50; i++) {
@@ -453,8 +459,16 @@ function activityPublicData(room) {
   return {
     watchers: Array.from(room.watchers.values()).map(({ streams, ...w }) => w),
     candidates: room.candidates.map(c => ({ ...c })),
-    poll: poll ? { ends_at: poll.ends_at, tally, votes } : null
+    poll: poll ? { ends_at: poll.ends_at, tally, votes, all_voted: allVoted(room) } : null,
+    spin: room.spin ? { key: room.spin.key, name: room.spin.name, ends_at: room.spin.ends_at } : null
   };
+}
+
+// Проголосовали все, кто сейчас у пульта (голосуют только из Activity)
+function allVoted(room) {
+  if (!room.poll || room.watchers.size === 0) return false;
+  for (const id of room.watchers.keys()) if (!room.poll.votes.has(id)) return false;
+  return true;
 }
 
 function activityChanged(room) {
@@ -503,6 +517,7 @@ function suggestFile(roomId, user, file) {
   const { room, error } = channelRoomOrError(roomId);
   if (!room) return { ok: false, error };
   if (room.poll) return { ok: false, error: "Голосование уже идёт: дождитесь итога." };
+  if (room.spin) return { ok: false, error: "Крутится рулетка: дождитесь итога." };
   const f = cleanFile(file);
   if (!f) return { ok: false, error: "Не тот файл." };
   if (!room.candidates.some(c => c.key === f.key)) {
@@ -518,6 +533,7 @@ function unsuggestFile(roomId, user, key) {
   const { room, error } = channelRoomOrError(roomId);
   if (!room) return { ok: false, error };
   if (room.poll) return { ok: false, error: "Голосование уже идёт: дождитесь итога." };
+  if (room.spin) return { ok: false, error: "Крутится рулетка: дождитесь итога." };
   const c = room.candidates.find(x => x.key === key);
   if (!c) return { ok: true };
   if (c.by !== user.id && !isRoomHost(room, user, null)) return { ok: false, error: "Убрать фильм может тот, кто его предложил, или ведущий." };
@@ -531,6 +547,7 @@ function startPoll(roomId, user, ms = POLL_MS) {
   if (!room) return { ok: false, error };
   if (!isRoomHost(room, user, null)) return { ok: false, error: "Голосование начинает ведущий." };
   if (room.poll) return { ok: true };
+  if (room.spin) return { ok: false, error: "Крутится рулетка: дождитесь итога." };
   if (room.candidates.length < 2) return { ok: false, error: "Для голосования нужно хотя бы два фильма." };
   const timer = setTimeout(() => finishPoll(room), ms);
   timer.unref?.();
@@ -545,6 +562,13 @@ function vote(roomId, user, key) {
   if (!room.poll) return { ok: false, error: "Голосование уже закончилось." };
   if (!room.candidates.some(c => c.key === key)) return { ok: false, error: "Такого фильма нет в списке." };
   room.poll.votes.set(user.id, key);
+  // Все у пульта проголосовали — итог через ALL_VOTED_MS, а не в конце минуты
+  if (allVoted(room) && room.poll.ends_at - Date.now() > ALL_VOTED_MS) {
+    clearTimeout(room.poll.timer);
+    room.poll.ends_at = Date.now() + ALL_VOTED_MS;
+    room.poll.timer = setTimeout(() => finishPoll(room), ALL_VOTED_MS);
+    room.poll.timer.unref?.();
+  }
   activityChanged(room);
   return { ok: true };
 }
@@ -577,6 +601,48 @@ function finishPoll(room) {
   broadcast(room.id, "poll_result", win ? { key: win.candidate.key, name: win.candidate.name, votes: win.votes } : { key: null });
   activityChanged(room);
   return win;
+}
+
+// «Итог сейчас»: ведущий не ждёт конца таймера
+function finishPollNow(roomId, user) {
+  const { room, error } = channelRoomOrError(roomId);
+  if (!room) return { ok: false, error };
+  if (!isRoomHost(room, user, null)) return { ok: false, error: "Подвести итог может ведущий." };
+  if (!room.poll) return { ok: false, error: "Голосование уже закончилось." };
+  if (room.poll.votes.size === 0) return { ok: false, error: "Ещё никто не проголосовал." };
+  finishPoll(room);
+  return { ok: true };
+}
+
+// «Рулетка»: ведущий выбирает случайно из предложенных. Победителя выбирает сервер (у всех один и тот же),
+// у всех SPIN_MS крутится барабан, потом фильм включается в комнате — как итог голосования
+function spinRoulette(roomId, user, ms = SPIN_MS) {
+  const { room, error } = channelRoomOrError(roomId);
+  if (!room) return { ok: false, error };
+  if (!isRoomHost(room, user, null)) return { ok: false, error: "Рулетку крутит ведущий." };
+  if (room.spin) return { ok: true };
+  if (room.poll) return { ok: false, error: "Сначала закончите голосование." };
+  if (room.candidates.length < 2) return { ok: false, error: "Для рулетки нужно хотя бы два фильма." };
+  const win = room.candidates[crypto.randomInt(room.candidates.length)];
+  const timer = setTimeout(() => finishSpin(room), ms);
+  timer.unref?.();
+  room.spin = { key: win.key, name: win.name, ends_at: Date.now() + ms, timer };
+  activityChanged(room);
+  return { ok: true, key: win.key };
+}
+
+function finishSpin(room) {
+  if (rooms.get(room.id) !== room || !room.spin) return null;
+  clearTimeout(room.spin.timer);
+  const win = room.candidates.find(c => c.key === room.spin.key);
+  room.spin = null;
+  if (win) {
+    room.candidates = [];
+    handleRoomAction(room.id, { id: room.host_id }, { type: "change_file", file: cleanFile(win), client_id: room.host_client_id });
+  }
+  broadcast(room.id, "poll_result", win ? { key: win.key, name: win.name, votes: null, roulette: true } : { key: null, roulette: true });
+  activityChanged(room);
+  return win || null;
 }
 
 function cancelPoll(roomId, user) {
@@ -614,6 +680,9 @@ module.exports = {
   startPoll,
   vote,
   finishPoll,
+  finishPollNow,
+  spinRoulette,
+  finishSpin,
   cancelPoll,
   cleanFile
 };

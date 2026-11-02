@@ -12,7 +12,7 @@ const config = require("../config");
 const { requireLogin, resolveAuth } = require("../middleware/auth");
 const { activityAuthLimiter, roomLimiter, apiLimiter, searchLimiter } = require("../middleware/rate-limit");
 const { DISCORD_FRAME_ANCESTORS, isActivityPage } = require("../middleware/security");
-const { exchangeOAuthCode, fetchMe, revokeOAuthToken, checkGuildMember } = require("../services/discord");
+const { exchangeOAuthCode, fetchMe, revokeOAuthToken, checkGuildMember, inviteMessage, sendChannelMessage } = require("../services/discord");
 const { findOrCreateUser } = require("../services/users");
 const { issueActivityToken, revokeActivityToken } = require("../services/activity");
 const { basePath } = require("../utils/helpers");
@@ -96,7 +96,9 @@ router.get("/api/activity/config", apiLimiter, (req, res) => {
   res.json({ ok: true, client_id: config.DISCORD_CLIENT_ID || "", enabled: config.DISCORD_ENABLED });
 });
 
-// 1. Вход: одноразовый код из commands.authorize Discord SDK → ключ Activity
+// 1. Вход: одноразовый код из commands.authorize Discord SDK → ключ Activity.
+// Если человек разрешил rpc.activities.write (статус «Смотрит …» в профиле Discord), токен Discord не отзывается, а
+// отдаётся странице: с ним она зовёт commands.authenticate и потом SET_ACTIVITY. Сервер его не хранит.
 router.post("/api/auth/discord/activity", activityAuthLimiter, async (req, res) => {
   if (!config.DISCORD_ENABLED) return res.status(503).json({ error: "Вход через Discord не настроен на сервере." });
   const code = typeof req.body?.code === "string" ? req.body.code.trim() : "";
@@ -106,10 +108,13 @@ router.post("/api/auth/discord/activity", activityAuthLimiter, async (req, res) 
     const tokenData = await exchangeOAuthCode(code, null);
     accessToken = tokenData.access_token;
     const me = await fetchMe(accessToken);
-    revokeOAuthToken(accessToken);
+    const scopes = String(tokenData.scope || "").split(/\s+/);
+    const presence = scopes.includes("rpc.activities.write") ? accessToken : null;
+    if (!presence) revokeOAuthToken(accessToken);
     accessToken = null;
     const check = await checkGuildMember(me.id);
     if (!check.allowed) {
+      if (presence) revokeOAuthToken(presence);
       const error =
         check.reason === "not_in_guild"
           ? "Нет доступа: ваш аккаунт Discord не состоит на сервере Suslik Media."
@@ -126,7 +131,8 @@ router.post("/api/auth/discord/activity", activityAuthLimiter, async (req, res) 
       token,
       expires_in,
       site_url: siteUrl(req),
-      user: { id: user.id, name: user.name, avatar: user.avatar, role: user.role }
+      user: { id: user.id, name: user.name, avatar: user.avatar, role: user.role },
+      ...(presence ? { discord_token: presence } : {})
     });
   } catch (err) {
     if (accessToken) revokeOAuthToken(accessToken);
@@ -202,6 +208,40 @@ router.post("/api/activity/rooms/:id/poll/cancel", requireLogin, roomLimiter, (r
   reply(res, rooms.cancelPoll(req.params.id, req.user)));
 router.post("/api/activity/rooms/:id/vote", requireLogin, roomLimiter, (req, res) =>
   reply(res, rooms.vote(req.params.id, req.user, String(req.body?.key || ""))));
+// «Итог сейчас» и «Рулетка» — только ведущий
+router.post("/api/activity/rooms/:id/poll/finish", requireLogin, roomLimiter, (req, res) =>
+  reply(res, rooms.finishPollNow(req.params.id, req.user)));
+router.post("/api/activity/rooms/:id/roulette", requireLogin, roomLimiter, (req, res) =>
+  reply(res, rooms.spinRoulette(req.params.id, req.user)));
+
+// «Позвать в чат»: бот пишет в текстовый чат голосового канала код комнаты и ссылку /join/<код>.
+// Бот не настроен или не может писать в канал — { fallback: true, link }: страница копирует ссылку сама.
+// Одно приглашение на комнату раз в INVITE_GAP_MS, чтобы чат не засыпали.
+const INVITE_GAP_MS = 30 * 1000;
+const lastInvite = new Map(); // room id -> когда звали
+router.post("/api/activity/rooms/:id/invite", requireLogin, roomLimiter, async (req, res) => {
+  const room = rooms.getRoom(req.params.id);
+  if (!room || !room.channel_id) return res.status(404).json({ error: "Комната не найдена." });
+  if (!room.watchers.has(req.user.id)) return res.status(403).json({ error: "Позвать может тот, кто в комнате." });
+  const site = siteUrl(req);
+  const link = site ? `${site}/join/${room.id}` : "";
+  const fallback = reason => res.json({ ok: true, fallback: true, reason, link });
+  if (!config.DISCORD_BOT_TOKEN) return fallback("no_bot");
+  const now = Date.now();
+  const left = (lastInvite.get(room.id) || 0) + INVITE_GAP_MS - now;
+  if (left > 0) return res.status(429).json({ error: `Приглашение уже отправлено. Ещё раз — через ${Math.ceil(left / 1000)} с.`, link });
+  lastInvite.set(room.id, now);
+  for (const [id, at] of lastInvite) if (at + INVITE_GAP_MS < now) lastInvite.delete(id);
+  try {
+    await sendChannelMessage(room.channel_id, inviteMessage({ code: room.id, film: room.file && room.file.name, by: req.user.name, link }));
+    res.json({ ok: true, sent: true, link });
+  } catch (err) {
+    lastInvite.delete(room.id);
+    const st = err.response?.status;
+    console.warn("Приглашение в чат канала:", st || "", err.response?.data?.message || err.message);
+    fallback(st === 403 || st === 404 ? "no_access" : "failed");
+  }
+});
 
 // 5. Поиск раздач: серверные трекеры Activity берёт обычным /api/search, а RuTracker — у ПК комнаты (services/pc-search.js)
 const PC_REASONS = {

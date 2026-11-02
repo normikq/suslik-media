@@ -26,6 +26,18 @@ function russianTitle(data, match) {
   return match?.original_language === "ru" ? text(match.original_title || match.original_name).slice(0, 200) : "";
 }
 
+// Жанры TMDB (фильмы и сериалы) по-русски: поиск идёт без языка и даёт только номера жанров
+const GENRES_RU = {
+  28: "боевик", 12: "приключения", 16: "мультфильм", 35: "комедия", 80: "криминал", 99: "документальный", 18: "драма",
+  10751: "семейный", 14: "фэнтези", 36: "история", 27: "ужасы", 10402: "музыка", 9648: "детектив", 10749: "мелодрама",
+  878: "фантастика", 10770: "телефильм", 53: "триллер", 10752: "военный", 37: "вестерн", 10759: "боевик и приключения",
+  10762: "детский", 10763: "новости", 10764: "реалити-шоу", 10765: "фантастика и фэнтези", 10766: "мыльная опера",
+  10767: "ток-шоу", 10768: "война и политика"
+};
+function genresOf(ids) {
+  return (Array.isArray(ids) ? ids : []).map(id => GENRES_RU[id]).filter(Boolean).slice(0, 4);
+}
+
 // Для баннера: лучший широкий кадр БЕЗ текста на нём (iso_639_1 = null), логотип названия (русский, иначе английский),
 // описание по-русски. Любая ошибка — баннер остаётся с тем, что нашёл поиск.
 async function addBannerExtras(body, match) {
@@ -44,6 +56,12 @@ async function addBannerExtras(body, match) {
   if (logo) body.logo = `/api/poster/img/w500/${name(logo)}`;
   const ov = typeof details?.overview === "string" ? details.overview.trim() : "";
   if (ov) body.overview = ov.slice(0, 600);
+  // Карточка фильма в Discord Activity: жанры по-русски и длительность (у сериала — серии)
+  const genres = (Array.isArray(details?.genres) ? details.genres : []).map(g => (typeof g?.name === "string" ? g.name.trim().toLowerCase() : "")).filter(Boolean);
+  if (genres.length) body.genres = genres.slice(0, 4);
+  const runtime = Number(details?.runtime) || Number(Array.isArray(details?.episode_run_time) ? details.episode_run_time[0] : 0) || 0;
+  if (runtime > 0 && runtime < 1000) body.runtime = Math.round(runtime);
+  if (Number(details?.number_of_seasons) > 0) body.seasons = Number(details.number_of_seasons);
 }
 
 // Сезон, который смотрят (&season=N): год выхода, описание и рейтинг этого сезона вместо сведений о первом.
@@ -160,7 +178,11 @@ async function searchBase(rawQuery) {
     backdrop: /^[A-Za-z0-9_-]+\.(?:jpg|png|webp)$/.test(backdropFile) ? `/api/poster/img/w1280/${backdropFile}` : null,
     overview: match && typeof match.overview === "string" && match.overview.trim() ? match.overview.trim().slice(0, 600) : null,
     year: match ? String(match.release_date || match.first_air_date || "").slice(0, 4) || null : null,
-    rating: match && Number(match.vote_average) > 0 ? Math.round(Number(match.vote_average) * 10) / 10 : null
+    rating: match && Number(match.vote_average) > 0 ? Math.round(Number(match.vote_average) * 10) / 10 : null,
+    // Для категорий и карточки фильма в Discord Activity: оригинальное название, язык оригинала (аниме — ja), жанры
+    original: match ? String(match.original_title || match.original_name || "").trim().slice(0, 200) || null : null,
+    lang: match && typeof match.original_language === "string" ? match.original_language.slice(0, 8) : null,
+    genres: match ? genresOf(match.genre_ids) : []
   };
 
   const ref = match && match.id ? {

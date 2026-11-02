@@ -1,13 +1,17 @@
 /*
  * Suslik Media в Discord Activity — пульт комнаты голосового канала (docs/DISCORD-ACTIVITY.md).
  * Видео здесь не играет: раздачи тяжёлые (MKV, DTS), их играют приложения. Здесь — что смотрим, кто ведущий,
- * медиатека («Включить в комнате», «Предложить»), голосование, «Следующая серия» и «Открыть в приложении».
+ * медиатека («Включить в комнате», «Предложить», категории, карточка фильма), голосование и «Рулетка», «Посоветовать фильм» (ИИ),
+ * «Следующая серия», «Открыть в приложении», «Позвать в чат» и статус «Смотрит …» в профиле Discord.
  * Медиатека разбирается тем же model.js, что у ТВ (копия tizen/js/model.js; тест сверяет копии).
  */
 (function () {
   'use strict';
   var D = window.SMDiscord, model = window.SM.model, SC = window.SM.searchcore;
   var app = document.getElementById('app');
+
+  var CATS = [['all', 'Все'], ['movie', 'Фильмы'], ['series', 'Сериалы'], ['cartoon', 'Мультфильмы'], ['anime', 'Аниме']];
+  var SORTS = [['new', 'Сначала новые'], ['name', 'По названию (А–Я)'], ['year', 'По году (сначала свежие)'], ['rating', 'По рейтингу']];
 
   var S = {
     clientId: '', token: '', site: '', me: null,
@@ -17,8 +21,18 @@
     // поиск раздач: mode — 'library' или 'trackers'; server — /api/search, pc — RuTracker с ПК комнаты
     find: { mode: 'library', q: '', asked: '', server: null, serverErr: '', providers: [], pc: null, busy: 0, notes: {},
       page: 0, filtersOpen: false, f: null },
-    stream: null, streamOk: false, pollTimer: 0, retry: 0
+    stream: null, streamOk: false, pollTimer: 0, retry: 0,
+    // медиатека: категория и сортировка (помнятся в браузере)
+    lib: { cat: 'all', sort: 'new' },
+    // «Посоветовать фильм»: POST /api/search/ai-discovery (Gemini + TMDB, docs/AI-DISCOVERY.md)
+    ai: { q: '', asked: '', busy: 0, items: null, err: '' },
+    inviteFallback: false
   };
+  try {
+    var savedLib = JSON.parse(localStorage.getItem('sm.act.lib') || '{}') || {};
+    if (CATS.some(function (c) { return c[0] === savedLib.cat; })) S.lib.cat = savedLib.cat;
+    if (SORTS.some(function (c) { return c[0] === savedLib.sort; })) S.lib.sort = savedLib.sort;
+  } catch (e) { /* без хранилища */ }
 
   // ---- значки: белые линии, как в приложениях ----
   var ICONS = {
@@ -42,7 +56,12 @@
     filter: '<path d="M4 6h16M7 12h10M10 18h4"/>',
     check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
     back: '<path d="M15 5l-7 7 7 7"/>',
-    fwd: '<path d="M9 5l7 7-7 7"/>'
+    fwd: '<path d="M9 5l7 7-7 7"/>',
+    dice: '<rect x="4" y="4" width="16" height="16" rx="3.5"/><circle cx="8.8" cy="8.8" r="1.1" fill="currentColor"/><circle cx="15.2" cy="8.8" r="1.1" fill="currentColor"/><circle cx="12" cy="12" r="1.1" fill="currentColor"/><circle cx="8.8" cy="15.2" r="1.1" fill="currentColor"/><circle cx="15.2" cy="15.2" r="1.1" fill="currentColor"/>',
+    sparkles: '<path d="M11 3.5l1.9 5.1 5.1 1.9-5.1 1.9L11 17.5l-1.9-5.1L4 10.5l5.1-1.9z"/><path d="M18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/>',
+    chat: '<path d="M4.5 5.5h15a1 1 0 011 1v9a1 1 0 01-1 1H10l-4.5 3.5v-3.5h-1a1 1 0 01-1-1v-9a1 1 0 011-1z"/><path d="M8.5 10h7M8.5 13h4.5"/>',
+    star: '<path d="M12 3.8l2.5 5.2 5.7.8-4.1 4 1 5.6L12 16.7l-5.1 2.7 1-5.6-4.1-4 5.7-.8z" fill="currentColor" stroke="none"/>',
+    flag: '<path d="M5.5 21V4.5"/><path d="M5.5 4.5h11.5l-2.4 4 2.4 4H5.5"/>'
   };
   function icon(name) {
     var s = document.createElement('span');
@@ -103,10 +122,21 @@
     });
   }
 
-  var loggingIn = null;
+  // Вход просит и rpc.activities.write — статус «Смотрит …» в профиле (presence ниже). Отказался в окне Discord —
+  // второй раз спрашиваем только identify и больше статус не просим (помним в браузере).
+  var loggingIn = null, PRESENCE_SCOPE = 'rpc.activities.write';
+  function wantPresence() { try { return localStorage.getItem('sm.act.nopresence') !== '1'; } catch (e) { return true; } }
+  function authorize() {
+    var scopes = wantPresence() ? ['identify', PRESENCE_SCOPE] : ['identify'];
+    return D.authorize(S.clientId, scopes).catch(function (e) {
+      if (scopes.length < 2 || !(e && e.code === 5000)) throw e;
+      try { localStorage.setItem('sm.act.nopresence', '1'); } catch (x) { /* без хранилища */ }
+      return D.authorize(S.clientId, ['identify']);
+    });
+  }
   function login() {
     if (loggingIn) return loggingIn;
-    loggingIn = D.authorize(S.clientId, ['identify']).then(function (a) {
+    loggingIn = authorize().then(function (a) {
       if (!a || !a.code) throw new Error('Discord не дал войти.');
       return api('api/auth/discord/activity', { code: a.code }, true);
     }, function (e) {
@@ -115,6 +145,7 @@
       S.token = r.token;
       S.site = r.site_url || '';
       S.me = r.user;
+      if (r.discord_token) presence.auth(r.discord_token);
     }).then(function () { loggingIn = null; }, function (e) { loggingIn = null; throw e; });
     return loggingIn;
   }
@@ -147,6 +178,7 @@
       var g = model.groupVersions(S.items, function (it) { return posters.pathOf(it.posterQueries); });
       S.shown = g.shown;
       S.versions = g.versions;
+      classifyLibrary();
     });
   }
   function titleOf(it) { return model.tileTitle(it, function (q) { return posters.titles[q]; }); }
@@ -184,47 +216,73 @@
   // ---- постеры: /api/poster?q= → путь → картинка с ключом (blob) ----
   // Как на ПК (Library::posterPath): запросы плитки по очереди — принятое название ИИ «Original (год)», потом
   // название и имя файла; у первого постера нет — спрашиваем следующий. «Постера нет» помним 3 дня, найденный — 30.
+  // Вместе с путём помним сведения TMDB для категорий и сортировки (m): рейтинг, мультфильм ли, язык оригинала, год,
+  // оригинальное название, открытый адрес постера (для статуса в Discord) и жанры.
   var posters = (function () {
-    var DAY = 864e5, known = {}, titles = {}, urls = {}, waits = {}, queue = [], active = 0;
+    var DAY = 864e5, known = {}, titles = {}, urls = {}, waits = {}, queue = [], active = 0, asking = {};
     try {
       known = JSON.parse(localStorage.getItem('sm.act.posters') || '{}') || {};
       titles = JSON.parse(localStorage.getItem('sm.act.titles') || '{}') || {};
     } catch (e) { /* без хранилища */ }
+    // Запись без сведений (m) — из прошлой версии страницы: спросим заново
     function fresh(q) {
       var k = known[q];
-      return k && Date.now() - k.at < (k.p ? 30 : 3) * DAY ? k : null;
+      return k && k.m && Date.now() - k.at < (k.p ? 30 : 3) * DAY ? k : null;
     }
+    var saveTimer = 0;
     function save() {
-      try { localStorage.setItem('sm.act.posters', JSON.stringify(known)); localStorage.setItem('sm.act.titles', JSON.stringify(titles)); } catch (e) { /* без хранилища */ }
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(function () {
+        try { localStorage.setItem('sm.act.posters', JSON.stringify(known)); localStorage.setItem('sm.act.titles', JSON.stringify(titles)); } catch (e) { /* без хранилища */ }
+      }, 500);
     }
     function pathOf(qs) {
       for (var i = 0; i < qs.length; i++) { var k = fresh(qs[i]); if (k && k.p) return k.p; }
       return null;
     }
+    /** Сведения TMDB плитки: {} — постера нет ни по одному запросу, null — ещё не спрашивали. */
+    function meta(it) {
+      var qs = it.posterQueries || [];
+      for (var i = 0; i < qs.length; i++) {
+        var k = fresh(qs[i]);
+        if (!k) return null;
+        if (k.p) return k.m;
+      }
+      return {};
+    }
     function ask(q) {
       var k = fresh(q);
       if (k) return Promise.resolve(k.p);
-      return api('api/poster?q=' + encodeURIComponent(q)).then(function (r) {
+      if (asking[q]) return asking[q];
+      asking[q] = api('api/poster?q=' + encodeURIComponent(q)).then(function (r) {
+        delete asking[q];
         var p = typeof r.poster === 'string' && r.poster.indexOf('/api/poster/img/') === 0 ? r.poster : null;
-        known[q] = { p: p, at: Date.now() };
+        known[q] = { p: p, at: Date.now(), m: p ? {
+          r: Number(r.rating) > 0 ? Number(r.rating) : 0, a: r.animation ? 1 : 0, l: typeof r.lang === 'string' ? r.lang : '',
+          y: Number(r.year) || 0, o: typeof r.original === 'string' ? r.original : '', t: r.type === 'tv' ? 'tv' : 'movie',
+          u: typeof r.poster_url === 'string' && r.poster_url.indexOf('https://') === 0 ? r.poster_url : '',
+          g: Array.isArray(r.genres) ? r.genres.filter(function (x) { return typeof x === 'string'; }).slice(0, 4) : []
+        } : {} };
         titles[q] = typeof r.title_ru === 'string' ? r.title_ru.trim() : '';
         save();
         return p;
-      });
+      }, function (e) { delete asking[q]; throw e; });
+      return asking[q];
     }
     // Первый запрос, у которого есть постер; сбой сети — не «постера нет»: в следующий раз спросим снова
-    function pathFor(qs, i) {
+    function hitFor(qs, i) {
       if (i >= qs.length) return Promise.resolve(null);
-      return ask(qs[i]).then(function (p) { return p || pathFor(qs, i + 1); });
+      return ask(qs[i]).then(function (p) { return p ? qs[i] : hitFor(qs, i + 1); });
     }
-    function load(qs) {
-      return pathFor(qs, 0).then(function (p) {
-        if (!p) return null;
-        return fetch(p.replace(/^\//, ''), { headers: { Authorization: 'Bearer ' + S.token } }).then(function (res) {
-          if (!res.ok) throw new Error('poster');
-          return res.blob();
-        }).then(function (b) { return URL.createObjectURL(b); });
-      });
+    function blobOf(p) {
+      return fetch(p.replace(/^\//, ''), { headers: { Authorization: 'Bearer ' + S.token } }).then(function (res) {
+        if (!res.ok) throw new Error('poster');
+        return res.blob();
+      }).then(function (b) { return URL.createObjectURL(b); });
+    }
+    function load(job) {
+      if (job.path) return blobOf(job.path);
+      return hitFor(job.qs, 0).then(function (q) { return q ? blobOf(known[q].p) : null; });
     }
     // Не больше 200 картинок в памяти: дольше всех не нужные освобождаются (как у ТВ)
     var order = [], LIMIT = 200;
@@ -245,21 +303,67 @@
       while (active < 3 && queue.length) {
         var job = queue.shift();
         active++;
-        load(job.qs).then(function (key) { return function (u) { done(key, u, false); }; }(job.key),
+        load(job).then(function (key) { return function (u) { done(key, u, false); }; }(job.key),
           function (key) { return function () { done(key, null, true); }; }(job.key));
       }
     }
-    /** Картинка постера для [it] в [cb] (сразу, если уже есть). */
-    function want(it, cb) {
-      var qs = it.posterQueries || [], key = qs.join('\n');
-      if (!qs.length) return;
-      if (urls[key] !== undefined) { if (urls[key]) cb(urls[key]); return; }
-      if (waits[key]) { waits[key].push(cb); return; }
-      waits[key] = [cb];
-      queue.push({ key: key, qs: qs });
+    function enqueue(job, cb) {
+      if (urls[job.key] !== undefined) { if (urls[job.key]) cb(urls[job.key]); return; }
+      if (waits[job.key]) { waits[job.key].push(cb); return; }
+      waits[job.key] = [cb];
+      queue.push(job);
       pump();
     }
-    return { pathOf: pathOf, want: want, titles: titles };
+    /** Картинка постера для [it] в [cb] (сразу, если уже есть). */
+    function want(it, cb) {
+      var qs = it.posterQueries || [];
+      if (qs.length) enqueue({ key: qs.join('\n'), qs: qs }, cb);
+    }
+    /** Картинка по пути зеркала /api/poster/img/… (постеры подборки ИИ). */
+    function img(path, cb) {
+      if (typeof path === 'string' && path.indexOf('/api/poster/img/') === 0) enqueue({ key: 'img:' + path, path: path }, cb);
+    }
+
+    // Сведения для всей медиатеки — в фоне, по два запроса (как Library.classifyAnimation на ПК): без них не работают
+    // «Мультфильмы», «Аниме» и сортировка по рейтингу. [onChange] — пачкой, не чаще раза в 0,8 с.
+    var cq = [], cActive = 0, cSeen = {}, cTimer = 0, cChange = null;
+    function classify(list, onChange) {
+      cChange = onChange;
+      list.forEach(function (it) {
+        var key = (it.posterQueries || []).join('\n');
+        if (!key || cSeen[key] || meta(it) !== null) return;
+        cSeen[key] = 1;
+        cq.push(it);
+      });
+      cPump();
+    }
+    function cDone() {
+      cActive--;
+      if (!cTimer) cTimer = setTimeout(function () { cTimer = 0; if (cChange) cChange(); }, 800);
+      cPump();
+    }
+    function cPump() {
+      while (cActive < 2 && cq.length) {
+        var it = cq.shift();
+        cActive++;
+        hitFor(it.posterQueries, 0).then(cDone, cDone);
+      }
+    }
+    function pendingMeta() { return cq.length + cActive; }
+
+    // Карточка фильма: описание по-русски, жанры и длительность (?hero=1 — ещё два запроса к TMDB, поэтому только по открытию)
+    var det = {};
+    function details(it) {
+      var key = (it.posterQueries || []).join('\n');
+      if (!key) return Promise.resolve(null);
+      if (!det[key]) {
+        det[key] = hitFor(it.posterQueries, 0).then(function (q) {
+          return q ? api('api/poster?hero=1&q=' + encodeURIComponent(q)) : null;
+        }).catch(function () { delete det[key]; return null; });
+      }
+      return det[key];
+    }
+    return { pathOf: pathOf, want: want, img: img, titles: titles, meta: meta, classify: classify, pendingMeta: pendingMeta, details: details };
   })();
 
   function posterInto(el, it, asBg) {
@@ -268,6 +372,114 @@
       el.style.backgroundImage = 'url("' + u + '")';
       if (!asBg) el.classList.add('has-image');
     });
+  }
+
+  // ---- статус в Discord («Смотрит …» в профиле и в голосовом канале): SET_ACTIVITY ----
+  // Нужен вход с rpc.activities.write и commands.authenticate токеном Discord (сервер отдаёт его только для этого).
+  // Шлём только когда статус изменился, не чаще раза в 1,5 с; живой таймер Discord ведёт сам по timestamps.start.
+  // Discord не принял — пробуем без картинки, потом как «Играет» (старые клиенты знают только этот тип).
+  var presence = (function () {
+    var ready = false, last = '', timer = 0, type = 3, withImage = true;
+    function auth(token) {
+      D.authenticate(token).then(function () { ready = true; last = ''; update(); }, function () { ready = false; });
+    }
+    function cut(t) { t = String(t || '').trim(); if (t.length > 128) t = t.slice(0, 127) + '…'; return t.length >= 2 ? t : t + '  '; }
+    function build() {
+      var r = S.room, f = r.file, info = f ? resolve(f.key) : null, people = (r.watchers || []).length || 1;
+      var a = { type: type, instance: true };
+      if (!f) {
+        a.details = r.spin ? 'Крутят рулетку' : r.poll ? 'Голосуют за фильм' : 'Выбирают фильм';
+        a.state = 'В комнате: ' + people + ' чел.';
+        return a;
+      }
+      var title = info ? titleOf(info.it) : f.name || 'Фильм', year = info ? model.itemYear(info.it) : null;
+      var st = r.state || {}, playing = st.playing && !st.waiting, ep = info && info.series ? info.entry.short : '';
+      a.details = cut(title + (year && title.indexOf(String(year)) < 0 ? ' (' + year + ')' : ''));
+      if (playing) {
+        a.state = cut(ep || 'Смотрим вместе · ' + people + ' чел.');
+        // секунды: с какого момента (на часах этого компьютера) фильм шёл бы с нуля
+        a.timestamps = { start: Math.floor((st.anchor_server_ms - S.offset - (st.pos || 0) * 1000 / (st.rate || 1)) / 1000) };
+      } else {
+        a.state = cut((ep ? ep + ' · ' : '') + (st.waiting ? 'Ждём загрузку · ' : 'На паузе · ') + clockText(roomPos()));
+      }
+      var mt = info ? posters.meta(info.it) : null;
+      if (withImage && mt && mt.u) a.assets = { large_image: mt.u, large_text: cut(title) };
+      return a;
+    }
+    function send() {
+      timer = 0;
+      if (!ready || !S.room) return;
+      var a = build(), k = JSON.stringify(a);
+      if (k === last) return;
+      last = k;
+      D.setActivity(a).catch(function () {
+        if (withImage && a.assets) withImage = false;
+        else if (type !== 0) type = 0;
+        else return;
+        last = '';
+        update();
+      });
+    }
+    function update() { if (ready && !timer) timer = setTimeout(send, 1500); }
+    return { auth: auth, update: update };
+  })();
+
+  // ---- категории и сортировка медиатеки (как на ПК: LibraryView.itemCategory) ----
+  var ANIME_RE = /(^|[^a-zа-яё])(?:anime|аниме|anilibria)(?![a-zа-яё])|\[(?:horriblesubs|erai-raws|subsplease|judas)\]/i;
+  // То же правило, что у сайта и ПК (website/classify.js): название раздачи, плюс жанр «Анимация» по TMDB
+  var CARTOON_RE = /мульт(?!сериал)|анимаци|\bcartoons?\b|\banimation\b|\bPixar\b|\bDreamWorks\b|\bDisney\b/i;
+  function categoryOf(it) {
+    var text = it.m.name + ' ' + it.baseTitle, mt = posters.meta(it) || {};
+    if (ANIME_RE.test(text) || (mt.a && mt.l === 'ja')) return 'anime';
+    if (CARTOON_RE.test(text) || mt.a) return 'cartoon';
+    if (model.isCollection(it.playable, it.m)) return 'movie';
+    return it.playable.kind === 'series' ? 'series' : 'movie';
+  }
+  var CAT_LABEL = { movie: 'Фильм', series: 'Сериал', cartoon: 'Мультфильм', anime: 'Аниме' };
+  function typeLabel(it) {
+    if (model.isCollection(it.playable, it.m)) return 'Сборник';
+    var c = categoryOf(it);
+    if (c === 'cartoon' && it.playable.kind === 'series') return 'Мультсериал';
+    return CAT_LABEL[c];
+  }
+  function yearOf(it) { var y = model.itemYear(it); if (y) return y; var mt = posters.meta(it); return mt && mt.y || 0; }
+  function ratingOf(it) { var mt = posters.meta(it); return mt && mt.r || 0; }
+  function setLib(k, v) {
+    S.lib[k] = v;
+    try { localStorage.setItem('sm.act.lib', JSON.stringify(S.lib)); } catch (e) { /* без хранилища */ }
+    render();
+  }
+  /** Плитки медиатеки после поиска, категории и сортировки. */
+  function libraryList() {
+    var q = S.query.trim().toLowerCase(), cat = S.lib.cat, sort = S.lib.sort;
+    var list = S.shown.filter(function (it) {
+      if (q && it.searchText.indexOf(q) < 0 && titleOf(it).toLowerCase().indexOf(q) < 0) return false;
+      return cat === 'all' || categoryOf(it) === cat;
+    });
+    var byId = function (a, b) { return b.m.id - a.m.id; };
+    var cmp = sort === 'name' ? function (a, b) { return titleOf(a).localeCompare(titleOf(b), 'ru') || byId(a, b); }
+      : sort === 'year' ? function (a, b) { return yearOf(b) - yearOf(a) || byId(a, b); }
+      : sort === 'rating' ? function (a, b) { return ratingOf(b) - ratingOf(a) || byId(a, b); }
+      : byId;
+    return list.slice().sort(cmp);
+  }
+  /** Сведения TMDB нужны всей медиатеке (категории, рейтинг): спрашиваем в фоне, по готовности — перерисовка. */
+  function classifyLibrary() {
+    posters.classify(S.shown, function () {
+      presence.update();
+      var el = document.activeElement;
+      if (S.tab === 'library' && S.find.mode === 'library' && !(el && el.tagName === 'SELECT')) render();
+    });
+  }
+  function randomFrom(list, not) {
+    var pool = list.length > 1 && not ? list.filter(function (it) { return it !== not; }) : list;
+    return pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
+  }
+  /** «Случайный фильм»: из того, что видно в медиатеке (поиск и категория). */
+  function rollRandom(not) {
+    var list = libraryList();
+    if (!list.length) { toast('В медиатеке нечего выбрать: смените категорию или поиск.', true); return; }
+    openSheet(randomFrom(list, not), { random: true });
   }
 
   // ---- поток событий комнаты (с переходом на опрос, если прокси Discord держит поток) ----
@@ -337,15 +549,19 @@
         memberRefresh = setTimeout(refreshRoom, 300);
         break;
       case 'activity_changed': {
-        var d = msg.data || {}, wasPoll = !!(S.room && S.room.poll);
-        ['watchers', 'candidates', 'poll', 'host_id', 'host_name'].forEach(function (k) { if (k in d) S.room[k] = d[k]; });
-        if (!wasPoll && S.room.poll) S.tab = 'poll'; // голосование началось — карточка выбора у всех
+        var d = msg.data || {}, wasPoll = !!(S.room && S.room.poll), wasSpin = !!(S.room && S.room.spin);
+        ['watchers', 'candidates', 'poll', 'spin', 'host_id', 'host_name'].forEach(function (k) { if (k in d) S.room[k] = d[k]; });
+        // голосование или рулетка началась — карточка выбора у всех
+        if ((!wasPoll && S.room.poll) || (!wasSpin && S.room.spin)) { S.tab = 'poll'; S.sheet = null; }
         render();
         break;
       }
       case 'poll_result': {
         var p = msg.data || {};
-        if (p.key) { toast('Победил «' + (p.name || 'фильм') + '» — включаем в комнате.'); S.tab = 'now'; } else toast('Никто не проголосовал: фильм не сменился.');
+        if (p.key) {
+          toast((p.roulette ? 'Рулетка выбрала «' : 'Победил «') + (p.name || 'фильм') + '» — включаем в комнате.');
+          S.tab = 'now';
+        } else toast(p.roulette ? 'Рулетка не выбрала фильм.' : 'Никто не проголосовал: фильм не сменился.');
         render();
         break;
       }
@@ -401,6 +617,22 @@
     if (ok) return Promise.resolve();
     try { return navigator.clipboard.writeText(text); } catch (e) { return Promise.reject(e); }
   }
+  // «Позвать в чат»: бот сервера пишет в чат голосового канала; бота нет — ссылку копируем сами (сразу по нажатию,
+  // пока Discord разрешает копирование, поэтому после первого «бота нет» сервер больше не спрашиваем)
+  function joinLink() { return S.site ? S.site + '/join/' + encodeURIComponent(S.room.id) : ''; }
+  function copyInvite(link) {
+    if (!link) { toast('Сервер не знает свой адрес: позовите кодом ' + prettyCode(S.room.id) + '.', true); return; }
+    copyText(link).then(function () { toast('Ссылка скопирована! Отправьте её в чат канала.'); },
+      function () { toast('Отправьте в чат канала: ' + link); });
+  }
+  function invite() {
+    if (S.inviteFallback) { copyInvite(joinLink()); return; }
+    api('api/activity/rooms/' + S.room.id + '/invite', {}).then(function (r) {
+      if (r.sent) { toast('Приглашение отправлено в чат канала!'); return; }
+      if (r.reason === 'no_bot') S.inviteFallback = true;
+      copyInvite(r.link || joinLink());
+    }, function (e) { toast(errText(e), true); });
+  }
   function copyCode() {
     var code = prettyCode(S.room.id);
     copyText(code).then(function () { toast('Код скопирован: ' + code); },
@@ -422,12 +654,15 @@
     if (S.tab === 'library') page.appendChild(viewLibrary());
     else if (S.tab === 'poll') page.appendChild(viewPoll());
     else page.appendChild(viewNow());
-    var focusSearch = document.activeElement && document.activeElement.id === 'q';
+    var focusId = document.activeElement && document.activeElement.id, focusSearch = focusId === 'q' || focusId === 'aiq';
     var caret = focusSearch ? document.activeElement.selectionStart : 0;
     app.replaceChildren(top, page);
     if (S.sheet) app.appendChild(viewSheet());
-    if (focusSearch) { var q = document.getElementById('q'); if (q) { q.focus(); q.setSelectionRange(caret, caret); } }
+    if (focusSearch) { var q = document.getElementById(focusId); if (q) { q.focus(); q.setSelectionRange(caret, caret); } }
+    presence.update();
+    if (S.room.spin && !spinning) { spinning = true; requestAnimationFrame(function f() { spinFrame(); if (S.room && S.room.spin) requestAnimationFrame(f); else spinning = false; }); }
   }
+  var spinning = false;
 
   function tabs() {
     var n = S.room.candidates ? S.room.candidates.length : 0;
@@ -438,7 +673,7 @@
     return h('div', { class: 'tabs' }, [
       tab('now', 'film', 'Сейчас'),
       tab('library', 'grid', 'Медиатека'),
-      tab('poll', 'vote', S.room.poll ? 'Голосуем' : 'Голосование', S.room.poll ? '!' : n)
+      tab('poll', S.room.spin ? 'dice' : 'vote', S.room.spin ? 'Рулетка' : S.room.poll ? 'Голосуем' : 'Голосование', S.room.poll || S.room.spin ? '!' : n)
     ]);
   }
 
@@ -484,22 +719,33 @@
           ? 'Выберите фильм в медиатеке и нажмите «Включить в комнате» — или соберите варианты и устройте голосование.'
           : 'Ведущий — ' + (r.host_name || 'ведущий') + '. Предложите фильм из медиатеки: ведущий может устроить голосование.' }),
         h('div', { class: 'spacer' }),
-        h('div', { class: 'row' }, [btn('lamp', 'grid', host ? 'Выбрать в медиатеке' : 'Предложить фильм', function () { S.tab = 'library'; render(); })])
+        h('div', { class: 'row' }, [
+          btn('lamp', 'grid', host ? 'Выбрать в медиатеке' : 'Предложить фильм', function () { S.tab = 'library'; S.find.mode = 'library'; render(); }),
+          btn('', 'dice', 'Случайный фильм', function () { rollRandom(); }),
+          btn('', 'sparkles', 'Посоветовать фильм', function () { S.tab = 'library'; S.find.mode = 'ai'; render(); })
+        ])
       ])]));
     }
-    if (r.poll) {
-      card = h('div', {}, [card, h('div', { class: 'panel' }, [h('div', { class: 'row' }, [
-        icon('vote'), h('b', { text: 'Идёт голосование' }), h('span', { class: 'timer', id: 'timer', text: pollLeft() }),
-        h('div', { class: 'spacer' }), btn('blue small', null, 'Голосовать', function () { S.tab = 'poll'; render(); })
-      ])])]);
+    var main = [card];
+    if (r.poll || r.spin) {
+      main.push(h('div', { class: 'panel' }, [h('div', { class: 'row' }, [
+        icon(r.spin ? 'dice' : 'vote'), h('b', { text: r.spin ? 'Крутится рулетка' : 'Идёт голосование' }),
+        r.poll ? h('span', { class: 'timer', id: 'timer', text: pollLeft() }) : null,
+        h('div', { class: 'spacer' }),
+        host && r.poll ? finishButton(r.poll) : null,
+        btn('blue small', null, r.spin ? 'Смотреть' : 'Голосовать', function () { S.tab = 'poll'; render(); })
+      ])]));
     }
+    if (!f) main.push(viewFresh());
+    card = h('div', {}, main);
 
     var side = h('div', {}, [
       h('div', { class: 'panel' }, [
         h('div', { class: 'h', text: 'Код для ТВ и приложений' }),
         h('div', { class: 'tv-code', text: prettyCode(r.id) }),
         h('div', { class: 'small muted', text: 'На телевизоре: «Вместе» → «Войти по коду». В приложении на ПК или телефоне — так же, или кнопкой «Открыть».' }),
-        h('div', { class: 'row', style: 'margin-top:12px' }, [btn('small', 'copy', 'Скопировать', copyCode)])
+        h('div', { class: 'row', style: 'margin-top:12px' }, [btn('small', 'copy', 'Скопировать', copyCode),
+          btn('small', 'chat', 'Позвать в чат', invite, { title: 'Отправить в чат голосового канала код и ссылку на комнату' })])
       ]),
       viewPeople()
     ]);
@@ -743,7 +989,7 @@
       n ? h('div', { class: 'small ' + (n.bad ? 'bad' : 'muted'), text: n.text }) : null,
       busy ? null : h('div', { class: 'row' }, [
         host ? btn('lamp small', 'play', 'Включить в комнате', function () { addHit(r, 'play'); }) : null,
-        S.room.poll ? null : btn('small', 'vote', 'Предложить', function () { addHit(r, 'suggest'); })
+        S.room.poll || S.room.spin ? null : btn('small', 'vote', 'Предложить', function () { addHit(r, 'suggest'); })
       ])
     ]);
   }
@@ -790,51 +1036,221 @@
 
   function viewLibrary() {
     var F = S.find;
-    var modes = h('div', { class: 'chips' }, [
-      h('button', { class: 'chip' + (F.mode === 'library' ? ' on' : ''), type: 'button', on: { click: function () { F.mode = 'library'; render(); } } },
-        [icon('grid'), 'В медиатеке']),
-      h('button', { class: 'chip' + (F.mode === 'trackers' ? ' on' : ''), type: 'button', on: { click: function () {
-        F.mode = 'trackers';
-        if (!F.q && S.query) F.q = S.query;
+    function mode(id, ico, text, onPick) {
+      return h('button', { class: 'chip' + (F.mode === id ? ' on' : ''), type: 'button', on: { click: function () {
+        F.mode = id;
+        if (onPick) onPick();
         render();
-      } } }, [icon('globe'), 'На трекерах'])
+      } } }, [icon(ico), text]);
+    }
+    var modes = h('div', { class: 'chips' }, [
+      mode('library', 'grid', 'В медиатеке'),
+      mode('trackers', 'globe', 'На трекерах', function () { if (!F.q && S.query) F.q = S.query; }),
+      mode('ai', 'sparkles', 'Посоветовать')
     ]);
     if (F.mode === 'trackers') return h('div', {}, [modes, viewTrackers()]);
+    if (F.mode === 'ai') return h('div', {}, [modes, viewAi()]);
     return h('div', {}, [modes, viewMediaLibrary()]);
   }
 
-  function viewMediaLibrary() {
-    var q = S.query.trim().toLowerCase();
-    var list = q ? S.shown.filter(function (it) {
-      return it.searchText.indexOf(q) >= 0 || titleOf(it).toLowerCase().indexOf(q) >= 0;
-    }) : S.shown;
-    var input = h('input', { id: 'q', type: 'search', placeholder: 'Поиск по медиатеке', value: S.query, autocomplete: 'off',
-      on: { input: function (e) { S.query = e.target.value; render(); } } });
-    var tiles = list.slice(0, 240).map(function (it) {
-      var name = titleOf(it), poster = h('div', { class: 'poster' }, [h('span', { class: 'poster-title', text: name })]);
-      var cand = S.room.candidates && S.room.candidates.some(function (c) { return Number(c.key.split('|')[0]) === it.m.id; });
-      if (cand) poster.appendChild(h('span', { class: 'mark tag lamp' }, [icon('vote'), 'В списке']));
-      posterInto(poster, it);
-      var p = it.playable;
-      var sub = p.kind === 'series' ? model.seriesLine(p) : (model.itemYear(it) || '');
-      return h('button', { class: 'tile', type: 'button', on: { click: function () { openSheet(it); } } }, [
-        poster, h('div', { class: 'tname', text: name }), sub ? h('div', { class: 'tsub', text: String(sub) }) : null
-      ]);
-    });
-    return h('div', {}, [
-      h('label', { class: 'search' }, [icon('search'), input]),
-      tiles.length ? h('div', { class: 'tiles' }, tiles) : h('div', { class: 'empty', text: q ? 'Ничего не нашлось.' : 'Медиатека пуста.' })
+  /** Плитка фильма: постер, название, год или сезоны; ведущему у фильма — «Включить» в один клик. */
+  function tileOf(it, quick) {
+    var name = titleOf(it), poster = h('div', { class: 'poster' }, [h('span', { class: 'poster-title', text: name })]);
+    var cand = S.room.candidates && S.room.candidates.some(function (c) { return Number(c.key.split('|')[0]) === it.m.id; });
+    if (cand) poster.appendChild(h('span', { class: 'mark tag lamp' }, [icon('vote'), 'В списке']));
+    var rating = ratingOf(it);
+    if (rating) poster.appendChild(h('span', { class: 'rating' }, [icon('star'), rating.toFixed(1)]));
+    posterInto(poster, it);
+    var p = it.playable, entries = quick ? entriesOf(it) : [];
+    if (quick && isHost() && entries.length === 1) {
+      poster.appendChild(h('span', { class: 'quick', title: 'Включить в комнате', role: 'button', on: { click: function (ev) {
+        ev.stopPropagation();
+        putEntry(it, entries[0]);
+      } } }, [icon('play')]));
+    }
+    var sub = p.kind === 'series' ? model.seriesLine(p) : (yearOf(it) || '');
+    return h('button', { class: 'tile', type: 'button', on: { click: function () { openSheet(it); } } }, [
+      poster, h('div', { class: 'tname', text: name }), sub ? h('div', { class: 'tsub', text: String(sub) }) : null
     ]);
   }
 
-  function openSheet(it) {
+  /** «Сейчас», пока фильм не выбран: последние добавленные — включить или открыть в один клик. */
+  function viewFresh() {
+    var list = S.shown.slice().sort(function (a, b) { return b.m.id - a.m.id; }).slice(0, 8);
+    if (!list.length) return null;
+    return h('div', { class: 'panel' }, [
+      h('div', { class: 'row', style: 'margin-bottom:12px' }, [
+        h('div', { class: 'h', style: 'margin:0', text: 'Новое в медиатеке' }), h('div', { class: 'spacer' }),
+        btn('small', 'grid', 'Вся медиатека', function () { S.tab = 'library'; S.find.mode = 'library'; render(); })
+      ]),
+      h('div', { class: 'rail' }, list.map(function (it) { return tileOf(it, true); }))
+    ]);
+  }
+
+  function viewMediaLibrary() {
+    var list = libraryList(), cat = S.lib.cat;
+    var input = h('input', { id: 'q', type: 'search', placeholder: 'Поиск по медиатеке', value: S.query, autocomplete: 'off',
+      on: { input: function (e) { S.query = e.target.value; render(); } } });
+    var tiles = list.slice(0, 240).map(function (it) { return tileOf(it, false); });
+    // Мультфильмы, аниме и рейтинг знает TMDB: пока сведения не пришли, список неполный — говорим об этом
+    var pending = posters.pendingMeta(), needMeta = cat === 'cartoon' || cat === 'anime' || S.lib.sort === 'rating';
+    return h('div', {}, [
+      h('div', { class: 'search-row' }, [
+        h('label', { class: 'search' }, [icon('search'), input]),
+        btn('', 'dice', null, function () { rollRandom(); }, { title: 'Случайный фильм из того, что видно' })
+      ]),
+      h('div', { class: 'chips presets' }, CATS.map(function (c) {
+        return h('button', { class: 'chip' + (cat === c[0] ? ' on' : ''), type: 'button', on: { click: function () { setLib('cat', c[0]); } } }, [c[1]]);
+      }).concat([h('div', { class: 'grow' }), select(S.lib.sort, SORTS, function (v) { setLib('sort', v); }, 'Сортировка')])),
+      needMeta && pending ? h('div', { class: 'small muted find-status', text: 'Уточняем жанры и рейтинг по TMDB: осталось ' + pending + '…' }) : null,
+      tiles.length ? h('div', { class: 'tiles' }, tiles) : h('div', { class: 'empty', text: S.query.trim() || cat !== 'all' ? 'Ничего не нашлось.' : 'Медиатека пуста.' })
+    ]);
+  }
+
+  // ---- «Посоветовать фильм»: подборка ИИ по настроению (docs/AI-DISCOVERY.md) ----
+  // Что из подборки уже есть в медиатеке — «Включить» и «Предложить»; чего нет — «Найти раздачу» на трекерах.
+  var VIBES = [
+    ['🍿', 'Комедия для компании', 'смешная комедия для компании друзей на вечер'],
+    ['😱', 'Триллер с финалом', 'захватывающий триллер с неожиданным финалом'],
+    ['🚀', 'Масштабная фантастика', 'масштабная эпичная фантастика с размахом'],
+    ['☕', 'Уютный вечер', 'уютное тёплое кино на вечер под пледом'],
+    ['🎲', 'Кинорулетка', 'случайная подборка сильных фильмов разных жанров, стран и десятилетий', true]
+  ];
+  function runAi(q, fresh) {
+    var A = S.ai;
+    q = String(q || '').replace(/\s+/g, ' ').trim();
+    if (q.length < 2) { toast('Опишите, что хочется посмотреть.', true); return; }
+    var gen = ++A.busy;
+    A.q = q; A.asked = q; A.err = '';
+    render();
+    api('api/search/ai-discovery', { query: q.slice(0, 300), fresh: !!fresh }).then(function (r) {
+      if (gen !== A.busy) return;
+      A.busy = 0;
+      A.items = Array.isArray(r.items) ? r.items.filter(function (x) { return x && typeof x.title === 'string'; }) : [];
+      if (!A.items.length) A.err = 'ИИ ничего не подобрал. Попробуйте описать иначе.';
+      render();
+    }, function (e) {
+      if (gen !== A.busy) return;
+      A.busy = 0;
+      // прежняя подборка остаётся на экране, сверху — причина
+      A.err = e.status === 404 ? 'Сервер пока не умеет подбирать фильмы: его нужно обновить.' : errText(e);
+      render();
+    });
+  }
+  function normTitle(t) { return String(t || '').toLowerCase().replace(/ё/g, 'е').replace(/[^a-zа-я0-9]+/g, ' ').trim(); }
+  function fileName(p) { return p ? String(p).slice(String(p).lastIndexOf('/') + 1) : ''; }
+  /** Ключи медиатеки для сверки (как SearchModel::libraryKeys на ПК): постер TMDB, названия, год, имя раздачи. */
+  function libraryKeys() {
+    return S.shown.map(function (it) {
+      var ai = it.m.aiTitle, names = {};
+      [it.baseTitle, titleOf(it), ai && ai.status === 'accepted' ? ai.original : ''].forEach(function (n) { var k = normTitle(n); if (k) names[k] = 1; });
+      return { it: it, poster: fileName(posters.pathOf(it.posterQueries || [])), names: names, year: model.itemYear(it), text: ' ' + normTitle(it.m.name) + ' ' };
+    });
+  }
+  function matchLibrary(keys, film) {
+    var year = Number(film.year) || 0, poster = fileName(film.poster), wanted = [];
+    [film.title, film.original, film.tmdbTitle].forEach(function (t) { var k = normTitle(t); if (k && wanted.indexOf(k) < 0) wanted.push(k); });
+    if (!wanted.length) return null;
+    function yearFits(y, need) { return !year || !y ? !need : Math.abs(y - year) <= 1; }
+    var byName = null, byText = null;
+    for (var i = 0; i < keys.length; i++) {
+      var k = keys[i];
+      if (poster && k.poster === poster) return k.it;
+      if (!byName && yearFits(k.year, false) && wanted.some(function (w) { return k.names[w]; })) byName = k.it;
+      if (!byName && !byText && yearFits(k.year, true) && wanted.some(function (w) { return w.length >= 5 && k.text.indexOf(' ' + w + ' ') >= 0; })) byText = k.it;
+    }
+    return byName || byText;
+  }
+  // Раздачи русских фильмов названы по-русски, остальные ищем по оригиналу (SearchModel::trackerTitle на ПК)
+  function trackerTitle(film) {
+    var o = film.original || '';
+    if (!o || /[а-яё]/i.test(o) || ['ru', 'uk', 'be'].indexOf(film.lang) >= 0) return film.title;
+    return o;
+  }
+  function findTorrent(film) {
+    var F = S.find;
+    F.mode = 'trackers';
+    F.q = trackerTitle(film) + (film.year ? ' ' + film.year : '');
+    searchTrackers();
+  }
+  function aiCard(film, it, host) {
+    var poster = h('div', { class: 'ai-poster' });
+    posters.img(film.poster, function (u) { poster.style.backgroundImage = 'url("' + u + '")'; });
+    var entries = it ? entriesOf(it) : [];
+    var line = [film.original && film.original !== film.title ? film.original : '', film.year || '', film.kind === 'series' ? 'сериал' : '']
+      .filter(Boolean).join(' · ');
+    var genres = Array.isArray(film.genres) ? film.genres.filter(function (g) { return typeof g === 'string'; }).slice(0, 3) : [];
+    var actions;
+    if (it) {
+      actions = [
+        host ? btn('lamp small', 'play', 'Включить в комнате', function () { if (entries.length === 1) putEntry(it, entries[0]); else openSheet(it); }) : null,
+        S.room.poll || S.room.spin ? null : btn('small', 'vote', 'Предложить', function () { if (entries.length === 1) suggest(it, entries[0]); else openSheet(it); }),
+        btn('small', null, 'Подробнее', function () { openSheet(it); })
+      ];
+    } else {
+      actions = [btn('small', 'globe', 'Найти раздачу', function () { findTorrent(film); })];
+    }
+    return h('div', { class: 'ai-card' }, [poster, h('div', { class: 'ai-body' }, [
+      h('div', { class: 'row', style: 'gap:8px' }, [
+        h('div', { class: 'ai-title', text: film.title }),
+        it ? h('span', { class: 'tag lamp', text: 'В медиатеке' }) : null,
+        Number(film.rating) > 0 ? h('span', { class: 'ai-rating' }, [icon('star'), Number(film.rating).toFixed(1)]) : null
+      ]),
+      line ? h('div', { class: 'small muted', text: line }) : null,
+      genres.length ? h('div', { class: 'small muted', text: genres.join(', ') }) : null,
+      film.reason ? h('div', { class: 'ai-reason', text: film.reason }) : null,
+      h('div', { class: 'spacer' }),
+      h('div', { class: 'row', style: 'gap:6px' }, actions)
+    ])]);
+  }
+  function viewAi() {
+    var A = S.ai, host = isHost();
+    var input = h('input', { id: 'aiq', type: 'search', placeholder: 'Свой запрос: настроение, сюжет или похожие фильмы…', value: A.q, autocomplete: 'off',
+      on: { input: function (e) { A.q = e.target.value; }, keydown: function (e) { if (e.key === 'Enter') runAi(A.q); } } });
+    var kids = [
+      h('div', { class: 'search-row' }, [
+        h('label', { class: 'search' }, [icon('sparkles'), input]),
+        btn('lamp', 'sparkles', A.busy ? 'Подбираем…' : 'Подобрать', function () { runAi(A.q); }, { disabled: !!A.busy })
+      ]),
+      h('div', { class: 'chips' }, VIBES.map(function (v) {
+        return h('button', { class: 'chip', type: 'button', disabled: !!A.busy, on: { click: function () { A.q = v[2]; runAi(v[2], v[3]); } } }, [v[0] + ' ' + v[1]]);
+      }))
+    ];
+    if (A.busy) kids.push(h('div', { class: 'small muted find-status', text: 'ИИ подбирает фильмы…' }));
+    if (A.err) kids.push(h('div', { class: 'small bad find-status', text: A.err }));
+    if (!A.items) {
+      kids.push(h('div', { class: 'empty', text: 'Опишите, что хочется посмотреть всей компанией, — ИИ подберёт фильмы и покажет, что уже есть в медиатеке.' }));
+      return h('div', {}, kids);
+    }
+    var keys = libraryKeys(), inLib = 0;
+    var cards = A.items.map(function (film) { var it = matchLibrary(keys, film); if (it) inLib++; return aiCard(film, it, host); });
+    if (!A.busy && A.items.length) {
+      kids.push(h('div', { class: 'row find-status' }, [
+        h('span', { class: 'small muted', text: 'По запросу «' + A.asked + '»: ' + A.items.length + (inLib ? ' · ' + inLib + ' уже в медиатеке' : '') }),
+        h('div', { class: 'spacer' }),
+        btn('small', 'dice', 'Другие варианты', function () { runAi(A.asked, true); })
+      ]));
+    }
+    kids.push(h('div', { class: 'ai-cards' + (A.busy ? ' dim' : '') }, cards));
+    return h('div', {}, kids);
+  }
+
+  function openSheet(it, opts) {
     var versions = S.versions[it.m.id] || [it];
-    S.sheet = { versions: versions, v: 0, season: null };
+    S.sheet = { versions: versions, v: 0, season: null, det: null, random: !!(opts && opts.random), roll: Date.now() };
+    var sh = S.sheet;
+    posters.details(versions[0]).then(function (d) { if (S.sheet === sh) { sh.det = d; render(); } });
     render();
   }
 
+  function runtimeText(min, series) {
+    if (!min) return '';
+    var t = min >= 60 ? Math.floor(min / 60) + ' ч' + (min % 60 ? ' ' + min % 60 + ' мин' : '') : min + ' мин';
+    return series ? 'серия ~' + t : t;
+  }
+
   function viewSheet() {
-    var sh = S.sheet, it = sh.versions[sh.v], host = isHost(), entries = entriesOf(it);
+    var sh = S.sheet, it = sh.versions[sh.v], host = isHost(), entries = entriesOf(it), series = it.playable.kind === 'series';
     var seasons = [];
     entries.forEach(function (e) { if (e.season != null && seasons.indexOf(e.season) < 0) seasons.push(e.season); });
     var curKey = S.room.file ? S.room.file.key : '';
@@ -843,13 +1259,35 @@
       sh.season = cur && cur.it === it && cur.entry.season != null ? cur.entry.season : seasons[0];
     }
     var shownEntries = seasons.length > 1 ? entries.filter(function (e) { return e.season === sh.season; }) : entries;
-    var poster = h('div', { class: 'now-poster', style: 'width:84px' });
+    var d = sh.det || {}, mt = posters.meta(it) || {}, name = titleOf(it);
+    var poster = h('div', { class: 'sheet-poster' + (sh.random ? ' rolled' : '') });
     posterInto(poster, it);
     var close = function () { S.sheet = null; render(); };
+    var original = d.original || mt.o || '';
+    var rating = Number(d.rating) || mt.r || 0, year = yearOf(it);
+    var genres = Array.isArray(d.genres) && d.genres.length ? d.genres : mt.g || [];
+    var facts = [h('span', { class: 'tag' + (series ? '' : ' lamp'), text: typeLabel(it) }),
+      year ? h('span', { text: String(year) }) : null,
+      d.runtime ? h('span', { text: runtimeText(d.runtime, series) }) : null,
+      series ? h('span', { text: model.seriesLine(it.playable) }) : null,
+      rating ? h('span', { class: 'ai-rating' }, [icon('star'), rating.toFixed(1)]) : null];
+    var one = entries.length === 1 ? entries[0] : null, oneKey = one ? keyOf(it, one) : '';
+    var oneIn = one && S.room.candidates && S.room.candidates.some(function (c) { return c.key === oneKey; });
+    var busy = S.room.poll || S.room.spin;
     var kids = [
-      h('div', { class: 'sheet-head' }, [poster, h('div', {}, [
-        h('h2', { text: titleOf(it) }),
-        h('div', { class: 'small muted', text: it.playable.kind === 'series' ? model.seriesLine(it.playable) : it.m.name })
+      sh.random ? h('div', { class: 'now-label', style: 'margin-bottom:10px' }, [icon('dice'), 'Случайный выбор']) : null,
+      h('div', { class: 'sheet-head' }, [poster, h('div', { class: 'sheet-info' }, [
+        h('h2', { text: name }),
+        original && normTitle(original) !== normTitle(name) ? h('div', { class: 'small muted', text: original }) : null,
+        h('div', { class: 'facts' }, facts),
+        genres.length ? h('div', { class: 'small muted', text: genres.join(', ') }) : null,
+        h('p', { class: 'overview' + (d.overview ? '' : ' muted'), text: d.overview || (sh.det === null ? 'Загружаем описание…' : 'Описания нет.') }),
+        h('div', { class: 'row' }, [
+          one && host && oneKey !== curKey ? btn('lamp', 'play', 'Включить в комнате', function () { putEntry(it, one); }) : null,
+          one && !busy && !oneIn ? btn('', 'vote', 'Предложить', function () { suggest(it, one); }) : null,
+          oneIn ? h('span', { class: 'tag', text: 'В списке' }) : null,
+          sh.random ? btn('', 'dice', 'Крутить ещё', function () { rollRandom(it); }) : null
+        ])
       ]), btn('icon close', 'close', null, close, { title: 'Закрыть' })])
     ];
     if (sh.versions.length > 1) {
@@ -860,6 +1298,7 @@
           on: { click: function () { sh.v = i; sh.season = null; render(); } } }, [line + ' · ' + model.formatBytes(v.m.size)]);
       })));
     }
+    kids.push(h('div', { class: 'h', style: 'margin-top:6px', text: series ? 'Серии' : 'Файл' }));
     if (seasons.length > 1) {
       kids.push(h('div', { class: 'chips' }, seasons.map(function (s) {
         return h('button', { class: 'chip' + (s === sh.season ? ' on' : ''), type: 'button', on: { click: function () { sh.season = s; render(); } } },
@@ -869,10 +1308,18 @@
     kids.push(h('div', { class: 'files' }, shownEntries.map(function (e) {
       var key = keyOf(it, e), current = key === curKey;
       var inList = S.room.candidates && S.room.candidates.some(function (c) { return c.key === key; });
+      // У фильма кнопки — выше, здесь сведения о файле
+      if (one) {
+        return h('div', { class: 'file' + (current ? ' current' : '') }, [
+          h('span', { class: 'fname', text: model.basename(e.file.path), title: e.file.path }),
+          h('span', { class: 'small muted', text: model.formatBytes(e.file.size) }),
+          current ? h('span', { class: 'tag lamp', text: 'Сейчас' }) : null
+        ]);
+      }
       return h('div', { class: 'file' + (current ? ' current' : '') }, [
-        h('span', { class: 'fname', text: it.playable.kind === 'series' ? e.short : e.label, title: e.file.path }),
+        h('span', { class: 'fname', text: series ? e.short : e.label, title: e.file.path }),
         current ? h('span', { class: 'tag lamp', text: 'Сейчас' }) : null,
-        !inList && !S.room.poll ? btn('small', 'vote', 'Предложить', function () { suggest(it, e); }) : inList ? h('span', { class: 'tag', text: 'В списке' }) : null,
+        !inList && !busy ? btn('small', 'vote', 'Предложить', function () { suggest(it, e); }) : inList ? h('span', { class: 'tag', text: 'В списке' }) : null,
         host && !current ? btn('lamp small', 'play', 'Включить в комнате', function () { putEntry(it, e); }) : null
       ]);
     })));
@@ -885,8 +1332,15 @@
     return clockText(Math.max(0, Math.ceil((p.ends_at - serverNow()) / 1000)));
   }
 
+  /** «Итог сейчас» ведущему; все у пульта проголосовали — кнопка светится. */
+  function finishButton(p) {
+    var any = p.tally && Object.keys(p.tally).length > 0;
+    return btn((p.all_voted ? 'lamp glow' : '') + ' small', 'flag', 'Итог сейчас', function () { roomCall('poll/finish'); },
+      { disabled: !any, title: any ? 'Подвести итог, не дожидаясь таймера' : 'Ещё никто не проголосовал' });
+  }
+
   function viewPoll() {
-    var r = S.room, host = isHost(), p = r.poll, cands = r.candidates || [];
+    var r = S.room, host = isHost(), p = r.poll, spin = r.spin, cands = r.candidates || [];
     var myVote = p && p.votes && S.me ? p.votes[S.me.id] : null;
     var total = 0;
     if (p && p.tally) Object.keys(p.tally).forEach(function (k) { total += p.tally[k]; });
@@ -895,35 +1349,60 @@
       var mini = h('div', { class: 'mini' });
       if (info) posterInto(mini, info.it, true);
       var mine = myVote === c.key;
-      var row = h('div', { class: 'cand' + (mine ? ' mine' : '') }, [
+      var row = h('div', { class: 'cand' + (mine ? ' mine' : ''), 'data-key': c.key }, [
         p ? h('div', { class: 'bar', style: 'width:' + (total ? Math.round(n / total * 100) : 0) + '%' }) : null,
         mini,
         h('div', { class: 'cbody' }, [h('div', { class: 'cname', text: info ? info.entry.label : c.name }), h('div', { class: 'small muted', text: 'Предложил(а): ' + (c.by_name || '—') })]),
         p ? h('div', { class: 'votes', text: String(n) }) : null,
-        p ? btn(mine ? 'blue small' : 'small', 'vote', mine ? 'Ваш голос' : 'Голосую', function () { roomCall('vote', { key: c.key }); })
+        spin ? null : p ? btn(mine ? 'blue small' : 'small', 'vote', mine ? 'Ваш голос' : 'Голосую', function () { roomCall('vote', { key: c.key }); })
           : (host || (S.me && c.by === S.me.id)) ? btn('icon small', 'close', null, function () { roomCall('unsuggest', { key: c.key }); }, { title: 'Убрать из списка' }) : null
       ]);
       return row;
     });
     var head;
-    if (p) {
+    if (spin) {
       head = h('div', { class: 'row' }, [
-        h('div', {}, [h('div', { class: 'h', text: 'Голосование' }), h('div', { class: 'muted', text: 'Выберите фильм. Победитель сразу включится в комнате.' })]),
+        h('div', {}, [h('div', { class: 'h', text: 'Рулетка' }), h('div', { class: 'muted', text: 'Крутим барабан… Выпавший фильм сразу включится в комнате.' })]),
+        h('div', { class: 'spacer' }), icon('dice')
+      ]);
+    } else if (p) {
+      head = h('div', { class: 'row' }, [
+        h('div', {}, [h('div', { class: 'h', text: 'Голосование' }), h('div', { class: 'muted', text: p.all_voted
+          ? 'Все проголосовали — итог через несколько секунд. Ещё можно передумать.'
+          : 'Выберите фильм. Победитель сразу включится в комнате.' })]),
         h('div', { class: 'spacer' }), h('span', { class: 'timer', id: 'timer', text: pollLeft() }),
+        host ? finishButton(p) : null,
         host ? btn('small', 'close', 'Отменить', function () { roomCall('poll/cancel'); }) : null
       ]);
     } else {
       head = h('div', { class: 'row' }, [
         h('div', {}, [h('div', { class: 'h', text: 'Что посмотреть?' }), h('div', { class: 'muted', text: host
-          ? 'Когда наберётся 2–4 варианта, начните голосование: 45 секунд, и победитель включится у всех.'
-          : 'Предлагайте фильмы из медиатеки — ведущий запустит голосование.' })]),
+          ? 'Когда наберётся 2–4 варианта, начните голосование (45 секунд) или доверьтесь рулетке — победитель включится у всех.'
+          : 'Предлагайте фильмы из медиатеки — ведущий запустит голосование или рулетку.' })]),
         h('div', { class: 'spacer' }),
         host ? btn('lamp', 'vote', 'Начать голосование', function () { roomCall('poll'); }, { disabled: cands.length < 2 }) : null,
+        host ? btn('', 'dice', 'Рулетка', function () { roomCall('roulette'); }, { disabled: cands.length < 2, title: 'Случайный фильм из предложенных' }) : null,
         btn('', 'plus', 'Предложить', function () { S.tab = 'library'; render(); })
       ]);
     }
     return h('div', { class: 'panel' }, [head, h('div', { style: 'height:14px' }),
-      rows.length ? h('div', { class: 'cands' }, rows) : h('div', { class: 'empty', text: 'Пока ничего не предложено. Откройте фильм в медиатеке и нажмите «Предложить».' })]);
+      rows.length ? h('div', { class: 'cands' + (spin ? ' spinning' : '') }, rows) : h('div', { class: 'empty', text: 'Пока ничего не предложено. Откройте фильм в медиатеке и нажмите «Предложить».' })]);
+  }
+
+  // Барабан рулетки: подсветка бежит по предложенным, замедляясь, и встаёт на выпавшем к ends_at (у всех одинаково)
+  var SPIN_MS = 3200;
+  function spinFrame() {
+    var sp = S.room && S.room.spin;
+    if (!sp) return;
+    var rows = document.querySelectorAll('.cands.spinning .cand');
+    if (rows.length) {
+      var keys = [], win = 0;
+      for (var i = 0; i < rows.length; i++) { keys.push(rows[i].getAttribute('data-key')); if (keys[i] === sp.key) win = i; }
+      var t = Math.min(1, Math.max(0, 1 - (sp.ends_at - serverNow()) / SPIN_MS));
+      var steps = rows.length * 4 + win, eased = 1 - Math.pow(1 - t, 3);
+      var at = Math.min(steps, Math.floor(eased * steps)) % rows.length;
+      for (var j = 0; j < rows.length; j++) rows[j].classList.toggle('lit', j === at);
+    }
   }
 
   // Раз в секунду — только часы и таймер, без перерисовки страницы
