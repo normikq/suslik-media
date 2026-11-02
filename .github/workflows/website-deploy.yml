@@ -1,0 +1,82 @@
+name: Website deploy
+
+# Выкладка website/ на сервер по SSH-ключу — только вручную (Actions → Website deploy → Run workflow).
+# Скрипт: scripts/deploy-website.sh, настройка ключа и секретов: docs/DEPLOY.md.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Что выкладывать: ветка, тег или коммит"
+        default: main
+        required: true
+      dry_run:
+        description: "Пробный запуск: только показать, что изменится"
+        type: boolean
+        default: false
+
+concurrency:
+  group: website-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Секреты можно держать в окружении «website» (Settings → Environments) — там же включается
+    # подтверждение перед выкладкой. Секреты репозитория тоже подхватываются.
+    environment: website
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ inputs.ref }}" }
+
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+
+      - name: Checks
+        working-directory: website
+        run: |
+          npm ci --no-audit --no-fund
+          npm run check
+          npm test
+
+      - name: SSH key
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        run: |
+          for v in DEPLOY_SSH_KEY DEPLOY_HOST; do
+            [ -n "${!v}" ] || { echo "::error::Не задан секрет $v (docs/DEPLOY.md)"; exit 1; }
+          done
+          install -d -m 700 ~/.ssh
+          umask 077
+          printf '%s\n' "$DEPLOY_SSH_KEY" | tr -d '\r' > ~/.ssh/deploy_key
+          ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null || { echo "::error::DEPLOY_SSH_KEY — не закрытый ключ OpenSSH (или он с паролем)"; exit 1; }
+          if [ -n "$DEPLOY_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$DEPLOY_KNOWN_HOSTS" | tr -d '\r' > ~/.ssh/deploy_known_hosts
+          else
+            echo "::warning::Не задан DEPLOY_KNOWN_HOSTS — ключ сервера взят без проверки (ssh-keyscan). Добавьте секрет, см. docs/DEPLOY.md"
+            ssh-keyscan -p "${DEPLOY_PORT:-22}" -T 15 "$DEPLOY_HOST" > ~/.ssh/deploy_known_hosts
+          fi
+
+      - name: Deploy
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          DEPLOY_RESTART_CMD: ${{ secrets.DEPLOY_RESTART_CMD }}
+          DEPLOY_HEALTH_URL: ${{ secrets.DEPLOY_HEALTH_URL }}
+          DEPLOY_KEY: ~/.ssh/deploy_key
+          DEPLOY_KNOWN_HOSTS: ~/.ssh/deploy_known_hosts
+          DEPLOY_REF: HEAD
+          DEPLOY_SKIP_CHECKS: "1"
+          DEPLOY_DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+        run: bash scripts/deploy-website.sh
+
+      - name: Cleanup
+        if: always()
+        run: rm -f ~/.ssh/deploy_key ~/.ssh/deploy_known_hosts

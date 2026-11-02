@@ -304,7 +304,7 @@ npm start
 ```
 
 > [!WARNING]
-> Пуш в GitHub **не обновляет сервер автоматически**. Workflow `website.yml` выполняет только синтаксическую проверку (`npm run check` и `npm test`). Развёртывание кода на production-сервер осуществляется вручную администратором.
+> Пуш в GitHub **не обновляет сервер автоматически**. Workflow `website.yml` выполняет только синтаксическую проверку (`npm run check` и `npm test`). Выкладка на сервер — вручную, по SSH-ключу: workflow **Website deploy** или `scripts/deploy-website.sh` (настройка и откат — [DEPLOY.md](DEPLOY.md)).
 
 ---
 
