@@ -566,7 +566,6 @@
     setFilter('off', off);
   }
 
-  function btihOf(magnet) { var m = /btih:([0-9a-z]+)/i.exec(magnet || ''); return m ? m[1].toLowerCase() : ''; }
   function searchTrackers() {
     var F = S.find, q = F.q.trim();
     if (q.length < 2) { toast('Введите хотя бы два символа.', true); return; }
