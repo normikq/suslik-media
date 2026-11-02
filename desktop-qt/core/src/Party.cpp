@@ -31,13 +31,18 @@ double optDouble(const QJsonObject &o, const QString &k, double def) {
 
 void PartyClock::addSample(qint64 localSend, qint64 localRecv, qint64 serverTime) {
     const qint64 rtt = std::max<qint64>(0, localRecv - localSend);
-    if (rtt < m_bestRtt) {
-        m_bestRtt = rtt;
-        m_offset = serverTime - (localSend + rtt / 2);
-    }
+    m_samples.append({localRecv, rtt, serverTime - (localSend + rtt / 2)});
+    m_samples.removeIf([&](const Sample &x) { return localRecv - x.at > WINDOW_MS || x.at > localRecv; });
+    const Sample *best = nullptr;
+    for (const Sample &x : m_samples)
+        if (!best || x.rtt < best->rtt) best = &x;
+    if (!best) return;
+    m_bestRtt = best->rtt;
+    m_offset = best->offset;
 }
 
 void PartyClock::reset() {
+    m_samples.clear();
     m_offset = 0;
     m_bestRtt = std::numeric_limits<qint64>::max();
 }
@@ -300,7 +305,9 @@ PartySyncEngine::PartySyncEngine(PartyLink &link, std::function<void(const QStri
 
 void PartySyncEngine::idle(SyncPlayer &player) {
     if (!m_seenSeek) m_seenSeek = player.seekStamp();
-    restoreRate(player);
+    m_drift = 1.f;
+    if (m_engineRate && *m_engineRate != player.userRate()) player.setRate(player.userRate());
+    m_engineRate.reset();
     m_lastSeq = -1; m_pendingAt = 0; m_stalledSince = 0; m_lastEngineMs = std::numeric_limits<qint64>::min();
     m_applied.reset(); m_waitSince = 0; m_waitNoticed = false;
     m_link.reportBuffering(false);
@@ -309,6 +316,9 @@ void PartySyncEngine::idle(SyncPlayer &player) {
 void PartySyncEngine::tick(SyncPlayer &player, const QString &key, qint64 now) {
     if (!m_seenSeek) m_seenSeek = player.seekStamp();
     if (player.busy()) return; // полосу тянут: место отправим после отпускания
+    // В фильме комнаты все идут со скоростью комнаты: своя скорость плеера (1,25× из настроек) уводила бы его вперёд,
+    // а выравнивание дрейфа при ней не работало
+    if (!m_engineRate) applyRate(player, 1.f);
     const qint64 t = player.timeMs();
     const bool p = player.paused();
     m_lastTimeMs = t;
@@ -317,7 +327,7 @@ void PartySyncEngine::tick(SyncPlayer &player, const QString &key, qint64 now) {
     const qint64 stamp = player.seekStamp();
     if (stamp != *m_seenSeek) {
         m_seenSeek = stamp;
-        const qint64 expected = m_prevP ? m_prevT : m_prevT + qint64(double(now - m_prevAt) * player.userRate() * m_drift);
+        const qint64 expected = m_prevP ? m_prevT : m_prevT + qint64(double(now - m_prevAt) * m_engineRate.value_or(player.userRate()));
         if (m_lastSeq >= 0 && std::llabs(t - expected) > 1500 && m_link.canSeek()) { // смена дорожки тоже ставит метку: без скачка
             log(S("[party] local seek at %1").arg(t));
             restoreRate(player);
@@ -417,13 +427,13 @@ void PartySyncEngine::tick(SyncPlayer &player, const QString &key, qint64 now) {
         // Готовы, но комната ждёт кого-то ещё: стоим здесь
         player.applyPaused(true); np = true; m_ownUntil = now + 1000;
         log(S("[party] ready, waiting for the others at %1").arg(t));
-    } else if (s.playing && !s.waiting && !p && !loading && now > m_ownUntil && player.running() && player.userRate() == 1.f) {
+    } else if (s.playing && !s.waiting && !p && !loading && now > m_ownUntil && player.running()) {
         const DriftAction a = DriftController::evaluate(float(t) / 1000.f, float(target) / 1000.f);
         switch (a.kind) {
         case DriftAction::Kind::None: restoreRate(player); break;
         case DriftAction::Kind::SlowDown:
         case DriftAction::Kind::SpeedUp:
-            if (m_drift != a.rate) { m_drift = a.rate; player.setRate(a.rate); }
+            if (m_drift != a.rate) applyRate(player, a.rate);
             break;
         case DriftAction::Kind::HardSeek:
             restoreRate(player); nt = seekRoom(player, target, now); m_ownUntil = now + OWN_MS;
@@ -445,8 +455,13 @@ std::optional<PartyNotice> PartySyncEngine::noticeOf(const PartyState &before, c
     return std::nullopt;
 }
 
-void PartySyncEngine::restoreRate(SyncPlayer &player) {
-    if (m_drift != 1.f) { m_drift = 1.f; player.setRate(player.userRate()); }
+// Скорость движка: скорость комнаты × подстройка дрейфа d (0,95–1,05)
+void PartySyncEngine::applyRate(SyncPlayer &player, float d) {
+    m_drift = d;
+    const double room = m_link.state().rate;
+    const float r = float(room >= 0.25 && room <= 4.0 ? room : 1.0) * d;
+    if (r != m_engineRate.value_or(player.userRate())) player.setRate(r);
+    m_engineRate = r;
 }
 
 qint64 PartySyncEngine::seekRoom(SyncPlayer &player, qint64 target, qint64 now) {

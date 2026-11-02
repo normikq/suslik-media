@@ -97,6 +97,17 @@ private slots:
         QCOMPARE(c.offsetMs(), 3990);
     }
 
+    void clockForgetsOldSamples() {
+        PartyClock c;
+        c.addSample(1000, 1020, 5000);
+        c.addSample(300000, 300100, 304550);
+        QCOMPARE(c.offsetMs(), 3990);
+        const qint64 late = 1020 + PartyClock::WINDOW_MS + 1;
+        c.addSample(late - 60, late, late + 4470);
+        QCOMPARE(c.bestRttMs(), 60);
+        QCOMPARE(c.offsetMs(), 4500);
+    }
+
     void driftDecisions() {
         QCOMPARE(DriftController::evaluate(10.1f, 10.0f).kind, DriftAction::Kind::None);
         QCOMPARE(DriftController::evaluate(9.8f, 10.0f).kind, DriftAction::Kind::None);
@@ -349,6 +360,25 @@ private slots:
         now += 400; p.play(400); e.tick(p, KEY, now);
         QCOMPARE(p.rates, (QList<float>{1.05f, 1.f}));
         QVERIFY(p.seeks.isEmpty());
+    }
+
+    // своя скорость плеера (1,25×) в фильме комнаты не действует, дрейф выравнивается; вне комнаты — снова своя
+    void roomRateOverridesUserRate() {
+        FakePlayer p; FakeLink l(true);
+        p.rate = 1.25f;
+        l.s = st(true, 10.0, 1.0, 0, 1); l.target = 10000;
+        p.t = 10000; p.e = 10000; p.isPaused = false;
+        PartySyncEngine e(l);
+        qint64 now = 1000;
+        e.tick(p, KEY, now);
+        QCOMPARE(p.rates, QList<float>{1.f});
+        while (now < 4000) { now += 400; p.play(400); l.target += 400; e.tick(p, KEY, now); }
+        l.target = p.t + 800;
+        now += 400; p.play(400); l.target += 400; e.tick(p, KEY, now);
+        QCOMPARE(p.rates, (QList<float>{1.f, 1.05f}));
+        e.idle(p);
+        QCOMPARE(p.rates, (QList<float>{1.f, 1.05f, 1.25f}));
+        QVERIFY(l.sent.isEmpty());
     }
 
     void stallReportsBuffering() {

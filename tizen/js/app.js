@@ -617,7 +617,8 @@
         magnet: it.m, title: en.label, file: en.file, entries: entries, index: i, watch: watch, toast: toast, dialog: dialog,
         resumeAt: o.resumeAt,
         onClose: function () { SM.sync.run(); o.back(); },
-        onEntry: function (j) { open(it, entries, j, { back: o.back, room: o.room }); }
+        // Серию гостю включает ведущий: она открывается с места комнаты, а не с места, где гость её когда-то бросил
+        onEntry: function (j) { open(it, entries, j, { back: o.back, room: o.room, resumeAt: o.room && party.isGuest() ? party.targetMs() : null }); }
       });
     };
     if (check.level === 'no') dialog(support.MESSAGES.unsupported, check.text + '.', [{ text: tr('player.try_anyway'), run: go }, { text: tr('common.back') }]);

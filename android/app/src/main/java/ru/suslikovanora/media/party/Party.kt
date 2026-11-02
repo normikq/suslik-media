@@ -60,10 +60,19 @@ object Party {
     val canControl get() = inRoom && isHost
     val canSeek get() = inRoom && isHost
 
-    /** This phone / TV in the room (the server keeps one entry per client id). */
-    val clientId = PartyProtocol.newClientId(if (ru.suslikovanora.media.Tv.cached == true) "tv" else "an")
+    /**
+     * This phone / TV in the room (the server keeps one entry per client id). The same after a restart: the creator of a
+     * room under the shared password stays its host, and entering the same room again is not refused with «already
+     * connected from another device» while the server has not yet noticed the old stream is gone.
+     */
+    val clientId: String by lazy {
+        val prefs = Api.appCtx?.getSharedPreferences("party", android.content.Context.MODE_PRIVATE)
+        prefs?.getString("client_id", null)?.takeIf { Regex("^(an|tv)_[0-9a-f]{12}$").matches(it) }
+            ?: PartyProtocol.newClientId(if (ru.suslikovanora.media.Tv.cached == true) "tv" else "an")
+                .also { id -> prefs?.edit()?.putString("client_id", id)?.apply() }
+    }
     /** How the server shows this device to the others: sha-256 of [clientId], 16 hex (rooms.js clientKey). */
-    val myKey: String = PartyProtocol.clientKey(clientId)
+    val myKey: String by lazy { PartyProtocol.clientKey(clientId) }
     val clock = PartyClock()
 
     /** I have just put this film into the room: my player starts the room from its own place (PartySyncEngine). */
@@ -85,7 +94,10 @@ object Party {
     private val streamClient by lazy { Api.plain.newBuilder().readTimeout(0, TimeUnit.MILLISECONDS).build() }
 
     /** Where the room is now, ms (estimated from the server's anchor with the calibrated clock). */
-    fun targetMs(): Long = state.targetMs(clock.serverNow())
+    fun targetMs(): Long = state.targetMs(clock.serverNow(mono()))
+
+    /** Monotonic clock for the room: changing the system time (NTP) does not move the room's place. */
+    private fun mono() = android.os.SystemClock.elapsedRealtime()
 
     fun othersBuffering(): Boolean = room.othersBuffering(myKey)
 
@@ -197,9 +209,9 @@ object Party {
 
     /** A request whose answer carries `server_time`: one more sample for the clock. */
     private suspend fun timed(call: suspend () -> JSONObject): JSONObject {
-        val t0 = System.currentTimeMillis()
+        val t0 = mono()
         val res = call()
-        val t1 = System.currentTimeMillis()
+        val t1 = mono()
         val st = PartyProtocol.roomOf(res)?.serverTime ?: 0L
         if (st > 0L) clock.addSample(t0, t1, st)
         return res
@@ -222,7 +234,16 @@ object Party {
         // A few more clock samples: the shortest round trip wins
         repeat(3) { runCatching { timed { Api.get(PartyProtocol.roomPath(id)) } } }
         startStream(id)
+        // While in the room, a clock sample once a minute: a guest sends nothing, and clocks drift over hours of watching
+        clockJob?.cancel()
+        clockJob = scope.launch {
+            while (isActive && roomId == id) {
+                delay(PartyClock.RESAMPLE_MS)
+                if (roomId == id) runCatching { timed { Api.get(PartyProtocol.roomPath(id)) } }
+            }
+        }
     }
+    private var clockJob: Job? = null
 
     @Synchronized private fun apply(update: RoomUpdate) { room = room.merge(update) }
 

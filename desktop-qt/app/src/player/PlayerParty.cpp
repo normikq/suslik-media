@@ -18,6 +18,12 @@ bool PlayerModel::partyGuest() const {
     return p && m_open && p->guest() && !key.isEmpty() && p->fileKey() == key;
 }
 
+bool PlayerModel::partyFilm() const {
+    const Party *p = Party::instance();
+    const QString key = watchKey();
+    return p && m_open && p->inRoom() && !key.isEmpty() && p->fileKey() == key;
+}
+
 bool PlayerModel::playLocked() const {
     const Party *p = Party::instance();
     return partyGuest() && (!p->playing() || p->waiting());

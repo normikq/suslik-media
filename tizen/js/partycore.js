@@ -58,11 +58,19 @@
 
   // ---- часы сервера (PartyClock) ----
 
+  // Смещение — по самому короткому кругу среди точек за последние CLOCK_WINDOW_MS: старые забываются, и часы, уплывшие
+  // за долгий просмотр, догоняются новыми точками (party.js берёт их раз в CLOCK_RESAMPLE_MS)
+  var CLOCK_WINDOW_MS = 10 * 60 * 1000, CLOCK_RESAMPLE_MS = 60 * 1000;
+
   function Clock() { this.reset(); }
-  Clock.prototype.reset = function () { this.offsetMs = 0; this.bestRttMs = Infinity; };
+  Clock.prototype.reset = function () { this.offsetMs = 0; this.bestRttMs = Infinity; this.samples = []; };
   Clock.prototype.addSample = function (sent, recv, server) {
     var rtt = Math.max(0, recv - sent);
-    if (rtt < this.bestRttMs) { this.bestRttMs = rtt; this.offsetMs = server - (sent + Math.floor(rtt / 2)); }
+    this.samples.push({ at: recv, rtt: rtt, offset: server - (sent + Math.floor(rtt / 2)) });
+    this.samples = this.samples.filter(function (x) { return recv - x.at <= CLOCK_WINDOW_MS && x.at <= recv; });
+    var best = null;
+    this.samples.forEach(function (x) { if (!best || x.rtt < best.rtt) best = x; });
+    if (best) { this.bestRttMs = best.rtt; this.offsetMs = best.offset; }
   };
   Clock.prototype.serverNow = function (localNow) { return (localNow == null ? Date.now() : localNow) + this.offsetMs; };
 
@@ -347,7 +355,8 @@
 
   SM.partycore = {
     sha256hex: sha256hex, Clock: Clock, targetMs: targetMs, room: room, protocol: protocol, Engine: Engine,
-    IDLE: IDLE, SHARED_USER: SHARED_USER, TICK_MS: TICK_MS, TOLERANCE_MS: TOLERANCE_MS
+    IDLE: IDLE, SHARED_USER: SHARED_USER, TICK_MS: TICK_MS, TOLERANCE_MS: TOLERANCE_MS,
+    CLOCK_WINDOW_MS: CLOCK_WINDOW_MS, CLOCK_RESAMPLE_MS: CLOCK_RESAMPLE_MS
   };
   if (typeof module === 'object' && module.exports) module.exports = SM.partycore;
 })(typeof window !== 'undefined' ? window : global);

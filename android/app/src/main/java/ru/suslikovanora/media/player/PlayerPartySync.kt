@@ -116,6 +116,15 @@ class PlayerPartySync(private val handler: Handler, private val cb: Callback) {
         if (!Party.isHost && rk != null && rk in keys && Party.followed != rk) Party.followed = rk
         // The host closed the film (the room has none now): a guest who watched it with them closes it too
         if (Party.inRoom && key != null && rk == key) showedRoomFilm = true
+        else if (showedRoomFilm && !Party.isHost && Party.inRoom && rk != null && rk !in keys && cb.ready() && cb.canPlayIndex()) {
+            // The host put a film that is not in this playlist (another season, another film): this player cannot follow
+            // it in place, and MainActivity behind it does not recompose while the player is in front. The guest's player
+            // closes, and MainActivity opens the host's film at the room's place (as for any film the host puts)
+            showedRoomFilm = false
+            AppLog.write("[party] the room's film is not in this playlist: closing the player to follow the host")
+            cb.close()
+            return
+        }
         else if (!Party.inRoom || rk != null) showedRoomFilm = false
         else if (showedRoomFilm && !Party.isHost) {
             showedRoomFilm = false
