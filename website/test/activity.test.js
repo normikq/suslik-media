@@ -151,6 +151,13 @@ test("рулетка: победителя выбирает сервер, у в�
   assert.equal(pub.spin.key, r.key);
   assert.ok(pub.spin.ends_at > Date.now());
   assert.equal(pub.spin.ends_at - pub.spin.started_at, 60000); // клиент крутит барабан ровно столько
+  // длительность от ведущего: 2–30 с, мусор — по умолчанию
+  assert.equal(rooms.spinMs(10), 10000);
+  assert.equal(rooms.spinMs("7.5"), 7500);
+  assert.equal(rooms.spinMs(1), 2000);
+  assert.equal(rooms.spinMs(999), 30000);
+  assert.equal(rooms.spinMs(undefined), 4000);
+  assert.equal(rooms.spinMs("abc"), 4000);
   // Пока крутится: список и голосование стоят
   assert.equal(rooms.suggestFile(room.id, carol, { key: "42|c.mkv", name: "C" }).ok, false);
   assert.equal(rooms.unsuggestFile(room.id, alice, "40|a.mkv").ok, false);

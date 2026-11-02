@@ -422,8 +422,16 @@ const POLL_MS = 45 * 1000;
 const MAX_CANDIDATES = 8;
 // Все, кто у пульта, проголосовали: ждать конца 45 секунд незачем — итог через несколько секунд (можно ещё передумать)
 const ALL_VOTED_MS = 5 * 1000;
-// Барабан «Рулетки» крутится столько у всех, потом победитель включается в комнате
+// Барабан «Рулетки» крутится столько у всех, потом победитель включается в комнате.
+// Ведущий может выбрать длительность сам: от 2 до 30 секунд
 const SPIN_MS = 4000;
+const SPIN_MIN_S = 2, SPIN_MAX_S = 30;
+/** Длительность барабана в мс из выбора ведущего (секунды); не число — по умолчанию. */
+function spinMs(seconds) {
+  const s = Number(seconds);
+  if (seconds == null || seconds === "" || !Number.isFinite(s)) return SPIN_MS;
+  return Math.round(Math.min(SPIN_MAX_S, Math.max(SPIN_MIN_S, s)) * 1000);
+}
 
 function shortRoomId() {
   for (let i = 0; i < 50; i++) {
@@ -683,6 +691,7 @@ module.exports = {
   finishPoll,
   finishPollNow,
   spinRoulette,
+  spinMs,
   finishSpin,
   cancelPoll,
   cleanFile

@@ -212,7 +212,7 @@ router.post("/api/activity/rooms/:id/vote", requireLogin, roomLimiter, (req, res
 router.post("/api/activity/rooms/:id/poll/finish", requireLogin, roomLimiter, (req, res) =>
   reply(res, rooms.finishPollNow(req.params.id, req.user)));
 router.post("/api/activity/rooms/:id/roulette", requireLogin, roomLimiter, (req, res) =>
-  reply(res, rooms.spinRoulette(req.params.id, req.user)));
+  reply(res, rooms.spinRoulette(req.params.id, req.user, rooms.spinMs(req.body?.seconds))));
 
 // «Позвать в чат»: бот пишет в текстовый чат голосового канала код комнаты и ссылку /join/<код>.
 // Бот не настроен или не может писать в канал — { fallback: true, link }: страница копирует ссылку сама.

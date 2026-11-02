@@ -1397,7 +1397,9 @@
           : 'Предлагайте фильмы из медиатеки — ведущий запустит голосование или рулетку.' })]),
         h('div', { class: 'spacer' }),
         host ? btn('lamp', 'vote', 'Начать голосование', function () { roomCall('poll'); }, { disabled: cands.length < 2 }) : null,
-        host ? btn('', 'dice', 'Рулетка', function () { roomCall('roulette'); }, { disabled: cands.length < 2, title: 'Случайный фильм из предложенных' }) : null,
+        host ? btn('', 'dice', 'Рулетка', function () { roomCall('roulette', { seconds: spinSeconds() }); }, { disabled: cands.length < 2, title: 'Случайный фильм из предложенных' }) : null,
+        host ? select(String(spinSeconds()), SPIN_CHOICES.map(function (n) { return [String(n), n + ' с']; }),
+          function (v) { setSpinSeconds(v); }, 'Сколько крутится рулетка') : null,
         btn('', 'plus', 'Предложить', function () { S.tab = 'library'; render(); }),
         muteButton()
       ]);
@@ -1412,11 +1414,19 @@
   // Шаги подсветки заранее расписаны по времени: каждый следующий длиннее (замедление), последний ~0,4 с — видно,
   // как барабан «доползает» до фильма. Сервер сразу после итога чистит список, поэтому барабан рисует свой снимок.
   var OLD_SPIN_MS = 3200; // сервер без started_at
+  // Сколько крутится барабан — выбирает ведущий (сервер примет 2–30 с), помнится в браузере
+  var SPIN_CHOICES = [3, 4, 6, 8, 10, 15, 20, 30], SPIN_DEFAULT = 4;
+  function spinSeconds() {
+    var v = SPIN_DEFAULT;
+    try { v = Number(localStorage.getItem('sm.act.spin')) || SPIN_DEFAULT; } catch (e) { /* без хранилища */ }
+    return SPIN_CHOICES.indexOf(v) >= 0 ? v : SPIN_DEFAULT;
+  }
+  function setSpinSeconds(v) { try { localStorage.setItem('sm.act.spin', String(Number(v))); } catch (e) { /* без хранилища */ } }
   var reel = null, reelSeen = '';
 
   /** Моменты смены подсветки (мс от старта): геометрически растущие шаги, последний ровно в dur. */
   function reelPlan(dur) {
-    var d0 = 55, dl = Math.max(260, Math.min(460, dur * 0.11));
+    var d0 = 55, dl = Math.max(260, Math.min(620, dur * 0.11));
     if (dur <= dl * 2) return [dur];
     var N = Math.max(3, Math.round(1 + Math.log(dl / d0) / Math.log((dur - d0) / (dur - dl))));
     if (N * d0 >= dur) N = Math.max(1, Math.floor(dur / d0 / 2));
