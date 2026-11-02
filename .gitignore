@@ -25,3 +25,6 @@ desktop/resources/
 desktop/setup/obj/
 desktop/setup/bin/
 tizen/js/site.js
+
+# служебная папка выкладки сайта (scripts/deploy-website.sh), если DEPLOY_PATH указывает сюда
+website/.deploy/

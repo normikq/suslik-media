@@ -41,6 +41,7 @@ Changelog (русский) — `android/app/src/main/assets/changelog.json`, `de
 ## Сборка и выпуск
 
 - Тесты общего модуля (`shared.yml`) идут на пуш с изменениями в `shared/`: `shared/src/test/...` (модель и слияние версий, `BurstProxy`, `TsClock`, зеркало, комнаты, вход, синхронизация, поиск, заставки, `SiteAddressTest` и др.). Логи заданий CI читаются через `mcp__github__get_job_logs`. Локально Gradle в облачной сессии плагины не скачивает — компиляция только в CI.
+- Выкладка сайта — только по команде владельца: workflow `website-deploy.yml` (вручную) или `scripts/deploy-website.sh` по SSH-ключу; секреты `DEPLOY_*`, данные и `.env` на сервере не трогаются, при неответе — откат. Подробно `docs/DEPLOY.md`.
 - Серверные модульные тесты: `website/test/*.test.js` (`node --test`). Статическая проверка: `npm run check`.
 - `android.yml` и `desktop.yml` запускаются только вручную (workflow_dispatch): пуш APK/MSI не собирает. Отладочная «Suslik Debug» собирается только с `inputs[debug]=true` (по умолчанию нет).
 - Выпуск беты после пуша:
