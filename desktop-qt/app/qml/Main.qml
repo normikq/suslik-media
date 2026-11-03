@@ -300,11 +300,14 @@ Window {
     // Свой заголовок окна: перетаскивание, «Свернуть», «Развернуть», «Закрыть» — поверх всего, кроме полного экрана
     // и мини-плеера. В плеере кнопки гаснут и появляются вместе с его панелями.
     TitleBar {
+        id: titleBar
         z: 60
         y: win.inset
         width: parent.width
         visible: !windowMode.fullscreen && !windowMode.mini
         shown: !player.open || !playerLoader.item || playerLoader.item.barsShown
+        // в плеере слева его кнопки «Назад» и «Поверх окон» (до 118 px)
+        dragLeft: player.open ? 130 : 0
         onActivity: if (player.open && playerLoader.item) playerLoader.item.poke()
     }
     // Вне Windows окно без системной рамки: размер меняют края окна
@@ -320,11 +323,15 @@ Window {
             readonly property int e: modelData.e
             readonly property bool horiz: e === Qt.LeftEdge || e === Qt.RightEdge
             readonly property bool vert: e === Qt.TopEdge || e === Qt.BottomEdge
+            // справа сверху — кнопки окна: верхний край до них не доходит, правый начинается под ними, угла нет
+            readonly property real capRoom: titleBar.visible ? 46 * 3 : 0
+            readonly property real capTop: titleBar.visible ? win.inset + titleBar.height : 0
+            visible: !(capRoom > 0 && e === (Qt.RightEdge | Qt.TopEdge))
             z: 70
             x: e & Qt.RightEdge ? win.width - width : 0
-            y: e & Qt.BottomEdge ? win.height - height : 0
-            width: vert ? win.width : horiz ? 5 : 10
-            height: horiz ? win.height : vert ? 5 : 10
+            y: e & Qt.BottomEdge ? win.height - height : e === Qt.RightEdge ? capTop : 0
+            width: vert ? (e === Qt.TopEdge ? win.width - capRoom : win.width) : horiz ? 5 : 10
+            height: horiz ? win.height - y : vert ? 5 : 10
             cursorShape: modelData.c
             onPressed: windowMode.startResize(e)
         }

@@ -11,8 +11,8 @@ Menu {
     function fit() {
         let w = 220
         for (let i = 0; i < count; ++i) {
-            const it = itemAt(i)    // скрытые пункты тоже: до показа меню «видимых» нет вовсе
-            if (it) w = Math.max(w, Math.ceil(it.implicitWidth))
+            const it = itemAt(i)    // скрытые (shown: false) не в счёт; visible до показа меню всегда false
+            if (it && it.shown !== false) w = Math.max(w, Math.ceil(it.implicitWidth))
         }
         implicitWidth = w + leftPadding + rightPadding
     }

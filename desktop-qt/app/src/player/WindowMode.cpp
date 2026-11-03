@@ -39,12 +39,27 @@ void WindowMode::setWindow(QWindow *w) {
     if (!w) return;
     TitleBar::style(w);
     TitleBar::hideCaption(w, true);
-    connect(w, &QWindow::windowStateChanged, this, [this] {
-        updateState();
-        QTimer::singleShot(0, this, &WindowMode::updateState); // размер развёрнутого окна приходит следом
-    });
-    connect(w, &QWindow::screenChanged, this, [this] { QTimer::singleShot(0, this, &WindowMode::updateState); });
+    // состояние и размер развёрнутого окна приходят следом за сменой состояния: пересчёт — один, в конце цикла событий
+    connect(w, &QWindow::windowStateChanged, this, &WindowMode::scheduleState);
+    connect(w, &QWindow::screenChanged, this, &WindowMode::scheduleState);
     updateState();
+}
+
+void WindowMode::scheduleState() {
+    if (!m_stateTimer) {
+        m_stateTimer = new QTimer(this);
+        m_stateTimer->setSingleShot(true);
+        m_stateTimer->setInterval(0);
+        connect(m_stateTimer, &QTimer::timeout, this, &WindowMode::updateState);
+    }
+    m_stateTimer->start();
+}
+
+void WindowMode::setMaxButton(bool hover, bool press) {
+    if (hover == m_maxHover && press == m_maxPress) return;
+    m_maxHover = hover;
+    m_maxPress = press;
+    emit maxButtonChanged();
 }
 
 void WindowMode::updateState() {
@@ -73,7 +88,7 @@ void WindowMode::toggleMaximized() {
 
 void WindowMode::systemMenu(qreal x, qreal y) {
     if (!m_w || m_full || m_mini) return;
-    TitleBar::systemMenu(m_w, m_w->mapToGlobal(QPointF(x, y)).toPoint());
+    TitleBar::systemMenu(m_w, QPointF(x, y));
 }
 
 bool WindowMode::nativeEventFilter(const QByteArray &type, void *message, qintptr *result) {
@@ -82,10 +97,28 @@ bool WindowMode::nativeEventFilter(const QByteArray &type, void *message, qintpt
     if (!m_w || !m_w->handle() || type != "windows_generic_MSG") return false;
     auto *msg = static_cast<MSG *>(message);
     if (msg->hwnd != reinterpret_cast<HWND>(m_w->winId())) return false;
-    // Обычное окно: верхней системной рамки нет — верхний край тянет размер сам (бока и низ — системные)
-    if (msg->message == WM_NCHITTEST && !m_mini && !m_full && !(m_w->windowStates() & (Qt::WindowMaximized | Qt::WindowMinimized))) {
+    // Кнопка «Развернуть» своего заголовка отдаётся системе (HTMAXBUTTON): Windows 11 показывает над ней панель макетов
+    // Snap Layouts. Её мышь тогда идёт «вне окна»: подсветку и щелчок ведём сами, системе их не отдаём (иначе она
+    // нарисует поверх старую серую кнопку).
+    const bool own = !m_mini && !m_full && !(m_w->windowStates() & Qt::WindowMinimized);
+    auto onMax = [this, msg](LPARAM lp) {
+        if (!m_captionButtons) return false;
+        POINT p{int(short(LOWORD(lp))), int(short(HIWORD(lp)))};
+        ScreenToClient(msg->hwnd, &p);
+        RECT rc;
+        GetClientRect(msg->hwnd, &rc);
+        const qreal dpr = m_w->devicePixelRatio();
+        const int top = qRound(m_topInset * dpr), h = qRound(32 * dpr), bw = qRound(46 * dpr);
+        return p.y >= top && p.y < top + h && p.x >= rc.right - 2 * bw && p.x < rc.right - bw;
+    };
+    switch (msg->message) {
+    case WM_NCHITTEST: {
+        if (!own) return false;
         const LRESULT hit = DefWindowProcW(msg->hwnd, msg->message, msg->wParam, msg->lParam);
         if (hit != HTCLIENT) return false;
+        if (onMax(msg->lParam)) { if (result) *result = HTMAXBUTTON; return true; }
+        if (m_w->windowStates() & Qt::WindowMaximized) return false;
+        // верхней системной рамки нет — верхний край тянет размер сам (бока и низ — системные)
         POINT p{int(short(LOWORD(msg->lParam))), int(short(HIWORD(msg->lParam)))};
         ScreenToClient(msg->hwnd, &p);
         RECT rc;
@@ -95,11 +128,39 @@ bool WindowMode::nativeEventFilter(const QByteArray &type, void *message, qintpt
         if (result) *result = p.x < border * 2 ? HTTOPLEFT : p.x >= rc.right - border * 2 ? HTTOPRIGHT : HTTOP;
         return true;
     }
+    case WM_NCMOUSEMOVE:
+        if (msg->wParam != HTMAXBUTTON) { setMaxButton(false, false); return false; }
+        if (!m_maxHover) {
+            TRACKMOUSEEVENT t{sizeof t, TME_LEAVE | TME_NONCLIENT, msg->hwnd, 0};
+            TrackMouseEvent(&t);
+        }
+        setMaxButton(true, m_maxPress);
+        if (result) *result = 0;
+        return true;
+    case WM_NCMOUSELEAVE:
+    case WM_MOUSEMOVE:
+        setMaxButton(false, false);
+        return false;
+    case WM_NCLBUTTONDOWN:
+    case WM_NCLBUTTONDBLCLK:
+        if (msg->wParam != HTMAXBUTTON) return false;
+        setMaxButton(true, true);
+        if (result) *result = 0;
+        return true;
+    case WM_NCLBUTTONUP:
+        if (msg->wParam != HTMAXBUTTON) return false;
+        if (m_maxPress) QTimer::singleShot(0, this, &WindowMode::toggleMaximized);
+        setMaxButton(true, false);
+        if (result) *result = 0;
+        return true;
+    default:
+        break;
+    }
     // другой монитор (DPI): высота убранной полосы заголовка пересчитывается
     if (msg->message == WM_DPICHANGED && !m_mini && !m_full) {
         QTimer::singleShot(0, this, [this] {
             if (m_w && !m_mini && !m_full) TitleBar::hideCaption(m_w, true);
-            updateState();
+            scheduleState();
         });
         return false;
     }
@@ -213,7 +274,7 @@ void WindowMode::setFullscreen(bool on) {
     }
     m_full = on;
     emit changed();
-    QTimer::singleShot(0, this, &WindowMode::updateState);
+    scheduleState();
 }
 
 void WindowMode::setOnTop(bool on) {
@@ -279,7 +340,7 @@ void WindowMode::setMini(bool on, double aspect) {
         });
     }
     emit changed();
-    QTimer::singleShot(0, this, &WindowMode::updateState);
+    scheduleState();
 }
 
 void WindowMode::fitMini(double aspect) {
@@ -299,7 +360,20 @@ void WindowMode::fitMini(double aspect) {
     }
 }
 
-void WindowMode::startMove() { if (m_w) m_w->startSystemMove(); }
+void WindowMode::startMove(qreal grabY) {
+    if (!m_w) return;
+    // Развёрнутое окно системное перемещение не двигает: сначала обычный размер, окно встаёт под курсор
+    // на ту же долю ширины, за которую его взяли, и уже тогда едет (как у системного заголовка)
+    if (grabY >= 0 && !m_mini && !m_full && (m_w->windowStates() & Qt::WindowMaximized)) {
+        const QPoint c = QCursor::pos();
+        const QRect was = m_w->geometry();
+        const double fx = was.width() > 0 ? double(c.x() - was.x()) / was.width() : 0.5;
+        m_w->showNormal();
+        const QRect now = m_w->geometry();
+        m_w->setPosition(c.x() - int(fx * now.width()), c.y() - int(grabY));
+    }
+    m_w->startSystemMove();
+}
 
 void WindowMode::startResize(int edges) { if (m_w) m_w->startSystemResize(Qt::Edges(edges)); }
 

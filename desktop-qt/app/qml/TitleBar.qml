@@ -6,6 +6,7 @@ import QtQuick
 Item {
     id: bar
     property bool shown: true          // в плеере кнопки гаснут вместе с его панелями
+    property real dragLeft: 0          // слева полоса не заходит на кнопки плеера («Назад», «Поверх окон»)
     signal activity()                  // мышь двигается по заголовку (плеер показывает панели)
     height: 32
 
@@ -13,6 +14,8 @@ Item {
     MouseArea {
         id: drag
         anchors.fill: parent
+        anchors.leftMargin: bar.dragLeft
+        anchors.rightMargin: buttons.visible ? buttons.width : 0
         acceptedButtons: Qt.LeftButton | Qt.RightButton
         hoverEnabled: true
         property point pressAt
@@ -22,7 +25,7 @@ Item {
             bar.activity()
             if (pressed && (m.buttons & Qt.LeftButton) && !moved && Math.hypot(m.x - pressAt.x, m.y - pressAt.y) > 3) {
                 moved = true
-                windowMode.startMove()
+                windowMode.startMove(pressAt.y)
             }
         }
         onDoubleClicked: (m) => { if (m.button === Qt.LeftButton) windowMode.toggleMaximized() }
@@ -33,14 +36,24 @@ Item {
         }
     }
 
+    // сообщить системе, где кнопка «Развернуть» (Snap Layouts), только пока она видна
+    Binding { target: windowMode; property: "captionButtons"; value: bar.visible && bar.shown }
+
     Row {
+        id: buttons
         anchors.right: parent.right
         height: parent.height
         opacity: bar.shown ? 1 : 0
+        // погасшие кнопки не ловят мышь (в плеере под ними — его шапка)
+        visible: opacity > 0
+        enabled: bar.shown
         Behavior on opacity { NumberAnimation { duration: 220 } }
         WinButton { kind: "min"; rightRoom: 92; tip: Ui.tx("app.okno_svernut"); onClicked: windowMode.minimize() }
         WinButton {
             rightRoom: 46
+            // на Windows эту кнопку ведёт система (HTMAXBUTTON — меню раскладок Snap): наведение и нажатие приходят из WindowMode
+            nativeHover: windowMode.maxHovered
+            nativePress: windowMode.maxPressed
             kind: windowMode.maximized ? "restore" : "max"
             tip: windowMode.maximized ? Ui.tx("app.okno_vosstanovit") : Ui.tx("app.okno_razvernut")
             onClicked: windowMode.toggleMaximized()
@@ -53,14 +66,18 @@ Item {
         property string kind
         property string tip
         property real rightRoom: 0       // сколько места до правого края окна (подсказка не выходит за него)
+        property bool nativeHover: false
+        property bool nativePress: false
+        readonly property bool hot: ma.containsMouse || nativeHover
+        readonly property bool down: ma.pressed || nativePress
         signal clicked()
         width: 46; height: bar.height
         readonly property bool close: kind === "close"
-        readonly property color ink: ma.containsMouse ? "white" : Theme.muted
+        readonly property color ink: hot ? "white" : Theme.muted
         Rectangle {
             anchors.fill: parent
-            color: wb.close ? (ma.pressed ? "#C63B40" : "#E5484D") : (ma.pressed ? "#26FFFFFF" : "#17FFFFFF")
-            opacity: ma.containsMouse ? 1 : 0
+            color: wb.close ? (wb.down ? "#C63B40" : "#E5484D") : (wb.down ? "#26FFFFFF" : "#17FFFFFF")
+            opacity: wb.hot ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: 120 } }
         }
         // «Свернуть» — черта
@@ -110,7 +127,7 @@ Item {
             y: wb.height + 6
             width: tipText.implicitWidth + 16; height: tipText.implicitHeight + 10; radius: 7
             color: "#F0141824"; border.color: "#33FFFFFF"
-            opacity: ma.containsMouse && wb.tip !== "" ? 1 : 0
+            opacity: wb.hot && wb.tip !== "" ? 1 : 0
             visible: opacity > 0
             Behavior on opacity { SequentialAnimation { PauseAnimation { duration: 500 } NumberAnimation { duration: 140 } } }
             Text { id: tipText; anchors.centerIn: parent; text: wb.tip; color: Theme.text; font.family: Theme.onest; font.pixelSize: 12 }

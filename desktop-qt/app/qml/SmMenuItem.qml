@@ -6,6 +6,10 @@ MenuItem {
     property color fg: Theme.text
     property bool tick: false     // «✓» слева (вид, сортировка)
     property bool tickColumn: false
+    // пункт в меню: false — скрыт и не занимает места (visible до показа меню всегда false, на него не опереться)
+    property bool shown: true
+    visible: shown
+    height: shown ? implicitHeight : 0
     implicitHeight: 36
     contentItem: Text {
         leftPadding: 8

@@ -1,7 +1,7 @@
 #include "TitleBar.h"
 
 #include <QMargins>
-#include <QPoint>
+#include <QPointF>
 #include <QWindow>
 
 #ifdef Q_OS_WIN
@@ -86,7 +86,7 @@ qreal maximizedInset(QWindow *w) {
 #endif
 }
 
-void systemMenu(QWindow *w, const QPoint &globalPos) {
+void systemMenu(QWindow *w, const QPointF &localPos) {
 #ifdef Q_OS_WIN
     if (!w) return;
     const HWND hwnd = reinterpret_cast<HWND>(w->winId());
@@ -101,14 +101,16 @@ void systemMenu(QWindow *w, const QPoint &globalPos) {
     enable(SC_MAXIMIZE, !maxed);
     enable(SC_CLOSE, true);
     SetMenuDefaultItem(menu, UINT(-1), FALSE);
+    // точка окна → физические пиксели экрана самой системой: на мониторах с разным масштабом не съезжает
     const qreal dpr = w->devicePixelRatio();
-    const QPoint p(qRound(globalPos.x() * dpr), qRound(globalPos.y() * dpr));
+    POINT p{qRound(localPos.x() * dpr), qRound(localPos.y() * dpr)};
+    ClientToScreen(hwnd, &p);
     const UINT cmd = UINT(TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_TOPALIGN | TPM_LEFTALIGN,
-                                         p.x(), p.y(), 0, hwnd, nullptr));
+                                         p.x, p.y, 0, hwnd, nullptr));
     if (cmd) PostMessageW(hwnd, WM_SYSCOMMAND, cmd, 0);
 #else
     (void)w;
-    (void)globalPos;
+    (void)localPos;
 #endif
 }
 

@@ -5,12 +5,12 @@ Btn {
     id: row
     property var t: ({})
     property var page
+    property var menu: null       // общее TileMenu страницы (одно на все строки)
     hoverUp: 1
     height: 96
     acceptedButtons: Qt.LeftButton | Qt.RightButton
     onClicked: if (t.canPlay) { Theme.fromContinue = false; page.open(t.id) }
-    onRightClicked: (x, y) => menu.popup(row, x, y)
-    TileMenu { id: menu; t: row.t; page: row.page }
+    onRightClicked: (x, y) => { if (menu) { menu.t = row.t; menu.page = row.page; menu.popup(row, x, y) } }
     Rectangle {
         anchors.fill: parent
         radius: 12

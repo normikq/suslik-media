@@ -10,6 +10,9 @@ Item {
     property alias category: lp.category
     readonly property alias model: lp
     signal versionsRequested(string title, var ids)
+
+    // меню фильма по правой кнопке — одно на страницу: плитка или строка подставляет свой фильм перед показом
+    TileMenu { id: tileMenu }
     signal playRequested(var magnetId, string path)
     signal flyTo(int tab, var rect, string poster)
     /// «Что посмотреть?» — во вкладку поиска с подбором по настроению
@@ -189,6 +192,7 @@ Item {
                         readonly property int row: Math.floor(index / grid.cols)
                         t: modelData
                         page: lp
+                        menu: tileMenu
                         x: col * (grid.tileW + grid.gap)
                         y: row * (grid.tileH + grid.rowGap)
                         width: grid.tileW
@@ -229,7 +233,7 @@ Item {
                 spacing: 12
                 Repeater {
                     model: (v.wasEverVisible && lp.viewMode === 1) ? lp.tiles : []
-                    ListRow { required property var modelData; t: modelData; page: lp; width: parent.width }
+                    ListRow { required property var modelData; t: modelData; page: lp; menu: tileMenu; width: parent.width }
                 }
             }
             PageBar {

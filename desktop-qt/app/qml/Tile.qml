@@ -6,6 +6,7 @@ Item {
     id: tile
     property var t: ({})
     property var page
+    property var menu: null       // общее TileMenu страницы (одно на все плитки)
     signal flyTo(int tab, var rect, string poster)   // постер летит в раздел боковой панели
 
     // место постера для вылета плеера (ExitFlight.kt: trackBounds); сменился фильм — старая запись уходит
@@ -160,7 +161,9 @@ Item {
             cursorShape: tile.t.canPlay ? Qt.PointingHandCursor : Qt.ArrowCursor
             onClicked: (m) => {
                 // меню — там, где щёлкнули (без координат Menu открывалось в углу плитки)
-                if (m.button === Qt.RightButton) menu.popup(tileMouse, m.x, m.y)
+                if (m.button === Qt.RightButton) {
+                    if (tile.menu) { tile.menu.t = tile.t; tile.menu.page = tile.page; tile.menu.popup(tileMouse, m.x, m.y) }
+                }
                 else if (tile.t.canPlay) {
                     Theme.fromContinue = false
                     tile.page.open(tile.t.id)
@@ -215,5 +218,4 @@ Item {
         page.setMineGroup(t.id, !t.mine)
     }
 
-    TileMenu { id: menu; t: tile.t; page: tile.page }
 }

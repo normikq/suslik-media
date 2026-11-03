@@ -1,5 +1,5 @@
 #pragma once
-#include <QPoint>
+#include <QPointF>
 #include <QtGlobal>
 class QWindow;
 
@@ -17,6 +17,6 @@ void hideCaption(QWindow *w, bool on);
 int resizeBorder(QWindow *w);
 /// Развёрнутое окно Windows выходит за экран на толщину рамки: на столько опускается всё содержимое (логические пиксели).
 qreal maximizedInset(QWindow *w);
-/// Системное меню окна (Восстановить, Переместить, Размер, Свернуть, Развернуть, Закрыть) в точке экрана (логической).
-void systemMenu(QWindow *w, const QPoint &globalPos);
+/// Системное меню окна (Восстановить, Переместить, Размер, Свернуть, Развернуть, Закрыть) в точке окна (логической).
+void systemMenu(QWindow *w, const QPointF &localPos);
 }

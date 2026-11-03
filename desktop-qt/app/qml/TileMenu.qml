@@ -16,17 +16,17 @@ SmMenu {
     SmMenuItem { text: menu.t.mineLabel || ""; onTriggered: menu.page.setMineGroup(menu.t.id, !menu.t.mine) }
     SmMenuItem { text: menu.t.favLabel || ""; onTriggered: menu.page.setFavoriteGroup(menu.t.id, !menu.t.favorite) }
     SmMenuItem {
-        visible: !!menu.t.aiAsk; height: visible ? implicitHeight : 0
+        shown: !!menu.t.aiAsk
         text: menu.t.aiAsk || ""; enabled: !!menu.t.aiAskEnabled
         onTriggered: menu.page.askAi(menu.t.id)
     }
     SmMenuItem {
-        visible: !!menu.t.aiKnown; height: visible ? implicitHeight : 0
+        shown: !!menu.t.aiKnown
         text: menu.t.aiKnown || ""
         onTriggered: menu.page.showAi(menu.t.id)
     }
     SmMenuItem {
-        visible: !!menu.t.canRemove; height: visible ? implicitHeight : 0
+        shown: !!menu.t.canRemove
         text: menu.t.removeLabel || ""; fg: Theme.bad
         onTriggered: lib.remove(menu.t.id)
     }

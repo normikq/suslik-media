@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls.Basic as C
 import Suslik.Native
 
 // «Смотреть» (PlayDialog.kt): фильм — постер, факты, «с места» или «с начала», одна кнопка; сериал — то же и выбор сезона
@@ -278,18 +279,28 @@ Sheet {
             }
         }
     }
-    // полоса прокрутки — в поле карточки справа (высота 1: Column не ставит элементы нулевой высоты)
+    // полоса прокрутки — в поле карточки справа, её можно тянуть и щёлкать
+    // (обёртка высотой 1: Column не ставит элементы нулевой высоты)
     Item {
         width: parent.width; height: 1
-        Rectangle {
+        C.ScrollBar {
+            id: vbar
             visible: scroller.interactive
-            x: parent.width + 9
-            readonly property real track: scroller.height
-            readonly property real ratio: scroller.contentHeight > 0 ? Math.min(1, scroller.height / scroller.contentHeight) : 1
-            height: Math.max(24, track * ratio)
-            y: -1 - track + (track - height) * (scroller.contentHeight > scroller.height ? scroller.contentY / (scroller.contentHeight - scroller.height) : 0)
-            width: 4; radius: 2
-            color: "#33FFFFFF"
+            orientation: Qt.Vertical
+            x: parent.width + 4
+            y: -1 - scroller.height
+            width: 12; height: scroller.height
+            padding: 4
+            size: scroller.visibleArea.heightRatio
+            position: scroller.visibleArea.yPosition
+            onPositionChanged: if (active) scroller.contentY = position * scroller.contentHeight
+            minimumSize: 24 / Math.max(1, scroller.height)
+            policy: C.ScrollBar.AlwaysOn
+            background: Item {}
+            contentItem: Rectangle {
+                implicitWidth: 4; radius: 2
+                color: vbar.pressed ? "#66FFFFFF" : vbar.hovered ? "#4DFFFFFF" : "#33FFFFFF"
+            }
         }
     }
 
