@@ -115,9 +115,6 @@ int main(int argc, char *argv[]) {
     // «Вместе»: комната и плеер в ней (до MediaSession — у Discord «Смотрит вместе»)
     app::Party party(api);
     app::PartySync partySync(player, party);
-    QObject::connect(&party, &app::Party::refreshLibraryRequested, &library, [&library] {
-        library.refresh();
-    });
     auto lastCheckedKey = std::make_shared<QString>();
     auto checkRoomFile = [&party, &library, lastCheckedKey] {
         const QString key = party.fileKey();
@@ -137,6 +134,11 @@ int main(int argc, char *argv[]) {
         }
     };
     QObject::connect(&party, &app::Party::changed, &library, checkRoomFile);
+    // refresh_library сервер шлёт всем в комнате. Ведущему не нужно (фильм он выбрал из своей медиатеки), гостю —
+    // только если фильма комнаты у него нет и медиатеку ради него ещё не перечитывали (checkRoomFile по changed)
+    QObject::connect(&party, &app::Party::refreshLibraryRequested, &library, [&party, checkRoomFile] {
+        if (!party.isHost()) checkRoomFile();
+    });
     QObject::connect(&library, &app::Library::authenticatedChanged, &party, [&library, &party] {
         if (library.authenticated() == 0) party.leave(); // вышли из аккаунта — и из комнаты
     });

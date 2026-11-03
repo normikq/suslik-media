@@ -182,11 +182,16 @@ void search(const QString &query_, QObject *ctx, std::function<void(QList<Search
 
 void downloadTorrent(const QString &topicId, QObject *ctx, std::function<void(QByteArray)> cb) {
     static const QRegularExpression digits(S("^\\d+$"));
-    // почему не скачалось — в журнал (без cookie): начало ответа показывает страницу входа, капчу или Cloudflare
+    // почему не скачалось — в журнал (без cookie): начало ответа показывает страницу входа, капчу или Cloudflare.
+    // Cookie в ответе нет (они в заголовках запроса), но длинные «слова» — похожие на ключ сессии, токен или адрес
+    // с параметрами — всё равно прячутся: для причины хватает заголовка страницы.
     auto head = [](const QByteArray &b) {
         QString t = QString::fromUtf8(b.left(160)).simplified();
         static const QRegularExpression tags(S("<[^>]*>"));
-        return t.replace(tags, S(" ")).simplified().left(100);
+        static const QRegularExpression token(S("[A-Za-z0-9+/=_%.:?&-]{24,}"));
+        t.replace(tags, S(" "));
+        t.replace(token, S("…"));
+        return t.simplified().left(100);
     };
     if (!digits.match(topicId).hasMatch() || !RuTracker::isReady()) {
         PlayerLog::write(S("[trackers] torrent t=%1: RuTracker не настроен (вход не выполнен)").arg(topicId));

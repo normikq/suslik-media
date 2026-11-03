@@ -36,7 +36,8 @@ Rectangle {
             anchors.verticalCenter: parent.verticalCenter
         }
     }
-    MouseArea { anchors.fill: parent; cursorShape: Qt.IBeamCursor; acceptedButtons: Qt.NoButton }
+    // Левая кнопка остаётся у TextInput (курсор под мышь, выделение протяжкой); TapHandler её не забирает,
+    // а только ставит фокус при щелчке по полям вокруг текста. Курсор-«I» — у MouseArea правой кнопки ниже.
     TapHandler { onTapped: input.forceActiveFocus() }
 
     // Правая кнопка — «Вырезать / Копировать / Вставить / Выделить всё / Очистить» (TextInput своего меню не даёт).

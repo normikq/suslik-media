@@ -10,7 +10,7 @@ Item {
     signal activity()                  // мышь двигается по заголовку (плеер показывает панели)
     height: 32
 
-    // полоса перетаскивания: окно поедет, когда мышь сдвинется с места (иначе двойной щелчок не дойдёт)
+    // полоса перетаскивания: окно поедет, когда мышь сдвинется на 6 px (меньше — дрожь руки при двойном щелчке, и он не дойдёт)
     MouseArea {
         id: drag
         anchors.fill: parent
@@ -23,7 +23,7 @@ Item {
         onPressed: (m) => { pressAt = Qt.point(m.x, m.y); moved = false; bar.activity() }
         onPositionChanged: (m) => {
             bar.activity()
-            if (pressed && (m.buttons & Qt.LeftButton) && !moved && Math.hypot(m.x - pressAt.x, m.y - pressAt.y) > 3) {
+            if (pressed && (m.buttons & Qt.LeftButton) && !moved && Math.hypot(m.x - pressAt.x, m.y - pressAt.y) > 6) {
                 moved = true
                 windowMode.startMove(pressAt.y)
             }

@@ -8,6 +8,7 @@ Menu {
     id: m
     padding: 4
     implicitWidth: 220
+    property bool fitted: false   // fit() уже позвали перед popup() (меню у правого края кнопки) — второй раз не нужен
     function fit() {
         let w = 220
         for (let i = 0; i < count; ++i) {
@@ -15,8 +16,10 @@ Menu {
             if (it && it.shown !== false) w = Math.max(w, Math.ceil(it.implicitWidth))
         }
         implicitWidth = w + leftPadding + rightPadding
+        fitted = true
     }
-    onAboutToShow: fit()
+    onAboutToShow: if (!fitted) fit()
+    onClosed: fitted = false
     background: Rectangle { implicitWidth: 220; color: Theme.menu; border.color: Theme.menuEdge; radius: 8 }
     enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 140 } }
     exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 100 } }

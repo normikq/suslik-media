@@ -13,8 +13,8 @@ SmMenu {
         onObjectAdded: (i, o) => menu.insertItem(i, o)
         onObjectRemoved: (i, o) => menu.removeItem(o)
     }
-    SmMenuItem { text: menu.t.mineLabel || ""; onTriggered: menu.page.setMineGroup(menu.t.id, !menu.t.mine) }
-    SmMenuItem { text: menu.t.favLabel || ""; onTriggered: menu.page.setFavoriteGroup(menu.t.id, !menu.t.favorite) }
+    SmMenuItem { shown: !!menu.t.mineLabel; text: menu.t.mineLabel || ""; onTriggered: menu.page.setMineGroup(menu.t.id, !menu.t.mine) }
+    SmMenuItem { shown: !!menu.t.favLabel; text: menu.t.favLabel || ""; onTriggered: menu.page.setFavoriteGroup(menu.t.id, !menu.t.favorite) }
     SmMenuItem {
         shown: !!menu.t.aiAsk
         text: menu.t.aiAsk || ""; enabled: !!menu.t.aiAskEnabled

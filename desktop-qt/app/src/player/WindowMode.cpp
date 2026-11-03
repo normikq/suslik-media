@@ -3,6 +3,7 @@
 
 #include <QCoreApplication>
 #include <QCursor>
+#include <QPlatformSurfaceEvent>
 #include <QQuickWindow>
 #include <memory>
 #include <QGuiApplication>
@@ -35,14 +36,25 @@ WindowMode::~WindowMode() {
 }
 
 void WindowMode::setWindow(QWindow *w) {
+    if (m_w) m_w->removeEventFilter(this);
     m_w = w;
+    m_hwnd = w && w->handle() ? quintptr(w->winId()) : 0;
     if (!w) return;
+    w->installEventFilter(this);
     TitleBar::style(w);
     TitleBar::hideCaption(w, true);
     // состояние и размер развёрнутого окна приходят следом за сменой состояния: пересчёт — один, в конце цикла событий
     connect(w, &QWindow::windowStateChanged, this, &WindowMode::scheduleState);
     connect(w, &QWindow::screenChanged, this, &WindowMode::scheduleState);
     updateState();
+}
+
+bool WindowMode::eventFilter(QObject *obj, QEvent *ev) {
+    if (obj == m_w && ev->type() == QEvent::PlatformSurface) {
+        const auto t = static_cast<QPlatformSurfaceEvent *>(ev)->surfaceEventType();
+        m_hwnd = t == QPlatformSurfaceEvent::SurfaceCreated && m_w->handle() ? quintptr(m_w->winId()) : 0;
+    }
+    return QObject::eventFilter(obj, ev);
 }
 
 void WindowMode::scheduleState() {
@@ -93,10 +105,11 @@ void WindowMode::systemMenu(qreal x, qreal y) {
 
 bool WindowMode::nativeEventFilter(const QByteArray &type, void *message, qintptr *result) {
 #ifdef Q_OS_WIN
-    // handle() пуст, пока окно создаётся: winId() здесь создал бы его второй раз изнутри CreateWindowEx
-    if (!m_w || !m_w->handle() || type != "windows_generic_MSG") return false;
+    // HWND берётся из m_hwnd (PlatformSurface): пока окно создаётся, он 0 — winId() здесь создал бы окно второй раз
+    // изнутри CreateWindowEx, а на каждое сообщение он и не нужен
+    if (!m_hwnd || !m_w || type != "windows_generic_MSG") return false;
     auto *msg = static_cast<MSG *>(message);
-    if (msg->hwnd != reinterpret_cast<HWND>(m_w->winId())) return false;
+    if (msg->hwnd != reinterpret_cast<HWND>(m_hwnd)) return false;
     // Кнопка «Развернуть» своего заголовка отдаётся системе (HTMAXBUTTON): Windows 11 показывает над ней панель макетов
     // Snap Layouts. Её мышь тогда идёт «вне окна»: подсветку и щелчок ведём сами, системе их не отдаём (иначе она
     // нарисует поверх старую серую кнопку).
@@ -125,6 +138,8 @@ bool WindowMode::nativeEventFilter(const QByteArray &type, void *message, qintpt
         GetClientRect(msg->hwnd, &rc);
         const int border = TitleBar::resizeBorder(m_w);
         if (p.y >= border) return false;
+        // над «Свернуть» и «Закрыть» верхний край — их, а не растягивание: щелчок по краю кнопки закрывает окно
+        if (m_captionButtons && p.x >= rc.right - 3 * qRound(46 * m_w->devicePixelRatio())) return false;
         if (result) *result = p.x < border * 2 ? HTTOPLEFT : p.x >= rc.right - border * 2 ? HTTOPRIGHT : HTTOP;
         return true;
     }
