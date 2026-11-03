@@ -1,5 +1,4 @@
 #include "Ui.h"
-#include "TitleBar.h"
 #include "AppDir.h"
 #include "PosterCache.h"
 
@@ -72,7 +71,6 @@ void Ui::raise(QWindow *w) const {
     w->requestActivate();
 }
 
-void Ui::styleTitleBar(QWindow *w) const { TitleBar::style(w); }
 
 void Ui::trimMemory() const {
     if (m_engine) {

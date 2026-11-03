@@ -136,7 +136,7 @@ Item {
                     text: Ui.tx("library.vid")
                     icon: "funnel"
                     active: lp.onlyReady || viewMenu.visible
-                    onClicked: viewMenu.popup(viewBtn, viewBtn.width - viewMenu.width, viewBtn.height + 4)
+                    onClicked: { viewMenu.fit(); viewMenu.popup(viewBtn, viewBtn.width - viewMenu.width, viewBtn.height + 4) }
                 }
                 SmMenu {
                     id: viewMenu

@@ -1,4 +1,5 @@
 #include "WindowMode.h"
+#include "../TitleBar.h"
 
 #include <QCoreApplication>
 #include <QCursor>
@@ -33,11 +34,75 @@ WindowMode::~WindowMode() {
     if (QCoreApplication::instance()) QCoreApplication::instance()->removeNativeEventFilter(this);
 }
 
+void WindowMode::setWindow(QWindow *w) {
+    m_w = w;
+    if (!w) return;
+    TitleBar::style(w);
+    TitleBar::hideCaption(w, true);
+    connect(w, &QWindow::windowStateChanged, this, [this] {
+        updateState();
+        QTimer::singleShot(0, this, &WindowMode::updateState); // размер развёрнутого окна приходит следом
+    });
+    connect(w, &QWindow::screenChanged, this, [this] { QTimer::singleShot(0, this, &WindowMode::updateState); });
+    updateState();
+}
+
+void WindowMode::updateState() {
+    if (!m_w) return;
+    const bool maxed = (m_w->windowStates() & Qt::WindowMaximized) && !m_full && !m_mini;
+    const qreal inset = maxed ? TitleBar::maximizedInset(m_w) : 0;
+    if (maxed == m_maximized && qFuzzyCompare(inset + 1, m_topInset + 1)) return;
+    m_maximized = maxed;
+    m_topInset = inset;
+    emit changed();
+}
+
+bool WindowMode::edgeResize() const {
+#ifdef Q_OS_WIN
+    return false;
+#else
+    return !m_full && !m_mini && !m_maximized;
+#endif
+}
+
+void WindowMode::toggleMaximized() {
+    if (!m_w || m_full || m_mini) return;
+    if (m_w->windowStates() & Qt::WindowMaximized) m_w->showNormal();
+    else m_w->showMaximized();
+}
+
+void WindowMode::systemMenu(qreal x, qreal y) {
+    if (!m_w || m_full || m_mini) return;
+    TitleBar::systemMenu(m_w, m_w->mapToGlobal(QPointF(x, y)).toPoint());
+}
+
 bool WindowMode::nativeEventFilter(const QByteArray &type, void *message, qintptr *result) {
 #ifdef Q_OS_WIN
-    if (!m_mini || !m_w || type != "windows_generic_MSG") return false;
+    if (!m_w || type != "windows_generic_MSG") return false;
     auto *msg = static_cast<MSG *>(message);
-    if (msg->message != WM_SIZING || msg->hwnd != reinterpret_cast<HWND>(m_w->winId())) return false;
+    if (msg->hwnd != reinterpret_cast<HWND>(m_w->winId())) return false;
+    // Обычное окно: верхней системной рамки нет — верхний край тянет размер сам (бока и низ — системные)
+    if (msg->message == WM_NCHITTEST && !m_mini && !m_full && !(m_w->windowStates() & (Qt::WindowMaximized | Qt::WindowMinimized))) {
+        const LRESULT hit = DefWindowProcW(msg->hwnd, msg->message, msg->wParam, msg->lParam);
+        if (hit != HTCLIENT) return false;
+        POINT p{int(short(LOWORD(msg->lParam))), int(short(HIWORD(msg->lParam)))};
+        ScreenToClient(msg->hwnd, &p);
+        RECT rc;
+        GetClientRect(msg->hwnd, &rc);
+        const int border = TitleBar::resizeBorder(m_w);
+        if (p.y >= border) return false;
+        if (result) *result = p.x < border * 2 ? HTTOPLEFT : p.x >= rc.right - border * 2 ? HTTOPRIGHT : HTTOP;
+        return true;
+    }
+    // другой монитор (DPI): высота убранной полосы заголовка пересчитывается
+    if (msg->message == WM_DPICHANGED && !m_mini && !m_full) {
+        QTimer::singleShot(0, this, [this] {
+            if (m_w && !m_mini && !m_full) TitleBar::hideCaption(m_w, true);
+            updateState();
+        });
+        return false;
+    }
+    if (!m_mini || msg->message != WM_SIZING) return false;
     auto *r = reinterpret_cast<RECT *>(msg->lParam);
     const int edge = int(msg->wParam);
     const double a = m_aspect;
@@ -61,7 +126,19 @@ bool WindowMode::nativeEventFilter(const QByteArray &type, void *message, qintpt
 }
 
 void WindowMode::frameless(bool on) {
-    m_w->setFlag(Qt::FramelessWindowHint, on);
+#ifdef Q_OS_WIN
+    // свои поля Qt применяет и к окну без рамки: снимаются до, ставятся после
+    if (on) {
+        TitleBar::hideCaption(m_w, false);
+        m_w->setFlag(Qt::FramelessWindowHint, true);
+    } else {
+        m_w->setFlag(Qt::FramelessWindowHint, false);
+        TitleBar::hideCaption(m_w, true);
+    }
+#else
+    Q_UNUSED(on)
+    m_w->setFlag(Qt::FramelessWindowHint, true); // вне Windows окно всегда без рамки, заголовок свой
+#endif
 }
 
 void WindowMode::cloakWhile(const std::function<void()> &change, const std::function<void()> &after) {
@@ -135,6 +212,7 @@ void WindowMode::setFullscreen(bool on) {
     }
     m_full = on;
     emit changed();
+    QTimer::singleShot(0, this, &WindowMode::updateState);
 }
 
 void WindowMode::setOnTop(bool on) {
@@ -200,6 +278,7 @@ void WindowMode::setMini(bool on, double aspect) {
         });
     }
     emit changed();
+    QTimer::singleShot(0, this, &WindowMode::updateState);
 }
 
 void WindowMode::fitMini(double aspect) {

@@ -37,7 +37,6 @@ public:
     Q_INVOKABLE void setSetting(const QString &key, const QString &value) const;
     /// Окно выйти вперёд (второй запуск).
     Q_INVOKABLE void raise(QWindow *w) const;
-    Q_INVOKABLE void styleTitleBar(QWindow *w) const;
     /// Мягкий сброс: сборка мусора QML, очистка кэша компонентов и пиксмапов интерфейса (без сброса страниц ОС).
     Q_INVOKABLE void trimMemory() const;
     /// Полная выгрузка: сборка мусора + сброс физических страниц процесса в ОС (при сворачивании > 30 с).

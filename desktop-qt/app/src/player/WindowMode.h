@@ -22,17 +22,28 @@ class WindowMode : public QObject, public QAbstractNativeEventFilter {
     Q_PROPERTY(bool fullscreen READ fullscreen NOTIFY changed)
     Q_PROPERTY(bool mini READ mini NOTIFY changed)
     Q_PROPERTY(bool onTop READ onTop NOTIFY changed)
+    /// Окно развёрнуто на весь экран (не полный экран плеера).
+    Q_PROPERTY(bool maximized READ maximized NOTIFY changed)
+    /// Развёрнутое окно Windows заходит за край экрана: на столько опускается содержимое (заголовок, страницы).
+    Q_PROPERTY(qreal topInset READ topInset NOTIFY changed)
+    /// Размер окна меняет QML (края TitleBar.qml): окно без системной рамки вне Windows.
+    Q_PROPERTY(bool edgeResize READ edgeResize NOTIFY changed)
 
 public:
     explicit WindowMode(QObject *parent = nullptr);
     ~WindowMode() override;
-    void setWindow(QWindow *w) { m_w = w; }
-    /// Windows: мини-плеер при растягивании за край держит пропорции фильма (WM_SIZING), без чёрных полос.
+    /// Окно приложения: системная полоса заголовка убирается (её место — TitleBar.qml), тёмная тема рамки.
+    void setWindow(QWindow *w);
+    /// Windows: мини-плеер при растягивании за край держит пропорции фильма (WM_SIZING), без чёрных полос;
+    /// обычное окно — верхний край тянет размер (WM_NCHITTEST), полоса заголовка своя.
     bool nativeEventFilter(const QByteArray &type, void *message, qintptr *result) override;
 
     bool fullscreen() const { return m_full; }
     bool mini() const { return m_mini; }
     bool onTop() const { return m_onTop; }
+    bool maximized() const { return m_maximized; }
+    qreal topInset() const { return m_topInset; }
+    bool edgeResize() const;
 
     Q_INVOKABLE void setFullscreen(bool on);
     Q_INVOKABLE void toggleFullscreen() { if (m_mini) setMini(false); else setFullscreen(!m_full); }
@@ -54,12 +65,17 @@ public:
     Q_INVOKABLE void reset();
     /// Свернуть окно в панель задач (развёрнутое остаётся развёрнутым при возврате).
     Q_INVOKABLE void minimize();
+    /// Кнопка «Развернуть / Восстановить» и двойной щелчок по заголовку.
+    Q_INVOKABLE void toggleMaximized();
+    /// Правая кнопка по заголовку: системное меню окна (x, y — в окне).
+    Q_INVOKABLE void systemMenu(qreal x, qreal y);
 
 signals:
     void changed();
 
 private:
     void frameless(bool on);
+    void updateState();
     void fly(const QRect &to);
     void roundCorners(bool on);
     void applyResize();
@@ -70,6 +86,8 @@ private:
 
     QPointer<QWindow> m_w;
     bool m_full = false, m_mini = false, m_onTop = false, m_topBeforeMini = false;
+    bool m_maximized = false;
+    qreal m_topInset = 0;
     QRect m_before;
     bool m_maximizedBefore = false;
     QSize m_minBefore;

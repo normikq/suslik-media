@@ -34,6 +34,7 @@ Item {
         radius: 22
         color: Theme.sheet
         border.color: Theme.sheetEdge
+        clip: true      // длинное содержимое не вылезает на затемнение (у длинных окон — своя прокрутка)
         MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; onWheel: (w) => w.accepted = true } // щелчки по карточке её не закрывают
         Column {
             id: body

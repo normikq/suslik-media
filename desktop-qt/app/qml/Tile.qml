@@ -154,11 +154,13 @@ Item {
         }
 
         MouseArea {
+            id: tileMouse
             anchors.fill: parent
             acceptedButtons: Qt.LeftButton | Qt.RightButton
             cursorShape: tile.t.canPlay ? Qt.PointingHandCursor : Qt.ArrowCursor
             onClicked: (m) => {
-                if (m.button === Qt.RightButton) menu.popup()
+                // меню — там, где щёлкнули (без координат Menu открывалось в углу плитки)
+                if (m.button === Qt.RightButton) menu.popup(tileMouse, m.x, m.y)
                 else if (tile.t.canPlay) {
                     Theme.fromContinue = false
                     tile.page.open(tile.t.id)
@@ -213,31 +215,5 @@ Item {
         page.setMineGroup(t.id, !t.mine)
     }
 
-    SmMenu {
-        id: menu
-        // сезоны сериала: плитка показывает и включает выбранный
-        Instantiator {
-            model: tile.t.seasons || []
-            delegate: SmMenuItem { required property int index; required property string modelData; text: modelData; onTriggered: tile.page.chooseSeason(tile.t.id, index) }
-            onObjectAdded: (i, o) => menu.insertItem(i, o)
-            onObjectRemoved: (i, o) => menu.removeItem(o)
-        }
-        SmMenuItem { text: tile.t.mineLabel || ""; onTriggered: tile.page.setMineGroup(tile.t.id, !tile.t.mine) }
-        SmMenuItem { text: tile.t.favLabel || ""; onTriggered: tile.page.setFavoriteGroup(tile.t.id, !tile.t.favorite) }
-        SmMenuItem {
-            visible: !!tile.t.aiAsk; height: visible ? implicitHeight : 0
-            text: tile.t.aiAsk || ""; enabled: !!tile.t.aiAskEnabled
-            onTriggered: tile.page.askAi(tile.t.id)
-        }
-        SmMenuItem {
-            visible: !!tile.t.aiKnown; height: visible ? implicitHeight : 0
-            text: tile.t.aiKnown || ""
-            onTriggered: tile.page.showAi(tile.t.id)
-        }
-        SmMenuItem {
-            visible: !!tile.t.canRemove; height: visible ? implicitHeight : 0
-            text: tile.t.removeLabel || ""; fg: Theme.bad
-            onTriggered: lib.remove(tile.t.id)
-        }
-    }
+    TileMenu { id: menu; t: tile.t; page: tile.page }
 }

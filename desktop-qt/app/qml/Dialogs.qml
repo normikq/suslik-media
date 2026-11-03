@@ -30,13 +30,23 @@ Item {
         function show(text) { label.text = text; opacity = 1; hide.restart() }
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom; anchors.bottomMargin: 28
-        width: label.implicitWidth + 32; height: label.implicitHeight + 20
+        // длинный текст (ошибка сети, трекера) переносится, плашка не шире окна
+        width: Math.min(label.implicitWidth, Math.min(640, d.width - 48) - 32) + 32; height: label.height + 20
         radius: 12; color: Theme.sheet; border.color: Theme.sheetEdge
         opacity: 0
         visible: opacity > 0
         z: 20
         Behavior on opacity { NumberAnimation { duration: 200 } }
-        Text { id: label; anchors.centerIn: parent; color: Theme.text; font.family: Theme.onest; font.pixelSize: 14 }
-        Timer { id: hide; interval: 3500; onTriggered: toast.opacity = 0 }
+        Text {
+            id: label
+            anchors.centerIn: parent
+            width: toast.width - 32
+            wrapMode: Text.Wrap
+            horizontalAlignment: Text.AlignHCenter
+            maximumLineCount: 6; elide: Text.ElideRight
+            color: Theme.text; font.family: Theme.onest; font.pixelSize: 14
+        }
+        // длинное сообщение висит дольше
+        Timer { id: hide; interval: Math.min(8000, 3500 + label.text.length * 25); onTriggered: toast.opacity = 0 }
     }
 }

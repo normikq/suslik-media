@@ -1,13 +1,16 @@
 import QtQuick
 
-// Строка вида «Список» (LibraryView.kt: ListRow).
+// Строка вида «Список» (LibraryView.kt: ListRow); правая кнопка — то же меню, что у плитки.
 Btn {
     id: row
     property var t: ({})
     property var page
     hoverUp: 1
     height: 96
-    onClicked: if (t.canPlay) page.open(t.id)
+    acceptedButtons: Qt.LeftButton | Qt.RightButton
+    onClicked: if (t.canPlay) { Theme.fromContinue = false; page.open(t.id) }
+    onRightClicked: (x, y) => menu.popup(row, x, y)
+    TileMenu { id: menu; t: row.t; page: row.page }
     Rectangle {
         anchors.fill: parent
         radius: 12
@@ -59,7 +62,7 @@ Btn {
         id: playBtn
         anchors { right: parent.right; rightMargin: 14; verticalCenter: parent.verticalCenter }
         Icon { anchors.centerIn: parent; name: "play"; size: 20; color: playBtn.hovered ? "white" : "#C0C7D5" }
-        onClicked: if (row.t.canPlay) row.page.open(row.t.id)
+        onClicked: if (row.t.canPlay) { Theme.fromContinue = false; row.page.open(row.t.id) }
     }
 
     // круглая кнопка без круга: белое свечение при наведении

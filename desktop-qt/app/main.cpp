@@ -168,10 +168,11 @@ int main(int argc, char *argv[]) {
     auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
     if (window) {
         window->setColor(QColor(0x09, 0x0B, 0x10));
-        ui.styleTitleBar(window);
+        // своя полоса заголовка (TitleBar.qml): системная убирается до показа окна
         windowMode.setWindow(window);
         media.attach(window);
         QObject::connect(&single, &app::SingleInstance::showRequested, window, [&ui, window] { ui.raise(window); });
+        window->show();
     }
 
     // Снимок окна для проверки вёрстки без экрана (SM_SHOT=файл.png, SM_SHOT_MS — через сколько мс).

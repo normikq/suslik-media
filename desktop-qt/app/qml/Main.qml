@@ -6,7 +6,7 @@ Window {
     id: win
     width: 1280; height: 860
     minimumWidth: 1005; minimumHeight: 685   // меньше не помещаются заголовок и вкладки
-    visible: true
+    visible: false   // показывает main.cpp, когда системная полоса заголовка уже убрана
     color: Theme.night
     title: Ui.tx("app.app_mediateka", { app: Ui.diag ? "Suslik Debug" : "Suslik Media" })
 
@@ -42,9 +42,13 @@ Window {
 
     Backdrop { anchors.fill: parent }
 
+    // развёрнутое окно Windows заходит за верх экрана на толщину рамки: содержимое опускается на столько же
+    readonly property real inset: windowMode.topInset
+
     // вход ↔ медиатека: плавная смена
     LoginView {
         anchors.fill: parent
+        anchors.topMargin: win.inset
         opacity: lib.authenticated === 0 ? 1 : 0
         visible: opacity > 0
         Behavior on opacity { NumberAnimation { duration: 420; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease } }
@@ -53,6 +57,7 @@ Window {
     Item {
         id: shell
         anchors.fill: parent
+        anchors.topMargin: win.inset
         opacity: lib.authenticated === 0 ? 0 : 1
         // под открытым плеером медиатеку не рисуем (при закрытии она снова на месте — плеер летит в её постер)
         visible: opacity > 0 && (win.playerPresence < 1 || win.playerLeaving)
@@ -80,7 +85,8 @@ Window {
 
             Item {
                 id: pages
-                anchors { left: sidebar.right; right: parent.right; top: parent.top; bottom: parent.bottom }
+                // сверху — место под свой заголовок окна (TitleBar): кнопки окна не заходят на шапку страницы
+                anchors { left: sidebar.right; right: parent.right; top: parent.top; topMargin: 22; bottom: parent.bottom }
                 clip: true
                 Page { index: 0; LibraryView { id: libraryPage; anchors.fill: parent; mine: false; onVersionsRequested: (t, ids) => dialogs.versions(model, t, ids); onPlayRequested: (id, p) => dialogs.play_(id, p); onFlyTo: (tab, r, p) => flight.launch(tab, r, p); onDiscoverRequested: { win.select(2); searchPage.openAi("") } } }
                 Page { index: 1; LibraryView { id: minePage; anchors.fill: parent; mine: true; onVersionsRequested: (t, ids) => dialogs.versions(model, t, ids); onPlayRequested: (id, p) => dialogs.play_(id, p); onFlyTo: (tab, r, p) => flight.launch(tab, r, p); onDiscoverRequested: { win.select(2); searchPage.openAi("") } } }
@@ -291,13 +297,46 @@ Window {
         }
     }
 
+    // Свой заголовок окна: перетаскивание, «Свернуть», «Развернуть», «Закрыть» — поверх всего, кроме полного экрана
+    // и мини-плеера. В плеере кнопки гаснут и появляются вместе с его панелями.
+    TitleBar {
+        z: 60
+        y: win.inset
+        width: parent.width
+        visible: !windowMode.fullscreen && !windowMode.mini
+        shown: !player.open || !playerLoader.item || playerLoader.item.barsShown
+        onActivity: if (player.open && playerLoader.item) playerLoader.item.poke()
+    }
+    // Вне Windows окно без системной рамки: размер меняют края окна
+    Repeater {
+        model: windowMode.edgeResize ? [
+            { e: Qt.LeftEdge, c: Qt.SizeHorCursor }, { e: Qt.RightEdge, c: Qt.SizeHorCursor },
+            { e: Qt.TopEdge, c: Qt.SizeVerCursor }, { e: Qt.BottomEdge, c: Qt.SizeVerCursor },
+            { e: Qt.LeftEdge | Qt.TopEdge, c: Qt.SizeFDiagCursor }, { e: Qt.RightEdge | Qt.BottomEdge, c: Qt.SizeFDiagCursor },
+            { e: Qt.RightEdge | Qt.TopEdge, c: Qt.SizeBDiagCursor }, { e: Qt.LeftEdge | Qt.BottomEdge, c: Qt.SizeBDiagCursor }
+        ] : []
+        MouseArea {
+            required property var modelData
+            readonly property int e: modelData.e
+            readonly property bool horiz: e === Qt.LeftEdge || e === Qt.RightEdge
+            readonly property bool vert: e === Qt.TopEdge || e === Qt.BottomEdge
+            z: 70
+            x: e & Qt.RightEdge ? win.width - width : 0
+            y: e & Qt.BottomEdge ? win.height - height : 0
+            width: vert ? win.width : horiz ? 5 : 10
+            height: horiz ? win.height : vert ? 5 : 10
+            cursorShape: modelData.c
+            onPressed: windowMode.startResize(e)
+        }
+    }
+
     // после входа: есть ли обновление; «Что нового» — когда медиатека уже на экране
     readonly property bool signedIn: lib.authenticated === 1
     onSignedInChanged: if (signedIn) { updater.check(); whatsNewDelay.start() }
     Timer { id: whatsNewDelay; interval: 700; onTriggered: updater.loadWhatsNew() }
 
     // проверка вёрстки без мыши: SM_OPEN=play:<id>:<путь> | versions:<id>,<id> | settings | add[:film|audio:<magnet>]
-    // | search:<запрос> | discover[:запрос] | trackers[:вкладка] | together[:create|<код>]
+    // | search:<запрос> | discover[:запрос] | trackers[:вкладка] | together[:create|<код>] | toast:<текст>
     Timer {
         running: Ui.env("SM_OPEN") !== ""
         interval: 2500
@@ -317,6 +356,7 @@ Window {
             else if (a[0] === "together") { win.select(4); if (a[1] === "create") party.create(); else if (a[1]) party.join(a[1]) }
             else if (a[0] === "trackers") { win.select(2); searchPage.openTrackers(Number(a[1] || 0)) }
             else if (a[0] === "list") libraryPage.model.viewMode = 1
+            else if (a[0] === "toast") dialogs.say(a.slice(1).join(":"))
             else if (a[0] === "video") player.startPreview(a.slice(1).join(":"), "", 0, "Проверка видео")
         }
     }
