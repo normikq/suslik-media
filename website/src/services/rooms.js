@@ -57,7 +57,7 @@ function createRoom(hostUser, file = null, controls = "all", hostClientId = null
     // Комната голосового канала Discord (Activity): id канала, кто смотрит Activity (не участники плеера),
     // предложенные фильмы и голосование
     channel_id: null,
-    watchers: new Map(), // user.id -> { id, name, avatar, streams }
+    watchers: new Map(), // user.id -> { id, name, avatar, streams, seen_until, expire } (addWatcher / touchWatcher)
     candidates: [], // [{ key, name, by, by_name, at }]
     poll: null, // { ends_at, votes: Map(user.id -> key), timer }
     spin: null // «Рулетка»: { key, name, started_at, ends_at, timer } — барабан крутится у всех, потом победитель включается
@@ -472,7 +472,7 @@ function activityPublicData(room) {
     }
   }
   return {
-    watchers: Array.from(room.watchers.values()).map(({ streams, ...w }) => w),
+    watchers: Array.from(room.watchers.values()).map(({ id, name, avatar }) => ({ id, name, avatar })),
     candidates: room.candidates.map(c => ({ ...c })),
     poll: poll ? { ends_at: poll.ends_at, tally, votes, all_voted: allVoted(room) } : null,
     spin: room.spin ? { key: room.spin.key, name: room.spin.name, started_at: room.spin.started_at, ends_at: room.spin.ends_at } : null
@@ -492,22 +492,53 @@ function activityChanged(room) {
 
 // Открыт поток событий Activity: человек «у пульта». Возвращает функцию «ушёл» (можно звать сколько угодно раз)
 function addWatcher(room, user) {
-  const w = room.watchers.get(user.id) || { id: user.id, name: user.name, avatar: user.avatar || "", streams: 0 };
+  const w = watcherOf(room, user);
+  const isNew = w.fresh;
+  w.fresh = false;
   w.streams++;
-  room.watchers.set(user.id, w);
-  room.empty_since = 0;
-  if (w.streams === 1) activityChanged(room);
+  if (isNew) activityChanged(room);
   let gone = false;
   return () => {
     if (gone) return;
     gone = true;
     w.streams--;
-    if (w.streams > 0) return;
-    room.watchers.delete(user.id);
-    if (room.members.size === 0 && room.watchers.size === 0) room.empty_since = Date.now();
-    else if (!hostPresent(room)) setTimeout(() => promoteIfHostGone(room), HOST_GRACE_MS).unref?.();
-    activityChanged(room);
+    dropWatcherIfGone(room, w);
   };
+}
+
+// Страница на опросе (прокси Discord держит поток пачкой или поток всё время рвётся): каждый GET комнаты держит
+// человека «у пульта» ещё WATCHER_POLL_MS — иначе без потока он пропал бы из голосования, «Позвать в чат»
+// и проверки ведущего, а комната считалась бы пустой
+const WATCHER_POLL_MS = 15 * 1000;
+function touchWatcher(room, user) {
+  const w = watcherOf(room, user);
+  const isNew = w.fresh;
+  w.fresh = false;
+  w.seen_until = Date.now() + WATCHER_POLL_MS;
+  clearTimeout(w.expire);
+  w.expire = setTimeout(() => dropWatcherIfGone(room, w), WATCHER_POLL_MS + 50);
+  w.expire.unref?.();
+  if (isNew) activityChanged(room);
+}
+
+function watcherOf(room, user) {
+  let w = room.watchers.get(user.id);
+  if (!w) {
+    w = { id: user.id, name: user.name, avatar: user.avatar || "", streams: 0, seen_until: 0, expire: null, fresh: true };
+    room.watchers.set(user.id, w);
+  }
+  room.empty_since = 0;
+  return w;
+}
+
+function dropWatcherIfGone(room, w) {
+  if (w.streams > 0 || w.seen_until > Date.now() || room.watchers.get(w.id) !== w) return;
+  clearTimeout(w.expire);
+  room.watchers.delete(w.id);
+  if (rooms.get(room.id) !== room) return;
+  if (room.members.size === 0 && room.watchers.size === 0) room.empty_since = Date.now();
+  else if (!hostPresent(room)) setTimeout(() => promoteIfHostGone(room), HOST_GRACE_MS).unref?.();
+  activityChanged(room);
 }
 
 function cleanFile(file) {
@@ -661,6 +692,21 @@ function finishSpin(room) {
   return win || null;
 }
 
+// Ведущий передумал, пока крутится барабан: фильм не включается, список остаётся. Страницы останавливают барабан
+// по событию spin_cancelled (просто spin: null приходит и при обычном итоге — его барабан должен доиграть)
+function cancelSpin(roomId, user) {
+  const { room, error } = channelRoomOrError(roomId);
+  if (!room) return { ok: false, error };
+  if (!isRoomHost(room, user, null)) return { ok: false, error: "Рулетку останавливает ведущий." };
+  if (room.spin) {
+    clearTimeout(room.spin.timer);
+    room.spin = null;
+    broadcast(room.id, "spin_cancelled", {});
+    activityChanged(room);
+  }
+  return { ok: true };
+}
+
 function cancelPoll(roomId, user) {
   const { room, error } = channelRoomOrError(roomId);
   if (!room) return { ok: false, error };
@@ -692,6 +738,7 @@ module.exports = {
   handleRoomAction,
   getOrCreateChannelRoom,
   addWatcher,
+  touchWatcher,
   suggestFile,
   unsuggestFile,
   startPoll,
@@ -702,5 +749,6 @@ module.exports = {
   spinMs,
   finishSpin,
   cancelPoll,
+  cancelSpin,
   cleanFile
 };

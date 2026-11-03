@@ -291,12 +291,12 @@
     function remember(key, u) {
       urls[key] = u;
       if (!u) return;
-      order.push(key);
+      if (order.indexOf(key) < 0) order.push(key);
       while (order.length > LIMIT) { var old = order.shift(); if (urls[old]) URL.revokeObjectURL(urls[old]); delete urls[old]; }
     }
     function done(key, u, failed) {
       if (!failed) remember(key, u);
-      (waits[key] || []).forEach(function (cb) { if (u) cb(u); });
+      (waits[key] || []).forEach(function (w) { if (u && live(w)) w.cb(u); });
       delete waits[key];
       active--;
       pump();
@@ -309,21 +309,27 @@
           function (key) { return function () { done(key, null, true); }; }(job.key));
       }
     }
-    function enqueue(job, cb) {
+    // Ждущий постер: колбэк и элемент, куда он ляжет. Перерисовка снимает старые плитки со страницы — их ожидания
+    // выбрасываем при следующем запросе того же постера, а не держим отвязанные элементы до конца загрузки.
+    // Элемент только что создан и ещё не вставлен (та же перерисовка) — не трогаем: ему даём секунду
+    function live(w) { return !w.el || w.el.isConnected; }
+    function stale(w) { return !live(w) && Date.now() - w.at > 1000; }
+    function enqueue(job, cb, el) {
       if (urls[job.key] !== undefined) { if (urls[job.key]) cb(urls[job.key]); return; }
-      if (waits[job.key]) { waits[job.key].push(cb); return; }
-      waits[job.key] = [cb];
+      var w = { cb: cb, el: el || null, at: Date.now() };
+      if (waits[job.key]) { waits[job.key] = waits[job.key].filter(function (x) { return !stale(x); }); waits[job.key].push(w); return; }
+      waits[job.key] = [w];
       queue.push(job);
       pump();
     }
     /** Картинка постера для [it] в [cb] (сразу, если уже есть). */
-    function want(it, cb) {
+    function want(it, cb, el) {
       var qs = it.posterQueries || [];
-      if (qs.length) enqueue({ key: qs.join('\n'), qs: qs }, cb);
+      if (qs.length) enqueue({ key: qs.join('\n'), qs: qs }, cb, el);
     }
     /** Картинка по пути зеркала /api/poster/img/… (постеры подборки ИИ). */
-    function img(path, cb) {
-      if (typeof path === 'string' && path.indexOf('/api/poster/img/') === 0) enqueue({ key: 'img:' + path, path: path }, cb);
+    function img(path, cb, el) {
+      if (typeof path === 'string' && path.indexOf('/api/poster/img/') === 0) enqueue({ key: 'img:' + path, path: path }, cb, el);
     }
 
     // Сведения для всей медиатеки — в фоне, по два запроса (как Library.classifyAnimation на ПК): без них не работают
@@ -373,7 +379,7 @@
     posters.want(it, function (u) {
       el.style.backgroundImage = 'url("' + u + '")';
       if (!asBg) el.classList.add('has-image');
-    });
+    }, el);
   }
 
   // ---- статус в Discord («Смотрит …» в профиле и в голосовом канале): SET_ACTIVITY ----
@@ -470,7 +476,10 @@
     posters.classify(S.shown, function () {
       presence.update();
       var el = document.activeElement;
-      if (S.tab === 'library' && S.find.mode === 'library' && !(el && el.tagName === 'SELECT')) render();
+      if (S.tab !== 'library' || S.find.mode !== 'library' || (el && el.tagName === 'SELECT')) return;
+      // Пришли жанры и рейтинг: перерисовать только плитки, поле поиска и фокус в нём не трогаем
+      var box = document.getElementById('lib-results');
+      if (box && !S.sheet) box.replaceWith(libResults()); else render();
     });
   }
   function randomFrom(list, not) {
@@ -549,6 +558,14 @@
       case 'member_left':
         clearTimeout(memberRefresh);
         memberRefresh = setTimeout(refreshRoom, 300);
+        break;
+      case 'spin_cancelled':
+        // Ведущий остановил барабан: свой снимок барабана убираем сразу (обычный итог тоже приходит со spin: null,
+        // но тогда барабан доигрывает до ends_at сам)
+        if (reel) { clearTimeout(reel.timer); reel = null; }
+        if (S.room) S.room.spin = null;
+        toast('Ведущий остановил рулетку.');
+        render();
         break;
       case 'activity_changed': {
         var d = msg.data || {}, wasPoll = !!(S.room && S.room.poll), wasSpin = !!(S.room && S.room.spin);
@@ -1095,13 +1112,32 @@
     ]);
   }
 
-  function viewMediaLibrary() {
+  // Поиск по медиатеке перерисовывает только плитки (#lib-results) и не чаще раза в SEARCH_MS: поле ввода остаётся
+  // тем же элементом, и клавиатура телефона в Discord (подсказки, автозамена) не сбрасывается на каждой букве
+  var SEARCH_MS = 180, searchTimer = 0;
+  function onSearchInput(e) {
+    S.query = e.target.value;
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(function () {
+      var el = document.getElementById('lib-results');
+      if (el) el.replaceWith(libResults()); else render();
+    }, SEARCH_MS);
+  }
+  function libResults() {
     var list = libraryList(), cat = S.lib.cat;
-    var input = h('input', { id: 'q', type: 'search', placeholder: 'Поиск по медиатеке', value: S.query, autocomplete: 'off',
-      on: { input: function (e) { S.query = e.target.value; render(); } } });
     var tiles = list.slice(0, 240).map(function (it) { return tileOf(it, false); });
     // Мультфильмы, аниме и рейтинг знает TMDB: пока сведения не пришли, список неполный — говорим об этом
     var pending = posters.pendingMeta(), needMeta = cat === 'cartoon' || cat === 'anime' || S.lib.sort === 'rating';
+    return h('div', { id: 'lib-results' }, [
+      needMeta && pending ? h('div', { class: 'small muted find-status', text: 'Уточняем жанры и рейтинг по TMDB: осталось ' + pending + '…' }) : null,
+      tiles.length ? h('div', { class: 'tiles' }, tiles) : h('div', { class: 'empty', text: S.query.trim() || cat !== 'all' ? 'Ничего не нашлось.' : 'Медиатека пуста.' })
+    ]);
+  }
+
+  function viewMediaLibrary() {
+    var cat = S.lib.cat;
+    var input = h('input', { id: 'q', type: 'search', placeholder: 'Поиск по медиатеке', value: S.query, autocomplete: 'off',
+      on: { input: onSearchInput } });
     return h('div', {}, [
       h('div', { class: 'search-row' }, [
         h('label', { class: 'search' }, [icon('search'), input]),
@@ -1110,8 +1146,7 @@
       h('div', { class: 'chips presets' }, CATS.map(function (c) {
         return h('button', { class: 'chip' + (cat === c[0] ? ' on' : ''), type: 'button', on: { click: function () { setLib('cat', c[0]); } } }, [c[1]]);
       }).concat([h('div', { class: 'grow' }), select(S.lib.sort, SORTS, function (v) { setLib('sort', v); }, 'Сортировка')])),
-      needMeta && pending ? h('div', { class: 'small muted find-status', text: 'Уточняем жанры и рейтинг по TMDB: осталось ' + pending + '…' }) : null,
-      tiles.length ? h('div', { class: 'tiles' }, tiles) : h('div', { class: 'empty', text: S.query.trim() || cat !== 'all' ? 'Ничего не нашлось.' : 'Медиатека пуста.' })
+      libResults()
     ]);
   }
 
@@ -1183,7 +1218,7 @@
   }
   function aiCard(film, it, host) {
     var poster = h('div', { class: 'ai-poster' });
-    posters.img(film.poster, function (u) { poster.style.backgroundImage = 'url("' + u + '")'; });
+    posters.img(film.poster, function (u) { poster.style.backgroundImage = 'url("' + u + '")'; }, poster);
     var entries = it ? entriesOf(it) : [];
     var line = [film.original && film.original !== film.title ? film.original : '', film.year || '', film.kind === 'series' ? 'сериал' : '']
       .filter(Boolean).join(' · ');
@@ -1379,7 +1414,9 @@
         h('div', {}, landed
           ? [h('div', { class: 'h', text: 'Выпало: «' + (win ? win.entry.label : reel.name || 'фильм') + '»' }), h('div', { class: 'muted', text: 'Включаем в комнате…' })]
           : [h('div', { class: 'h', text: 'Рулетка' }), h('div', { class: 'muted', text: 'Крутим барабан… Выпавший фильм сразу включится в комнате.' })]),
-        h('div', { class: 'spacer' }), muteButton(), icon('dice')
+        h('div', { class: 'spacer' }), muteButton(),
+        host && !landed && r.spin ? btn('small', 'close', 'Отменить', function () { roomCall('roulette/cancel'); }, { title: 'Остановить барабан: фильм не включится' }) : null,
+        icon('dice')
       ]);
     } else if (p) {
       head = h('div', { class: 'row' }, [
@@ -1413,7 +1450,6 @@
   // на выпавшем ровно в ends_at: в этот же миг — звук, подсветка и конфетти, без ожидания события об итоге.
   // Шаги подсветки заранее расписаны по времени: каждый следующий длиннее (замедление), последний ~0,4 с — видно,
   // как барабан «доползает» до фильма. Сервер сразу после итога чистит список, поэтому барабан рисует свой снимок.
-  var OLD_SPIN_MS = 3200; // сервер без started_at
   // Сколько крутится барабан — выбирает ведущий (сервер примет 2–30 с), помнится в браузере
   var SPIN_CHOICES = [3, 4, 6, 8, 10, 15, 20, 30], SPIN_DEFAULT = 4;
   function spinSeconds() {
@@ -1443,14 +1479,19 @@
 
   function syncReel() {
     var sp = S.room && S.room.spin;
-    if (!sp || !sp.key || !sp.ends_at) return;
+    // Барабан пропал задолго до своего конца — ведущий его остановил (на опросе события spin_cancelled нет)
+    if (!sp && reel && reel.phase === 'spin' && serverNow() < reel.start + reel.times[reel.times.length - 1] - 1000) {
+      clearTimeout(reel.timer);
+      reel = null;
+    }
+    if (!sp || !sp.key || !sp.ends_at || !sp.started_at) return;
     var id = sp.key + '@' + sp.ends_at;
     if (reel ? reel.id === id : reelSeen === id) return; // этот барабан уже идёт или уже показан
     if (reel) clearTimeout(reel.timer);
     var cands = (S.room.candidates || []).slice(), win = -1;
     cands.forEach(function (c, i) { if (c.key === sp.key) win = i; });
     if (win < 0) { cands.push({ key: sp.key, name: sp.name }); win = cands.length - 1; }
-    var start = sp.started_at || sp.ends_at - OLD_SPIN_MS, times = reelPlan(Math.max(300, sp.ends_at - start)), n = cands.length;
+    var start = sp.started_at, times = reelPlan(Math.max(300, sp.ends_at - start)), n = cands.length;
     reel = { id: id, key: sp.key, name: sp.name, start: start, times: times, n: n, cands: cands,
       first: ((win - times.length) % n + n) % n, k: 0, phase: 'spin', timer: 0 };
     reel.k = reelStep(); // открыли посреди вращения — без пачки щелчков за пропущенное
@@ -1564,6 +1605,7 @@
       g.gain.exponentialRampToValueAtTime(vol, t + 0.006);
       g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
       o.connect(g); g.connect(out);
+      o.onended = function () { o.disconnect(); g.disconnect(); };
       o.start(t); o.stop(t + dur + 0.03);
     }
     return {
@@ -1582,6 +1624,7 @@
         g.gain.setValueAtTime(0.5, t);
         g.gain.exponentialRampToValueAtTime(0.0001, t + 0.035);
         s.connect(bp); bp.connect(g); g.connect(out);
+        s.onended = function () { s.disconnect(); bp.disconnect(); g.disconnect(); };
         s.start(t); s.stop(t + 0.05);
         tone(c, 900 - 300 * p, t, 0.04, 'triangle', 0.1, 500);
       },
@@ -1653,6 +1696,21 @@
       setInterval(function () { loadLibrary().then(render, function () {}); }, 5 * 60 * 1000);
     }).catch(function (e) { bootLine(errText(e), true); });
   }
+
+  // Activity закрыли (Discord прислал CLOSE или страницу выгружают): ключ Activity больше не нужен — отзываем его
+  // на сервере, а не ждём, пока истечёт. Каждый запуск всё равно входит заново; вернулись из кэша страницы — api()
+  // на 401 войдёт сам
+  function logout() {
+    var token = S.token;
+    if (!token) return;
+    S.token = null;
+    try {
+      fetch('api/auth/discord/activity/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + token }, keepalive: true })
+        .catch(function () {});
+    } catch (e) { /* выгрузка */ }
+  }
+  D.onClose(function () { if (S.stream) S.stream.abort(); logout(); });
+  window.addEventListener('pagehide', function (e) { if (!e.persisted) logout(); });
 
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && S.sheet) { S.sheet = null; render(); } });
   boot();
