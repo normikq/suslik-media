@@ -132,6 +132,7 @@ PartyRoom PartyRoom::reduce(const PartyEvent &e) const {
         r.members.append(e.member);
         return r;
     }
+    case PartyEvent::Kind::RefreshLibrary: return *this;   // комнату не меняет: только «перечитай медиатеку»
     case PartyEvent::Kind::MemberLeft: {
         PartyRoom r = *this;
         r.members.removeIf([&](const PartyMember &m) { return m.key == e.key; });
@@ -293,6 +294,13 @@ std::optional<PartyEvent> PartyProtocol::parseEvent(const QString &text) {
         if (!key) return std::nullopt;
         e.kind = PartyEvent::Kind::MemberLeft;
         e.key = *key;
+        return e;
+    }
+    // ведущий сменил фильм, которого у гостя ещё нет в медиатеке: перечитать её (файла может и не быть)
+    if (event == S("refresh_library")) {
+        e.kind = PartyEvent::Kind::RefreshLibrary;
+        const QJsonValue f = data.value(S("file"));
+        if (f.isObject()) e.file = PartyFileRef{json::str(f.toObject(), S("key")), json::str(f.toObject(), S("name"))};
         return e;
     }
     return std::nullopt;
