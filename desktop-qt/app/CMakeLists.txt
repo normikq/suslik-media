@@ -60,8 +60,8 @@ qt_add_shaders(suslik_media sm_shaders
   FILES shaders/rounded.frag shaders/roundedimage.frag
 )
 
-# Шрифты, значки и строки — те же файлы, что у Kotlin-версии (desktop/src/main/resources), без копий.
-set(SM_RES ${CMAKE_CURRENT_SOURCE_DIR}/../../desktop/src/main/resources)
+# Шрифты, значки, строки, «Что нового» и версия libmpv — desktop-qt/resources (лицензия шрифтов — FONTS-LICENSE-OFL.txt там же).
+set(SM_RES ${CMAKE_CURRENT_SOURCE_DIR}/../resources)
 qt_add_resources(suslik_media sm_shared_res
   PREFIX /res
   BASE ${SM_RES}
@@ -93,7 +93,7 @@ target_compile_definitions(suslik_media PRIVATE
 target_link_libraries(suslik_media PRIVATE suslik_core Qt6::Gui Qt6::Quick Qt6::OpenGL Qt6::WebSockets)
 if(WIN32)
   # Значок и версия в самом .exe; путь к значку — с прямыми слешами (rc.exe понимает)
-  set(SM_ICON "${CMAKE_CURRENT_SOURCE_DIR}/../../desktop/icon.ico")
+  set(SM_ICON "${CMAKE_CURRENT_SOURCE_DIR}/../resources/icon.ico")
   if(SM_DIAG)
     set(SM_PRODUCT "Suslik Debug Qt")
   else()
