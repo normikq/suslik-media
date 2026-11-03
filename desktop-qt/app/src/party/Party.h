@@ -101,6 +101,8 @@ signals:
     void changed();
     /// Вошли по ссылке из Discord: окну — открыть «Вместе» (ведущему — и фильм комнаты, если он уже выбран).
     void roomLinkOpened();
+    /// Сервер комнаты сообщил о смене фильма: обновить медиатеку
+    void refreshLibraryRequested();
 
 private:
     using Done = std::function<void(const core::ApiResult &)>;

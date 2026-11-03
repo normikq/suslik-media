@@ -420,6 +420,10 @@ void Party::onRemoteRequest(const RemoteTrackerRequest &rq) {
 
 void Party::onEvent(const PartyEvent &e) {
     if (e.kind == PartyEvent::Kind::Init && e.myUserId) m_myUserId = e.myUserId;
+    if (e.kind == PartyEvent::Kind::RefreshLibrary) {
+        emit refreshLibraryRequested();
+        return;
+    }
     setRoom(m_room.reduce(e));
 }
 

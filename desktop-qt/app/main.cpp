@@ -115,6 +115,28 @@ int main(int argc, char *argv[]) {
     // «Вместе»: комната и плеер в ней (до MediaSession — у Discord «Смотрит вместе»)
     app::Party party(api);
     app::PartySync partySync(player, party);
+    QObject::connect(&party, &app::Party::refreshLibraryRequested, &library, [&library] {
+        library.refresh();
+    });
+    auto lastCheckedKey = std::make_shared<QString>();
+    auto checkRoomFile = [&party, &library, lastCheckedKey] {
+        const QString key = party.fileKey();
+        if (key.isEmpty()) {
+            lastCheckedKey->clear();
+            return;
+        }
+        if (key == *lastCheckedKey) return;
+        const int bar = key.indexOf(QLatin1Char('|'));
+        if (bar <= 0) return;
+        bool ok = false;
+        const qint64 id = key.left(bar).toLongLong(&ok);
+        const QString path = key.mid(bar + 1);
+        if (ok && !library.hasFile(id, path)) {
+            *lastCheckedKey = key;
+            library.refresh();
+        }
+    };
+    QObject::connect(&party, &app::Party::changed, &library, checkRoomFile);
     QObject::connect(&library, &app::Library::authenticatedChanged, &party, [&library, &party] {
         if (library.authenticated() == 0) party.leave(); // вышли из аккаунта — и из комнаты
     });

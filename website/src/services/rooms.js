@@ -409,6 +409,9 @@ function handleRoomAction(roomId, user, action) {
 
   const roomData = getRoomPublicData(room);
   broadcast(roomId, "state_changed", roomData);
+  if (action.type === "change_file" && action.file) {
+    broadcast(roomId, "refresh_library", { file: room.file });
+  }
   return { ok: true, room: roomData };
 }
 

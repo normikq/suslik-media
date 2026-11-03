@@ -511,3 +511,17 @@ test("rooms: a shared-password room without the creator's device has no host", (
   const film = { key: "4|d.mkv", name: "D" };
   assert.equal(handleRoomAction(room.id, shared, { type: "change_file", file: film, client_id: "pc_any" }).ok, false);
 });
+
+test("rooms: change_file broadcasts refresh_library to clients", () => {
+  const { createRoom, handleRoomAction, addListener } = require("../src/services/rooms");
+  const host = findOrCreateUser({ id: "3001", username: "h", global_name: "Host" }, "allow");
+  const room = createRoom(host, null, "all", "pc_host");
+  const events = [];
+  const remove = addListener(room.id, raw => events.push(JSON.parse(raw)));
+  const film = { key: "42|movie.mkv", name: "Movie" };
+  handleRoomAction(room.id, host, { type: "change_file", file: film, client_id: "pc_host" });
+  remove();
+  const refresh = events.find(e => e.event === "refresh_library");
+  assert.ok(refresh, "must broadcast refresh_library");
+  assert.equal(refresh.data.file.key, "42|movie.mkv");
+});

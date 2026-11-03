@@ -116,6 +116,7 @@ data class PartyRoom(
         is PartyEvent.StateChanged -> merge(e.room)
         is PartyEvent.MemberJoined -> copy(members = members.filter { it.key != e.member.key } + e.member)
         is PartyEvent.MemberLeft -> copy(members = members.filter { it.key != e.key })
+        is PartyEvent.RefreshLibrary -> this
     }
 
     companion object {
@@ -146,6 +147,7 @@ sealed class PartyEvent {
     data class StateChanged(val room: RoomUpdate) : PartyEvent()
     data class MemberJoined(val member: PartyMember) : PartyEvent()
     data class MemberLeft(val key: String) : PartyEvent()
+    data class RefreshLibrary(val file: PartyFileRef?) : PartyEvent()
 }
 
 object PartyProtocol {
@@ -245,6 +247,11 @@ object PartyProtocol {
             "state_changed" -> msg.optJSONObject("data")?.let { PartyEvent.StateChanged(parseRoom(it)) }
             "member_joined" -> msg.optJSONObject("data")?.optJSONObject("member")?.let { PartyEvent.MemberJoined(parseMember(it)) }
             "member_left" -> msg.optJSONObject("data")?.optString("key")?.ifBlank { null }?.let { PartyEvent.MemberLeft(it) }
+            "refresh_library" -> {
+                val f = msg.optJSONObject("data")?.optJSONObject("file")
+                val ref = if (f != null) PartyFileRef(f.optString("key"), f.optString("name")) else null
+                PartyEvent.RefreshLibrary(ref)
+            }
             else -> null
         }
     }

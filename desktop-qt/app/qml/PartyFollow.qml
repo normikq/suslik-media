@@ -23,11 +23,12 @@ Sheet {
         }
     }
 
+    property string lastTriedKey: ""
     function check() {
         const key = party.fileKey
         if (!party.guest || key === "") {
             open = false
-            if (key === "") party.followed = ""
+            if (key === "") { party.followed = ""; lastTriedKey = "" }
             return
         }
         if (key === party.followed) return
@@ -35,8 +36,15 @@ Sheet {
         if (player.hasWatchKey(key)) { party.followed = key; return }
         const bar = key.indexOf("|")
         const id = Number(key.substring(0, bar)), path = key.substring(bar + 1)
-        if (!lib.hasFile(id, path)) return
+        if (!lib.hasFile(id, path)) {
+            if (key !== lastTriedKey) {
+                lastTriedKey = key
+                lib.refresh()
+            }
+            return
+        }
         party.followed = key
+        lastTriedKey = ""
         d.key = key
         m.load(id, path)
         open = true

@@ -147,6 +147,19 @@ Item {
                         readonly property var magnetId: key === "" ? 0 : Number(key.split("|")[0])
                         readonly property string path: key === "" ? "" : key.substring(key.indexOf("|") + 1)
                         readonly property bool known: { lib.version; return key !== "" && lib.hasFile(magnetId, path) }
+                        readonly property int magnetCode: { lib.version; return key !== "" ? lib.magnetStatusCode(magnetId) : -1 }
+                        readonly property bool failed: magnetCode >= 5
+                        property int pollCount: 0
+                        onKeyChanged: { pollCount = 0; if (key !== "" && !known) lib.refresh() }
+                        Timer {
+                            interval: 4000
+                            repeat: true
+                            running: party.inRoom && filmPanel.key !== "" && !filmPanel.known && !filmPanel.failed && filmPanel.pollCount < 15
+                            onTriggered: {
+                                filmPanel.pollCount++
+                                lib.refresh()
+                            }
+                        }
                         Heading { text: Ui.tx("party.film") }
                         // нет фильма
                         Hint {
@@ -182,7 +195,11 @@ Item {
                             visible: filmPanel.key !== "" && !filmPanel.known
                             width: parent.width
                             bottomPadding: 10
-                            text: Ui.tx("party.net_v_mediateke")
+                            text: filmPanel.failed
+                                  ? (lib.magnetStatus(filmPanel.magnetId) !== ""
+                                     ? Ui.tx("add.oshibka_p", { p: lib.magnetStatus(filmPanel.magnetId) })
+                                     : Ui.tx("search.oshibka"))
+                                  : Ui.tx("party.net_v_mediateke")
                             color: Theme.bad; wrapMode: Text.WordWrap
                             font.family: Theme.onest; font.pixelSize: 13
                         }
@@ -197,6 +214,11 @@ Item {
                                     if (party.isHost) v.playRequested(filmPanel.magnetId, filmPanel.path)
                                     else party.followed = "" // гость: фильм ведущего откроется сам
                                 }
+                            }
+                            OutlineButton {
+                                visible: !filmPanel.known
+                                text: Ui.tx("library.obnovit")
+                                onClicked: { filmPanel.pollCount = 0; lib.refresh() }
                             }
                             OutlineButton { visible: party.isHost; text: Ui.tx("party.drugoy_film"); onClicked: v.library() }
                         }

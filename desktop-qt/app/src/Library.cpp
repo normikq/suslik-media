@@ -904,4 +904,16 @@ bool Library::hasFile(qint64 magnetId, const QString &path) const {
     return false;
 }
 
+int Library::magnetStatusCode(qint64 magnetId) const {
+    for (const LibraryItem &it : m_items)
+        if (it.m.id == magnetId) return it.m.statusCode;
+    return -1;
+}
+
+QString Library::magnetStatus(qint64 magnetId) const {
+    for (const LibraryItem &it : m_items)
+        if (it.m.id == magnetId) return it.m.status;
+    return QString();
+}
+
 } // namespace suslik::app

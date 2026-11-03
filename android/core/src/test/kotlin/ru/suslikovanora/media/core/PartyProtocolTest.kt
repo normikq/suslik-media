@@ -110,6 +110,15 @@ class PartyProtocolTest {
         assertFalse(r.state.playing)
         assertEquals(8L, r.state.seq)
 
+        val ref = PartyProtocol.parseEventLine("""data: {"event":"refresh_library","data":{"file":{"key":"42|s1.mkv","name":"Test"}}}""")
+        assertIs<PartyEvent.RefreshLibrary>(ref)
+        assertEquals("42|s1.mkv", ref.file?.key)
+        assertEquals("Test", ref.file?.title)
+
+        val refEmpty = PartyProtocol.parseEventLine("""data: {"event":"refresh_library"}""")
+        assertIs<PartyEvent.RefreshLibrary>(refEmpty)
+        assertNull(refEmpty.file)
+
         assertNull(PartyProtocol.parseEventLine(": ping"))
         assertNull(PartyProtocol.parseEvent("""{"event":"something_new"}"""))
         assertNull(PartyProtocol.parseEvent("not json"))

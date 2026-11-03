@@ -108,6 +108,10 @@ public:
     Q_INVOKABLE QVariantMap categoryCounts(bool mine) const;
     /// Есть ли в медиатеке этот файл раздачи (фильм комнаты «Вместе» по ключу magnetId|путь).
     Q_INVOKABLE bool hasFile(qint64 magnetId, const QString &path) const;
+    /// Код состояния раздачи: -1 — нет в медиатеке, <4 — качается, 4 — готова, >=5 — ошибка.
+    Q_INVOKABLE int magnetStatusCode(qint64 magnetId) const;
+    /// Текстовый статус раздачи из облака ("Downloading", "Ready", "Error" и т.д.).
+    Q_INVOKABLE QString magnetStatus(qint64 magnetId) const;
 
     // ---- постеры ----
     /// Путь картинки сервера (/api/poster/img/…) для плитки, если уже известен; иначе запрашивает и потом повышает version.
