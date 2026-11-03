@@ -56,7 +56,9 @@ function sameOriginWrites(req, res, next) {
   if (!origin) return next();
   let host = "";
   try { host = new URL(origin).host; } catch {}
-  const hosts = [req.get("host"), req.get("x-forwarded-host")].filter(Boolean).map(h => String(h).split(",")[0].trim());
+  // X-Forwarded-Host — только за доверенным прокси (TRUST_PROXY), как X-Forwarded-Prefix в basePath
+  const forwarded = req.app?.get?.("trust proxy") ? req.get("x-forwarded-host") : "";
+  const hosts = [req.get("host"), forwarded].filter(Boolean).map(h => String(h).split(",")[0].trim());
   return host && hosts.includes(host) ? next() : deny();
 }
 

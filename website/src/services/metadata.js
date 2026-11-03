@@ -28,22 +28,48 @@ const persistMediaCache = makeJsonWriter(config.MEDIA_CACHE_FILE, () => Object.f
 
 // At most two ffprobe processes at once (a season page asks for dozens; each may run 25 s on a one-core VPS), and the
 // same file asked for twice waits for the one analysis already running.
+// Фоновый разбор меток (mediatags) занимает не больше одного места и пропускает вперёд запросы из интерфейса:
+// второе место всегда остаётся плееру и карточке фильма, а ждущий запрос интерфейса берёт освободившееся первым.
 const FFPROBE_MAX = 2;
+const FFPROBE_BACKGROUND_MAX = 1;
 let ffprobeRunning = 0;
-const ffprobeQueue = [];
+let ffprobeBackground = 0;
+const ffprobeQueue = []; // интерфейс
+const ffprobeBackgroundQueue = []; // фон
 const metadataInflight = new Map(); // key -> Promise<metadata>
 
-async function withFfprobeSlot(fn) {
-  if (ffprobeRunning >= FFPROBE_MAX) {
-    await new Promise(resolve => ffprobeQueue.push(resolve));
-  }
+function takeFfprobeSlot(background) {
   ffprobeRunning++;
+  if (background) ffprobeBackground++;
+}
+
+function canStartFfprobe(background) {
+  if (ffprobeRunning >= FFPROBE_MAX) return false;
+  return !background || (ffprobeBackground < FFPROBE_BACKGROUND_MAX && ffprobeQueue.length === 0);
+}
+
+// Место отдаётся ждущему сразу (счётчик растёт здесь, а не после пробуждения): новый вызов не перехватит его
+function pumpFfprobe() {
+  while (ffprobeRunning < FFPROBE_MAX) {
+    if (ffprobeQueue.length) {
+      takeFfprobeSlot(false);
+      ffprobeQueue.shift()();
+    } else if (ffprobeBackgroundQueue.length && ffprobeBackground < FFPROBE_BACKGROUND_MAX) {
+      takeFfprobeSlot(true);
+      ffprobeBackgroundQueue.shift()();
+    } else break;
+  }
+}
+
+async function withFfprobeSlot(fn, { background = false } = {}) {
+  if (canStartFfprobe(background)) takeFfprobeSlot(background);
+  else await new Promise(resolve => (background ? ffprobeBackgroundQueue : ffprobeQueue).push(resolve));
   try {
     return await fn();
   } finally {
     ffprobeRunning--;
-    const next = ffprobeQueue.shift();
-    if (next) next();
+    if (background) ffprobeBackground--;
+    pumpFfprobe();
   }
 }
 
@@ -164,10 +190,11 @@ async function getMediaMetadata(rawLink, magnetId, wantedPath) {
 
   let job = metadataInflight.get(key);
   if (!job) {
-    job = withFfprobeSlot(async () => {
+    job = (async () => {
       // Resolve through the official provider API; only inspect the resulting direct URL.
+      // Ссылку берём до слота (как mediatags): ожидание AllDebrid (до 20 с) не держит ffprobe
       const direct = await resolveDirectUrl(parsed);
-      const metadata = await runFfprobe(direct.toString());
+      const metadata = await withFfprobeSlot(() => runFfprobe(direct.toString()));
       for (const [k, v] of mediaMetadataCache) {
         if (!(v.expiresAt > Date.now())) mediaMetadataCache.delete(k);
       }
@@ -178,7 +205,7 @@ async function getMediaMetadata(rawLink, magnetId, wantedPath) {
       }
       persistMediaCache();
       return metadata;
-    }).finally(() => metadataInflight.delete(key));
+    })().finally(() => metadataInflight.delete(key));
     metadataInflight.set(key, job);
   }
 

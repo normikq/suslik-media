@@ -93,9 +93,10 @@ async function work() {
       try {
         const parsed = safeHttpsUrl(job.link);
         if (!isAllDebridFileLink(parsed)) throw new Error("ссылка");
-        // ссылку берём до слота: ожидание AllDebrid (до 20 с) не держит ffprobe, общий с /api/media-metadata
+        // ссылку берём до слота: ожидание AllDebrid (до 20 с) не держит ffprobe, общий с /api/media-metadata.
+        // Слот фоновый: не больше одного и после ждущих запросов из интерфейса
         const direct = await resolveDirectUrl(parsed);
-        const tags = await withFfprobeSlot(() => probeTags(direct.toString()));
+        const tags = await withFfprobeSlot(() => probeTags(direct.toString()), { background: true });
         store.set(job.id, { t: tags, at: Date.now() });
       } catch (err) {
         store.set(job.id, { f: Date.now(), n: ((prev && prev.n) || 0) + 1 });

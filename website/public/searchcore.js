@@ -1,6 +1,6 @@
 /*
  * Поиск раздач: разбор названия релиза, фильтры, сортировка, оценка битрейта — как на ПК.
- * Перенос shared/.../core/search (ReleaseParser, SearchFilter, SearchHit) один в один; тесты — test/searchcore.test.js.
+ * Перенос android/core/.../core/search (ReleaseParser, SearchFilter, SearchHit) один в один; тесты — test/searchcore.test.js.
  * Копия этого файла лежит в website/public/searchcore.js: правьте оба.
  * Только ES2017 (Tizen 4.0, Chromium 56): без lookbehind и \p{…}; «граница слова» для кириллицы — явными классами.
  */
