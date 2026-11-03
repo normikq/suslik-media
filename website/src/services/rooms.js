@@ -190,6 +190,13 @@ function clearAccountActiveDevice(userId, clientId = null) {
   }
 }
 
+// Выбранное устройство отключилось без «Выйти» (обрыв связи): отсчёт льготы начинается заново
+function touchAccountActiveDevice(userId, clientId) {
+  if (!userId || userId === "shared" || userId === "guest" || !clientId) return;
+  const cur = accountActiveDevices.get(String(userId));
+  if (cur && cur.clientId === clientId) cur.at = Date.now();
+}
+
 // Поиск активной комнаты, где уже подключен пользователь с другого устройства.
 // Правило: 1 аккаунт = 1 активная комната (нельзя заходить с другого устройства, пока активно первое).
 // То же устройство (тот же client_id: приложения хранят его между запусками) — не помеха: оно перешло в другую комнату
@@ -472,9 +479,13 @@ function leaveRoom(roomId, clientId, force = false) {
       closeMemberStreams(roomId, clientId);
       room.members.delete(clientId);
       if (member.id) {
-        clearAccountActiveDevice(member.id, clientId);
+        // Явный выход («Выйти», переход в другую комнату) снимает выбор устройства. Обрыв потока — нет: пока устройство
+        // переподключается, ещё PENDING_DEVICE_TTL_MS его место не займёт старое, повторяющее /events
+        if (force) clearAccountActiveDevice(member.id, clientId);
+        else touchAccountActiveDevice(member.id, clientId);
       }
-      if (room.host_client_id === clientId) {
+      // При общем пароле ведущего отличает только host_client_id, и joinRoom его не вернёт: не обнуляем
+      if (room.host_id !== "shared" && room.host_client_id === clientId) {
         room.host_client_id = null;
       }
       broadcast(roomId, "member_left", { key: clientKey(clientId), total: room.members.size });

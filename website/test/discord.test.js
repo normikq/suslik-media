@@ -720,3 +720,41 @@ test("rooms: HTTP POST /api/rooms/:id/join evicts dead PC and allows phone to co
     server.close();
   }
 });
+
+test("rooms: shared-password host keeps the host role after a stream drop and reconnect", () => {
+  const rooms = require("../src/services/rooms");
+  const shared = { id: "shared", name: "Общий доступ" };
+  const film = { key: "9|drop.mkv", name: "Drop" };
+  const room = rooms.createRoom(shared, null, "host", "tv_host_drop");
+  rooms.joinRoom(room.id, shared, "tv_host_drop");
+  rooms.joinRoom(room.id, shared, "phone_guest_drop");
+  rooms.leaveRoom(room.id, "tv_host_drop"); // мигнула сеть: поток закрылся без «Выйти»
+  assert.equal(room.host_client_id, "tv_host_drop");
+  assert.equal(rooms.joinRoom(room.id, shared, "tv_host_drop").ok, true);
+  assert.equal(rooms.handleRoomAction(room.id, shared, { type: "change_file", file: film, client_id: "tv_host_drop" }).ok, true);
+  assert.equal(rooms.handleRoomAction(room.id, shared, { type: "change_file", file: film, client_id: "phone_guest_drop" }).ok, false);
+});
+
+test("rooms: a stream drop on the chosen device does not let the old device take the room back", () => {
+  const rooms = require("../src/services/rooms");
+  const user = { id: "acc_drop_1", name: "Gleb" };
+  const room = rooms.createRoom(user, null, "all", "laptop_drop");
+  assert.equal(rooms.joinRoom(room.id, user, "laptop_drop").ok, true);
+  rooms.moveAccount(user, "phone_drop", room.id); // «Войти» с телефона
+  assert.equal(rooms.joinRoom(room.id, user, "phone_drop").ok, true);
+  rooms.leaveRoom(room.id, "phone_drop"); // у телефона оборвался поток
+  const laptop = rooms.joinRoom(room.id, user, "laptop_drop"); // ноутбук проснулся и повторил /events
+  assert.equal(laptop.ok, false);
+  assert.equal(laptop.code, 403);
+  assert.equal(room.members.has("laptop_drop"), false);
+  assert.equal(rooms.joinRoom(room.id, user, "phone_drop").ok, true); // телефон вернулся на своё место
+});
+
+test("rooms: explicit leave on the chosen device frees the account for another device", () => {
+  const rooms = require("../src/services/rooms");
+  const user = { id: "acc_drop_2", name: "Gleb" };
+  const room = rooms.createRoom(user, null, "all", "pc_leave");
+  assert.equal(rooms.joinRoom(room.id, user, "pc_leave").ok, true);
+  rooms.leaveRoom(room.id, "pc_leave", true); // «Выйти»
+  assert.equal(rooms.joinRoom(room.id, user, "tv_leave").ok, true);
+});
