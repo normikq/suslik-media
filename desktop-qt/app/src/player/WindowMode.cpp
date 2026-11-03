@@ -195,6 +195,7 @@ void WindowMode::frameless(bool on) {
         m_w->setFlag(Qt::FramelessWindowHint, true);
     } else {
         m_w->setFlag(Qt::FramelessWindowHint, false);
+        TitleBar::hideCaption(m_w, false);   // поля могли остаться в Qt с прошлого раза: тогда повтор не применится
         TitleBar::hideCaption(m_w, true);
     }
 #else
@@ -280,6 +281,14 @@ void WindowMode::setFullscreen(bool on) {
 void WindowMode::setOnTop(bool on) {
     if (!m_w || on == m_onTop) return;
     m_w->setFlag(Qt::WindowStaysOnTopHint, on);
+#ifdef Q_OS_WIN
+    // Qt пересоздаёт стиль окна при смене флагов, и система снова рисует свой заголовок над нашим:
+    // поля снимаются и ставятся заново (одинаковые повторно не применяются)
+    if (!m_mini && !m_full && !(m_w->flags() & Qt::FramelessWindowHint)) {
+        TitleBar::hideCaption(m_w, false);
+        TitleBar::hideCaption(m_w, true);
+    }
+#endif
     m_w->show();
     m_onTop = on;
     emit changed();
@@ -331,8 +340,8 @@ void WindowMode::setMini(bool on, double aspect) {
         m_mini = false;
         cloakWhile([this] {
             roundCorners(false);
+            setOnTop(m_topBeforeMini);   // до возврата рамки: смена флага «поверх окон» сбрасывает свои поля
             frameless(false);
-            setOnTop(m_topBeforeMini);
             m_w->setMinimumSize(m_minBefore);
             m_w->setGeometry(m_before);
             if (m_maximizedBefore) m_w->setWindowStates(Qt::WindowMaximized);
