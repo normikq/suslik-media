@@ -159,18 +159,19 @@ private fun FilmPanel(store: LibraryStore, onLibrary: () -> Unit, onOpen: (PlayT
             fontFamily = Onest, fontSize = 13.sp, modifier = Modifier.padding(top = 2.dp, bottom = 12.dp))
         val target = remember(store.items, f.key) { targetForKey(store.items, f.key) }
         val scope = rememberCoroutineScope()
-        var pollCount by remember(f.key) { mutableIntStateOf(0) }
+        // «Обновить» начинает проверки заново
+        var pollRound by remember(f.key) { mutableIntStateOf(0) }
         LaunchedEffect(f.key) {
             if (target == null) store.refresh()
         }
         if (target == null) {
-            LaunchedEffect(store.items, pollCount) {
-                if (pollCount < 15) {
+            // Раздачи ещё нет в медиатеке: до 15 проверок раз в 4 с одним циклом. Ключи — только фильм и «Обновить»:
+            // store.items и счётчик в ключах перезапускали эффект и отменяли идущее обновление
+            LaunchedEffect(f.key, pollRound) {
+                repeat(15) {
                     delay(4000)
-                    if (targetForKey(store.items, f.key) == null) {
-                        pollCount++
-                        store.refresh()
-                    }
+                    if (targetForKey(store.items, f.key) != null) return@LaunchedEffect
+                    store.refresh()
                 }
             }
             Text(tr("party.net_v_mediateke"), color = Sm.bad, fontFamily = Onest, fontSize = 13.sp, modifier = Modifier.padding(bottom = 10.dp))
@@ -179,7 +180,7 @@ private fun FilmPanel(store: LibraryStore, onLibrary: () -> Unit, onOpen: (PlayT
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             // A guest picks nothing: the host's file opens by itself (MainActivity), the button only opens it again
             if (target != null) LampButton(tr("party.smotret_vmeste")) { if (Party.isHost) onOpen(target) else Party.followed = null }
-            if (target == null) OutlineButton(tr("library.obnovit")) { pollCount = 0; scope.launch { store.refresh() } }
+            if (target == null) OutlineButton(tr("library.obnovit")) { pollRound++; scope.launch { store.refresh() } }
             if (Party.isHost) OutlineButton(tr("party.drugoy_film")) { onLibrary() }
         }
     }

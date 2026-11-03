@@ -43,6 +43,12 @@ public:
     /// обычное окно — верхний край тянет размер (WM_NCHITTEST), полоса заголовка своя.
     bool nativeEventFilter(const QByteArray &type, void *message, qintptr *result) override;
 
+protected:
+    /// HWND окна запоминается при создании его платформенной части и забывается при уничтожении (смена флагов).
+    bool eventFilter(QObject *obj, QEvent *ev) override;
+
+public:
+
     bool fullscreen() const { return m_full; }
     bool mini() const { return m_mini; }
     bool onTop() const { return m_onTop; }
@@ -98,6 +104,7 @@ private:
     int m_cloakGen = 0;
 
     QPointer<QWindow> m_w;
+    quintptr m_hwnd = 0;   ///< HWND окна (0 — ещё не создано): фильтр сообщений сверяет с ним, без winId() на каждое
     bool m_full = false, m_mini = false, m_onTop = false, m_topBeforeMini = false;
     bool m_maximized = false;
     bool m_captionButtons = true, m_maxHover = false, m_maxPress = false;

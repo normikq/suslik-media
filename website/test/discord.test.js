@@ -68,7 +68,7 @@ test("users & device flow: pairing creation, authorization and polling", () => {
 
 test("rooms & watch together: state transitions and synchronization", () => {
   const host = { id: "u_1", name: "Host User" };
-  const room = createRoom(host, { ad_id: 10, idx: 0, name: "Film.mkv" }, "all");
+  const room = createRoom(host, { key: "10|Film.mkv", name: "Film.mkv" }, "all");
 
   assert.equal(room.host_id, "u_1");
   assert.equal(room.file.name, "Film.mkv");

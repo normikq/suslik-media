@@ -130,6 +130,28 @@ Sheet {
                         contentHeight: filmsCol.height
                         clip: true
                         boundsBehavior: Flickable.StopAtBounds
+                        interactive: contentHeight > height + 1
+                        // Колесо над списком крутит список, а не весь диалог (у диалога свой WheelHandler)
+                        WheelHandler {
+                            enabled: filmsList.interactive
+                            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                            onWheel: (ev) => {
+                                const dy = ev.pixelDelta.y !== 0 ? ev.pixelDelta.y : ev.angleDelta.y / 120 * 90
+                                filmsList.contentY = Math.max(0, Math.min(filmsList.contentHeight - filmsList.height, filmsList.contentY - dy))
+                            }
+                        }
+                        C.ScrollBar.vertical: C.ScrollBar {
+                            id: filmsBar
+                            visible: filmsList.interactive
+                            width: 8; padding: 2
+                            policy: C.ScrollBar.AlwaysOn
+                            minimumSize: 24 / Math.max(1, filmsList.height)
+                            background: Item {}
+                            contentItem: Rectangle {
+                                implicitWidth: 4; radius: 2
+                                color: filmsBar.pressed ? "#66FFFFFF" : filmsBar.hovered ? "#4DFFFFFF" : "#33FFFFFF"
+                            }
+                        }
                         Column {
                             id: filmsCol
                             width: parent.width
