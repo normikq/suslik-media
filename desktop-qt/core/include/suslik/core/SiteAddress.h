@@ -2,7 +2,7 @@
 #include <QString>
 
 /// Адрес сервера из одной настройки сборки (секрет SITE_URL): домен и, если сервер не в корне, путь.
-/// Перенос shared/.../core/SiteAddress.kt — правила те же, тесты те же.
+/// Перенос android/core/.../core/SiteAddress.kt — правила те же, тесты те же.
 namespace suslik::core::SiteAddress {
 
 /// `https://host[/path]` без `/` в конце; пусто, если адреса нет. Без схемы — https; запрос и `#` отбрасываются.

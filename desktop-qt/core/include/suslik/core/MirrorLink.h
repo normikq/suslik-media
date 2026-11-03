@@ -4,7 +4,7 @@
 #include <optional>
 
 /// Подписанный адрес зеркала `https://<site>/api/file/proxy/<name>?link=…&exp=…&sig=…` (подпись живёт 12 ч).
-/// Перенос shared/.../core/MirrorLink.kt.
+/// Перенос android/core/.../core/MirrorLink.kt.
 namespace suslik::core::MirrorLink {
 
 /// Ключ файла: путь и параметр link (у одного фильма каждый раз новая подпись). Без link — сам адрес.

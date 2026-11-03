@@ -1,6 +1,6 @@
 # Suslik Media — Android-приложение (`android/`)
 
-Документация по мобильному клиенту Suslik Media для телефонов, планшетов и ТВ-приставок (Android TV): архитектура, модули плеера, интеграция с общим ядром `shared/`, отладка и сборка.
+Документация по мобильному клиенту Suslik Media для телефонов, планшетов и ТВ-приставок (Android TV): архитектура, модули плеера, ядро `android/core/`, отладка и сборка.
 
 ---
 
@@ -11,7 +11,7 @@
 - **Видеоплеер:** нативный **libVLC 3.6** для Android (`org.videolan.android:libvlc-all`).
 - **Сетевой слой:** OkHttp 4 (с кастомной стратегией ретраев на мобильных сетях).
 - **Асинхронность:** Kotlin Coroutines & Flow.
-- **Общий модуль:** прямая зависимость от `:shared` (модели, локальный прокси `BurstProxy`, сторож плеера `PlaybackSupervisor`, Blu-ray расчеты `TsClock`).
+- **Ядро:** `android/core/` — сборка Gradle `includeBuild("core")`, зависимость `ru.suslikovanora.media:core` (модели, локальный прокси `BurstProxy`, сторож плеера `PlaybackSupervisor`, Blu-ray расчеты `TsClock`); чистый Kotlin, тесты на JVM (`android-core.yml`).
 
 Идентификатор пакета:
 - Релизная сборка: `ru.suslikovanora.media`
@@ -124,7 +124,7 @@ android/
 
 ---
 
-## 4. Интеграция с ядром `shared/` (`BurstProxy` и `PlaybackSupervisor`)
+## 4. Ядро `android/core/` (`BurstProxy` и `PlaybackSupervisor`)
 
 Android-приложение воспроизводит видео не по прямой ссылке сервера, а через локальный HTTP-прокси, работающий внутри самого приложения:
 
@@ -152,7 +152,7 @@ Android-приложение воспроизводит видео не по п�
 Специфика мобильных сетей в РФ (высокий джиттер, потеря SYN-пакетов при первичном подключении, обрывы VPN-туннелей):
 - Сетевой клиент `Api.kt` реализует агрессивные тайм-ауты на первичное подключение: 6 секунд на первый запрос, 8 на второй, 10 на третий. При отсутствии ответа сокет принудительно разрывается и создаётся заново на чистом соединении.
 - `Api.call` повторяет запрос на новом соединении при любом сетевом сбое (сброс, TLS, отказ), кроме `UnknownHostException`; `Api.init` вызывается в `SuslikApp`, поэтому дисковый кеш HTTP не теряется при раннем обращении.
-- Адрес сервера — `BuildConfig.SITE_URL` (секрет `SITE_URL`: домен и, если сервер не в корне, путь; разбор — `shared/.../SiteAddress.kt`).
+- Адрес сервера — `BuildConfig.SITE_URL` (секрет `SITE_URL`: домен и, если сервер не в корне, путь; разбор — `android/core/.../SiteAddress.kt`).
   Cookie, токен устройства и бета-код уходят только на адреса внутри него (`SiteAddress.isOwn`). Если сборка пришла с другим адресом,
   `Api.moveCookies()` один раз переносит cookie WebView со старого адреса (`auth` → `site_base`): вход по паролю и `sdev` не теряются (`docs/MIGRATION.md`).
 - Ошибки «нет сети» (`UnknownHostException`, потеря default network) не сжигают счетчик попыток ретрая — плеер переходит в режим ожидания и мгновенно возобновляет работу, как только `ConnectivityManager` сообщает о появлении сети.
@@ -178,7 +178,7 @@ Android-приложение воспроизводит видео не по п�
 
 ## 6а. Discord и совместный просмотр (2.5.0)
 
-Всё общее — в `shared/` (`core/auth/Auth.kt`, `core/party/`), как на ПК; здесь только сеть и экраны.
+Всё общее — в `android/core/` (`core/auth/Auth.kt`, `core/party/`), как на ПК; здесь только сеть и экраны.
 - Вход: «Войти через Discord» → код устройства (`DeviceAuth`), браузер открывает страницу подтверждения, приложение опрашивает сервер.
   Токен устройства — `Api.deviceToken` (SharedPreferences `auth`), заголовок `X-Device-Token` только к своему серверу. ТВ показывает ссылку и код.
 - «Мои»: `LibraryScreen(mineOnly = true)`, закладка на постере — `LibraryStore.setMine` (`/api/shelf`).
@@ -195,14 +195,13 @@ Android-приложение воспроизводит видео не по п�
 
 ### Локальная сборка:
 ```powershell
-# Сборка релизного APK
-./gradlew assembleRelease
+# из android/ (Gradle wrapper 8.10.2)
+./gradlew :app:assembleRelease      # релизный APK
+./gradlew :app:assembleDiag         # Suslik Debug
+./gradlew -p core test              # тесты ядра
 
-# Сборка диагностической версии Suslik Debug
-./gradlew assembleDiag
-
-# Быстрая установка отладочной версии на подключённый телефон по ADB
-./install-android-debug.ps1
+# из корня репозитория: сборка и установка Suslik Debug на телефон по ADB
+install-android-debug.bat
 ```
 
 ### Версионирование:
@@ -229,9 +228,9 @@ Android-приложение воспроизводит видео не по п�
 Страницы библиотеки (`LibraryScreen.kt`, `PageBar`): страница — 5 рядов на телефоне и 3 ряда на ТВ (колонок столько, сколько влезает по ширине); внизу «‹ 1 2 3 … ›» (пультом по ячейкам, OK — выбрать), поиск и подборка возвращают на первую страницу.
 
 ## Слияние версий и поиск как на ПК (26.10, PR #39 влит в `main`, 2.6.3, код 67)
-- Плитка на все версии фильма и сезоны сериала: `LibraryScreen.kt` (`groupVersions` из `shared`, постер — `LibraryStore.posterPathOf`,
+- Плитка на все версии фильма и сезоны сериала: `LibraryScreen.kt` (`groupVersions` из `android/core`, постер — `LibraryStore.posterPathOf`,
   пути постеров заполняет `classifyAnimation`), выбор версии — `library/VersionPicker.kt` (нижний лист, `versionTarget`).
-- Поиск (`library/SearchScreen.kt`) на общем коде `shared/core/search`: `SearchHit`, `ReleaseParser`, `SearchFilterCriteria`
+- Поиск (`library/SearchScreen.kt`) на общем коде `android/core/.../core/search`: `SearchHit`, `ReleaseParser`, `SearchFilterCriteria`
   (пресеты, качество, сортировка, «Только с сидами», «Только RU-трекеры»), выдача по 25 с «Показать ещё»; результаты
   фильтруются через `remember`. Прямого поиска RuTracker (ПК) нет.
 - ICU не знает инлайн-флаг `(?iU)` и флаг `UNICODE_CHARACTER_CLASS`: регулярки поиска создаёт `ReleaseParser.uRegex`

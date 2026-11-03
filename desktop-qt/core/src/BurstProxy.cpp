@@ -24,7 +24,7 @@
 #include <map>
 #include <thread>
 
-// Перенос shared/.../core/BurstProxy.kt. Поведение и числа те же; комментарии о причинах решений — там и в docs/HISTORY.md.
+// Перенос android/core/.../core/BurstProxy.kt. Поведение и числа те же; комментарии о причинах решений — там и в docs/HISTORY.md.
 namespace suslik::core {
 
 // ---- Cancel ----

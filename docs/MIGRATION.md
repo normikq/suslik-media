@@ -47,9 +47,9 @@
 | Android `net/Api.kt` | `BASE = "https://$HOST"`, cookie/токен/бета-код — по `host == HOST` | `BASE` из `SiteAddress.normalize`, «свой сервер» — `SiteAddress.isOwn` (домен **и** путь) |
 | Android `MainActivity.kt:341` | плейлист только с `host == siteHost` | `SiteAddress.isOwn(плейлист, BASE)` |
 | Android cookie WebView | хранятся по адресу: смена домена = выход для входа по паролю, новый `sdev` | `Api.moveCookies()` переносит cookie со старого адреса один раз |
-| ПК `build.gradle.kts`, `Api.kt` | `-Dsuslik.host` — только домен | `-Dsuslik.site` — домен и путь (`-Dsuslik.host` — запасной) |
-| ПК `MpvInstall.kt` | `Api.BASE + /media/mpv/libmpv-2.dll` | без изменений, но теперь `BASE` с путём |
-| Установщик `setup/Mpv.cs`, `SuslikSetup.csproj` | `-p:SiteHost=домен` | `-p:SiteUrl=https://домен/путь` (`SiteHost` — запасной) |
+| ПК (`desktop-qt/`) | — | `SITE_URL` из окружения или `-DSM_SITE_URL` при сборке — домен и путь (`SM_SITE_URL`), разбор — `core/…/SiteAddress` |
+| ПК `MpvInstall` | адрес сервера + `/media/mpv/libmpv-2.dll` | без изменений, адрес уже с путём |
+| Установщик `desktop-qt/installer/setup/Mpv.cs`, `SuslikSetup.csproj` | `-p:SiteHost=домен` | `-p:SiteUrl=https://домен/путь` (`SiteHost` — запасной) |
 | Tizen `build.sh`, `build.ps1`, `js/api.js` | `SM.SITE_HOST` | `SM.SITE_URL` (+ `SITE_HOST` для старого `site.js`) |
 | Tizen `config.xml` | `<access origin="*">` | ✅ домен не прописан |
 | Общий модуль | `DeviceAuth.isOwnServer` | через новый `core/SiteAddress.kt` (+ `SiteAddressTest`) |
@@ -59,19 +59,19 @@
 
 | Workflow | Что | Под путём |
 |---|---|---|
-| `android.yml`, `desktop.yml` | `SITE_URL` в сборку; выкладка `"$SITE_URL/api/app/upload"`, changelog | ✅ (секрет без `/` в конце) |
-| `desktop.yml` (установщик) | раньше вырезал домен в `SiteHost` | ✅ теперь `-p:SiteUrl="${SITE_URL%/}"` |
+| `android.yml`, `desktop-qt.yml` | `SITE_URL` в сборку; выкладка `"$SITE_URL/api/app/upload"`, changelog | ✅ (секрет без `/` в конце) |
+| `desktop-qt.yml` (установщик) | адрес целиком | ✅ `-p:SiteUrl="${SITE_URL%/}"` |
 | `changelog.yml` (сам на пуш в `main`), `promote.yml`, `update-status.yml`, `reports.yml` | `"$SITE_URL/api/app/…"` | ✅ |
 
 ## 2. Что сделано в клиентах (компилируется, на устройствах не проверено)
 
-- `shared/.../core/SiteAddress.kt`: `normalize` (схема по умолчанию `https://`, без `/` в конце, `http://` только для
+- `android/core/.../core/SiteAddress.kt`: `normalize` (схема по умолчанию `https://`, без `/` в конце, `http://` только для
   `localhost`), `host`, `path`, `isOwn` (тот же домен и внутри пути: `…/suslik-evil` и `…/other` — чужие).
   `DeviceAuth.isOwnServer` теперь через него. Тест `SiteAddressTest`.
 - Android: `BuildConfig.SITE_URL`; `Api.BASE/HOST/SITE` из него; cookie, токен устройства и бета-код — только на
   `SiteAddress.isOwn`; при первом запуске с новым адресом cookie WebView (`movieportal.sid`, `sdev`) копируются со старого
   (`auth` → `site_base`), если на новом их ещё нет.
-- ПК: `-Dsuslik.site`; `Api.BASE` из него (запасной `-Dsuslik.host`). Cookie и токен на ПК от адреса не зависят.
+- ПК: адрес вшивается при сборке (`SM_SITE_URL` из `SITE_URL`), при запуске его можно подменить `SUSLIK_SITE`. Cookie и токен на ПК отправляются только на свой сервер (`SiteAddress`).
 - Установщик: метаданные `SiteUrl`; `Mpv.Url` = `SiteUrl` + путь из `libmpv.properties` (запасной `SiteHost`).
 - Tizen: `site.js` получает `SITE_URL` и `SITE_HOST`; `api.js` берёт `SITE_URL`, старый `site.js` тоже понимает.
   Вход на ТВ — токен в `localStorage` приложения, от адреса не зависит.
@@ -183,9 +183,9 @@ server {
 **Переключение сборок**
 
 8. Секрет `SITE_URL` (GitHub → Settings → Secrets) = `https://new.example/suslik`. Локально — `suslik.siteUrl` в
-   `~/.gradle/gradle.properties`. С этого момента пуш в `main` публикует changelog уже на новый адрес — сервер тот же,
+   `~/.gradle/gradle.properties` (Android) и `SITE_URL` / `-DSM_SITE_URL` (ПК). С этого момента пуш в `main` публикует changelog уже на новый адрес — сервер тот же,
    разницы нет.
-9. Бета Android и ПК (`android.yml`, `desktop.yml` с `channel=beta`), `update-status.yml`. Владелец ставит бету: вход по
+9. Бета Android и ПК (`android.yml`, `desktop-qt.yml` с `channel=beta`), `update-status.yml`. Владелец ставит бету: вход по
    паролю должен сохраниться (перенос cookie), вход через Discord — сохраниться (токен устройства), libmpv на ПК —
    скачаться с нового адреса. Tizen — собрать с новым `SITE_URL` и поставить на ТВ вручную (самообновления нет).
 10. «Выпускай всем» → `promote.yml`. Старые приложения спрашивают обновление у **старого** домена (тот же Node) и

@@ -163,13 +163,13 @@ Write-Host "`n=== [2/4] Checking device connection ===" -ForegroundColor Cyan
 $deviceId = Select-AdbDevice -AdbPath $adb -PreferredDeviceId $DeviceId
 
 Write-Host "`n=== [3/4] Building Suslik Debug APK (assembleDiag) ===" -ForegroundColor Cyan
-$gradlew = Join-Path $projectRoot "desktop\gradlew.bat"
+$gradlew = Join-Path $projectRoot "android\gradlew.bat"
 if (-not (Test-Path $gradlew)) {
     Write-Host "ERROR: gradlew.bat not found at $gradlew" -ForegroundColor Red
     exit 1
 }
 
-& $gradlew -p android assembleDiag
+& $gradlew -p (Join-Path $projectRoot "android") assembleDiag
 $buildExit = $LASTEXITCODE
 if ($buildExit -ne 0) {
     Write-Host "ERROR: Build assembleDiag failed (exit code $buildExit)!" -ForegroundColor Red

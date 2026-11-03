@@ -1,4 +1,4 @@
-// Перенос shared/.../core/search: ReleaseModels.kt, ReleaseParser.kt, SearchHit.kt, SearchFilter.kt.
+// Перенос android/core/.../core/search: ReleaseModels.kt, ReleaseParser.kt, SearchHit.kt, SearchFilter.kt.
 #include "suslik/core/Search.h"
 
 #include "JsonOpt.h"

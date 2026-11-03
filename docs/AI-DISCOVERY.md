@@ -44,4 +44,4 @@
 - Интерфейс: переключатель «По названию / По настроению» в `qml/SearchView.qml`, быстрые настроения, карточки
   `qml/AiDiscoveryCard.qml`, «Что посмотреть?» в шапке медиатеки и в пустых «Моих фильмах». Вместо эмодзи — белые значки
   `IconProvider` (`sparkle`, `star`, `cup`, `spiral`, `smile`, `planet`, `dice`).
-- Строки — `discover.*` в `desktop/src/main/resources/strings/ru.json`. Проверка без мыши: `SM_OPEN=discover[:запрос]`.
+- Строки — `discover.*` в `desktop-qt/resources/strings/ru.json`. Проверка без мыши: `SM_OPEN=discover[:запрос]`.

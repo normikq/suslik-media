@@ -4,7 +4,7 @@
 
 Нативное приложение (Kotlin, Jetpack Compose) для телефонов и Android TV: медиатека, «Мои», «Вместе» (совместный просмотр),
 поиск раздач, добавление magnet/.torrent, настройки. Плеер — libVLC 3.6 или Media3 (выбор — `player/EngineChoice`), оба
-читают фильм через общий запас `BurstProxy` (`shared/`). Пакет `ru.suslikovanora.media`; отладочная сборка «Suslik Debug» —
+читают фильм через запас `BurstProxy` из ядра `core/`. Пакет `ru.suslikovanora.media`; отладочная сборка «Suslik Debug» —
 `ru.suslikovanora.media.diag` ([DEBUG-BUILD.md](DEBUG-BUILD.md)).
 
 ## Адрес сервера
@@ -17,10 +17,18 @@
 ## Сборка
 
 - CI: workflow `android.yml` (только вручную), с `publish=true` и `channel=beta` — на сайт в бета-канал.
-- Локально на ПК владельца: в `android/` нет `gradlew` — Gradle 8.10.2 из `~/.gradle/wrapper/dists`, JDK 21 (байткод JVM 17),
-  Android SDK 35 (`minSdk` 24). `gradle :app:assembleRelease` или `:app:assembleDiag`; установка отладочной — `install-android-debug.ps1`.
+- Локально: `android/gradlew` (Gradle 8.10.2, как в CI), JDK 21 (байткод JVM 17), Android SDK 35 (`minSdk` 24).
+  `./gradlew :app:assembleRelease` или `:app:assembleDiag` из `android/`; установка отладочной на телефон — `install-android-debug.bat` в корне.
+- Тесты ядра: `./gradlew -p core test` (в CI — `android-core.yml` на пуш в `android/core/`).
 - Release подписывается ключом из секретов (`ANDROID_KEYSTORE_B64` и др.); без ключа собирается только debug-APK.
   Локальная diag-сборка подписана другим ключом, чем CI: поверх неё ставится только после удаления.
+
+## Ядро `core/`
+
+`android/core/` — отдельная сборка Gradle (`includeBuild("core")` в `settings.gradle.kts`, зависимость `ru.suslikovanora.media:core`)
+на чистом Kotlin без Android API: запас `BurstProxy`, сторож `PlaybackSupervisor`, Blu-ray (`TsClock`/`TsPlayback`), модель медиатеки,
+вход, синхронизация, комнаты, поиск, заставки, адрес сервера. Пакеты — `ru.suslikovanora.media.core.*`. До 03.11 это был общий модуль
+`shared/` в корне. У ПК свой C++-перенос (`desktop-qt/core/`), у ТВ и сайта — JS-переносы: правило, изменённое здесь, меняйте и там.
 
 ## Версии
 

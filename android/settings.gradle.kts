@@ -3,5 +3,5 @@ dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_P
 rootProject.name = "SuslikMedia"
 include(":app")
 
-// Code shared with the other app (models, changelog, reserve, playback supervisor).
-includeBuild("../shared")
+// App core without Android APIs (reserve BurstProxy, models, changelog, playback supervisor…), tested on the JVM.
+includeBuild("core")

@@ -1,6 +1,6 @@
 /*
  * Совместный просмотр без сети: комната, разбор ответов и потока сервера, часы, движок синхронизации плеера.
- * Перенос shared/.../core/party (PartyModels.kt, PartyProtocol.kt, PartySyncEngine.kt) один в один;
+ * Перенос android/core/.../core/party (PartyModels.kt, PartyProtocol.kt, PartySyncEngine.kt) один в один;
  * тесты — test/party.test.js. Сеть и экран — в party.js. Только ES2017 (Tizen 4.0).
  *
  * Отличие ТВ: AVPlay не меняет скорость плавно, поэтому малый дрейф (0,3–2 с) не выравнивается — только перемотка.

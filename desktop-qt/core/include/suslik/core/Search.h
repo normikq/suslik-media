@@ -6,7 +6,7 @@
 #include <QStringList>
 #include <optional>
 
-/// Поиск раздач: разбор названий с трекеров, выдача сервера и фильтры. Перенос shared/.../core/search
+/// Поиск раздач: разбор названий с трекеров, выдача сервера и фильтры. Перенос android/core/.../core/search
 /// (ReleaseModels.kt, ReleaseParser.kt, SearchHit.kt, SearchFilter.kt) — те же правила и те же тесты.
 namespace suslik::core {
 

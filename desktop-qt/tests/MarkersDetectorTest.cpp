@@ -1,4 +1,4 @@
-// Перенос shared/src/test/.../MarkersDetectorTest.kt.
+// Перенос android/core/src/test/.../MarkersDetectorTest.kt.
 #include "suslik/core/MarkersDetector.h"
 #include "TestUtil.h"
 

@@ -5,7 +5,7 @@ name: Changelog to the site
 on:
   push:
     branches: [main]
-    paths: ["desktop/src/main/resources/changelog.json", "android/app/src/main/assets/changelog.json"]
+    paths: ["desktop-qt/resources/changelog.json", "android/app/src/main/assets/changelog.json"]
   workflow_dispatch:
 
 jobs:
@@ -17,7 +17,7 @@ jobs:
         env: { UPDATE_TOKEN: "${{ secrets.UPDATE_TOKEN }}", SITE_URL: "${{ secrets.SITE_URL }}" }
         run: |
           if [ -z "$UPDATE_TOKEN" ] || [ -z "$SITE_URL" ]; then echo "::warning::UPDATE_TOKEN / SITE_URL не заданы"; exit 0; fi
-          for p in desktop:desktop/src/main/resources/changelog.json android:android/app/src/main/assets/changelog.json; do
+          for p in desktop:desktop-qt/resources/changelog.json android:android/app/src/main/assets/changelog.json; do
             plat="${p%%:*}"; file="${p#*:}"
             python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$file" || { echo "::error file=$file::Некорректный JSON"; exit 1; }
             curl -fsS -H "X-Update-Token: $UPDATE_TOKEN" -H "Content-Type: application/json" \

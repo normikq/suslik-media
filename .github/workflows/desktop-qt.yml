@@ -1,11 +1,10 @@
 name: Desktop Qt
 
-# Новая ПК-версия на C++/Qt (desktop-qt/, план — docs/QT-PORT.md).
-# На пуш с изменениями в desktop-qt/ — только тесты ядра на Linux (Qt из apt, пара минут).
-# Сборка для Windows (MSVC + Qt 6.8) — только вручную, как android.yml и desktop.yml.
-# С 3.0.0 Qt-версия заменяет Kotlin-версию (desktop.yml): publish выкладывает на сайт только установщик
-# «Suslik Media Setup-<V>.exe» на ту же платформу desktop — старая версия получает его как обычное обновление,
-# а установщик удаляет её (installer/setup/Work.cs). MSI, архив программы и отладочная сборка на сайт не идут.
+# ПК-версия на C++/Qt (desktop-qt/). На пуш с изменениями в desktop-qt/ — только тесты ядра на Linux (Qt из apt, пара минут).
+# Сборка для Windows (MSVC + Qt 6.8) — только вручную, как android.yml. publish выкладывает на сайт только установщик
+# «Suslik Media Setup-<V>.exe» на платформу desktop (старая Kotlin-версия 2.x получает его как обычное обновление,
+# а установщик удаляет её: installer/setup/Work.cs). MSI, архив программы и отладочная сборка на сайт не идут.
+
 on:
   push:
     paths: ["desktop-qt/**", ".github/workflows/desktop-qt.yml"]
@@ -132,7 +131,7 @@ jobs:
         run: |
           mkdir -p msi
           desktop-qt/installer/build-msi.sh dist "$V" "msi/Suslik Media Qt-$V.msi"
-      # Файл для людей — «Suslik Media Setup-<V>.exe», то же имя, что у Kotlin-версии: тот же мастер (desktop/setup), с MSI внутри.
+      # Файл для людей — «Suslik Media Setup-<V>.exe», то же имя, что было у Kotlin-версии, с MSI внутри.
       # Им же обновляется программа (запускает его с /update), и им же Kotlin-версия переходит на эту. Видеодвижок libmpv он качает
       # с нашего сервера (libmpv.properties).
       - name: Установщик
@@ -150,12 +149,12 @@ jobs:
           echo "SETUP=setup/Suslik Media Setup-$V.exe" >> "$GITHUB_ENV"
           rm -rf desktop-qt/installer/setup/obj desktop-qt/installer/setup/bin
           ls -la setup
-      # видеодвижок: та же сборка libmpv, что раздаёт сервер (desktop/.../libmpv.properties), проверка по SHA-256.
+      # видеодвижок: та же сборка libmpv, что раздаёт сервер (desktop-qt/resources/libmpv.properties), проверка по SHA-256.
       # В установщике её не будет (качает MpvInstall), здесь — чтобы архив сборки сразу играл видео.
       - name: libmpv
         shell: bash
         run: |
-          P=desktop/src/main/resources/libmpv.properties
+          P=desktop-qt/resources/libmpv.properties
           V=$(sed -n 's/^version=//p' $P); SHA=$(sed -n 's/^dllSha256=//p' $P)
           A=$(sed -n 's/.*(\(mpv-dev-x86_64-[^)]*\.7z\)).*/\1/p' $P)
           curl -fsSL --retry 3 -o "$RUNNER_TEMP/mpv.7z" "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/$V/$A"
@@ -230,7 +229,7 @@ jobs:
             tail -n 150 out.txt; tail -n 60 err.txt
             echo "::endgroup::"
           done
-      # На сайт — только установщик exe и «Что нового» (desktop/src/main/resources/changelog.json, его же показывает программа).
+      # На сайт — только установщик exe и «Что нового» (desktop-qt/resources/changelog.json, его же показывает программа).
       # Идёт последним: если не прошли сборка, проверка запуска или тесты, ничего не выкладывается.
       - name: Выложить на сайт
         if: inputs.publish
@@ -244,7 +243,7 @@ jobs:
           [ -n "$URL" ] || { echo "::error::Нет секрета SITE_URL"; exit 1; }
           [ -n "$UPDATE_TOKEN" ] || { echo "::error::Нет секрета UPDATE_TOKEN"; exit 1; }
           [ -s "$SETUP" ] || { echo "::error::Нет установщика: $SETUP"; exit 1; }
-          # Сервер без бета-канала отдал бы сборку всем, не обращая внимания на X-Channel: тогда отказываемся (как в desktop.yml)
+          # Сервер без бета-канала отдал бы сборку всем, не обращая внимания на X-Channel: тогда отказываемся
           if [ "$CHANNEL" = "beta" ]; then
             code=$(curl -s -o /dev/null -w "%{http_code}" -H "X-Update-Token: $UPDATE_TOKEN" "$URL/api/app/reports?limit=1")
             if [ "$code" != "200" ]; then echo "::error::Сервер ещё без бета-канала — публикация отменена"; exit 1; fi
@@ -252,5 +251,5 @@ jobs:
           curl -fsS -H "X-Update-Token: $UPDATE_TOKEN" -H "X-File-Name: $(basename "$SETUP")" -H "X-Channel: $CHANNEL" \
                -H "Content-Type: application/octet-stream" --data-binary @"$SETUP" "$URL/api/app/upload"
           curl -fsS -H "X-Update-Token: $UPDATE_TOKEN" -H "Content-Type: application/json" \
-               --data-binary @desktop/src/main/resources/changelog.json "$URL/api/app/changelog?platform=desktop"
+               --data-binary @desktop-qt/resources/changelog.json "$URL/api/app/changelog?platform=desktop"
           echo "::notice::Выложен $(basename "$SETUP") ($CHANNEL)"

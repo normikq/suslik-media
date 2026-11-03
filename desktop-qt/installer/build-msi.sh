@@ -5,7 +5,7 @@
 set -euo pipefail
 SRC=$1; VER=$2; OUT=$3; DIAG=${4:-}
 HERE=$(cd "$(dirname "$0")" && pwd)
-ICON="$HERE/../../desktop/icon.ico"
+ICON="$HERE/../resources/icon.ico"
 if [ -n "$DIAG" ]; then
   PRODUCT="Suslik Debug Qt"; UPGRADE="{F79D44DC-CEC2-4619-824F-32180E6B7698}"; FOLDER="Suslik Debug Qt"
 else
