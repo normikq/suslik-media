@@ -169,9 +169,9 @@
 - Фильм удалён из библиотеки (`cleanup.forget`) — удаляются его записи из `audio-tracks.json`.
   Удалена раздача с озвучкой — пропадают дорожки, которые брали файлы из неё.
 
-## 6. Общий модуль (`shared/`, 23.10)
+## 6. Ядро (`android/core/`, 23.10; на ПК — перенос `desktop-qt/core/…/CustomAudio`)
 
-`shared/src/main/kotlin/ru/suslikovanora/media/core/audio/CustomAudio.kt` — то, что одинаково на ПК и Android (сети нет:
+`android/core/src/main/kotlin/ru/suslikovanora/media/core/audio/CustomAudio.kt` — то, что одинаково на ПК и Android (сети нет:
 приложения сами делают запросы и отдают ответ сюда):
 
 - `CustomTrack` — дорожка фильма; `menuName` — название в меню, «HDRezka [rus]» (без названия — имя файла, `lang: "und"` — без языка).
@@ -181,7 +181,7 @@
   `byMenuName` (дорожка по названию в меню плеера), `infoJson` — `{"<подписанная ссылка>": {"title", "offsetMs"}}` для плеера Android.
 - `CustomAudioIndex` — название и задержка по ссылке: ключ `MirrorLink.fileKey` (новая подпись — тот же файл) и адрес через `BurstProxy` (`noteWrapped`).
 
-Тест: `shared/src/test/.../CustomAudioTest.kt`. В приложениях остаются сеть, кеш, тексты ошибок, интерфейс и применение задержки к движку.
+Тест: `android/core/src/test/.../CustomAudioTest.kt`. В приложениях остаются сеть, кеш, тексты ошибок, интерфейс и применение задержки к движку.
 
 ## 6а. Android-клиент (23.10, поверх 2.5.1)
 
@@ -215,13 +215,14 @@
 - Проверено 23.10 на SM-S936B (Suslik Debug) только с `.aac` — вариант с `.mka` на устройстве ещё не проверен
   (особенно отрицательный сдвиг в VLC: с `.aac` VLC не мог перемотать файл и звука не было).
 
-## 7. Клиент ПК (`desktop/`)
+## 7. Клиент ПК (`desktop-qt/`)
 
-Код: `CustomAudio.kt` (запросы, кеш дорожек, удаление не привязанных раздач, тексты ошибок; разбор и модели — из `shared/`, раздел 6), `AudioAttachView.kt` (экран), плеер — `player/PlayerView.kt`,
-`player/MpvEngine.kt`, меню — `player/PlayerOverlays.kt`. Строки — `resources/strings/ru.json` (`audio.*`, `player.*ozvuchk*`).
+Код: разбор и модели — `core/…/CustomAudio` (C++-перенос раздела 6), экран «Добавить» → «Озвучка» — `app/src/AudioAttach.cpp` и `qml/AddView.qml`,
+плеер — `app/src/player/PlayerModel.cpp`, `MpvEngine.cpp`, меню — `qml/PlayerView.qml`. Строки — `desktop-qt/resources/strings/ru.json` (`audio.*`, `player.*ozvuchk*`).
+(До 3.0.0 то же делала Kotlin-версия: `CustomAudio.kt`, `AudioAttachView.kt`; описание ниже — поведение, оно перенесено без изменений.)
 
 **Только `.mka`.** Сервер принимает и отдаёт озвучки только в `.mka` (раздел 2): у контейнера есть индекс, mpv перематывает его точно,
-задержку делает `audio-delay`. ПК проверяет это и сам (`CustomAudio.isSupported` в `shared/`): дорожка из `GET` не с `.mka` (старая запись) пропускается,
+задержку делает `audio-delay`. ПК проверяет это и сам (`CustomAudio.isSupported` в ядре): дорожка из `GET` не с `.mka` (старая запись) пропускается,
 раздача, где есть что-то кроме `.mka`, сервером отклоняется ещё на проверке (`FORBIDDEN_FILES`) и в AllDebrid не остаётся.
 
 ### 7.1. «Добавить» → «Озвучка»

@@ -1,4 +1,4 @@
-// Перенос ReleaseParserTest.kt и SearchFilterTest.kt (shared/src/test/.../search).
+// Перенос ReleaseParserTest.kt и SearchFilterTest.kt (android/core/src/test/.../search).
 #include "suslik/core/Search.h"
 
 #include <QTest>

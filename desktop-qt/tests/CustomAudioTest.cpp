@@ -1,4 +1,4 @@
-// Перенос shared/src/test/.../CustomAudioTest.kt и проверка LibraryKeep.
+// Перенос android/core/src/test/.../CustomAudioTest.kt и проверка LibraryKeep.
 #include "suslik/core/CustomAudio.h"
 #include "suslik/core/LibraryKeep.h"
 #include "TestUtil.h"

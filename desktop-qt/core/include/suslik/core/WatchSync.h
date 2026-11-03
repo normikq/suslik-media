@@ -8,7 +8,7 @@
 #include <unordered_map>
 
 /// Синхронизация просмотра по аккаунту Discord: прогресс файлов и выбранные озвучка/субтитры (сервер services/sync.js,
-/// /api/sync). Без сети: приложение шлёт request() и отдаёт ответ в onResponse(). Перенос shared/.../sync/WatchSync.kt.
+/// /api/sync). Без сети: приложение шлёт request() и отдаёт ответ в onResponse(). Перенос android/core/.../sync/WatchSync.kt.
 namespace suslik::core {
 
 /// Прогресс файла: ключ "magnetId|path" (watchKey).

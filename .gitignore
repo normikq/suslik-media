@@ -18,12 +18,9 @@ dist/
 *.zip
 android/ffmpeg/work/
 
-# libmpv-2.dll скачивается при сборке (см. desktop/build.gradle.kts), в git не хранится
-desktop/resources/
-
-# Установщик (desktop/setup): промежуточные файлы dotnet
-desktop/setup/obj/
-desktop/setup/bin/
+# Установщик ПК (desktop-qt/installer/setup): промежуточные файлы dotnet
+desktop-qt/installer/setup/obj/
+desktop-qt/installer/setup/bin/
 tizen/js/site.js
 
 # служебная папка выкладки сайта (scripts/deploy-website.sh), если DEPLOY_PATH указывает сюда

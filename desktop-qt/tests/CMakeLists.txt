@@ -1,4 +1,4 @@
-# Тесты ядра (Qt Test) — те же случаи, что в shared/src/test. Запуск: ctest --output-on-failure
+# Тесты ядра (Qt Test) — те же случаи, что в android/core/src/test. Запуск: ctest --output-on-failure
 find_package(Qt6 REQUIRED COMPONENTS Test)
 
 function(sm_test name)

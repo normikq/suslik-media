@@ -1,6 +1,6 @@
 # Заставки, титры и умные субтитры
 
-Общая логика — `shared/.../core/MarkersDetector.kt` (тесты `MarkersDetectorTest`), модели `MediaMarkers` / `TimeRange` — в `Model.kt`.
+Общая логика — `android/core/.../core/MarkersDetector.kt` (тесты `MarkersDetectorTest`), модели `MediaMarkers` / `TimeRange` — в `Model.kt`.
 
 ## Откуда берутся метки
 

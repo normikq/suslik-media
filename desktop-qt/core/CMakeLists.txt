@@ -1,4 +1,4 @@
-# Ядро без интерфейса: перенос shared/ и сетевой части desktop/ с Kotlin. Только Qt Core и Qt Network — его гоняют тесты на Linux.
+# Ядро без интерфейса: перенос android/core/ (бывший shared/) и сетевой части Kotlin-версии ПК. Только Qt Core и Qt Network — его гоняют тесты на Linux.
 add_library(suslik_core STATIC
   src/SiteAddress.cpp
   src/MirrorLink.cpp

@@ -1,7 +1,7 @@
 # Suslik Media: как устроен проект
 
 Подробная карта проекта: что из чего состоит, как фильм доходит до экрана, где какой код и куда смотреть, если
-хочется что-то поменять. Состояние на 30.10.2026: Android 2.7.0, Windows 2.7.0, Samsung TV 0.2.12 (в коде; последние сборки — 2.6.9).
+хочется что-то поменять. Состояние на 03.11.2026: в коде Android 2.7.2 (код 75), Windows 3.1.1 (C++/Qt), Samsung TV 0.2.12.
 
 ---
 
@@ -23,8 +23,8 @@ Suslik Media — частная медиатека поверх **AllDebrid**. A
         ┌──────────────┼───────────────────┬──────────────────────────┐
         ▼              ▼                   ▼                          ▼
    Сайт (браузер)   Android-приложение   Windows-приложение   Samsung TV        GitHub Actions
-   public/index.html  android/            desktop/             tizen/            (сборки, выпуск)
-                        └── общий код shared/ ──┘
+   public/index.html  android/            desktop-qt/          tizen/            (сборки, выпуск)
+                      (ядро android/core/)  (ядро desktop-qt/core/)
 ```
 
 Части:
@@ -33,21 +33,23 @@ Suslik Media — частная медиатека поверх **AllDebrid**. A
 |---|---|---|
 | `website/` | Node.js + Express, один HTML с JS | сервер: вход, медиатека, поиск торрентов, ссылки и зеркало видео, раздача обновлений приложений; плюс сам сайт |
 | `android/` | Kotlin, Jetpack Compose, libVLC 3.6 и Media3 | приложение для телефона и ТВ-приставок (Android TV) |
-| `desktop/` | Kotlin, Compose Desktop, mpv (`libmpv-2.dll`) | приложение для Windows |
-| `tizen/` | HTML/JS (Tizen Web API, AVPlay) | приложение для Samsung Smart TV (Tizen 4.0+) |
-| `shared/` | чистый Kotlin (без Android и без окон) | общий код Android и ПК: запас фильма, сторож воспроизведения, Blu-ray, модель медиатеки, поиск, комнаты, вход, синхронизация, заставки, адрес сервера |
+| `android/core/` | чистый Kotlin (без Android API) | ядро Android: запас фильма, сторож воспроизведения, Blu-ray, модель медиатеки, поиск, комнаты, вход, синхронизация, заставки, адрес сервера; тесты на JVM |
+| `desktop-qt/` | C++20, Qt 6 (QML), libmpv (`libmpv-2.dll`) | приложение для Windows; ядро `desktop-qt/core/` — перенос `android/core/` на C++ с теми же тестами |
+| `tizen/` | HTML/JS (Tizen Web API, AVPlay) | приложение для Samsung Smart TV (Tizen 4.0+); правила медиатеки, поиска и комнат — JS-перенос того же ядра |
+
+Ядро продублировано на трёх языках (Kotlin — Android, C++ — ПК, JS — ТВ и сайт): правила общие, паритет держат одинаковые тесты.
 
 ---
 
 ## 2. Путь одного фильма: от нажатия до картинки
 
 1. **Медиатека.** Приложение спрашивает сервер `GET /api/library`. Сервер берёт список «магнетов» (раздач) у AllDebrid,
-   кеширует его и отдаёт в упрощённом виде. В `shared/Model.kt` этот ответ разбирается: раздача → файлы → фильм или
+   кеширует его и отдаёт в упрощённом виде. В `Model` ядра (Android — `android/core/.../Model.kt`, ПК — `desktop-qt/core/src/Model.cpp`) этот ответ разбирается: раздача → файлы → фильм или
    сериал по сезонам, субтитры и внешние озвучки рядом с видео.
 2. **Ссылка.** При выборе фильма приложение просит у сервера `GET /api/file/mirror-url?link=…`. Сервер возвращает
    **подписанную ссылку зеркала**:
    `https://ваш-сайт[/путь]/api/file/proxy/<имя>?link=<ссылка AllDebrid>&exp=<срок>&sig=<подпись>`
-   (адрес сервера с путём приложения берут из сборки — секрет `SITE_URL`, `shared/.../SiteAddress.kt`).
+   (адрес сервера с путём приложения берут из сборки — секрет `SITE_URL`, `SiteAddress` в ядре).
    Подпись — HMAC с секретом сервера: без неё зеркало не отдаст файл, и ссылка работает ограниченное время.
    Прямую ссылку AllDebrid приложения не спрашивают и не показывают (аудит безопасности 25.10): она есть только у сервера.
 3. **Зеркало на сервере.** Запрос на `/api/file/proxy` приходит в Node: он проверяет подпись и узнаёт у AllDebrid
@@ -76,17 +78,24 @@ suslik-media/
 │   ├── ARCHITECTURE.md  общая архитектура проекта (этот файл)
 │   ├── WEBSITE.md       сервер и веб-интерфейс
 │   ├── ANDROID.md       приложение Android
-│   ├── DESKTOP.md       приложение Windows
+│   ├── DESKTOP.md       приложение Windows (C++/Qt)
+│   ├── DEPLOY.md        выкладка сервера
 │   ├── HISTORY.md       журнал версий и причины решений
-│   ├── DISCORD.md, DISCORD-CHANGES.md  вход через Discord и совместный просмотр
-│   ├── AI-TITLE.md, MARKERS.md, CUSTOM-AUDIO-API.md  отдельные подсистемы
+│   ├── DISCORD.md, DISCORD-ACTIVITY.md  вход через Discord, совместный просмотр, Discord Activity
+│   ├── AI-TITLE.md, AI-DISCOVERY.md, MARKERS.md, CUSTOM-AUDIO-API.md  отдельные подсистемы
+│   ├── WEBSITE-DESIGN-AND-SESSIONS.md  дизайн сайта и «Сессии»
 │   ├── MIGRATION.md     переезд сервера на другой домен или путь
 │   └── TODO.md          отложенные задачи
 ├── website/             сервер + сайт
-├── shared/              общий код приложений (+ тесты)
 ├── android/             приложение Android
-├── desktop/             приложение Windows (+ setup/ — установщик на C#)
+│   ├── app/             приложение (Compose, libVLC, Media3)
+│   ├── core/            ядро без Android API (+ тесты на JVM)
+│   ├── ffmpeg/          сборка декодера ffmpeg для Media3
+│   └── gradlew          Gradle wrapper (8.10.2)
+├── desktop-qt/          приложение Windows (core/, app/, installer/, resources/, tests/)
 ├── tizen/               приложение Samsung TV
+├── scripts/             выкладка сайта по SSH
+├── install-android-debug.bat/.ps1  сборка и установка «Suslik Debug» на телефон по ADB
 └── .github/workflows/   сборки и выпуск в GitHub Actions
 ```
 
@@ -141,10 +150,14 @@ suslik-media/
 
 ---
 
-## 5. Общий модуль (`shared/`)
+## 5. Ядро Android (`android/core/`)
 
-Код, который одинаково нужен Android и Windows. В нём нет ничего про экран, поэтому он покрыт модульными тестами
-(`shared/src/test/...`, запускаются в CI на каждый пуш с изменениями в `shared/`):
+Логика без экрана и без Android API (бывший общий модуль `shared/`, до 03.11 его делили Android и Kotlin-версия ПК). Подключается к сборке
+Android как отдельная сборка Gradle (`includeBuild("core")` в `android/settings.gradle.kts`, зависимость `ru.suslikovanora.media:core`),
+пакеты — `ru.suslikovanora.media.core.*`. ПК держит C++-перенос того же кода в `desktop-qt/core/` с теми же тестами (Qt Test), ТВ и сайт —
+JS-переносы части правил (`tizen/js/model.js`, `searchcore.js`, `partycore.js`). Меняете правило здесь — поменяйте и переносы.
+
+Модульные тесты — `android/core/src/test/...`, в CI на каждый пуш с изменениями в `android/core/` (`android-core.yml`):
 - `ModelTest.kt` — парсинг ответа сервера, сериалы по папкам и именам, коллекции фильмов, очистка названий, внешние дорожки и субтитры, статусы и прогресс;
 - `BurstProxyTest.kt` — локальный прокси, кольцевые файлы, скачивание рывками, смены сети, hold-буферизация, тайм-ауты;
 - `TsClockTest.kt` — расчет длительности Blu-ray по меткам PCR, перемотка, сетка контрольных точек VBR;
@@ -229,45 +242,36 @@ suslik-media/
 
 ---
 
-## 7. Windows (`desktop/`)
+## 7. Windows (`desktop-qt/`)
 
-> 📖 **Подробная документация:** [docs/DESKTOP.md](DESKTOP.md)
+> 📖 **Подробная документация:** [docs/DESKTOP.md](DESKTOP.md), сборка — [desktop-qt/README.md](../desktop-qt/README.md)
 
-Движок — только **mpv** (`libmpv-2.dll`; VLC убран в 2.4.3). Библиотеку не кладут в установщик: её качает установщик или
-само приложение (`player/MpvInstall.kt`) с сервера и сверяет SHA-256 (`libmpv.properties`).
+C++20 и Qt 6 (QML), только Windows; с 3.0.0 заменяет Kotlin-версию на Compose Desktop (удалена 03.11). Движок — **mpv**
+(`libmpv-2.dll`): её не кладут в программу, её качает установщик или сама программа (`player/MpvInstall`) с сервера и сверяет SHA-256
+(`resources/libmpv.properties`).
 
-| Файл / модуль (`desktop/src/main/kotlin/ru/suslikovanora/media/desktop/`) | Что делает |
+| Папка / модуль (`desktop-qt/`) | Что делает |
 |---|---|
-| `Main.kt` | запуск: одно окно, боковая панель, вкладки, плеер поверх медиатеки, горячие клавиши |
-| `player/` | **плеер**: `PlayerView.kt` (экран и клавиши), `PlayerOverlays.kt`, `PlayerControls.kt`, `PlayerIcons.kt`, `PlayerMorePanel.kt`, `PlayerPlaylist.kt`, `PlayRequest.kt`; движок `PlayerEngine.kt` → `MpvEngine.kt` + `MpvLib.kt` (JNA) + `MpvVideo.kt` (вывод в сцене); `SideFiles.kt` — внешние озвучки и субтитры; `MediaControls.kt` — системные медиа-контролы Windows; `DisplayAwake.kt` — экран не гаснет во время фильма |
-| `ui/` | дизайн-система: `Theme.kt` (токены `Sm`, шрифты), `Controls.kt`, `DesktopIcons.kt`, `Motion.kt`, `Pagination.kt` |
-| `Library.kt`, `LibraryView.kt`, `PlayDialog.kt`, `VersionPicker.kt`, `Sidebar.kt` | медиатека: данные, экран, окно «Смотреть», выбор версии, боковая панель |
-| `SearchView.kt`, `AddView.kt`, `trackers/` | поиск раздач (сервер + прямой поиск RuTracker через браузер ПК), добавление |
-| `AiTitleDialog.kt`, `CustomAudio.kt`, `AudioAttachView.kt` | «Определить через ИИ», внешние озвучки |
-| `Api.kt` | запросы к серверу (java.net.http), адрес из `-Dsuslik.site`; cookie и токен устройства — только своему серверу (`SiteAddress.isOwn`) |
-| `party/` | **совместный просмотр**: `Party.kt` — комната (REST + SSE), `PartySync.kt` — плеер идёт за комнатой, `TogetherView.kt` — страница «Вместе» |
-| `discord/DiscordRpc.kt` | активность «Смотрит» в профиле Discord через локальный канал discord-ipc |
-| `CloudSync.kt` | прогресс и выбор дорожек по аккаунту Discord (`/api/sync`) |
-| `Reserve.kt` | подключает общий запас `BurstProxy` к этому приложению |
-| `Settings.kt`, `Storage.kt`, `Strings.kt` | настройки, хранение (`Store` с `fsync` и `.bak`), строки `tr()` |
-| `Updater.kt`, `WhatsNew.kt`, `Uninstaller.kt` | обновление через «Suslik Media Setup.exe /update», «Что нового», удаление |
-| `PlayerLog.kt`, `Diag.kt`, `CrashReports.kt` | журнал плеера, подробный журнал «Suslik Debug» (`-Pdiag`), отчёты о сбоях |
-| `SingleInstance.kt`, `AppExit.kt`, `ExitFlight.kt`, `TitleBar.kt`, `WindowMode.kt` | один экземпляр, чистый выход, цвет заголовка, полный экран без рамки и мини-плеер через Win32 |
+| `core/` | ядро без интерфейса (Qt Core/Network): `BurstProxy`, `PlaybackSupervisor`, `Model`, `Auth`, `WatchSync`/`CloudSync`, `Party`, `Search`, `Trackers`, `ApiClient`, `Store`, `Strings`… |
+| `app/main.cpp`, `app/qml/` | запуск; экраны на QML: `Main.qml` (окно, вкладки), `Theme.qml` (токены «жидкого стекла»), `LibraryView`, `PlayDialog`, `PlayerView`, `SearchView`, `TogetherView`, `SettingsSheet`… |
+| `app/src/` | модели для QML: `Library`, `LibraryPage`, `PlayModel`, `SearchModel`, `AddModel`, `AudioAttach`, `Settings`, `Updater`, `AppDir`, `ImageProvider`/`PosterCache`, `IconProvider`, `SingleInstance`, `TitleBar`, `UrlScheme` |
+| `app/src/player/` | **плеер**: `PlayerModel` (очередь, прогресс, дорожки, сторож), `MpvEngine` + `Mpv` + `MpvVideo` (вывод в сцене QML), `Reserve` (запас), `WindowMode` (полный экран, мини-плеер), `MediaControls`/`MediaSession` (медиа-кнопки Windows), `DisplayAwake`, `DiscordRpc`, `PlayerLog` |
+| `app/src/party/` | **«Вместе»**: `Party` (комната, REST + SSE), `PartySync` (плеер идёт за комнатой, `core::PartySyncEngine`) |
+| `app/src/trackers/` | RuTracker с ПК через фоновый браузер (`BrowserBridge`) и напрямую (`RuTrackerClient`), окно «Трекеры» |
+| `installer/` | MSI (WiX 3, `build-msi.sh`) и мастер установки/удаления на WPF (`setup/`) |
+| `resources/` | шрифты, значки, `strings/ru.json`, `changelog.json`, `libmpv.properties` |
+| `tests/` | тесты ядра (Qt Test, `ctest`) |
 
 ### Плеер Windows — главное
 
-- **Видео и панели в одной сцене.** mpv рисует кадры (`vo=libmpv`, render API) в OpenGL-контексте, которым Skiko рисует окно,
-  прямо в текстуру Skia; видео — слой Compose, панели — слои того же `Box`. Отдельных окон-оверлеев нет. Ловушки общего
-  GL-контекста (освобождать render context до закрытия окна, ждать кадр без видео при закрытии) — `docs/DESKTOP.md` §4.1.
-- **Полный экран и мини-плеер** — через Win32 (`WindowMode`), не через `WindowPlacement.Fullscreen` (`docs/DESKTOP.md` §7).
-- **Слабая сеть: «копим запас».** На сети чуть быстрее фильма прокси держит фильм, пока не накопится ~30 с (`BurstProxy.hold`,
-  правила — общий `CatchUp`, одинаково с Android).
-- **Сторож** (`PlaybackSupervisor`) получает статистику из `MpvEngine.supervisorStats()` и при зависании перезапускает вывод
-  видео без переоткрытия файла (`restartVideoOutput`).
-- **Заставки и титры** — `shared/.../MarkersDetector.kt` + `/api/markers` (`docs/MARKERS.md`); «Следующая/Предыдущая серия», очередь — весь сериал.
+- **Видео и панели в одной сцене.** mpv рисует кадры (render API, OpenGL) в FBO Qt Quick (`MpvVideo`), панели — слои QML поверх.
+- **Полный экран и мини-плеер** — `WindowMode` (окно без рамки на 1 px выше монитора, мини-плеер с пропорциями фильма).
+- **Слабая сеть: «копим запас»** — `BurstProxy.hold` и правила `CatchUp`, как на Android.
+- **Сторож** (`PlaybackSupervisor`) получает статистику от `MpvEngine` и при зависании перезапускает вывод видео без переоткрытия файла.
+- **Заставки и титры** — `MarkersDetector` + `/api/markers` (`docs/MARKERS.md`); «Следующая/Предыдущая серия», очередь — весь сериал.
 
-Сборка: `desktop/build.gradle.kts` (там `appVersion`), `./gradlew packageMsi`, отладочная — `./gradlew packageMsi -Pdiag`
-(подробно `desktop/DEBUG-BUILD.md`); установщик `desktop/setup` (C#). «Что нового»: `desktop/src/main/resources/changelog.json`.
+Сборка: `cmake -S desktop-qt -B build -G Ninja && cmake --build build`; версия — `project(SuslikMediaQt VERSION …)` в `desktop-qt/CMakeLists.txt`;
+отладочная — `-DSM_DIAG=ON`. «Что нового»: `desktop-qt/resources/changelog.json`.
 
 ---
 
@@ -275,22 +279,24 @@ suslik-media/
 
 | Workflow | Когда запускается | Что делает |
 |---|---|---|
-| `shared.yml` | пуш с изменениями в `shared/` | тесты общего модуля |
+| `android-core.yml` | пуш с изменениями в `android/core/` | тесты ядра Android |
 | `android.yml` | только вручную | собирает APK (отладочный — с `debug=true`); с `publish=true` выкладывает на сайт в канал `beta` или `stable` |
-| `desktop.yml` | только вручную | собирает MSI и установщик `Suslik Media Setup-<V>.exe`; выкладывает так же |
-| `setup-preview.yml` | пуш в `desktop/setup/` | проверочная сборка установщика |
+| `desktop-qt.yml` | пуш в `desktop-qt/` — тесты ядра на Linux; вручную — сборка для Windows | программа, MSI, установщик `Suslik Media Setup-<V>.exe` (отладочная — с `debug=true`); с `publish=true` выкладывает установщик на сайт (платформа `desktop`) |
+| `setup-preview.yml` | пуш в `desktop-qt/installer/setup/` | снимки окон установщика (PNG) |
 | `media3-ffmpeg.yml` | пуш в `android/ffmpeg/` (не `main`), или вручную | сборка AAR декодера ffmpeg для Media3 |
 | `promote.yml` | вручную | «выпустить всем»: версия из беты становится релизом |
 | `update-status.yml` | вручную | проверка: какие версии сайт видит в каналах |
 | `changelog.yml` | пуш в `main` с изменением `changelog.json` | сразу отправляет «Что нового» на сайт |
 | `website.yml` | пуш в `website/` | только проверка синтаксиса (на сервер ничего не ставит) |
+| `website-deploy.yml` | только вручную, по команде владельца | выкладка сайта на сервер по SSH (`docs/DEPLOY.md`) |
 | `reports.yml` | вручную | показывает последние отчёты о сбоях и журналы, которые прислали приложения |
 
 **Каналы.** Обычный путь — бета (видят только те, у кого введён код беты) → «выпускай всем» (`promote.yml`).
 Приложения сами спрашивают сервер `/api/app/update` и предлагают обновиться.
 
-**Версия** — три числа `2.x.y`: Android — `versionCode`/`versionName`, Windows — `appVersion`. При выпуске:
-поднять версию, добавить запись в оба `changelog.json` (новая сверху; Tizen — `tizen/js/changelog.js`), пуш, запустить сборку с публикацией.
+**Версия** — три числа: Android — `versionCode`/`versionName` в `android/app/build.gradle.kts`, Windows — `project(SuslikMediaQt VERSION …)`
+в `desktop-qt/CMakeLists.txt`, Tizen — `version` в `tizen/config.xml`. При выпуске: поднять версию, добавить запись в «Что нового»
+(`android/app/src/main/assets/changelog.json`, `desktop-qt/resources/changelog.json`, `tizen/js/changelog.js`; новая сверху), пуш, запустить сборку с публикацией.
 Адрес сервера сборки берут из секрета `SITE_URL` (домен и, если нужно, путь; переезд — `docs/MIGRATION.md`).
 
 ---
@@ -299,7 +305,7 @@ suslik-media/
 
 - **Отладочные сборки «Suslik Debug»** — отдельные приложения рядом с обычными, со своим входом и подробным журналом.
   - Android: журнал `Android/data/ru.suslikovanora.media.diag/files/diag/player.log`, метка 📍 в плеере.
-  - Windows: журнал `%APPDATA%\SuslikMediaDebug\player.log`, метка — F8 в плеере, архив журнала — в настройках.
+  - Windows: «Suslik Debug Qt» (`-DSM_DIAG=ON`), журнал `%APPDATA%\SuslikMediaQtDebug\player.log`, метка — F8 в плеере (`docs/DESKTOP.md` §9).
 - **Теги журнала:** `[vlc]` (Android) / `[mpv]` (ПК) и `[proxy]` (раз в 5 с: что показывает плеер и сколько запаса впереди), `[sys]` (батарея,
   процессор, сеть), `[http]` (каждый запрос), `[net]` (смена сети), `[mark]` (метка), `[ts]` (Blu-ray).
   Читать удобно от нужной метки назад.
@@ -311,9 +317,9 @@ suslik-media/
 
 | Задача | Где |
 |---|---|
-| размер запаса, как часто качать, поведение на плохой сети | `shared/.../BurstProxy.kt`, пресеты — `PlaybackPresets.kt` |
-| когда плеер сам что-то чинит (застывшая картинка, нет звука) | `shared/.../PlaybackSupervisor.kt` |
-| как раздача превращается в фильм/сериал, серии, субтитры | `shared/.../Model.kt` |
+| размер запаса, как часто качать, поведение на плохой сети | `android/core/.../BurstProxy.kt` и `desktop-qt/core/src/BurstProxy.cpp`, пресеты — `PlaybackPresets` |
+| когда плеер сам что-то чинит (застывшая картинка, нет звука) | `PlaybackSupervisor` в `android/core/` и `desktop-qt/core/` |
+| как раздача превращается в фильм/сериал, серии, субтитры | `Model` в `android/core/` и `desktop-qt/core/` (+ `tizen/js/model.js`, сайт) |
 | экран и кнопки плеера на телефоне | `android/.../PlayerActivity.kt`, панель над фильмом — `player/PlayerOverlay.kt` (иконки — `PlayerIcons.kt`), под фильмом — `PlayerPanel.kt`, показ/скрытие и блокировка — `player/PlayerControlsOverlay.kt` |
 | жесты в плеере на телефоне (перемотка, зум, яркость) | `android/.../player/PlayerGestures.kt` |
 | звук, кнопки гарнитуры и Bluetooth в плеере | `android/.../player/PlayerAudioSession.kt` |
@@ -322,18 +328,18 @@ suslik-media/
 | очередь серий и автопереход | `android/.../player/PlayerPlaylistQueue.kt` |
 | сохранение прогресса просмотра фильма/серии | `android/.../player/PlayerWatchProgress.kt` |
 | телеметрия, кодеки и fps дисплея на телефоне | `android/.../player/PlayerDiagnostics.kt` |
-| экран и клавиши плеера на ПК | `desktop/.../player/PlayerView.kt` |
-| лист «Смотреть» (зеркало/напрямую, продолжить) | Android `library/PlaySheet.kt`, ПК — `LibraryView.kt` |
-| медиатека на телефоне / ПК | `library/LibraryScreen.kt` + `LibraryStore.kt` / `LibraryView.kt` + `Library.kt` |
-| поиск торрентов (трекеры) | сервер: `website/search.js`, `search-ru.js`; экраны — `SearchScreen.kt` / `SearchView.kt` |
-| вход, сессии, пароль | `website/src/routes/auth.js`, `src/middleware/auth.js` + `LoginScreen.kt` / вход в `LibraryView.kt` |
+| экран и клавиши плеера на ПК | `desktop-qt/app/qml/PlayerView.qml`, логика — `app/src/player/PlayerModel.cpp` |
+| лист «Смотреть» (зеркало/напрямую, продолжить) | Android `library/PlaySheet.kt`, ПК — `qml/PlayDialog.qml` + `PlayModel` |
+| медиатека на телефоне / ПК | `library/LibraryScreen.kt` + `LibraryStore.kt` / `qml/LibraryView.qml` + `Library`, `LibraryPage` |
+| поиск торрентов (трекеры) | сервер: `website/search.js`, `search-ru.js`; экраны — `SearchScreen.kt` / `qml/SearchView.qml` + `SearchModel` |
+| вход, сессии, пароль | `website/src/routes/auth.js`, `src/middleware/auth.js` + `LoginScreen.kt` / `qml/LoginView.qml` |
 | ссылки зеркала, подпись, срок | `website/src/routes/mirror.js`, `src/services/mirror.js`; nginx — `NGINX-MIRROR.md` |
 | сам сайт | `website/public/index.html` (+ `redesign.css/js`) |
-| обновления и каналы | сервер `website/src/routes/updates.js`, приложения `Updater.kt`, workflows |
-| тексты «Что нового» | `android/app/src/main/assets/changelog.json`, `desktop/src/main/resources/changelog.json`, `tizen/js/changelog.js` |
-| совместный просмотр | `shared/.../party/`, ПК `desktop/.../party/`, Android `party/Party.kt`, сервер `website/src/routes/rooms.js`, Tizen `js/party*.js` |
-| адрес сервера, переезд | `shared/.../SiteAddress.kt`, секрет `SITE_URL`, сервер `website/src/utils/helpers.js` (`basePath`), `docs/MIGRATION.md` |
-| плеер в окне громкости Windows и клавиши мультимедиа на ПК | `desktop/.../player/MediaControls.kt`, подключение — `PlayerView.kt` (см. `docs/DESKTOP.md` §10) |
+| обновления и каналы | сервер `website/src/routes/updates.js`, приложения — Android `Updater.kt`, ПК `app/src/Updater.cpp`; workflows |
+| тексты «Что нового» | `android/app/src/main/assets/changelog.json`, `desktop-qt/resources/changelog.json`, `tizen/js/changelog.js` |
+| совместный просмотр | ядро `android/core/.../party/` и `desktop-qt/core/src/Party.cpp`, ПК `app/src/party/`, Android `party/Party.kt`, сервер `website/src/routes/rooms.js`, Tizen `js/party*.js` |
+| адрес сервера, переезд | `SiteAddress` в `android/core/` и `desktop-qt/core/`, секрет `SITE_URL`, сервер `website/src/utils/helpers.js` (`basePath`), `docs/MIGRATION.md` |
+| плеер в окне громкости Windows и клавиши мультимедиа на ПК | `desktop-qt/app/src/player/MediaControls.cpp`, подключение — `MediaSession.cpp` (`docs/DESKTOP.md` §6) |
 
 ---
 
@@ -348,7 +354,7 @@ suslik-media/
 ## 12. Подсистема локализации (i18n)
 
 Все платформы проекта выносят пользовательские строки в JSON-файлы локализации:
-- **Desktop**: `desktop/src/main/resources/strings/ru.json`, доступ через функцию `tr(key, ...)` (`Strings.kt`).
+- **Windows**: `desktop-qt/resources/strings/ru.json`, доступ через `tx(key, ...)` (`core/Strings`, в QML — `Ui.tx`).
 - **Android**: `android/app/src/main/assets/strings/ru.json`, доступ через `tr(key, ...)` (`Strings.kt`).
 - **Samsung Smart TV (Tizen)**: `tizen/locales/ru.json`, модуль `tizen/js/i18n.js` (`tr()` и декларативные атрибуты `data-i18n`).
 - **Веб-интерфейс**: `website/public/locales/ru.json`, модуль `website/public/i18n.js` (`window.tr`, декларативные атрибуты `data-i18n`).

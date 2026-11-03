@@ -1,4 +1,4 @@
-// Перенос shared/.../core/party: PartyModels.kt, PartyProtocol.kt, PartySyncEngine.kt.
+// Перенос android/core/.../core/party: PartyModels.kt, PartyProtocol.kt, PartySyncEngine.kt.
 #include "suslik/core/Party.h"
 
 #include <QRegularExpression>

@@ -3,7 +3,7 @@
 #include <QString>
 #include <algorithm>
 
-/// «Настройки»: варианты и подсказки, одинаковые во всех приложениях. Перенос shared/.../PlaybackPresets.kt.
+/// «Настройки»: варианты и подсказки, одинаковые во всех приложениях. Перенос android/core/.../PlaybackPresets.kt.
 namespace suslik::core::PlaybackPresets {
 
 struct Preset {

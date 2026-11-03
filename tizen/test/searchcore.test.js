@@ -1,4 +1,4 @@
-// Те же случаи, что shared/src/test/.../search/ReleaseParserTest.kt и SearchFilterTest.kt: поиск на ТВ и сайте не должен расходиться с ПК.
+// Те же случаи, что android/core/src/test/.../search/ReleaseParserTest.kt и SearchFilterTest.kt: поиск на ТВ и сайте не должен расходиться с ПК.
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');

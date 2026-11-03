@@ -7,7 +7,7 @@
 #include <optional>
 
 /// Заставка и финальные титры видео и какие субтитры идут к озвучке. Сначала главы файла («Opening», «Заставка»,
-/// «Credits», «Титры»…), потом то, что нашёл сервер (GET /api/markers). Перенос shared/.../MarkersDetector.kt.
+/// «Credits», «Титры»…), потом то, что нашёл сервер (GET /api/markers). Перенос android/core/.../MarkersDetector.kt.
 namespace suslik::core {
 
 /// Глава открытого файла: где начинается и как называется.

@@ -1,11 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!--
     Установщик и окно удаления Qt-версии Suslik Media (WPF, .NET Framework 4.7.2 — есть в Windows 10/11 из коробки).
-    Перенос desktop/setup (тот же вид и те же функции) под desktop-qt: своя программа, папка, данные и UpgradeCode (Product.cs).
+    Перенос установщика Kotlin-версии (тот же вид и те же функции) под desktop-qt: своя программа, папка, данные и UpgradeCode (Product.cs).
     Одна программа в двух сборках (см. .github/workflows/desktop-qt.yml):
       SuslikUninstall.exe — без MSI, кладётся в само приложение (рядом с SuslikMediaQt.exe) и открывается из «Установленных приложений»;
       Suslik Media Setup.exe — с MSI внутри (-p:MsiPath=…): мастер установки; убирает Kotlin-версию (Work.cs). Видеодвижок libmpv он скачивает с нашего сервера.
-    Шрифты, значок и libmpv.properties — те же файлы, что у Kotlin-версии (desktop/), без копий, как в app/CMakeLists.txt.
+    Шрифты, значок и libmpv.properties — из desktop-qt/resources, те же файлы, что берёт app/CMakeLists.txt.
     Сборка: dotnet build -c Release [-p:MsiPath=…] [-p:SiteUrl=https://домен[/путь]] [-p:AssemblyName=…] [-p:AppVersion=2.3.1]
   -->
   <PropertyGroup>
@@ -16,7 +16,7 @@
     <LangVersion>latest</LangVersion>
     <AssemblyName>SuslikSetup</AssemblyName>
     <RootNamespace>SuslikSetup</RootNamespace>
-    <ApplicationIcon>..\..\..\desktop\icon.ico</ApplicationIcon>
+    <ApplicationIcon>..\..\resources\icon.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AppVersion Condition="'$(AppVersion)' == ''">0.0.0</AppVersion>
     <InformationalVersion>$(AppVersion)</InformationalVersion>
@@ -26,7 +26,7 @@
     <DebugType>none</DebugType>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <SatelliteResourceLanguages>ru</SatelliteResourceLanguages>
-    <SmRes>..\..\..\desktop\src\main\resources\</SmRes>
+    <SmRes>..\..\resources\</SmRes>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />

@@ -1,4 +1,4 @@
-// Перенос PartyTest.kt, PartyProtocolTest.kt и PartySyncEngineTest.kt (shared/src/test).
+// Перенос PartyTest.kt, PartyProtocolTest.kt и PartySyncEngineTest.kt (android/core/src/test).
 #include "suslik/core/Party.h"
 
 #include "TestUtil.h"
