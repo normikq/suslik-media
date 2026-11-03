@@ -27,8 +27,16 @@
     return Date.now().toString(36) + Math.random().toString(36).slice(2);
   }
 
+  // 'null' в ORIGINS — как в официальном SDK: мобильный клиент Discord шлёт кадры из WebView без origin. Поэтому
+  // смотрим и на отправителя: только окно Discord, с которым шло рукопожатие, или сам WebView (кадр, внедрённый
+  // мобильным клиентом, приходит от этого же окна или без source). Чужой iframe с origin 'null' — мимо.
+  function fromDiscord(ev) {
+    if (ORIGINS.indexOf(ev.origin) < 0) return false;
+    return ev.source === source || ev.source === g || ev.source == null;
+  }
+
   function onMessage(ev) {
-    if (ORIGINS.indexOf(ev.origin) < 0) return;
+    if (!fromDiscord(ev)) return;
     var t = ev.data;
     if (!Array.isArray(t)) return;
     var op = t[0], p = t[1] || {};

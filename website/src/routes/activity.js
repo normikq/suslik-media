@@ -12,7 +12,7 @@ const config = require("../config");
 const { requireLogin, resolveAuth } = require("../middleware/auth");
 const { activityAuthLimiter, roomLimiter, apiLimiter, searchLimiter } = require("../middleware/rate-limit");
 const { DISCORD_FRAME_ANCESTORS, isActivityPage } = require("../middleware/security");
-const { exchangeOAuthCode, fetchMe, revokeOAuthToken, checkGuildMember, inviteMessage, sendChannelMessage } = require("../services/discord");
+const { exchangeOAuthCode, fetchMe, revokeOAuthToken, checkGuildMember, inviteMessage, sendChannelMessage, userVoiceChannel } = require("../services/discord");
 const { findOrCreateUser } = require("../services/users");
 const { issueActivityToken, revokeActivityToken } = require("../services/activity");
 const { basePath } = require("../utils/helpers");
@@ -96,25 +96,43 @@ router.get("/api/activity/config", apiLimiter, (req, res) => {
   res.json({ ok: true, client_id: config.DISCORD_CLIENT_ID || "", enabled: config.DISCORD_ENABLED });
 });
 
+// Одноразовый код OAuth2 Discord — несколько десятков латинских букв и цифр. Мусор отсекаем до запроса к Discord
+// и до счётчика входов (activityAuthLimiter стоит после этой проверки)
+function isOAuthCode(code) {
+  return typeof code === "string" && /^[A-Za-z0-9_-]{10,100}$/.test(code);
+}
+function requireOAuthCode(req, res, next) {
+  if (!config.DISCORD_ENABLED) return res.status(503).json({ error: "Вход через Discord не настроен на сервере." });
+  if (!isOAuthCode(typeof req.body?.code === "string" ? req.body.code.trim() : "")) {
+    return res.status(400).json({ error: "Discord не прислал код входа." });
+  }
+  next();
+}
+
 // 1. Вход: одноразовый код из commands.authorize Discord SDK → ключ Activity.
 // Если человек разрешил rpc.activities.write (статус «Смотрит …» в профиле Discord), токен Discord не отзывается, а
 // отдаётся странице: с ним она зовёт commands.authenticate и потом SET_ACTIVITY. Сервер его не хранит.
-router.post("/api/auth/discord/activity", activityAuthLimiter, async (req, res) => {
+router.post("/api/auth/discord/activity", requireOAuthCode, activityAuthLimiter, async (req, res) => {
   if (!config.DISCORD_ENABLED) return res.status(503).json({ error: "Вход через Discord не настроен на сервере." });
   const code = typeof req.body?.code === "string" ? req.body.code.trim() : "";
-  if (!code || code.length > 200) return res.status(400).json({ error: "Discord не прислал код входа." });
-  let accessToken = null;
+  if (!isOAuthCode(code)) return res.status(400).json({ error: "Discord не прислал код входа." });
+  // Токен Discord, который ещё надо отозвать при сбое: сначала обычный, потом (если разрешён статус) — presence.
+  // Отдан странице — уже не наш (outstanding = null)
+  let outstanding = null;
   try {
     const tokenData = await exchangeOAuthCode(code, null);
-    accessToken = tokenData.access_token;
-    const me = await fetchMe(accessToken);
+    outstanding = tokenData.access_token;
+    const me = await fetchMe(outstanding);
     const scopes = String(tokenData.scope || "").split(/\s+/);
-    const presence = scopes.includes("rpc.activities.write") ? accessToken : null;
-    if (!presence) revokeOAuthToken(accessToken);
-    accessToken = null;
+    const presence = scopes.includes("rpc.activities.write") ? outstanding : null;
+    if (!presence) {
+      revokeOAuthToken(outstanding);
+      outstanding = null;
+    }
     const check = await checkGuildMember(me.id);
     if (!check.allowed) {
       if (presence) revokeOAuthToken(presence);
+      outstanding = null;
       const error =
         check.reason === "not_in_guild"
           ? "Нет доступа: ваш аккаунт Discord не состоит на сервере Suslik Media."
@@ -126,6 +144,7 @@ router.post("/api/auth/discord/activity", activityAuthLimiter, async (req, res) 
     const user = findOrCreateUser(me, check.role);
     const { token, expires_in } = issueActivityToken(user.id);
     res.setHeader("Cache-Control", "no-store");
+    outstanding = null;
     res.json({
       ok: true,
       token,
@@ -135,7 +154,7 @@ router.post("/api/auth/discord/activity", activityAuthLimiter, async (req, res) 
       ...(presence ? { discord_token: presence } : {})
     });
   } catch (err) {
-    if (accessToken) revokeOAuthToken(accessToken);
+    if (outstanding) revokeOAuthToken(outstanding);
     console.error("Вход из Discord Activity:", err.response?.status || "", err.message);
     res.status(502).json({ error: "Не удалось войти через Discord. Попробуйте открыть Activity ещё раз." });
   }
@@ -189,6 +208,8 @@ router.get("/api/activity/rooms/:id/events", requireLogin, (req, res) => {
 router.get("/api/activity/rooms/:id", requireLogin, (req, res) => {
   const room = rooms.getRoom(req.params.id);
   if (!room || !room.channel_id) return res.status(404).json({ error: "Комната не найдена." });
+  // Опрос из Activity держит человека «у пульта», как открытый поток (rooms.touchWatcher)
+  if (req.activity) rooms.touchWatcher(room, req.user);
   res.setHeader("Cache-Control", "no-store");
   res.json({ ok: true, room: rooms.getRoomPublicData(room), server_time: Date.now() });
 });
@@ -213,6 +234,8 @@ router.post("/api/activity/rooms/:id/poll/finish", requireLogin, roomLimiter, (r
   reply(res, rooms.finishPollNow(req.params.id, req.user)));
 router.post("/api/activity/rooms/:id/roulette", requireLogin, roomLimiter, (req, res) =>
   reply(res, rooms.spinRoulette(req.params.id, req.user, rooms.spinMs(req.body?.seconds))));
+router.post("/api/activity/rooms/:id/roulette/cancel", requireLogin, roomLimiter, (req, res) =>
+  reply(res, rooms.cancelSpin(req.params.id, req.user)));
 
 // «Позвать в чат»: бот пишет в текстовый чат голосового канала код комнаты и ссылку /join/<код>.
 // Бот не настроен или не может писать в канал — { fallback: true, link }: страница копирует ссылку сама.
@@ -230,6 +253,15 @@ router.post("/api/activity/rooms/:id/invite", requireLogin, roomLimiter, async (
   const now = Date.now();
   const left = (lastInvite.get(room.id) || 0) + INVITE_GAP_MS - now;
   if (left > 0) return res.status(429).json({ error: `Приглашение уже отправлено. Ещё раз — через ${Math.ceil(left / 1000)} с.`, link });
+  // channel_id комнаты прислал клиент: бот пишет туда, только если позвавший сейчас сам в этом голосовом канале
+  // на сервере проекта — иначе ключом Activity можно было бы слать сообщения бота в любой канал, куда ему можно писать
+  if (!config.DISCORD_GUILD_ID || !req.user.discord_id) return fallback("no_access");
+  try {
+    if (await userVoiceChannel(req.user.discord_id) !== room.channel_id) return fallback("not_in_channel");
+  } catch (err) {
+    console.warn("Приглашение в чат канала, проверка голосового канала:", err.response?.status || "", err.message);
+    return fallback("failed");
+  }
   lastInvite.set(room.id, now);
   for (const [id, at] of lastInvite) if (at + INVITE_GAP_MS < now) lastInvite.delete(id);
   try {

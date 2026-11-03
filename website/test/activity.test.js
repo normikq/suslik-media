@@ -72,6 +72,29 @@ test("ведущий закрыл Activity: ведущим становится 
   leaveB();
 });
 
+test("на опросе: GET комнаты держит человека у пульта, без опроса он уходит", () => {
+  const room = rooms.getOrCreateChannelRoom("454545454545454545", alice);
+  const leaveA = rooms.addWatcher(room, alice);
+  leaveA(); // поток оборвался (прокси Discord)…
+  assert.equal(room.watchers.size, 0);
+  rooms.touchWatcher(room, alice); // …а страница опрашивает
+  assert.equal(room.watchers.has(alice.id), true);
+  assert.equal(room.empty_since, 0);
+  const leaveB = rooms.addWatcher(room, bob);
+  leaveB();
+  const w = room.watchers.get(alice.id);
+  assert.equal(rooms.getRoomPublicData(room).watchers.length, 1);
+  assert.deepEqual(Object.keys(rooms.getRoomPublicData(room).watchers[0]).sort(), ["avatar", "id", "name"]); // без таймера
+  // Опрос прекратился: срок вышел — ушёл
+  w.seen_until = Date.now() - 1;
+  const leaveAgain = rooms.addWatcher(room, alice); // и поток вернулся — тот же наблюдатель
+  assert.equal(room.watchers.get(alice.id), w);
+  leaveAgain();
+  assert.equal(room.watchers.size, 0);
+  assert.ok(room.empty_since > 0);
+  clearTimeout(w.expire);
+});
+
 test("предложения и голосование: победитель включается в комнате, поровну — кого предложили раньше", () => {
   const room = rooms.getOrCreateChannelRoom("555555555555555555", alice);
   const f1 = { key: "10|Film.One.2020.mkv", name: "Фильм 1" };
@@ -173,6 +196,25 @@ test("рулетка: победителя выбирает сервер, у в�
   stop();
 });
 
+test("рулетку можно отменить: только ведущий, фильм не включается, список остаётся", () => {
+  const room = rooms.getOrCreateChannelRoom("141414141414141414", alice);
+  rooms.suggestFile(room.id, alice, { key: "50|a.mkv", name: "A" });
+  rooms.suggestFile(room.id, bob, { key: "51|b.mkv", name: "B" });
+  const sent = [];
+  const stop = rooms.addListener(room.id, msg => sent.push(JSON.parse(msg)));
+  assert.equal(rooms.spinRoulette(room.id, alice, 60000).ok, true);
+  assert.equal(rooms.cancelSpin(room.id, bob).ok, false); // не ведущий
+  assert.ok(room.spin);
+  assert.equal(rooms.cancelSpin(room.id, alice).ok, true);
+  assert.equal(room.spin, null);
+  assert.equal(room.file, null);
+  assert.equal(room.candidates.length, 2);
+  assert.ok(sent.some(m => m.event === "spin_cancelled"));
+  assert.equal(rooms.finishSpin(room), null); // таймер уже ни на что не влияет
+  assert.equal(rooms.cancelSpin(room.id, alice).ok, true); // второй раз — тоже без ошибки
+  stop();
+});
+
 test("приглашение в чат: код для ТВ, кнопка только с https, без упоминаний", () => {
   const { inviteMessage } = require("../src/services/discord");
   const m = inviteMessage({ code: "381667", film: "Дюна **2**", by: "Глеб", link: "https://example.org/join/381667" });
@@ -266,6 +308,10 @@ test("сервер: страница Activity встраивается толь�
     assert.match(pageText, /activity\/activity\.js\?v=[0-9a-f]{10}"/);
     assert.doesNotMatch(pageText, /\?v=1"/);
 
+    // Вход: мусор вместо кода в Discord не уходит
+    const junk = await fetch(`${base}/api/auth/discord/activity`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: "<x>" }) });
+    assert.equal(junk.status, 400);
+
     const site = await fetch(`${base}/`);
     assert.equal(site.headers.get("x-frame-options"), "DENY");
     assert.match(site.headers.get("content-security-policy") || "", /frame-ancestors 'none'/);
@@ -301,6 +347,17 @@ test("сервер: страница Activity встраивается толь�
     assert.equal(inv.reason, "no_bot");
     assert.match(inv.link, new RegExp(`/join/${room.id}$`));
     leave();
+    // Опрос комнаты из Activity — тоже «у пульта»: позвать можно и без потока
+    const polled = await fetch(`${base}/api/activity/rooms/${room.id}`, { headers: auth });
+    assert.equal(polled.status, 200);
+    assert.ok(rooms.getRoom(room.id).watchers.has(bob.id));
+    const inv2 = await (await fetch(`${base}/api/activity/rooms/${room.id}/invite`, { method: "POST", headers: auth, body: "{}" })).json();
+    assert.equal(inv2.reason, "no_bot");
+    const pw = rooms.getRoom(room.id).watchers.get(bob.id);
+    clearTimeout(pw.expire);
+    rooms.getRoom(room.id).watchers.delete(bob.id);
+    const cancelSpin = await fetch(`${base}/api/activity/rooms/${room.id}/roulette/cancel`, { method: "POST", headers: auth, body: "{}" });
+    assert.equal(cancelSpin.status, 200);
     const fin = await fetch(`${base}/api/activity/rooms/${room.id}/poll/finish`, { method: "POST", headers: auth, body: "{}" });
     assert.equal(fin.status, 400); // голосования нет
     const spin = await fetch(`${base}/api/activity/rooms/${room.id}/roulette`, { method: "POST", headers: auth, body: "{}" });

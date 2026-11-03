@@ -159,6 +159,29 @@ function inviteMessage({ code, film, by, link }) {
   };
 }
 
+/**
+ * Голосовой канал, где сейчас человек на сервере проекта (DISCORD_GUILD_ID), или null — не в голосовом канале
+ * этого сервера. Бросает ошибку axios при сбое сети или прав бота.
+ */
+async function userVoiceChannel(discordId) {
+  if (!config.DISCORD_BOT_TOKEN || !config.DISCORD_GUILD_ID) {
+    throw Object.assign(new Error("Бот Discord не настроен."), { code: "no_bot" });
+  }
+  const id = String(discordId || "");
+  if (!/^\d{5,25}$/.test(id)) return null;
+  try {
+    const res = await axios.get(`${DISCORD_API_BASE}/guilds/${config.DISCORD_GUILD_ID}/voice-states/${id}`, {
+      headers: { Authorization: `Bot ${config.DISCORD_BOT_TOKEN}` },
+      timeout: 8000
+    });
+    const ch = res.data && res.data.channel_id;
+    return typeof ch === "string" && ch ? ch : null;
+  } catch (err) {
+    if (err.response && err.response.status === 404) return null; // Unknown Voice State: не в голосовом
+    throw err;
+  }
+}
+
 /** Сообщение ботом в канал. Бросает ошибку axios (403 — у бота нет прав писать в этот канал). */
 async function sendChannelMessage(channelId, message) {
   if (!config.DISCORD_BOT_TOKEN) throw Object.assign(new Error("Бот Discord не настроен."), { code: "no_bot" });
@@ -172,6 +195,7 @@ async function sendChannelMessage(channelId, message) {
 module.exports = {
   inviteMessage,
   sendChannelMessage,
+  userVoiceChannel,
   getAvatarUrl,
   exchangeOAuthCode,
   fetchMe,

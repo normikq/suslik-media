@@ -135,10 +135,14 @@ const roomLimiter = rateLimit({
   handler: (req, res, next, options) => res.status(options.statusCode).json({ error: "Слишком много команд комнате." })
 });
 
-// Вход из Discord Activity: ещё без ключа, а адрес у всех один — прокси Discord. Каждый запуск Activity входит заново
+// Вход из Discord Activity: ещё без ключа, а адрес у всех один — прокси Discord (адрес человека он не передаёт).
+// Каждый запуск Activity входит заново, поэтому удачные входы не считаются: лимит тратят только неудачные
+// (поддельный код, нет доступа), и обычные запуски у друзей его не съедают. Мусор вместо кода отсекается ещё
+// до лимита (routes/activity.js, requireOAuthCode) и в Discord не уходит
 const activityAuthLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 400,
+  skipSuccessfulRequests: true,
   standardHeaders: "draft-7",
   legacyHeaders: false,
   handler: (req, res, next, options) => res.status(options.statusCode).json({ error: "Слишком много входов. Попробуйте через несколько минут." })
