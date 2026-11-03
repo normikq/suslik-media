@@ -178,6 +178,11 @@ router.get("/api/activity/rooms/:id/events", requireLogin, (req, res) => {
   const room = rooms.getRoom(req.params.id);
   if (!room || !room.channel_id) return res.status(404).json({ error: "Комната не найдена." });
 
+  // TCP keepalive на соединении с reverse proxy (реальный обрыв внешнего клиента ловит nginx при отправке пинга)
+  if (req.socket && typeof req.socket.setKeepAlive === "function") {
+    req.socket.setKeepAlive(true, 10000);
+  }
+
   res.setHeader("Content-Type", "text/event-stream");
   // no-transform: модуль compression иначе копит поток для сжатия (браузер всегда шлёт Accept-Encoding)
   res.setHeader("Cache-Control", "no-cache, no-transform");

@@ -10,7 +10,10 @@ const {
   getRoomPublicData,
   addListener,
   joinRoom,
-  findUserActiveRoom,
+  moveDevice,
+  moveAccount,
+  registerMemberStream,
+  unregisterMemberStream,
   previewMember,
   publicMember,
   leaveRoom,
@@ -26,10 +29,10 @@ router.post("/api/rooms", requireLogin, roomLimiter, (req, res) => {
   if (req.user && req.user.id === "shared" && !(typeof client_id === "string" && client_id.trim())) {
     return res.status(400).json({ error: "Не хватает client_id устройства: обновите приложение." });
   }
-  const active = findUserActiveRoom(req.user, client_id, null);
-  if (active) {
-    return res.status(400).json({ error: "Этот аккаунт уже находится в активной комнате." });
-  }
+  // Перемещение аккаунта и устройства: старые комнаты освобождаются (выключился свет, другое устройство)
+  moveAccount(req.user, client_id, null);
+  moveDevice(client_id, null);
+
   const room = createRoom(req.user, file, controls, client_id);
   res.json({ ok: true, room: getRoomPublicData(room) });
 });
@@ -47,14 +50,10 @@ router.post("/api/rooms/:id/join", requireLogin, roomLimiter, (req, res) => {
   if (!room) return res.status(404).json({ error: "Комната не найдена." });
 
   const { client_id } = req.body || {};
-  const active = findUserActiveRoom(req.user, client_id, room.id);
-  if (active) {
-    const error =
-      active.reason === "other_device_same_room"
-        ? "Этот аккаунт уже подключен к комнате с другого устройства."
-        : "Этот аккаунт уже находится в активной комнате.";
-    return res.status(400).json({ error });
-  }
+  // Вход с нового устройства того же аккаунта (или переподключение): старое зависшее место освобождается,
+  // при отключении питания на ПК или смене устройства человек спокойно входит с телефона
+  moveAccount(req.user, client_id, room.id);
+  moveDevice(client_id, room.id);
 
   // В список участников попадают с открытием потока событий (/events), здесь только «кто я»
   res.json({ ok: true, room: getRoomPublicData(room), member: previewMember(req.user, client_id) });
@@ -93,9 +92,15 @@ router.get("/api/rooms/:id/events", requireLogin, (req, res) => {
   if (!room) return res.status(404).json({ error: "Комната не найдена." });
 
   const clientId = req.query.client_id;
+
+  // TCP keepalive на соединении с reverse proxy (реальный обрыв внешнего клиента ловит nginx при отправке пинга)
+  if (req.socket && typeof req.socket.setKeepAlive === "function") {
+    req.socket.setKeepAlive(true, 10000);
+  }
+
   const joined = joinRoom(room.id, req.user, clientId);
-  if (!joined || !joined.member) {
-    return res.status(400).json({ error: joined?.error || "Не удалось подключиться к комнате." });
+  if (!joined || !joined.ok || !joined.member) {
+    return res.status(joined?.code || 400).json({ error: joined?.error || "Не удалось подключиться к комнате." });
   }
 
   res.setHeader("Content-Type", "text/event-stream");
@@ -103,6 +108,8 @@ router.get("/api/rooms/:id/events", requireLogin, (req, res) => {
   res.setHeader("Connection", "keep-alive");
   res.setHeader("X-Accel-Buffering", "no"); // nginx отдаёт события сразу, а не пачкой
   res.flushHeaders?.();
+
+  registerMemberStream(room.id, joined.member.client_id, res);
 
   // Отправляем текущее состояние сразу при подключении
   // Себе — и свой client_id, остальные видят только отпечаток (key)
@@ -126,6 +133,7 @@ router.get("/api/rooms/:id/events", requireLogin, (req, res) => {
   res.on("close", () => {
     clearInterval(pingTimer);
     removeListener();
+    unregisterMemberStream(room.id, joined.member.client_id, res);
     // Только своё место: устройство могло уже перейти в другую комнату и вернуться сюда новым участником (moveDevice)
     if (joined && joined.member && room.members.get(joined.member.client_id) === joined.member) {
       leaveRoom(room.id, joined.member.client_id);
