@@ -560,19 +560,59 @@ test("rooms: moveAccount evicts old device when power cuts off on PC and user jo
   assert.equal(room.members.has("pc_dead"), false);
   assert.equal(streamClosed, true);
 
-  // Ведущий в комнате передан новому устройству Алисы
-  assert.equal(room.host_client_id, "an_phone");
+  // host_client_id сброшен и не указывает на телефон до тех пор, пока телефон реально не подключился
+  assert.equal(room.host_client_id, null);
 
   // Теперь телефон спокойно подключается без ошибки «уже подключен с другого устройства»
   const joinPhone = joinRoom(room.id, alice, "an_phone");
   assert.equal(joinPhone.ok, true);
   assert.equal(room.members.has("an_phone"), true);
+  assert.equal(room.host_client_id, "an_phone");
 
   const pub = getRoomPublicData(room);
   assert.equal(pub.host_key, clientKey("an_phone"));
   assert.equal(pub.member_count, 1);
 
   leaveRoom(room.id, "an_phone", true);
+});
+
+test("rooms: race condition protection when moving from PC to phone (old PC auto-retry is rejected with 403)", () => {
+  const { createRoom, joinRoom, leaveRoom, moveAccount } = require("../src/services/rooms");
+
+  const alice = { id: "u_alice_race", name: "Alice" };
+  const room = createRoom(alice, null, "all", "pc_1");
+
+  // 1. Алиса сидит в комнате с ПК
+  const joinPc = joinRoom(room.id, alice, "pc_1");
+  assert.equal(joinPc.ok, true);
+  assert.equal(room.members.has("pc_1"), true);
+  assert.equal(room.host_client_id, "pc_1");
+
+  // 2. Алиса переходит на телефон: вызывается moveAccount
+  moveAccount(alice, "phone_1", room.id);
+
+  // ПК удалён из участников, но телефон ещё не успел открыть /events
+  assert.equal(room.members.has("pc_1"), false);
+  assert.equal(room.members.has("phone_1"), false);
+  // host_client_id не должен указывать на телефон раньше времени
+  assert.equal(room.host_client_id, null);
+
+  // 3. Живой ПК ловит обрыв SSE и делает авто-повтор (joinRoom) через 1 с
+  const pcRetry = joinRoom(room.id, alice, "pc_1");
+  // ПК должен быть отвергнут с кодом 403 (выбрано другое устройство)
+  assert.equal(pcRetry.ok, false);
+  assert.equal(pcRetry.code, 403);
+  assert.equal(pcRetry.error, "Этот аккаунт уже подключен к комнате с другого устройства.");
+  assert.equal(room.members.has("pc_1"), false);
+
+  // 4. Телефон завершает TLS handshake (через 2-5 с) и открывает /events (joinRoom)
+  const phoneJoin = joinRoom(room.id, alice, "phone_1");
+  assert.equal(phoneJoin.ok, true);
+  assert.equal(room.members.has("phone_1"), true);
+  // Теперь телефон стал ведущим
+  assert.equal(room.host_client_id, "phone_1");
+
+  leaveRoom(room.id, "phone_1", true);
 });
 
 test("rooms: moveAccount evicts user from previous rooms when creating a new room", () => {
@@ -644,11 +684,19 @@ test("rooms: HTTP POST /api/rooms/:id/join evicts dead PC and allows phone to co
     const joinData = await phoneJoinRes.json();
     assert.equal(joinData.ok, true);
 
-    // 5. Старое мертвое устройство ПК вытеснено из комнаты, ведущий передан телефону
+    // 5. Старое мертвое устройство ПК вытеснено из комнаты, host_client_id сброшен до входа телефона
     assert.equal(roomObj.members.has("pc_dead"), false);
-    assert.equal(roomObj.host_client_id, "an_phone");
+    assert.equal(roomObj.host_client_id, null);
 
-    // 6. Телефон подключается к потоку событий комнаты
+    // 6. Защита от гонки: живой ПК авто-повторяет запрос ДО того, как телефон открыл /events
+    const pcRetryBeforePhone = await fetch(`${base}/api/rooms/${room.id}/events?client_id=pc_dead`, {
+      headers: auth
+    });
+    assert.equal(pcRetryBeforePhone.status, 403, "ПК сразу получает 403, так как выбрано устройство an_phone");
+    const pcRetryBeforeJson = await pcRetryBeforePhone.json();
+    assert.match(pcRetryBeforeJson.error, /уже подключен|активен/);
+
+    // 7. Телефон подключается к потоку событий комнаты и становится ведущим
     const phoneStreamCtrl = new AbortController();
     const phoneStream = await fetch(`${base}/api/rooms/${room.id}/events?client_id=an_phone`, {
       headers: auth,
@@ -656,8 +704,9 @@ test("rooms: HTTP POST /api/rooms/:id/join evicts dead PC and allows phone to co
     });
     assert.equal(phoneStream.status, 200);
     assert.equal(roomObj.members.has("an_phone"), true);
+    assert.equal(roomObj.host_client_id, "an_phone");
 
-    // 7. Если ПК спустя время попытается фоново восстановить поток (retryStream), он получит 403 и прекратит попытки
+    // 8. Если ПК повторит попытку после подключения телефона — он также получает 403
     const pcRetry = await fetch(`${base}/api/rooms/${room.id}/events?client_id=pc_dead`, {
       headers: auth
     });

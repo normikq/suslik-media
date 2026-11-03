@@ -34,13 +34,14 @@ function getEstimatedPos(state) {
 
 function createRoom(hostUser, file = null, controls = "all", hostClientId = null, fixedId = null) {
   const id = fixedId || crypto.randomBytes(6).toString("hex"); // 12 hex chars
+  const normHostClientId = typeof hostClientId === "string" && hostClientId.trim() ? hostClientId.trim().slice(0, 64) : null;
 
   const room = {
     id,
     host_id: hostUser ? hostUser.id : "shared",
     host_name: hostUser ? hostUser.name : "Хост",
     // Устройство создателя: при общем пароле у всех один id "shared", ведущего отличает только оно
-    host_client_id: typeof hostClientId === "string" && hostClientId ? hostClientId.slice(0, 64) : null,
+    host_client_id: normHostClientId,
     file: cleanFile(file), // { key, name, ad_id }: из тела запроса — та же проверка, что у change_file
     controls: controls === "host" ? "host" : "all",
     state: {
@@ -65,6 +66,13 @@ function createRoom(hostUser, file = null, controls = "all", hostClientId = null
 
   rooms.set(id, room);
   roomListeners.set(id, new Set());
+
+  const hostUserId = hostUser && hostUser.id ? String(hostUser.id) : null;
+  const isAccount = Boolean(hostUserId && hostUserId !== "shared" && hostUserId !== "guest");
+  if (isAccount && normHostClientId) {
+    setAccountActiveDevice(hostUserId, normHostClientId, id);
+  }
+
   return room;
 }
 
@@ -118,12 +126,12 @@ function broadcast(roomId, event, data) {
 }
 
 function memberOf(user, clientId) {
+  const normClientId = typeof clientId === "string" && clientId.trim() ? clientId.trim().slice(0, 64) : null;
   const cid =
-    typeof clientId === "string" && clientId
-      ? clientId.slice(0, 64)
-      : user
-        ? `${user.id}_${crypto.randomBytes(4).toString("hex")}`
-        : crypto.randomBytes(8).toString("hex");
+    normClientId ||
+    (user
+      ? `${user.id}_${crypto.randomBytes(4).toString("hex")}`
+      : crypto.randomBytes(8).toString("hex"));
   return {
     client_id: cid,
     id: user ? user.id : "guest",
@@ -134,6 +142,54 @@ function memberOf(user, clientId) {
   };
 }
 
+// Активное выбранное устройство аккаунта (userId -> { clientId, roomId, at })
+// Запоминается при явном действии (POST /rooms или POST /join) или при входе в комнату.
+// Защищает от гонки: когда старое устройство (ПК) вытеснено и получает обрыв SSE,
+// оно авто-переподключается через 1 с, пока новое устройство (телефон) ещё устанавливает TLS (2-5 с).
+// Все попытки старого устройства войти получают 403, побеждает выбранное новое устройство.
+const accountActiveDevices = new Map();
+const PENDING_DEVICE_TTL_MS = 30 * 1000;
+
+function isDeviceInAnyRoom(clientId) {
+  if (!clientId) return false;
+  for (const room of rooms.values()) {
+    if (room.members.has(clientId)) return true;
+  }
+  return false;
+}
+
+function setAccountActiveDevice(userId, clientId, roomId = null) {
+  if (!userId || userId === "shared" || userId === "guest") return;
+  const cid = typeof clientId === "string" && clientId.trim() ? clientId.trim().slice(0, 64) : null;
+  if (!cid) {
+    accountActiveDevices.delete(String(userId));
+    return;
+  }
+  accountActiveDevices.set(String(userId), {
+    clientId: cid,
+    roomId: roomId || null,
+    at: Date.now()
+  });
+}
+
+function getAccountActiveDevice(userId) {
+  if (!userId || userId === "shared" || userId === "guest") return null;
+  return accountActiveDevices.get(String(userId)) || null;
+}
+
+function clearAccountActiveDevice(userId, clientId = null) {
+  if (!userId || userId === "shared" || userId === "guest") return;
+  const uid = String(userId);
+  if (!clientId) {
+    accountActiveDevices.delete(uid);
+    return;
+  }
+  const cur = accountActiveDevices.get(uid);
+  if (cur && cur.clientId === clientId) {
+    accountActiveDevices.delete(uid);
+  }
+}
+
 // Поиск активной комнаты, где уже подключен пользователь с другого устройства.
 // Правило: 1 аккаунт = 1 активная комната (нельзя заходить с другого устройства, пока активно первое).
 // То же устройство (тот же client_id: приложения хранят его между запусками) — не помеха: оно перешло в другую комнату
@@ -141,10 +197,35 @@ function memberOf(user, clientId) {
 function findUserActiveRoom(user, clientId = null, targetRoomId = null) {
   const userId = user && user.id ? String(user.id) : null;
   const isAccount = Boolean(userId && userId !== "shared" && userId !== "guest");
-  const normClientId = typeof clientId === "string" && clientId ? clientId.trim().slice(0, 64) : null;
+  const normClientId = typeof clientId === "string" && clientId.trim() ? clientId.trim().slice(0, 64) : null;
 
   if (!isAccount && !normClientId) return null;
 
+  // 1. Проверка выбранного активного устройства аккаунта:
+  // Если пользователь явно переключился на другое устройство (POST /join или POST /rooms),
+  // старое устройство блокируется даже в промежутке до того, как новое открыло поток /events.
+  if (isAccount) {
+    const activeDev = accountActiveDevices.get(userId);
+    if (activeDev && activeDev.clientId) {
+      const isConnected = isDeviceInAnyRoom(activeDev.clientId);
+      const isPendingValid = Date.now() - activeDev.at < PENDING_DEVICE_TTL_MS;
+      if (isConnected || isPendingValid) {
+        if (!normClientId || normClientId !== activeDev.clientId) {
+          const inSame = Boolean(targetRoomId && activeDev.roomId && targetRoomId === activeDev.roomId);
+          return {
+            inRoom: true,
+            room: activeDev.roomId ? rooms.get(activeDev.roomId) || null : null,
+            member: null,
+            reason: inSame ? "other_device_same_room" : "other_room"
+          };
+        }
+      } else {
+        accountActiveDevices.delete(userId);
+      }
+    }
+  }
+
+  // 2. Проверка по текущим подключенным участникам комнат:
   for (const room of rooms.values()) {
     for (const member of room.members.values()) {
       if (!member) continue;
@@ -153,8 +234,15 @@ function findUserActiveRoom(user, clientId = null, targetRoomId = null) {
 
       const memberUserId = member.id ? String(member.id) : null;
 
-      // 1. Проверка по аккаунту: 1 аккаунт = 1 активная комната
+      // Проверка по аккаунту: 1 аккаунт = 1 активная комната
       if (isAccount && memberUserId === userId) {
+        // Если текущее устройство — это явно выбранное активное устройство аккаунта,
+        // оно имеет приоритет и вытеснит старые устройства в joinRoom
+        const activeDev = accountActiveDevices.get(userId);
+        if (activeDev && normClientId && activeDev.clientId === normClientId) {
+          continue;
+        }
+
         // Аккаунт уже активен в другой комнате
         if (!targetRoomId || room.id !== targetRoomId) {
           return {
@@ -235,7 +323,11 @@ function moveAccount(user, newClientId, targetRoomId = null) {
   const userId = user && user.id ? String(user.id) : null;
   const isAccount = Boolean(userId && userId !== "shared" && userId !== "guest");
   if (!isAccount) return;
-  const normNewClientId = typeof newClientId === "string" && newClientId ? newClientId.trim().slice(0, 64) : null;
+  const normNewClientId = typeof newClientId === "string" && newClientId.trim() ? newClientId.trim().slice(0, 64) : null;
+
+  if (normNewClientId) {
+    setAccountActiveDevice(userId, normNewClientId, targetRoomId);
+  }
 
   for (const room of Array.from(rooms.values())) {
     for (const member of Array.from(room.members.values())) {
@@ -246,12 +338,6 @@ function moveAccount(user, newClientId, targetRoomId = null) {
       const oldClientId = member.client_id;
       leaveRoom(room.id, oldClientId, true);
       closeMemberStreams(room.id, oldClientId);
-
-      // Если вытесненное устройство было ведущим в этой же комнате, куда входит новое устройство —
-      // ведущим остаётся этот же человек, но уже с нового устройства
-      if (room.id === targetRoomId && room.host_id === userId) {
-        room.host_client_id = normNewClientId;
-      }
     }
   }
 }
@@ -268,9 +354,17 @@ function joinRoom(roomId, user, clientId = null) {
       active.reason === "other_device_same_room"
         ? "Этот аккаунт уже подключен к комнате с другого устройства."
         : "Этот аккаунт уже находится в активной комнате.";
-    return { ok: false, error, room: null, member: null };
+    return { ok: false, error, code: 403, room: null, member: null };
   }
   moveDevice(clientId, roomId);
+
+  const userId = user && user.id ? String(user.id) : null;
+  const isAccount = Boolean(userId && userId !== "shared" && userId !== "guest");
+
+  // Если у аккаунта оставались другие устройства в комнатах — вытесняем их
+  if (isAccount) {
+    moveAccount(user, clientId, roomId);
+  }
 
   const fresh = memberOf(user, clientId);
   const existing = room.members.get(fresh.client_id);
@@ -278,8 +372,25 @@ function joinRoom(roomId, user, clientId = null) {
   member.streams++;
   room.members.set(member.client_id, member);
   room.empty_since = 0;
+
+  if (isAccount && fresh.client_id) {
+    setAccountActiveDevice(userId, fresh.client_id, roomId);
+  }
+
+  // Если в комнату вошёл ведущий (хост аккаунта) — обновляем host_client_id на его текущее подключенное устройство
+  let hostChanged = false;
+  if (room.host_id && room.host_id !== "shared" && String(room.host_id) === userId) {
+    if (room.host_client_id !== fresh.client_id) {
+      room.host_client_id = fresh.client_id;
+      hostChanged = true;
+    }
+  }
+
   if (!existing) {
     broadcast(roomId, "member_joined", { member: publicMember(member), total: room.members.size });
+  }
+  if (hostChanged) {
+    broadcast(roomId, "state_changed", getRoomPublicData(room));
   }
   return { ok: true, room, member };
 }
@@ -360,6 +471,12 @@ function leaveRoom(roomId, clientId, force = false) {
     if (member.streams === 0) {
       closeMemberStreams(roomId, clientId);
       room.members.delete(clientId);
+      if (member.id) {
+        clearAccountActiveDevice(member.id, clientId);
+      }
+      if (room.host_client_id === clientId) {
+        room.host_client_id = null;
+      }
       broadcast(roomId, "member_left", { key: clientKey(clientId), total: room.members.size });
       if (room.members.size === 0 && room.watchers.size === 0) room.empty_since = Date.now();
       else if (!hostPresent(room)) setTimeout(() => promoteIfHostGone(room), HOST_GRACE_MS).unref?.();
@@ -796,6 +913,9 @@ module.exports = {
   findUserActiveRoom,
   moveDevice,
   moveAccount,
+  getAccountActiveDevice,
+  setAccountActiveDevice,
+  clearAccountActiveDevice,
   registerMemberStream,
   unregisterMemberStream,
   closeMemberStreams,

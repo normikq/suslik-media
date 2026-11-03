@@ -10,7 +10,6 @@ const {
   getRoomPublicData,
   addListener,
   joinRoom,
-  findUserActiveRoom,
   moveDevice,
   moveAccount,
   registerMemberStream,
@@ -94,25 +93,14 @@ router.get("/api/rooms/:id/events", requireLogin, (req, res) => {
 
   const clientId = req.query.client_id;
 
-  // Включаем TCP keepalive для раннего обнаружения внезапного обрыва связи (отключение питания, перезагрузка роутера)
+  // TCP keepalive на соединении с reverse proxy (реальный обрыв внешнего клиента ловит nginx при отправке пинга)
   if (req.socket && typeof req.socket.setKeepAlive === "function") {
     req.socket.setKeepAlive(true, 10000);
   }
 
-  // Если аккаунт уже активно смотрит с другого устройства в этой или другой комнате —
-  // фоновое авто-переподключение старого вытесненного устройства не должно перебивать новый сеанс
-  const active = findUserActiveRoom(req.user, clientId, room.id);
-  if (active) {
-    const error =
-      active.reason === "other_device_same_room"
-        ? "Этот аккаунт уже подключен к комнате с другого устройства."
-        : "Этот аккаунт уже находится в активной комнате.";
-    return res.status(403).json({ error });
-  }
-
   const joined = joinRoom(room.id, req.user, clientId);
-  if (!joined || !joined.member) {
-    return res.status(400).json({ error: joined?.error || "Не удалось подключиться к комнате." });
+  if (!joined || !joined.ok || !joined.member) {
+    return res.status(joined?.code || 400).json({ error: joined?.error || "Не удалось подключиться к комнате." });
   }
 
   res.setHeader("Content-Type", "text/event-stream");
