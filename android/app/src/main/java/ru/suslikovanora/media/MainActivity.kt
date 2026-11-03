@@ -228,7 +228,8 @@ class MainActivity : ComponentActivity() {
         val guest = Party.isGuest
         val tvUi = Tv.isTv(this@MainActivity)
         androidx.compose.runtime.DisposableEffect(Unit) {
-            Party.onRefreshLibrary = { store.refresh() }
+            // приходит из потока событий комнаты (не главный поток): обновление — в корутине экрана
+            Party.onRefreshLibrary = { scope.launch { store.refresh() } }
             onDispose { Party.onRefreshLibrary = null }
         }
         LaunchedEffect(guest) { if (guest && tab in GUEST_LOCKED) tab = Tab.Together }

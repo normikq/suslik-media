@@ -158,6 +158,7 @@ private fun FilmPanel(store: LibraryStore, onLibrary: () -> Unit, onOpen: (PlayT
         Text(stateText + " · " + clockText(tick.let { Party.targetMs() }), color = if (s.playing && s.waiting) Amber else Sm.muted,
             fontFamily = Onest, fontSize = 13.sp, modifier = Modifier.padding(top = 2.dp, bottom = 12.dp))
         val target = remember(store.items, f.key) { targetForKey(store.items, f.key) }
+        val scope = rememberCoroutineScope()
         var pollCount by remember(f.key) { mutableIntStateOf(0) }
         LaunchedEffect(f.key) {
             if (target == null) store.refresh()
@@ -178,7 +179,7 @@ private fun FilmPanel(store: LibraryStore, onLibrary: () -> Unit, onOpen: (PlayT
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             // A guest picks nothing: the host's file opens by itself (MainActivity), the button only opens it again
             if (target != null) LampButton(tr("party.smotret_vmeste")) { if (Party.isHost) onOpen(target) else Party.followed = null }
-            if (target == null) OutlineButton(tr("library.obnovit")) { pollCount = 0; store.refresh() }
+            if (target == null) OutlineButton(tr("library.obnovit")) { pollCount = 0; scope.launch { store.refresh() } }
             if (Party.isHost) OutlineButton(tr("party.drugoy_film")) { onLibrary() }
         }
     }
