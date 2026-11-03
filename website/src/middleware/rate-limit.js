@@ -3,13 +3,20 @@
 const crypto = require("crypto");
 const expressRateLimit = require("express-rate-limit");
 const { ipKeyGenerator } = expressRateLimit;
+const { verifyActivityToken } = require("../services/activity");
 
 // Счёт по адресу; запросы Discord Activity — по её ключу: они все приходят с адресов прокси Discord,
-// и по адресу друзья в одном голосовом канале делили бы один лимит
+// и по адресу друзья в одном голосовом канале делили бы один лимит. Ключ считается, только если он настоящий
+// (выдан сервером и не истёк): иначе случайный «Bearer sa_…» в каждом запросе давал бы каждому запросу свой
+// счётчик, и лимит не работал бы вовсе
 function clientKey(req) {
   const auth = String(req.get("Authorization") || "");
   const m = /^Bearer\s+(sa_[0-9a-f]{20,80})$/i.exec(auth);
-  if (m) return "sa:" + crypto.createHash("sha256").update(m[1]).digest("hex").slice(0, 32);
+  if (m && verifyActivityToken(m[1])) return "sa:" + crypto.createHash("sha256").update(m[1]).digest("hex").slice(0, 32);
+  return ipKey(req);
+}
+
+function ipKey(req) {
   return ipKeyGenerator(req.ip || "");
 }
 
@@ -17,7 +24,9 @@ function rateLimit(options) {
   return expressRateLimit({ keyGenerator: clientKey, ...options });
 }
 
+// Вход по паролю и код устройства — всегда по адресу: до входа ключа Activity у человека нет
 const loginLimiter = rateLimit({
+  keyGenerator: ipKey,
   windowMs: 15 * 60 * 1000,
   limit: 10,
   standardHeaders: "draft-7",
@@ -110,6 +119,7 @@ const serviceLimiter = rateLimit({
 
 // Связка устройства по коду: не подбор пароля, свой счётчик (ТВ, ПК и ноутбук за одним роутером, «Отмена» и снова)
 const deviceAuthLimiter = rateLimit({
+  keyGenerator: ipKey,
   windowMs: 15 * 60 * 1000,
   limit: 60,
   standardHeaders: "draft-7",
@@ -158,5 +168,6 @@ module.exports = {
   mirrorLimiter,
   reportLimiter,
   anonReportLimiter,
-  serviceLimiter
+  serviceLimiter,
+  clientKey
 };

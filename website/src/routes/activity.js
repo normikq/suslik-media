@@ -15,7 +15,7 @@ const { DISCORD_FRAME_ANCESTORS, isActivityPage } = require("../middleware/secur
 const { exchangeOAuthCode, fetchMe, revokeOAuthToken, checkGuildMember, inviteMessage, sendChannelMessage } = require("../services/discord");
 const { findOrCreateUser } = require("../services/users");
 const { issueActivityToken, revokeActivityToken } = require("../services/activity");
-const { basePath } = require("../utils/helpers");
+const { basePath, sseSender } = require("../utils/helpers");
 const rooms = require("../services/rooms");
 const pcSearch = require("../services/pc-search");
 
@@ -166,9 +166,7 @@ router.get("/api/activity/rooms/:id/events", requireLogin, (req, res) => {
   res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders?.();
   res.on("error", () => {});
-  const send = text => {
-    if (!res.destroyed && !res.writableEnded) res.write(text);
-  };
+  const send = sseSender(res);
   // Сначала «у пульта» (остальным — activity_changed), потом свой поток: себе — снимок init, где ты уже есть
   const leave = rooms.addWatcher(room, req.user);
   const removeListener = rooms.addListener(room.id, msg => send(`data: ${msg}\n\n`));
@@ -295,7 +293,10 @@ function joinPage() {
 }
 router.get("/join/:code", apiLimiter, (req, res) => {
   // /join/842-190/ → без слэша: иначе относительные ../activity/… уходят мимо
-  if (req.path.endsWith("/")) return res.redirect(301, `${basePath(req)}${config.SITE_PREFIX || ""}${req.path.replace(/\/+$/, "")}`);
+  if (req.path.endsWith("/")) {
+    const query = req.originalUrl.includes("?") ? req.originalUrl.slice(req.originalUrl.indexOf("?")) : "";
+    return res.redirect(301, `${basePath(req)}${config.SITE_PREFIX || ""}${req.path.replace(/\/+$/, "")}${query}`);
+  }
   const code = String(req.params.code || "").replace(/[^0-9a-z]/gi, "").toLowerCase().slice(0, 24);
   const html = joinPage();
   if (!code || !html) return res.status(404).type("text").send("Нет такой комнаты.");

@@ -7,7 +7,7 @@ const config = require("../config");
 const { makeJsonWriter } = require("../utils/json-writer");
 
 // ---- Заставки и титры из открытых баз (TheIntroDB, AniSkip) ---------------------------------------------------------
-// Плеер сначала смотрит главы файла (shared/.../core/MarkersDetector.kt); если там нет заставки или титров — спрашивает
+// Плеер сначала смотрит главы файла (android/core/.../core/MarkersDetector.kt, на ПК — desktop-qt/core); если там нет заставки или титров — спрашивает
 // сервер: GET /api/markers?title=&alt=&season=&episode=&duration= (без episode — фильм).
 // 1. TheIntroDB (сериалы и фильмы): id TMDB по названию (тот же поиск, что у постеров, services/posters.js), затем
 //    https://api.theintrodb.org/v4/media?tmdb_id=&season=&episode=&duration_ms= — интервалы в миллисекундах.
