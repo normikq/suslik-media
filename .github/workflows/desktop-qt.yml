@@ -243,7 +243,7 @@ jobs:
           [ -n "$URL" ] || { echo "::error::Нет секрета SITE_URL"; exit 1; }
           [ -n "$UPDATE_TOKEN" ] || { echo "::error::Нет секрета UPDATE_TOKEN"; exit 1; }
           [ -s "$SETUP" ] || { echo "::error::Нет установщика: $SETUP"; exit 1; }
-          # Сервер без бета-канала отдал бы сборку всем, не обращая внимания на X-Channel: тогда отказываемся (как в desktop.yml)
+          # Сервер без бета-канала отдал бы сборку всем, не обращая внимания на X-Channel: тогда отказываемся
           if [ "$CHANNEL" = "beta" ]; then
             code=$(curl -s -o /dev/null -w "%{http_code}" -H "X-Update-Token: $UPDATE_TOKEN" "$URL/api/app/reports?limit=1")
             if [ "$code" != "200" ]; then echo "::error::Сервер ещё без бета-канала — публикация отменена"; exit 1; fi

@@ -32,7 +32,7 @@ private object AndroidPartyLink : PartyLink {
 
 /**
  * Keeps [PlayerActivity][ru.suslikovanora.media.PlayerActivity] in the room's film: the loop is the shared
- * [PartySyncEngine] (the PC uses the same one, `desktop/party/PartySync.kt`), ticked every 400 ms on the main thread.
+ * [PartySyncEngine] (the PC port is `desktop-qt/core/src/Party.cpp`), ticked every 400 ms on the main thread.
  * Works only while the player shows the room's film; otherwise it does nothing (and tells the room «not loading»).
  */
 class PlayerPartySync(private val handler: Handler, private val cb: Callback) {

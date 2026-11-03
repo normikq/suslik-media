@@ -1,4 +1,4 @@
-// Перенос shared/src/test/.../BurstProxyTest.kt: запас против настоящего HTTP-источника с диапазонами (каким и
+// Перенос android/core/src/test/.../BurstProxyTest.kt: запас против настоящего HTTP-источника с диапазонами (каким и
 // является зеркало). Источник, плеер и прокси — в своих потоках, как в жизни; загрузка — HttpUpstream.
 #include "suslik/core/BurstProxy.h"
 #include "suslik/core/HttpUpstream.h"

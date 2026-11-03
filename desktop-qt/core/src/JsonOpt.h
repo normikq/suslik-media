@@ -1,5 +1,5 @@
 #pragma once
-// Чтение JSON как в org.json (optString / optLong / optBoolean / isNull) — чтобы перенос из shared/ вёл себя так же.
+// Чтение JSON как в org.json (optString / optLong / optBoolean / isNull) — чтобы перенос из android/core/ вёл себя так же.
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QString>

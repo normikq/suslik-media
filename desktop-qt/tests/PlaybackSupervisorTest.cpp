@@ -1,4 +1,4 @@
-// Перенос SupervisorTest и CatchUpTest (shared/.../CoreTest.kt) и PlaybackSupervisorTest.kt.
+// Перенос SupervisorTest и CatchUpTest (android/core/.../CoreTest.kt) и PlaybackSupervisorTest.kt.
 #include "suslik/core/CatchUp.h"
 #include "suslik/core/PlaybackSupervisor.h"
 

@@ -1,4 +1,4 @@
-// Перенос shared/src/test/.../AuthTest.kt.
+// Перенос android/core/src/test/.../AuthTest.kt.
 #include "suslik/core/Auth.h"
 #include "TestUtil.h"
 

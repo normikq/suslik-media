@@ -1,4 +1,4 @@
-// Те же случаи, что shared/src/test/.../ModelTest.kt: правила медиатеки на ТВ не должны расходиться с приложениями.
+// Те же случаи, что android/core/src/test/.../ModelTest.kt: правила медиатеки на ТВ не должны расходиться с приложениями.
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');

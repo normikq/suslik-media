@@ -1,4 +1,4 @@
-// Перенос shared/src/test/.../WatchSyncTest.kt.
+// Перенос android/core/src/test/.../WatchSyncTest.kt.
 #include "suslik/core/WatchSync.h"
 #include "TestUtil.h"
 

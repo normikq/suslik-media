@@ -1,5 +1,6 @@
-// Code shared by the Android and the Windows app (plain Kotlin/JVM — Android consumes it like any JVM library).
-// Included into both builds with includeBuild("../shared"); used as implementation("ru.suslikovanora.media:shared").
+// Android app core: reserve BurstProxy, playback supervisor, library model, auth, sync, party, search (plain Kotlin/JVM,
+// no Android APIs — unit tests run on the JVM, see .github/workflows/android-core.yml).
+// Included into the Android build with includeBuild("core"); used as implementation("ru.suslikovanora.media:core").
 plugins { kotlin("jvm") version "2.0.21" }
 
 group = "ru.suslikovanora.media"
@@ -12,7 +13,7 @@ java {
 kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
 
 dependencies {
-    // org.json: built into Android; the desktop app brings its own copy.
+    // org.json: built into Android (compileOnly), tests bring their own copy.
     compileOnly("org.json:json:20240303")
     testImplementation(kotlin("test"))
     testImplementation("org.json:json:20240303")

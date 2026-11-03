@@ -7,7 +7,7 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Unified model for a search hit across all platforms (Android, Desktop).
+ * Unified model for a search hit (the PC has a C++ port in desktop-qt/core).
  */
 data class SearchHit(
     val id: String,

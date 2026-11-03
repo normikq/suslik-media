@@ -7,7 +7,7 @@
 #include <optional>
 
 /// Внешние озвучки с сервера (/api/custom-audio, docs/CUSTOM-AUDIO-API.md): аудио из другой раздачи, привязанное к
-/// видеофайлу фильма, по подписанной ссылке зеркала. Перенос shared/.../audio/CustomAudio.kt.
+/// видеофайлу фильма, по подписанной ссылке зеркала. Перенос android/core/.../audio/CustomAudio.kt.
 namespace suslik::core {
 
 /// Дорожка фильма: url — свежая ссылка зеркала, offsetMs — задержка для всех, mine — её можно менять.

@@ -7,7 +7,7 @@
 #include <limits>
 
 /// Совместный просмотр: данные комнаты, протокол сервера (`/api/rooms`), часы и синхронизация плеера.
-/// Перенос shared/.../core/party (PartyModels.kt, PartyProtocol.kt, PartySyncEngine.kt) — без сети: сеть у приложения.
+/// Перенос android/core/.../core/party (PartyModels.kt, PartyProtocol.kt, PartySyncEngine.kt) — без сети: сеть у приложения.
 namespace suslik::core {
 
 /// Часы комнаты: смещение локального времени относительно сервера по самому короткому кругу запроса среди точек

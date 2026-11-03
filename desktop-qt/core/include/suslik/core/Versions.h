@@ -2,7 +2,7 @@
 #include <QString>
 
 /// Версии вида «1.9.5» / «2.0.0.1» (до четырёх чисел, прочий текст не учитывается) и канал обновлений.
-/// Перенос shared/.../core/Versions.kt.
+/// Перенос android/core/.../core/Versions.kt.
 namespace suslik::core {
 
 namespace Versions {

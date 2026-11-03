@@ -1,4 +1,4 @@
-// Перенос shared/src/test/.../SeriesGroupingTest.kt (SeriesGroupingTest и AiTitleSearchGroupingTest).
+// Перенос android/core/src/test/.../SeriesGroupingTest.kt (SeriesGroupingTest и AiTitleSearchGroupingTest).
 #include "TestUtil.h"
 
 #include <QRandomGenerator>

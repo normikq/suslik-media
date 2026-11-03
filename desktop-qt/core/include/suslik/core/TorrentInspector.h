@@ -7,7 +7,7 @@
 #include <optional>
 
 /// Проверка «в раздаче есть видео» до отправки на сервер: список файлов .torrent (bencode) и имя магнета.
-/// Перенос shared/.../torrent/TorrentInspector.kt.
+/// Перенос android/core/.../torrent/TorrentInspector.kt.
 namespace suslik::core::TorrentInspector {
 
 inline constexpr int MAX_TORRENT_FILE_SIZE = 10 * 1024 * 1024;

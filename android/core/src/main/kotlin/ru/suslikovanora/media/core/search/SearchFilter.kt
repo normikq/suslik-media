@@ -43,7 +43,7 @@ object SearchQueryCleaner {
 }
 
 /**
- * Complete search filter criteria used across Android and Desktop.
+ * Complete search filter criteria (the PC has a C++ port in desktop-qt/core).
  */
 data class SearchFilterCriteria(
     val query: String = "",

@@ -4,10 +4,10 @@
 
 | Папка | Что |
 |---|---|
-| `core/` | Ядро без интерфейса, перенос `shared/` (только Qt Core/Network): адрес сервера, зеркало, версии, changelog… |
+| `core/` | Ядро без интерфейса, перенос `android/core/` (только Qt Core/Network): адрес сервера, зеркало, версии, changelog… |
 | `app/` | Приложение на Qt Quick (QML): медиатека, плеер на libmpv |
 | `installer/` | MSI (WiX 3) и `setup/` — стилизованный установщик и окно удаления (перенос `desktop/setup`, WPF) |
-| `tests/` | Тесты ядра (Qt Test) — те же случаи, что в `shared/src/test` |
+| `tests/` | Тесты ядра (Qt Test) — те же случаи, что в `android/core/src/test` |
 
 ## Сборка
 

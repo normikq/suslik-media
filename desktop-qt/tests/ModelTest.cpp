@@ -1,4 +1,4 @@
-// Перенос shared/src/test/.../ModelTest.kt.
+// Перенос android/core/src/test/.../ModelTest.kt.
 #include "TestUtil.h"
 
 using namespace suslik::core;

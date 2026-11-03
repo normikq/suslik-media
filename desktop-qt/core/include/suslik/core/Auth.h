@@ -4,7 +4,7 @@
 #include <optional>
 
 /// Вход (общий пароль, Discord, код устройства) и «Мои фильмы»: протокол сервера (website/src/routes/auth.js, /api/shelf).
-/// Без сети: приложение шлёт запросы и отдаёт сюда ответы. Перенос shared/.../auth/Auth.kt.
+/// Без сети: приложение шлёт запросы и отдаёт сюда ответы. Перенос android/core/.../auth/Auth.kt.
 namespace suslik::core {
 
 /// Пользователь сервера. Вход по общему паролю — isShared (id "shared").

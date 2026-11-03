@@ -27,7 +27,7 @@ import ru.suslikovanora.media.tr
 import java.util.concurrent.TimeUnit
 
 /**
- * Совместный просмотр: одна комната на приложение (как `desktop/party/Party.kt`). Сервер (`/api/rooms`) хранит, что и где
+ * Совместный просмотр: одна комната на приложение (как `desktop-qt/app/src/party/Party.cpp` на ПК). Сервер (`/api/rooms`) хранит, что и где
  * играет; изменения приходят потоком событий (SSE). Данные комнаты, разбор ответов и права — в общем модуле
  * (`core/party/PartyProtocol.kt`); здесь — сеть (OkHttp) и состояние для Compose. Живёт в процессе: медиатека и плеер
  * видят одну и ту же комнату.
