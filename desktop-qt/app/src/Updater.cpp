@@ -40,7 +40,7 @@ Store &prefs() { return Store::of(S("updates")); }
 Store &seen() { return Store::of(S("whatsnew")); }
 
 #ifdef Q_OS_WIN
-/// UpgradeCode установщика Qt-версии (свой; Kotlin-версию при установке убирает установщик, см. docs/QT-PORT.md, шаг 4).
+/// UpgradeCode установщика Qt-версии (свой; Kotlin-версию при установке убирает установщик, см. docs/DESKTOP.md §8).
 #ifdef SM_DIAG
 constexpr const wchar_t *kUpgradeCode = L"{F79D44DC-CEC2-4619-824F-32180E6B7698}";
 #else

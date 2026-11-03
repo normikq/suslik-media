@@ -1,4 +1,4 @@
-# Приложение: интерфейс на QML поверх ядра (core/). План — docs/QT-PORT.md.
+# Приложение: интерфейс на QML поверх ядра (core/). Устройство — docs/DESKTOP.md.
 find_package(Qt6 6.4 REQUIRED COMPONENTS Gui Quick OpenGL ShaderTools WebSockets)
 
 qt_add_executable(suslik_media WIN32
