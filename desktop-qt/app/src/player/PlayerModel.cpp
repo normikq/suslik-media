@@ -423,14 +423,15 @@ void PlayerModel::fetchSubtitles(quint64 gen, const QStringList &urls, const QSt
     auto st = std::make_shared<State>();
     st->left = int(urls.size());
     st->local.resize(urls.size());
-    auto *nam = new QNetworkAccessManager(this);
+    if (!m_subsNam) m_subsNam = new QNetworkAccessManager(this);
+    QNetworkAccessManager *nam = m_subsNam;
     const qint64 stamp = now();
     QPointer<PlayerModel> self(this);
     for (int i = 0; i < urls.size(); ++i) {
         QNetworkRequest req{QUrl(urls[i])};
         req.setTransferTimeout(20000);
         QNetworkReply *r = nam->get(req);
-        connect(r, &QNetworkReply::finished, this, [self, r, st, i, urls, videoUrl, gen, dir, stamp, nam] {
+        connect(r, &QNetworkReply::finished, this, [self, r, st, i, urls, videoUrl, gen, dir, stamp] {
             r->deleteLater();
             const int code = r->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
             if (r->error() == QNetworkReply::NoError && code >= 200 && code < 300 && self) {
@@ -440,7 +441,6 @@ void PlayerModel::fetchSubtitles(quint64 gen, const QStringList &urls, const QSt
                 if (f.open(QIODevice::WriteOnly)) { f.write(r->readAll()); st->local[i] = f.fileName(); }
             }
             if (--st->left > 0) return;
-            nam->deleteLater();
             if (!self || self->m_gen != gen) return;
             QList<MpvEngine::SideTrack> subs;
             for (int k = 0; k < urls.size(); ++k) {

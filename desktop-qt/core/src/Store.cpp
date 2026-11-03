@@ -62,7 +62,10 @@ void Store::load() {
         QHash<QString, QString> v = parseProperties(bytes);
         for (auto it = v.begin(); it != v.end();) {
             const QString both = it.key() + it.value();
-            const bool control = std::any_of(both.begin(), both.end(), [](QChar c) { return c.unicode() < ' '; });
+            // мусор — управляющие знаки, кроме пробельных: \t, \n, \r пишутся экранированными и бывают в значениях
+            const bool control = std::any_of(both.begin(), both.end(), [](QChar c) {
+                return c.unicode() < ' ' && c != QLatin1Char('\t') && c != QLatin1Char('\n') && c != QLatin1Char('\r');
+            });
             it = control ? v.erase(it) : std::next(it);
         }
         m_values = v;
@@ -90,6 +93,11 @@ QStringList Store::keys() const {
     return m_values.keys();
 }
 
+QHash<QString, QString> Store::all() const {
+    QMutexLocker l(&m_lock);
+    return m_values;
+}
+
 void Store::scheduleSave() {
     {
         QMutexLocker l(&m_lock);
@@ -113,15 +121,26 @@ void Store::flush() {
         copy = m_values;
     }
     QDir().mkpath(QFileInfo(m_file).absolutePath());
-    // Прежний файл становится .bak, новый пишется через QSaveFile: данные на диске (fsync) раньше, чем у файла имя
-    if (QFile::exists(m_file)) {
-        QFile::remove(m_bak);
-        QFile::rename(m_file, m_bak);
-    }
+    // Новый файл пишется через QSaveFile (временный файл, fsync, замена именем): рабочий файл на месте, пока новый
+    // не готов. Прежний становится .bak копией, а не переименованием — не открылся QSaveFile, файл не пропадает.
     QSaveFile out(m_file);
-    if (!out.open(QIODevice::WriteOnly)) return;
-    out.write(writeProperties(copy));
-    out.commit();
+    bool ok = out.open(QIODevice::WriteOnly);
+    if (ok) ok = out.write(writeProperties(copy)) >= 0;
+    if (ok && QFile::exists(m_file)) {
+        QFile::remove(m_bak);
+        QFile::copy(m_file, m_bak);
+    }
+    if (ok) ok = out.commit();
+    else out.cancelWriting();
+    if (ok) return;
+    // Не записалось (файл занят антивирусом, нет места): данные пока только в памяти — повторить позже.
+    {
+        QMutexLocker l(&m_lock);
+        if (m_pending) return; // уже есть новая запись в очереди
+        m_pending = true;
+    }
+    if (auto *app = QCoreApplication::instance())
+        QMetaObject::invokeMethod(app, [this] { QTimer::singleShot(5000, QCoreApplication::instance(), [this] { flush(); }); }, Qt::QueuedConnection);
 }
 
 QHash<QString, QString> Store::parseProperties(const QByteArray &bytes) {

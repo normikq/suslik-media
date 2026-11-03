@@ -3,6 +3,7 @@
 #include "PlayerLog.h"
 #include "../AppDir.h"
 
+#include "suslik/core/Safety.h"
 #include "suslik/core/Store.h"
 #include "suslik/core/Strings.h"
 
@@ -11,6 +12,7 @@
 #include <QFile>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
+#include <QRegularExpression>
 
 namespace suslik::app {
 
@@ -34,6 +36,15 @@ QString MpvInstall::path() const { return ready() ? mpv::libraryFile() : QString
 void MpvInstall::start() {
     if (m_reply) return;
     if (ready() || m_url.isEmpty()) { emit finished(ready()); return; }
+    // Без эталонной суммы чужую DLL не качаем: её загрузит LoadLibrary в наш процесс.
+    static const QRegularExpression hex64(S("^[0-9a-f]{64}$"));
+    if (!hex64.match(m_sha).hasMatch()) {
+        m_error = core::tx(S("app.mpv_fayl_povrezhden"));
+        PlayerLog::write(S("libmpv: no valid dllSha256 in libmpv.properties, not downloading"));
+        emit changed();
+        emit finished(false);
+        return;
+    }
     QDir().mkpath(dir());
     m_error.clear();
     m_progress = 0;
@@ -68,7 +79,7 @@ void MpvInstall::start() {
         m_part->write(r->readAll());
         m_part->close();
         const QString hex = QString::fromLatin1(m_hash->result().toHex());
-        if (!m_sha.isEmpty() && hex != m_sha) { fail(core::tx(S("app.mpv_fayl_povrezhden")), S("checksum mismatch")); return; }
+        if (!core::Safety::sha256Matches(m_sha, hex)) { fail(core::tx(S("app.mpv_fayl_povrezhden")), S("checksum mismatch")); return; }
         const QString target = QDir(dir()).filePath(mpv::libraryName());
         QFile::remove(target);
         if (!m_part->rename(target)) { fail(core::tx(S("app.mpv_server_nedostupen")), S("cannot place %1").arg(target)); return; }

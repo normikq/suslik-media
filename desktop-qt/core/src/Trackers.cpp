@@ -32,11 +32,11 @@ QString stripTags(QString s) {
 // ---- какие источники включены ----
 
 const QList<TrackerSourceInfo> &TrackerSettings::sources() {
-    // Подписи из Kotlin-версии как есть (ключи строк у неё перепутаны местами — текст тот же)
+    // Тексты те же, что у Kotlin-версии; ключи строк названы по своему трекеру (у Kotlin они были перепутаны)
     static const QList<TrackerSourceInfo> list = {
-        {S("rutor"), S("Rutor"), S("trackers.desc_kinozal"), S("trackers.badge_kinozal"), false},
-        {S("nnmclub"), S("NNM-Club"), S("trackers.desc_rutor"), S("trackers.badge_rutor"), false},
-        {S("tpb"), S("The Pirate Bay"), S("trackers.desc_torrentgalaxy"), S("trackers.badge_torrentgalaxy"), false},
+        {S("rutor"), S("Rutor"), S("trackers.desc_rutor"), S("trackers.badge_rutor"), false},
+        {S("nnmclub"), S("NNM-Club"), S("trackers.desc_nnmclub"), S("trackers.badge_nnmclub"), false},
+        {S("tpb"), S("The Pirate Bay"), S("trackers.desc_tpb"), S("trackers.badge_tpb"), false},
         {S("nyaa"), S("Nyaa"), S("trackers.desc_nyaa"), S("trackers.badge_nyaa"), false},
         {S("rutracker"), S("RuTracker (ПК)"), S("trackers.desc_rutracker"), S("trackers.badge_rutracker"), true},
     };
@@ -105,6 +105,8 @@ void RuTracker::setUrl(const QString &u) {
 }
 bool RuTracker::enabled() { return get(S("rutracker.enabled")) == S("true"); }
 void RuTracker::setEnabled(bool on) { store().put(S("rutracker.enabled"), on ? S("true") : S("false")); }
+bool RuTracker::partyAllowed() { return get(S("rutracker.party")) != S("false"); }
+void RuTracker::setPartyAllowed(bool on) { store().put(S("rutracker.party"), on ? S("true") : S("false")); }
 QString RuTracker::cookie() { return get(S("rutracker.cookie")); }
 void RuTracker::setCookie(const QString &c) { store().put(S("rutracker.cookie"), c.trimmed()); }
 QString RuTracker::cookieSource() { return get(S("rutracker.cookie_source")); }

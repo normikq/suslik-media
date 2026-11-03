@@ -36,7 +36,9 @@ namespace SuslikSetup
                 return site.Length > 0 && pin.TryGetValue("path", out var p) ? site + p : "";
             }
         }
-        static string Sha256 => (pin.TryGetValue("dllSha256", out var v) ? v : "").ToLowerInvariant();
+        static string Sha256 => (pin.TryGetValue("dllSha256", out var v) ? v : "").Trim().ToLowerInvariant();
+        /// Ровно 64 шестнадцатеричных знака: пустую или кривую сумму за проверку не считаем.
+        static bool ValidSha => Sha256.Length == 64 && Sha256.All(Uri.IsHexDigit);
 
         /// <summary>Папка установки не важна: видеодвижок живёт в данных программы.</summary>
         static string Dir(string folder) => Product.MpvFolder;
@@ -64,7 +66,8 @@ namespace SuslikSetup
         /// <summary>Нужная версия уже лежит в папке установки: при обновлении ничего не качаем.</summary>
         public static bool Ready(string folder)
         {
-            if (Sha256.Length == 0) return true;
+            // Без эталонной суммы в libmpv.properties ничего не считаем «готовым»: непроверенную DLL не оставляем.
+            if (!ValidSha) return false;
             try
             {
                 var dll = Dll(folder);
@@ -84,6 +87,7 @@ namespace SuslikSetup
         public static void Download(string folder, Action<double, long, long> progress, CancellationToken ct)
         {
             if (Url.Length == 0) throw new IOException("Не задан адрес видеодвижка.");
+            if (!ValidSha) throw new IOException("Не задана контрольная сумма видеодвижка: скачивание без проверки отключено.");
             Directory.CreateDirectory(Dir(folder));
             var dll = Dll(folder);
             var part = dll + ".part";

@@ -1,5 +1,6 @@
 #pragma once
 #include "suslik/core/Party.h"
+#include "suslik/core/Safety.h"
 
 #include <QObject>
 #include <QPointer>
@@ -143,6 +144,9 @@ private:
     int m_failures = 0;
     int m_streamGen = 0;
     QTimer m_clockTimer;
+    /// Запросы участников к RuTracker через этот ПК (с его cookie): поиск и .torrent — не чаще, чем живой человек.
+    core::Safety::RateLimit m_remoteSearches{10, 10 * 60 * 1000};
+    core::Safety::RateLimit m_remoteTorrents{5, 10 * 60 * 1000};
 };
 
 } // namespace suslik::app

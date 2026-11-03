@@ -80,6 +80,27 @@ private slots:
         QVERIFY(!s.get(S("bad")));
     }
 
+    void whitespaceInValuesSurvivesReload() {
+        // \t, \n, \r пишутся экранированными — после перезапуска значение то же (раньше стиралось как «мусор»)
+        Store &s = Store::of(S("notes"));
+        s.put(S("note"), S("строка 1\nстрока 2\tтаб\r"));
+        s.flush();
+        Store::resetForTests();
+        QCOMPARE(Store::of(S("notes")).get(S("note")).value(), S("строка 1\nстрока 2\tтаб\r"));
+    }
+
+    void flushKeepsWorkingFileAndCopy() {
+        Store &s = Store::of(S("keep"));
+        s.put(S("k"), S("one"));
+        s.flush();
+        s.put(S("k"), S("two"));
+        s.flush();
+        QVERIFY(QFile::exists(dir.filePath(S("keep.properties"))));
+        QFile bak(dir.filePath(S("keep.properties.bak")));
+        QVERIFY(bak.open(QIODevice::ReadOnly));
+        QCOMPARE(Store::parseProperties(bak.readAll()).value(S("k")), S("one"));
+    }
+
     void stringsWithParams() {
         Strings::load(R"j({"a":"Ошибка сервера ({code})","b":"Б"})j", R"j({"b":"B"})j");
         QCOMPARE(tx(S("a"), {{"code", S("502")}}), S("Ошибка сервера (502)"));

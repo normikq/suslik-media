@@ -40,9 +40,9 @@ std::optional<QString> renew(QPointer<ApiClient> api, const QString &old) {
     return future.get();
 }
 
-/// Читает диапазон до конца в потоке пула (свой менеджер сети); размер всего файла — из Content-Range.
-std::optional<qint64> readSome(const QString &url, const QString &range) {
-    QNetworkAccessManager nam;
+/// Читает диапазон до конца в потоке пула (менеджер сети этого потока — от вызывающего, для нескольких чтений подряд
+/// один); размер всего файла — из Content-Range.
+std::optional<qint64> readSome(QNetworkAccessManager &nam, const QString &url, const QString &range) {
     QNetworkRequest req{QUrl(url)};
     req.setRawHeader("Range", range.toUtf8());
     req.setTransferTimeout(30000);
@@ -73,12 +73,12 @@ BurstProxy &proxy(ApiClient *api) {
     if (api) g_api = api;
     if (!g_proxy) {
         g_proxy = new BurstProxy;
-        if (!g_up) g_up = new HttpUpstream; // не удаляется: держит только соединения, ОС закроет их сама
+        if (!g_up) g_up = new HttpUpstream; // только общее состояние соединений; удаляется в shutdown()
     }
     BurstProxy &p = *g_proxy;
     if (!p.initialized()) {
         p.setLog([](const QString &m) { PlayerLog::write(m); });
-        p.setResetConnections([] { g_up->resetConnections(); });
+        p.setResetConnections([up = *g_up]() mutable { up.resetConnections(); }); // копия: то же состояние, без g_up
         p.setRefreshUrl([](const QString &old) { return renew(g_api, old); });
         p.init(reserveDir(), g_up->upstream());
     }
@@ -90,16 +90,22 @@ int dropRetired() { return g_proxy ? g_proxy->dropRetired() : 0; }
 void shutdown() {
     delete g_proxy;
     g_proxy = nullptr;
+    delete g_up; // потоки прокси уже закрыты; их копии Upstream держат состояние сами
+    g_up = nullptr;
 }
 
 void warmUp(const QString &url, qint64 bytes) {
-    QThreadPool::globalInstance()->start([url, bytes] { readSome(url, S("bytes=0-%1").arg(bytes - 1)); });
+    QThreadPool::globalInstance()->start([url, bytes] {
+        QNetworkAccessManager nam;
+        readSome(nam, url, S("bytes=0-%1").arg(bytes - 1));
+    });
 }
 
 void warmSidecar(const QString &localUrl) {
     QThreadPool::globalInstance()->start([localUrl] {
-        const auto total = readSome(localUrl, S("bytes=0-262143"));
-        if (total && *total > (512 << 10)) readSome(localUrl, S("bytes=%1-%2").arg(*total - (512 << 10)).arg(*total - 1));
+        QNetworkAccessManager nam; // одно соединение с прокси на оба чтения
+        const auto total = readSome(nam, localUrl, S("bytes=0-262143"));
+        if (total && *total > (512 << 10)) readSome(nam, localUrl, S("bytes=%1-%2").arg(*total - (512 << 10)).arg(*total - 1));
     });
 }
 

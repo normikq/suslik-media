@@ -60,6 +60,16 @@ private slots:
         QCOMPARE(i.files.size(), 0);
     }
 
+    void brokenInsideClosedDictIsRefused() {
+        // строка длиннее остатка, длина не число, ключ без значения, число без «e» — ошибка, а не пустые узлы
+        QVERIFY(TorrentInspector::inspect("d4:infod6:lengthi1e4:name9:video.mkvee").isParsedSuccessfully);
+        QVERIFY(!TorrentInspector::inspect("d4:infod6:lengthi1e4:name99:video.mkvee").isParsedSuccessfully);
+        QVERIFY(!TorrentInspector::inspect("d4:infod6:lengthi1e4:namex:video.mkvee").isParsedSuccessfully);
+        QVERIFY(!TorrentInspector::inspect("d4:infod6:lengthi1e4:namee4:infoe").isParsedSuccessfully);
+        QVERIFY(!TorrentInspector::inspect("d4:infod6:lengthi1x").isParsedSuccessfully);
+        QVERIFY(!TorrentInspector::inspect("d4:infod6:lengthi1").isParsedSuccessfully);
+    }
+
     void deepNestingIsRefused() {
         QVERIFY(!TorrentInspector::inspect(QByteArray(100, 'l') + QByteArray(100, 'e')).isParsedSuccessfully);
     }

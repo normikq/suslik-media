@@ -123,7 +123,9 @@ void CloudSync::tick() {
     const bool due = m_kicked || (m_sync->hasPending() && now - m_lastPush > 2 * 60000LL) || now - m_lastPull > 5 * 60000LL;
     m_kicked = false;
     if (!due || !WatchSync::eligible(m_user)) return;
-    m_lastPush = now;
+    // Отсчёт двух минут — от раунда, который правда отправил своё: раунд «за чужим» без своих изменений
+    // не должен откладывать прогресс, появившийся сразу после него.
+    if (m_sync->hasPending()) m_lastPush = now;
     m_busy = true;
     round(*m_user, 0, 0, now);
 }

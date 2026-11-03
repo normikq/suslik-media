@@ -881,6 +881,20 @@ std::optional<std::pair<MFile, WatchInfo>> Library::lastWatched(const Magnet &m)
     return best;
 }
 
+QSet<qint64> Library::watchedSince(qint64 since) const {
+    QSet<qint64> ids;
+    const QHash<QString, QString> all = m_watch.all();
+    for (auto it = all.cbegin(); it != all.cend(); ++it) {
+        // ключ «magnetId|путь», значение «pos|len|at»
+        const qsizetype bar = it.key().indexOf(QLatin1Char('|'));
+        if (bar <= 0) continue;
+        bool ok = false;
+        const qint64 id = QStringView(it.key()).left(bar).toLongLong(&ok);
+        if (ok && it.value().section(QLatin1Char('|'), 2, 2).toLongLong() >= since) ids.insert(id);
+    }
+    return ids;
+}
+
 qint64 Library::continueHiddenAt(qint64 id) const { return m_hidden.get(QString::number(id)).value_or(QString()).toLongLong(); }
 
 void Library::hideContinue(const QVariantList &ids) {

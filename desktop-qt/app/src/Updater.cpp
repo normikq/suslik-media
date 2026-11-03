@@ -4,6 +4,7 @@
 
 #include "suslik/core/ApiClient.h"
 #include "suslik/core/Changelog.h"
+#include "suslik/core/Safety.h"
 #include "suslik/core/Store.h"
 #include "suslik/core/Strings.h"
 #include "suslik/core/Versions.h"
@@ -198,8 +199,9 @@ void Updater::install() {
         QString err;
         if (reply->error() != QNetworkReply::NoError && code == 0) err = reply->errorString();
         else if (code != 200) err = tx(S("update.server_ne_otdal_fayl"), {{S("p"), QString::number(code)}});
-        // Обрезанный или битый файл не должен дойти до msiexec: размер (и сумма, если сервер её дал) обязаны совпасть.
-        else if ((total > 0 && *got != total) || (!info.sha256.isEmpty() && QString::fromLatin1(hash->result().toHex()) != info.sha256))
+        // Обрезанный, битый или подменённый файл не должен дойти до msiexec: размер и SHA-256 обязаны совпасть.
+        // Без суммы от сервера не ставим вовсе (сервер отдаёт её с 2.x, routes/updates.js).
+        else if ((total > 0 && *got != total) || !Safety::sha256Matches(info.sha256, QString::fromLatin1(hash->result().toHex())))
             err = tx(S("update.fayl_povrezhden"));
         if (!err.isEmpty()) {
             QFile::remove(path);
@@ -231,8 +233,8 @@ void Updater::installAndExit(const QString &file, bool replace) {
         }
         // Своя запись в «Установленных приложениях» у окна удаления (SuslikUninstall.exe): запись самого MSI прячем.
         const QString arp = uninstaller().isEmpty() ? QString() : S(" ARPSYSTEMCOMPONENT=1");
-        script += S("$p = Start-Process msiexec -ArgumentList '/i \"%1\" /passive /norestart INSTALLDIR=\"%2\"%3' -Wait -PassThru\n")
-                      .arg(q(QDir::toNativeSeparators(file)), q(dir), arp);
+        script += S("$p = Start-Process msiexec -ArgumentList '/i %1 /passive /norestart INSTALLDIR=%2%3' -Wait -PassThru\n")
+                      .arg(q(Safety::quoteWindowsArg(QDir::toNativeSeparators(file), true)), q(Safety::quoteWindowsArg(dir, true)), arp);
         script += S("if ($p.ExitCode -eq 0 -or $p.ExitCode -eq 3010) { Start-Process '%1' }\n").arg(q(exe));
         // В base64 (UTF-16LE): командной строке тогда не нужны кавычки.
         const QByteArray utf16(reinterpret_cast<const char *>(script.utf16()), script.size() * 2);
