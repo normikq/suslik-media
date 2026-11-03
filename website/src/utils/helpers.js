@@ -41,9 +41,25 @@ function basePath(req) {
   return PREFIX_RE.test(p) ? p : "";
 }
 
-// Внешний адрес сервера для ссылок, которые уходят в приложения и плееры: https://домен[/путь]
+// Внешний адрес сервера для ссылок, которые уходят в приложения и плееры: https://домен[/путь].
+// http — только для запроса по http на локальный или домашний адрес (сервер разработчика без nginx):
+// за nginx без TRUST_PROXY req.protocol всегда http, поэтому по умолчанию — https, как раньше
+const LOCAL_HOST_RE = /^(?:localhost|127(?:\.\d{1,3}){3}|\[::1\]|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})(?::\d+)?$/i;
 function publicBase(req) {
-  return `https://${req.get("host")}${basePath(req)}`;
+  const host = String(req.get("host") || "");
+  const proto = !req.secure && LOCAL_HOST_RE.test(host) ? "http" : "https";
+  return `${proto}://${host}${basePath(req)}`;
+}
+
+// Отправка в поток событий (SSE). Клиент на медленной сети не успевает читать — буфер сокета растёт без предела.
+// Больше SSE_MAX_BUFFER непрочитанного — закрываем поток: клиент переподключится и получит свежий снимок (init)
+const SSE_MAX_BUFFER = 1024 * 1024;
+function sseSender(res) {
+  return text => {
+    if (res.destroyed || res.writableEnded) return;
+    if (res.writableLength > SSE_MAX_BUFFER) return res.destroy();
+    res.write(text);
+  };
 }
 
 function adFail(status, message) {
@@ -60,5 +76,6 @@ module.exports = {
   contentDisposition,
   basePath,
   publicBase,
+  sseSender,
   adFail
 };

@@ -50,7 +50,9 @@ const SHARED_USER = Object.freeze({
   name: "Общий доступ",
   username: "shared",
   avatar: null,
-  role: "admin"
+  // Не "admin": общий пароль — это все сразу, админских прав у него нет (requireAdmin, isLibraryAdmin),
+  // и приложения не должны показывать ему «Администратор»
+  role: "user"
 });
 
 function normalizeUserCode(input) {

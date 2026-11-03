@@ -46,7 +46,7 @@ function recordOwner(id, dev, ip) {
 }
 
 function isLibraryAdmin(req) {
-  // Админ Discord. Не «shared»: у общего пароля тоже role "admin", но это все сразу
+  // Админ Discord. Не «shared» (общий пароль — это все сразу; роль у него и так "user", проверка id — страховка)
   return Boolean(req.user && req.user.role === "admin" && req.user.id !== "shared");
 }
 

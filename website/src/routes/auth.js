@@ -410,25 +410,14 @@ router.get("/api/session", (req, res) => {
     });
   }
 
-  let userInfo = null;
-  if (req.user) {
-    userInfo = {
-      id: req.user.id,
-      name: req.user.name,
-      username: req.user.username,
-      avatar: req.user.avatar,
-      role: req.user.role
-    };
-  } else {
-    // Вход по паролю
-    userInfo = {
-      id: "shared",
-      name: "Общий доступ",
-      username: "shared",
-      avatar: "",
-      role: "user" // не "admin": удалять готовые раздачи общий пароль не может (isLibraryAdmin)
-    };
-  }
+  // resolveAuth при входе всегда задаёт req.user (общий пароль — SHARED_USER с ролью "user")
+  const userInfo = {
+    id: req.user.id,
+    name: req.user.name,
+    username: req.user.username,
+    avatar: req.user.avatar,
+    role: req.user.role
+  };
 
   res.json({
     authenticated: true,

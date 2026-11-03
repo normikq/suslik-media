@@ -3,6 +3,7 @@
 const express = require("express");
 const { requireLogin, resolveAuth } = require("../middleware/auth");
 const { roomLimiter } = require("../middleware/rate-limit");
+const { sseSender } = require("../utils/helpers");
 const {
   createRoom,
   getRoom,
@@ -110,9 +111,7 @@ router.get("/api/rooms/:id/events", requireLogin, (req, res) => {
 
   // Запись в оборванный поток — не повод падать: ошибку сокета гасим, закрытие разберёт «close»
   res.on("error", () => {});
-  const send = text => {
-    if (!res.destroyed && !res.writableEnded) res.write(text);
-  };
+  const send = sseSender(res);
 
   const removeListener = addListener(room.id, msg => send(`data: ${msg}\n\n`));
 

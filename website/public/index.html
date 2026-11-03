@@ -398,6 +398,12 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
 try{document.documentElement.classList.add("auth-pending");setTimeout(function(){document.documentElement.classList.remove("auth-pending");},4000);}catch(e){}</script>
 <link rel="stylesheet" href="redesign.css?v=42">
 <style>
+  /* Пока ждём /api/session (страница скрыта, до 4 с): если ответ задержался больше полсекунды — крутилка, а не пустой экран */
+  html.auth-pending::after { content: ""; position: fixed; left: 50%; top: 45%; width: 34px; height: 34px; margin: -17px 0 0 -17px; z-index: 50;
+    border: 3px solid rgba(255,255,255,.16); border-top-color: #a78bfa; border-radius: 50%; opacity: 0; pointer-events: none;
+    animation: sm-auth-spin .8s linear infinite, sm-auth-show .2s ease .5s forwards; }
+  @keyframes sm-auth-spin { to { transform: rotate(360deg); } }
+  @keyframes sm-auth-show { to { opacity: 1; } }
 .sr-badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
 .sr-badges .rb { background: #1c2230; color: #c7d0e0; border: 1px solid #2e3850; border-radius: 6px; padding: 2px 8px; font-size: 12px; font-weight: 700; }
 .sr-badges .rb.res4k { background: #281e10; color: #ffb02e; border-color: #6e501c; }
@@ -925,7 +931,7 @@ $("removeTorrentBtn").addEventListener("click",()=>{$("torrentFile").value="";re
 for(const ev of ["dragenter","dragover"])$("torrentDropzone").addEventListener(ev,e=>{e.preventDefault();$("torrentDropzone").classList.add("dragover");});
 for(const ev of ["dragleave","drop"])$("torrentDropzone").addEventListener(ev,e=>{e.preventDefault();$("torrentDropzone").classList.remove("dragover");});
 $("torrentDropzone").addEventListener("drop",e=>{const file=e.dataTransfer?.files?.[0];if(!file)return;e.preventDefault();if(file.size>1024*1024){$("linkStatus").textContent="Размер файла .torrent не должен превышать 1 МБ.";$("linkStatus").className="status error";return;}if(!file.name.toLowerCase().endsWith(".torrent")){$("linkStatus").textContent="Выберите файл с расширением .torrent.";$("linkStatus").className="status error";return;}const transfer=new DataTransfer();transfer.items.add(file);$("torrentFile").files=transfer.files;renderChosenTorrent();});
-// «В раздаче есть видео» — то же правило, что в shared/…/core/torrent/TorrentInspector.kt (ПК и Android)
+// «В раздаче есть видео» — то же правило, что в android/core/…/core/torrent/TorrentInspector.kt (ПК и Android)
 const CHK_VIDEO_EXT=new Set(["mkv","mp4","m4v","avi","mov","webm","ts","m2ts","mts","wmv","vob","mpg","mpeg","flv","3gp","ogv","asf"]);
 const CHK_NON_VIDEO_EXT=new Set(["exe","msi","apk","pkg","deb","rpm","bin","cue","dmg","zip","rar","7z","tar","gz","cbr","cbz","pdf","epub","fb2","mp3","flac","wav","ape","aac","ogg","wma","doc","docx"]);
 function addExtOf(name){const i=name.lastIndexOf(".");return i<0?"":name.slice(i+1).toLowerCase();}
@@ -1698,7 +1704,7 @@ function buildPlaylistByFiles(magnet){
   const mainVideo = pickMainVideo(magnet);
   return {type: mainVideo ? "movie" : "none", file: mainVideo};
 }
-// ---- одна плитка на несколько версий (groupVersions / numberedEpisodesOf / titleKey в shared/.../core/Model.kt) ----
+// ---- одна плитка на несколько версий (groupVersions / numberedEpisodesOf / titleKey в android/core/.../core/Model.kt) ----
 const NUM_NOISE=/(?:2160|1080|720|480|576)[pi]|[xh][ .]?26[45]|\d+(?:[.,]\d+)?\s?(?:fps|kbps|mbps|bit|gb|mb)|(?<!\d)(?:19|20)\d{2}(?!\d)|(?<!\d)[1-9]\.[01](?!\d)/gi;
 const NUM_IN_NAME=/(?<!\d)\d{1,3}(?!\d)/g;
 function numberedEpisodesOf(magnet, vids, season=1){
@@ -1812,7 +1818,7 @@ async function fillPosterPaths(){
   }catch{} finally{ fillPostersRunning=false; }
 }
 function versionsWord(n){ return n+(n%10>=2&&n%10<=4&&!(n%100>=12&&n%100<=14)?" версии":" версий"); }
-// ---- «Какую версию включить?»: как VersionPicker на ПК (versionSections / versionLine в shared/.../core/Model.kt) ----
+// ---- «Какую версию включить?»: как VersionPicker на ПК (versionSections / versionLine в android/core/.../core/Model.kt) ----
 const pluralRu=(n,one,few,many)=>n%10===1&&n%100!==11?one:n%10>=2&&n%10<=4&&!(n%100>=12&&n%100<=14)?few:many;
 const filmCountRu=n=>n+" "+pluralRu(n,"фильм","фильма","фильмов");
 const episodesRu=n=>n+" "+pluralRu(n,"серия","серии","серий");
