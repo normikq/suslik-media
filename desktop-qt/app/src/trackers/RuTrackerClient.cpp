@@ -1,5 +1,6 @@
 #include "RuTrackerClient.h"
 #include "BrowserBridge.h"
+#include "../player/PlayerLog.h"
 
 #include "suslik/core/Strings.h"
 #include "suslik/core/Trackers.h"
@@ -181,25 +182,42 @@ void search(const QString &query_, QObject *ctx, std::function<void(QList<Search
 
 void downloadTorrent(const QString &topicId, QObject *ctx, std::function<void(QByteArray)> cb) {
     static const QRegularExpression digits(S("^\\d+$"));
-    if (!digits.match(topicId).hasMatch() || !RuTracker::isReady()) { cb({}); return; }
+    // почему не скачалось — в журнал (без cookie): начало ответа показывает страницу входа, капчу или Cloudflare
+    auto head = [](const QByteArray &b) {
+        QString t = QString::fromUtf8(b.left(160)).simplified();
+        static const QRegularExpression tags(S("<[^>]*>"));
+        return t.replace(tags, S(" ")).simplified().left(100);
+    };
+    if (!digits.match(topicId).hasMatch() || !RuTracker::isReady()) {
+        PlayerLog::write(S("[trackers] torrent t=%1: RuTracker не настроен (вход не выполнен)").arg(topicId));
+        cb({});
+        return;
+    }
     const QString base = RuTracker::validateUrl(RuTracker::url());
-    if (base.isEmpty()) { cb({}); return; }
+    if (base.isEmpty()) { PlayerLog::write(S("[trackers] torrent t=%1: неверный адрес RuTracker").arg(topicId)); cb({}); return; }
     QPointer<QObject> guard(ctx);
-    auto direct = [base, topicId, guard, cb] {
+    auto direct = [base, topicId, guard, cb, head] {
         if (!guard) return;
         const QString c = RuTracker::normalizeCookie(RuTracker::cookie());
-        if (c.isEmpty()) { cb({}); return; }
+        if (c.isEmpty()) { PlayerLog::write(S("[trackers] torrent t=%1: нет cookie").arg(topicId)); cb({}); return; }
         get(base + S("/forum/dl.php?t=") + topicId, c, 20000,
             {{"Referer", (base + S("/forum/viewtopic.php?t=") + topicId).toUtf8()}}, guard,
-            [cb](int code, const QByteArray &body, const QString &) {
-                cb(code == 200 && body.startsWith('d') ? body : QByteArray()); // bencode начинается с 'd'
+            [cb, topicId, head](int code, const QByteArray &body, const QString &err) {
+                const bool ok = code == 200 && body.startsWith('d'); // bencode начинается с 'd'
+                if (!ok)
+                    PlayerLog::write(S("[trackers] torrent t=%1 напрямую: HTTP %2, %3 байт%4, начало: %5")
+                                         .arg(topicId).arg(code).arg(body.size())
+                                         .arg(err.isEmpty() ? QString() : S(", ") + err).arg(head(body)));
+                cb(ok ? body : QByteArray());
             });
     };
     if (!BrowserBridge::isAvailable()) { direct(); return; }
     BrowserBridge::instance().downloadTorrent(base, topicId, RuTracker::parseCookieMap(RuTracker::cookie()), ctx,
-        [cb, direct](const QByteArray &b) {
-            if (b.startsWith('d')) cb(b);
-            else direct();
+        [cb, direct, topicId, head](const QByteArray &b) {
+            if (b.startsWith('d')) { cb(b); return; }
+            PlayerLog::write(S("[trackers] torrent t=%1 через браузер: %2 байт, начало: %3 — пробую напрямую")
+                                 .arg(topicId).arg(b.size()).arg(head(b)));
+            direct();
         });
 }
 
