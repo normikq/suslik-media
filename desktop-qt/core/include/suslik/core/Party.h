@@ -88,12 +88,13 @@ struct RoomUpdate {
 
 /// Событие потока комнаты (`/api/rooms/<id>/events`).
 struct PartyEvent {
-    enum class Kind { Init, StateChanged, MemberJoined, MemberLeft };
+    enum class Kind { Init, StateChanged, MemberJoined, MemberLeft, RefreshLibrary };
     Kind kind = Kind::Init;
     std::optional<QString> myUserId;   ///< Init
     std::optional<RoomUpdate> room;    ///< Init (может не быть), StateChanged
     PartyMember member;                ///< MemberJoined
     QString key;                       ///< MemberLeft
+    std::optional<PartyFileRef> file;  ///< RefreshLibrary
 };
 
 /// Discord Activity просит ПК комнаты поискать на RuTracker («search») или добавить найденную раздачу без magnet

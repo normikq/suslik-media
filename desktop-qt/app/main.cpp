@@ -115,6 +115,30 @@ int main(int argc, char *argv[]) {
     // «Вместе»: комната и плеер в ней (до MediaSession — у Discord «Смотрит вместе»)
     app::Party party(api);
     app::PartySync partySync(player, party);
+    auto lastCheckedKey = std::make_shared<QString>();
+    auto checkRoomFile = [&party, &library, lastCheckedKey] {
+        const QString key = party.fileKey();
+        if (key.isEmpty()) {
+            lastCheckedKey->clear();
+            return;
+        }
+        if (key == *lastCheckedKey) return;
+        const int bar = key.indexOf(QLatin1Char('|'));
+        if (bar <= 0) return;
+        bool ok = false;
+        const qint64 id = key.left(bar).toLongLong(&ok);
+        const QString path = key.mid(bar + 1);
+        if (ok && !library.hasFile(id, path)) {
+            *lastCheckedKey = key;
+            library.refresh();
+        }
+    };
+    QObject::connect(&party, &app::Party::changed, &library, checkRoomFile);
+    // refresh_library сервер шлёт всем в комнате. Ведущему не нужно (фильм он выбрал из своей медиатеки), гостю —
+    // только если фильма комнаты у него нет и медиатеку ради него ещё не перечитывали (checkRoomFile по changed)
+    QObject::connect(&party, &app::Party::refreshLibraryRequested, &library, [&party, checkRoomFile] {
+        if (!party.isHost()) checkRoomFile();
+    });
     QObject::connect(&library, &app::Library::authenticatedChanged, &party, [&library, &party] {
         if (library.authenticated() == 0) party.leave(); // вышли из аккаунта — и из комнаты
     });
@@ -168,10 +192,11 @@ int main(int argc, char *argv[]) {
     auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
     if (window) {
         window->setColor(QColor(0x09, 0x0B, 0x10));
-        ui.styleTitleBar(window);
+        // своя полоса заголовка (TitleBar.qml): системная убирается до показа окна
         windowMode.setWindow(window);
         media.attach(window);
         QObject::connect(&single, &app::SingleInstance::showRequested, window, [&ui, window] { ui.raise(window); });
+        window->show();
     }
 
     // Снимок окна для проверки вёрстки без экрана (SM_SHOT=файл.png, SM_SHOT_MS — через сколько мс).

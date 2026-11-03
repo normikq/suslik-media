@@ -27,11 +27,12 @@ Sheet {
             font.family: Theme.onest; font.pixelSize: 13
         }
     }
+    // Поля по краям прокрутки: кнопки при наведении растут и светятся за свои края — clip их не обрезает
     Flickable {
         id: flick
-        x: 18; width: parent.width - 36
-        height: Math.min(form.height, 620, s.height - 48 - 20 - 16 - 70 - 60)
-        contentHeight: form.height
+        x: 10; width: parent.width - 20
+        height: Math.min(form.height + 8, 620, s.height - 48 - 20 - 16 - 70 - 60)
+        contentHeight: form.height + 8
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         WheelHandler {
@@ -43,7 +44,8 @@ Sheet {
         }
         Column {
             id: form
-            width: flick.width - 6
+            x: 8; y: 4
+            width: flick.width - 22
 
             Section { title: Ui.tx("settings.zapas_filma_na_diske"); text: Ui.tx("settings.zapas_filma_opisanie"); gap: 0 }
             Repeater {
@@ -164,7 +166,7 @@ Sheet {
                 Item {
                     width: form.width
                     height: s.betaPicked ? 54 : 0
-                    clip: true
+                    clip: height < 54     // обрезка — только пока выезжает: кнопка при наведении не режется
                     Behavior on height { NumberAnimation { duration: 260; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease } }
                     Row {
                         y: 10

@@ -292,7 +292,8 @@ Item {
         id: topBar
         visible: !pv.mini
         width: parent.width; height: 75
-        y: pv.barsShown ? 0 : -90
+        // развёрнутое окно заходит за верх экрана (WindowMode.topInset)
+        y: (pv.barsShown ? 0 : -90) + windowMode.topInset
         opacity: pv.barsShown ? 1 : 0
         Behavior on y { NumberAnimation { duration: 280; easing.type: Easing.BezierSpline; easing.bezierCurve: Theme.ease } }
         Behavior on opacity { NumberAnimation { duration: 260 } }
@@ -321,7 +322,8 @@ Item {
             Item { width: 6; height: 1 }
             Text {
                 anchors.verticalCenter: parent.verticalCenter
-                width: topBar.width - 24 - 42 * 2 - 30 - 24
+                // справа в окне — кнопки окна (TitleBar), в полном экране их нет
+                width: topBar.width - 24 - 42 * 2 - 30 - 24 - (windowMode.fullscreen ? 0 : 46 * 3)
                 text: player.heading
                 color: "#E6EEF0F5"; font.family: Theme.onest; font.weight: Font.Medium; font.pixelSize: 14
                 elide: Text.ElideRight
@@ -535,26 +537,30 @@ Item {
                 }
             }
 
+            // гость комнаты «Вместе»: метка слева над полосой — полоса «прямой эфир», ведёт ведущий
+            Item {
+                visible: player.partyGuest
+                width: parent.width; height: visible ? 22 : 0
+                Row {
+                    anchors.left: parent.left; anchors.leftMargin: 2
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 6
+                    Rectangle { anchors.verticalCenter: parent.verticalCenter; width: 7; height: 7; radius: 3.5; color: "#E5484D" }
+                    Text { anchors.verticalCenter: parent.verticalCenter; text: Ui.tx("party.vmeste"); color: "white"; font.family: Theme.onest; font.weight: Font.DemiBold; font.pixelSize: 13 }
+                }
+            }
+
             // время и полоса
             Item {
                 width: parent.width; height: 30
                 Rectangle {
                     id: nowBox
+                    visible: !player.partyGuest
                     anchors.verticalCenter: parent.verticalCenter
-                    width: Math.max(52, (player.partyGuest ? 13 + liveWidth.implicitWidth : nowText.implicitWidth) + 12); height: nowText.implicitHeight + 4; radius: 6
-                    TextMetrics { id: liveWidth; text: Ui.tx("party.vmeste"); font.family: Theme.onest; font.weight: Font.DemiBold; font.pixelSize: 13 }
+                    width: visible ? Math.max(52, nowText.implicitWidth + 12) : 0; height: nowText.implicitHeight + 4; radius: 6
                     color: pv.hoverAt >= 0 || pv.scrubAt >= 0 ? "#29FFFFFF" : "transparent"
-                    // гость комнаты «Вместе»: полоса — «прямой эфир», ведёт ведущий
-                    Row {
-                        visible: player.partyGuest
-                        anchors.centerIn: parent
-                        spacing: 6
-                        Rectangle { anchors.verticalCenter: parent.verticalCenter; width: 7; height: 7; radius: 3.5; color: "#E5484D" }
-                        Text { text: Ui.tx("party.vmeste"); color: "white"; font.family: Theme.onest; font.weight: Font.DemiBold; font.pixelSize: 13 }
-                    }
                     Text {
                         id: nowText
-                        visible: !player.partyGuest
                         anchors.centerIn: parent
                         text: player.clock(pv.hoverAt >= 0 ? pv.hoverAt : pv.scrubAt >= 0 ? pv.scrubAt : player.time)
                         color: "white"; font.family: Theme.onest; font.pixelSize: 13
@@ -565,7 +571,7 @@ Item {
                 Rectangle {
                     visible: player.partyGuest
                     anchors.left: nowBox.right; anchors.right: lenText.left
-                    anchors.leftMargin: 8; anchors.rightMargin: 8
+                    anchors.leftMargin: 2; anchors.rightMargin: 8
                     anchors.verticalCenter: parent.verticalCenter
                     height: 4; radius: 2
                     color: "#E5484D"
@@ -705,6 +711,7 @@ Item {
         property real radius: size / 2
         width: size; height: size
         hoverUp: 1.05
+        z: hovered ? 1 : 0          // подсказка поверх соседних кнопок
         readonly property real glow: pressed ? 0.48 : active ? 0.42 : hovered ? 0.30 : 0
         Shape {
             anchors.centerIn: parent
@@ -755,18 +762,23 @@ Item {
         Text { anchors.centerIn: parent; text: "10"; color: "white"; font.family: Theme.onest; font.bold: true; font.pixelSize: 10 }
     }
 
-    // Подсказка над кнопкой
+    // Подсказка над кнопкой; у верхнего края окна — под ней, у боковых — сдвигается внутрь (не выходит за окно)
     component Tip: Rectangle {
+        id: tip
         property string text
         property bool shown
-        anchors.bottom: parent.top; anchors.bottomMargin: 8
-        anchors.horizontalCenter: parent.horizontalCenter
+        property point at: Qt.point(0, 0)          // где кнопка в плеере; меряется, когда подсказка появляется
+        onShownChanged: if (shown && parent) at = parent.mapToItem(pv, 0, 0)
+        readonly property bool below: at.y - height - 8 < 6
+        x: Math.max(6 - at.x, Math.min(pv.width - 6 - width - at.x, (parent.width - width) / 2))
+        y: below ? parent.height + 8 : -height - 8
         width: tipText.implicitWidth + 16; height: tipText.implicitHeight + 10; radius: 7
         color: "#F0141824"; border.color: "#33FFFFFF"
         opacity: shown ? 1 : 0
         visible: opacity > 0
+        z: 5
         Behavior on opacity { SequentialAnimation { PauseAnimation { duration: 350 } NumberAnimation { duration: 140 } } }
-        Text { id: tipText; anchors.centerIn: parent; text: parent.text; color: Theme.text; font.family: Theme.onest; font.pixelSize: 12 }
+        Text { id: tipText; anchors.centerIn: parent; text: tip.text; color: Theme.text; font.family: Theme.onest; font.pixelSize: 12 }
     }
 
     // Пункт меню дорожек и настроек (PlayerChip)
@@ -943,13 +955,16 @@ Item {
                 id: track
                 anchors.left: parent.left; anchors.right: volText.left; anchors.rightMargin: 6
                 height: parent.height
+                // ползунок ходит внутри полосы целиком: при 0 % и 150 % не обрезается краем (clip у родителя)
+                readonly property real knob: 11
+                readonly property real knobX: (width - knob) * Math.max(0, Math.min(1, player.volume / 150))
                 Rectangle { anchors.verticalCenter: parent.verticalCenter; width: parent.width; height: 4; radius: 2; color: "#33FFFFFF" }
-                Rectangle { anchors.verticalCenter: parent.verticalCenter; width: parent.width * player.volume / 150; height: 4; radius: 2; color: "white" }
-                Rectangle { x: parent.width * player.volume / 150 - 5.5; anchors.verticalCenter: parent.verticalCenter; width: 11; height: 11; radius: 5.5; color: "white" }
+                Rectangle { anchors.verticalCenter: parent.verticalCenter; width: track.knobX + track.knob / 2; height: 4; radius: 2; color: "white" }
+                Rectangle { x: track.knobX; anchors.verticalCenter: parent.verticalCenter; width: track.knob; height: track.knob; radius: track.knob / 2; color: "white" }
                 MouseArea {
                     id: drag
                     anchors.fill: parent
-                    function set(x) { player.setVolume(Math.round(Math.max(0, Math.min(1, x / width)) * 150)) }
+                    function set(x) { player.setVolume(Math.round(Math.max(0, Math.min(1, (x - track.knob / 2) / (width - track.knob))) * 150)) }
                     onPressed: (m) => set(m.x)
                     onPositionChanged: (m) => { if (pressed) set(m.x) }
                 }

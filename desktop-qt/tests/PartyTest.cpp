@@ -210,6 +210,18 @@ private slots:
         QVERIFY(!r.state.playing);
         QCOMPARE(r.state.seq, 8);
 
+        const auto ref = PartyProtocol::parseEventLine(S(R"(data: {"event":"refresh_library","data":{"file":{"key":"42|s1.mkv","name":"Test"}}})"));
+        QVERIFY(ref);
+        QCOMPARE(ref->kind, PartyEvent::Kind::RefreshLibrary);
+        QVERIFY(ref->file);
+        QCOMPARE(ref->file->key, S("42|s1.mkv"));
+        QCOMPARE(ref->file->title, S("Test"));
+
+        const auto refEmpty = PartyProtocol::parseEventLine(S(R"(data: {"event":"refresh_library"})"));
+        QVERIFY(refEmpty);
+        QCOMPARE(refEmpty->kind, PartyEvent::Kind::RefreshLibrary);
+        QVERIFY(!refEmpty->file);
+
         QVERIFY(!PartyProtocol::parseEventLine(S(": ping")));
         QVERIFY(!PartyProtocol::parseEvent(S(R"({"event":"something_new"})")));
         QVERIFY(!PartyProtocol::parseEvent(S("not json")));

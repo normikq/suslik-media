@@ -291,10 +291,16 @@ object Party {
         connected = false
     }
 
+    var onRefreshLibrary: (() -> Unit)? = null
+
     // Under the same lock as apply(): «member joined/left» from the stream and the answer to my own action (outbox thread)
     // both rewrite [room]; without the lock one of the two changes could be lost
     @Synchronized private fun onEvent(e: PartyEvent) {
         if (e is PartyEvent.Init) e.myUserId?.let { myUserId = it }
+        if (e is PartyEvent.RefreshLibrary) {
+            onRefreshLibrary?.invoke()
+            return
+        }
         room = room.reduce(e)
     }
 }

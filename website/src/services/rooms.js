@@ -41,7 +41,7 @@ function createRoom(hostUser, file = null, controls = "all", hostClientId = null
     host_name: hostUser ? hostUser.name : "Хост",
     // Устройство создателя: при общем пароле у всех один id "shared", ведущего отличает только оно
     host_client_id: typeof hostClientId === "string" && hostClientId ? hostClientId.slice(0, 64) : null,
-    file: file, // { ad_id, idx, name }
+    file: cleanFile(file), // { key, name, ad_id }: из тела запроса — та же проверка, что у change_file
     controls: controls === "host" ? "host" : "all",
     state: {
       playing: false,
@@ -393,7 +393,10 @@ function handleRoomAction(roomId, user, action) {
       break;
     }
     case "change_file": {
-      room.file = action.file; // { ad_id, idx, name }
+      // Файл приходит из тела запроса: та же проверка, что у голосования и рулетки. null — фильм закрыт
+      const file = action.file == null ? null : cleanFile(action.file);
+      if (action.file != null && !file) return { ok: false, error: "Неверный формат файла." };
+      room.file = file; // { key, name, ad_id }
       state.pos = 0;
       state.playing = false;
       // Новый фильм: прежние загрузки не в счёт
@@ -409,6 +412,9 @@ function handleRoomAction(roomId, user, action) {
 
   const roomData = getRoomPublicData(room);
   broadcast(roomId, "state_changed", roomData);
+  if (action.type === "change_file" && room.file) {
+    broadcast(roomId, "refresh_library", { file: room.file });
+  }
   return { ok: true, room: roomData };
 }
 

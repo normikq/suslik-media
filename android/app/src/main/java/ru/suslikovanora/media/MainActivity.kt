@@ -227,17 +227,36 @@ class MainActivity : ComponentActivity() {
         // A guest of a room stays on the room's page: the library (and «Мои фильмы») are closed until they leave it
         val guest = Party.isGuest
         val tvUi = Tv.isTv(this@MainActivity)
+        androidx.compose.runtime.DisposableEffect(Unit) {
+            // приходит из потока событий комнаты (не главный поток): обновление — в корутине экрана
+            // Сервер шлёт refresh_library всем в комнате: ведущий фильм выбрал из своей медиатеки — ему не нужно
+            Party.onRefreshLibrary = { if (!Party.isHost) scope.launch { store.refresh() } }
+            onDispose { Party.onRefreshLibrary = null }
+        }
         LaunchedEffect(guest) { if (guest && tab in GUEST_LOCKED) tab = Tab.Together }
         // A guest watches the host's file: it opens by itself at the room's place, once per file (closed by the guest,
         // it waits for «Смотреть вместе»). The guest's progress is kept as usual (PlayerWatchProgress, CloudSync).
+        var lastTriedKey by remember { mutableStateOf<String?>(null) }
         val roomKey = Party.file?.key
         LaunchedEffect(guest, roomKey, Party.followed, Party.playingKeys, store.items) {
             // No film (the host closed it): the same film put again opens again
-            if (!guest || roomKey == null) { followTarget = null; if (roomKey == null) Party.followed = null; return@LaunchedEffect }
+            if (!guest || roomKey == null) {
+                followTarget = null
+                if (roomKey == null) { Party.followed = null; lastTriedKey = null }
+                return@LaunchedEffect
+            }
             if (roomKey == Party.followed) return@LaunchedEffect
             // The host went on within the open playlist: the player follows by itself (PlayerPartySync)
             if (roomKey in Party.playingKeys) { Party.followed = roomKey; return@LaunchedEffect }
-            val t = ru.suslikovanora.media.library.targetForKey(store.items, roomKey) ?: return@LaunchedEffect
+            val t = ru.suslikovanora.media.library.targetForKey(store.items, roomKey)
+            if (t == null) {
+                if (lastTriedKey != roomKey) {
+                    lastTriedKey = roomKey
+                    store.refresh()
+                }
+                return@LaunchedEffect
+            }
+            lastTriedKey = null
             Party.followed = roomKey
             playTarget = null
             followTarget = t
