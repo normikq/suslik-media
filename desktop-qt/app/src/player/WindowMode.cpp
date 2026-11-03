@@ -78,7 +78,8 @@ void WindowMode::systemMenu(qreal x, qreal y) {
 
 bool WindowMode::nativeEventFilter(const QByteArray &type, void *message, qintptr *result) {
 #ifdef Q_OS_WIN
-    if (!m_w || type != "windows_generic_MSG") return false;
+    // handle() пуст, пока окно создаётся: winId() здесь создал бы его второй раз изнутри CreateWindowEx
+    if (!m_w || !m_w->handle() || type != "windows_generic_MSG") return false;
     auto *msg = static_cast<MSG *>(message);
     if (msg->hwnd != reinterpret_cast<HWND>(m_w->winId())) return false;
     // Обычное окно: верхней системной рамки нет — верхний край тянет размер сам (бока и низ — системные)
