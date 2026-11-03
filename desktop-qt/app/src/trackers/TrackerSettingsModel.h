@@ -1,5 +1,6 @@
 #pragma once
 #include "BrowserBridge.h"
+#include "suslik/core/Trackers.h"
 
 #include <QObject>
 #include <QVariantList>
@@ -12,6 +13,7 @@ namespace suslik::app {
 class TrackerSettingsModel : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool rtEnabled READ rtEnabled WRITE setRtEnabled NOTIFY changed)
+    Q_PROPERTY(bool rtParty READ rtParty WRITE setRtParty NOTIFY changed)
     Q_PROPERTY(QString rtUrl READ rtUrl WRITE setRtUrl NOTIFY changed)
     Q_PROPERTY(QString rtCookie READ rtCookie WRITE setRtCookie NOTIFY changed)
     Q_PROPERTY(QVariantList browsers READ browsers NOTIFY changed)
@@ -36,6 +38,9 @@ public:
 
     bool rtEnabled() const { return m_rtEnabled; }
     void setRtEnabled(bool on);
+    /// Участники «Вместе» могут искать на RuTracker через этот ПК (RuTracker::partyAllowed).
+    bool rtParty() const { return core::RuTracker::partyAllowed(); }
+    void setRtParty(bool on) { core::RuTracker::setPartyAllowed(on); emit changed(); }
     QString rtUrl() const { return m_rtUrl; }
     void setRtUrl(const QString &u) { m_rtUrl = u; emit changed(); }
     QString rtCookie() const { return m_rtCookie; }

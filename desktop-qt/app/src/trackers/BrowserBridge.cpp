@@ -4,6 +4,7 @@
 #include "../AppDir.h"
 #include "../player/PlayerLog.h"
 
+#include "suslik/core/Safety.h"
 #include "suslik/core/Store.h"
 #include "suslik/core/Strings.h"
 
@@ -430,10 +431,8 @@ struct Proc {
 enum class Launch { Hidden, Headless, Visible };
 
 #ifdef Q_OS_WIN
-QString quoteArg(const QString &a) {
-    if (!a.contains(QLatin1Char(' ')) && !a.contains(QLatin1Char('"')) && !a.isEmpty()) return a;
-    return QLatin1Char('"') + QString(a).replace(S("\""), S("\\\"")) + QLatin1Char('"');
-}
+/// По правилам CommandLineToArgvW: путь профиля с «\» в конце иначе съедал закрывающую кавычку.
+QString quoteArg(const QString &a) { return core::Safety::quoteWindowsArg(a); }
 
 HANDLE killOnCloseJob(HANDLE process) {
     HANDLE job = CreateJobObjectW(nullptr, nullptr);

@@ -135,6 +135,9 @@ public:
     void noteWatch(const QString &key, qint64 pos, qint64 len);
     CloudSync &sync() const { return m_sync; }
     std::optional<std::pair<MFile, WatchInfo>> lastWatched(const Magnet &m) const;
+    /// Раздачи, у которых что-то смотрели не раньше since (мс): один проход по прогрессу вместо обхода всех файлов
+    /// всей медиатеки («Продолжить просмотр» пересобирается до раза в 400 мс).
+    QSet<qint64> watchedSince(qint64 since) const;
     qint64 continueHiddenAt(qint64 id) const;
     Q_INVOKABLE void hideContinue(const QVariantList &ids);
     std::optional<QString> lastEpisode(qint64 id) const;

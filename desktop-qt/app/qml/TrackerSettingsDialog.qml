@@ -110,6 +110,13 @@ Item {
                             font.family: Theme.onest; font.pixelSize: 13
                         }
                     }
+                    Item { width: 1; height: 8 }
+                    Chip {
+                        text: m.rtParty ? Ui.tx("trackers.party_allowed") : Ui.tx("trackers.party_denied")
+                        on: m.rtParty
+                        onClicked: m.rtParty = !m.rtParty
+                    }
+                    Note { topPadding: 4; text: Ui.tx("trackers.party_hint"); font.pixelSize: 13 }
                     Item { width: 1; height: 14 }
 
                     Heading { text: Ui.tx("trackers.address_label") }

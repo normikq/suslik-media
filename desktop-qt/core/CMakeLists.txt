@@ -23,6 +23,7 @@ add_library(suslik_core STATIC
   src/Search.cpp
   src/Party.cpp
   src/Trackers.cpp
+  src/Safety.cpp
   src/JsonOpt.h
   include/suslik/core/ApiClient.h
   include/suslik/core/CloudSync.h

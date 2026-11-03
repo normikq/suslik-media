@@ -61,8 +61,8 @@ private:
         v.type = BValue::Type::Int;
         bool ok = false;
         v.i = m_b.mid(start, m_pos - start).toLongLong(&ok);
-        if (!ok) v.i = 0;
-        ++m_pos;
+        if (m_pos >= m_b.size() || !ok) { failed = true; v.i = 0; } // оборвано или не число
+        else ++m_pos;
         return v;
     }
     BValue parseBytes() {
@@ -70,10 +70,14 @@ private:
         while (m_pos < m_b.size() && m_b[m_pos] != ':') ++m_pos;
         bool ok = false;
         qsizetype len = m_b.mid(start, m_pos - start).toLongLong(&ok);
-        if (!ok) len = 0;
-        ++m_pos;
-        len = std::max<qsizetype>(0, std::min(len, m_b.size() - m_pos));
         BValue v;
+        // Нет «:», длина не число или длиннее остатка файла — торрент битый, а не строка покороче
+        if (m_pos >= m_b.size() || !ok || len < 0 || len > m_b.size() - m_pos - 1) {
+            failed = true;
+            m_pos = m_b.size();
+            return v;
+        }
+        ++m_pos;
         v.s = m_b.mid(m_pos, len);
         m_pos += len;
         return v;
@@ -103,7 +107,8 @@ private:
             if (!key || failed || key->type != BValue::Type::Bytes) break;
             auto value = parse(depth);
             if (failed) break;
-            v.dict[QString::fromUtf8(key->s)] = value ? std::move(*value) : BValue{};
+            if (!value) { failed = true; break; } // ключ без значения
+            v.dict[QString::fromUtf8(key->s)] = std::move(*value);
         }
         if (!closed) { failed = true; return std::nullopt; }
         return v;

@@ -379,6 +379,21 @@ void Party::onRemoteRequest(const RemoteTrackerRequest &rq) {
         body.insert(S("request_id"), id);
         self->m_api.post(path, body, [](const ApiResult &) {});
     };
+    // Поиск и .torrent идут с cookie владельца этого ПК: он может закрыть их для участников (Настройки → Трекеры),
+    // а частота ограничена в любом случае — чужой спам не съест суточный лимит и не насторожит трекер.
+    const bool targeted = rq.kind == S("add") && rq.target == m_myKey;
+    if (rq.kind != S("search") && !targeted) return;
+    if (!RuTracker::partyAllowed()) {
+        log(S("RuTracker %1 for the Activity refused: disabled in settings (%2)").arg(rq.kind, rq.by));
+        send({{S("error"), S("Владелец этого ПК закрыл поиск RuTracker для участников.")}});
+        return;
+    }
+    auto &limit = rq.kind == S("search") ? m_remoteSearches : m_remoteTorrents;
+    if (!limit.allow(QDateTime::currentMSecsSinceEpoch())) {
+        log(S("RuTracker %1 for the Activity refused: rate limit (%2)").arg(rq.kind, rq.by));
+        send({{S("error"), S("Слишком много запросов к RuTracker через этот ПК. Попробуйте через несколько минут.")}});
+        return;
+    }
     if (rq.kind == S("search")) {
         if (!RuTracker::isReady() || !TrackerSettings::isEnabled(S("rutracker"))) {
             send({{S("error"), S("На этом ПК RuTracker не настроен (Настройки → Трекеры).")}});
@@ -402,7 +417,6 @@ void Party::onRemoteRequest(const RemoteTrackerRequest &rq) {
         return;
     }
     // «add»: раздачу нашёл этот ПК, у сервера её .torrent нет — качаем со своими cookie и кладём в AllDebrid
-    if (rq.kind != S("add") || rq.target != m_myKey) return;
     log(S("RuTracker topic %1 for the Activity (%2)").arg(rq.topicId, rq.by));
     rutracker::downloadTorrent(rq.topicId, this, [self, send, rq](const QByteArray &bytes) {
         if (!self) return;

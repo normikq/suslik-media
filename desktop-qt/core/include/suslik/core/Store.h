@@ -25,6 +25,8 @@ public:
     std::optional<QString> get(const QString &key) const;
     void put(const QString &key, const std::optional<QString> &value);
     QStringList keys() const;
+    /// Все пары разом (копия под одной блокировкой).
+    QHash<QString, QString> all() const;
     void flush();
 
     // Формат Properties: разбор и запись (открыто для тестов).

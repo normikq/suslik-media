@@ -297,8 +297,9 @@ void LibraryPage::rebuild() {
         struct E { QVariantMap map; qint64 at; };
         std::vector<E> entries;
         const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        const QSet<qint64> recent = m_lib->watchedSince(now - 60LL * 24 * 3600 * 1000);
         for (const auto &item : all) {
-            if (!item.m.ready()) continue;
+            if (!item.m.ready() || !recent.contains(item.m.id)) continue;
             const auto lw = m_lib->lastWatched(item.m);
             if (!lw) continue;
             const auto &[file, w] = *lw;

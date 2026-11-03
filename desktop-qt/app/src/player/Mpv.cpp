@@ -49,7 +49,11 @@ const Api *api() {
     QStringList tries;
     for (const QString &d : searchDirs())
         if (QFileInfo::exists(QDir(d).filePath(libraryName()))) tries << QDir(d).filePath(libraryName());
-    tries << libraryName(); // системные пути (PATH, ld.so)
+#ifndef Q_OS_WIN
+    tries << libraryName(); // системные пути (ld.so, dyld)
+#endif
+    // На Windows голое имя не пробуем: LoadLibrary искал бы его и в текущей папке и по PATH (подмена DLL).
+    // Только полные пути из доверенных папок выше.
     for (const QString &path : tries) {
         auto *lib = new QLibrary(path); // не выгружаем до конца работы
         if (!lib->load()) { delete lib; continue; }

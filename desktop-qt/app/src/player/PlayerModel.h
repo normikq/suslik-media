@@ -15,6 +15,8 @@
 #include <functional>
 #include <memory>
 
+class QNetworkAccessManager;
+
 /// Плеер (PlayerView.kt без вёрстки): очередь серий, открытие через запас на диске, прогресс в медиатеке и облаке,
 /// выбор дорожек (запомненный, умные субтитры), задержки, скорость, ночной звук, заставка и титры, карточка
 /// следующей серии, сторож воспроизведения и «копим запас». Вёрстка — PlayerView.qml, кадры — MpvVideo.
@@ -329,6 +331,8 @@ private:
     bool m_endCut = false;
     QString m_deleteArmed;
     int m_subsFetching = 0;
+    /// Внешние субтитры: один менеджер сети на плеер (соединения и TLS-сессии переиспользуются между сериями).
+    QNetworkAccessManager *m_subsNam = nullptr;
     QSet<int> m_warmed;
     int m_trackSwitchGen = 0;
 

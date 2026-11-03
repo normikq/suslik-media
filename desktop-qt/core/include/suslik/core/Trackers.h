@@ -51,6 +51,10 @@ public:
     /// Браузер, из которого взяты cookie (имя BrowserType из Kotlin: "EDGE", "FIREFOX"…); пусто — вставлены вручную.
     static QString cookieSource();
     static void setCookieSource(const QString &type);
+    /// Участники комнаты «Вместе» (Discord Activity) могут искать на RuTracker и брать .torrent через этот ПК
+    /// (с его cookie). По умолчанию да; запросы всё равно ограничены по частоте (Party::onRemoteRequest).
+    static bool partyAllowed();
+    static void setPartyAllowed(bool on);
     /// Включён и есть cookie.
     static bool isReady() { return enabled() && !cookie().trimmed().isEmpty(); }
 

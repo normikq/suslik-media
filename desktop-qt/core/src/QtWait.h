@@ -22,6 +22,8 @@ void waitFor(Obj *o, int ms, Sig... sigs) {
 }
 
 /// Диспетчер событий потоку — до создания в нём сокетов (иначе QSocketNotifier не работает).
+/// Работает сам конструктор QEventLoop: он вызывает QThreadData::ensureEventDispatcher() (qeventloop.cpp),
+/// exec() для этого не нужен.
 inline void ensureDispatcher() { QEventLoop warm; }
 
 } // namespace suslik::core::detail
