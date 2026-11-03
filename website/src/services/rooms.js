@@ -190,6 +190,72 @@ function moveDevice(clientId, targetRoomId) {
   }
 }
 
+// SSE слушатели конкретных устройств участников: roomId:clientId -> Set<res>
+// Чтобы при вытеснении старого устройства (вход с телефона, обрыв) сразу закрыть его зависший сокет
+const memberStreams = new Map();
+
+function registerMemberStream(roomId, clientId, res) {
+  if (!roomId || !clientId || !res) return;
+  const key = `${roomId}:${clientId}`;
+  let set = memberStreams.get(key);
+  if (!set) {
+    set = new Set();
+    memberStreams.set(key, set);
+  }
+  set.add(res);
+}
+
+function unregisterMemberStream(roomId, clientId, res) {
+  const key = `${roomId}:${clientId}`;
+  const set = memberStreams.get(key);
+  if (!set) return;
+  set.delete(res);
+  if (set.size === 0) memberStreams.delete(key);
+}
+
+function closeMemberStreams(roomId, clientId) {
+  const key = `${roomId}:${clientId}`;
+  const set = memberStreams.get(key);
+  if (!set || set.size === 0) return;
+  memberStreams.delete(key);
+  for (const res of set) {
+    try {
+      if (!res.destroyed && !res.writableEnded) {
+        res.end();
+      }
+      res.destroy?.();
+    } catch {}
+  }
+}
+
+// Один аккаунт — одно активное устройство и комната: если вошёл с нового устройства (или в другую комнату),
+// прежнее устройство этого аккаунта освобождает место (старый поток мог оборваться, выключился свет, сел аккумулятор).
+// То же устройство в той же комнате — это переподключение, его не трогаем.
+function moveAccount(user, newClientId, targetRoomId = null) {
+  const userId = user && user.id ? String(user.id) : null;
+  const isAccount = Boolean(userId && userId !== "shared" && userId !== "guest");
+  if (!isAccount) return;
+  const normNewClientId = typeof newClientId === "string" && newClientId ? newClientId.trim().slice(0, 64) : null;
+
+  for (const room of Array.from(rooms.values())) {
+    for (const member of Array.from(room.members.values())) {
+      if (!member || String(member.id) !== userId) continue;
+      // Тот же client_id в той же целевой комнате — это повторный вход того же устройства
+      if (normNewClientId && member.client_id === normNewClientId && room.id === targetRoomId) continue;
+
+      const oldClientId = member.client_id;
+      leaveRoom(room.id, oldClientId, true);
+      closeMemberStreams(room.id, oldClientId);
+
+      // Если вытесненное устройство было ведущим в этой же комнате, куда входит новое устройство —
+      // ведущим остаётся этот же человек, но уже с нового устройства
+      if (room.id === targetRoomId && room.host_id === userId) {
+        room.host_client_id = normNewClientId;
+      }
+    }
+  }
+}
+
 // Участник комнаты — это открытый поток событий (SSE): закрылся последний поток устройства — его нет в комнате.
 // Так в списке не остаются «призраки» тех, кто вышел или у кого оборвалась связь.
 function joinRoom(roomId, user, clientId = null) {
@@ -292,6 +358,7 @@ function leaveRoom(roomId, clientId, force = false) {
   if (member) {
     member.streams = force ? 0 : Math.max(0, (member.streams || 1) - 1);
     if (member.streams === 0) {
+      closeMemberStreams(roomId, clientId);
       room.members.delete(clientId);
       broadcast(roomId, "member_left", { key: clientKey(clientId), total: room.members.size });
       if (room.members.size === 0 && room.watchers.size === 0) room.empty_since = Date.now();
@@ -728,6 +795,10 @@ module.exports = {
   joinRoom,
   findUserActiveRoom,
   moveDevice,
+  moveAccount,
+  registerMemberStream,
+  unregisterMemberStream,
+  closeMemberStreams,
   previewMember,
   publicMember,
   clientKey,

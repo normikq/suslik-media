@@ -525,3 +525,149 @@ test("rooms: change_file broadcasts refresh_library to clients", () => {
   assert.ok(refresh, "must broadcast refresh_library");
   assert.equal(refresh.data.file.key, "42|movie.mkv");
 });
+
+test("rooms: moveAccount evicts old device when power cuts off on PC and user joins from phone", () => {
+  const {
+    createRoom,
+    joinRoom,
+    leaveRoom,
+    moveAccount,
+    registerMemberStream,
+    getRoomPublicData,
+    clientKey
+  } = require("../src/services/rooms");
+
+  const alice = { id: "u_alice_outage", name: "Alice" };
+  const room = createRoom(alice, null, "all", "pc_dead");
+  const joinPc = joinRoom(room.id, alice, "pc_dead");
+  assert.equal(joinPc.ok, true);
+  assert.equal(room.members.has("pc_dead"), true);
+  assert.equal(room.host_client_id, "pc_dead");
+
+  // Имитируем зависший SSE поток на ПК, у которого внезапно отключился свет
+  let streamClosed = false;
+  const fakeRes = {
+    destroyed: false,
+    end() { streamClosed = true; this.destroyed = true; },
+    destroy() { streamClosed = true; this.destroyed = true; }
+  };
+  registerMemberStream(room.id, "pc_dead", fakeRes);
+
+  // Алиса открывает телефон (an_phone) и входит в комнату
+  moveAccount(alice, "an_phone", room.id);
+
+  // Старый зависший ПК удалён из участников, его сокет закрыт
+  assert.equal(room.members.has("pc_dead"), false);
+  assert.equal(streamClosed, true);
+
+  // Ведущий в комнате передан новому устройству Алисы
+  assert.equal(room.host_client_id, "an_phone");
+
+  // Теперь телефон спокойно подключается без ошибки «уже подключен с другого устройства»
+  const joinPhone = joinRoom(room.id, alice, "an_phone");
+  assert.equal(joinPhone.ok, true);
+  assert.equal(room.members.has("an_phone"), true);
+
+  const pub = getRoomPublicData(room);
+  assert.equal(pub.host_key, clientKey("an_phone"));
+  assert.equal(pub.member_count, 1);
+
+  leaveRoom(room.id, "an_phone", true);
+});
+
+test("rooms: moveAccount evicts user from previous rooms when creating a new room", () => {
+  const { createRoom, joinRoom, leaveRoom, moveAccount } = require("../src/services/rooms");
+
+  const user = { id: "u_switcher", name: "Switcher" };
+  const oldRoom = createRoom(user, null, "all", "pc_old");
+  joinRoom(oldRoom.id, user, "pc_old");
+  assert.equal(oldRoom.members.has("pc_old"), true);
+
+  // Переход на телефон и создание новой комнаты
+  moveAccount(user, "an_new", null);
+  assert.equal(oldRoom.members.has("pc_old"), false);
+
+  const newRoom = createRoom(user, null, "all", "an_new");
+  const joinNew = joinRoom(newRoom.id, user, "an_new");
+  assert.equal(joinNew.ok, true);
+  assert.equal(newRoom.members.has("an_new"), true);
+
+  leaveRoom(newRoom.id, "an_new", true);
+});
+
+test("rooms: HTTP POST /api/rooms/:id/join evicts dead PC and allows phone to connect after power outage", async () => {
+  const { createApp } = require("../src/app");
+  const { issueActivityToken } = require("../src/services/activity");
+  const { clientKey, getRoom } = require("../src/services/rooms");
+
+  const app = createApp();
+  const server = app.listen(0);
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  const user = findOrCreateUser({ id: "999888777", username: "poweroutage", global_name: "PowerOutageUser", avatar: null }, "allow");
+  const { token } = issueActivityToken(user.id);
+  const auth = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+
+  try {
+    // 1. Создание комнаты на ПК
+    const createRes = await fetch(`${base}/api/rooms`, {
+      method: "POST",
+      headers: auth,
+      body: JSON.stringify({ client_id: "pc_dead" })
+    });
+    assert.equal(createRes.status, 200);
+    const { room } = await createRes.json();
+    assert.ok(room.id);
+
+    // 2. ПК открывает SSE поток
+    const pcStreamCtrl = new AbortController();
+    const pcStream = await fetch(`${base}/api/rooms/${room.id}/events?client_id=pc_dead`, {
+      headers: auth,
+      signal: pcStreamCtrl.signal
+    });
+    assert.equal(pcStream.status, 200);
+
+    const roomObj = getRoom(room.id);
+    assert.equal(roomObj.members.has("pc_dead"), true);
+    assert.equal(roomObj.host_client_id, "pc_dead");
+
+    // 3. У ПК внезапно выключился свет: сокет завис на сервере (ПК не посылал /leave)
+
+    // 4. Человек открывает приложение на телефоне и жмёт «Войти в комнату»
+    const phoneJoinRes = await fetch(`${base}/api/rooms/${room.id}/join`, {
+      method: "POST",
+      headers: auth,
+      body: JSON.stringify({ client_id: "an_phone" })
+    });
+    // Раньше здесь падала ошибка 400: «Этот аккаунт уже подключен к комнате с другого устройства.»
+    assert.equal(phoneJoinRes.status, 200, "Телефон должен успешно войти без ошибки 400");
+    const joinData = await phoneJoinRes.json();
+    assert.equal(joinData.ok, true);
+
+    // 5. Старое мертвое устройство ПК вытеснено из комнаты, ведущий передан телефону
+    assert.equal(roomObj.members.has("pc_dead"), false);
+    assert.equal(roomObj.host_client_id, "an_phone");
+
+    // 6. Телефон подключается к потоку событий комнаты
+    const phoneStreamCtrl = new AbortController();
+    const phoneStream = await fetch(`${base}/api/rooms/${room.id}/events?client_id=an_phone`, {
+      headers: auth,
+      signal: phoneStreamCtrl.signal
+    });
+    assert.equal(phoneStream.status, 200);
+    assert.equal(roomObj.members.has("an_phone"), true);
+
+    // 7. Если ПК спустя время попытается фоново восстановить поток (retryStream), он получит 403 и прекратит попытки
+    const pcRetry = await fetch(`${base}/api/rooms/${room.id}/events?client_id=pc_dead`, {
+      headers: auth
+    });
+    assert.equal(pcRetry.status, 403);
+    const pcRetryJson = await pcRetry.json();
+    assert.match(pcRetryJson.error, /уже подключен|активен/);
+
+    phoneStreamCtrl.abort();
+    pcStreamCtrl.abort();
+  } finally {
+    server.close();
+  }
+});
