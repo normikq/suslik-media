@@ -761,7 +761,7 @@ Item {
                             anchors.centerIn: parent
                             text: {
                                 for (let i = 0; i < player.qualityVariants.length; ++i) {
-                                    if (player.qualityVariants[i].isActive) return player.qualityVariants[i].quality
+                                    if (player.qualityVariants[i].isActive && player.qualityVariants[i].quality) return player.qualityVariants[i].quality
                                 }
                                 return "HD"
                             }

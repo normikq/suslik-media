@@ -144,6 +144,32 @@ PlayerModel::PlayerModel(QObject *parent)
     });
     connect(m_engine, &MpvEngine::finished, this, &PlayerModel::evFinished);
     connect(m_engine, &MpvEngine::failed, this, &PlayerModel::evError);
+    connect(m_engine, &MpvEngine::videoSizeChanged, this, [this] {
+        const int w = m_engine->videoWidth();
+        const int h = m_engine->videoHeight();
+        if (w <= 0 && h <= 0) return;
+        QString detectedQ;
+        if (w >= 3000 || h >= 1600) detectedQ = QStringLiteral("4K");
+        else if (w >= 1600 || h >= 900) detectedQ = QStringLiteral("1080p");
+        else if (w >= 1100 || h >= 600) detectedQ = QStringLiteral("720p");
+        else if (w > 0 || h > 0) detectedQ = QStringLiteral("480p");
+        if (detectedQ.isEmpty()) return;
+
+        bool changed = false;
+        for (auto &v : m_req.variants) {
+            if (v.key == m_activeVariantKey) {
+                if (v.quality.isEmpty()) {
+                    v.quality = detectedQ;
+                    if (!v.label.startsWith(detectedQ)) {
+                        v.label = detectedQ + QStringLiteral(" · ") + v.label;
+                    }
+                    changed = true;
+                }
+                break;
+            }
+        }
+        if (changed) emit qualityVariantsChanged();
+    });
 
     m_tickTimer.setInterval(1000);
     connect(&m_tickTimer, &QTimer::timeout, this, &PlayerModel::tick);
