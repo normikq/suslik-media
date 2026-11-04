@@ -603,6 +603,22 @@ private slots:
         QCOMPARE(v.score, 505);
         QCOMPARE(v.hardwareFlags, QStringList{S("dv")});
         QVERIFY(v.bitrate > 0.0);
+        QVERIFY(v.label.contains(S("4K")));
+        QVERIFY(!v.label.contains(S("Мбит/с"))); // Без профиля сервера битрейт не показывается как факт в подписи
+
+        PartyVariant prof;
+        prof.key = S("42|Dune.2021.mkv");
+        prof.bitrate = 54.5;
+        const PartyVariant vProf = buildPartyVariant(item, f, prof);
+        QCOMPARE(vProf.bitrate, 54.5);
+
+        // Неизвестное разрешение не подменяется на 1080p
+        const MFile fUnknown = testutil::file(0, S("video.mkv"), 1000);
+        const Magnet mUnknown = testutil::magnet(43, S("SomeVideo"), S("Ready"), 4, 1000LL, 1000LL, {fUnknown});
+        const LibraryItem itemUnknown = prepareItems({mUnknown}).first();
+        const PartyVariant vUnknown = buildPartyVariant(itemUnknown, fUnknown);
+        QVERIFY(vUnknown.quality.isEmpty());
+        QVERIFY(!vUnknown.label.contains(S("1080p")));
     }
 };
 

@@ -745,7 +745,7 @@ fun buildPartyVariant(
         match("""(?:^|\D)1080[pi](?![a-z])|(?:^|\D)1920(?!\d)""") -> "1080p"
         match("""(?:^|\D)720p(?![a-z])|(?:^|\D)1280(?!\d)""") -> "720p"
         match("""(?:^|\D)(?:480|576)[pi](?![a-z])|(?:^|[^a-z])dvd""") -> "480p"
-        else -> "1080p"
+        else -> ""
     }
 
     val audio = when {
@@ -768,10 +768,14 @@ fun buildPartyVariant(
     val isSeries = item.playable is Playable.Series
     val estDuration = if (isSeries) 2700.0 else 6600.0
     var bitrate = if (sizeBytes > 0) Math.round((sizeBytes * 8.0) / (estDuration * 1_000_000.0) * 10.0) / 10.0 else 0.0
-    if (serverProfile != null && serverProfile.bitrate > 0) bitrate = serverProfile.bitrate
+    var hasExactBitrate = false
+    if (serverProfile != null && serverProfile.bitrate > 0) {
+        bitrate = serverProfile.bitrate
+        hasExactBitrate = true
+    }
 
     val parts = ArrayList<String>()
-    parts += quality
+    if (quality.isNotEmpty()) parts += quality
     if ("dv" in hwFlags) parts += "Dolby Vision"
     else if ("hdr" in hwFlags) parts += "HDR"
     if (match("""remux""")) parts += "BDRemux"
@@ -780,8 +784,13 @@ fun buildPartyVariant(
     if (audio != "Stereo") parts += audio
 
     var label = parts.joinToString(" · ")
-    if (bitrate > 0) label += " (%.1f Мбит/с)".format(Locale.ROOT, bitrate)
-    else if (sizeBytes > 0) label += " (${formatBytes(sizeBytes)})"
+    if (hasExactBitrate) {
+        if (label.isNotEmpty()) label += " "
+        label += "(%.1f Мбит/с)".format(Locale.ROOT, bitrate)
+    } else if (sizeBytes > 0) {
+        if (label.isNotEmpty()) label += " "
+        label += "(${formatBytes(sizeBytes)})"
+    }
 
     return ru.suslikovanora.media.core.party.PartyVariant(
         key = key,

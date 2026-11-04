@@ -1038,15 +1038,15 @@ void BurstProxy::Impl::trimToBudget() {
 }
 
 QString BurstProxy::Impl::wrap(const QString &url) {
-    const QString d = directory();
-    if (d.isEmpty() || !url.startsWith(QLatin1String("https://"))) return url;
+    const QString dir = directory();
+    if (dir.isEmpty() || !url.startsWith(QLatin1String("https://"))) return url;
     const qint64 cap = capBytes;
     if (cap <= 0) return url;
     // Файлы запаса (закрытый раньше фильм) освобождают место для нового: см. keepOnly.
-    const qint64 free = std::max<qint64>(0, QStorageInfo(d).bytesAvailable());
-    if (free + diskBytesIn(d) < cap + 300 * MB) return url;
-    const quint16 port = ensureServer();
-    if (!port) return url;
+    const qint64 free = std::max<qint64>(0, QStorageInfo(dir).bytesAvailable());
+    if (free + diskBytesIn(dir) < cap + 300 * MB) return url;
+    const quint16 srvPort = ensureServer();
+    if (!srvPort) return url;
     const QString key = MirrorLink::fileKey(url);
     std::shared_ptr<Source> src;
     QString token;
@@ -1068,7 +1068,7 @@ QString BurstProxy::Impl::wrap(const QString &url) {
     QString name = fileOf(url);
     if (name.trimmed().isEmpty()) name = QStringLiteral("stream");
     const QString decoded = formDecode(name).value_or(name);
-    return QStringLiteral("http://127.0.0.1:%1/s/%2/%3").arg(port).arg(token, formEncode(decoded).replace(QLatin1Char('+'), QLatin1String("%20")));
+    return QStringLiteral("http://127.0.0.1:%1/s/%2/%3").arg(srvPort).arg(token, formEncode(decoded).replace(QLatin1Char('+'), QLatin1String("%20")));
 }
 
 void BurstProxy::Impl::keepOnly(const QStringList &urls) {

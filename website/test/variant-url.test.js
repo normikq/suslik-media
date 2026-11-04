@@ -169,6 +169,38 @@ test("маршруты variant-url: проверка без авторизаци
   assert.equal(dataS2.path, "Season 2/01.mkv");
   assert.equal(dataS2.subtitles.length, 1);
   assert.equal(dataS2.subtitles[0].path, "Season 2/01.srt");
+
+  // variant_key имеет приоритет над старыми ad_id и path
+  const rPrio = await fetch(`${base}/api/file/variant-url`, {
+    method: "POST",
+    headers: authHeaders,
+    body: JSON.stringify({
+      ad_id: 104921,
+      path: "Dune.2021/Dune.2021.1080p.mkv",
+      variant_key: "200001|Season 2/01.mkv"
+    })
+  });
+  assert.equal(rPrio.status, 200);
+  const dataPrio = await rPrio.json();
+  assert.equal(dataPrio.ad_id, 200001);
+  assert.equal(dataPrio.path, "Season 2/01.mkv");
+
+  // Отбор субтитров конкретной серии в многосерийной раздаче
+  treeCache.set(300001, [
+    { name: "Show.S01E01.mkv", path: "Show/Show.S01E01.mkv", type: "file", size: 1000, sourceLink: "https://alldebrid.com/f/e01" },
+    { name: "Show.S01E02.mkv", path: "Show/Show.S01E02.mkv", type: "file", size: 1000, sourceLink: "https://alldebrid.com/f/e02" },
+    { name: "Show.S01E01.rus.srt", path: "Show/Show.S01E01.rus.srt", type: "file", size: 50, sourceLink: "https://alldebrid.com/f/e01_sub" },
+    { name: "Show.S01E02.rus.srt", path: "Show/Show.S01E02.rus.srt", type: "file", size: 50, sourceLink: "https://alldebrid.com/f/e02_sub" }
+  ]);
+  const rSubsEp1 = await fetch(`${base}/api/file/variant-url`, {
+    method: "POST",
+    headers: authHeaders,
+    body: JSON.stringify({ variant_key: "300001|Show/Show.S01E01.mkv" })
+  });
+  assert.equal(rSubsEp1.status, 200);
+  const dataEp1 = await rSubsEp1.json();
+  assert.equal(dataEp1.subtitles.length, 1);
+  assert.equal(dataEp1.subtitles[0].path, "Show/Show.S01E01.rus.srt");
 });
 
 test("комнаты: действие variant_change обновляет variant_key участника", () => {

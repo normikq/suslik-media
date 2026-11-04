@@ -695,5 +695,26 @@ class ModelTest {
         assertEquals(505, v.score)
         assertEquals(listOf("dv"), v.hardwareFlags)
         assertEquals(true, v.bitrate > 0.0)
+        assertEquals(true, v.label.contains("4K"))
+        assertEquals(false, v.label.contains("Мбит/с"))
+
+        val prof = ru.suslikovanora.media.core.party.PartyVariant(
+            key = "42|Dune.2021.mkv",
+            label = "",
+            quality = "4K",
+            audio = "TrueHD Atmos",
+            bitrate = 54.5,
+            offsetMs = 0L,
+            score = 505
+        )
+        val vProf = buildPartyVariant(item, file, prof)
+        assertEquals(54.5, vProf.bitrate, 0.001)
+
+        val fUnknown = MFile(0, "video.mkv", "video.mkv", false, 1000L, null)
+        val mUnknown = Magnet(43L, "SomeVideo", "Ready", 4, 1000L, 1000L, listOf(fUnknown), true)
+        val itemUnknown = prepareItems(listOf(mUnknown)).first()
+        val vUnknown = buildPartyVariant(itemUnknown, fUnknown)
+        assertEquals("", vUnknown.quality)
+        assertEquals(false, vUnknown.label.contains("1080p"))
     }
 }

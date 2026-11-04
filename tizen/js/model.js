@@ -481,13 +481,16 @@
     return rScore + vScore + aScore + sScore;
   }
 
-  function buildPartyVariant(item, file) {
+  function buildPartyVariant(item, file, serverProfile) {
+    if (serverProfile && serverProfile.key && serverProfile.key === watchKey((item && item.m && item.m.id) || 0, file || {})) {
+      return serverProfile;
+    }
     var name = (item && item.m && item.m.name) || '';
     var filePath = (file && (file.path || file.name)) || '';
     var combined = (name + ' ' + filePath).trim();
     var lower = combined.toLowerCase();
 
-    var quality = '1080p';
+    var quality = '';
     if (/(?:^|[^a-z0-9])(?:2160p|4k|uhd)(?![a-z])|(?:^|\D)3840(?!\d)/i.test(lower)) quality = '4K';
     else if (/(?:^|\D)1080[pi](?![a-z])|(?:^|\D)1920(?!\d)/i.test(lower)) quality = '1080p';
     else if (/(?:^|\D)720p(?![a-z])|(?:^|\D)1280(?!\d)/i.test(lower)) quality = '720p';
@@ -511,8 +514,14 @@
     var isSeries = item && item.playable && item.playable.kind === 'series';
     var estDuration = isSeries ? 2700 : 6600;
     var bitrate = sizeBytes > 0 ? Math.round((sizeBytes * 8) / (estDuration * 1000000) * 10) / 10 : 0.0;
+    var hasExactBitrate = false;
+    if (serverProfile && serverProfile.bitrate > 0) {
+      bitrate = serverProfile.bitrate;
+      hasExactBitrate = true;
+    }
 
-    var parts = [quality];
+    var parts = [];
+    if (quality) parts.push(quality);
     if (hwFlags.indexOf('dv') >= 0) parts.push('Dolby Vision');
     else if (hwFlags.indexOf('hdr') >= 0) parts.push('HDR');
     if (/remux/i.test(lower)) parts.push('BDRemux');
@@ -521,13 +530,16 @@
     if (audio !== 'Stereo') parts.push(audio);
 
     var label = parts.join(' · ');
-    if (bitrate > 0) label += ' (' + bitrate.toFixed(1) + ' Мбит/с)';
-    else if (sizeBytes > 0) label += ' (' + formatBytes(sizeBytes) + ')';
+    if (hasExactBitrate) {
+      label += (label ? ' ' : '') + '(' + bitrate.toFixed(1) + ' Мбит/с)';
+    } else if (sizeBytes > 0) {
+      label += (label ? ' ' : '') + '(' + formatBytes(sizeBytes) + ')';
+    }
 
     var mId = (item && item.m && item.m.id) || 0;
     return {
       key: watchKey(mId, file || {}),
-      label: label,
+      label: label.trim(),
       quality: quality,
       audio: audio,
       bitrate: bitrate,

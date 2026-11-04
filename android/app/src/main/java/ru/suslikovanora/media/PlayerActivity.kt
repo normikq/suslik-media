@@ -29,6 +29,7 @@ import ru.suslikovanora.media.player.Media3Cache
 import ru.suslikovanora.media.player.Media3Engine
 import ru.suslikovanora.media.player.PlaybackTweaks
 import ru.suslikovanora.media.player.VideoHints
+import ru.suslikovanora.media.library.LibraryStore
 
 import android.app.AlertDialog
 import android.content.Context
@@ -751,6 +752,12 @@ class PlayerActivity : ComponentActivity() {
                 lastKnownLength = 0L
                 lastKnownLengthUrl = ""
                 currentTitle = entry.title
+                val newKey = watchProgress.keys.getOrNull(index)
+                if (newKey != null) {
+                    ui.activeVariantKey = newKey
+                    val newVars = variantsForWatchKey(newKey)
+                    if (newVars.isNotEmpty()) ui.variants = newVars
+                }
                 // The room switched a guest to this episode (the host went on to it): from the room's place, not from
                 // where the guest once left it here (that place would load first, and then the room would seek again)
                 val roomKey = ru.suslikovanora.media.party.Party.file?.key
@@ -858,7 +865,47 @@ class PlayerActivity : ComponentActivity() {
                 }
             }
             override fun close() = leave()
+            override fun variantsFor(key: String): List<ru.suslikovanora.media.core.party.PartyVariant> = variantsForWatchKey(key)
         })
+    }
+
+    private fun variantsForWatchKey(key: String): List<ru.suslikovanora.media.core.party.PartyVariant> {
+        if (!key.contains('|')) return emptyList()
+        val magnetId = key.substringBefore('|').toLongOrNull() ?: return emptyList()
+        val filePath = key.substringAfter('|')
+        val store = LibraryStore(this)
+        val versions = store.versionsOf(magnetId)
+        val item = versions.find { it.m.id == magnetId } ?: store.items.find { it.m.id == magnetId }
+        val isSeries = item?.playable is ru.suslikovanora.media.core.Playable.Series
+        val sNum = if (isSeries) {
+            (item!!.playable as ru.suslikovanora.media.core.Playable.Series).seasons.firstNotNullOfOrNull { s ->
+                s.items.find { it.file.path == filePath }?.let { s.season to it.episode }
+            }
+        } else null
+
+        val vars = ArrayList<ru.suslikovanora.media.core.party.PartyVariant>()
+        for (ver in versions) {
+            val vFile = if (ver.m.id == magnetId) {
+                ver.m.files.find { it.path == filePath } ?: ru.suslikovanora.media.core.MFile(0, filePath, filePath, false, 0L, null)
+            } else if (ver.playable is ru.suslikovanora.media.core.Playable.Series && sNum != null) {
+                (ver.playable as ru.suslikovanora.media.core.Playable.Series).seasons
+                    .find { it.season == sNum.first }
+                    ?.items?.find { it.episode == sNum.second }?.file
+            } else if (ver.playable is ru.suslikovanora.media.core.Playable.Movie) {
+                (ver.playable as ru.suslikovanora.media.core.Playable.Movie).file
+            } else {
+                ru.suslikovanora.media.core.mainVideo(ver.m)
+            }
+            if (vFile != null) {
+                vars += ru.suslikovanora.media.core.buildPartyVariant(ver, vFile, store.serverProfiles[ver.m.id])
+            }
+        }
+        if (vars.isEmpty() && item != null) {
+            val f = item.m.files.find { it.path == filePath } ?: ru.suslikovanora.media.core.MFile(0, filePath, filePath, false, 0L, null)
+            vars += ru.suslikovanora.media.core.buildPartyVariant(item, f, store.serverProfiles[magnetId])
+        }
+        vars.sortByDescending { it.score }
+        return vars
     }
 
     /** A guest of the room watching its film: pause / play, seeking and episodes are the host's. */
@@ -1523,12 +1570,11 @@ class PlayerActivity : ComponentActivity() {
         val currentPos = perceivedPosition()
         scope.launch {
             try {
-                val key = watchProgress.currentWatchKey()
                 var adId: Long? = null
                 var path: String? = null
-                if (key != null && '|' in key) {
-                    adId = key.substringBefore('|').toLongOrNull()
-                    path = key.substringAfter('|')
+                if ('|' in variantKey) {
+                    adId = variantKey.substringBefore('|').toLongOrNull()
+                    path = variantKey.substringAfter('|')
                 }
                 val res = ru.suslikovanora.media.net.Api.resolveVariantUrl(variantKey, adId, path)
                 val newUrl = res.optString("url")
@@ -1537,6 +1583,7 @@ class PlayerActivity : ComponentActivity() {
                     ui.switchingVariant = false
                     return@launch
                 }
+                val prevVariantKey = ui.activeVariantKey
                 ui.activeVariantKey = variantKey
                 ui.switchingVariant = false
                 currentUrl = newUrl
@@ -1564,7 +1611,7 @@ class PlayerActivity : ComponentActivity() {
                 }
                 trackSelector.setVariantSidecars(newUrl, newSubs, newAudios)
 
-                val prevVariant = ui.variants.find { it.key == ui.activeVariantKey }
+                val prevVariant = ui.variants.find { it.key == prevVariantKey }
                 val targetOffsetMs = currentVariant?.offsetMs ?: 0L
                 val prevOffsetMs = prevVariant?.offsetMs ?: 0L
                 val offsetDiff = targetOffsetMs - prevOffsetMs

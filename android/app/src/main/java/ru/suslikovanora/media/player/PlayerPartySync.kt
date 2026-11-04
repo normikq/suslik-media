@@ -52,6 +52,7 @@ class PlayerPartySync(private val handler: Handler, private val cb: Callback) {
         fun onTick()
         /** The host closed the room's film: a guest's player closes too. */
         fun close()
+        fun variantsFor(key: String): List<ru.suslikovanora.media.core.party.PartyVariant> = emptyList()
     }
 
     private val engine = PartySyncEngine(AndroidPartyLink, log = { AppLog.write(it) }, notice = { n -> noticeText(n)?.let(cb::notice) })
@@ -108,13 +109,7 @@ class PlayerPartySync(private val handler: Handler, private val cb: Callback) {
             lastKey = key
             val f = Party.file
             if (f != null && key != null && key != f.key && Party.isHost && f.key in keys) {
-                val nextVariants = if (f.variants.isNotEmpty()) {
-                    val curPath = key.substringAfter('|')
-                    f.variants.map { v ->
-                        val vAdId = v.key.substringBefore('|')
-                        v.copy(key = "$vAdId|$curPath")
-                    }
-                } else emptyList()
+                val nextVariants = cb.variantsFor(key)
                 Party.putFilm(PartyFileRef(key, cb.title(), variants = nextVariants))
             }
         }
@@ -153,7 +148,7 @@ class PlayerPartySync(private val handler: Handler, private val cb: Callback) {
             }
         }
         cb.onTick()
-        if (Party.inRoom && matchesFilm && key != null && cb.ready()) {
+        if (Party.inRoom && matchesFilm && cb.ready()) {
             episodeNotice?.let { episodeNotice = null; cb.notice(it) }
             engine.tick(p, key, System.currentTimeMillis())
         } else engine.idle(p)

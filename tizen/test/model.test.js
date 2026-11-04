@@ -416,4 +416,20 @@ test('smartQualityScore и qualityScore: шкала разрешения и ко
   assert.equal(v.score, 505);
   assert.deepEqual(v.hardware_flags, ['dv']);
   assert.equal(v.bitrate > 0, true);
+  assert.equal(v.label.indexOf('4K') >= 0, true);
+  assert.equal(v.label.indexOf('Мбит/с') < 0, true);
+
+  const vProf = M.buildPartyVariant(
+    { m: { id: 42, name: 'Dune.2021.2160p.UHD.Remux.DV.TrueHD.Atmos.mkv', size: 45000000000 } },
+    { path: 'Dune.2021.mkv', size: 45000000000 },
+    { bitrate: 54.5 }
+  );
+  assert.equal(vProf.label.indexOf('54.5 Мбит/с') >= 0, true);
+
+  const vUnknown = M.buildPartyVariant(
+    { m: { id: 43, name: 'SomeVideo', size: 1000 } },
+    { path: 'video.mkv', size: 1000 }
+  );
+  assert.equal(vUnknown.quality, '');
+  assert.equal(vUnknown.label.indexOf('1080p') < 0, true);
 });

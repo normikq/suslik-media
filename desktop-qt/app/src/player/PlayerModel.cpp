@@ -484,6 +484,68 @@ void PlayerModel::reopenAt(qint64 t) {
     sidecars(i, [this, i, t](const Sides &s) { if (m_index == i && !m_closing) open(m_currentUrl, t, s); });
 }
 
+void PlayerModel::rebuildVariantsForEntry(int i) {
+    if (!m_lib || i < 0 || i >= m_req.queue.size()) return;
+    const core::MFile cur = m_req.queue[i];
+    const auto it = m_lib->item(m_req.magnetId);
+    const auto versions = m_lib->versionsOf(m_req.magnetId);
+
+    int curSeasonNum = -1, curEpNum = -1;
+    if (it && it->playable.isSeries()) {
+        for (const auto &s : it->playable.seasons) {
+            for (const auto &e : s.items) {
+                if (e.file.path == cur.path) {
+                    curSeasonNum = s.season;
+                    curEpNum = e.episode;
+                    break;
+                }
+            }
+            if (curSeasonNum >= 0) break;
+        }
+    }
+    int colIndex = -1;
+    if (it && it->playable.isCollection()) {
+        const auto colFilms = collectionFilms(*it);
+        for (int idx = 0; idx < colFilms.size(); ++idx) {
+            if (colFilms[idx].file.path == cur.path) {
+                colIndex = idx;
+                break;
+            }
+        }
+    }
+
+    QList<core::PartyVariant> vars;
+    for (const auto &ver : versions) {
+        core::MFile vFile;
+        if (ver.m.id == m_req.magnetId) {
+            vFile = cur;
+        } else if (curSeasonNum >= 0 && curEpNum >= 0 && ver.playable.isSeries()) {
+            for (const auto &s : ver.playable.seasons) {
+                if (s.season == curSeasonNum) {
+                    for (const auto &e : s.items) {
+                        if (e.episode == curEpNum && !e.file.path.isEmpty()) { vFile = e.file; break; }
+                    }
+                }
+                if (!vFile.path.isEmpty()) break;
+            }
+        } else if (colIndex >= 0 && ver.playable.isCollection()) {
+            const auto colFilms = collectionFilms(ver);
+            if (colIndex >= 0 && colIndex < colFilms.size()) vFile = colFilms[colIndex].file;
+        } else {
+            if (auto mf = ver.playable.movieFile()) vFile = *mf;
+            else if (auto mv = mainVideo(ver.m)) vFile = *mv;
+        }
+        if (!vFile.path.isEmpty()) {
+            vars << core::buildPartyVariant(ver, vFile, m_lib->serverProfile(ver.m.id));
+        }
+    }
+    if (vars.isEmpty() && it) {
+        vars << core::buildPartyVariant(*it, cur, m_lib->serverProfile(m_req.magnetId));
+    }
+    std::sort(vars.begin(), vars.end(), [](const auto &a, const auto &b) { return a.score > b.score; });
+    m_req.variants = vars;
+}
+
 void PlayerModel::playEntry(int i) {
     if (i < 0 || i >= m_queue.size() || m_queue[i].url.isEmpty()) return;
     // гость комнаты: серию выбирает ведущий (плеер гостя идёт за ним сам)
@@ -493,6 +555,10 @@ void PlayerModel::playEntry(int i) {
     m_pendingSeek.reset();
     if (finishedHere && m_length > 0) savePos(m_length, m_length); else savePos(m_time, m_length);
     m_index = i;
+    m_activeVariantKey = watchKey(i);
+    rebuildVariantsForEntry(i);
+    emit activeVariantKeyChanged();
+    emit qualityVariantsChanged();
     m_nextIn = -1;
     m_currentUrl = m_queue[i].url;
     m_title = m_queue[i].title;
@@ -1330,10 +1396,9 @@ void PlayerModel::switchVariant(const QString &variantKey) {
 
     const qint64 curPos = m_time;
     QJsonObject body{{S("variant_key"), variantKey}};
-    const QString curKey = watchKey();
-    if (curKey.contains(QLatin1Char('|'))) {
-        body.insert(S("ad_id"), curKey.section(QLatin1Char('|'), 0, 0).toLongLong());
-        body.insert(S("path"), curKey.section(QLatin1Char('|'), 1));
+    if (variantKey.contains(QLatin1Char('|'))) {
+        body.insert(S("ad_id"), variantKey.section(QLatin1Char('|'), 0, 0).toLongLong());
+        body.insert(S("path"), variantKey.section(QLatin1Char('|'), 1));
     }
     QPointer<PlayerModel> self(this);
     m_lib->api().post(S("/api/file/variant-url"), body, [self, variantKey, curPos](const ApiResult &r) {

@@ -44,11 +44,15 @@ async function handleVariantUrl(req, res) {
   let adId = Number(src.ad_id);
   let filePath = typeof src.path === "string" ? src.path.trim() : "";
   const variantKey = typeof src.variant_key === "string" ? src.variant_key.trim() : (typeof src.key === "string" ? src.key.trim() : "");
-  if (variantKey && (!adId || !filePath)) {
+  if (variantKey) {
     const pipeIdx = variantKey.indexOf("|");
     if (pipeIdx > 0) {
-      adId = Number(variantKey.slice(0, pipeIdx));
-      filePath = variantKey.slice(pipeIdx + 1).trim();
+      const parsedAd = Number(variantKey.slice(0, pipeIdx));
+      const parsedPath = variantKey.slice(pipeIdx + 1).trim();
+      if (Number.isSafeInteger(parsedAd) && parsedAd > 0 && parsedPath) {
+        adId = parsedAd;
+        filePath = parsedPath;
+      }
     }
   }
   if (!Number.isSafeInteger(adId) || adId <= 0 || !filePath) {
@@ -138,8 +142,37 @@ async function handleVariantUrl(req, res) {
       }
     } catch {}
 
-    const subExts = [".srt", ".vtt", ".ass", ".ssa"];
-    const customSubs = list.filter(it => it && it.type === "file" && it.sourceLink && typeof it.path === "string" && subExts.some(ext => it.path.toLowerCase().endsWith(ext))).map(s => {
+    const subExts = [".srt", ".vtt", ".ass", ".ssa", ".sub"];
+    const allSubs = list.filter(it => it && it.type === "file" && it.sourceLink && typeof it.path === "string" && subExts.some(ext => it.path.toLowerCase().endsWith(ext)));
+
+    const baseName = p => { const s = norm(p); const i = s.lastIndexOf("/"); return i < 0 ? s : s.slice(i + 1); };
+    const dirName = p => { const s = norm(p); const i = s.lastIndexOf("/"); return i < 0 ? "" : s.slice(0, i); };
+    const stripExt = name => { const i = name.lastIndexOf("."); return i < 0 ? name : name.slice(0, i); };
+    const isLetterOrDigit = c => /\d/.test(c) || c.toLowerCase() !== c.toUpperCase();
+    const sameBase = (name, base) => name.startsWith(base) && (name.length === base.length || !isLetterOrDigit(name[base.length]));
+
+    let matchedSubs = [];
+    if (allSubs.length > 0) {
+      const vPath = norm(f.path);
+      const vDir = dirName(vPath);
+      const vBase = stripExt(baseName(vPath)).toLowerCase();
+      const byName = allSubs.filter(s => sameBase(stripExt(baseName(s.path)).toLowerCase(), vBase));
+      if (byName.length > 0) {
+        matchedSubs = byName.slice(0, 8);
+      } else {
+        const videoCount = list.filter(it => it && it.type === "file" && typeof it.path === "string" && /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso)$/i.test(it.path) && !/(^|[\/._ -])sample([\/._ -]|$)/i.test(it.path)).length;
+        if (videoCount <= 1) {
+          matchedSubs = allSubs.slice(0, 8);
+        } else {
+          matchedSubs = allSubs.filter(s => {
+            const d = dirName(s.path);
+            return d === vDir || (d.startsWith(vDir ? vDir + "/" : "") && baseName(d).toLowerCase().startsWith("sub"));
+          }).slice(0, 8);
+        }
+      }
+    }
+
+    const customSubs = matchedSubs.map(s => {
       const sParsed = safeHttpsUrl(s.sourceLink);
       if (!isAllDebridFileLink(sParsed)) return null;
       const sLink = sParsed.toString();

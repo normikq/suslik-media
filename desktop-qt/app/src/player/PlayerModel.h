@@ -300,6 +300,7 @@ private:
     QString sideFileName(const QString &url) const;
     std::pair<QString, QString> sideName(const QString &sideUrl, const QString &videoUrl) const;
     QStringList preferFirst(const QStringList &urls, const std::optional<QString> &saved, const QString &videoUrl) const;
+    void rebuildVariantsForEntry(int i);
 
     QPointer<Library> m_lib;
     MpvEngine *m_engine;

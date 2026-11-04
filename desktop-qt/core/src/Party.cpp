@@ -567,7 +567,7 @@ PartyVariant buildPartyVariant(const LibraryItem &item, const MFile &file, const
     const QString combined = (item.m.name + QLatin1Char(' ') + file.name).trimmed();
     const QString l = combined.toLower();
 
-    QString quality = QStringLiteral("1080p");
+    QString quality;
     auto match = [&](const char *pat) {
         return l.contains(QRegularExpression(QString::fromUtf8(pat), QRegularExpression::CaseInsensitiveOption));
     };
@@ -594,10 +594,14 @@ PartyVariant buildPartyVariant(const LibraryItem &item, const MFile &file, const
     const bool isSeries = item.playable.isSeries();
     const double estDuration = isSeries ? 2700.0 : 6600.0;
     double bitrate = sizeBytes > 0 ? std::round((sizeBytes * 8.0) / (estDuration * 1000000.0) * 10.0) / 10.0 : 0.0;
-    if (serverProfile.has_value() && serverProfile->bitrate > 0) bitrate = serverProfile->bitrate;
+    bool hasExactBitrate = false;
+    if (serverProfile.has_value() && serverProfile->bitrate > 0) {
+        bitrate = serverProfile->bitrate;
+        hasExactBitrate = true;
+    }
 
     QStringList parts;
-    parts << quality;
+    if (!quality.isEmpty()) parts << quality;
     if (hwFlags.contains(QStringLiteral("dv"))) parts << QStringLiteral("Dolby Vision");
     else if (hwFlags.contains(QStringLiteral("hdr"))) parts << QStringLiteral("HDR");
     if (match(R"(remux)")) parts << QStringLiteral("BDRemux");
@@ -606,8 +610,13 @@ PartyVariant buildPartyVariant(const LibraryItem &item, const MFile &file, const
     if (audio != QStringLiteral("Stereo")) parts << audio;
 
     QString label = parts.join(QStringLiteral(" · "));
-    if (bitrate > 0) label += QStringLiteral(" (%1 Мбит/с)").arg(QString::number(bitrate, 'f', 1));
-    else if (sizeBytes > 0) label += QStringLiteral(" (%1)").arg(formatBytes(sizeBytes));
+    if (hasExactBitrate) {
+        if (!label.isEmpty()) label += QLatin1Char(' ');
+        label += QStringLiteral("(%1 Мбит/с)").arg(QString::number(bitrate, 'f', 1));
+    } else if (sizeBytes > 0) {
+        if (!label.isEmpty()) label += QLatin1Char(' ');
+        label += QStringLiteral("(%1)").arg(formatBytes(sizeBytes));
+    }
 
     PartyVariant v;
     v.key = watchKey(item.m.id, file);

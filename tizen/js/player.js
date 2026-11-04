@@ -854,7 +854,7 @@
     var p = av();
     var curTime = 0;
     try { curTime = p.getCurrentTime(); } catch (e) { curTime = c.pos; }
-    var parts = (c.key || '').split('|');
+    var parts = (variantKey || '').split('|');
     var adId = parts.length > 1 ? Number(parts[0]) : null;
     var path = parts.length > 1 ? parts.slice(1).join('|') : null;
 
