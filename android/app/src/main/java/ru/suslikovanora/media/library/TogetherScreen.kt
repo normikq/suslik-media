@@ -163,7 +163,7 @@ private fun FilmPanel(store: LibraryStore, onLibrary: () -> Unit, onOpen: (PlayT
                         f.variants.any { v -> v.key.substringBefore('|') == item.m.id.toString() }
                 if (canMatch) {
                     val file = item.m.files.firstOrNull { file -> f.matches(ru.suslikovanora.media.core.watchKey(item.m.id, file)) }
-                        ?: item.m.files.firstOrNull { it.type == "file" }
+                        ?: item.m.files.firstOrNull { !it.isFolder }
                     file?.let { targetForKey(store.items, ru.suslikovanora.media.core.watchKey(item.m.id, it)) }
                 } else null
             }

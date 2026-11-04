@@ -256,7 +256,7 @@ class MainActivity : ComponentActivity() {
                                 fileRef.variants.any { v -> v.key.substringBefore('|') == item.m.id.toString() }
                         if (canMatch) {
                             val f = item.m.files.firstOrNull { file -> fileRef.matches(ru.suslikovanora.media.core.watchKey(item.m.id, file)) }
-                                ?: item.m.files.firstOrNull { it.type == "file" }
+                                ?: item.m.files.firstOrNull { !it.isFolder }
                             f?.let { ru.suslikovanora.media.library.targetForKey(store.items, ru.suslikovanora.media.core.watchKey(item.m.id, it)) }
                         } else null
                     }
