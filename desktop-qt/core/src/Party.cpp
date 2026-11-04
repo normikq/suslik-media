@@ -222,6 +222,26 @@ QJsonObject PartyProtocol::fileJson(const PartyFileRef &f) {
     return obj;
 }
 
+PartyVariant parsePartyVariant(const QJsonObject &vo) {
+    PartyVariant v;
+    v.key = json::str(vo, S("key"));
+    v.label = json::str(vo, S("label"));
+    v.quality = json::str(vo, S("resolution"));
+    if (v.quality.isEmpty()) v.quality = json::str(vo, S("quality"));
+    if (v.quality.isEmpty()) v.quality = S("1080p");
+    v.audio = json::str(vo, S("audio_tech"));
+    if (v.audio.isEmpty()) v.audio = json::str(vo, S("audio"));
+    if (v.audio.isEmpty()) v.audio = S("Stereo");
+    v.bitrate = optDouble(vo, S("bitrate_mbps"), optDouble(vo, S("bitrate"), 0.0));
+    v.offsetMs = json::optLong(vo, S("offset_ms"));
+    v.score = int(optDouble(vo, S("score"), 0));
+    const QJsonValue flags = vo.value(S("hardware_flags"));
+    if (flags.isArray()) {
+        for (const auto &fl : flags.toArray()) v.hardwareFlags << fl.toString();
+    }
+    return v;
+}
+
 std::optional<PartyFileRef> PartyProtocol::parseFileRef(const QJsonObject &f) {
     const QString key = json::str(f, S("key"));
     if (key.trimmed().isEmpty()) return std::nullopt;
@@ -235,24 +255,8 @@ std::optional<PartyFileRef> PartyProtocol::parseFileRef(const QJsonObject &f) {
         for (const auto &val : vars.toArray()) {
             if (!val.isObject()) continue;
             const QJsonObject vo = val.toObject();
-            const QString vk = json::str(vo, S("key"));
-            if (vk.isEmpty()) continue;
-            PartyVariant v;
-            v.key = vk;
-            v.label = json::str(vo, S("label"));
-            v.quality = json::str(vo, S("quality"));
-            if (v.quality.isEmpty()) v.quality = json::str(vo, S("resolution"));
-            if (v.quality.isEmpty()) v.quality = S("1080p");
-            v.audio = json::str(vo, S("audio"));
-            if (v.audio.isEmpty()) v.audio = json::str(vo, S("audio_tech"));
-            if (v.audio.isEmpty()) v.audio = S("Stereo");
-            v.bitrate = optDouble(vo, S("bitrate"), optDouble(vo, S("bitrate_mbps"), 0));
-            v.offsetMs = json::optLong(vo, S("offset_ms"));
-            v.score = int(optDouble(vo, S("score"), 0));
-            const QJsonValue flags = vo.value(S("hardware_flags"));
-            if (flags.isArray()) {
-                for (const auto &fl : flags.toArray()) v.hardwareFlags << fl.toString();
-            }
+            PartyVariant v = parsePartyVariant(vo);
+            if (v.key.isEmpty()) continue;
             ref.variants << v;
         }
     }

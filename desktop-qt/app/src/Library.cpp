@@ -775,19 +775,7 @@ void Library::refreshTags(int round) {
             bool ok = false;
             const qint64 id = it.key().toLongLong(&ok);
             if (!ok || !it.value().isObject()) continue;
-            const QJsonObject po = it.value().toObject();
-            core::PartyVariant pv;
-            pv.key = json::str(po, S("key"));
-            pv.label = json::str(po, S("label"));
-            pv.quality = json::str(po, S("resolution"));
-            if (pv.quality.isEmpty()) pv.quality = json::str(po, S("quality"), S("1080p"));
-            pv.audio = json::str(po, S("audio_tech"));
-            if (pv.audio.isEmpty()) pv.audio = json::str(po, S("audio"), S("Stereo"));
-            pv.bitrate = optDouble(po, S("bitrate_mbps"), optDouble(po, S("bitrate"), 0.0));
-            pv.score = int(optDouble(po, S("score"), 0));
-            const auto hf = po.value(S("hardware_flags")).toArray();
-            for (const auto &f : hf) pv.hardwareFlags << f.toString();
-            m_serverProfiles.insert(id, pv);
+            m_serverProfiles.insert(id, core::parsePartyVariant(it.value().toObject()));
         }
         bump();
         // сервер разбирает новые фильмы по одному в фоне: пока остались — спросить ещё

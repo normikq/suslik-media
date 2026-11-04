@@ -68,6 +68,7 @@ struct PartyVariant {
 
 struct LibraryItem;
 struct MFile;
+PartyVariant parsePartyVariant(const QJsonObject &obj);
 PartyVariant buildPartyVariant(const LibraryItem &item, const MFile &file, const std::optional<PartyVariant> &serverProfile = std::nullopt);
 
 /// Фильм комнаты: ключ просмотра `magnetId|путь` (тот же, что у прогресса в медиатеке), canonical_id и варианты.
@@ -143,6 +144,7 @@ struct PartyRoom {
     std::optional<QString> pendingFileKey;
 
     bool isHost(const std::optional<QString> &myUserId, const QString &myKey) const;
+    bool isHost(const PartyMember &m) const { return isCreator(m); }
     bool isCreator(const PartyMember &m) const;
     bool othersBuffering(const QString &myKey) const;
     PartyRoom putFile(const PartyFileRef &f) const;

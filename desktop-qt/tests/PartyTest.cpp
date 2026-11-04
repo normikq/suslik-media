@@ -178,6 +178,8 @@ private slots:
         QVERIFY(!shared.isHost(S("shared"), S("kb")));
         QVERIFY(shared.isCreator(a));
         QVERIFY(!shared.isCreator(b));
+        QVERIFY(shared.isHost(a));
+        QVERIFY(!shared.isHost(b));
         PartyRoom discord; discord.hostId = S("u1"); discord.hostKey = S("ka");
         QVERIFY(discord.isHost(S("u1"), S("kb")));
         QVERIFY(!discord.isHost(S("u2"), S("ka")));
@@ -565,6 +567,28 @@ private slots:
         QCOMPARE(parsed->variants.size(), 2);
         QCOMPARE(parsed->variants[0].score, 505);
         QCOMPARE(parsed->variants[1].bitrate, 8.1);
+    }
+
+    void parsePartyVariantTest() {
+        const QJsonObject o{
+            {S("key"), S("42|video.mkv")},
+            {S("label"), S("4K HDR")},
+            {S("resolution"), S("4K")},
+            {S("audio_tech"), S("TrueHD Atmos")},
+            {S("bitrate_mbps"), 45.5},
+            {S("offset_ms"), 1500},
+            {S("score"), 500},
+            {S("hardware_flags"), QJsonArray{S("dv"), S("hdr")}}
+        };
+        const PartyVariant v = parsePartyVariant(o);
+        QCOMPARE(v.key, S("42|video.mkv"));
+        QCOMPARE(v.label, S("4K HDR"));
+        QCOMPARE(v.quality, S("4K"));
+        QCOMPARE(v.audio, S("TrueHD Atmos"));
+        QCOMPARE(v.bitrate, 45.5);
+        QCOMPARE(v.offsetMs, 1500);
+        QCOMPARE(v.score, 500);
+        QCOMPARE(v.hardwareFlags, QStringList({S("dv"), S("hdr")}));
     }
 
     void buildPartyVariantTest() {

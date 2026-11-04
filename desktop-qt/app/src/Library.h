@@ -1,6 +1,7 @@
 #pragma once
 #include "suslik/core/Auth.h"
 #include "suslik/core/Model.h"
+#include "suslik/core/Party.h"
 
 #include <QHash>
 #include <QJsonObject>
