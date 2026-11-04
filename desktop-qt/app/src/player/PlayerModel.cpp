@@ -16,7 +16,9 @@
 
 #include <QDateTime>
 #include <QDir>
+#include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QRegularExpression>
