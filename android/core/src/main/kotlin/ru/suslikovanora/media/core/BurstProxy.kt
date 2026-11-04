@@ -41,6 +41,8 @@ object BurstProxy {
     private const val PROBE_AHEAD = 4L shl 20      // before a window proves to be real playback
     private const val PROBE_LIMIT = 6L shl 20      // read sequentially this far = playback → bursts
     private const val PROBE_IDLE_MS = 500L         // a probe the player has not read for this long stops at PROBE_AHEAD (a fast network fills the ring in 3 s)
+    private const val SIDE_PROBE_LIMIT = 512L shl 10 // voice-over/subs: 512 KB sequentially = playback (128 kbps audio takes minutes to reach 6 MB)
+    private const val SIDE_IDLE_MS = 5_000L        // a playing voice-over reads every 1-2 s; don't kill it after 500 ms
     private const val CHUNK = 256 * 1024
     private const val NEAR = 8L shl 20             // a request this close to a window's end joins it (the downloader gets there in a moment)
     private const val NEAR_MIN = 1L shl 20         // ...but at most what the network brings in NEAR_SEC (see Source.near)
@@ -271,7 +273,7 @@ object BurstProxy {
             if (used <= budget) return
             val filmLast = all.filter { it.first.retiredAt == 0L }.maxOfOrNull { it.second.lastReadAt } ?: 0L
             fun stays(s: Source, w: Window) =
-                s.retiredAt == 0L && (w.readers > 0 || filmLast - w.lastReadAt < recentMs || (!s.side() && w === s.current()))
+                s.retiredAt == 0L && (w.readers > 0 || filmLast - w.lastReadAt < recentMs || w === s.current())
             for ((s, w) in all.filterNot { (s, w) -> stays(s, w) }.sortedBy { it.second.lastReadAt }) {
                 if (used <= budget) break
                 val freed = w.diskBytes()
@@ -660,7 +662,7 @@ object BurstProxy {
         var gateAt = 0L              // while held, the player gets nothing from here on
         fun held() = System.currentTimeMillis() < heldUntil
         fun validFrom() = start + maxOf(0L, written - CAP)
-        fun burst() = sequential >= PROBE_LIMIT
+        fun burst() = sequential >= (if (src.side()) SIDE_PROBE_LIMIT else PROBE_LIMIT)
 
         /** How far ahead to fill, and when to start again (radio wakes up). Sized by the film's bitrate. */
         // Up to ~110 s ahead (or what the reserve holds), refill when ~25 s are left. A small reserve keeps a part of
@@ -876,7 +878,8 @@ object BurstProxy {
                     // ...unless the player has stopped taking data here: an external voice-over that is not playing (mpv
                     // read its header and index and keeps the connection open). 18.10 journal: 8 voice-overs of one episode
                     // pulled 3–32 MB each in the first 10 s next to the video, only one of them played.
-                    if (!burst() && !held() && ahead >= PROBE_AHEAD && System.currentTimeMillis() - lastReadAt > PROBE_IDLE_MS) {
+                    val idleLimit = if (src.side()) SIDE_IDLE_MS else PROBE_IDLE_MS
+                    if (!burst() && !held() && ahead >= PROBE_AHEAD && System.currentTimeMillis() - lastReadAt > idleLimit) {
                         why = "player idle"; return
                     }
                     val n = input.read(buf)

@@ -125,6 +125,7 @@ class Media3Engine(private val context: Context) : PlayerEngine {
     @Volatile private var viaReserve = false     // the film is read from BurstProxy on this phone, not from the mirror
     private var videoRenderer: FreshDecoderVideoRenderer? = null // of the current ExoPlayer
     // Set by the viewer (PlaybackTweaks), + = later. ExoPlayer has no such thing: see SyncedClock / DelayedTextRenderer.
+    @Volatile private var voiceDelayUs = 0L
     @Volatile private var audioSyncUs = 0L
     @Volatile private var subtitleDelayUs = 0L
     private var builtPassthrough = true                // the audio sink's capabilities are fixed when the player is built
@@ -238,7 +239,7 @@ class Media3Engine(private val context: Context) : PlayerEngine {
     }
 
     private inner class SyncedClock(private val inner: MediaClock) : MediaClock {
-        override fun getPositionUs() = inner.positionUs + audioSyncUs
+        override fun getPositionUs() = maxOf(0L, inner.positionUs + voiceDelayUs + audioSyncUs)
         override fun hasSkippedSilenceSinceLastCall() = inner.hasSkippedSilenceSinceLastCall()
         override fun setPlaybackParameters(playbackParameters: PlaybackParameters) = inner.setPlaybackParameters(playbackParameters)
         override fun getPlaybackParameters(): PlaybackParameters = inner.playbackParameters
@@ -249,6 +250,13 @@ class Media3Engine(private val context: Context) : PlayerEngine {
         override fun render(positionUs: Long, elapsedRealtimeUs: Long) = super.render(positionUs - subtitleDelayUs, elapsedRealtimeUs)
         override fun getDurationToProgressUs(positionUs: Long, elapsedRealtimeUs: Long) =
             super.getDurationToProgressUs(positionUs - subtitleDelayUs, elapsedRealtimeUs)
+    }
+
+    override fun setAudioDelayMs(ms: Long) {
+        val us = ms * 1000L
+        if (voiceDelayUs == us) return
+        voiceDelayUs = us
+        AppLog.write("[track] voice-over delay $ms ms")
     }
 
     override fun setAudioSyncMs(ms: Long) {
@@ -287,7 +295,7 @@ class Media3Engine(private val context: Context) : PlayerEngine {
             // Nothing loaded ahead of one of the sources (a voice-over file or subtitles switched back on start again
             // from the current moment) while the byte cap is reached by the film's own buffer: without this ExoPlayer
             // waited at «Буферизация 0%» until a seek emptied the buffer.
-            if (!load && parameters.bufferedDurationUs < STARVING_US) return true
+            if (!load && parameters.bufferedDurationUs < RESERVE_AHEAD_US) return true
             return load && (!viaReserve || parameters.bufferedDurationUs < RESERVE_AHEAD_US)
         }
         override fun shouldStartPlayback(parameters: LoadControl.Parameters) = d.shouldStartPlayback(parameters)
@@ -299,12 +307,8 @@ class Media3Engine(private val context: Context) : PlayerEngine {
             .setSubtitleConfigurations(m.subtitleFiles.map { subtitle(it) })
             .build()
         val main = factory.createMediaSource(item)
-        val audio = (m.audioFiles + extraAudio).map { u ->
-            val s = factory.createMediaSource(MediaItem.fromUri(u))
-            val offset = CustomAudioInfo.of(u)?.offsetMs ?: 0L
-            if (offset == 0L) s else OffsetMediaSource(s, offset)
-        }
-        return if (audio.isEmpty()) main else MergingMediaSource(main, *audio.toTypedArray())
+        val audio = (m.audioFiles + extraAudio).map { factory.createMediaSource(MediaItem.fromUri(it)) }
+        return if (audio.isEmpty()) main else MergingMediaSource(/* adjustPeriodTimeOffsets = */ true, /* clipDurations = */ true, main, *audio.toTypedArray())
     }
 
     private fun subtitle(url: String): MediaItem.SubtitleConfiguration {
@@ -324,6 +328,7 @@ class Media3Engine(private val context: Context) : PlayerEngine {
         val p = exo ?: build(reserve).also { exo = it; view.player = it }
         this.media = media
         extraAudio.clear()
+        voiceDelayUs = 0L
         opened++
         reported = false; tracksLogged = ""; selectLastAudio = false; lengthSent = 0L; bufferedPct = -1
         hdrSent = false; openedAt = android.os.SystemClock.elapsedRealtime(); playAt = 0L
@@ -725,7 +730,7 @@ class Media3Engine(private val context: Context) : PlayerEngine {
         private const val TICK_MS = 250L
         private const val TARGET_BUFFER_BYTES = 80 shl 20
         private const val RESERVE_AHEAD_US = 15_000_000L
-        private const val STARVING_US = 2_000_000L
+        private const val STARVING_US = 15_000_000L
         private const val LOCAL_HOST = "127.0.0.1"
 
         /**
