@@ -18,27 +18,51 @@ void PlaybackSupervisor::opening(const QString &episodeKey) {
     }
     m_bufferedAt = -1;
     m_picturesMoved = 0; // новый поток: неподвижная обложка не должна сойти за фильм, потому что прошлый двигался
+    m_recentBuffering.clear();
+    m_bufferingStart = 0;
+    m_lastDowngradeSuggested = LLONG_MIN / 2;
     enter(State::Opening, 8000);
 }
 
 void PlaybackSupervisor::buffering(float percent) {
     if (m_state == State::Paused || m_state == State::Ended) return;
     if (percent < 100.f) {
+        if (m_bufferingStart == 0) m_bufferingStart = m_now();
         if (m_state != State::Opening) enter(State::Buffering, 4000);
-    } else if (m_state == State::Buffering) {
-        m_bufferedAt = m_now();
-        enter(State::Playing, 2000);
-    } else if (m_state == State::Opening) {
-        enter(State::Playing, 4000);
+    } else {
+        if (m_bufferingStart > 0) {
+            m_recentBuffering.push_back({ m_bufferingStart, m_now() - m_bufferingStart });
+            m_bufferingStart = 0;
+        }
+        if (m_state == State::Buffering) {
+            m_bufferedAt = m_now();
+            enter(State::Playing, 2000);
+        } else if (m_state == State::Opening) {
+            enter(State::Playing, 4000);
+        }
     }
 }
 
 void PlaybackSupervisor::playing() {
+    if (m_bufferingStart > 0) {
+        m_recentBuffering.push_back({ m_bufferingStart, m_now() - m_bufferingStart });
+        m_bufferingStart = 0;
+    }
     if (m_state != State::Paused && m_state != State::Playing) enter(State::Playing, 4000);
 }
 void PlaybackSupervisor::paused() { enter(State::Paused); }
-void PlaybackSupervisor::resumed() { enter(State::Playing, 5000); }
+void PlaybackSupervisor::resumed() {
+    if (m_bufferingStart > 0) {
+        m_recentBuffering.push_back({ m_bufferingStart, m_now() - m_bufferingStart });
+        m_bufferingStart = 0;
+    }
+    enter(State::Playing, 5000);
+}
 void PlaybackSupervisor::seeked() {
+    if (m_bufferingStart > 0) {
+        m_recentBuffering.push_back({ m_bufferingStart, m_now() - m_bufferingStart });
+        m_bufferingStart = 0;
+    }
     if (m_state != State::Paused) enter(State::Playing, 5000);
     else resetMeasurements();
 }
@@ -78,6 +102,25 @@ void PlaybackSupervisor::tick(const Stats &s) {
     const qint64 prevAt = m_lastAt;
     m_last = s;
     m_lastAt = t;
+
+    // 0. Троттлинг / частая буферизация: битрейт > 25 Мбит/с и за последние 60 с буферизировался > 3 раз или суммарно > 10 с
+    while (!m_recentBuffering.empty() && t - m_recentBuffering.front().start > 60000) {
+        m_recentBuffering.erase(m_recentBuffering.begin());
+    }
+    int bufCount = int(m_recentBuffering.size());
+    qint64 bufTotalMs = 0;
+    for (const auto &span : m_recentBuffering) bufTotalMs += span.durationMs;
+    if (m_bufferingStart > 0 && t > m_bufferingStart) {
+        bufCount++;
+        bufTotalMs += (t - m_bufferingStart);
+    }
+    if ((bufCount >= 3 || bufTotalMs >= 10000) && m_bitrateMbps > 25.0) {
+        if (t - m_lastDowngradeSuggested >= 60000) {
+            m_lastDowngradeSuggested = t;
+            m_actions.suggestDowngrade(m_bitrateMbps);
+        }
+    }
+
     if (m_state == State::Recovering && t >= m_graceUntil) m_state = State::Playing;
     if (!prev) return;
     if (s.pictures > prev->pictures && prev->pictures > 0) ++m_picturesMoved;

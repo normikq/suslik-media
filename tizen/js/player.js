@@ -93,9 +93,20 @@
       prepared: false, loading: true, seekStamp: 0, seeking: false, slow: null, party: null,
       urlAt: 0, played: false, retryAt: 0, stalls: 0, stallMs: 0, stallFrom: 0, durAskedAt: 0,
       tc: null, viewer: Math.random().toString(36).slice(2, 10),
-      dubs: model.externalAudioFor(opts.magnet, opts.file), custom: null
+      dubs: model.externalAudioFor(opts.magnet, opts.file), custom: null,
+      activeVariantKey: key, switching: false, currentBitrate: 0, recentBuffering: [], downgradePromptShown: false
     };
     if (opts.resumeAt != null) cur.resume = opts.resumeAt;
+    var variants = (opts.file && opts.file.variants) || (SM.party && SM.party.room && SM.party.room.file && SM.party.room.file.variants) || [];
+    if (variants.length) {
+      cur.activeVariantKey = key;
+      for (var vi = 0; vi < variants.length; vi++) {
+        if (variants[vi].key === key) {
+          cur.currentBitrate = variants[vi].bitrate || 0;
+          break;
+        }
+      }
+    }
     clearTimeout(logSaveTimer); logSaveTimer = 0;
     prevLog = log.length ? [] : loadLog(); // журнал в памяти пуст — приложение запущено заново (может, после зависания)
     log = [];
@@ -323,7 +334,13 @@
           if (cur !== c) return;
           note('buffering start');
           c.loading = true; buffering(true, 0, 'Буферизация…');
-          if (c.prepared && !c.seekBusy) { c.stalls++; c.stallFrom = Date.now(); }
+          if (c.prepared && !c.seekBusy) {
+            c.stalls++;
+            c.stallFrom = Date.now();
+            c.recentBuffering = c.recentBuffering || [];
+            c.recentBuffering.push({ start: c.stallFrom, end: null });
+            checkBufferThrottling(c);
+          }
         },
         onbufferingprogress: function (pct) { if (cur === c) buffering(true, pct); },
         onbufferingcomplete: function () {
@@ -331,7 +348,14 @@
           note('buffering complete');
           c.loading = false;
           if (c.resumeCover) buffering(true, 0); else buffering(false); // переход к месту продолжения ещё впереди
-          if (c.stallFrom) { c.stallMs += Date.now() - c.stallFrom; c.stallFrom = 0; }
+          if (c.stallFrom) {
+            c.stallMs += Date.now() - c.stallFrom;
+            if (c.recentBuffering && c.recentBuffering.length) {
+              c.recentBuffering[c.recentBuffering.length - 1].end = Date.now();
+            }
+            c.stallFrom = 0;
+            checkBufferThrottling(c);
+          }
         },
         oncurrentplaytime: function (ms) {
           if (cur !== c) return;
@@ -746,13 +770,123 @@
     el('p-party').className = 'show';
   }
 
+  function checkBufferThrottling(c) {
+    if (!c || c.downgradePromptShown) return;
+    var bitrate = c.currentBitrate || 0;
+    if (bitrate <= 25.0) return;
+    var now = Date.now();
+    c.recentBuffering = (c.recentBuffering || []).filter(function (t) { return now - t.start <= 60000; });
+    var count = c.recentBuffering.length;
+    var totalMs = 0;
+    for (var i = 0; i < count; i++) {
+      var item = c.recentBuffering[i];
+      var end = item.end || now;
+      totalMs += (end - item.start);
+    }
+    if (count > 3 || totalMs > 10000) {
+      suggestDowngrade(c);
+    }
+  }
+
+  function suggestDowngrade(c) {
+    if (!c || c.downgradePromptShown) return;
+    var variants = (c.opts.file && c.opts.file.variants) || (SM.party && SM.party.room && SM.party.room.file && SM.party.room.file.variants) || [];
+    if (!variants.length) return;
+    var currentBitrate = c.currentBitrate || 0;
+    var best = null;
+    for (var i = 0; i < variants.length; i++) {
+      var v = variants[i];
+      if (v.key !== (c.activeVariantKey || c.key) && v.bitrate < currentBitrate) {
+        if (!best || (v.bitrate > best.bitrate && v.bitrate <= 25.0)) {
+          best = v;
+        }
+      }
+    }
+    if (!best) return;
+    c.downgradePromptShown = true;
+    var targetLabel = best.label || (best.quality + (best.bitrate ? ' (' + best.bitrate.toFixed(1) + ' Мбит/с)' : ''));
+    c.opts.dialog(
+      'Скорость интернета недостаточна для этого качества. Переключить на ' + targetLabel + '?',
+      null,
+      [
+        { text: 'Да', run: function () { switchVariant(best.key); } },
+        { text: 'Скрыть' }
+      ]
+    );
+  }
+
+  function switchVariant(variantKey) {
+    var c = cur;
+    if (!c || c.switching || variantKey === (c.activeVariantKey || c.key)) return;
+    c.switching = true;
+    c.opts.toast('Переключение качества…');
+    var p = av();
+    var curTime = 0;
+    try { curTime = p.getCurrentTime(); } catch (e) { curTime = c.pos; }
+    var parts = (c.key || '').split('|');
+    var adId = parts.length > 1 ? Number(parts[0]) : null;
+    var path = parts.length > 1 ? parts.slice(1).join('|') : null;
+
+    api.resolveVariantUrl(variantKey, adId, path).then(function (res) {
+      if (!res || !res.url || cur !== c) {
+        if (cur === c) {
+          c.switching = false;
+          c.opts.toast('Не удалось сменить качество');
+        }
+        return;
+      }
+      c.activeVariantKey = variantKey;
+      c.switching = false;
+      if (SM.party) SM.party.sendVariantChange(variantKey);
+
+      var variants = (c.opts.file && c.opts.file.variants) || (SM.party && SM.party.room && SM.party.room.file && SM.party.room.file.variants) || [];
+      for (var i = 0; i < variants.length; i++) {
+        if (variants[i].key === variantKey) {
+          c.currentBitrate = variants[i].bitrate || 0;
+          break;
+        }
+      }
+
+      try {
+        p.stop();
+        p.close();
+      } catch (e) {}
+      start(res.url, curTime);
+    }).catch(function () {
+      if (cur === c) {
+        c.switching = false;
+        c.opts.toast('Не удалось сменить качество');
+      }
+    });
+  }
+
   // ---- меню звука и субтитров ----
 
   function openMenu() {
     var c = cur;
     var menu = el('menu');
     menu.innerHTML = '';
-    var items = [h('h2', { text: 'Звук' })];
+    var items = [];
+    var variants = (c.opts.file && c.opts.file.variants) || (SM.party && SM.party.room && SM.party.room.file && SM.party.room.file.variants) || [];
+    if (variants.length > 1) {
+      items.push(h('h2', { text: 'Качество' }));
+      var hostKey = (SM.party && SM.party.room && SM.party.room.file) ? SM.party.room.file.key : null;
+      var activeKey = c.activeVariantKey || c.key;
+      variants.forEach(function (v) {
+        var on = (v.key === activeKey);
+        var isHost = (hostKey && v.key === hostKey);
+        var comp = support.checkVariantCompatibility(v);
+        var label = v.label || (v.quality + (v.bitrate ? ' (' + v.bitrate.toFixed(1) + ' Мбит/с)' : ''));
+        if (isHost) label += ' [Хост]';
+        if (!comp.ok) label += ' (' + comp.text + ')';
+        var btnClass = (on ? 'sel ' : '') + (!comp.ok ? 'disabled' : '');
+        items.push(SM.ui.button((on ? '● ' : '') + label, function () {
+          closeMenu();
+          if (!on) switchVariant(v.key);
+        }, btnClass.trim()));
+      });
+    }
+    items.push(h('h2', { text: 'Звук' }));
     if (!c.audio || !c.audio.tracks.length) items.push(h('p', { class: 'muted', text: 'Нет сведений о дорожках' }));
     else c.audio.tracks.forEach(function (t) {
       var selected = !(c.tc && c.tc.ext) && c.audio.current && c.audio.current.index === t.index;
@@ -967,5 +1101,5 @@
     }
   });
 
-  SM.player = { play: play, close: close, current: function () { return cur ? cur.key : null; }, log: function () { return log.slice(); } };
+  SM.player = { play: play, close: close, switchVariant: switchVariant, current: function () { return cur ? cur.key : null; }, log: function () { return log.slice(); } };
 })(window);

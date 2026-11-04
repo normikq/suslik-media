@@ -236,6 +236,23 @@ void PlayerModel::begin() {
     m_retries = 0;
     m_nextIn = -1;
     m_infoOpen = false;
+    m_activeVariantKey = m_req.activeVariantKey;
+    if (m_req.variants.isEmpty() && Party::instance() && Party::instance()->file() && !Party::instance()->file()->variants.isEmpty()) {
+        m_req.variants = Party::instance()->file()->variants;
+    }
+    if (m_activeVariantKey.isEmpty()) {
+        if (!m_req.variants.isEmpty()) m_activeVariantKey = m_req.variants[0].key;
+        else m_activeVariantKey = watchKey(m_index);
+    }
+    m_switchingVariant = false;
+    m_suggestedDowngradeKey.clear();
+    m_suggestedDowngradeLabel.clear();
+    for (const auto &v : m_req.variants) {
+        if (v.key == m_activeVariantKey) {
+            m_supervisor.setBitrateMbps(v.bitrate);
+            break;
+        }
+    }
     // Пока список сезона не пришёл, в очереди только этот файл, а место — уже его номер в сезоне.
     m_queue.clear();
     const int n = std::max<int>(1, int(m_req.queue.size()));
@@ -256,6 +273,11 @@ void PlayerModel::begin() {
     emit optionsChanged();
     emit nextChanged();
     emit infoChanged();
+    emit qualityVariantsChanged();
+    emit activeVariantKeyChanged();
+    emit hostVariantKeyChanged();
+    emit switchingVariantChanged();
+    emit suggestedDowngradeChanged();
     PlayerLog::write(S("player open «%1»: %2 in the queue, starts with %3").arg(m_req.title).arg(n).arg(m_index + 1));
     const qint64 at = m_req.startMs ? *m_req.startMs : m_req.fromStart ? 0 : savedPos(m_index);
     open(m_req.url, at, m_sidecars.value(m_index));
@@ -551,6 +573,10 @@ void PlayerModel::finishClose() {
     ++m_gen;
     m_status.clear();
     m_catchingUp = false;
+    m_activeVariantKey.clear();
+    m_suggestedDowngradeKey.clear();
+    m_suggestedDowngradeLabel.clear();
+    m_switchingVariant = false;
     // данные сеанса — не подмешивать в следующий фильм
     m_sidecars.clear();
     m_sidePaths.clear();
@@ -1236,6 +1262,120 @@ void PlayerModel::reopen(bool fresh) {
 }
 
 void PlayerModel::log(const QString &message) { PlayerLog::write(message); }
+
+void PlayerModel::suggestDowngrade(double currentBitrateMbps) {
+    const auto &vars = m_req.variants.isEmpty() && Party::instance() && Party::instance()->file()
+        ? Party::instance()->file()->variants : m_req.variants;
+    if (vars.isEmpty()) return;
+    const core::PartyVariant *best = nullptr;
+    for (const auto &v : vars) {
+        if (v.bitrate < currentBitrateMbps && v.key != m_activeVariantKey) {
+            if (!best || (v.bitrate > best->bitrate && v.bitrate <= 25.0)) {
+                best = &v;
+            }
+        }
+    }
+    if (best) {
+        m_suggestedDowngradeKey = best->key;
+        m_suggestedDowngradeLabel = best->label.isEmpty()
+            ? QStringLiteral("%1 (%2 Мбит/с)").arg(best->quality).arg(QString::number(best->bitrate, 'f', 1))
+            : best->label;
+        emit suggestedDowngradeChanged();
+    }
+}
+
+QVariantList PlayerModel::qualityVariants() const {
+    QVariantList list;
+    QList<core::PartyVariant> vars = m_req.variants;
+    if (vars.isEmpty() && Party::instance() && Party::instance()->file()) {
+        vars = Party::instance()->file()->variants;
+    }
+    const QString hKey = hostVariantKey();
+    for (const auto &v : vars) {
+        QVariantMap map;
+        map.insert(S("key"), v.key);
+        map.insert(S("label"), v.label);
+        map.insert(S("quality"), v.quality);
+        map.insert(S("audio"), v.audio);
+        map.insert(S("bitrate"), v.bitrate);
+        map.insert(S("offsetMs"), v.offsetMs);
+        map.insert(S("score"), v.score);
+        map.insert(S("isHost"), !hKey.isEmpty() && v.key == hKey);
+        map.insert(S("isActive"), v.key == m_activeVariantKey);
+        list << map;
+    }
+    return list;
+}
+
+QString PlayerModel::hostVariantKey() const {
+    Party *p = Party::instance();
+    if (!p || !p->inRoom()) return QString();
+    if (p->isHost()) return m_activeVariantKey;
+    const auto members = p->memberList();
+    for (const auto &m : members) {
+        if (!p->hostName().isEmpty() && m.name == p->hostName()) {
+            if (m.variantKey.has_value()) return *m.variantKey;
+        }
+    }
+    return p->fileKey();
+}
+
+void PlayerModel::switchVariant(const QString &variantKey) {
+    if (variantKey.isEmpty() || variantKey == m_activeVariantKey || m_switchingVariant) return;
+    if (!m_open || m_closing || !m_lib) return;
+    m_switchingVariant = true;
+    emit switchingVariantChanged();
+    flash(Strings::get(S("player.pereklyuchenie_kachestva")));
+
+    const qint64 curPos = m_time;
+    QJsonObject body{{S("variant_key"), variantKey}};
+    const QString curKey = watchKey();
+    if (curKey.contains(QLatin1Char('|'))) {
+        body.insert(S("ad_id"), curKey.section(QLatin1Char('|'), 0, 0).toLongLong());
+        body.insert(S("path"), curKey.section(QLatin1Char('|'), 1));
+    }
+    QPointer<PlayerModel> self(this);
+    m_lib->api().post(S("/api/file/variant-url"), body, [self, variantKey, curPos](const ApiResult &r) {
+        if (!self) return;
+        self->m_switchingVariant = false;
+        self->emit switchingVariantChanged();
+        if (!r.ok() || !self->m_open || self->m_closing) {
+            self->flash(Strings::get(S("player.ne_udalos_smenit_kachestvo")));
+            return;
+        }
+        const QString newUrl = r.json.value(S("url")).toString();
+        if (newUrl.isEmpty()) {
+            self->flash(Strings::get(S("player.ne_udalos_smenit_kachestvo")));
+            return;
+        }
+        self->m_activeVariantKey = variantKey;
+        self->m_currentUrl = newUrl;
+        for (const auto &v : self->m_req.variants) {
+            if (v.key == variantKey) {
+                self->m_supervisor.setBitrateMbps(v.bitrate);
+                break;
+            }
+        }
+        if (Party::instance()) Party::instance()->sendVariantChange(variantKey);
+        self->open(newUrl, curPos, self->m_sidecars.value(self->m_index));
+        self->emit activeVariantKeyChanged();
+        self->emit qualityVariantsChanged();
+    });
+}
+
+void PlayerModel::acceptSuggestedDowngrade() {
+    const QString key = m_suggestedDowngradeKey;
+    m_suggestedDowngradeKey.clear();
+    m_suggestedDowngradeLabel.clear();
+    emit suggestedDowngradeChanged();
+    if (!key.isEmpty()) switchVariant(key);
+}
+
+void PlayerModel::dismissSuggestedDowngrade() {
+    m_suggestedDowngradeKey.clear();
+    m_suggestedDowngradeLabel.clear();
+    emit suggestedDowngradeChanged();
+}
 
 // ---- прогресс и настройки ----
 

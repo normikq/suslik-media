@@ -540,6 +540,16 @@ function handleRoomAction(roomId, user, action) {
     return { ok: true, room: getRoomPublicData(room) };
   }
 
+  // Смена пресета качества участником (независимый выбор потока)
+  if (action.type === "variant_change") {
+    const m = action.client_id ? room.members.get(action.client_id) : null;
+    if (m && typeof action.variant_key === "string") {
+      m.variant_key = action.variant_key.slice(0, 1000);
+      broadcast(roomId, "state_changed", getRoomPublicData(room));
+    }
+    return { ok: true, room: getRoomPublicData(room) };
+  }
+
   const isHost = isRoomHost(room, user, action.client_id);
   // Фильм комнаты выбирает только ведущий; пауза и перемотка — по настройке комнаты
   if (action.type === "change_file" && !isHost) {

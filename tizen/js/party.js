@@ -149,6 +149,11 @@
     if (variantKey) reportedVariantKey = variantKey;
     send(P.buffering(loading, variantKey || reportedVariantKey));
   };
+  party.sendVariantChange = function (variantKey) {
+    if (!party.roomId) return;
+    reportedVariantKey = variantKey;
+    send(P.variantChange(variantKey));
+  };
 
   function action(body) { if (party.roomId && party.canControl()) send(body); }
 

@@ -17,10 +17,13 @@ const {
   handleMirrorStream
 } = require("../services/mirror");
 const { markOpened, markLinkOpened } = require("../services/cleanup");
+const ca = require("../services/custom-audio");
 
 const router = express.Router();
 
 const PLAYLIST_MAX_ITEMS = 200;
+const variantUrlCache = new Map();
+const VARIANT_CACHE_TTL_MS = 15 * 60 * 1000;
 
 router.get("/api/file/mirror-url", requireLogin, mirrorUrlLimiter, (req, res) => {
   const parsed = safeHttpsUrl(typeof req.query.link === "string" ? req.query.link.trim() : "");
@@ -34,6 +37,114 @@ router.get("/api/file/mirror-url", requireLogin, mirrorUrlLimiter, (req, res) =>
     url: `${publicBase(req)}/api/file/proxy${name ? "/" + encodeURIComponent(name) : ""}?link=${encodeURIComponent(link)}&exp=${expires}&sig=${makeMirrorToken(link, expires)}`
   });
 });
+
+async function handleVariantUrl(req, res) {
+  const src = req.method === "POST" ? (req.body || {}) : (req.query || {});
+  let adId = Number(src.ad_id);
+  let filePath = typeof src.path === "string" ? src.path.trim() : "";
+  const variantKey = typeof src.variant_key === "string" ? src.variant_key.trim() : (typeof src.key === "string" ? src.key.trim() : "");
+  if (variantKey && (!adId || !filePath)) {
+    const pipeIdx = variantKey.indexOf("|");
+    if (pipeIdx > 0) {
+      adId = Number(variantKey.slice(0, pipeIdx));
+      filePath = variantKey.slice(pipeIdx + 1).trim();
+    }
+  }
+  if (!Number.isSafeInteger(adId) || adId <= 0 || !filePath) {
+    return res.status(400).json({ error: "Некорректный ad_id или путь к файлу варианта." });
+  }
+
+  const cacheKey = `${adId}|${filePath}`;
+  const now = Date.now();
+  const cached = variantUrlCache.get(cacheKey);
+  if (cached && cached.expiresAt > now + 60 * 1000) {
+    res.setHeader("Cache-Control", "no-store");
+    return res.json({
+      ok: true,
+      url: cached.url,
+      source_url: cached.sourceUrl,
+      name: cached.name,
+      path: cached.path,
+      size: cached.size,
+      ad_id: cached.adId,
+      variant_key: cacheKey,
+      audio: cached.audio || [],
+      subtitles: []
+    });
+  }
+
+  try {
+    const list = await getMagnetFileList(adId);
+    if (!list || !list.length) {
+      return res.status(404).json({ error: "Для этой раздачи не найдено файлов." });
+    }
+    const f = list.find(it => it && it.type === "file" && (
+      it.path === filePath ||
+      it.name === filePath ||
+      it.path.endsWith("/" + filePath) ||
+      (typeof it.path === "string" && it.path.toLowerCase() === filePath.toLowerCase())
+    ));
+    if (!f || !f.sourceLink) {
+      return res.status(404).json({ error: "Файл варианта не найден в раздаче." });
+    }
+    const parsed = safeHttpsUrl(f.sourceLink);
+    if (!isAllDebridFileLink(parsed)) {
+      return res.status(502).json({ error: "Некорректная ссылка на медиафайл." });
+    }
+    const link = parsed.toString();
+    markLinkOpened(link);
+    const name = cleanFileName(f.path.split(/[\\/]/).pop() || f.name);
+    const expires = String(Math.floor(Date.now() / 1000) + config.MIRROR_TTL);
+    const proxyUrl = `${publicBase(req)}/api/file/proxy${name ? "/" + encodeURIComponent(name) : ""}?link=${encodeURIComponent(link)}&exp=${expires}&sig=${makeMirrorToken(link, expires)}`;
+
+    let customAudio = [];
+    try {
+      const { items } = await ca.trackLinks(adId);
+      if (Array.isArray(items)) {
+        customAudio = items.filter(it => !it.track.targetVideoPath || it.track.targetVideoPath === f.path).map(({ track: t, link: aLink }) => {
+          const aName = cleanFileName(ca.baseName(t.audioPath)) || "audio";
+          return {
+            id: t.id,
+            title: t.title,
+            lang: t.lang,
+            offset_ms: t.offsetMs || 0,
+            url: `${publicBase(req)}/api/file/proxy/${encodeURIComponent(aName)}?link=${encodeURIComponent(aLink)}&exp=${expires}&sig=${makeMirrorToken(aLink, expires)}`
+          };
+        });
+      }
+    } catch {}
+
+    variantUrlCache.set(cacheKey, {
+      url: proxyUrl,
+      sourceUrl: link,
+      name,
+      path: f.path,
+      size: f.size || 0,
+      adId,
+      audio: customAudio,
+      expiresAt: now + VARIANT_CACHE_TTL_MS
+    });
+
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      ok: true,
+      url: proxyUrl,
+      source_url: link,
+      name,
+      path: f.path,
+      size: f.size || 0,
+      ad_id: adId,
+      variant_key: cacheKey,
+      audio: customAudio,
+      subtitles: []
+    });
+  } catch (err) {
+    res.status(502).json({ error: err.message || "Не удалось разрешить ссылку варианта." });
+  }
+}
+
+router.post("/api/file/variant-url", requireLogin, mirrorUrlLimiter, handleVariantUrl);
+router.get("/api/file/variant-url", requireLogin, mirrorUrlLimiter, handleVariantUrl);
 
 // Body: { magnetId, title, items: [{ index, link }] }. `link` is checked against the server's own list,
 // so a stale browser snapshot (library changed since) is rejected instead of playing the wrong files.

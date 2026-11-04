@@ -148,6 +148,14 @@ object Api {
     suspend fun post(path: String, body: JSONObject? = null, repeatable: Boolean = true): JSONObject =
         call(Request.Builder().url(BASE + path).post((body?.toString() ?: "{}").toRequestBody(jsonType)).build(), hedged = repeatable)
 
+    suspend fun resolveVariantUrl(variantKey: String, adId: Long? = null, path: String? = null): JSONObject {
+        val body = JSONObject()
+        body.put("variant_key", variantKey)
+        if (adId != null) body.put("ad_id", adId)
+        if (!path.isNullOrBlank()) body.put("path", path)
+        return post("/api/file/variant-url", body)
+    }
+
     private val watchdog by lazy {
         java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "api-watchdog").apply { isDaemon = true } }
     }

@@ -242,6 +242,9 @@ private slots:
         QCOMPARE(play.value(S("type")).toString(), S("play"));
         QVERIFY(qAbs(play.value(S("pos")).toDouble() - 12.34) < 1e-9);
         QCOMPARE(play.value(S("client_id")).toString(), S("pc_1"));
+        const auto vchange = PartyProtocol::variantChange(S("104921|Dune.1080p.mkv"));
+        QCOMPARE(vchange.value(S("type")).toString(), S("variant_change"));
+        QCOMPARE(vchange.value(S("variant_key")).toString(), S("104921|Dune.1080p.mkv"));
         const auto file = PartyProtocol::changeFile(PartyFileRef{S("42|a.mkv"), S("A")}).value(S("file")).toObject();
         QCOMPARE(qint64(file.value(S("ad_id")).toDouble()), 42);
         QCOMPARE(PartyProtocol::eventsPath(S("x"), S("pc_1")), S("/api/rooms/x/events?client_id=pc_1"));

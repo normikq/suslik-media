@@ -222,6 +222,9 @@
       if (variantKey) o.variant_key = variantKey;
       return o;
     },
+    variantChange: function (variantKey) {
+      return { type: 'variant_change', variant_key: variantKey };
+    },
     changeFile: function (f) {
       var o = { key: f.key, name: f.title, ad_id: f.adId };
       if (f.canonicalId) o.canonical_id = f.canonicalId;

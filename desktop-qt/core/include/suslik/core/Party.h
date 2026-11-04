@@ -174,6 +174,7 @@ public:
     static QJsonObject pause(qint64 posMs);
     static QJsonObject seek(qint64 posMs);
     static QJsonObject buffering(bool loading, const QString &variantKey = QString());
+    static QJsonObject variantChange(const QString &variantKey);
     static QJsonObject changeFile(const PartyFileRef &f);
     /// Ведущий закрыл фильм: у гостей плеер тоже закрывается.
     static QJsonObject closeFile();

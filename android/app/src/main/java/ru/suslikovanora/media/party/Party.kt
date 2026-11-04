@@ -203,6 +203,12 @@ object Party {
         outbox.trySend(id to PartyProtocol.withClient(PartyProtocol.buffering(loading, variantKey ?: reportedVariantKey), clientId))
     }
 
+    fun sendVariantChange(variantKey: String) {
+        val id = roomId ?: return
+        reportedVariantKey = variantKey
+        outbox.trySend(id to PartyProtocol.withClient(PartyProtocol.variantChange(variantKey), clientId))
+    }
+
     private fun action(body: JSONObject) {
         val id = roomId ?: return
         if (!canControl) return

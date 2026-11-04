@@ -331,6 +331,56 @@ Item {
         }
     }
 
+    // ---- баннер подсказки даунгрейда качества (троттлинг буфера) ----
+    Rectangle {
+        id: downgradeBanner
+        visible: player.suggestedDowngradeKey !== "" && !pv.mini
+        anchors.top: topBar.bottom
+        anchors.topMargin: 8
+        anchors.horizontalCenter: parent.horizontalCenter
+        width: bannerRow.width + 32
+        height: 44
+        radius: 22
+        color: "#E61A1D24"
+        border.color: "#33FFFFFF"
+        Row {
+            id: bannerRow
+            anchors.centerIn: parent
+            spacing: 12
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: Ui.tx("player.skorost_nedostatochna", { target: player.suggestedDowngradeLabel })
+                color: "white"
+                font.family: Theme.onest
+                font.pixelSize: 13
+            }
+            Rectangle {
+                anchors.verticalCenter: parent.verticalCenter
+                width: 44; height: 28; radius: 14
+                color: "#29FFFFFF"
+                Text {
+                    anchors.centerIn: parent
+                    text: Ui.tx("player.da")
+                    color: "white"
+                    font.family: Theme.onest
+                    font.bold: true
+                    font.pixelSize: 12
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: player.acceptSuggestedDowngrade()
+                }
+            }
+            GlassBtn {
+                anchors.verticalCenter: parent.verticalCenter
+                size: 26
+                onClicked: player.dismissSuggestedDowngrade()
+                PlayerIcon { anchors.centerIn: parent; name: "cross"; size: 10; color: "#99FFFFFF" }
+            }
+        }
+    }
+
     // ---- нижняя панель ----
     Item {
         id: bottom
@@ -456,6 +506,41 @@ Item {
                         }
                     }
                     Text { width: parent.width; wrapMode: Text.WordWrap; text: Ui.tx("player.razmer_subtitrov_i_nochnoy"); color: "#73FFFFFF"; font.family: Theme.onest; font.pixelSize: 12 }
+                }
+            }
+
+            // выбор качества
+            Panel_ {
+                id: qualityPanel
+                shown: pv.picker === "quality"
+                Column {
+                    width: parent.width
+                    spacing: 10
+                    Item {
+                        width: parent.width; height: 28
+                        Text { anchors.verticalCenter: parent.verticalCenter; text: Ui.tx("player.kachestvo"); color: "white"; font.family: Theme.onest; font.weight: Font.DemiBold; font.pixelSize: 14 }
+                        GlassBtn { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; size: 26; onClicked: pv.picker = ""; PlayerIcon { anchors.centerIn: parent; name: "cross"; size: 11; color: "#99FFFFFF" } }
+                    }
+                    Flow {
+                        width: parent.width
+                        spacing: 6
+                        Repeater {
+                            model: player.qualityVariants
+                            Chip_ {
+                                required property var modelData
+                                label: {
+                                    var txt = modelData.label || (modelData.quality + (modelData.bitrate > 0 ? " (" + modelData.bitrate.toFixed(1) + " Мбит/с)" : ""))
+                                    if (modelData.isHost) txt += " [Хост]"
+                                    return txt
+                                }
+                                on: modelData.isActive
+                                onClicked: {
+                                    player.switchVariant(modelData.key)
+                                    pv.picker = ""
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -667,6 +752,25 @@ Item {
                     spacing: pv.narrow ? 4 : pv.compact ? 6 : 10
                     layoutDirection: Qt.LeftToRight
                     Rectangle { anchors.verticalCenter: parent.verticalCenter; width: 1; height: 18; color: "#33FFFFFF" }
+                    GlassBtn {
+                        visible: player.qualityVariants.length > 1
+                        size: pv.btn; active: pv.picker === "quality"
+                        tip: Ui.tx("player.kachestvo")
+                        onClicked: pv.openPicker("quality")
+                        Text {
+                            anchors.centerIn: parent
+                            text: {
+                                for (let i = 0; i < player.qualityVariants.length; ++i) {
+                                    if (player.qualityVariants[i].isActive) return player.qualityVariants[i].quality
+                                }
+                                return "HD"
+                            }
+                            color: "white"
+                            font.family: Theme.onest
+                            font.pixelSize: 10
+                            font.bold: true
+                        }
+                    }
                     GlassBtn { size: pv.btn; active: pv.picker === "audio"; onClicked: pv.openPicker("audio"); PlayerIcon { anchors.centerIn: parent; name: "audio"; size: pv.compact ? 18 : 20 } }
                     GlassBtn { size: pv.btn; active: pv.picker === "spu"; onClicked: pv.openPicker("spu"); PlayerIcon { anchors.centerIn: parent; name: "subs"; size: pv.compact ? 20 : 22 } }
                     GlassBtn {

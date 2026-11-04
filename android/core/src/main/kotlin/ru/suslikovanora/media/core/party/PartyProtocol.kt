@@ -221,6 +221,8 @@ object PartyProtocol {
         variantKey?.let { obj.put("variant_key", it) }
         return obj
     }
+    fun variantChange(variantKey: String): JSONObject =
+        JSONObject().put("type", "variant_change").put("variant_key", variantKey)
     fun changeFile(f: PartyFileRef): JSONObject = JSONObject().put("type", "change_file").put("file", fileJson(f))
     /** Ведущий закрыл фильм: у гостей плеер тоже закрывается (сервер ставит `room.file = null`). */
     fun closeFile(): JSONObject = JSONObject().put("type", "change_file").put("file", JSONObject.NULL)

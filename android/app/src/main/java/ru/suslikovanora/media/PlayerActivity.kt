@@ -258,6 +258,15 @@ class PlayerActivity : ComponentActivity() {
             handler.postDelayed({ if (!buffering && !networkLost) bufferingLabel.visibility = View.GONE }, 2500L)
         }
         override fun log(message: String) = AppLog.write(message)
+        override fun suggestDowngrade(currentBitrateMbps: Double) {
+            val vars = ui.variants
+            if (vars.isEmpty()) return
+            val best = vars.filter { it.bitrate < currentBitrateMbps && it.key != ui.activeVariantKey }
+                .maxByOrNull { it.bitrate } ?: return
+            val label = if (best.label.isNotBlank()) best.label else "${best.quality} (${String.format(java.util.Locale.US, "%.1f", best.bitrate)} Мбит/с)"
+            suggestedDowngradeKey = best.key
+            ui.downgradePrompt = tr("player.skorost_nedostatochna", "target" to label)
+        }
     }, stuckLimitMs = { if (viaReserve()) 30_000L else 8_000L })
 
     private fun statsOf(p: PlayerEngine): PlaybackSupervisor.Stats? {
@@ -833,7 +842,17 @@ class PlayerActivity : ComponentActivity() {
                 if (i != playlistQueue.currentIndex) { roomEntryKey = watchProgress.keys.getOrNull(i); playlistQueue.playEntry(i) }
             }
             override fun notice(text: String) = showSeekLabel(text)
-            override fun onTick() { ui.live = partyGuest() }
+            override fun onTick() {
+                ui.live = partyGuest()
+                val rf = Party.file
+                if (rf != null && rf.variants.isNotEmpty()) {
+                    ui.variants = rf.variants
+                    ui.hostVariantKey = Party.members.find { it.name == Party.hostName }?.variantKey ?: rf.key
+                    if (ui.activeVariantKey == null) {
+                        ui.activeVariantKey = rf.variants.find { it.key == watchProgress.currentWatchKey() }?.key ?: rf.variants.first().key
+                    }
+                }
+            }
             override fun close() = leave()
         })
     }
@@ -962,6 +981,9 @@ class PlayerActivity : ComponentActivity() {
         ui.onSubDelay = { ms -> setDelays(delays.copy(subtitleMs = PlaybackTweaks.clamp(ms))) }
         ui.onAudioDelay = { ms -> setDelays(delays.copy(audioMs = PlaybackTweaks.clamp(ms))) }
         ui.onVolume = { v -> setSystemVolume(v); ui.volume = v; controlsOverlay.keepShown() }
+        ui.onSelectVariant = { key -> switchVariant(key) }
+        ui.onAcceptDowngrade = { acceptDowngrade() }
+        ui.onDismissDowngrade = { dismissDowngrade() }
         // From the card: the current one counts as watched (it may be on its end credits)
         ui.onNextNow = { playlistQueue.hideNextCard(); if (!guestBlocks("episode")) playlistQueue.playNext(finished = true) }
         ui.onSkipIntro = { skipIntro(); showControlsTemporarily() }
@@ -1474,6 +1496,61 @@ class PlayerActivity : ComponentActivity() {
             "audio" -> trackSelector.audioChoices(player)
             "spu" -> trackSelector.subtitleChoices(player)
             else -> emptyList()
+        }
+    }
+
+    private var suggestedDowngradeKey: String? = null
+
+    private fun acceptDowngrade() {
+        val key = suggestedDowngradeKey ?: return
+        dismissDowngrade()
+        switchVariant(key)
+    }
+
+    private fun dismissDowngrade() {
+        suggestedDowngradeKey = null
+        ui.downgradePrompt = null
+    }
+
+    private fun switchVariant(variantKey: String) {
+        if (variantKey.isBlank() || variantKey == ui.activeVariantKey || ui.switchingVariant) return
+        ui.switchingVariant = true
+        showSeekLabel(tr("player.pereklyuchenie_kachestva"))
+        val currentPos = perceivedPosition()
+        scope.launch {
+            try {
+                val key = watchProgress.currentWatchKey()
+                var adId: Long? = null
+                var path: String? = null
+                if (key != null && '|' in key) {
+                    adId = key.substringBefore('|').toLongOrNull()
+                    path = key.substringAfter('|')
+                }
+                val res = ru.suslikovanora.media.net.Api.resolveVariantUrl(variantKey, adId, path)
+                val newUrl = res.optString("url")
+                if (newUrl.isBlank()) {
+                    showSeekLabel(tr("player.ne_udalos_smenit_kachestvo"))
+                    ui.switchingVariant = false
+                    return@launch
+                }
+                ui.activeVariantKey = variantKey
+                ui.switchingVariant = false
+                currentUrl = newUrl
+                val currentVariant = ui.variants.find { it.key == variantKey }
+                if (currentVariant != null && currentVariant.bitrate > 0) {
+                    supervisor.bitrateMbps = currentVariant.bitrate
+                }
+                Party.sendVariantChange(variantKey)
+                val p = createPlayer(newUrl, currentPos)
+                if (!userPaused && !ended) {
+                    audioSession.requestAudioFocus()
+                    p.play()
+                }
+            } catch (e: Throwable) {
+                AppLog.write("[player] switchVariant failed: ${e.message}")
+                showSeekLabel(tr("player.ne_udalos_smenit_kachestvo"))
+                ui.switchingVariant = false
+            }
         }
     }
 

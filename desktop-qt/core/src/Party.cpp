@@ -193,6 +193,11 @@ QJsonObject PartyProtocol::buffering(bool loading, const QString &variantKey) {
     if (!variantKey.isEmpty()) obj.insert(S("variant_key"), variantKey);
     return obj;
 }
+QJsonObject PartyProtocol::variantChange(const QString &variantKey) {
+    QJsonObject obj{{S("type"), S("variant_change")}};
+    if (!variantKey.isEmpty()) obj.insert(S("variant_key"), variantKey);
+    return obj;
+}
 QJsonObject PartyProtocol::changeFile(const PartyFileRef &f) { return {{S("type"), S("change_file")}, {S("file"), fileJson(f)}}; }
 QJsonObject PartyProtocol::closeFile() { return {{S("type"), S("change_file")}, {S("file"), QJsonValue::Null}}; }
 QJsonObject PartyProtocol::withClient(QJsonObject body, const QString &clientId) { body.insert(S("client_id"), clientId); return body; }

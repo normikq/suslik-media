@@ -188,3 +188,15 @@ test('clearFile: ведущий закрыл фильм — старый отв�
   assert.equal(r.state.seq, 7);
   assert.deepEqual(P.closeFile(), { type: 'change_file', file: null });
 });
+
+test('variantChange и buffering: формирование команд протокола', () => {
+  assert.deepEqual(P.variantChange('104921|Dune.1080p.mkv'), {
+    type: 'variant_change',
+    variant_key: '104921|Dune.1080p.mkv'
+  });
+  assert.deepEqual(P.buffering(true, '104921|Dune.2160p.mkv'), {
+    type: 'buffering',
+    buffering: true,
+    variant_key: '104921|Dune.2160p.mkv'
+  });
+});

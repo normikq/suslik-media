@@ -24,6 +24,7 @@ struct Simple : PlaybackSupervisor::Actions {
     void notice(const QString &) override {}
     void log(const QString &) override {}
 
+
     PlaybackSupervisor::Stats stats(double fps = 24.0) const {
         return {film, audio, audio, pics, fps, 1, true, 1, false};
     }
@@ -43,6 +44,8 @@ struct Simple : PlaybackSupervisor::Actions {
 struct Sim : PlaybackSupervisor::Actions {
     QList<bool> reopens;
     int videoRestarts = 0, soundFixes = 0;
+    int downgradeSuggestions = 0;
+    double lastSuggestedBitrate = 0.0;
     QStringList notices;
     qint64 t = 100000, time = 0, pictures = 100, played = 100;
     int audioTracks = 0;
@@ -60,7 +63,9 @@ struct Sim : PlaybackSupervisor::Actions {
     void fixSound() override { ++soundFixes; }
     void reopen(bool fresh) override { reopens << fresh; }
     void notice(const QString &text) override { notices << text; }
+    void suggestDowngrade(double mbps) override { ++downgradeSuggestions; lastSuggestedBitrate = mbps; }
     void log(const QString &) override {}
+
 
     void tick(qint64 clock = 2000, qint64 newPictures = 48, qint64 newAudio = 100) {
         t += 2000;
@@ -215,6 +220,28 @@ private slots:
         s.sup.opening(S("b")); s.sup.buffering(100.f);
         s.ticks(60, 0);
         QVERIFY(s.reopens.size() > 3);
+    }
+
+    void downgradeSuggestionOnFrequentBuffering() {
+        Sim s;
+        s.sup.setBitrateMbps(35.0);
+        s.warm(S("heavy_4k"));
+        QCOMPARE(s.downgradeSuggestions, 0);
+
+        s.sup.buffering(50.f); s.t += 4000; s.sup.buffering(100.f); s.ticks(2);
+        s.sup.buffering(40.f); s.t += 4000; s.sup.buffering(100.f); s.ticks(2);
+        s.sup.buffering(30.f); s.t += 4000; s.sup.buffering(100.f); s.ticks(2);
+
+        QVERIFY(s.downgradeSuggestions >= 1);
+        QCOMPARE(s.lastSuggestedBitrate, 35.0);
+
+        Sim sLow;
+        sLow.sup.setBitrateMbps(12.0);
+        sLow.warm(S("light_1080p"));
+        sLow.sup.buffering(50.f); sLow.t += 4000; sLow.sup.buffering(100.f); sLow.ticks(2);
+        sLow.sup.buffering(50.f); sLow.t += 4000; sLow.sup.buffering(100.f); sLow.ticks(2);
+        sLow.sup.buffering(50.f); sLow.t += 4000; sLow.sup.buffering(100.f); sLow.ticks(2);
+        QCOMPARE(sLow.downgradeSuggestions, 0);
     }
 
     // ---- CatchUpTest ----

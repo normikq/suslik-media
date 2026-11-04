@@ -78,6 +78,12 @@ class PlayerModel : public QObject, private core::PlaybackSupervisor::Actions {
     /// Плеер показывает фильм комнаты (ведущий или гость): скорость — комнаты, своя не действует.
     Q_PROPERTY(bool partyFilm READ partyFilm NOTIFY partyChanged)
     Q_PROPERTY(bool playLocked READ playLocked NOTIFY partyChanged)
+    Q_PROPERTY(QVariantList qualityVariants READ qualityVariants NOTIFY qualityVariantsChanged)
+    Q_PROPERTY(QString activeVariantKey READ activeVariantKey NOTIFY activeVariantKeyChanged)
+    Q_PROPERTY(QString hostVariantKey READ hostVariantKey NOTIFY hostVariantKeyChanged)
+    Q_PROPERTY(bool switchingVariant READ switchingVariant NOTIFY switchingVariantChanged)
+    Q_PROPERTY(QString suggestedDowngradeKey READ suggestedDowngradeKey NOTIFY suggestedDowngradeChanged)
+    Q_PROPERTY(QString suggestedDowngradeLabel READ suggestedDowngradeLabel NOTIFY suggestedDowngradeChanged)
 
 public:
     explicit PlayerModel(QObject *parent = nullptr);
@@ -124,6 +130,17 @@ public:
     int subsFetching() const { return m_subsFetching; }
     QString saveDelayText() const;
     QString deleteTrackText() const;
+    QVariantList qualityVariants() const;
+    QString activeVariantKey() const { return m_activeVariantKey; }
+    QString hostVariantKey() const;
+    bool switchingVariant() const { return m_switchingVariant; }
+    QString suggestedDowngradeKey() const { return m_suggestedDowngradeKey; }
+    QString suggestedDowngradeLabel() const { return m_suggestedDowngradeLabel; }
+    QList<core::PartyVariant> requestVariants() const { return m_req.variants; }
+
+    Q_INVOKABLE void switchVariant(const QString &variantKey);
+    Q_INVOKABLE void acceptSuggestedDowngrade();
+    Q_INVOKABLE void dismissSuggestedDowngrade();
 
     /// Открыть то, что собрало окно «Смотреть».
     Q_INVOKABLE void start(suslik::app::PlayModel *from);
@@ -213,6 +230,11 @@ signals:
     void infoChanged();
     void tracksExtraChanged();
     void partyChanged();
+    void qualityVariantsChanged();
+    void activeVariantKeyChanged();
+    void hostVariantKeyChanged();
+    void switchingVariantChanged();
+    void suggestedDowngradeChanged();
     /// Короткая надпись поверх (громкость, скорость…).
     void flashed(const QString &text);
     /// Плеер закрылся (окно убирает экран плеера).
@@ -234,6 +256,7 @@ private:
     void reopen(bool fresh) override;
     void notice(const QString &text) override { flash(text); }
     void log(const QString &message) override;
+    void suggestDowngrade(double currentBitrateMbps) override;
 
     void begin();
     void loadPlaylist();
@@ -330,6 +353,10 @@ private:
     std::optional<core::CustomTrack> m_activeCustom;
     bool m_endCut = false;
     QString m_deleteArmed;
+    QString m_activeVariantKey;
+    bool m_switchingVariant = false;
+    QString m_suggestedDowngradeKey;
+    QString m_suggestedDowngradeLabel;
     int m_subsFetching = 0;
     /// Внешние субтитры: один менеджер сети на плеер (соединения и TLS-сессии переиспользуются между сериями).
     QNetworkAccessManager *m_subsNam = nullptr;

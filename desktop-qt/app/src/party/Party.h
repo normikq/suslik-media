@@ -98,6 +98,7 @@ public:
     void seek(qint64 posMs) override { if (canSeek()) action(core::PartyProtocol::seek(posMs)); }
     void reportBuffering(bool loading) override;
     void reportBuffering(bool loading, const QString &variantKey);
+    void sendVariantChange(const QString &variantKey);
 
 signals:
     void changed();

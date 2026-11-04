@@ -38,6 +38,8 @@ class PlaybackSupervisor(
         /** Short message for the viewer («Восстанавливаем звук…»). */
         fun notice(text: String)
         fun log(message: String)
+        /** Подсказка даунгрейда качества при частой буферизации */
+        fun suggestDowngrade(currentBitrateMbps: Double) {}
     }
 
     /** What VLC measured, sampled by the player. Counters are cumulative for the current stream. */
@@ -55,6 +57,8 @@ class PlaybackSupervisor(
 
     var state = State.Idle
         private set
+
+    var bitrateMbps: Double = 0.0
 
     private var episode = ""
     private var graceUntil = 0L
@@ -75,25 +79,59 @@ class PlaybackSupervisor(
     private var stuckFor = 0L           // wall ms in Playing with the clock not moving
     private var surfaceCheck: Pair<Long, Long>? = null // (at, pictures) after the video surface changed
 
+    private data class BufferSpan(val start: Long, val durationMs: Long)
+    private val recentBuffering = ArrayList<BufferSpan>()
+    private var bufferingStart = 0L
+    private var lastDowngradeSuggested = Long.MIN_VALUE / 2
+
     // ---- events ----------------------------------------------------------------------------------------------
     /** A stream starts opening. A new [episodeKey] resets the budgets. */
     fun opening(episodeKey: String) {
         if (episodeKey != episode) { episode = episodeKey; videoFixes = 0; soundFixes = 0; reopens = 0; afterBufferFixes = 0 }
         bufferedAt = -1L
         picturesMoved = 0 // a new stream: a still cover must not pass for a film because the last one moved
+        recentBuffering.clear()
+        bufferingStart = 0L
+        lastDowngradeSuggested = Long.MIN_VALUE / 2
         enter(State.Opening, grace = 8_000)
     }
     fun buffering(percent: Float) {
         if (state == State.Paused || state == State.Ended) return
-        if (percent < 100f) { if (state != State.Opening) enter(State.Buffering, grace = 4_000) }
-        else if (state == State.Buffering) { bufferedAt = now(); enter(State.Playing, grace = 2_000) }
-        else if (state == State.Opening) enter(State.Playing, grace = 4_000)
+        if (percent < 100f) {
+            if (bufferingStart == 0L) bufferingStart = now()
+            if (state != State.Opening) enter(State.Buffering, grace = 4_000)
+        } else {
+            if (bufferingStart > 0L) {
+                recentBuffering += BufferSpan(bufferingStart, now() - bufferingStart)
+                bufferingStart = 0L
+            }
+            if (state == State.Buffering) { bufferedAt = now(); enter(State.Playing, grace = 2_000) }
+            else if (state == State.Opening) enter(State.Playing, grace = 4_000)
+        }
     }
-    fun playing() { if (state != State.Paused && state != State.Playing) enter(State.Playing, grace = 4_000) }
+    fun playing() {
+        if (bufferingStart > 0L) {
+            recentBuffering += BufferSpan(bufferingStart, now() - bufferingStart)
+            bufferingStart = 0L
+        }
+        if (state != State.Paused && state != State.Playing) enter(State.Playing, grace = 4_000)
+    }
     fun paused() = enter(State.Paused)
-    fun resumed() = enter(State.Playing, grace = 5_000)
+    fun resumed() {
+        if (bufferingStart > 0L) {
+            recentBuffering += BufferSpan(bufferingStart, now() - bufferingStart)
+            bufferingStart = 0L
+        }
+        enter(State.Playing, grace = 5_000)
+    }
     /** Any jump (seek, chapter, track switch that re-seeks): VLC rebuilds its buffer. */
-    fun seeked() { if (state != State.Paused) enter(State.Playing, grace = 5_000) else resetMeasurements() }
+    fun seeked() {
+        if (bufferingStart > 0L) {
+            recentBuffering += BufferSpan(bufferingStart, now() - bufferingStart)
+            bufferingStart = 0L
+        }
+        if (state != State.Paused) enter(State.Playing, grace = 5_000) else resetMeasurements()
+    }
     fun ended() = enter(State.Ended)
     fun closed() = enter(State.Idle)
     /** Window resized / fullscreen / surface recreated: check soon that the picture still moves. */
@@ -111,6 +149,22 @@ class PlaybackSupervisor(
         val t = now()
         val prev = last; val prevAt = lastAt
         last = s; lastAt = t
+
+        // 0. Троттлинг / частая буферизация: битрейт > 25 Мбит/с и за последние 60 с буферизация > 3 раз или суммарно > 10 с
+        recentBuffering.removeAll { t - it.start > 60_000 }
+        var bufCount = recentBuffering.size
+        var bufTotalMs = recentBuffering.sumOf { it.durationMs }
+        if (bufferingStart > 0L && t > bufferingStart) {
+            bufCount++
+            bufTotalMs += (t - bufferingStart)
+        }
+        if ((bufCount >= 3 || bufTotalMs >= 10_000) && bitrateMbps > 25.0) {
+            if (t - lastDowngradeSuggested >= 60_000) {
+                lastDowngradeSuggested = t
+                actions.suggestDowngrade(bitrateMbps)
+            }
+        }
+
         if (state == State.Recovering && t >= graceUntil) state = State.Playing
         if (prev == null) return
         if (s.pictures > prev.pictures && prev.pictures > 0) picturesMoved++

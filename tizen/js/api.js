@@ -74,6 +74,14 @@
       return call('GET', '/api/file/mirror-url?link=' + enc(file.link) + '&name=' + enc(name), null, true)
         .then(function (r) { if (!r.url) throw { message: 'Сервер не дал ссылку на файл' }; return r.url; });
     },
+    /** Разрешение прямой ссылки варианта качества (бесшовное переключение). */
+    resolveVariantUrl: function (variantKey, adId, path) {
+      var body = {};
+      if (typeof variantKey === 'string' && variantKey) body.variant_key = variantKey;
+      if (adId) body.ad_id = adId;
+      if (path) body.path = path;
+      return call('POST', '/api/file/variant-url', body, true);
+    },
     /**
      * Поток для ТВ (сервер, ffmpeg): { stream, durationMs, audio: [{ index, codec, channels, language, ok, url }],
      * subs, audioDefault, external: [{ kind, link | id, title, offsetMs, url }] }. Первый ответ по файлу ждёт ffprobe

@@ -270,6 +270,13 @@ void Party::reportBuffering(bool loading, const QString &variantKey) {
     pump();
 }
 
+void Party::sendVariantChange(const QString &variantKey) {
+    if (!m_roomId) return;
+    m_reportedVariantKey = variantKey;
+    m_outbox << std::make_pair(*m_roomId, PartyProtocol::withClient(PartyProtocol::variantChange(variantKey), m_clientId));
+    pump();
+}
+
 void Party::action(const QJsonObject &body) {
     if (!m_roomId || !canControl()) return;
     m_outbox << std::make_pair(*m_roomId, PartyProtocol::withClient(body, m_clientId));

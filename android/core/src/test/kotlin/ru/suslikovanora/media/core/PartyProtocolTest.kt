@@ -244,5 +244,9 @@ class PartyProtocolTest {
         assertEquals(2, parsed?.variants?.size)
         assertEquals(505, parsed?.variants?.get(0)?.score)
         assertEquals(8.1, parsed?.variants?.get(1)?.bitrate)
+
+        val vChange = PartyProtocol.variantChange("104921|Dune.1080p.mkv")
+        assertEquals("variant_change", vChange.optString("type"))
+        assertEquals("104921|Dune.1080p.mkv", vChange.optString("variant_key"))
     }
 }

@@ -31,6 +31,8 @@ public:
         /// Короткое сообщение зрителю («Восстанавливаем звук…»).
         virtual void notice(const QString &text) = 0;
         virtual void log(const QString &message) = 0;
+        /// Подсказка даунгрейда качества при частой буферизации
+        virtual void suggestDowngrade(double currentBitrateMbps) { (void)currentBitrateMbps; }
     };
 
     /// Замеры плеера. Счётчики — нарастающие для текущего потока.
@@ -52,6 +54,9 @@ public:
     explicit PlaybackSupervisor(Actions &actions, Clock now = {}, std::function<qint64()> stuckLimitMs = {});
 
     State state() const { return m_state; }
+
+    void setBitrateMbps(double mbps) { m_bitrateMbps = mbps; }
+    double bitrateMbps() const { return m_bitrateMbps; }
 
     // ---- события ----
     /// Поток начинает открываться. Новый episodeKey обнуляет бюджеты.
@@ -91,6 +96,11 @@ private:
     qint64 m_silentFor = 0, m_frozenFor = 0, m_stuckFor = 0;
     int m_choppyTicks = 0;
     std::optional<std::pair<qint64, qint64>> m_surfaceCheck; ///< (когда, кадров до)
+    struct BufferSpan { qint64 start = 0; qint64 durationMs = 0; };
+    double m_bitrateMbps = 0.0;
+    qint64 m_bufferingStart = 0;
+    std::vector<BufferSpan> m_recentBuffering;
+    qint64 m_lastDowngradeSuggested = LLONG_MIN / 2;
 };
 
 } // namespace suslik::core

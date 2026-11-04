@@ -71,7 +71,11 @@ void PartySync::onOpen() {
         m_episodeNotice.clear();
         // в комнате фильм ведущего становится фильмом комнаты (другой фильм гостя играет только у него)
         const QString key = m_player.currentWatchKey();
-        if (!key.isEmpty() && m_party.inRoom() && m_party.isHost()) m_party.putFilm({key, m_player.entryLabel()});
+        if (!key.isEmpty() && m_party.inRoom() && m_party.isHost()) {
+            PartyFileRef ref{key, m_player.entryLabel()};
+            ref.variants = m_player.requestVariants();
+            m_party.putFilm(ref);
+        }
         m_roomKey = S("\x01"); // onRoom — как при первом показе
         m_timer.start();
         onRoom();
@@ -93,7 +97,9 @@ void PartySync::onEntry() {
     m_lastKey = key;
     const auto &f = m_party.file();
     if (!f || key.isEmpty() || key == f->key || !m_party.isHost() || !m_player.watchKeys().contains(f->key)) return;
-    m_party.putFilm({key, m_player.entryLabel()});
+    PartyFileRef ref{key, m_player.entryLabel()};
+    ref.variants = m_player.requestVariants();
+    m_party.putFilm(ref);
 }
 
 /// Фильм комнаты сменился: плеер гостя включает серию ведущего, если она в его очереди.
