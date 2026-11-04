@@ -57,10 +57,12 @@ object CloudSync {
                 e.audio?.let { putString("track:audio:${e.key}", it) }
                 e.spu?.let { putString("track:spu:${e.key}", it) }
                 e.quality?.let { putString("vquality:${e.key}", it) }
-                e.cid?.let {
-                    putString("cid:${e.key}", it)
-                    e.audio?.let { a -> putString("track:audio:c$it", a) }
-                    e.quality?.let { q -> putString("vquality:c$it", q) }
+                if (e.key != WatchSync.ANY) {
+                    e.cid?.let {
+                        e.audio?.let { a -> putString("track:audio:c$it", a) }
+                        e.spu?.let { s -> putString("track:spu:c$it", s) }
+                        e.quality?.let { q -> putString("vquality:c$it", q) }
+                    }
                 }
                 if (e.key != WatchSync.ANY) e.sidecar?.let { putString("track:sidecar:${e.key}", it) }
                 putLong("track:at:${e.key}", e.at)
@@ -79,7 +81,7 @@ object CloudSync {
                 val at = trackAt(k).takeIf { it > 0 } ?: if (k == WatchSync.ANY) seen.values.maxOrNull() else seen[k]
                 if (at == null || at <= 0) null
                 else TrackEntry(k, ui.getString("track:audio:$k", null), ui.getString("track:spu:$k", null),
-                    ui.getString("track:sidecar:$k", null), at, ui.getString("vquality:$k", null), ui.getString("cid:$k", null))
+                    ui.getString("track:sidecar:$k", null), at, ui.getString("vquality:$k", null))
             }
         }
         override var cursor: String?
@@ -121,10 +123,9 @@ object CloudSync {
                 if (alsoAny) putString("vquality:*", quality)
                 if (cid != null) putString("vquality:c$cid", quality)
             }
-            if (cid != null && filmKey != null) putString("cid:$filmKey", cid)
         }.apply()
         if (!WatchSync.eligible(userId)) return
-        for (k in keys) sync.noteTrack(TrackEntry(k, audio, spu, if (k == WatchSync.ANY) null else sidecar, now, quality, cid))
+        for (k in keys) sync.noteTrack(TrackEntry(k, audio, spu, if (k == WatchSync.ANY) null else sidecar, now, quality, if (k == WatchSync.ANY) null else cid))
     }
 
     /** Синхронизировать сейчас (главный экран снова виден, вошли). */

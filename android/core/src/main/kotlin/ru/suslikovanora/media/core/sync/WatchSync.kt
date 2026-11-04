@@ -70,7 +70,15 @@ class WatchSync(private val store: SyncStore) {
     fun noteTrack(e: TrackEntry) = synchronized(lock) {
         val old = pendingTracks.remove(e.key)
         pendingTracks[e.key] = if (old == null) e
-            else TrackEntry(e.key, e.audio ?: old.audio, e.spu ?: old.spu, e.sidecar ?: old.sidecar, maxOf(e.at, old.at))
+            else TrackEntry(
+                e.key,
+                e.audio ?: old.audio,
+                e.spu ?: old.spu,
+                e.sidecar ?: old.sidecar,
+                maxOf(e.at, old.at),
+                e.quality ?: old.quality,
+                e.cid ?: old.cid
+            )
     }
 
     val hasPending: Boolean get() = synchronized(lock) { pendingWatch.isNotEmpty() || pendingTracks.isNotEmpty() }
@@ -132,7 +140,7 @@ class WatchSync(private val store: SyncStore) {
                     put(obj)
                 }
             })
-        Sent(user, body, w, t, startedAt).also { it.more = pendingWatch.size > w.size || pendingTracks.size > t.size }
+        Sent(user, body, w, t, startedAt).also { it.more = pendingWatch.size > BATCH || pendingTracks.size > BATCH }
     }
 
     /** Ответ сервера: пришедшее новее своего ложится в хранилище. Возвращает, сколько записей поменялось. */

@@ -104,7 +104,7 @@ WatchSync::Sent WatchSync::request(const QString &user) {
         ta.append(o);
     }
     s.body = QJsonObject{{QStringLiteral("since"), std::max<qint64>(c.since, 0)}, {QStringLiteral("watch"), wa}, {QStringLiteral("tracks"), ta}};
-    s.more = m_watch.size() > s.watch.size() || m_tracks.size() > s.tracks.size();
+    s.more = m_watch.size() > BATCH || m_tracks.size() > BATCH;
     return s;
 }
 

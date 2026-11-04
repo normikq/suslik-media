@@ -74,6 +74,40 @@ int selectedId(const QVariantList &tracks) {
         if (v.toMap().value(S("selected")).toBool()) return v.toMap().value(S("id")).toInt();
     return -1;
 }
+
+void parseVariantMedia(const QJsonObject &json, QList<core::CustomTrack> &customTracks, QStringList &sidecarAudio, QStringList &newSubs) {
+    const auto audios = json.value(S("audio")).toArray();
+    for (const auto &a : audios) {
+        const auto o = a.toObject();
+        const QString u = o.value(S("url")).toString();
+        if (u.isEmpty()) continue;
+        const QString id = o.value(S("id")).toString();
+        if (!id.startsWith(S("sidecar:")) && (o.contains(S("title")) || o.contains(S("offset_ms")) || o.contains(S("offsetMs")))) {
+            core::CustomTrack t;
+            t.id = id;
+            t.title = o.value(S("title")).toString();
+            t.audioPath = o.value(S("audioPath")).toString();
+            if (t.audioPath.isEmpty()) t.audioPath = o.value(S("audio_path")).toString();
+            t.videoPath = o.value(S("videoPath")).toString();
+            if (t.videoPath.isEmpty()) t.videoPath = o.value(S("video_path")).toString();
+            if (o.contains(S("lang"))) {
+                const QString l = o.value(S("lang")).toString();
+                if (!l.isEmpty() && l != S("und")) t.lang = l;
+            }
+            t.offsetMs = o.contains(S("offset_ms")) ? o.value(S("offset_ms")).toVariant().toLongLong()
+                                                    : o.value(S("offsetMs")).toVariant().toLongLong();
+            t.url = u;
+            customTracks << t;
+        } else {
+            sidecarAudio << u;
+        }
+    }
+    const auto subs = json.value(S("subtitles")).toArray();
+    for (const auto &s : subs) {
+        const QString u = s.toObject().value(S("url")).toString();
+        if (!u.isEmpty()) newSubs << u;
+    }
+}
 } // namespace
 
 PlayerModel::PlayerModel(QObject *parent)
@@ -331,10 +365,9 @@ void PlayerModel::loadPlaylist() {
     if (!m_req.playlist || !m_lib) return;
     QPointer<PlayerModel> self(this);
     const quint64 gen = m_gen;
-    Q_UNUSED(gen)
     const QString url = *m_req.playlist;
-    m_lib->api().text(url, [self, url](const ApiResult &r) {
-        if (!self || !self->m_open || self->m_req.playlist != url) return;
+    m_lib->api().text(url, [self, gen, url](const ApiResult &r) {
+        if (!self || !self->m_open || self->m_gen != gen || self->m_req.playlist != url) return;
         const auto entries = r.ok() ? parseM3u(QString::fromUtf8(r.bytes)) : QList<std::pair<QString, QString>>();
         if (entries.size() <= 1) return;
         if (entries.size() != self->m_queue.size())
@@ -659,9 +692,10 @@ void PlayerModel::playEntry(int i) {
             body.insert(S("ad_id"), targetVar.key.section(QLatin1Char('|'), 0, 0).toLongLong());
             body.insert(S("path"), targetVar.key.section(QLatin1Char('|'), 1));
         }
+        const quint64 gen = m_gen;
         QPointer<PlayerModel> self(this);
-        m_lib->api().post(S("/api/file/variant-url"), body, [self, i, start, targetVar](const ApiResult &r) {
-            if (!self || self->m_index != i || self->m_closing) return;
+        m_lib->api().post(S("/api/file/variant-url"), body, [self, gen, i, start, targetVar](const ApiResult &r) {
+            if (!self || !self->m_open || self->m_closing || self->m_gen != gen || self->m_index != i) return;
             if (!r.ok() || r.json.value(S("url")).toString().isEmpty()) {
                 self->m_activeVariantKey = self->watchKey(i);
                 self->emit activeVariantKeyChanged();
@@ -678,34 +712,8 @@ void PlayerModel::playEntry(int i) {
             self->m_supervisor.setBitrateMbps(targetVar.bitrate);
 
             QList<core::CustomTrack> customTracks;
-            QStringList sidecarAudio;
-            const auto audios = r.json.value(S("audio")).toArray();
-            for (const auto &a : audios) {
-                const auto o = a.toObject();
-                const QString u = o.value(S("url")).toString();
-                if (u.isEmpty()) continue;
-                const QString id = o.value(S("id")).toString();
-                if (!id.startsWith(S("sidecar:")) && (o.contains(S("title")) || o.contains(S("offset_ms")))) {
-                    core::CustomTrack t;
-                    t.id = id;
-                    t.title = o.value(S("title")).toString();
-                    if (o.contains(S("lang"))) {
-                        const QString l = o.value(S("lang")).toString();
-                        if (!l.isEmpty() && l != S("und")) t.lang = l;
-                    }
-                    t.offsetMs = o.value(S("offset_ms")).toVariant().toLongLong();
-                    t.url = u;
-                    customTracks << t;
-                } else {
-                    sidecarAudio << u;
-                }
-            }
-            QStringList newSubs;
-            const auto subs = r.json.value(S("subtitles")).toArray();
-            for (const auto &s : subs) {
-                const QString u = s.toObject().value(S("url")).toString();
-                if (!u.isEmpty()) newSubs << u;
-            }
+            QStringList sidecarAudio, newSubs;
+            parseVariantMedia(r.json, customTracks, sidecarAudio, newSubs);
             Sides newSides;
             newSides.audio = sidecarAudio;
             newSides.subs = newSubs;
@@ -718,7 +726,6 @@ void PlayerModel::playEntry(int i) {
 
     m_activeVariantKey = watchKey(i);
     m_variantCustom.clear();
-    rebuildVariantsForEntry(i);
     emit activeVariantKeyChanged();
     emit qualityVariantsChanged();
     m_nextIn = -1;
@@ -1622,9 +1629,10 @@ void PlayerModel::switchVariant(const QString &variantKey) {
         body.insert(S("ad_id"), variantKey.section(QLatin1Char('|'), 0, 0).toLongLong());
         body.insert(S("path"), variantKey.section(QLatin1Char('|'), 1));
     }
+    const quint64 gen = m_gen;
     QPointer<PlayerModel> self(this);
-    m_lib->api().post(S("/api/file/variant-url"), body, [self, variantKey, curPos](const ApiResult &r) {
-        if (!self) return;
+    m_lib->api().post(S("/api/file/variant-url"), body, [self, gen, variantKey, curPos](const ApiResult &r) {
+        if (!self || self->m_gen != gen) return;
         self->m_switchingVariant = false;
         self->emit switchingVariantChanged();
         if (!r.ok() || !self->m_open || self->m_closing) {
@@ -1670,34 +1678,8 @@ void PlayerModel::switchVariant(const QString &variantKey) {
             self->m_lib->sync().noteTrack(self->seriesKey(), a, spu, self->m_canonicalId.isEmpty() ? std::nullopt : std::optional<QString>(self->m_canonicalId), qv.isEmpty() ? std::nullopt : std::optional<QString>(qv));
         }
         QList<core::CustomTrack> customTracks;
-        QStringList sidecarAudio;
-        const auto audios = r.json.value(S("audio")).toArray();
-        for (const auto &a : audios) {
-            const auto o = a.toObject();
-            const QString u = o.value(S("url")).toString();
-            if (u.isEmpty()) continue;
-            const QString id = o.value(S("id")).toString();
-            if (!id.startsWith(S("sidecar:")) && (o.contains(S("title")) || o.contains(S("offset_ms")))) {
-                core::CustomTrack t;
-                t.id = id;
-                t.title = o.value(S("title")).toString();
-                if (o.contains(S("lang"))) {
-                    const QString l = o.value(S("lang")).toString();
-                    if (!l.isEmpty() && l != S("und")) t.lang = l;
-                }
-                t.offsetMs = o.value(S("offset_ms")).toVariant().toLongLong();
-                t.url = u;
-                customTracks << t;
-            } else {
-                sidecarAudio << u;
-            }
-        }
-        QStringList newSubs;
-        const auto subs = r.json.value(S("subtitles")).toArray();
-        for (const auto &s : subs) {
-            const QString u = s.toObject().value(S("url")).toString();
-            if (!u.isEmpty()) newSubs << u;
-        }
+        QStringList sidecarAudio, newSubs;
+        parseVariantMedia(r.json, customTracks, sidecarAudio, newSubs);
         Sides newSides;
         newSides.audio = sidecarAudio;
         newSides.subs = newSubs;

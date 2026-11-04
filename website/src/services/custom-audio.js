@@ -25,7 +25,6 @@ const KEY_RE = /^(\d{1,20})\|(.{1,600})$/s;
 // Минус в теге и смещении: ASCII, типографский (U+2212) или короткое тире (U+2013)
 const toAsciiMinus = s => String(s).replace(/[−–]/g, "-");
 
-const norm = p => String(p || "").replace(/\\/g, "/");
 const extOf = p => (/\.([a-z0-9]{1,6})$/i.exec(p) || [])[1]?.toLowerCase() || "";
 const baseName = p => String(p).split("/").pop();
 const stem = p => baseName(p).replace(/\.[a-z0-9]{1,6}$/i, "");
@@ -68,6 +67,7 @@ const SEASON_DIR_RE = /^(?:(?:season|сезон)[ ._-]*|[sс][0oо]?)(\d{1,2})$/
 // Номер серии без сезона: E01, «Серия 1», 01.Озвучка, 01 - Pilot
 const EP_ONLY_RE = /(?:^|[ ._\-\[(])(?:ep?|серия)[ ._-]*(\d{1,3})(?![0-9])|^(\d{1,3})(?=$|[ ._\-\[(])/i;
 const LANG_TAG_RE = /\[([a-z]{2,3})\]/i;
+const LANG_TAG_G_RE = /\[([a-z]{2,3})\]/gi;
 // Коды языков ISO 639-1/639-2 для тега [xx]/[xxx]: [HQ], [RAW], [Dub] — не языки
 const LANGS = new Set(`ru rus en eng uk ukr be bel kk kaz de deu ger fr fra fre es spa it ita ja jpn ko kor zh zho chi
   pt por pl pol tr tur ar ara he heb hi hin cs ces cze nl nld dut sv swe no nor fi fin da dan hu hun ro ron rum bg bul
@@ -79,7 +79,7 @@ const cleanLang = v => {
 };
 // Первый тег языка из списка LANGS или null
 const langTag = text => {
-  for (const m of String(text || "").matchAll(new RegExp(LANG_TAG_RE.source, "gi"))) {
+  for (const m of String(text || "").matchAll(LANG_TAG_G_RE)) {
     const l = cleanLang(m[1]);
     if (l) return l;
   }
@@ -104,7 +104,7 @@ function parseAudioName(path) {
   });
   const out = { title: null, year: null, season: null, episode: null, voice: "", delayMs, lang: langTag(name), layout: "file" };
   // Тег языка в названии фильма (Severance.[rus].S01E01) мешает сопоставлению; в озвучке он остаётся («HDRezka [rus]»)
-  const titleText = s => cleanText(String(s).replace(new RegExp(LANG_TAG_RE.source, "gi"), " "));
+  const titleText = s => cleanText(String(s).replace(LANG_TAG_G_RE, " "));
 
   let se = SERIES_RE.exec(name);
   if (!se) {
@@ -131,7 +131,6 @@ function parseAudioName(path) {
     }
     const sm = SEASON_TOKEN_RE.exec(title || "");
     if (sm) {
-      if (out.season === null) out.season = Number(sm[1]);
       title = cleanText(title.slice(0, sm.index));
     }
     const y = lastYear(title || "");
@@ -183,13 +182,18 @@ function titleMatches(parsed, movie) {
   return true;
 }
 
+let _canonicalIdOf;
+function getCanonicalIdOf() {
+  if (_canonicalIdOf === undefined) {
+    try { _canonicalIdOf = require("./aititle").canonicalIdOf || null; } catch { _canonicalIdOf = null; }
+  }
+  return _canonicalIdOf;
+}
+
 function isSameMovieRelease(m1, m2) {
   if (!m1 || !m2) return false;
   if (m1.id === m2.id) return true;
-  let canonicalIdOf = null;
-  try {
-    canonicalIdOf = require("./aititle").canonicalIdOf;
-  } catch {}
+  const canonicalIdOf = getCanonicalIdOf();
   const c1 = m1.aiTitle?.canonical_id || (canonicalIdOf && m1.aiTitle ? canonicalIdOf(m1.aiTitle) : null);
   const c2 = m2.aiTitle?.canonical_id || (canonicalIdOf && m2.aiTitle ? canonicalIdOf(m2.aiTitle) : null);
   if (c1 && c2 && c1 === c2) return true;
@@ -253,8 +257,8 @@ function matchToMovie(audioFiles, movie, { explicit = false } = {}) {
   // Односезонная ли раздача: в видеофайлах только один сезон (или сезон не указан)
   const videoSeasons = new Set(eps.map(x => x.e?.season).filter(s => s !== null && s !== undefined));
   // И в аудиофайлах только один сезон (или сезон не указан)
-  const audioParsed = audioFiles.map(a => parseAudioName(a.path));
-  const audioSeasons = new Set(audioParsed.map(p => p.season).filter(s => s !== null && s !== undefined));
+  const audioParsed = audioFiles.map(a => ({ a, p: parseAudioName(a.path) }));
+  const audioSeasons = new Set(audioParsed.map(({ p }) => p.season).filter(s => s !== null && s !== undefined));
   const singleSeason = videoSeasons.size <= 1 && audioSeasons.size <= 1;
 
   // Один видеофайл для фильма: единственный, либо заметно самый большой (>= 1.5x следующего).
@@ -263,8 +267,7 @@ function matchToMovie(audioFiles, movie, { explicit = false } = {}) {
   const top = bySize[0].size || 0;
   const mainVideo = videos.length === 1 ? videos[0] : top > 0 && top >= (bySize[1].size || 0) * 1.5 ? bySize[0] : null;
 
-  for (const a of audioFiles) {
-    const p = parseAudioName(a.path);
+  for (const { a, p } of audioParsed) {
     const unresolved = why => errors.push({ code: "UNRESOLVED", path: a.path, message: `Не удалось однозначно определить, к какому ${why} относится файл «${baseName(a.path)}». Назовите его по стандарту: Название.Год.Озвучка или Название.SxxEyy.Озвучка.` });
     if (!p.title) { unresolved(p.episode ? "сериалу" : "фильму"); continue; }
     if (p.delayMs !== null && Math.abs(p.delayMs) > MAX_OFFSET_MS) {
@@ -576,9 +579,8 @@ async function trackLinks(movieMagnetId, videoPath) {
   const { safeHttpsUrl } = require("../utils/helpers");
   const { isAllDebridFileLink } = require("./mirror");
   let directTracks = forMovie(movieMagnetId);
-  const normVPath = videoPath != null ? norm(videoPath) : null;
-  if (normVPath != null) {
-    directTracks = directTracks.filter(t => t.videoPath && norm(t.videoPath) === normVPath);
+  if (videoPath != null) {
+    directTracks = directTracks.filter(t => t.videoPath === videoPath);
   }
   const tracks = [...directTracks];
 
@@ -588,36 +590,46 @@ async function trackLinks(movieMagnetId, videoPath) {
     const magnets = data?.magnets || [];
     const mSelf = magnets.find(m => m.id === movieMagnetId);
     if (mSelf) {
+      const selfVideos = (mSelf.files || []).filter(f => f && f.type === "file" && VIDEO_EXT.has(extOf(f.path)));
+      const selfEps = selfVideos.map(v => ({ path: v.path, ep: videoEpisode(v.path) }));
+      const bySize = [...selfVideos].sort((a, b) => (b.size || 0) - (a.size || 0));
+      const top = bySize[0]?.size || 0;
+      const selfMainVideo = selfVideos.length === 1 ? selfVideos[0].path : (top > 0 && top >= (bySize[1]?.size || 0) * 1.5 ? bySize[0].path : null);
+
       const companions = magnets.filter(m => m.statusCode === 4 && m.id !== movieMagnetId && isSameMovieRelease(m, mSelf));
       for (const comp of companions) {
         const compTracks = forMovie(comp.id);
         if (!compTracks.length) continue;
         for (const ct of compTracks) {
-          if (tracks.some(t => t.audioMagnetId === ct.audioMagnetId && t.audioPath === ct.audioPath)) {
-            continue;
-          }
+          let resolvedVideoPath = videoPath;
+          const compEp = videoEpisode(ct.videoPath);
           if (videoPath != null) {
             const targetEp = videoEpisode(videoPath);
-            const compEp = videoEpisode(ct.videoPath);
             if (targetEp && compEp) {
-              if (targetEp.episode !== compEp.episode) continue;
-              if (targetEp.season != null && compEp.season != null && targetEp.season !== compEp.season) {
-                const s1 = (mSelf.files || []).map(f => videoEpisode(f.path)?.season).filter(s => s != null);
-                const s2 = (comp.files || []).map(f => videoEpisode(f.path)?.season).filter(s => s != null);
-                const multi1 = Math.max(...s1, 1) !== Math.min(...s1, 1);
-                const multi2 = Math.max(...s2, 1) !== Math.min(...s2, 1);
-                if (multi1 || multi2) continue;
-              }
+              if (targetEp.season !== compEp.season || targetEp.episode !== compEp.episode) continue;
             } else if (targetEp || compEp) {
-              const v1 = (mSelf.files || []).filter(f => f && f.type === "file" && VIDEO_EXT.has(extOf(f.path)));
-              const v2 = (comp.files || []).filter(f => f && f.type === "file" && VIDEO_EXT.has(extOf(f.path)));
-              if (v1.length > 1 || v2.length > 1) continue;
+              continue;
             }
+          } else if (selfVideos.length > 0) {
+            if (compEp) {
+              const hit = selfEps.find(x => x.ep && x.ep.season === compEp.season && x.ep.episode === compEp.episode)
+                || ((compEp.season === null || compEp.season === 1) && selfEps.find(x => x.ep && x.ep.season === null && x.ep.episode === compEp.episode));
+              if (!hit) continue;
+              resolvedVideoPath = hit.path;
+            } else {
+              if (!selfMainVideo) continue;
+              resolvedVideoPath = selfMainVideo;
+            }
+          } else {
+            resolvedVideoPath = ct.videoPath;
+          }
+          if (tracks.some(t => t.videoPath === resolvedVideoPath && t.audioMagnetId === ct.audioMagnetId && t.audioPath === ct.audioPath)) {
+            continue;
           }
           tracks.push({
             ...ct,
             movieMagnetId,
-            videoPath: videoPath || ct.videoPath
+            videoPath: resolvedVideoPath
           });
         }
       }

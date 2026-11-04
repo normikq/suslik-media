@@ -136,8 +136,8 @@ function apply(owner, body, now = Date.now()) {
     const sp = text(it?.spu);
     const sc = text(it?.sidecar);
     const qv = text(it?.quality ?? it?.qv);
-    const cid = typeof it?.cid === "string" && it.cid.trim() ? it.cid.trim().slice(0, 200) : (typeof it?.canonical_id === "string" ? it.canonical_id.trim().slice(0, 200) : null);
-    if (!TRACK_KEY_RE.test(key) || at === null || au === undefined || sp === undefined || sc === undefined) continue;
+    const rawCid = key === "*" ? null : (typeof it?.cid === "string" && it.cid.trim() ? it.cid.trim().slice(0, 200) : (typeof it?.canonical_id === "string" && it.canonical_id.trim() ? it.canonical_id.trim().slice(0, 200) : null));
+    if (!TRACK_KEY_RE.test(key) || at === null || au === undefined || sp === undefined || sc === undefined || qv === undefined) continue;
     if (au === null && sp === null && sc === null && qv === null) continue;
     at = Math.min(at, now);
     if (at < oldest) continue;
@@ -149,7 +149,7 @@ function apply(owner, body, now = Date.now()) {
       sp: sp ?? old?.sp ?? null,
       sc: sc ?? old?.sc ?? null,
       qv: qv ?? old?.qv ?? null,
-      cid: cid ?? old?.cid ?? null,
+      cid: key === "*" ? null : (rawCid ?? old?.cid ?? null),
       a: at,
       c: now,
       u: now
@@ -187,7 +187,7 @@ function changesSince(owner, since = 0, now = Date.now()) {
   return out;
 }
 
-/** Получить прогресс дорожек: сначала по key, если нет — fallback по canonicalId. */
+/** Получить прогресс дорожек: сначала по key, если нет — fallback по canonicalId (самая свежая запись). */
 function getTracks(owner, key, canonicalId = null) {
   const d = OWNER_RE.test(String(owner || "")) ? users.get(owner) : null;
   if (!d) return null;
@@ -196,16 +196,18 @@ function getTracks(owner, key, canonicalId = null) {
     return { key, audio: e.au ?? null, spu: e.sp ?? null, sidecar: e.sc ?? null, quality: e.qv ?? null, cid: e.cid ?? null, at: e.a };
   }
   if (canonicalId) {
+    let best = null;
     for (const [k, e] of d.t) {
-      if (e.cid === canonicalId) {
-        return { key: k, audio: e.au ?? null, spu: e.sp ?? null, sidecar: e.sc ?? null, quality: e.qv ?? null, cid: e.cid ?? null, at: e.a };
+      if (k !== "*" && e.cid === canonicalId && (!best || e.a > best.at)) {
+        best = { key: k, audio: e.au ?? null, spu: e.sp ?? null, sidecar: e.sc ?? null, quality: e.qv ?? null, cid: e.cid ?? null, at: e.a };
       }
     }
+    return best;
   }
   return null;
 }
 
-/** Получить прогресс просмотра: сначала по fileKey, если нет — fallback по canonicalId. */
+/** Получить прогресс просмотра: сначала по fileKey, если нет — fallback по canonicalId (самая свежая запись). */
 function getProgress(owner, fileKey, canonicalId = null) {
   const d = OWNER_RE.test(String(owner || "")) ? users.get(owner) : null;
   if (!d) return null;
@@ -214,11 +216,13 @@ function getProgress(owner, fileKey, canonicalId = null) {
     return { key: fileKey, pos: e.p, len: e.l, at: e.a, cid: e.cid || null };
   }
   if (canonicalId) {
+    let best = null;
     for (const [k, e] of d.w) {
-      if (e.cid === canonicalId) {
-        return { key: k, pos: e.p, len: e.l, at: e.a, cid: e.cid };
+      if (e.cid === canonicalId && (!best || e.a > best.at)) {
+        best = { key: k, pos: e.p, len: e.l, at: e.a, cid: e.cid };
       }
     }
+    return best;
   }
   return null;
 }

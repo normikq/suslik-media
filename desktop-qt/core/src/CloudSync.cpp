@@ -40,10 +40,10 @@ void DesktopSyncStore::putTrack(const TrackEntry &e) {
     if (e.audio) uiStore().put(QStringLiteral("audio:") + e.key, *e.audio);
     if (e.spu) uiStore().put(QStringLiteral("spu:") + e.key, *e.spu);
     if (e.quality) uiStore().put(QStringLiteral("vquality:") + e.key, *e.quality);
-    if (e.cid) {
+    if (e.cid && e.key != QLatin1String(WatchSync::ANY)) {
         if (e.audio) uiStore().put(QStringLiteral("audio:c") + *e.cid, *e.audio);
+        if (e.spu) uiStore().put(QStringLiteral("spu:c") + *e.cid, *e.spu);
         if (e.quality) uiStore().put(QStringLiteral("vquality:c") + *e.cid, *e.quality);
-        uiStore().put(QStringLiteral("cid:") + e.key, *e.cid);
     }
     uiStore().put(QStringLiteral("trackAt:") + e.key, QString::number(e.at));
 }
@@ -80,7 +80,7 @@ QList<TrackEntry> DesktopSyncStore::allTracks() {
         }
         if (at <= 0) continue;
         out << TrackEntry{k, uiStore().get(QStringLiteral("audio:") + k), uiStore().get(QStringLiteral("spu:") + k), std::nullopt,
-                          uiStore().get(QStringLiteral("vquality:") + k), uiStore().get(QStringLiteral("cid:") + k), at};
+                          uiStore().get(QStringLiteral("vquality:") + k), std::nullopt, at};
     }
     return out;
 }
@@ -109,10 +109,12 @@ void CloudSync::noteTrack(const QString &filmKey, const std::optional<QString> &
                           const std::optional<QString> &cid, const std::optional<QString> &quality) {
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     for (const QString &k : {filmKey, QString::fromLatin1(WatchSync::ANY)}) {
-        if (k != QLatin1String(WatchSync::ANY) && !isFilmKey(k)) continue; // фильм не из библиотеки
+        const bool isAny = (k == QLatin1String(WatchSync::ANY));
+        if (!isAny && !isFilmKey(k)) continue; // фильм не из библиотеки
         uiStore().put(QStringLiteral("trackAt:") + k, QString::number(now));
-        if (cid) uiStore().put(QStringLiteral("cid:") + k, *cid);
-        if (WatchSync::eligible(m_user)) m_sync->noteTrack({k, audio, spu, std::nullopt, quality, cid, now});
+        if (WatchSync::eligible(m_user)) {
+            m_sync->noteTrack({k, audio, spu, std::nullopt, quality, isAny ? std::nullopt : cid, now});
+        }
     }
 }
 
