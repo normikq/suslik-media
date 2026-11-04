@@ -504,7 +504,7 @@ void PlayerModel::rebuildVariantsForEntry(int i) {
         }
     }
     int colIndex = -1;
-    if (it && it->playable.isCollection()) {
+    if (it && isCollection(it->playable, &it->m)) {
         const auto colFilms = collectionFilms(*it);
         for (int idx = 0; idx < colFilms.size(); ++idx) {
             if (colFilms[idx].file.path == cur.path) {
@@ -528,7 +528,7 @@ void PlayerModel::rebuildVariantsForEntry(int i) {
                 }
                 if (!vFile.path.isEmpty()) break;
             }
-        } else if (colIndex >= 0 && ver.playable.isCollection()) {
+        } else if (colIndex >= 0 && isCollection(ver.playable, &ver.m)) {
             const auto colFilms = collectionFilms(ver);
             if (colIndex >= 0 && colIndex < colFilms.size()) vFile = colFilms[colIndex].file;
         } else {
