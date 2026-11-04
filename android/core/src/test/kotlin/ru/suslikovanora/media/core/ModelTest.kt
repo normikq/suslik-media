@@ -680,5 +680,9 @@ class ModelTest {
         assertEquals(485, smartQualityScore("Movie.2160p.HDR10+.DTS:X.BDRip.mkv"))
         assertEquals(100, smartQualityScore("Old.Show.480p.mkv"))
         assertEquals(100, smartQualityScore("network.webcam.4kilo.dtswiss.mkv"))
+        assertEquals(320, smartQualityScore("Movie_1080p_x264_DTS5.1.mkv"))
+        assertEquals(335, smartQualityScore("Film.1080p.BluRay.dts.x264.mkv"))
+        assertEquals(210, smartQualityScore("Atmosphere.2020.720p.WEB.mkv"))
+        assertEquals(300, smartQualityScore("Film.1920x1080.HDRip.mkv"))
     }
 }

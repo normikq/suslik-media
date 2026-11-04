@@ -699,29 +699,29 @@ fun smartQualityScore(name: String): Int {
     fun match(pattern: String): Boolean = Regex(pattern, RegexOption.IGNORE_CASE).containsMatchIn(lower)
 
     val rScore = when {
-        match("""\b(2160p|4k|3840|uhd)\b""") -> 400
-        match("""\b(1080[pi]|1920)\b""") -> 300
-        match("""\b(720p|1280)\b""") -> 200
+        match("""(?:^|[^a-z0-9])(?:2160p|4k|uhd)(?![a-z])|(?:^|\D)3840(?!\d)""") -> 400
+        match("""(?:^|\D)1080[pi](?![a-z])|(?:^|\D)1920(?!\d)""") -> 300
+        match("""(?:^|\D)720p(?![a-z])|(?:^|\D)1280(?!\d)""") -> 200
         else -> 100
     }
     val vScore = when {
-        match("""dolby[\s._-]?vision|dovi|\bdv\b""") -> 40
-        match("""hdr10\+""") -> 30
-        match("""hdr10|\bhdr\b""") -> 20
+        match("""dolby[\s._-]?vision|dovi|(?:^|[^a-z])dv(?![a-z])""") -> 40
+        match("""hdr10\+|hdr10plus""") -> 30
+        match("""hdr10|(?:^|[^a-z])hdr(?![a-z])""") -> 20
         match("""10[\s._-]?bit|hi10p""") -> 10
         else -> 0
     }
     val aScore = when {
-        match("""atmos|dts[:._-]?x""") -> 40
-        match("""dts[\s._-]?hd[\s._-]?(?:ma)?|dtshd""") -> 30
-        match("""\bdts\b|dd\+|ddp|e[\s._-]?ac[\s._-]?3|eac3""") -> 20
-        match("""\bac3\b|ac[\s._-]?3|dd[\s._-]?5\.1|\b5\.1\b""") -> 10
+        match("""atmos(?![a-z])|dts[:._-]?x(?![a-z0-9])""") -> 40
+        match("""dts[\s._-]?hd""") -> 30
+        match("""(?:^|[^a-z])dts(?![a-z])|dd\+|(?:^|[^a-z])ddp(?![a-z])|(?:^|[^a-z])e[\s._-]?ac[\s._-]?3(?!\d)""") -> 20
+        match("""(?:^|[^a-z])ac[\s._-]?3(?!\d)|(?:^|[^a-z])dd[\s._-]?5\.1|(?:^|[^\d.])5\.1(?!\d)""") -> 10
         else -> 0
     }
     val sScore = when {
-        match("""\b(?:bd|uhd)?remux\b""") -> 25
-        match("""\b(bdrip|brrip)\b|blu[\s._-]?ray""") -> 15
-        match("""\bweb[\s._-]?(?:dl|rip)?\b""") -> 10
+        match("""remux""") -> 25
+        match("""bdrip|brrip|blu[\s._-]?ray""") -> 15
+        match("""(?:^|[^a-z])web(?:[\s._-]?(?:dl|rip))?(?![a-z])""") -> 10
         else -> 0
     }
     return rScore + vScore + aScore + sScore

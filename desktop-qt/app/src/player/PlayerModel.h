@@ -194,10 +194,6 @@ public:
     void engineRate(double r);
     void showNotice(const QString &text) { flash(text); }
 
-    QVariantList variants() const;
-    QString currentVariantKey() const;
-    QString hostVariantKey() const;
-
     /// Для SMTC и Discord: строка 1 и 2.
     std::pair<QString, QString> mediaTitles() const;
     Presence presence() const;
