@@ -78,6 +78,7 @@ async function handleVariantUrl(req, res) {
       audio: (cached.audio || []).map(a => ({
         id: a.id,
         title: a.title,
+        path: a.path,
         lang: a.lang,
         offset_ms: a.offset_ms,
         url: `${base}${a.proxyPath}`
@@ -125,16 +126,16 @@ async function handleVariantUrl(req, res) {
 
     let customAudio = [];
     try {
-      const { items } = await ca.trackLinks(adId);
+      const { items } = await ca.trackLinks(adId, f.path);
       if (Array.isArray(items)) {
-        customAudio = items.filter(it => !it.track.targetVideoPath || it.track.targetVideoPath === f.path).map(({ track: t, link: aLink }) => {
+        customAudio = items.filter(it => it && it.track && (!it.track.videoPath || it.track.videoPath === f.path)).map(({ track: t, link: aLink }) => {
           const aName = cleanFileName(ca.baseName(t.audioPath)) || "audio";
           const aProxyPath = `/api/file/proxy/${encodeURIComponent(aName)}?link=${encodeURIComponent(aLink)}&exp=${expires}&sig=${makeMirrorToken(aLink, expires)}`;
           return {
             id: t.id,
             title: t.title,
             lang: t.lang,
-            offset_ms: t.offsetMs || 0,
+            offset_ms: typeof t.offsetMs === "number" ? t.offsetMs : 0,
             proxyPath: aProxyPath,
             url: `${base}${aProxyPath}`
           };
@@ -142,14 +143,56 @@ async function handleVariantUrl(req, res) {
       }
     } catch {}
 
-    const subExts = [".srt", ".vtt", ".ass", ".ssa", ".sub"];
-    const allSubs = list.filter(it => it && it.type === "file" && it.sourceLink && typeof it.path === "string" && subExts.some(ext => it.path.toLowerCase().endsWith(ext)));
-
     const baseName = p => { const s = norm(p); const i = s.lastIndexOf("/"); return i < 0 ? s : s.slice(i + 1); };
     const dirName = p => { const s = norm(p); const i = s.lastIndexOf("/"); return i < 0 ? "" : s.slice(0, i); };
     const stripExt = name => { const i = name.lastIndexOf("."); return i < 0 ? name : name.slice(0, i); };
     const isLetterOrDigit = c => /\d/.test(c) || c.toLowerCase() !== c.toUpperCase();
     const sameBase = (name, base) => name.startsWith(base) && (name.length === base.length || !isLetterOrDigit(name[base.length]));
+
+    const audioExts = [".mka", ".ac3", ".dts", ".dtshd", ".eac3", ".flac", ".wav", ".aac", ".m4a", ".mp3", ".opus"];
+    const allAudioFiles = list.filter(it => it && it.type === "file" && it.sourceLink && typeof it.path === "string" && audioExts.some(ext => it.path.toLowerCase().endsWith(ext)));
+
+    let matchedAudio = [];
+    if (allAudioFiles.length > 0) {
+      const vPath = norm(f.path);
+      const vDir = dirName(vPath);
+      const vBase = stripExt(baseName(vPath)).toLowerCase();
+      const byName = allAudioFiles.filter(s => sameBase(stripExt(baseName(s.path)).toLowerCase(), vBase));
+      if (byName.length > 0) {
+        matchedAudio = byName.slice(0, 8);
+      } else {
+        const videoCount = list.filter(it => it && it.type === "file" && typeof it.path === "string" && /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso)$/i.test(it.path) && !/(^|[\/._ -])sample([\/._ -]|$)/i.test(it.path)).length;
+        if (videoCount <= 1) {
+          matchedAudio = allAudioFiles.slice(0, 8);
+        } else {
+          matchedAudio = allAudioFiles.filter(s => {
+            const d = dirName(s.path);
+            return d === vDir || (d.startsWith(vDir ? vDir + "/" : "") && baseName(d).toLowerCase().startsWith("audio"));
+          }).slice(0, 8);
+        }
+      }
+    }
+
+    const sidecarAudio = matchedAudio.map(s => {
+      const sParsed = safeHttpsUrl(s.sourceLink);
+      if (!isAllDebridFileLink(sParsed)) return null;
+      const sLink = sParsed.toString();
+      const sName = cleanFileName(typeof s.path === "string" ? s.path.split(/[\\/]/).pop() : (s.name || "audio"));
+      const sProxyPath = `/api/file/proxy/${encodeURIComponent(sName)}?link=${encodeURIComponent(sLink)}&exp=${expires}&sig=${makeMirrorToken(sLink, expires)}`;
+      return {
+        id: `sidecar:${s.path}`,
+        title: sName,
+        path: s.path,
+        offset_ms: 0,
+        proxyPath: sProxyPath,
+        url: `${base}${sProxyPath}`
+      };
+    }).filter(Boolean);
+
+    const combinedAudio = [...sidecarAudio, ...customAudio];
+
+    const subExts = [".srt", ".vtt", ".ass", ".ssa", ".sub"];
+    const allSubs = list.filter(it => it && it.type === "file" && it.sourceLink && typeof it.path === "string" && subExts.some(ext => it.path.toLowerCase().endsWith(ext)));
 
     let matchedSubs = [];
     if (allSubs.length > 0) {
@@ -198,7 +241,7 @@ async function handleVariantUrl(req, res) {
       path: f.path,
       size: f.size || 0,
       adId,
-      audio: customAudio.map(a => ({ id: a.id, title: a.title, lang: a.lang, offset_ms: a.offset_ms, proxyPath: a.proxyPath })),
+      audio: combinedAudio.map(a => ({ id: a.id, title: a.title, path: a.path, lang: a.lang, offset_ms: a.offset_ms, proxyPath: a.proxyPath })),
       subtitles: customSubs.map(s => ({ name: s.name, path: s.path, proxyPath: s.proxyPath })),
       expiresAt: now + VARIANT_CACHE_TTL_MS
     });
@@ -213,7 +256,7 @@ async function handleVariantUrl(req, res) {
       size: f.size || 0,
       ad_id: adId,
       variant_key: cacheKey,
-      audio: customAudio.map(a => ({ id: a.id, title: a.title, lang: a.lang, offset_ms: a.offset_ms, url: a.url })),
+      audio: combinedAudio.map(a => ({ id: a.id, title: a.title, path: a.path, lang: a.lang, offset_ms: a.offset_ms, url: a.url })),
       subtitles: customSubs.map(s => ({ name: s.name, path: s.path, url: s.url }))
     });
   } catch (err) {

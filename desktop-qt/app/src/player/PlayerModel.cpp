@@ -165,7 +165,12 @@ PlayerModel::PlayerModel(QObject *parent)
     m_trackWatch.setInterval(3000);
     connect(&m_trackWatch, &QTimer::timeout, this, [this] {
         if (--m_trackWatchLeft < 0 || m_closing || paused() || m_scrubbing || m_catchingUp) { m_trackWatch.stop(); return; }
-        if (m_bufferingSince == 0) { m_trackWatchShown = 0; return; }
+        if (m_bufferingSince == 0) { m_trackWatchShown = -1; return; }
+        const qint64 bufferingMs = now() - m_bufferingSince;
+        if (bufferingMs < 5000) {
+            if (m_bufferingShown > m_trackWatchShown) m_trackWatchShown = m_bufferingShown;
+            return;
+        }
         if (m_bufferingShown > m_trackWatchShown) { m_trackWatchShown = m_bufferingShown; return; }
         m_trackWatch.stop();
         PlayerLog::write(S("[track] buffering stuck at %1% after the switch → seek to %2s").arg(m_bufferingShown).arg(m_time / 1000));
@@ -235,6 +240,7 @@ void PlayerModel::begin() {
     m_sidePaths = m_req.sidePaths;
     m_sideTitles.clear();
     m_warmed.clear();
+    m_variantCustom.clear();
     m_retries = 0;
     m_nextIn = -1;
     m_infoOpen = false;
@@ -389,6 +395,12 @@ void PlayerModel::open(const QString &url, qint64 startAt, const Sides &sides) {
 
     // Серверные озвучки — после озвучек раздачи; без сети не ждём дольше 3 с.
     if (m_preview) { openWithCustom(gen, url, startAt, Sides{audio, subs}, {*m_preview}); return; }
+    if (!m_variantCustom.isEmpty()) {
+        const auto custom = m_variantCustom;
+        m_variantCustom.clear();
+        openWithCustom(gen, url, startAt, Sides{audio, subs}, custom);
+        return;
+    }
     const QString key = watchKey();
     const qint64 magnet = key.section(QLatin1Char('|'), 0, 0).toLongLong();
     if (!PlaybackSettings::customAudioOn() || magnet <= 0 || !m_lib) { openWithCustom(gen, url, startAt, Sides{audio, subs}, {}); return; }
@@ -480,6 +492,7 @@ void PlayerModel::fetchSubtitles(quint64 gen, const QStringList &urls, const QSt
 }
 
 void PlayerModel::reopenAt(qint64 t) {
+    m_variantCustom.clear();
     const int i = m_index;
     sidecars(i, [this, i, t](const Sides &s) { if (m_index == i && !m_closing) open(m_currentUrl, t, s); });
 }
@@ -556,6 +569,7 @@ void PlayerModel::playEntry(int i) {
     if (finishedHere && m_length > 0) savePos(m_length, m_length); else savePos(m_time, m_length);
     m_index = i;
     m_activeVariantKey = watchKey(i);
+    m_variantCustom.clear();
     rebuildVariantsForEntry(i);
     emit activeVariantKeyChanged();
     emit qualityVariantsChanged();
@@ -650,6 +664,7 @@ void PlayerModel::finishClose() {
     m_sidePaths.clear();
     m_queue.clear();
     m_custom.clear();
+    m_variantCustom.clear();
     m_serverMarkers.reset();
     emit openChanged();
     emit entryChanged();
@@ -814,6 +829,7 @@ void PlayerModel::togglePause() {
 void PlayerModel::seekBy(qint64 d) {
     if (!m_started && m_length <= 0) return;
     if (partyGuest()) { flash(tx(S("party.peremativaet_sozdatel"))); return; }
+    m_trackWatch.stop();
     const qint64 base = m_pendingSeek.value_or(m_time);
     qint64 t = std::max<qint64>(0, base + d);
     if (m_length > 0) t = std::min(t, std::max<qint64>(0, m_length - 2000));
@@ -824,6 +840,7 @@ void PlayerModel::seekBy(qint64 d) {
 }
 
 void PlayerModel::seekTo(qint64 t) {
+    m_trackWatch.stop();
     m_seekTimer.stop();
     m_pendingSeek.reset();
     m_scrubbing = false;
@@ -853,6 +870,7 @@ void PlayerModel::jumpChapter(int d) {
     const QVariantList ch = m_engine->chapters();
     if (ch.size() < 2) return;
     if (partyGuest()) { flash(tx(S("party.peremativaet_sozdatel"))); return; }
+    m_trackWatch.stop();
     const int i = std::clamp(chapterAt(m_time) + d, 0, int(ch.size()) - 1);
     const QVariantMap c = ch[i].toMap();
     seekTo(c.value(S("timeMs")).toLongLong());
@@ -1423,11 +1441,28 @@ void PlayerModel::switchVariant(const QString &variantKey) {
                 break;
             }
         }
-        QStringList newAudio;
+        QList<core::CustomTrack> customTracks;
+        QStringList sidecarAudio;
         const auto audios = r.json.value(S("audio")).toArray();
         for (const auto &a : audios) {
-            const QString u = a.toObject().value(S("url")).toString();
-            if (!u.isEmpty()) newAudio << u;
+            const auto o = a.toObject();
+            const QString u = o.value(S("url")).toString();
+            if (u.isEmpty()) continue;
+            const QString id = o.value(S("id")).toString();
+            if (!id.startsWith(S("sidecar:")) && (o.contains(S("title")) || o.contains(S("offset_ms")))) {
+                core::CustomTrack t;
+                t.id = id;
+                t.title = o.value(S("title")).toString();
+                if (o.contains(S("lang"))) {
+                    const QString l = o.value(S("lang")).toString();
+                    if (!l.isEmpty() && l != S("und")) t.lang = l;
+                }
+                t.offsetMs = o.value(S("offset_ms")).toVariant().toLongLong();
+                t.url = u;
+                customTracks << t;
+            } else {
+                sidecarAudio << u;
+            }
         }
         QStringList newSubs;
         const auto subs = r.json.value(S("subtitles")).toArray();
@@ -1436,9 +1471,10 @@ void PlayerModel::switchVariant(const QString &variantKey) {
             if (!u.isEmpty()) newSubs << u;
         }
         Sides newSides;
-        newSides.audio = newAudio;
+        newSides.audio = sidecarAudio;
         newSides.subs = newSubs;
         self->m_sidecars.insert(self->m_index, newSides);
+        self->m_variantCustom = customTracks;
 
         qint64 targetOffsetMs = 0, currentOffsetMs = 0;
         for (const auto &v : self->m_req.variants) {

@@ -1596,9 +1596,20 @@ class PlayerActivity : ComponentActivity() {
                 val newAudios = ArrayList<String>()
                 val audioArr = res.optJSONArray("audio")
                 if (audioArr != null) {
+                    val customObj = org.json.JSONObject()
                     for (i in 0 until audioArr.length()) {
-                        val u = audioArr.optJSONObject(i)?.optString("url")
-                        if (!u.isNullOrBlank()) newAudios += u
+                        val item = audioArr.optJSONObject(i) ?: continue
+                        val u = item.optString("url")
+                        if (u.isNullOrBlank()) continue
+                        newAudios += u
+                        val title = item.optString("title")
+                        val offsetMs = item.optLong("offset_ms", 0L)
+                        if (!title.isNullOrBlank()) {
+                            customObj.put(u, org.json.JSONObject().put("title", title).put("offsetMs", offsetMs))
+                        }
+                    }
+                    if (customObj.length() > 0) {
+                        ru.suslikovanora.media.player.CustomAudioInfo.read(customObj.toString())
                     }
                 }
                 val newSubs = ArrayList<String>()

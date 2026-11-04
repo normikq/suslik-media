@@ -309,6 +309,7 @@ private:
 
     PlayRequest m_req;
     std::optional<core::CustomTrack> m_preview;
+    QList<core::CustomTrack> m_variantCustom;
     QString m_poster;
     QList<Entry> m_queue;
     QHash<int, Sides> m_sidecars;

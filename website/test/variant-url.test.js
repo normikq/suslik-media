@@ -185,13 +185,32 @@ test("маршруты variant-url: проверка без авторизаци
   assert.equal(dataPrio.ad_id, 200001);
   assert.equal(dataPrio.path, "Season 2/01.mkv");
 
-  // Отбор субтитров конкретной серии в многосерийной раздаче
+  const ca = require("../src/services/custom-audio");
+
+  // Отбор субтитров и дорожек конкретной серии в многосерийной раздаче
   treeCache.set(300001, [
     { name: "Show.S01E01.mkv", path: "Show/Show.S01E01.mkv", type: "file", size: 1000, sourceLink: "https://alldebrid.com/f/e01" },
     { name: "Show.S01E02.mkv", path: "Show/Show.S01E02.mkv", type: "file", size: 1000, sourceLink: "https://alldebrid.com/f/e02" },
     { name: "Show.S01E01.rus.srt", path: "Show/Show.S01E01.rus.srt", type: "file", size: 50, sourceLink: "https://alldebrid.com/f/e01_sub" },
-    { name: "Show.S01E02.rus.srt", path: "Show/Show.S01E02.rus.srt", type: "file", size: 50, sourceLink: "https://alldebrid.com/f/e02_sub" }
+    { name: "Show.S01E02.rus.srt", path: "Show/Show.S01E02.rus.srt", type: "file", size: 50, sourceLink: "https://alldebrid.com/f/e02_sub" },
+    { name: "Show.S01E01.mka", path: "Show/Show.S01E01.mka", type: "file", size: 100, sourceLink: "https://alldebrid.com/f/e01_aud" },
+    { name: "Show.S01E02.mka", path: "Show/Show.S01E02.mka", type: "file", size: 100, sourceLink: "https://alldebrid.com/f/e02_aud" }
   ]);
+
+  treeCache.set(400001, [
+    { name: "Dub_E01.mka", path: "Dub/Dub_E01.mka", type: "file", size: 100, sourceLink: "https://alldebrid.com/f/dub_e01" },
+    { name: "Dub_E02.mka", path: "Dub/Dub_E02.mka", type: "file", size: 100, sourceLink: "https://alldebrid.com/f/dub_e02" }
+  ]);
+  ca.addTracks({
+    movieMagnetId: 300001,
+    audioMagnetId: 400001,
+    author: "vtester",
+    pairs: [
+      { videoPath: "Show/Show.S01E01.mkv", audioPath: "Dub/Dub_E01.mka", voice: "Кубик в Кубе" },
+      { videoPath: "Show/Show.S01E02.mkv", audioPath: "Dub/Dub_E02.mka", voice: "Кубик в Кубе" }
+    ]
+  });
+
   const rSubsEp1 = await fetch(`${base}/api/file/variant-url`, {
     method: "POST",
     headers: authHeaders,
@@ -201,6 +220,11 @@ test("маршруты variant-url: проверка без авторизаци
   const dataEp1 = await rSubsEp1.json();
   assert.equal(dataEp1.subtitles.length, 1);
   assert.equal(dataEp1.subtitles[0].path, "Show/Show.S01E01.rus.srt");
+  assert.equal(dataEp1.audio.length, 2); // 1 sidecar + 1 custom track
+  assert.equal(dataEp1.audio.some(a => a.id.startsWith("sidecar:") && a.path === "Show/Show.S01E01.mka"), true);
+  assert.equal(dataEp1.audio.some(a => !a.id.startsWith("sidecar:") && a.title === "Кубик в Кубе"), true);
+  // Никаких дорожек от серии 2 быть не должно
+  assert.equal(dataEp1.audio.some(a => (a.path && a.path.includes("E02")) || (a.url && a.url.includes("E02"))), false);
 });
 
 test("комнаты: действие variant_change обновляет variant_key участника", () => {
