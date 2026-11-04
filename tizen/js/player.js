@@ -257,6 +257,26 @@
       c.tc = { info: r, a: ext ? null : pick, ext: ext ? o.ext : null, base: 0, playedOk: false };
       if (r.durationMs > 0) c.dur = r.durationMs;
       var v = r.video || {};
+      if (v.width || v.height) {
+        var detQ = '';
+        if (v.width >= 3000 || v.height >= 1600) detQ = '4K';
+        else if (v.width >= 1600 || v.height >= 900) detQ = '1080p';
+        else if (v.width >= 1100 || v.height >= 600) detQ = '720p';
+        else detQ = '480p';
+        var activeK = c.activeVariantKey || c.key;
+        var fVars = (c.opts.file && c.opts.file.variants) || [];
+        for (var vi = 0; vi < fVars.length; vi++) {
+          if (fVars[vi].key === activeK) {
+            if (!fVars[vi].quality) {
+              fVars[vi].quality = detQ;
+              if (fVars[vi].label && fVars[vi].label.indexOf(detQ) !== 0) {
+                fVars[vi].label = detQ + ' · ' + fVars[vi].label;
+              }
+            }
+            break;
+          }
+        }
+      }
       note('server stream: video ' + [v.codec, v.profile, v.width + 'x' + v.height, v.pixFmt, v.transfer, v.dv ? 'DV P' + v.dv : ''].filter(Boolean).join(' '));
       note('server stream: ' + (ext ? 'dub "' + o.ext.label + '" offset ' + (ext.offsetMs || 0) + ' ms' : 'audio #' + pick) +
         ' (' + audio.map(function (t) { return t.index + ':' + t.codec + (t.ok ? '' : '→ac3'); }).join(', ') +

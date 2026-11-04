@@ -482,9 +482,19 @@
     return rScore + vScore + aScore + sScore;
   }
 
-  function buildPartyVariant(item, file, serverProfile) {
+  function buildPartyVariant(item, file, serverProfile, width, height) {
     if (serverProfile && serverProfile.key && serverProfile.key === watchKey((item && item.m && item.m.id) || 0, file || {})) {
-      return serverProfile;
+      var prof = Object.assign({}, serverProfile);
+      if (!prof.quality && (width || height)) {
+        if (width >= 3000 || height >= 1600) prof.quality = '4K';
+        else if (width >= 1600 || height >= 900) prof.quality = '1080p';
+        else if (width >= 1100 || height >= 600) prof.quality = '720p';
+        else prof.quality = '480p';
+        if (prof.label && prof.label.indexOf(prof.quality) !== 0) {
+          prof.label = prof.quality + ' · ' + prof.label;
+        }
+      }
+      return prof;
     }
     var name = (item && item.m && item.m.name) || '';
     var filePath = (file && (file.path || file.name)) || '';
@@ -496,6 +506,12 @@
     else if (/(?:^|\D)1080[pi](?![a-z])|(?:^|\D)1920(?!\d)/i.test(lower)) quality = '1080p';
     else if (/(?:^|\D)720p(?![a-z])|(?:^|\D)1280(?!\d)/i.test(lower)) quality = '720p';
     else if (/(?:^|\D)(?:480|576)[pi](?![a-z])|(?:^|[^a-z])dvd/i.test(lower)) quality = '480p';
+    else if (width || height) {
+      if (width >= 3000 || height >= 1600) quality = '4K';
+      else if (width >= 1600 || height >= 900) quality = '1080p';
+      else if (width >= 1100 || height >= 600) quality = '720p';
+      else quality = '480p';
+    }
 
     var audio = 'Stereo';
     if (/atmos(?![a-z])/i.test(lower)) audio = 'TrueHD Atmos';
@@ -512,6 +528,14 @@
     if (/(?:^|[^a-z])dts(?![a-z])/i.test(lower)) hwFlags.push('dts');
 
     var score = smartQualityScore(combined);
+    if (!/(?:^|[^a-z0-9])(?:2160p|4k|uhd)(?![a-z])|(?:^|\D)3840(?!\d)/i.test(lower)
+        && !/(?:^|\D)1080[pi](?![a-z])|(?:^|\D)1920(?!\d)/i.test(lower)
+        && !/(?:^|\D)720p(?![a-z])|(?:^|\D)1280(?!\d)/i.test(lower)
+        && (width || height)) {
+      if (quality === '4K') score += 300;
+      else if (quality === '1080p') score += 200;
+      else if (quality === '720p') score += 100;
+    }
     var sizeBytes = (file && file.size) || (item && item.m && item.m.size) || 0;
     var isSeries = item && item.playable && item.playable.kind === 'series';
     var estDuration = isSeries ? 2700 : 6600;

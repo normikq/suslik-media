@@ -17,7 +17,7 @@
   ];
   var tabs = SM.tabs = SM.tabs || {};
 
-  var state = { items: [], loadedAt: 0, tab: 'home', focusKey: null, user: null, pages: {} };
+  var state = { items: [], loadedAt: 0, tab: 'home', focusKey: null, user: null, pages: {}, serverProfiles: {} };
 
   // Экран уходит: отписки (комната, таймеры вкладок)
   var leaving = [];
@@ -156,6 +156,7 @@
       state.items = model.prepareItems(model.parseLibrary(json).filter(function (m) { return !model.isVoiceOverOnly(m); }));
       state.loadedAt = Date.now();
       posters.fill(state.items, function () { if (state.tab === 'home' || state.tab === 'mine') refreshTab(); });
+      refreshTags(0);
       return state.items;
     }, function (e) {
       loading = null;
@@ -171,6 +172,18 @@
 
   /** Медиатека устарела (добавили раздачу): обновится при следующем открытии вкладки. */
   function libraryChanged() { state.loadedAt = 0; }
+
+  /** Профили качества с сервера: ffprobe анализирует раздачи в фоне. */
+  function refreshTags(round) {
+    if ((round || 0) >= 40) return;
+    api.get('/api/tags').then(function (r) {
+      if (!r || !r.profiles) return;
+      for (var k in r.profiles) {
+        state.serverProfiles[k] = r.profiles[k];
+      }
+      if (r.pending > 0) setTimeout(function () { refreshTags((round || 0) + 1); }, 30000);
+    }).catch(function () {});
+  }
 
   // ---- оболочка с вкладками ----
 
@@ -665,10 +678,10 @@
           matchingFile = model.mainVideo(ver.m);
         }
         if (matchingFile) {
-          vars.push(model.buildPartyVariant(ver, matchingFile));
+          vars.push(model.buildPartyVariant(ver, matchingFile, state.serverProfiles && state.serverProfiles[ver.m.id]));
         }
       }
-      if (!vars.length) vars.push(model.buildPartyVariant(it, en.file));
+      if (!vars.length) vars.push(model.buildPartyVariant(it, en.file, state.serverProfiles && state.serverProfiles[it.m.id]));
       vars.sort(function (a, b) { return b.score - a.score; });
       en.file.variants = vars;
     }

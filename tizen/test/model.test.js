@@ -432,4 +432,15 @@ test('smartQualityScore и qualityScore: шкала разрешения и ко
   );
   assert.equal(vUnknown.quality, '');
   assert.equal(vUnknown.label.indexOf('1080p') < 0, true);
+
+  const vProbed = M.buildPartyVariant(
+    { m: { id: 43, name: 'SomeVideo', size: 1000 } },
+    { path: 'video.mkv', size: 1000 },
+    null,
+    3840,
+    1600
+  );
+  assert.equal(vProbed.quality, '4K');
+  assert.equal(vProbed.label.indexOf('4K') === 0, true);
+  assert.equal(vProbed.score, 400);
 });
