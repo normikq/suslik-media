@@ -444,6 +444,7 @@ void PlayModel::play() {
     if (it) {
         r.posterQueries = it->posterQueries;
         if (it->m.aiTitle) r.canonicalId = it->m.aiTitle->canonicalId;
+        r.seriesTitle = it->baseTitle;
     }
     if (m_playlist) {
         r.queue = queueFiles();

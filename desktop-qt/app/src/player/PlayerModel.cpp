@@ -245,6 +245,7 @@ void PlayerModel::begin() {
     m_nextIn = -1;
     m_infoOpen = false;
     m_canonicalId = m_req.canonicalId.value_or(QString());
+    m_seriesTitle = m_req.seriesTitle.value_or(QString());
     m_activeVariantKey = m_req.activeVariantKey;
     if (m_req.variants.isEmpty() && Party::instance() && Party::instance()->file() && !Party::instance()->file()->variants.isEmpty()) {
         m_req.variants = Party::instance()->file()->variants;
@@ -252,6 +253,34 @@ void PlayerModel::begin() {
     if (m_activeVariantKey.isEmpty()) {
         if (!m_req.variants.isEmpty()) m_activeVariantKey = m_req.variants[0].key;
         else m_activeVariantKey = watchKey(m_index);
+    }
+    const QString prefMag = pref(S("vmagnet")).value_or(QString());
+    const QString prefQ = pref(S("vquality")).value_or(QString());
+    core::PartyVariant targetVar;
+    bool foundTarget = false;
+    if (!prefMag.isEmpty()) {
+        for (const auto &v : m_req.variants) {
+            if (v.key.section(QLatin1Char('|'), 0, 0) == prefMag) {
+                targetVar = v;
+                foundTarget = true;
+                break;
+            }
+        }
+    }
+    if (!foundTarget && !prefQ.isEmpty()) {
+        for (const auto &v : m_req.variants) {
+            if (v.quality == prefQ || v.label == prefQ) {
+                targetVar = v;
+                foundTarget = true;
+                break;
+            }
+        }
+    }
+    if (foundTarget && !targetVar.key.isEmpty()) {
+        m_activeVariantKey = targetVar.key;
+        if (m_index >= 0 && m_index < m_req.watchKeys.size()) {
+            m_req.watchKeys[m_index] = targetVar.key;
+        }
     }
     m_switchingVariant = false;
     m_suggestedDowngradeKey.clear();
@@ -288,6 +317,11 @@ void PlayerModel::begin() {
     emit switchingVariantChanged();
     emit suggestedDowngradeChanged();
     PlayerLog::write(S("player open «%1»: %2 in the queue, starts with %3").arg(m_req.title).arg(n).arg(m_index + 1));
+    if (foundTarget && targetVar.key != m_req.activeVariantKey) {
+        switchVariant(targetVar.key);
+        loadPlaylist();
+        return;
+    }
     const qint64 at = m_req.startMs ? *m_req.startMs : m_req.fromStart ? 0 : savedPos(m_index);
     open(m_req.url, at, m_sidecars.value(m_index));
     loadPlaylist();
@@ -372,6 +406,8 @@ void PlayerModel::open(const QString &url, qint64 startAt, const Sides &sides) {
     m_lastGood = m_time = startAt;
     m_audioDelay = pref(S("adelay")).value_or(S("0")).toLongLong();
     m_subDelay = pref(S("sdelay")).value_or(S("0")).toLongLong();
+    m_engine->setAudioDelayMs(m_audioDelay);
+    m_engine->setSubDelayMs(m_subDelay);
     m_custom.clear();
     m_activeCustom.reset();
     m_endCut = false;
@@ -636,6 +672,9 @@ void PlayerModel::playEntry(int i) {
             }
             const QString newUrl = r.json.value(S("url")).toString();
             self->m_currentUrl = newUrl;
+            if (i >= 0 && i < self->m_req.watchKeys.size()) {
+                self->m_req.watchKeys[i] = targetVar.key;
+            }
             self->m_supervisor.setBitrateMbps(targetVar.bitrate);
 
             QList<core::CustomTrack> customTracks;
@@ -1252,7 +1291,11 @@ void PlayerModel::applySmartSubs(int audioId) {
 /// фильма. Задержка всегда от 00:00 видео: −5000 — дорожка с 00:05 звучит на 00:00.
 void PlayerModel::applyCustomDelay(const QString &name) {
     const auto ct = CustomAudio::byMenuName(m_custom, name);
-    if (!ct && !m_activeCustom) return;
+    if (!ct && !m_activeCustom) {
+        m_audioDelay = pref(S("adelay")).value_or(S("0")).toLongLong();
+        m_engine->setAudioDelayMs(m_audioDelay);
+        return;
+    }
     m_activeCustom = ct;
     m_deleteArmed.clear();
     const qint64 before = m_audioDelay;
@@ -1595,6 +1638,11 @@ void PlayerModel::switchVariant(const QString &variantKey) {
         }
         const QString prevVariantKey = self->m_activeVariantKey;
         self->m_activeVariantKey = variantKey;
+        if (self->m_index >= 0 && self->m_index < self->m_req.watchKeys.size()) {
+            self->m_req.watchKeys[self->m_index] = variantKey;
+        } else if (self->m_req.watchKeys.isEmpty()) {
+            self->m_req.watchKeys << variantKey;
+        }
         self->m_currentUrl = newUrl;
         QString qv;
         for (const auto &v : self->m_req.variants) {
@@ -1618,7 +1666,8 @@ void PlayerModel::switchVariant(const QString &variantKey) {
         }
         if (self->m_lib) {
             const auto a = self->pref(S("audio"));
-            self->m_lib->sync().noteTrack(self->seriesKey(), a, std::nullopt, self->m_canonicalId.isEmpty() ? std::nullopt : std::optional<QString>(self->m_canonicalId), qv.isEmpty() ? std::nullopt : std::optional<QString>(qv));
+            const auto spu = self->pref(S("spu"));
+            self->m_lib->sync().noteTrack(self->seriesKey(), a, spu, self->m_canonicalId.isEmpty() ? std::nullopt : std::optional<QString>(self->m_canonicalId), qv.isEmpty() ? std::nullopt : std::optional<QString>(qv));
         }
         QList<core::CustomTrack> customTracks;
         QStringList sidecarAudio;
@@ -1708,7 +1757,19 @@ qint64 PlayerModel::savedPos(int i) const {
     return !w || w->watched() ? 0 : w->pos;
 }
 
-QString PlayerModel::titleKey() const { return m_title.section(S(" · "), 0, 0).toLower(); }
+QString PlayerModel::titleKey() const {
+    QString base = m_seriesTitle;
+    if (base.isEmpty()) {
+        base = m_title;
+        const int idxBullet = base.indexOf(QString::fromUtf8(" • "));
+        if (idxBullet >= 0) base = base.left(idxBullet);
+        const int idxDot = base.indexOf(QString::fromUtf8(" · "));
+        if (idxDot >= 0) base = base.left(idxDot);
+        static const QRegularExpression epRe(QStringLiteral("(?i)[\\s._-]+(?:s\\d{1,2}\\s*e\\d{1,3}|season\\s*\\d+|сезон\\s*\\d+).*$"));
+        base.remove(epRe);
+    }
+    return core::titleKey(core::cleanTitle(base));
+}
 
 QString PlayerModel::seriesKey() const {
     const QString id = m_req.watchKeys.isEmpty() ? QString() : m_req.watchKeys.first().section(QLatin1Char('|'), 0, 0);
@@ -1720,7 +1781,11 @@ std::optional<QString> PlayerModel::pref(const QString &kind) const {
     if (!m_canonicalId.isEmpty()) {
         if (auto v = ui().get(kind + S(":c") + m_canonicalId)) return v;
     }
-    return ui().get(kind + S(":") + titleKey());
+    const QString tk = titleKey();
+    if (!tk.isEmpty()) {
+        if (auto v = ui().get(kind + S(":") + tk)) return v;
+    }
+    return ui().get(kind + S(":*"));
 }
 
 QString PlayerModel::prefLanguage(const QString &kind) const {

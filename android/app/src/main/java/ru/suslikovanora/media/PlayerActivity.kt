@@ -1606,13 +1606,21 @@ class PlayerActivity : ComponentActivity() {
                 if (!qv.isNullOrBlank()) {
                     val sp = getSharedPreferences("player_ui", Context.MODE_PRIVATE)
                     val fk = ru.suslikovanora.media.core.sync.WatchSync.filmKeyOf(watchProgress.currentWatchKey())
+                    val newFk = ru.suslikovanora.media.core.sync.WatchSync.filmKeyOf(variantKey)
+                    val mag = variantKey.substringBefore('|')
                     sp.edit().apply {
                         if (fk != null) putString("vquality:$fk", qv)
+                        if (newFk != null && newFk != fk) putString("vquality:$newFk", qv)
                         putString("vquality:*", qv)
-                        val mag = variantKey.substringBefore('|')
-                        if (mag.isNotBlank() && fk != null) putString("vmagnet:$fk", mag)
+                        if (mag.isNotBlank()) {
+                            if (fk != null) putString("vmagnet:$fk", mag)
+                            if (newFk != null) putString("vmagnet:$newFk", mag)
+                        }
                     }.apply()
                     ru.suslikovanora.media.library.CloudSync.noteTrack(fk, null, null, null, alsoAny = true, quality = qv)
+                    if (newFk != null && newFk != fk) {
+                        ru.suslikovanora.media.library.CloudSync.noteTrack(newFk, null, null, null, alsoAny = false, quality = qv)
+                    }
                 }
                 Party.sendVariantChange(variantKey)
 

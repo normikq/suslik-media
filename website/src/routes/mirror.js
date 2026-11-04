@@ -128,7 +128,7 @@ async function handleVariantUrl(req, res) {
     try {
       const { items } = await ca.trackLinks(adId, f.path);
       if (Array.isArray(items)) {
-        customAudio = items.filter(it => it && it.track && (!it.track.videoPath || it.track.videoPath === f.path)).map(({ track: t, link: aLink }) => {
+        customAudio = items.filter(it => it && it.track).map(({ track: t, link: aLink }) => {
           const aName = cleanFileName(ca.baseName(t.audioPath)) || "audio";
           const aProxyPath = `/api/file/proxy/${encodeURIComponent(aName)}?link=${encodeURIComponent(aLink)}&exp=${expires}&sig=${makeMirrorToken(aLink, expires)}`;
           return {

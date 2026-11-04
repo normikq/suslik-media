@@ -1,5 +1,6 @@
 #include "suslik/core/CustomAudio.h"
 #include "suslik/core/MirrorLink.h"
+#include "suslik/core/Model.h"
 #include "JsonOpt.h"
 
 #include <QJsonArray>
@@ -28,6 +29,18 @@ QList<QJsonObject> objects(const QJsonObject &r, const char *key) {
 }
 std::optional<qint64> longOrNull(const QJsonObject &o, const QString &k) {
     return hasValue(o, k) ? std::optional<qint64>(optLong(o, k)) : std::nullopt;
+}
+std::optional<int> episodeNum(const QString &path) {
+    static const QRegularExpression sxxeyy(QStringLiteral("(?i)s(\\d{1,2})[ ._-]?e(\\d{1,3})"));
+    auto m = sxxeyy.match(path);
+    if (m.hasMatch()) return m.captured(2).toInt();
+    static const QRegularExpression nxnn(QStringLiteral("(?i)(?:^|[^\\d])(\\d{1,2})x(\\d{2,3})(?!\\d)"));
+    m = nxnn.match(path);
+    if (m.hasMatch()) return m.captured(2).toInt();
+    static const QRegularExpression epWord(QStringLiteral("(?i)(?:^|[^a-z0-9а-яё])(?:e|ep|episode|серия)[ ._-]?(\\d{1,3})(?!\\d)"));
+    m = epWord.match(path);
+    if (m.hasMatch()) return m.captured(1).toInt();
+    return std::nullopt;
 }
 } // namespace
 
@@ -65,9 +78,24 @@ QList<CustomTrack> CustomAudio::forVideo(const QList<CustomTrack> &tracks, const
     (bar < 0 ? *watchKey : watchKey->left(bar)).toLongLong(&ok);
     if (!ok) return {};
     const QString path = bar < 0 ? *watchKey : watchKey->mid(bar + 1);
+    const QString normPath = QString(path).replace(QLatin1Char('\\'), QLatin1Char('/'));
+    const auto epCur = episodeNum(normPath);
     QList<CustomTrack> out;
-    for (const CustomTrack &t : tracks)
-        if (t.videoPath == path) out << t;
+    for (const CustomTrack &t : tracks) {
+        const QString tNorm = QString(t.videoPath).replace(QLatin1Char('\\'), QLatin1Char('/'));
+        if (tNorm == normPath || t.videoPath == path) {
+            out << t;
+            continue;
+        }
+        if (t.videoPath.isEmpty()) {
+            out << t;
+            continue;
+        }
+        const auto epT = episodeNum(tNorm);
+        if (epT && epCur && *epT == *epCur) {
+            out << t;
+        }
+    }
     return out;
 }
 

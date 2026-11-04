@@ -347,8 +347,9 @@ router.get("/api/custom-audio/:magnetId", requireLogin, apiLimiter, async (req, 
   const movieMagnetId = magnetIdOf(req.params.magnetId);
   if (!movieMagnetId) return fail(res, 400, "BAD_REQUEST", "Некорректный идентификатор magnet-ссылки.");
   markOpened(movieMagnetId);
+  const videoPath = typeof req.query.videoPath === "string" ? req.query.videoPath : undefined;
   // Сбой одной раздачи убирает только её дорожки; 502 — лишь если не получили ни одного списка
-  const { items, failed } = await ca.trackLinks(movieMagnetId);
+  const { items, failed } = await ca.trackLinks(movieMagnetId, videoPath);
   if (failed) return fail(res, 502, "UPSTREAM", "Не удалось получить список файлов озвучки. Попробуйте ещё раз.");
   const expires = String(Math.floor(Date.now() / 1000) + config.MIRROR_TTL);
   const out = items.map(({ track: t, link }) => {

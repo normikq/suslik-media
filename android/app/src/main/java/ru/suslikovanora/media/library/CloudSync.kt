@@ -58,6 +58,7 @@ object CloudSync {
                 e.spu?.let { putString("track:spu:${e.key}", it) }
                 e.quality?.let { putString("vquality:${e.key}", it) }
                 e.cid?.let {
+                    putString("cid:${e.key}", it)
                     e.audio?.let { a -> putString("track:audio:c$it", a) }
                     e.quality?.let { q -> putString("vquality:c$it", q) }
                 }
@@ -78,7 +79,7 @@ object CloudSync {
                 val at = trackAt(k).takeIf { it > 0 } ?: if (k == WatchSync.ANY) seen.values.maxOrNull() else seen[k]
                 if (at == null || at <= 0) null
                 else TrackEntry(k, ui.getString("track:audio:$k", null), ui.getString("track:spu:$k", null),
-                    ui.getString("track:sidecar:$k", null), at, ui.getString("vquality:$k", null))
+                    ui.getString("track:sidecar:$k", null), at, ui.getString("vquality:$k", null), ui.getString("cid:$k", null))
             }
         }
         override var cursor: String?
@@ -120,6 +121,7 @@ object CloudSync {
                 if (alsoAny) putString("vquality:*", quality)
                 if (cid != null) putString("vquality:c$cid", quality)
             }
+            if (cid != null && filmKey != null) putString("cid:$filmKey", cid)
         }.apply()
         if (!WatchSync.eligible(userId)) return
         for (k in keys) sync.noteTrack(TrackEntry(k, audio, spu, if (k == WatchSync.ANY) null else sidecar, now, quality, cid))

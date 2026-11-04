@@ -25,6 +25,7 @@ const KEY_RE = /^(\d{1,20})\|(.{1,600})$/s;
 // Минус в теге и смещении: ASCII, типографский (U+2212) или короткое тире (U+2013)
 const toAsciiMinus = s => String(s).replace(/[−–]/g, "-");
 
+const norm = p => String(p || "").replace(/\\/g, "/");
 const extOf = p => (/\.([a-z0-9]{1,6})$/i.exec(p) || [])[1]?.toLowerCase() || "";
 const baseName = p => String(p).split("/").pop();
 const stem = p => baseName(p).replace(/\.[a-z0-9]{1,6}$/i, "");
@@ -575,8 +576,9 @@ async function trackLinks(movieMagnetId, videoPath) {
   const { safeHttpsUrl } = require("../utils/helpers");
   const { isAllDebridFileLink } = require("./mirror");
   let directTracks = forMovie(movieMagnetId);
-  if (videoPath != null) {
-    directTracks = directTracks.filter(t => t.videoPath === videoPath);
+  const normVPath = videoPath != null ? norm(videoPath) : null;
+  if (normVPath != null) {
+    directTracks = directTracks.filter(t => t.videoPath && norm(t.videoPath) === normVPath);
   }
   const tracks = [...directTracks];
 
@@ -598,9 +600,18 @@ async function trackLinks(movieMagnetId, videoPath) {
             const targetEp = videoEpisode(videoPath);
             const compEp = videoEpisode(ct.videoPath);
             if (targetEp && compEp) {
-              if (targetEp.season !== compEp.season || targetEp.episode !== compEp.episode) continue;
+              if (targetEp.episode !== compEp.episode) continue;
+              if (targetEp.season != null && compEp.season != null && targetEp.season !== compEp.season) {
+                const s1 = (mSelf.files || []).map(f => videoEpisode(f.path)?.season).filter(s => s != null);
+                const s2 = (comp.files || []).map(f => videoEpisode(f.path)?.season).filter(s => s != null);
+                const multi1 = Math.max(...s1, 1) !== Math.min(...s1, 1);
+                const multi2 = Math.max(...s2, 1) !== Math.min(...s2, 1);
+                if (multi1 || multi2) continue;
+              }
             } else if (targetEp || compEp) {
-              continue;
+              const v1 = (mSelf.files || []).filter(f => f && f.type === "file" && VIDEO_EXT.has(extOf(f.path)));
+              const v2 = (comp.files || []).filter(f => f && f.type === "file" && VIDEO_EXT.has(extOf(f.path)));
+              if (v1.length > 1 || v2.length > 1) continue;
             }
           }
           tracks.push({

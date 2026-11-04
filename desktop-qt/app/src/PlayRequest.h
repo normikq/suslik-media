@@ -40,6 +40,7 @@ struct PlayRequest {
     QList<core::PartyVariant> variants;
     QString activeVariantKey;
     std::optional<QString> canonicalId;
+    std::optional<QString> seriesTitle;
 };
 
 } // namespace suslik::app

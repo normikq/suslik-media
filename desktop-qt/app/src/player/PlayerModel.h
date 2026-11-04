@@ -318,6 +318,7 @@ private:
     QHash<QString, std::pair<QString, QString>> m_sideTitles;
     int m_index = 0;
     QString m_title, m_currentUrl;
+    QString m_seriesTitle;
     quint64 m_gen = 0;
 
     bool m_open = false, m_closing = false, m_started = false, m_playing = false, m_switching = false;
