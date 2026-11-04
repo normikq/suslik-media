@@ -108,6 +108,67 @@ test("маршруты variant-url: проверка без авторизаци
   assert.equal(rOkCached.status, 200);
   const dataCached = await rOkCached.json();
   assert.equal(dataCached.url, data1.url);
+
+  // Проверка динамического publicBase при смене Host заголовка из кэша (http.request позволяет переопределить Host)
+  const http = require("http");
+  const resHost = await new Promise((resolve, reject) => {
+    const req = http.request({
+      host: "127.0.0.1",
+      port: server.address().port,
+      method: "POST",
+      path: "/api/file/variant-url",
+      headers: {
+        ...authHeaders,
+        "Host": "otherhost.example.com"
+      }
+    }, res => {
+      let text = "";
+      res.setEncoding("utf8");
+      res.on("data", c => { text += c; });
+      res.on("end", () => resolve({ status: res.statusCode, json: JSON.parse(text) }));
+    });
+    req.on("error", reject);
+    req.end(JSON.stringify({ ad_id: 104921, path: "Dune.2021/Dune.2021.1080p.mkv" }));
+  });
+  assert.equal(resHost.status, 200);
+  assert.match(resHost.json.url, /^https:\/\/otherhost\.example\.com\/api\/file\/proxy\//);
+
+  // Тест на различение файлов сериала с одинаковыми именами («01.mkv» в разных сезонах) и субтитры
+  treeCache.set(200001, [
+    {
+      name: "01.mkv",
+      path: "Season 1/01.mkv",
+      type: "file",
+      size: 1000000000,
+      sourceLink: "https://alldebrid.com/f/s01e01"
+    },
+    {
+      name: "01.mkv",
+      path: "Season 2/01.mkv",
+      type: "file",
+      size: 1200000000,
+      sourceLink: "https://alldebrid.com/f/s02e01"
+    },
+    {
+      name: "01.srt",
+      path: "Season 2/01.srt",
+      type: "file",
+      size: 50000,
+      sourceLink: "https://alldebrid.com/f/s02e01_sub"
+    }
+  ]);
+
+  const rS2 = await fetch(`${base}/api/file/variant-url`, {
+    method: "POST",
+    headers: authHeaders,
+    body: JSON.stringify({ ad_id: 200001, path: "Season 2/01.mkv" })
+  });
+  assert.equal(rS2.status, 200);
+  const dataS2 = await rS2.json();
+  assert.equal(dataS2.source_url, "https://alldebrid.com/f/s02e01");
+  assert.equal(dataS2.path, "Season 2/01.mkv");
+  assert.equal(dataS2.subtitles.length, 1);
+  assert.equal(dataS2.subtitles[0].path, "Season 2/01.srt");
 });
 
 test("комнаты: действие variant_change обновляет variant_key участника", () => {

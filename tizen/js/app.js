@@ -608,6 +608,70 @@
       ]);
       return;
     }
+    if (!en.file.variants || !en.file.variants.length) {
+      var all = state.library || [];
+      var grouped = model.groupVersions(all, function (item) { return posters.pathOf(item.posterQueries); });
+      var versions = grouped.versions && grouped.versions[it.m.id];
+      if (!versions) {
+        for (var vid in (grouped.versions || {})) {
+          var gList = grouped.versions[vid];
+          if (gList && gList.some(function (v) { return v.m.id === it.m.id; })) {
+            versions = gList;
+            break;
+          }
+        }
+      }
+      if (!versions || !versions.length) versions = [it];
+      var vars = [];
+      for (var vi = 0; vi < versions.length; vi++) {
+        var ver = versions[vi];
+        var matchingFile = null;
+        if (ver.m.id === it.m.id) {
+          matchingFile = en.file;
+        } else if (ver.playable && ver.playable.kind === 'series' && it.playable && it.playable.kind === 'series') {
+          var sNum = typeof en.season === 'number' ? en.season : -1;
+          var epNum = -1;
+          if (it.playable.seasons) {
+            for (var si = 0; si < it.playable.seasons.length; si++) {
+              var s = it.playable.seasons[si];
+              if (s.season === sNum) {
+                for (var ei = 0; ei < (s.items || []).length; ei++) {
+                  if (s.items[ei].file && s.items[ei].file.path === en.file.path) {
+                    epNum = s.items[ei].episode;
+                    break;
+                  }
+                }
+              }
+              if (epNum >= 0) break;
+            }
+          }
+          if (ver.playable.seasons) {
+            for (var vsi = 0; vsi < ver.playable.seasons.length; vsi++) {
+              var vs = ver.playable.seasons[vsi];
+              if (vs.season === sNum) {
+                for (var vei = 0; vei < (vs.items || []).length; vei++) {
+                  if (vs.items[vei].episode === epNum && vs.items[vei].file) {
+                    matchingFile = vs.items[vei].file;
+                    break;
+                  }
+                }
+              }
+              if (matchingFile) break;
+            }
+          }
+        } else if (ver.playable && ver.playable.kind === 'movie') {
+          matchingFile = ver.playable.file || model.mainVideo(ver.m);
+        } else {
+          matchingFile = model.mainVideo(ver.m);
+        }
+        if (matchingFile) {
+          vars.push(model.buildPartyVariant(ver, matchingFile));
+        }
+      }
+      if (!vars.length) vars.push(model.buildPartyVariant(it, en.file));
+      vars.sort(function (a, b) { return b.score - a.score; });
+      en.file.variants = vars;
+    }
     var check = support.checkFile(en.file.path);
     var go = function () {
       if (party.isHost()) party.putFilm(key, en.room || en.label, en.file.canonical_id || '', en.file.edition || '', en.file.variants || []);

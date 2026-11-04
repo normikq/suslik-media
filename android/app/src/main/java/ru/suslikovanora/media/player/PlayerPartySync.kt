@@ -107,7 +107,16 @@ class PlayerPartySync(private val handler: Handler, private val cb: Callback) {
         if (key != lastKey) {
             lastKey = key
             val f = Party.file
-            if (f != null && key != null && key != f.key && Party.isHost && f.key in keys) Party.putFilm(PartyFileRef(key, cb.title()))
+            if (f != null && key != null && key != f.key && Party.isHost && f.key in keys) {
+                val nextVariants = if (f.variants.isNotEmpty()) {
+                    val curPath = key.substringAfter('|')
+                    f.variants.map { v ->
+                        val vAdId = v.key.substringBefore('|')
+                        v.copy(key = "$vAdId|$curPath")
+                    }
+                } else emptyList()
+                Party.putFilm(PartyFileRef(key, cb.title(), variants = nextVariants))
+            }
         }
         // The room's episode changed (the host picked another one): this player follows, once per change
         val rk = Party.file?.key

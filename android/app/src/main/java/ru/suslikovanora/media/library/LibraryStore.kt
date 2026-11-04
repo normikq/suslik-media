@@ -292,6 +292,17 @@ class LibraryStore(context: Context) {
 
     fun posterPathOf(item: LibraryItem): String? = item.posterQueries.firstNotNullOfOrNull { posterPaths[it.lowercase()] }
 
+    fun versionsOf(magnetId: Long): List<LibraryItem> {
+        val all = items
+        val (_, versionsMap) = groupVersions(all) { posterPathOf(it) }
+        versionsMap[magnetId]?.let { return it }
+        for ((_, list) in versionsMap) {
+            if (list.any { it.m.id == magnetId }) return list
+        }
+        val single = items.find { it.m.id == magnetId }
+        return if (single != null) listOf(single) else emptyList()
+    }
+
     private fun notePoster(key: String, path: String) {
         if (posterPaths[key] != path) { posterPaths[key] = path; posterVersion++ }
     }
@@ -439,6 +450,7 @@ class LibraryStore(context: Context) {
 
     // ---- Dolby Vision / HDR / DTS marks: the server looks into the file (ffprobe, kept until the film is deleted) ----
     private val serverTags = androidx.compose.runtime.mutableStateMapOf<Long, List<String>>()
+    val serverProfiles = java.util.concurrent.ConcurrentHashMap<Long, ru.suslikovanora.media.core.party.PartyVariant>()
     // The guess by the names runs regexes over every file of the torrent: once per film, not at every look at a tile
     private val guessedTags = java.util.concurrent.ConcurrentHashMap<Long, List<String>>()
     fun tagsOf(item: LibraryItem): List<String> = serverTags[item.m.id] ?: guessedTags.getOrPut(item.m.id) { itemTags(item) }
@@ -452,6 +464,24 @@ class LibraryStore(context: Context) {
                 val a = tags.optJSONArray(k) ?: continue
                 val id = k.toLongOrNull() ?: continue
                 serverTags[id] = (0 until a.length()).map { a.getString(it) }
+            }
+            val profiles = j.optJSONObject("profiles")
+            if (profiles != null) for (k in profiles.keys()) {
+                val p = profiles.optJSONObject(k) ?: continue
+                val id = k.toLongOrNull() ?: continue
+                val flagsArr = p.optJSONArray("hardware_flags")
+                val flags = ArrayList<String>()
+                if (flagsArr != null) for (fi in 0 until flagsArr.length()) flags += flagsArr.optString(fi)
+                serverProfiles[id] = ru.suslikovanora.media.core.party.PartyVariant(
+                    key = p.optString("key"),
+                    label = p.optString("label"),
+                    quality = p.optString("resolution").ifBlank { p.optString("quality", "1080p") },
+                    audio = p.optString("audio_tech").ifBlank { p.optString("audio", "Stereo") },
+                    bitrate = p.optDouble("bitrate_mbps", p.optDouble("bitrate", 0.0)),
+                    offsetMs = p.optLong("offset_ms", 0L),
+                    score = p.optInt("score", 0),
+                    hardwareFlags = flags
+                )
             }
             if (j.optInt("pending", 0) <= 0) return
             kotlinx.coroutines.delay(30_000)

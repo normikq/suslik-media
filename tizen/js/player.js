@@ -94,7 +94,7 @@
       urlAt: 0, played: false, retryAt: 0, stalls: 0, stallMs: 0, stallFrom: 0, durAskedAt: 0,
       tc: null, viewer: Math.random().toString(36).slice(2, 10),
       dubs: model.externalAudioFor(opts.magnet, opts.file), custom: null,
-      activeVariantKey: key, switching: false, currentBitrate: 0, recentBuffering: [], downgradePromptShown: false
+      activeVariantKey: key, activeVariantUrl: null, switching: false, currentBitrate: 0, recentBuffering: [], lastDowngradePromptAt: 0
     };
     if (opts.resumeAt != null) cur.resume = opts.resumeAt;
     var variants = (opts.file && opts.file.variants) || (SM.party && SM.party.room && SM.party.room.file && SM.party.room.file.variants) || [];
@@ -294,6 +294,23 @@
         if (Array.isArray(r.audio) && (c.tc.ext ? model.externalIn(r, c.tc.ext) : r.audio.length)) c.tc.info = r;
         done(serverUrl(c, at));
       }, bad);
+    } else if (c.activeVariantKey && c.activeVariantKey !== c.key) {
+      var parts = c.activeVariantKey.split('|');
+      var adId = parts.length > 1 ? Number(parts[0]) : null;
+      var path = parts.length > 1 ? parts.slice(1).join('|') : null;
+      api.resolveVariantUrl(c.activeVariantKey, adId, path).then(function (res) {
+        if (cur !== c) return;
+        if (res && res.url) {
+          c.activeVariantUrl = res.url;
+          done(res.url);
+        } else {
+          done(c.activeVariantUrl || c.url);
+        }
+      }, function () {
+        if (cur !== c) return;
+        if (c.activeVariantUrl || c.url) done(c.activeVariantUrl || c.url);
+        else bad();
+      });
     } else api.mirrorUrl(c.opts.file).then(done, bad);
   }
 
@@ -512,7 +529,20 @@
       c.tc = null; c.dur = 0; c.serverFailed = true;
       c.opts.toast(dub ? 'Сервер не смог подготовить озвучку «' + dub.label + '» (' + type + ') — открываю без неё'
         : 'Сервер не смог подготовить файл (' + type + ') — открываю как есть');
-      api.mirrorUrl(c.opts.file).then(function (url) { if (cur === c) start(url, at); }).catch(function (e) { if (cur === c) fail('network', api.describe(e)); });
+      if (c.activeVariantKey && c.activeVariantKey !== c.key) {
+        if (c.activeVariantUrl) start(c.activeVariantUrl, at);
+        else {
+          var parts = c.activeVariantKey.split('|');
+          api.resolveVariantUrl(c.activeVariantKey, Number(parts[0]), parts.slice(1).join('|')).then(function (res) {
+            if (cur === c && res && res.url) { c.activeVariantUrl = res.url; start(res.url, at); }
+            else if (cur === c) api.mirrorUrl(c.opts.file).then(function (u) { if (cur === c) start(u, at); });
+          }).catch(function () {
+            if (cur === c) api.mirrorUrl(c.opts.file).then(function (u) { if (cur === c) start(u, at); });
+          });
+        }
+      } else {
+        api.mirrorUrl(c.opts.file).then(function (url) { if (cur === c) start(url, at); }).catch(function (e) { if (cur === c) fail('network', api.describe(e)); });
+      }
       return;
     }
     // Сеть или истёкшая подпись зеркала (12 ч): новая ссылка и то же место, не больше двух раз подряд.
@@ -783,13 +813,14 @@
       var end = item.end || now;
       totalMs += (end - item.start);
     }
-    if (count > 3 || totalMs > 10000) {
+    if ((count >= 3 || totalMs >= 10000) && (c.currentBitrate || 0) > 25.0) {
       suggestDowngrade(c);
     }
   }
 
   function suggestDowngrade(c) {
-    if (!c || c.downgradePromptShown) return;
+    var now = Date.now();
+    if (!c || (now - (c.lastDowngradePromptAt || 0) < 60000)) return;
     var variants = (c.opts.file && c.opts.file.variants) || (SM.party && SM.party.room && SM.party.room.file && SM.party.room.file.variants) || [];
     if (!variants.length) return;
     var currentBitrate = c.currentBitrate || 0;
@@ -803,7 +834,7 @@
       }
     }
     if (!best) return;
-    c.downgradePromptShown = true;
+    c.lastDowngradePromptAt = now;
     var targetLabel = best.label || (best.quality + (best.bitrate ? ' (' + best.bitrate.toFixed(1) + ' Мбит/с)' : ''));
     c.opts.dialog(
       'Скорость интернета недостаточна для этого качества. Переключить на ' + targetLabel + '?',
@@ -836,6 +867,8 @@
         return;
       }
       c.activeVariantKey = variantKey;
+      c.activeVariantUrl = res.url;
+      c.tc = null; // Сбрасываем режим серверного потока
       c.switching = false;
       if (SM.party) SM.party.sendVariantChange(variantKey);
 
@@ -870,11 +903,19 @@
     var variants = (c.opts.file && c.opts.file.variants) || (SM.party && SM.party.room && SM.party.room.file && SM.party.room.file.variants) || [];
     if (variants.length > 1) {
       items.push(h('h2', { text: 'Качество' }));
-      var hostKey = (SM.party && SM.party.room && SM.party.room.file) ? SM.party.room.file.key : null;
+      var hostVariantKey = null;
+      if (SM.party && SM.party.room) {
+        var r = SM.party.room;
+        var hm = r.members && r.members.find(function (m) {
+          return SM.partycore && SM.partycore.room && SM.partycore.room.isHost(r, m.userId, m.key);
+        });
+        if (hm && hm.variantKey) hostVariantKey = hm.variantKey;
+        else if (r.file) hostVariantKey = r.file.key;
+      }
       var activeKey = c.activeVariantKey || c.key;
       variants.forEach(function (v) {
         var on = (v.key === activeKey);
-        var isHost = (hostKey && v.key === hostKey);
+        var isHost = (hostVariantKey && v.key === hostVariantKey);
         var comp = support.checkVariantCompatibility(v);
         var label = v.label || (v.quality + (v.bitrate ? ' (' + v.bitrate.toFixed(1) + ' Мбит/с)' : ''));
         if (isHost) label += ' [Хост]';
@@ -882,7 +923,13 @@
         var btnClass = (on ? 'sel ' : '') + (!comp.ok ? 'disabled' : '');
         items.push(SM.ui.button((on ? '● ' : '') + label, function () {
           closeMenu();
-          if (!on) switchVariant(v.key);
+          if (!on) {
+            if (!comp.ok) {
+              c.opts.toast(comp.text || 'Формат не поддерживается телевизором');
+              return;
+            }
+            switchVariant(v.key);
+          }
         }, btnClass.trim()));
       });
     }

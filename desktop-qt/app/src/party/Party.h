@@ -46,6 +46,7 @@ public:
 
     bool inRoom() const { return m_roomId.has_value(); }
     QString roomId() const { return m_roomId.value_or(QString()); }
+    const core::PartyRoom &room() const { return m_room; }
     bool isHost() const { return m_room.isHost(m_myUserId, m_myKey); }
     bool guest() const { return inRoom() && !isHost(); }
     bool connected() const { return m_connected; }

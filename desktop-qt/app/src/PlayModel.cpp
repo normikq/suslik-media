@@ -457,6 +457,47 @@ void PlayModel::play() {
         r.presence << presenceOf(cur);
         r.markerQueries << markerQueryOf(cur).value_or(MarkerQuery{});
     }
+    QList<core::PartyVariant> vars;
+    if (m_lib) {
+        const auto versions = m_lib->versionsOf(m_id);
+        for (const auto &ver : versions) {
+            core::MFile vFile;
+            if (ver.m.id == m_id) {
+                vFile = cur;
+            } else if (m_series && it) {
+                int curSeasonNum = -1, curEpNum = -1;
+                if (m_season >= 0 && m_season < it->playable.seasons.size()) {
+                    const auto &s = it->playable.seasons[m_season];
+                    curSeasonNum = s.season;
+                    if (m_episode >= 0 && m_episode < s.items.size()) curEpNum = s.items[m_episode].episode;
+                }
+                for (const auto &s : ver.playable.seasons) {
+                    if (s.season == curSeasonNum) {
+                        for (const auto &e : s.items) {
+                            if (e.episode == curEpNum && !e.file.path.isEmpty()) { vFile = e.file; break; }
+                        }
+                    }
+                    if (!vFile.path.isEmpty()) break;
+                }
+            } else if (m_collection) {
+                const auto colFilms = collectionFilms(ver);
+                if (m_film >= 0 && m_film < colFilms.size()) vFile = colFilms[m_film].file;
+            } else {
+                if (auto mf = ver.playable.movieFile()) vFile = *mf;
+                else if (auto mv = mainVideo(ver.m)) vFile = *mv;
+            }
+            if (!vFile.path.isEmpty()) {
+                vars << core::buildPartyVariant(ver, vFile, m_lib->serverProfile(ver.m.id));
+            }
+        }
+    }
+    if (vars.isEmpty() && it) {
+        vars << core::buildPartyVariant(*it, cur, m_lib ? m_lib->serverProfile(m_id) : std::nullopt);
+    }
+    std::sort(vars.begin(), vars.end(), [](const auto &a, const auto &b) { return a.score > b.score; });
+    r.variants = vars;
+    r.activeVariantKey = core::watchKey(m_id, cur);
+
     m_request = r;
     emit playRequested();
 }

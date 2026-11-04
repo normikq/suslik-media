@@ -99,7 +99,9 @@ data class PlayRequest(
     /** Where to open (ms) instead of the remembered place (player.PlayerExtras.START_MS); null — as usual. */
     val startMs: Long? = null,
     /** Along [watchKeys]: what a room shows — the library's title and the episode (player.PlayerExtras.ROOM_TITLES). */
-    val roomTitles: List<String> = emptyList()
+    val roomTitles: List<String> = emptyList(),
+    /** Варианты качества фильма/серии */
+    val variants: List<ru.suslikovanora.media.core.party.PartyVariant> = emptyList()
 )
 
 /**
@@ -277,8 +279,37 @@ fun PlaySheet(
         val keys = if (playlist != null) target.season.filter { f -> f.link != null }.map { f -> watchKey(target.magnetId, f) }
         else listOf(watchKey(target.magnetId, target.file))
         val files = if (playlist != null) target.season.filter { f -> f.link != null } else listOf(target.file)
+
+        val versions = store.versionsOf(target.magnetId)
+        val vars = ArrayList<ru.suslikovanora.media.core.party.PartyVariant>()
+        for (ver in versions) {
+            val vFile = if (ver.m.id == target.magnetId) {
+                target.file
+            } else if (ver.playable is ru.suslikovanora.media.core.Playable.Series && target.season.isNotEmpty()) {
+                val sNum = series?.seasons?.firstNotNullOfOrNull { s ->
+                    s.items.find { it.file.path == target.file.path }?.let { s.season to it.episode }
+                }
+                if (sNum != null) {
+                    (ver.playable as ru.suslikovanora.media.core.Playable.Series).seasons
+                        .find { it.season == sNum.first }
+                        ?.items?.find { it.episode == sNum.second }?.file
+                } else null
+            } else if (ver.playable is ru.suslikovanora.media.core.Playable.Movie) {
+                (ver.playable as ru.suslikovanora.media.core.Playable.Movie).file
+            } else {
+                ru.suslikovanora.media.core.mainVideo(ver.m)
+            }
+            if (vFile != null) {
+                vars += ru.suslikovanora.media.core.buildPartyVariant(ver, vFile, store.serverProfiles[ver.m.id])
+            }
+        }
+        if (vars.isEmpty() && item != null) {
+            vars += ru.suslikovanora.media.core.buildPartyVariant(item, target.file, store.serverProfiles[target.magnetId])
+        }
+        vars.sortByDescending { it.score }
+
         return PlayRequest(url, target.label, playlist, subUrls, keys, audioUrls, fromStart, if (playlist != null) episodeSidesJson(target, customByPath) else null, customJson(customByPath), watchKey(target.magnetId, target.file), isColl,
-            if (item == null) null else markersJson(item, series, files, isColl), roomTitles = files.map(::roomTitleOf))
+            if (item == null) null else markersJson(item, series, files, isColl), roomTitles = files.map(::roomTitleOf), variants = vars)
     }
     LaunchedEffect(prepared) {
         val at = autoStartMs ?: return@LaunchedEffect

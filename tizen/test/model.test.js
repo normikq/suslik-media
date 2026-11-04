@@ -405,4 +405,15 @@ test('smartQualityScore и qualityScore: шкала разрешения и ко
   assert.equal(M.smartQualityScore('Film.1080p.BluRay.dts.x264.mkv'), 335);
   assert.equal(M.smartQualityScore('Atmosphere.2020.720p.WEB.mkv'), 210);
   assert.equal(M.smartQualityScore('Film.1920x1080.HDRip.mkv'), 300);
+
+  const v = M.buildPartyVariant(
+    { m: { id: 42, name: 'Dune.2021.2160p.UHD.Remux.DV.TrueHD.Atmos.mkv', size: 45000000000 } },
+    { path: 'Dune.2021.mkv', size: 45000000000 }
+  );
+  assert.equal(v.key, '42|Dune.2021.mkv');
+  assert.equal(v.quality, '4K');
+  assert.equal(v.audio, 'TrueHD Atmos');
+  assert.equal(v.score, 505);
+  assert.deepEqual(v.hardware_flags, ['dv']);
+  assert.equal(v.bitrate > 0, true);
 });

@@ -684,5 +684,16 @@ class ModelTest {
         assertEquals(335, smartQualityScore("Film.1080p.BluRay.dts.x264.mkv"))
         assertEquals(210, smartQualityScore("Atmosphere.2020.720p.WEB.mkv"))
         assertEquals(300, smartQualityScore("Film.1920x1080.HDRip.mkv"))
+
+        val file = MFile(0, "Dune.2021.mkv", "Dune.2021.mkv", false, 45000000000L, "https://link")
+        val m = Magnet(42L, "Dune.2021.2160p.UHD.Remux.DV.TrueHD.Atmos.mkv", "Ready", 4, 45000000000L, 45000000000L, listOf(file), true)
+        val item = prepareItems(listOf(m)).first()
+        val v = buildPartyVariant(item, file)
+        assertEquals("42|Dune.2021.mkv", v.key)
+        assertEquals("4K", v.quality)
+        assertEquals("TrueHD Atmos", v.audio)
+        assertEquals(505, v.score)
+        assertEquals(listOf("dv"), v.hardwareFlags)
+        assertEquals(true, v.bitrate > 0.0)
     }
 }

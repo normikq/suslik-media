@@ -80,6 +80,12 @@ class PlayerTrackSelector(
     val selectedAudio: Int? get() = selectedAudioId
     val selectedSpu: Int? get() = selectedSpuId
 
+    fun setVariantSidecars(url: String, subs: List<String>, audio: List<String>) {
+        if (url.isNotEmpty()) episodeFiles[keyOf(url)] = EpisodeFiles(subs, audio)
+        attachedAudio.clear()
+        activeSidecar = null
+    }
+
     fun readSideExtras(i: Intent?) {
         episodeFiles.clear()
         val url = i?.getStringExtra(PlayerExtras.URL).orEmpty()

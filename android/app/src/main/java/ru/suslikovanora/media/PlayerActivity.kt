@@ -847,9 +847,13 @@ class PlayerActivity : ComponentActivity() {
                 val rf = Party.file
                 if (rf != null && rf.variants.isNotEmpty()) {
                     ui.variants = rf.variants
-                    ui.hostVariantKey = Party.members.find { it.name == Party.hostName }?.variantKey ?: rf.key
+                    ui.hostVariantKey = Party.members.find { Party.isHost(it) }?.variantKey ?: rf.key
                     if (ui.activeVariantKey == null) {
                         ui.activeVariantKey = rf.variants.find { it.key == watchProgress.currentWatchKey() }?.key ?: rf.variants.first().key
+                    }
+                    val curV = rf.variants.find { it.key == ui.activeVariantKey }
+                    if (curV != null && curV.bitrate > 0 && supervisor.bitrateMbps <= 0.0) {
+                        supervisor.bitrateMbps = curV.bitrate
                     }
                 }
             }
@@ -1541,7 +1545,32 @@ class PlayerActivity : ComponentActivity() {
                     supervisor.bitrateMbps = currentVariant.bitrate
                 }
                 Party.sendVariantChange(variantKey)
-                val p = createPlayer(newUrl, currentPos)
+
+                val newAudios = ArrayList<String>()
+                val audioArr = res.optJSONArray("audio")
+                if (audioArr != null) {
+                    for (i in 0 until audioArr.length()) {
+                        val u = audioArr.optJSONObject(i)?.optString("url")
+                        if (!u.isNullOrBlank()) newAudios += u
+                    }
+                }
+                val newSubs = ArrayList<String>()
+                val subsArr = res.optJSONArray("subtitles")
+                if (subsArr != null) {
+                    for (i in 0 until subsArr.length()) {
+                        val u = subsArr.optJSONObject(i)?.optString("url")
+                        if (!u.isNullOrBlank()) newSubs += u
+                    }
+                }
+                trackSelector.setVariantSidecars(newUrl, newSubs, newAudios)
+
+                val prevVariant = ui.variants.find { it.key == ui.activeVariantKey }
+                val targetOffsetMs = currentVariant?.offsetMs ?: 0L
+                val prevOffsetMs = prevVariant?.offsetMs ?: 0L
+                val offsetDiff = targetOffsetMs - prevOffsetMs
+                val targetPos = maxOf(0L, currentPos + offsetDiff)
+
+                val p = createPlayer(newUrl, targetPos)
                 if (!userPaused && !ended) {
                     audioSession.requestAudioFocus()
                     p.play()
@@ -1688,6 +1717,38 @@ class PlayerActivity : ComponentActivity() {
     private fun readSideExtras(i: Intent?) {
         trackSelector.readSideExtras(i)
         watchProgress.readIntent(i)
+        val varsRaw = i?.getStringExtra(PlayerExtras.VARIANTS)
+        if (!varsRaw.isNullOrBlank() && ui.variants.isEmpty()) {
+            val arr = runCatching { org.json.JSONArray(varsRaw) }.getOrNull()
+            if (arr != null) {
+                val list = ArrayList<ru.suslikovanora.media.core.party.PartyVariant>()
+                for (idx in 0 until arr.length()) {
+                    val o = arr.optJSONObject(idx) ?: continue
+                    val hfArr = o.optJSONArray("hardware_flags")
+                    val hf = ArrayList<String>()
+                    if (hfArr != null) for (j in 0 until hfArr.length()) hf += hfArr.optString(j)
+                    list += ru.suslikovanora.media.core.party.PartyVariant(
+                        key = o.optString("key"),
+                        label = o.optString("label"),
+                        quality = o.optString("quality", "1080p"),
+                        audio = o.optString("audio", "Stereo"),
+                        bitrate = o.optDouble("bitrate", 0.0),
+                        offsetMs = o.optLong("offset_ms", 0L),
+                        score = o.optInt("score", 0),
+                        hardwareFlags = hf
+                    )
+                }
+                if (list.isNotEmpty()) {
+                    ui.variants = list
+                    val curKey = watchProgress.currentWatchKey()
+                    ui.activeVariantKey = list.find { it.key == curKey }?.key ?: list.first().key
+                    val curV = list.find { it.key == ui.activeVariantKey }
+                    if (curV != null && curV.bitrate > 0) {
+                        supervisor.bitrateMbps = curV.bitrate
+                    }
+                }
+            }
+        }
         panel.collection = i?.getBooleanExtra(PlayerExtras.COLLECTION, false) == true
         markerQueries = i?.getStringExtra(PlayerExtras.MARKERS)?.let { runCatching { org.json.JSONArray(it) }.getOrNull() }
         roomTitles = i?.getStringArrayListExtra(PlayerExtras.ROOM_TITLES).orEmpty()

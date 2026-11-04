@@ -39,7 +39,9 @@ object Party {
     var roomId by mutableStateOf<String?>(null)
         private set
     val hostName get() = room.hostName
+    val hostKey get() = room.hostKey
     val hostOnly get() = room.hostOnly
+    fun isHost(m: ru.suslikovanora.media.core.party.PartyMember): Boolean = room.isCreator(m)
     val file get() = room.file
     val state get() = room.state
     val members get() = room.members

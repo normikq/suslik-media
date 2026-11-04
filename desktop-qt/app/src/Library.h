@@ -67,6 +67,10 @@ public:
     ApiClient &api() const { return m_api; }
     const QList<LibraryItem> &items() const { return m_items; }
     const LibraryItem *item(qint64 id) const;
+    /// Все версии одного фильма / сериала, сгруппированные groupVersions.
+    QList<core::LibraryItem> versionsOf(qint64 magnetId) const;
+    /// Профиль медиафайла от сервера (/api/tags profiles).
+    std::optional<core::PartyVariant> serverProfile(qint64 magnetId) const;
     /// Раздачи только с озвучкой: в медиатеке их нет, предпросмотру «Озвучки» нужны их файлы.
     const QList<Magnet> &voiceOvers() const { return m_voiceOvers; }
 
@@ -231,6 +235,7 @@ private:
     std::shared_ptr<std::function<void()>> m_classifyStep;
     std::vector<std::function<void()>> m_refreshWaiters;
     int m_tagsRound = 0;
+    QHash<qint64, core::PartyVariant> m_serverProfiles;
 };
 
 } // namespace suslik::app

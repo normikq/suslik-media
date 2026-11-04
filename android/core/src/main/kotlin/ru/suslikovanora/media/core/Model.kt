@@ -727,6 +727,74 @@ fun smartQualityScore(name: String): Int {
     return rScore + vScore + aScore + sScore
 }
 
+fun buildPartyVariant(
+    item: LibraryItem,
+    file: MFile,
+    serverProfile: ru.suslikovanora.media.core.party.PartyVariant? = null
+): ru.suslikovanora.media.core.party.PartyVariant {
+    val key = watchKey(item.m.id, file)
+    if (serverProfile != null && serverProfile.key.isNotBlank() && serverProfile.key == key) {
+        return serverProfile
+    }
+    val combined = "${item.m.name} ${file.name}".trim()
+    val lower = combined.lowercase(Locale.ROOT)
+    fun match(pattern: String): Boolean = Regex(pattern, RegexOption.IGNORE_CASE).containsMatchIn(lower)
+
+    val quality = when {
+        match("""(?:^|[^a-z0-9])(?:2160p|4k|uhd)(?![a-z])|(?:^|\D)3840(?!\d)""") -> "4K"
+        match("""(?:^|\D)1080[pi](?![a-z])|(?:^|\D)1920(?!\d)""") -> "1080p"
+        match("""(?:^|\D)720p(?![a-z])|(?:^|\D)1280(?!\d)""") -> "720p"
+        match("""(?:^|\D)(?:480|576)[pi](?![a-z])|(?:^|[^a-z])dvd""") -> "480p"
+        else -> "1080p"
+    }
+
+    val audio = when {
+        match("""atmos(?![a-z])""") -> "TrueHD Atmos"
+        match("""dts[:._-]?x(?![a-z0-9])""") -> "DTS:X"
+        match("""dts[\s._-]?hd""") -> "DTS-HD MA"
+        match("""(?:^|[^a-z])dts(?![a-z])""") -> "DTS 5.1"
+        match("""dd\+|(?:^|[^a-z])ddp(?![a-z])|(?:^|[^a-z])e[\s._-]?ac[\s._-]?3(?!\d)|dolby\s*digital\s*plus""") -> "DD+"
+        match("""(?:^|[^a-z])ac[\s._-]?3(?!\d)|(?:^|[^a-z])dd[\s._-]?5\.1|(?:^|[^\d.])5\.1(?!\d)""") -> "AC3 5.1"
+        else -> "Stereo"
+    }
+
+    val hwFlags = ArrayList<String>()
+    if (match("""dolby[\s._-]?vision|dovi|(?:^|[^a-z])dv(?![a-z])""")) hwFlags += "dv"
+    if (match("""hdr10\+|hdr10plus|hdr10|(?:^|[^a-z])hdr(?![a-z])""")) hwFlags += "hdr"
+    if (match("""(?:^|[^a-z])dts(?![a-z])""")) hwFlags += "dts"
+
+    val score = smartQualityScore(combined)
+    val sizeBytes = if (file.size > 0) file.size else item.m.size
+    val isSeries = item.playable is Playable.Series
+    val estDuration = if (isSeries) 2700.0 else 6600.0
+    var bitrate = if (sizeBytes > 0) Math.round((sizeBytes * 8.0) / (estDuration * 1_000_000.0) * 10.0) / 10.0 else 0.0
+    if (serverProfile != null && serverProfile.bitrate > 0) bitrate = serverProfile.bitrate
+
+    val parts = ArrayList<String>()
+    parts += quality
+    if ("dv" in hwFlags) parts += "Dolby Vision"
+    else if ("hdr" in hwFlags) parts += "HDR"
+    if (match("""remux""")) parts += "BDRemux"
+    else if (match("""bdrip|brrip|blu[\s._-]?ray""")) parts += "BDRip"
+    else if (match("""web(?:[\s._-]?(?:dl|rip))?""")) parts += "WEB-DL"
+    if (audio != "Stereo") parts += audio
+
+    var label = parts.joinToString(" · ")
+    if (bitrate > 0) label += " (%.1f Мбит/с)".format(Locale.ROOT, bitrate)
+    else if (sizeBytes > 0) label += " (${formatBytes(sizeBytes)})"
+
+    return ru.suslikovanora.media.core.party.PartyVariant(
+        key = key,
+        label = label,
+        quality = quality,
+        audio = audio,
+        bitrate = bitrate,
+        offsetMs = 0L,
+        score = score,
+        hardwareFlags = hwFlags
+    )
+}
+
 fun qualityScore(name: String): Int {
     val lower = name.lowercase(Locale.ROOT)
     return when {

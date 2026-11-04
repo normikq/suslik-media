@@ -1311,9 +1311,8 @@ QString PlayerModel::hostVariantKey() const {
     Party *p = Party::instance();
     if (!p || !p->inRoom()) return QString();
     if (p->isHost()) return m_activeVariantKey;
-    const auto members = p->memberList();
-    for (const auto &m : members) {
-        if (!p->hostName().isEmpty() && m.name == p->hostName()) {
+    for (const auto &m : p->memberList()) {
+        if (p->room().isHost(m)) {
             if (m.variantKey.has_value()) return *m.variantKey;
         }
     }
@@ -1356,8 +1355,33 @@ void PlayerModel::switchVariant(const QString &variantKey) {
                 break;
             }
         }
+        QStringList newAudio;
+        const auto audios = r.json.value(S("audio")).toArray();
+        for (const auto &a : audios) {
+            const QString u = a.toObject().value(S("url")).toString();
+            if (!u.isEmpty()) newAudio << u;
+        }
+        QStringList newSubs;
+        const auto subs = r.json.value(S("subtitles")).toArray();
+        for (const auto &s : subs) {
+            const QString u = s.toObject().value(S("url")).toString();
+            if (!u.isEmpty()) newSubs << u;
+        }
+        Sides newSides;
+        newSides.audio = newAudio;
+        newSides.subs = newSubs;
+        self->m_sidecars.insert(self->m_index, newSides);
+
+        qint64 targetOffsetMs = 0, currentOffsetMs = 0;
+        for (const auto &v : self->m_req.variants) {
+            if (v.key == variantKey) targetOffsetMs = v.offsetMs;
+            if (v.key == self->m_activeVariantKey) currentOffsetMs = v.offsetMs;
+        }
+        const qint64 offsetDiff = targetOffsetMs - currentOffsetMs;
+        const qint64 targetPos = std::max<qint64>(0, curPos + offsetDiff);
+
         if (Party::instance()) Party::instance()->sendVariantChange(variantKey);
-        self->open(newUrl, curPos, self->m_sidecars.value(self->m_index));
+        self->open(newUrl, targetPos, newSides);
         self->emit activeVariantKeyChanged();
         self->emit qualityVariantsChanged();
     });
@@ -1389,6 +1413,9 @@ void PlayerModel::savePos(qint64 t, qint64 len, int i) {
     if (key.isEmpty() || !m_lib || t < 5000) return;
     const bool done = len > 0 && t > len - 15000;
     m_lib->noteWatch(key, done ? len : t, len);
+    if (!m_activeVariantKey.isEmpty() && m_activeVariantKey != key) {
+        m_lib->noteWatch(m_activeVariantKey, done ? len : t, len);
+    }
 }
 
 qint64 PlayerModel::savedPos(int i) const {

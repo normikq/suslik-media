@@ -66,6 +66,10 @@ struct PartyVariant {
     bool operator==(const PartyVariant &o) const = default;
 };
 
+struct LibraryItem;
+struct MFile;
+PartyVariant buildPartyVariant(const LibraryItem &item, const MFile &file, const std::optional<PartyVariant> &serverProfile = std::nullopt);
+
 /// Фильм комнаты: ключ просмотра `magnetId|путь` (тот же, что у прогресса в медиатеке), canonical_id и варианты.
 struct PartyFileRef {
     QString key, title;

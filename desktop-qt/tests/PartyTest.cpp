@@ -566,6 +566,20 @@ private slots:
         QCOMPARE(parsed->variants[0].score, 505);
         QCOMPARE(parsed->variants[1].bitrate, 8.1);
     }
+
+    void buildPartyVariantTest() {
+        const MFile f = testutil::file(0, S("Dune.2021.mkv"), 45000);
+        const Magnet m = testutil::magnet(42, S("Dune.2021.2160p.UHD.Remux.DV.TrueHD.Atmos.mkv"), S("Ready"), 4, 45000000000LL, 45000000000LL, {f});
+        const LibraryItem item = prepareItems({m}).first();
+        const PartyVariant v = buildPartyVariant(item, f);
+
+        QCOMPARE(v.key, S("42|Dune.2021.mkv"));
+        QCOMPARE(v.quality, S("4K"));
+        QCOMPARE(v.audio, S("TrueHD Atmos"));
+        QCOMPARE(v.score, 505);
+        QCOMPARE(v.hardwareFlags, QStringList{S("dv")});
+        QVERIFY(v.bitrate > 0.0);
+    }
 };
 
 QTEST_GUILESS_MAIN(PartyTest)

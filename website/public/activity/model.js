@@ -481,6 +481,62 @@
     return rScore + vScore + aScore + sScore;
   }
 
+  function buildPartyVariant(item, file) {
+    var name = (item && item.m && item.m.name) || '';
+    var filePath = (file && (file.path || file.name)) || '';
+    var combined = (name + ' ' + filePath).trim();
+    var lower = combined.toLowerCase();
+
+    var quality = '1080p';
+    if (/(?:^|[^a-z0-9])(?:2160p|4k|uhd)(?![a-z])|(?:^|\D)3840(?!\d)/i.test(lower)) quality = '4K';
+    else if (/(?:^|\D)1080[pi](?![a-z])|(?:^|\D)1920(?!\d)/i.test(lower)) quality = '1080p';
+    else if (/(?:^|\D)720p(?![a-z])|(?:^|\D)1280(?!\d)/i.test(lower)) quality = '720p';
+    else if (/(?:^|\D)(?:480|576)[pi](?![a-z])|(?:^|[^a-z])dvd/i.test(lower)) quality = '480p';
+
+    var audio = 'Stereo';
+    if (/atmos(?![a-z])/i.test(lower)) audio = 'TrueHD Atmos';
+    else if (/dts[:._-]?x(?![a-z0-9])/i.test(lower)) audio = 'DTS:X';
+    else if (/dts[\s._-]?hd/i.test(lower)) audio = 'DTS-HD MA';
+    else if (/(?:^|[^a-z])dts(?![a-z])/i.test(lower)) audio = 'DTS 5.1';
+    else if (/dd\+|(?:^|[^a-z])ddp(?![a-z])|(?:^|[^a-z])e[\s._-]?ac[\s._-]?3(?!\d)|dolby\s*digital\s*plus/i.test(lower)) audio = 'DD+';
+    else if (/(?:^|[^a-z])ac[\s._-]?3(?!\d)|(?:^|[^a-z])dd[\s._-]?5\.1|(?:^|[^\d.])5\.1(?!\d)/i.test(lower)) audio = 'AC3 5.1';
+
+    var hwFlags = [];
+    if (/dolby[\s._-]?vision|dovi|(?:^|[^a-z])dv(?![a-z])/i.test(lower)) hwFlags.push('dv');
+    if (/hdr10\+|hdr10plus|hdr10|(?:^|[^a-z])hdr(?![a-z])/i.test(lower)) hwFlags.push('hdr');
+    if (/(?:^|[^a-z])dts(?![a-z])/i.test(lower)) hwFlags.push('dts');
+
+    var score = smartQualityScore(combined);
+    var sizeBytes = (file && file.size) || (item && item.m && item.m.size) || 0;
+    var isSeries = item && item.playable && item.playable.kind === 'series';
+    var estDuration = isSeries ? 2700 : 6600;
+    var bitrate = sizeBytes > 0 ? Math.round((sizeBytes * 8) / (estDuration * 1000000) * 10) / 10 : 0.0;
+
+    var parts = [quality];
+    if (hwFlags.indexOf('dv') >= 0) parts.push('Dolby Vision');
+    else if (hwFlags.indexOf('hdr') >= 0) parts.push('HDR');
+    if (/remux/i.test(lower)) parts.push('BDRemux');
+    else if (/bdrip|brrip|blu[\s._-]?ray/i.test(lower)) parts.push('BDRip');
+    else if (/web(?:[\s._-]?(?:dl|rip))?/i.test(lower)) parts.push('WEB-DL');
+    if (audio !== 'Stereo') parts.push(audio);
+
+    var label = parts.join(' · ');
+    if (bitrate > 0) label += ' (' + bitrate.toFixed(1) + ' Мбит/с)';
+    else if (sizeBytes > 0) label += ' (' + formatBytes(sizeBytes) + ')';
+
+    var mId = (item && item.m && item.m.id) || 0;
+    return {
+      key: watchKey(mId, file || {}),
+      label: label,
+      quality: quality,
+      audio: audio,
+      bitrate: bitrate,
+      offset_ms: 0,
+      score: score,
+      hardware_flags: hwFlags
+    };
+  }
+
   function qualityScore(name) {
     var lower = (name || '').toLowerCase();
     if (/2160p|4k|3840/.test(lower)) return 4;
@@ -747,7 +803,7 @@
     parseLibrary: parseLibrary, magnet: magnet, mainVideo: mainVideo, buildPlayable: buildPlayable,
     cleanTitle: cleanTitle, titleKey: titleKey, groupVersions: groupVersions, seriesLine: seriesLine, versionLine: versionLine,
     sortVersions: sortVersions, itemYear: itemYear, itemPart: itemPart, isCollection: isCollection, collectionLabel: collectionLabel,
-    qualityScore: qualityScore, smartQualityScore: smartQualityScore, itemSeasons: itemSeasons, nameSeason: nameSeason,
+    qualityScore: qualityScore, smartQualityScore: smartQualityScore, buildPartyVariant: buildPartyVariant, itemSeasons: itemSeasons, nameSeason: nameSeason,
     formatBytes: formatBytes, statusRu: statusRu, episodeLabel: episodeLabel,
     prepareItems: prepareItems, subtitlesFor: subtitlesFor, externalAudioFor: externalAudioFor,
     isVoiceOverOnly: isVoiceOverOnly, dubLabel: dubLabel, customName: customName, externalChoices: externalChoices, externalIn: externalIn,

@@ -119,6 +119,24 @@ const LibraryItem *Library::item(qint64 id) const {
     return nullptr;
 }
 
+QList<LibraryItem> Library::versionsOf(qint64 magnetId) const {
+    const auto [shown, versionsMap] = groupVersions(m_items, [this](const LibraryItem &i) { return posterPathOf(i); });
+    if (versionsMap.contains(magnetId)) return versionsMap.value(magnetId);
+    for (auto it = versionsMap.constBegin(); it != versionsMap.constEnd(); ++it) {
+        for (const auto &item : it.value()) {
+            if (item.m.id == magnetId) return it.value();
+        }
+    }
+    if (const LibraryItem *single = item(magnetId)) return {*single};
+    return {};
+}
+
+std::optional<core::PartyVariant> Library::serverProfile(qint64 magnetId) const {
+    const auto it = m_serverProfiles.constFind(magnetId);
+    if (it != m_serverProfiles.cend()) return *it;
+    return std::nullopt;
+}
+
 void Library::publish(const QList<Magnet> &list) {
     QList<Magnet> library;
     m_voiceOvers.clear();
@@ -751,6 +769,25 @@ void Library::refreshTags(int round) {
             QStringList list;
             for (const auto &v : it.value().toArray()) list << v.toString();
             m_serverTags.insert(id, list);
+        }
+        const QJsonObject profiles = r.json.value(S("profiles")).toObject();
+        for (auto it = profiles.begin(); it != profiles.end(); ++it) {
+            bool ok = false;
+            const qint64 id = it.key().toLongLong(&ok);
+            if (!ok || !it.value().isObject()) continue;
+            const QJsonObject po = it.value().toObject();
+            core::PartyVariant pv;
+            pv.key = json::str(po, S("key"));
+            pv.label = json::str(po, S("label"));
+            pv.quality = json::str(po, S("resolution"));
+            if (pv.quality.isEmpty()) pv.quality = json::str(po, S("quality"), S("1080p"));
+            pv.audio = json::str(po, S("audio_tech"));
+            if (pv.audio.isEmpty()) pv.audio = json::str(po, S("audio"), S("Stereo"));
+            pv.bitrate = optDouble(po, S("bitrate_mbps"), optDouble(po, S("bitrate"), 0.0));
+            pv.score = int(optDouble(po, S("score"), 0));
+            const auto hf = po.value(S("hardware_flags")).toArray();
+            for (const auto &f : hf) pv.hardwareFlags << f.toString();
+            m_serverProfiles.insert(id, pv);
         }
         bump();
         // сервер разбирает новые фильмы по одному в фоне: пока остались — спросить ещё

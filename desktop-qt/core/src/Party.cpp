@@ -1,5 +1,6 @@
 // Перенос android/core/.../core/party: PartyModels.kt, PartyProtocol.kt, PartySyncEngine.kt.
 #include "suslik/core/Party.h"
+#include "suslik/core/Model.h"
 
 #include <QRegularExpression>
 #include <QUrl>
@@ -553,6 +554,67 @@ qint64 PartySyncEngine::seekRoom(SyncPlayer &player, qint64 target, qint64 now) 
     m_pendingAt = now; m_pendingTo = target; m_pendingT = -1;
     m_seenSeek = player.seekStamp();
     return target;
+}
+
+PartyVariant buildPartyVariant(const LibraryItem &item, const MFile &file, const std::optional<PartyVariant> &serverProfile) {
+    if (serverProfile.has_value() && !serverProfile->key.isEmpty() && serverProfile->key == watchKey(item.m.id, file)) {
+        return *serverProfile;
+    }
+    const QString combined = (item.m.name + QLatin1Char(' ') + file.name).trimmed();
+    const QString l = combined.toLower();
+
+    QString quality = QStringLiteral("1080p");
+    auto match = [&](const char *pat) {
+        return l.contains(QRegularExpression(QString::fromUtf8(pat), QRegularExpression::CaseInsensitiveOption));
+    };
+    if (match(R"((?:^|[^a-z0-9])(?:2160p|4k|uhd)(?![a-z])|(?:^|\D)3840(?!\d))")) quality = QStringLiteral("4K");
+    else if (match(R"((?:^|\D)1080[pi](?![a-z])|(?:^|\D)1920(?!\d))")) quality = QStringLiteral("1080p");
+    else if (match(R"((?:^|\D)720p(?![a-z])|(?:^|\D)1280(?!\d))")) quality = QStringLiteral("720p");
+    else if (match(R"((?:^|\D)(?:480|576)[pi](?![a-z])|(?:^|[^a-z])dvd)")) quality = QStringLiteral("480p");
+
+    QString audio = QStringLiteral("Stereo");
+    if (match(R"(atmos(?![a-z]))")) audio = QStringLiteral("TrueHD Atmos");
+    else if (match(R"(dts[:._-]?x(?![a-z0-9]))")) audio = QStringLiteral("DTS:X");
+    else if (match(R"(dts[\s._-]?hd)")) audio = QStringLiteral("DTS-HD MA");
+    else if (match(R"((?:^|[^a-z])dts(?![a-z]))")) audio = QStringLiteral("DTS 5.1");
+    else if (match(R"(dd\+|(?:^|[^a-z])ddp(?![a-z])|(?:^|[^a-z])e[\s._-]?ac[\s._-]?3(?!\d)|dolby\s*digital\s*plus)")) audio = QStringLiteral("DD+");
+    else if (match(R"((?:^|[^a-z])ac[\s._-]?3(?!\d)|(?:^|[^a-z])dd[\s._-]?5\.1|(?:^|[^\d.])5\.1(?!\d))")) audio = QStringLiteral("AC3 5.1");
+
+    QStringList hwFlags;
+    if (match(R"(dolby[\s._-]?vision|dovi|(?:^|[^a-z])dv(?![a-z]))")) hwFlags << QStringLiteral("dv");
+    if (match(R"(hdr10\+|hdr10plus|hdr10|(?:^|[^a-z])hdr(?![a-z]))")) hwFlags << QStringLiteral("hdr");
+    if (match(R"((?:^|[^a-z])dts(?![a-z]))")) hwFlags << QStringLiteral("dts");
+
+    const int score = smartQualityScore(combined);
+    const qint64 sizeBytes = file.size > 0 ? file.size : item.m.size;
+    const bool isSeries = item.playable.isSeries();
+    const double estDuration = isSeries ? 2700.0 : 6600.0;
+    double bitrate = sizeBytes > 0 ? std::round((sizeBytes * 8.0) / (estDuration * 1000000.0) * 10.0) / 10.0 : 0.0;
+    if (serverProfile.has_value() && serverProfile->bitrate > 0) bitrate = serverProfile->bitrate;
+
+    QStringList parts;
+    parts << quality;
+    if (hwFlags.contains(QStringLiteral("dv"))) parts << QStringLiteral("Dolby Vision");
+    else if (hwFlags.contains(QStringLiteral("hdr"))) parts << QStringLiteral("HDR");
+    if (match(R"(remux)")) parts << QStringLiteral("BDRemux");
+    else if (match(R"(bdrip|brrip|blu[\s._-]?ray)")) parts << QStringLiteral("BDRip");
+    else if (match(R"(web(?:[\s._-]?(?:dl|rip))?)")) parts << QStringLiteral("WEB-DL");
+    if (audio != QStringLiteral("Stereo")) parts << audio;
+
+    QString label = parts.join(QStringLiteral(" · "));
+    if (bitrate > 0) label += QStringLiteral(" (%1 Мбит/с)").arg(QString::number(bitrate, 'f', 1));
+    else if (sizeBytes > 0) label += QStringLiteral(" (%1)").arg(formatBytes(sizeBytes));
+
+    PartyVariant v;
+    v.key = watchKey(item.m.id, file);
+    v.label = label;
+    v.quality = quality;
+    v.audio = audio;
+    v.bitrate = bitrate;
+    v.offsetMs = 0;
+    v.score = score;
+    v.hardwareFlags = hwFlags;
+    return v;
 }
 
 } // namespace suslik::core
