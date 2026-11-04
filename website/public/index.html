@@ -1931,9 +1931,16 @@ function versionLine(m,inSection){
 // Качество и кодек по имени раздачи (itemSpecs на ПК) и метки картинки: «4K • H265 • Dolby Vision»
 function versionSpecs(m){
   const n=String(m.name||"").toLowerCase();
-  const q=/2160p|4k/.test(n)?"4K":/1080p/.test(n)?"1080p":/720p/.test(n)?"720p":"1080p";
-  const c=/x265|hevc|h\.?265/.test(n)?"H265":/x264|h\.?264/.test(n)?"H264":/av1/.test(n)?"AV1":q==="4K"?"H265":"H264";
-  return [q,c,...getItemTags(m).filter(t=>t==="Dolby Vision"||t==="HDR")].join(" • ");
+  const prof=(window.SM&&window.SM.serverProfiles&&window.SM.serverProfiles[m.id])||null;
+  let q=prof&&prof.quality?prof.quality:"";
+  if(!q){
+    if(/2160p|4k|3840/.test(n)) q="4K";
+    else if(/1080[pi]|1920/.test(n)) q="1080p";
+    else if(/720p|1280/.test(n)) q="720p";
+    else if(/480|576|dvd/.test(n)) q="480p";
+  }
+  let c=/av1/.test(n)?"AV1":/x265|hevc|h\.?265/.test(n)?"H265":/x264|h\.?264/.test(n)?"H264":q==="4K"?"H265":"";
+  return [q,c,...getItemTags(m).filter(t=>t==="Dolby Vision"||t==="HDR")].filter(Boolean).join(" • ");
 }
 // Сколько посмотрено: сериал — последняя открытая серия, фильм — его файл
 function versionWatch(m){

@@ -194,31 +194,46 @@ fun itemTypeLabel(item: LibraryItem): String {
     }
 }
 
-fun itemSpecs(item: LibraryItem, mediaStr: String?): Pair<String, String> {
+fun itemSpecs(
+    item: LibraryItem,
+    mediaStr: String?,
+    serverProf: ru.suslikovanora.media.core.party.PartyVariant? = null,
+    dims: Pair<Int, Int> = Pair(0, 0)
+): Pair<String, String> {
     val name = item.m.name.lowercase()
     val str = mediaStr?.lowercase().orEmpty()
 
     val quality = when {
-        str.contains("3840") || str.contains("2160") || name.contains("2160p") || name.contains("4k") -> "4K"
-        str.contains("1920") || str.contains("1080") || name.contains("1080p") -> "1080p"
+        serverProf != null && serverProf.quality.isNotBlank() -> serverProf.quality
+        dims.first >= 3000 || dims.second >= 1600 -> "4K"
+        dims.first >= 1600 || dims.second >= 900 -> "1080p"
+        dims.first >= 1100 || dims.second >= 600 -> "720p"
+        dims.first > 0 || dims.second > 0 -> "480p"
+        str.contains("3840") || str.contains("2160") || name.contains("2160p") || name.contains("4k") || name.contains("uhd") -> "4K"
+        str.contains("1920") || str.contains("1080") || name.contains("1080p") || name.contains("1080i") -> "1080p"
         str.contains("1280") || str.contains("720") || name.contains("720p") -> "720p"
-        else -> "1080p"
+        str.contains("480p") || name.contains("480p") || name.contains("576p") || name.contains("dvd") -> "480p"
+        else -> ""
     }
 
     val codec = when {
+        str.contains("av1") || name.contains("av1") -> "AV1"
         str.contains("hevc") || str.contains("h.265") || str.contains("h265") || name.contains("x265") || name.contains("hevc") || name.contains("h265") || name.contains("h.265") -> "H265"
         str.contains("avc") || str.contains("h.264") || str.contains("h264") || name.contains("x264") || name.contains("h264") || name.contains("h.264") -> "H264"
-        str.contains("av1") || name.contains("av1") -> "AV1"
         quality == "4K" -> "H265"
-        else -> "H264"
+        else -> ""
     }
 
     val fpsMatch = Regex("""(\d+(\.\d+)?)\s*fps""").find(str) ?: Regex("""(\d+(\.\d+)?)\s*fps""").find(name)
-    val fps = fpsMatch?.value ?: "23.98 fps"
+    val fps = fpsMatch?.value.orEmpty()
+
+    val p1 = listOf(quality, codec, fps).filter { it.isNotBlank() }
 
     val brMatch = Regex("""(\d+(\.\d+)?)\s*мбит/с""").find(str)
     val bitrate = if (brMatch != null) {
         brMatch.value
+    } else if (serverProf != null && serverProf.bitrate > 0) {
+        String.format(Locale.ROOT, "%.1f Мбит/с", serverProf.bitrate)
     } else if (item.m.size > 0) {
         val durH = 1.5
         val mbps = (item.m.size * 8.0) / (durH * 3600.0 * 1_000_000.0)
@@ -228,7 +243,8 @@ fun itemSpecs(item: LibraryItem, mediaStr: String?): Pair<String, String> {
     }
 
     val sz = formatBytes(item.m.size)
-    return Pair("$quality • $codec • $fps", "$bitrate • $sz")
+    val p2 = listOf(bitrate, sz).filter { it.isNotBlank() }
+    return Pair(p1.joinToString(" • "), p2.joinToString(" • "))
 }
 
 data class ContinueEntry(
@@ -1097,7 +1113,7 @@ private fun TileDetails(
         Text(store.titleOf(item), color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp, lineHeight = 18.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Text("${itemYear(item)} • ${itemTypeLabel(item)} · ${formatBytes(m.size)}", color = Sm.muted, fontFamily = Onest, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
         if (m.ready && media != null) {
-            val specs = remember(item, media) { itemSpecs(item, media) }
+            val specs = remember(item, media) { itemSpecs(item, media, store.serverProfiles[item.m.id]) }
             Text(specs.first, color = Color(0xFFB0B7C6), fontFamily = Onest, fontSize = 11.5.sp, modifier = Modifier.padding(top = 2.dp))
         }
         val lastNow = last

@@ -228,7 +228,6 @@ PartyVariant parsePartyVariant(const QJsonObject &vo) {
     v.label = json::str(vo, S("label"));
     v.quality = json::str(vo, S("resolution"));
     if (v.quality.isEmpty()) v.quality = json::str(vo, S("quality"));
-    if (v.quality.isEmpty()) v.quality = S("1080p");
     v.audio = json::str(vo, S("audio_tech"));
     if (v.audio.isEmpty()) v.audio = json::str(vo, S("audio"));
     if (v.audio.isEmpty()) v.audio = S("Stereo");

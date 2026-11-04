@@ -164,10 +164,13 @@ PlayerModel::PlayerModel(QObject *parent)
 
         bool changed = false;
         for (auto &v : m_req.variants) {
-            if (v.key == m_activeVariantKey) {
-                if (v.quality.isEmpty()) {
+            if (v.key == m_activeVariantKey || m_req.variants.size() == 1) {
+                if (v.quality.isEmpty() || v.quality != detectedQ) {
+                    const QString oldQ = v.quality;
                     v.quality = detectedQ;
-                    if (!v.label.startsWith(detectedQ)) {
+                    if (!oldQ.isEmpty() && v.label.startsWith(oldQ + QStringLiteral(" · "))) {
+                        v.label = detectedQ + v.label.mid(oldQ.length());
+                    } else if (!v.label.startsWith(detectedQ)) {
                         v.label = detectedQ + QStringLiteral(" · ") + v.label;
                     }
                     changed = true;

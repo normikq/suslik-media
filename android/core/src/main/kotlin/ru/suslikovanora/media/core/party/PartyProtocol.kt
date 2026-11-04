@@ -273,7 +273,7 @@ object PartyProtocol {
                 variants += PartyVariant(
                     key = vKey,
                     label = vObj.optString("label"),
-                    quality = vObj.optString("quality").ifBlank { vObj.optString("resolution", "1080p") },
+                    quality = vObj.optString("quality").ifBlank { vObj.optString("resolution", "") },
                     audio = vObj.optString("audio").ifBlank { vObj.optString("audio_tech", "Stereo") },
                     bitrate = vObj.optDouble("bitrate", vObj.optDouble("bitrate_mbps", 0.0)),
                     offsetMs = vObj.optLong("offset_ms", 0L),

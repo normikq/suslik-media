@@ -105,9 +105,11 @@ private fun VersionRow(v: LibraryItem, store: LibraryStore, inSection: Boolean, 
     val series = v.playable as? Playable.Series
     val watched = if (series != null) store.lastWatched(v.m)?.second
         else (v.playable as? Playable.Movie)?.file?.let { store.watchInfo(watchKey(v.m.id, it)) }
-    val baseSpecs = itemSpecs(v, null).first.split(" • ").take(2).joinToString(" • ")
-    val tags = store.tagsOf(v).filter { it == "Dolby Vision" || it == "HDR" }
-    val specs = if (tags.isNotEmpty()) baseSpecs + " • " + tags.joinToString(" • ") else baseSpecs
+    val serverProf = store.serverProfiles[v.m.id]
+    val specsPair = itemSpecs(v, null, serverProf)
+    val baseSpecs = specsPair.first.split(" • ").filter { it.isNotBlank() && !it.endsWith("fps") }.joinToString(" • ")
+    val tags = store.tagsOf(v).filter { (it == "Dolby Vision" || it == "HDR") && it !in baseSpecs }
+    val specs = listOf(baseSpecs, tags.joinToString(" • ")).filter { it.isNotBlank() }.joinToString(" • ")
 
     // what the release holds (shared versionLine: seasons, films, year) • quality
     val heading = listOf(versionLine(v, inSection), specs).filter { it.isNotBlank() }.joinToString(" • ")

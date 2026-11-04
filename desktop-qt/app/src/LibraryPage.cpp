@@ -74,34 +74,67 @@ QString itemYear(const LibraryItem &item) {
     return S("2024");
 }
 
-std::pair<QString, QString> itemSpecs(const LibraryItem &item, const std::optional<QString> &media) {
+std::pair<QString, QString> itemSpecs(
+    const LibraryItem &item,
+    const std::optional<QString> &media,
+    const std::optional<core::PartyVariant> &serverProf,
+    const std::pair<int, int> &dims
+) {
     const QString name = item.m.name.toLower();
     const QString str = media.value_or(QString()).toLower();
     auto has = [&](const char *a) { return str.contains(S(a)); };
     auto hasN = [&](const char *a) { return name.contains(S(a)); };
+
     QString quality;
-    if (has("3840") || has("2160") || hasN("2160p") || hasN("4k")) quality = S("4K");
-    else if (has("1920") || has("1080") || hasN("1080p")) quality = S("1080p");
-    else if (has("1280") || has("720") || hasN("720p")) quality = S("720p");
-    else quality = S("1080p");
+    if (serverProf.has_value() && !serverProf->quality.isEmpty()) {
+        quality = serverProf->quality;
+    } else if (dims.first > 0 || dims.second > 0) {
+        if (dims.first >= 3000 || dims.second >= 1600) quality = S("4K");
+        else if (dims.first >= 1600 || dims.second >= 900) quality = S("1080p");
+        else if (dims.first >= 1100 || dims.second >= 600) quality = S("720p");
+        else quality = S("480p");
+    } else if (has("3840") || has("2160") || hasN("2160p") || hasN("4k") || hasN("uhd")) {
+        quality = S("4K");
+    } else if (has("1920") || has("1080") || hasN("1080p") || hasN("1080i")) {
+        quality = S("1080p");
+    } else if (has("1280") || has("720") || hasN("720p")) {
+        quality = S("720p");
+    } else if (has("720x480") || has("720x576") || hasN("480p") || hasN("576p") || hasN("dvd")) {
+        quality = S("480p");
+    }
+
     QString codec;
-    if (has("hevc") || has("h.265") || has("h265") || hasN("x265") || hasN("hevc") || hasN("h265") || hasN("h.265")) codec = S("H265");
+    if (has("av1") || hasN("av1")) codec = S("AV1");
+    else if (has("hevc") || has("h.265") || has("h265") || hasN("x265") || hasN("hevc") || hasN("h265") || hasN("h.265")) codec = S("H265");
     else if (has("avc") || has("h.264") || has("h264") || hasN("x264") || hasN("h264") || hasN("h.264")) codec = S("H264");
-    else if (has("av1") || hasN("av1")) codec = S("AV1");
-    else codec = quality == QLatin1String("4K") ? S("H265") : S("H264");
+    else if (quality == QLatin1String("4K")) codec = S("H265");
+
     static const QRegularExpression fpsRe(S("(\\d+(\\.\\d+)?)\\s*fps"));
     auto fm = fpsRe.match(str);
     if (!fm.hasMatch()) fm = fpsRe.match(name);
-    const QString fps = fm.hasMatch() ? fm.captured(0) : S("23.98 fps");
+    const QString fps = fm.hasMatch() ? fm.captured(0) : QString();
+
+    QStringList p1;
+    if (!quality.isEmpty()) p1 << quality;
+    if (!codec.isEmpty()) p1 << codec;
+    if (!fps.isEmpty()) p1 << fps;
+
     static const QRegularExpression brRe(S("(\\d+(\\.\\d+)?)\\s*мбит/с"));
     const auto bm = brRe.match(str);
     QString bitrate;
     if (bm.hasMatch()) bitrate = bm.captured(0);
-    else if (item.m.size > 0) {
+    else if (serverProf.has_value() && serverProf->bitrate > 0) {
+        bitrate = QString::number(serverProf->bitrate, 'f', 1) + S(" Мбит/с");
+    } else if (item.m.size > 0) {
         const double approx = std::clamp(item.m.size * 8.0 / (7200.0 * 1000000.0), 8.0, 75.0);
         bitrate = QString::asprintf(tx(S("library.f_mbit_s")).toUtf8().constData(), approx);
     } else bitrate = tx(S("library.mbit_s_2"));
-    return {quality + S(" • ") + codec + S(" • ") + fps, bitrate + S(" • ") + formatBytes(item.m.size)};
+
+    QStringList p2;
+    if (!bitrate.isEmpty()) p2 << bitrate;
+    if (item.m.size > 0) p2 << formatBytes(item.m.size);
+
+    return {p1.join(S(" • ")), p2.join(S(" • "))};
 }
 
 QStringList collapseTags(const QStringList &all) {
@@ -199,7 +232,26 @@ QVariantMap LibraryPage::tileOf(const LibraryItem &item, const QList<LibraryItem
         media = m_lib->cachedMediaLine(m.id, *cur);
         if (!media && m.ready()) const_cast<Library *>(m_lib)->requestMediaLine(m.id, *cur);
     }
-    const auto specs = itemSpecs(item, media);
+    const auto serverProf = m_lib->serverProfile(m.id);
+    auto dims = cur ? m_lib->cachedMediaDimensions(m.id, cur->path) : std::pair{0, 0};
+    if (dims.first <= 0 && dims.second <= 0 && cur) {
+        const QString lower = (item.m.name + QLatin1Char(' ') + cur->name).toLower();
+        if (lower.contains(S("2160p")) || lower.contains(S("4k")) || lower.contains(S("3840"))) {
+            dims = {3840, 2160};
+            const_cast<Library *>(m_lib)->saveMediaDimensions(m.id, cur->path, 3840, 2160);
+        } else if (lower.contains(S("1080p")) || lower.contains(S("1080i")) || lower.contains(S("1920"))) {
+            dims = {1920, 1080};
+            const_cast<Library *>(m_lib)->saveMediaDimensions(m.id, cur->path, 1920, 1080);
+        } else if (lower.contains(S("720p")) || lower.contains(S("1280"))) {
+            dims = {1280, 720};
+            const_cast<Library *>(m_lib)->saveMediaDimensions(m.id, cur->path, 1280, 720);
+        } else if (serverProf.has_value() && !serverProf->quality.isEmpty()) {
+            if (serverProf->quality == S("4K")) { dims = {3840, 2160}; const_cast<Library *>(m_lib)->saveMediaDimensions(m.id, cur->path, 3840, 2160); }
+            else if (serverProf->quality == S("1080p")) { dims = {1920, 1080}; const_cast<Library *>(m_lib)->saveMediaDimensions(m.id, cur->path, 1920, 1080); }
+            else if (serverProf->quality == S("720p")) { dims = {1280, 720}; const_cast<Library *>(m_lib)->saveMediaDimensions(m.id, cur->path, 1280, 720); }
+        }
+    }
+    const auto specs = itemSpecs(item, media, serverProf, dims);
     t[S("specs1")] = specs.first;
     t[S("specs2")] = specs.second;
     // полоска внизу: прогресс просмотра или загрузки
@@ -446,9 +498,41 @@ QVariantList LibraryPage::versionRows(const QVariantList &ids) const {
             std::optional<WatchInfo> w;
             if (v.playable.isSeries()) { if (auto lw = m_lib->lastWatched(v.m)) w = lw->second; }
             else if (v.playable.isMovie()) w = m_lib->watchInfo(watchKey(v.m.id, v.playable.file));
-            QStringList base = itemSpecs(v, std::nullopt).first.split(S(" • ")).mid(0, 2);
-            for (const QString &t : m_lib->tagsOf(v))
-                if (t == S("Dolby Vision") || t == S("HDR")) base << t;
+            const auto cur = currentFile(v);
+            std::optional<QString> media;
+            if (cur) {
+                media = m_lib->cachedMediaLine(v.m.id, *cur);
+                if (!media && v.m.ready()) const_cast<Library *>(m_lib)->requestMediaLine(v.m.id, *cur);
+            }
+            const auto serverProf = m_lib->serverProfile(v.m.id);
+            auto dims = cur ? m_lib->cachedMediaDimensions(v.m.id, cur->path) : std::pair{0, 0};
+            if (dims.first <= 0 && dims.second <= 0 && cur) {
+                const QString lower = (v.m.name + QLatin1Char(' ') + cur->name).toLower();
+                if (lower.contains(S("2160p")) || lower.contains(S("4k")) || lower.contains(S("3840"))) {
+                    dims = {3840, 2160};
+                    const_cast<Library *>(m_lib)->saveMediaDimensions(v.m.id, cur->path, 3840, 2160);
+                } else if (lower.contains(S("1080p")) || lower.contains(S("1080i")) || lower.contains(S("1920"))) {
+                    dims = {1920, 1080};
+                    const_cast<Library *>(m_lib)->saveMediaDimensions(v.m.id, cur->path, 1920, 1080);
+                } else if (lower.contains(S("720p")) || lower.contains(S("1280"))) {
+                    dims = {1280, 720};
+                    const_cast<Library *>(m_lib)->saveMediaDimensions(v.m.id, cur->path, 1280, 720);
+                } else if (serverProf.has_value() && !serverProf->quality.isEmpty()) {
+                    if (serverProf->quality == S("4K")) { dims = {3840, 2160}; const_cast<Library *>(m_lib)->saveMediaDimensions(v.m.id, cur->path, 3840, 2160); }
+                    else if (serverProf->quality == S("1080p")) { dims = {1920, 1080}; const_cast<Library *>(m_lib)->saveMediaDimensions(v.m.id, cur->path, 1920, 1080); }
+                    else if (serverProf->quality == S("720p")) { dims = {1280, 720}; const_cast<Library *>(m_lib)->saveMediaDimensions(v.m.id, cur->path, 1280, 720); }
+                }
+            }
+
+            const auto specs = itemSpecs(v, media, serverProf, dims);
+            QStringList base;
+            for (const QString &part : specs.first.split(S(" • "))) {
+                if (!part.trimmed().isEmpty() && !part.endsWith(S("fps"))) base << part;
+            }
+            for (const QString &t : m_lib->tagsOf(v)) {
+                if ((t == S("Dolby Vision") || t == S("HDR")) && !base.contains(t)) base << t;
+            }
+
             QStringList heading;
             for (const QString &h : {versionLine(v, sec.title.has_value()), base.join(S(" • "))})
                 if (!h.trimmed().isEmpty()) heading << h;

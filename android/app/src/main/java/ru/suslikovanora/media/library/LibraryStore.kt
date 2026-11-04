@@ -475,7 +475,7 @@ class LibraryStore(context: Context) {
                 serverProfiles[id] = ru.suslikovanora.media.core.party.PartyVariant(
                     key = p.optString("key"),
                     label = p.optString("label"),
-                    quality = p.optString("resolution").ifBlank { p.optString("quality", "1080p") },
+                    quality = p.optString("resolution").ifBlank { p.optString("quality", "") },
                     audio = p.optString("audio_tech").ifBlank { p.optString("audio", "Stereo") },
                     bitrate = p.optDouble("bitrate_mbps", p.optDouble("bitrate", 0.0)),
                     offsetMs = p.optLong("offset_ms", 0L),

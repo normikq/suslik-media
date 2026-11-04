@@ -401,9 +401,15 @@
   function pickVersion(title, versions) {
     // versions уже упорядочены groupVersions (sortVersions)
     dialog(tr('library.pick_version_title'), title + ' · ' + versionsWord(versions.length), versions.map(function (v) {
-      var q = /2160p|4k/i.test(v.m.name) ? '4K' : /720p/i.test(v.m.name) ? '720p' : '1080p';
+      var prof = state.serverProfiles && state.serverProfiles[v.m.id];
+      var q = '';
+      if (prof && prof.quality) q = prof.quality;
+      else if (/2160p|4k|3840/i.test(v.m.name)) q = '4K';
+      else if (/1080[pi]|1920/i.test(v.m.name)) q = '1080p';
+      else if (/720p|1280/i.test(v.m.name)) q = '720p';
+      else if (/480|576|dvd/i.test(v.m.name)) q = '480p';
       var line = model.versionLine(v); // сезоны / фильмы сборника / год (versionLine в Model.kt)
-      var head = (line ? line + ' • ' : '') + q;
+      var head = [line, q].filter(Boolean).join(' • ');
       return { text: head + ' · ' + model.formatBytes(v.m.size) + ' · ' + shorten(v.m.name, 60), run: function () { details(v); } };
     }), 'versions');
   }

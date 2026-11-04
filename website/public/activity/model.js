@@ -485,6 +485,7 @@
   function buildPartyVariant(item, file, serverProfile, width, height) {
     if (serverProfile && serverProfile.key && serverProfile.key === watchKey((item && item.m && item.m.id) || 0, file || {})) {
       var prof = Object.assign({}, serverProfile);
+      prof.quality = prof.quality || prof.resolution || '';
       if (!prof.quality && (width || height)) {
         if (width >= 3000 || height >= 1600) prof.quality = '4K';
         else if (width >= 1600 || height >= 900) prof.quality = '1080p';
