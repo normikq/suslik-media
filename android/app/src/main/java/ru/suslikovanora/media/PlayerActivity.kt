@@ -761,7 +761,7 @@ class PlayerActivity : ComponentActivity() {
                     val prefMag = fk?.let { sp.getString("vmagnet:$it", null) }
                     val prefQ = fk?.let { sp.getString("vquality:$it", null) } ?: sp.getString("vquality:*", null)
                     val targetVar = (if (!prefMag.isNullOrBlank()) newVars.find { it.key.substringBefore('|') == prefMag } else null)
-                        ?: (if (!prefQ.isNullOrBlank()) newVars.find { it.resolution == prefQ || it.name == prefQ } else null)
+                        ?: (if (!prefQ.isNullOrBlank()) newVars.find { it.quality == prefQ || it.label == prefQ } else null)
                     if (targetVar != null && targetVar.key != newKey) {
                         ui.activeVariantKey = targetVar.key
                         switchVariant(targetVar.key)
@@ -1602,7 +1602,7 @@ class PlayerActivity : ComponentActivity() {
                 if (currentVariant != null && currentVariant.bitrate > 0) {
                     supervisor.bitrateMbps = currentVariant.bitrate
                 }
-                val qv = currentVariant?.let { if (it.resolution.isNotBlank()) it.resolution else it.name }
+                val qv: String? = currentVariant?.let { if (it.quality.isNotBlank()) it.quality else it.label }
                 if (!qv.isNullOrBlank()) {
                     val sp = getSharedPreferences("player_ui", Context.MODE_PRIVATE)
                     val fk = ru.suslikovanora.media.core.sync.WatchSync.filmKeyOf(watchProgress.currentWatchKey())
