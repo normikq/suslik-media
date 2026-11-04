@@ -22,8 +22,11 @@
     find: { mode: 'library', q: '', asked: '', server: null, serverErr: '', providers: [], pc: null, busy: 0, notes: {},
       page: 0, filtersOpen: false, f: null },
     stream: null, streamOk: false, pollTimer: 0, retry: 0,
-    // медиатека: категория и сортировка (помнятся в браузере)
+    // библиотека: категория и сортировка (помнятся в браузере)
     lib: { cat: 'all', sort: 'new' },
+    // моя медиатека: категория и сортировка
+    mineLib: { cat: 'all', sort: 'new' },
+    mineQuery: '',
     // «Посоветовать фильм»: POST /api/search/ai-discovery (Gemini + TMDB, docs/AI-DISCOVERY.md)
     ai: { q: '', asked: '', busy: 0, items: null, err: '' },
     inviteFallback: false
@@ -32,6 +35,11 @@
     var savedLib = JSON.parse(localStorage.getItem('sm.act.lib') || '{}') || {};
     if (CATS.some(function (c) { return c[0] === savedLib.cat; })) S.lib.cat = savedLib.cat;
     if (SORTS.some(function (c) { return c[0] === savedLib.sort; })) S.lib.sort = savedLib.sort;
+  } catch (e) { /* без хранилища */ }
+  try {
+    var savedMine = JSON.parse(localStorage.getItem('sm.act.mineLib') || '{}') || {};
+    if (CATS.some(function (c) { return c[0] === savedMine.cat; })) S.mineLib.cat = savedMine.cat;
+    if (SORTS.some(function (c) { return c[0] === savedMine.sort; })) S.mineLib.sort = savedMine.sort;
   } catch (e) { /* без хранилища */ }
 
   // ---- значки: белые линии, как в приложениях ----
@@ -49,6 +57,7 @@
     users: '<circle cx="9" cy="8" r="3.4"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M15.5 4.8a3.4 3.4 0 010 6.4M17.5 14.3c2 .9 3.5 3 3.5 5.7"/>',
     film: '<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M7.5 4v16M16.5 4v16M3 9h4.5M3 15h4.5M16.5 9H21M16.5 15H21"/>',
     grid: '<rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/>',
+    bookmark: '<path d="M6 3h12v18l-6-4-6 4z"/>',
     copy: '<rect x="8.5" y="8.5" width="11.5" height="11.5" rx="2.2"/><path d="M15.5 8.5V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7.5a2 2 0 002 2h2.5"/>',
     loading: '<path d="M12 3a9 9 0 109 9"/>',
     globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.6 4 5.8 4 9s-1.4 6.4-4 9c-2.6-2.6-4-5.8-4-9s1.4-6.4 4-9z"/>',
@@ -457,10 +466,18 @@
     try { localStorage.setItem('sm.act.lib', JSON.stringify(S.lib)); } catch (e) { /* без хранилища */ }
     render();
   }
-  /** Плитки медиатеки после поиска, категории и сортировки. */
-  function libraryList() {
-    var q = S.query.trim().toLowerCase(), cat = S.lib.cat, sort = S.lib.sort;
-    var list = S.shown.filter(function (it) {
+  function setMineLib(k, v) {
+    S.mineLib[k] = v;
+    try { localStorage.setItem('sm.act.mineLib', JSON.stringify(S.mineLib)); } catch (e) { /* без хранилища */ }
+    render();
+  }
+  /** Плитки библиотеки после поиска, категории и сортировки. */
+  function libraryList(mineOnly) {
+    var q = (mineOnly ? S.mineQuery : S.query).trim().toLowerCase(),
+        cat = mineOnly ? S.mineLib.cat : S.lib.cat,
+        sort = mineOnly ? S.mineLib.sort : S.lib.sort;
+    var source = mineOnly ? S.shown.filter(function (it) { return it.m.mine; }) : S.shown;
+    var list = source.filter(function (it) {
       if (q && it.searchText.indexOf(q) < 0 && titleOf(it).toLowerCase().indexOf(q) < 0) return false;
       return cat === 'all' || categoryOf(it) === cat;
     });
@@ -476,21 +493,29 @@
     posters.classify(S.shown, function () {
       presence.update();
       var el = document.activeElement;
-      if (S.tab !== 'library' || S.find.mode !== 'library' || (el && el.tagName === 'SELECT')) return;
+      if ((S.tab !== 'library' && S.tab !== 'mine') || S.find.mode !== 'library' || (el && el.tagName === 'SELECT')) return;
       // Пришли жанры и рейтинг: перерисовать только плитки, поле поиска и фокус в нём не трогаем
-      var box = document.getElementById('lib-results');
-      if (box && !S.sheet) box.replaceWith(libResults()); else render();
+      if (S.tab === 'mine') {
+        var box = document.getElementById('mine-results');
+        if (box && !S.sheet) box.replaceWith(mineResults()); else render();
+      } else {
+        var box = document.getElementById('lib-results');
+        if (box && !S.sheet) box.replaceWith(libResults()); else render();
+      }
     });
   }
   function randomFrom(list, not) {
     var pool = list.length > 1 && not ? list.filter(function (it) { return it !== not; }) : list;
     return pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
   }
-  /** «Случайный фильм»: из того, что видно в медиатеке (поиск и категория). */
-  function rollRandom(not) {
-    var list = libraryList();
-    if (!list.length) { toast('В медиатеке нечего выбрать: смените категорию или поиск.', true); return; }
-    openSheet(randomFrom(list, not), { random: true });
+  /** «Случайный фильм»: из того, что видно в библиотеке или моей медиатеке (поиск и категория). */
+  function rollRandom(not, mineOnly) {
+    var list = libraryList(mineOnly);
+    if (!list.length) {
+      toast(mineOnly ? 'В вашей медиатеке нечего выбрать: смените категорию или поиск.' : 'В библиотеке нечего выбрать: смените категорию или поиск.', true);
+      return;
+    }
+    openSheet(randomFrom(list, not), { random: true, mine: !!mineOnly });
   }
 
   // ---- поток событий комнаты (с переходом на опрос, если прокси Discord держит поток) ----
@@ -595,7 +620,7 @@
     if (room.state && room.state.server_time) noteServerTime(room.state.server_time);
     S.room = room;
     var key = room.file ? room.file.key : null;
-    if (key && key !== prevKey && prevKey !== null && S.tab === 'library' && !isHost()) S.tab = 'now';
+    if (key && key !== prevKey && prevKey !== null && (S.tab === 'library' || S.tab === 'mine') && !isHost()) S.tab = 'now';
     render();
   }
 
@@ -674,9 +699,10 @@
     ]);
     var page = h('div', { class: 'page' });
     if (S.tab === 'library') page.appendChild(viewLibrary());
+    else if (S.tab === 'mine') page.appendChild(viewMine());
     else if (S.tab === 'poll') page.appendChild(viewPoll());
     else page.appendChild(viewNow());
-    var focusId = document.activeElement && document.activeElement.id, focusSearch = focusId === 'q' || focusId === 'aiq';
+    var focusId = document.activeElement && document.activeElement.id, focusSearch = focusId === 'q' || focusId === 'mine-q' || focusId === 'aiq';
     var caret = focusSearch ? document.activeElement.selectionStart : 0;
     app.replaceChildren(top, page);
     if (S.sheet) app.appendChild(viewSheet());
@@ -691,13 +717,19 @@
 
   function tabs() {
     var n = S.room.candidates ? S.room.candidates.length : 0;
-    function tab(id, ico, text, badge) {
+    function tab(id, ico, text, badge, shortText) {
       return h('button', { class: 'tab' + (S.tab === id ? ' on' : ''), type: 'button', on: { click: function () { S.tab = id; render(); } } },
-        [icon(ico), text, badge ? h('span', { class: 'badge', text: String(badge) }) : null]);
+        [
+          icon(ico),
+          shortText ? h('span', { class: 'tab-long', text: text }) : text,
+          shortText ? h('span', { class: 'tab-short', text: shortText }) : null,
+          badge ? h('span', { class: 'badge', text: String(badge) }) : null
+        ]);
     }
     return h('div', { class: 'tabs' }, [
       tab('now', 'film', 'Сейчас'),
-      tab('library', 'grid', 'Медиатека'),
+      tab('library', 'grid', 'Библиотека'),
+      tab('mine', 'bookmark', 'Моя медиатека', null, 'Мои'),
       tab('poll', S.room.spin || reel ? 'dice' : 'vote', S.room.spin || reel ? 'Рулетка' : S.room.poll ? 'Голосуем' : 'Голосование', S.room.poll || S.room.spin || reel ? '!' : n)
     ]);
   }
@@ -741,11 +773,11 @@
         h('div', { class: 'now-label' }, [icon('film'), 'Сейчас в комнате']),
         h('h1', { class: 'now-title', text: 'Фильм ещё не выбран' }),
         h('div', { class: 'now-sub', text: host
-          ? 'Выберите фильм в медиатеке и нажмите «Включить в комнате» — или соберите варианты и устройте голосование.'
-          : 'Ведущий — ' + (r.host_name || 'ведущий') + '. Предложите фильм из медиатеки: ведущий может устроить голосование.' }),
+          ? 'Выберите фильм в библиотеке и нажмите «Включить в комнате» — или соберите варианты и устройте голосование.'
+          : 'Ведущий — ' + (r.host_name || 'ведущий') + '. Предложите фильм из библиотеки: ведущий может устроить голосование.' }),
         h('div', { class: 'spacer' }),
         h('div', { class: 'row' }, [
-          btn('lamp', 'grid', host ? 'Выбрать в медиатеке' : 'Предложить фильм', function () { S.tab = 'library'; S.find.mode = 'library'; render(); }),
+          btn('lamp', 'grid', host ? 'Выбрать в библиотеке' : 'Предложить фильм', function () { S.tab = 'library'; S.find.mode = 'library'; render(); }),
           btn('', 'dice', 'Случайный фильм', function () { rollRandom(); }),
           btn('', 'sparkles', 'Посоветовать фильм', function () { S.tab = 'library'; S.find.mode = 'ai'; render(); })
         ])
@@ -1069,7 +1101,7 @@
       } } }, [icon(ico), text]);
     }
     var modes = h('div', { class: 'chips' }, [
-      mode('library', 'grid', 'В медиатеке'),
+      mode('library', 'grid', 'В библиотеке'),
       mode('trackers', 'globe', 'На трекерах', function () { if (!F.q && S.query) F.q = S.query; }),
       mode('ai', 'sparkles', 'Посоветовать')
     ]);
@@ -1083,6 +1115,7 @@
     var name = titleOf(it), poster = h('div', { class: 'poster' }, [h('span', { class: 'poster-title', text: name })]);
     var cand = S.room.candidates && S.room.candidates.some(function (c) { return Number(c.key.split('|')[0]) === it.m.id; });
     if (cand) poster.appendChild(h('span', { class: 'mark tag lamp' }, [icon('vote'), 'В списке']));
+    if (it.m.mine) poster.appendChild(h('span', { class: 'mark-mine' + (cand ? ' shifted' : ''), title: 'В моей медиатеке' }, [icon('bookmark')]));
     var rating = ratingOf(it);
     if (rating) poster.appendChild(h('span', { class: 'rating' }, [icon('star'), rating.toFixed(1)]));
     posterInto(poster, it);
@@ -1105,8 +1138,8 @@
     if (!list.length) return null;
     return h('div', { class: 'panel' }, [
       h('div', { class: 'row', style: 'margin-bottom:12px' }, [
-        h('div', { class: 'h', style: 'margin:0', text: 'Новое в медиатеке' }), h('div', { class: 'spacer' }),
-        btn('small', 'grid', 'Вся медиатека', function () { S.tab = 'library'; S.find.mode = 'library'; render(); })
+        h('div', { class: 'h', style: 'margin:0', text: 'Новое в библиотеке' }), h('div', { class: 'spacer' }),
+        btn('small', 'grid', 'Вся библиотека', function () { S.tab = 'library'; S.find.mode = 'library'; render(); })
       ]),
       h('div', { class: 'rail' }, list.map(function (it) { return tileOf(it, true); }))
     ]);
@@ -1124,29 +1157,75 @@
     }, SEARCH_MS);
   }
   function libResults() {
-    var list = libraryList(), cat = S.lib.cat;
+    var list = libraryList(false), cat = S.lib.cat;
     var tiles = list.slice(0, 240).map(function (it) { return tileOf(it, false); });
     // Мультфильмы, аниме и рейтинг знает TMDB: пока сведения не пришли, список неполный — говорим об этом
     var pending = posters.pendingMeta(), needMeta = cat === 'cartoon' || cat === 'anime' || S.lib.sort === 'rating';
     return h('div', { id: 'lib-results' }, [
       needMeta && pending ? h('div', { class: 'small muted find-status', text: 'Уточняем жанры и рейтинг по TMDB: осталось ' + pending + '…' }) : null,
-      tiles.length ? h('div', { class: 'tiles' }, tiles) : h('div', { class: 'empty', text: S.query.trim() || cat !== 'all' ? 'Ничего не нашлось.' : 'Медиатека пуста.' })
+      tiles.length ? h('div', { class: 'tiles' }, tiles) : h('div', { class: 'empty', text: S.query.trim() || cat !== 'all' ? 'Ничего не нашлось.' : 'Библиотека пуста.' })
     ]);
   }
 
   function viewMediaLibrary() {
     var cat = S.lib.cat;
-    var input = h('input', { id: 'q', type: 'search', placeholder: 'Поиск по медиатеке', value: S.query, autocomplete: 'off',
+    var input = h('input', { id: 'q', type: 'search', placeholder: 'Поиск по библиотеке', value: S.query, autocomplete: 'off',
       on: { input: onSearchInput } });
     return h('div', {}, [
       h('div', { class: 'search-row' }, [
         h('label', { class: 'search' }, [icon('search'), input]),
-        btn('', 'dice', null, function () { rollRandom(); }, { title: 'Случайный фильм из того, что видно' })
+        btn('', 'dice', null, function () { rollRandom(null, false); }, { title: 'Случайный фильм из того, что видно' })
       ]),
       h('div', { class: 'chips presets' }, CATS.map(function (c) {
         return h('button', { class: 'chip' + (cat === c[0] ? ' on' : ''), type: 'button', on: { click: function () { setLib('cat', c[0]); } } }, [c[1]]);
       }).concat([h('div', { class: 'grow' }), select(S.lib.sort, SORTS, function (v) { setLib('sort', v); }, 'Сортировка')])),
       libResults()
+    ]);
+  }
+
+  var mineSearchTimer = 0;
+  function onMineSearchInput(e) {
+    S.mineQuery = e.target.value;
+    clearTimeout(mineSearchTimer);
+    mineSearchTimer = setTimeout(function () {
+      var el = document.getElementById('mine-results');
+      if (el) el.replaceWith(mineResults()); else render();
+    }, SEARCH_MS);
+  }
+  function mineResults() {
+    var list = libraryList(true), cat = S.mineLib.cat;
+    var totalMine = S.shown.filter(function (it) { return it.m.mine; }).length;
+    var tiles = list.slice(0, 240).map(function (it) { return tileOf(it, false); });
+    var pending = posters.pendingMeta(), needMeta = cat === 'cartoon' || cat === 'anime' || S.mineLib.sort === 'rating';
+    var emptyEl;
+    if (!totalMine) {
+      emptyEl = h('div', { class: 'empty empty-mine' }, [
+        h('div', { class: 'empty-mine-icon' }, [icon('bookmark')]),
+        h('div', { class: 'empty-mine-title', text: 'В «Моей медиатеке» пока пусто' }),
+        h('div', { class: 'empty-mine-sub', text: 'Нажмите значок закладки на карточке фильма в библиотеке, чтобы добавить его в свою подборку.' }),
+        btn('small blue', 'grid', 'Перейти в библиотеку', function () { S.tab = 'library'; render(); })
+      ]);
+    } else {
+      emptyEl = h('div', { class: 'empty', text: 'Ничего не нашлось.' });
+    }
+    return h('div', { id: 'mine-results' }, [
+      needMeta && pending ? h('div', { class: 'small muted find-status', text: 'Уточняем жанры и рейтинг по TMDB: осталось ' + pending + '…' }) : null,
+      tiles.length ? h('div', { class: 'tiles' }, tiles) : emptyEl
+    ]);
+  }
+  function viewMine() {
+    var cat = S.mineLib.cat;
+    var input = h('input', { id: 'mine-q', type: 'search', placeholder: 'Поиск по моей медиатеке', value: S.mineQuery, autocomplete: 'off',
+      on: { input: onMineSearchInput } });
+    return h('div', {}, [
+      h('div', { class: 'search-row' }, [
+        h('label', { class: 'search' }, [icon('search'), input]),
+        btn('', 'dice', null, function () { rollRandom(null, true); }, { title: 'Случайный фильм из моей медиатеки' })
+      ]),
+      h('div', { class: 'chips presets' }, CATS.map(function (c) {
+        return h('button', { class: 'chip' + (cat === c[0] ? ' on' : ''), type: 'button', on: { click: function () { setMineLib('cat', c[0]); } } }, [c[1]]);
+      }).concat([h('div', { class: 'grow' }), select(S.mineLib.sort, SORTS, function (v) { setMineLib('sort', v); }, 'Сортировка')])),
+      mineResults()
     ]);
   }
 
@@ -1280,7 +1359,7 @@
 
   function openSheet(it, opts) {
     var versions = S.versions[it.m.id] || [it];
-    S.sheet = { versions: versions, v: 0, season: null, det: null, random: !!(opts && opts.random), roll: Date.now() };
+    S.sheet = { versions: versions, v: 0, season: null, det: null, random: !!(opts && opts.random), mine: !!(opts && opts.mine), roll: Date.now() };
     var sh = S.sheet;
     posters.details(versions[0]).then(function (d) { if (S.sheet === sh) { sh.det = d; render(); } });
     render();
@@ -1290,6 +1369,24 @@
     if (!min) return '';
     var t = min >= 60 ? Math.floor(min / 60) + ' ч' + (min % 60 ? ' ' + min % 60 + ' мин' : '') : min + ' мин';
     return series ? 'серия ~' + t : t;
+  }
+
+  function toggleMine(it) {
+    var next = !it.m.mine;
+    it.m.mine = next;
+    var vers = S.versions[it.m.id] || [it];
+    vers.forEach(function (v) { if (v && v.m) v.m.mine = next; });
+    S.items.forEach(function (x) { if (x.m && x.m.id === it.m.id) x.m.mine = next; });
+    render();
+    api('api/shelf', { id: it.m.id, on: next }).then(function () {
+      toast(next ? 'Добавлено в мою медиатеку' : 'Удалено из моей медиатеки');
+    }).catch(function (e) {
+      it.m.mine = !next;
+      vers.forEach(function (v) { if (v && v.m) v.m.mine = !next; });
+      S.items.forEach(function (x) { if (x.m && x.m.id === it.m.id) x.m.mine = !next; });
+      render();
+      toast('Не удалось обновить: ' + errText(e), true);
+    });
   }
 
   function viewSheet() {
@@ -1329,7 +1426,8 @@
           one && host && oneKey !== curKey ? btn('lamp', 'play', 'Включить в комнате', function () { putEntry(it, one); }) : null,
           one && !busy && !oneIn ? btn('', 'vote', 'Предложить', function () { suggest(it, one); }) : null,
           oneIn ? h('span', { class: 'tag', text: 'В списке' }) : null,
-          sh.random ? btn('', 'dice', 'Крутить ещё', function () { rollRandom(it); }) : null
+          btn(it.m.mine ? 'blue' : '', 'bookmark', it.m.mine ? 'Из моей медиатеки' : 'В мою медиатеку', function () { toggleMine(it); }),
+          sh.random ? btn('', 'dice', 'Крутить ещё', function () { rollRandom(it, sh.mine); }) : null
         ])
       ]), btn('icon close', 'close', null, close, { title: 'Закрыть' })])
     ];
@@ -1431,7 +1529,7 @@
       head = h('div', { class: 'row' }, [
         h('div', {}, [h('div', { class: 'h', text: 'Что посмотреть?' }), h('div', { class: 'muted', text: host
           ? 'Когда наберётся 2–4 варианта, начните голосование (45 секунд) или доверьтесь рулетке — победитель включится у всех.'
-          : 'Предлагайте фильмы из медиатеки — ведущий запустит голосование или рулетку.' })]),
+          : 'Предлагайте фильмы из библиотеки — ведущий запустит голосование или рулетку.' })]),
         h('div', { class: 'spacer' }),
         host ? btn('lamp', 'vote', 'Начать голосование', function () { roomCall('poll'); }, { disabled: cands.length < 2 }) : null,
         host ? btn('', 'dice', 'Рулетка', function () { roomCall('roulette', { seconds: spinSeconds() }); }, { disabled: cands.length < 2, title: 'Случайный фильм из предложенных' }) : null,
@@ -1442,7 +1540,7 @@
       ]);
     }
     return h('div', { class: 'panel' }, [head, h('div', { style: 'height:14px' }),
-      rows.length ? h('div', { class: 'cands' + (reel ? ' reel' : '') + (landed ? ' landed' : '') }, rows) : h('div', { class: 'empty', text: 'Пока ничего не предложено. Откройте фильм в медиатеке и нажмите «Предложить».' })]);
+      rows.length ? h('div', { class: 'cands' + (reel ? ' reel' : '') + (landed ? ' landed' : '') }, rows) : h('div', { class: 'empty', text: 'Пока ничего не предложено. Откройте фильм в библиотеке и нажмите «Предложить».' })]);
   }
 
   // ---- «Рулетка»: барабан, звук и эффект победителя ----
