@@ -475,6 +475,10 @@ private slots:
         QCOMPARE(smartQualityScore(S("Movie.2160p.HDR10+.DTS:X.BDRip.mkv")), 485);
         QCOMPARE(smartQualityScore(S("Old.Show.480p.mkv")), 100);
         QCOMPARE(smartQualityScore(S("network.webcam.4kilo.dtswiss.mkv")), 100);
+        QCOMPARE(smartQualityScore(S("Movie_1080p_x264_DTS5.1.mkv")), 320);
+        QCOMPARE(smartQualityScore(S("Film.1080p.BluRay.dts.x264.mkv")), 335);
+        QCOMPARE(smartQualityScore(S("Atmosphere.2020.720p.WEB.mkv")), 210);
+        QCOMPARE(smartQualityScore(S("Film.1920x1080.HDRip.mkv")), 300);
     }
 };
 

@@ -61,6 +61,11 @@ test('parseRoom и события потока', () => {
   assert.equal(roomWithVariants.file.matches('102|dune_1080.mkv'), true);
   assert.equal(roomWithVariants.file.matches('999|other.mkv', 'm:dune_2021:theatrical'), true);
   assert.equal(roomWithVariants.file.matches('999|other.mkv', 'm:other:default'), false);
+
+  // change_file несёт canonical_id, edition и варианты (имена полей сервера)
+  const sent = P.changeFile(P.fileRef('101|dune.mkv', 'Дюна', 'm:dune_2021:theatrical', 'theatrical', [{ key: '101|dune.mkv' }]));
+  assert.deepEqual(sent, { type: 'change_file', file: { key: '101|dune.mkv', name: 'Дюна', ad_id: 101,
+    canonical_id: 'm:dune_2021:theatrical', edition: 'theatrical', variants: [{ key: '101|dune.mkv' }] } });
 });
 
 test('merge: состояние только новее по seq; фильм ведущего держится до подтверждения', () => {

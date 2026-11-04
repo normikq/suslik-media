@@ -75,3 +75,16 @@ test("buildMediaVariant и метки оборудования", () => {
   assert.ok(v.hardware_flags.includes("heavy"));
   assert.match(v.label, /^1080p · 10-bit · BDRemux · DTS-HD MA \(24\.2 ГБ\)$/);
 });
+
+test("buildMediaVariant: слитные кодеки и подчёркивания в имени", () => {
+  const dts = buildMediaVariant({ adId: 1, filePath: "Film.1080p.BluRay.DTS5.1.mkv" });
+  assert.equal(dts.audio_tech, "DTS 5.1");
+  assert.ok(dts.hardware_flags.includes("dts"));
+  const us = buildMediaVariant({ adId: 2, filePath: "Movie_1080p_WEB-DL_DDP5.1.mkv" });
+  assert.equal(us.resolution, "1080p");
+  assert.equal(us.source_type, "Web-DL");
+  assert.equal(us.audio_tech, "DD+");
+  // «dts.x264» — не DTS:X, «Atmosphere» — не Atmos
+  assert.equal(buildMediaVariant({ adId: 3, filePath: "Film.1080p.dts.x264.mkv" }).audio_tech, "DTS 5.1");
+  assert.equal(buildMediaVariant({ adId: 4, filePath: "Atmosphere.2020.720p.mkv" }).audio_tech, "Stereo");
+});

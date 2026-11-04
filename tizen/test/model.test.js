@@ -401,4 +401,8 @@ test('smartQualityScore и qualityScore: шкала разрешения и ко
   assert.equal(M.smartQualityScore('Movie.2160p.HDR10+.DTS:X.BDRip.mkv'), 485);
   assert.equal(M.smartQualityScore('Old.Show.480p.mkv'), 100);
   assert.equal(M.smartQualityScore('network.webcam.4kilo.dtswiss.mkv'), 100);
+  assert.equal(M.smartQualityScore('Movie_1080p_x264_DTS5.1.mkv'), 320);
+  assert.equal(M.smartQualityScore('Film.1080p.BluRay.dts.x264.mkv'), 335);
+  assert.equal(M.smartQualityScore('Atmosphere.2020.720p.WEB.mkv'), 210);
+  assert.equal(M.smartQualityScore('Film.1920x1080.HDRip.mkv'), 300);
 });

@@ -453,29 +453,29 @@
   function smartQualityScore(name) {
     var lower = (name || '').toLowerCase();
     var rScore = 100;
-    if (/\b(2160p|4k|3840|uhd)\b/i.test(lower)) rScore = 400;
-    else if (/\b(1080[pi]|1920)\b/i.test(lower)) rScore = 300;
-    else if (/\b(720p|1280)\b/i.test(lower)) rScore = 200;
+    if (/(?:^|[^a-z0-9])(?:2160p|4k|uhd)(?![a-z])|(?:^|\D)3840(?!\d)/i.test(lower)) rScore = 400;
+    else if (/(?:^|\D)1080[pi](?![a-z])|(?:^|\D)1920(?!\d)/i.test(lower)) rScore = 300;
+    else if (/(?:^|\D)720p(?![a-z])|(?:^|\D)1280(?!\d)/i.test(lower)) rScore = 200;
     else rScore = 100;
 
     var vScore = 0;
-    if (/dolby[\s._-]?vision|dovi|\bdv\b/i.test(lower)) vScore = 40;
-    else if (/hdr10\+/i.test(lower)) vScore = 30;
-    else if (/hdr10|\bhdr\b/i.test(lower)) vScore = 20;
+    if (/dolby[\s._-]?vision|dovi|(?:^|[^a-z])dv(?![a-z])/i.test(lower)) vScore = 40;
+    else if (/hdr10\+|hdr10plus/i.test(lower)) vScore = 30;
+    else if (/hdr10|(?:^|[^a-z])hdr(?![a-z])/i.test(lower)) vScore = 20;
     else if (/10[\s._-]?bit|hi10p/i.test(lower)) vScore = 10;
     else vScore = 0;
 
     var aScore = 0;
-    if (/atmos|dts[:._-]?x/i.test(lower)) aScore = 40;
-    else if (/dts[\s._-]?hd[\s._-]?(?:ma)?|dtshd/i.test(lower)) aScore = 30;
-    else if (/\bdts\b|dd\+|ddp|e[\s._-]?ac[\s._-]?3|eac3/i.test(lower)) aScore = 20;
-    else if (/\bac3\b|ac[\s._-]?3|dd[\s._-]?5\.1|\b5\.1\b/i.test(lower)) aScore = 10;
+    if (/atmos(?![a-z])|dts[:._-]?x(?![a-z0-9])/i.test(lower)) aScore = 40;
+    else if (/dts[\s._-]?hd/i.test(lower)) aScore = 30;
+    else if (/(?:^|[^a-z])dts(?![a-z])|dd\+|(?:^|[^a-z])ddp(?![a-z])|(?:^|[^a-z])e[\s._-]?ac[\s._-]?3(?!\d)/i.test(lower)) aScore = 20;
+    else if (/(?:^|[^a-z])ac[\s._-]?3(?!\d)|(?:^|[^a-z])dd[\s._-]?5\.1|(?:^|[^\d.])5\.1(?!\d)/i.test(lower)) aScore = 10;
     else aScore = 0;
 
     var sScore = 0;
-    if (/\b(?:bd|uhd)?remux\b/i.test(lower)) sScore = 25;
-    else if (/\b(bdrip|brrip)\b|blu[\s._-]?ray/i.test(lower)) sScore = 15;
-    else if (/\bweb[\s._-]?(?:dl|rip)?\b/i.test(lower)) sScore = 10;
+    if (/remux/i.test(lower)) sScore = 25;
+    else if (/bdrip|brrip|blu[\s._-]?ray/i.test(lower)) sScore = 15;
+    else if (/(?:^|[^a-z])web(?:[\s._-]?(?:dl|rip))?(?![a-z])/i.test(lower)) sScore = 10;
     else sScore = 0;
 
     return rScore + vScore + aScore + sScore;

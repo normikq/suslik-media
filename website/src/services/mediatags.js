@@ -246,19 +246,19 @@ function parseResolution(name, streams = []) {
     if (h > 0 || w > 0) return "SD";
   }
   const s = String(name || "").toLowerCase();
-  if (/\b(2160p|4k|3840|uhd)\b/i.test(s)) return "4K";
-  if (/\b(1080[pi]|1920)\b/i.test(s)) return "1080p";
-  if (/\b(720p|1280)\b/i.test(s)) return "720p";
-  if (/\b(480[pi]|576[pi]|dvd)\b/i.test(s)) return "SD";
+  if (/(?:^|[^a-z0-9])(?:2160p|4k|uhd)(?![a-z])|(?:^|\D)3840(?!\d)/i.test(s)) return "4K";
+  if (/(?:^|\D)1080[pi](?![a-z])|(?:^|\D)1920(?!\d)/i.test(s)) return "1080p";
+  if (/(?:^|\D)720p(?![a-z])|(?:^|\D)1280(?!\d)/i.test(s)) return "720p";
+  if (/(?:^|\D)(?:480|576)[pi](?![a-z])|(?:^|[^a-z])dvd/i.test(s)) return "SD";
   return "";
 }
 
 function parseSourceType(name) {
   const s = String(name || "").toLowerCase();
-  if (/\b(?:bd|uhd)?remux\b/i.test(s)) return "Remux";
-  if (/\b(bdrip|brrip)\b|blu[\s._-]?ray/i.test(s)) return "BDRip";
-  if (/\bweb[\s._-]?(?:dl|rip)?\b/i.test(s)) return "Web-DL";
-  if (/\bhdtv\b/i.test(s)) return "HDTV";
+  if (/remux/i.test(s)) return "Remux";
+  if (/bdrip|brrip|blu[\s._-]?ray/i.test(s)) return "BDRip";
+  if (/(?:^|[^a-z])web(?:[\s._-]?(?:dl|rip))?(?![a-z])/i.test(s)) return "Web-DL";
+  if (/hdtv/i.test(s)) return "HDTV";
   return "";
 }
 
@@ -276,10 +276,10 @@ function parseVideoTech(name, streams = [], tags = []) {
   }
   if (tags.includes("HDR")) return "HDR10";
   const s = String(name || "").toLowerCase();
-  if (/dolby[\s._-]?vision|\bdv\b/i.test(s)) return "DV";
-  if (/hdr10\+/i.test(s)) return "HDR10+";
-  if (/hdr10|hdr\b/i.test(s)) return "HDR10";
-  if (/10-?bit|hi10p/i.test(s)) return "10-bit";
+  if (/dolby[\s._-]?vision|dovi|(?:^|[^a-z])dv(?![a-z])/i.test(s)) return "DV";
+  if (/hdr10\+|hdr10plus/i.test(s)) return "HDR10+";
+  if (/hdr10|(?:^|[^a-z])hdr(?![a-z])/i.test(s)) return "HDR10";
+  if (/10[\s._-]?bit|hi10p/i.test(s)) return "10-bit";
   return "SDR";
 }
 
@@ -303,12 +303,12 @@ function parseAudioTech(name, streams = [], tags = []) {
     if (codec === "ac3") return "AC3 5.1";
   }
   const s = String(name || "").toLowerCase();
-  if (/atmos/i.test(s)) return "TrueHD Atmos";
-  if (/dts[:._-]?x/i.test(s)) return "DTS:X";
-  if (/dts[\s._-]?hd[\s._-]?(?:ma)?|dtshd/i.test(s)) return "DTS-HD MA";
-  if (/\bdts\b/i.test(s)) return "DTS 5.1";
-  if (/dd\+|ddp|e[\s._-]?ac[\s._-]?3|eac3|dolby\s*digital\s*plus/i.test(s)) return "DD+";
-  if (/\bac3\b|ac[\s._-]?3|dd[\s._-]?5\.1|\b5\.1\b|dolby\s*digital/i.test(s)) return "AC3 5.1";
+  if (/atmos(?![a-z])/i.test(s)) return "TrueHD Atmos";
+  if (/dts[:._-]?x(?![a-z0-9])/i.test(s)) return "DTS:X";
+  if (/dts[\s._-]?hd/i.test(s)) return "DTS-HD MA";
+  if (/(?:^|[^a-z])dts(?![a-z])/i.test(s)) return "DTS 5.1";
+  if (/dd\+|(?:^|[^a-z])ddp(?![a-z])|(?:^|[^a-z])e[\s._-]?ac[\s._-]?3(?!\d)|dolby\s*digital\s*plus/i.test(s)) return "DD+";
+  if (/(?:^|[^a-z])ac[\s._-]?3(?!\d)|(?:^|[^a-z])dd[\s._-]?5\.1|(?:^|[^\d.])5\.1(?!\d)|dolby\s*digital/i.test(s)) return "AC3 5.1";
   return "Stereo";
 }
 

@@ -224,7 +224,7 @@
     },
     changeFile: function (f) {
       var o = { key: f.key, name: f.title, ad_id: f.adId };
-      if (f.canonical_id) o.canonical_id = f.canonical_id;
+      if (f.canonicalId) o.canonical_id = f.canonicalId;
       if (f.edition) o.edition = f.edition;
       if (Array.isArray(f.variants) && f.variants.length) o.variants = f.variants;
       return { type: 'change_file', file: o };
