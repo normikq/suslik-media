@@ -66,7 +66,6 @@ const SEASON_TOKEN_RE = /[ ._(\-]+(?:season|сезон|[sс][0oо]?)[\s._\-]*(\d
 const SEASON_DIR_RE = /^(?:(?:season|сезон)[ ._-]*|[sс][0oо]?)(\d{1,2})$/i;
 // Номер серии без сезона: E01, «Серия 1», 01.Озвучка, 01 - Pilot
 const EP_ONLY_RE = /(?:^|[ ._\-\[(])(?:ep?|серия)[ ._-]*(\d{1,3})(?![0-9])|^(\d{1,3})(?=$|[ ._\-\[(])/i;
-const LANG_TAG_RE = /\[([a-z]{2,3})\]/i;
 const LANG_TAG_G_RE = /\[([a-z]{2,3})\]/gi;
 // Коды языков ISO 639-1/639-2 для тега [xx]/[xxx]: [HQ], [RAW], [Dub] — не языки
 const LANGS = new Set(`ru rus en eng uk ukr be bel kk kaz de deu ger fr fra fre es spa it ita ja jpn ko kor zh zho chi
@@ -85,7 +84,9 @@ const langTag = text => {
   }
   return null;
 };
-const lastYear = s => [...String(s).matchAll(/(?<![a-z0-9])((?:19|20)\d{2})(?![a-z0-9])/g)].reverse().find(m => m.index > 0);
+const lastYear = s => [...String(s).matchAll(YEAR_RE)].reverse().find(m => {
+  return m.index > 0 && cleanText(String(s).slice(0, m.index).replace(LANG_TAG_G_RE, " ")).length > 0;
+});
 
 /**
  * Имя файла озвучки -> { title, year, season, episode, voice, delayMs, layout }.
@@ -208,7 +209,7 @@ function isSameMovieRelease(m1, m2) {
     if (y1 && y2 && y1 !== y2) return false;
     const s1 = m1.aiTitle?.season ?? videoEpisode(m1.files?.[0]?.path || "")?.season;
     const s2 = m2.aiTitle?.season ?? videoEpisode(m2.files?.[0]?.path || "")?.season;
-    if (s1 && s2 && s1 !== s2) return false;
+    if (s1 != null && s2 != null && s1 !== s2) return false;
     return true;
   }
   return false;
@@ -364,16 +365,20 @@ function bdecode(buf) {
 function torrentFiles(bytes) {
   const root = bdecode(bytes);
   const info = root && root.info;
+  const cleanSeg = s => String(s).replace(/[/\\:\u0000-\u001f]+/g, "_").trim();
   // name.utf-8 — имя в UTF-8, когда name записан в другой кодировке (как path.utf-8 у файлов)
   const nameBuf = info && typeof info === "object" ? (Buffer.isBuffer(info["name.utf-8"]) ? info["name.utf-8"] : info.name) : null;
   if (!Buffer.isBuffer(nameBuf)) throw new Error("В торренте нет списка файлов.");
-  const top = nameBuf.toString("utf8");
+  const top = cleanSeg(nameBuf.toString("utf8"));
+  if (!top || top === "." || top === "..") throw new Error("Некорректное имя раздачи в торренте.");
   if (Array.isArray(info.files)) {
     const files = info.files
       .map(f => {
         const parts = Array.isArray(f["path.utf-8"]) ? f["path.utf-8"] : f.path;
         if (!Array.isArray(parts) || !parts.length) return null;
-        return { path: [top, ...parts.map(p => p.toString("utf8"))].join("/"), type: "file", size: Number(f.length) || null, sourceLink: null };
+        const segs = parts.map(p => Buffer.isBuffer(p) ? cleanSeg(p.toString("utf8")) : "").filter(s => s && s !== "." && s !== "..");
+        if (segs.length !== parts.length) return null;
+        return { path: [top, ...segs].join("/"), type: "file", size: Number(f.length) || null, sourceLink: null };
       })
       .filter(Boolean);
     return { name: top, files };
@@ -390,7 +395,23 @@ function mayBeLibraryFilm(magnets, magnetId) {
 // ---- Хранилище ---------------------------------------------------------------------------------------------------
 const store = new Map(); // "magnetId|videoPath" -> [запись]
 const keyById = new Map(); // id дорожки -> ключ store
+const keysByAudioMagnet = new Map(); // audioMagnetId -> Set<key>
 let total = 0;
+
+function indexAudioMagnet(audioMagnetId, key) {
+  let set = keysByAudioMagnet.get(audioMagnetId);
+  if (!set) { set = new Set(); keysByAudioMagnet.set(audioMagnetId, set); }
+  set.add(key);
+}
+
+function unindexAudioMagnet(audioMagnetId, key, remainingList) {
+  if (remainingList && remainingList.some(t => t.audioMagnetId === audioMagnetId)) return;
+  const set = keysByAudioMagnet.get(audioMagnetId);
+  if (set) {
+    set.delete(key);
+    if (set.size === 0) keysByAudioMagnet.delete(audioMagnetId);
+  }
+}
 
 function load() {
   try {
@@ -400,6 +421,7 @@ function load() {
       for (const t of list) {
         if (!t || !TRACK_ID_RE.test(t.id) || keyById.has(t.id) || !Number.isSafeInteger(t.audioMagnetId) || typeof t.audioPath !== "string") continue;
         keyById.set(t.id, key);
+        indexAudioMagnet(t.audioMagnetId, key);
         ok.push(t);
       }
       if (ok.length) { store.set(key, ok); total += ok.length; }
@@ -499,6 +521,7 @@ function addTracks({ movieMagnetId, audioMagnetId, pairs, author, override = {} 
     list.push(track);
     store.set(key, list);
     keyById.set(track.id, key);
+    indexAudioMagnet(track.audioMagnetId, key);
     total++;
     created.push(view(key, track));
   }
@@ -531,39 +554,48 @@ function removeTrack(id) {
   const hit = locate(id);
   if (!hit) return null;
   hit.list.splice(hit.list.indexOf(hit.t), 1);
-  keyById.delete(id);
+  keyById.delete(hit.t.id);
   total = Math.max(0, total - 1);
   if (hit.list.length === 0) store.delete(hit.key);
+  unindexAudioMagnet(hit.t.audioMagnetId, hit.key, hit.list);
   persist();
   return view(hit.key, hit.t);
 }
 
 function hasAudioMagnetTracks(audioMagnetId) {
-  const targetId = Number(audioMagnetId);
-  for (const list of store.values()) {
-    if (list.some(t => t.audioMagnetId === targetId)) return true;
-  }
-  return false;
+  const set = keysByAudioMagnet.get(Number(audioMagnetId));
+  return Boolean(set && set.size > 0);
 }
 
 // Раздачу удалили: пропадают связки фильма (ключи "<id>|…") и дорожки, чьим источником она была
 function dropMagnet(magnetId) {
+  const targetId = Number(magnetId);
   const prefix = `${magnetId}|`;
   let n = 0;
-  for (const [key, list] of [...store]) {
+  for (const [key, list] of store) {
     if (key.startsWith(prefix)) {
       n += list.length;
-      for (const t of list) keyById.delete(t.id);
       store.delete(key);
-      continue;
+      for (const t of list) {
+        keyById.delete(t.id);
+        unindexAudioMagnet(t.audioMagnetId, key, null);
+      }
     }
-    const keep = list.filter(t => t.audioMagnetId !== Number(magnetId));
-    if (keep.length !== list.length) {
-      n += list.length - keep.length;
-      for (const t of list) if (t.audioMagnetId === Number(magnetId)) keyById.delete(t.id);
-      if (keep.length) store.set(key, keep);
-      else store.delete(key);
+  }
+  const affectedKeys = keysByAudioMagnet.get(targetId);
+  if (affectedKeys) {
+    for (const key of [...affectedKeys]) {
+      const list = store.get(key);
+      if (!list) continue;
+      const keep = list.filter(t => t.audioMagnetId !== targetId);
+      if (keep.length !== list.length) {
+        n += list.length - keep.length;
+        for (const t of list) if (t.audioMagnetId === targetId) keyById.delete(t.id);
+        if (keep.length) store.set(key, keep);
+        else store.delete(key);
+      }
     }
+    keysByAudioMagnet.delete(targetId);
   }
   if (n) { total = Math.max(0, total - n); persist(); }
   return n;
@@ -660,6 +692,7 @@ async function trackLinks(movieMagnetId, videoPath) {
 function _reset() {
   store.clear();
   keyById.clear();
+  keysByAudioMagnet.clear();
   total = 0;
 }
 

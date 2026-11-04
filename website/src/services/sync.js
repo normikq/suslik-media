@@ -47,8 +47,16 @@ function load() {
       const t = new Map();
       for (const [k, e] of Object.entries(data.w || {})) if (WATCH_KEY_RE.test(k) && e && num(e.u) !== null) w.set(k, e);
       for (const [k, e] of Object.entries(data.t || {})) if (TRACK_KEY_RE.test(k) && e && num(e.u) !== null) t.set(k, e);
-      if (w.size || t.size) users.set(owner, { w, t });
+      if (w.size || t.size) {
+        const d = { w, t, u: 0 };
+        d.u = lastUse(d);
+        users.set(owner, d);
+      }
     }
+    // Выстраиваем LRU-порядок по возрастанию времени использования
+    const sorted = [...users.entries()].sort((a, b) => a[1].u - b[1].u);
+    users.clear();
+    for (const [k, v] of sorted) users.set(k, v);
   } catch {}
 }
 load();
@@ -59,22 +67,19 @@ const persist = makeJsonWriter(
   3000
 );
 
-function bucket(owner, create) {
+function bucket(owner, create, now = Date.now()) {
   let d = users.get(owner);
   if (!d && create) {
-    d = { w: new Map(), t: new Map() };
-    users.set(owner, d);
-    if (users.size > MAX_USERS) {
-      // давно не заходивший пользователь уходит первым
-      let oldest = null;
-      let oldestAt = Infinity;
-      for (const [o, x] of users) {
-        if (o === owner) continue;
-        const at = lastUse(x);
-        if (at < oldestAt) { oldest = o; oldestAt = at; }
-      }
-      if (oldest) users.delete(oldest);
+    if (users.size >= MAX_USERS) {
+      const oldestKey = users.keys().next().value;
+      if (oldestKey !== undefined) users.delete(oldestKey);
     }
+    d = { w: new Map(), t: new Map(), u: now };
+    users.set(owner, d);
+  } else if (d && create) {
+    d.u = Math.max(d.u || 0, now);
+    users.delete(owner);
+    users.set(owner, d);
   }
   return d || null;
 }
@@ -108,7 +113,7 @@ function apply(owner, body, now = Date.now()) {
   const watch = Array.isArray(body?.watch) ? body.watch.slice(0, MAX_BATCH) : [];
   const tracks = Array.isArray(body?.tracks) ? body.tracks.slice(0, MAX_BATCH) : [];
   if (!watch.length && !tracks.length) return { watch: 0, tracks: 0 };
-  const d = bucket(owner, true);
+  const d = bucket(owner, true, now);
   const oldest = now - idleMs();
   let nw = 0;
   let nt = 0;

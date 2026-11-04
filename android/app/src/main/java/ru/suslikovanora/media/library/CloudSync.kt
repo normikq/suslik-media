@@ -59,6 +59,7 @@ object CloudSync {
                 e.quality?.let { putString("vquality:${e.key}", it) }
                 if (e.key != WatchSync.ANY) {
                     e.cid?.let {
+                        putString("track:cid:${e.key}", it)
                         e.audio?.let { a -> putString("track:audio:c$it", a) }
                         e.spu?.let { s -> putString("track:spu:c$it", s) }
                         e.quality?.let { q -> putString("vquality:c$it", q) }
@@ -81,7 +82,8 @@ object CloudSync {
                 val at = trackAt(k).takeIf { it > 0 } ?: if (k == WatchSync.ANY) seen.values.maxOrNull() else seen[k]
                 if (at == null || at <= 0) null
                 else TrackEntry(k, ui.getString("track:audio:$k", null), ui.getString("track:spu:$k", null),
-                    ui.getString("track:sidecar:$k", null), at, ui.getString("vquality:$k", null))
+                    ui.getString("track:sidecar:$k", null), at, ui.getString("vquality:$k", null),
+                    if (k == WatchSync.ANY) null else ui.getString("track:cid:$k", null))
             }
         }
         override var cursor: String?
@@ -118,6 +120,7 @@ object CloudSync {
         val keys = listOfNotNull(filmKey?.takeIf { it.matches(filmKeyRe) }, WatchSync.ANY.takeIf { alsoAny })
         ui.edit().apply {
             keys.forEach { putLong("track:at:$it", now) }
+            if (filmKey != null && cid != null) putString("track:cid:$filmKey", cid)
             if (quality != null) {
                 filmKey?.let { putString("vquality:$it", quality) }
                 if (alsoAny) putString("vquality:*", quality)

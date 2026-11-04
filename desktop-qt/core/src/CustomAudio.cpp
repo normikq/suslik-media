@@ -121,8 +121,10 @@ QList<CustomTrack> CustomAudio::forVideo(const QList<CustomTrack> &tracks, const
             continue;
         }
         const auto epT = episodeInfo(tNorm);
-        if (epT && epCur && epT->episode == epCur->episode && epT->season == epCur->season) {
-            out << t;
+        if (epT && epCur && epT->episode == epCur->episode) {
+            const int sT = epT->season.value_or(1);
+            const int sCur = epCur->season.value_or(1);
+            if (sT == sCur) out << t;
         }
     }
     return out;

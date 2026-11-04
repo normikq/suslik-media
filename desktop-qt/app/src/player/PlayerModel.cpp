@@ -272,7 +272,6 @@ void PlayerModel::begin() {
     m_sidecars.clear();
     m_sidecarWaiters.clear();
     m_sidePaths = m_req.sidePaths;
-    m_sideTitles.clear();
     m_warmed.clear();
     m_variantCustom.clear();
     m_retries = 0;
@@ -798,7 +797,7 @@ void PlayerModel::finishClose() {
     ui().put(S("volume"), num(m_volume));
     m_open = false;
     m_closing = false;
-    m_started = m_playing = false;
+    m_started = m_playing = m_switching = false;
     ++m_gen;
     m_status.clear();
     m_catchingUp = false;
@@ -938,6 +937,7 @@ void PlayerModel::evFinished() {
 void PlayerModel::evError(const QString &message) {
     PlayerLog::write(S("[mpv] ") + message);
     if (m_closing || !m_open) return;
+    m_switching = false;
     if (!m_engine->available()) { setStatus(tx(S("app.mpv_ne_skachan"))); return; }
     if (m_retries < 6) {
         ++m_retries;
@@ -1051,7 +1051,8 @@ void PlayerModel::selectAudio(int id, const QString &name) {
     if (!m_canonicalId.isEmpty()) putUi(S("audio:c") + m_canonicalId, name);
     if (m_lib) {
         const QString qv = pref(S("vquality")).value_or(QString());
-        m_lib->sync().noteTrack(seriesKey(), name, std::nullopt, m_canonicalId.isEmpty() ? std::nullopt : std::optional<QString>(m_canonicalId), qv.isEmpty() ? std::nullopt : std::optional<QString>(qv));
+        const std::optional<QString> spuSync = smart ? std::optional<QString>(SMART_SUBS) : std::nullopt;
+        m_lib->sync().noteTrack(seriesKey(), name, spuSync, m_canonicalId.isEmpty() ? std::nullopt : std::optional<QString>(m_canonicalId), qv.isEmpty() ? std::nullopt : std::optional<QString>(qv));
     }
     m_trackWatchLeft = 7;
     m_trackWatchShown = 0;
@@ -1369,8 +1370,16 @@ void PlayerModel::deleteTrack() {
         for (const QVariant &v : list) {
             const QVariantMap t = v.toMap();
             if (t.value(S("id")).toInt() == cur) continue;
+            const QString newLabel = t.value(S("label")).toString();
             self->m_engine->setAudioTrack(t.value(S("id")).toInt());
-            self->putUi(S("audio:") + self->seriesKey(), t.value(S("label")).toString());
+            self->putUi(S("audio:") + self->seriesKey(), newLabel);
+            self->putUi(S("audio:*"), newLabel);
+            if (!self->titleKey().isEmpty()) self->putUi(S("audio:") + self->titleKey(), newLabel);
+            if (!self->m_canonicalId.isEmpty()) self->putUi(S("audio:c") + self->m_canonicalId, newLabel);
+            if (self->m_lib) {
+                const QString qv = self->pref(S("vquality")).value_or(QString());
+                self->m_lib->sync().noteTrack(self->seriesKey(), newLabel, std::nullopt, self->m_canonicalId.isEmpty() ? std::nullopt : std::optional<QString>(self->m_canonicalId), qv.isEmpty() ? std::nullopt : std::optional<QString>(qv));
+            }
             break;
         }
         self->m_engine->removeAudioTrack(cur);
@@ -1766,8 +1775,7 @@ std::optional<QString> PlayerModel::pref(const QString &kind) const {
 }
 
 QString PlayerModel::prefLanguage(const QString &kind) const {
-    auto v = pref(kind);
-    if (!v) v = ui().get(kind + S(":*"));
+    const auto v = pref(kind);
     if (!v) return {};
     static const QRegularExpression re(S("\\[([^\\]]+)\\]"));
     const auto m = re.match(*v);

@@ -10,6 +10,7 @@
 
 #include <QJsonArray>
 #include <QPointer>
+#include <QTimer>
 #include <algorithm>
 #include <memory>
 
@@ -334,6 +335,7 @@ void PlayModel::fetch() {
 
     struct State {
         int left = 0;
+        bool finished = false;
         std::optional<QString> mirror;
         QVector<std::optional<QString>> subs, audio;
     };
@@ -346,7 +348,8 @@ void PlayModel::fetch() {
     const QString title = currentTitle();
     ApiClient *apiP = &api;
     auto finish = [self, gen, st, queue, title, apiP, subs, audio]() {
-        if (!self || self->m_gen != gen) return;
+        if (st->finished || !self || self->m_gen != gen) return;
+        st->finished = true;
         for (int i = 0; i < st->subs.size(); ++i)
             if (const auto &u = st->subs[i]) { self->m_subs << *u; self->m_sidePaths.insert(*u, subs[i].path); }
         for (int i = 0; i < st->audio.size(); ++i)
@@ -378,6 +381,11 @@ void PlayModel::fetch() {
         api.get(mirrorPath(subs[i]), [st, step, urlOf, i](const ApiResult &r) { st->subs[i] = urlOf(r); step(); });
     for (int i = 0; i < audio.size(); ++i)
         api.get(mirrorPath(audio[i]), [st, step, urlOf, i](const ApiResult &r) { st->audio[i] = urlOf(r); step(); });
+    if (!subs.isEmpty() || !audio.isEmpty()) {
+        QTimer::singleShot(5000, this, [st, finish]() {
+            if (!st->finished && st->mirror) finish();
+        });
+    }
     m_lib->saveEpisode(m_id, file.path);
 }
 

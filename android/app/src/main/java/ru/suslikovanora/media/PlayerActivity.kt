@@ -45,36 +45,25 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import android.util.Rational
 import android.view.Gravity
 import android.view.KeyEvent
-import android.view.MotionEvent
-import android.graphics.Rect
-import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
-import android.view.ViewGroup
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.annotation.RequiresApi
-import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
-import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
-import java.net.HttpURLConnection
-import java.net.URL
-import java.util.Locale
 
 class PlayerActivity : ComponentActivity() {
     /** The video engine (VLC or Media3, chosen per file — see [EngineChoice]), made in onCreate; [player] is it while a film is open. */
     private lateinit var engine: HybridEngine
     private val engineChoice by lazy { EngineChoice(this) }
     private val tweaks by lazy { PlaybackTweaks(this) }
+    private val libraryStore by lazy { LibraryStore(this) }
     private var delays = PlaybackTweaks.Delays(0L, 0L) // субтитры / звук этого файла, помнятся на файл
     private var engineLoggedFor = "" // "<engine> <file>" last written to the journal (reconnects do not repeat it)
     private val player: PlayerEngine? get() = if (::engine.isInitialized) engine.takeIf { it.hasPlayer } else null
@@ -790,6 +779,7 @@ class PlayerActivity : ComponentActivity() {
                 ui.time = 0L
                 if (!trackSelector.needsSidecars(entry.url)) { reconnect(forcePlay = true, startAt = playbackPosition); return }
                 // This episode's own voice-overs and subtitles are signed on the mirror first, then it opens with them.
+                runCatching { player?.pause() }
                 showStatus(tr("play.gotovim_dorozhki"))
                 sideJob?.cancel()
                 sideJob = scope.launch {
@@ -889,7 +879,7 @@ class PlayerActivity : ComponentActivity() {
         if (!key.contains('|')) return emptyList()
         val magnetId = key.substringBefore('|').toLongOrNull() ?: return emptyList()
         val filePath = key.substringAfter('|')
-        val store = LibraryStore(this)
+        val store = libraryStore
         val versions = store.versionsOf(magnetId)
         val item = versions.find { it.m.id == magnetId } ?: store.items.find { it.m.id == magnetId }
         val isSeries = item?.playable is ru.suslikovanora.media.core.Playable.Series
