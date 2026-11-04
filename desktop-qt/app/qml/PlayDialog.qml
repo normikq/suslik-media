@@ -37,6 +37,18 @@ Sheet {
             }
         }
         Connections { target: d; function onOpenChanged() { if (d.open) scroller.contentY = 0 } }
+        C.ScrollBar.vertical: C.ScrollBar {
+            id: vbar
+            visible: scroller.interactive
+            width: 12
+            padding: 4
+            policy: C.ScrollBar.AlwaysOn
+            background: Item {}
+            contentItem: Rectangle {
+                implicitWidth: 4; radius: 2
+                color: vbar.pressed ? "#66FFFFFF" : vbar.hovered ? "#4DFFFFFF" : "#33FFFFFF"
+            }
+        }
         Column {
             id: content
             width: scroller.width
@@ -299,28 +311,6 @@ Sheet {
                 Rectangle { anchors.fill: parent; radius: 12; color: closeBottom.hovered ? "#1C2232" : "#141824"; border.color: closeBottom.hovered ? "#323B50" : "#242A3A" }
                 Text { anchors.centerIn: parent; text: Ui.tx("library.zakryt"); color: "white"; font.family: Theme.onest; font.weight: Font.DemiBold; font.pixelSize: 14 }
             }
-        }
-    }
-    // полоса прокрутки — в поле карточки справа, её можно тянуть и щёлкать
-    C.ScrollBar {
-        id: vbar
-        visible: scroller.interactive
-        orientation: Qt.Vertical
-        anchors.top: scroller.top
-        anchors.bottom: scroller.bottom
-        anchors.left: scroller.right
-        anchors.leftMargin: 4
-        width: 12
-        padding: 4
-        size: scroller.visibleArea.heightRatio
-        position: scroller.visibleArea.yPosition
-        onPositionChanged: if (active) scroller.contentY = position * scroller.contentHeight
-        minimumSize: 24 / Math.max(1, scroller.height)
-        policy: C.ScrollBar.AlwaysOn
-        background: Item {}
-        contentItem: Rectangle {
-            implicitWidth: 4; radius: 2
-            color: vbar.pressed ? "#66FFFFFF" : vbar.hovered ? "#4DFFFFFF" : "#33FFFFFF"
         }
     }
 
