@@ -748,13 +748,19 @@ function cleanVariant(v) {
   const audio = typeof v.audio === "string" ? v.audio.slice(0, 100) : (typeof v.audio_tech === "string" ? v.audio_tech.slice(0, 100) : "");
   const bitrate = Number(v.bitrate ?? v.bitrate_mbps) || 0;
   const offset_ms = Number(v.offset_ms) || 0;
+  const score = Number(v.score) || 0;
+  const hardware_flags = Array.isArray(v.hardware_flags)
+    ? v.hardware_flags.filter(x => typeof x === "string" && x.trim()).map(x => x.trim().slice(0, 30))
+    : [];
   return {
     key,
     label: label || quality,
     quality,
     audio,
     bitrate: Math.round(bitrate * 10) / 10,
-    offset_ms
+    offset_ms,
+    score,
+    hardware_flags
   };
 }
 
@@ -805,9 +811,14 @@ function suggestFile(roomId, user, file) {
     };
     if (f.canonical_id) cand.canonical_id = f.canonical_id;
     if (f.edition) cand.edition = f.edition;
-    if (file.poster) cand.poster = String(file.poster).slice(0, 500);
-    if (file.year) cand.year = Number(file.year) || null;
-    if (file.original) cand.original = String(file.original).slice(0, 200);
+    if (typeof file.poster === "string" && (/^\/api\/poster\/img\/[a-zA-Z0-9_\-\.]+$/.test(file.poster) || /^[a-zA-Z0-9_\-\.]+\.(jpg|jpeg|png|webp)$/i.test(file.poster))) {
+      cand.poster = file.poster.slice(0, 500);
+    }
+    const yr = Number(file.year);
+    if (Number.isInteger(yr) && yr >= 1888 && yr <= 2100) cand.year = yr;
+    if (typeof file.original === "string" && file.original.trim()) {
+      cand.original = file.original.trim().slice(0, 200);
+    }
     if (f.variants) cand.variants = f.variants;
     room.candidates.push(cand);
     activityChanged(room);

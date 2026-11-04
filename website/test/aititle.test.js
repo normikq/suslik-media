@@ -101,7 +101,7 @@ test("aititle: one call, the right request, then the stored answer", async () =>
   replies.push(gemini({ base: "Тед Лассо", season: 2 }));
   const r = await ai.suggest(show, "u_1", NOW);
   assert.equal(r.cached, false);
-  assert.deepEqual(r.aiTitle, { base: "Тед Лассо", season: 2, kind: null, original: null, year: null, edition: "default", source: "ai", model: "gemini-3.5-flash-lite", at: NOW, status: "suggested", stale: false, canonical_id: "m:тед_лассо:default" });
+  assert.deepEqual(r.aiTitle, { base: "Тед Лассо", season: 2, kind: null, original: null, year: null, edition: "default", source: "ai", model: "gemini-3.5-flash-lite", at: NOW, status: "suggested", stale: false, canonical_id: "s:тед_лассо_s2:default" });
   assert.equal(calls.length, 1);
   const c = calls[0];
   assert.match(c.url, /\/v1beta\/models\/gemini-3\.5-flash-lite:generateContent$/);

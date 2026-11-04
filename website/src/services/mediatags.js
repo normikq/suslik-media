@@ -199,7 +199,7 @@ function calculateScore({ resolution = "SD", videoTech = "SDR", audioTech = "Ste
   if (aScore === undefined) {
     if (/atmos|dts:?x/i.test(audioTech)) aScore = 40;
     else if (/dts-?hd/i.test(audioTech)) aScore = 30;
-    else if (/dts|dd\+|e-?ac-?3/i.test(audioTech)) aScore = 20;
+    else if (/dts|dd\+|ddp|e-?ac-?3/i.test(audioTech)) aScore = 20;
     else if (/ac-?3|5\.1/i.test(audioTech)) aScore = 10;
     else aScore = 0;
   }
@@ -224,7 +224,7 @@ function formatBytesRu(bytes) {
   return mb.toFixed(0) + " МБ";
 }
 
-function buildCompositeLabel({ resolution = "1080p", sourceType = "BDRip", videoTech = "SDR", audioTech = "Stereo", sizeBytes = 0 } = {}) {
+function buildCompositeLabel({ resolution = "", sourceType = "", videoTech = "SDR", audioTech = "Stereo", sizeBytes = 0 } = {}) {
   const parts = [];
   if (resolution) parts.push(resolution);
   if (videoTech && videoTech !== "SDR") parts.push(videoTech === "DV" ? "Dolby Vision" : videoTech);
@@ -246,20 +246,20 @@ function parseResolution(name, streams = []) {
     if (h > 0 || w > 0) return "SD";
   }
   const s = String(name || "").toLowerCase();
-  if (/2160p|4k|uhd/i.test(s)) return "4K";
-  if (/1080[pi]/i.test(s)) return "1080p";
-  if (/720p/i.test(s)) return "720p";
-  if (/480[pi]|576[pi]|dvd/i.test(s)) return "SD";
-  return "1080p";
+  if (/\b(2160p|4k|3840|uhd)\b/i.test(s)) return "4K";
+  if (/\b(1080[pi]|1920)\b/i.test(s)) return "1080p";
+  if (/\b(720p|1280)\b/i.test(s)) return "720p";
+  if (/\b(480[pi]|576[pi]|dvd)\b/i.test(s)) return "SD";
+  return "";
 }
 
 function parseSourceType(name) {
   const s = String(name || "").toLowerCase();
-  if (/bdremux|remux/i.test(s)) return "Remux";
-  if (/bdrip|brrip|bluray|blu-ray/i.test(s)) return "BDRip";
-  if (/web-?dl|webrip|web\b/i.test(s)) return "Web-DL";
-  if (/hdtv/i.test(s)) return "HDTV";
-  return "BDRip";
+  if (/\b(?:bd|uhd)?remux\b/i.test(s)) return "Remux";
+  if (/\b(bdrip|brrip)\b|blu[\s._-]?ray/i.test(s)) return "BDRip";
+  if (/\bweb[\s._-]?(?:dl|rip)?\b/i.test(s)) return "Web-DL";
+  if (/\bhdtv\b/i.test(s)) return "HDTV";
+  return "";
 }
 
 function parseVideoTech(name, streams = [], tags = []) {
@@ -304,13 +304,11 @@ function parseAudioTech(name, streams = [], tags = []) {
   }
   const s = String(name || "").toLowerCase();
   if (/atmos/i.test(s)) return "TrueHD Atmos";
-  if (/dts:?x/i.test(s)) return "DTS:X";
-  if (/dts-?hd\s*ma/i.test(s)) return "DTS-HD MA";
-  if (/dts-?hd/i.test(s)) return "DTS-HD MA";
-  if (/dts/i.test(s)) return "DTS 5.1";
-  if (/dd\+|e-?ac-?3|dolby\s*digital\s*plus/i.test(s)) return "DD+";
-  if (/ac-?3|dolby\s*digital/i.test(s)) return "AC3 5.1";
-  if (/5\.1/i.test(s)) return "AC3 5.1";
+  if (/dts[:._-]?x/i.test(s)) return "DTS:X";
+  if (/dts[\s._-]?hd[\s._-]?(?:ma)?|dtshd/i.test(s)) return "DTS-HD MA";
+  if (/\bdts\b/i.test(s)) return "DTS 5.1";
+  if (/dd\+|ddp|e[\s._-]?ac[\s._-]?3|eac3|dolby\s*digital\s*plus/i.test(s)) return "DD+";
+  if (/\bac3\b|ac[\s._-]?3|dd[\s._-]?5\.1|\b5\.1\b|dolby\s*digital/i.test(s)) return "AC3 5.1";
   return "Stereo";
 }
 
@@ -324,14 +322,14 @@ function buildMediaVariant({
   streams = [],
   tags = []
 }) {
-  const name = fileName || filePath || "";
-  const resolution = parseResolution(name, streams);
-  const sourceType = parseSourceType(name);
-  const videoTech = parseVideoTech(name, streams, tags);
-  const audioTech = parseAudioTech(name, streams, tags);
+  const combined = [fileName, filePath].filter(Boolean).join(" ");
+  const resolution = parseResolution(combined, streams);
+  const sourceType = parseSourceType(combined);
+  const videoTech = parseVideoTech(combined, streams, tags);
+  const audioTech = parseAudioTech(combined, streams, tags);
   const score = calculateScore({ resolution, videoTech, audioTech, sourceType });
   const hardwareFlags = getHardwareFlags({ videoTech, audioTech, bitrateMbps, sourceType });
-  const key = `${adId}|${filePath || name}`;
+  const key = `${adId}|${filePath || fileName || ""}`;
   const label = buildCompositeLabel({ resolution, sourceType, videoTech, audioTech, sizeBytes });
 
   return {

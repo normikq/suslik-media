@@ -833,10 +833,7 @@ class PlayerActivity : ComponentActivity() {
                 if (i != playlistQueue.currentIndex) { roomEntryKey = watchProgress.keys.getOrNull(i); playlistQueue.playEntry(i) }
             }
             override fun notice(text: String) = showSeekLabel(text)
-            override fun onTick() {
-                ui.live = partyGuest()
-                updatePartyVariants()
-            }
+            override fun onTick() { ui.live = partyGuest() }
             override fun close() = leave()
         })
     }
@@ -956,10 +953,6 @@ class PlayerActivity : ComponentActivity() {
             handler.postDelayed({ if (!buffering && !networkLost) bufferingLabel.visibility = View.GONE }, 1500L)
         }
         ui.onPicker = { kind -> openPicker(kind) }
-        ui.onSelectVariant = { key ->
-            playAt(perceivedPosition(), key)
-            ui.picker = null
-        }
         ui.onPick = { kind, i ->
             if (kind == "audio") trackSelector.pickAudio(player, i) else trackSelector.pickSubtitle(player, i)
             refreshPicker()
@@ -1469,42 +1462,9 @@ class PlayerActivity : ComponentActivity() {
         visibility = View.GONE
     }
 
-    private var activeVariantKey: String? = null
-
-    private fun updatePartyVariants() {
-        val file = Party.file
-        val vars = file?.variants.orEmpty()
-        val hostKey = file?.key.orEmpty()
-        val currentKey = activeVariantKey ?: file?.key.orEmpty()
-        ui.currentVariantKey = currentKey
-        if (vars.isNotEmpty()) {
-            ui.variants = vars.map { v ->
-                ru.suslikovanora.media.player.PlayerVariantUi(
-                    key = v.key,
-                    label = v.label.ifBlank { v.quality.ifBlank { v.key } },
-                    isHost = (v.key == hostKey)
-                )
-            }
-        } else {
-            ui.variants = emptyList()
-        }
-    }
-
-    private fun playAt(currentPositionMs: Long, newVariantKey: String) {
-        if (newVariantKey.isBlank()) return
-        AppLog.write("[player] switch quality preset -> $newVariantKey at ${currentPositionMs / 1000}s")
-        activeVariantKey = newVariantKey
-        ui.currentVariantKey = newVariantKey
-        if (Party.inRoom) {
-            Party.reportBuffering(true, newVariantKey)
-        }
-        reconnect(forcePlay = true, startAt = currentPositionMs)
-    }
-
-    /** «Аудио», «Субтитры», «Качество», «⚙» (or null: close). The sheet is over the bar sideways, at the top of the panel below upright. */
+    /** «Аудио», «Субтитры», «⚙» (or null: close). The sheet is over the bar sideways, at the top of the panel below upright. */
     private fun openPicker(kind: String?) {
         ui.picker = kind
-        if (kind == "quality") updatePartyVariants()
         refreshPicker()
         if (kind != null) showControlsTemporarily() else controlsOverlay.keepShown()
     }

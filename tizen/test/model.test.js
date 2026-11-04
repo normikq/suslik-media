@@ -385,3 +385,20 @@ test('tileTitle: ИИ, потом русское название TMDB, пото
     aiTitle: { base: 'Начало (2010)', kind: 'movie', status: 'accepted' } })]);
   assert.equal(M.tileTitle(ai, of), 'Начало (2010)');
 });
+
+test('smartQualityScore и qualityScore: шкала разрешения и композитный скоринг', () => {
+  assert.equal(M.qualityScore('Movie.2160p.mkv'), 4);
+  assert.equal(M.qualityScore('Movie.1080p.mkv'), 3);
+  assert.equal(M.qualityScore('Movie.720p.mkv'), 2);
+  assert.equal(M.qualityScore('Movie.480p.mkv'), 1);
+  assert.equal(M.qualityScore('Movie.DVDRip.mkv'), 1);
+  assert.equal(M.qualityScore('Movie.Unknown.mkv'), 0);
+
+  assert.equal(M.smartQualityScore('Dune.2021.2160p.UHD.Remux.DV.TrueHD.Atmos.mkv'), 505);
+  assert.equal(M.smartQualityScore('Movie.1080p.BDRemux.10-bit.DTS-HD.MA.mkv'), 365);
+  assert.equal(M.smartQualityScore('Film.1080p.BDRip.AC3.5.1.mkv'), 325);
+  assert.equal(M.smartQualityScore('Series.S01E01.720p.WEB-DL.DDP5.1.mkv'), 230);
+  assert.equal(M.smartQualityScore('Movie.2160p.HDR10+.DTS:X.BDRip.mkv'), 485);
+  assert.equal(M.smartQualityScore('Old.Show.480p.mkv'), 100);
+  assert.equal(M.smartQualityScore('network.webcam.4kilo.dtswiss.mkv'), 100);
+});

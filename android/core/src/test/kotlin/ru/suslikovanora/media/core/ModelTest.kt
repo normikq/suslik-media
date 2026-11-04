@@ -663,4 +663,22 @@ class ModelTest {
         val accepted = prepareItems(parseLibrary(aiLibrary("accepted")))[1]
         assertEquals("Тачки 2", tileTitle(accepted) { ru[it] ?: "Другое" })
     }
+
+    @Test
+    fun smartQualityScoreAndQualityScore() {
+        assertEquals(4, qualityScore("Movie.2160p.mkv"))
+        assertEquals(3, qualityScore("Movie.1080p.mkv"))
+        assertEquals(2, qualityScore("Movie.720p.mkv"))
+        assertEquals(1, qualityScore("Movie.480p.mkv"))
+        assertEquals(1, qualityScore("Movie.DVDRip.mkv"))
+        assertEquals(0, qualityScore("Movie.Unknown.mkv"))
+
+        assertEquals(505, smartQualityScore("Dune.2021.2160p.UHD.Remux.DV.TrueHD.Atmos.mkv"))
+        assertEquals(365, smartQualityScore("Movie.1080p.BDRemux.10-bit.DTS-HD.MA.mkv"))
+        assertEquals(325, smartQualityScore("Film.1080p.BDRip.AC3.5.1.mkv"))
+        assertEquals(230, smartQualityScore("Series.S01E01.720p.WEB-DL.DDP5.1.mkv"))
+        assertEquals(485, smartQualityScore("Movie.2160p.HDR10+.DTS:X.BDRip.mkv"))
+        assertEquals(100, smartQualityScore("Old.Show.480p.mkv"))
+        assertEquals(100, smartQualityScore("network.webcam.4kilo.dtswiss.mkv"))
+    }
 }

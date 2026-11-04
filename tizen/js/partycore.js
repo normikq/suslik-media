@@ -222,7 +222,13 @@
       if (variantKey) o.variant_key = variantKey;
       return o;
     },
-    changeFile: function (f) { return { type: 'change_file', file: { key: f.key, name: f.title, ad_id: f.adId } }; },
+    changeFile: function (f) {
+      var o = { key: f.key, name: f.title, ad_id: f.adId };
+      if (f.canonical_id) o.canonical_id = f.canonical_id;
+      if (f.edition) o.edition = f.edition;
+      if (Array.isArray(f.variants) && f.variants.length) o.variants = f.variants;
+      return { type: 'change_file', file: o };
+    },
     /** Ведущий закрыл фильм: у гостей плеер тоже закрывается (сервер ставит room.file = null). */
     closeFile: function () { return { type: 'change_file', file: null }; },
     roomOf: function (res) { return res && res.room && typeof res.room === 'object' ? parseRoom(res.room) : null; },

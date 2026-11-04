@@ -543,39 +543,3 @@ fun LockIcon(
         drawCircle(color, radius = w * 0.045f, center = Offset(w * 0.5f, h * 0.64f))
     }
 }
-
-/** Quality badge icon ("HD"). */
-@Composable
-fun QualityIcon(
-    modifier: Modifier = Modifier,
-    color: Color = Color.White,
-    size: Dp = 20.dp
-) {
-    Box(modifier = modifier.size(size), contentAlignment = Alignment.Center) {
-        Canvas(modifier = Modifier.size(size)) {
-            val w = this.size.width
-            val h = this.size.height
-            val sw = 1.4.dp.toPx()
-            val padX = w * 0.08f
-            val padY = h * 0.16f
-            val rectW = w - padX * 2f
-            val rectH = h - padY * 2f
-            val cr = 3.0.dp.toPx()
-            drawRoundRect(
-                color = color,
-                topLeft = Offset(padX, padY),
-                size = Size(rectW, rectH),
-                cornerRadius = CornerRadius(cr, cr),
-                style = Stroke(width = sw)
-            )
-        }
-        Text(
-            "HD",
-            color = color,
-            fontFamily = Onest,
-            fontWeight = FontWeight.Bold,
-            fontSize = 9.sp,
-            textAlign = TextAlign.Center
-        )
-    }
-}

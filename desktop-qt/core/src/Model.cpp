@@ -832,39 +832,44 @@ std::optional<int> itemPart(const LibraryItem &item) {
 
 int smartQualityScore(const QString &name) {
     const QString l = name.toLower();
-    auto has = [&](const char *s) { return l.contains(QLatin1String(s)); };
+    auto match = [&](const char *pat) {
+        return l.contains(QRegularExpression(QString::fromUtf8(pat), QRegularExpression::CaseInsensitiveOption));
+    };
 
     int rScore = 100;
-    if (has("2160p") || has("4k") || has("3840") || has("uhd")) rScore = 400;
-    else if (has("1080p") || has("1080i") || has("1920")) rScore = 300;
-    else if (has("720p") || has("1280")) rScore = 200;
+    if (match(R"(\b(2160p|4k|3840|uhd)\b)")) rScore = 400;
+    else if (match(R"(\b(1080[pi]|1920)\b)")) rScore = 300;
+    else if (match(R"(\b(720p|1280)\b)")) rScore = 200;
     else rScore = 100;
 
     int vScore = 0;
-    if (has("dolby vision") || has("dovi") || l.contains(QRegularExpression(QStringLiteral(R"(\b(dv)\b)")))) vScore = 40;
-    else if (has("hdr10+")) vScore = 30;
-    else if (has("hdr10") || l.contains(QRegularExpression(QStringLiteral(R"(\b(hdr)\b)")))) vScore = 20;
-    else if (has("10-bit") || has("10bit") || has("hi10p")) vScore = 10;
-    else vScore = 0;
+    if (match(R"(dolby[\s._-]?vision|dovi|\bdv\b)")) vScore = 40;
+    else if (match(R"(hdr10\+)")) vScore = 30;
+    else if (match(R"(hdr10|\bhdr\b)")) vScore = 20;
+    else if (match(R"(10[\s._-]?bit|hi10p)")) vScore = 10;
 
     int aScore = 0;
-    if (has("atmos") || has("dts:x") || has("dts-x")) aScore = 40;
-    else if (has("dts-hd ma") || has("dts-hd.ma") || has("dts-hd") || has("dtshd")) aScore = 30;
-    else if (has("dts") || has("dd+") || has("e-ac-3") || has("eac3") || has("eac-3")) aScore = 20;
-    else if (has("ac3") || has("ac-3") || has("dd5.1") || has("5.1")) aScore = 10;
-    else aScore = 0;
+    if (match(R"(atmos|dts[:._-]?x)")) aScore = 40;
+    else if (match(R"(dts[\s._-]?hd[\s._-]?(?:ma)?|dtshd)")) aScore = 30;
+    else if (match(R"(\bdts\b|dd\+|ddp|e[\s._-]?ac[\s._-]?3|eac3)")) aScore = 20;
+    else if (match(R"(\bac3\b|ac[\s._-]?3|dd[\s._-]?5\.1|\b5\.1\b)")) aScore = 10;
 
     int sScore = 0;
-    if (has("remux")) sScore = 25;
-    else if (has("bdrip") || has("brrip") || has("bluray") || has("blu-ray")) sScore = 15;
-    else if (has("web-dl") || has("webdl") || has("webrip") || has("web")) sScore = 10;
-    else sScore = 0;
+    if (match(R"(\b(?:bd|uhd)?remux\b)")) sScore = 25;
+    else if (match(R"(\b(bdrip|brrip)\b|blu[\s._-]?ray)")) sScore = 15;
+    else if (match(R"(\bweb[\s._-]?(?:dl|rip)?\b)")) sScore = 10;
 
     return rScore + vScore + aScore + sScore;
 }
 
 int qualityScore(const QString &name) {
-    return smartQualityScore(name);
+    const QString l = name.toLower();
+    auto has = [&](const char *s) { return l.contains(QLatin1String(s)); };
+    if (has("2160p") || has("4k") || has("3840")) return 4;
+    if (has("1080p") || has("1080i") || has("1920")) return 3;
+    if (has("720p") || has("1280")) return 2;
+    if (has("480p") || has("576p") || has("dvd")) return 1;
+    return 0;
 }
 
 std::optional<std::pair<int, int>> itemSeasons(const LibraryItem &item) {
@@ -971,8 +976,11 @@ std::pair<QList<LibraryItem>, QHash<qint64, QList<LibraryItem>>> groupVersions(c
         if (it.playable.isNone() || !it.m.ready() || isBlank(base)) { shown << it; continue; }
         const QString kind = it.playable.isMovie() ? QStringLiteral("m") : QStringLiteral("s");
         QString ed;
-        if (const AiTitle *ai = it.m.acceptedAi(); ai && ai->edition && !ai->edition->isEmpty() && *ai->edition != QLatin1String("default"))
-            ed = *ai->edition;
+        if (const AiTitle *ai = it.m.acceptedAi(); ai && ai->edition && !ai->edition->isEmpty()) {
+            const QString e = *ai->edition;
+            if (e == QLatin1String("theatrical") || e == QLatin1String("extended") || e == QLatin1String("directors_cut") || e == QLatin1String("unrated"))
+                ed = e;
+        }
         const QString edKey = ed.isEmpty() ? QString() : (QLatin1Char('|') + ed);
         QStringList keys;
         if (posterOf)

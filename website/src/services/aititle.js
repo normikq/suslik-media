@@ -50,14 +50,15 @@ function canonicalNormalize(s) {
 
 function canonicalIdOf(info) {
   if (!info) return null;
-  const kind = info.kind === "series" ? "s" : "m";
+  const isSeries = info.kind === "series" || (Number.isInteger(info.season) && info.season > 0);
+  const kind = isSeries ? "s" : "m";
   const title = canonicalNormalize(info.original || info.base || "unknown");
   const edition = info.edition || "default";
   if (kind === "m") {
     const year = info.year ? `_${info.year}` : "";
     return `m:${title}${year}:${edition}`;
   } else {
-    const season = Number.isInteger(info.season) ? `_s${info.season}` : "";
+    const season = Number.isInteger(info.season) && info.season > 0 ? `_s${info.season}` : "";
     return `s:${title}${season}:${edition}`;
   }
 }
@@ -65,10 +66,9 @@ function canonicalIdOf(info) {
 // Версия ответа: 2 — с типом раздачи (kind), 3 — сезон без пометок в раздаче («Show 2 - 01», «Show - 01»),
 // 4 — сезон из числа после названия (seasonFromName), 5 — без пометок верим модели, «Part 2» — не сезон (прогон
 // scripts/aititle-eval.js 27.10), 6 — оригинальное название и год (original, year) для поиска постера в TMDB.
-// 7 — монтажная версия (edition) и канонический идентификатор (canonical_id).
 // Ответ старой версии можно спросить заново (stale в медиатеке), кроме принятого или отклонённого: решение владельца
 // не теряется от смены версии (переспросить его — только force).
-const VERSION = 7;
+const VERSION = 6;
 const NONE_RETRY_MS = 3600 * 1000; // «нет ответа» можно спросить заново через час (остальные решения — только force)
 
 const PROMPT = [

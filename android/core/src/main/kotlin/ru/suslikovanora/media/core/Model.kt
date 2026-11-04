@@ -696,36 +696,47 @@ data class MediaVariant(
 /** Smart Quality Score: resolution + video tech + audio tech + source type. */
 fun smartQualityScore(name: String): Int {
     val lower = name.lowercase(Locale.ROOT)
+    fun match(pattern: String): Boolean = Regex(pattern, RegexOption.IGNORE_CASE).containsMatchIn(lower)
+
     val rScore = when {
-        lower.contains("2160p") || lower.contains("4k") || lower.contains("3840") || lower.contains("uhd") -> 400
-        lower.contains("1080p") || lower.contains("1080i") || lower.contains("1920") -> 300
-        lower.contains("720p") || lower.contains("1280") -> 200
+        match("""\b(2160p|4k|3840|uhd)\b""") -> 400
+        match("""\b(1080[pi]|1920)\b""") -> 300
+        match("""\b(720p|1280)\b""") -> 200
         else -> 100
     }
     val vScore = when {
-        lower.contains("dolby vision") || lower.contains("dovi") || Regex("""\b(dv)\b""").containsMatchIn(lower) -> 40
-        lower.contains("hdr10+") -> 30
-        lower.contains("hdr10") || Regex("""\b(hdr)\b""").containsMatchIn(lower) -> 20
-        lower.contains("10-bit") || lower.contains("10bit") || lower.contains("hi10p") -> 10
+        match("""dolby[\s._-]?vision|dovi|\bdv\b""") -> 40
+        match("""hdr10\+""") -> 30
+        match("""hdr10|\bhdr\b""") -> 20
+        match("""10[\s._-]?bit|hi10p""") -> 10
         else -> 0
     }
     val aScore = when {
-        lower.contains("atmos") || lower.contains("dts:x") || lower.contains("dts-x") -> 40
-        lower.contains("dts-hd ma") || lower.contains("dts-hd.ma") || lower.contains("dts-hd") || lower.contains("dtshd") -> 30
-        lower.contains("dts") || lower.contains("dd+") || lower.contains("e-ac-3") || lower.contains("eac3") || lower.contains("eac-3") -> 20
-        lower.contains("ac3") || lower.contains("ac-3") || lower.contains("dd5.1") || lower.contains("5.1") -> 10
+        match("""atmos|dts[:._-]?x""") -> 40
+        match("""dts[\s._-]?hd[\s._-]?(?:ma)?|dtshd""") -> 30
+        match("""\bdts\b|dd\+|ddp|e[\s._-]?ac[\s._-]?3|eac3""") -> 20
+        match("""\bac3\b|ac[\s._-]?3|dd[\s._-]?5\.1|\b5\.1\b""") -> 10
         else -> 0
     }
     val sScore = when {
-        lower.contains("remux") -> 25
-        lower.contains("bdrip") || lower.contains("brrip") || lower.contains("bluray") || lower.contains("blu-ray") -> 15
-        lower.contains("web-dl") || lower.contains("webdl") || lower.contains("webrip") || lower.contains("web") -> 10
+        match("""\b(?:bd|uhd)?remux\b""") -> 25
+        match("""\b(bdrip|brrip)\b|blu[\s._-]?ray""") -> 15
+        match("""\bweb[\s._-]?(?:dl|rip)?\b""") -> 10
         else -> 0
     }
     return rScore + vScore + aScore + sScore
 }
 
-fun qualityScore(name: String): Int = smartQualityScore(name)
+fun qualityScore(name: String): Int {
+    val lower = name.lowercase(Locale.ROOT)
+    return when {
+        lower.contains("2160p") || lower.contains("4k") || lower.contains("3840") -> 4
+        lower.contains("1080p") || lower.contains("1080i") || lower.contains("1920") -> 3
+        lower.contains("720p") || lower.contains("1280") -> 2
+        lower.contains("480p") || lower.contains("576p") || lower.contains("dvd") -> 1
+        else -> 0
+    }
+}
 
 /** Seasons covered by this item: Pair(minSeason, maxSeason) or null if not a series. */
 fun itemSeasons(item: LibraryItem): Pair<Int, Int>? {
@@ -860,7 +871,9 @@ fun groupVersions(list: List<LibraryItem>, posterOf: (LibraryItem) -> String? = 
         val base = it.baseTitle
         if (it.playable is Playable.None || !it.m.ready || base.isBlank()) { shown += it; continue }
         val kind = if (it.playable is Playable.Movie) "m" else "s"
-        val ed = it.m.aiTitle?.takeIf { a -> a.accepted }?.edition?.takeIf { it != "default" }.orEmpty()
+        val ed = it.m.aiTitle?.takeIf { a -> a.accepted }?.edition?.takeIf { e ->
+            e == "theatrical" || e == "extended" || e == "directors_cut" || e == "unrated"
+        }.orEmpty()
         val edKey = if (ed.isNotEmpty()) "|$ed" else ""
         val keys = listOfNotNull(
             posterOf(it)?.let { p -> "$kind|poster|$p$edKey" },

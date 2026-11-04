@@ -505,48 +505,6 @@ void PlayerModel::playEntry(int i) {
 
 void PlayerModel::playNext() { if (m_index + 1 < m_queue.size()) playEntry(m_index + 1); }
 
-void PlayerModel::playAt(qint64 currentPositionMs, const QString &newVariantKey) {
-    if (newVariantKey.isEmpty()) return;
-    PlayerLog::write(S("[player] switch quality preset -> %1 at %2 ms").arg(newVariantKey).arg(currentPositionMs));
-    m_activeVariantKey = newVariantKey;
-    m_time = currentPositionMs;
-    emit currentVariantKeyChanged();
-    if (Party *party = Party::instance(); party && party->inRoom()) {
-        party->reportBuffering(true, newVariantKey);
-    }
-    open(m_currentUrl, currentPositionMs, {});
-}
-
-QVariantList PlayerModel::variants() const {
-    QVariantList list;
-    const Party *party = Party::instance();
-    if (party && party->file() && !party->file()->variants.isEmpty()) {
-        const QString hostKey = party->file()->key;
-        for (const auto &v : party->file()->variants) {
-            QVariantMap m;
-            m[S("key")] = v.key;
-            m[S("label")] = v.label;
-            m[S("quality")] = v.quality;
-            m[S("audio")] = v.audio;
-            m[S("bitrate")] = v.bitrate;
-            m[S("isHost")] = (v.key == hostKey);
-            list << m;
-        }
-    }
-    return list;
-}
-
-QString PlayerModel::currentVariantKey() const {
-    if (!m_activeVariantKey.isEmpty()) return m_activeVariantKey;
-    return currentWatchKey();
-}
-
-QString PlayerModel::hostVariantKey() const {
-    const Party *party = Party::instance();
-    if (party && party->file()) return party->file()->key;
-    return QString();
-}
-
 void PlayerModel::cancelNext() {
     m_nextIn = -1;
     m_nextDismissed = true;

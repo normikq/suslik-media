@@ -609,10 +609,6 @@
       return;
     }
     var check = support.checkFile(en.file.path);
-    var vCompat = support.checkVariantCompatibility({ hardware_flags: en.file.hardware_flags || (en.file.path.toLowerCase().indexOf('dts') >= 0 ? ['dts'] : []) });
-    if (!vCompat.ok && vCompat.warn) {
-      toast(vCompat.text);
-    }
     var go = function () {
       if (party.isHost()) party.putFilm(key, en.room || en.label, en.file.canonical_id || '', en.file.edition || '', en.file.variants || []);
       show(h('div')); // экран под плеером пустой: старый не держит фокус и подписки
