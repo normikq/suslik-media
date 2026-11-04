@@ -114,6 +114,7 @@ struct Playable {
     bool isNone() const { return kind == Kind::None; }
     bool isMovie() const { return kind == Kind::Movie; }
     bool isSeries() const { return kind == Kind::Series; }
+    std::optional<MFile> movieFile() const { return isMovie() && !file.path.isEmpty() ? std::optional<MFile>(file) : std::nullopt; }
     bool operator==(const Playable &) const = default;
 };
 

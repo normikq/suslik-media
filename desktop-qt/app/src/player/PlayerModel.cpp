@@ -1347,6 +1347,7 @@ void PlayerModel::switchVariant(const QString &variantKey) {
             self->flash(Strings::get(S("player.ne_udalos_smenit_kachestvo")));
             return;
         }
+        const QString prevVariantKey = self->m_activeVariantKey;
         self->m_activeVariantKey = variantKey;
         self->m_currentUrl = newUrl;
         for (const auto &v : self->m_req.variants) {
@@ -1375,7 +1376,7 @@ void PlayerModel::switchVariant(const QString &variantKey) {
         qint64 targetOffsetMs = 0, currentOffsetMs = 0;
         for (const auto &v : self->m_req.variants) {
             if (v.key == variantKey) targetOffsetMs = v.offsetMs;
-            if (v.key == self->m_activeVariantKey) currentOffsetMs = v.offsetMs;
+            if (v.key == prevVariantKey) currentOffsetMs = v.offsetMs;
         }
         const qint64 offsetDiff = targetOffsetMs - currentOffsetMs;
         const qint64 targetPos = std::max<qint64>(0, curPos + offsetDiff);
