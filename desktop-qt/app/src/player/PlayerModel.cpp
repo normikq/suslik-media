@@ -323,27 +323,11 @@ void PlayerModel::begin() {
         if (!m_req.variants.isEmpty()) m_activeVariantKey = m_req.variants[0].key;
         else m_activeVariantKey = watchKey(m_index);
     }
-    const QString prefMag = pref(S("vmagnet")).value_or(QString());
-    const QString prefQ = pref(S("vquality")).value_or(QString());
-    core::PartyVariant targetVar;
-    bool foundTarget = false;
-    if (!prefMag.isEmpty()) {
-        for (const auto &v : m_req.variants) {
-            if (v.key.section(QLatin1Char('|'), 0, 0) == prefMag) {
-                targetVar = v;
-                foundTarget = true;
-                break;
-            }
-        }
-    }
-    if (!foundTarget && !prefQ.isEmpty()) {
-        for (const auto &v : m_req.variants) {
-            if (v.quality == prefQ || v.label == prefQ) {
-                targetVar = v;
-                foundTarget = true;
-                break;
-            }
-        }
+    const QString mag = m_activeVariantKey.section(QLatin1Char('|'), 0, 0);
+    if (!mag.isEmpty()) {
+        const QString tk = titleKey();
+        if (!tk.isEmpty()) putUi(S("vmagnet:") + tk, mag);
+        if (!m_canonicalId.isEmpty()) putUi(S("vmagnet:c") + m_canonicalId, mag);
     }
     m_switchingVariant = false;
     m_suggestedDowngradeKey.clear();
@@ -382,11 +366,6 @@ void PlayerModel::begin() {
     PlayerLog::write(S("player open «%1»: %2 in the queue, starts with %3").arg(m_req.title).arg(n).arg(m_index + 1));
     const qint64 at = m_req.startMs ? *m_req.startMs : m_req.fromStart ? 0 : savedPos(m_index);
     m_time = m_lastGood = at;
-    if (foundTarget && !targetVar.key.isEmpty() && targetVar.key != m_activeVariantKey) {
-        switchVariant(targetVar.key);
-        loadPlaylist();
-        return;
-    }
     open(m_req.url, at, m_sidecars.value(m_index));
     loadPlaylist();
 }

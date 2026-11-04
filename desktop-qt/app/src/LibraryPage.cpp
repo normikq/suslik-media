@@ -1,5 +1,6 @@
 #include "LibraryPage.h"
 
+#include "suslik/core/Store.h"
 #include "suslik/core/Strings.h"
 
 #include <QDateTime>
@@ -346,7 +347,7 @@ void LibraryPage::rebuild() {
     // «Продолжить просмотр»: только на «Главной», без поиска и категории
     m_continue.clear();
     if (!m_mine && q.isEmpty() && m_category == 0) {
-        struct E { QVariantMap map; qint64 at; };
+        struct E { QVariantMap map; qint64 at; QString groupKey; };
         std::vector<E> entries;
         const qint64 now = QDateTime::currentMSecsSinceEpoch();
         const QSet<qint64> recent = m_lib->watchedSince(now - 60LL * 24 * 3600 * 1000);
@@ -431,10 +432,19 @@ void LibraryPage::rebuild() {
                                  : tx(S("library.ostalos_min"), {{"minutes", QString::number(min)}});
             }
             e[S("left")] = left;
-            entries.push_back({e, w.at});
+            const auto vs = m_lib->versionsOf(item.m.id);
+            const qint64 rootId = vs.isEmpty() ? item.m.id : vs.first().m.id;
+            const QString groupKey = coll ? (QString::number(rootId) + QLatin1Char('|') + target.path) : QString::number(rootId);
+            entries.push_back({e, w.at, groupKey});
         }
         std::stable_sort(entries.begin(), entries.end(), [](const E &a, const E &b) { return a.at > b.at; });
-        for (size_t i = 0; i < std::min<size_t>(4, entries.size()); ++i) m_continue << entries[i].map;
+        QSet<QString> seenGroups;
+        for (const auto &entry : entries) {
+            if (seenGroups.contains(entry.groupKey)) continue;
+            seenGroups.insert(entry.groupKey);
+            m_continue << entry.map;
+            if (m_continue.size() >= 4) break;
+        }
     }
     emit resultChanged();
 }
@@ -488,6 +498,20 @@ void LibraryPage::showAi(qint64 id) {
 }
 
 QVariantList LibraryPage::versionRows(const QVariantList &ids) const {
+    qint64 lastPlayedId = -1;
+    qint64 latestAt = 0;
+    for (const auto &vVal : ids) {
+        const qint64 vid = vVal.toLongLong();
+        if (const LibraryItem *it = m_lib->item(vid)) {
+            std::optional<WatchInfo> w;
+            if (it->playable.isSeries()) { if (auto lw = m_lib->lastWatched(it->m)) w = lw->second; }
+            else if (it->playable.isMovie()) w = m_lib->watchInfo(watchKey(it->m.id, it->playable.file));
+            if (w && w->at > latestAt) {
+                latestAt = w->at;
+                lastPlayedId = vid;
+            }
+        }
+    }
     QList<LibraryItem> vs;
     for (const auto &v : ids)
         if (const LibraryItem *it = m_lib->item(v.toLongLong())) vs << *it;
@@ -542,6 +566,7 @@ QVariantList LibraryPage::versionRows(const QVariantList &ids) const {
             r[S("size")] = formatBytes(v.m.size);
             r[S("name")] = v.m.name;
             r[S("fraction")] = w && w->fraction() > 0.01f ? (w->watched() ? 1.0 : double(w->fraction())) : 0.0;
+            r[S("isLastPlayed")] = (latestAt > 0 && v.m.id == lastPlayedId);
             rows << r;
         }
         QVariantMap sm;
@@ -557,6 +582,17 @@ QString LibraryPage::versionsLabel(int n) const { return versionsWord(n); }
 void LibraryPage::chooseVersion(qint64 id) {
     const LibraryItem *item = m_lib->item(id);
     if (!item) return;
+    const auto vs = m_lib->versionsOf(id);
+    if (!vs.isEmpty()) {
+        const QString mag = QString::number(id);
+        const QString tKey = titleKey(vs.first().baseTitle);
+        if (!tKey.isEmpty()) {
+            core::Store::of(S("player_ui")).put(S("vmagnet:") + tKey, mag);
+        }
+        if (vs.first().m.aiTitle && vs.first().m.aiTitle->canonicalId) {
+            core::Store::of(S("player_ui")).put(S("vmagnet:c") + *vs.first().m.aiTitle->canonicalId, mag);
+        }
+    }
     if (item->playable.isMovie()) { emit playRequested(id, item->playable.file.path); return; }
     if (!item->playable.isSeries() || item->playable.seasons.isEmpty()) return;
     std::optional<QString> saved;

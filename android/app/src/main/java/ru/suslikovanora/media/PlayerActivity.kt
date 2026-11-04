@@ -764,12 +764,13 @@ class PlayerActivity : ComponentActivity() {
                     val prefQ = fk?.let { sp.getString("vquality:$it", null) } ?: sp.getString("vquality:*", null)
                     val targetVar = (if (!prefMag.isNullOrBlank()) newVars.find { it.key.substringBefore('|') == prefMag } else null)
                         ?: (if (!prefQ.isNullOrBlank()) newVars.find { it.quality == prefQ || it.label == prefQ } else null)
-                    if (targetVar != null && targetVar.key != newKey) {
+                    if (index > 0 && targetVar != null && targetVar.key != newKey) {
                         ui.activeVariantKey = targetVar.key
                         switchVariant(targetVar.key, initialPos = targetEpisodePos)
                         return
                     }
                     ui.activeVariantKey = newKey
+                    fk?.let { sp.edit().putString("vmagnet:$it", newKey.substringBefore('|')).apply() }
                 }
                 lastTime = playbackPosition
                 ended = false

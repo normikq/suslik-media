@@ -328,6 +328,12 @@
    */
   function continueList() {
     var out = [];
+    var grouped = model.groupVersions(state.items, function (it) { return posters.pathOf(it.posterQueries); });
+    var rootOf = {};
+    for (var vid in (grouped.versions || {})) {
+      var g = grouped.versions[vid];
+      g.forEach(function (v) { rootOf[v.m.id] = g[0].m.id; });
+    }
     state.items.forEach(function (it) {
       if (!it.m.ready) return;
       var entries = null, best = null;
@@ -341,13 +347,24 @@
       entries.forEach(function (en, j) { if (en.file.path === best.f.path) i = j; });
       if (i < 0) return;
       var info = model.watchInfo(best.w.pos, best.w.len, best.w.at);
+      var rootId = rootOf[it.m.id] || it.m.id;
+      var isColl = it.playable.kind === 'series' && it.playable.seasons.length > 0 && it.playable.seasons[0].items.length > 0 && !!it.playable.seasons[0].items[0].title;
+      var groupKey = isColl ? (rootId + '|' + best.f.path) : String(rootId);
       if (info.watched) {
         if (i + 1 >= entries.length) return;
-        out.push({ it: it, entries: entries, index: i + 1, at: best.w.at, fraction: 0, next: true });
-      } else if (best.w.pos > 30000) out.push({ it: it, entries: entries, index: i, at: best.w.at, fraction: info.fraction, next: false });
+        out.push({ it: it, entries: entries, index: i + 1, at: best.w.at, fraction: 0, next: true, groupKey: groupKey });
+      } else if (best.w.pos > 30000) out.push({ it: it, entries: entries, index: i, at: best.w.at, fraction: info.fraction, next: false, groupKey: groupKey });
     });
     out.sort(function (a, b) { return b.at - a.at; });
-    return out.slice(0, 12);
+    var deduped = [], seen = {};
+    for (var k = 0; k < out.length; k++) {
+      var item = out[k];
+      if (seen[item.groupKey]) continue;
+      seen[item.groupKey] = true;
+      deduped.push(item);
+      if (deduped.length >= 12) break;
+    }
+    return deduped;
   }
 
   function continueCard(c) {
@@ -399,7 +416,16 @@
 
   /** «Какую версию включить?»: строка на раздачу — серии и сезоны в ней, размер и имя; открывает её экран. */
   function pickVersion(title, versions) {
-    // versions уже упорядочены groupVersions (sortVersions)
+    var maxAt = 0, lastPlayedId = null;
+    versions.forEach(function (v) {
+      v.m.files.forEach(function (f) {
+        var w = watch.raw(model.watchKey(v.m.id, f));
+        if (w && w.at && w.at > maxAt) {
+          maxAt = w.at;
+          lastPlayedId = v.m.id;
+        }
+      });
+    });
     dialog(tr('library.pick_version_title'), title + ' · ' + versionsWord(versions.length), versions.map(function (v) {
       var prof = state.serverProfiles && state.serverProfiles[v.m.id];
       var q = '';
@@ -410,7 +436,8 @@
       else if (/480|576|dvd/i.test(v.m.name)) q = '480p';
       var line = model.versionLine(v); // сезоны / фильмы сборника / год (versionLine в Model.kt)
       var head = [line, q].filter(Boolean).join(' • ');
-      return { text: head + ' · ' + model.formatBytes(v.m.size) + ' · ' + shorten(v.m.name, 60), run: function () { details(v); } };
+      var prefix = (maxAt > 0 && v.m.id === lastPlayedId) ? ('[' + tr('library.poslednyaya_versiya') + '] ') : '';
+      return { text: prefix + head + ' · ' + model.formatBytes(v.m.size) + ' · ' + shorten(v.m.name, 60), run: function () { details(v); } };
     }), 'versions');
   }
   function shorten(s, n) { return s.length > n ? s.substring(0, n - 1) + '…' : s; }

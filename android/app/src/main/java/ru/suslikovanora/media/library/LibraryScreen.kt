@@ -310,31 +310,45 @@ private fun filmSub(item: LibraryItem, file: MFile): String {
     return if (films.size > 1 && idx >= 0) tr("library.film_p", "p" to (idx + 1)) + " · " + title else title
 }
 
-internal fun continueEntries(items: List<LibraryItem>, store: LibraryStore): List<ContinueEntry> = items.mapNotNull { item ->
-    if (!item.m.ready) return@mapNotNull null
-    val (file, w) = store.lastWatched(item.m) ?: return@mapNotNull null
-    if (System.currentTimeMillis() - w.at > 60L * 24 * 3600 * 1000) return@mapNotNull null
-    if (store.continueHiddenAt(item.m.id) >= w.at) return@mapNotNull null
-    val isColl = isCollection(item.playable, item.m)
-    if (!w.watched) {
-        val t = targetFor(item, file) ?: return@mapNotNull null
-        val queries = continueItemPosterQueries(item, file)
-        val sub = if (isColl) filmSub(item, file) else {
-            t.label.removePrefix(item.baseTitle).removePrefix(" · ").ifBlank { tr("library.film") }
+internal fun continueEntries(items: List<LibraryItem>, store: LibraryStore): List<ContinueEntry> {
+    val raw = items.mapNotNull { item ->
+        if (!item.m.ready) return@mapNotNull null
+        val (file, w) = store.lastWatched(item.m) ?: return@mapNotNull null
+        if (System.currentTimeMillis() - w.at > 60L * 24 * 3600 * 1000) return@mapNotNull null
+        if (store.continueHiddenAt(item.m.id) >= w.at) return@mapNotNull null
+        val isColl = isCollection(item.playable, item.m)
+        val vs = store.versionsOf(item.m.id)
+        val rootId = vs.firstOrNull()?.m?.id ?: item.m.id
+        val groupKey = if (isColl) "$rootId|${file.path}" else "$rootId"
+        if (!w.watched) {
+            val t = targetFor(item, file) ?: return@mapNotNull null
+            val queries = continueItemPosterQueries(item, file)
+            val sub = if (isColl) filmSub(item, file) else {
+                t.label.removePrefix(item.baseTitle).removePrefix(" · ").ifBlank { tr("library.film") }
+            }
+            ContinueEntry(item, t, sub, w.fraction, w.pos, w.len, w.at, queries) to groupKey
+        } else {
+            val series = item.playable as? Playable.Series ?: return@mapNotNull null
+            val next = nextEpisode(series, file) ?: return@mapNotNull null
+            if (store.watchInfo(watchKey(item.m.id, next))?.watched == true) return@mapNotNull null
+            val t = targetFor(item, next) ?: return@mapNotNull null
+            val queries = continueItemPosterQueries(item, next)
+            val sub = if (isColl) tr("library.dalshe") + filmSub(item, next) else {
+                tr("library.dalshe") + t.label.removePrefix(item.baseTitle).removePrefix(" · ")
+            }
+            ContinueEntry(item, t, sub, 0f, 0L, 0L, w.at, queries) to groupKey
         }
-        ContinueEntry(item, t, sub, w.fraction, w.pos, w.len, w.at, queries)
-    } else {
-        val series = item.playable as? Playable.Series ?: return@mapNotNull null
-        val next = nextEpisode(series, file) ?: return@mapNotNull null
-        if (store.watchInfo(watchKey(item.m.id, next))?.watched == true) return@mapNotNull null
-        val t = targetFor(item, next) ?: return@mapNotNull null
-        val queries = continueItemPosterQueries(item, next)
-        val sub = if (isColl) tr("library.dalshe") + filmSub(item, next) else {
-            tr("library.dalshe") + t.label.removePrefix(item.baseTitle).removePrefix(" · ")
+    }.sortedByDescending { it.first.at }
+
+    val seen = HashSet<String>()
+    val result = ArrayList<ContinueEntry>()
+    for ((entry, key) in raw) {
+        if (seen.add(key)) {
+            result.add(entry)
         }
-        ContinueEntry(item, t, sub, 0f, 0L, 0L, w.at, queries)
     }
-}.sortedByDescending { it.at }
+    return result
+}
 
 /** «Продолжить просмотр» shows the last four (the phone's row and the TV banner); «Очистить» hides them all. */
 const val CONTINUE_SHOWN = 4
@@ -444,8 +458,18 @@ fun LibraryScreen(
             PageBar(curPage, pageCount) { n -> page = n; scope.launch { gridState.scrollToItem(0) } }
         }
     }
+    val context = LocalContext.current
     pick?.let { vs ->
-        VersionSheet(vs.first().baseTitle, vs, store, onDismiss = { pick = null }) { v -> pick = null; versionTarget(v, store)?.let(onPlay) }
+        VersionSheet(vs.first().baseTitle, vs, store, onDismiss = { pick = null }) { v ->
+            pick = null
+            val mag = v.m.id.toString()
+            val sp = context.getSharedPreferences("player_ui", Context.MODE_PRIVATE)
+            val tKey = titleKey(vs.first().baseTitle)
+            if (tKey.isNotBlank()) sp.edit().putString("vmagnet:$tKey", mag).apply()
+            val cId = vs.first().m.aiTitle?.canonicalId
+            if (!cId.isNullOrBlank()) sp.edit().putString("vmagnet:c$cId", mag).apply()
+            versionTarget(v, store)?.let(onPlay)
+        }
     }
 }
 

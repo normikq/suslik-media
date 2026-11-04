@@ -51,6 +51,7 @@
   "library.versions": "{count} версии",
   "library.not_ready": "Раздача ещё не готова: {status}",
   "library.pick_version_title": "Какую версию включить?",
+  "library.poslednyaya_versiya": "Последняя",
   "library.refresh": "Обновить медиатеку",
   "library.refreshing": "Загружаем медиатеку…",
   "library.refreshed": "Медиатека обновлена",
