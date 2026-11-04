@@ -473,6 +473,10 @@ std::optional<AiTitle> parseAiTitle(const QJsonObject *a) {
         if (const QString o = optString(*a, QStringLiteral("original")).trimmed(); !o.isEmpty()) t.original = o;
     if (hasValue(*a, QStringLiteral("year")))
         if (const int y = int(optLong(*a, QStringLiteral("year"))); y >= 1880 && y <= 2100) t.year = y;
+    if (hasValue(*a, QStringLiteral("edition")))
+        if (const QString ed = optString(*a, QStringLiteral("edition")).trimmed(); !ed.isEmpty()) t.edition = ed;
+    if (hasValue(*a, QStringLiteral("canonical_id")))
+        if (const QString cid = optString(*a, QStringLiteral("canonical_id")).trimmed(); !cid.isEmpty()) t.canonicalId = cid;
     return t;
 }
 
@@ -826,14 +830,41 @@ std::optional<int> itemPart(const LibraryItem &item) {
     return std::nullopt;
 }
 
-int qualityScore(const QString &name) {
+int smartQualityScore(const QString &name) {
     const QString l = name.toLower();
     auto has = [&](const char *s) { return l.contains(QLatin1String(s)); };
-    if (has("2160p") || has("4k") || has("3840")) return 4;
-    if (has("1080p") || has("1080i") || has("1920")) return 3;
-    if (has("720p") || has("1280")) return 2;
-    if (has("480p") || has("576p") || has("dvd")) return 1;
-    return 0;
+
+    int rScore = 100;
+    if (has("2160p") || has("4k") || has("3840") || has("uhd")) rScore = 400;
+    else if (has("1080p") || has("1080i") || has("1920")) rScore = 300;
+    else if (has("720p") || has("1280")) rScore = 200;
+    else rScore = 100;
+
+    int vScore = 0;
+    if (has("dolby vision") || has("dovi") || l.contains(QRegularExpression(QStringLiteral(R"(\b(dv)\b)")))) vScore = 40;
+    else if (has("hdr10+")) vScore = 30;
+    else if (has("hdr10") || l.contains(QRegularExpression(QStringLiteral(R"(\b(hdr)\b)")))) vScore = 20;
+    else if (has("10-bit") || has("10bit") || has("hi10p")) vScore = 10;
+    else vScore = 0;
+
+    int aScore = 0;
+    if (has("atmos") || has("dts:x") || has("dts-x")) aScore = 40;
+    else if (has("dts-hd ma") || has("dts-hd.ma") || has("dts-hd") || has("dtshd")) aScore = 30;
+    else if (has("dts") || has("dd+") || has("e-ac-3") || has("eac3") || has("eac-3")) aScore = 20;
+    else if (has("ac3") || has("ac-3") || has("dd5.1") || has("5.1")) aScore = 10;
+    else aScore = 0;
+
+    int sScore = 0;
+    if (has("remux")) sScore = 25;
+    else if (has("bdrip") || has("brrip") || has("bluray") || has("blu-ray")) sScore = 15;
+    else if (has("web-dl") || has("webdl") || has("webrip") || has("web")) sScore = 10;
+    else sScore = 0;
+
+    return rScore + vScore + aScore + sScore;
+}
+
+int qualityScore(const QString &name) {
+    return smartQualityScore(name);
 }
 
 std::optional<std::pair<int, int>> itemSeasons(const LibraryItem &item) {
@@ -939,16 +970,20 @@ std::pair<QList<LibraryItem>, QHash<qint64, QList<LibraryItem>>> groupVersions(c
         const QString &base = it.baseTitle;
         if (it.playable.isNone() || !it.m.ready() || isBlank(base)) { shown << it; continue; }
         const QString kind = it.playable.isMovie() ? QStringLiteral("m") : QStringLiteral("s");
+        QString ed;
+        if (const AiTitle *ai = it.m.acceptedAi(); ai && ai->edition && !ai->edition->isEmpty() && *ai->edition != QLatin1String("default"))
+            ed = *ai->edition;
+        const QString edKey = ed.isEmpty() ? QString() : (QLatin1Char('|') + ed);
         QStringList keys;
         if (posterOf)
-            if (auto p = posterOf(it)) keys << kind + QStringLiteral("|poster|") + *p;
+            if (auto p = posterOf(it)) keys << kind + QStringLiteral("|poster|") + *p + edKey;
         if (kind == QLatin1String("m")) {
             QString year;
             if (const AiTitle *ai = it.m.acceptedAi(); ai && ai->year) year = QString::number(*ai->year);
             else if (const auto y = YEAR_IN_NAME.match(it.m.name); y.hasMatch()) year = y.captured(0);
-            keys << QStringLiteral("m|") + titleKey(base) + QLatin1Char('|') + year;
+            keys << QStringLiteral("m|") + titleKey(base) + QLatin1Char('|') + year + edKey;
         } else {
-            keys << QStringLiteral("s|") + titleKey(base);
+            keys << QStringLiteral("s|") + titleKey(base) + edKey;
         }
         int group = -1;
         for (const QString &k : keys)

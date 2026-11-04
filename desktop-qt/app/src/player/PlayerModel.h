@@ -78,6 +78,10 @@ class PlayerModel : public QObject, private core::PlaybackSupervisor::Actions {
     /// Плеер показывает фильм комнаты (ведущий или гость): скорость — комнаты, своя не действует.
     Q_PROPERTY(bool partyFilm READ partyFilm NOTIFY partyChanged)
     Q_PROPERTY(bool playLocked READ playLocked NOTIFY partyChanged)
+    /// Пресеты качества для карточки и меню плеера (MediaVariant).
+    Q_PROPERTY(QVariantList variants READ variants NOTIFY variantsChanged)
+    Q_PROPERTY(QString currentVariantKey READ currentVariantKey NOTIFY currentVariantKeyChanged)
+    Q_PROPERTY(QString hostVariantKey READ hostVariantKey NOTIFY hostVariantKeyChanged)
 
 public:
     explicit PlayerModel(QObject *parent = nullptr);
@@ -140,6 +144,7 @@ public:
     Q_INVOKABLE void seekBy(qint64 ms);
     Q_INVOKABLE void seekTo(qint64 ms);
     Q_INVOKABLE void playEntry(int i);
+    Q_INVOKABLE void playAt(qint64 currentPositionMs, const QString &newVariantKey);
     Q_INVOKABLE void playNext();
     Q_INVOKABLE void cancelNext();
     Q_INVOKABLE void skipIntro() { skipIntroImpl(false); }
@@ -194,6 +199,10 @@ public:
     void engineRate(double r);
     void showNotice(const QString &text) { flash(text); }
 
+    QVariantList variants() const;
+    QString currentVariantKey() const;
+    QString hostVariantKey() const;
+
     /// Для SMTC и Discord: строка 1 и 2.
     std::pair<QString, QString> mediaTitles() const;
     Presence presence() const;
@@ -213,6 +222,9 @@ signals:
     void infoChanged();
     void tracksExtraChanged();
     void partyChanged();
+    void variantsChanged();
+    void currentVariantKeyChanged();
+    void hostVariantKeyChanged();
     /// Короткая надпись поверх (громкость, скорость…).
     void flashed(const QString &text);
     /// Плеер закрылся (окно убирает экран плеера).
@@ -293,6 +305,7 @@ private:
     QHash<QString, std::pair<QString, QString>> m_sideTitles;
     int m_index = 0;
     QString m_title, m_currentUrl;
+    QString m_activeVariantKey;
     quint64 m_gen = 0;
 
     bool m_open = false, m_closing = false, m_started = false, m_playing = false, m_switching = false;

@@ -141,11 +141,227 @@ function snapshot(magnets, prune) {
   }
   work().catch(() => {});
   const tags = {};
+  const profiles = {};
   for (const m of magnets) {
     const e = store.get(String(m.id));
     if (e && Array.isArray(e.t)) tags[m.id] = e.t;
+    const file = pickMainFile(m.files);
+    if (file) {
+      profiles[m.id] = buildMediaVariant({
+        adId: m.id,
+        filePath: file.path,
+        fileName: m.name,
+        sizeBytes: Number(file.size) || Number(m.size) || 0,
+        tags: tags[m.id] || []
+      });
+    }
   }
-  return { tags, pending: queue.length + (running ? 1 : 0) };
+  return { tags, profiles, pending: queue.length + (running ? 1 : 0) };
 }
 
-module.exports = { snapshot, tagsFromStreams, pickMainFile, store };
+const RESOLUTION_SCORES = {
+  "4K": 400,
+  "1080p": 300,
+  "720p": 200,
+  "SD": 100
+};
+
+const VIDEO_TECH_SCORES = {
+  "DV": 40,
+  "HDR10+": 30,
+  "HDR10": 20,
+  "10-bit": 10,
+  "SDR": 0
+};
+
+const AUDIO_TECH_SCORES = {
+  "TrueHD Atmos": 40,
+  "DTS:X": 40,
+  "DTS-HD MA": 30,
+  "DTS-HD": 30,
+  "DTS 5.1": 20,
+  "DD+": 20,
+  "AC3 5.1": 10,
+  "Stereo": 0
+};
+
+const SOURCE_TYPE_SCORES = {
+  "Remux": 25,
+  "BDRip": 15,
+  "Web-DL": 10,
+  "HDTV": 0
+};
+
+function calculateScore({ resolution = "SD", videoTech = "SDR", audioTech = "Stereo", sourceType = "Web-DL" } = {}) {
+  const rScore = RESOLUTION_SCORES[resolution] ?? 100;
+  const vScore = VIDEO_TECH_SCORES[videoTech] ?? 0;
+  let aScore = AUDIO_TECH_SCORES[audioTech];
+  if (aScore === undefined) {
+    if (/atmos|dts:?x/i.test(audioTech)) aScore = 40;
+    else if (/dts-?hd/i.test(audioTech)) aScore = 30;
+    else if (/dts|dd\+|e-?ac-?3/i.test(audioTech)) aScore = 20;
+    else if (/ac-?3|5\.1/i.test(audioTech)) aScore = 10;
+    else aScore = 0;
+  }
+  const sScore = SOURCE_TYPE_SCORES[sourceType] ?? 0;
+  return rScore + vScore + aScore + sScore;
+}
+
+function getHardwareFlags({ videoTech = "SDR", audioTech = "Stereo", bitrateMbps = 0, sourceType = "" } = {}) {
+  const flags = [];
+  if (audioTech && /dts/i.test(audioTech)) flags.push("dts");
+  if (videoTech === "DV") flags.push("dv");
+  if (videoTech && /hdr/i.test(videoTech)) flags.push("hdr");
+  if ((bitrateMbps && bitrateMbps > 30) || sourceType === "Remux") flags.push("heavy");
+  return flags;
+}
+
+function formatBytesRu(bytes) {
+  if (!bytes || !Number.isFinite(bytes)) return "";
+  const gb = bytes / (1024 * 1024 * 1024);
+  if (gb >= 1) return gb.toFixed(1).replace(/\.0$/, "") + " ГБ";
+  const mb = bytes / (1024 * 1024);
+  return mb.toFixed(0) + " МБ";
+}
+
+function buildCompositeLabel({ resolution = "1080p", sourceType = "BDRip", videoTech = "SDR", audioTech = "Stereo", sizeBytes = 0 } = {}) {
+  const parts = [];
+  if (resolution) parts.push(resolution);
+  if (videoTech && videoTech !== "SDR") parts.push(videoTech === "DV" ? "Dolby Vision" : videoTech);
+  if (sourceType) parts.push(sourceType === "Remux" ? "BDRemux" : sourceType);
+  if (audioTech && audioTech !== "Stereo") parts.push(audioTech);
+  const main = parts.join(" · ") || resolution || "Видео";
+  const sz = formatBytesRu(sizeBytes);
+  return sz ? `${main} (${sz})` : main;
+}
+
+function parseResolution(name, streams = []) {
+  const v = streams.find(s => s && (s.codec_type === "video" || (s.width && s.height)));
+  if (v) {
+    const h = Number(v.height) || 0;
+    const w = Number(v.width) || 0;
+    if (h >= 1600 || w >= 3000) return "4K";
+    if (h >= 900 || w >= 1600) return "1080p";
+    if (h >= 600 || w >= 1100) return "720p";
+    if (h > 0 || w > 0) return "SD";
+  }
+  const s = String(name || "").toLowerCase();
+  if (/2160p|4k|uhd/i.test(s)) return "4K";
+  if (/1080[pi]/i.test(s)) return "1080p";
+  if (/720p/i.test(s)) return "720p";
+  if (/480[pi]|576[pi]|dvd/i.test(s)) return "SD";
+  return "1080p";
+}
+
+function parseSourceType(name) {
+  const s = String(name || "").toLowerCase();
+  if (/bdremux|remux/i.test(s)) return "Remux";
+  if (/bdrip|brrip|bluray|blu-ray/i.test(s)) return "BDRip";
+  if (/web-?dl|webrip|web\b/i.test(s)) return "Web-DL";
+  if (/hdtv/i.test(s)) return "HDTV";
+  return "BDRip";
+}
+
+function parseVideoTech(name, streams = [], tags = []) {
+  if (tags.includes("Dolby Vision")) return "DV";
+  const v = streams.find(s => s && s.codec_type === "video");
+  if (v) {
+    const side = Array.isArray(v.side_data_list) ? v.side_data_list.map(d => String(d.side_data_type || "")) : [];
+    if (side.some(t => /dovi|dolby vision/i.test(t))) return "DV";
+    const ct = String(v.color_transfer || "").toLowerCase();
+    if (/hdr10\+/i.test(ct)) return "HDR10+";
+    if (/smpte2084|arib-std-b67/i.test(ct)) return "HDR10";
+    const pix = String(v.pix_fmt || "");
+    if (/10(?:le|be)?|hi10p/i.test(pix)) return "10-bit";
+  }
+  if (tags.includes("HDR")) return "HDR10";
+  const s = String(name || "").toLowerCase();
+  if (/dolby[\s._-]?vision|\bdv\b/i.test(s)) return "DV";
+  if (/hdr10\+/i.test(s)) return "HDR10+";
+  if (/hdr10|hdr\b/i.test(s)) return "HDR10";
+  if (/10-?bit|hi10p/i.test(s)) return "10-bit";
+  return "SDR";
+}
+
+function parseAudioTech(name, streams = [], tags = []) {
+  for (const t of tags) {
+    if (t === "DTS:X") return "DTS:X";
+    if (t === "DTS-HD MA") return "DTS-HD MA";
+    if (t === "DTS-HD") return "DTS-HD MA";
+    if (t === "DTS") return "DTS 5.1";
+  }
+  for (const s of streams) {
+    if (s.codec_type !== "audio") continue;
+    const codec = String(s.codec_name || "").toLowerCase();
+    const prof = String(s.profile || "").toLowerCase();
+    if (/atmos/i.test(prof) || (codec === "truehd" && /atmos/i.test(s.title || ""))) return "TrueHD Atmos";
+    if (codec === "dts" && /dts:x/i.test(prof)) return "DTS:X";
+    if (codec === "dts" && /ma/i.test(prof)) return "DTS-HD MA";
+    if (codec === "dts" && /hd|hra/i.test(prof)) return "DTS-HD MA";
+    if (codec === "dts") return "DTS 5.1";
+    if (codec === "eac3") return "DD+";
+    if (codec === "ac3") return "AC3 5.1";
+  }
+  const s = String(name || "").toLowerCase();
+  if (/atmos/i.test(s)) return "TrueHD Atmos";
+  if (/dts:?x/i.test(s)) return "DTS:X";
+  if (/dts-?hd\s*ma/i.test(s)) return "DTS-HD MA";
+  if (/dts-?hd/i.test(s)) return "DTS-HD MA";
+  if (/dts/i.test(s)) return "DTS 5.1";
+  if (/dd\+|e-?ac-?3|dolby\s*digital\s*plus/i.test(s)) return "DD+";
+  if (/ac-?3|dolby\s*digital/i.test(s)) return "AC3 5.1";
+  if (/5\.1/i.test(s)) return "AC3 5.1";
+  return "Stereo";
+}
+
+function buildMediaVariant({
+  adId,
+  filePath,
+  fileName,
+  sizeBytes = 0,
+  durationSec = 0,
+  bitrateMbps = 0,
+  streams = [],
+  tags = []
+}) {
+  const name = fileName || filePath || "";
+  const resolution = parseResolution(name, streams);
+  const sourceType = parseSourceType(name);
+  const videoTech = parseVideoTech(name, streams, tags);
+  const audioTech = parseAudioTech(name, streams, tags);
+  const score = calculateScore({ resolution, videoTech, audioTech, sourceType });
+  const hardwareFlags = getHardwareFlags({ videoTech, audioTech, bitrateMbps, sourceType });
+  const key = `${adId}|${filePath || name}`;
+  const label = buildCompositeLabel({ resolution, sourceType, videoTech, audioTech, sizeBytes });
+
+  return {
+    key,
+    ad_id: Number(adId),
+    label,
+    resolution,
+    source_type: sourceType,
+    video_tech: videoTech,
+    audio_tech: audioTech,
+    bitrate_mbps: bitrateMbps || (durationSec > 0 && sizeBytes > 0 ? Math.round((sizeBytes * 8) / (durationSec * 1000000) * 10) / 10 : 0),
+    size_bytes: Number(sizeBytes) || 0,
+    duration_sec: Number(durationSec) || 0,
+    offset_ms: 0,
+    score,
+    hardware_flags: hardwareFlags
+  };
+}
+
+module.exports = {
+  snapshot,
+  tagsFromStreams,
+  pickMainFile,
+  store,
+  buildMediaVariant,
+  calculateScore,
+  getHardwareFlags,
+  buildCompositeLabel,
+  parseResolution,
+  parseSourceType,
+  parseVideoTech,
+  parseAudioTech
+};

@@ -609,8 +609,12 @@
       return;
     }
     var check = support.checkFile(en.file.path);
+    var vCompat = support.checkVariantCompatibility({ hardware_flags: en.file.hardware_flags || (en.file.path.toLowerCase().indexOf('dts') >= 0 ? ['dts'] : []) });
+    if (!vCompat.ok && vCompat.warn) {
+      toast(vCompat.text);
+    }
     var go = function () {
-      if (party.isHost()) party.putFilm(key, en.room || en.label);
+      if (party.isHost()) party.putFilm(key, en.room || en.label, en.file.canonical_id || '', en.file.edition || '', en.file.variants || []);
       show(h('div')); // экран под плеером пустой: старый не держит фокус и подписки
       posters.drop();
       SM.player.play({
@@ -633,14 +637,19 @@
     var f = party.room.file;
     if (!f) return;
     followed = f.key;
-    if (SM.player.current() === f.key) return;
-    var found = findKey(f.key);
+    var targetKey = f.key;
+    if (f.variants && f.variants.length) {
+      var best = support.pickBestCompatibleVariant(f.variants);
+      if (best && best.key) targetKey = best.key;
+    }
+    if (SM.player.current() === targetKey || SM.player.current() === f.key) return;
+    var found = findKey(targetKey) || findKey(f.key);
     var go = function (hit) {
       if (!hit) { toast(tr('together.room_film_not_found')); return; }
       open(hit.it, hit.entries, hit.index, { back: function () { shell('party', true); }, room: true, resumeAt: party.targetMs() });
     };
     if (found) go(found);
-    else loadLibrary(true).then(function () { go(findKey(f.key)); }, function () {});
+    else loadLibrary(true).then(function () { go(findKey(targetKey) || findKey(f.key)); }, function () {});
   }
 
   function findKey(key) {

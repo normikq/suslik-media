@@ -63,6 +63,18 @@ qint64 PartyFileRef::adId() const {
     return ok ? v : 0;
 }
 
+bool PartyFileRef::matches(const QString &fileKey, const QString &otherCanonicalId) const {
+    if (fileKey.isEmpty()) return false;
+    if (fileKey == key) return true;
+    for (const auto &v : variants) {
+        if (v.key == fileKey) return true;
+    }
+    if (canonicalId && !canonicalId->isEmpty() && !otherCanonicalId.isEmpty() && *canonicalId == otherCanonicalId) {
+        return true;
+    }
+    return false;
+}
+
 qint64 PartyState::targetMs(qint64 serverNowMs) const {
     const double base = pos * 1000.0;
     if (!playing || waiting) return qint64(base);
@@ -176,11 +188,70 @@ QJsonObject PartyProtocol::leaveBody(const QString &clientId) { return {{S("clie
 QJsonObject PartyProtocol::play(qint64 posMs) { return {{S("type"), S("play")}, {S("pos"), double(posMs) / 1000.0}}; }
 QJsonObject PartyProtocol::pause(qint64 posMs) { return {{S("type"), S("pause")}, {S("pos"), double(posMs) / 1000.0}}; }
 QJsonObject PartyProtocol::seek(qint64 posMs) { return {{S("type"), S("seek")}, {S("pos"), double(posMs) / 1000.0}}; }
-QJsonObject PartyProtocol::buffering(bool loading) { return {{S("type"), S("buffering")}, {S("buffering"), loading}}; }
+QJsonObject PartyProtocol::buffering(bool loading, const QString &variantKey) {
+    QJsonObject obj{{S("type"), S("buffering")}, {S("buffering"), loading}};
+    if (!variantKey.isEmpty()) obj.insert(S("variant_key"), variantKey);
+    return obj;
+}
 QJsonObject PartyProtocol::changeFile(const PartyFileRef &f) { return {{S("type"), S("change_file")}, {S("file"), fileJson(f)}}; }
 QJsonObject PartyProtocol::closeFile() { return {{S("type"), S("change_file")}, {S("file"), QJsonValue::Null}}; }
 QJsonObject PartyProtocol::withClient(QJsonObject body, const QString &clientId) { body.insert(S("client_id"), clientId); return body; }
-QJsonObject PartyProtocol::fileJson(const PartyFileRef &f) { return {{S("key"), f.key}, {S("name"), f.title}, {S("ad_id"), double(f.adId())}}; }
+QJsonObject PartyProtocol::fileJson(const PartyFileRef &f) {
+    QJsonObject obj{{S("key"), f.key}, {S("name"), f.title}, {S("ad_id"), double(f.adId())}};
+    if (f.canonicalId) obj.insert(S("canonical_id"), *f.canonicalId);
+    if (f.edition) obj.insert(S("edition"), *f.edition);
+    if (!f.variants.isEmpty()) {
+        QJsonArray arr;
+        for (const auto &v : f.variants) {
+            QJsonObject vo{{S("key"), v.key}, {S("label"), v.label}, {S("quality"), v.quality},
+                           {S("audio"), v.audio}, {S("bitrate"), v.bitrate}, {S("offset_ms"), double(v.offsetMs)},
+                           {S("score"), double(v.score)}};
+            QJsonArray fa;
+            for (const auto &flag : v.hardwareFlags) fa.append(flag);
+            vo.insert(S("hardware_flags"), fa);
+            arr.append(vo);
+        }
+        obj.insert(S("variants"), arr);
+    }
+    return obj;
+}
+
+std::optional<PartyFileRef> PartyProtocol::parseFileRef(const QJsonObject &f) {
+    const QString key = json::str(f, S("key"));
+    if (key.trimmed().isEmpty()) return std::nullopt;
+    PartyFileRef ref;
+    ref.key = key;
+    ref.title = json::str(f, S("name"));
+    ref.canonicalId = nonBlank(json::str(f, S("canonical_id")));
+    ref.edition = nonBlank(json::str(f, S("edition")));
+    const QJsonValue vars = f.value(S("variants"));
+    if (vars.isArray()) {
+        for (const auto &val : vars.toArray()) {
+            if (!val.isObject()) continue;
+            const QJsonObject vo = val.toObject();
+            const QString vk = json::str(vo, S("key"));
+            if (vk.isEmpty()) continue;
+            PartyVariant v;
+            v.key = vk;
+            v.label = json::str(vo, S("label"));
+            v.quality = json::str(vo, S("quality"));
+            if (v.quality.isEmpty()) v.quality = json::str(vo, S("resolution"));
+            if (v.quality.isEmpty()) v.quality = S("1080p");
+            v.audio = json::str(vo, S("audio"));
+            if (v.audio.isEmpty()) v.audio = json::str(vo, S("audio_tech"));
+            if (v.audio.isEmpty()) v.audio = S("Stereo");
+            v.bitrate = optDouble(vo, S("bitrate"), optDouble(vo, S("bitrate_mbps"), 0));
+            v.offsetMs = json::optLong(vo, S("offset_ms"));
+            v.score = int(optDouble(vo, S("score"), 0));
+            const QJsonValue flags = vo.value(S("hardware_flags"));
+            if (flags.isArray()) {
+                for (const auto &fl : flags.toArray()) v.hardwareFlags << fl.toString();
+            }
+            ref.variants << v;
+        }
+    }
+    return ref;
+}
 
 std::optional<RoomUpdate> PartyProtocol::roomOf(const QJsonObject &res) {
     const QJsonValue v = res.value(S("room"));
@@ -207,9 +278,7 @@ RoomUpdate PartyProtocol::parseRoom(const QJsonObject &room) {
     u.hostOnly = json::str(room, S("controls")) == S("host");
     const QJsonValue fv = room.value(S("file"));
     if (fv.isObject()) {
-        const QJsonObject f = fv.toObject();
-        const QString key = json::str(f, S("key"));
-        if (!key.trimmed().isEmpty()) u.file = PartyFileRef{key, json::str(f, S("name"))};
+        u.file = parseFileRef(fv.toObject());
     }
     const QJsonValue sv = room.value(S("state"));
     if (sv.isObject()) {
@@ -237,6 +306,8 @@ PartyMember PartyProtocol::parseMember(const QJsonObject &m) {
     p.buffering = json::optBool(m, S("buffering"));
     const QString avatar = json::str(m, S("avatar"));
     if (avatar.startsWith(S("https://"))) p.avatar = avatar;
+    const QString vk = json::str(m, S("variant_key"));
+    if (!vk.isEmpty()) p.variantKey = vk;
     return p;
 }
 
@@ -300,7 +371,7 @@ std::optional<PartyEvent> PartyProtocol::parseEvent(const QString &text) {
     if (event == S("refresh_library")) {
         e.kind = PartyEvent::Kind::RefreshLibrary;
         const QJsonValue f = data.value(S("file"));
-        if (f.isObject()) e.file = PartyFileRef{json::str(f.toObject(), S("key")), json::str(f.toObject(), S("name"))};
+        if (f.isObject()) e.file = parseFileRef(f.toObject());
         return e;
     }
     return std::nullopt;

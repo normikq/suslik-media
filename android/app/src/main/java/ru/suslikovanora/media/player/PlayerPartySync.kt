@@ -115,8 +115,9 @@ class PlayerPartySync(private val handler: Handler, private val cb: Callback) {
         // player closes (it does not recompose while the player is in front, and playingKeys are empty then)
         if (!Party.isHost && rk != null && rk in keys && Party.followed != rk) Party.followed = rk
         // The host closed the film (the room has none now): a guest who watched it with them closes it too
-        if (Party.inRoom && key != null && rk == key) showedRoomFilm = true
-        else if (showedRoomFilm && !Party.isHost && Party.inRoom && rk != null && rk !in keys && cb.ready() && cb.canPlayIndex()) {
+        val matchesFilm = key != null && Party.file?.matches(key) == true
+        if (Party.inRoom && matchesFilm) showedRoomFilm = true
+        else if (showedRoomFilm && !Party.isHost && Party.inRoom && rk != null && !matchesFilm && cb.ready() && cb.canPlayIndex()) {
             // The host put a film that is not in this playlist (another season, another film): this player cannot follow
             // it in place, and MainActivity behind it does not recompose while the player is in front. The guest's player
             // closes, and MainActivity opens the host's film at the room's place (as for any film the host puts)
@@ -132,7 +133,7 @@ class PlayerPartySync(private val handler: Handler, private val cb: Callback) {
             cb.close()
             return
         }
-        if (rk == null || rk == key) switchedTo = null
+        if (rk == null || matchesFilm) switchedTo = null
         else if (Party.inRoom && switchedTo != rk && cb.ready() && cb.canPlayIndex()) {
             val i = keys.indexOf(rk)
             if (i >= 0) {
@@ -143,7 +144,7 @@ class PlayerPartySync(private val handler: Handler, private val cb: Callback) {
             }
         }
         cb.onTick()
-        if (Party.inRoom && rk == key && key != null && cb.ready()) {
+        if (Party.inRoom && matchesFilm && key != null && cb.ready()) {
             episodeNotice?.let { episodeNotice = null; cb.notice(it) }
             engine.tick(p, key, System.currentTimeMillis())
         } else engine.idle(p)

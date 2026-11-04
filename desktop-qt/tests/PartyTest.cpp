@@ -536,6 +536,33 @@ private slots:
         for (int i = 0; i < 10; ++i) { now += 400; e.tick(p, KEY, now); }
         QCOMPARE(notes, (QList<PartyNotice>{{PartyNotice::Kind::Waiting, 0}}));
     }
+
+    void canonicalContextAndVariants() {
+        PartyVariant v1{S("101|Dune.2021.2160p.Remux.mkv"), S("4K Remux"), S("4K"), S("TrueHD Atmos"), 48.2, 0, 505, {S("dv"), S("hdr")}};
+        PartyVariant v2{S("102|Dune.2021.1080p.BDRip.mkv"), S("1080p BDRip"), S("1080p"), S("AC3 5.1"), 8.1, 0, 335, {}};
+        PartyFileRef ref{v1.key, S("Дюна (2021)"), S("m:dune_2021:theatrical"), S("theatrical"), {v1, v2}};
+
+        // matches() checks
+        QVERIFY(ref.matches(v1.key));
+        QVERIFY(ref.matches(v2.key)); // variant matches
+        QVERIFY(ref.matches(S("any_file.mkv"), S("m:dune_2021:theatrical"))); // canonical matches
+        QVERIFY(!ref.matches(S("other.mkv"), S("m:other_film:theatrical")));
+        QVERIFY(!ref.matches(QString()));
+
+        // JSON serialization and parsing
+        const QJsonObject json = PartyProtocol::fileJson(ref);
+        QCOMPARE(json.value(S("canonical_id")).toString(), S("m:dune_2021:theatrical"));
+        QCOMPARE(json.value(S("edition")).toString(), S("theatrical"));
+        QCOMPARE(json.value(S("variants")).toArray().size(), 2);
+
+        const auto parsed = PartyProtocol::parseFileRef(json);
+        QVERIFY(parsed.has_value());
+        QCOMPARE(parsed->canonicalId.value_or(QString()), S("m:dune_2021:theatrical"));
+        QCOMPARE(parsed->edition.value_or(QString()), S("theatrical"));
+        QCOMPARE(parsed->variants.size(), 2);
+        QCOMPARE(parsed->variants[0].score, 505);
+        QCOMPARE(parsed->variants[1].bitrate, 8.1);
+    }
 };
 
 QTEST_GUILESS_MAIN(PartyTest)

@@ -47,7 +47,9 @@ data class AiTitle(
     val kind: String? = null, // "movie" | "series" | "collection": what the release is, applied once accepted
     val stale: Boolean = false, // answered by an older server version: may be asked again
     val original: String? = null, // original title (English when not in Latin letters) — for the TMDB poster
-    val year: Int? = null // the film's year / the show's first season
+    val year: Int? = null, // the film's year / the show's first season
+    val edition: String? = null,
+    val canonicalId: String? = null
 ) {
     val accepted get() = status == "accepted" && base.isNotBlank()
     /** «Dune (2021)»: the server picks the TMDB result of that year. Null without an original title. */
@@ -70,7 +72,9 @@ fun parseAiTitle(a: JSONObject?): AiTitle? {
         kind = a.optString("kind").takeIf { it in AI_KINDS },
         stale = a.optBoolean("stale", false),
         original = a.optString("original").trim().takeIf { it.isNotEmpty() && !a.isNull("original") },
-        year = if (a.has("year") && !a.isNull("year")) a.optInt("year").takeIf { it in 1880..2100 } else null
+        year = if (a.has("year") && !a.isNull("year")) a.optInt("year").takeIf { it in 1880..2100 } else null,
+        edition = a.optString("edition").trim().takeIf { it.isNotEmpty() && !a.isNull("edition") },
+        canonicalId = a.optString("canonical_id").trim().takeIf { it.isNotEmpty() && !a.isNull("canonical_id") }
     )
 }
 
@@ -673,17 +677,55 @@ fun itemPart(item: LibraryItem): Int? {
     return null
 }
 
-/** Quality score: 4K (4), 1080p (3), 720p (2), SD (1), other (0). */
-fun qualityScore(name: String): Int {
+data class MediaVariant(
+    val key: String,
+    val adId: Long,
+    val label: String,
+    val resolution: String,
+    val sourceType: String,
+    val videoTech: String,
+    val audioTech: String,
+    val bitrateMbps: Double,
+    val sizeBytes: Long,
+    val durationSec: Long,
+    val offsetMs: Long = 0L,
+    val score: Int,
+    val hardwareFlags: List<String> = emptyList()
+)
+
+/** Smart Quality Score: resolution + video tech + audio tech + source type. */
+fun smartQualityScore(name: String): Int {
     val lower = name.lowercase(Locale.ROOT)
-    return when {
-        lower.contains("2160p") || lower.contains("4k") || lower.contains("3840") -> 4
-        lower.contains("1080p") || lower.contains("1080i") || lower.contains("1920") -> 3
-        lower.contains("720p") || lower.contains("1280") -> 2
-        lower.contains("480p") || lower.contains("576p") || lower.contains("dvd") -> 1
+    val rScore = when {
+        lower.contains("2160p") || lower.contains("4k") || lower.contains("3840") || lower.contains("uhd") -> 400
+        lower.contains("1080p") || lower.contains("1080i") || lower.contains("1920") -> 300
+        lower.contains("720p") || lower.contains("1280") -> 200
+        else -> 100
+    }
+    val vScore = when {
+        lower.contains("dolby vision") || lower.contains("dovi") || Regex("""\b(dv)\b""").containsMatchIn(lower) -> 40
+        lower.contains("hdr10+") -> 30
+        lower.contains("hdr10") || Regex("""\b(hdr)\b""").containsMatchIn(lower) -> 20
+        lower.contains("10-bit") || lower.contains("10bit") || lower.contains("hi10p") -> 10
         else -> 0
     }
+    val aScore = when {
+        lower.contains("atmos") || lower.contains("dts:x") || lower.contains("dts-x") -> 40
+        lower.contains("dts-hd ma") || lower.contains("dts-hd.ma") || lower.contains("dts-hd") || lower.contains("dtshd") -> 30
+        lower.contains("dts") || lower.contains("dd+") || lower.contains("e-ac-3") || lower.contains("eac3") || lower.contains("eac-3") -> 20
+        lower.contains("ac3") || lower.contains("ac-3") || lower.contains("dd5.1") || lower.contains("5.1") -> 10
+        else -> 0
+    }
+    val sScore = when {
+        lower.contains("remux") -> 25
+        lower.contains("bdrip") || lower.contains("brrip") || lower.contains("bluray") || lower.contains("blu-ray") -> 15
+        lower.contains("web-dl") || lower.contains("webdl") || lower.contains("webrip") || lower.contains("web") -> 10
+        else -> 0
+    }
+    return rScore + vScore + aScore + sScore
 }
+
+fun qualityScore(name: String): Int = smartQualityScore(name)
 
 /** Seasons covered by this item: Pair(minSeason, maxSeason) or null if not a series. */
 fun itemSeasons(item: LibraryItem): Pair<Int, Int>? {
@@ -818,9 +860,11 @@ fun groupVersions(list: List<LibraryItem>, posterOf: (LibraryItem) -> String? = 
         val base = it.baseTitle
         if (it.playable is Playable.None || !it.m.ready || base.isBlank()) { shown += it; continue }
         val kind = if (it.playable is Playable.Movie) "m" else "s"
+        val ed = it.m.aiTitle?.takeIf { a -> a.accepted }?.edition?.takeIf { it != "default" }.orEmpty()
+        val edKey = if (ed.isNotEmpty()) "|$ed" else ""
         val keys = listOfNotNull(
-            posterOf(it)?.let { p -> "$kind|poster|$p" },
-            if (kind == "m") "m|" + titleKey(base) + "|" + (it.m.aiTitle?.takeIf { a -> a.accepted }?.year?.toString() ?: YEAR_IN_NAME.find(it.m.name)?.value ?: "") else "s|" + titleKey(base)
+            posterOf(it)?.let { p -> "$kind|poster|$p$edKey" },
+            if (kind == "m") "m|" + titleKey(base) + "|" + (it.m.aiTitle?.takeIf { a -> a.accepted }?.year?.toString() ?: YEAR_IN_NAME.find(it.m.name)?.value ?: "") + edKey else "s|" + titleKey(base) + edKey
         )
         val group = keys.firstNotNullOfOrNull { k -> byKey[k] }
         if (group == null) { val g = mutableListOf(it); groups += g; shown += it; keys.forEach { k -> byKey[k] = g } }

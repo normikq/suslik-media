@@ -9,7 +9,7 @@ process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "suslik-sync-test-"
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { apply, changesSince, sweep, dropMagnet, _reset } = require("../src/services/sync");
+const { apply, changesSince, getProgress, sweep, dropMagnet, _reset } = require("../src/services/sync");
 
 const DAY = 24 * 3600 * 1000;
 const U = "u_100";
@@ -109,4 +109,32 @@ test("sync: a removed torrent leaves the account", () => {
   const left = changesSince(U, 0, now);
   assert.deepEqual(left.watch.map(w => w.key), ["33|a.mkv"]);
   assert.equal(left.tracks.length, 0);
+});
+
+test("sync: канонический прогресс fallback по canonical_id (cid)", () => {
+  _reset();
+  const now = 1_000 * DAY;
+  // Смотрели 30 минут 1080p Remux на ПК
+  apply(U, {
+    watch: [{
+      key: "101|Dune.2021.1080p.BDRemux.mkv",
+      pos: 1800_000,
+      len: 9000_000,
+      cid: "m:dune_2021:theatrical",
+      at: now
+    }]
+  }, now);
+
+  const changes = changesSince(U, 0, now);
+  assert.equal(changes.watch[0].cid, "m:dune_2021:theatrical");
+
+  // Открываем тот же файл: прямое совпадение
+  const direct = getProgress(U, "101|Dune.2021.1080p.BDRemux.mkv", "m:dune_2021:theatrical");
+  assert.equal(direct.pos, 1800_000);
+
+  // Открываем лёгкий 1080p BDRip на смартфоне: ключ другой, но cid совпадает
+  const fallback = getProgress(U, "102|Dune.2021.1080p.BDRip.mkv", "m:dune_2021:theatrical");
+  assert.ok(fallback);
+  assert.equal(fallback.pos, 1800_000);
+  assert.equal(fallback.cid, "m:dune_2021:theatrical");
 });

@@ -258,10 +258,15 @@ void Party::closeIfNobodyWatches() {
 }
 
 void Party::reportBuffering(bool loading) {
-    if (!m_roomId || loading == m_reportedBuffering) return;
+    reportBuffering(loading, QString());
+}
+
+void Party::reportBuffering(bool loading, const QString &variantKey) {
+    if (!m_roomId || (loading == m_reportedBuffering && (variantKey.isEmpty() || variantKey == m_reportedVariantKey))) return;
     m_reportedBuffering = loading;
+    if (!variantKey.isEmpty()) m_reportedVariantKey = variantKey;
     log(loading ? S("loading: the room waits") : S("ready"));
-    m_outbox << std::make_pair(*m_roomId, PartyProtocol::withClient(PartyProtocol::buffering(loading), m_clientId));
+    m_outbox << std::make_pair(*m_roomId, PartyProtocol::withClient(PartyProtocol::buffering(loading, m_reportedVariantKey), m_clientId));
     pump();
 }
 

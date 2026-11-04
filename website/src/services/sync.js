@@ -123,7 +123,8 @@ function apply(owner, body, now = Date.now()) {
     if (at < oldest) continue;
     const old = d.w.get(key);
     if (old && old.a > at) continue;
-    d.w.set(key, { p: pos, l: len, a: at, c: now, u: now });
+    const cid = typeof it?.cid === "string" && it.cid.trim() ? it.cid.trim().slice(0, 200) : (typeof it?.canonical_id === "string" ? it.canonical_id.trim().slice(0, 200) : null);
+    d.w.set(key, { p: pos, l: len, a: at, c: now, u: now, ...(cid ? { cid } : (old?.cid ? { cid: old.cid } : {})) });
     touch(d, "m" + m[1], now);
     touch(d, "*", now);
     nw++;
@@ -164,11 +165,35 @@ function changesSince(owner, since = 0, now = Date.now()) {
   const d = OWNER_RE.test(String(owner || "")) ? users.get(owner) : null;
   if (!d) return out;
   const from = num(since) ?? 0;
-  for (const [key, e] of d.w) if (e.c >= from) out.watch.push({ key, pos: e.p, len: e.l, at: e.a });
+  for (const [key, e] of d.w) {
+    if (e.c >= from) {
+      const w = { key, pos: e.p, len: e.l, at: e.a };
+      if (e.cid) w.cid = e.cid;
+      out.watch.push(w);
+    }
+  }
   for (const [key, e] of d.t) {
     if (e.c >= from) out.tracks.push({ key, audio: e.au ?? null, spu: e.sp ?? null, sidecar: e.sc ?? null, at: e.a });
   }
   return out;
+}
+
+/** Получить прогресс просмотра: сначала по fileKey, если нет — fallback по canonicalId. */
+function getProgress(owner, fileKey, canonicalId = null) {
+  const d = OWNER_RE.test(String(owner || "")) ? users.get(owner) : null;
+  if (!d) return null;
+  if (fileKey && d.w.has(fileKey)) {
+    const e = d.w.get(fileKey);
+    return { key: fileKey, pos: e.p, len: e.l, at: e.a, cid: e.cid || null };
+  }
+  if (canonicalId) {
+    for (const [k, e] of d.w) {
+      if (e.cid === canonicalId) {
+        return { key: k, pos: e.p, len: e.l, at: e.a, cid: e.cid };
+      }
+    }
+  }
+  return null;
 }
 
 /** Удалить всё, чем не пользовались дольше срока. Возвращает, сколько записей удалено. */
@@ -212,6 +237,7 @@ setInterval(() => sweep(), SWEEP_EVERY_MS).unref();
 module.exports = {
   apply,
   changesSince,
+  getProgress,
   sweep,
   dropMagnet,
   OWNER_RE,

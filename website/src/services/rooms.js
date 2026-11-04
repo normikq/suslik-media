@@ -520,6 +520,9 @@ function handleRoomAction(roomId, user, action) {
   if (action.type === "buffering") {
     const m = action.client_id ? room.members.get(action.client_id) : null;
     if (m) {
+      if (typeof action.variant_key === "string") {
+        m.variant_key = action.variant_key.slice(0, 1000);
+      }
       const b = Boolean(action.buffering);
       if (Boolean(m.buffering) !== b) {
         m.buffering = b;
@@ -736,6 +739,25 @@ function dropWatcherIfGone(room, w) {
   activityChanged(room);
 }
 
+function cleanVariant(v) {
+  if (!v || typeof v !== "object") return null;
+  const key = typeof v.key === "string" ? v.key.slice(0, 1000) : "";
+  if (!key || key.indexOf("|") <= 0) return null;
+  const label = typeof v.label === "string" ? v.label.slice(0, 300) : "";
+  const quality = typeof v.quality === "string" ? v.quality.slice(0, 50) : (typeof v.resolution === "string" ? v.resolution.slice(0, 50) : "1080p");
+  const audio = typeof v.audio === "string" ? v.audio.slice(0, 100) : (typeof v.audio_tech === "string" ? v.audio_tech.slice(0, 100) : "");
+  const bitrate = Number(v.bitrate ?? v.bitrate_mbps) || 0;
+  const offset_ms = Number(v.offset_ms) || 0;
+  return {
+    key,
+    label: label || quality,
+    quality,
+    audio,
+    bitrate: Math.round(bitrate * 10) / 10,
+    offset_ms
+  };
+}
+
 function cleanFile(file) {
   if (!file || typeof file !== "object") return null;
   const key = typeof file.key === "string" ? file.key.slice(0, 1000) : "";
@@ -743,7 +765,18 @@ function cleanFile(file) {
   const adId = Number(key.slice(0, bar));
   if (bar <= 0 || !Number.isSafeInteger(adId) || adId <= 0 || bar === key.length - 1) return null;
   const name = typeof file.name === "string" && file.name.trim() ? file.name.trim().slice(0, 300) : key.slice(bar + 1);
-  return { key, name, ad_id: adId };
+  const res = { key, name, ad_id: adId };
+  if (typeof file.canonical_id === "string" && file.canonical_id.trim()) {
+    res.canonical_id = file.canonical_id.trim().slice(0, 200);
+  }
+  if (typeof file.edition === "string" && file.edition.trim()) {
+    res.edition = file.edition.trim().slice(0, 50);
+  }
+  if (Array.isArray(file.variants) && file.variants.length > 0) {
+    const cleaned = file.variants.map(cleanVariant).filter(Boolean);
+    if (cleaned.length > 0) res.variants = cleaned;
+  }
+  return res;
 }
 
 function channelRoomOrError(roomId) {
@@ -761,9 +794,22 @@ function suggestFile(roomId, user, file) {
   if (room.spin) return { ok: false, error: "Крутится рулетка: дождитесь итога." };
   const f = cleanFile(file);
   if (!f) return { ok: false, error: "Не тот файл." };
-  if (!room.candidates.some(c => c.key === f.key)) {
+  if (!room.candidates.some(c => c.key === f.key || (c.canonical_id && f.canonical_id && c.canonical_id === f.canonical_id))) {
     if (room.candidates.length >= MAX_CANDIDATES) return { ok: false, error: `Не больше ${MAX_CANDIDATES} фильмов в списке.` };
-    room.candidates.push({ key: f.key, name: f.name, by: user.id, by_name: user.name, at: Date.now() });
+    const cand = {
+      key: f.key,
+      name: f.name,
+      by: user.id,
+      by_name: user.name,
+      at: Date.now()
+    };
+    if (f.canonical_id) cand.canonical_id = f.canonical_id;
+    if (f.edition) cand.edition = f.edition;
+    if (file.poster) cand.poster = String(file.poster).slice(0, 500);
+    if (file.year) cand.year = Number(file.year) || null;
+    if (file.original) cand.original = String(file.original).slice(0, 200);
+    if (f.variants) cand.variants = f.variants;
+    room.candidates.push(cand);
     activityChanged(room);
   }
   return { ok: true };

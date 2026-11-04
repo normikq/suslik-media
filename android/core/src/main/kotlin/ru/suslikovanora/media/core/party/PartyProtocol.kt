@@ -16,12 +16,39 @@ data class PartyMember(
     val userId: String,
     val name: String,
     val buffering: Boolean = false,
-    val avatar: String? = null
+    val avatar: String? = null,
+    val variantKey: String? = null
 )
 
-/** Фильм комнаты: ключ просмотра `magnetId|путь` (тот же, что у прогресса в медиатеке). */
-data class PartyFileRef(val key: String, val title: String) {
+data class PartyVariant(
+    val key: String,
+    val label: String,
+    val quality: String = "1080p",
+    val audio: String = "Stereo",
+    val bitrate: Double = 0.0,
+    val offsetMs: Long = 0L,
+    val score: Int = 0,
+    val hardwareFlags: List<String> = emptyList()
+)
+
+/** Фильм комнаты: ключ просмотра `magnetId|путь`, канонический ID и варианты качества. */
+data class PartyFileRef(
+    val key: String,
+    val title: String,
+    val canonicalId: String? = null,
+    val edition: String? = null,
+    val variants: List<PartyVariant> = emptyList()
+) {
     val adId: Long get() = key.substringBefore('|').toLongOrNull() ?: 0L
+
+    /** Признаёт фильм комнаты по прямому ключу, варианту или canonical_id */
+    fun matches(fileKey: String?, otherCanonicalId: String? = null): Boolean {
+        if (fileKey == null) return false
+        if (fileKey == key) return true
+        if (variants.any { it.key == fileKey }) return true
+        if (canonicalId != null && otherCanonicalId != null && canonicalId == otherCanonicalId) return true
+        return false
+    }
 }
 
 /**
@@ -189,13 +216,72 @@ object PartyProtocol {
     fun play(posMs: Long): JSONObject = JSONObject().put("type", "play").put("pos", posMs / 1000.0)
     fun pause(posMs: Long): JSONObject = JSONObject().put("type", "pause").put("pos", posMs / 1000.0)
     fun seek(posMs: Long): JSONObject = JSONObject().put("type", "seek").put("pos", posMs / 1000.0)
-    fun buffering(loading: Boolean): JSONObject = JSONObject().put("type", "buffering").put("buffering", loading)
+    fun buffering(loading: Boolean, variantKey: String? = null): JSONObject {
+        val obj = JSONObject().put("type", "buffering").put("buffering", loading)
+        variantKey?.let { obj.put("variant_key", it) }
+        return obj
+    }
     fun changeFile(f: PartyFileRef): JSONObject = JSONObject().put("type", "change_file").put("file", fileJson(f))
     /** Ведущий закрыл фильм: у гостей плеер тоже закрывается (сервер ставит `room.file = null`). */
     fun closeFile(): JSONObject = JSONObject().put("type", "change_file").put("file", JSONObject.NULL)
     fun withClient(body: JSONObject, clientId: String): JSONObject = body.put("client_id", clientId)
 
-    fun fileJson(f: PartyFileRef): JSONObject = JSONObject().put("key", f.key).put("name", f.title).put("ad_id", f.adId)
+    fun fileJson(f: PartyFileRef): JSONObject {
+        val obj = JSONObject().put("key", f.key).put("name", f.title).put("ad_id", f.adId)
+        f.canonicalId?.let { obj.put("canonical_id", it) }
+        f.edition?.let { obj.put("edition", it) }
+        if (f.variants.isNotEmpty()) {
+            val arr = JSONArray()
+            for (v in f.variants) {
+                arr.put(JSONObject()
+                    .put("key", v.key)
+                    .put("label", v.label)
+                    .put("quality", v.quality)
+                    .put("audio", v.audio)
+                    .put("bitrate", v.bitrate)
+                    .put("offset_ms", v.offsetMs)
+                    .put("score", v.score)
+                    .put("hardware_flags", JSONArray(v.hardwareFlags))
+                )
+            }
+            obj.put("variants", arr)
+        }
+        return obj
+    }
+
+    fun parseFileRef(f: JSONObject?): PartyFileRef? {
+        if (f == null) return null
+        val key = f.optString("key")
+        if (key.isBlank()) return null
+        val title = f.optString("name")
+        val canonicalId = f.optString("canonical_id").takeIf { it.isNotBlank() }
+        val edition = f.optString("edition").takeIf { it.isNotBlank() }
+        val variantsArr = f.optJSONArray("variants")
+        val variants = ArrayList<PartyVariant>()
+        if (variantsArr != null) {
+            for (i in 0 until variantsArr.length()) {
+                val vObj = variantsArr.optJSONObject(i) ?: continue
+                val vKey = vObj.optString("key")
+                if (vKey.isBlank()) continue
+                val flagsArr = vObj.optJSONArray("hardware_flags")
+                val flags = ArrayList<String>()
+                if (flagsArr != null) {
+                    for (j in 0 until flagsArr.length()) flags += flagsArr.optString(j)
+                }
+                variants += PartyVariant(
+                    key = vKey,
+                    label = vObj.optString("label"),
+                    quality = vObj.optString("quality").ifBlank { vObj.optString("resolution", "1080p") },
+                    audio = vObj.optString("audio").ifBlank { vObj.optString("audio_tech", "Stereo") },
+                    bitrate = vObj.optDouble("bitrate", vObj.optDouble("bitrate_mbps", 0.0)),
+                    offsetMs = vObj.optLong("offset_ms", 0L),
+                    score = vObj.optInt("score", 0),
+                    hardwareFlags = flags
+                )
+            }
+        }
+        return PartyFileRef(key, title, canonicalId, edition, variants)
+    }
 
     /** Комната из ответа создания / входа / действия (`{room: {...}}`), если она там есть. */
     fun roomOf(res: JSONObject): RoomUpdate? = res.optJSONObject("room")?.let(::parseRoom)
@@ -212,10 +298,7 @@ object PartyProtocol {
             hostKey = room.optString("host_key").ifBlank { null },
             hostName = room.optString("host_name"),
             hostOnly = room.optString("controls") == "host",
-            file = room.optJSONObject("file")?.let { f ->
-                val key = f.optString("key")
-                if (key.isBlank()) null else PartyFileRef(key, f.optString("name"))
-            },
+            file = room.optJSONObject("file")?.let(::parseFileRef),
             state = s?.let {
                 PartyState(it.optBoolean("playing"), it.optDouble("pos", 0.0), it.optDouble("rate", 1.0),
                     it.optLong("anchor_server_ms"), it.optLong("seq"), it.optBoolean("waiting"))
@@ -227,7 +310,8 @@ object PartyProtocol {
 
     fun parseMember(m: JSONObject): PartyMember = PartyMember(
         m.optString("key"), m.optString("id"), m.optString("name").ifBlank { "Гость" },
-        m.optBoolean("buffering"), m.optString("avatar").takeIf { it.startsWith("https://") }
+        m.optBoolean("buffering"), m.optString("avatar").takeIf { it.startsWith("https://") },
+        m.optString("variant_key").takeIf { it.isNotBlank() }
     )
 
     private fun parseMembers(arr: JSONArray): List<PartyMember> =
@@ -249,7 +333,7 @@ object PartyProtocol {
             "member_left" -> msg.optJSONObject("data")?.optString("key")?.ifBlank { null }?.let { PartyEvent.MemberLeft(it) }
             "refresh_library" -> {
                 val f = msg.optJSONObject("data")?.optJSONObject("file")
-                val ref = if (f != null) PartyFileRef(f.optString("key"), f.optString("name")) else null
+                val ref = parseFileRef(f)
                 PartyEvent.RefreshLibrary(ref)
             }
             else -> null

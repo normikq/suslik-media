@@ -97,6 +97,7 @@ public:
     void pause(qint64 posMs) override { action(core::PartyProtocol::pause(posMs)); }
     void seek(qint64 posMs) override { if (canSeek()) action(core::PartyProtocol::seek(posMs)); }
     void reportBuffering(bool loading) override;
+    void reportBuffering(bool loading, const QString &variantKey);
 
 signals:
     void changed();
@@ -135,6 +136,7 @@ private:
     QString m_notice, m_followed;
     std::optional<QString> m_startedByMe;
     bool m_reportedBuffering = false;
+    QString m_reportedVariantKey;
     bool m_busy = false;
     QString m_error;
 

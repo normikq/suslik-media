@@ -194,4 +194,55 @@ class PartyProtocolTest {
         assertEquals("change_file", body.getString("type"))
         assertTrue(body.isNull("file"))
     }
+
+    @Test
+    fun canonicalContextAndVariants() {
+        val v1 = ru.suslikovanora.media.core.party.PartyVariant(
+            key = "101|Dune.2021.2160p.Remux.mkv",
+            label = "4K Remux",
+            quality = "4K",
+            audio = "TrueHD Atmos",
+            bitrate = 48.2,
+            offsetMs = 0L,
+            score = 505,
+            hardwareFlags = listOf("dv", "hdr")
+        )
+        val v2 = ru.suslikovanora.media.core.party.PartyVariant(
+            key = "102|Dune.2021.1080p.BDRip.mkv",
+            label = "1080p BDRip",
+            quality = "1080p",
+            audio = "AC3 5.1",
+            bitrate = 8.1,
+            offsetMs = 0L,
+            score = 335
+        )
+        val ref = PartyFileRef(
+            key = v1.key,
+            title = "Дюна (2021)",
+            canonicalId = "m:dune_2021:theatrical",
+            edition = "theatrical",
+            variants = listOf(v1, v2)
+        )
+
+        // matches()
+        assertTrue(ref.matches(v1.key))
+        assertTrue(ref.matches(v2.key))
+        assertTrue(ref.matches("any.mkv", "m:dune_2021:theatrical"))
+        assertFalse(ref.matches("other.mkv", "m:other:theatrical"))
+        assertFalse(ref.matches(null))
+
+        // JSON serialization and parsing
+        val json = PartyProtocol.fileJson(ref)
+        assertEquals("m:dune_2021:theatrical", json.optString("canonical_id"))
+        assertEquals("theatrical", json.optString("edition"))
+        assertEquals(2, json.optJSONArray("variants")?.length())
+
+        val parsed = PartyProtocol.parseFileRef(json)
+        assertEquals(ref.key, parsed?.key)
+        assertEquals(ref.canonicalId, parsed?.canonicalId)
+        assertEquals(ref.edition, parsed?.edition)
+        assertEquals(2, parsed?.variants?.size)
+        assertEquals(505, parsed?.variants?.get(0)?.score)
+        assertEquals(8.1, parsed?.variants?.get(1)?.bitrate)
+    }
 }

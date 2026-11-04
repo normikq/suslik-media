@@ -82,6 +82,31 @@
     return 'Возможно, файл слишком тяжёлый для телевизора (Remux, 4K): лучше выбрать раздачу полегче.';
   }
 
+  function checkVariantCompatibility(variant) {
+    if (!variant) return { ok: true, warn: false, text: '' };
+    var flags = Array.isArray(variant.hardware_flags) ? variant.hardware_flags : [];
+    var audio = String(variant.audio_tech || variant.audio || '').toLowerCase();
+    var hasDts = flags.indexOf('dts') >= 0 || BAD_AUDIO.test(audio);
+    if (hasDts) {
+      return { ok: false, warn: true, text: 'Нет звука на вашем ТВ' };
+    }
+    return { ok: true, warn: false, text: '' };
+  }
+
+  function pickBestCompatibleVariant(variants) {
+    if (!Array.isArray(variants) || !variants.length) return null;
+    var compatible = variants.filter(function (v) {
+      return checkVariantCompatibility(v).ok;
+    });
+    if (compatible.length) {
+      compatible.sort(function (a, b) { return (Number(b.score) || 0) - (Number(a.score) || 0); });
+      return compatible[0];
+    }
+    var all = variants.slice();
+    all.sort(function (a, b) { return (Number(b.score) || 0) - (Number(a.score) || 0); });
+    return all[0];
+  }
+
   var MESSAGES = {
     unsupported: 'Этот файл телевизор не поддерживает',
     noAudio: 'Звук этого файла телевизор не воспроизводит',
@@ -91,6 +116,7 @@
 
   SM.support = {
     checkFile: checkFile, serverFirst: serverFirst, slowHint: slowHint, audioTrack: audioTrack, audioPlan: audioPlan, errorKind: errorKind,
+    checkVariantCompatibility: checkVariantCompatibility, pickBestCompatibleVariant: pickBestCompatibleVariant,
     EXTERNAL_AUDIO_TEXT: EXTERNAL_AUDIO_TEXT, MESSAGES: MESSAGES
   };
   if (typeof module === 'object' && module.exports) module.exports = SM.support;

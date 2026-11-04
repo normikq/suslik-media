@@ -89,6 +89,9 @@ import ru.suslikovanora.media.ui.Sm
 /** One line of the audio / subtitles sheet. */
 data class TrackChoice(val label: String, val on: Boolean)
 
+/** A quality variant choice in the player quality sheet. */
+data class PlayerVariantUi(val key: String, val label: String, val isHost: Boolean)
+
 /**
  * What the glass panel over the film shows (the same look as the Windows player); written by PlayerActivity,
  * read by [PlayerOverlay]. The panel sits in one ComposeView over the film: where it has no button,
@@ -109,8 +112,11 @@ class PlayerUiState {
     var volumeMax by mutableIntStateOf(15)
     var scales by mutableStateOf<List<String>>(emptyList())
     var scaleIndex by mutableIntStateOf(0)
-    var picker by mutableStateOf<String?>(null) // "audio", "spu", "more"
+    var picker by mutableStateOf<String?>(null) // "audio", "spu", "quality", "more"
     var pickerItems by mutableStateOf<List<TrackChoice>>(emptyList())
+    var variants by mutableStateOf<List<PlayerVariantUi>>(emptyList())
+    var currentVariantKey by mutableStateOf<String?>(null)
+    var onSelectVariant: (String) -> Unit = {}
     var nextTitle by mutableStateOf<String?>(null) // «Следующая серия: S01E02» / «Следующий фильм: …» with its countdown
     /** Inside the intro (core.MarkersDetector): the «Пропустить заставку» button bottom right. */
     var introShown by mutableStateOf(false)
@@ -306,6 +312,11 @@ private fun BottomBar(s: PlayerUiState, pad: PaddingValues) {
             Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp, Alignment.End)) {
                     if (full) {
+                        if (s.variants.size > 1) {
+                            GlassIconButton(onClick = { toggle(s, "quality") }, active = s.picker == "quality", size = btn, description = tr("search.quality")) {
+                                QualityIcon(color = Color.White, size = 20.dp)
+                            }
+                        }
                         GlassIconButton(onClick = { toggle(s, "audio") }, active = s.picker == "audio", size = btn, description = tr("playertrack.audiodorozhka")) {
                             AudioTrackIcon(color = Color.White, size = 20.dp)
                         }
@@ -352,7 +363,12 @@ fun PlayerSheet(s: PlayerUiState, modifier: Modifier = Modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    when (kind) { "audio" -> tr("playertrack.audiodorozhka"); "spu" -> tr("playertrack.subtitry"); else -> tr("overlay.nastroyki_vosproizvedeniya") },
+                    when (kind) {
+                        "audio" -> tr("playertrack.audiodorozhka")
+                        "spu" -> tr("playertrack.subtitry")
+                        "quality" -> tr("search.quality")
+                        else -> tr("overlay.nastroyki_vosproizvedeniya")
+                    },
                     color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp
                 )
                 GlassIconButton(onClick = { s.onPicker(null) }, size = 36.dp, description = tr("player.zakryt")) {
@@ -361,7 +377,20 @@ fun PlayerSheet(s: PlayerUiState, modifier: Modifier = Modifier) {
             }
             Column(Modifier.fillMaxWidth().heightIn(max = 210.dp).verticalScroll(rememberScrollState()).padding(end = 6.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (kind == "more") {
+                if (kind == "quality") {
+                    val vars = s.variants
+                    if (vars.isEmpty()) Text(tr("overlay.dorozhki_esche_ne_opredeleny"), color = Color.White.copy(alpha = 0.5f), fontFamily = Onest, fontSize = 13.sp)
+                    FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        vars.forEachIndexed { i, v ->
+                            val isCurrent = (v.key == s.currentVariantKey)
+                            val focus = if (vars.none { it.key == s.currentVariantKey }) i == 0 else isCurrent
+                            val label = if (v.isHost) "${v.label} [Хост]" else v.label
+                            PlayerChip(label, isCurrent, if (focus) Modifier.focusRequester(first) else Modifier) {
+                                s.onSelectVariant(v.key)
+                            }
+                        }
+                    }
+                } else if (kind == "more") {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         SheetLabel(tr("overlay.kadr"))
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {

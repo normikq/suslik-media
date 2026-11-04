@@ -28,12 +28,47 @@ const OWNER_RE = /^(?:[a-f0-9]{32}|u_\d{1,25})$/;
 const VIDEO_EXT = /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso|wmv|mpg|mpeg|vob)$/i;
 const STATUSES = new Set(["suggested", "accepted", "rejected", "none"]);
 const KINDS = new Set(["movie", "series", "collection"]);
+const EDITIONS = new Set(["theatrical", "extended", "directors_cut", "unrated", "remastered", "default"]);
+
+function parseEdition(name) {
+  const s = String(name || "").toLowerCase();
+  if (/director(?:'?s)?[\s._-]*cut/i.test(s)) return "directors_cut";
+  if (/extended(?:\s+cut|\s+edition)?/i.test(s)) return "extended";
+  if (/theatrical(?:\s+cut|\s+edition)?/i.test(s)) return "theatrical";
+  if (/unrated/i.test(s)) return "unrated";
+  if (/remaster(?:ed)?/i.test(s)) return "remastered";
+  return "default";
+}
+
+function canonicalNormalize(s) {
+  return String(s || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^\p{L}\p{N}]+/gu, "_")
+    .replace(/^_+|_+$/g, "") || "unknown";
+}
+
+function canonicalIdOf(info) {
+  if (!info) return null;
+  const kind = info.kind === "series" ? "s" : "m";
+  const title = canonicalNormalize(info.original || info.base || "unknown");
+  const edition = info.edition || "default";
+  if (kind === "m") {
+    const year = info.year ? `_${info.year}` : "";
+    return `m:${title}${year}:${edition}`;
+  } else {
+    const season = Number.isInteger(info.season) ? `_s${info.season}` : "";
+    return `s:${title}${season}:${edition}`;
+  }
+}
+
 // Версия ответа: 2 — с типом раздачи (kind), 3 — сезон без пометок в раздаче («Show 2 - 01», «Show - 01»),
 // 4 — сезон из числа после названия (seasonFromName), 5 — без пометок верим модели, «Part 2» — не сезон (прогон
 // scripts/aititle-eval.js 27.10), 6 — оригинальное название и год (original, year) для поиска постера в TMDB.
+// 7 — монтажная версия (edition) и канонический идентификатор (canonical_id).
 // Ответ старой версии можно спросить заново (stale в медиатеке), кроме принятого или отклонённого: решение владельца
 // не теряется от смены версии (переспросить его — только force).
-const VERSION = 6;
+const VERSION = 7;
 const NONE_RETRY_MS = 3600 * 1000; // «нет ответа» можно спросить заново через час (остальные решения — только force)
 
 const PROMPT = [
@@ -48,6 +83,7 @@ const PROMPT = [
   "франшизы: \"Матрица\", а не \"Матрица: Трилогия\"); цифры, которые входят в само название (\"Тачки 2\", \"1+1\"), оставь.",
   "year — год выхода: у фильма — год фильма, у сериала — год первого сезона всего сериала (не этой раздачи), у сборника —",
   "год первого фильма; если не знаешь — null.",
+  "edition — монтажная версия: \"theatrical\" (театральная), \"extended\" (расширенная), \"directors_cut\" (режиссёрская), \"unrated\" (без цензуры), \"remastered\" (ремастер) или \"default\" (обычная/не указано).",
   "season — номер сезона, если раздача — ровно один сезон сериала (смотри и на пути: S02E01 — сезон 2), иначе null",
   "(фильм, несколько сезонов, сборник). Сезон бывает записан без пометок: \"Сериал 2 - 01.mkv\" — второй сезон (цифра",
   "после названия), если это не часть самого названия; если пометок нет вовсе и это первый сезон — 1. \"Part 2\",",
@@ -71,7 +107,11 @@ const RESPONSE_SCHEMA = {
           season: { type: "INTEGER", nullable: true },
           kind: { type: "STRING", enum: ["movie", "series", "collection"] },
           original: { type: "STRING" },
-          year: { type: "INTEGER", nullable: true }
+          year: { type: "INTEGER", nullable: true },
+          edition: {
+            type: "STRING",
+            enum: ["theatrical", "extended", "directors_cut", "unrated", "remastered", "default"]
+          }
         },
         required: ["n", "base", "kind", "original"]
       }
@@ -231,7 +271,11 @@ function validate(answer, name, files) {
   original = original.replace(/\s+/g, " ").trim();
   if (original.length > 200 || /[\u0000-\u001f\u007f]/.test(original)) original = "";
   const year = Number.isInteger(answer.year) && answer.year >= 1880 && answer.year <= new Date().getFullYear() + 2 ? answer.year : null;
-  return { base, season, kind, original: original || null, year };
+  let edition = typeof answer.edition === "string" ? answer.edition.trim().toLowerCase() : "";
+  if (!EDITIONS.has(edition) || edition === "default") {
+    edition = parseEdition(name);
+  }
+  return { base, season, kind, original: original || null, year, edition: edition || "default" };
 }
 
 function today(now) {
@@ -266,7 +310,22 @@ function publicView(r) {
   if (!r) return null;
   // ответы до 27.10 могли прийти с точками вместо пробелов («Kak.priruchit.lisu»)
   const base = String(r.base || "");
-  return { base: /\s/.test(base) ? base : base.replace(/[._]+/g, " ").trim(), season: r.season ?? null, kind: KINDS.has(r.kind) ? r.kind : null, original: r.original || null, year: r.year ?? null, source: "ai", model: r.model, at: r.at, status: r.status, stale: (r.v || 1) < VERSION && r.status !== "accepted" && r.status !== "rejected" };
+  const edition = r.edition || "default";
+  const res = {
+    base: /\s/.test(base) ? base : base.replace(/[._]+/g, " ").trim(),
+    season: r.season ?? null,
+    kind: KINDS.has(r.kind) ? r.kind : null,
+    original: r.original || null,
+    year: r.year ?? null,
+    edition,
+    source: "ai",
+    model: r.model,
+    at: r.at,
+    status: r.status,
+    stale: (r.v || 1) < VERSION && r.status !== "accepted" && r.status !== "rejected"
+  };
+  res.canonical_id = canonicalIdOf(res);
+  return res;
 }
 
 /** Сохранённый результат раздачи (или null). */
@@ -508,5 +567,8 @@ module.exports = {
   decide,
   dropMagnet,
   stats,
+  canonicalIdOf,
+  parseEdition,
+  EDITIONS,
   _reset
 };

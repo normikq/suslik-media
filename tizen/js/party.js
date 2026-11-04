@@ -119,9 +119,9 @@
   var clockTimer = 0;
 
   /** Ведущий ставит фильм в комнату (сервер ставит его на паузу в начале; мой плеер запустит). */
-  party.putFilm = function (key, title) {
+  party.putFilm = function (key, title, canonicalId, edition, variants) {
     if (!party.inRoom() || !party.isHost() || (party.room.file && party.room.file.key === key)) return;
-    var f = P.fileRef(key, title);
+    var f = P.fileRef(key, title, canonicalId, edition, variants);
     party.room = R.putFile(party.room, f);
     party.startedByMe = key;
     action(P.changeFile(f));
@@ -142,11 +142,12 @@
     }, 1500);
   };
 
-  var reported = false;
-  party.reportBuffering = function (loading) {
-    if (!party.roomId || loading === reported) return;
+  var reported = false, reportedVariantKey = null;
+  party.reportBuffering = function (loading, variantKey) {
+    if (!party.roomId || (loading === reported && (!variantKey || variantKey === reportedVariantKey))) return;
     reported = loading;
-    send(P.buffering(loading));
+    if (variantKey) reportedVariantKey = variantKey;
+    send(P.buffering(loading, variantKey || reportedVariantKey));
   };
 
   function action(body) { if (party.roomId && party.canControl()) send(body); }
@@ -278,7 +279,9 @@
       // Ведущий выбрал другую серию: этот плеер переходит на неё, один раз
       var rk = party.room.file ? party.room.file.key : null;
       // Ведущий закрыл фильм (у комнаты его нет): гость, который смотрел его вместе с ним, тоже закрывает
-      if (party.inRoom() && key && rk === key) showedRoomFilm = true;
+      var f = party.room.file;
+      var matchesFilm = f && (typeof f.matches === 'function' ? f.matches(key) : f.key === key);
+      if (party.inRoom() && key && matchesFilm) showedRoomFilm = true;
       else if (!party.inRoom() || rk != null) showedRoomFilm = false;
       else if (showedRoomFilm && !party.isHost()) {
         showedRoomFilm = false;
@@ -286,7 +289,7 @@
         if (cb.close) cb.close();
         return;
       }
-      if (rk == null || rk === key) switchedTo = null;
+      if (rk == null || matchesFilm) switchedTo = null;
       else if (party.inRoom() && switchedTo !== rk && p) {
         var i = keys.indexOf(rk);
         if (i >= 0) {
@@ -296,7 +299,7 @@
           return;
         }
       }
-      if (party.inRoom() && rk === key && key && p) {
+      if (party.inRoom() && matchesFilm && key && p) {
         if (episodeNotice) { cb.notice(episodeNotice); episodeNotice = null; }
         engine.tick(p, key, Date.now());
       } else if (p) engine.idle(p);

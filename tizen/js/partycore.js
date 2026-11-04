@@ -135,20 +135,41 @@
 
   var ROOMS = '/api/rooms';
 
-  function fileRef(key, title) { return { key: key, title: title || '', adId: Number(String(key).split('|')[0]) || 0 }; }
+  function fileRef(key, title, canonicalId, edition, variants) {
+    var vList = Array.isArray(variants) ? variants : [];
+    return {
+      key: key,
+      title: title || '',
+      canonicalId: canonicalId || null,
+      edition: edition || null,
+      variants: vList,
+      adId: Number(String(key).split('|')[0]) || 0,
+      matches: function (fileKey, otherCid) {
+        if (!fileKey) return false;
+        if (fileKey === key) return true;
+        for (var i = 0; i < vList.length; i++) {
+          if (vList[i] && vList[i].key === fileKey) return true;
+        }
+        if (canonicalId && otherCid && canonicalId === otherCid) return true;
+        return false;
+      }
+    };
+  }
 
   function nonEmpty(v) { return typeof v === 'string' && v.trim() ? v : null; }
 
   function parseMember(m) {
     return {
       key: String(m.key || ''), userId: String(m.id || ''), name: nonEmpty(m.name) || 'Гость', buffering: m.buffering === true,
-      avatar: typeof m.avatar === 'string' && m.avatar.indexOf('https://') === 0 ? m.avatar : null
+      avatar: typeof m.avatar === 'string' && m.avatar.indexOf('https://') === 0 ? m.avatar : null,
+      variantKey: nonEmpty(m.variant_key)
     };
   }
 
   function parseRoom(o) {
     var s = o.state && typeof o.state === 'object' ? o.state : null;
-    var f = o.file && typeof o.file === 'object' && nonEmpty(o.file.key) ? fileRef(o.file.key, String(o.file.name || '')) : null;
+    var f = o.file && typeof o.file === 'object' && nonEmpty(o.file.key)
+      ? fileRef(o.file.key, String(o.file.name || ''), nonEmpty(o.file.canonical_id), nonEmpty(o.file.edition), o.file.variants) : null;
     return {
       id: nonEmpty(o.id), hostId: nonEmpty(o.host_id), hostKey: nonEmpty(o.host_key), hostName: String(o.host_name || ''),
       hostOnly: o.controls === 'host', file: f,
@@ -169,6 +190,10 @@
       case 'state_changed': return d ? { type: 'state_changed', room: parseRoom(d) } : null;
       case 'member_joined': return d && d.member ? { type: 'member_joined', member: parseMember(d.member) } : null;
       case 'member_left': return d && nonEmpty(d.key) ? { type: 'member_left', key: d.key } : null;
+      case 'refresh_library':
+        var rf = d && d.file && typeof d.file === 'object' && nonEmpty(d.file.key)
+          ? fileRef(d.file.key, String(d.file.name || ''), nonEmpty(d.file.canonical_id), nonEmpty(d.file.edition), d.file.variants) : null;
+        return { type: 'refresh_library', file: rf };
       default: return null;
     }
   }
@@ -192,7 +217,11 @@
     play: function (ms) { return { type: 'play', pos: ms / 1000 }; },
     pause: function (ms) { return { type: 'pause', pos: ms / 1000 }; },
     seek: function (ms) { return { type: 'seek', pos: ms / 1000 }; },
-    buffering: function (loading) { return { type: 'buffering', buffering: loading }; },
+    buffering: function (loading, variantKey) {
+      var o = { type: 'buffering', buffering: loading };
+      if (variantKey) o.variant_key = variantKey;
+      return o;
+    },
     changeFile: function (f) { return { type: 'change_file', file: { key: f.key, name: f.title, ad_id: f.adId } }; },
     /** Ведущий закрыл фильм: у гостей плеер тоже закрывается (сервер ставит room.file = null). */
     closeFile: function () { return { type: 'change_file', file: null }; },

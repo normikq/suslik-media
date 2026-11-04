@@ -510,6 +510,38 @@ Item {
                 }
             }
 
+            // пресеты качества (Composite Quality Presets)
+            Panel_ {
+                shown: pv.picker === "quality"
+                Column {
+                    width: parent.width
+                    spacing: 10
+                    Item {
+                        width: parent.width; height: 28
+                        Text { anchors.verticalCenter: parent.verticalCenter; text: Ui.tx("player.kachestvo") || "Качество"; color: "white"; font.family: Theme.onest; font.weight: Font.DemiBold; font.pixelSize: 14 }
+                        GlassBtn { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; size: 26; onClicked: pv.picker = ""; PlayerIcon { anchors.centerIn: parent; name: "cross"; size: 11; color: "#99FFFFFF" } }
+                    }
+                    Flow {
+                        width: parent.width
+                        spacing: 6
+                        Repeater {
+                            model: player.variants
+                            Chip_ {
+                                required property var modelData
+                                readonly property bool selected: modelData.key === player.currentVariantKey
+                                readonly property bool isHost: modelData.isHost === true
+                                label: (modelData.label || modelData.quality || "") + (isHost ? " [Хост]" : "")
+                                on: selected
+                                onClicked: {
+                                    player.playAt(player.time, modelData.key)
+                                    pv.picker = ""
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // карточка следующей серии (на титрах или в конце)
             Item {
                 width: parent.width; height: player.nextIn >= 0 && player.index < player.queueSize - 1 ? 52 : 0
@@ -669,6 +701,17 @@ Item {
                     Rectangle { anchors.verticalCenter: parent.verticalCenter; width: 1; height: 18; color: "#33FFFFFF" }
                     GlassBtn { size: pv.btn; active: pv.picker === "audio"; onClicked: pv.openPicker("audio"); PlayerIcon { anchors.centerIn: parent; name: "audio"; size: pv.compact ? 18 : 20 } }
                     GlassBtn { size: pv.btn; active: pv.picker === "spu"; onClicked: pv.openPicker("spu"); PlayerIcon { anchors.centerIn: parent; name: "subs"; size: pv.compact ? 20 : 22 } }
+                    GlassBtn {
+                        visible: player.variants.length > 1
+                        size: pv.btn; active: pv.picker === "quality"; onClicked: pv.openPicker("quality")
+                        tip: Ui.tx("player.kachestvo") || "Качество"
+                        Rectangle {
+                            anchors.centerIn: parent
+                            width: pv.compact ? 22 : 26; height: pv.compact ? 16 : 18; radius: 4
+                            color: "transparent"; border.color: "white"; border.width: 1.5
+                            Text { anchors.centerIn: parent; text: "HD"; color: "white"; font.family: Theme.onest; font.pixelSize: pv.compact ? 9 : 10; font.bold: true }
+                        }
+                    }
                     GlassBtn {
                         size: pv.btn; active: pv.picker === "more"; onClicked: pv.openPicker("more")
                         width: player.rate !== 1 && !player.partyFilm && !pv.narrow ? pv.btn + 22 : pv.btn

@@ -70,3 +70,27 @@ test("создание комнаты: файл тоже очищается, н�
   assert.equal(rooms.createRoom(host, { key: "nope" }).file, null);
   assert.equal(rooms.createRoom(host, "9|c.mkv").file, null);
 });
+
+test("change_file: canonical_id, edition и variants сохраняются", () => {
+  const room = rooms.createRoom(host);
+  const variants = [
+    { key: "101|dune.2160p.mkv", label: "4K · DV · Atmos", quality: "4K", audio: "TrueHD Atmos", bitrate: 48.2, offset_ms: 0 },
+    { key: "102|dune.1080p.mkv", label: "1080p · AC3", quality: "1080p", audio: "AC3 5.1", bitrate: 8.1, offset_ms: 0 }
+  ];
+  const res = rooms.handleRoomAction(room.id, host, {
+    type: "change_file",
+    file: {
+      key: "101|dune.2160p.mkv",
+      name: "Дюна (2021)",
+      canonical_id: "m:dune_2021:theatrical",
+      edition: "theatrical",
+      variants
+    }
+  });
+  assert.equal(res.ok, true);
+  assert.equal(room.file.canonical_id, "m:dune_2021:theatrical");
+  assert.equal(room.file.edition, "theatrical");
+  assert.equal(room.file.variants.length, 2);
+  assert.equal(room.file.variants[0].quality, "4K");
+  assert.equal(room.file.variants[1].bitrate, 8.1);
+});

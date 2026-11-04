@@ -44,3 +44,20 @@ test('checkFile: Blu-ray (.m2ts) — через сервер', () => {
   assert.match(S.slowHint('BDMV/STREAM/00001.m2ts'), /Blu-ray/);
   assert.match(S.slowHint('Film.2160p.Remux.mkv'), /тяжёлый/);
 });
+
+test('checkVariantCompatibility и pickBestCompatibleVariant для Tizen TV (DTS guard)', () => {
+  const v1 = { key: '1|dts.mkv', audio_tech: 'DTS-HD MA 5.1', hardware_flags: ['dts'], score: 395 };
+  const v2 = { key: '2|ac3.mkv', audio_tech: 'AC3 5.1', hardware_flags: [], score: 335 };
+
+  const c1 = S.checkVariantCompatibility(v1);
+  assert.equal(c1.ok, false);
+  assert.equal(c1.warn, true);
+  assert.match(c1.text, /Нет звука на вашем ТВ/);
+
+  const c2 = S.checkVariantCompatibility(v2);
+  assert.equal(c2.ok, true);
+  assert.equal(c2.warn, false);
+
+  const best = S.pickBestCompatibleVariant([v1, v2]);
+  assert.equal(best.key, '2|ac3.mkv');
+});

@@ -241,7 +241,7 @@ test('parseLibrary: aiTitle и canAiTitle; неизвестный статус �
     { id: 2, name: 'B', statusCode: 4, files: [], aiTitle: { base: 'X', season: null, status: 'weird' } },
     { id: 3, name: 'C', statusCode: 4, files: [] }
   ] });
-  assert.deepEqual(list[0].aiTitle, { base: 'Тед Лассо', season: 2, model: 'gemini-3.5-flash-lite', at: 5, status: 'suggested', kind: null, stale: false, original: null, year: null });
+  assert.deepEqual(list[0].aiTitle, { base: 'Тед Лассо', season: 2, model: 'gemini-3.5-flash-lite', at: 5, status: 'suggested', kind: null, stale: false, original: null, year: null, edition: null, canonicalId: null });
   assert.equal(list[0].canAiTitle, true);
   assert.equal(list[1].aiTitle, null);
   assert.equal(list[2].aiTitle, null);

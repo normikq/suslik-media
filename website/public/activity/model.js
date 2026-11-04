@@ -15,7 +15,9 @@
       model: str(a.model), at: num(a.at), status: a.status,
       kind: ['movie', 'series', 'collection'].indexOf(a.kind) >= 0 ? a.kind : null, stale: a.stale === true,
       original: str(a.original).trim() || null,
-      year: typeof a.year === 'number' && a.year >= 1880 && a.year <= 2100 ? Math.floor(a.year) : null
+      year: typeof a.year === 'number' && a.year >= 1880 && a.year <= 2100 ? Math.floor(a.year) : null,
+      edition: str(a.edition).trim() || null,
+      canonicalId: str(a.canonical_id).trim() || null
     };
   }
 
@@ -448,13 +450,39 @@
     return null;
   }
 
-  function qualityScore(name) {
+  function smartQualityScore(name) {
     var lower = (name || '').toLowerCase();
-    if (/2160p|4k|3840/.test(lower)) return 4;
-    if (/1080p|1080i|1920/.test(lower)) return 3;
-    if (/720p|1280/.test(lower)) return 2;
-    if (/480p|576p|dvd/.test(lower)) return 1;
-    return 0;
+    var rScore = 100;
+    if (/2160p|4k|3840|uhd/.test(lower)) rScore = 400;
+    else if (/1080[pi]|1920/.test(lower)) rScore = 300;
+    else if (/720p|1280/.test(lower)) rScore = 200;
+    else rScore = 100;
+
+    var vScore = 0;
+    if (/dolby[\s._-]?vision|\bdv\b|dovi/.test(lower)) vScore = 40;
+    else if (/hdr10\+/.test(lower)) vScore = 30;
+    else if (/hdr10|\bhdr\b/.test(lower)) vScore = 20;
+    else if (/10-?bit|hi10p/.test(lower)) vScore = 10;
+    else vScore = 0;
+
+    var aScore = 0;
+    if (/atmos|dts:?x/.test(lower)) aScore = 40;
+    else if (/dts-?hd(?:\s*ma)?|dtshd/.test(lower)) aScore = 30;
+    else if (/dts|dd\+|e-?ac-?3/.test(lower)) aScore = 20;
+    else if (/ac-?3|dd5\.1|5\.1/.test(lower)) aScore = 10;
+    else aScore = 0;
+
+    var sScore = 0;
+    if (/remux/.test(lower)) sScore = 25;
+    else if (/bdrip|brrip|bluray|blu-ray/.test(lower)) sScore = 15;
+    else if (/web-?dl|webrip|web\b/.test(lower)) sScore = 10;
+    else sScore = 0;
+
+    return rScore + vScore + aScore + sScore;
+  }
+
+  function qualityScore(name) {
+    return smartQualityScore(name);
   }
 
   function itemSeasons(item) {
@@ -536,10 +564,12 @@
       // год принятого ответа ИИ важнее года в имени раздачи (groupVersions в Model.kt)
       var aiy = it.m.aiTitle && it.m.aiTitle.status === 'accepted' && it.m.aiTitle.base ? it.m.aiTitle.year : null;
       var y = aiy ? [null, String(aiy)] : YEAR_IN_NAME.exec(it.m.name);
+      var ed = it.m.aiTitle && it.m.aiTitle.status === 'accepted' && it.m.aiTitle.edition && it.m.aiTitle.edition !== 'default' ? it.m.aiTitle.edition : '';
+      var edKey = ed ? '|' + ed : '';
       var keys = [];
       var poster = posterOf ? posterOf(it) : null;
-      if (poster) keys.push(kind + '|poster|' + poster);
-      keys.push(kind === 'm' ? 'm|' + titleKey(base) + '|' + (y ? y[1] : '') : 's|' + titleKey(base));
+      if (poster) keys.push(kind + '|poster|' + poster + edKey);
+      keys.push(kind === 'm' ? 'm|' + titleKey(base) + '|' + (y ? y[1] : '') + edKey : 's|' + titleKey(base) + edKey);
       var group = null;
       for (var i = 0; i < keys.length && !group; i++) group = byKey[keys[i]] || null;
       if (!group) { group = [it]; groups.push(group); shown.push(it); keys.forEach(function (k) { byKey[k] = group; }); }

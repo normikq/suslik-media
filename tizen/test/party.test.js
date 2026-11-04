@@ -40,6 +40,27 @@ test('parseRoom и события потока', () => {
   assert.equal(P.parseEventLine('data: {oops'), null);
   const left = P.parseEvent(JSON.stringify({ event: 'member_left', data: { key: 'k2' } }));
   assert.deepEqual(left, { type: 'member_left', key: 'k2' });
+
+  const roomWithVariants = P.parseRoom(roomJson(4, '101|dune.mkv', {
+    file: {
+      key: '101|dune.mkv',
+      name: 'Дюна',
+      canonical_id: 'm:dune_2021:theatrical',
+      edition: 'theatrical',
+      variants: [
+        { key: '101|dune.mkv', label: '4K', quality: '4K', audio: 'TrueHD Atmos', bitrate: 48.2, offset_ms: 0 },
+        { key: '102|dune_1080.mkv', label: '1080p', quality: '1080p', audio: 'AC3 5.1', bitrate: 8.1, offset_ms: 0 }
+      ]
+    },
+    members: [{ key: 'k1', id: 'u_1', name: 'Аня', variant_key: '101|dune.mkv' }]
+  }));
+  assert.equal(roomWithVariants.file.canonicalId, 'm:dune_2021:theatrical');
+  assert.equal(roomWithVariants.file.edition, 'theatrical');
+  assert.equal(roomWithVariants.file.variants.length, 2);
+  assert.equal(roomWithVariants.members[0].variantKey, '101|dune.mkv');
+  assert.equal(roomWithVariants.file.matches('102|dune_1080.mkv'), true);
+  assert.equal(roomWithVariants.file.matches('999|other.mkv', 'm:dune_2021:theatrical'), true);
+  assert.equal(roomWithVariants.file.matches('999|other.mkv', 'm:other:default'), false);
 });
 
 test('merge: состояние только новее по seq; фильм ведущего держится до подтверждения', () => {

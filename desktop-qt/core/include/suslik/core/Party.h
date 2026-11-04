@@ -50,13 +50,31 @@ struct PartyMember {
     QString key, userId, name;
     bool buffering = false;
     std::optional<QString> avatar;
+    std::optional<QString> variantKey;
     bool operator==(const PartyMember &o) const = default;
 };
 
-/// Фильм комнаты: ключ просмотра `magnetId|путь` (тот же, что у прогресса в медиатеке).
+struct PartyVariant {
+    QString key;
+    QString label;
+    QString quality = QStringLiteral("1080p");
+    QString audio = QStringLiteral("Stereo");
+    double bitrate = 0.0;
+    qint64 offsetMs = 0;
+    int score = 0;
+    QStringList hardwareFlags;
+    bool operator==(const PartyVariant &o) const = default;
+};
+
+/// Фильм комнаты: ключ просмотра `magnetId|путь` (тот же, что у прогресса в медиатеке), canonical_id и варианты.
 struct PartyFileRef {
     QString key, title;
+    std::optional<QString> canonicalId;
+    std::optional<QString> edition;
+    QList<PartyVariant> variants;
+
     qint64 adId() const;
+    bool matches(const QString &fileKey, const QString &otherCanonicalId = QString()) const;
     bool operator==(const PartyFileRef &o) const = default;
 };
 
@@ -155,13 +173,14 @@ public:
     static QJsonObject play(qint64 posMs);
     static QJsonObject pause(qint64 posMs);
     static QJsonObject seek(qint64 posMs);
-    static QJsonObject buffering(bool loading);
+    static QJsonObject buffering(bool loading, const QString &variantKey = QString());
     static QJsonObject changeFile(const PartyFileRef &f);
     /// Ведущий закрыл фильм: у гостей плеер тоже закрывается.
     static QJsonObject closeFile();
     static QJsonObject withClient(QJsonObject body, const QString &clientId);
     static QJsonObject fileJson(const PartyFileRef &f);
 
+    static std::optional<PartyFileRef> parseFileRef(const QJsonObject &f);
     static std::optional<RoomUpdate> roomOf(const QJsonObject &res);
     static std::optional<QString> hostIdOf(const QJsonObject &res);
     static std::optional<QString> memberIdOf(const QJsonObject &res);

@@ -34,6 +34,8 @@ struct AiTitle {
     bool stale = false;
     std::optional<QString> original;
     std::optional<int> year;
+    std::optional<QString> edition;
+    std::optional<QString> canonicalId;
 
     bool accepted() const { return status == QLatin1String("accepted") && !base.trimmed().isEmpty(); }
     /// «Dune (2021)»: сервер берёт результат TMDB этого года. Пусто без оригинального названия.
@@ -170,10 +172,28 @@ struct VersionSection {
     QList<LibraryItem> items;
 };
 
+struct MediaVariant {
+    QString key;
+    qint64 adId = 0;
+    QString label;
+    QString resolution;
+    QString sourceType;
+    QString videoTech;
+    QString audioTech;
+    double bitrateMbps = 0.0;
+    qint64 sizeBytes = 0;
+    qint64 durationSec = 0;
+    qint64 offsetMs = 0;
+    int score = 0;
+    QStringList hardwareFlags;
+    bool operator==(const MediaVariant &) const = default;
+};
+
 std::optional<int> extractYear(const QString &name);
 std::optional<int> releaseYear(const LibraryItem &item);
 std::optional<int> itemPart(const LibraryItem &item);
 int qualityScore(const QString &name);
+int smartQualityScore(const QString &name);
 std::optional<std::pair<int, int>> itemSeasons(const LibraryItem &item);
 QList<LibraryItem> sortVersions(const QList<LibraryItem> &versions);
 QList<VersionSection> versionSections(const QList<LibraryItem> &versions);
