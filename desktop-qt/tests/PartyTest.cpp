@@ -619,6 +619,12 @@ private slots:
         const PartyVariant vUnknown = buildPartyVariant(itemUnknown, fUnknown);
         QVERIFY(vUnknown.quality.isEmpty());
         QVERIFY(!vUnknown.label.contains(S("1080p")));
+
+        // Размеры потока из ffprobe (3840x1600) дают 4K
+        const PartyVariant vProbed = buildPartyVariant(itemUnknown, fUnknown, std::nullopt, 3840, 1600);
+        QCOMPARE(vProbed.quality, S("4K"));
+        QVERIFY(vProbed.label.startsWith(S("4K")));
+        QCOMPARE(vProbed.score, 400);
     }
 };
 

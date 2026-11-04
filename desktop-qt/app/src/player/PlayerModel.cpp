@@ -155,6 +155,13 @@ PlayerModel::PlayerModel(QObject *parent)
         else if (w > 0 || h > 0) detectedQ = QStringLiteral("480p");
         if (detectedQ.isEmpty()) return;
 
+        if (m_lib) {
+            const QString k = m_activeVariantKey.isEmpty() ? watchKey() : m_activeVariantKey;
+            if (!k.isEmpty()) {
+                m_lib->saveMediaDimensions(k, w, h);
+            }
+        }
+
         bool changed = false;
         for (auto &v : m_req.variants) {
             if (v.key == m_activeVariantKey) {
@@ -639,11 +646,13 @@ void PlayerModel::rebuildVariantsForEntry(int i) {
             else if (auto mv = mainVideo(ver.m)) vFile = *mv;
         }
         if (!vFile.path.isEmpty()) {
-            vars << core::buildPartyVariant(ver, vFile, m_lib->serverProfile(ver.m.id));
+            const auto [w, h] = m_lib ? m_lib->cachedMediaDimensions(ver.m.id, vFile.path) : std::pair{0, 0};
+            vars << core::buildPartyVariant(ver, vFile, m_lib->serverProfile(ver.m.id), w, h);
         }
     }
     if (vars.isEmpty() && it) {
-        vars << core::buildPartyVariant(*it, cur, m_lib->serverProfile(m_req.magnetId));
+        const auto [w, h] = m_lib ? m_lib->cachedMediaDimensions(m_req.magnetId, cur.path) : std::pair{0, 0};
+        vars << core::buildPartyVariant(*it, cur, m_lib->serverProfile(m_req.magnetId), w, h);
     }
     std::sort(vars.begin(), vars.end(), [](const auto &a, const auto &b) { return a.score > b.score; });
     m_req.variants = vars;

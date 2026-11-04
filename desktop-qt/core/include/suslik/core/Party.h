@@ -69,7 +69,7 @@ struct PartyVariant {
 struct LibraryItem;
 struct MFile;
 PartyVariant parsePartyVariant(const QJsonObject &obj);
-PartyVariant buildPartyVariant(const LibraryItem &item, const MFile &file, const std::optional<PartyVariant> &serverProfile = std::nullopt);
+PartyVariant buildPartyVariant(const LibraryItem &item, const MFile &file, const std::optional<PartyVariant> &serverProfile = std::nullopt, int width = 0, int height = 0);
 
 /// Фильм комнаты: ключ просмотра `magnetId|путь` (тот же, что у прогресса в медиатеке), canonical_id и варианты.
 struct PartyFileRef {

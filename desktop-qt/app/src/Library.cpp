@@ -855,6 +855,32 @@ std::optional<QString> Library::cachedMediaLine(qint64 id, const MFile &f) const
     return parts.join(S(" · "));
 }
 
+std::pair<int, int> Library::cachedMediaDimensions(const QString &key) const {
+    if (key.isEmpty()) return {0, 0};
+    const auto raw = m_mediaIndex.get(key);
+    if (!raw) return {0, 0};
+    const QJsonObject j = QJsonDocument::fromJson(raw->toUtf8()).object();
+    return {j.value(S("width")).toInt(), j.value(S("height")).toInt()};
+}
+
+std::pair<int, int> Library::cachedMediaDimensions(qint64 id, const QString &path) const {
+    return cachedMediaDimensions(QString::number(id) + QLatin1Char('|') + path);
+}
+
+void Library::saveMediaDimensions(const QString &key, int width, int height) {
+    if (key.isEmpty() || width <= 0 || height <= 0) return;
+    const auto raw = m_mediaIndex.get(key);
+    QJsonObject j = raw ? QJsonDocument::fromJson(raw->toUtf8()).object() : QJsonObject{};
+    if (j.value(S("width")).toInt() == width && j.value(S("height")).toInt() == height) return;
+    j.insert(S("width"), width);
+    j.insert(S("height"), height);
+    m_mediaIndex.put(key, QString::fromUtf8(QJsonDocument(j).toJson(QJsonDocument::Compact)));
+}
+
+void Library::saveMediaDimensions(qint64 id, const QString &path, int width, int height) {
+    saveMediaDimensions(QString::number(id) + QLatin1Char('|') + path, width, height);
+}
+
 void Library::requestMediaLine(qint64 id, const MFile &f) {
     const QString key = QString::number(id) + QLatin1Char('|') + f.path;
     if (m_mediaAsked.contains(key) || cachedMediaLine(id, f) || !f.link) return;

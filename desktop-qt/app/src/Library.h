@@ -139,6 +139,10 @@ public:
     // ---- строка о видео («1920×1080 · 12 Мбит/с») ----
     std::optional<QString> cachedMediaLine(qint64 id, const MFile &f) const;
     void requestMediaLine(qint64 id, const MFile &f);
+    std::pair<int, int> cachedMediaDimensions(const QString &key) const;
+    std::pair<int, int> cachedMediaDimensions(qint64 id, const QString &path) const;
+    void saveMediaDimensions(const QString &key, int width, int height);
+    void saveMediaDimensions(qint64 id, const QString &path, int width, int height);
 
     // ---- прогресс ----
     std::optional<WatchInfo> watchInfo(const QString &key) const;

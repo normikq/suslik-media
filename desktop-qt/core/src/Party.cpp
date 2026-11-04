@@ -560,9 +560,19 @@ qint64 PartySyncEngine::seekRoom(SyncPlayer &player, qint64 target, qint64 now) 
     return target;
 }
 
-PartyVariant buildPartyVariant(const LibraryItem &item, const MFile &file, const std::optional<PartyVariant> &serverProfile) {
+PartyVariant buildPartyVariant(const LibraryItem &item, const MFile &file, const std::optional<PartyVariant> &serverProfile, int width, int height) {
     if (serverProfile.has_value() && !serverProfile->key.isEmpty() && serverProfile->key == watchKey(item.m.id, file)) {
-        return *serverProfile;
+        PartyVariant v = *serverProfile;
+        if (v.quality.isEmpty() && (width > 0 || height > 0)) {
+            if (width >= 3000 || height >= 1600) v.quality = QStringLiteral("4K");
+            else if (width >= 1600 || height >= 900) v.quality = QStringLiteral("1080p");
+            else if (width >= 1100 || height >= 600) v.quality = QStringLiteral("720p");
+            else v.quality = QStringLiteral("480p");
+            if (!v.label.startsWith(v.quality)) {
+                v.label = v.quality + QStringLiteral(" · ") + v.label;
+            }
+        }
+        return v;
     }
     const QString combined = (item.m.name + QLatin1Char(' ') + file.name).trimmed();
     const QString l = combined.toLower();
@@ -575,6 +585,12 @@ PartyVariant buildPartyVariant(const LibraryItem &item, const MFile &file, const
     else if (match(R"((?:^|\D)1080[pi](?![a-z])|(?:^|\D)1920(?!\d))")) quality = QStringLiteral("1080p");
     else if (match(R"((?:^|\D)720p(?![a-z])|(?:^|\D)1280(?!\d))")) quality = QStringLiteral("720p");
     else if (match(R"((?:^|\D)(?:480|576)[pi](?![a-z])|(?:^|[^a-z])dvd)")) quality = QStringLiteral("480p");
+    else if (width > 0 || height > 0) {
+        if (width >= 3000 || height >= 1600) quality = QStringLiteral("4K");
+        else if (width >= 1600 || height >= 900) quality = QStringLiteral("1080p");
+        else if (width >= 1100 || height >= 600) quality = QStringLiteral("720p");
+        else quality = QStringLiteral("480p");
+    }
 
     QString audio = QStringLiteral("Stereo");
     if (match(R"(atmos(?![a-z]))")) audio = QStringLiteral("TrueHD Atmos");
@@ -590,7 +606,15 @@ PartyVariant buildPartyVariant(const LibraryItem &item, const MFile &file, const
     if (match(R"(hdr10\+|hdr10plus|hdr10|(?:^|[^a-z])hdr(?![a-z]))")) hwFlags << QStringLiteral("hdr");
     if (match(R"((?:^|[^a-z])dts(?![a-z]))")) hwFlags << QStringLiteral("dts");
 
-    const int score = smartQualityScore(combined);
+    int score = smartQualityScore(combined);
+    if (!match(R"((?:^|[^a-z0-9])(?:2160p|4k|uhd)(?![a-z])|(?:^|\D)3840(?!\d))")
+        && !match(R"((?:^|\D)1080[pi](?![a-z])|(?:^|\D)1920(?!\d))")
+        && !match(R"((?:^|\D)720p(?![a-z])|(?:^|\D)1280(?!\d))")
+        && (width > 0 || height > 0)) {
+        if (quality == QStringLiteral("4K")) score += 300;
+        else if (quality == QStringLiteral("1080p")) score += 200;
+        else if (quality == QStringLiteral("720p")) score += 100;
+    }
     const qint64 sizeBytes = file.size > 0 ? file.size : item.m.size;
     const bool isSeries = item.playable.isSeries();
     const double estDuration = isSeries ? 2700.0 : 6600.0;

@@ -499,12 +499,14 @@ void PlayModel::play() {
                 else if (auto mv = mainVideo(ver.m)) vFile = *mv;
             }
             if (!vFile.path.isEmpty()) {
-                vars << core::buildPartyVariant(ver, vFile, m_lib->serverProfile(ver.m.id));
+                const auto [w, h] = m_lib ? m_lib->cachedMediaDimensions(ver.m.id, vFile.path) : std::pair{0, 0};
+                vars << core::buildPartyVariant(ver, vFile, m_lib->serverProfile(ver.m.id), w, h);
             }
         }
     }
     if (vars.isEmpty() && it) {
-        vars << core::buildPartyVariant(*it, cur, m_lib ? m_lib->serverProfile(m_id) : std::nullopt);
+        const auto [w, h] = m_lib ? m_lib->cachedMediaDimensions(m_id, cur.path) : std::pair{0, 0};
+        vars << core::buildPartyVariant(*it, cur, m_lib ? m_lib->serverProfile(m_id) : std::nullopt, w, h);
     }
     std::sort(vars.begin(), vars.end(), [](const auto &a, const auto &b) { return a.score > b.score; });
     r.variants = vars;

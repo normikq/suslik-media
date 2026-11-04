@@ -6,7 +6,8 @@ const config = require("../config");
 const { safeHttpsUrl } = require("../utils/helpers");
 const { makeJsonWriter } = require("../utils/json-writer");
 const { isAllDebridFileLink } = require("./mirror");
-const { resolveDirectUrl, withFfprobeSlot } = require("./metadata");
+const { resolveDirectUrl, withFfprobeSlot, mediaMetadataCache } = require("./metadata");
+const crypto = require("crypto");
 
 // ---- Метки Dolby Vision / HDR / DTS для постеров ---------------------------------------------------------------
 // ffprobe смотрит самый большой видеофайл раздачи один раз: Dolby Vision — запись DOVI в потоке видео, HDR — передаточная
@@ -73,7 +74,13 @@ function probeTags(url) {
     child.on("close", code => {
       clearTimeout(timeout);
       if (code !== 0) return reject(new Error(stderr || "ffprobe не смог проанализировать файл."));
-      try { resolve(tagsFromStreams(JSON.parse(stdout).streams)); } catch { reject(new Error("Не удалось разобрать ответ ffprobe.")); }
+      try {
+        const streams = JSON.parse(stdout).streams || [];
+        const tags = tagsFromStreams(streams);
+        const v = Array.isArray(streams) ? streams.find(s => s && (s.codec_type === "video" || (s.width && s.height))) : null;
+        const meta = v ? { w: Number(v.width) || 0, h: Number(v.height) || 0, codec: v.codec_name || "" } : null;
+        resolve({ tags, meta });
+      } catch { reject(new Error("Не удалось разобрать ответ ffprobe.")); }
     });
   });
 }
@@ -96,8 +103,8 @@ async function work() {
         // ссылку берём до слота: ожидание AllDebrid (до 20 с) не держит ffprobe, общий с /api/media-metadata.
         // Слот фоновый: не больше одного и после ждущих запросов из интерфейса
         const direct = await resolveDirectUrl(parsed);
-        const tags = await withFfprobeSlot(() => probeTags(direct.toString()), { background: true });
-        store.set(job.id, { t: tags, at: Date.now() });
+        const res = await withFfprobeSlot(() => probeTags(direct.toString()), { background: true });
+        store.set(job.id, { t: res.tags, meta: res.meta, at: Date.now() });
       } catch (err) {
         store.set(job.id, { f: Date.now(), n: ((prev && prev.n) || 0) + 1 });
         console.warn(`[tags] раздача ${job.id}: ${err.userMessage || err.message}`.slice(0, 200));
@@ -147,11 +154,24 @@ function snapshot(magnets, prune) {
     if (e && Array.isArray(e.t)) tags[m.id] = e.t;
     const file = pickMainFile(m.files);
     if (file) {
+      let streams = [];
+      if (e && e.meta && (e.meta.w || e.meta.h)) {
+        streams = [{ codec_type: "video", width: e.meta.w, height: e.meta.h, codec_name: e.meta.codec }];
+      } else if (file.sourceLink) {
+        try {
+          const hashKey = crypto.createHash("sha256").update(file.sourceLink).digest("hex");
+          const cachedMeta = mediaMetadataCache.get(hashKey);
+          if (cachedMeta && cachedMeta.metadata && (cachedMeta.metadata.width || cachedMeta.metadata.height)) {
+            streams = [{ codec_type: "video", width: cachedMeta.metadata.width, height: cachedMeta.metadata.height, codec_name: cachedMeta.metadata.codec }];
+          }
+        } catch {}
+      }
       profiles[m.id] = buildMediaVariant({
         adId: m.id,
         filePath: file.path,
         fileName: m.name,
         sizeBytes: Number(file.size) || Number(m.size) || 0,
+        streams,
         tags: tags[m.id] || []
       });
     }

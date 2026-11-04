@@ -88,3 +88,19 @@ test("buildMediaVariant: слитные кодеки и подчёркивани
   assert.equal(buildMediaVariant({ adId: 3, filePath: "Film.1080p.dts.x264.mkv" }).audio_tech, "DTS 5.1");
   assert.equal(buildMediaVariant({ adId: 4, filePath: "Atmosphere.2020.720p.mkv" }).audio_tech, "Stereo");
 });
+
+test("buildMediaVariant определяет 4K из streams ffprobe даже без разрешения в имени файла", () => {
+  const v = buildMediaVariant({
+    adId: 811054601,
+    filePath: "Железный Человек 1 (TrueHD Atmos).mkv",
+    fileName: "Железный Человек 1 (TrueHD Atmos).mkv",
+    sizeBytes: 17443438443,
+    streams: [{ codec_type: "video", width: 3840, height: 1600 }],
+    tags: ["HDR"]
+  });
+  assert.equal(v.resolution, "4K");
+  assert.equal(v.video_tech, "HDR10");
+  assert.equal(v.audio_tech, "TrueHD Atmos");
+  assert.match(v.label, /^4K · HDR10 · TrueHD Atmos \(16\.2 ГБ\)$/);
+  assert.equal(v.score, 400 + 20 + 40);
+});
