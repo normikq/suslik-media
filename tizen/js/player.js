@@ -827,27 +827,33 @@
     var best = null;
     for (var i = 0; i < variants.length; i++) {
       var v = variants[i];
-      if (v.key !== (c.activeVariantKey || c.key) && v.bitrate < currentBitrate) {
-        if (!best || (v.bitrate > best.bitrate && v.bitrate <= 25.0)) {
+      if (v.key === (c.activeVariantKey || c.key) || v.bitrate >= currentBitrate || v.bitrate <= 0) continue;
+      if (support && typeof support.checkVariantCompatibility === 'function' && !support.checkVariantCompatibility(v).ok) continue;
+      if (v.bitrate <= 25.0) {
+        if (!best || best.bitrate > 25.0 || v.bitrate > best.bitrate) {
           best = v;
         }
+      } else if (!best || (best.bitrate > 25.0 && v.bitrate < best.bitrate)) {
+        best = v;
       }
     }
     if (!best) return;
     c.lastDowngradePromptAt = now;
+    c.downgradePromptShown = true;
     var targetLabel = best.label || (best.quality + (best.bitrate ? ' (' + best.bitrate.toFixed(1) + ' Мбит/с)' : ''));
     c.opts.dialog(
       'Скорость интернета недостаточна для этого качества. Переключить на ' + targetLabel + '?',
       null,
       [
-        { text: 'Да', run: function () { switchVariant(best.key); } },
-        { text: 'Скрыть' }
+        { text: 'Да', run: function () { c.downgradePromptShown = false; switchVariant(best.key); } },
+        { text: 'Скрыть', run: function () { c.downgradePromptShown = true; } }
       ]
     );
   }
 
   function switchVariant(variantKey) {
     var c = cur;
+    if (c) c.downgradePromptShown = false;
     if (!c || c.switching || variantKey === (c.activeVariantKey || c.key)) return;
     c.switching = true;
     c.opts.toast('Переключение качества…');

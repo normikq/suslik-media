@@ -467,6 +467,7 @@
 
     var aScore = 0;
     if (/atmos(?![a-z])|dts[:._-]?x(?![a-z0-9])/i.test(lower)) aScore = 40;
+    else if (/truehd/i.test(lower)) aScore = 35;
     else if (/dts[\s._-]?hd/i.test(lower)) aScore = 30;
     else if (/(?:^|[^a-z])dts(?![a-z])|dd\+|(?:^|[^a-z])ddp(?![a-z])|(?:^|[^a-z])e[\s._-]?ac[\s._-]?3(?!\d)/i.test(lower)) aScore = 20;
     else if (/(?:^|[^a-z])ac[\s._-]?3(?!\d)|(?:^|[^a-z])dd[\s._-]?5\.1|(?:^|[^\d.])5\.1(?!\d)/i.test(lower)) aScore = 10;
@@ -498,6 +499,7 @@
 
     var audio = 'Stereo';
     if (/atmos(?![a-z])/i.test(lower)) audio = 'TrueHD Atmos';
+    else if (/truehd/i.test(lower)) audio = 'TrueHD';
     else if (/dts[:._-]?x(?![a-z0-9])/i.test(lower)) audio = 'DTS:X';
     else if (/dts[\s._-]?hd/i.test(lower)) audio = 'DTS-HD MA';
     else if (/(?:^|[^a-z])dts(?![a-z])/i.test(lower)) audio = 'DTS 5.1';

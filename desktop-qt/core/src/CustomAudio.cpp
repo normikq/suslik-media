@@ -63,11 +63,9 @@ std::optional<EpInfo> episodeInfo(const QString &path) {
     m = epWord.match(name);
     if (m.hasMatch()) return EpInfo{folderSeason, m.captured(1).toInt()};
 
-    if (folderSeason) {
-        static const QRegularExpression leadNum(QStringLiteral(R"(^\s*(\d{1,3})(?=[ ._-]))"));
-        m = leadNum.match(name);
-        if (m.hasMatch()) return EpInfo{folderSeason, m.captured(1).toInt()};
-    }
+    static const QRegularExpression leadNum(QStringLiteral(R"(^\s*(\d{1,3})(?=[ ._-]|\.[a-zA-Z0-9]+$))"));
+    m = leadNum.match(name);
+    if (m.hasMatch()) return EpInfo{folderSeason, m.captured(1).toInt()};
 
     return std::nullopt;
 }

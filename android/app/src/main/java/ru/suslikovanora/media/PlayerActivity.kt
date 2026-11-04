@@ -747,6 +747,14 @@ class PlayerActivity : ComponentActivity() {
                 lastKnownLengthUrl = ""
                 currentTitle = entry.title
                 val newKey = watchProgress.keys.getOrNull(index)
+                // The room switched a guest to this episode (the host went on to it): from the room's place, not from
+                // where the guest once left it here (that place would load first, and then the room would seek again)
+                val roomKey = ru.suslikovanora.media.party.Party.file?.key
+                val targetEpisodePos = if (roomKey != null && (roomKey == roomEntryKey || (newKey != null && ru.suslikovanora.media.party.Party.file?.matches(newKey) == true)) &&
+                    ru.suslikovanora.media.party.Party.isGuest) ru.suslikovanora.media.party.Party.targetMs().coerceAtLeast(0L)
+                else savedPosition()
+                roomEntryKey = null
+                playbackPosition = targetEpisodePos
                 if (newKey != null) {
                     val newVars = variantsForWatchKey(newKey)
                     if (newVars.isNotEmpty()) ui.variants = newVars
@@ -758,18 +766,11 @@ class PlayerActivity : ComponentActivity() {
                         ?: (if (!prefQ.isNullOrBlank()) newVars.find { it.quality == prefQ || it.label == prefQ } else null)
                     if (targetVar != null && targetVar.key != newKey) {
                         ui.activeVariantKey = targetVar.key
-                        switchVariant(targetVar.key)
+                        switchVariant(targetVar.key, initialPos = targetEpisodePos)
                         return
                     }
                     ui.activeVariantKey = newKey
                 }
-                // The room switched a guest to this episode (the host went on to it): from the room's place, not from
-                // where the guest once left it here (that place would load first, and then the room would seek again)
-                val roomKey = ru.suslikovanora.media.party.Party.file?.key
-                playbackPosition = if (roomKey != null && roomKey == roomEntryKey && watchProgress.keys.getOrNull(index) == roomKey &&
-                    ru.suslikovanora.media.party.Party.isGuest) ru.suslikovanora.media.party.Party.targetMs().coerceAtLeast(0L)
-                else savedPosition()
-                roomEntryKey = null
                 lastTime = playbackPosition
                 ended = false
                 userPaused = false
@@ -915,7 +916,7 @@ class PlayerActivity : ComponentActivity() {
     }
 
     /** A guest of the room watching its film: pause / play, seeking and episodes are the host's. */
-    private fun partyGuest(): Boolean = Party.isGuest && Party.file?.key == watchProgress.currentWatchKey()
+    private fun partyGuest(): Boolean = Party.isGuest && (Party.file?.matches(watchProgress.currentWatchKey(), canonicalId) == true)
     /** The host holds the pause (or the room waits for someone loading): a guest cannot lift it. */
     private fun partyPlayLocked(): Boolean = partyGuest() && Party.state.let { !it.playing || it.waiting }
     private fun guestBlocks(what: String): Boolean {
@@ -1569,11 +1570,11 @@ class PlayerActivity : ComponentActivity() {
         ui.downgradePrompt = null
     }
 
-    private fun switchVariant(variantKey: String) {
+    private fun switchVariant(variantKey: String, initialPos: Long? = null) {
         if (variantKey.isBlank() || variantKey == ui.activeVariantKey || ui.switchingVariant) return
         ui.switchingVariant = true
         showSeekLabel(tr("player.pereklyuchenie_kachestva"))
-        val currentPos = perceivedPosition()
+        val currentPos = initialPos ?: perceivedPosition()
         val expectedKey = watchProgress.currentWatchKey()
         switchVariantJob?.cancel()
         switchVariantJob = scope.launch {
@@ -1661,7 +1662,7 @@ class PlayerActivity : ComponentActivity() {
                 val targetOffsetMs = currentVariant?.offsetMs ?: 0L
                 val prevOffsetMs = prevVariant?.offsetMs ?: 0L
                 val offsetDiff = targetOffsetMs - prevOffsetMs
-                val targetPos = maxOf(0L, currentPos + offsetDiff)
+                val targetPos = if (initialPos != null) maxOf(0L, initialPos) else maxOf(0L, currentPos + offsetDiff)
 
                 val p = createPlayer(newUrl, targetPos)
                 if (!userPaused && !ended) {

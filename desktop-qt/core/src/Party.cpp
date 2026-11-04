@@ -578,6 +578,7 @@ PartyVariant buildPartyVariant(const LibraryItem &item, const MFile &file, const
 
     QString audio = QStringLiteral("Stereo");
     if (match(R"(atmos(?![a-z]))")) audio = QStringLiteral("TrueHD Atmos");
+    else if (match(R"(truehd)")) audio = QStringLiteral("TrueHD");
     else if (match(R"(dts[:._-]?x(?![a-z0-9]))")) audio = QStringLiteral("DTS:X");
     else if (match(R"(dts[\s._-]?hd)")) audio = QStringLiteral("DTS-HD MA");
     else if (match(R"((?:^|[^a-z])dts(?![a-z]))")) audio = QStringLiteral("DTS 5.1");

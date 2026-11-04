@@ -15,13 +15,17 @@ qint64 nowMs() { return QDateTime::currentMSecsSinceEpoch(); }
 bool PlayerModel::partyGuest() const {
     const Party *p = Party::instance();
     const QString key = watchKey();
-    return p && m_open && p->guest() && !key.isEmpty() && p->fileKey() == key;
+    if (!p || !m_open || !p->guest() || key.isEmpty()) return false;
+    const auto f = p->file();
+    return f ? f->matches(key, m_canonicalId) : (p->fileKey() == key);
 }
 
 bool PlayerModel::partyFilm() const {
     const Party *p = Party::instance();
     const QString key = watchKey();
-    return p && m_open && p->inRoom() && !key.isEmpty() && p->fileKey() == key;
+    if (!p || !m_open || !p->inRoom() || key.isEmpty()) return false;
+    const auto f = p->file();
+    return f ? f->matches(key, m_canonicalId) : (p->fileKey() == key);
 }
 
 bool PlayerModel::playLocked() const {

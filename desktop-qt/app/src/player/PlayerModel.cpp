@@ -1567,10 +1567,13 @@ void PlayerModel::suggestDowngrade(double currentBitrateMbps) {
     if (vars.isEmpty()) return;
     const core::PartyVariant *best = nullptr;
     for (const auto &v : vars) {
-        if (v.bitrate < currentBitrateMbps && v.key != m_activeVariantKey) {
-            if (!best || (v.bitrate > best->bitrate && v.bitrate <= 25.0)) {
+        if (v.key == m_activeVariantKey || v.bitrate >= currentBitrateMbps || v.bitrate <= 0.0) continue;
+        if (v.bitrate <= 25.0) {
+            if (!best || best->bitrate > 25.0 || v.bitrate > best->bitrate) {
                 best = &v;
             }
+        } else if (!best || (best->bitrate > 25.0 && v.bitrate < best->bitrate)) {
+            best = &v;
         }
     }
     if (best) {

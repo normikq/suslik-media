@@ -713,6 +713,7 @@ fun smartQualityScore(name: String): Int {
     }
     val aScore = when {
         match("""atmos(?![a-z])|dts[:._-]?x(?![a-z0-9])""") -> 40
+        match("""truehd""") -> 35
         match("""dts[\s._-]?hd""") -> 30
         match("""(?:^|[^a-z])dts(?![a-z])|dd\+|(?:^|[^a-z])ddp(?![a-z])|(?:^|[^a-z])e[\s._-]?ac[\s._-]?3(?!\d)""") -> 20
         match("""(?:^|[^a-z])ac[\s._-]?3(?!\d)|(?:^|[^a-z])dd[\s._-]?5\.1|(?:^|[^\d.])5\.1(?!\d)""") -> 10
@@ -750,6 +751,7 @@ fun buildPartyVariant(
 
     val audio = when {
         match("""atmos(?![a-z])""") -> "TrueHD Atmos"
+        match("""truehd""") -> "TrueHD"
         match("""dts[:._-]?x(?![a-z0-9])""") -> "DTS:X"
         match("""dts[\s._-]?hd""") -> "DTS-HD MA"
         match("""(?:^|[^a-z])dts(?![a-z])""") -> "DTS 5.1"

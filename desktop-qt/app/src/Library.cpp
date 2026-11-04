@@ -120,9 +120,12 @@ const LibraryItem *Library::item(qint64 id) const {
 }
 
 QList<LibraryItem> Library::versionsOf(qint64 magnetId) const {
-    const auto [shown, versionsMap] = groupVersions(m_items, [this](const LibraryItem &i) { return posterPathOf(i); });
-    if (versionsMap.contains(magnetId)) return versionsMap.value(magnetId);
-    for (auto it = versionsMap.constBegin(); it != versionsMap.constEnd(); ++it) {
+    if (m_versionsMap.isEmpty() && !m_items.isEmpty()) {
+        const auto [shown, vMap] = groupVersions(m_items, [this](const LibraryItem &i) { return posterPathOf(i); });
+        m_versionsMap = vMap;
+    }
+    if (m_versionsMap.contains(magnetId)) return m_versionsMap.value(magnetId);
+    for (auto it = m_versionsMap.constBegin(); it != m_versionsMap.constEnd(); ++it) {
         for (const auto &item : it.value()) {
             if (item.m.id == magnetId) return it.value();
         }
@@ -142,6 +145,7 @@ void Library::publish(const QList<Magnet> &list) {
     m_voiceOvers.clear();
     for (const Magnet &m : list) (isVoiceOverOnly(m) ? m_voiceOvers : library) << m;
     m_items = prepareItems(library);
+    m_versionsMap.clear();
     bump();
 }
 
@@ -250,6 +254,7 @@ void Library::logout() {
     m_api.post(S("/api/logout"), {}, [](const ApiResult &) {});
     m_api.setDeviceToken(std::nullopt);
     m_items.clear();
+    m_versionsMap.clear();
     m_voiceOvers.clear();
     applyProfile(std::nullopt);
     m_sync.setUserId(std::nullopt);
@@ -939,6 +944,18 @@ bool Library::hasFile(qint64 magnetId, const QString &path) const {
             for (const Episode &e : s.items)
                 if (e.file.path == path) return true;
         return false;
+    }
+    return false;
+}
+
+bool Library::hasMatchingFilm(const QString &key, const QString &canonicalId) const {
+    const qint64 magnetId = key.section(QLatin1Char('|'), 0, 0).toLongLong();
+    const QString path = key.section(QLatin1Char('|'), 1);
+    if (magnetId > 0 && hasFile(magnetId, path)) return true;
+    if (!canonicalId.isEmpty()) {
+        for (const LibraryItem &it : m_items) {
+            if (it.m.aiTitle && it.m.aiTitle->accepted() && it.m.aiTitle->canonicalId == canonicalId) return true;
+        }
     }
     return false;
 }

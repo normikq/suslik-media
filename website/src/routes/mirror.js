@@ -79,6 +79,8 @@ async function handleVariantUrl(req, res) {
         id: a.id,
         title: a.title,
         path: a.path,
+        audio_path: a.audio_path || a.path,
+        video_path: a.video_path || "",
         lang: a.lang,
         offset_ms: a.offset_ms,
         url: `${base}${a.proxyPath}`
@@ -135,6 +137,9 @@ async function handleVariantUrl(req, res) {
             id: t.id,
             title: t.title,
             lang: t.lang,
+            path: t.audioPath,
+            audio_path: t.audioPath,
+            video_path: t.videoPath,
             offset_ms: typeof t.offsetMs === "number" ? t.offsetMs : 0,
             proxyPath: aProxyPath,
             url: `${base}${aProxyPath}`
@@ -241,7 +246,16 @@ async function handleVariantUrl(req, res) {
       path: f.path,
       size: f.size || 0,
       adId,
-      audio: combinedAudio.map(a => ({ id: a.id, title: a.title, path: a.path, lang: a.lang, offset_ms: a.offset_ms, proxyPath: a.proxyPath })),
+      audio: combinedAudio.map(a => ({
+        id: a.id,
+        title: a.title,
+        path: a.path,
+        audio_path: a.audio_path || a.path,
+        video_path: a.video_path || "",
+        lang: a.lang,
+        offset_ms: a.offset_ms,
+        proxyPath: a.proxyPath
+      })),
       subtitles: customSubs.map(s => ({ name: s.name, path: s.path, proxyPath: s.proxyPath })),
       expiresAt: now + VARIANT_CACHE_TTL_MS
     });
@@ -256,7 +270,16 @@ async function handleVariantUrl(req, res) {
       size: f.size || 0,
       ad_id: adId,
       variant_key: cacheKey,
-      audio: combinedAudio.map(a => ({ id: a.id, title: a.title, path: a.path, lang: a.lang, offset_ms: a.offset_ms, url: a.url })),
+      audio: combinedAudio.map(a => ({
+        id: a.id,
+        title: a.title,
+        path: a.path,
+        audio_path: a.audio_path || a.path,
+        video_path: a.video_path || "",
+        lang: a.lang,
+        offset_ms: a.offset_ms,
+        url: a.url
+      })),
       subtitles: customSubs.map(s => ({ name: s.name, path: s.path, url: s.url }))
     });
   } catch (err) {

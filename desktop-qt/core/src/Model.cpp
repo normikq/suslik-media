@@ -850,6 +850,7 @@ int smartQualityScore(const QString &name) {
 
     int aScore = 0;
     if (match(R"(atmos(?![a-z])|dts[:._-]?x(?![a-z0-9]))")) aScore = 40;
+    else if (match(R"(truehd)")) aScore = 35;
     else if (match(R"(dts[\s._-]?hd)")) aScore = 30;
     else if (match(R"((?:^|[^a-z])dts(?![a-z])|dd\+|(?:^|[^a-z])ddp(?![a-z])|(?:^|[^a-z])e[\s._-]?ac[\s._-]?3(?!\d))")) aScore = 20;
     else if (match(R"((?:^|[^a-z])ac[\s._-]?3(?!\d)|(?:^|[^a-z])dd[\s._-]?5\.1|(?:^|[^\d.])5\.1(?!\d))")) aScore = 10;

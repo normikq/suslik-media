@@ -704,6 +704,12 @@
     }
     if (SM.player.current() === targetKey || SM.player.current() === f.key) return;
     var found = findKey(targetKey) || findKey(f.key);
+    if (!found && f && f.variants) {
+      for (var vi = 0; vi < f.variants.length; vi++) {
+        found = findKey(f.variants[vi].key);
+        if (found) break;
+      }
+    }
     var go = function (hit) {
       if (!hit) { toast(tr('together.room_film_not_found')); return; }
       open(hit.it, hit.entries, hit.index, { back: function () { shell('party', true); }, room: true, resumeAt: party.targetMs() });

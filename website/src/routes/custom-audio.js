@@ -177,7 +177,13 @@ async function prepare(req, res, { allowTorrent, offsetMs }) {
       targetMovies.push({ id: hit.id, name: hit.name || "", pairs: match.pairs });
       const companions = magnets.filter(m => m.statusCode === 4 && m.id !== movieMagnetId && m.id !== audioMagnetId && ca.isSameMovieRelease(m, hit));
       for (const comp of companions) {
-        const compFiles = comp.files || (await filesOf(res, comp.id, "с фильмом"));
+        let compFiles = comp.files;
+        if (!compFiles) {
+          try {
+            const list = await getMagnetFileList(comp.id);
+            if (list && list.some(f => f.type === "file")) compFiles = list;
+          } catch {}
+        }
         if (compFiles && compFiles.length) {
           const compMatch = ca.matchToMovie(audioFiles, { id: comp.id, name: comp.name || "", files: compFiles }, { explicit: true });
           if (compMatch.ok) {

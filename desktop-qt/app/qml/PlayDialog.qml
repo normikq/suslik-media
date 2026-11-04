@@ -302,27 +302,25 @@ Sheet {
         }
     }
     // полоса прокрутки — в поле карточки справа, её можно тянуть и щёлкать
-    // (обёртка высотой 1: Column не ставит элементы нулевой высоты)
-    Item {
-        width: parent.width; height: 1
-        C.ScrollBar {
-            id: vbar
-            visible: scroller.interactive
-            orientation: Qt.Vertical
-            x: parent.width + 4
-            y: -1 - scroller.height
-            width: 12; height: scroller.height
-            padding: 4
-            size: scroller.visibleArea.heightRatio
-            position: scroller.visibleArea.yPosition
-            onPositionChanged: if (active) scroller.contentY = position * scroller.contentHeight
-            minimumSize: 24 / Math.max(1, scroller.height)
-            policy: C.ScrollBar.AlwaysOn
-            background: Item {}
-            contentItem: Rectangle {
-                implicitWidth: 4; radius: 2
-                color: vbar.pressed ? "#66FFFFFF" : vbar.hovered ? "#4DFFFFFF" : "#33FFFFFF"
-            }
+    C.ScrollBar {
+        id: vbar
+        visible: scroller.interactive
+        orientation: Qt.Vertical
+        anchors.top: scroller.top
+        anchors.bottom: scroller.bottom
+        anchors.left: scroller.right
+        anchors.leftMargin: 4
+        width: 12
+        padding: 4
+        size: scroller.visibleArea.heightRatio
+        position: scroller.visibleArea.yPosition
+        onPositionChanged: if (active) scroller.contentY = position * scroller.contentHeight
+        minimumSize: 24 / Math.max(1, scroller.height)
+        policy: C.ScrollBar.AlwaysOn
+        background: Item {}
+        contentItem: Rectangle {
+            implicitWidth: 4; radius: 2
+            color: vbar.pressed ? "#66FFFFFF" : vbar.hovered ? "#4DFFFFFF" : "#33FFFFFF"
         }
     }
 

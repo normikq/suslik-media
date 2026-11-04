@@ -157,7 +157,17 @@ private fun FilmPanel(store: LibraryStore, onLibrary: () -> Unit, onOpen: (PlayT
         }
         Text(stateText + " · " + clockText(tick.let { Party.targetMs() }), color = if (s.playing && s.waiting) Amber else Sm.muted,
             fontFamily = Onest, fontSize = 13.sp, modifier = Modifier.padding(top = 2.dp, bottom = 12.dp))
-        val target = remember(store.items, f.key) { targetForKey(store.items, f.key) }
+        val target = remember(store.items, f.key, f.variants) {
+            targetForKey(store.items, f.key) ?: store.items.firstNotNullOfOrNull { item ->
+                val canMatch = (f.canonicalId != null && item.m.aiTitle?.canonicalId == f.canonicalId) ||
+                        f.variants.any { v -> v.key.substringBefore('|') == item.m.id.toString() }
+                if (canMatch) {
+                    val file = item.m.files.firstOrNull { file -> f.matches(ru.suslikovanora.media.core.watchKey(item.m.id, file)) }
+                        ?: item.m.files.firstOrNull { it.type == "file" }
+                    file?.let { targetForKey(store.items, ru.suslikovanora.media.core.watchKey(item.m.id, it)) }
+                } else null
+            }
+        }
         val scope = rememberCoroutineScope()
         // «Обновить» начинает проверки заново
         var pollRound by remember(f.key) { mutableIntStateOf(0) }
@@ -170,7 +180,11 @@ private fun FilmPanel(store: LibraryStore, onLibrary: () -> Unit, onOpen: (PlayT
             LaunchedEffect(f.key, pollRound) {
                 repeat(15) {
                     delay(4000)
-                    if (targetForKey(store.items, f.key) != null) return@LaunchedEffect
+                    val found = targetForKey(store.items, f.key) != null || store.items.any { item ->
+                        (f.canonicalId != null && item.m.aiTitle?.canonicalId == f.canonicalId) ||
+                                f.variants.any { v -> v.key.substringBefore('|') == item.m.id.toString() }
+                    }
+                    if (found) return@LaunchedEffect
                     store.refresh()
                 }
             }

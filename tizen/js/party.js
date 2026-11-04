@@ -319,7 +319,12 @@
         if (party.isHost() && party.room.file && party.room.file.key === lastKey) party.closeIfNobodyWatches();
       },
       /** Это фильм комнаты, а я гость: перематывать и переключать серии нельзя. */
-      guestLocked: function () { return party.isGuest() && party.room.file != null && party.room.file.key === cb.key(); }
+      guestLocked: function () {
+        if (!party.isGuest() || !party.room.file) return false;
+        var f = party.room.file;
+        var k = cb.key();
+        return typeof f.matches === 'function' ? f.matches(k) : f.key === k;
+      }
     };
   };
 

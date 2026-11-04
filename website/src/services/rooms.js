@@ -520,6 +520,10 @@ function handleRoomAction(roomId, user, action) {
   if (action.type === "buffering") {
     const m = action.client_id ? room.members.get(action.client_id) : null;
     if (m) {
+      const isAccount = user && user.id && user.id !== "shared" && user.id !== "guest";
+      if (isAccount && m.id && String(m.id) !== String(user.id)) {
+        return { ok: false, error: "Недостаточно прав для управления состоянием другого участника." };
+      }
       if (typeof action.variant_key === "string") {
         m.variant_key = action.variant_key.slice(0, 1000);
       }
@@ -543,9 +547,15 @@ function handleRoomAction(roomId, user, action) {
   // Смена пресета качества участником (независимый выбор потока)
   if (action.type === "variant_change") {
     const m = action.client_id ? room.members.get(action.client_id) : null;
-    if (m && typeof action.variant_key === "string") {
-      m.variant_key = action.variant_key.slice(0, 1000);
-      broadcast(roomId, "state_changed", getRoomPublicData(room));
+    if (m) {
+      const isAccount = user && user.id && user.id !== "shared" && user.id !== "guest";
+      if (isAccount && m.id && String(m.id) !== String(user.id)) {
+        return { ok: false, error: "Недостаточно прав для управления качеством другого участника." };
+      }
+      if (typeof action.variant_key === "string") {
+        m.variant_key = action.variant_key.slice(0, 1000);
+        broadcast(roomId, "state_changed", getRoomPublicData(room));
+      }
     }
     return { ok: true, room: getRoomPublicData(room) };
   }

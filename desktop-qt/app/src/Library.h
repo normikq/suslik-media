@@ -113,6 +113,8 @@ public:
     Q_INVOKABLE QVariantMap categoryCounts(bool mine) const;
     /// Есть ли в медиатеке этот файл раздачи (фильм комнаты «Вместе» по ключу magnetId|путь).
     Q_INVOKABLE bool hasFile(qint64 magnetId, const QString &path) const;
+    /// Есть ли в медиатеке этот фильм (по ключу или каноническому ID, включая другие варианты качества).
+    Q_INVOKABLE bool hasMatchingFilm(const QString &key, const QString &canonicalId = QString()) const;
     /// Код состояния раздачи: -1 — нет в медиатеке, <4 — качается, 4 — готова, >=5 — ошибка.
     Q_INVOKABLE int magnetStatusCode(qint64 magnetId) const;
     /// Текстовый статус раздачи из облака ("Downloading", "Ready", "Error" и т.д.).
@@ -237,6 +239,7 @@ private:
     std::vector<std::function<void()>> m_refreshWaiters;
     int m_tagsRound = 0;
     QHash<qint64, core::PartyVariant> m_serverProfiles;
+    mutable QHash<qint64, QList<LibraryItem>> m_versionsMap;
 };
 
 } // namespace suslik::app

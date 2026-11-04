@@ -163,6 +163,7 @@ const RESOLUTION_SCORES = {
   "4K": 400,
   "1080p": 300,
   "720p": 200,
+  "480p": 100,
   "SD": 100
 };
 
@@ -176,6 +177,7 @@ const VIDEO_TECH_SCORES = {
 
 const AUDIO_TECH_SCORES = {
   "TrueHD Atmos": 40,
+  "TrueHD": 35,
   "DTS:X": 40,
   "DTS-HD MA": 30,
   "DTS-HD": 30,
@@ -198,6 +200,7 @@ function calculateScore({ resolution = "SD", videoTech = "SDR", audioTech = "Ste
   let aScore = AUDIO_TECH_SCORES[audioTech];
   if (aScore === undefined) {
     if (/atmos|dts:?x/i.test(audioTech)) aScore = 40;
+    else if (/truehd/i.test(audioTech)) aScore = 35;
     else if (/dts-?hd/i.test(audioTech)) aScore = 30;
     else if (/dts|dd\+|ddp|e-?ac-?3/i.test(audioTech)) aScore = 20;
     else if (/ac-?3|5\.1/i.test(audioTech)) aScore = 10;
@@ -243,13 +246,13 @@ function parseResolution(name, streams = []) {
     if (h >= 1600 || w >= 3000) return "4K";
     if (h >= 900 || w >= 1600) return "1080p";
     if (h >= 600 || w >= 1100) return "720p";
-    if (h > 0 || w > 0) return "SD";
+    if (h > 0 || w > 0) return "480p";
   }
   const s = String(name || "").toLowerCase();
   if (/(?:^|[^a-z0-9])(?:2160p|4k|uhd)(?![a-z])|(?:^|\D)3840(?!\d)/i.test(s)) return "4K";
   if (/(?:^|\D)1080[pi](?![a-z])|(?:^|\D)1920(?!\d)/i.test(s)) return "1080p";
   if (/(?:^|\D)720p(?![a-z])|(?:^|\D)1280(?!\d)/i.test(s)) return "720p";
-  if (/(?:^|\D)(?:480|576)[pi](?![a-z])|(?:^|[^a-z])dvd/i.test(s)) return "SD";
+  if (/(?:^|\D)(?:480|576)[pi](?![a-z])|(?:^|[^a-z])dvd/i.test(s)) return "480p";
   return "";
 }
 
@@ -295,6 +298,7 @@ function parseAudioTech(name, streams = [], tags = []) {
     const codec = String(s.codec_name || "").toLowerCase();
     const prof = String(s.profile || "").toLowerCase();
     if (/atmos/i.test(prof) || (codec === "truehd" && /atmos/i.test(s.title || ""))) return "TrueHD Atmos";
+    if (codec === "truehd") return "TrueHD";
     if (codec === "dts" && /dts:x/i.test(prof)) return "DTS:X";
     if (codec === "dts" && /ma/i.test(prof)) return "DTS-HD MA";
     if (codec === "dts" && /hd|hra/i.test(prof)) return "DTS-HD MA";
@@ -304,6 +308,7 @@ function parseAudioTech(name, streams = [], tags = []) {
   }
   const s = String(name || "").toLowerCase();
   if (/atmos(?![a-z])/i.test(s)) return "TrueHD Atmos";
+  if (/truehd/i.test(s)) return "TrueHD";
   if (/dts[:._-]?x(?![a-z0-9])/i.test(s)) return "DTS:X";
   if (/dts[\s._-]?hd/i.test(s)) return "DTS-HD MA";
   if (/(?:^|[^a-z])dts(?![a-z])/i.test(s)) return "DTS 5.1";

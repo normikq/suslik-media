@@ -248,7 +248,19 @@ class MainActivity : ComponentActivity() {
             if (roomKey == Party.followed) return@LaunchedEffect
             // The host went on within the open playlist: the player follows by itself (PlayerPartySync)
             if (roomKey in Party.playingKeys) { Party.followed = roomKey; return@LaunchedEffect }
+            val rf = Party.file
             val t = ru.suslikovanora.media.library.targetForKey(store.items, roomKey)
+                ?: rf?.let { fileRef ->
+                    store.items.firstNotNullOfOrNull { item ->
+                        val canMatch = (fileRef.canonicalId != null && item.m.aiTitle?.canonicalId == fileRef.canonicalId) ||
+                                fileRef.variants.any { v -> v.key.substringBefore('|') == item.m.id.toString() }
+                        if (canMatch) {
+                            val f = item.m.files.firstOrNull { file -> fileRef.matches(ru.suslikovanora.media.core.watchKey(item.m.id, file)) }
+                                ?: item.m.files.firstOrNull { it.type == "file" }
+                            f?.let { ru.suslikovanora.media.library.targetForKey(store.items, ru.suslikovanora.media.core.watchKey(item.m.id, it)) }
+                        } else null
+                    }
+                }
             if (t == null) {
                 if (lastTriedKey != roomKey) {
                     lastTriedKey = roomKey
@@ -326,7 +338,7 @@ class MainActivity : ComponentActivity() {
                     store = store,
                     onDismiss = { followTarget = null },
                     // the room's place at the moment the links are ready, not when the sheet appeared
-                    autoStartMs = { if (Party.file?.key == key) Party.targetMs() else 0L },
+                    autoStartMs = { if (Party.file?.matches(key) == true) Party.targetMs() else 0L },
                     onPlay = { r -> followTarget = null; handlePlay(r.url, r.title, r.playlist, r.subUrls, r.watchKeys, r.audioUrls, r.fromStart, r.episodeSides, r.customAudio, r.watchKey, r.collection, r.markers, r.startMs, r.roomTitles, r.variants, r.canonicalId) }
                 )
             }
