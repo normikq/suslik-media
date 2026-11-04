@@ -39,6 +39,7 @@ struct PlayRequest {
     QHash<QString, QString> sidePaths;  ///< адрес зеркала озвучки или субтитров → путь в раздаче (язык часто в папке)
     QList<core::PartyVariant> variants;
     QString activeVariantKey;
+    std::optional<QString> canonicalId;
 };
 
 } // namespace suslik::app

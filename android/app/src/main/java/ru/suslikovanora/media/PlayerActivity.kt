@@ -754,9 +754,20 @@ class PlayerActivity : ComponentActivity() {
                 currentTitle = entry.title
                 val newKey = watchProgress.keys.getOrNull(index)
                 if (newKey != null) {
-                    ui.activeVariantKey = newKey
                     val newVars = variantsForWatchKey(newKey)
                     if (newVars.isNotEmpty()) ui.variants = newVars
+                    val sp = getSharedPreferences("player_ui", Context.MODE_PRIVATE)
+                    val fk = ru.suslikovanora.media.core.sync.WatchSync.filmKeyOf(newKey)
+                    val prefMag = fk?.let { sp.getString("vmagnet:$it", null) }
+                    val prefQ = fk?.let { sp.getString("vquality:$it", null) } ?: sp.getString("vquality:*", null)
+                    val targetVar = (if (!prefMag.isNullOrBlank()) newVars.find { it.key.substringBefore('|') == prefMag } else null)
+                        ?: (if (!prefQ.isNullOrBlank()) newVars.find { it.resolution == prefQ || it.name == prefQ } else null)
+                    if (targetVar != null && targetVar.key != newKey) {
+                        ui.activeVariantKey = targetVar.key
+                        switchVariant(targetVar.key)
+                        return
+                    }
+                    ui.activeVariantKey = newKey
                 }
                 // The room switched a guest to this episode (the host went on to it): from the room's place, not from
                 // where the guest once left it here (that place would load first, and then the room would seek again)
@@ -1590,6 +1601,18 @@ class PlayerActivity : ComponentActivity() {
                 val currentVariant = ui.variants.find { it.key == variantKey }
                 if (currentVariant != null && currentVariant.bitrate > 0) {
                     supervisor.bitrateMbps = currentVariant.bitrate
+                }
+                val qv = currentVariant?.let { if (it.resolution.isNotBlank()) it.resolution else it.name }
+                if (!qv.isNullOrBlank()) {
+                    val sp = getSharedPreferences("player_ui", Context.MODE_PRIVATE)
+                    val fk = ru.suslikovanora.media.core.sync.WatchSync.filmKeyOf(watchProgress.currentWatchKey())
+                    sp.edit().apply {
+                        if (fk != null) putString("vquality:$fk", qv)
+                        putString("vquality:*", qv)
+                        val mag = variantKey.substringBefore('|')
+                        if (mag.isNotBlank() && fk != null) putString("vmagnet:$fk", mag)
+                    }.apply()
+                    ru.suslikovanora.media.library.CloudSync.noteTrack(fk, null, null, null, alsoAny = true, quality = qv)
                 }
                 Party.sendVariantChange(variantKey)
 

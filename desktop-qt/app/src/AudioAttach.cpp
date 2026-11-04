@@ -200,6 +200,7 @@ QVariantList AudioAttachModel::sources() const {
         out << QVariantMap{{S("key"), s.key}, {S("name"), s.name}, {S("torrent"), !s.torrent.isEmpty()}, {S("busy"), s.busy},
                            {S("note"), s.note}, {S("noteOk"), s.noteOk}, {S("valid"), s.valid}, {S("done"), s.done},
                            {S("candidates"), cands}, {S("rows"), rows},
+                           {S("targetCount"), int(s.targetIds.size())}, {S("targetNames"), s.targetNames.join(S(", "))},
                            {S("moviePoster"), movie ? const_cast<Library *>(m_lib)->posterPath(movie->posterQueries) : QString()},
                            {S("canCheck"), !s.busy && !s.done && s.valid != 1}};
     }
@@ -353,6 +354,8 @@ void AudioAttachModel::runCheck(qint64 key) {
         Source *s = self->find(key);
         if (!s) return;
         s->valid = 1;
+        s->targetIds = c.targetMagnetIds;
+        s->targetNames = c.targetMovieNames;
         if (c.movieMagnetId) s->movieId = c.movieMagnetId;
         auto fill = [self, key, aid, c](const QList<CustomTrack> &bound) {
             if (!self) return;

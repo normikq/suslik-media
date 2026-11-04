@@ -98,6 +98,10 @@ CustomCheck CustomAudio::parseCheck(const QJsonObject &r) {
         if (const auto e = longOrNull(p, QStringLiteral("episode"))) pair.episode = int(*e);
         c.pairs << pair;
     }
+    for (const QJsonObject &tm : objects(r, "targetMovies")) {
+        if (const auto mid = longOrNull(tm, QStringLiteral("id"))) c.targetMagnetIds << *mid;
+        if (const QString name = optString(tm, QStringLiteral("name")); !name.isEmpty()) c.targetMovieNames << name;
+    }
     return c;
 }
 

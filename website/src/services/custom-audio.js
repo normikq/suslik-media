@@ -182,6 +182,33 @@ function titleMatches(parsed, movie) {
   return true;
 }
 
+function isSameMovieRelease(m1, m2) {
+  if (!m1 || !m2) return false;
+  if (m1.id === m2.id) return true;
+  let canonicalIdOf = null;
+  try {
+    canonicalIdOf = require("./aititle").canonicalIdOf;
+  } catch {}
+  const c1 = m1.aiTitle?.canonical_id || (canonicalIdOf && m1.aiTitle ? canonicalIdOf(m1.aiTitle) : null);
+  const c2 = m2.aiTitle?.canonical_id || (canonicalIdOf && m2.aiTitle ? canonicalIdOf(m2.aiTitle) : null);
+  if (c1 && c2 && c1 === c2) return true;
+
+  const t1 = words(m1.aiTitle?.base || m1.name || "");
+  const t2 = words(m2.aiTitle?.base || m2.name || "");
+  const cleanT1 = t1.replace(/\b(s\d+|season\s*\d+|сезон\s*\d+|\d{3,4}p|x26[45]|hevc|hdr|dv|web[ ._-]?dl|remux|bdrip)\b/gi, "").trim();
+  const cleanT2 = t2.replace(/\b(s\d+|season\s*\d+|сезон\s*\d+|\d{3,4}p|x26[45]|hevc|hdr|dv|web[ ._-]?dl|remux|bdrip)\b/gi, "").trim();
+  if (cleanT1 && cleanT2 && (cleanT1 === cleanT2 || cleanT1.replace(/ /g, "") === cleanT2.replace(/ /g, ""))) {
+    const y1 = m1.aiTitle?.year || Number(/(?:19|20)\d{2}/.exec(m1.name)?.[0] || 0);
+    const y2 = m2.aiTitle?.year || Number(/(?:19|20)\d{2}/.exec(m2.name)?.[0] || 0);
+    if (y1 && y2 && y1 !== y2) return false;
+    const s1 = m1.aiTitle?.season ?? videoEpisode(m1.files?.[0]?.path || "")?.season;
+    const s2 = m2.aiTitle?.season ?? videoEpisode(m2.files?.[0]?.path || "")?.season;
+    if (s1 && s2 && s1 !== s2) return false;
+    return true;
+  }
+  return false;
+}
+
 const epLabel = (s, e) => `S${String(s).padStart(2, "0")}E${String(e).padStart(2, "0")}`;
 
 // Серия -> номер сезона/серии в имени видеофайла (S01E02, 1x02); сезон может быть неизвестен (null)
@@ -547,7 +574,45 @@ async function trackLinks(movieMagnetId, videoPath) {
   const { fetchMagnetTrees, treeCache } = require("./alldebrid");
   const { safeHttpsUrl } = require("../utils/helpers");
   const { isAllDebridFileLink } = require("./mirror");
-  const tracks = forMovie(movieMagnetId).filter(t => videoPath == null || t.videoPath === videoPath);
+  let directTracks = forMovie(movieMagnetId);
+  if (videoPath != null) {
+    directTracks = directTracks.filter(t => t.videoPath === videoPath);
+  }
+  const tracks = [...directTracks];
+
+  try {
+    const { getLibrary } = require("./library");
+    const { data } = await getLibrary();
+    const magnets = data?.magnets || [];
+    const mSelf = magnets.find(m => m.id === movieMagnetId);
+    if (mSelf) {
+      const companions = magnets.filter(m => m.statusCode === 4 && m.id !== movieMagnetId && isSameMovieRelease(m, mSelf));
+      for (const comp of companions) {
+        const compTracks = forMovie(comp.id);
+        if (!compTracks.length) continue;
+        for (const ct of compTracks) {
+          if (tracks.some(t => t.audioMagnetId === ct.audioMagnetId && t.audioPath === ct.audioPath)) {
+            continue;
+          }
+          if (videoPath != null) {
+            const targetEp = videoEpisode(videoPath);
+            const compEp = videoEpisode(ct.videoPath);
+            if (targetEp && compEp) {
+              if (targetEp.season !== compEp.season || targetEp.episode !== compEp.episode) continue;
+            } else if (targetEp || compEp) {
+              continue;
+            }
+          }
+          tracks.push({
+            ...ct,
+            movieMagnetId,
+            videoPath: videoPath || ct.videoPath
+          });
+        }
+      }
+    }
+  } catch {}
+
   const ids = [...new Set(tracks.map(t => t.audioMagnetId))];
   const lists = new Map();
   for (const id of ids) if (treeCache.has(id)) lists.set(id, treeCache.get(id));
@@ -597,6 +662,7 @@ module.exports = {
   hasAudioMagnetTracks,
   dropMagnet,
   trackLinks,
+  isSameMovieRelease,
   mayBeLibraryFilm,
   baseName,
   _reset

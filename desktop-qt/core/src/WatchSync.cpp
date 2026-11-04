@@ -33,7 +33,13 @@ void WatchSync::noteTrack(const TrackEntry &e) {
     QMutexLocker l(&m_lock);
     const TrackEntry *old = m_tracks.get(e.key);
     if (!old) { m_tracks.put(e.key, e); return; }
-    const TrackEntry merged{e.key, e.audio ? e.audio : old->audio, e.spu ? e.spu : old->spu, e.sidecar ? e.sidecar : old->sidecar, std::max(e.at, old->at)};
+    const TrackEntry merged{e.key,
+                            e.audio ? e.audio : old->audio,
+                            e.spu ? e.spu : old->spu,
+                            e.sidecar ? e.sidecar : old->sidecar,
+                            e.quality ? e.quality : old->quality,
+                            e.cid ? e.cid : old->cid,
+                            std::max(e.at, old->at)};
     m_tracks.put(e.key, merged);
 }
 
@@ -90,9 +96,13 @@ WatchSync::Sent WatchSync::request(const QString &user) {
     QJsonArray wa, ta;
     for (const auto &e : s.watch)
         wa.append(QJsonObject{{QStringLiteral("key"), e.key}, {QStringLiteral("pos"), e.pos}, {QStringLiteral("len"), e.len}, {QStringLiteral("at"), e.at}});
-    for (const auto &e : s.tracks)
-        ta.append(QJsonObject{{QStringLiteral("key"), e.key}, {QStringLiteral("audio"), nullable(e.audio)}, {QStringLiteral("spu"), nullable(e.spu)},
-                              {QStringLiteral("sidecar"), nullable(e.sidecar)}, {QStringLiteral("at"), e.at}});
+    for (const auto &e : s.tracks) {
+        QJsonObject o{{QStringLiteral("key"), e.key}, {QStringLiteral("audio"), nullable(e.audio)}, {QStringLiteral("spu"), nullable(e.spu)},
+                      {QStringLiteral("sidecar"), nullable(e.sidecar)}, {QStringLiteral("at"), e.at}};
+        if (e.quality) o.insert(QStringLiteral("quality"), *e.quality);
+        if (e.cid) o.insert(QStringLiteral("cid"), *e.cid);
+        ta.append(o);
+    }
     s.body = QJsonObject{{QStringLiteral("since"), std::max<qint64>(c.since, 0)}, {QStringLiteral("watch"), wa}, {QStringLiteral("tracks"), ta}};
     s.more = m_watch.size() > s.watch.size() || m_tracks.size() > s.tracks.size();
     return s;
@@ -127,7 +137,8 @@ int WatchSync::onResponse(const Sent &sent, const QJsonObject &res) {
         if (!v.isObject()) continue;
         const QJsonObject o = v.toObject();
         const TrackEntry e{optString(o, QStringLiteral("key")), nonEmpty(o, QStringLiteral("audio")), nonEmpty(o, QStringLiteral("spu")),
-                           nonEmpty(o, QStringLiteral("sidecar")), optLong(o, QStringLiteral("at"), 0)};
+                           nonEmpty(o, QStringLiteral("sidecar")), nonEmpty(o, QStringLiteral("quality")), nonEmpty(o, QStringLiteral("cid")),
+                           optLong(o, QStringLiteral("at"), 0)};
         if (e.key.isEmpty() || e.at <= 0) continue;
         if (m_store.trackAt(e.key) >= e.at) continue;
         if (const auto *p = m_tracks.get(e.key); p && p->at >= e.at) continue;

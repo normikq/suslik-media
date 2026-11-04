@@ -39,6 +39,11 @@ qint64 DesktopSyncStore::trackAt(const QString &key) { return uiStore().get(QStr
 void DesktopSyncStore::putTrack(const TrackEntry &e) {
     if (e.audio) uiStore().put(QStringLiteral("audio:") + e.key, *e.audio);
     if (e.spu) uiStore().put(QStringLiteral("spu:") + e.key, *e.spu);
+    if (e.quality) uiStore().put(QStringLiteral("vquality:") + e.key, *e.quality);
+    if (e.cid) {
+        if (e.audio) uiStore().put(QStringLiteral("audio:c") + *e.cid, *e.audio);
+        if (e.quality) uiStore().put(QStringLiteral("vquality:c") + *e.cid, *e.quality);
+    }
     uiStore().put(QStringLiteral("trackAt:") + e.key, QString::number(e.at));
 }
 
@@ -58,6 +63,7 @@ QList<TrackEntry> DesktopSyncStore::allTracks() {
         QString rest;
         if (k.startsWith(QLatin1String("audio:"))) rest = k.mid(6);
         else if (k.startsWith(QLatin1String("spu:"))) rest = k.mid(4);
+        else if (k.startsWith(QLatin1String("vquality:"))) rest = k.mid(9);
         else continue;
         if (rest == QLatin1String(WatchSync::ANY) || isFilmKey(rest)) keys.insert(rest);
     }
@@ -72,7 +78,8 @@ QList<TrackEntry> DesktopSyncStore::allTracks() {
             }
         }
         if (at <= 0) continue;
-        out << TrackEntry{k, uiStore().get(QStringLiteral("audio:") + k), uiStore().get(QStringLiteral("spu:") + k), std::nullopt, at};
+        out << TrackEntry{k, uiStore().get(QStringLiteral("audio:") + k), uiStore().get(QStringLiteral("spu:") + k), std::nullopt,
+                          uiStore().get(QStringLiteral("vquality:") + k), std::nullopt, at};
     }
     return out;
 }
@@ -97,12 +104,13 @@ void CloudSync::noteWatch(const QString &key, qint64 pos, qint64 len, qint64 at)
     if (WatchSync::eligible(m_user)) m_sync->noteWatch({key, pos, len, at});
 }
 
-void CloudSync::noteTrack(const QString &filmKey, const std::optional<QString> &audio, const std::optional<QString> &spu) {
+void CloudSync::noteTrack(const QString &filmKey, const std::optional<QString> &audio, const std::optional<QString> &spu,
+                          const std::optional<QString> &cid, const std::optional<QString> &quality) {
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     for (const QString &k : {filmKey, QString::fromLatin1(WatchSync::ANY)}) {
         if (k != QLatin1String(WatchSync::ANY) && !isFilmKey(k)) continue; // фильм не из библиотеки
         uiStore().put(QStringLiteral("trackAt:") + k, QString::number(now));
-        if (WatchSync::eligible(m_user)) m_sync->noteTrack({k, audio, spu, std::nullopt, now});
+        if (WatchSync::eligible(m_user)) m_sync->noteTrack({k, audio, spu, std::nullopt, quality, cid, now});
     }
 }
 

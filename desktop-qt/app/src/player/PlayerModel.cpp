@@ -244,6 +244,7 @@ void PlayerModel::begin() {
     m_retries = 0;
     m_nextIn = -1;
     m_infoOpen = false;
+    m_canonicalId = m_req.canonicalId.value_or(QString());
     m_activeVariantKey = m_req.activeVariantKey;
     if (m_req.variants.isEmpty() && Party::instance() && Party::instance()->file() && !Party::instance()->file()->variants.isEmpty()) {
         m_req.variants = Party::instance()->file()->variants;
@@ -568,6 +569,114 @@ void PlayerModel::playEntry(int i) {
     m_pendingSeek.reset();
     if (finishedHere && m_length > 0) savePos(m_length, m_length); else savePos(m_time, m_length);
     m_index = i;
+    m_variantCustom.clear();
+    rebuildVariantsForEntry(i);
+
+    const QString prefMag = pref(S("vmagnet")).value_or(QString());
+    const QString prefQ = pref(S("vquality")).value_or(QString());
+    core::PartyVariant targetVar;
+    bool foundTarget = false;
+    if (!prefMag.isEmpty()) {
+        for (const auto &v : m_req.variants) {
+            if (v.key.section(QLatin1Char('|'), 0, 0) == prefMag) {
+                targetVar = v;
+                foundTarget = true;
+                break;
+            }
+        }
+    }
+    if (!foundTarget && !prefQ.isEmpty()) {
+        for (const auto &v : m_req.variants) {
+            if (v.quality == prefQ || v.label == prefQ) {
+                targetVar = v;
+                foundTarget = true;
+                break;
+            }
+        }
+    }
+
+    if (foundTarget && targetVar.key != watchKey(i)) {
+        m_activeVariantKey = targetVar.key;
+        emit activeVariantKeyChanged();
+        emit qualityVariantsChanged();
+        m_nextIn = -1;
+        m_title = m_queue[i].title;
+        m_retries = 0;
+        m_serverMarkers.reset();
+        m_nextDismissed = false;
+        m_introAutoDone.reset();
+        const Party *party = Party::instance();
+        const qint64 start = m_byRoom && party && party->inRoom() && !party->isHost() ? std::max<qint64>(0, party->roomMs()) : savedPos(i);
+        m_playing = m_started = false;
+        m_switching = true;
+        m_time = m_lastGood = start;
+        m_length = 0;
+        setStatus(tx(S("player.sleduyuschaya_seriya")));
+        emit entryChanged();
+        emit stateChanged();
+        emit timeChanged();
+        emit nextChanged();
+        emit markersChanged();
+
+        QJsonObject body{{S("variant_key"), targetVar.key}};
+        if (targetVar.key.contains(QLatin1Char('|'))) {
+            body.insert(S("ad_id"), targetVar.key.section(QLatin1Char('|'), 0, 0).toLongLong());
+            body.insert(S("path"), targetVar.key.section(QLatin1Char('|'), 1));
+        }
+        QPointer<PlayerModel> self(this);
+        m_lib->api().post(S("/api/file/variant-url"), body, [self, i, start, targetVar](const ApiResult &r) {
+            if (!self || self->m_index != i || self->m_closing) return;
+            if (!r.ok() || r.json.value(S("url")).toString().isEmpty()) {
+                self->m_activeVariantKey = self->watchKey(i);
+                self->emit activeVariantKeyChanged();
+                self->emit qualityVariantsChanged();
+                self->m_currentUrl = self->m_queue[i].url;
+                self->open(self->m_currentUrl, start, self->m_sidecars.value(i));
+                return;
+            }
+            const QString newUrl = r.json.value(S("url")).toString();
+            self->m_currentUrl = newUrl;
+            self->m_supervisor.setBitrateMbps(targetVar.bitrate);
+
+            QList<core::CustomTrack> customTracks;
+            QStringList sidecarAudio;
+            const auto audios = r.json.value(S("audio")).toArray();
+            for (const auto &a : audios) {
+                const auto o = a.toObject();
+                const QString u = o.value(S("url")).toString();
+                if (u.isEmpty()) continue;
+                const QString id = o.value(S("id")).toString();
+                if (!id.startsWith(S("sidecar:")) && (o.contains(S("title")) || o.contains(S("offset_ms")))) {
+                    core::CustomTrack t;
+                    t.id = id;
+                    t.title = o.value(S("title")).toString();
+                    if (o.contains(S("lang"))) {
+                        const QString l = o.value(S("lang")).toString();
+                        if (!l.isEmpty() && l != S("und")) t.lang = l;
+                    }
+                    t.offsetMs = o.value(S("offset_ms")).toVariant().toLongLong();
+                    t.url = u;
+                    customTracks << t;
+                } else {
+                    sidecarAudio << u;
+                }
+            }
+            QStringList newSubs;
+            const auto subs = r.json.value(S("subtitles")).toArray();
+            for (const auto &s : subs) {
+                const QString u = s.toObject().value(S("url")).toString();
+                if (!u.isEmpty()) newSubs << u;
+            }
+            Sides newSides;
+            newSides.audio = sidecarAudio;
+            newSides.subs = newSubs;
+            self->m_sidecars.insert(i, newSides);
+            self->m_variantCustom = customTracks;
+            self->open(newUrl, start, newSides);
+        });
+        return;
+    }
+
     m_activeVariantKey = watchKey(i);
     m_variantCustom.clear();
     rebuildVariantsForEntry(i);
@@ -900,7 +1009,12 @@ void PlayerModel::selectAudio(int id, const QString &name) {
     applyCustomDelay(name);
     putUi(S("audio:") + seriesKey(), name);
     putUi(S("audio:*"), name);
-    if (m_lib) m_lib->sync().noteTrack(seriesKey(), name, std::nullopt);
+    if (!titleKey().isEmpty()) putUi(S("audio:") + titleKey(), name);
+    if (!m_canonicalId.isEmpty()) putUi(S("audio:c") + m_canonicalId, name);
+    if (m_lib) {
+        const QString qv = pref(S("vquality")).value_or(QString());
+        m_lib->sync().noteTrack(seriesKey(), name, std::nullopt, m_canonicalId.isEmpty() ? std::nullopt : std::optional<QString>(m_canonicalId), qv.isEmpty() ? std::nullopt : std::optional<QString>(qv));
+    }
     m_trackWatchLeft = 7;
     m_trackWatchShown = 0;
     m_trackWatch.start();
@@ -912,7 +1026,12 @@ void PlayerModel::selectSub(int id, const QString &name) {
     const QString v = id == -1 ? S("__off__") : name;
     putUi(S("spu:") + seriesKey(), v);
     putUi(S("spu:*"), v);
-    if (m_lib) m_lib->sync().noteTrack(seriesKey(), std::nullopt, v);
+    if (!titleKey().isEmpty()) putUi(S("spu:") + titleKey(), v);
+    if (!m_canonicalId.isEmpty()) putUi(S("spu:c") + m_canonicalId, v);
+    if (m_lib) {
+        const QString qv = pref(S("vquality")).value_or(QString());
+        m_lib->sync().noteTrack(seriesKey(), std::nullopt, v, m_canonicalId.isEmpty() ? std::nullopt : std::optional<QString>(m_canonicalId), qv.isEmpty() ? std::nullopt : std::optional<QString>(qv));
+    }
 }
 
 void PlayerModel::setVolume(int v) {
@@ -1045,11 +1164,53 @@ void PlayerModel::applyPrefs() {
     const std::optional<QString> spu = pref(S("spu"));
     const QVariantList audio = m_engine->audioTracks(), subs = m_engine->subTracks();
     if (a) {
+        int matchedId = -1;
         for (const QVariant &v : audio) {
             const QVariantMap t = v.toMap();
-            if (t.value(S("label")).toString() == *a && !t.value(S("selected")).toBool()) {
-                m_engine->setAudioTrack(t.value(S("id")).toInt());
-                m_supervisor.seeked();
+            if (t.value(S("label")).toString() == *a) {
+                matchedId = t.value(S("id")).toInt();
+                break;
+            }
+        }
+        if (matchedId == -1) {
+            const auto ct = CustomAudio::byMenuName(m_custom, *a);
+            for (const QVariant &v : audio) {
+                const QVariantMap t = v.toMap();
+                const QString label = t.value(S("label")).toString();
+                const QString title = t.value(S("title")).toString();
+                if (ct) {
+                    if (label == ct->menuName() || title == ct->title || (t.value(S("external")).toBool() && title.startsWith(ct->title))) {
+                        matchedId = t.value(S("id")).toInt();
+                        break;
+                    }
+                }
+            }
+        }
+        if (matchedId == -1) {
+            const QString aBase = a->section(QLatin1Char('['), 0, 0).trimmed();
+            if (!aBase.isEmpty()) {
+                for (const QVariant &v : audio) {
+                    const QVariantMap t = v.toMap();
+                    const QString label = t.value(S("label")).toString();
+                    const QString title = t.value(S("title")).toString();
+                    const QString lBase = label.section(QLatin1Char('['), 0, 0).trimmed();
+                    if (lBase.compare(aBase, Qt::CaseInsensitive) == 0 || title.compare(aBase, Qt::CaseInsensitive) == 0) {
+                        matchedId = t.value(S("id")).toInt();
+                        break;
+                    }
+                }
+            }
+        }
+        if (matchedId != -1) {
+            for (const QVariant &v : audio) {
+                const QVariantMap t = v.toMap();
+                if (t.value(S("id")).toInt() == matchedId) {
+                    if (!t.value(S("selected")).toBool()) {
+                        m_engine->setAudioTrack(matchedId);
+                        m_supervisor.seeked();
+                    }
+                    break;
+                }
             }
         }
     }
@@ -1435,11 +1596,29 @@ void PlayerModel::switchVariant(const QString &variantKey) {
         const QString prevVariantKey = self->m_activeVariantKey;
         self->m_activeVariantKey = variantKey;
         self->m_currentUrl = newUrl;
+        QString qv;
         for (const auto &v : self->m_req.variants) {
             if (v.key == variantKey) {
                 self->m_supervisor.setBitrateMbps(v.bitrate);
+                qv = v.quality.isEmpty() ? v.label : v.quality;
                 break;
             }
+        }
+        if (!qv.isEmpty()) {
+            self->putUi(S("vquality:") + self->seriesKey(), qv);
+            self->putUi(S("vquality:*"), qv);
+            if (!self->titleKey().isEmpty()) self->putUi(S("vquality:") + self->titleKey(), qv);
+            if (!self->m_canonicalId.isEmpty()) self->putUi(S("vquality:c") + self->m_canonicalId, qv);
+        }
+        const QString mag = variantKey.section(QLatin1Char('|'), 0, 0);
+        if (!mag.isEmpty()) {
+            self->putUi(S("vmagnet:") + self->seriesKey(), mag);
+            if (!self->titleKey().isEmpty()) self->putUi(S("vmagnet:") + self->titleKey(), mag);
+            if (!self->m_canonicalId.isEmpty()) self->putUi(S("vmagnet:c") + self->m_canonicalId, mag);
+        }
+        if (self->m_lib) {
+            const auto a = self->pref(S("audio"));
+            self->m_lib->sync().noteTrack(self->seriesKey(), a, std::nullopt, self->m_canonicalId.isEmpty() ? std::nullopt : std::optional<QString>(self->m_canonicalId), qv.isEmpty() ? std::nullopt : std::optional<QString>(qv));
         }
         QList<core::CustomTrack> customTracks;
         QStringList sidecarAudio;
@@ -1538,6 +1717,9 @@ QString PlayerModel::seriesKey() const {
 
 std::optional<QString> PlayerModel::pref(const QString &kind) const {
     if (auto v = ui().get(kind + S(":") + seriesKey())) return v;
+    if (!m_canonicalId.isEmpty()) {
+        if (auto v = ui().get(kind + S(":c") + m_canonicalId)) return v;
+    }
     return ui().get(kind + S(":") + titleKey());
 }
 

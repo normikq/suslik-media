@@ -356,6 +356,7 @@ private:
     bool m_endCut = false;
     QString m_deleteArmed;
     QString m_activeVariantKey;
+    QString m_canonicalId;
     bool m_switchingVariant = false;
     QString m_suggestedDowngradeKey;
     QString m_suggestedDowngradeLabel;

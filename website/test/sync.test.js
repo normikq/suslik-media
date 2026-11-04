@@ -138,3 +138,30 @@ test("sync: канонический прогресс fallback по canonical_id
   assert.equal(fallback.pos, 1800_000);
   assert.equal(fallback.cid, "m:dune_2021:theatrical");
 });
+
+test("sync: качество и дорожки сериала с fallback по canonical_id (cid)", () => {
+  const { getTracks } = require("../src/services/sync");
+  const now = 1700_000_000_000;
+  apply(U, {
+    tracks: [{
+      key: "m101",
+      audio: "HDRezka",
+      spu: "__off__",
+      quality: "2160p",
+      cid: "s:fallout_2024:season_1",
+      at: now
+    }]
+  }, now);
+
+  const changes = changesSince(U, 0, now);
+  assert.equal(changes.tracks[0].audio, "HDRezka");
+  assert.equal(changes.tracks[0].quality, "2160p");
+  assert.equal(changes.tracks[0].cid, "s:fallout_2024:season_1");
+
+  // Открываем раздачу 1080p того же сериала (m102): fallback по cid
+  const res = getTracks(U, "m102", "s:fallout_2024:season_1");
+  assert.ok(res);
+  assert.equal(res.audio, "HDRezka");
+  assert.equal(res.quality, "2160p");
+  assert.equal(res.cid, "s:fallout_2024:season_1");
+});

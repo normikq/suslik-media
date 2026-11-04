@@ -39,6 +39,8 @@ struct CustomCheck {
     std::optional<qint64> movieMagnetId;
     bool attachable = true;
     QList<CustomPair> pairs;
+    QList<qint64> targetMagnetIds;
+    QStringList targetMovieNames;
 };
 
 namespace CustomAudio {

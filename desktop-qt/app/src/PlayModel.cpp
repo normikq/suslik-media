@@ -441,7 +441,10 @@ void PlayModel::play() {
     r.fromStart = m_fromStart;
     r.collection = m_collection;
     r.startMs = m_startMs;
-    if (it) r.posterQueries = it->posterQueries;
+    if (it) {
+        r.posterQueries = it->posterQueries;
+        if (it->m.aiTitle) r.canonicalId = it->m.aiTitle->canonicalId;
+    }
     if (m_playlist) {
         r.queue = queueFiles();
         for (int i = 0; i < r.queue.size(); ++i) {

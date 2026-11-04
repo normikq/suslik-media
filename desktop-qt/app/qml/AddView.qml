@@ -330,6 +330,15 @@ Item {
                     font.family: Theme.onest; font.weight: Font.DemiBold; font.pixelSize: 14
                 }
                 Text {
+                    visible: sc.src.targetCount > 1
+                    topPadding: 6
+                    width: parent.width
+                    text: "[✓] Привяжется ко всем раздачам фильма (" + sc.src.targetCount + ")" + (sc.src.targetNames ? ": " + sc.src.targetNames : "")
+                    color: Theme.ok
+                    wrapMode: Text.WordWrap
+                    font.family: Theme.onest; font.weight: Font.Medium; font.pixelSize: 13
+                }
+                Text {
                     visible: sc.src.note !== ""
                     width: parent.width
                     topPadding: 6

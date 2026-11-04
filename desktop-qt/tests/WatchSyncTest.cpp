@@ -93,7 +93,7 @@ private slots:
         const qint64 mark = store.c->split(QLatin1Char('|'))[2].toLongLong();
         store.putWatch({S("1|a.mkv"), 10000, 100000, mark + 5});
         store.putWatch({S("2|old.mkv"), 10000, 100000, mark - 5}); // старее границы: уже ушло раньше
-        store.putTrack({S("m1"), S("A"), std::nullopt, std::nullopt, mark + 6});
+        store.putTrack({S("m1"), S("A"), std::nullopt, std::nullopt, std::nullopt, std::nullopt, mark + 6});
         WatchSync after(store);
         const auto sent = after.request(S("u_1"));
         QCOMPARE(since(sent), 1000);
@@ -140,7 +140,7 @@ private slots:
         MemStore store;
         store.c = S("u_1|10|0");
         WatchSync sync(store);
-        sync.noteTrack({S("m5"), S("ru"), std::nullopt, std::nullopt, 100});
+        sync.noteTrack({S("m5"), S("ru"), std::nullopt, std::nullopt, std::nullopt, std::nullopt, 100});
         sync.noteWatch({S("1|a.mkv"), 1000, 0, 100});
         WatchSync other(store);
         const auto sent = other.request(S("u_1")); // чужой запрос, чтобы в ответе пришло новее нашего
@@ -148,7 +148,7 @@ private slots:
                                    "\"tracks\":[{\"key\":\"m5\",\"audio\":\"orig\",\"spu\":null,\"sidecar\":null,\"at\":200}]}"));
         QCOMPARE(store.w[S("1|a.mkv")].pos, 9000);
         QVERIFY(!sync.hasPending());
-        sync.noteTrack({S("m5"), std::nullopt, S("sub"), std::nullopt, 300});
+        sync.noteTrack({S("m5"), std::nullopt, S("sub"), std::nullopt, std::nullopt, std::nullopt, 300});
         const QJsonObject t = sync.request(S("u_1")).body.value(S("tracks")).toArray()[0].toObject();
         QVERIFY(t.value(S("audio")).isNull());
         QCOMPARE(t.value(S("spu")).toString(), S("sub"));
@@ -158,8 +158,8 @@ private slots:
         MemStore store;
         store.c = S("u_1|10");
         WatchSync sync(store);
-        sync.noteTrack({S("m5"), S("A"), std::nullopt, std::nullopt, 100});
-        sync.noteTrack({S("m5"), std::nullopt, S("__off__"), std::nullopt, 120});
+        sync.noteTrack({S("m5"), S("A"), std::nullopt, std::nullopt, std::nullopt, std::nullopt, 100});
+        sync.noteTrack({S("m5"), std::nullopt, S("__off__"), std::nullopt, std::nullopt, std::nullopt, 120});
         const QJsonObject t = sync.request(S("u_1")).body.value(S("tracks")).toArray()[0].toObject();
         QCOMPARE(t.value(S("audio")).toString(), S("A"));
         QCOMPARE(t.value(S("spu")).toString(), S("__off__"));

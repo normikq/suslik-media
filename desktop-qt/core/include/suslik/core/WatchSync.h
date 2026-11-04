@@ -26,6 +26,8 @@ struct TrackEntry {
     std::optional<QString> audio;
     std::optional<QString> spu;
     std::optional<QString> sidecar;
+    std::optional<QString> quality;
+    std::optional<QString> cid;
     qint64 at = 0;
     bool operator==(const TrackEntry &) const = default;
 };

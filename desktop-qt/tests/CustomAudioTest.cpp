@@ -50,12 +50,15 @@ private slots:
 
     void readsCheckAndAttach() {
         const auto c = CustomAudio::parseCheck(json("{\"movieMagnetId\": 12, \"pairs\": ["
-                                                    "{\"videoPath\": \"v.mkv\", \"audioPath\": \"a.mka\", \"voice\": \"LostFilm\", \"season\": 1, \"episode\": null, \"offsetMs\": null}]}"));
+                                                    "{\"videoPath\": \"v.mkv\", \"audioPath\": \"a.mka\", \"voice\": \"LostFilm\", \"season\": 1, \"episode\": null, \"offsetMs\": null}],"
+                                                    "\"targetMovies\": [{\"id\": 12, \"name\": \"Dune 1\"}, {\"id\": 13, \"name\": \"Dune 2\"}]}"));
         QCOMPARE(c.movieMagnetId.value(), 12);
         QVERIFY(c.attachable);
         QCOMPARE(c.pairs[0].season.value(), 1);
         QVERIFY(!c.pairs[0].episode);
         QVERIFY(!c.pairs[0].offsetMs);
+        QCOMPARE(c.targetMagnetIds, (QList<qint64>{12, 13}));
+        QCOMPARE(c.targetMovieNames, (QStringList{S("Dune 1"), S("Dune 2")}));
         const auto a = CustomAudio::parseAttached(json("{\"created\": [{\"id\": \"a\"}], \"existing\": [{\"id\": \"b\"}]}"));
         QCOMPARE(a.size(), 2);
         QCOMPARE(a[0].value(S("id")).toString(), S("a"));

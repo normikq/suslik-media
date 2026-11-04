@@ -40,7 +40,8 @@ public:
     /// Плеер сохранил прогресс (уже записан в "watch").
     void noteWatch(const QString &key, qint64 pos, qint64 len, qint64 at);
     /// Выбрали дорожку (filmKey — "m<id>"; общий выбор "*" отмечается здесь же). Уже записано в "player_ui".
-    void noteTrack(const QString &filmKey, const std::optional<QString> &audio, const std::optional<QString> &spu);
+    void noteTrack(const QString &filmKey, const std::optional<QString> &audio, const std::optional<QString> &spu,
+                   const std::optional<QString> &cid = std::nullopt, const std::optional<QString> &quality = std::nullopt);
     /// Отправить сейчас (закрыли плеер, вошли).
     void kick();
     void start();

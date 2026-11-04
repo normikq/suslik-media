@@ -100,6 +100,8 @@ private:
         int valid = -1;
         std::optional<qint64> audioId, movieId;
         QList<std::pair<qint64, QString>> candidates;
+        QList<qint64> targetIds;
+        QStringList targetNames;
         bool done = false, existed = false;
         QList<Row> rows;
         bool ready() const;
