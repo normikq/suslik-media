@@ -188,8 +188,6 @@ Item {
         property alias text: field.text
         signal submit()
         signal pickFiles()
-        signal noClipboard()
-        signal emptySubmitted()
         width: parent ? parent.width : 0
         spacing: 10
         Text {
@@ -205,35 +203,10 @@ Item {
                 id: field
                 width: parent.width - torrentBtn.width - mainBtn.width - 20
                 placeholder: Ui.tx("audio.magnet_ili_torrent")
-                onAccepted: {
-                    if (field.text.trim() === "") {
-                        ib.emptySubmitted()
-                    } else {
-                        ib.submit()
-                    }
-                }
+                onAccepted: ib.submit()
             }
             OutlineButton { id: torrentBtn; height: 44; text: Ui.tx("audio.torrent"); onClicked: ib.pickFiles() }
-            LampButton {
-                id: mainBtn
-                height: 44
-                text: ib.action
-                enabled_: true
-                onClicked: {
-                    if (field.text.trim() === "") {
-                        const clip = Ui.paste().trim()
-                        if (clip !== "" && (clip.toLowerCase().indexOf("magnet:?") !== -1 || /^[0-9a-fA-F]{40}$|^[2-7a-zA-Z]{32}$/.test(clip))) {
-                            field.text = clip
-                            ib.submit()
-                        } else {
-                            ib.emptySubmitted()
-                            field.input.forceActiveFocus()
-                        }
-                    } else {
-                        ib.submit()
-                    }
-                }
-            }
+            LampButton { id: mainBtn; height: 44; text: ib.action; enabled_: field.text.trim() !== ""; onClicked: ib.submit() }
         }
         Row {
             spacing: 12
@@ -241,12 +214,8 @@ Item {
                 text: Ui.tx("add.vstavit_iz_bufera")
                 onClicked: {
                     const t = Ui.paste().trim()
-                    if (t === "") {
-                        ib.noClipboard()
-                    } else {
-                        field.text = t
-                        field.input.forceActiveFocus()
-                    }
+                    if (t === "") ib.noClipboard()
+                    else field.text = t
                 }
             }
             Text {
@@ -256,6 +225,7 @@ Item {
                 font.family: Theme.onest; font.pixelSize: 13
             }
         }
+        signal noClipboard()
     }
 
     component FilmPane: Slide {
@@ -269,13 +239,9 @@ Item {
             id: filmCol
             hint: Ui.tx("add.film_tekst")
             action: Ui.tx("add.dobavit_magnet")
-            onSubmit: {
-                add.submit(text)
-                if (add.statusOk) text = ""
-            }
+            onSubmit: { add.submit(text); text = "" }
             onPickFiles: v.pick(0)
             onNoClipboard: add.setStatus(Ui.tx("add.v_bufere_obmena_net"), false)
-            onEmptySubmitted: add.setStatus(Ui.tx("add.vstavte_magnet_ssylku"), false)
         }
     }
 
@@ -295,7 +261,6 @@ Item {
                 onSubmit: { audio.setNote(""); audio.addInput(text); if (audio.note === "") text = "" }
                 onPickFiles: v.pick(1)
                 onNoClipboard: audio.setNote(Ui.tx("add.v_bufere_obmena_net"))
-                onEmptySubmitted: audio.setNote(Ui.tx("add.vstavte_magnet_ssylku"))
             }
             Text {
                 visible: audio.note !== ""

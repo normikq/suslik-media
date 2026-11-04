@@ -212,11 +212,11 @@ void AudioAttachModel::say(qint64 key, const QString &text, bool ok) {
 }
 
 void AudioAttachModel::addInput(const QString &text) {
-    const QStringList links = core::parseMagnetLinks(text);
-    if (links.isEmpty()) {
-        setNote(tx(text.trimmed().isEmpty() ? S("add.vstavte_magnet_ssylku") : S("add.vstavte_ssylku_kotoraya_nachin")));
-        return;
-    }
+    QStringList links;
+    static const QRegularExpression wsRe(S("\\s+"));
+    for (const QString &w : text.split(wsRe, Qt::SkipEmptyParts))
+        if (w.trimmed().startsWith(S("magnet:?"))) links << w.trimmed();
+    if (links.isEmpty()) { setNote(tx(S("add.vstavte_ssylku_kotoraya_nachin"))); return; }
     for (const QString &l : links) add(l, QString());
 }
 

@@ -1,8 +1,5 @@
 #include "suslik/core/UrlCoding.h"
 
-#include <QRegularExpression>
-#include <QUrl>
-
 namespace suslik::core {
 
 QString formEncode(const QString &value) {
@@ -53,46 +50,6 @@ std::optional<QString> formDecode(const QString &value) {
         }
     }
     flush();
-    return out;
-}
-
-QStringList parseMagnetLinks(const QString &input) {
-    QString text = input.trimmed();
-    if (text.isEmpty()) return {};
-
-    if (text.startsWith(QStringLiteral("magnet%3A"), Qt::CaseInsensitive)) {
-        text = QUrl::fromPercentEncoding(text.toUtf8());
-    }
-
-    static const QRegularExpression hashRe(QStringLiteral("^[0-9a-fA-F]{40}$|^[2-7a-zA-Z]{32}$"));
-    if (hashRe.match(text).hasMatch()) {
-        return {QStringLiteral("magnet:?xt=urn:btih:") + text};
-    }
-    if (text.startsWith(QStringLiteral("urn:btih:"), Qt::CaseInsensitive)) {
-        return {QStringLiteral("magnet:?xt=") + text};
-    }
-    if (text.startsWith(QStringLiteral("xt=urn:btih:"), Qt::CaseInsensitive)) {
-        return {QStringLiteral("magnet:?") + text};
-    }
-
-    static const QRegularExpression splitRe(QStringLiteral("(?:\r\n|\r|\n)+|\\s*(?=[<\"']?[mM][aA][gG][nN][eE][tT]:\\?)"));
-    const QStringList parts = text.split(splitRe, Qt::SkipEmptyParts);
-
-    QStringList out;
-    for (QString raw : parts) {
-        raw = raw.trimmed();
-        while (!raw.isEmpty() && (raw.startsWith(QLatin1Char('"')) || raw.startsWith(QLatin1Char('\'')) || raw.startsWith(QLatin1Char('<')))) {
-            raw.remove(0, 1);
-        }
-        while (!raw.isEmpty() && (raw.endsWith(QLatin1Char('"')) || raw.endsWith(QLatin1Char('\'')) || raw.endsWith(QLatin1Char('>')))) {
-            raw.chop(1);
-        }
-        raw = raw.trimmed();
-        if (raw.startsWith(QStringLiteral("magnet:?"), Qt::CaseInsensitive)) {
-            QString link = QStringLiteral("magnet:?") + raw.mid(8);
-            out << link;
-        }
-    }
     return out;
 }
 
