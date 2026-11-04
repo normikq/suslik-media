@@ -101,7 +101,8 @@ data class PlayRequest(
     /** Along [watchKeys]: what a room shows — the library's title and the episode (player.PlayerExtras.ROOM_TITLES). */
     val roomTitles: List<String> = emptyList(),
     /** Варианты качества фильма/серии */
-    val variants: List<ru.suslikovanora.media.core.party.PartyVariant> = emptyList()
+    val variants: List<ru.suslikovanora.media.core.party.PartyVariant> = emptyList(),
+    val canonicalId: String? = null
 )
 
 /**
@@ -309,7 +310,8 @@ fun PlaySheet(
         vars.sortByDescending { it.score }
 
         return PlayRequest(url, target.label, playlist, subUrls, keys, audioUrls, fromStart, if (playlist != null) episodeSidesJson(target, customByPath) else null, customJson(customByPath), watchKey(target.magnetId, target.file), isColl,
-            if (item == null) null else markersJson(item, series, files, isColl), roomTitles = files.map(::roomTitleOf), variants = vars)
+            if (item == null) null else markersJson(item, series, files, isColl), roomTitles = files.map(::roomTitleOf), variants = vars,
+            canonicalId = item?.m?.aiTitle?.canonicalId)
     }
     LaunchedEffect(prepared) {
         val at = autoStartMs ?: return@LaunchedEffect

@@ -327,7 +327,7 @@ class MainActivity : ComponentActivity() {
                     onDismiss = { followTarget = null },
                     // the room's place at the moment the links are ready, not when the sheet appeared
                     autoStartMs = { if (Party.file?.key == key) Party.targetMs() else 0L },
-                    onPlay = { r -> followTarget = null; handlePlay(r.url, r.title, r.playlist, r.subUrls, r.watchKeys, r.audioUrls, r.fromStart, r.episodeSides, r.customAudio, r.watchKey, r.collection, r.markers, r.startMs, r.roomTitles, r.variants) }
+                    onPlay = { r -> followTarget = null; handlePlay(r.url, r.title, r.playlist, r.subUrls, r.watchKeys, r.audioUrls, r.fromStart, r.episodeSides, r.customAudio, r.watchKey, r.collection, r.markers, r.startMs, r.roomTitles, r.variants, r.canonicalId) }
                 )
             }
             playTarget?.let { t ->
@@ -335,7 +335,7 @@ class MainActivity : ComponentActivity() {
                     initial = t,
                     store = store,
                     onDismiss = { playTarget = null },
-                    onPlay = { r -> playTarget = null; handlePlay(r.url, r.title, r.playlist, r.subUrls, r.watchKeys, r.audioUrls, r.fromStart, r.episodeSides, r.customAudio, r.watchKey, r.collection, r.markers, roomTitles = r.roomTitles, variants = r.variants) }
+                    onPlay = { r -> playTarget = null; handlePlay(r.url, r.title, r.playlist, r.subUrls, r.watchKeys, r.audioUrls, r.fromStart, r.episodeSides, r.customAudio, r.watchKey, r.collection, r.markers, roomTitles = r.roomTitles, variants = r.variants, canonicalId = r.canonicalId) }
                 )
             }
         }
@@ -360,7 +360,8 @@ class MainActivity : ComponentActivity() {
         subUrls: List<String> = emptyList(), watchKeys: List<String> = emptyList(), audioUrls: List<String> = emptyList(),
         fromStart: Boolean = false, episodeSides: String? = null, customAudio: String? = null, watchKey: String? = null,
         collection: Boolean = false, markers: String? = null, startMs: Long? = null, roomTitles: List<String> = emptyList(),
-        variants: List<ru.suslikovanora.media.core.party.PartyVariant> = emptyList()
+        variants: List<ru.suslikovanora.media.core.party.PartyVariant> = emptyList(),
+        canonicalId: String? = null
     ) {
         val current = watchKey ?: watchKeys.firstOrNull()
         val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return
@@ -369,7 +370,7 @@ class MainActivity : ComponentActivity() {
             return
         }
         // In a room, the host's film becomes the room's film (a guest's other film just plays for them alone)
-        current?.let { key -> if (Party.isHost) Party.putFilm(ru.suslikovanora.media.core.party.PartyFileRef(key, roomTitles.getOrNull(watchKeys.indexOf(key)) ?: title ?: tr("main.video"), variants = variants)) }
+        current?.let { key -> if (Party.isHost) Party.putFilm(ru.suslikovanora.media.core.party.PartyFileRef(key, roomTitles.getOrNull(watchKeys.indexOf(key)) ?: title ?: tr("main.video"), canonicalId = canonicalId, variants = variants)) }
         // A playlist may only come from our own site: it is fetched without any credentials.
         val playlistUri = playlist?.let { runCatching { Uri.parse(it) }.getOrNull() }
             ?.takeIf { it.scheme == "https" && ru.suslikovanora.media.core.SiteAddress.isOwn(it.toString(), ru.suslikovanora.media.net.Api.BASE) }
@@ -377,6 +378,7 @@ class MainActivity : ComponentActivity() {
             addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP) // a second tap reuses the running player instead of stacking another
             putExtra(PlayerActivity.EXTRA_URL, uri.toString())
             putExtra(PlayerActivity.EXTRA_TITLE, title ?: tr("main.video"))
+            canonicalId?.let { putExtra(ru.suslikovanora.media.player.PlayerExtras.CANONICAL_ID, it) }
             playlistUri?.let { putExtra(PlayerActivity.EXTRA_PLAYLIST, it.toString()) }
             if (subUrls.isNotEmpty()) putStringArrayListExtra(PlayerActivity.EXTRA_SUB_URLS, ArrayList(subUrls))
             if (watchKeys.isNotEmpty()) putStringArrayListExtra(PlayerActivity.EXTRA_WATCH_KEYS, ArrayList(watchKeys))

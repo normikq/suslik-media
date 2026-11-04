@@ -28,4 +28,5 @@ object PlayerExtras {
     const val ROOM_TITLES = "media_room_titles"
     /** Список вариантов качества (JSON array) */
     const val VARIANTS = "media_variants"
+    const val CANONICAL_ID = "media_canonical_id"
 }

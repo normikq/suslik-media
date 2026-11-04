@@ -46,6 +46,26 @@ private slots:
         QCOMPARE(CustomAudio::byMenuName(t, S("HDRezka [rus]"))->id, S("t1"));
         QCOMPARE(CustomAudio::byMenuName(t, S("Other.MKA [und]"))->id, S("t2"));
         QVERIFY(!CustomAudio::byMenuName(t, S("HDRezka")));
+
+        // Season/Episode matching test: Season 1 Ep 1 must NOT match Season 2 Ep 1
+        CustomTrack s1e1, s2e1;
+        s1e1.id = S("s1e1");
+        s1e1.videoPath = S("Season 1/S01E01.mkv");
+        s1e1.audioPath = S("Dub/s1e1.mka");
+        s1e1.url = S("https://x/s1e1.mka");
+        s2e1.id = S("s2e1");
+        s2e1.videoPath = S("Season 2/S02E01.mkv");
+        s2e1.audioPath = S("Dub/s2e1.mka");
+        s2e1.url = S("https://x/s2e1.mka");
+        const QList<CustomTrack> seasonTracks{s1e1, s2e1};
+
+        const auto foundS1 = CustomAudio::forVideo(seasonTracks, S("10|Season 1/S01E01.mkv"));
+        QCOMPARE(foundS1.size(), 1);
+        QCOMPARE(foundS1[0].id, S("s1e1"));
+
+        const auto foundS2 = CustomAudio::forVideo(seasonTracks, S("10|Season 2/S02E01.mkv"));
+        QCOMPARE(foundS2.size(), 1);
+        QCOMPARE(foundS2[0].id, S("s2e1"));
     }
 
     void readsCheckAndAttach() {

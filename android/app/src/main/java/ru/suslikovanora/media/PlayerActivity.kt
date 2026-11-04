@@ -738,6 +738,8 @@ class PlayerActivity : ComponentActivity() {
 
     private val scope = kotlinx.coroutines.MainScope()
     private var sideJob: kotlinx.coroutines.Job? = null
+    private var switchVariantJob: kotlinx.coroutines.Job? = null
+    private var canonicalId: String? = null
 
     private val playlistQueue: PlayerPlaylistQueue by lazy {
         PlayerPlaylistQueue(handler, object : PlayerPlaylistQueue.Callback {
@@ -747,6 +749,9 @@ class PlayerActivity : ComponentActivity() {
                 player?.let { val len = lengthOf(it); if (finished && len > 0L) persistPosition(len, len) else persistPosition(timeOf(it).coerceAtLeast(0L), len) }
             }
             override fun onPlayEntry(entry: PlayerPlaylistQueue.Entry, index: Int) {
+                switchVariantJob?.cancel()
+                switchVariantJob = null
+                ui.switchingVariant = false
                 currentUrl = entry.url
                 resetMarkers()
                 lastKnownLength = 0L
@@ -1579,7 +1584,9 @@ class PlayerActivity : ComponentActivity() {
         ui.switchingVariant = true
         showSeekLabel(tr("player.pereklyuchenie_kachestva"))
         val currentPos = perceivedPosition()
-        scope.launch {
+        val expectedKey = watchProgress.currentWatchKey()
+        switchVariantJob?.cancel()
+        switchVariantJob = scope.launch {
             try {
                 var adId: Long? = null
                 var path: String? = null
@@ -1588,6 +1595,10 @@ class PlayerActivity : ComponentActivity() {
                     path = variantKey.substringAfter('|')
                 }
                 val res = ru.suslikovanora.media.net.Api.resolveVariantUrl(variantKey, adId, path)
+                if (!alive || leaving || watchProgress.currentWatchKey() != expectedKey) {
+                    ui.switchingVariant = false
+                    return@launch
+                }
                 val newUrl = res.optString("url")
                 if (newUrl.isBlank()) {
                     showSeekLabel(tr("player.ne_udalos_smenit_kachestvo"))
@@ -1608,18 +1619,21 @@ class PlayerActivity : ComponentActivity() {
                     val fk = ru.suslikovanora.media.core.sync.WatchSync.filmKeyOf(watchProgress.currentWatchKey())
                     val newFk = ru.suslikovanora.media.core.sync.WatchSync.filmKeyOf(variantKey)
                     val mag = variantKey.substringBefore('|')
+                    val cid = canonicalId ?: Party.file?.canonicalId
                     sp.edit().apply {
                         if (fk != null) putString("vquality:$fk", qv)
                         if (newFk != null && newFk != fk) putString("vquality:$newFk", qv)
                         putString("vquality:*", qv)
+                        if (cid != null) putString("vquality:c$cid", qv)
                         if (mag.isNotBlank()) {
                             if (fk != null) putString("vmagnet:$fk", mag)
                             if (newFk != null) putString("vmagnet:$newFk", mag)
+                            if (cid != null) putString("vmagnet:c$cid", mag)
                         }
                     }.apply()
-                    ru.suslikovanora.media.library.CloudSync.noteTrack(fk, null, null, null, alsoAny = true, quality = qv)
+                    ru.suslikovanora.media.library.CloudSync.noteTrack(fk, null, null, null, alsoAny = true, quality = qv, cid = cid)
                     if (newFk != null && newFk != fk) {
-                        ru.suslikovanora.media.library.CloudSync.noteTrack(newFk, null, null, null, alsoAny = false, quality = qv)
+                        ru.suslikovanora.media.library.CloudSync.noteTrack(newFk, null, null, null, alsoAny = false, quality = qv, cid = cid)
                     }
                 }
                 Party.sendVariantChange(variantKey)
@@ -1634,8 +1648,8 @@ class PlayerActivity : ComponentActivity() {
                         if (u.isNullOrBlank()) continue
                         newAudios += u
                         val title = item.optString("title")
-                        val offsetMs = item.optLong("offset_ms", 0L)
-                        if (!title.isNullOrBlank()) {
+                        val offsetMs = if (item.has("offset_ms")) item.optLong("offset_ms", 0L) else item.optLong("offsetMs", 0L)
+                        if (!title.isNullOrBlank() || offsetMs != 0L) {
                             customObj.put(u, org.json.JSONObject().put("title", title).put("offsetMs", offsetMs))
                         }
                     }
@@ -1665,6 +1679,7 @@ class PlayerActivity : ComponentActivity() {
                     p.play()
                 }
             } catch (e: Throwable) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 AppLog.write("[player] switchVariant failed: ${e.message}")
                 showSeekLabel(tr("player.ne_udalos_smenit_kachestvo"))
                 ui.switchingVariant = false
@@ -1822,7 +1837,7 @@ class PlayerActivity : ComponentActivity() {
                         quality = o.optString("quality", "1080p"),
                         audio = o.optString("audio", "Stereo"),
                         bitrate = o.optDouble("bitrate", 0.0),
-                        offsetMs = o.optLong("offset_ms", 0L),
+                        offsetMs = if (o.has("offset_ms")) o.optLong("offset_ms", 0L) else o.optLong("offsetMs", 0L),
                         score = o.optInt("score", 0),
                         hardwareFlags = hf
                     )
@@ -1838,6 +1853,7 @@ class PlayerActivity : ComponentActivity() {
                 }
             }
         }
+        canonicalId = i?.getStringExtra(PlayerExtras.CANONICAL_ID) ?: Party.file?.canonicalId
         panel.collection = i?.getBooleanExtra(PlayerExtras.COLLECTION, false) == true
         markerQueries = i?.getStringExtra(PlayerExtras.MARKERS)?.let { runCatching { org.json.JSONArray(it) }.getOrNull() }
         roomTitles = i?.getStringArrayListExtra(PlayerExtras.ROOM_TITLES).orEmpty()
@@ -2236,6 +2252,9 @@ class PlayerActivity : ComponentActivity() {
         setIntent(intent)
         val url = intent.getStringExtra(EXTRA_URL)?.takeIf { it.isNotBlank() } ?: return
         if (url == currentUrl) return
+        switchVariantJob?.cancel()
+        switchVariantJob = null
+        ui.switchingVariant = false
         // Another film chosen while this one was parked behind the lock screen / in the background: wake the player
         // up first (receivers, video surface) without resuming the old film — the new one replaces it right below.
         if (keptOnStop) { playOnStart = false; handler.removeCallbacks(idleReleaseRunnable); resumeAfterStop()

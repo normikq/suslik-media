@@ -310,12 +310,6 @@ void PlayerModel::begin() {
             }
         }
     }
-    if (foundTarget && !targetVar.key.isEmpty()) {
-        m_activeVariantKey = targetVar.key;
-        if (m_index >= 0 && m_index < m_req.watchKeys.size()) {
-            m_req.watchKeys[m_index] = targetVar.key;
-        }
-    }
     m_switchingVariant = false;
     m_suggestedDowngradeKey.clear();
     m_suggestedDowngradeLabel.clear();
@@ -351,12 +345,13 @@ void PlayerModel::begin() {
     emit switchingVariantChanged();
     emit suggestedDowngradeChanged();
     PlayerLog::write(S("player open «%1»: %2 in the queue, starts with %3").arg(m_req.title).arg(n).arg(m_index + 1));
-    if (foundTarget && targetVar.key != m_req.activeVariantKey) {
+    const qint64 at = m_req.startMs ? *m_req.startMs : m_req.fromStart ? 0 : savedPos(m_index);
+    m_time = m_lastGood = at;
+    if (foundTarget && !targetVar.key.isEmpty() && targetVar.key != m_activeVariantKey) {
         switchVariant(targetVar.key);
         loadPlaylist();
         return;
     }
-    const qint64 at = m_req.startMs ? *m_req.startMs : m_req.fromStart ? 0 : savedPos(m_index);
     open(m_req.url, at, m_sidecars.value(m_index));
     loadPlaylist();
 }
@@ -471,7 +466,7 @@ void PlayerModel::open(const QString &url, qint64 startAt, const Sides &sides) {
         openWithCustom(gen, url, startAt, Sides{audio, subs}, custom);
         return;
     }
-    const QString key = watchKey();
+    const QString key = m_activeVariantKey.isEmpty() ? watchKey() : m_activeVariantKey;
     const qint64 magnet = key.section(QLatin1Char('|'), 0, 0).toLongLong();
     if (!PlaybackSettings::customAudioOn() || magnet <= 0 || !m_lib) { openWithCustom(gen, url, startAt, Sides{audio, subs}, {}); return; }
     QPointer<PlayerModel> self(this);
@@ -706,9 +701,6 @@ void PlayerModel::playEntry(int i) {
             }
             const QString newUrl = r.json.value(S("url")).toString();
             self->m_currentUrl = newUrl;
-            if (i >= 0 && i < self->m_req.watchKeys.size()) {
-                self->m_req.watchKeys[i] = targetVar.key;
-            }
             self->m_supervisor.setBitrateMbps(targetVar.bitrate);
 
             QList<core::CustomTrack> customTracks;
@@ -1646,11 +1638,6 @@ void PlayerModel::switchVariant(const QString &variantKey) {
         }
         const QString prevVariantKey = self->m_activeVariantKey;
         self->m_activeVariantKey = variantKey;
-        if (self->m_index >= 0 && self->m_index < self->m_req.watchKeys.size()) {
-            self->m_req.watchKeys[self->m_index] = variantKey;
-        } else if (self->m_req.watchKeys.isEmpty()) {
-            self->m_req.watchKeys << variantKey;
-        }
         self->m_currentUrl = newUrl;
         QString qv;
         for (const auto &v : self->m_req.variants) {
@@ -1733,10 +1720,17 @@ void PlayerModel::savePos(qint64 t, qint64 len, int i) {
 }
 
 qint64 PlayerModel::savedPos(int i) const {
+    if (!m_lib) return 0;
     const QString key = watchKey(i);
-    if (key.isEmpty() || !m_lib) return 0;
-    const auto w = m_lib->watchInfo(key);
-    return !w || w->watched() ? 0 : w->pos;
+    if (!key.isEmpty()) {
+        const auto w = m_lib->watchInfo(key);
+        if (w) return w->watched() ? 0 : w->pos;
+    }
+    if (i == m_index && !m_activeVariantKey.isEmpty() && m_activeVariantKey != key) {
+        const auto w = m_lib->watchInfo(m_activeVariantKey);
+        if (w) return w->watched() ? 0 : w->pos;
+    }
+    return 0;
 }
 
 QString PlayerModel::titleKey() const {
@@ -1754,6 +1748,7 @@ QString PlayerModel::titleKey() const {
 }
 
 QString PlayerModel::seriesKey() const {
+    if (m_req.magnetId > 0) return S("m") + num(m_req.magnetId);
     const QString id = m_req.watchKeys.isEmpty() ? QString() : m_req.watchKeys.first().section(QLatin1Char('|'), 0, 0);
     return id.trimmed().isEmpty() ? titleKey() : S("m") + id;
 }
