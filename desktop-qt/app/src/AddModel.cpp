@@ -63,15 +63,17 @@ void AddModel::update(qint64 key, const std::function<void(Added &)> &f) {
 }
 
 void AddModel::submit(const QString &text) {
-    QStringList links;
-    for (const QString &w : text.split(QRegularExpression(S("\\s+")), Qt::SkipEmptyParts))
-        if (w.trimmed().startsWith(S("magnet:?"))) links << w.trimmed();
-    if (links.isEmpty()) { setStatus(tx(S("add.vstavte_ssylku_kotoraya_nachin")), false); return; }
+    const QStringList links = core::parseMagnetLinks(text);
+    if (links.isEmpty()) {
+        setStatus(tx(text.trimmed().isEmpty() ? S("add.vstavte_magnet_ssylku") : S("add.vstavte_ssylku_kotoraya_nachin")), false);
+        return;
+    }
     m_status.clear();
+    m_statusOk = true;
     for (const QString &link : links) {
         static const QRegularExpression dnRe(S("[?&]dn=([^&]+)"));
         const auto m = dnRe.match(link);
-        const QString dn = m.hasMatch() ? formDecode(m.captured(1)).value_or(tx(S("add.magnet_ssylka"))) : tx(S("add.magnet_ssylka"));
+        const QString dn = m.hasMatch() ? core::formDecode(m.captured(1)).value_or(tx(S("add.magnet_ssylka"))) : tx(S("add.magnet_ssylka"));
         const qint64 key = push(dn);
         // сразу видно, что это не видео (по имени раздачи)
         if (const auto reason = TorrentInspector::rejectionForMagnetName(dn)) {
