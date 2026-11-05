@@ -767,23 +767,6 @@ class PlayerActivity : ComponentActivity() {
                 else savedPosition()
                 roomEntryKey = null
                 playbackPosition = targetEpisodePos
-                if (newKey != null) {
-                    val newVars = variantsForWatchKey(newKey)
-                    if (newVars.isNotEmpty()) ui.variants = newVars
-                    val sp = getSharedPreferences("player_ui", Context.MODE_PRIVATE)
-                    val fk = ru.suslikovanora.media.core.sync.WatchSync.filmKeyOf(newKey)
-                    val prefMag = fk?.let { sp.getString("vmagnet:$it", null) }
-                    val prefQ = fk?.let { sp.getString("vquality:$it", null) } ?: sp.getString("vquality:*", null)
-                    val targetVar = (if (!prefMag.isNullOrBlank()) newVars.find { it.key.substringBefore('|') == prefMag } else null)
-                        ?: (if (!prefQ.isNullOrBlank()) newVars.find { it.quality == prefQ || it.label == prefQ } else null)
-                    if (index > 0 && targetVar != null && targetVar.key != newKey) {
-                        ui.activeVariantKey = targetVar.key
-                        switchVariant(targetVar.key, initialPos = targetEpisodePos)
-                        return
-                    }
-                    ui.activeVariantKey = newKey
-                    fk?.let { sp.edit().putString("vmagnet:$it", newKey.substringBefore('|')).apply() }
-                }
                 lastTime = playbackPosition
                 ended = false
                 userPaused = false
@@ -791,6 +774,26 @@ class PlayerActivity : ComponentActivity() {
                 retryCount = 0
                 needsReload = false
                 ui.time = 0L
+                if (newKey != null) {
+                    val newVars = variantsForWatchKey(newKey)
+                    if (newVars.isNotEmpty()) ui.variants = newVars
+                    val sp = getSharedPreferences("player_ui", Context.MODE_PRIVATE)
+                    val fk = ru.suslikovanora.media.core.sync.WatchSync.filmKeyOf(newKey)
+                    val cid = canonicalId ?: Party.file?.canonicalId
+                    val prefMag = (if (!cid.isNullOrBlank()) sp.getString("vmagnet:c$cid", null) else null)
+                        ?: fk?.let { sp.getString("vmagnet:$it", null) }
+                    val prefQ = (if (!cid.isNullOrBlank()) sp.getString("vquality:c$cid", null) else null)
+                        ?: fk?.let { sp.getString("vquality:$it", null) }
+                        ?: sp.getString("vquality:*", null)
+                    val targetVar = (if (!prefMag.isNullOrBlank()) newVars.find { it.key.substringBefore('|') == prefMag } else null)
+                        ?: (if (!prefQ.isNullOrBlank()) newVars.find { it.quality == prefQ || it.label == prefQ } else null)
+                    ui.activeVariantKey = newKey
+                    if (index > 0 && targetVar != null && targetVar.key != newKey) {
+                        switchVariant(targetVar.key, initialPos = targetEpisodePos)
+                        return
+                    }
+                    fk?.let { sp.edit().putString("vmagnet:$it", newKey.substringBefore('|')).apply() }
+                }
                 if (!trackSelector.needsSidecars(entry.url)) { reconnect(forcePlay = true, startAt = playbackPosition); return }
                 // This episode's own voice-overs and subtitles are signed on the mirror first, then it opens with them.
                 runCatching { player?.pause() }
@@ -1591,7 +1594,9 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun switchVariant(variantKey: String, initialPos: Long? = null) {
-        if (variantKey.isBlank() || variantKey == ui.activeVariantKey || ui.switchingVariant) return
+        if (variantKey.isBlank() || (initialPos == null && variantKey == ui.activeVariantKey) || ui.switchingVariant) return
+        val prevVariantKey = ui.activeVariantKey
+        ui.activeVariantKey = variantKey
         ui.switchingVariant = true
         showSeekLabel(tr("player.pereklyuchenie_kachestva"))
         val currentPos = initialPos ?: perceivedPosition()
@@ -1612,12 +1617,12 @@ class PlayerActivity : ComponentActivity() {
                 }
                 val newUrl = res.optString("url")
                 if (newUrl.isBlank()) {
+                    ui.activeVariantKey = prevVariantKey
                     showSeekLabel(tr("player.ne_udalos_smenit_kachestvo"))
                     ui.switchingVariant = false
+                    if (initialPos != null) reconnect(forcePlay = true, startAt = initialPos)
                     return@launch
                 }
-                val prevVariantKey = ui.activeVariantKey
-                ui.activeVariantKey = variantKey
                 ui.switchingVariant = false
                 currentUrl = newUrl
                 val currentVariant = ui.variants.find { it.key == variantKey }
@@ -1696,6 +1701,10 @@ class PlayerActivity : ComponentActivity() {
             } catch (e: Throwable) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 AppLog.write("[player] switchVariant failed: ${e.message}")
+                if (watchProgress.currentWatchKey() == expectedKey) {
+                    ui.activeVariantKey = prevVariantKey
+                    if (initialPos != null) reconnect(forcePlay = true, startAt = initialPos)
+                }
                 showSeekLabel(tr("player.ne_udalos_smenit_kachestvo"))
                 ui.switchingVariant = false
             }

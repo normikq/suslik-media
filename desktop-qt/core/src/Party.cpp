@@ -71,9 +71,12 @@ bool PartyFileRef::matches(const QString &fileKey, const QString &otherCanonical
         if (v.key == fileKey) return true;
     }
     if (canonicalId && !canonicalId->isEmpty() && !otherCanonicalId.isEmpty() && *canonicalId == otherCanonicalId) {
+        const QString myMag = key.contains(QLatin1Char('|')) ? key.section(QLatin1Char('|'), 0, 0) : QString();
+        const QString otherMag = fileKey.contains(QLatin1Char('|')) ? fileKey.section(QLatin1Char('|'), 0, 0) : QString();
+        if (!myMag.isEmpty() && myMag == otherMag) return false;
         const auto ep1 = key.contains(QLatin1Char('|')) ? episodePair(key.section(QLatin1Char('|'), 1)) : std::nullopt;
         const auto ep2 = fileKey.contains(QLatin1Char('|')) ? episodePair(fileKey.section(QLatin1Char('|'), 1)) : std::nullopt;
-        if (ep1 && ep2 && *ep1 != *ep2) return false;
+        if (ep1 != ep2) return false;
         return true;
     }
     return false;
@@ -568,19 +571,6 @@ PartyVariant buildPartyVariant(const LibraryItem &item, const MFile &file, const
     const PartyVariant *sp = (serverProfile.has_value() && (serverProfile->key.isEmpty() || serverProfile->key == wKey || serverProfile->key.startsWith(mPrefix)))
                                  ? &*serverProfile
                                  : nullptr;
-    if (sp && sp->key == wKey && !sp->label.isEmpty() && sp->bitrate > 0.0) {
-        PartyVariant v = *sp;
-        if (v.quality.isEmpty() && (width > 0 || height > 0)) {
-            if (width >= 3000 || height >= 1600) v.quality = QStringLiteral("4K");
-            else if (width >= 1600 || height >= 900) v.quality = QStringLiteral("1080p");
-            else if (width >= 1100 || height >= 600) v.quality = QStringLiteral("720p");
-            else v.quality = QStringLiteral("480p");
-            if (!v.label.startsWith(v.quality)) {
-                v.label = v.quality + QStringLiteral(" · ") + v.label;
-            }
-        }
-        return v;
-    }
     const QString combined = (item.m.name + QLatin1Char(' ') + file.name).trimmed();
     const QString l = combined.toLower();
 
@@ -609,8 +599,15 @@ PartyVariant buildPartyVariant(const LibraryItem &item, const MFile &file, const
     else if (match(R"((?:^|[^a-z])dts(?![a-z]))")) audio = QStringLiteral("DTS 5.1");
     else if (match(R"(dd\+|(?:^|[^a-z])ddp(?![a-z])|(?:^|[^a-z])e[\s._-]?ac[\s._-]?3(?!\d)|dolby\s*digital\s*plus)")) audio = QStringLiteral("DD+");
     else if (match(R"((?:^|[^a-z])ac[\s._-]?3(?!\d)|(?:^|[^a-z])dd[\s._-]?5\.1|(?:^|[^\d.])5\.1(?!\d))")) audio = QStringLiteral("AC3 5.1");
-    if (audio == QStringLiteral("Stereo") && sp && !sp->audio.isEmpty() && sp->audio != QStringLiteral("Stereo")) {
-        audio = sp->audio;
+    if (sp && !sp->audio.isEmpty() && sp->audio != QStringLiteral("Stereo")) {
+        const QString spAudioL = sp->audio.toLower();
+        if (audio == QStringLiteral("Stereo")
+            || spAudioL.contains(QStringLiteral("dts-hd"))
+            || spAudioL.contains(QStringLiteral("dts:x"))
+            || spAudioL.contains(QStringLiteral("atmos"))
+            || spAudioL.contains(QStringLiteral("truehd"))) {
+            audio = sp->audio;
+        }
     }
 
     QStringList hwFlags;

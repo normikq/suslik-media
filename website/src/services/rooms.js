@@ -626,7 +626,16 @@ function handleRoomAction(roomId, user, action) {
           actor.variant_key = null;
         } else if (typeof action.variant_key === "string" && action.variant_key.trim()) {
           actor.variant_key = action.variant_key.trim().slice(0, 1000);
-        } else if (!actor.variant_key || !(Array.isArray(file.variants) && file.variants.some(v => v.key === actor.variant_key))) {
+        } else if (actor.variant_key && Array.isArray(file.variants)) {
+          const exact = file.variants.find(v => v.key === actor.variant_key);
+          if (exact) {
+            actor.variant_key = exact.key;
+          } else {
+            const prevMag = String(actor.variant_key).split("|")[0];
+            const byMag = prevMag ? file.variants.find(v => String(v.key || "").split("|")[0] === prevMag) : null;
+            actor.variant_key = byMag ? byMag.key : file.key;
+          }
+        } else {
           actor.variant_key = file.key;
         }
       }
