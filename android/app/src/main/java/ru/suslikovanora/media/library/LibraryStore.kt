@@ -56,22 +56,6 @@ class LibraryStore(context: Context) {
     private val titlePrefs = app.getSharedPreferences("poster_title", Context.MODE_PRIVATE) // query -> "time|Русское название" or "time|"
     private val episodePrefs = app.getSharedPreferences("last_episode", Context.MODE_PRIVATE)
 
-    init {
-        loadCachedAnimationFlags()
-        if (sharedItems.isNotEmpty()) {
-            magnets = sharedMagnets
-            items = sharedItems
-        }
-        if (sharedPosterPaths.isNotEmpty()) posterPaths.putAll(sharedPosterPaths)
-        if (sharedServerTags.isNotEmpty()) serverTags.putAll(sharedServerTags)
-        if (sharedServerProfiles.isNotEmpty()) serverProfiles.putAll(sharedServerProfiles)
-        for ((k, v) in posterPrefs.all) {
-            val url = (v as? String)?.substringAfter('|', "")?.takeIf { it.startsWith("/api/poster/img/") } ?: continue
-            posterPaths[k] = url
-            sharedPosterPaths[k] = url
-        }
-    }
-
     companion object {
         @Volatile private var sharedMagnets: List<Magnet> = emptyList()
         @Volatile private var sharedItems: List<LibraryItem> = emptyList()
@@ -723,5 +707,21 @@ class LibraryStore(context: Context) {
     fun saveEpisode(id: Long, path: String) {
         episodeMemory[id] = path
         episodePrefs.edit().putString(id.toString(), path).apply()
+    }
+
+    init {
+        loadCachedAnimationFlags()
+        if (sharedItems.isNotEmpty()) {
+            magnets = sharedMagnets
+            items = sharedItems
+        }
+        if (sharedPosterPaths.isNotEmpty()) posterPaths.putAll(sharedPosterPaths)
+        if (sharedServerTags.isNotEmpty()) serverTags.putAll(sharedServerTags)
+        if (sharedServerProfiles.isNotEmpty()) serverProfiles.putAll(sharedServerProfiles)
+        for ((k, v) in posterPrefs.all) {
+            val url = (v as? String)?.substringAfter('|', "")?.takeIf { it.startsWith("/api/poster/img/") } ?: continue
+            posterPaths[k] = url
+            sharedPosterPaths[k] = url
+        }
     }
 }
