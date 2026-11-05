@@ -145,7 +145,8 @@ public:
     void saveMediaDimensions(qint64 id, const QString &path, int width, int height);
 
     // ---- прогресс ----
-    std::optional<WatchInfo> watchInfo(const QString &key, const std::optional<QString> &cid = std::nullopt) const;
+    std::optional<WatchInfo> watchInfo(const QString &key) const;
+    std::optional<WatchInfo> watchInfoWithFallback(const QString &key, const std::optional<QString> &cid = std::nullopt) const;
     /// Плеер: место в файле (в медиатеку и в облако).
     void noteWatch(const QString &key, qint64 pos, qint64 len, const std::optional<QString> &cid = std::nullopt);
     CloudSync &sync() const { return m_sync; }
@@ -243,7 +244,9 @@ private:
     std::vector<std::function<void()>> m_refreshWaiters;
     int m_tagsRound = 0;
     QHash<qint64, core::PartyVariant> m_serverProfiles;
+    mutable bool m_versionsBuilt = false;
     mutable QHash<qint64, QList<LibraryItem>> m_versionsMap;
+    mutable QHash<qint64, qint64> m_versionRoot;
 };
 
 } // namespace suslik::app

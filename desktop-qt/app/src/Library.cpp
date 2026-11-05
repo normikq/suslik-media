@@ -120,15 +120,20 @@ const LibraryItem *Library::item(qint64 id) const {
 }
 
 QList<LibraryItem> Library::versionsOf(qint64 magnetId) const {
-    if (m_versionsMap.isEmpty() && !m_items.isEmpty()) {
+    if (magnetId <= 0 || m_items.isEmpty()) return {};
+    if (!m_versionsBuilt) {
         const auto [shown, vMap] = groupVersions(m_items, [this](const LibraryItem &i) { return posterPathOf(i); });
         m_versionsMap = vMap;
-    }
-    if (m_versionsMap.contains(magnetId)) return m_versionsMap.value(magnetId);
-    for (auto it = m_versionsMap.constBegin(); it != m_versionsMap.constEnd(); ++it) {
-        for (const auto &item : it.value()) {
-            if (item.m.id == magnetId) return it.value();
+        m_versionRoot.clear();
+        for (auto it = m_versionsMap.constBegin(); it != m_versionsMap.constEnd(); ++it) {
+            for (const auto &ver : it.value()) {
+                m_versionRoot.insert(ver.m.id, it.key());
+            }
         }
+        m_versionsBuilt = true;
+    }
+    if (const auto rootIt = m_versionRoot.constFind(magnetId); rootIt != m_versionRoot.cend()) {
+        return m_versionsMap.value(*rootIt);
     }
     if (const LibraryItem *single = item(magnetId)) return {*single};
     return {};
@@ -145,7 +150,9 @@ void Library::publish(const QList<Magnet> &list) {
     m_voiceOvers.clear();
     for (const Magnet &m : list) (isVoiceOverOnly(m) ? m_voiceOvers : library) << m;
     m_items = prepareItems(library);
+    m_versionsBuilt = false;
     m_versionsMap.clear();
+    m_versionRoot.clear();
     bump();
 }
 
@@ -254,7 +261,9 @@ void Library::logout() {
     m_api.post(S("/api/logout"), {}, [](const ApiResult &) {});
     m_api.setDeviceToken(std::nullopt);
     m_items.clear();
+    m_versionsBuilt = false;
     m_versionsMap.clear();
+    m_versionRoot.clear();
     m_voiceOvers.clear();
     applyProfile(std::nullopt);
     m_sync.setUserId(std::nullopt);
@@ -420,6 +429,7 @@ void Library::remove(qint64 id) {
     m_api.post(path, {}, [this, id](const ApiResult &r) {
         if (!r.ok()) { emit actionFailed(ApiClient::describe(r.error)); return; }
         m_items.erase(std::remove_if(m_items.begin(), m_items.end(), [id](const LibraryItem &i) { return i.m.id == id; }), m_items.end());
+        m_versionsBuilt = false;
         bump();
     });
 }
@@ -431,6 +441,7 @@ void Library::setAi(const QHash<qint64, std::optional<AiTitle>> &answers) {
         const auto a = answers.constFind(i.m.id);
         if (a != answers.cend()) i = i.withAiTitle(*a);
     }
+    m_versionsBuilt = false;
     bump();
 }
 
@@ -630,7 +641,7 @@ void Library::recordAnimation(const QString &key, const QJsonObject &j) {
 }
 
 void Library::notePoster(const QString &key, const QString &path) {
-    if (m_posterPaths.value(key) != path) { m_posterPaths.insert(key, path); bump(); }
+    if (m_posterPaths.value(key) != path) { m_posterPaths.insert(key, path); m_versionsBuilt = false; bump(); }
 }
 
 std::optional<QString> Library::posterPathOf(const LibraryItem &item) const {
@@ -919,7 +930,11 @@ static std::optional<WatchInfo> parseWatchInfoVal(const std::optional<QString> &
     return WatchInfo{pos, p[1].toLongLong(), p[2].toLongLong()};
 }
 
-std::optional<WatchInfo> Library::watchInfo(const QString &key, const std::optional<QString> &cid) const {
+std::optional<WatchInfo> Library::watchInfo(const QString &key) const {
+    return parseWatchInfoVal(m_watch.get(key));
+}
+
+std::optional<WatchInfo> Library::watchInfoWithFallback(const QString &key, const std::optional<QString> &cid) const {
     if (const auto direct = parseWatchInfoVal(m_watch.get(key))) return direct;
 
     const qsizetype bar = key.indexOf(QLatin1Char('|'));
@@ -944,10 +959,11 @@ std::optional<WatchInfo> Library::watchInfo(const QString &key, const std::optio
                 if (targetEp) continue;
                 const auto w = parseWatchInfoVal(m_watch.get(watchKey(ver.m.id, ver.playable.file)));
                 if (w && (!best || w->at > best->at)) best = w;
-            } else {
+            } else if (targetEp) {
                 for (const auto &s : ver.playable.seasons) {
+                    if (s.season != targetEp->first) continue;
                     for (const auto &e : s.items) {
-                        if (targetEp && core::episodePair(e.file.path) == targetEp) {
+                        if (e.episode == targetEp->second) {
                             const auto w = parseWatchInfoVal(m_watch.get(watchKey(ver.m.id, e.file)));
                             if (w && (!best || w->at > best->at)) best = w;
                         }
@@ -959,9 +975,10 @@ std::optional<WatchInfo> Library::watchInfo(const QString &key, const std::optio
 
     // 2. Поиск по canonicalId (cid) в m_watch (в т.ч. пришедшее с других устройств)
     if (effCid && !effCid->isEmpty()) {
+        const QString cidSuffix = QLatin1Char('|') + *effCid;
         const QHash<QString, QString> all = m_watch.all();
         for (auto it = all.cbegin(); it != all.cend(); ++it) {
-            if (it.key() == key) continue;
+            if (it.key() == key || !it.value().endsWith(cidSuffix)) continue;
             const QStringList p = it.value().split(QLatin1Char('|'));
             if (p.size() < 4 || p[3] != *effCid) continue;
             const QString kPath = after(it.key(), QLatin1Char('|'));

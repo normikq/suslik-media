@@ -165,7 +165,9 @@ QString PlayModel::poster() const {
     return it ? m_lib->posterPath(it->posterQueries) : QString();
 }
 
-std::optional<WatchInfo> PlayModel::watch() const { return m_lib ? m_lib->watchInfo(watchKey(m_id, currentFile())) : std::nullopt; }
+std::optional<WatchInfo> PlayModel::watch() const {
+    return (m_lib && m_id > 0) ? m_lib->watchInfoWithFallback(watchKey(m_id, currentFile())) : std::nullopt;
+}
 
 QStringList PlayModel::chips() const {
     const LibraryItem *it = item();
@@ -291,12 +293,13 @@ void PlayModel::toggleMine() { if (const LibraryItem *it = item()) m_lib->setMin
 void PlayModel::toggleFavorite() { if (const LibraryItem *it = item()) m_lib->setFavorite(m_id, !it->m.favorite); }
 
 bool PlayModel::hasMultipleVersions() const {
-    return m_lib && m_lib->versionsOf(m_id).size() > 1;
+    return m_lib && m_id > 0 && m_lib->versionsOf(m_id).size() > 1;
 }
 
 QString PlayModel::versionLabel() const {
+    if (!m_lib || m_id <= 0 || !hasMultipleVersions()) return {};
     const LibraryItem *it = item();
-    if (!it || !m_lib) return {};
+    if (!it) return {};
     const MFile cur = currentFile();
     const auto [w, h] = m_lib->cachedMediaDimensions(m_id, cur.path);
     const auto pv = core::buildPartyVariant(*it, cur, m_lib->serverProfile(m_id), w, h);

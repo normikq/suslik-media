@@ -1808,11 +1808,11 @@ qint64 PlayerModel::savedPos(int i) const {
     const std::optional<QString> cid = m_canonicalId.isEmpty() ? std::nullopt : std::optional<QString>(m_canonicalId);
     const QString key = watchKey(i);
     if (!key.isEmpty()) {
-        const auto w = m_lib->watchInfo(key, cid);
+        const auto w = m_lib->watchInfoWithFallback(key, cid);
         if (w) return w->watched() ? 0 : w->pos;
     }
     if (i == m_index && !m_activeVariantKey.isEmpty() && m_activeVariantKey != key) {
-        const auto w = m_lib->watchInfo(m_activeVariantKey, cid);
+        const auto w = m_lib->watchInfoWithFallback(m_activeVariantKey, cid);
         if (w) return w->watched() ? 0 : w->pos;
     }
     return 0;

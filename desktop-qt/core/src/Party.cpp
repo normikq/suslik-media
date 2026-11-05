@@ -574,14 +574,36 @@ PartyVariant buildPartyVariant(const LibraryItem &item, const MFile &file, const
     const QString combined = (item.m.name + QLatin1Char(' ') + file.name).trimmed();
     const QString l = combined.toLower();
 
-    QString quality;
-    auto match = [&](const char *pat) {
-        return l.contains(QRegularExpression(QString::fromUtf8(pat), QRegularExpression::CaseInsensitiveOption));
+    static const auto rx = [](const char *pat) {
+        return QRegularExpression(QString::fromUtf8(pat), QRegularExpression::CaseInsensitiveOption);
     };
-    if (match(R"((?:^|[^a-z0-9])(?:2160p|4k|uhd)(?![a-z])|(?:^|\D)3840(?!\d))")) quality = QStringLiteral("4K");
-    else if (match(R"((?:^|\D)1080[pi](?![a-z])|(?:^|\D)1920(?!\d))")) quality = QStringLiteral("1080p");
-    else if (match(R"((?:^|\D)720p(?![a-z])|(?:^|\D)1280(?!\d))")) quality = QStringLiteral("720p");
-    else if (match(R"((?:^|\D)(?:480|576)[pi](?![a-z])|(?:^|[^a-z])dvd)")) quality = QStringLiteral("480p");
+    static const QRegularExpression re4k = rx(R"((?:^|[^a-z0-9])(?:2160p|4k|uhd)(?![a-z])|(?:^|\D)3840(?!\d))");
+    static const QRegularExpression re1080 = rx(R"((?:^|\D)1080[pi](?![a-z])|(?:^|\D)1920(?!\d))");
+    static const QRegularExpression re720 = rx(R"((?:^|\D)720p(?![a-z])|(?:^|\D)1280(?!\d))");
+    static const QRegularExpression re480 = rx(R"((?:^|\D)(?:480|576)[pi](?![a-z])|(?:^|[^a-z])dvd)");
+    static const QRegularExpression reAtmos = rx(R"(atmos(?![a-z]))");
+    static const QRegularExpression reTruehd = rx(R"(truehd)");
+    static const QRegularExpression reDtsx = rx(R"(dts[:._-]?x(?![a-z0-9]))");
+    static const QRegularExpression reDtshd = rx(R"(dts[\s._-]?hd)");
+    static const QRegularExpression reDts = rx(R"((?:^|[^a-z])dts(?![a-z]))");
+    static const QRegularExpression reDdp = rx(R"(dd\+|(?:^|[^a-z])ddp(?![a-z])|(?:^|[^a-z])e[\s._-]?ac[\s._-]?3(?!\d)|dolby\s*digital\s*plus)");
+    static const QRegularExpression reAc3 = rx(R"((?:^|[^a-z])ac[\s._-]?3(?!\d)|(?:^|[^a-z])dd[\s._-]?5\.1|(?:^|[^\d.])5\.1(?!\d))");
+    static const QRegularExpression reDv = rx(R"(dolby[\s._-]?vision|dovi|(?:^|[^a-z])dv(?![a-z]))");
+    static const QRegularExpression reHdr = rx(R"(hdr10\+|hdr10plus|hdr10|(?:^|[^a-z])hdr(?![a-z]))");
+    static const QRegularExpression re10bit = rx(R"(10[\s._-]?bit|hi10p)");
+    static const QRegularExpression reRemux = rx(R"(remux)");
+    static const QRegularExpression reBdrip = rx(R"(bdrip|brrip|blu[\s._-]?ray)");
+    static const QRegularExpression reWebdl = rx(R"((?:^|[^a-z0-9])web[\s._-]?(?:dl|rip)(?![a-z0-9]))");
+
+    const bool has4k = l.contains(re4k);
+    const bool has1080 = !has4k && l.contains(re1080);
+    const bool has720 = !has4k && !has1080 && l.contains(re720);
+
+    QString quality;
+    if (has4k) quality = QStringLiteral("4K");
+    else if (has1080) quality = QStringLiteral("1080p");
+    else if (has720) quality = QStringLiteral("720p");
+    else if (l.contains(re480)) quality = QStringLiteral("480p");
     else if (width > 0 || height > 0) {
         if (width >= 3000 || height >= 1600) quality = QStringLiteral("4K");
         else if (width >= 1600 || height >= 900) quality = QStringLiteral("1080p");
@@ -592,13 +614,13 @@ PartyVariant buildPartyVariant(const LibraryItem &item, const MFile &file, const
     }
 
     QString audio = QStringLiteral("Stereo");
-    if (match(R"(atmos(?![a-z]))")) audio = QStringLiteral("TrueHD Atmos");
-    else if (match(R"(truehd)")) audio = QStringLiteral("TrueHD");
-    else if (match(R"(dts[:._-]?x(?![a-z0-9]))")) audio = QStringLiteral("DTS:X");
-    else if (match(R"(dts[\s._-]?hd)")) audio = QStringLiteral("DTS-HD MA");
-    else if (match(R"((?:^|[^a-z])dts(?![a-z]))")) audio = QStringLiteral("DTS 5.1");
-    else if (match(R"(dd\+|(?:^|[^a-z])ddp(?![a-z])|(?:^|[^a-z])e[\s._-]?ac[\s._-]?3(?!\d)|dolby\s*digital\s*plus)")) audio = QStringLiteral("DD+");
-    else if (match(R"((?:^|[^a-z])ac[\s._-]?3(?!\d)|(?:^|[^a-z])dd[\s._-]?5\.1|(?:^|[^\d.])5\.1(?!\d))")) audio = QStringLiteral("AC3 5.1");
+    if (l.contains(reAtmos)) audio = QStringLiteral("TrueHD Atmos");
+    else if (l.contains(reTruehd)) audio = QStringLiteral("TrueHD");
+    else if (l.contains(reDtsx)) audio = QStringLiteral("DTS:X");
+    else if (l.contains(reDtshd)) audio = QStringLiteral("DTS-HD MA");
+    else if (l.contains(reDts)) audio = QStringLiteral("DTS 5.1");
+    else if (l.contains(reDdp)) audio = QStringLiteral("DD+");
+    else if (l.contains(reAc3)) audio = QStringLiteral("AC3 5.1");
     if (sp && !sp->audio.isEmpty() && sp->audio != QStringLiteral("Stereo")) {
         const QString spAudioL = sp->audio.toLower();
         if (audio == QStringLiteral("Stereo")
@@ -611,9 +633,9 @@ PartyVariant buildPartyVariant(const LibraryItem &item, const MFile &file, const
     }
 
     QStringList hwFlags;
-    if (match(R"(dolby[\s._-]?vision|dovi|(?:^|[^a-z])dv(?![a-z]))")) hwFlags << QStringLiteral("dv");
-    if (match(R"(hdr10\+|hdr10plus|hdr10|(?:^|[^a-z])hdr(?![a-z]))")) hwFlags << QStringLiteral("hdr");
-    if (match(R"((?:^|[^a-z])dts(?![a-z]))")) hwFlags << QStringLiteral("dts");
+    if (l.contains(reDv)) hwFlags << QStringLiteral("dv");
+    if (l.contains(reHdr)) hwFlags << QStringLiteral("hdr");
+    if (l.contains(reDts)) hwFlags << QStringLiteral("dts");
     if (sp) {
         for (const QString &fl : sp->hardwareFlags) {
             if (!hwFlags.contains(fl)) hwFlags << fl;
@@ -621,10 +643,7 @@ PartyVariant buildPartyVariant(const LibraryItem &item, const MFile &file, const
     }
 
     int score = smartQualityScore(combined);
-    if (!match(R"((?:^|[^a-z0-9])(?:2160p|4k|uhd)(?![a-z])|(?:^|\D)3840(?!\d))")
-        && !match(R"((?:^|\D)1080[pi](?![a-z])|(?:^|\D)1920(?!\d))")
-        && !match(R"((?:^|\D)720p(?![a-z])|(?:^|\D)1280(?!\d))")
-        && (width > 0 || height > 0)) {
+    if (!has4k && !has1080 && !has720 && (width > 0 || height > 0)) {
         if (quality == QStringLiteral("4K")) score += 300;
         else if (quality == QStringLiteral("1080p")) score += 200;
         else if (quality == QStringLiteral("720p")) score += 100;
@@ -647,12 +666,12 @@ PartyVariant buildPartyVariant(const LibraryItem &item, const MFile &file, const
     else if (hwFlags.contains(QStringLiteral("hdr"))) {
         if (sp && sp->label.contains(QStringLiteral("HDR10+"))) parts << QStringLiteral("HDR10+");
         else parts << QStringLiteral("HDR");
-    } else if (match(R"(10[\s._-]?bit|hi10p)") || (sp && sp->label.contains(QStringLiteral("10-bit")))) {
+    } else if (l.contains(re10bit) || (sp && sp->label.contains(QStringLiteral("10-bit")))) {
         parts << QStringLiteral("10-bit");
     }
-    if (match(R"(remux)")) parts << QStringLiteral("BDRemux");
-    else if (match(R"(bdrip|brrip|blu[\s._-]?ray)")) parts << QStringLiteral("BDRip");
-    else if (match(R"((?:^|[^a-z0-9])web[\s._-]?(?:dl|rip)(?![a-z0-9]))")) parts << QStringLiteral("WEB-DL");
+    if (l.contains(reRemux)) parts << QStringLiteral("BDRemux");
+    else if (l.contains(reBdrip)) parts << QStringLiteral("BDRip");
+    else if (l.contains(reWebdl)) parts << QStringLiteral("WEB-DL");
     if (audio != QStringLiteral("Stereo")) parts << audio;
 
     QString label = parts.join(QStringLiteral(" · "));
