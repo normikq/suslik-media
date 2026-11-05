@@ -200,6 +200,16 @@ fun PlaySheet(
     var customByPath by remember(target) { mutableStateOf<Map<String, List<CustomTrack>>>(emptyMap()) }
     // Links, side files and the playlist are all fetched (or failed): what «Смотреть» waits for
     var prepared by remember(target) { mutableStateOf(false) }
+    fun matchingFileInVersion(ver: LibraryItem, targetEp: Pair<Int, Int>?): MFile? {
+        if (targetEp != null) {
+            val vs = ver.playable as? Playable.Series
+            if (vs != null) {
+                return vs.seasons.find { it.season == targetEp.first }?.items?.find { it.episode == targetEp.second }?.file
+            }
+            return ver.m.files.find { !it.isFolder && episodePair(it.path) == targetEp }
+        }
+        return (ver.playable as? Playable.Movie)?.file ?: mainVideo(ver.m)
+    }
     // Where the player stopped last time (the same place the player itself resumes from); null = nothing to resume.
     val resumeAt = remember(target, store.watchVersion) {
         val posPrefs = context.getSharedPreferences("positions", Context.MODE_PRIVATE)
@@ -208,15 +218,14 @@ fun PlaySheet(
         if (direct != null) direct
         else {
             val versions = store.versionsOf(target.magnetId)
-            val targetEp = episodePair(target.file.path)
+            val targetEp = if (series != null && !isColl) {
+                series.seasons.firstNotNullOfOrNull { s -> s.items.find { it.file.path == target.file.path }?.let { s.season to it.episode } }
+                    ?: episodePair(target.file.path)
+            } else episodePair(target.file.path)
             var sibPos: Long? = null
             for (ver in versions) {
                 if (ver.m.id == target.magnetId) continue
-                val vFile = if (targetEp != null) {
-                    ver.m.files.find { !it.isFolder && episodePair(it.path) == targetEp }
-                } else {
-                    (ver.playable as? Playable.Movie)?.file ?: mainVideo(ver.m)
-                }
+                val vFile = matchingFileInVersion(ver, targetEp)
                 if (vFile != null) {
                     val p = posPrefs.getLong("w:${watchKey(ver.m.id, vFile)}", 0L)
                     if (p >= 5_000L) { sibPos = p; break }
@@ -230,15 +239,14 @@ fun PlaySheet(
         val wk = watchKey(target.magnetId, target.file)
         store.watchInfo(wk) ?: run {
             val versions = store.versionsOf(target.magnetId)
-            val targetEp = episodePair(target.file.path)
+            val targetEp = if (series != null && !isColl) {
+                series.seasons.firstNotNullOfOrNull { s -> s.items.find { it.file.path == target.file.path }?.let { s.season to it.episode } }
+                    ?: episodePair(target.file.path)
+            } else episodePair(target.file.path)
             var best: WatchInfo? = null
             for (ver in versions) {
                 if (ver.m.id == target.magnetId) continue
-                val vFile = if (targetEp != null) {
-                    ver.m.files.find { !it.isFolder && episodePair(it.path) == targetEp }
-                } else {
-                    (ver.playable as? Playable.Movie)?.file ?: mainVideo(ver.m)
-                }
+                val vFile = matchingFileInVersion(ver, targetEp)
                 if (vFile != null) {
                     val w = store.watchInfo(watchKey(ver.m.id, vFile))
                     if (w != null && (best == null || w.at > best.at)) best = w

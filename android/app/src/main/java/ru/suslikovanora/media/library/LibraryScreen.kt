@@ -150,15 +150,7 @@ enum class Category(val label: String) {
     Other(tr("library.drugoe"))
 }
 
-fun itemYear(item: LibraryItem): String {
-    val match = Regex("""\b(19\d{2}|20\d{2})\b""").find(item.m.name)
-    if (match != null) return match.value
-    for (f in item.m.files) {
-        val fMatch = Regex("""\b(19\d{2}|20\d{2})\b""").find(f.name)
-        if (fMatch != null) return fMatch.value
-    }
-    return "2024"
-}
+fun itemYear(item: LibraryItem): String = releaseYear(item)?.toString() ?: "2024"
 
 fun isAnime(item: LibraryItem): Boolean {
     val text = (item.m.name + " " + item.baseTitle).lowercase()
@@ -194,6 +186,9 @@ fun itemTypeLabel(item: LibraryItem): String {
     }
 }
 
+private val FPS_RE = Regex("""(\d+(\.\d+)?)\s*fps""")
+private val BITRATE_RE = Regex("""(\d+(\.\d+)?)\s*мбит/с""")
+
 fun itemSpecs(
     item: LibraryItem,
     mediaStr: String?,
@@ -224,12 +219,12 @@ fun itemSpecs(
         else -> ""
     }
 
-    val fpsMatch = Regex("""(\d+(\.\d+)?)\s*fps""").find(str) ?: Regex("""(\d+(\.\d+)?)\s*fps""").find(name)
+    val fpsMatch = FPS_RE.find(str) ?: FPS_RE.find(name)
     val fps = fpsMatch?.value.orEmpty()
 
     val p1 = listOf(quality, codec, fps).filter { it.isNotBlank() }
 
-    val brMatch = Regex("""(\d+(\.\d+)?)\s*мбит/с""").find(str)
+    val brMatch = BITRATE_RE.find(str)
     val bitrate = if (brMatch != null) {
         brMatch.value
     } else if (serverProf != null && serverProf.bitrate > 0) {
@@ -1041,7 +1036,7 @@ private fun PosterArtwork(
 ) {
     val context = LocalContext.current
     val m = item.m
-    val baseTitle = store.titleOf(item)
+    val baseTitle = remember(item, store.titleVersion) { store.titleOf(item) }
 
     Box(
         Modifier.fillMaxWidth().aspectRatio(2f / 3f)
@@ -1070,7 +1065,7 @@ private fun PosterArtwork(
             MineMark(group.any { it.m.mine }, Modifier.align(Alignment.TopStart).padding(8.dp)) { on -> group.map { store.setMine(it.m, on) }.firstOrNull { it != null } }
             FavStar(group.any { it.m.favorite }, Modifier.align(Alignment.TopEnd).padding(8.dp)) { on -> group.map { store.setFavorite(it.m, on) }.firstOrNull { it != null } }
             // Dolby Vision / HDR / DTS under the star
-            val tags = remember(item, versions, group.flatMap { store.tagsOf(it) }) { collapseTags(group.flatMap { store.tagsOf(it) }) }
+            val tags = remember(item.m.id, versions, store.tagsVersion) { collapseTags(group.flatMap { store.tagsOf(it) }) }
             if (tags.isNotEmpty()) {
                 Column(Modifier.align(Alignment.TopEnd).padding(top = 46.dp, end = 8.dp), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     for (t in tags) TagChip(t)
@@ -1137,12 +1132,13 @@ private fun TileDetails(
 ) {
     val m = item.m
     val playable = item.playable
+    val displayTitle = remember(item, store.titleVersion) { store.titleOf(item) }
     Column(Modifier.padding(start = 2.dp, end = 2.dp, top = 8.dp)) {
         // As on the PC: the plain title (the AI's one once accepted, else TMDB's Russian one), not the release name with its tags
-        Text(store.titleOf(item), color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp, lineHeight = 18.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(displayTitle, color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp, lineHeight = 18.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Text("${itemYear(item)} • ${itemTypeLabel(item)} · ${formatBytes(m.size)}", color = Sm.muted, fontFamily = Onest, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
         if (m.ready && media != null) {
-            val specs = remember(item, media) { itemSpecs(item, media, store.serverProfiles[item.m.id]) }
+            val specs = remember(item, media, store.tagsVersion) { itemSpecs(item, media, store.serverProfiles[item.m.id]) }
             Text(specs.first, color = Color(0xFFB0B7C6), fontFamily = Onest, fontSize = 11.5.sp, modifier = Modifier.padding(top = 2.dp))
         }
         val lastNow = last

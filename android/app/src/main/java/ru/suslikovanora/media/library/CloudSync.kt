@@ -123,7 +123,9 @@ object CloudSync {
         val targetEp = if (key != null && '|' in key) ru.suslikovanora.media.core.episodePair(key.substringAfter('|')) else null
         var best: WatchEntry? = null
         for ((k, v) in wPrefs.all) {
-            val e = parseWatch(k, v) ?: continue
+            val s = v as? String ?: continue
+            if (!s.endsWith("|$cid")) continue
+            val e = parseWatch(k, s) ?: continue
             if (e.cid != cid) continue
             if (targetEp != null) {
                 val ep = if ('|' in k) ru.suslikovanora.media.core.episodePair(k.substringAfter('|')) else null
