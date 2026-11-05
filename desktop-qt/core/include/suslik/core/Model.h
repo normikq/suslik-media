@@ -200,7 +200,7 @@ int smartQualityScore(const QString &name);
 std::optional<std::pair<int, int>> itemSeasons(const LibraryItem &item);
 QList<LibraryItem> sortVersions(const QList<LibraryItem> &versions);
 QList<VersionSection> versionSections(const QList<LibraryItem> &versions);
-QString versionLine(const LibraryItem &v, bool inSection);
+QString versionLine(const LibraryItem &v, bool inSection = false);
 
 using PosterOf = std::function<std::optional<QString>(const LibraryItem &)>;
 /// Один фильм или сериал, добавленный несколько раз: одна плитка. second — id показанного → все версии по порядку.

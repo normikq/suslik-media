@@ -930,7 +930,7 @@ std::optional<WatchInfo> Library::watchInfo(const QString &key, const std::optio
     std::optional<QString> effCid = (cid && !cid->isEmpty()) ? cid : std::nullopt;
     if (!effCid && magId > 0) {
         if (const LibraryItem *it = item(magId)) {
-            if (const auto ai = it->m.acceptedAi(); ai && !ai->canonicalId.isEmpty()) effCid = ai->canonicalId;
+            if (const auto ai = it->m.acceptedAi(); ai && ai->canonicalId && !ai->canonicalId->isEmpty()) effCid = ai->canonicalId;
         }
     }
 
@@ -983,7 +983,7 @@ void Library::noteWatch(const QString &key, qint64 pos, qint64 len, const std::o
         const qint64 magId = before(key, QLatin1Char('|')).toLongLong();
         if (magId > 0) {
             if (const LibraryItem *it = item(magId)) {
-                if (const auto ai = it->m.acceptedAi(); ai && !ai->canonicalId.isEmpty()) effCid = ai->canonicalId;
+                if (const auto ai = it->m.acceptedAi(); ai && ai->canonicalId && !ai->canonicalId->isEmpty()) effCid = ai->canonicalId;
             }
         }
     }

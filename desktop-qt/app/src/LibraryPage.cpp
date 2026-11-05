@@ -462,8 +462,8 @@ void LibraryPage::open(qint64 id) {
         QString savedMag;
         for (const auto &v : vs) {
             if (auto m = ui.get(S("vmagnet:m") + QString::number(v.m.id)); m && !m->isEmpty()) { savedMag = *m; break; }
-            if (v.m.aiTitle && !v.m.aiTitle->canonicalId.isEmpty()) {
-                if (auto m = ui.get(S("vmagnet:c") + v.m.aiTitle->canonicalId); m && !m->isEmpty()) { savedMag = *m; break; }
+            if (v.m.aiTitle && v.m.aiTitle->canonicalId && !v.m.aiTitle->canonicalId->isEmpty()) {
+                if (auto m = ui.get(S("vmagnet:c") + *v.m.aiTitle->canonicalId); m && !m->isEmpty()) { savedMag = *m; break; }
             }
         }
         if (savedMag.isEmpty()) {
@@ -627,8 +627,8 @@ void LibraryPage::chooseVersion(qint64 id) {
     if (!vs.isEmpty()) {
         for (const auto &v : vs) {
             ui.put(S("vmagnet:m") + QString::number(v.m.id), mag);
-            if (v.m.aiTitle && !v.m.aiTitle->canonicalId.isEmpty()) {
-                ui.put(S("vmagnet:c") + v.m.aiTitle->canonicalId, mag);
+            if (v.m.aiTitle && v.m.aiTitle->canonicalId && !v.m.aiTitle->canonicalId->isEmpty()) {
+                ui.put(S("vmagnet:c") + *v.m.aiTitle->canonicalId, mag);
             }
         }
         const QString tKey = titleKey(vs.first().baseTitle);

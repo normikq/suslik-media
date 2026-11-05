@@ -81,7 +81,7 @@ std::optional<QString> PlayerModel::edition() const {
     const qint64 magId = k.section(QLatin1Char('|'), 0, 0).toLongLong();
     const core::LibraryItem *it = magId > 0 ? m_lib->item(magId) : m_lib->item(m_req.magnetId);
     if (!it) return std::nullopt;
-    if (const auto ai = it->m.acceptedAi(); ai && !ai->edition.isEmpty() && ai->edition != QLatin1String("default")) {
+    if (const auto ai = it->m.acceptedAi(); ai && ai->edition && !ai->edition->isEmpty() && *ai->edition != QLatin1String("default")) {
         return ai->edition;
     }
     const QString parsed = core::parseEdition(it->m.name);
