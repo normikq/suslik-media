@@ -3,7 +3,7 @@
 const express = require("express");
 const config = require("../config");
 const { apiLimiter, mirrorUrlLimiter, mirrorLimiter } = require("../middleware/rate-limit");
-const { requireLogin } = require("../middleware/auth");
+const { requireLogin, deviceId } = require("../middleware/auth");
 const { safeHttpsUrl, cleanFileName, contentDisposition, publicBase } = require("../utils/helpers");
 const { getMagnetFileList } = require("../services/alldebrid");
 const {
@@ -17,7 +17,55 @@ const {
   handleMirrorStream
 } = require("../services/mirror");
 const { markOpened, markLinkOpened } = require("../services/cleanup");
+const { isLibraryAdmin } = require("../services/downloads");
+const { getUser, SHARED_USER } = require("../services/users");
 const ca = require("../services/custom-audio");
+
+function authorOf(req, res) {
+  if (!req.customAudioAuthor) {
+    req.customAudioAuthor = req.user && req.user.id !== SHARED_USER.id ? req.user.id : `dev_${deviceId(req, res)}`;
+  }
+  return req.customAudioAuthor;
+}
+
+function canEditCustomTrack(req, res, track) {
+  return isLibraryAdmin(req) || track.addedBy === authorOf(req, res);
+}
+
+async function resolveCustomAudioForVariant(adId, filePath, req, res, base) {
+  const expires = String(Math.floor(Date.now() / 1000) + config.MIRROR_TTL);
+  try {
+    const { items } = await ca.trackLinks(adId, filePath);
+    if (!Array.isArray(items)) return [];
+    return items.filter(it => it && it.track).map(({ track: t, link: aLink }) => {
+      const aName = cleanFileName(ca.baseName(t.audioPath)) || "audio";
+      const aProxyPath = `/api/file/proxy/${encodeURIComponent(aName)}?link=${encodeURIComponent(aLink)}&exp=${expires}&sig=${makeMirrorToken(aLink, expires)}`;
+      const author = /^u_\d+$/.test(t.addedBy) ? getUser(t.addedBy) : null;
+      const offsetVal = typeof t.offsetMs === "number" ? t.offsetMs : 0;
+      return {
+        id: t.id,
+        movieMagnetId: t.movieMagnetId || adId,
+        audioMagnetId: t.audioMagnetId,
+        videoPath: t.videoPath,
+        video_path: t.videoPath,
+        audioPath: t.audioPath,
+        audio_path: t.audioPath,
+        path: t.audioPath,
+        title: t.title,
+        lang: t.lang,
+        offsetMs: offsetVal,
+        offset_ms: offsetVal,
+        addedBy: t.addedBy,
+        addedByName: author ? author.name : null,
+        createdAt: t.createdAt,
+        mine: canEditCustomTrack(req, res, t),
+        url: `${base}${aProxyPath}`
+      };
+    });
+  } catch {
+    return [];
+  }
+}
 
 const router = express.Router();
 
@@ -63,9 +111,21 @@ async function handleVariantUrl(req, res) {
   const now = Date.now();
   const cached = variantUrlCache.get(cacheKey);
   if (cached && cached.expiresAt > now + 60 * 1000) {
+    markOpened(adId);
     markLinkOpened(cached.sourceUrl);
-    res.setHeader("Cache-Control", "no-store");
     const base = publicBase(req);
+    const customAudio = await resolveCustomAudioForVariant(adId, cached.path, req, res, base);
+    const sidecarAudio = (cached.sidecarAudio || []).map(a => ({
+      id: a.id,
+      title: a.title,
+      path: a.path,
+      audio_path: a.audio_path || a.path,
+      video_path: a.video_path || "",
+      lang: a.lang,
+      offset_ms: a.offset_ms,
+      url: `${base}${a.proxyPath}`
+    }));
+    res.setHeader("Cache-Control", "no-store");
     return res.json({
       ok: true,
       url: `${base}${cached.proxyPath}`,
@@ -75,16 +135,7 @@ async function handleVariantUrl(req, res) {
       size: cached.size,
       ad_id: cached.adId,
       variant_key: cacheKey,
-      audio: (cached.audio || []).map(a => ({
-        id: a.id,
-        title: a.title,
-        path: a.path,
-        audio_path: a.audio_path || a.path,
-        video_path: a.video_path || "",
-        lang: a.lang,
-        offset_ms: a.offset_ms,
-        url: `${base}${a.proxyPath}`
-      })),
+      audio: [...sidecarAudio, ...customAudio],
       subtitles: (cached.subtitles || []).map(s => ({
         name: s.name,
         path: s.path,
@@ -101,17 +152,25 @@ async function handleVariantUrl(req, res) {
     const norm = p => (typeof p === "string" ? p.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "") : "");
     const targetNorm = norm(filePath);
     const hasSep = filePath.includes("/") || filePath.includes("\\");
-    const f = list.find(it => {
+    let f = list.find(it => {
       if (!it || it.type !== "file") return false;
       const ip = norm(it.path);
       if (ip === targetNorm) return true;
       if (typeof it.path === "string" && it.path.toLowerCase() === filePath.toLowerCase()) return true;
-      if (targetNorm && ip.endsWith("/" + targetNorm)) return true;
-      if (!hasSep) {
-        return it.name === filePath || (typeof it.name === "string" && it.name.toLowerCase() === filePath.toLowerCase());
-      }
+      if (ip.toLowerCase() === targetNorm.toLowerCase()) return true;
       return false;
     });
+    if (!f) {
+      f = list.find(it => {
+        if (!it || it.type !== "file") return false;
+        const ip = norm(it.path);
+        if (targetNorm && (ip.endsWith("/" + targetNorm) || ip.toLowerCase().endsWith("/" + targetNorm.toLowerCase()))) return true;
+        if (!hasSep) {
+          return it.name === filePath || (typeof it.name === "string" && it.name.toLowerCase() === filePath.toLowerCase());
+        }
+        return false;
+      });
+    }
     if (!f || !f.sourceLink) {
       return res.status(404).json({ error: "Файл варианта не найден в раздаче." });
     }
@@ -120,33 +179,14 @@ async function handleVariantUrl(req, res) {
       return res.status(502).json({ error: "Некорректная ссылка на медиафайл." });
     }
     const link = parsed.toString();
+    markOpened(adId);
     markLinkOpened(link);
     const name = cleanFileName(typeof f.path === "string" ? f.path.split(/[\\/]/).pop() : (f.name || "video"));
     const expires = String(Math.floor(Date.now() / 1000) + config.MIRROR_TTL);
     const proxyPath = `/api/file/proxy${name ? "/" + encodeURIComponent(name) : ""}?link=${encodeURIComponent(link)}&exp=${expires}&sig=${makeMirrorToken(link, expires)}`;
     const base = publicBase(req);
 
-    let customAudio = [];
-    try {
-      const { items } = await ca.trackLinks(adId, f.path);
-      if (Array.isArray(items)) {
-        customAudio = items.filter(it => it && it.track).map(({ track: t, link: aLink }) => {
-          const aName = cleanFileName(ca.baseName(t.audioPath)) || "audio";
-          const aProxyPath = `/api/file/proxy/${encodeURIComponent(aName)}?link=${encodeURIComponent(aLink)}&exp=${expires}&sig=${makeMirrorToken(aLink, expires)}`;
-          return {
-            id: t.id,
-            title: t.title,
-            lang: t.lang,
-            path: t.audioPath,
-            audio_path: t.audioPath,
-            video_path: t.videoPath,
-            offset_ms: typeof t.offsetMs === "number" ? t.offsetMs : 0,
-            proxyPath: aProxyPath,
-            url: `${base}${aProxyPath}`
-          };
-        });
-      }
-    } catch {}
+    const customAudio = await resolveCustomAudioForVariant(adId, f.path, req, res, base);
 
     const baseName = p => { const s = norm(p); const i = s.lastIndexOf("/"); return i < 0 ? s : s.slice(i + 1); };
     const dirName = p => { const s = norm(p); const i = s.lastIndexOf("/"); return i < 0 ? "" : s.slice(0, i); };
@@ -246,7 +286,7 @@ async function handleVariantUrl(req, res) {
       path: f.path,
       size: f.size || 0,
       adId,
-      audio: combinedAudio.map(a => ({
+      sidecarAudio: sidecarAudio.map(a => ({
         id: a.id,
         title: a.title,
         path: a.path,
@@ -270,16 +310,19 @@ async function handleVariantUrl(req, res) {
       size: f.size || 0,
       ad_id: adId,
       variant_key: cacheKey,
-      audio: combinedAudio.map(a => ({
-        id: a.id,
-        title: a.title,
-        path: a.path,
-        audio_path: a.audio_path || a.path,
-        video_path: a.video_path || "",
-        lang: a.lang,
-        offset_ms: a.offset_ms,
-        url: a.url
-      })),
+      audio: [
+        ...sidecarAudio.map(a => ({
+          id: a.id,
+          title: a.title,
+          path: a.path,
+          audio_path: a.audio_path || a.path,
+          video_path: a.video_path || "",
+          lang: a.lang,
+          offset_ms: a.offset_ms,
+          url: a.url
+        })),
+        ...customAudio
+      ],
       subtitles: customSubs.map(s => ({ name: s.name, path: s.path, url: s.url }))
     });
   } catch (err) {

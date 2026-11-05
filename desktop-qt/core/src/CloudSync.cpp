@@ -26,13 +26,18 @@ std::optional<WatchEntry> parseWatch(const QString &key, const std::optional<QSt
     bool ok = false;
     const qint64 pos = p[0].toLongLong(&ok);
     if (!ok) return std::nullopt;
-    return WatchEntry{key, pos, p[1].toLongLong(), p[2].toLongLong()};
+    const std::optional<QString> cid = (p.size() >= 4 && !p[3].isEmpty()) ? std::optional<QString>(p[3]) : std::nullopt;
+    return WatchEntry{key, pos, p[1].toLongLong(), p[2].toLongLong(), cid};
 }
 } // namespace
 
 std::optional<WatchEntry> DesktopSyncStore::watch(const QString &key) { return parseWatch(key, watchStore().get(key)); }
 
-void DesktopSyncStore::putWatch(const WatchEntry &e) { watchStore().put(e.key, QStringLiteral("%1|%2|%3").arg(e.pos).arg(e.len).arg(e.at)); }
+void DesktopSyncStore::putWatch(const WatchEntry &e) {
+    const QString val = (e.cid && !e.cid->isEmpty()) ? QStringLiteral("%1|%2|%3|%4").arg(e.pos).arg(e.len).arg(e.at).arg(*e.cid)
+                                                     : QStringLiteral("%1|%2|%3").arg(e.pos).arg(e.len).arg(e.at);
+    watchStore().put(e.key, val);
+}
 
 qint64 DesktopSyncStore::trackAt(const QString &key) { return uiStore().get(QStringLiteral("trackAt:") + key).value_or(QString()).toLongLong(); }
 
@@ -103,8 +108,8 @@ void CloudSync::setUserId(const std::optional<QString> &id) {
     kick();
 }
 
-void CloudSync::noteWatch(const QString &key, qint64 pos, qint64 len, qint64 at) {
-    if (WatchSync::eligible(m_user)) m_sync->noteWatch({key, pos, len, at});
+void CloudSync::noteWatch(const QString &key, qint64 pos, qint64 len, qint64 at, const std::optional<QString> &cid) {
+    if (WatchSync::eligible(m_user)) m_sync->noteWatch({key, pos, len, at, cid});
 }
 
 void CloudSync::noteTrack(const QString &filmKey, const std::optional<QString> &audio, const std::optional<QString> &spu,

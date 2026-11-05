@@ -42,6 +42,10 @@ class PlayModel : public QObject {
     Q_PROPERTY(bool canWatch READ canWatch NOTIFY changed)
     Q_PROPERTY(bool mine READ mine NOTIFY changed)
     Q_PROPERTY(bool favorite READ favorite NOTIFY changed)
+    Q_PROPERTY(bool hasMultipleVersions READ hasMultipleVersions NOTIFY changed)
+    Q_PROPERTY(QString versionLabel READ versionLabel NOTIFY changed)
+    Q_PROPERTY(QString versionTitle READ versionTitle NOTIFY changed)
+    Q_PROPERTY(QVariantList versionIds READ versionIds NOTIFY changed)
 
 public:
     explicit PlayModel(QObject *parent = nullptr);
@@ -78,6 +82,10 @@ public:
     bool canWatch() const { return !m_loading && m_mirror.has_value(); }
     bool mine() const;
     bool favorite() const;
+    bool hasMultipleVersions() const;
+    QString versionLabel() const;
+    QString versionTitle() const;
+    QVariantList versionIds() const;
 
     /// Открыть: раздача и файл (из плитки, баннера, выбора версии).
     Q_INVOKABLE void load(qint64 magnetId, const QString &path);

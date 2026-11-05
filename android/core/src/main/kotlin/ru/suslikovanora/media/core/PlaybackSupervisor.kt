@@ -150,7 +150,7 @@ class PlaybackSupervisor(
         val prev = last; val prevAt = lastAt
         last = s; lastAt = t
 
-        // 0. Троттлинг / частая буферизация: битрейт > 25 Мбит/с и за последние 60 с буферизация > 3 раз или суммарно > 10 с
+        // 0. Троттлинг / частая буферизация: за последние 60 с буферизация >= 3 раз или суммарно >= 10 с
         recentBuffering.removeAll { t - it.start > 60_000 }
         var bufCount = recentBuffering.size
         var bufTotalMs = recentBuffering.sumOf { it.durationMs }
@@ -158,7 +158,7 @@ class PlaybackSupervisor(
             bufCount++
             bufTotalMs += (t - bufferingStart)
         }
-        if ((bufCount >= 3 || bufTotalMs >= 10_000) && bitrateMbps > 25.0) {
+        if (bufCount >= 3 || bufTotalMs >= 10_000) {
             if (t - lastDowngradeSuggested >= 60_000) {
                 lastDowngradeSuggested = t
                 actions.suggestDowngrade(bitrateMbps)

@@ -10,7 +10,7 @@ import org.json.JSONObject
  */
 
 /** Прогресс файла: ключ "magnetId|path" ([ru.suslikovanora.media.core.watchKey]), как в "watch" приложений. */
-data class WatchEntry(val key: String, val pos: Long, val len: Long, val at: Long)
+data class WatchEntry(val key: String, val pos: Long, val len: Long, val at: Long, val cid: String? = null)
 
 /**
  * Выбор дорожек фильма или сериала: ключ [filmKey] ("m<magnetId>") или [ANY] (последний выбор вообще).
@@ -130,7 +130,13 @@ class WatchSync(private val store: SyncStore) {
         val t = pendingTracks.values.take(BATCH)
         val body = JSONObject()
             .put("since", since.coerceAtLeast(0))
-            .put("watch", JSONArray().apply { w.forEach { put(JSONObject().put("key", it.key).put("pos", it.pos).put("len", it.len).put("at", it.at)) } })
+            .put("watch", JSONArray().apply {
+                w.forEach {
+                    val obj = JSONObject().put("key", it.key).put("pos", it.pos).put("len", it.len).put("at", it.at)
+                    if (it.cid != null) obj.put("cid", it.cid)
+                    put(obj)
+                }
+            })
             .put("tracks", JSONArray().apply {
                 t.forEach {
                     val obj = JSONObject().put("key", it.key).put("audio", it.audio ?: JSONObject.NULL).put("spu", it.spu ?: JSONObject.NULL)
@@ -151,7 +157,8 @@ class WatchSync(private val store: SyncStore) {
         res.optJSONArray("watch")?.let { a ->
             for (i in 0 until a.length()) {
                 val o = a.optJSONObject(i) ?: continue
-                val e = WatchEntry(o.optString("key"), o.optLong("pos", -1), o.optLong("len", 0), o.optLong("at", 0))
+                val cid = if (o.isNull("cid")) null else o.optString("cid").ifEmpty { null }
+                val e = WatchEntry(o.optString("key"), o.optLong("pos", -1), o.optLong("len", 0), o.optLong("at", 0), cid)
                 if ('|' !in e.key || e.pos < 0 || e.at <= 0) continue
                 val mine = store.watch(e.key)
                 if (mine != null && mine.at >= e.at) continue

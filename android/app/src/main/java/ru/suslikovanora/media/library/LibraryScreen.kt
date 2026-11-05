@@ -465,9 +465,14 @@ fun LibraryScreen(
             val mag = v.m.id.toString()
             val sp = context.getSharedPreferences("player_ui", Context.MODE_PRIVATE)
             val tKey = titleKey(vs.first().baseTitle)
-            if (tKey.isNotBlank()) sp.edit().putString("vmagnet:$tKey", mag).apply()
-            val cId = vs.first().m.aiTitle?.canonicalId
-            if (!cId.isNullOrBlank()) sp.edit().putString("vmagnet:c$cId", mag).apply()
+            val cId = v.m.aiTitle?.canonicalId ?: vs.first().m.aiTitle?.canonicalId
+            sp.edit().apply {
+                if (tKey.isNotBlank()) putString("vmagnet:$tKey", mag)
+                if (!cId.isNullOrBlank()) putString("vmagnet:c$cId", mag)
+                for (ver in vs) {
+                    putString("vmagnet:m${ver.m.id}", mag)
+                }
+            }.apply()
             versionTarget(v, store)?.let(onPlay)
         }
     }

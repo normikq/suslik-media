@@ -63,7 +63,7 @@ function tagsFromStreams(streams) {
 function probeTags(url) {
   return new Promise((resolve, reject) => {
     const args = ["-v", "error", "-rw_timeout", "12000000", "-user_agent", "Mozilla/5.0", "-analyzeduration", "10000000",
-      "-probesize", "16000000", "-show_streams", "-of", "json", url];
+      "-probesize", "16000000", "-show_streams", "-show_format", "-of", "json", url];
     const child = spawn(config.FFPROBE_PATH || "ffprobe", args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     let stdout = "";
     let stderr = "";
@@ -75,14 +75,37 @@ function probeTags(url) {
       clearTimeout(timeout);
       if (code !== 0) return reject(new Error(stderr || "ffprobe не смог проанализировать файл."));
       try {
-        const streams = JSON.parse(stdout).streams || [];
+        const parsed = JSON.parse(stdout);
+        const streams = parsed.streams || [];
+        const format = parsed.format || {};
         const tags = tagsFromStreams(streams);
         const v = Array.isArray(streams) ? streams.find(s => s && (s.codec_type === "video" || (s.width && s.height))) : null;
-        const meta = v ? { w: Number(v.width) || 0, h: Number(v.height) || 0, codec: v.codec_name || "" } : null;
+        const durationSec = Math.round(Number(format.duration || (v && v.duration)) || 0);
+        const rawBitrate = Number(format.bit_rate || (v && v.bit_rate)) || 0;
+        const bitrateMbps = rawBitrate > 0 ? Math.round((rawBitrate / 1000000) * 10) / 10 : 0;
+        const meta = (v || durationSec || bitrateMbps) ? {
+          w: v ? (Number(v.width) || 0) : 0,
+          h: v ? (Number(v.height) || 0) : 0,
+          codec: v ? (v.codec_name || "") : "",
+          durationSec,
+          bitrateMbps
+        } : null;
         resolve({ tags, meta });
       } catch { reject(new Error("Не удалось разобрать ответ ffprobe.")); }
     });
   });
+}
+
+const mainFileMemo = new WeakMap();
+const linkHashMemo = new Map();
+const profileCache = new Map();
+
+function getMainFileMemoized(m) {
+  if (!m || !Array.isArray(m.files)) return null;
+  if (mainFileMemo.has(m.files)) return mainFileMemo.get(m.files);
+  const f = pickMainFile(m.files);
+  mainFileMemo.set(m.files, f);
+  return f;
 }
 
 const queue = []; // { id, link }
@@ -130,7 +153,7 @@ function snapshot(magnets, prune) {
     for (const id of [...store.keys()]) {
       if (present.has(id)) { missingSince.delete(id); continue; }
       if (!missingSince.has(id)) missingSince.set(id, now);
-      else if (now - missingSince.get(id) > GONE_MS) { store.delete(id); missingSince.delete(id); dropped = true; }
+      else if (now - missingSince.get(id) > GONE_MS) { store.delete(id); profileCache.delete(id); missingSince.delete(id); dropped = true; }
     }
     if (dropped) persist();
   }
@@ -141,7 +164,7 @@ function snapshot(magnets, prune) {
     if (e && Array.isArray(e.t)) continue;
     if (e && (e.n >= MAX_ATTEMPTS || Date.now() - e.f < RETRY_AFTER_MS)) continue;
     if (queued.has(id) || queue.length >= QUEUE_MAX) continue;
-    const file = pickMainFile(m.files);
+    const file = getMainFileMemoized(m);
     if (!file) continue;
     queued.add(id);
     queue.push({ id, link: file.sourceLink });
@@ -150,30 +173,58 @@ function snapshot(magnets, prune) {
   const tags = {};
   const profiles = {};
   for (const m of magnets) {
-    const e = store.get(String(m.id));
+    const idStr = String(m.id);
+    const e = store.get(idStr);
     if (e && Array.isArray(e.t)) tags[m.id] = e.t;
-    const file = pickMainFile(m.files);
+    const file = getMainFileMemoized(m);
     if (file) {
-      let streams = [];
-      if (e && e.meta && (e.meta.w || e.meta.h)) {
-        streams = [{ codec_type: "video", width: e.meta.w, height: e.meta.h, codec_name: e.meta.codec }];
-      } else if (file.sourceLink) {
+      let w = 0, h = 0, codec = "", durationSec = 0, bitrateMbps = 0;
+      if (e && e.meta) {
+        w = Number(e.meta.w) || 0;
+        h = Number(e.meta.h) || 0;
+        codec = e.meta.codec || "";
+        durationSec = Number(e.meta.durationSec) || 0;
+        bitrateMbps = Number(e.meta.bitrateMbps) || 0;
+      }
+      if ((!w || !h || !bitrateMbps || !durationSec) && file.sourceLink) {
         try {
-          const hashKey = crypto.createHash("sha256").update(file.sourceLink).digest("hex");
+          let hashKey = linkHashMemo.get(file.sourceLink);
+          if (!hashKey) {
+            hashKey = crypto.createHash("sha256").update(file.sourceLink).digest("hex");
+            if (linkHashMemo.size > 5000) linkHashMemo.clear();
+            linkHashMemo.set(file.sourceLink, hashKey);
+          }
           const cachedMeta = mediaMetadataCache.get(hashKey);
-          if (cachedMeta && cachedMeta.metadata && (cachedMeta.metadata.width || cachedMeta.metadata.height)) {
-            streams = [{ codec_type: "video", width: cachedMeta.metadata.width, height: cachedMeta.metadata.height, codec_name: cachedMeta.metadata.codec }];
+          if (cachedMeta && cachedMeta.metadata) {
+            if (!w && cachedMeta.metadata.width) w = Number(cachedMeta.metadata.width) || 0;
+            if (!h && cachedMeta.metadata.height) h = Number(cachedMeta.metadata.height) || 0;
+            if (!codec && cachedMeta.metadata.codec) codec = cachedMeta.metadata.codec || "";
+            if (!bitrateMbps && cachedMeta.metadata.bitrateMbps) bitrateMbps = Number(cachedMeta.metadata.bitrateMbps) || 0;
+            if (!durationSec && cachedMeta.metadata.durationSec) durationSec = Number(cachedMeta.metadata.durationSec) || 0;
           }
         } catch {}
       }
-      profiles[m.id] = buildMediaVariant({
-        adId: m.id,
-        filePath: file.path,
-        fileName: m.name,
-        sizeBytes: Number(file.size) || Number(m.size) || 0,
-        streams,
-        tags: tags[m.id] || []
-      });
+      const sizeBytes = Number(file.size) || Number(m.size) || 0;
+      const tagList = tags[m.id] || [];
+      const sig = `${m.name}|${file.path}|${sizeBytes}|${w}x${h}|${codec}|${durationSec}|${bitrateMbps}|${tagList.join(",")}`;
+      const cachedProf = profileCache.get(idStr);
+      if (cachedProf && cachedProf.sig === sig) {
+        profiles[m.id] = cachedProf.profile;
+      } else {
+        const streams = (w || h || codec) ? [{ codec_type: "video", width: w, height: h, codec_name: codec }] : [];
+        const prof = buildMediaVariant({
+          adId: m.id,
+          filePath: file.path,
+          fileName: m.name,
+          sizeBytes,
+          durationSec,
+          bitrateMbps,
+          streams,
+          tags: tagList
+        });
+        profileCache.set(idStr, { sig, profile: prof });
+        profiles[m.id] = prof;
+      }
     }
   }
   return { tags, profiles, pending: queue.length + (running ? 1 : 0) };
@@ -280,7 +331,7 @@ function parseSourceType(name) {
   const s = String(name || "").toLowerCase();
   if (/remux/i.test(s)) return "Remux";
   if (/bdrip|brrip|blu[\s._-]?ray/i.test(s)) return "BDRip";
-  if (/(?:^|[^a-z])web(?:[\s._-]?(?:dl|rip))?(?![a-z])/i.test(s)) return "Web-DL";
+  if (/(?:^|[^a-z0-9])web[\s._-]?(?:dl|rip)(?![a-z0-9])/i.test(s)) return "Web-DL";
   if (/hdtv/i.test(s)) return "HDTV";
   return "";
 }
@@ -353,7 +404,8 @@ function buildMediaVariant({
   const videoTech = parseVideoTech(combined, streams, tags);
   const audioTech = parseAudioTech(combined, streams, tags);
   const score = calculateScore({ resolution, videoTech, audioTech, sourceType });
-  const hardwareFlags = getHardwareFlags({ videoTech, audioTech, bitrateMbps, sourceType });
+  const computedBitrate = bitrateMbps || (durationSec > 0 && sizeBytes > 0 ? Math.round((sizeBytes * 8) / (durationSec * 1000000) * 10) / 10 : 0);
+  const hardwareFlags = getHardwareFlags({ videoTech, audioTech, bitrateMbps: computedBitrate, sourceType });
   const key = `${adId}|${filePath || fileName || ""}`;
   const label = buildCompositeLabel({ resolution, sourceType, videoTech, audioTech, sizeBytes });
 
@@ -365,7 +417,7 @@ function buildMediaVariant({
     source_type: sourceType,
     video_tech: videoTech,
     audio_tech: audioTech,
-    bitrate_mbps: bitrateMbps || (durationSec > 0 && sizeBytes > 0 ? Math.round((sizeBytes * 8) / (durationSec * 1000000) * 10) / 10 : 0),
+    bitrate_mbps: computedBitrate,
     size_bytes: Number(sizeBytes) || 0,
     duration_sec: Number(durationSec) || 0,
     offset_ms: 0,

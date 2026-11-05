@@ -183,32 +183,73 @@ function titleMatches(parsed, movie) {
   return true;
 }
 
-let _canonicalIdOf;
-function getCanonicalIdOf() {
-  if (_canonicalIdOf === undefined) {
-    try { _canonicalIdOf = require("./aititle").canonicalIdOf || null; } catch { _canonicalIdOf = null; }
+let _aititle;
+function getAiTitleService() {
+  if (_aititle === undefined) {
+    try { _aititle = require("./aititle") || null; } catch { _aititle = null; }
   }
-  return _canonicalIdOf;
+  return _aititle;
+}
+
+const RELEASE_CUT_RE = /(?:[\[\(\{]|\b)(?:s\d{1,2}(?:e\d{1,3})?\b|season\s*\d+|сезон\s*\d+|\d+\s*сезон|2160p|1080[pi]|720p|480p|576p|4k|8k|uhd|web[\s._-]?(?:dl|rip)|bd[\s._-]?(?:rip|remux)|remux|blu[\s._-]?ray|brrip|hdtv|dvdrip|hdr10?\+?|dolby[\s._-]?vision|dovi|dv|hevc|[xh][\s._-]?26[45]|avc|truehd|atmos|dts|ddp?\+?|eac3|ac3|aac|flac|proper|repack)\b[\s\S]*$/i;
+
+function releaseTitleCandidates(m, ai) {
+  const set = new Set();
+  const add = s => {
+    const w = words(s);
+    if (w) set.add(w);
+  };
+  if (ai) {
+    if (ai.base) add(ai.base);
+    if (ai.original) add(ai.original);
+  }
+  const raw = String(m?.name || "").replace(/\.[a-z0-9]{2,5}$/i, "").replace(/[._]+/g, " ");
+  let head = raw.replace(/^\s*\[[^\]]+\]\s*/, "").replace(RELEASE_CUT_RE, " ");
+  const y = lastYear(head);
+  if (y) head = head.slice(0, y.index);
+  for (const part of head.split(/[\/|]/)) {
+    const cleaned = cleanText(part.replace(/[\[\(\{].*$/, ""));
+    if (cleaned) add(cleaned);
+  }
+  if (!set.size) {
+    const fallback = cleanText(head);
+    if (fallback) add(fallback);
+  }
+  return [...set];
+}
+
+function releaseSeason(m, ai) {
+  if (ai && Number.isInteger(ai.season)) return ai.season;
+  const sMatch = /(?<![a-z0-9])(?:season|сезон)[ ._-]*(\d{1,2})(?![0-9])|(?<![a-z0-9])(\d{1,2})[ ._-]*(?:season|сезон)|(?<![a-z0-9])[sс][0oо]?(\d{1,2})(?![0-9])/i.exec(m?.name || "");
+  if (sMatch) return Number(sMatch[1] || sMatch[2] || sMatch[3]);
+  return videoEpisode(m?.files?.[0]?.path || "")?.season ?? null;
 }
 
 function isSameMovieRelease(m1, m2) {
   if (!m1 || !m2) return false;
   if (m1.id === m2.id) return true;
-  const canonicalIdOf = getCanonicalIdOf();
-  const c1 = m1.aiTitle?.canonical_id || (canonicalIdOf && m1.aiTitle ? canonicalIdOf(m1.aiTitle) : null);
-  const c2 = m2.aiTitle?.canonical_id || (canonicalIdOf && m2.aiTitle ? canonicalIdOf(m2.aiTitle) : null);
-  if (c1 && c2 && c1 === c2) return true;
+  const aiSvc = getAiTitleService();
+  const rawAi1 = m1.aiTitle || (aiSvc && aiSvc.resultFor ? aiSvc.resultFor(m1) : null);
+  const rawAi2 = m2.aiTitle || (aiSvc && aiSvc.resultFor ? aiSvc.resultFor(m2) : null);
+  const ai1 = rawAi1 && (!rawAi1.status || rawAi1.status === "accepted") ? rawAi1 : null;
+  const ai2 = rawAi2 && (!rawAi2.status || rawAi2.status === "accepted") ? rawAi2 : null;
+  const canonicalIdOf = aiSvc?.canonicalIdOf || null;
+  const c1 = ai1?.canonical_id || (canonicalIdOf && ai1 ? canonicalIdOf(ai1) : null);
+  const c2 = ai2?.canonical_id || (canonicalIdOf && ai2 ? canonicalIdOf(ai2) : null);
+  if (c1 && c2) return c1 === c2;
 
-  const t1 = words(m1.aiTitle?.base || m1.name || "");
-  const t2 = words(m2.aiTitle?.base || m2.name || "");
-  const cleanT1 = t1.replace(/\b(s\d+|season\s*\d+|сезон\s*\d+|\d{3,4}p|x26[45]|hevc|hdr|dv|web[ ._-]?dl|remux|bdrip)\b/gi, "").trim();
-  const cleanT2 = t2.replace(/\b(s\d+|season\s*\d+|сезон\s*\d+|\d{3,4}p|x26[45]|hevc|hdr|dv|web[ ._-]?dl|remux|bdrip)\b/gi, "").trim();
-  if (cleanT1 && cleanT2 && (cleanT1 === cleanT2 || cleanT1.replace(/ /g, "") === cleanT2.replace(/ /g, ""))) {
-    const y1 = m1.aiTitle?.year || Number(/(?:19|20)\d{2}/.exec(m1.name)?.[0] || 0);
-    const y2 = m2.aiTitle?.year || Number(/(?:19|20)\d{2}/.exec(m2.name)?.[0] || 0);
+  const ed1 = ai1?.edition || (aiSvc?.parseEdition ? aiSvc.parseEdition(m1.name) : "default");
+  const ed2 = ai2?.edition || (aiSvc?.parseEdition ? aiSvc.parseEdition(m2.name) : "default");
+  if (ed1 && ed2 && ed1 !== ed2) return false;
+
+  const cands1 = releaseTitleCandidates(m1, ai1);
+  const cands2 = releaseTitleCandidates(m2, ai2);
+  if (cands1.length && cands2.length && cands1.some(t1 => cands2.some(t2 => t1 === t2 || t1.replace(/ /g, "") === t2.replace(/ /g, "")))) {
+    const y1 = ai1?.year || Number(lastYear(m1.name)?.[1] || 0);
+    const y2 = ai2?.year || Number(lastYear(m2.name)?.[1] || 0);
     if (y1 && y2 && y1 !== y2) return false;
-    const s1 = m1.aiTitle?.season ?? videoEpisode(m1.files?.[0]?.path || "")?.season;
-    const s2 = m2.aiTitle?.season ?? videoEpisode(m2.files?.[0]?.path || "")?.season;
+    const s1 = releaseSeason(m1, ai1);
+    const s2 = releaseSeason(m2, ai2);
     if (s1 != null && s2 != null && s1 !== s2) return false;
     return true;
   }

@@ -65,10 +65,11 @@ function canonicalIdOf(info) {
 
 // Версия ответа: 2 — с типом раздачи (kind), 3 — сезон без пометок в раздаче («Show 2 - 01», «Show - 01»),
 // 4 — сезон из числа после названия (seasonFromName), 5 — без пометок верим модели, «Part 2» — не сезон (прогон
-// scripts/aititle-eval.js 27.10), 6 — оригинальное название и год (original, year) для поиска постера в TMDB.
+// scripts/aititle-eval.js 27.10), 6 — оригинальное название и год (original, year) для поиска постера в TMDB,
+// 7 — монтажная версия (edition) и канонический идентификатор (canonical_id).
 // Ответ старой версии можно спросить заново (stale в медиатеке), кроме принятого или отклонённого: решение владельца
 // не теряется от смены версии (переспросить его — только force).
-const VERSION = 6;
+const VERSION = 7;
 const NONE_RETRY_MS = 3600 * 1000; // «нет ответа» можно спросить заново через час (остальные решения — только force)
 
 const PROMPT = [
@@ -477,7 +478,7 @@ async function suggestMany(magnets, owner, now = Date.now(), { noCooldown = fals
     list.forEach(([key, m], i) => {
       const ok = validate(res.answers.get(i + 1), m.name, m.files);
       const r = ok
-        ? { base: ok.base, season: ok.season, kind: ok.kind, original: ok.original, year: ok.year, model: config.AI_TITLE_MODEL, at: now, status: "suggested", by: owner, v: VERSION }
+        ? { base: ok.base, season: ok.season, kind: ok.kind, original: ok.original, year: ok.year, edition: ok.edition, model: config.AI_TITLE_MODEL, at: now, status: "suggested", by: owner, v: VERSION }
         : { base: "", season: null, kind: null, model: config.AI_TITLE_MODEL, at: now, status: "none", by: owner, v: VERSION };
       if (!ok) { totals.none++; console.warn(`[aititle] ${m.id}: нет ответа: ${String(res.raw).slice(0, 300)}`); }
       results.set(key, r);

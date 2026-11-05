@@ -457,6 +457,44 @@ void LibraryPage::chooseSeason(qint64 id, int seasonIndex) {
 void LibraryPage::open(qint64 id) {
     const auto vs = m_versionsOf.value(id);
     if (vs.size() > 1) {
+        auto &ui = core::Store::of(S("player_ui"));
+        qint64 preferredId = -1;
+        QString savedMag;
+        for (const auto &v : vs) {
+            if (auto m = ui.get(S("vmagnet:m") + QString::number(v.m.id)); m && !m->isEmpty()) { savedMag = *m; break; }
+            if (v.m.aiTitle && !v.m.aiTitle->canonicalId.isEmpty()) {
+                if (auto m = ui.get(S("vmagnet:c") + v.m.aiTitle->canonicalId); m && !m->isEmpty()) { savedMag = *m; break; }
+            }
+        }
+        if (savedMag.isEmpty()) {
+            const QString tKey = titleKey(vs.first().baseTitle);
+            if (!tKey.isEmpty()) {
+                if (auto m = ui.get(S("vmagnet:") + tKey); m && !m->isEmpty()) savedMag = *m;
+            }
+        }
+        if (!savedMag.isEmpty()) {
+            const qint64 sId = savedMag.toLongLong();
+            for (const auto &v : vs) {
+                if (v.m.id == sId && v.m.ready()) { preferredId = sId; break; }
+            }
+        }
+        if (preferredId < 0) {
+            qint64 latestAt = 0;
+            for (const auto &v : vs) {
+                if (!v.m.ready()) continue;
+                std::optional<WatchInfo> w;
+                if (v.playable.isSeries()) { if (auto lw = m_lib->lastWatched(v.m)) w = lw->second; }
+                else if (v.playable.isMovie()) w = m_lib->watchInfo(watchKey(v.m.id, v.playable.file));
+                if (w && w->at > latestAt) {
+                    latestAt = w->at;
+                    preferredId = v.m.id;
+                }
+            }
+        }
+        if (preferredId > 0) {
+            chooseVersion(preferredId);
+            return;
+        }
         QVariantList ids;
         for (const auto &v : vs) ids << v.m.id;
         emit versionsRequested(vs.first().baseTitle, ids);
@@ -583,14 +621,19 @@ void LibraryPage::chooseVersion(qint64 id) {
     const LibraryItem *item = m_lib->item(id);
     if (!item) return;
     const auto vs = m_lib->versionsOf(id);
+    auto &ui = core::Store::of(S("player_ui"));
+    const QString mag = QString::number(id);
+    ui.put(S("vmagnet:m") + mag, mag);
     if (!vs.isEmpty()) {
-        const QString mag = QString::number(id);
+        for (const auto &v : vs) {
+            ui.put(S("vmagnet:m") + QString::number(v.m.id), mag);
+            if (v.m.aiTitle && !v.m.aiTitle->canonicalId.isEmpty()) {
+                ui.put(S("vmagnet:c") + v.m.aiTitle->canonicalId, mag);
+            }
+        }
         const QString tKey = titleKey(vs.first().baseTitle);
         if (!tKey.isEmpty()) {
-            core::Store::of(S("player_ui")).put(S("vmagnet:") + tKey, mag);
-        }
-        if (vs.first().m.aiTitle && vs.first().m.aiTitle->canonicalId) {
-            core::Store::of(S("player_ui")).put(S("vmagnet:c") + *vs.first().m.aiTitle->canonicalId, mag);
+            ui.put(S("vmagnet:") + tKey, mag);
         }
     }
     if (item->playable.isMovie()) { emit playRequested(id, item->playable.file.path); return; }

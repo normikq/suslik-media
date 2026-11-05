@@ -240,7 +240,7 @@ public:
     virtual void play(qint64 posMs) = 0;
     virtual void pause(qint64 posMs) = 0;
     virtual void seek(qint64 posMs) = 0;
-    virtual void reportBuffering(bool loading) = 0;
+    virtual void reportBuffering(bool loading, const QString &variantKey = QString()) = 0;
 };
 
 /// Подсказка в плеере: что сделал ведущий (гостю) и кого ждёт комната.

@@ -145,9 +145,9 @@ public:
     void saveMediaDimensions(qint64 id, const QString &path, int width, int height);
 
     // ---- прогресс ----
-    std::optional<WatchInfo> watchInfo(const QString &key) const;
+    std::optional<WatchInfo> watchInfo(const QString &key, const std::optional<QString> &cid = std::nullopt) const;
     /// Плеер: место в файле (в медиатеку и в облако).
-    void noteWatch(const QString &key, qint64 pos, qint64 len);
+    void noteWatch(const QString &key, qint64 pos, qint64 len, const std::optional<QString> &cid = std::nullopt);
     CloudSync &sync() const { return m_sync; }
     std::optional<std::pair<MFile, WatchInfo>> lastWatched(const Magnet &m) const;
     /// Раздачи, у которых что-то смотрели не раньше since (мс): один проход по прогрессу вместо обхода всех файлов

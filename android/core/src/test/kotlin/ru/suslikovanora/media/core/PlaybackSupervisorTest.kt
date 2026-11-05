@@ -143,12 +143,14 @@ class PlaybackSupervisorTest {
         assertTrue(s.downgradeSuggestions >= 1)
         assertEquals(35.0, s.lastSuggestedBitrate)
 
+        // Works for moderate / unknown bitrates too
         val sLow = Sim()
         sLow.sup.bitrateMbps = 12.0
         sLow.warm("light_1080p")
         sLow.sup.buffering(50f); sLow.t += 4000; sLow.sup.buffering(100f); sLow.ticks(2)
         sLow.sup.buffering(50f); sLow.t += 4000; sLow.sup.buffering(100f); sLow.ticks(2)
         sLow.sup.buffering(50f); sLow.t += 4000; sLow.sup.buffering(100f); sLow.ticks(2)
-        assertEquals(0, sLow.downgradeSuggestions)
+        assertEquals(1, sLow.downgradeSuggestions)
+        assertEquals(12.0, sLow.lastSuggestedBitrate)
     }
 }

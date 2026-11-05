@@ -94,8 +94,11 @@ WatchSync::Sent WatchSync::request(const QString &user) {
     s.watch = m_watch.take(BATCH);
     s.tracks = m_tracks.take(BATCH);
     QJsonArray wa, ta;
-    for (const auto &e : s.watch)
-        wa.append(QJsonObject{{QStringLiteral("key"), e.key}, {QStringLiteral("pos"), e.pos}, {QStringLiteral("len"), e.len}, {QStringLiteral("at"), e.at}});
+    for (const auto &e : s.watch) {
+        QJsonObject o{{QStringLiteral("key"), e.key}, {QStringLiteral("pos"), e.pos}, {QStringLiteral("len"), e.len}, {QStringLiteral("at"), e.at}};
+        if (e.cid && !e.cid->isEmpty()) o.insert(QStringLiteral("cid"), *e.cid);
+        wa.append(o);
+    }
     for (const auto &e : s.tracks) {
         QJsonObject o{{QStringLiteral("key"), e.key}, {QStringLiteral("audio"), nullable(e.audio)}, {QStringLiteral("spu"), nullable(e.spu)},
                       {QStringLiteral("sidecar"), nullable(e.sidecar)}, {QStringLiteral("at"), e.at}};
@@ -125,7 +128,7 @@ int WatchSync::onResponse(const Sent &sent, const QJsonObject &res) {
         if (!v.isObject()) continue;
         const QJsonObject o = v.toObject();
         const WatchEntry e{optString(o, QStringLiteral("key")), optLong(o, QStringLiteral("pos"), -1), optLong(o, QStringLiteral("len"), 0),
-                           optLong(o, QStringLiteral("at"), 0)};
+                           optLong(o, QStringLiteral("at"), 0), nonEmpty(o, QStringLiteral("cid"))};
         if (!e.key.contains(QLatin1Char('|')) || e.pos < 0 || e.at <= 0) continue;
         if (const auto mine = m_store.watch(e.key); mine && mine->at >= e.at) continue;
         if (const auto *p = m_watch.get(e.key); p && p->at >= e.at) continue;

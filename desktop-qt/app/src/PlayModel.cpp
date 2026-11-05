@@ -290,6 +290,32 @@ bool PlayModel::favorite() const { const LibraryItem *it = item(); return it && 
 void PlayModel::toggleMine() { if (const LibraryItem *it = item()) m_lib->setMine(m_id, !it->m.mine); }
 void PlayModel::toggleFavorite() { if (const LibraryItem *it = item()) m_lib->setFavorite(m_id, !it->m.favorite); }
 
+bool PlayModel::hasMultipleVersions() const {
+    return m_lib && m_lib->versionsOf(m_id).size() > 1;
+}
+
+QString PlayModel::versionLabel() const {
+    const LibraryItem *it = item();
+    if (!it || !m_lib) return {};
+    const MFile cur = currentFile();
+    const auto [w, h] = m_lib->cachedMediaDimensions(m_id, cur.path);
+    const auto pv = core::buildPartyVariant(*it, cur, m_lib->serverProfile(m_id), w, h);
+    if (!pv.label.isEmpty()) return pv.label;
+    return versionLine(*it);
+}
+
+QString PlayModel::versionTitle() const {
+    const LibraryItem *it = item();
+    return it ? it->baseTitle : currentTitle();
+}
+
+QVariantList PlayModel::versionIds() const {
+    QVariantList out;
+    if (!m_lib) return out;
+    for (const auto &v : m_lib->versionsOf(m_id)) out << v.m.id;
+    return out;
+}
+
 // Очередь плеера: весь сериал (все сезоны) или сборник — со ссылками, чтобы «предыдущая» и «следующая» шли через сезоны;
 // сервер берёт до PLAYLIST_MAX пунктов — у длинного сериала столько вокруг этой серии.
 QList<MFile> PlayModel::queueFiles() const {

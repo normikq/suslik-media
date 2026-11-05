@@ -241,7 +241,8 @@ private slots:
         sLow.sup.buffering(50.f); sLow.t += 4000; sLow.sup.buffering(100.f); sLow.ticks(2);
         sLow.sup.buffering(50.f); sLow.t += 4000; sLow.sup.buffering(100.f); sLow.ticks(2);
         sLow.sup.buffering(50.f); sLow.t += 4000; sLow.sup.buffering(100.f); sLow.ticks(2);
-        QCOMPARE(sLow.downgradeSuggestions, 0);
+        QVERIFY(sLow.downgradeSuggestions >= 1);
+        QCOMPARE(sLow.lastSuggestedBitrate, 12.0);
     }
 
     // ---- CatchUpTest ----

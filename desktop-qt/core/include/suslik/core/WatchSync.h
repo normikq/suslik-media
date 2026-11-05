@@ -17,6 +17,7 @@ struct WatchEntry {
     qint64 pos = 0;
     qint64 len = 0;
     qint64 at = 0;
+    std::optional<QString> cid = std::nullopt;
     bool operator==(const WatchEntry &) const = default;
 };
 

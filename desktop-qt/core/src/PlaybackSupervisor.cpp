@@ -103,7 +103,7 @@ void PlaybackSupervisor::tick(const Stats &s) {
     m_last = s;
     m_lastAt = t;
 
-    // 0. Троттлинг / частая буферизация: битрейт > 25 Мбит/с и за последние 60 с буферизировался > 3 раз или суммарно > 10 с
+    // 0. Троттлинг / частая буферизация: за последние 60 с буферизировался >= 3 раз или суммарно >= 10 с
     while (!m_recentBuffering.empty() && t - m_recentBuffering.front().start > 60000) {
         m_recentBuffering.erase(m_recentBuffering.begin());
     }
@@ -114,7 +114,7 @@ void PlaybackSupervisor::tick(const Stats &s) {
         bufCount++;
         bufTotalMs += (t - m_bufferingStart);
     }
-    if ((bufCount >= 3 || bufTotalMs >= 10000) && m_bitrateMbps > 25.0) {
+    if (bufCount >= 3 || bufTotalMs >= 10000) {
         if (t - m_lastDowngradeSuggested >= 60000) {
             m_lastDowngradeSuggested = t;
             m_actions.suggestDowngrade(m_bitrateMbps);

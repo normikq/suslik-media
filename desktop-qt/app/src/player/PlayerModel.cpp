@@ -96,6 +96,14 @@ void parseVariantMedia(const QJsonObject &json, QList<core::CustomTrack> &custom
             }
             t.offsetMs = o.contains(S("offset_ms")) ? o.value(S("offset_ms")).toVariant().toLongLong()
                                                     : o.value(S("offsetMs")).toVariant().toLongLong();
+            t.mine = o.value(S("mine")).toBool();
+            if (o.contains(S("audioMagnetId")) && !o.value(S("audioMagnetId")).isNull()) {
+                const qint64 amid = o.value(S("audioMagnetId")).toVariant().toLongLong();
+                if (amid > 0) t.audioMagnetId = amid;
+            } else if (o.contains(S("audio_magnet_id")) && !o.value(S("audio_magnet_id")).isNull()) {
+                const qint64 amid = o.value(S("audio_magnet_id")).toVariant().toLongLong();
+                if (amid > 0) t.audioMagnetId = amid;
+            }
             t.url = u;
             customTracks << t;
         } else {
@@ -325,6 +333,11 @@ void PlayerModel::begin() {
     }
     const QString mag = m_activeVariantKey.section(QLatin1Char('|'), 0, 0);
     if (!mag.isEmpty()) {
+        putUi(S("vmagnet:") + seriesKey(), mag);
+        for (const auto &v : m_req.variants) {
+            const QString vMag = v.key.section(QLatin1Char('|'), 0, 0);
+            if (!vMag.isEmpty()) putUi(S("vmagnet:m") + vMag, mag);
+        }
         const QString tk = titleKey();
         if (!tk.isEmpty()) putUi(S("vmagnet:") + tk, mag);
         if (!m_canonicalId.isEmpty()) putUi(S("vmagnet:c") + m_canonicalId, mag);
@@ -571,8 +584,15 @@ void PlayerModel::fetchSubtitles(quint64 gen, const QStringList &urls, const QSt
 }
 
 void PlayerModel::reopenAt(qint64 t) {
-    m_variantCustom.clear();
     const int i = m_index;
+    if (!m_activeVariantKey.isEmpty() && m_activeVariantKey != watchKey(i)) {
+        m_variantCustom = m_custom;
+        if (m_sidecars.contains(i)) {
+            open(m_currentUrl, t, m_sidecars.value(i));
+            return;
+        }
+    }
+    m_variantCustom.clear();
     sidecars(i, [this, i, t](const Sides &s) { if (m_index == i && !m_closing) open(m_currentUrl, t, s); });
 }
 
@@ -727,6 +747,7 @@ void PlayerModel::playEntry(int i) {
             newSides.subs = newSubs;
             self->m_sidecars.insert(i, newSides);
             self->m_variantCustom = customTracks;
+            if (Party::instance() && Party::instance()->inRoom()) Party::instance()->sendVariantChange(targetVar.key);
             self->open(newUrl, start, newSides);
         });
         return;
@@ -1498,6 +1519,9 @@ void PlayerModel::checkCredits() {
 }
 
 void PlayerModel::warmNext() {
+    const QString activeMag = m_activeVariantKey.section(QLatin1Char('|'), 0, 0);
+    const QString queueMag = watchKey(m_index).section(QLatin1Char('|'), 0, 0);
+    if (!activeMag.isEmpty() && !queueMag.isEmpty() && activeMag != queueMag) return;
     const int next = m_index + 1;
     if (next >= m_queue.size() || m_queue[next].url.isEmpty() || m_warmed.contains(next)) return;
     m_warmed.insert(next);
@@ -1516,8 +1540,12 @@ void PlayerModel::tick() {
     // На паузе отсчёт ждёт (конец файла — не пауза)
     if (m_nextIn > 0 && !paused()) { --m_nextIn; emit nextChanged(); }
     else if (m_nextIn == 0) { playNext(); return; }
-    // через 15 с на серии — её озвучки и субтитры следующей
-    if (m_started && m_index + 1 < m_queue.size() && now() - m_openedAt > 15000) sidecars(m_index + 1, [](const Sides &) {});
+    // через 15 с на серии — её озвучки и субтитры следующей (только если не переключились на другой торрент)
+    const QString activeMag = m_activeVariantKey.section(QLatin1Char('|'), 0, 0);
+    const QString queueMag = watchKey(m_index).section(QLatin1Char('|'), 0, 0);
+    if (m_started && m_index + 1 < m_queue.size() && now() - m_openedAt > 15000 && (activeMag.isEmpty() || activeMag == queueMag)) {
+        sidecars(m_index + 1, [](const Sides &) {});
+    }
 
     const qint64 t = now();
     if (m_catchingUp) {
@@ -1582,21 +1610,38 @@ void PlayerModel::suggestDowngrade(double currentBitrateMbps) {
     const auto &vars = m_req.variants.isEmpty() && Party::instance() && Party::instance()->file()
         ? Party::instance()->file()->variants : m_req.variants;
     if (vars.isEmpty()) return;
-    const core::PartyVariant *best = nullptr;
+    double effBitrate = currentBitrateMbps;
+    int curScore = INT_MAX;
     for (const auto &v : vars) {
-        if (v.key == m_activeVariantKey || v.bitrate >= currentBitrateMbps || v.bitrate <= 0.0) continue;
-        if (v.bitrate <= 25.0) {
-            if (!best || best->bitrate > 25.0 || v.bitrate > best->bitrate) {
+        if (v.key == m_activeVariantKey) {
+            if (effBitrate <= 0.0) effBitrate = v.bitrate;
+            curScore = v.score;
+            break;
+        }
+    }
+    const core::PartyVariant *best = nullptr;
+    if (effBitrate > 0.0) {
+        for (const auto &v : vars) {
+            if (v.key == m_activeVariantKey || v.bitrate >= effBitrate || v.bitrate <= 0.0) continue;
+            if (v.bitrate <= 25.0) {
+                if (!best || best->bitrate > 25.0 || v.bitrate > best->bitrate) {
+                    best = &v;
+                }
+            } else if (!best || (best->bitrate > 25.0 && v.bitrate < best->bitrate)) {
                 best = &v;
             }
-        } else if (!best || (best->bitrate > 25.0 && v.bitrate < best->bitrate)) {
-            best = &v;
+        }
+    }
+    if (!best) {
+        for (const auto &v : vars) {
+            if (v.key == m_activeVariantKey || v.score >= curScore) continue;
+            if (!best || v.score > best->score) best = &v;
         }
     }
     if (best) {
         m_suggestedDowngradeKey = best->key;
         m_suggestedDowngradeLabel = best->label.isEmpty()
-            ? QStringLiteral("%1 (%2 Мбит/с)").arg(best->quality).arg(QString::number(best->bitrate, 'f', 1))
+            ? (best->bitrate > 0.0 ? QStringLiteral("%1 (%2 Мбит/с)").arg(best->quality).arg(QString::number(best->bitrate, 'f', 1)) : best->quality)
             : best->label;
         emit suggestedDowngradeChanged();
     }
@@ -1685,6 +1730,10 @@ void PlayerModel::switchVariant(const QString &variantKey) {
         const QString mag = variantKey.section(QLatin1Char('|'), 0, 0);
         if (!mag.isEmpty()) {
             self->putUi(S("vmagnet:") + self->seriesKey(), mag);
+            for (const auto &v : self->m_req.variants) {
+                const QString vMag = v.key.section(QLatin1Char('|'), 0, 0);
+                if (!vMag.isEmpty()) self->putUi(S("vmagnet:m") + vMag, mag);
+            }
             if (!self->titleKey().isEmpty()) self->putUi(S("vmagnet:") + self->titleKey(), mag);
             if (!self->m_canonicalId.isEmpty()) self->putUi(S("vmagnet:c") + self->m_canonicalId, mag);
         }
@@ -1742,21 +1791,28 @@ void PlayerModel::savePos(qint64 t, qint64 len, int i) {
     const QString key = watchKey(i);
     if (key.isEmpty() || !m_lib || t < 5000) return;
     const bool done = len > 0 && t > len - 15000;
-    m_lib->noteWatch(key, done ? len : t, len);
+    const std::optional<QString> cid = m_canonicalId.isEmpty() ? std::nullopt : std::optional<QString>(m_canonicalId);
+    m_lib->noteWatch(key, done ? len : t, len, cid);
     if (!m_activeVariantKey.isEmpty() && m_activeVariantKey != key) {
-        m_lib->noteWatch(m_activeVariantKey, done ? len : t, len);
+        m_lib->noteWatch(m_activeVariantKey, done ? len : t, len, cid);
+        if (m_queue.size() > 1) {
+            const qint64 activeMag = m_activeVariantKey.section(QLatin1Char('|'), 0, 0).toLongLong();
+            const QString activePath = m_activeVariantKey.section(QLatin1Char('|'), 1);
+            if (activeMag > 0 && !activePath.isEmpty()) m_lib->saveEpisode(activeMag, activePath);
+        }
     }
 }
 
 qint64 PlayerModel::savedPos(int i) const {
     if (!m_lib) return 0;
+    const std::optional<QString> cid = m_canonicalId.isEmpty() ? std::nullopt : std::optional<QString>(m_canonicalId);
     const QString key = watchKey(i);
     if (!key.isEmpty()) {
-        const auto w = m_lib->watchInfo(key);
+        const auto w = m_lib->watchInfo(key, cid);
         if (w) return w->watched() ? 0 : w->pos;
     }
     if (i == m_index && !m_activeVariantKey.isEmpty() && m_activeVariantKey != key) {
-        const auto w = m_lib->watchInfo(m_activeVariantKey);
+        const auto w = m_lib->watchInfo(m_activeVariantKey, cid);
         if (w) return w->watched() ? 0 : w->pos;
     }
     return 0;

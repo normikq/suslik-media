@@ -201,11 +201,52 @@ fun PlaySheet(
     // Links, side files and the playlist are all fetched (or failed): what «Смотреть» waits for
     var prepared by remember(target) { mutableStateOf(false) }
     // Where the player stopped last time (the same place the player itself resumes from); null = nothing to resume.
-    val resumeAt = remember(target) {
-        context.getSharedPreferences("positions", Context.MODE_PRIVATE).getLong("w:" + watchKey(target.magnetId, target.file), 0L)
-            .takeIf { it >= 5_000L }
+    val resumeAt = remember(target, store.watchVersion) {
+        val posPrefs = context.getSharedPreferences("positions", Context.MODE_PRIVATE)
+        val wk = watchKey(target.magnetId, target.file)
+        val direct = posPrefs.getLong("w:$wk", 0L).takeIf { it >= 5_000L }
+        if (direct != null) direct
+        else {
+            val versions = store.versionsOf(target.magnetId)
+            val targetEp = episodePair(target.file.path)
+            var sibPos: Long? = null
+            for (ver in versions) {
+                if (ver.m.id == target.magnetId) continue
+                val vFile = if (targetEp != null) {
+                    ver.m.files.find { !it.isFolder && episodePair(it.path) == targetEp }
+                } else {
+                    (ver.playable as? Playable.Movie)?.file ?: mainVideo(ver.m)
+                }
+                if (vFile != null) {
+                    val p = posPrefs.getLong("w:${watchKey(ver.m.id, vFile)}", 0L)
+                    if (p >= 5_000L) { sibPos = p; break }
+                }
+            }
+            sibPos ?: CloudSync.watchFor(context, wk, item?.m?.aiTitle?.canonicalId)
+                ?.takeIf { it.pos >= 5_000L && !(it.len > 0L && it.pos > it.len - 15_000L) }?.pos
+        }
     }
-    val info = remember(target, store.watchVersion) { store.watchInfo(watchKey(target.magnetId, target.file)) }
+    val info = remember(target, store.watchVersion) {
+        val wk = watchKey(target.magnetId, target.file)
+        store.watchInfo(wk) ?: run {
+            val versions = store.versionsOf(target.magnetId)
+            val targetEp = episodePair(target.file.path)
+            var best: WatchInfo? = null
+            for (ver in versions) {
+                if (ver.m.id == target.magnetId) continue
+                val vFile = if (targetEp != null) {
+                    ver.m.files.find { !it.isFolder && episodePair(it.path) == targetEp }
+                } else {
+                    (ver.playable as? Playable.Movie)?.file ?: mainVideo(ver.m)
+                }
+                if (vFile != null) {
+                    val w = store.watchInfo(watchKey(ver.m.id, vFile))
+                    if (w != null && (best == null || w.at > best.at)) best = w
+                }
+            }
+            best ?: CloudSync.watchFor(context, wk, item?.m?.aiTitle?.canonicalId)?.let { WatchInfo(it.pos, it.len, it.at) }
+        }
+    }
     var fromStart by remember(target) { mutableStateOf(false) }
 
     val sheetQueries = remember(item, target.file.path, isColl) {

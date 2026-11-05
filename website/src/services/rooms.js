@@ -620,6 +620,16 @@ function handleRoomAction(roomId, user, action) {
       // Новый фильм: прежние загрузки не в счёт
       state.waiting = false;
       for (const m of room.members.values()) { m.buffering = false; m.buffering_since = 0; }
+      const actor = action.client_id ? room.members.get(action.client_id) : null;
+      if (actor) {
+        if (!file) {
+          actor.variant_key = null;
+        } else if (typeof action.variant_key === "string" && action.variant_key.trim()) {
+          actor.variant_key = action.variant_key.trim().slice(0, 1000);
+        } else if (!actor.variant_key || !(Array.isArray(file.variants) && file.variants.some(v => v.key === actor.variant_key))) {
+          actor.variant_key = file.key;
+        }
+      }
       state.anchor_server_ms = now;
       state.seq++;
       break;

@@ -27,7 +27,7 @@ private object AndroidPartyLink : PartyLink {
     override fun play(posMs: Long) = Party.play(posMs)
     override fun pause(posMs: Long) = Party.pause(posMs)
     override fun seek(posMs: Long) = Party.seek(posMs)
-    override fun reportBuffering(loading: Boolean) = Party.reportBuffering(loading)
+    override fun reportBuffering(loading: Boolean, variantKey: String?) = Party.reportBuffering(loading, variantKey)
 }
 
 /**
@@ -39,6 +39,10 @@ class PlayerPartySync(private val handler: Handler, private val cb: Callback) {
     interface Callback {
         /** Watch key (`magnetId|path`) of what is playing, null — not from the library. */
         fun watchKey(): String?
+        /** Active variant key (`magnetId|path`) if the viewer switched quality, else null. */
+        fun activeVariantKey(): String? = null
+        /** Canonical ID of the current film/series, if known. */
+        fun canonicalId(): String? = null
         /** The playlist's watch keys: index = the playlist's entry. */
         fun keys(): List<String>
         fun title(): String
@@ -88,40 +92,66 @@ class PlayerPartySync(private val handler: Handler, private val cb: Callback) {
         Party.watching--
         Party.playingKeys = emptyList()
         player?.let { engine.idle(it) }
-        if (Party.isHost && Party.file?.key == lastKey) Party.closeIfNobodyWatches()
+        if (Party.isHost && lastKey != null && Party.file?.matches(lastKey, cb.canonicalId()) == true) Party.closeIfNobodyWatches()
     }
 
     /** The host's player went behind the lock screen / another app: the room waits for them on pause. */
     fun hostAway(posMs: Long) {
-        if (Party.isHost && Party.file?.key == cb.watchKey() && Party.state.playing) {
+        val activeKey = cb.activeVariantKey()?.ifBlank { null } ?: cb.watchKey()
+        if (Party.isHost && Party.file?.matches(activeKey, cb.canonicalId()) == true && Party.state.playing) {
             AppLog.write("[party] host left the player: pause")
             Party.pause(posMs)
         }
     }
 
+    private fun findEpisodeIndex(keys: List<String>, f: PartyFileRef): Int {
+        val direct = keys.indexOf(f.key)
+        if (direct >= 0) return direct
+        for (v in f.variants) {
+            val vi = keys.indexOf(v.key)
+            if (vi >= 0) return vi
+        }
+        val targetEp = if ('|' in f.key) ru.suslikovanora.media.core.episodePair(f.key.substringAfter('|')) else null
+        if (targetEp != null) {
+            val ei = keys.indexOfFirst { wk ->
+                '|' in wk && ru.suslikovanora.media.core.episodePair(wk.substringAfter('|')) == targetEp
+            }
+            if (ei >= 0) return ei
+        }
+        return -1
+    }
+
     private fun step() {
         val p = player ?: return
         val key = cb.watchKey()
+        val activeKey = cb.activeVariantKey()?.ifBlank { null } ?: key
+        val cid = cb.canonicalId()
         val keys = cb.keys()
         if (keys != Party.playingKeys) Party.playingKeys = keys
         // The host went on to another episode: the room follows
         if (key != lastKey) {
             lastKey = key
             val f = Party.file
-            if (f != null && key != null && key != f.key && Party.isHost && f.key in keys) {
+            if (f != null && key != null && !f.matches(key, cid) && Party.isHost && (f.key in keys || findEpisodeIndex(keys, f) >= 0)) {
                 val nextVariants = cb.variantsFor(key)
-                Party.putFilm(PartyFileRef(key, cb.title(), variants = nextVariants))
+                Party.putFilm(PartyFileRef(key, cb.title(), canonicalId = cid, variants = nextVariants))
+                val curVar = cb.activeVariantKey()?.ifBlank { null }
+                if (curVar != null && curVar != key) {
+                    Party.sendVariantChange(curVar)
+                }
             }
         }
         // The room's episode changed (the host picked another one): this player follows, once per change
-        val rk = Party.file?.key
+        val rf = Party.file
+        val rk = rf?.key
+        val roomEpIdx = if (rf != null) findEpisodeIndex(keys, rf) else -1
         // The guest's player follows the room's file in its playlist: MainActivity must not open it again after the
         // player closes (it does not recompose while the player is in front, and playingKeys are empty then)
-        if (!Party.isHost && rk != null && rk in keys && Party.followed != rk) Party.followed = rk
+        if (!Party.isHost && rk != null && roomEpIdx >= 0 && Party.followed != rk) Party.followed = rk
         // The host closed the film (the room has none now): a guest who watched it with them closes it too
-        val matchesFilm = key != null && Party.file?.matches(key) == true
+        val matchesFilm = (activeKey != null && rf?.matches(activeKey, cid) == true) || (key != null && rf?.matches(key, cid) == true)
         if (Party.inRoom && matchesFilm) showedRoomFilm = true
-        else if (showedRoomFilm && !Party.isHost && Party.inRoom && rk != null && rk !in keys && !matchesFilm && cb.ready() && cb.canPlayIndex()) {
+        else if (showedRoomFilm && !Party.isHost && Party.inRoom && rk != null && roomEpIdx < 0 && !matchesFilm && cb.ready() && cb.canPlayIndex()) {
             // The host put a film that is not in this playlist (another season, another film): this player cannot follow
             // it in place, and MainActivity behind it does not recompose while the player is in front. The guest's player
             // closes, and MainActivity opens the host's film at the room's place (as for any film the host puts)
@@ -139,7 +169,7 @@ class PlayerPartySync(private val handler: Handler, private val cb: Callback) {
         }
         if (rk == null || matchesFilm) switchedTo = null
         else if (Party.inRoom && switchedTo != rk && cb.ready() && cb.canPlayIndex()) {
-            val i = keys.indexOf(rk)
+            val i = roomEpIdx
             if (i >= 0) {
                 switchedTo = rk
                 AppLog.write("[party] room episode -> $i")
@@ -148,9 +178,9 @@ class PlayerPartySync(private val handler: Handler, private val cb: Callback) {
             }
         }
         cb.onTick()
-        if (Party.inRoom && matchesFilm && cb.ready()) {
+        if (Party.inRoom && matchesFilm && activeKey != null && cb.ready()) {
             episodeNotice?.let { episodeNotice = null; cb.notice(it) }
-            engine.tick(p, key, System.currentTimeMillis())
+            engine.tick(p, activeKey, System.currentTimeMillis())
         } else engine.idle(p)
     }
 

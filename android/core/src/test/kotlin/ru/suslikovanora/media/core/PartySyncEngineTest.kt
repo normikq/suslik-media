@@ -45,7 +45,7 @@ class PartySyncEngineTest {
         override fun play(posMs: Long) { sent += "play $posMs" }
         override fun pause(posMs: Long) { sent += "pause $posMs" }
         override fun seek(posMs: Long) { sent += "seek $posMs" }
-        override fun reportBuffering(loading: Boolean) { if (buffering.lastOrNull() != loading) buffering += loading }
+        override fun reportBuffering(loading: Boolean, variantKey: String?) { if (buffering.lastOrNull() != loading) buffering += loading }
     }
 
     private val key = "42|a.mkv"

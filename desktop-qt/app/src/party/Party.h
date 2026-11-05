@@ -97,8 +97,7 @@ public:
     void play(qint64 posMs) override { action(core::PartyProtocol::play(posMs)); }
     void pause(qint64 posMs) override { action(core::PartyProtocol::pause(posMs)); }
     void seek(qint64 posMs) override { if (canSeek()) action(core::PartyProtocol::seek(posMs)); }
-    void reportBuffering(bool loading) override;
-    void reportBuffering(bool loading, const QString &variantKey);
+    void reportBuffering(bool loading, const QString &variantKey = QString()) override;
     void sendVariantChange(const QString &variantKey);
 
 signals:

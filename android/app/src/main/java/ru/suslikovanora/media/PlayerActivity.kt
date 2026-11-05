@@ -203,17 +203,23 @@ class PlayerActivity : ComponentActivity() {
         }
     }
     // Playing but the clock does not move and no buffering is reported = frozen playback.
-    // Runs only while VLC reports "playing" (restarted by the Playing event), so a paused player wakes nobody up.
+    // Runs while VLC reports "playing" or buffering is in progress, so a paused player wakes nobody up.
     private val watchdogRunnable = object : Runnable {
         override fun run() {
             val p = player ?: return
-            if (!p.isPlaying) return // paused: nobody wakes up (restarted by the Playing event)
-            warnIfSoftwareDecoding(p) // once per file; the track may not be known yet at the first picture
-            checkNoPicture(p)
-            diagnostics.checkProcessorOverload(p)
-            checkHeavy()
-            // Network trouble is handled by the reconnect logic; the supervisor judges only real playback.
-            if (!userPaused && !ended && !networkMonitor.isNetworkLost && !audioSession.isPausedForFocus) statsOf(p)?.let { supervisor.tick(it) }
+            if (!p.isPlaying && !buffering) return // paused: nobody wakes up (restarted by the Playing/Buffering event)
+            if (p.isPlaying) {
+                warnIfSoftwareDecoding(p) // once per file; the track may not be known yet at the first picture
+                checkNoPicture(p)
+                diagnostics.checkProcessorOverload(p)
+                checkHeavy()
+            }
+            // Network trouble is handled by the reconnect logic; the supervisor judges real playback and long buffering.
+            if (!userPaused && !ended && !networkMonitor.isNetworkLost && !audioSession.isPausedForFocus) {
+                if (buffering && bufferingShown in 1..99) supervisor.buffering(bufferingShown.toFloat())
+                val st = statsOf(p) ?: if (buffering) PlaybackSupervisor.Stats(perceivedPosition(), 0L, 0L, 0L, 0.0, 0, false, 0, false) else null
+                st?.let { supervisor.tick(it) }
+            }
             handler.postDelayed(this, WATCHDOG_TICK_MS)
         }
     }
@@ -251,8 +257,11 @@ class PlayerActivity : ComponentActivity() {
         override fun suggestDowngrade(currentBitrateMbps: Double) {
             val vars = ui.variants
             if (vars.isEmpty()) return
-            val best = vars.filter { it.bitrate < currentBitrateMbps && it.key != ui.activeVariantKey }
-                .maxByOrNull { it.bitrate } ?: return
+            val curVar = vars.find { it.key == ui.activeVariantKey }
+            val curBr = currentBitrateMbps.takeIf { it > 0.0 } ?: curVar?.bitrate ?: 0.0
+            val best = (if (curBr > 0.0) vars.filter { it.bitrate > 0.0 && it.bitrate < curBr && it.key != ui.activeVariantKey }.maxByOrNull { it.bitrate } else null)
+                ?: vars.filter { it.key != ui.activeVariantKey && (curVar == null || it.score < curVar.score) }.maxByOrNull { it.score }
+                ?: return
             val label = if (best.label.isNotBlank()) best.label else "${best.quality} (${String.format(java.util.Locale.US, "%.1f", best.bitrate)} Мбит/с)"
             suggestedDowngradeKey = best.key
             ui.downgradePrompt = tr("player.skorost_nedostatochna", "target" to label)
@@ -347,6 +356,7 @@ class PlayerActivity : ComponentActivity() {
         override fun buffering(percent: Float) {
             val owner = player ?: return
             supervisor.buffering(percent)
+            if (percent < 100f) startWatchdog()
             if (catchingUp) {
                 // the reserve holds the film back on purpose: its own label, no stall timer
                 buffering = percent < 100f
@@ -722,6 +732,8 @@ class PlayerActivity : ComponentActivity() {
             override fun getCurrentUrl(): String = currentUrl
             override fun getCurrentQueueIndex(): Int = playlistQueue.currentIndex
             override fun getQueueSize(): Int = playlistQueue.size
+            override fun getActiveVariantKey(): String? = ui.activeVariantKey
+            override fun getCanonicalId(): String? = canonicalId ?: Party.file?.canonicalId
         })
     }
 
@@ -849,6 +861,8 @@ class PlayerActivity : ComponentActivity() {
     private val partySync: PlayerPartySync by lazy {
         PlayerPartySync(handler, object : PlayerPartySync.Callback {
             override fun watchKey(): String? = watchProgress.currentWatchKey()
+            override fun activeVariantKey(): String? = ui.activeVariantKey
+            override fun canonicalId(): String? = canonicalId ?: Party.file?.canonicalId
             override fun keys(): List<String> = watchProgress.keys
             override fun title(): String = roomTitles.getOrNull(watchProgress.keys.indexOf(watchProgress.currentWatchKey())) ?: currentTitle
             override fun ready(): Boolean = alive && !leaving && !keptOnStop && player != null && sideJob?.isActive != true
@@ -1057,6 +1071,7 @@ class PlayerActivity : ComponentActivity() {
         panel.title = currentTitle
         panel.scale = SCALES[scaleIndex].second
         panel.ui = ui
+        panel.onQuality = { openPicker(if (ui.picker == "quality") null else "quality") }
         panel.onAudio = { openPicker(if (ui.picker == "audio") null else "audio") }
         panel.onSubs = { openPicker(if (ui.picker == "spu") null else "spu") }
         panel.onScale = { cycleScale() }
@@ -1140,6 +1155,10 @@ class PlayerActivity : ComponentActivity() {
 
         pipController.setup()
         showControlsTemporarily()
+        scope.launch {
+            libraryStore.restoreSnapshot()
+            if (libraryStore.serverProfiles.isEmpty()) libraryStore.refreshTags()
+        }
         intent.getStringExtra(EXTRA_PLAYLIST)?.takeIf { it.isNotBlank() }?.let { fetchPlaylist(it) }
         partySync.start(syncPlayer)
     }
@@ -1631,24 +1650,25 @@ class PlayerActivity : ComponentActivity() {
                 Party.sendVariantChange(variantKey)
 
                 val newAudios = ArrayList<String>()
-                val audioArr = res.optJSONArray("audio")
-                if (audioArr != null) {
-                    val customObj = org.json.JSONObject()
-                    for (i in 0 until audioArr.length()) {
-                        val item = audioArr.optJSONObject(i) ?: continue
+                val customObj = org.json.JSONObject()
+                fun collectAudio(arr: org.json.JSONArray?) {
+                    if (arr == null) return
+                    for (i in 0 until arr.length()) {
+                        val item = arr.optJSONObject(i) ?: continue
                         val u = item.optString("url")
                         if (u.isNullOrBlank()) continue
-                        newAudios += u
+                        if (u !in newAudios) newAudios += u
                         val title = item.optString("title")
-                        val offsetMs = if (item.has("offset_ms")) item.optLong("offset_ms", 0L) else item.optLong("offsetMs", 0L)
-                        if (!title.isNullOrBlank() || offsetMs != 0L) {
-                            customObj.put(u, org.json.JSONObject().put("title", title).put("offsetMs", offsetMs))
+                        val lang = item.optString("lang").takeIf { it.isNotBlank() && it != "und" }
+                        val menuName = if (!lang.isNullOrBlank() && !title.isNullOrBlank() && !title.endsWith(" [$lang]", ignoreCase = true)) "$title [$lang]" else title
+                        val offsetMs = if (item.has("offsetMs")) item.optLong("offsetMs", 0L) else item.optLong("offset_ms", 0L)
+                        if (!menuName.isNullOrBlank() || offsetMs != 0L) {
+                            customObj.put(u, org.json.JSONObject().put("title", menuName).put("offsetMs", offsetMs))
                         }
                     }
-                    if (customObj.length() > 0) {
-                        ru.suslikovanora.media.player.CustomAudioInfo.read(customObj.toString())
-                    }
                 }
+                collectAudio(res.optJSONArray("audio"))
+                collectAudio(res.optJSONArray("customAudio"))
                 val newSubs = ArrayList<String>()
                 val subsArr = res.optJSONArray("subtitles")
                 if (subsArr != null) {
@@ -1657,7 +1677,7 @@ class PlayerActivity : ComponentActivity() {
                         if (!u.isNullOrBlank()) newSubs += u
                     }
                 }
-                trackSelector.setVariantSidecars(newUrl, newSubs, newAudios)
+                trackSelector.setVariantSidecars(newUrl, newSubs, newAudios, customObj.toString())
 
                 val prevVariant = ui.variants.find { it.key == prevVariantKey }
                 val targetOffsetMs = currentVariant?.offsetMs ?: 0L
@@ -1669,7 +1689,10 @@ class PlayerActivity : ComponentActivity() {
                 if (!userPaused && !ended) {
                     audioSession.requestAudioFocus()
                     p.play()
+                    handler.removeCallbacks(stallRunnable)
+                    handler.postDelayed(stallRunnable, openTimeout())
                 }
+                startWatchdog()
             } catch (e: Throwable) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 AppLog.write("[player] switchVariant failed: ${e.message}")

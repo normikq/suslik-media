@@ -58,6 +58,42 @@ class LibraryStore(context: Context) {
 
     init {
         loadCachedAnimationFlags()
+        if (sharedItems.isNotEmpty()) {
+            magnets = sharedMagnets
+            items = sharedItems
+        }
+        if (sharedPosterPaths.isNotEmpty()) posterPaths.putAll(sharedPosterPaths)
+        if (sharedServerTags.isNotEmpty()) serverTags.putAll(sharedServerTags)
+        if (sharedServerProfiles.isNotEmpty()) serverProfiles.putAll(sharedServerProfiles)
+        for ((k, v) in posterPrefs.all) {
+            val url = (v as? String)?.substringAfter('|', "")?.takeIf { it.startsWith("/api/poster/img/") } ?: continue
+            posterPaths[k] = url
+            sharedPosterPaths[k] = url
+        }
+    }
+
+    companion object {
+        @Volatile private var sharedMagnets: List<Magnet> = emptyList()
+        @Volatile private var sharedItems: List<LibraryItem> = emptyList()
+        private val sharedPosterPaths = java.util.concurrent.ConcurrentHashMap<String, String>()
+        private val sharedServerTags = java.util.concurrent.ConcurrentHashMap<Long, List<String>>()
+        private val sharedServerProfiles = java.util.concurrent.ConcurrentHashMap<Long, ru.suslikovanora.media.core.party.PartyVariant>()
+    }
+
+    fun ensureLoadedSync() {
+        if (items.isNotEmpty()) return
+        if (sharedItems.isNotEmpty()) {
+            magnets = sharedMagnets
+            items = sharedItems
+            return
+        }
+        val list = runCatching { parseLibrary(JSONObject(snapshotFile.readText())) }.getOrNull() ?: return
+        val filtered = list.filterNot { isVoiceOverOnly(it) }
+        val prepared = prepareItems(filtered)
+        magnets = filtered
+        items = prepared
+        sharedMagnets = filtered
+        sharedItems = prepared
     }
 
     private fun loadCachedAnimationFlags() {
@@ -91,6 +127,8 @@ class LibraryStore(context: Context) {
         val prepared = withContext(Dispatchers.Default) { prepareItems(list) }
         magnets = list
         items = prepared
+        sharedMagnets = list
+        sharedItems = prepared
     }
 
     // A torrent of only .mka is an uploaded voice-over (/api/custom-audio): it plays inside its film, not as a tile (as on the PC).
@@ -293,6 +331,7 @@ class LibraryStore(context: Context) {
     fun posterPathOf(item: LibraryItem): String? = item.posterQueries.firstNotNullOfOrNull { posterPaths[it.lowercase()] }
 
     fun versionsOf(magnetId: Long): List<LibraryItem> {
+        if (items.isEmpty()) ensureLoadedSync()
         val all = items
         val (_, versionsMap) = groupVersions(all) { posterPathOf(it) }
         versionsMap[magnetId]?.let { return it }
@@ -304,6 +343,7 @@ class LibraryStore(context: Context) {
     }
 
     private fun notePoster(key: String, path: String) {
+        sharedPosterPaths[key] = path
         if (posterPaths[key] != path) { posterPaths[key] = path; posterVersion++ }
     }
 
@@ -463,7 +503,9 @@ class LibraryStore(context: Context) {
             if (tags != null) for (k in tags.keys()) {
                 val a = tags.optJSONArray(k) ?: continue
                 val id = k.toLongOrNull() ?: continue
-                serverTags[id] = (0 until a.length()).map { a.getString(it) }
+                val list = (0 until a.length()).map { a.getString(it) }
+                serverTags[id] = list
+                sharedServerTags[id] = list
             }
             val profiles = j.optJSONObject("profiles")
             if (profiles != null) for (k in profiles.keys()) {
@@ -472,7 +514,7 @@ class LibraryStore(context: Context) {
                 val flagsArr = p.optJSONArray("hardware_flags")
                 val flags = ArrayList<String>()
                 if (flagsArr != null) for (fi in 0 until flagsArr.length()) flags += flagsArr.optString(fi)
-                serverProfiles[id] = ru.suslikovanora.media.core.party.PartyVariant(
+                val prof = ru.suslikovanora.media.core.party.PartyVariant(
                     key = p.optString("key"),
                     label = p.optString("label"),
                     quality = p.optString("resolution").ifBlank { p.optString("quality", "") },
@@ -482,6 +524,8 @@ class LibraryStore(context: Context) {
                     score = p.optInt("score", 0),
                     hardwareFlags = flags
                 )
+                serverProfiles[id] = prof
+                sharedServerProfiles[id] = prof
             }
             if (j.optInt("pending", 0) <= 0) return
             kotlinx.coroutines.delay(30_000)

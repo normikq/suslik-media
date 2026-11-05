@@ -257,10 +257,6 @@ void Party::closeIfNobodyWatches() {
     });
 }
 
-void Party::reportBuffering(bool loading) {
-    reportBuffering(loading, QString());
-}
-
 void Party::reportBuffering(bool loading, const QString &variantKey) {
     if (!m_roomId || (loading == m_reportedBuffering && (variantKey.isEmpty() || variantKey == m_reportedVariantKey))) return;
     m_reportedBuffering = loading;

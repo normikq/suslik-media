@@ -193,6 +193,10 @@ public:
     /// Гость, а ведущий держит паузу (или комната ждёт загрузку): снять её гость не может.
     bool playLocked() const;
     QString currentWatchKey() const { return watchKey(); }
+    QString activeWatchKey() const { return !m_activeVariantKey.isEmpty() ? m_activeVariantKey : watchKey(); }
+    QString canonicalId() const { return m_canonicalId; }
+    std::optional<QString> edition() const;
+    int findEpisodeIndex(const core::PartyFileRef &f) const;
     /// Открыт ли этот файл в очереди плеера (гость комнаты: ведущий перешёл к серии, которая уже в ней).
     Q_INVOKABLE bool hasWatchKey(const QString &key) const { return m_open && !m_closing && m_req.watchKeys.contains(key); }
     QStringList watchKeys() const { return m_req.watchKeys; }

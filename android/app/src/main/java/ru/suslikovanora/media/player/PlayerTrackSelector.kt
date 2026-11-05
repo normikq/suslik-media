@@ -80,10 +80,15 @@ class PlayerTrackSelector(
     val selectedAudio: Int? get() = selectedAudioId
     val selectedSpu: Int? get() = selectedSpuId
 
-    fun setVariantSidecars(url: String, subs: List<String>, audio: List<String>) {
+    fun setVariantSidecars(url: String, subs: List<String>, audio: List<String>, customJson: String? = null) {
+        val oldAudio = filesOf(filmUrl)?.audio.orEmpty() + filesOf(url)?.audio.orEmpty()
+        CustomAudioInfo.updateUrls(oldAudio, customJson)
         if (url.isNotEmpty()) episodeFiles[keyOf(url)] = EpisodeFiles(subs, audio)
+        filmUrl = url
         attachedAudio.clear()
         activeSidecar = null
+        pendingAudio = null
+        prefsAppliedForUrl = ""
     }
 
     fun readSideExtras(i: Intent?) {

@@ -8,6 +8,7 @@ Sheet {
     id: d
     readonly property alias model: m
     signal play()
+    signal changeVersion(string title, var ids)
     maxWidth: m.kind === 2 ? 660 : m.kind === 1 ? 540 : 620
     onDismissed: open = false
     function show(magnetId, path) { m.load(magnetId, path); open = true }
@@ -222,6 +223,44 @@ Sheet {
                 spacing: 12
                 Selector { width: (parent.width - 12) / 2; label: Ui.tx("library.sezon"); value: m.seasonValue; items: m.seasons; onPicked: (i) => m.seasonIndex = i }
                 Selector { width: (parent.width - 12) / 2; label: Ui.tx("library.seriya"); value: m.episodeValue; items: m.episodes; onPicked: (i) => m.episodeIndex = i }
+            }
+            Item {
+                visible: m.hasMultipleVersions
+                width: parent.width
+                height: 52
+                Btn {
+                    id: verBtn
+                    anchors.bottom: parent.bottom
+                    width: parent.width; height: 42
+                    hoverUp: 1
+                    onClicked: {
+                        const t = m.versionTitle, ids = m.versionIds
+                        d.open = false
+                        d.changeVersion(t, ids)
+                    }
+                    Rectangle {
+                        anchors.fill: parent; radius: 12
+                        color: verBtn.hovered ? "#1C2232" : Theme.glassFill
+                        border.color: verBtn.hovered ? "#323B50" : Theme.glassEdge
+                    }
+                    Row {
+                        x: 14; width: parent.width - 28; anchors.verticalCenter: parent.verticalCenter
+                        spacing: 8
+                        Text {
+                            width: parent.width - changeLbl.implicitWidth - 16
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: m.versionLabel
+                            color: "white"; font.family: Theme.onest; font.weight: Font.Medium; font.pixelSize: 13
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            id: changeLbl
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: Ui.tx("library.vyberite_versiyu")
+                            color: Theme.accent; font.family: Theme.onest; font.weight: Font.DemiBold; font.pixelSize: 13
+                        }
+                    }
+                }
             }
             // ---- состояние, место, «Смотреть» ----
             Text {

@@ -395,7 +395,7 @@ struct VersionKey {
     std::optional<int> year;
     int quality;
     explicit VersionKey(const LibraryItem &i)
-        : item(i), seasons(itemSeasons(i)), part(itemPart(i)), year(releaseYear(i)), quality(qualityScore(i.m.name)) {}
+        : item(i), seasons(itemSeasons(i)), part(itemPart(i)), year(releaseYear(i)), quality(smartQualityScore(i.m.name)) {}
 };
 
 /// Сезоны по порядку (спецвыпуски после, потом без сезона), часть, год, лучшее качество, больший размер. Порядок полный.
@@ -538,6 +538,25 @@ std::optional<int> nameSeason(const QString &name) {
     if (nums.size() != 1) return std::nullopt;
     const int n = *nums.begin();
     return n > 0 ? std::optional<int>(n) : std::nullopt;
+}
+
+std::optional<std::pair<int, int>> episodePair(const QString &path, int defaultSeason) {
+    return parseEpisode(path, defaultSeason);
+}
+
+QString parseEdition(const QString &name) {
+    if (isBlank(name)) return {};
+    static const RE reExt = rx(NB + QStringLiteral(R"((?:extended|ext[\s._-]?cut|расширенн\p{L}*))") + NA, true);
+    static const RE reDc = rx(NB + QStringLiteral(R"((?:director'?s?[\s._-]?cut|dc|режиссерск\p{L}*))") + NA, true);
+    static const RE reUnr = rx(NB + QStringLiteral(R"((?:unrated|uncut|без[\s._-]?цензур\p{L}*))") + NA, true);
+    static const RE reRem = rx(NB + QStringLiteral(R"((?:remaster(?:ed)?|ремастер\p{L}*))") + NA, true);
+    static const RE reTh = rx(NB + QStringLiteral(R"((?:theatrical|театральн\p{L}*))") + NA, true);
+    if (contains(reExt, name)) return QStringLiteral("extended");
+    if (contains(reDc, name)) return QStringLiteral("directors_cut");
+    if (contains(reUnr, name)) return QStringLiteral("unrated");
+    if (contains(reRem, name)) return QStringLiteral("remastered");
+    if (contains(reTh, name)) return QStringLiteral("theatrical");
+    return {};
 }
 
 std::optional<MFile> mainVideo(const Magnet &m) {
@@ -979,9 +998,11 @@ std::pair<QList<LibraryItem>, QHash<qint64, QList<LibraryItem>>> groupVersions(c
         QString ed;
         if (const AiTitle *ai = it.m.acceptedAi(); ai && ai->edition && !ai->edition->isEmpty()) {
             const QString e = *ai->edition;
-            if (e == QLatin1String("theatrical") || e == QLatin1String("extended") || e == QLatin1String("directors_cut") || e == QLatin1String("unrated"))
+            if (e == QLatin1String("theatrical") || e == QLatin1String("extended") || e == QLatin1String("directors_cut") ||
+                e == QLatin1String("unrated") || e == QLatin1String("remastered"))
                 ed = e;
         }
+        if (ed.isEmpty()) ed = parseEdition(it.m.name);
         const QString edKey = ed.isEmpty() ? QString() : (QLatin1Char('|') + ed);
         QStringList keys;
         if (posterOf)

@@ -46,7 +46,12 @@ data class PartyFileRef(
         if (fileKey == null) return false
         if (fileKey == key) return true
         if (variants.any { it.key == fileKey }) return true
-        if (canonicalId != null && otherCanonicalId != null && canonicalId == otherCanonicalId) return true
+        if (canonicalId != null && otherCanonicalId != null && canonicalId == otherCanonicalId) {
+            val myEp = if ('|' in key) ru.suslikovanora.media.core.episodePair(key.substringAfter('|')) else null
+            val otherEp = if ('|' in fileKey) ru.suslikovanora.media.core.episodePair(fileKey.substringAfter('|')) else null
+            if (myEp != null && otherEp != null && myEp != otherEp) return false
+            return true
+        }
         return false
     }
 }

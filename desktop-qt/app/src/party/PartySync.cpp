@@ -70,11 +70,16 @@ void PartySync::onOpen() {
         m_showedRoomFilm = false;
         m_episodeNotice.clear();
         // в комнате фильм ведущего становится фильмом комнаты (другой фильм гостя играет только у него)
-        const QString key = m_player.currentWatchKey();
+        const QString key = m_player.activeWatchKey();
         if (!key.isEmpty() && m_party.inRoom() && m_party.isHost()) {
             PartyFileRef ref{key, m_player.entryLabel()};
+            if (!m_player.canonicalId().isEmpty()) ref.canonicalId = m_player.canonicalId();
+            ref.edition = m_player.edition();
             ref.variants = m_player.requestVariants();
             m_party.putFilm(ref);
+            if (!m_player.activeVariantKey().isEmpty() && m_player.activeVariantKey() != ref.key) {
+                m_party.sendVariantChange(m_player.activeVariantKey());
+            }
         }
         m_roomKey = S("\x01"); // onRoom — как при первом показе
         m_timer.start();
@@ -85,21 +90,30 @@ void PartySync::onOpen() {
         m_timer.stop();
         m_engine.idle(*this);
         // ведущий закрыл фильм: комната остаётся без него (через миг — пересоздание плеера закрытием не считается)
-        if (m_party.isHost() && !m_lastKey.isEmpty() && m_party.fileKey() == m_lastKey) m_party.closeIfNobodyWatches();
+        if (m_party.isHost() && !m_lastKey.isEmpty() && (m_party.fileKey() == m_lastKey || (m_party.file() && m_party.file()->matches(m_lastKey, m_player.canonicalId())))) {
+            m_party.closeIfNobodyWatches();
+        }
     }
-    if (showing) m_lastKey = m_player.currentWatchKey();
+    if (showing) m_lastKey = m_player.activeWatchKey();
 }
 
 /// Ведущий перешёл к другой серии этой очереди: комната идёт за ним.
 void PartySync::onEntry() {
     if (!m_watching) return;
-    const QString key = m_player.currentWatchKey();
+    const QString key = m_player.activeWatchKey();
     m_lastKey = key;
     const auto &f = m_party.file();
-    if (!f || key.isEmpty() || key == f->key || !m_party.isHost() || !m_player.watchKeys().contains(f->key)) return;
+    if (!f || key.isEmpty() || !m_party.isHost()) return;
+    if (key == f->key && m_player.currentWatchKey() == f->key) return;
+    if (m_player.findEpisodeIndex(*f) < 0 && !m_player.watchKeys().contains(f->key) && !f->matches(key, m_player.canonicalId())) return;
     PartyFileRef ref{key, m_player.entryLabel()};
+    if (!m_player.canonicalId().isEmpty()) ref.canonicalId = m_player.canonicalId();
+    ref.edition = m_player.edition();
     ref.variants = m_player.requestVariants();
     m_party.putFilm(ref);
+    if (!m_player.activeVariantKey().isEmpty() && m_player.activeVariantKey() != ref.key) {
+        m_party.sendVariantChange(m_player.activeVariantKey());
+    }
 }
 
 /// Фильм комнаты сменился: плеер гостя включает серию ведущего, если она в его очереди.
@@ -110,10 +124,10 @@ void PartySync::onRoom() {
     m_roomKey = rk;
     if (rk.isEmpty()) return;
     const auto &f = m_party.file();
-    const QString key = m_player.currentWatchKey();
-    if (f && f->matches(key)) return;
-    const int i = int(m_player.watchKeys().indexOf(rk));
-    if (rk != key && i >= 0 && !m_player.closing()) {
+    const QString key = m_player.activeWatchKey();
+    if (f && f->matches(key, m_player.canonicalId())) return;
+    const int i = f ? m_player.findEpisodeIndex(*f) : int(m_player.watchKeys().indexOf(rk));
+    if (rk != key && i >= 0 && i != m_player.index() && !m_player.closing()) {
         PlayerLog::write(S("[party] room episode -> %1").arg(i));
         m_player.roomPlayEntry(i);
         if (!m_party.isHost()) m_episodeNotice = tx(S("party.vklyuchaet"), {{"who", m_party.hostWho()}, {"title", m_party.fileTitle()}});
@@ -121,11 +135,11 @@ void PartySync::onRoom() {
 }
 
 void PartySync::tick() {
-    const QString key = m_player.currentWatchKey();
+    const QString key = m_player.activeWatchKey();
     const bool inRoom = m_party.inRoom();
     const auto &f = m_party.file();
     const QString rk = m_party.fileKey();
-    const bool matches = f ? f->matches(key) : (!rk.isEmpty() && rk == key);
+    const bool matches = f ? f->matches(key, m_player.canonicalId()) : (!rk.isEmpty() && rk == key);
     // Ведущий закрыл фильм (в комнате его больше нет): гость, смотревший его, тоже закрывает
     if (inRoom && !key.isEmpty() && matches) m_showedRoomFilm = true;
     else if (!inRoom || !rk.isEmpty()) m_showedRoomFilm = false;

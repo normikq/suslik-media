@@ -483,20 +483,11 @@
   }
 
   function buildPartyVariant(item, file, serverProfile, width, height) {
-    if (serverProfile && serverProfile.key && serverProfile.key === watchKey((item && item.m && item.m.id) || 0, file || {})) {
-      var prof = Object.assign({}, serverProfile);
-      prof.quality = prof.quality || prof.resolution || '';
-      if (!prof.quality && (width || height)) {
-        if (width >= 3000 || height >= 1600) prof.quality = '4K';
-        else if (width >= 1600 || height >= 900) prof.quality = '1080p';
-        else if (width >= 1100 || height >= 600) prof.quality = '720p';
-        else prof.quality = '480p';
-        if (prof.label && prof.label.indexOf(prof.quality) !== 0) {
-          prof.label = prof.quality + ' · ' + prof.label;
-        }
-      }
-      return prof;
-    }
+    var mId = (item && item.m && item.m.id) || 0;
+    var wk = watchKey(mId, file || {});
+    var profSameMagnet = serverProfile && (!serverProfile.key || serverProfile.key === wk || serverProfile.key.indexOf(mId + '|') === 0 || serverProfile.ad_id === mId);
+    var prof = profSameMagnet ? serverProfile : null;
+
     var name = (item && item.m && item.m.name) || '';
     var filePath = (file && (file.path || file.name)) || '';
     var combined = (name + ' ' + filePath).trim();
@@ -507,7 +498,9 @@
     else if (/(?:^|\D)1080[pi](?![a-z])|(?:^|\D)1920(?!\d)/i.test(lower)) quality = '1080p';
     else if (/(?:^|\D)720p(?![a-z])|(?:^|\D)1280(?!\d)/i.test(lower)) quality = '720p';
     else if (/(?:^|\D)(?:480|576)[pi](?![a-z])|(?:^|[^a-z])dvd/i.test(lower)) quality = '480p';
-    else if (width || height) {
+    else if (prof && (prof.quality || prof.resolution)) {
+      quality = prof.quality || prof.resolution || '';
+    } else if (width || height) {
       if (width >= 3000 || height >= 1600) quality = '4K';
       else if (width >= 1600 || height >= 900) quality = '1080p';
       else if (width >= 1100 || height >= 600) quality = '720p';
@@ -522,28 +515,43 @@
     else if (/(?:^|[^a-z])dts(?![a-z])/i.test(lower)) audio = 'DTS 5.1';
     else if (/dd\+|(?:^|[^a-z])ddp(?![a-z])|(?:^|[^a-z])e[\s._-]?ac[\s._-]?3(?!\d)|dolby\s*digital\s*plus/i.test(lower)) audio = 'DD+';
     else if (/(?:^|[^a-z])ac[\s._-]?3(?!\d)|(?:^|[^a-z])dd[\s._-]?5\.1|(?:^|[^\d.])5\.1(?!\d)/i.test(lower)) audio = 'AC3 5.1';
+    if (prof) {
+      var profAudio = prof.audio || prof.audio_tech || '';
+      if (profAudio && profAudio !== 'Stereo' && (audio === 'Stereo' || /dts-hd|dts:x|atmos|truehd/i.test(profAudio))) {
+        audio = profAudio;
+      }
+    }
 
     var hwFlags = [];
     if (/dolby[\s._-]?vision|dovi|(?:^|[^a-z])dv(?![a-z])/i.test(lower)) hwFlags.push('dv');
     if (/hdr10\+|hdr10plus|hdr10|(?:^|[^a-z])hdr(?![a-z])/i.test(lower)) hwFlags.push('hdr');
     if (/(?:^|[^a-z])dts(?![a-z])/i.test(lower)) hwFlags.push('dts');
+    if (prof) {
+      var pFlags = prof.hardware_flags || prof.hardwareFlags || [];
+      for (var fi = 0; fi < pFlags.length; fi++) {
+        if (hwFlags.indexOf(pFlags[fi]) < 0) hwFlags.push(pFlags[fi]);
+      }
+    }
 
     var score = smartQualityScore(combined);
     if (!/(?:^|[^a-z0-9])(?:2160p|4k|uhd)(?![a-z])|(?:^|\D)3840(?!\d)/i.test(lower)
         && !/(?:^|\D)1080[pi](?![a-z])|(?:^|\D)1920(?!\d)/i.test(lower)
         && !/(?:^|\D)720p(?![a-z])|(?:^|\D)1280(?!\d)/i.test(lower)
-        && (width || height)) {
+        && quality) {
       if (quality === '4K') score += 300;
       else if (quality === '1080p') score += 200;
       else if (quality === '720p') score += 100;
     }
+    if (prof && prof.score > score) score = prof.score;
+
     var sizeBytes = (file && file.size) || (item && item.m && item.m.size) || 0;
     var isSeries = item && item.playable && item.playable.kind === 'series';
     var estDuration = isSeries ? 2700 : 6600;
     var bitrate = sizeBytes > 0 ? Math.round((sizeBytes * 8) / (estDuration * 1000000) * 10) / 10 : 0.0;
     var hasExactBitrate = false;
-    if (serverProfile && serverProfile.bitrate > 0) {
-      bitrate = serverProfile.bitrate;
+    var profBitrate = prof ? (prof.bitrate || prof.bitrate_mbps || 0) : 0;
+    if (profBitrate > 0) {
+      bitrate = profBitrate;
       hasExactBitrate = true;
     }
 
@@ -551,9 +559,10 @@
     if (quality) parts.push(quality);
     if (hwFlags.indexOf('dv') >= 0) parts.push('Dolby Vision');
     else if (hwFlags.indexOf('hdr') >= 0) parts.push('HDR');
+    else if (/10[\s._-]?bit|hi10p/i.test(lower) || (prof && (prof.video_tech === '10-bit' || (prof.label && prof.label.indexOf('10-bit') >= 0)))) parts.push('10-bit');
     if (/remux/i.test(lower)) parts.push('BDRemux');
     else if (/bdrip|brrip|blu[\s._-]?ray/i.test(lower)) parts.push('BDRip');
-    else if (/web(?:[\s._-]?(?:dl|rip))?/i.test(lower)) parts.push('WEB-DL');
+    else if (/(?:^|[^a-z0-9])web[\s._-]?(?:dl|rip)(?![a-z0-9])/i.test(lower)) parts.push('WEB-DL');
     if (audio !== 'Stereo') parts.push(audio);
 
     var label = parts.join(' · ');
@@ -563,14 +572,13 @@
       label += (label ? ' ' : '') + '(' + formatBytes(sizeBytes) + ')';
     }
 
-    var mId = (item && item.m && item.m.id) || 0;
     return {
-      key: watchKey(mId, file || {}),
+      key: wk,
       label: label.trim(),
       quality: quality,
       audio: audio,
       bitrate: bitrate,
-      offset_ms: 0,
+      offset_ms: (prof && (prof.offset_ms || prof.offsetMs)) || 0,
       score: score,
       hardware_flags: hwFlags
     };
@@ -620,13 +628,23 @@
    * лучшее качество и больший размер (sortVersions в Model.kt). Ключ считается один раз на версию и сравнивается поле за
    * полем: так порядок всегда последовательный (сравнение, что пропускает поле, если его нет у одной стороны, зацикливается).
    */
+  function parseEdition(name) {
+    var s = String(name || '').toLowerCase();
+    if (/director(?:'?s)?[\s._-]*cut/i.test(s)) return 'directors_cut';
+    if (/extended(?:\s+cut|\s+edition)?/i.test(s)) return 'extended';
+    if (/theatrical(?:\s+cut|\s+edition)?/i.test(s)) return 'theatrical';
+    if (/unrated/i.test(s)) return 'unrated';
+    if (/remaster(?:ed)?/i.test(s)) return 'remastered';
+    return '';
+  }
+
   function sortVersions(list) {
     if (!list || list.length <= 1) return list ? list.slice() : [];
     var keys = list.map(function (it) {
       var s = itemSeasons(it), p = itemPart(it), y = itemYear(it);
       return [
         s ? (s.min === 0 ? LAST - 1 : s.min) : LAST, s ? s.max - s.min : 0, p != null ? p : LAST, y != null ? y : LAST,
-        -qualityScore(it.m ? it.m.name : ''), -(it.m ? it.m.size : 0), it
+        -smartQualityScore(it.m ? it.m.name : ''), -(it.m ? it.m.size : 0), it
       ];
     });
     keys.sort(function (a, b) {
@@ -664,8 +682,9 @@
       // год принятого ответа ИИ важнее года в имени раздачи (groupVersions в Model.kt)
       var aiy = it.m.aiTitle && it.m.aiTitle.status === 'accepted' && it.m.aiTitle.base ? it.m.aiTitle.year : null;
       var y = aiy ? [null, String(aiy)] : YEAR_IN_NAME.exec(it.m.name);
-      var aiEd = it.m.aiTitle && it.m.aiTitle.status === 'accepted' && it.m.aiTitle.edition && it.m.aiTitle.edition !== 'default' ? it.m.aiTitle.edition : '';
-      var ed = (aiEd === 'theatrical' || aiEd === 'extended' || aiEd === 'directors_cut' || aiEd === 'unrated') ? aiEd : '';
+      var aiEd = it.m.aiTitle && it.m.aiTitle.status === 'accepted' && it.m.aiTitle.edition ? it.m.aiTitle.edition : '';
+      var rawEd = aiEd ? (aiEd !== 'default' ? aiEd : '') : parseEdition(it.m.name);
+      var ed = (rawEd === 'theatrical' || rawEd === 'extended' || rawEd === 'directors_cut' || rawEd === 'unrated' || rawEd === 'remastered') ? rawEd : '';
       var edKey = ed ? '|' + ed : '';
       var keys = [];
       var poster = posterOf ? posterOf(it) : null;

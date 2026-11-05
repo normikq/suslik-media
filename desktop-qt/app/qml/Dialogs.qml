@@ -4,9 +4,10 @@ import QtQuick
 Item {
     id: d
     property var page   // страница, с которой открыли (выбор версии ведёт обратно в неё)
+    property var defaultPage
     signal play(var request)
 
-    function versions(p, title, ids) { versionPicker.page = p; versionPicker.title = title; versionPicker.ids = ids; versionPicker.open = true }
+    function versions(p, title, ids) { const targetPage = p || d.page || d.defaultPage; d.page = targetPage; versionPicker.page = targetPage; versionPicker.title = title; versionPicker.ids = ids; versionPicker.open = true }
     // Гость комнаты смотрит фильм ведущего: свой фильм (из поиска раздач) — только выйдя из комнаты
     function play_(magnetId, path) {
         if (party.guest) { say(Ui.tx("party.svoy_film_gostyu")); return }
@@ -21,7 +22,11 @@ Item {
     function say(text) { toast.show(text) }
 
     VersionPicker { id: versionPicker }
-    PlayDialog { id: playDialog; onPlay: player.start(playDialog.model) }
+    PlayDialog {
+        id: playDialog
+        onPlay: player.start(playDialog.model)
+        onChangeVersion: (title, ids) => d.versions(d.page || d.defaultPage, title, ids)
+    }
     AiDialog { id: aiDialog }
 
     // Короткая подсказка снизу.

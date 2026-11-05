@@ -71,6 +71,9 @@ bool PartyFileRef::matches(const QString &fileKey, const QString &otherCanonical
         if (v.key == fileKey) return true;
     }
     if (canonicalId && !canonicalId->isEmpty() && !otherCanonicalId.isEmpty() && *canonicalId == otherCanonicalId) {
+        const auto ep1 = key.contains(QLatin1Char('|')) ? episodePair(key.section(QLatin1Char('|'), 1)) : std::nullopt;
+        const auto ep2 = fileKey.contains(QLatin1Char('|')) ? episodePair(fileKey.section(QLatin1Char('|'), 1)) : std::nullopt;
+        if (ep1 && ep2 && *ep1 != *ep2) return false;
         return true;
     }
     return false;
@@ -425,7 +428,7 @@ void PartySyncEngine::tick(SyncPlayer &player, const QString &key, qint64 now) {
             m_pendingAt = now; m_pendingTo = t; m_pendingT = -1;
             m_ownUntil = now + OWN_MS;
             m_prevT = t; m_prevP = p; m_prevAt = now;
-            m_link.reportBuffering(!p);
+            m_link.reportBuffering(!p, key);
             return;
         }
     }
@@ -452,7 +455,7 @@ void PartySyncEngine::tick(SyncPlayer &player, const QString &key, qint64 now) {
     else
         m_stalledSince = 0;
     const bool loading = m_pendingAt > 0 || (m_stalledSince > 0 && now - m_stalledSince > 1000);
-    m_link.reportBuffering(loading && m_link.state().playing);
+    m_link.reportBuffering(loading && m_link.state().playing, key);
 
     // 1. Я только что поставил этот фильм в комнату: комната стартует с моего места
     if (m_link.takeStartedByMe(key)) {
@@ -560,8 +563,13 @@ qint64 PartySyncEngine::seekRoom(SyncPlayer &player, qint64 target, qint64 now) 
 }
 
 PartyVariant buildPartyVariant(const LibraryItem &item, const MFile &file, const std::optional<PartyVariant> &serverProfile, int width, int height) {
-    if (serverProfile.has_value() && !serverProfile->key.isEmpty() && serverProfile->key == watchKey(item.m.id, file)) {
-        PartyVariant v = *serverProfile;
+    const QString wKey = watchKey(item.m.id, file);
+    const QString mPrefix = QString::number(item.m.id) + QLatin1Char('|');
+    const PartyVariant *sp = (serverProfile.has_value() && (serverProfile->key.isEmpty() || serverProfile->key == wKey || serverProfile->key.startsWith(mPrefix)))
+                                 ? &*serverProfile
+                                 : nullptr;
+    if (sp && sp->key == wKey && !sp->label.isEmpty() && sp->bitrate > 0.0) {
+        PartyVariant v = *sp;
         if (v.quality.isEmpty() && (width > 0 || height > 0)) {
             if (width >= 3000 || height >= 1600) v.quality = QStringLiteral("4K");
             else if (width >= 1600 || height >= 900) v.quality = QStringLiteral("1080p");
@@ -589,6 +597,8 @@ PartyVariant buildPartyVariant(const LibraryItem &item, const MFile &file, const
         else if (width >= 1600 || height >= 900) quality = QStringLiteral("1080p");
         else if (width >= 1100 || height >= 600) quality = QStringLiteral("720p");
         else quality = QStringLiteral("480p");
+    } else if (sp && !sp->quality.isEmpty()) {
+        quality = sp->quality;
     }
 
     QString audio = QStringLiteral("Stereo");
@@ -599,11 +609,19 @@ PartyVariant buildPartyVariant(const LibraryItem &item, const MFile &file, const
     else if (match(R"((?:^|[^a-z])dts(?![a-z]))")) audio = QStringLiteral("DTS 5.1");
     else if (match(R"(dd\+|(?:^|[^a-z])ddp(?![a-z])|(?:^|[^a-z])e[\s._-]?ac[\s._-]?3(?!\d)|dolby\s*digital\s*plus)")) audio = QStringLiteral("DD+");
     else if (match(R"((?:^|[^a-z])ac[\s._-]?3(?!\d)|(?:^|[^a-z])dd[\s._-]?5\.1|(?:^|[^\d.])5\.1(?!\d))")) audio = QStringLiteral("AC3 5.1");
+    if (audio == QStringLiteral("Stereo") && sp && !sp->audio.isEmpty() && sp->audio != QStringLiteral("Stereo")) {
+        audio = sp->audio;
+    }
 
     QStringList hwFlags;
     if (match(R"(dolby[\s._-]?vision|dovi|(?:^|[^a-z])dv(?![a-z]))")) hwFlags << QStringLiteral("dv");
     if (match(R"(hdr10\+|hdr10plus|hdr10|(?:^|[^a-z])hdr(?![a-z]))")) hwFlags << QStringLiteral("hdr");
     if (match(R"((?:^|[^a-z])dts(?![a-z]))")) hwFlags << QStringLiteral("dts");
+    if (sp) {
+        for (const QString &fl : sp->hardwareFlags) {
+            if (!hwFlags.contains(fl)) hwFlags << fl;
+        }
+    }
 
     int score = smartQualityScore(combined);
     if (!match(R"((?:^|[^a-z0-9])(?:2160p|4k|uhd)(?![a-z])|(?:^|\D)3840(?!\d))")
@@ -614,23 +632,30 @@ PartyVariant buildPartyVariant(const LibraryItem &item, const MFile &file, const
         else if (quality == QStringLiteral("1080p")) score += 200;
         else if (quality == QStringLiteral("720p")) score += 100;
     }
+    if (sp && sp->score > score) score = sp->score;
+
     const qint64 sizeBytes = file.size > 0 ? file.size : item.m.size;
     const bool isSeries = item.playable.isSeries();
     const double estDuration = isSeries ? 2700.0 : 6600.0;
     double bitrate = sizeBytes > 0 ? std::round((sizeBytes * 8.0) / (estDuration * 1000000.0) * 10.0) / 10.0 : 0.0;
     bool hasExactBitrate = false;
-    if (serverProfile.has_value() && serverProfile->bitrate > 0) {
-        bitrate = serverProfile->bitrate;
+    if (sp && sp->bitrate > 0) {
+        bitrate = sp->bitrate;
         hasExactBitrate = true;
     }
 
     QStringList parts;
     if (!quality.isEmpty()) parts << quality;
     if (hwFlags.contains(QStringLiteral("dv"))) parts << QStringLiteral("Dolby Vision");
-    else if (hwFlags.contains(QStringLiteral("hdr"))) parts << QStringLiteral("HDR");
+    else if (hwFlags.contains(QStringLiteral("hdr"))) {
+        if (sp && sp->label.contains(QStringLiteral("HDR10+"))) parts << QStringLiteral("HDR10+");
+        else parts << QStringLiteral("HDR");
+    } else if (match(R"(10[\s._-]?bit|hi10p)") || (sp && sp->label.contains(QStringLiteral("10-bit")))) {
+        parts << QStringLiteral("10-bit");
+    }
     if (match(R"(remux)")) parts << QStringLiteral("BDRemux");
     else if (match(R"(bdrip|brrip|blu[\s._-]?ray)")) parts << QStringLiteral("BDRip");
-    else if (match(R"(web(?:[\s._-]?(?:dl|rip))?)")) parts << QStringLiteral("WEB-DL");
+    else if (match(R"((?:^|[^a-z0-9])web[\s._-]?(?:dl|rip)(?![a-z0-9]))")) parts << QStringLiteral("WEB-DL");
     if (audio != QStringLiteral("Stereo")) parts << audio;
 
     QString label = parts.join(QStringLiteral(" · "));
@@ -643,7 +668,7 @@ PartyVariant buildPartyVariant(const LibraryItem &item, const MFile &file, const
     }
 
     PartyVariant v;
-    v.key = watchKey(item.m.id, file);
+    v.key = wKey;
     v.label = label;
     v.quality = quality;
     v.audio = audio;

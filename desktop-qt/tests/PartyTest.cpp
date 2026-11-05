@@ -72,7 +72,7 @@ struct FakeLink : PartyLink {
     void play(qint64 p) override { sent << S("play %1").arg(p); }
     void pause(qint64 p) override { sent << S("pause %1").arg(p); }
     void seek(qint64 p) override { sent << S("seek %1").arg(p); }
-    void reportBuffering(bool l) override { if (buffering.isEmpty() || buffering.last() != l) buffering << l; }
+    void reportBuffering(bool l, const QString & = QString()) override { if (buffering.isEmpty() || buffering.last() != l) buffering << l; }
 };
 
 const QString KEY = S("42|a.mkv");

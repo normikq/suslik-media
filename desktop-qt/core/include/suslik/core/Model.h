@@ -132,6 +132,8 @@ struct LibraryItem {
 
 /// Сезон, который называет раздача, если она называет ровно один.
 std::optional<int> nameSeason(const QString &name);
+std::optional<std::pair<int, int>> episodePair(const QString &path, int defaultSeason = 1);
+QString parseEdition(const QString &name);
 std::optional<MFile> mainVideo(const Magnet &m);
 /// Что играть: по файлам, потом вид и сезон, принятые от ИИ.
 Playable buildPlayable(const Magnet &m);

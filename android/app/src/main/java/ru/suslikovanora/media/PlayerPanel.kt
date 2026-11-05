@@ -61,6 +61,7 @@ class PlayerPanelState {
     var bottomInsetPx by mutableIntStateOf(0)
     /** The panel over the film: its audio / subtitles sheet opens here while the phone is upright. */
     var ui: PlayerUiState? = null
+    var onQuality: () -> Unit = {}
     var onAudio: () -> Unit = {}
     var onSubs: () -> Unit = {}
     var onScale: () -> Unit = {}
@@ -90,6 +91,11 @@ fun PlayerInfoPanel(s: PlayerPanelState) {
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             PanelChip(tr("player.na_ves_ekran_2"), accent = true, onClick = s.onFull)
+            val ui = s.ui
+            if (ui != null && ui.variants.size > 1) {
+                val curQuality = ui.variants.find { it.key == ui.activeVariantKey }?.quality?.takeIf { it.isNotBlank() } ?: "HD"
+                PanelChip(tr("player.kachestvo") + ": $curQuality", accent = ui.picker == "quality", onClick = s.onQuality)
+            }
             PanelChip(tr("player.audio"), onClick = s.onAudio)
             PanelChip(tr("player.cc_subtitry"), onClick = s.onSubs)
             PanelChip(tr("player.ves_ekran_scale", "scale" to s.scale), onClick = s.onScale)

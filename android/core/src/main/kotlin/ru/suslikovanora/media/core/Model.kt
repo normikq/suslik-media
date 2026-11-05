@@ -200,6 +200,8 @@ fun nameSeason(name: String): Int? {
     return nums.singleOrNull()?.takeIf { it > 0 }
 }
 
+fun episodePair(path: String, defaultSeason: Int = 1): Pair<Int, Int>? = parseEpisode(path, defaultSeason)
+
 private fun parseEpisode(path: String, defaultSeason: Int = 1): Pair<Int, Int>? {
     val p = path.replace('\\', '/')
     val name = p.substringAfterLast('/')
@@ -734,8 +736,8 @@ fun buildPartyVariant(
     serverProfile: ru.suslikovanora.media.core.party.PartyVariant? = null
 ): ru.suslikovanora.media.core.party.PartyVariant {
     val key = watchKey(item.m.id, file)
-    if (serverProfile != null && serverProfile.key.isNotBlank() && serverProfile.key == key) {
-        return serverProfile
+    val prof = serverProfile?.takeIf {
+        it.key.isBlank() || it.key == key || it.key.startsWith("${item.m.id}|")
     }
     val combined = "${item.m.name} ${file.name}".trim()
     val lower = combined.lowercase(Locale.ROOT)
@@ -746,10 +748,11 @@ fun buildPartyVariant(
         match("""(?:^|\D)1080[pi](?![a-z])|(?:^|\D)1920(?!\d)""") -> "1080p"
         match("""(?:^|\D)720p(?![a-z])|(?:^|\D)1280(?!\d)""") -> "720p"
         match("""(?:^|\D)(?:480|576)[pi](?![a-z])|(?:^|[^a-z])dvd""") -> "480p"
+        prof != null && prof.quality.isNotEmpty() -> prof.quality
         else -> ""
     }
 
-    val audio = when {
+    var audio = when {
         match("""atmos(?![a-z])""") -> "TrueHD Atmos"
         match("""truehd""") -> "TrueHD"
         match("""dts[:._-]?x(?![a-z0-9])""") -> "DTS:X"
@@ -759,20 +762,44 @@ fun buildPartyVariant(
         match("""(?:^|[^a-z])ac[\s._-]?3(?!\d)|(?:^|[^a-z])dd[\s._-]?5\.1|(?:^|[^\d.])5\.1(?!\d)""") -> "AC3 5.1"
         else -> "Stereo"
     }
+    if (prof != null && prof.audio.isNotEmpty() && prof.audio != "Stereo") {
+        if (audio == "Stereo" || Regex("""dts-hd|dts:x|atmos|truehd""", RegexOption.IGNORE_CASE).containsMatchIn(prof.audio)) {
+            audio = prof.audio
+        }
+    }
 
     val hwFlags = ArrayList<String>()
     if (match("""dolby[\s._-]?vision|dovi|(?:^|[^a-z])dv(?![a-z])""")) hwFlags += "dv"
     if (match("""hdr10\+|hdr10plus|hdr10|(?:^|[^a-z])hdr(?![a-z])""")) hwFlags += "hdr"
     if (match("""(?:^|[^a-z])dts(?![a-z])""")) hwFlags += "dts"
+    if (prof != null) {
+        for (f in prof.hardwareFlags) {
+            if (f !in hwFlags) hwFlags += f
+        }
+    }
 
-    val score = smartQualityScore(combined)
+    var score = smartQualityScore(combined)
+    if (!match("""(?:^|[^a-z0-9])(?:2160p|4k|uhd)(?![a-z])|(?:^|\D)3840(?!\d)""") &&
+        !match("""(?:^|\D)1080[pi](?![a-z])|(?:^|\D)1920(?!\d)""") &&
+        !match("""(?:^|\D)720p(?![a-z])|(?:^|\D)1280(?!\d)""") &&
+        quality.isNotEmpty()
+    ) {
+        score += when (quality) {
+            "4K" -> 300
+            "1080p" -> 200
+            "720p" -> 100
+            else -> 0
+        }
+    }
+    if (prof != null && prof.score > score) score = prof.score
+
     val sizeBytes = if (file.size > 0) file.size else item.m.size
     val isSeries = item.playable is Playable.Series
     val estDuration = if (isSeries) 2700.0 else 6600.0
     var bitrate = if (sizeBytes > 0) Math.round((sizeBytes * 8.0) / (estDuration * 1_000_000.0) * 10.0) / 10.0 else 0.0
     var hasExactBitrate = false
-    if (serverProfile != null && serverProfile.bitrate > 0) {
-        bitrate = serverProfile.bitrate
+    if (prof != null && prof.bitrate > 0) {
+        bitrate = prof.bitrate
         hasExactBitrate = true
     }
 
@@ -780,9 +807,10 @@ fun buildPartyVariant(
     if (quality.isNotEmpty()) parts += quality
     if ("dv" in hwFlags) parts += "Dolby Vision"
     else if ("hdr" in hwFlags) parts += "HDR"
+    else if (match("""10[\s._-]?bit|hi10p""") || (prof != null && prof.label.contains("10-bit"))) parts += "10-bit"
     if (match("""remux""")) parts += "BDRemux"
     else if (match("""bdrip|brrip|blu[\s._-]?ray""")) parts += "BDRip"
-    else if (match("""web(?:[\s._-]?(?:dl|rip))?""")) parts += "WEB-DL"
+    else if (match("""(?:^|[^a-z0-9])web[\s._-]?(?:dl|rip)(?![a-z0-9])""")) parts += "WEB-DL"
     if (audio != "Stereo") parts += audio
 
     var label = parts.joinToString(" · ")
@@ -800,7 +828,7 @@ fun buildPartyVariant(
         quality = quality,
         audio = audio,
         bitrate = bitrate,
-        offsetMs = 0L,
+        offsetMs = prof?.offsetMs ?: 0L,
         score = score,
         hardwareFlags = hwFlags
     )
@@ -851,7 +879,7 @@ private class VersionKey(val item: LibraryItem) {
     val seasons = itemSeasons(item)
     val part = itemPart(item)
     val year = releaseYear(item)
-    val quality = qualityScore(item.m.name)
+    val quality = smartQualityScore(item.m.name)
 }
 
 /**
@@ -942,6 +970,18 @@ fun versionLine(v: LibraryItem, inSection: Boolean): String {
  * The first one in the list order stays on screen; [Pair.second] maps its id to every version (itself included), sorted
  * by [sortVersions].
  */
+fun parseEdition(name: String): String {
+    val s = name.lowercase(Locale.ROOT)
+    return when {
+        Regex("""director(?:'?s)?[\s._-]*cut""").containsMatchIn(s) -> "directors_cut"
+        Regex("""extended(?:\s+cut|\s+edition)?""").containsMatchIn(s) -> "extended"
+        Regex("""theatrical(?:\s+cut|\s+edition)?""").containsMatchIn(s) -> "theatrical"
+        Regex("""unrated""").containsMatchIn(s) -> "unrated"
+        Regex("""remaster(?:ed)?""").containsMatchIn(s) -> "remastered"
+        else -> ""
+    }
+}
+
 fun groupVersions(list: List<LibraryItem>, posterOf: (LibraryItem) -> String? = { null }): Pair<List<LibraryItem>, Map<Long, List<LibraryItem>>> {
     val byKey = HashMap<String, MutableList<LibraryItem>>()
     val groups = ArrayList<MutableList<LibraryItem>>()
@@ -950,8 +990,10 @@ fun groupVersions(list: List<LibraryItem>, posterOf: (LibraryItem) -> String? = 
         val base = it.baseTitle
         if (it.playable is Playable.None || !it.m.ready || base.isBlank()) { shown += it; continue }
         val kind = if (it.playable is Playable.Movie) "m" else "s"
-        val ed = it.m.aiTitle?.takeIf { a -> a.accepted }?.edition?.takeIf { e ->
-            e == "theatrical" || e == "extended" || e == "directors_cut" || e == "unrated"
+        val aiEd = it.m.aiTitle?.takeIf { a -> a.accepted }?.edition.orEmpty()
+        val rawEd = if (aiEd.isNotEmpty()) (if (aiEd != "default") aiEd else "") else parseEdition(it.m.name)
+        val ed = rawEd.takeIf { e ->
+            e == "theatrical" || e == "extended" || e == "directors_cut" || e == "unrated" || e == "remastered"
         }.orEmpty()
         val edKey = if (ed.isNotEmpty()) "|$ed" else ""
         val keys = listOfNotNull(

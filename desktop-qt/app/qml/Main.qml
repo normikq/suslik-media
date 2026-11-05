@@ -168,7 +168,7 @@ Window {
         enabled: win.pendingRoomKey !== ""
         function onVersionChanged() { win.playRoomKey() }
     }
-    Dialogs { id: dialogs; anchors.fill: parent }
+    Dialogs { id: dialogs; anchors.fill: parent; defaultPage: win.tab === 1 ? minePage.model : libraryPage.model }
     SettingsSheet { id: settingsSheet; anchors.fill: parent }
     WhatsNew { anchors.fill: parent }
     // Экран плеера: вылет из постера и отлёт обратно (Main.kt + ExitFlight.kt). playerPresence: 0 — медиатека, 1 — плеер.

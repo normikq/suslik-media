@@ -909,8 +909,7 @@ void Library::runMediaQueue() {
 }
 
 // ---- прогресс ----
-std::optional<WatchInfo> Library::watchInfo(const QString &key) const {
-    const auto v = m_watch.get(key);
+static std::optional<WatchInfo> parseWatchInfoVal(const std::optional<QString> &v) {
     if (!v) return std::nullopt;
     const QStringList p = v->split(QLatin1Char('|'));
     if (p.size() < 3) return std::nullopt;
@@ -920,10 +919,80 @@ std::optional<WatchInfo> Library::watchInfo(const QString &key) const {
     return WatchInfo{pos, p[1].toLongLong(), p[2].toLongLong()};
 }
 
-void Library::noteWatch(const QString &key, qint64 pos, qint64 len) {
+std::optional<WatchInfo> Library::watchInfo(const QString &key, const std::optional<QString> &cid) const {
+    if (const auto direct = parseWatchInfoVal(m_watch.get(key))) return direct;
+
+    const qsizetype bar = key.indexOf(QLatin1Char('|'));
+    const qint64 magId = bar > 0 ? key.left(bar).toLongLong() : 0;
+    const QString path = bar >= 0 ? key.mid(bar + 1) : QString();
+    const auto targetEp = path.isEmpty() ? std::nullopt : core::episodePair(path);
+
+    std::optional<QString> effCid = (cid && !cid->isEmpty()) ? cid : std::nullopt;
+    if (!effCid && magId > 0) {
+        if (const LibraryItem *it = item(magId)) {
+            if (const auto ai = it->m.acceptedAi(); ai && !ai->canonicalId.isEmpty()) effCid = ai->canonicalId;
+        }
+    }
+
+    std::optional<WatchInfo> best;
+    // 1. Поиск среди других версий (groupVersions) того же фильма/сериала
+    if (magId > 0) {
+        const auto versions = versionsOf(magId);
+        for (const auto &ver : versions) {
+            if (ver.m.id == magId) continue;
+            if (ver.playable.isMovie()) {
+                if (targetEp) continue;
+                const auto w = parseWatchInfoVal(m_watch.get(watchKey(ver.m.id, ver.playable.file)));
+                if (w && (!best || w->at > best->at)) best = w;
+            } else {
+                for (const auto &s : ver.playable.seasons) {
+                    for (const auto &e : s.items) {
+                        if (targetEp && core::episodePair(e.file.path) == targetEp) {
+                            const auto w = parseWatchInfoVal(m_watch.get(watchKey(ver.m.id, e.file)));
+                            if (w && (!best || w->at > best->at)) best = w;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Поиск по canonicalId (cid) в m_watch (в т.ч. пришедшее с других устройств)
+    if (effCid && !effCid->isEmpty()) {
+        const QHash<QString, QString> all = m_watch.all();
+        for (auto it = all.cbegin(); it != all.cend(); ++it) {
+            if (it.key() == key) continue;
+            const QStringList p = it.value().split(QLatin1Char('|'));
+            if (p.size() < 4 || p[3] != *effCid) continue;
+            const QString kPath = after(it.key(), QLatin1Char('|'));
+            if (targetEp != core::episodePair(kPath)) continue;
+            bool ok = false;
+            const qint64 pos = p[0].toLongLong(&ok);
+            if (!ok) continue;
+            const WatchInfo w{pos, p[1].toLongLong(), p[2].toLongLong()};
+            if (!best || w.at > best->at) best = w;
+        }
+    }
+    return best;
+}
+
+void Library::noteWatch(const QString &key, qint64 pos, qint64 len, const std::optional<QString> &cid) {
     const qint64 at = QDateTime::currentMSecsSinceEpoch();
-    m_watch.put(key, QStringLiteral("%1|%2|%3").arg(pos).arg(std::max<qint64>(len, 0)).arg(at));
-    m_sync.noteWatch(key, pos, std::max<qint64>(len, 0), at);
+    std::optional<QString> effCid = (cid && !cid->isEmpty()) ? cid : std::nullopt;
+    if (!effCid) {
+        const qint64 magId = before(key, QLatin1Char('|')).toLongLong();
+        if (magId > 0) {
+            if (const LibraryItem *it = item(magId)) {
+                if (const auto ai = it->m.acceptedAi(); ai && !ai->canonicalId.isEmpty()) effCid = ai->canonicalId;
+            }
+        }
+    }
+    const qint64 safeLen = std::max<qint64>(len, 0);
+    const QString val = (effCid && !effCid->isEmpty())
+                            ? QStringLiteral("%1|%2|%3|%4").arg(pos).arg(safeLen).arg(at).arg(*effCid)
+                            : QStringLiteral("%1|%2|%3").arg(pos).arg(safeLen).arg(at);
+    m_watch.put(key, val);
+    m_sync.noteWatch(key, pos, safeLen, at, effCid);
 }
 
 std::optional<std::pair<MFile, WatchInfo>> Library::lastWatched(const Magnet &m) const {
