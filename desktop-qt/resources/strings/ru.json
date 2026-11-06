@@ -411,7 +411,7 @@
   "player.gromkost_v": "Громкость: {v}%",
   "player.informaciya_i": "ⓘ Информация (I)",
   "player.kachestvo": "Качество",
-  "player.skorost_nedostatochna": "Скорость интернета недостаточна для этого качества. Переключить на {quality}?",
+  "player.skorost_nedostatochna": "Скорость интернета недостаточна для этого качества. Переключить на {target}?",
   "player.da": "Да",
   "player.skryt": "Скрыть",
   "player.pereklyuchenie_kachestva": "Переключение качества…",

@@ -862,11 +862,11 @@
     c.downgradePromptShown = true;
     var targetLabel = best.label || (best.quality + (best.bitrate ? ' (' + best.bitrate.toFixed(1) + ' Мбит/с)' : ''));
     c.opts.dialog(
-      'Скорость интернета недостаточна для этого качества. Переключить на ' + targetLabel + '?',
+      tr('player.skorost_nedostatochna', { target: targetLabel }),
       null,
       [
-        { text: 'Да', run: function () { c.downgradePromptShown = false; switchVariant(best.key); } },
-        { text: 'Скрыть', run: function () { c.downgradePromptShown = true; } }
+        { text: tr('player.da'), run: function () { c.downgradePromptShown = false; switchVariant(best.key); } },
+        { text: tr('player.skryt'), run: function () { c.downgradePromptShown = true; } }
       ]
     );
   }
@@ -876,7 +876,7 @@
     if (c) c.downgradePromptShown = false;
     if (!c || c.switching || variantKey === (c.activeVariantKey || c.key)) return;
     c.switching = true;
-    c.opts.toast('Переключение качества…');
+    c.opts.toast(tr('player.pereklyuchenie_kachestva'));
     var p = av();
     var curTime = 0;
     try { curTime = p.getCurrentTime(); } catch (e) { curTime = c.pos; }
@@ -888,7 +888,7 @@
       if (!res || !res.url || cur !== c) {
         if (cur === c) {
           c.switching = false;
-          c.opts.toast('Не удалось сменить качество');
+          c.opts.toast(tr('player.ne_udalos_smenit_kachestvo'));
         }
         return;
       }
@@ -919,7 +919,7 @@
     }).catch(function () {
       if (cur === c) {
         c.switching = false;
-        c.opts.toast('Не удалось сменить качество');
+        c.opts.toast(tr('player.ne_udalos_smenit_kachestvo'));
       }
     });
   }
@@ -933,7 +933,7 @@
     var items = [];
     var variants = (c.opts.file && c.opts.file.variants) || (SM.party && SM.party.room && SM.party.room.file && SM.party.room.file.variants) || [];
     if (variants.length > 1) {
-      items.push(h('h2', { text: 'Качество' }));
+      items.push(h('h2', { text: tr('player.kachestvo') }));
       var hostVariantKey = null;
       if (SM.party && SM.party.room) {
         var r = SM.party.room;
