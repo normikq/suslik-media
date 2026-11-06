@@ -36,10 +36,10 @@ website/
 │   │   ├── favorites.js    /api/favorites
 │   │   ├── magnets.js      /api/magnets, /api/torrents, файлы и отмена
 │   │   ├── search.js       /api/search, /api/search/add
-│   │   ├── mirror.js       /api/file/mirror-url, /api/file/proxy, /api/playlist
+│   │   ├── mirror.js       /api/file/mirror-url, /api/file/variant-url, /api/file/proxy, /api/playlist
 │   │   ├── updates.js      /api/app/* (обновления, каналы beta/stable, changelog, отчёты)
 │   │   ├── media.js        /api/media-metadata, /api/poster, /api/poster/img
-│   │   ├── sync.js         /api/sync — прогресс и дорожки по аккаунту Discord
+│   │   ├── sync.js         /api/sync — прогресс и дорожки по аккаунту Discord (с key/cid — запись и по canonical_id)
 │   │   ├── tags.js         /api/tags — метки Dolby Vision / HDR / DTS
 │   │   ├── tvstream.js     /api/file/tv-info, /api/file/tv — поток для Samsung TV (ffmpeg)
 │   │   ├── custom-audio.js /api/custom-audio — внешние озвучки (docs/CUSTOM-AUDIO-API.md)
@@ -127,7 +127,7 @@ website/
 - `GET /api/rooms/:id/events?client_id=…` — поток событий (`init`, `state_changed`, `member_joined`, `member_left`), `X-Accel-Buffering: no`.
   Участник — это открытый поток: закрылся последний поток устройства — его нет в комнате.
 - `POST /api/rooms/:id/leave` — выйти сразу.
-- `POST /api/rooms/:id/action` — `change_file`, `play`, `pause`, `seek`, `rate` — **только ведущий**; `buffering` — любой участник (с указанием своего `variant_key`).
+- `POST /api/rooms/:id/action` — `change_file`, `play`, `pause`, `seek`, `rate` — **только ведущий**; `buffering` и `variant_change` — любой участник про себя (аккаунт не может менять другого). `variant_key` проверяется: формат `<adId>|<путь>` и, если у файла есть список `variants`, ключ из него; в `buffering` неверный ключ молча пропускается, в `variant_change` — ошибка. Повторное `suggest` того же фильма (по `canonical_id`) пополняет `variants` кандидата (до 30).
 - `room.file` (протокол комнат): сохраняет `key` (дефолтный файл ведущего для старых клиентов), а также канонический идентификатор `canonical_id`, монтажную версию `edition` и список пресетов качества `variants: [{ key, label, resolution, source_type, video_tech, audio_tech, bitrate_mbps, size_bytes, duration_sec, offset_ms, score, hardware_flags }]`.
 - Голосование и рулетка (`candidates`): хранят канонические сущности с постером TMDB, русским/оригинальным названием, годом, версией монтажа и списком прикреплённых вариантов качества.
 
@@ -167,6 +167,7 @@ website/
   4. Поддерживает HTTP range-запросы (`206 Partial Content`) для мгновенной перемотки.
 
 ### 3.6. Сериалы и Плейлисты
+- `POST /api/file/variant-url` — ссылка зеркала для другого релиза (пресета качества) без выхода из плеера. Тело: `{ variant_key }` вида `<adId>|<путь>` или `{ ad_id, path }`. Ответ: `url`, `variant_key`, `audio` (озвучки рядом с файлом и пользовательские), `subtitles`. Только POST (путь файла не должен попадать в логи nginx). Ответ без озвучек пользователей кэшируется в памяти не дольше срока подписи ссылок и 15 мин; подбор файлов рядом с видео — `services/sidecars.js`. Как и `/api/playlist`, не проверяет, что раздача входит в медиатеку пользователя — любая раздача аккаунта AllDebrid.
 - `POST /api/playlist` — генерация плейлиста сезона `.m3u`.
 - `GET /api/playlist/:id/:name` — отдача подписанного M3U-файла, содержащего список последующих серий до конца сезона с уже сгенерированными зеркальными ссылками.
 

@@ -512,21 +512,40 @@ function sweepRooms(now = Date.now()) {
 }
 setInterval(sweepRooms, 5 * 60 * 1000).unref?.();
 
+const VARIANT_KEY_RE = /^d{1,20}|.{1,900}$/s;
+
+// Ключ варианта файла комнаты: формы "<adId>|<путь>"; если у файла есть список пресетов — только из него (или сам файл).
+function variantKeyFor(file, raw) {
+  const key = typeof raw === "string" ? raw.trim() : "";
+  if (!VARIANT_KEY_RE.test(key)) return null;
+  if (file && Array.isArray(file.variants) && file.variants.length) {
+    return key === file.key || file.variants.some(v => v.key === key) ? key : null;
+  }
+  return key;
+}
+
+// Участник, от имени которого пришло действие: аккаунт управляет только собой (client_id гостя наружу не отдаётся).
+function actingMember(room, user, action) {
+  const m = action.client_id ? room.members.get(action.client_id) : null;
+  if (!m) return { member: null };
+  const isAccount = user && user.id && user.id !== "shared" && user.id !== "guest";
+  if (isAccount && m.id && String(m.id) !== String(user.id)) {
+    return { member: null, error: "Недостаточно прав для управления состоянием другого участника." };
+  }
+  return { member: m };
+}
+
 function handleRoomAction(roomId, user, action) {
   const room = getRoom(roomId);
   if (!room) return { ok: false, error: "Комната не найдена." };
 
   // «У меня грузится / готово» — от любого участника, без прав на управление
   if (action.type === "buffering") {
-    const m = action.client_id ? room.members.get(action.client_id) : null;
+    const { member: m, error } = actingMember(room, user, action);
+    if (error) return { ok: false, error };
     if (m) {
-      const isAccount = user && user.id && user.id !== "shared" && user.id !== "guest";
-      if (isAccount && m.id && String(m.id) !== String(user.id)) {
-        return { ok: false, error: "Недостаточно прав для управления состоянием другого участника." };
-      }
-      if (typeof action.variant_key === "string") {
-        m.variant_key = action.variant_key.slice(0, 1000);
-      }
+      const vk = variantKeyFor(room.file, action.variant_key);
+      if (vk) m.variant_key = vk;
       const b = Boolean(action.buffering);
       if (Boolean(m.buffering) !== b) {
         m.buffering = b;
@@ -546,14 +565,13 @@ function handleRoomAction(roomId, user, action) {
 
   // Смена пресета качества участником (независимый выбор потока)
   if (action.type === "variant_change") {
-    const m = action.client_id ? room.members.get(action.client_id) : null;
+    const { member: m, error } = actingMember(room, user, action);
+    if (error) return { ok: false, error };
     if (m) {
-      const isAccount = user && user.id && user.id !== "shared" && user.id !== "guest";
-      if (isAccount && m.id && String(m.id) !== String(user.id)) {
-        return { ok: false, error: "Недостаточно прав для управления качеством другого участника." };
-      }
-      if (typeof action.variant_key === "string") {
-        m.variant_key = action.variant_key.slice(0, 1000);
+      const vk = variantKeyFor(room.file, action.variant_key);
+      if (!vk) return { ok: false, error: "Такого варианта у этого фильма нет." };
+      if (m.variant_key !== vk) {
+        m.variant_key = vk;
         broadcast(roomId, "state_changed", getRoomPublicData(room));
       }
     }
@@ -624,8 +642,8 @@ function handleRoomAction(roomId, user, action) {
       if (actor) {
         if (!file) {
           actor.variant_key = null;
-        } else if (typeof action.variant_key === "string" && action.variant_key.trim()) {
-          actor.variant_key = action.variant_key.trim().slice(0, 1000);
+        } else if (variantKeyFor(file, action.variant_key)) {
+          actor.variant_key = variantKeyFor(file, action.variant_key);
         } else if (actor.variant_key && Array.isArray(file.variants)) {
           const exact = file.variants.find(v => v.key === actor.variant_key);
           if (exact) {
@@ -803,6 +821,8 @@ function cleanVariant(v) {
   };
 }
 
+const MAX_VARIANTS = 30;
+
 function cleanFile(file) {
   if (!file || typeof file !== "object") return null;
   const key = typeof file.key === "string" ? file.key.slice(0, 1000) : "";
@@ -818,7 +838,7 @@ function cleanFile(file) {
     res.edition = file.edition.trim().slice(0, 50);
   }
   if (Array.isArray(file.variants) && file.variants.length > 0) {
-    const cleaned = file.variants.map(cleanVariant).filter(Boolean);
+    const cleaned = file.variants.slice(0, MAX_VARIANTS).map(cleanVariant).filter(Boolean);
     if (cleaned.length > 0) res.variants = cleaned;
   }
   return res;
@@ -839,7 +859,18 @@ function suggestFile(roomId, user, file) {
   if (room.spin) return { ok: false, error: "Крутится рулетка: дождитесь итога." };
   const f = cleanFile(file);
   if (!f) return { ok: false, error: "Не тот файл." };
-  if (!room.candidates.some(c => c.key === f.key || (c.canonical_id && f.canonical_id && c.canonical_id === f.canonical_id))) {
+  const same = room.candidates.find(c => c.key === f.key || (c.canonical_id && f.canonical_id && c.canonical_id === f.canonical_id));
+  if (same) {
+    // тот же фильм в другом релизе: пополняем список пресетов, чтобы голосующий мог выбрать любой
+    if (f.variants) {
+      const have = new Set((same.variants || []).map(v => v.key));
+      const extra = f.variants.filter(v => !have.has(v.key));
+      if (extra.length) {
+        same.variants = [...(same.variants || []), ...extra].slice(0, MAX_VARIANTS);
+        activityChanged(room);
+      }
+    }
+  } else {
     if (room.candidates.length >= MAX_CANDIDATES) return { ok: false, error: `Не больше ${MAX_CANDIDATES} фильмов в списке.` };
     const cand = {
       key: f.key,

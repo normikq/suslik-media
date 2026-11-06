@@ -255,3 +255,50 @@ test("комнаты: действие variant_change обновляет variant
 
   assert.equal(events.some(e => e.event === "state_changed"), true);
 });
+
+test("комнаты: variant_key проверяется по списку пресетов файла", () => {
+  const host = { id: "h2", name: "Host" };
+  const guest = { id: "g2", name: "Guest" };
+  const file = {
+    key: "10|Film.2160p.mkv",
+    name: "Film",
+    variants: [{ key: "10|Film.2160p.mkv", label: "4K" }, { key: "11|Film.1080p.mkv", label: "1080p" }]
+  };
+  const room = rooms.createRoom(host, file);
+  assert.equal(rooms.joinRoom(room.id, guest, "g2_client").ok, true);
+
+  const bad = rooms.handleRoomAction(room.id, guest, { type: "variant_change", client_id: "g2_client", variant_key: "99|Other.mkv" });
+  assert.equal(bad.ok, false);
+  assert.equal(room.members.get("g2_client").variant_key, undefined);
+
+  const junk = rooms.handleRoomAction(room.id, guest, { type: "variant_change", client_id: "g2_client", variant_key: "not a key" });
+  assert.equal(junk.ok, false);
+
+  // buffering с чужим ключом не падает, но ключ не принимается
+  const buf = rooms.handleRoomAction(room.id, guest, { type: "buffering", client_id: "g2_client", buffering: false, variant_key: "99|Other.mkv" });
+  assert.equal(buf.ok, true);
+  assert.equal(room.members.get("g2_client").variant_key, undefined);
+
+  const good = rooms.handleRoomAction(room.id, guest, { type: "variant_change", client_id: "g2_client", variant_key: "11|Film.1080p.mkv" });
+  assert.equal(good.ok, true);
+  assert.equal(room.members.get("g2_client").variant_key, "11|Film.1080p.mkv");
+});
+
+test("комнаты: аккаунт не меняет качество другого участника", () => {
+  const host = { id: "u_1", name: "A" };
+  const other = { id: "u_2", name: "B" };
+  const room = rooms.createRoom(host, { key: "1|f.mkv", name: "F" });
+  rooms.joinRoom(room.id, host, "a_client");
+  const res = rooms.handleRoomAction(room.id, other, { type: "variant_change", client_id: "a_client", variant_key: "2|f.mkv" });
+  assert.equal(res.ok, false);
+});
+
+test("комнаты: повторное предложение того же фильма пополняет пресеты кандидата", () => {
+  const host = { id: "u_5", name: "Host" };
+  const room = rooms.getOrCreateChannelRoom("123456789", host);
+  const v = (k, label) => ({ key: k, label });
+  assert.equal(rooms.suggestFile(room.id, host, { key: "1|a.mkv", name: "A", canonical_id: "m:a_2020:default", variants: [v("1|a.mkv", "1080p")] }).ok, true);
+  assert.equal(rooms.suggestFile(room.id, host, { key: "2|a.mkv", name: "A", canonical_id: "m:a_2020:default", variants: [v("2|a.mkv", "4K"), v("1|a.mkv", "1080p")] }).ok, true);
+  assert.equal(room.candidates.length, 1);
+  assert.deepEqual(room.candidates[0].variants.map(x => x.key), ["1|a.mkv", "2|a.mkv"]);
+});

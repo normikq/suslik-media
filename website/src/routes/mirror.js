@@ -20,6 +20,7 @@ const { markOpened, markLinkOpened } = require("../services/cleanup");
 const { isLibraryAdmin } = require("../services/downloads");
 const { getUser, SHARED_USER } = require("../services/users");
 const ca = require("../services/custom-audio");
+const { findFile, pickAudio, pickSubtitles } = require("../services/sidecars");
 
 function authorOf(req, res) {
   if (!req.customAudioAuthor) {
@@ -87,251 +88,116 @@ router.get("/api/file/mirror-url", requireLogin, mirrorUrlLimiter, (req, res) =>
   });
 });
 
-async function handleVariantUrl(req, res) {
-  const src = req.method === "POST" ? (req.body || {}) : (req.query || {});
-  let adId = Number(src.ad_id);
-  let filePath = typeof src.path === "string" ? src.path.trim() : "";
-  const variantKey = typeof src.variant_key === "string" ? src.variant_key.trim() : (typeof src.key === "string" ? src.key.trim() : "");
-  if (variantKey) {
-    const pipeIdx = variantKey.indexOf("|");
-    if (pipeIdx > 0) {
-      const parsedAd = Number(variantKey.slice(0, pipeIdx));
-      const parsedPath = variantKey.slice(pipeIdx + 1).trim();
-      if (Number.isSafeInteger(parsedAd) && parsedAd > 0 && parsedPath) {
-        adId = parsedAd;
-        filePath = parsedPath;
-      }
-    }
-  }
-  if (!Number.isSafeInteger(adId) || adId <= 0 || !filePath) {
-    return res.status(400).json({ error: "Некорректный ad_id или путь к файлу варианта." });
-  }
+// Подписанный путь зеркала для файла раздачи.
+function mirrorPath(link, name, expires) {
+  return `/api/file/proxy${name ? "/" + encodeURIComponent(name) : ""}?link=${encodeURIComponent(link)}&exp=${expires}&sig=${makeMirrorToken(link, expires)}`;
+}
 
-  const cacheKey = `${adId}|${filePath}`;
-  const now = Date.now();
-  const cached = variantUrlCache.get(cacheKey);
-  if (cached && cached.expiresAt > now + 60 * 1000) {
-    markOpened(adId);
-    markLinkOpened(cached.sourceUrl);
-    const base = publicBase(req);
-    const customAudio = await resolveCustomAudioForVariant(adId, cached.path, req, res, base);
-    const sidecarAudio = (cached.sidecarAudio || []).map(a => ({
-      id: a.id,
-      title: a.title,
-      path: a.path,
-      audio_path: a.audio_path || a.path,
-      video_path: a.video_path || "",
-      lang: a.lang,
-      offset_ms: a.offset_ms,
-      url: `${base}${a.proxyPath}`
-    }));
-    res.setHeader("Cache-Control", "no-store");
-    return res.json({
-      ok: true,
-      url: `${base}${cached.proxyPath}`,
-      source_url: cached.sourceUrl,
-      name: cached.name,
-      path: cached.path,
-      size: cached.size,
-      ad_id: cached.adId,
-      variant_key: cacheKey,
-      audio: [...sidecarAudio, ...customAudio],
-      subtitles: (cached.subtitles || []).map(s => ({
-        name: s.name,
-        path: s.path,
-        url: `${base}${s.proxyPath}`
-      }))
-    });
+// Файл рядом с видео (озвучка, субтитры) -> запись кэша с относительным путём зеркала; null, если ссылка не от AllDebrid.
+function sidecarEntry(item, expires, fallback) {
+  const parsed = safeHttpsUrl(item.sourceLink);
+  if (!isAllDebridFileLink(parsed)) return null;
+  const name = cleanFileName(item.path.split(/[\\/]/).pop()) || fallback;
+  return { name, path: item.path, proxyPath: mirrorPath(parsed.toString(), name, expires) };
+}
+
+// Кэш хранит всё, что не зависит от запроса (пути без хоста); адрес сервера и «мои» озвучки добавляются при выдаче.
+function renderVariant(entry, base, customAudio) {
+  return {
+    ok: true,
+    url: `${base}${entry.proxyPath}`,
+    source_url: entry.sourceUrl,
+    name: entry.name,
+    path: entry.path,
+    size: entry.size,
+    ad_id: entry.adId,
+    variant_key: entry.key,
+    audio: [
+      ...entry.audio.map(a => ({
+        id: `sidecar:${a.path}`,
+        title: a.name,
+        path: a.path,
+        audio_path: a.path,
+        video_path: "",
+        offset_ms: 0,
+        url: `${base}${a.proxyPath}`
+      })),
+      ...customAudio
+    ],
+    subtitles: entry.subtitles.map(s => ({ name: s.name, path: s.path, url: `${base}${s.proxyPath}` }))
+  };
+}
+
+function pruneVariantCache(now) {
+  for (const [k, e] of variantUrlCache) if (e.expiresAt <= now) variantUrlCache.delete(k);
+  while (variantUrlCache.size >= VARIANT_CACHE_MAX) variantUrlCache.delete(variantUrlCache.keys().next().value);
+}
+
+// Ключ варианта — "<adId>|<путь файла>" (как watchKey в приложениях); можно передать и ad_id + path.
+function parseVariantRequest(body) {
+  let adId = Number(body.ad_id);
+  let filePath = typeof body.path === "string" ? body.path.trim() : "";
+  const variantKey = typeof body.variant_key === "string" ? body.variant_key.trim() : (typeof body.key === "string" ? body.key.trim() : "");
+  const bar = variantKey.indexOf("|");
+  if (bar > 0) {
+    const parsedAd = Number(variantKey.slice(0, bar));
+    const parsedPath = variantKey.slice(bar + 1).trim();
+    if (Number.isSafeInteger(parsedAd) && parsedAd > 0 && parsedPath) { adId = parsedAd; filePath = parsedPath; }
   }
+  if (!Number.isSafeInteger(adId) || adId <= 0 || !filePath) return null;
+  return { adId, filePath };
+}
+
+// Только POST: путь файла не должен попадать в строку запроса и логи nginx.
+router.post("/api/file/variant-url", requireLogin, mirrorUrlLimiter, async (req, res) => {
+  const reqInfo = parseVariantRequest(req.body || {});
+  if (!reqInfo) return res.status(400).json({ error: "Некорректный ad_id или путь к файлу варианта." });
+  const { adId, filePath } = reqInfo;
+  const key = `${adId}|${filePath}`;
+  const now = Date.now();
+  const base = publicBase(req);
+  res.setHeader("Cache-Control", "no-store");
+
+  let entry = variantUrlCache.get(key);
+  if (entry && entry.expiresAt <= now) { variantUrlCache.delete(key); entry = null; }
 
   try {
-    const list = await getMagnetFileList(adId);
-    if (!list || !list.length) {
-      return res.status(404).json({ error: "Для этой раздачи не найдено файлов." });
+    if (!entry) {
+      const list = await getMagnetFileList(adId);
+      if (!list || !list.length) return res.status(404).json({ error: "Для этой раздачи не найдено файлов." });
+      const f = findFile(list, filePath);
+      if (!f || !f.sourceLink) return res.status(404).json({ error: "Файл варианта не найден в раздаче." });
+      const parsed = safeHttpsUrl(f.sourceLink);
+      if (!isAllDebridFileLink(parsed)) return res.status(502).json({ error: "Некорректная ссылка на медиафайл." });
+      const link = parsed.toString();
+      const expSec = Math.floor(now / 1000) + config.MIRROR_TTL;
+      const expires = String(expSec);
+      const name = cleanFileName(f.path.split(/[\\/]/).pop() || f.name || "video");
+      entry = {
+        key,
+        adId,
+        sourceUrl: link,
+        name,
+        path: f.path,
+        size: f.size || 0,
+        proxyPath: mirrorPath(link, name, expires),
+        audio: pickAudio(list, f.path).map(s => sidecarEntry(s, expires, "audio")).filter(Boolean),
+        subtitles: pickSubtitles(list, f.path).map(s => sidecarEntry(s, expires, "subtitles")).filter(Boolean),
+        // кэш живёт не дольше подписи ссылок (с запасом минуту, чтобы плеер успел начать)
+        expiresAt: Math.min(now + VARIANT_CACHE_TTL_MS, expSec * 1000 - 60 * 1000)
+      };
+      pruneVariantCache(now);
+      variantUrlCache.set(key, entry);
     }
-    const norm = p => (typeof p === "string" ? p.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "") : "");
-    const targetNorm = norm(filePath);
-    const hasSep = filePath.includes("/") || filePath.includes("\\");
-    let f = list.find(it => {
-      if (!it || it.type !== "file") return false;
-      const ip = norm(it.path);
-      if (ip === targetNorm) return true;
-      if (typeof it.path === "string" && it.path.toLowerCase() === filePath.toLowerCase()) return true;
-      if (ip.toLowerCase() === targetNorm.toLowerCase()) return true;
-      return false;
-    });
-    if (!f) {
-      f = list.find(it => {
-        if (!it || it.type !== "file") return false;
-        const ip = norm(it.path);
-        if (targetNorm && (ip.endsWith("/" + targetNorm) || ip.toLowerCase().endsWith("/" + targetNorm.toLowerCase()))) return true;
-        if (!hasSep) {
-          return it.name === filePath || (typeof it.name === "string" && it.name.toLowerCase() === filePath.toLowerCase());
-        }
-        return false;
-      });
-    }
-    if (!f || !f.sourceLink) {
-      return res.status(404).json({ error: "Файл варианта не найден в раздаче." });
-    }
-    const parsed = safeHttpsUrl(f.sourceLink);
-    if (!isAllDebridFileLink(parsed)) {
-      return res.status(502).json({ error: "Некорректная ссылка на медиафайл." });
-    }
-    const link = parsed.toString();
     markOpened(adId);
-    markLinkOpened(link);
-    const name = cleanFileName(typeof f.path === "string" ? f.path.split(/[\\/]/).pop() : (f.name || "video"));
-    const expires = String(Math.floor(Date.now() / 1000) + config.MIRROR_TTL);
-    const proxyPath = `/api/file/proxy${name ? "/" + encodeURIComponent(name) : ""}?link=${encodeURIComponent(link)}&exp=${expires}&sig=${makeMirrorToken(link, expires)}`;
-    const base = publicBase(req);
-
-    const customAudio = await resolveCustomAudioForVariant(adId, f.path, req, res, base);
-
-    const baseName = p => { const s = norm(p); const i = s.lastIndexOf("/"); return i < 0 ? s : s.slice(i + 1); };
-    const dirName = p => { const s = norm(p); const i = s.lastIndexOf("/"); return i < 0 ? "" : s.slice(0, i); };
-    const stripExt = name => { const i = name.lastIndexOf("."); return i < 0 ? name : name.slice(0, i); };
-    const isLetterOrDigit = c => /\d/.test(c) || c.toLowerCase() !== c.toUpperCase();
-    const sameBase = (name, base) => name.startsWith(base) && (name.length === base.length || !isLetterOrDigit(name[base.length]));
-
-    const audioExts = [".mka", ".ac3", ".dts", ".dtshd", ".eac3", ".flac", ".wav", ".aac", ".m4a", ".mp3", ".opus"];
-    const allAudioFiles = list.filter(it => it && it.type === "file" && it.sourceLink && typeof it.path === "string" && audioExts.some(ext => it.path.toLowerCase().endsWith(ext)));
-
-    let matchedAudio = [];
-    if (allAudioFiles.length > 0) {
-      const vPath = norm(f.path);
-      const vDir = dirName(vPath);
-      const vBase = stripExt(baseName(vPath)).toLowerCase();
-      const byName = allAudioFiles.filter(s => sameBase(stripExt(baseName(s.path)).toLowerCase(), vBase));
-      if (byName.length > 0) {
-        matchedAudio = byName.slice(0, 8);
-      } else {
-        const videoCount = list.filter(it => it && it.type === "file" && typeof it.path === "string" && /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso)$/i.test(it.path) && !/(^|[\/._ -])sample([\/._ -]|$)/i.test(it.path)).length;
-        if (videoCount <= 1) {
-          matchedAudio = allAudioFiles.slice(0, 8);
-        } else {
-          matchedAudio = allAudioFiles.filter(s => {
-            const d = dirName(s.path);
-            return d === vDir || (d.startsWith(vDir ? vDir + "/" : "") && baseName(d).toLowerCase().startsWith("audio"));
-          }).slice(0, 8);
-        }
-      }
-    }
-
-    const sidecarAudio = matchedAudio.map(s => {
-      const sParsed = safeHttpsUrl(s.sourceLink);
-      if (!isAllDebridFileLink(sParsed)) return null;
-      const sLink = sParsed.toString();
-      const sName = cleanFileName(typeof s.path === "string" ? s.path.split(/[\\/]/).pop() : (s.name || "audio"));
-      const sProxyPath = `/api/file/proxy/${encodeURIComponent(sName)}?link=${encodeURIComponent(sLink)}&exp=${expires}&sig=${makeMirrorToken(sLink, expires)}`;
-      return {
-        id: `sidecar:${s.path}`,
-        title: sName,
-        path: s.path,
-        offset_ms: 0,
-        proxyPath: sProxyPath,
-        url: `${base}${sProxyPath}`
-      };
-    }).filter(Boolean);
-
-    const combinedAudio = [...sidecarAudio, ...customAudio];
-
-    const subExts = [".srt", ".vtt", ".ass", ".ssa", ".sub"];
-    const allSubs = list.filter(it => it && it.type === "file" && it.sourceLink && typeof it.path === "string" && subExts.some(ext => it.path.toLowerCase().endsWith(ext)));
-
-    let matchedSubs = [];
-    if (allSubs.length > 0) {
-      const vPath = norm(f.path);
-      const vDir = dirName(vPath);
-      const vBase = stripExt(baseName(vPath)).toLowerCase();
-      const byName = allSubs.filter(s => sameBase(stripExt(baseName(s.path)).toLowerCase(), vBase));
-      if (byName.length > 0) {
-        matchedSubs = byName.slice(0, 8);
-      } else {
-        const videoCount = list.filter(it => it && it.type === "file" && typeof it.path === "string" && /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|iso)$/i.test(it.path) && !/(^|[\/._ -])sample([\/._ -]|$)/i.test(it.path)).length;
-        if (videoCount <= 1) {
-          matchedSubs = allSubs.slice(0, 8);
-        } else {
-          matchedSubs = allSubs.filter(s => {
-            const d = dirName(s.path);
-            return d === vDir || (d.startsWith(vDir ? vDir + "/" : "") && baseName(d).toLowerCase().startsWith("sub"));
-          }).slice(0, 8);
-        }
-      }
-    }
-
-    const customSubs = matchedSubs.map(s => {
-      const sParsed = safeHttpsUrl(s.sourceLink);
-      if (!isAllDebridFileLink(sParsed)) return null;
-      const sLink = sParsed.toString();
-      const sName = cleanFileName(typeof s.path === "string" ? s.path.split(/[\\/]/).pop() : (s.name || "subtitles"));
-      const sProxyPath = `/api/file/proxy/${encodeURIComponent(sName)}?link=${encodeURIComponent(sLink)}&exp=${expires}&sig=${makeMirrorToken(sLink, expires)}`;
-      return {
-        name: sName,
-        path: s.path,
-        proxyPath: sProxyPath,
-        url: `${base}${sProxyPath}`
-      };
-    }).filter(Boolean);
-
-    if (variantUrlCache.size >= VARIANT_CACHE_MAX) {
-      const oldest = variantUrlCache.keys().next().value;
-      variantUrlCache.delete(oldest);
-    }
-
-    variantUrlCache.set(cacheKey, {
-      proxyPath,
-      sourceUrl: link,
-      name,
-      path: f.path,
-      size: f.size || 0,
-      adId,
-      sidecarAudio: sidecarAudio.map(a => ({
-        id: a.id,
-        title: a.title,
-        path: a.path,
-        audio_path: a.audio_path || a.path,
-        video_path: a.video_path || "",
-        lang: a.lang,
-        offset_ms: a.offset_ms,
-        proxyPath: a.proxyPath
-      })),
-      subtitles: customSubs.map(s => ({ name: s.name, path: s.path, proxyPath: s.proxyPath })),
-      expiresAt: now + VARIANT_CACHE_TTL_MS
-    });
-
-    res.setHeader("Cache-Control", "no-store");
-    res.json({
-      ok: true,
-      url: `${base}${proxyPath}`,
-      source_url: link,
-      name,
-      path: f.path,
-      size: f.size || 0,
-      ad_id: adId,
-      variant_key: cacheKey,
-      audio: [
-        ...sidecarAudio.map(a => ({
-          id: a.id,
-          title: a.title,
-          path: a.path,
-          audio_path: a.audio_path || a.path,
-          video_path: a.video_path || "",
-          lang: a.lang,
-          offset_ms: a.offset_ms,
-          url: a.url
-        })),
-        ...customAudio
-      ],
-      subtitles: customSubs.map(s => ({ name: s.name, path: s.path, url: s.url }))
-    });
+    markLinkOpened(entry.sourceUrl);
+    // озвучки пользователей не кэшируем: «mine» зависит от того, кто спрашивает
+    const customAudio = await resolveCustomAudioForVariant(adId, entry.path, req, res, base);
+    res.json(renderVariant(entry, base, customAudio));
   } catch (err) {
     res.status(502).json({ error: err.message || "Не удалось разрешить ссылку варианта." });
   }
-}
-
-router.post("/api/file/variant-url", requireLogin, mirrorUrlLimiter, handleVariantUrl);
-router.get("/api/file/variant-url", requireLogin, mirrorUrlLimiter, handleVariantUrl);
+});
 
 // Body: { magnetId, title, items: [{ index, link }] }. `link` is checked against the server's own list,
 // so a stale browser snapshot (library changed since) is rejected instead of playing the wrong files.

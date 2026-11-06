@@ -163,6 +163,7 @@ function apply(owner, body, now = Date.now()) {
   }
   trim(d.w, MAX_WATCH);
   trim(d.t, MAX_TRACKS);
+  d.ci = null;
   if (!d.w.size && !d.t.size) users.delete(owner);
   if (nw || nt) persist();
   return { watch: nw, tracks: nt };
@@ -192,44 +193,50 @@ function changesSince(owner, since = 0, now = Date.now()) {
   return out;
 }
 
-/** Получить прогресс дорожек: сначала по key, если нет — fallback по canonicalId (самая свежая запись). */
+/** Ключ дорожек для файла "<magnetId>|<путь>": дорожки хранятся на раздачу ("m<magnetId>"). */
+function trackKeyFor(key) {
+  return key && /^d+|/.test(key) ? "m" + key.split("|")[0] : key;
+}
+
+// Самая свежая запись на каждый canonical_id (прогресс и дорожки отдельно). Строится по требованию и сбрасывается
+// при любом изменении, поэтому поиск по cid — O(1), а не обход всех записей пользователя при каждом запросе.
+function cidIndex(d) {
+  if (d.ci) return d.ci;
+  const w = new Map();
+  const t = new Map();
+  for (const [k, e] of d.w) if (e.cid && !(w.get(e.cid)?.e.a >= e.a)) w.set(e.cid, { k, e });
+  for (const [k, e] of d.t) if (k !== "*" && e.cid && !(t.get(e.cid)?.e.a >= e.a)) t.set(e.cid, { k, e });
+  d.ci = { w, t };
+  return d.ci;
+}
+
+const trackOut = (key, e) => ({ key, audio: e.au ?? null, spu: e.sp ?? null, sidecar: e.sc ?? null, quality: e.qv ?? null, cid: e.cid ?? null, at: e.a });
+
+/** Дорожки: сначала по key, если нет — запись с тем же canonical_id (самая свежая). */
 function getTracks(owner, key, canonicalId = null) {
   const d = OWNER_RE.test(String(owner || "")) ? users.get(owner) : null;
   if (!d) return null;
-  if (key && d.t.has(key)) {
-    const e = d.t.get(key);
-    return { key, audio: e.au ?? null, spu: e.sp ?? null, sidecar: e.sc ?? null, quality: e.qv ?? null, cid: e.cid ?? null, at: e.a };
-  }
-  if (canonicalId) {
-    let best = null;
-    for (const [k, e] of d.t) {
-      if (k !== "*" && e.cid === canonicalId && (!best || e.a > best.at)) {
-        best = { key: k, audio: e.au ?? null, spu: e.sp ?? null, sidecar: e.sc ?? null, quality: e.qv ?? null, cid: e.cid ?? null, at: e.a };
-      }
-    }
-    return best;
-  }
-  return null;
+  if (key && d.t.has(key)) return trackOut(key, d.t.get(key));
+  const hit = canonicalId ? cidIndex(d).t.get(canonicalId) : null;
+  return hit ? trackOut(hit.k, hit.e) : null;
 }
 
-/** Получить прогресс просмотра: сначала по fileKey, если нет — fallback по canonicalId (самая свежая запись). */
+/** Прогресс просмотра: сначала по fileKey, если нет — запись с тем же canonical_id (самая свежая). */
 function getProgress(owner, fileKey, canonicalId = null) {
   const d = OWNER_RE.test(String(owner || "")) ? users.get(owner) : null;
   if (!d) return null;
-  if (fileKey && d.w.has(fileKey)) {
-    const e = d.w.get(fileKey);
-    return { key: fileKey, pos: e.p, len: e.l, at: e.a, cid: e.cid || null };
-  }
-  if (canonicalId) {
-    let best = null;
-    for (const [k, e] of d.w) {
-      if (e.cid === canonicalId && (!best || e.a > best.at)) {
-        best = { key: k, pos: e.p, len: e.l, at: e.a, cid: e.cid };
-      }
-    }
-    return best;
-  }
-  return null;
+  const out = (k, e) => ({ key: k, pos: e.p, len: e.l, at: e.a, cid: e.cid || null });
+  if (fileKey && d.w.has(fileKey)) return out(fileKey, d.w.get(fileKey));
+  const hit = canonicalId ? cidIndex(d).w.get(canonicalId) : null;
+  return hit ? out(hit.k, hit.e) : null;
+}
+
+/** Прогресс и дорожки по key/cid одним ответом (query: key, cid, track_key). */
+function lookup(owner, q = {}) {
+  const key = typeof q.key === "string" ? q.key : null;
+  const cid = typeof q.cid === "string" ? q.cid : null;
+  const trackKey = typeof q.track_key === "string" ? q.track_key : trackKeyFor(key);
+  return { progress: getProgress(owner, key, cid), trackChoice: getTracks(owner, trackKey, cid) };
 }
 
 /** Удалить всё, чем не пользовались дольше срока. Возвращает, сколько записей удалено. */
@@ -239,7 +246,7 @@ function sweep(now = Date.now()) {
   for (const [owner, d] of users) {
     for (const map of [d.w, d.t]) {
       for (const [k, e] of map) {
-        if (!(e.u >= oldest)) { map.delete(k); n++; }
+        if (!(e.u >= oldest)) { map.delete(k); n++; d.ci = null; }
       }
     }
     if (!d.w.size && !d.t.size) users.delete(owner);
@@ -257,6 +264,7 @@ function dropMagnet(id) {
   for (const [owner, d] of users) {
     for (const k of d.w.keys()) if (k.startsWith(prefix)) { d.w.delete(k); changed = true; }
     if (d.t.delete("m" + key)) changed = true;
+    if (changed) d.ci = null;
     if (!d.w.size && !d.t.size) users.delete(owner);
   }
   if (changed) persist();
@@ -275,6 +283,7 @@ module.exports = {
   changesSince,
   getProgress,
   getTracks,
+  lookup,
   sweep,
   dropMagnet,
   OWNER_RE,

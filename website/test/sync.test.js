@@ -165,3 +165,18 @@ test("sync: качество и дорожки сериала с fallback по c
   assert.equal(res.quality, "2160p");
   assert.equal(res.cid, "s:fallout_2024:season_1");
 });
+
+test("sync: поиск по cid видит новые записи и забывает удалённые раздачи", () => {
+  _reset();
+  const { getTracks } = require("../src/services/sync");
+  const now = 1_000 * DAY;
+  apply(U, { watch: [{ key: "101|a.mkv", pos: 10, len: 100, at: now - 5, cid: "m:x_2020:default" }] }, now);
+  assert.equal(getProgress(U, "202|b.mkv", "m:x_2020:default").key, "101|a.mkv");
+  // более свежая запись с тем же cid должна вытеснить прежний результат из индекса
+  apply(U, { watch: [{ key: "202|b.mkv", pos: 50, len: 100, at: now - 1, cid: "m:x_2020:default" }] }, now);
+  assert.equal(getProgress(U, "303|c.mkv", "m:x_2020:default").key, "202|b.mkv");
+  apply(U, { tracks: [{ key: "m101", at: now - 2, audio: "ru", spu: null, sidecar: null, cid: "m:x_2020:default" }] }, now);
+  assert.equal(getTracks(U, "m999", "m:x_2020:default").key, "m101");
+  dropMagnet(202);
+  assert.equal(getProgress(U, "303|c.mkv", "m:x_2020:default").key, "101|a.mkv");
+});
