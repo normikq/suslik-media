@@ -7,6 +7,7 @@ import ru.suslikovanora.media.core.party.PartyMember
 import ru.suslikovanora.media.core.party.PartyProtocol
 import ru.suslikovanora.media.core.party.PartyRoom
 import ru.suslikovanora.media.core.party.PartyState
+import ru.suslikovanora.media.core.party.PartyVariant
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
