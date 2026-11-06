@@ -820,12 +820,12 @@ function activityPublicData(room) {
 // ---- Приглушение: кто говорит в голосовом канале (docs/DISCORD-ACTIVITY.md, «Приглушение») ----
 // Говорящих видит клиент Discord у каждого, кто открыл Activity (SPEAKING_START / SPEAKING_STOP); все пульты канала
 // шлют одно и то же, сервер сводит в один список. Говорящий числится ещё SPEAK_LINGER_MS после конца фразы
-// (гистерезис: паузы между словами не дёргают громкость). Пока человек говорит, пульт повторяет «говорит» раз в 10 с;
-// без повторов (пульт закрыли посреди фразы) запись живёт SPEAK_TTL_MS. Плеерам уходит только смена списка:
+// (гистерезис: паузы между словами не дёргают громкость). Пока человек говорит, пульт повторяет «говорит» раз в 5 с;
+// без повторов (пульт закрыли посреди фразы, «замолчал» потерялся) запись живёт SPEAK_TTL_MS. Плеерам уходит только смена списка:
 // voice_changed { active, speakers: [user.id] } — каждый плеер сам глушит, если говорит не он.
 // Кто и когда говорил, не хранится и не пишется в журнал.
 const SPEAK_LINGER_MS = 1500;
-const SPEAK_TTL_MS = 25 * 1000;
+const SPEAK_TTL_MS = 12 * 1000;
 const MAX_SPEAKERS = 50;
 
 function voicePublicData(room) {
@@ -833,7 +833,7 @@ function voicePublicData(room) {
   return { active: speakers.length > 0, speakers };
 }
 
-function dropSpeaker(room, id, entry) {
+function removeSpeaker(room, id, entry) {
   if (room.speakers.get(id) !== entry) return;
   room.speakers.delete(id);
   if (rooms.get(room.id) === room) broadcast(room.id, "voice_changed", voicePublicData(room));
@@ -854,11 +854,21 @@ function reportSpeaking(roomId, reporter, userId, speaking, now = Date.now()) {
   if (!old && room.speakers.size >= MAX_SPEAKERS) return { ok: true, changed: false };
   if (old) clearTimeout(old.timer);
   const entry = { until: now + (speaking ? SPEAK_TTL_MS : SPEAK_LINGER_MS), timer: null };
-  entry.timer = setTimeout(() => dropSpeaker(room, id, entry), entry.until - now);
+  entry.timer = setTimeout(() => removeSpeaker(room, id, entry), entry.until - now);
   entry.timer.unref?.();
   room.speakers.set(id, entry);
   if (!old) broadcast(room.id, "voice_changed", voicePublicData(room));
   return { ok: true, changed: !old };
+}
+
+/** Снять говорящего сразу, без задержки (бот сказал: его нет в голосовом канале комнаты). */
+function dropSpeaker(roomId, userId) {
+  const room = rooms.get(roomId);
+  const entry = room && room.speakers ? room.speakers.get(String(userId || "")) : null;
+  if (!entry) return false;
+  clearTimeout(entry.timer);
+  removeSpeaker(room, String(userId), entry);
+  return true;
 }
 
 /** Человек изменил свою настройку (приглушение): его плеерам в комнатах — settings_changed, чужие пропускают. */
@@ -1206,6 +1216,7 @@ module.exports = {
   timelineShiftMs,
   getOrCreateChannelRoom,
   reportSpeaking,
+  dropSpeaker,
   notifyUserSettings,
   addWatcher,
   touchWatcher,

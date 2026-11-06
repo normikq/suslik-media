@@ -240,24 +240,27 @@ router.post("/api/activity/voice-duck", requireLogin, roomLimiter, (req, res) =>
 // Событие речи от клиента Discord (SPEAKING_START / SPEAKING_STOP): user_id — id Discord того, кто говорит.
 // Ключ Activity можно взять и вне Discord, поэтому говорящий проверяется ботом: он сейчас в голосовом канале комнаты
 // (ответ помним VOICE_CHECK_MS). Бота нет или Discord не ответил — верим пульту: последствие — только громкость.
+// Начало речи засчитывается сразу, а бот спрашивается в фоне: если ждать его ответа, короткая фраза успевала
+// закончиться раньше — «замолчал» отбрасывался (записи ещё нет), а «говорит» вставал после него и держал фильм
+// приглушённым до следующей фразы. Бот сказал «не в канале» — запись снимается.
 const VOICE_CHECK_MS = 10 * 1000;
 const voiceChecks = new Map(); // discord id -> { channel, at }
-async function speakerInChannel(discordId, channelId) {
-  if (!config.DISCORD_BOT_TOKEN || !config.DISCORD_GUILD_ID) return true;
-  const now = Date.now();
-  let c = voiceChecks.get(discordId);
-  if (!c || now - c.at > VOICE_CHECK_MS) {
-    try {
-      c = { channel: await userVoiceChannel(discordId), at: now };
-    } catch {
-      return true;
-    }
-    voiceChecks.set(discordId, c);
-    if (voiceChecks.size > 500) for (const [id, v] of voiceChecks) if (now - v.at > VOICE_CHECK_MS) voiceChecks.delete(id);
-  }
-  return c.channel === channelId;
+const voiceChecking = new Map(); // discord id -> Promise (один запрос к боту на человека)
+function knownVoiceChannel(discordId, now = Date.now()) {
+  const c = voiceChecks.get(discordId);
+  return c && now - c.at <= VOICE_CHECK_MS ? c : null;
 }
-router.post("/api/activity/rooms/:id/speaking", requireLogin, speakingLimiter, async (req, res) => {
+function checkSpeakerLater(discordId, roomId, channelId) {
+  if (!config.DISCORD_BOT_TOKEN || !config.DISCORD_GUILD_ID || voiceChecking.has(discordId)) return;
+  const p = userVoiceChannel(discordId).then(channel => {
+    const now = Date.now();
+    voiceChecks.set(discordId, { channel, at: now });
+    if (voiceChecks.size > 500) for (const [id, v] of voiceChecks) if (now - v.at > VOICE_CHECK_MS) voiceChecks.delete(id);
+    if (channel !== channelId) rooms.dropSpeaker(roomId, `u_${discordId}`);
+  }, () => { /* Discord не ответил — верим пульту */ }).finally(() => voiceChecking.delete(discordId));
+  voiceChecking.set(discordId, p);
+}
+router.post("/api/activity/rooms/:id/speaking", requireLogin, speakingLimiter, (req, res) => {
   if (!req.activity) return res.status(403).json({ error: "Только из Discord Activity." });
   const room = rooms.getRoom(req.params.id);
   if (!room || !room.channel_id) return res.status(404).json({ error: "Комната не найдена." });
@@ -265,9 +268,11 @@ router.post("/api/activity/rooms/:id/speaking", requireLogin, speakingLimiter, a
   if (!/^\d{5,25}$/.test(discordId)) return res.status(400).json({ error: "Нет участника канала." });
   const speaking = req.body?.speaking === true;
   // Конец фразы не проверяем: он только возвращает громкость
-  if (speaking && !(await speakerInChannel(discordId, room.channel_id))) return res.json({ ok: true, changed: false });
+  const known = speaking ? knownVoiceChannel(discordId) : null;
+  if (known && known.channel !== room.channel_id) return res.json({ ok: true, changed: false });
   const r = rooms.reportSpeaking(room.id, req.user, `u_${discordId}`, speaking);
   if (!r.ok) return res.status(r.status || 400).json({ error: r.error });
+  if (speaking && !known) checkSpeakerLater(discordId, room.id, room.channel_id);
   res.json({ ok: true, changed: r.changed });
 });
 

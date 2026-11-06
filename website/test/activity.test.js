@@ -493,3 +493,25 @@ test("приглушение: маршруты — только из Activity, �
     server.close();
   }
 });
+
+test("приглушение: «замолчал» сразу после «говорит» не оставляет запись, бот может снять говорящего", () => {
+  const room = rooms.getOrCreateChannelRoom("777777777777777777", dan);
+  const events = [];
+  const stop = rooms.addListener(room.id, msg => { const m = JSON.parse(msg); if (m.event === "voice_changed") events.push(m.data); });
+  const leave = rooms.addWatcher(room, dan);
+  // фраза короче ответа бота: оба события засчитаны по порядку, запись уходит через 1,5 с, а не висит
+  rooms.reportSpeaking(room.id, dan, eve.id, true);
+  rooms.reportSpeaking(room.id, dan, eve.id, false);
+  assert.ok(room.speakers.get(eve.id).until - Date.now() <= 1500);
+  // бот: говорящего нет в канале — снимается сразу
+  assert.equal(rooms.dropSpeaker(room.id, eve.id), true);
+  assert.equal(room.speakers.size, 0);
+  assert.deepEqual(events.at(-1), { active: false, speakers: [] });
+  assert.equal(rooms.dropSpeaker(room.id, eve.id), false);
+  // без повторов «говорит» запись живёт не дольше 12 с
+  rooms.reportSpeaking(room.id, dan, eve.id, true);
+  assert.ok(room.speakers.get(eve.id).until - Date.now() <= 12000);
+  rooms.dropSpeaker(room.id, eve.id);
+  stop();
+  leave();
+});

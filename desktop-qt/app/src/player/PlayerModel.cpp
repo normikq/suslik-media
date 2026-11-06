@@ -23,6 +23,7 @@
 #include <QNetworkReply>
 #include <QRegularExpression>
 #include <QUrl>
+#include <QSignalBlocker>
 #include <QVariantAnimation>
 #include <cmath>
 
@@ -1187,8 +1188,13 @@ void PlayerModel::setDuck(double factor) {
     }
     m_duckAnim->stop();
     if (qFuzzyCompare(m_duck + 1.0, factor + 1.0)) return;
-    m_duckAnim->setStartValue(m_duck);
-    m_duckAnim->setEndValue(factor);
+    {
+        // Остановленная анимация на setStartValue/setEndValue пересчитывает своё значение и шлёт valueChanged:
+        // без блокировки громкость прыгала бы к новой цели до начала плавного перехода
+        const QSignalBlocker block(m_duckAnim);
+        m_duckAnim->setStartValue(m_duck);
+        m_duckAnim->setEndValue(factor);
+    }
     m_duckAnim->setDuration(factor < m_duck ? 200 : 1500);
     m_duckAnim->setEasingCurve(factor < m_duck ? QEasingCurve::OutCubic : QEasingCurve::InOutSine);
     m_duckAnim->start();

@@ -466,13 +466,21 @@
 
   // ---- приглушение: кто говорит в канале (SPEAKING_START / SPEAKING_STOP) → сервер ----
   // Страница ничего не глушит сама: только сообщает серверу, он сводит пульты канала и рассылает плеерам
-  // voice_changed. Пока человек говорит, повторяем «говорит» раз в 10 с: так сервер не держит запись вечно,
+  // voice_changed. Пока человек говорит, повторяем «говорит» раз в 5 с: так сервер не держит запись вечно,
   // если пульт закрыли посреди фразы. Кто и когда говорил, страница не хранит.
+  // События одного человека уходят строго по очереди: два запроса подряд («говорит», сразу «замолчал») по разным
+  // соединениям могли прийти на сервер наоборот — и фильм оставался приглушённым до следующей фразы.
   var voice = (function () {
-    var started = false, talking = {}; // discord id -> таймер повтора
+    var started = false, talking = {}, queue = {}; // discord id -> таймер повтора; discord id -> последний запрос
     function send(userId, speaking) {
       if (!S.room || !S.token) return;
-      api('api/activity/rooms/' + S.room.id + '/speaking', { user_id: userId, speaking: speaking }).catch(function () { /* не дошло — громкость не главное */ });
+      var roomId = S.room.id, body = { user_id: userId, speaking: speaking };
+      var prev = queue[userId] || Promise.resolve();
+      var next = prev.then(function () {
+        return api('api/activity/rooms/' + roomId + '/speaking', body).catch(function () { /* не дошло — громкость не главное */ });
+      });
+      queue[userId] = next;
+      next.then(function () { if (queue[userId] === next) delete queue[userId]; });
     }
     function idOf(d) {
       var id = d && (d.user_id || (d.user && d.user.id));
@@ -483,7 +491,7 @@
     function onStart(d) {
       var id = idOf(d);
       if (!id || talking[id]) return;
-      talking[id] = setInterval(function () { send(id, true); }, 10000);
+      talking[id] = setInterval(function () { send(id, true); }, 5000);
       send(id, true);
     }
     function onStop(d) {
