@@ -892,25 +892,30 @@
         }
         return;
       }
+      // Как на ПК и Android: у релизов разная длина вступления — место сдвигается на разницу их offset_ms
+      var prevKey = c.activeVariantKey || c.key;
+      var targetOff = 0, prevOff = 0;
+      var variants = (c.opts.file && c.opts.file.variants) || (SM.party && SM.party.room && SM.party.room.file && SM.party.room.file.variants) || [];
+      for (var i = 0; i < variants.length; i++) {
+        var off = Number(variants[i].offset_ms || variants[i].offsetMs) || 0;
+        if (variants[i].key === variantKey) {
+          c.currentBitrate = variants[i].bitrate || 0;
+          targetOff = off;
+        }
+        if (variants[i].key === prevKey) prevOff = off;
+      }
+
       c.activeVariantKey = variantKey;
       c.activeVariantUrl = res.url;
       c.tc = null; // Сбрасываем режим серверного потока
       c.switching = false;
       if (SM.party) SM.party.sendVariantChange(variantKey);
 
-      var variants = (c.opts.file && c.opts.file.variants) || (SM.party && SM.party.room && SM.party.room.file && SM.party.room.file.variants) || [];
-      for (var i = 0; i < variants.length; i++) {
-        if (variants[i].key === variantKey) {
-          c.currentBitrate = variants[i].bitrate || 0;
-          break;
-        }
-      }
-
       try {
         p.stop();
         p.close();
       } catch (e) {}
-      start(res.url, curTime);
+      start(res.url, Math.max(0, curTime + targetOff - prevOff));
     }).catch(function () {
       if (cur === c) {
         c.switching = false;

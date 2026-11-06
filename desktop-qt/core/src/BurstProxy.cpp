@@ -60,6 +60,8 @@ constexpr int MAX_WINDOWS = 3;              // на поток (фильм + д�
 constexpr qint64 PROBE_AHEAD = 4 * MB;      // пока окно не доказало, что это воспроизведение
 constexpr qint64 PROBE_LIMIT = 6 * MB;      // прочитано подряд столько — воспроизведение, рывки
 constexpr qint64 PROBE_IDLE_MS = 500;       // проба, которую плеер не читает столько, стоит на PROBE_AHEAD
+constexpr qint64 SIDE_PROBE_LIMIT = 512 * 1024; // озвучка/субтитры: 512 КБ подряд — уже воспроизведение (128 кбит/с до 6 МБ идут минуты)
+constexpr qint64 SIDE_IDLE_MS = 5000;           // играющая озвучка читается раз в 1–2 с: не обрывать её через 500 мс
 constexpr qint64 CHUNK = 256 * 1024;
 constexpr qint64 NEAR = 8 * MB;             // запрос так близко к концу окна присоединяется к нему
 constexpr qint64 NEAR_MIN = 1 * MB;         // ...но не дальше, чем сеть принесёт за NEAR_SEC
@@ -253,7 +255,7 @@ struct Window : std::enable_shared_from_this<Window> {
     qint64 end() const { return start + written; }
     qint64 diskBytes() const { return std::min<qint64>(written, CAP); }
     qint64 validFrom() const { return start + std::max<qint64>(0, written - CAP); }
-    bool burst() const { return sequential >= PROBE_LIMIT; }
+    bool burst() const { return sequential >= (src->side() ? SIDE_PROBE_LIMIT : PROBE_LIMIT); }
     bool held() const { return nowMs() < heldUntil; }
 
     void checkStall(qint64 now);
@@ -907,7 +909,8 @@ void Window::fetch() {
         if (burst() && to < 0 && ahead >= high()) { why = QStringLiteral("reserve full"); return; }
         if (ahead >= CAP * 7 / 8) { why = QStringLiteral("ring full"); return; }
         // ...или плеер перестал брать данные: невыбранная озвучка (mpv прочитал заголовок и держит соединение).
-        if (!burst() && !held() && ahead >= PROBE_AHEAD && nowMs() - lastReadAt > PROBE_IDLE_MS) { why = QStringLiteral("player idle"); return; }
+        const qint64 idleLimit = src->side() ? SIDE_IDLE_MS : PROBE_IDLE_MS;
+        if (!burst() && !held() && ahead >= PROBE_AHEAD && nowMs() - lastReadAt > idleLimit) { why = QStringLiteral("player idle"); return; }
         const qint64 n = res->read(buf, CHUNK);
         if (n < 0) {
             // Конец ответа. Конец файла — только если пришло всё до размера; полный ограниченный ответ — конец рывка;

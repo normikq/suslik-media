@@ -111,6 +111,15 @@ class PlayerPartySync(private val handler: Handler, private val cb: Callback) {
             val vi = keys.indexOf(v.key)
             if (vi >= 0) return vi
         }
+        // As on the PC (PlayerParty.cpp, sameWork): by episode number only within the same work, otherwise
+        // another show's S01E01 would be taken for the room's one
+        val myCid = cb.canonicalId()
+        val sameWork = (!f.canonicalId.isNullOrBlank() && f.canonicalId == myCid) ||
+            (listOf(f.key) + f.variants.map { it.key }).any { rk ->
+                val mag = rk.substringBefore('|')
+                keys.any { it.substringBefore('|') == mag }
+            }
+        if (!sameWork) return -1
         val targetEp = if ('|' in f.key) ru.suslikovanora.media.core.episodePair(f.key.substringAfter('|')) else null
         if (targetEp != null) {
             val ei = keys.indexOfFirst { wk ->
