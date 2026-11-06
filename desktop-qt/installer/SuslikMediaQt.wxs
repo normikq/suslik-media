@@ -35,10 +35,12 @@
 
     <DirectoryRef Id="INSTALLDIR">
       <Component Id="Shortcuts" Guid="*">
+        <!-- Без Icon=: значок берётся из самого SuslikMediaQt.exe (IDI_ICON1, app.rc). Иконка из таблицы MSI
+             (кэш в C:\Windows\Installer) после обновления/переустановки терялась — ярлык показывал пустой значок. -->
         <Shortcut Id="MenuShortcut" Directory="ProgramMenuFolder" Name="$(var.Product)" Target="[INSTALLDIR]SuslikMediaQt.exe"
-                  WorkingDirectory="INSTALLDIR" Icon="app.ico" />
+                  WorkingDirectory="INSTALLDIR" />
         <Shortcut Id="DesktopShortcut" Directory="DesktopFolder" Name="$(var.Product)" Target="[INSTALLDIR]SuslikMediaQt.exe"
-                  WorkingDirectory="INSTALLDIR" Icon="app.ico" />
+                  WorkingDirectory="INSTALLDIR" />
         <RemoveFolder Id="RemoveProgramsDir" Directory="ProgramsDir" On="uninstall" />
         <RemoveFolder Id="RemoveInstallDir" On="uninstall" />
         <RegistryValue Root="HKCU" Key="Software\Suslik Media\$(var.Folder)" Name="installed" Type="integer" Value="1" KeyPath="yes" />
