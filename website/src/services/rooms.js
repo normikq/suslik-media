@@ -13,6 +13,8 @@ const roomListeners = new Map();
 
 // Пустая комната живёт столько, потом удаляется (и та, куда после создания так никто и не вошёл)
 const EMPTY_ROOM_TTL_MS = 30 * 60 * 1000;
+// Комната голосового канала, где никого не осталось (docs/DISCORD-ACTIVITY.md, «Пустая комната»)
+const CHANNEL_ROOM_TTL_MS = 5 * 60 * 1000;
 
 // client_id устройства — его пропуск (по нему ведущий при общем пароле, «грузится», «вышел»): другим его не показываем,
 // в общих данных только отпечаток. Своё устройство приложение узнаёт, посчитав отпечаток своего client_id.
@@ -63,6 +65,7 @@ function createRoom(hostUser, file = null, controls = "all", hostClientId = null
     host_name: hostUser ? hostUser.name : "Хост",
     // Устройство создателя: при общем пароле у всех один id "shared", ведущего отличает только оно
     host_client_id: normHostClientId,
+    host_absent_since: 0, // когда ведущего нет в комнате (noteHostAbsence); 0 — он здесь
     file: cleanFile(file), // { key, name, ad_id }: из тела запроса — та же проверка, что у change_file
     controls: controls === "host" ? "host" : "all",
     state: {
@@ -396,6 +399,7 @@ function joinRoom(roomId, user, clientId = null) {
   }
 
   const fresh = memberOf(user, clientId);
+  adoptIfHostAbsent(room, user, fresh.client_id);
   const existing = room.members.get(fresh.client_id);
   const member = existing ? Object.assign(existing, { last_seen: fresh.last_seen }) : { ...fresh, streams: 0 };
   member.streams++;
@@ -474,11 +478,39 @@ function promoteIfHostGone(room) {
   if (rooms.get(room.id) !== room || (room.members.size === 0 && room.watchers.size === 0) || hostPresent(room)) return false;
   // Map хранит порядок входа: сначала тот, кто в комнате с плеером, иначе первый у пульта Activity
   const next = room.members.size > 0 ? room.members.values().next().value : room.watchers.values().next().value;
-  room.host_id = next.id;
-  room.host_name = next.name;
-  room.host_client_id = next.client_id || null;
+  setHost(room, next, next.client_id || null);
   broadcast(room.id, "state_changed", getRoomPublicData(room));
   return true;
+}
+
+function setHost(room, who, clientId) {
+  room.host_id = who.id;
+  room.host_name = who.name;
+  room.host_client_id = clientId || null;
+  room.host_absent_since = 0;
+}
+
+// Ведущего нет в комнате: засекаем, с какого времени. Через минуту без него ведущим станет тот, кто в комнате
+// (promoteIfHostGone). Пустую комнату promote не трогает — её поднимет adoptIfHostAbsent, когда кто-то войдёт
+function noteHostAbsence(room) {
+  if (hostPresent(room)) {
+    room.host_absent_since = 0;
+    return;
+  }
+  if (!room.host_absent_since) room.host_absent_since = Date.now();
+  setTimeout(() => promoteIfHostGone(room), HOST_GRACE_MS).unref?.();
+}
+
+// Комната голосового канала была пуста, и её ведущий давно не вернулся: новый человек в комнате становится ведущим.
+// Иначе комната, где все вышли, отдавалась бы тому, кто первым открыл её в канале, даже если его уже нет
+function adoptIfHostAbsent(room, user, clientId) {
+  if (!room.channel_id || !user || !user.id || user.id === "guest" || user.id === "shared" || !room.host_absent_since) return;
+  if (Date.now() - room.host_absent_since < HOST_GRACE_MS) return;
+  if (hostPresent(room)) {
+    room.host_absent_since = 0;
+    return;
+  }
+  setHost(room, { id: user.id, name: user.name }, clientId);
 }
 
 function isRoomHost(room, user, clientId) {
@@ -512,7 +544,7 @@ function leaveRoom(roomId, clientId, force = false) {
       }
       broadcast(roomId, "member_left", { key: clientKey(clientId), total: room.members.size });
       if (room.members.size === 0 && room.watchers.size === 0) room.empty_since = Date.now();
-      else if (!hostPresent(room)) setTimeout(() => promoteIfHostGone(room), HOST_GRACE_MS).unref?.();
+      noteHostAbsence(room);
       pauseIfEmpty(room);
       // Ушёл тот, кого ждали: комната идёт дальше
       if (updateWaiting(room)) broadcast(roomId, "state_changed", getRoomPublicData(room));
@@ -520,10 +552,12 @@ function leaveRoom(roomId, clientId, force = false) {
   }
 }
 
-// Удаляет комнаты, пустые дольше EMPTY_ROOM_TTL_MS (в том числе созданные, но так и не открытые)
+// Удаляет комнаты, пустые дольше срока (в том числе созданные, но так и не открытые). Комната голосового канала
+// живёт меньше: её код и список фильмов никому не нужны, когда в канале никого не осталось
 function sweepRooms(now = Date.now()) {
   for (const [id, room] of rooms) {
-    if (room.members.size === 0 && room.watchers.size === 0 && room.empty_since && now - room.empty_since > EMPTY_ROOM_TTL_MS) {
+    const ttl = room.channel_id ? CHANNEL_ROOM_TTL_MS : EMPTY_ROOM_TTL_MS;
+    if (room.members.size === 0 && room.watchers.size === 0 && room.empty_since && now - room.empty_since > ttl) {
       rooms.delete(id);
       roomListeners.delete(id);
       if (room.poll && room.poll.timer) clearTimeout(room.poll.timer);
@@ -828,6 +862,7 @@ function activityChanged(room) {
 
 // Открыт поток событий Activity: человек «у пульта». Возвращает функцию «ушёл» (можно звать сколько угодно раз)
 function addWatcher(room, user) {
+  adoptIfHostAbsent(room, user, null);
   const w = watcherOf(room, user);
   const isNew = w.fresh;
   w.fresh = false;
@@ -847,6 +882,7 @@ function addWatcher(room, user) {
 // и проверки ведущего, а комната считалась бы пустой
 const WATCHER_POLL_MS = 15 * 1000;
 function touchWatcher(room, user) {
+  adoptIfHostAbsent(room, user, null);
   const w = watcherOf(room, user);
   const isNew = w.fresh;
   w.fresh = false;
@@ -873,7 +909,7 @@ function dropWatcherIfGone(room, w) {
   room.watchers.delete(w.id);
   if (rooms.get(room.id) !== room) return;
   if (room.members.size === 0 && room.watchers.size === 0) room.empty_since = Date.now();
-  else if (!hostPresent(room)) setTimeout(() => promoteIfHostGone(room), HOST_GRACE_MS).unref?.();
+  noteHostAbsence(room);
   activityChanged(room);
 }
 
@@ -1122,6 +1158,51 @@ function cancelPoll(roomId, user) {
   return { ok: true };
 }
 
+// «Сделать ведущим»: передаёт комнату тому, кто сейчас в ней (у пульта или с плеером). Передать может только ведущий.
+function transferHost(roomId, user, targetId) {
+  const { room, error } = channelRoomOrError(roomId);
+  if (!room) return { ok: false, error };
+  if (!isRoomHost(room, user, null)) return { ok: false, error: "Ведущего передаёт только ведущий." };
+  const id = String(targetId || "");
+  if (!id) return { ok: false, error: "Не выбран участник." };
+  if (id === String(room.host_id)) return { ok: true };
+  const member = Array.from(room.members.values()).find(m => m && String(m.id) === id);
+  const watcher = room.watchers.get(id);
+  if (!member && !watcher) return { ok: false, error: "Ведущим можно сделать только того, кто сейчас в комнате." };
+  const who = member || watcher;
+  setHost(room, { id: who.id, name: who.name }, member ? member.client_id : null);
+  broadcast(room.id, "state_changed", getRoomPublicData(room));
+  activityChanged(room);
+  return { ok: true };
+}
+
+// «Закрыть комнату»: код перестаёт работать, список фильмов, голосование и участники сбрасываются. Закрыть может ведущий.
+// Всем у пульта уходит room_closed; приложения с плеером отключаются (и при переподключении получают «комната не найдена»).
+// Следующее открытие Activity в этом канале заводит новую комнату с новым кодом.
+function closeRoom(roomId, user) {
+  const { room, error } = channelRoomOrError(roomId);
+  if (!room) return { ok: false, error };
+  if (!isRoomHost(room, user, null)) return { ok: false, error: "Закрыть комнату может только ведущий." };
+  broadcast(room.id, "room_closed", {});
+  rooms.delete(room.id);
+  roomListeners.delete(room.id);
+  if (channelRooms.get(room.channel_id) === room.id) channelRooms.delete(room.channel_id);
+  if (room.poll && room.poll.timer) clearTimeout(room.poll.timer);
+  if (room.spin && room.spin.timer) clearTimeout(room.spin.timer);
+  for (const w of room.watchers.values()) clearTimeout(w.expire);
+  if (room.speakers) for (const s of room.speakers.values()) clearTimeout(s.timer);
+  for (const m of room.members.values()) {
+    if (m.id) clearAccountActiveDevice(m.id, m.client_id);
+    closeMemberStreams(room.id, m.client_id);
+  }
+  room.poll = null;
+  room.spin = null;
+  room.watchers.clear();
+  room.members.clear();
+  if (room.speakers) room.speakers.clear();
+  return { ok: true };
+}
+
 module.exports = {
   createRoom,
   getRoom,
@@ -1161,5 +1242,7 @@ module.exports = {
   finishSpin,
   cancelPoll,
   cancelSpin,
+  transferHost,
+  closeRoom,
   cleanFile
 };

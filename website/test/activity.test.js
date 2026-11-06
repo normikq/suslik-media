@@ -384,3 +384,72 @@ test("сервер: страница Activity встраивается толь�
     server.close();
   }
 });
+
+test("ведущего можно передать тому, кто в комнате; передать может только ведущий", () => {
+  const room = rooms.getOrCreateChannelRoom("161616161616161616", alice);
+  const leaveA = rooms.addWatcher(room, alice);
+  const leaveB = rooms.addWatcher(room, bob);
+  const leaveC = rooms.addWatcher(room, carol);
+  assert.equal(rooms.transferHost(room.id, bob, bob.id).ok, false, "гость не передаёт");
+  assert.equal(rooms.transferHost(room.id, alice, "999").ok, false, "нет в комнате");
+  assert.equal(rooms.transferHost(room.id, alice, bob.id).ok, true);
+  assert.equal(room.host_id, bob.id);
+  assert.equal(room.host_name, bob.name);
+  assert.equal(rooms.transferHost(room.id, alice, carol.id).ok, false, "бывший ведущий уже не ведущий");
+  assert.equal(rooms.transferHost(room.id, bob, bob.id).ok, true, "себе — без ошибки");
+  // Передача ведущему с плеером: его устройство становится ведущим устройством
+  const joined = rooms.joinRoom(room.id, carol, "pc_carol");
+  assert.equal(joined.ok, true);
+  assert.equal(rooms.transferHost(room.id, bob, carol.id).ok, true);
+  assert.equal(room.host_client_id, "pc_carol");
+  assert.equal(rooms.isRoomHost(room, carol, "pc_carol"), true);
+  rooms.leaveRoom(room.id, "pc_carol", true);
+  leaveA(); leaveB(); leaveC();
+});
+
+test("ведущий вышел из пустой комнаты: тот, кто вошёл позже минуты, становится ведущим", () => {
+  const room = rooms.getOrCreateChannelRoom("171717171717171717", alice);
+  const leaveA = rooms.addWatcher(room, alice);
+  leaveA(); // комната пуста, ведущего нет
+  assert.equal(room.host_id, alice.id, "ведущий записан, но его нет");
+  assert.ok(room.host_absent_since > 0);
+  // Вошёл сразу — ведущий ещё не «устарел»
+  const leaveB = rooms.addWatcher(room, bob);
+  assert.equal(room.host_id, alice.id);
+  leaveB();
+  // Прошло больше минуты без ведущего — новый человек становится ведущим
+  room.host_absent_since = Date.now() - 61 * 1000;
+  const leaveC = rooms.addWatcher(room, carol);
+  assert.equal(room.host_id, carol.id);
+  assert.equal(room.host_absent_since, 0);
+  leaveC();
+});
+
+test("закрыть комнату может только ведущий: код перестаёт работать, в канале заводится новая", () => {
+  const room = rooms.getOrCreateChannelRoom("181818181818181818", alice);
+  const leaveA = rooms.addWatcher(room, alice);
+  const leaveB = rooms.addWatcher(room, bob);
+  assert.equal(rooms.closeRoom(room.id, bob).ok, false);
+  assert.ok(rooms.getRoom(room.id));
+  assert.equal(rooms.closeRoom(room.id, alice).ok, true);
+  assert.equal(rooms.getRoom(room.id), null);
+  const fresh = rooms.getOrCreateChannelRoom("181818181818181818", bob);
+  assert.notEqual(fresh.id, room.id);
+  assert.equal(fresh.host_id, bob.id);
+  assert.equal(rooms.closeRoom(room.id, alice).ok, false, "уже закрыта");
+  leaveA(); leaveB();
+  rooms.closeRoom(fresh.id, bob);
+});
+
+test("пустая комната канала удаляется через 5 минут, обычная — через 30", () => {
+  const channel = rooms.getOrCreateChannelRoom("191919191919191919", alice);
+  const leave = rooms.addWatcher(channel, alice);
+  leave();
+  const plain = rooms.createRoom(alice);
+  const later = Date.now() + 6 * 60 * 1000;
+  rooms.sweepRooms(later);
+  assert.equal(rooms.getRoom(channel.id), null, "канал: через 6 минут уже нет");
+  assert.ok(rooms.getRoom(plain.id), "обычная комната ещё ждёт 30 минут");
+  rooms.sweepRooms(Date.now() + 31 * 60 * 1000);
+  assert.equal(rooms.getRoom(plain.id), null);
+});

@@ -239,6 +239,11 @@ router.post("/api/activity/rooms/:id/roulette", requireLogin, roomLimiter, (req,
   reply(res, rooms.spinRoulette(req.params.id, req.user, rooms.spinMs(req.body?.seconds))));
 router.post("/api/activity/rooms/:id/roulette/cancel", requireLogin, roomLimiter, (req, res) =>
   reply(res, rooms.cancelSpin(req.params.id, req.user)));
+// Ведущий: передать комнату тому, кто в ней сейчас; закрыть комнату (код перестаёт работать)
+router.post("/api/activity/rooms/:id/host", requireLogin, roomLimiter, (req, res) =>
+  reply(res, rooms.transferHost(req.params.id, req.user, String(req.body?.user_id ?? ""))));
+router.post("/api/activity/rooms/:id/close", requireLogin, roomLimiter, (req, res) =>
+  reply(res, rooms.closeRoom(req.params.id, req.user)));
 
 // «Позвать в чат»: бот пишет в текстовый чат голосового канала код комнаты и ссылку /join/<код>.
 // Бот не настроен или не может писать в канал — { fallback: true, link }: страница копирует ссылку сама.

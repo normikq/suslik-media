@@ -572,9 +572,33 @@
       if (e.status === 404) reopenRoom();
     }).then(function () { refreshing = false; });
   }
-  // Комнату удалили (сервер перезапустился, все ушли): та же кнопка Activity открывает новую
+  // Комнату удалили (сервер перезапустился, все ушли): та же кнопка Activity открывает новую.
+  // Комнату закрыл ведущий (roomClosed) — новую открываем только по кнопке «Открыть новую комнату»
   function reopenRoom() {
-    api('api/activity/room', { channel_id: D.info.channelId }).then(function (r) { setRoom(r.room); startStream(); }, function () {});
+    api('api/activity/room', { channel_id: D.info.channelId }).then(function (r) { S.closed = false; setRoom(r.room); startStream(); }, function () {});
+  }
+  // Комнату закрыл ведущий: поток и опрос стоят, на экране — «Комната закрыта»
+  function roomClosed() {
+    if (S.stream) S.stream.abort();
+    stopPolling();
+    S.room = null;
+    S.closed = true;
+    S.tab = 'now';
+    render();
+  }
+  function closeRoomNow() {
+    S.closeAsk = false;
+    api('api/activity/rooms/' + S.room.id + '/close', {}).then(roomClosed, function (e) { toast(errText(e), true); render(); });
+  }
+  function renderClosed() {
+    app.replaceChildren(
+      h('div', { class: 'top' }, [h('div', { class: 'brand' }, [h('span', { class: 'brand-mark' }), h('span', { text: 'Вместе' })])]),
+      h('div', { class: 'page' }, [h('div', { class: 'panel' }, [
+        h('div', { class: 'h', text: 'Комната закрыта' }),
+        h('div', { class: 'muted', text: 'Ведущий закрыл комнату: код больше не работает, список фильмов сброшен.' }),
+        h('div', { class: 'row', style: 'margin-top:12px' }, [btn('lamp small', 'play', 'Открыть новую комнату', reopenRoom)])
+      ])])
+    );
   }
 
   var memberRefresh = 0;
@@ -586,6 +610,9 @@
       case 'member_left':
         clearTimeout(memberRefresh);
         memberRefresh = setTimeout(refreshRoom, 300);
+        break;
+      case 'room_closed':
+        roomClosed();
         break;
       case 'spin_cancelled':
         // Ведущий остановил барабан: свой снимок барабана убираем сразу (обычный итог тоже приходит со spin: null,
@@ -730,7 +757,7 @@
   // ---- отрисовка ----
   function render() {
     syncReel();
-    if (!S.room) return;
+    if (!S.room) { if (S.closed) renderClosed(); return; }
     var top = h('div', { class: 'top' }, [
       h('div', { class: 'brand' }, [h('span', { class: 'brand-mark' }), h('span', { text: 'Вместе' })]),
       h('div', { class: 'grow' }),
@@ -862,19 +889,39 @@
       p.player = true;
       if (m.buffering) p.buffering = true;
     });
+    var host = isHost();
+    function giveHost(p) {
+      // roomCall при ошибке сам показывает тост и отдаёт undefined
+      roomCall('host', { user_id: p.id }).then(function (r) { if (r) toast('Ведущий — ' + p.name + '.'); });
+    }
     var rows = list.map(function (p) {
       var av = h('div', { class: 'avatar', text: p.avatar ? '' : (p.name || '?').slice(0, 1).toUpperCase() });
       if (p.avatar && /^https:\/\/cdn\.discordapp\.com\//.test(p.avatar)) av.style.backgroundImage = 'url("' + p.avatar + '")';
+      // Ведущему — передать комнату любому, кто сейчас в ней (кроме себя)
+      var canGive = host && S.me && p.id !== S.me.id && p.id !== r.host_id;
       return h('div', { class: 'person' }, [
         av, h('span', { class: 'name', text: p.name + (S.me && p.id === S.me.id ? ' (вы)' : '') }),
         p.id === r.host_id ? h('span', { class: 'tag lamp' }, [icon('crown'), 'Ведущий']) : null,
-        p.buffering ? h('span', { class: 'tag lamp', text: 'Грузится' }) : p.player ? h('span', { class: 'tag' }, [icon('devices'), 'Смотрит']) : null
+        p.buffering ? h('span', { class: 'tag lamp', text: 'Грузится' }) : p.player ? h('span', { class: 'tag' }, [icon('devices'), 'Смотрит']) : null,
+        canGive ? btn('icon small', 'crown', null, function () { giveHost(p); }, { title: 'Сделать ведущим' }) : null
       ]);
     });
+    // «Закрыть комнату» — в два нажатия (диалоги Discord не открывает): первое нажатие просит подтвердить 4 секунды
+    var closeBtn = null;
+    if (host) {
+      closeBtn = S.closeAsk
+        ? btn('small', 'close', 'Точно закрыть комнату?', closeRoomNow, { title: 'Код перестанет работать, у всех участников комната закроется' })
+        : btn('small', 'close', 'Закрыть комнату', function () {
+            S.closeAsk = true;
+            render();
+            setTimeout(function () { if (S.closeAsk) { S.closeAsk = false; render(); } }, 4000);
+          }, { title: 'Код перестанет работать, у всех участников комната закроется' });
+    }
     return h('div', { class: 'panel' }, [
       h('div', { class: 'h' }, ['В комнате · ' + list.length]),
       rows.length ? h('div', { class: 'people' }, rows) : h('div', { class: 'muted', text: 'Пока никого.' }),
-      h('div', { class: 'small muted', style: 'margin-top:10px', text: '«Смотрит» — открыл фильм в приложении.' })
+      h('div', { class: 'small muted', style: 'margin-top:10px', text: '«Смотрит» — открыл фильм в приложении.' + (host ? ' Корона у участника — передать ему комнату.' : '') }),
+      closeBtn ? h('div', { class: 'row', style: 'margin-top:12px' }, [closeBtn]) : null
     ]);
   }
 
