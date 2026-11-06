@@ -476,7 +476,12 @@ function hostPresent(room) {
 
 // true — ведущий сменился (и все об этом узнали)
 function promoteIfHostGone(room) {
-  if (rooms.get(room.id) !== room || (room.members.size === 0 && room.watchers.size === 0) || hostPresent(room)) return false;
+  if (rooms.get(room.id) !== room) return false;
+  if (hostPresent(room)) {
+    room.host_absent_since = 0;
+    return false;
+  }
+  if (room.members.size === 0 && room.watchers.size === 0) return false;
   // Map хранит порядок входа: сначала тот, кто в комнате с плеером, иначе первый у пульта Activity
   const next = room.members.size > 0 ? room.members.values().next().value : room.watchers.values().next().value;
   setHost(room, next, next.client_id || null);
@@ -505,12 +510,14 @@ function noteHostAbsence(room) {
 // Комната голосового канала была пуста, и её ведущий давно не вернулся: новый человек в комнате становится ведущим.
 // Иначе комната, где все вышли, отдавалась бы тому, кто первым открыл её в канале, даже если его уже нет
 function adoptIfHostAbsent(room, user, clientId) {
-  if (!room.channel_id || !user || !user.id || user.id === "guest" || user.id === "shared" || !room.host_absent_since) return;
-  if (Date.now() - room.host_absent_since < HOST_GRACE_MS) return;
+  if (!room.channel_id || !user || !user.id || user.id === "guest" || user.id === "shared") return;
   if (hostPresent(room)) {
     room.host_absent_since = 0;
     return;
   }
+  // Создатель комнаты мог закрыть Activity, так и не открыв поток: тогда отсчёт идёт с момента, когда комната опустела
+  const since = room.host_absent_since || room.empty_since;
+  if (!since || Date.now() - since < HOST_GRACE_MS) return;
   setHost(room, { id: user.id, name: user.name }, clientId);
 }
 
@@ -936,6 +943,7 @@ function activityChanged(room) {
 function addWatcher(room, user) {
   adoptIfHostAbsent(room, user, null);
   const w = watcherOf(room, user);
+  if (user.id === room.host_id) room.host_absent_since = 0;
   const isNew = w.fresh;
   w.fresh = false;
   w.streams++;
@@ -956,6 +964,7 @@ const WATCHER_POLL_MS = 15 * 1000;
 function touchWatcher(room, user) {
   adoptIfHostAbsent(room, user, null);
   const w = watcherOf(room, user);
+  if (user.id === room.host_id) room.host_absent_since = 0;
   const isNew = w.fresh;
   w.fresh = false;
   w.seen_until = Date.now() + WATCHER_POLL_MS;
@@ -1238,6 +1247,7 @@ function transferHost(roomId, user, targetId) {
   const id = String(targetId || "");
   if (!id) return { ok: false, error: "Не выбран участник." };
   if (id === String(room.host_id)) return { ok: true };
+  if (id === "guest" || id === "shared") return { ok: false, error: "Ведущим может быть только участник с аккаунтом." };
   const member = Array.from(room.members.values()).find(m => m && String(m.id) === id);
   const watcher = room.watchers.get(id);
   if (!member && !watcher) return { ok: false, error: "Ведущим можно сделать только того, кто сейчас в комнате." };

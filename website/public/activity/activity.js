@@ -657,7 +657,7 @@
     if (refreshing || !S.room) return;
     refreshing = true;
     api('api/activity/rooms/' + S.room.id).then(function (r) { noteServerTime(r.server_time); setRoom(r.room); }, function (e) {
-      if (e.status === 404) reopenRoom();
+      if (e.status === 404) roomClosed();
     }).then(function () { refreshing = false; });
   }
   // Комнату удалили (сервер перезапустился, все ушли): та же кнопка Activity открывает новую.
