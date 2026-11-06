@@ -661,50 +661,51 @@ class LibraryStore(context: Context) {
 
     // ---- watch progress written by the player (prefs "watch": "magnetId|path" -> "pos|len|at") ----
     private val watchPrefs = app.getSharedPreferences("watch", Context.MODE_PRIVATE)
-    private val watchMemory = java.util.concurrent.ConcurrentHashMap<String, WatchInfo>()
-    private val watchedMagnets = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
-    @Volatile private var watchLoaded = false
+    /** All of the prefs read in one pass, never changed after: a reset swaps in a new one, so no reader sees half of it. */
+    private class WatchSnap(val byKey: Map<String, WatchInfo>, val magnets: Set<Long>)
+    @Volatile private var watchSnap: WatchSnap? = null
+    private val watchLock = Any()
+    private var watchGen = 0 // under watchLock: a load started before a reset does not publish its (old) result
     /** Bumped when the app comes back from the player, so tiles re-read their progress. */
     var watchVersion by mutableStateOf(0)
         private set
     fun bumpWatch() {
-        watchLoaded = false
-        watchMemory.clear()
-        watchedMagnets.clear()
+        invalidateWatch()
         watchVersion++
     }
 
-    private fun ensureWatchLoaded() {
-        if (watchLoaded) return
-        synchronized(watchMemory) {
-            if (watchLoaded) return
-            for ((k, v) in watchPrefs.all) {
-                val s = v as? String ?: continue
-                val parts = s.split('|')
-                if (parts.size < 3) continue
-                val pos = parts[0].toLongOrNull() ?: continue
-                val len = parts[1].toLongOrNull() ?: 0L
-                val at = parts[2].toLongOrNull() ?: 0L
-                watchMemory[k] = WatchInfo(pos, len, at)
-                k.substringBefore('|').toLongOrNull()?.let { watchedMagnets += it }
-            }
-            watchLoaded = true
+    private fun invalidateWatch() = synchronized(watchLock) { watchGen++; watchSnap = null }
+
+    private fun watchSnapshot(): WatchSnap {
+        watchSnap?.let { return it }
+        val gen = synchronized(watchLock) { watchGen }
+        val byKey = HashMap<String, WatchInfo>()
+        val magnets = HashSet<Long>()
+        for ((k, v) in watchPrefs.all) {
+            val s = v as? String ?: continue
+            val parts = s.split('|')
+            if (parts.size < 3) continue
+            val pos = parts[0].toLongOrNull() ?: continue
+            val len = parts[1].toLongOrNull() ?: 0L
+            val at = parts[2].toLongOrNull() ?: 0L
+            byKey[k] = WatchInfo(pos, len, at)
+            k.substringBefore('|').toLongOrNull()?.let { magnets += it }
         }
+        val snap = WatchSnap(byKey, magnets)
+        synchronized(watchLock) { if (gen == watchGen) watchSnap = snap }
+        return snap
     }
 
-    fun watchInfo(key: String): WatchInfo? {
-        ensureWatchLoaded()
-        return watchMemory[key]
-    }
+    fun watchInfo(key: String): WatchInfo? = watchSnapshot().byKey[key]
 
     /** Most recently watched file of a torrent (to pre-select the episode and show "Продолжить"). */
     fun lastWatched(m: Magnet): Pair<MFile, WatchInfo>? {
-        ensureWatchLoaded()
-        if (m.id !in watchedMagnets) return null
+        val snap = watchSnapshot()
+        if (m.id !in snap.magnets) return null
         var best: Pair<MFile, WatchInfo>? = null
         for (f in m.files) {
             if (f.isFolder) continue
-            val w = watchMemory[watchKey(m.id, f)] ?: continue
+            val w = snap.byKey[watchKey(m.id, f)] ?: continue
             if (best == null || w.at > best.second.at) best = f to w
         }
         return best
@@ -726,9 +727,7 @@ class LibraryStore(context: Context) {
      */
     @OptIn(coil.annotation.ExperimentalCoilApi::class)
     private suspend fun cleanUp(list: List<LibraryItem>) = withContext(Dispatchers.IO) {
-        watchLoaded = false
-        watchMemory.clear()
-        watchedMagnets.clear()
+        invalidateWatch()
         episodeMemory.clear()
         val keep = LibraryKeep(list)
         if (!keep.usable) return@withContext

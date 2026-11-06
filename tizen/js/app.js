@@ -328,7 +328,7 @@
    */
   function continueList() {
     var out = [];
-    var grouped = model.groupVersions(state.items, function (it) { return posters.pathOf(it.posterQueries); });
+    var grouped = groupedVersions(state.items);
     var rootOf = {};
     for (var vid in (grouped.versions || {})) {
       var g = grouped.versions[vid];
@@ -464,6 +464,25 @@
   }
 
   /** Постеры: /api/poster?q= → путь картинки → blob (нужен токен). Не больше трёх запросов сразу. */
+  /**
+   * groupVersions по списку раздач, пока не сменились сам список и пути постеров: на ТВ пересчёт всей медиатеки
+   * (регулярки сезонов, частей, года, качества) при каждом показе «Продолжить» и каждом открытии заметен.
+   * «Продолжить» и открытие фильма группируют один state.items (новый массив после каждой загрузки). byId — группа любой версии.
+   */
+  var groupMemo = [];
+  function groupedVersions(list) {
+    var pv = posters.version();
+    for (var i = 0; i < groupMemo.length; i++) if (groupMemo[i].list === list && groupMemo[i].pv === pv) return groupMemo[i].res;
+    var res = model.groupVersions(list, function (it) { return posters.pathOf(it.posterQueries); });
+    res.byId = {};
+    for (var vid in (res.versions || {})) {
+      var g = res.versions[vid];
+      for (var j = 0; j < g.length; j++) res.byId[g[j].m.id] = g;
+    }
+    groupMemo = [{ list: list, pv: pv, res: res }].concat(groupMemo.filter(function (m) { return m.list !== list; })).slice(0, 2);
+    return res;
+  }
+
   var posters = (function () {
     // Не больше 60 картинок в памяти (у ТВ 2018 года на страницу ~200 МБ): дольше всех не показанные освобождаются.
     // Путь картинки на сервере ([paths]) помним всегда: повторный показ — без нового /api/poster
@@ -484,6 +503,13 @@
     function savePaths() {
       clearTimeout(saveTimer);
       saveTimer = setTimeout(function () { try { var keep = {}; Object.keys(paths).forEach(function (k) { if (paths[k]) keep[k] = paths[k]; }); localStorage.setItem(PATHS_KEY, JSON.stringify(keep)); } catch (e) { /* место кончилось */ } }, 1500);
+    }
+    // Растёт, когда меняется путь постера: от путей зависит, какие раздачи — версии одного фильма (groupedVersions)
+    var pathsVersion = 0;
+    function setPath(q, p) {
+      var v = typeof p === 'string' && p.indexOf('/api/poster/img/') === 0 ? p : null;
+      if (paths[q] !== v) { paths[q] = v; pathsVersion++; }
+      return v;
     }
     function pathOf(queries) {
       for (var i = 0; i < queries.length; i++) if (typeof paths[queries[i]] === 'string') return paths[queries[i]];
@@ -506,9 +532,7 @@
         if (!todo.length) { filling = false; if (n) done(); return; }
         var q = todo.shift();
         api.get('/api/poster?q=' + encodeURIComponent(q)).then(function (r) {
-          var p = r.poster;
-          paths[q] = typeof p === 'string' && p.indexOf('/api/poster/img/') === 0 ? p : null;
-          if (paths[q]) { n++; savePaths(); }
+          if (setPath(q, r.poster)) { n++; savePaths(); }
           if (noteTitle(q, r)) n++;
         }, function () {}).then(function () { setTimeout(next, 150); });
       })();
@@ -530,8 +554,7 @@
     function load(q) {
       if (cache[q] !== undefined) return Promise.resolve(cache[q]);
       var path = paths[q] !== undefined ? Promise.resolve(paths[q]) : api.get('/api/poster?q=' + encodeURIComponent(q)).then(function (r) {
-        var p = r.poster;
-        paths[q] = typeof p === 'string' && p.indexOf('/api/poster/img/') === 0 ? p : null;
+        setPath(q, r.poster);
         savePaths();
         noteTitle(q, r);
         return paths[q];
@@ -544,6 +567,7 @@
     return {
       has: function (q) { return !!cache[q]; },
       pathOf: pathOf,
+      version: function () { return pathsVersion; },
       titleOf: titleOf,
       fill: fill,
       want: function (q, cb) {
@@ -655,18 +679,7 @@
       return;
     }
     if (!en.file.variants || !en.file.variants.length) {
-      var all = state.library || [];
-      var grouped = model.groupVersions(all, function (item) { return posters.pathOf(item.posterQueries); });
-      var versions = grouped.versions && grouped.versions[it.m.id];
-      if (!versions) {
-        for (var vid in (grouped.versions || {})) {
-          var gList = grouped.versions[vid];
-          if (gList && gList.some(function (v) { return v.m.id === it.m.id; })) {
-            versions = gList;
-            break;
-          }
-        }
-      }
+      var versions = groupedVersions(state.items || []).byId[it.m.id];
       if (!versions || !versions.length) versions = [it];
       var vars = [];
       for (var vi = 0; vi < versions.length; vi++) {

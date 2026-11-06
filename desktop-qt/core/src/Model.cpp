@@ -850,34 +850,50 @@ std::optional<int> itemPart(const LibraryItem &item) {
 }
 
 int smartQualityScore(const QString &name) {
-    const QString l = name.toLower();
-    auto match = [&](const char *pat) {
-        return l.contains(QRegularExpression(QString::fromUtf8(pat), QRegularExpression::CaseInsensitiveOption));
+    // Вызывается на каждую раздачу при каждой группировке версий: шаблоны компилируются один раз, а не на каждый вызов
+    static const auto rx = [](const char *pat) {
+        return QRegularExpression(QString::fromUtf8(pat), QRegularExpression::CaseInsensitiveOption);
     };
+    static const QRegularExpression re4k = rx(R"((?:^|[^a-z0-9])(?:2160p|4k|uhd)(?![a-z])|(?:^|\D)3840(?!\d))");
+    static const QRegularExpression re1080 = rx(R"((?:^|\D)1080[pi](?![a-z])|(?:^|\D)1920(?!\d))");
+    static const QRegularExpression re720 = rx(R"((?:^|\D)720p(?![a-z])|(?:^|\D)1280(?!\d))");
+    static const QRegularExpression reDv = rx(R"(dolby[\s._-]?vision|dovi|(?:^|[^a-z])dv(?![a-z]))");
+    static const QRegularExpression reHdr10p = rx(R"(hdr10\+|hdr10plus)");
+    static const QRegularExpression reHdr = rx(R"(hdr10|(?:^|[^a-z])hdr(?![a-z]))");
+    static const QRegularExpression re10bit = rx(R"(10[\s._-]?bit|hi10p)");
+    static const QRegularExpression reAtmosDtsx = rx(R"(atmos(?![a-z])|dts[:._-]?x(?![a-z0-9]))");
+    static const QRegularExpression reTruehd = rx(R"(truehd)");
+    static const QRegularExpression reDtshd = rx(R"(dts[\s._-]?hd)");
+    static const QRegularExpression reDtsDdp = rx(R"((?:^|[^a-z])dts(?![a-z])|dd\+|(?:^|[^a-z])ddp(?![a-z])|(?:^|[^a-z])e[\s._-]?ac[\s._-]?3(?!\d))");
+    static const QRegularExpression reAc3 = rx(R"((?:^|[^a-z])ac[\s._-]?3(?!\d)|(?:^|[^a-z])dd[\s._-]?5\.1|(?:^|[^\d.])5\.1(?!\d))");
+    static const QRegularExpression reRemux = rx(R"(remux)");
+    static const QRegularExpression reBluray = rx(R"(bdrip|brrip|blu[\s._-]?ray)");
+    static const QRegularExpression reWeb = rx(R"((?:^|[^a-z])web(?:[\s._-]?(?:dl|rip))?(?![a-z]))");
+
+    const QString l = name.toLower();
 
     int rScore = 100;
-    if (match(R"((?:^|[^a-z0-9])(?:2160p|4k|uhd)(?![a-z])|(?:^|\D)3840(?!\d))")) rScore = 400;
-    else if (match(R"((?:^|\D)1080[pi](?![a-z])|(?:^|\D)1920(?!\d))")) rScore = 300;
-    else if (match(R"((?:^|\D)720p(?![a-z])|(?:^|\D)1280(?!\d))")) rScore = 200;
-    else rScore = 100;
+    if (l.contains(re4k)) rScore = 400;
+    else if (l.contains(re1080)) rScore = 300;
+    else if (l.contains(re720)) rScore = 200;
 
     int vScore = 0;
-    if (match(R"(dolby[\s._-]?vision|dovi|(?:^|[^a-z])dv(?![a-z]))")) vScore = 40;
-    else if (match(R"(hdr10\+|hdr10plus)")) vScore = 30;
-    else if (match(R"(hdr10|(?:^|[^a-z])hdr(?![a-z]))")) vScore = 20;
-    else if (match(R"(10[\s._-]?bit|hi10p)")) vScore = 10;
+    if (l.contains(reDv)) vScore = 40;
+    else if (l.contains(reHdr10p)) vScore = 30;
+    else if (l.contains(reHdr)) vScore = 20;
+    else if (l.contains(re10bit)) vScore = 10;
 
     int aScore = 0;
-    if (match(R"(atmos(?![a-z])|dts[:._-]?x(?![a-z0-9]))")) aScore = 40;
-    else if (match(R"(truehd)")) aScore = 35;
-    else if (match(R"(dts[\s._-]?hd)")) aScore = 30;
-    else if (match(R"((?:^|[^a-z])dts(?![a-z])|dd\+|(?:^|[^a-z])ddp(?![a-z])|(?:^|[^a-z])e[\s._-]?ac[\s._-]?3(?!\d))")) aScore = 20;
-    else if (match(R"((?:^|[^a-z])ac[\s._-]?3(?!\d)|(?:^|[^a-z])dd[\s._-]?5\.1|(?:^|[^\d.])5\.1(?!\d))")) aScore = 10;
+    if (l.contains(reAtmosDtsx)) aScore = 40;
+    else if (l.contains(reTruehd)) aScore = 35;
+    else if (l.contains(reDtshd)) aScore = 30;
+    else if (l.contains(reDtsDdp)) aScore = 20;
+    else if (l.contains(reAc3)) aScore = 10;
 
     int sScore = 0;
-    if (match(R"(remux)")) sScore = 25;
-    else if (match(R"(bdrip|brrip|blu[\s._-]?ray)")) sScore = 15;
-    else if (match(R"((?:^|[^a-z])web(?:[\s._-]?(?:dl|rip))?(?![a-z]))")) sScore = 10;
+    if (l.contains(reRemux)) sScore = 25;
+    else if (l.contains(reBluray)) sScore = 15;
+    else if (l.contains(reWeb)) sScore = 10;
 
     return rScore + vScore + aScore + sScore;
 }

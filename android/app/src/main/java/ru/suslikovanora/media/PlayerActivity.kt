@@ -1877,7 +1877,11 @@ class PlayerActivity : ComponentActivity() {
                 }
             }
         }
-        canonicalId = i?.getStringExtra(PlayerExtras.CANONICAL_ID) ?: Party.file?.canonicalId
+        // The room's canonical id only for the room's own file (a guest following the host): a guest's other film without
+        // one must not pass for the room's work, or findEpisodeIndex would match its episodes by number
+        val openedKeys = i?.getStringArrayListExtra(EXTRA_WATCH_KEYS).orEmpty() + listOfNotNull(i?.getStringExtra(PlayerExtras.WATCH_KEY))
+        canonicalId = i?.getStringExtra(PlayerExtras.CANONICAL_ID)
+            ?: Party.file?.takeIf { f -> openedKeys.any { k -> k == f.key || f.variants.any { it.key == k } } }?.canonicalId
         panel.collection = i?.getBooleanExtra(PlayerExtras.COLLECTION, false) == true
         markerQueries = i?.getStringExtra(PlayerExtras.MARKERS)?.let { runCatching { org.json.JSONArray(it) }.getOrNull() }
         roomTitles = i?.getStringArrayListExtra(PlayerExtras.ROOM_TITLES).orEmpty()
