@@ -20,14 +20,16 @@ private object AndroidPartyLink : PartyLink {
     override fun targetMs() = Party.targetMs()
     override fun othersBuffering() = Party.othersBuffering()
     override fun takeStartedByMe(key: String): Boolean {
-        if (Party.startedByMe != key) return false
+        val started = Party.startedByMe ?: return false
+        // The engine ticks with the active quality key, putFilm remembers the watch key: both mean the same film
+        if (started != key && Party.file?.let { it.key == started && it.variants.any { v -> v.key == key } } != true) return false
         Party.startedByMe = null
         return true
     }
     override fun play(posMs: Long) = Party.play(posMs)
     override fun pause(posMs: Long) = Party.pause(posMs)
     override fun seek(posMs: Long) = Party.seek(posMs)
-    override fun reportBuffering(loading: Boolean, variantKey: String?) = Party.reportBuffering(loading, variantKey)
+    override fun reportBuffering(loading: Boolean) = Party.reportBuffering(loading)
 }
 
 /**
@@ -104,31 +106,7 @@ class PlayerPartySync(private val handler: Handler, private val cb: Callback) {
         }
     }
 
-    private fun findEpisodeIndex(keys: List<String>, f: PartyFileRef): Int {
-        val direct = keys.indexOf(f.key)
-        if (direct >= 0) return direct
-        for (v in f.variants) {
-            val vi = keys.indexOf(v.key)
-            if (vi >= 0) return vi
-        }
-        // As on the PC (PlayerParty.cpp, sameWork): by episode number only within the same work, otherwise
-        // another show's S01E01 would be taken for the room's one
-        val myCid = cb.canonicalId()
-        val sameWork = (!f.canonicalId.isNullOrBlank() && f.canonicalId == myCid) ||
-            (listOf(f.key) + f.variants.map { it.key }).any { rk ->
-                val mag = rk.substringBefore('|')
-                keys.any { it.substringBefore('|') == mag }
-            }
-        if (!sameWork) return -1
-        val targetEp = if ('|' in f.key) ru.suslikovanora.media.core.episodePair(f.key.substringAfter('|')) else null
-        if (targetEp != null) {
-            val ei = keys.indexOfFirst { wk ->
-                '|' in wk && ru.suslikovanora.media.core.episodePair(wk.substringAfter('|')) == targetEp
-            }
-            if (ei >= 0) return ei
-        }
-        return -1
-    }
+    private fun findEpisodeIndex(keys: List<String>, f: PartyFileRef): Int = f.resolveIndex(keys, cb.canonicalId())
 
     private fun step() {
         val p = player ?: return

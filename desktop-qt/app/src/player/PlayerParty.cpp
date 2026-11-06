@@ -90,31 +90,15 @@ std::optional<QString> PlayerModel::edition() const {
 }
 
 int PlayerModel::findEpisodeIndex(const core::PartyFileRef &f) const {
-    const int direct = int(m_req.watchKeys.indexOf(f.key));
-    if (direct >= 0) return direct;
-    for (const auto &v : f.variants) {
-        const int idx = int(m_req.watchKeys.indexOf(v.key));
-        if (idx >= 0) return idx;
-    }
-    const QString roomPath = f.key.section(QLatin1Char('|'), 1);
-    const auto targetEp = roomPath.isEmpty() ? std::nullopt : core::episodePair(roomPath);
-    if (!targetEp) return -1;
-
-    bool sameWork = (f.canonicalId && !f.canonicalId->isEmpty() && *f.canonicalId == m_canonicalId);
-    if (!sameWork && m_lib && m_req.magnetId > 0) {
+    // Две раздачи, которые медиатека считает версиями одной работы, — та же работа и без canonical_id
+    bool hint = false;
+    if (m_lib && m_req.magnetId > 0) {
         const qint64 roomMag = f.key.section(QLatin1Char('|'), 0, 0).toLongLong();
-        if (roomMag > 0) {
-            for (const auto &ver : m_lib->versionsOf(m_req.magnetId)) {
-                if (ver.m.id == roomMag) { sameWork = true; break; }
-            }
-        }
+        if (roomMag > 0)
+            for (const auto &ver : m_lib->versionsOf(m_req.magnetId))
+                if (ver.m.id == roomMag) { hint = true; break; }
     }
-    if (!sameWork) return -1;
-    for (int i = 0; i < m_req.watchKeys.size(); ++i) {
-        const QString p = m_req.watchKeys[i].section(QLatin1Char('|'), 1);
-        if (core::episodePair(p) == targetEp) return i;
-    }
-    return -1;
+    return f.resolveIndex(m_req.watchKeys, m_canonicalId, hint);
 }
 
 } // namespace suslik::app

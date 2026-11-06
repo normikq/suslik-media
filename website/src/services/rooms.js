@@ -512,7 +512,7 @@ function sweepRooms(now = Date.now()) {
 }
 setInterval(sweepRooms, 5 * 60 * 1000).unref?.();
 
-const VARIANT_KEY_RE = /^d{1,20}|.{1,900}$/s;
+const VARIANT_KEY_RE = /^\d{1,20}\|.{1,900}$/s;
 
 // Ключ варианта файла комнаты: формы "<adId>|<путь>"; если у файла есть список пресетов — только из него (или сам файл).
 function variantKeyFor(file, raw) {
@@ -544,8 +544,6 @@ function handleRoomAction(roomId, user, action) {
     const { member: m, error } = actingMember(room, user, action);
     if (error) return { ok: false, error };
     if (m) {
-      const vk = variantKeyFor(room.file, action.variant_key);
-      if (vk) m.variant_key = vk;
       const b = Boolean(action.buffering);
       if (Boolean(m.buffering) !== b) {
         m.buffering = b;
@@ -637,7 +635,8 @@ function handleRoomAction(roomId, user, action) {
       state.playing = false;
       // Новый фильм: прежние загрузки не в счёт
       state.waiting = false;
-      for (const m of room.members.values()) { m.buffering = false; m.buffering_since = 0; }
+      // Ключ качества прежнего фильма никому не подходит: у остальных он сбрасывается, клиент пришлёт свой заново
+      for (const m of room.members.values()) { m.buffering = false; m.buffering_since = 0; m.variant_key = null; }
       const actor = action.client_id ? room.members.get(action.client_id) : null;
       if (actor) {
         if (!file) {

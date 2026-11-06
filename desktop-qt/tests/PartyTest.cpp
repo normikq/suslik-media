@@ -72,7 +72,7 @@ struct FakeLink : PartyLink {
     void play(qint64 p) override { sent << S("play %1").arg(p); }
     void pause(qint64 p) override { sent << S("pause %1").arg(p); }
     void seek(qint64 p) override { sent << S("seek %1").arg(p); }
-    void reportBuffering(bool l, const QString & = QString()) override { if (buffering.isEmpty() || buffering.last() != l) buffering << l; }
+    void reportBuffering(bool l) override { if (buffering.isEmpty() || buffering.last() != l) buffering << l; }
 };
 
 const QString KEY = S("42|a.mkv");
@@ -540,6 +540,23 @@ private slots:
         QVERIFY(notes.isEmpty());
         for (int i = 0; i < 10; ++i) { now += 400; e.tick(p, KEY, now); }
         QCOMPARE(notes, (QList<PartyNotice>{{PartyNotice::Kind::Waiting, 0}}));
+    }
+
+    // Те же случаи, что в PartyProtocolTest.kt (resolveIndexFixtures) и tizen/test/party.test.js
+    void resolveIndexFixtures() {
+        const QStringList keys{S("10|Show/S01E01.mkv"), S("10|Show/S01E02.mkv")};
+        const QString cid = S("s:show_s1:default");
+        auto ref = [](const QString &k, const QString &c = QString(), const QList<PartyVariant> &vs = {}) {
+            PartyFileRef r; r.key = k; if (!c.isEmpty()) r.canonicalId = c; r.variants = vs; return r;
+        };
+        PartyVariant v; v.key = S("10|Show/S01E01.mkv");
+        QCOMPARE(ref(S("10|Show/S01E02.mkv")).resolveIndex(keys, QString()), 1);
+        QCOMPARE(ref(S("20|Show.WEB/S01E02.mkv"), cid).resolveIndex(keys, cid), 1);
+        QCOMPARE(ref(S("20|Show.WEB/S01E02.mkv"), cid).resolveIndex(keys, S("s:other")), -1);
+        QCOMPARE(ref(S("20|Other/S01E01.mkv"), S("s:other")).resolveIndex(keys, cid), -1);
+        QCOMPARE(ref(S("20|Show.WEB/S01E02.mkv"), QString(), {v}).resolveIndex(keys, QString()), 0);
+        QCOMPARE(ref(S("20|Show.WEB/S01E02.mkv")).resolveIndex(keys, QString(), true), 1);
+        QCOMPARE(ref(S("30|a.mkv")).resolveIndex(keys, QString()), -1);
     }
 
     void canonicalContextAndVariants() {

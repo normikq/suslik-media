@@ -135,6 +135,19 @@
 
   var ROOMS = '/api/rooms';
 
+  function episodeOf(k) {
+    var parse = SM.model && SM.model.parseEpisode;
+    var s = String(k), bar = s.indexOf('|');
+    return parse && bar >= 0 ? parse(s.slice(bar + 1), 1) : null;
+  }
+
+  /** Серии двух ключей просмотра совпадают (у обоих нет серии — это фильм). */
+  function sameEpisode(a, b) {
+    var ea = episodeOf(a), eb = episodeOf(b);
+    if (!ea || !eb) return !ea && !eb;
+    return ea[0] === eb[0] && ea[1] === eb[1];
+  }
+
   function fileRef(key, title, canonicalId, edition, variants) {
     var vList = Array.isArray(variants) ? variants : [];
     return {
@@ -150,8 +163,38 @@
         for (var i = 0; i < vList.length; i++) {
           if (vList[i] && vList[i].key === fileKey) return true;
         }
-        if (canonicalId && otherCid && canonicalId === otherCid) return true;
+        if (canonicalId && otherCid && canonicalId === otherCid) {
+          // Как PartyFileRef.matches в Kotlin и C++: та же раздача — не тот фильм, серии должны совпасть
+          var myMag = key.indexOf('|') >= 0 ? key.split('|')[0] : '';
+          var otherMag = fileKey.indexOf('|') >= 0 ? fileKey.split('|')[0] : '';
+          if (myMag && myMag === otherMag) return false;
+          return sameEpisode(key, fileKey);
+        }
         return false;
+      },
+      /** Индекс фильма комнаты в списке ключей просмотра плеера или -1 (Kotlin/C++ resolveIndex). */
+      resolveIndex: function (keys, myCid, sameWorkHint) {
+        var d = keys.indexOf(key);
+        if (d >= 0) return d;
+        for (var i = 0; i < vList.length; i++) {
+          var vi = vList[i] ? keys.indexOf(vList[i].key) : -1;
+          if (vi >= 0) return vi;
+        }
+        if (key.indexOf('|') < 0) return -1;
+        var sameWork = !!sameWorkHint || !!(canonicalId && canonicalId === myCid);
+        if (!sameWork) {
+          var mine = [key.split('|')[0]];
+          vList.forEach(function (v) { if (v && v.key) mine.push(String(v.key).split('|')[0]); });
+          sameWork = keys.some(function (k) { return mine.indexOf(String(k).split('|')[0]) >= 0; });
+        }
+        if (!sameWork) return -1;
+        var target = episodeOf(key);
+        if (!target) return -1;
+        for (var j = 0; j < keys.length; j++) {
+          var e = episodeOf(keys[j]);
+          if (e && e[0] === target[0] && e[1] === target[1]) return j;
+        }
+        return -1;
       }
     };
   }
@@ -217,11 +260,7 @@
     play: function (ms) { return { type: 'play', pos: ms / 1000 }; },
     pause: function (ms) { return { type: 'pause', pos: ms / 1000 }; },
     seek: function (ms) { return { type: 'seek', pos: ms / 1000 }; },
-    buffering: function (loading, variantKey) {
-      var o = { type: 'buffering', buffering: loading };
-      if (variantKey) o.variant_key = variantKey;
-      return o;
-    },
+    buffering: function (loading) { return { type: 'buffering', buffering: loading }; },
     variantChange: function (variantKey) {
       return { type: 'variant_change', variant_key: variantKey };
     },

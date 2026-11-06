@@ -2,6 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
+require('../js/model.js');
 const C = require('../js/partycore.js');
 const P = C.protocol, R = C.room;
 
@@ -194,9 +195,18 @@ test('variantChange и buffering: формирование команд прот
     type: 'variant_change',
     variant_key: '104921|Dune.1080p.mkv'
   });
-  assert.deepEqual(P.buffering(true, '104921|Dune.2160p.mkv'), {
-    type: 'buffering',
-    buffering: true,
-    variant_key: '104921|Dune.2160p.mkv'
-  });
+  assert.deepEqual(P.buffering(true), { type: 'buffering', buffering: true });
+});
+
+test('resolveIndex: те же случаи, что в PartyProtocolTest.kt и PartyTest.cpp', () => {
+  const keys = ['10|Show/S01E01.mkv', '10|Show/S01E02.mkv'];
+  const cid = 's:show_s1:default';
+  const ref = (k, c, vs) => C.protocol.fileRef(k, '', c, null, vs);
+  assert.equal(ref('10|Show/S01E02.mkv').resolveIndex(keys, null), 1);
+  assert.equal(ref('20|Show.WEB/S01E02.mkv', cid).resolveIndex(keys, cid), 1);
+  assert.equal(ref('20|Show.WEB/S01E02.mkv', cid).resolveIndex(keys, 's:other'), -1);
+  assert.equal(ref('20|Other/S01E01.mkv', 's:other').resolveIndex(keys, cid), -1);
+  assert.equal(ref('20|Show.WEB/S01E02.mkv', null, [{ key: '10|Show/S01E01.mkv' }]).resolveIndex(keys, null), 0);
+  assert.equal(ref('20|Show.WEB/S01E02.mkv').resolveIndex(keys, null, true), 1);
+  assert.equal(ref('30|a.mkv').resolveIndex(keys, null), -1);
 });

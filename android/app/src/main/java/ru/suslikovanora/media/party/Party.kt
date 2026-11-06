@@ -193,21 +193,18 @@ object Party {
     }
 
     @Volatile private var reportedBuffering = false
-    @Volatile private var reportedVariantKey: String? = null
 
     /** «My player is loading» / «ready»: while anyone is loading the room waits (any member may say it). */
-    fun reportBuffering(loading: Boolean, variantKey: String? = null) {
+    fun reportBuffering(loading: Boolean) {
         val id = roomId ?: return
-        if (loading == reportedBuffering && (variantKey == null || variantKey == reportedVariantKey)) return
+        if (loading == reportedBuffering) return
         reportedBuffering = loading
-        if (variantKey != null) reportedVariantKey = variantKey
         AppLog.write("[party] ${if (loading) "loading: the room waits" else "ready"}")
-        outbox.trySend(id to PartyProtocol.withClient(PartyProtocol.buffering(loading, variantKey ?: reportedVariantKey), clientId))
+        outbox.trySend(id to PartyProtocol.withClient(PartyProtocol.buffering(loading), clientId))
     }
 
     fun sendVariantChange(variantKey: String) {
         val id = roomId ?: return
-        reportedVariantKey = variantKey
         outbox.trySend(id to PartyProtocol.withClient(PartyProtocol.variantChange(variantKey), clientId))
     }
 

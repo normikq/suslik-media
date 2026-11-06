@@ -868,7 +868,7 @@
     formatBytes: formatBytes, statusRu: statusRu, episodeLabel: episodeLabel,
     prepareItems: prepareItems, subtitlesFor: subtitlesFor, externalAudioFor: externalAudioFor,
     isVoiceOverOnly: isVoiceOverOnly, dubLabel: dubLabel, customName: customName, externalChoices: externalChoices, externalIn: externalIn,
-    watchKey: watchKey, watchInfo: watchInfo, basename: basename, tileTitle: tileTitle
+    watchKey: watchKey, watchInfo: watchInfo, parseEpisode: parseEpisode, basename: basename, tileTitle: tileTitle
   };
   if (typeof module === 'object' && module.exports) module.exports = SM.model;
 })(typeof window !== 'undefined' ? window : global);

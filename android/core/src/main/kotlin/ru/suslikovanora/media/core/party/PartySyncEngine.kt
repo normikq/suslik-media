@@ -40,7 +40,7 @@ interface PartyLink {
     fun pause(posMs: Long)
     fun seek(posMs: Long)
     /** «Мой плеер грузится» / «готов». Повторы одного и того же приложение отбрасывает само. */
-    fun reportBuffering(loading: Boolean, variantKey: String? = null)
+    fun reportBuffering(loading: Boolean)
 }
 
 /** Подсказка в плеере: что сделал ведущий (гостю) и кого ждёт комната (всем). Текст пишет приложение. */
@@ -129,7 +129,7 @@ class PartySyncEngine(
                 pendingAt = now; pendingTo = t; pendingT = -1L
                 ownUntil = now + OWN_MS
                 prevT = t; prevP = p; prevAt = now
-                link.reportBuffering(!p, key)
+                link.reportBuffering(!p)
                 return
             }
         }
@@ -154,7 +154,7 @@ class PartySyncEngine(
         stalledSince = if (!p && pendingAt == 0L && (!player.running || frozen))
             (if (stalledSince > 0L) stalledSince else if (frozen) engineMovedAt else now) else 0L
         val loading = pendingAt > 0L || (stalledSince > 0L && now - stalledSince > 1_000L)
-        link.reportBuffering(loading && link.state.playing, key)
+        link.reportBuffering(loading && link.state.playing)
 
         // 1. Я только что поставил этот фильм в комнату: комната стартует с моего места.
         if (link.takeStartedByMe(key)) {

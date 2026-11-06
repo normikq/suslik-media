@@ -249,4 +249,19 @@ class PartyProtocolTest {
         assertEquals("variant_change", vChange.optString("type"))
         assertEquals("104921|Dune.1080p.mkv", vChange.optString("variant_key"))
     }
+
+    // Same fixtures as desktop-qt/tests/PartyTest.cpp (resolveIndexFixtures) and tizen/test/party.test.js
+    @Test
+    fun resolveIndexFixtures() {
+        val keys = listOf("10|Show/S01E01.mkv", "10|Show/S01E02.mkv")
+        val cid = "s:show_s1:default"
+        fun v(k: String) = PartyVariant(key = k, label = k)
+        assertEquals(1, PartyFileRef("10|Show/S01E02.mkv", "").resolveIndex(keys, null))
+        assertEquals(1, PartyFileRef("20|Show.WEB/S01E02.mkv", "", canonicalId = cid).resolveIndex(keys, cid))
+        assertEquals(-1, PartyFileRef("20|Show.WEB/S01E02.mkv", "", canonicalId = cid).resolveIndex(keys, "s:other"))
+        assertEquals(-1, PartyFileRef("20|Other/S01E01.mkv", "", canonicalId = "s:other").resolveIndex(keys, cid))
+        assertEquals(0, PartyFileRef("20|Show.WEB/S01E02.mkv", "", variants = listOf(v("10|Show/S01E01.mkv"))).resolveIndex(keys, null))
+        assertEquals(1, PartyFileRef("20|Show.WEB/S01E02.mkv", "").resolveIndex(keys, null, sameWorkHint = true))
+        assertEquals(-1, PartyFileRef("30|a.mkv", "").resolveIndex(keys, null))
+    }
 }

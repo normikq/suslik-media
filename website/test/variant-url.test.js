@@ -274,7 +274,7 @@ test("комнаты: variant_key проверяется по списку пр�
   const junk = rooms.handleRoomAction(room.id, guest, { type: "variant_change", client_id: "g2_client", variant_key: "not a key" });
   assert.equal(junk.ok, false);
 
-  // buffering с чужим ключом не падает, но ключ не принимается
+  // buffering ключ качества не принимает вообще: для этого есть variant_change
   const buf = rooms.handleRoomAction(room.id, guest, { type: "buffering", client_id: "g2_client", buffering: false, variant_key: "99|Other.mkv" });
   assert.equal(buf.ok, true);
   assert.equal(room.members.get("g2_client").variant_key, undefined);

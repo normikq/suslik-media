@@ -94,7 +94,15 @@ QString Party::stateLine() const {
 }
 
 bool Party::takeStartedByMe(const QString &key) {
-    if (m_startedByMe != key) return false;
+    if (!m_startedByMe) return false;
+    // Движок тикает с ключом выбранного качества, putFilm помнит ключ просмотра: это один и тот же фильм
+    if (*m_startedByMe != key) {
+        const auto &f = m_room.file;
+        bool same = false;
+        if (f && f->key == *m_startedByMe)
+            for (const auto &v : f->variants) if (v.key == key) { same = true; break; }
+        if (!same) return false;
+    }
     m_startedByMe.reset();
     return true;
 }
@@ -257,18 +265,16 @@ void Party::closeIfNobodyWatches() {
     });
 }
 
-void Party::reportBuffering(bool loading, const QString &variantKey) {
-    if (!m_roomId || (loading == m_reportedBuffering && (variantKey.isEmpty() || variantKey == m_reportedVariantKey))) return;
+void Party::reportBuffering(bool loading) {
+    if (!m_roomId || loading == m_reportedBuffering) return;
     m_reportedBuffering = loading;
-    if (!variantKey.isEmpty()) m_reportedVariantKey = variantKey;
     log(loading ? S("loading: the room waits") : S("ready"));
-    m_outbox << std::make_pair(*m_roomId, PartyProtocol::withClient(PartyProtocol::buffering(loading, m_reportedVariantKey), m_clientId));
+    m_outbox << std::make_pair(*m_roomId, PartyProtocol::withClient(PartyProtocol::buffering(loading), m_clientId));
     pump();
 }
 
 void Party::sendVariantChange(const QString &variantKey) {
     if (!m_roomId) return;
-    m_reportedVariantKey = variantKey;
     m_outbox << std::make_pair(*m_roomId, PartyProtocol::withClient(PartyProtocol::variantChange(variantKey), m_clientId));
     pump();
 }

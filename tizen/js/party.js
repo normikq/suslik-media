@@ -142,16 +142,14 @@
     }, 1500);
   };
 
-  var reported = false, reportedVariantKey = null;
-  party.reportBuffering = function (loading, variantKey) {
-    if (!party.roomId || (loading === reported && (!variantKey || variantKey === reportedVariantKey))) return;
+  var reported = false;
+  party.reportBuffering = function (loading) {
+    if (!party.roomId || loading === reported) return;
     reported = loading;
-    if (variantKey) reportedVariantKey = variantKey;
-    send(P.buffering(loading, variantKey || reportedVariantKey));
+    send(P.buffering(loading));
   };
   party.sendVariantChange = function (variantKey) {
     if (!party.roomId) return;
-    reportedVariantKey = variantKey;
     send(P.variantChange(variantKey));
   };
 
@@ -246,7 +244,15 @@
     canSeek: party.canControl,
     targetMs: party.targetMs,
     othersBuffering: party.othersBuffering,
-    takeStartedByMe: function (key) { if (party.startedByMe !== key) return false; party.startedByMe = null; return true; },
+    takeStartedByMe: function (key) {
+      var s = party.startedByMe;
+      if (s == null) return false;
+      if (s !== key) {
+        var f = party.room.file;
+        if (!(f && f.key === s && (f.variants || []).some(function (v) { return v.key === key; }))) return false;
+      }
+      party.startedByMe = null; return true;
+    },
     play: party.play, pause: party.pause, seek: party.seek, reportBuffering: party.reportBuffering
   };
 
@@ -279,7 +285,7 @@
       if (key !== lastKey) {
         lastKey = key;
         var f = party.room.file;
-        if (f && key && key !== f.key && party.isHost() && keys.indexOf(f.key) >= 0) party.putFilm(key, cb.title());
+        if (f && key && key !== f.key && party.isHost() && (keys.indexOf(f.key) >= 0 || (f.resolveIndex && f.resolveIndex(keys, null) >= 0))) party.putFilm(key, cb.title());
       }
       // Ведущий выбрал другую серию: этот плеер переходит на неё, один раз
       var rk = party.room.file ? party.room.file.key : null;
@@ -296,7 +302,7 @@
       }
       if (rk == null || matchesFilm) switchedTo = null;
       else if (party.inRoom() && switchedTo !== rk && p) {
-        var i = keys.indexOf(rk);
+        var rf = party.room.file, i = rf && rf.resolveIndex ? rf.resolveIndex(keys, null) : keys.indexOf(rk);
         if (i >= 0) {
           switchedTo = rk;
           if (!party.isHost()) episodeNotice = hostWho() + ' включает «' + party.room.file.title + '»';

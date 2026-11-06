@@ -80,6 +80,9 @@ struct PartyFileRef {
 
     qint64 adId() const;
     bool matches(const QString &fileKey, const QString &otherCanonicalId = QString()) const;
+    /// Индекс фильма комнаты в списке ключей просмотра плеера или -1: свой ключ, затем варианты, затем та же серия (S/E)
+    /// той же работы. Те же правила, что у Kotlin `resolveIndex` и JS; sameWorkHint — вызывающий знает, что работа та же.
+    int resolveIndex(const QStringList &keys, const QString &myCanonicalId, bool sameWorkHint = false) const;
     bool operator==(const PartyFileRef &o) const = default;
 };
 
@@ -179,7 +182,7 @@ public:
     static QJsonObject play(qint64 posMs);
     static QJsonObject pause(qint64 posMs);
     static QJsonObject seek(qint64 posMs);
-    static QJsonObject buffering(bool loading, const QString &variantKey = QString());
+    static QJsonObject buffering(bool loading);
     static QJsonObject variantChange(const QString &variantKey);
     static QJsonObject changeFile(const PartyFileRef &f);
     /// Ведущий закрыл фильм: у гостей плеер тоже закрывается.
@@ -240,7 +243,7 @@ public:
     virtual void play(qint64 posMs) = 0;
     virtual void pause(qint64 posMs) = 0;
     virtual void seek(qint64 posMs) = 0;
-    virtual void reportBuffering(bool loading, const QString &variantKey = QString()) = 0;
+    virtual void reportBuffering(bool loading) = 0;
 };
 
 /// Подсказка в плеере: что сделал ведущий (гостю) и кого ждёт комната.

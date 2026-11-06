@@ -82,6 +82,26 @@ bool PartyFileRef::matches(const QString &fileKey, const QString &otherCanonical
     return false;
 }
 
+int PartyFileRef::resolveIndex(const QStringList &keys, const QString &myCanonicalId, bool sameWorkHint) const {
+    if (const int d = int(keys.indexOf(key)); d >= 0) return d;
+    for (const auto &v : variants)
+        if (const int i = int(keys.indexOf(v.key)); i >= 0) return i;
+    if (!key.contains(QLatin1Char('|'))) return -1;
+    auto mag = [](const QString &k) { return k.section(QLatin1Char('|'), 0, 0); };
+    bool sameWork = sameWorkHint || (canonicalId && !canonicalId->isEmpty() && *canonicalId == myCanonicalId);
+    if (!sameWork) {
+        QStringList mine{mag(key)};
+        for (const auto &v : variants) mine << mag(v.key);
+        for (const auto &k : keys) if (mine.contains(mag(k))) { sameWork = true; break; }
+    }
+    if (!sameWork) return -1;
+    const auto target = episodePair(key.section(QLatin1Char('|'), 1));
+    if (!target) return -1;
+    for (int i = 0; i < keys.size(); ++i)
+        if (keys[i].contains(QLatin1Char('|')) && episodePair(keys[i].section(QLatin1Char('|'), 1)) == target) return i;
+    return -1;
+}
+
 qint64 PartyState::targetMs(qint64 serverNowMs) const {
     const double base = pos * 1000.0;
     if (!playing || waiting) return qint64(base);
@@ -195,11 +215,7 @@ QJsonObject PartyProtocol::leaveBody(const QString &clientId) { return {{S("clie
 QJsonObject PartyProtocol::play(qint64 posMs) { return {{S("type"), S("play")}, {S("pos"), double(posMs) / 1000.0}}; }
 QJsonObject PartyProtocol::pause(qint64 posMs) { return {{S("type"), S("pause")}, {S("pos"), double(posMs) / 1000.0}}; }
 QJsonObject PartyProtocol::seek(qint64 posMs) { return {{S("type"), S("seek")}, {S("pos"), double(posMs) / 1000.0}}; }
-QJsonObject PartyProtocol::buffering(bool loading, const QString &variantKey) {
-    QJsonObject obj{{S("type"), S("buffering")}, {S("buffering"), loading}};
-    if (!variantKey.isEmpty()) obj.insert(S("variant_key"), variantKey);
-    return obj;
-}
+QJsonObject PartyProtocol::buffering(bool loading) { return {{S("type"), S("buffering")}, {S("buffering"), loading}}; }
 QJsonObject PartyProtocol::variantChange(const QString &variantKey) {
     QJsonObject obj{{S("type"), S("variant_change")}};
     if (!variantKey.isEmpty()) obj.insert(S("variant_key"), variantKey);
@@ -431,7 +447,7 @@ void PartySyncEngine::tick(SyncPlayer &player, const QString &key, qint64 now) {
             m_pendingAt = now; m_pendingTo = t; m_pendingT = -1;
             m_ownUntil = now + OWN_MS;
             m_prevT = t; m_prevP = p; m_prevAt = now;
-            m_link.reportBuffering(!p, key);
+            m_link.reportBuffering(!p);
             return;
         }
     }
@@ -458,7 +474,7 @@ void PartySyncEngine::tick(SyncPlayer &player, const QString &key, qint64 now) {
     else
         m_stalledSince = 0;
     const bool loading = m_pendingAt > 0 || (m_stalledSince > 0 && now - m_stalledSince > 1000);
-    m_link.reportBuffering(loading && m_link.state().playing, key);
+    m_link.reportBuffering(loading && m_link.state().playing);
 
     // 1. Я только что поставил этот фильм в комнату: комната стартует с моего места
     if (m_link.takeStartedByMe(key)) {

@@ -57,6 +57,27 @@ data class PartyFileRef(
         }
         return false
     }
+
+    /**
+     * Index of the room's film in a player's playlist ([keys] = watch keys), or -1. The same rules on every platform
+     * (C++ `PartyFileRef::resolveIndex`, JS `fileRef().resolveIndex`): the film's own key, then any of its variants, then
+     * the same episode (S/E) of the same work. Another show's S01E01 is never taken for the room's one.
+     * [sameWorkHint]: the caller knows the work is the same (e.g. the library groups the two releases as versions).
+     */
+    fun resolveIndex(keys: List<String>, myCanonicalId: String?, sameWorkHint: Boolean = false): Int {
+        keys.indexOf(key).let { if (it >= 0) return it }
+        for (v in variants) keys.indexOf(v.key).let { if (it >= 0) return it }
+        if ('|' !in key) return -1
+        val sameWork = sameWorkHint ||
+            (!canonicalId.isNullOrBlank() && canonicalId == myCanonicalId) ||
+            (listOf(key) + variants.map { it.key }).any { rk ->
+                val mag = rk.substringBefore('|')
+                keys.any { it.substringBefore('|') == mag }
+            }
+        if (!sameWork) return -1
+        val target = ru.suslikovanora.media.core.episodePair(key.substringAfter('|')) ?: return -1
+        return keys.indexOfFirst { '|' in it && ru.suslikovanora.media.core.episodePair(it.substringAfter('|')) == target }
+    }
 }
 
 /**
@@ -224,11 +245,7 @@ object PartyProtocol {
     fun play(posMs: Long): JSONObject = JSONObject().put("type", "play").put("pos", posMs / 1000.0)
     fun pause(posMs: Long): JSONObject = JSONObject().put("type", "pause").put("pos", posMs / 1000.0)
     fun seek(posMs: Long): JSONObject = JSONObject().put("type", "seek").put("pos", posMs / 1000.0)
-    fun buffering(loading: Boolean, variantKey: String? = null): JSONObject {
-        val obj = JSONObject().put("type", "buffering").put("buffering", loading)
-        variantKey?.let { obj.put("variant_key", it) }
-        return obj
-    }
+    fun buffering(loading: Boolean): JSONObject = JSONObject().put("type", "buffering").put("buffering", loading)
     fun variantChange(variantKey: String): JSONObject =
         JSONObject().put("type", "variant_change").put("variant_key", variantKey)
     fun changeFile(f: PartyFileRef): JSONObject = JSONObject().put("type", "change_file").put("file", fileJson(f))
