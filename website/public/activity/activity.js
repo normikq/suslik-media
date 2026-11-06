@@ -189,6 +189,9 @@
       var g = model.groupVersions(S.items, function (it) { return posters.pathOf(it.posterQueries); });
       S.shown = g.shown;
       S.versions = g.versions;
+      // любая раздача фильма -> первая в группе (её плитка на экране): список предложений считает фильмы, а не раздачи
+      S.headOf = {};
+      Object.keys(g.versions).forEach(function (head) { g.versions[head].forEach(function (v) { S.headOf[v.m.id] = Number(head); }); });
       classifyLibrary();
     });
   }
@@ -635,8 +638,46 @@
       toast('«' + entry.label + '» — в комнате. Откройте его в приложении.');
     });
   }
+  /** Все раздачи этого фильма (другие релизы, озвучки): одна плитка, один вариант в списке. */
+  function groupOf(it) { return S.versions && S.versions[S.headOf && S.headOf[it.m.id] || it.m.id] || [it]; }
+  function isMovie(it) { return it.playable.kind === 'movie'; }
+  /** Канонический id фильма: от ИИ сервера, иначе m:<название>_<год>:<версия монтажа> (как на сервере и в приложениях). */
+  function canonicalOf(it) {
+    if (!isMovie(it)) return null;
+    var grp = groupOf(it), i, ai;
+    for (i = 0; i < grp.length; i++) { ai = grp[i].m.aiTitle; if (ai && ai.status === 'accepted' && ai.canonicalId) return ai.canonicalId; }
+    var y = model.itemYear(it);
+    if (!y) return null;
+    ai = it.m.aiTitle;
+    var ed = ai && ai.status === 'accepted' && ai.edition ? ai.edition : 'default';
+    return 'm:' + model.titleKey(it.baseTitle).replace(/s+/g, '_') + '_' + y + ':' + ed;
+  }
+  /** Этот фильм (любой его релиз) уже в списке предложений? Сериалы — по файлу: у каждой серии свой вариант. */
+  function inCandidates(it, key) {
+    var cands = S.room.candidates || [];
+    if (!isMovie(it)) return cands.some(function (c) { return c.key === key; });
+    var ids = {}, cid = canonicalOf(it);
+    groupOf(it).forEach(function (v) { ids[v.m.id] = true; });
+    return cands.some(function (c) { return ids[Number(c.key.split('|')[0])] || (cid && c.canonical_id === cid); });
+  }
   function suggest(it, entry) {
-    api('api/activity/rooms/' + S.room.id + '/suggest', { file: { key: keyOf(it, entry), name: entry.label } })
+    var key = keyOf(it, entry);
+    if (inCandidates(it, key)) { toast('«' + entry.label + '» уже в списке.'); return; }
+    var file = { key: key, name: entry.label };
+    var cid = canonicalOf(it);
+    if (cid) {
+      file.canonical_id = cid;
+      var ai = it.m.aiTitle, y = model.itemYear(it);
+      if (ai && ai.status === 'accepted' && ai.edition) file.edition = ai.edition;
+      if (y) file.year = y;
+      if (ai && ai.status === 'accepted' && ai.original) file.original = ai.original;
+      // остальные релизы того же фильма — как пресеты качества кандидата
+      file.variants = groupOf(it).map(function (v) {
+        var e = entriesOf(v)[0];
+        return e ? { key: keyOf(v, e), label: model.versionLine(v) || v.m.name } : null;
+      }).filter(Boolean);
+    }
+    api('api/activity/rooms/' + S.room.id + '/suggest', { file: file })
       .then(function () { toast('Предложено: «' + entry.label + '»'); }, function (e) { toast(errText(e), true); });
   }
   function roomCall(path, body) {
@@ -1113,7 +1154,7 @@
   /** Плитка фильма: постер, название, год или сезоны; ведущему у фильма — «Включить» в один клик. */
   function tileOf(it, quick) {
     var name = titleOf(it), poster = h('div', { class: 'poster' }, [h('span', { class: 'poster-title', text: name })]);
-    var cand = S.room.candidates && S.room.candidates.some(function (c) { return Number(c.key.split('|')[0]) === it.m.id; });
+    var cand = isMovie(it) ? inCandidates(it, '') : (S.room.candidates || []).some(function (c) { return Number(c.key.split('|')[0]) === it.m.id; });
     if (cand) poster.appendChild(h('span', { class: 'mark tag lamp' }, [icon('vote'), 'В списке']));
     if (it.m.mine) poster.appendChild(h('span', { class: 'mark-mine' + (cand ? ' shifted' : ''), title: 'В моей медиатеке' }, [icon('bookmark')]));
     var rating = ratingOf(it);
@@ -1412,7 +1453,7 @@
       series ? h('span', { text: model.seriesLine(it.playable) }) : null,
       rating ? h('span', { class: 'ai-rating' }, [icon('star'), rating.toFixed(1)]) : null];
     var one = entries.length === 1 ? entries[0] : null, oneKey = one ? keyOf(it, one) : '';
-    var oneIn = one && S.room.candidates && S.room.candidates.some(function (c) { return c.key === oneKey; });
+    var oneIn = one && inCandidates(it, oneKey);
     var busy = S.room.poll || S.room.spin;
     var kids = [
       sh.random ? h('div', { class: 'now-label', style: 'margin-bottom:10px' }, [icon('dice'), 'Случайный выбор']) : null,
@@ -1448,7 +1489,7 @@
     }
     kids.push(h('div', { class: 'files' }, shownEntries.map(function (e) {
       var key = keyOf(it, e), current = key === curKey;
-      var inList = S.room.candidates && S.room.candidates.some(function (c) { return c.key === key; });
+      var inList = inCandidates(it, key);
       // У фильма кнопки — выше, здесь сведения о файле
       if (one) {
         return h('div', { class: 'file' + (current ? ' current' : '') }, [
