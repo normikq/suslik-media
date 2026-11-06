@@ -42,6 +42,8 @@
 #include <QIcon>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include <QQmlError>
+#include <QHash>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
 #include <QTimer>
@@ -183,6 +185,16 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty(QStringLiteral("party"), &party);
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app, [] { QCoreApplication::exit(1); },
                      Qt::QueuedConnection);
+    // Ошибки QML (TypeError в обработчике и т.п.) — в журнал: без этого кнопка просто «не реагировала» без следа
+    // (06.11: «Добавить magnet», add был null). Одна и та же ошибка — не больше 5 раз, привязки не заливают журнал.
+    QObject::connect(&engine, &QQmlEngine::warnings, &app, [](const QList<QQmlError> &list) {
+        static QHash<QString, int> seen;
+        for (const QQmlError &e : list) {
+            const QString text = e.toString();
+            const int n = ++seen[text];
+            if (n <= 5) app::PlayerLog::write(QStringLiteral("[qml] ") + text + (n == 5 ? QStringLiteral(" (дальше не пишется)") : QString()));
+        }
+    });
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
     engine.loadFromModule("Suslik", "Main");
 #else

@@ -11,7 +11,9 @@ Item {
 
     onActiveChanged: if (!active) audio.leave()
 
-    AddModel { id: add; library: lib }
+    // Не «add»: у Column (InputBlock) есть своё свойство add (переход), и внутри него add.submit(...) брал его —
+    // null, «Добавить magnet» молча не работал (TypeError: Cannot call method 'submit' of null, 06.11)
+    AddModel { id: addModel; library: lib }
     readonly property alias audioModel: audio
     AudioAttachModel {
         id: audio
@@ -20,7 +22,7 @@ Item {
     }
 
     /// Ссылки, пришедшие извне (браузер, другое приложение): сразу добавляются.
-    function addLinks(text) { mode = 0; add.submit(text) }
+    function addLinks(text) { mode = 0; addModel.submit(text) }
 
     FileDialog {
         id: picker
@@ -29,7 +31,7 @@ Item {
         nameFilters: [".torrent (*.torrent)"]
         property int target: 0
         onAccepted: {
-            if (target === 0) add.addTorrents(selectedFiles)
+            if (target === 0) addModel.addTorrents(selectedFiles)
             else audio.addTorrents(selectedFiles)
         }
     }
@@ -78,8 +80,8 @@ Item {
                 Row {
                     width: parent.width
                     spacing: 12
-                    ModeCard { width: (parent.width - 12) / 2; glyph: "▶"; title: Ui.tx("add.film"); hint: Ui.tx("add.film_podskazka"); selected: v.mode === 0; onClicked: { v.mode = 0; add.setStatus("", true) } }
-                    ModeCard { width: (parent.width - 12) / 2; glyph: "♪"; title: Ui.tx("audio.ozvuchka"); hint: Ui.tx("audio.k_filmu_v_biblioteke"); selected: v.mode === 1; onClicked: { v.mode = 1; add.setStatus("", true) } }
+                    ModeCard { width: (parent.width - 12) / 2; glyph: "▶"; title: Ui.tx("add.film"); hint: Ui.tx("add.film_podskazka"); selected: v.mode === 0; onClicked: { v.mode = 0; addModel.setStatus("", true) } }
+                    ModeCard { width: (parent.width - 12) / 2; glyph: "♪"; title: Ui.tx("audio.ozvuchka"); hint: Ui.tx("audio.k_filmu_v_biblioteke"); selected: v.mode === 1; onClicked: { v.mode = 1; addModel.setStatus("", true) } }
                 }
                 Item { width: 1; height: 16 }
 
@@ -94,29 +96,29 @@ Item {
                 }
 
                 Text {
-                    visible: v.mode === 0 && add.status !== ""
+                    visible: v.mode === 0 && addModel.status !== ""
                     width: parent.width
                     topPadding: 12
-                    text: add.status
-                    color: add.statusOk ? Theme.ok : Theme.bad
+                    text: addModel.status
+                    color: addModel.statusOk ? Theme.ok : Theme.bad
                     wrapMode: Text.WordWrap
                     font.family: Theme.onest; font.pixelSize: 14
                 }
             }
 
             Text {
-                visible: add.added.length > 0
+                visible: addModel.added.length > 0
                 topPadding: 26; bottomPadding: 10
                 text: Ui.tx("add.dobavleno_seychas")
                 color: Theme.text
                 font.family: Theme.unbounded; font.weight: Font.Medium; font.pixelSize: 16
             }
             Repeater {
-                model: add.added
+                model: addModel.added
                 delegate: AddedRow { width: content.width; entry: modelData }
             }
             Text {
-                visible: add.added.length === 0
+                visible: addModel.added.length === 0
                 width: Math.min(parent.width, 640)
                 topPadding: 22
                 text: Ui.tx("add.skachannoe_poyavitsya_vo_vklad")
@@ -233,15 +235,15 @@ Item {
         DropArea {
             anchors.fill: parent
             keys: ["text/uri-list"]
-            onDropped: (d) => { if (d.hasUrls) add.addTorrents(d.urls) }
+            onDropped: (d) => { if (d.hasUrls) addModel.addTorrents(d.urls) }
         }
         InputBlock {
             id: filmCol
             hint: Ui.tx("add.film_tekst")
             action: Ui.tx("add.dobavit_magnet")
-            onSubmit: { add.submit(text); text = "" }
+            onSubmit: { addModel.submit(text); text = "" }
             onPickFiles: v.pick(0)
-            onNoClipboard: add.setStatus(Ui.tx("add.v_bufere_obmena_net"), false)
+            onNoClipboard: addModel.setStatus(Ui.tx("add.v_bufere_obmena_net"), false)
         }
     }
 
