@@ -8,6 +8,9 @@ import ru.suslikovanora.media.core.party.PartyProtocol
 import ru.suslikovanora.media.core.party.PartyRoom
 import ru.suslikovanora.media.core.party.PartyState
 import ru.suslikovanora.media.core.party.PartyVariant
+import ru.suslikovanora.media.core.party.VoiceDuck
+import ru.suslikovanora.media.core.party.VoiceState
+import ru.suslikovanora.media.core.party.VoiceUpdate
 import ru.suslikovanora.media.core.party.timelineShiftMs
 import ru.suslikovanora.media.core.party.roomShiftMs
 import kotlin.test.Test
@@ -290,5 +293,89 @@ class PartyProtocolTest {
         assertEquals(0, PartyFileRef("20|Show.WEB/S01E02.mkv", "", variants = listOf(v("10|Show/S01E01.mkv"))).resolveIndex(keys, null))
         assertEquals(1, PartyFileRef("20|Show.WEB/S01E02.mkv", "").resolveIndex(keys, null, sameWorkHint = true))
         assertEquals(-1, PartyFileRef("30|a.mkv", "").resolveIndex(keys, null))
+    }
+
+    // Приглушение, когда говорят в Discord: те же случаи, что desktop-qt/tests/PartyTest.cpp (voiceDuck*)
+    @Test
+    fun voiceDuckParsing() {
+        val init = PartyProtocol.voiceOf("""data: {"event":"init","room":{"id":"842190","voice":{"active":true,"speakers":["u_2"]}},"member":{"id":"u_1"},"my_voice_duck":{"enabled":true,"level":30}}""")
+        assertEquals(listOf("u_2"), init?.speakers)
+        assertEquals(VoiceDuck(true, 30, 400), init?.duck)
+        assertNull(init?.forUser)
+        val plain = PartyProtocol.voiceOf("""data: {"event":"init","room":{"id":"ab"},"my_voice_duck":{"enabled":false,"level":10}}""")
+        assertNull(plain?.speakers)
+        assertEquals(VoiceDuck(false, 10, 400), plain?.duck)
+        assertEquals(emptyList<String>(), PartyProtocol.voiceOf("""data: {"event":"voice_changed","data":{"active":false,"speakers":[]},"time":1}""")?.speakers)
+        val sc = PartyProtocol.voiceOf("""data: {"event":"settings_changed","data":{"for_user":"u_1","voice_duck":{"enabled":true,"level":47}}}""")
+        assertEquals("u_1", sc?.forUser)
+        assertEquals(50, sc?.duck?.level)
+        assertNull(PartyProtocol.voiceOf("""data: {"event":"settings_changed","data":{"voice_duck":{"enabled":true,"level":10}}}"""))
+        assertNull(PartyProtocol.voiceOf("""data: {"event":"member_left","data":{"key":"k"}}"""))
+        assertNull(PartyProtocol.voiceOf("""data: {"event":"state_changed","data":{"id":"ab"}}"""))
+        assertNull(PartyProtocol.voiceOf(": ping"))
+        // события приглушения не ломают поток комнаты
+        assertNull(PartyProtocol.parseEventLine("""data: {"event":"voice_changed","data":{"active":true,"speakers":["u_2"]}}"""))
+    }
+
+    @Test
+    fun voiceDuckFactor() {
+        val me = "u_1"
+        val two = listOf("u_2")
+        fun talk(sp: List<String>, t: List<String>) = VoiceUpdate(speakers = sp, talking = t)
+        val v = VoiceState()
+        v.apply(VoiceUpdate(duck = VoiceDuck(true, 10, 0)), me, 0)
+        assertEquals(1.0, v.factor(me))
+        v.apply(talk(two, two), me, 1000)
+        assertEquals(0.9, v.factor(me), 1e-9)
+        v.apply(talk(listOf("u_2", "u_1"), listOf("u_2", "u_1")), me, 1100)
+        assertEquals(1.0, v.factor(me))
+        v.apply(talk(two, two), me, 1200)
+        v.apply(VoiceUpdate(duck = VoiceDuck(true, 100, 0), forUser = "u_9"), me, 1300)
+        assertEquals(0.9, v.factor(me), 1e-9)
+        v.apply(VoiceUpdate(duck = VoiceDuck(true, 100, 0), forUser = "u_1"), me, 1300)
+        assertEquals(0.0, v.factor(me), 1e-9)
+        v.apply(VoiceUpdate(duck = VoiceDuck(false, 100, 0)), me, 1300)
+        assertEquals(1.0, v.factor(me))
+        v.apply(VoiceUpdate(duck = VoiceDuck(true, 40, 0)), me, 1300)
+        assertEquals(0.6, v.factor(me), 1e-9)
+        v.apply(talk(emptyList(), emptyList()), me, 1400)
+        assertEquals(1.0, v.factor(me))
+        // без своего id (общий пароль) глушит любой говорящий
+        v.apply(talk(listOf("u_1"), listOf("u_1")), me, 1500)
+        assertEquals(0.6, v.factor(null), 1e-9)
+    }
+
+    // Порог min_ms: короткий шорох не глушит, хоть сервер и держит его в speakers ещё 1,5 с (как voiceDuckThreshold на ПК)
+    @Test
+    fun voiceDuckThreshold() {
+        val me = "u_1"
+        val two = listOf("u_2")
+        fun talk(sp: List<String>, t: List<String>) = VoiceUpdate(speakers = sp, talking = t)
+        val v = VoiceState()
+        assertEquals(400, v.duck.minMs)
+        v.apply(talk(two, two), me, 10000)
+        assertEquals(1.0, v.factor(me))
+        assertEquals(300L, v.nextDueMs(10100))
+        v.apply(talk(two, emptyList()), me, 10150)
+        assertFalse(v.tick(10600))
+        assertEquals(1.0, v.factor(me))
+        assertEquals(-1L, v.nextDueMs(10600))
+        v.apply(talk(two, two), me, 11000)
+        assertFalse(v.tick(11399))
+        assertTrue(v.tick(11400))
+        assertEquals(0.9, v.factor(me), 1e-9)
+        v.apply(talk(two, emptyList()), me, 12000)
+        assertEquals(0.9, v.factor(me), 1e-9)
+        v.apply(talk(emptyList(), emptyList()), me, 13500)
+        assertEquals(1.0, v.factor(me))
+        v.apply(VoiceUpdate(speakers = two), me, 20000)
+        v.tick(20400)
+        assertEquals(0.9, v.factor(me), 1e-9)
+        v.clearSpeakers()
+        assertEquals(1.0, v.factor(me))
+        assertEquals(emptyList<String>(), PartyProtocol.voiceOf("""data: {"event":"voice_changed","data":{"active":true,"speakers":["u_2"],"talking":[]}}""")?.talking)
+        assertNull(PartyProtocol.voiceOf("""data: {"event":"voice_changed","data":{"speakers":["u_2"]}}""")?.talking)
+        assertEquals(600, PartyProtocol.parseVoiceDuck(JSONObject("""{"enabled":true,"level":10,"min_ms":640}""")).minMs)
+        assertEquals(400, PartyProtocol.parseVoiceDuck(JSONObject("""{"enabled":true,"level":10}""")).minMs)
     }
 }

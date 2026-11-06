@@ -202,6 +202,7 @@ void Party::openLink(const QString &link) {
     m_sentVariant.clear();
     m_sentDuration = 0;
     m_outbox.clear();
+    resetVoice();
     emit changed();
     QPointer<Party> self(this);
     m_api.post(PartyProtocol::leavePath(old), PartyProtocol::leaveBody(m_clientId), [self, code, opened](const ApiResult &) {
@@ -219,6 +220,7 @@ void Party::enter(const RoomUpdate &u) {
     m_outbox.clear();
     // Свежий снимок: seq другой комнаты не должен прятать состояние этой
     m_room = PartyRoom().merge(u);
+    m_voice.clearSpeakers();
     // Вход по коду не включает фильм, который уже в комнате: его откроет «Смотреть вместе»; следующий ведущего — сам
     m_followed = m_room.file ? m_room.file->key : QString();
     const QString id = *u.id;
@@ -248,6 +250,7 @@ void Party::leave() {
     m_sentVariant.clear();
     m_sentDuration = 0;
     m_outbox.clear();
+    resetVoice();
     log(S("left room %1").arg(id));
     emit changed();
     m_api.post(PartyProtocol::leavePath(id), PartyProtocol::leaveBody(m_clientId), [](const ApiResult &) {});
@@ -405,6 +408,8 @@ void Party::startStream(const QString &id) {
             m_streamBuf.remove(0, nl + 1);
             if (const auto e = PartyProtocol::parseEventLine(line)) onEvent(*e);
             else if (const auto rq = PartyProtocol::remoteRequestOf(line)) onRemoteRequest(*rq);
+            // после onEvent: init уже назвал свой id (по нему — чья настройка и говорю ли я)
+            if (const auto v = PartyProtocol::voiceOf(line)) onVoice(*v);
         }
     });
     connect(reply, &QNetworkReply::finished, this, [this, reply, id, gen, status] {
@@ -514,6 +519,43 @@ void Party::onRemoteRequest(const RemoteTrackerRequest &rq) {
             send({{S("id"), double(r.json.value(S("id")).toInteger())}, {S("ready"), r.json.value(S("ready")).toBool()}});
         });
     });
+}
+
+void Party::onVoice(const VoiceUpdate &u) {
+    m_voice.apply(u, m_myUserId, QDateTime::currentMSecsSinceEpoch());
+    noteDuck();
+    scheduleVoice();
+}
+
+// Кто-то говорит, но порог (min_ms) ещё не набран: проверить, когда наберётся
+void Party::scheduleVoice() {
+    const qint64 due = m_voice.nextDueMs(QDateTime::currentMSecsSinceEpoch());
+    if (due < 0) { m_voiceTimer.stop(); return; }
+    if (!m_voiceTimerWired) {
+        m_voiceTimerWired = true;
+        m_voiceTimer.setSingleShot(true);
+        connect(&m_voiceTimer, &QTimer::timeout, this, [this] {
+            m_voice.tick(QDateTime::currentMSecsSinceEpoch());
+            noteDuck();
+            scheduleVoice();
+        });
+    }
+    m_voiceTimer.start(int(std::min<qint64>(due, 60000)) + 1);
+}
+
+void Party::resetVoice() {
+    m_voice.clearSpeakers();
+    m_voiceTimer.stop();
+    noteDuck();
+}
+
+void Party::noteDuck() {
+    const double f = duckFactor();
+    if (qFuzzyCompare(f, m_lastDuck)) return;
+    m_lastDuck = f;
+    // Кто говорит, в журнал не пишем: только что громкость сменилась
+    log(S("voice duck: %1").arg(f < 1.0 ? S("x%1").arg(f, 0, 'f', 2) : S("off")));
+    emit duckChanged();
 }
 
 void Party::onEvent(const PartyEvent &e) {

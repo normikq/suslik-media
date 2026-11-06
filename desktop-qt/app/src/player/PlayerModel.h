@@ -16,6 +16,7 @@
 #include <memory>
 
 class QNetworkAccessManager;
+class QVariantAnimation;
 
 /// Плеер (PlayerView.kt без вёрстки): очередь серий, открытие через запас на диске, прогресс в медиатеке и облаке,
 /// выбор дорожек (запомненный, умные субтитры), задержки, скорость, ночной звук, заставка и титры, карточка
@@ -168,6 +169,9 @@ public:
     Q_INVOKABLE void setVolume(int v);
     Q_INVOKABLE void wheelVolume(int steps);
     Q_INVOKABLE void stepVolume(int delta);
+    /// Приглушение, когда говорят в Discord (Party::duckFactor): громкость движка = своя × factor, плавно.
+    /// Своя громкость (volume) не меняется — после возврата она та же.
+    void setDuck(double factor);
     Q_INVOKABLE void toggleMute();
     Q_INVOKABLE void setSpeed(double r);
     Q_INVOKABLE void stepSpeed(int d);
@@ -336,6 +340,10 @@ private:
     qint64 m_pausedAt = 0;
     bool m_muted = false;
     int m_volume = 100;
+    /// Текущий множитель приглушения (идёт к цели анимацией) и громкость, которую видит mpv.
+    double m_duck = 1.0;
+    QVariantAnimation *m_duckAnim = nullptr;
+    int engineVolume() const;
     qint64 m_volumeWheelAt = 0;
     double m_rate = 1;
     int m_subScale = 100;

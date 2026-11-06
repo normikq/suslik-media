@@ -23,6 +23,9 @@
 #include <QNetworkReply>
 #include <QRegularExpression>
 #include <QUrl>
+#include <QSignalBlocker>
+#include <QVariantAnimation>
+#include <cmath>
 
 namespace suslik::app {
 
@@ -939,7 +942,7 @@ void PlayerModel::evPlayingNow() {
         m_engine->setPaused(true);
     } else {
         m_engine->setMute(m_muted);
-        if (!wasStarted) m_engine->setVolume(m_volume);
+        if (!wasStarted) m_engine->setVolume(engineVolume());
     }
     emit stateChanged();
     if (m_length > 0 && !m_markersAsked) fetchMarkers();
@@ -1162,9 +1165,39 @@ void PlayerModel::setVolume(int v) {
     m_volume = std::clamp(v, 0, 150);
     const bool unmute = m_muted && m_volume > 0;
     if (unmute) m_muted = false;
-    m_engine->setVolume(m_volume);
+    m_engine->setVolume(engineVolume());
     if (unmute) m_engine->setMute(false);
     emit soundChanged();
+}
+
+int PlayerModel::engineVolume() const {
+    return std::clamp(int(std::lround(m_volume * m_duck)), 0, 150);
+}
+
+// Спад быстрый (~200 мс: заговорили — фильм сразу тише), возврат мягкий (~1,5 с после тишины; сервер ещё 1,5 с
+// держит говорящего после конца фразы, так что паузы между словами громкость не дёргают)
+void PlayerModel::setDuck(double factor) {
+    factor = std::clamp(factor, 0.0, 1.0);
+    if (!m_duckAnim) {
+        m_duckAnim = new QVariantAnimation(this);
+        connect(m_duckAnim, &QVariantAnimation::valueChanged, this, [this](const QVariant &v) {
+            const int before = engineVolume();
+            m_duck = v.toDouble();
+            if (engineVolume() != before) m_engine->setVolume(engineVolume());
+        });
+    }
+    m_duckAnim->stop();
+    if (qFuzzyCompare(m_duck + 1.0, factor + 1.0)) return;
+    {
+        // Остановленная анимация на setStartValue/setEndValue пересчитывает своё значение и шлёт valueChanged:
+        // без блокировки громкость прыгала бы к новой цели до начала плавного перехода
+        const QSignalBlocker block(m_duckAnim);
+        m_duckAnim->setStartValue(m_duck);
+        m_duckAnim->setEndValue(factor);
+    }
+    m_duckAnim->setDuration(factor < m_duck ? 200 : 1500);
+    m_duckAnim->setEasingCurve(factor < m_duck ? QEasingCurve::OutCubic : QEasingCurve::InOutSine);
+    m_duckAnim->start();
 }
 
 void PlayerModel::wheelVolume(int steps) {
@@ -1173,7 +1206,7 @@ void PlayerModel::wheelVolume(int steps) {
 
 void PlayerModel::stepVolume(int delta) {
     m_volume = std::clamp(m_volume + delta, 0, 150);
-    m_engine->setVolume(m_volume);
+    m_engine->setVolume(engineVolume());
     if (m_muted) { m_muted = false; m_engine->setMute(false); }
     m_volumeWheelAt = now();
     emit soundChanged();
@@ -1641,7 +1674,7 @@ void PlayerModel::restartVideo() {
 
 void PlayerModel::fixSound() {
     m_engine->setMute(m_muted);
-    m_engine->setVolume(m_volume);
+    m_engine->setVolume(engineVolume());
     ensureAudio();
 }
 

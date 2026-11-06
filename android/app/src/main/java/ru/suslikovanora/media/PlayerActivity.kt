@@ -1194,6 +1194,30 @@ class PlayerActivity : ComponentActivity() {
         }
         intent.getStringExtra(EXTRA_PLAYLIST)?.takeIf { it.isNotBlank() }?.let { fetchPlaylist(it) }
         partySync.start(syncPlayer)
+        startVoiceDuck()
+    }
+
+    // ---- приглушение, когда говорят в Discord (Party.duckFactor): громкость самого плеера, системная не трогается ----
+    // Спад быстрый (~200 мс), возврат мягкий (~1,5 с; сервер ещё 1,5 с держит говорящего после фразы). Как PlayerModel::setDuck на ПК.
+    private var duckNow = 1.0
+    private fun startVoiceDuck() {
+        scope.launch {
+            var anim: kotlinx.coroutines.Job? = null
+            androidx.compose.runtime.snapshotFlow { Party.duckFactor }.collect { target ->
+                anim?.cancel()
+                anim = launch {
+                    val from = duckNow
+                    if (from == target) return@launch
+                    val ms = if (target < from) 200L else 1500L
+                    val steps = (ms / 40L).toInt().coerceAtLeast(1)
+                    for (i in 1..steps) {
+                        duckNow = from + (target - from) * i / steps
+                        engine.setPlayerVolume(Math.round(duckNow * 100).toInt())
+                        kotlinx.coroutines.delay(ms / steps)
+                    }
+                }
+            }
+        }
     }
 
 

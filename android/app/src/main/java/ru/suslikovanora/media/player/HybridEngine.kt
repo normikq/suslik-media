@@ -61,6 +61,7 @@ class HybridEngine(private val context: Context) : PlayerEngine {
         val next = engine(kind)
         if (next !== active && active.hasPlayer) active.release()
         active = next
+        next.setPlayerVolume(playerVolume)
         for (e in listOfNotNull(vlc, media3)) e.videoView.visibility = if (e === active) View.VISIBLE else View.GONE
     }
 
@@ -85,6 +86,11 @@ class HybridEngine(private val context: Context) : PlayerEngine {
     override val rate: Float get() = active.rate
     override fun setRate(rate: Float) = active.setRate(rate)
     override val volume: Int get() = active.volume
+    private var playerVolume = 100
+    override fun setPlayerVolume(percent: Int) {
+        playerVolume = percent.coerceIn(0, 100)
+        active.setPlayerVolume(playerVolume)
+    }
     override fun seekTo(ms: Long) = active.seekTo(ms)
     override fun seekToFraction(fraction: Float) = active.seekToFraction(fraction)
 

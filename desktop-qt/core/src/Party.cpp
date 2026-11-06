@@ -11,6 +11,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QUuid>
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 
@@ -398,6 +399,105 @@ std::optional<RemoteTrackerRequest> PartyProtocol::remoteRequestOf(const QString
     if (r.kind == S("search") && !r.query.isEmpty()) return r;
     if (r.kind == S("add") && !r.topicId.isEmpty() && !r.target.isEmpty()) return r;
     return std::nullopt;
+}
+
+VoiceDuck PartyProtocol::parseVoiceDuck(const QJsonObject &o) {
+    VoiceDuck d;
+    if (o.value(S("enabled")).isBool()) d.enabled = o.value(S("enabled")).toBool();
+    const QJsonValue lv = o.value(S("level"));
+    if (lv.isDouble()) d.level = std::clamp(int(std::lround(lv.toDouble() / 10.0)) * 10, 0, 100);
+    const QJsonValue mv = o.value(S("min_ms"));
+    if (mv.isDouble()) d.minMs = std::clamp(int(std::lround(mv.toDouble() / 100.0)) * 100, 0, 2000);
+    return d;
+}
+
+namespace {
+std::optional<QStringList> speakersOf(const QJsonValue &voice, const QString &field = QStringLiteral("speakers")) {
+    if (!voice.isObject() || (field != QLatin1String("speakers") && !voice.toObject().value(field).isArray())) return std::nullopt;
+    QStringList out;
+    for (const QJsonValue &v : voice.toObject().value(field).toArray()) {
+        const QString id = v.toString();
+        if (!id.isEmpty() && !out.contains(id)) out << id;
+    }
+    return out;
+}
+} // namespace
+
+std::optional<VoiceUpdate> PartyProtocol::voiceOf(const QString &line) {
+    if (!line.startsWith(S("data:"))) return std::nullopt;
+    const auto doc = QJsonDocument::fromJson(line.mid(5).trimmed().toUtf8());
+    if (!doc.isObject()) return std::nullopt;
+    const QJsonObject msg = doc.object();
+    const QString event = json::str(msg, S("event"));
+    const QJsonValue data = msg.value(S("data"));
+    VoiceUpdate u;
+    if (event == S("voice_changed")) {
+        u.speakers = speakersOf(data);
+        if (!u.speakers) return std::nullopt;
+        u.talking = speakersOf(data, S("talking"));
+    } else if (event == S("settings_changed")) {
+        const QJsonObject d = data.toObject();
+        const QString who = json::str(d, S("for_user"));
+        if (who.isEmpty() || !d.value(S("voice_duck")).isObject()) return std::nullopt;
+        u.forUser = who;
+        u.duck = parseVoiceDuck(d.value(S("voice_duck")).toObject());
+    } else if (event == S("init")) {
+        const QJsonValue voice = msg.value(S("room")).toObject().value(S("voice"));
+        u.speakers = speakersOf(voice);
+        u.talking = speakersOf(voice, S("talking"));
+        if (msg.value(S("my_voice_duck")).isObject()) u.duck = parseVoiceDuck(msg.value(S("my_voice_duck")).toObject());
+    } else if (event == S("state_changed")) {
+        const QJsonValue voice = data.toObject().value(S("voice"));
+        u.speakers = speakersOf(voice);
+        u.talking = speakersOf(voice, S("talking"));
+    } else {
+        return std::nullopt;
+    }
+    if (!u.speakers && !u.duck) return std::nullopt;
+    return u;
+}
+
+void VoiceState::apply(const VoiceUpdate &u, const std::optional<QString> &myUserId, qint64 nowMs) {
+    if (u.duck && (!u.forUser || (myUserId && *u.forUser == *myUserId))) duck = *u.duck;
+    if (u.speakers) {
+        speakers = *u.speakers;
+        for (auto it = counted.begin(); it != counted.end();) it = speakers.contains(*it) ? std::next(it) : counted.erase(it);
+    }
+    // Старый сервер без talking: говорит каждый из списка
+    const std::optional<QStringList> talking = u.talking ? u.talking : u.speakers;
+    if (talking) {
+        for (auto it = talkingSince.begin(); it != talkingSince.end();) it = talking->contains(it.key()) ? std::next(it) : talkingSince.erase(it);
+        for (const QString &id : *talking)
+            if (!talkingSince.contains(id)) talkingSince.insert(id, nowMs);
+    }
+    tick(nowMs);
+}
+
+bool VoiceState::tick(qint64 nowMs) {
+    bool any = false;
+    for (auto it = talkingSince.cbegin(); it != talkingSince.cend(); ++it) {
+        if (counted.contains(it.key()) || !speakers.contains(it.key()) || nowMs - it.value() < duck.minMs) continue;
+        counted.insert(it.key());
+        any = true;
+    }
+    return any;
+}
+
+qint64 VoiceState::nextDueMs(qint64 nowMs) const {
+    qint64 best = -1;
+    for (auto it = talkingSince.cbegin(); it != talkingSince.cend(); ++it) {
+        if (counted.contains(it.key()) || !speakers.contains(it.key())) continue;
+        const qint64 left = std::max<qint64>(0, it.value() + duck.minMs - nowMs);
+        if (best < 0 || left < best) best = left;
+    }
+    return best;
+}
+
+double VoiceState::factor(const std::optional<QString> &myUserId) const {
+    if (!duck.enabled || counted.isEmpty()) return 1.0;
+    // Говорит сам владелец этого устройства — его фильм не глушим (даже если с ним говорит кто-то ещё)
+    if (myUserId && speakers.contains(*myUserId)) return 1.0;
+    return std::clamp(1.0 - duck.level / 100.0, 0.0, 1.0);
 }
 
 QString PartyProtocol::remoteReplyPath(const QString &roomId) {

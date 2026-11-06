@@ -111,6 +111,8 @@ public:
     qint64 shiftFor(const QString &myKey, qint64 myDurationMs) const;
     /// Гость двигает свою раздачу относительно ведущего на deltaMs: сразу здесь, на сервере — для пары раздач.
     void nudgeShift(const QString &myKey, qint64 myDurationMs, qint64 deltaMs);
+    /// Приглушение, когда говорят в Discord: множитель громкости фильма (1 — как есть). Вне комнаты — 1.
+    double duckFactor() const { return inRoom() ? m_voice.factor(m_myUserId) : 1.0; }
 
 signals:
     void changed();
@@ -118,6 +120,8 @@ signals:
     void roomLinkOpened();
     /// Сервер комнаты сообщил о смене фильма: обновить медиатеку
     void refreshLibraryRequested();
+    /// Сменился duckFactor (заговорили, замолчали, другая настройка, вышли из комнаты).
+    void duckChanged();
 
 private:
     using Done = std::function<void(const core::ApiResult &)>;
@@ -131,6 +135,12 @@ private:
     void onEvent(const core::PartyEvent &e);
     /// Discord Activity просит этот ПК поискать на RuTracker или добавить найденную раздачу (website/src/services/pc-search.js)
     void onRemoteRequest(const core::RemoteTrackerRequest &rq);
+    void onVoice(const core::VoiceUpdate &u);
+    /// Вышли из комнаты или сменили её: говорящие прежней больше не в счёт.
+    void resetVoice();
+    /// duckFactor изменился с прошлого раза — сказать плееру.
+    void noteDuck();
+    void scheduleVoice();
     void action(const QJsonObject &body);
     void pump();
     void setRoom(const core::PartyRoom &r) { m_room = r; emit changed(); }
@@ -140,6 +150,10 @@ private:
     static inline Party *s_instance = nullptr;
     core::ApiClient &m_api;
     core::PartyRoom m_room;
+    core::VoiceState m_voice;
+    double m_lastDuck = 1.0;
+    QTimer m_voiceTimer;
+    bool m_voiceTimerWired = false;
     std::optional<QString> m_roomId;
     std::optional<QString> m_myUserId;
     const QString m_clientId;

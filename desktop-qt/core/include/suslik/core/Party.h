@@ -1,5 +1,7 @@
 #pragma once
+#include <QHash>
 #include <QJsonObject>
+#include <QSet>
 #include <QList>
 #include <QString>
 #include <functional>
@@ -150,6 +152,47 @@ struct RemoteTrackerRequest {
     QString id, kind, query, topicId, title, target, by;
 };
 
+/// Приглушение фильма, когда говорят в Discord (website: services/voice-duck.js): своя настройка аккаунта.
+/// level — насколько тише, %: 10 — громкость × 0,9, 100 — тишина.
+/// minMs — сколько человек должен говорить без перерыва, чтобы фильм затих (короткий шорох не глушит).
+struct VoiceDuck {
+    bool enabled = true;
+    int level = 10;
+    int minMs = 400;
+    bool operator==(const VoiceDuck &o) const = default;
+};
+
+/// Что о приглушении сказал поток комнаты: кто говорит (voice_changed, room.voice в init и state_changed)
+/// и/или своя настройка (my_voice_duck в init, settings_changed с for_user).
+struct VoiceUpdate {
+    std::optional<QStringList> speakers;
+    std::optional<VoiceDuck> duck;
+    /// Кто говорит прямо сейчас (speakers — с задержкой 1,5 с после фразы). Старый сервер не шлёт — тогда = speakers.
+    std::optional<QStringList> talking;
+    /// settings_changed: чья настройка (чужую пропускаем). Пусто — своя (init).
+    std::optional<QString> forUser;
+};
+
+/// Приглушение в плеере: настройка и кто говорит. Сам говорящий свой фильм не глушит.
+/// Глушит только тот, кто проговорил без перерыва duck.minMs («засчитан»); засчитанный глушит и в задержке после фразы.
+/// Время — часы этого устройства (мс): начало фразы — когда пришло событие.
+struct VoiceState {
+    VoiceDuck duck;
+    QStringList speakers;
+    QHash<QString, qint64> talkingSince;
+    QSet<QString> counted;
+    /// Применить событие (чужая настройка пропускается).
+    void apply(const VoiceUpdate &u, const std::optional<QString> &myUserId, qint64 nowMs);
+    /// Засчитать тех, кто уже говорит дольше порога; true — кто-то засчитан.
+    bool tick(qint64 nowMs);
+    /// Через сколько мс следующий засчитается; -1 — некого ждать.
+    qint64 nextDueMs(qint64 nowMs) const;
+    /// Множитель громкости: 1 — как есть, 0,9 — на 10 % тише, 0 — тишина.
+    double factor(const std::optional<QString> &myUserId) const;
+    /// Вышли из комнаты или новый поток: говорящих нет, настройка остаётся.
+    void clearSpeakers() { speakers.clear(); talkingSince.clear(); counted.clear(); }
+};
+
 /// Снимок комнаты, как его видит приложение. Меняется только через merge и reduce.
 struct PartyRoom {
     static inline const QString SHARED_USER = QStringLiteral("shared");
@@ -229,6 +272,10 @@ public:
     static std::optional<RemoteTrackerRequest> remoteRequestOf(const QString &line);
     /// Путь ответа ПК на такой запрос.
     static QString remoteReplyPath(const QString &roomId);
+    /// Строка потока с тем, что касается приглушения (voice_changed, settings_changed, init, state_changed);
+    /// иначе — пусто.
+    static std::optional<VoiceUpdate> voiceOf(const QString &line);
+    static VoiceDuck parseVoiceDuck(const QJsonObject &o);
 };
 
 /// Плеер, которым управляет комната.
