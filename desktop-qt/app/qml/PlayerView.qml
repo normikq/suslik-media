@@ -760,8 +760,10 @@ Item {
                         Text {
                             anchors.centerIn: parent
                             text: {
-                                for (let i = 0; i < player.qualityVariants.length; ++i) {
-                                    if (player.qualityVariants[i].isActive && player.qualityVariants[i].quality) return player.qualityVariants[i].quality
+                                // каждое чтение player.qualityVariants заново собирает список в C++: читаем один раз
+                                const vs = player.qualityVariants
+                                for (let i = 0; i < vs.length; ++i) {
+                                    if (vs[i].isActive && vs[i].quality) return vs[i].quality
                                 }
                                 return "HD"
                             }

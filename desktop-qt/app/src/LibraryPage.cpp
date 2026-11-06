@@ -200,6 +200,20 @@ std::optional<MFile> LibraryPage::currentFile(const LibraryItem &item) const {
     return s.items.value(ei, s.items.first()).file;
 }
 
+/// Размер кадра, пока ffprobe не ответил: по имени раздачи и файла, иначе по профилю сервера. Только для подписи плитки:
+/// в кэш размеров (cachedMediaDimensions) не пишется — там место замеру, а запись из отрисовки планировала сохранение
+/// на диск на каждую плитку при каждой пересборке страницы.
+static std::pair<int, int> guessDims(const QString &magnetName, const QString &fileName, const std::optional<core::PartyVariant> &serverProf) {
+    const QString lower = (magnetName + QLatin1Char(' ') + fileName).toLower();
+    if (lower.contains(S("2160p")) || lower.contains(S("4k")) || lower.contains(S("3840"))) return {3840, 2160};
+    if (lower.contains(S("1080p")) || lower.contains(S("1080i")) || lower.contains(S("1920"))) return {1920, 1080};
+    if (lower.contains(S("720p")) || lower.contains(S("1280"))) return {1280, 720};
+    if (serverProf && serverProf->quality == S("4K")) return {3840, 2160};
+    if (serverProf && serverProf->quality == S("1080p")) return {1920, 1080};
+    if (serverProf && serverProf->quality == S("720p")) return {1280, 720};
+    return {0, 0};
+}
+
 QVariantMap LibraryPage::tileOf(const LibraryItem &item, const QList<LibraryItem> &versions) const {
     const Magnet &m = item.m;
     QVariantMap t;
@@ -235,23 +249,7 @@ QVariantMap LibraryPage::tileOf(const LibraryItem &item, const QList<LibraryItem
     }
     const auto serverProf = m_lib->serverProfile(m.id);
     auto dims = cur ? m_lib->cachedMediaDimensions(m.id, cur->path) : std::pair{0, 0};
-    if (dims.first <= 0 && dims.second <= 0 && cur) {
-        const QString lower = (item.m.name + QLatin1Char(' ') + cur->name).toLower();
-        if (lower.contains(S("2160p")) || lower.contains(S("4k")) || lower.contains(S("3840"))) {
-            dims = {3840, 2160};
-            const_cast<Library *>(m_lib)->saveMediaDimensions(m.id, cur->path, 3840, 2160);
-        } else if (lower.contains(S("1080p")) || lower.contains(S("1080i")) || lower.contains(S("1920"))) {
-            dims = {1920, 1080};
-            const_cast<Library *>(m_lib)->saveMediaDimensions(m.id, cur->path, 1920, 1080);
-        } else if (lower.contains(S("720p")) || lower.contains(S("1280"))) {
-            dims = {1280, 720};
-            const_cast<Library *>(m_lib)->saveMediaDimensions(m.id, cur->path, 1280, 720);
-        } else if (serverProf.has_value() && !serverProf->quality.isEmpty()) {
-            if (serverProf->quality == S("4K")) { dims = {3840, 2160}; const_cast<Library *>(m_lib)->saveMediaDimensions(m.id, cur->path, 3840, 2160); }
-            else if (serverProf->quality == S("1080p")) { dims = {1920, 1080}; const_cast<Library *>(m_lib)->saveMediaDimensions(m.id, cur->path, 1920, 1080); }
-            else if (serverProf->quality == S("720p")) { dims = {1280, 720}; const_cast<Library *>(m_lib)->saveMediaDimensions(m.id, cur->path, 1280, 720); }
-        }
-    }
+    if (dims.first <= 0 && dims.second <= 0 && cur) dims = guessDims(item.m.name, cur->name, serverProf);
     const auto specs = itemSpecs(item, media, serverProf, dims);
     t[S("specs1")] = specs.first;
     t[S("specs2")] = specs.second;
@@ -568,23 +566,7 @@ QVariantList LibraryPage::versionRows(const QVariantList &ids) const {
             }
             const auto serverProf = m_lib->serverProfile(v.m.id);
             auto dims = cur ? m_lib->cachedMediaDimensions(v.m.id, cur->path) : std::pair{0, 0};
-            if (dims.first <= 0 && dims.second <= 0 && cur) {
-                const QString lower = (v.m.name + QLatin1Char(' ') + cur->name).toLower();
-                if (lower.contains(S("2160p")) || lower.contains(S("4k")) || lower.contains(S("3840"))) {
-                    dims = {3840, 2160};
-                    const_cast<Library *>(m_lib)->saveMediaDimensions(v.m.id, cur->path, 3840, 2160);
-                } else if (lower.contains(S("1080p")) || lower.contains(S("1080i")) || lower.contains(S("1920"))) {
-                    dims = {1920, 1080};
-                    const_cast<Library *>(m_lib)->saveMediaDimensions(v.m.id, cur->path, 1920, 1080);
-                } else if (lower.contains(S("720p")) || lower.contains(S("1280"))) {
-                    dims = {1280, 720};
-                    const_cast<Library *>(m_lib)->saveMediaDimensions(v.m.id, cur->path, 1280, 720);
-                } else if (serverProf.has_value() && !serverProf->quality.isEmpty()) {
-                    if (serverProf->quality == S("4K")) { dims = {3840, 2160}; const_cast<Library *>(m_lib)->saveMediaDimensions(v.m.id, cur->path, 3840, 2160); }
-                    else if (serverProf->quality == S("1080p")) { dims = {1920, 1080}; const_cast<Library *>(m_lib)->saveMediaDimensions(v.m.id, cur->path, 1920, 1080); }
-                    else if (serverProf->quality == S("720p")) { dims = {1280, 720}; const_cast<Library *>(m_lib)->saveMediaDimensions(v.m.id, cur->path, 1280, 720); }
-                }
-            }
+            if (dims.first <= 0 && dims.second <= 0 && cur) dims = guessDims(v.m.name, cur->name, serverProf);
 
             const auto specs = itemSpecs(v, media, serverProf, dims);
             QStringList base;

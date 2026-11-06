@@ -843,7 +843,10 @@ fun buildPartyVariant(
     val sizeBytes = if (file.size > 0) file.size else item.m.size
     val isSeries = item.playable is Playable.Series
     val estDuration = if (isSeries) 2700.0 else 6600.0
-    var bitrate = if (sizeBytes > 0) Math.round((sizeBytes * 8.0) / (estDuration * 1_000_000.0) * 10.0) / 10.0 else 0.0
+    // Size of the whole torrent only stands for one film: a season or a collection over one episode's length gave
+    // hundreds of Mbit/s and a false «lower the quality» (bitrate 0 = unknown)
+    val rateBytes = if (file.size > 0) file.size else if (isSeries || isCollection(item.playable, item.m)) 0L else item.m.size
+    var bitrate = if (rateBytes > 0) Math.round((rateBytes * 8.0) / (estDuration * 1_000_000.0) * 10.0) / 10.0 else 0.0
     var hasExactBitrate = false
     if (prof != null && prof.bitrate > 0) {
         bitrate = prof.bitrate

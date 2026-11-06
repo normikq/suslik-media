@@ -653,7 +653,10 @@ PartyVariant buildPartyVariant(const LibraryItem &item, const MFile &file, const
     const qint64 sizeBytes = file.size > 0 ? file.size : item.m.size;
     const bool isSeries = item.playable.isSeries();
     const double estDuration = isSeries ? 2700.0 : 6600.0;
-    double bitrate = sizeBytes > 0 ? std::round((sizeBytes * 8.0) / (estDuration * 1000000.0) * 10.0) / 10.0 : 0.0;
+    // Размер всей раздачи годится только для одного фильма: сезон или сборник на длину одной серии давали
+    // сотни Мбит/с и ложное «снизить качество» (битрейт 0 — неизвестен)
+    const qint64 rateBytes = file.size > 0 ? file.size : (isSeries || isCollection(item.playable, &item.m)) ? 0 : item.m.size;
+    double bitrate = rateBytes > 0 ? std::round((rateBytes * 8.0) / (estDuration * 1000000.0) * 10.0) / 10.0 : 0.0;
     bool hasExactBitrate = false;
     if (sp && sp->bitrate > 0) {
         bitrate = sp->bitrate;

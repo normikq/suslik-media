@@ -547,7 +547,10 @@
     var sizeBytes = (file && file.size) || (item && item.m && item.m.size) || 0;
     var isSeries = item && item.playable && item.playable.kind === 'series';
     var estDuration = isSeries ? 2700 : 6600;
-    var bitrate = sizeBytes > 0 ? Math.round((sizeBytes * 8) / (estDuration * 1000000) * 10) / 10 : 0.0;
+    // Размер всей раздачи годится только для одного фильма: сезон или сборник на длину одной серии давали
+    // сотни Мбит/с и ложное «снизить качество» (битрейт 0 — неизвестен)
+    var rateBytes = (file && file.size) || ((isSeries || (item && isCollection(item.playable, item.m))) ? 0 : (item && item.m && item.m.size) || 0);
+    var bitrate = rateBytes > 0 ? Math.round((rateBytes * 8) / (estDuration * 1000000) * 10) / 10 : 0.0;
     var hasExactBitrate = false;
     var profBitrate = prof ? (prof.bitrate || prof.bitrate_mbps || 0) : 0;
     if (profBitrate > 0) {

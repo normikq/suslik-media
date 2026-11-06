@@ -129,11 +129,14 @@ private fun VersionRow(
     val series = v.playable as? Playable.Series
     val watched = if (series != null) store.lastWatched(v.m)?.second
         else (v.playable as? Playable.Movie)?.file?.let { store.watchInfo(watchKey(v.m.id, it)) }
-    val serverProf = store.serverProfiles[v.m.id]
-    val specsPair = itemSpecs(v, null, serverProf)
-    val baseSpecs = specsPair.first.split(" • ").filter { it.isNotBlank() && !it.endsWith("fps") }.joinToString(" • ")
-    val tags = store.tagsOf(v).filter { (it == "Dolby Vision" || it == "HDR") && it !in baseSpecs }
-    val specs = listOf(baseSpecs, tags.joinToString(" • ")).filter { it.isNotBlank() }.joinToString(" • ")
+    // Regexes over the release name: once per release and per arrival of the server's tags/profiles (tagsVersion — they
+    // are not Compose state), not at every recomposition of the row
+    val specs = remember(v, store.tagsVersion) {
+        val specsPair = itemSpecs(v, null, store.serverProfiles[v.m.id])
+        val baseSpecs = specsPair.first.split(" • ").filter { it.isNotBlank() && !it.endsWith("fps") }.joinToString(" • ")
+        val tags = store.tagsOf(v).filter { (it == "Dolby Vision" || it == "HDR") && it !in baseSpecs }
+        listOf(baseSpecs, tags.joinToString(" • ")).filter { it.isNotBlank() }.joinToString(" • ")
+    }
 
     // what the release holds (shared versionLine: seasons, films, year) • quality
     val heading = listOf(versionLine(v, inSection), specs).filter { it.isNotBlank() }.joinToString(" • ")
