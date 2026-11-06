@@ -926,6 +926,10 @@ void PlayerModel::evBuffering(int percent) {
 void PlayerModel::evTime(qint64 t) {
     if (m_switching || m_closing) return;
     if (!m_started && t > 0 && !m_engine->paused()) evPlayingNow();
+    // смена качества: плеер уже «started», evPlayingNow не зовётся, и «Открываем…» от open() висело бы вечно
+    else if (m_started && t > 0 && !m_engine->paused() && !m_engine->buffering() && now() - m_openedAt > 500
+             && m_status == tx(S("player.otkryvaem")))
+        setStatus({});
     if (!m_scrubbing && !m_pendingSeek && now() - m_lastSeekAt > 600 && (std::abs(t - m_time) >= 250 || t < m_time)) {
         m_time = t;
         emit timeChanged();

@@ -29,7 +29,7 @@ class WindowMode : public QObject, public QAbstractNativeEventFilter {
     /// Размер окна меняет QML (края TitleBar.qml): окно без системной рамки вне Windows.
     Q_PROPERTY(bool edgeResize READ edgeResize NOTIFY changed)
     /// Кнопки окна видны (в плеере гаснут вместе с панелями): только тогда кнопка «Развернуть» — системная (Snap Layouts).
-    Q_PROPERTY(bool captionButtons READ captionButtons WRITE setCaptionButtons NOTIFY changed)
+    Q_PROPERTY(bool captionButtons READ captionButtons WRITE setCaptionButtons NOTIFY captionButtonsChanged)
     /// Windows 11: курсор или нажатие на «Развернуть» (её события идут системе — показать панель макетов Snap Layouts).
     Q_PROPERTY(bool maxHovered READ maxHovered NOTIFY maxButtonChanged)
     Q_PROPERTY(bool maxPressed READ maxPressed NOTIFY maxButtonChanged)
@@ -56,7 +56,7 @@ public:
     qreal topInset() const { return m_topInset; }
     bool edgeResize() const;
     bool captionButtons() const { return m_captionButtons; }
-    void setCaptionButtons(bool on) { if (on != m_captionButtons) { m_captionButtons = on; emit changed(); } }
+    void setCaptionButtons(bool on) { if (on != m_captionButtons) { m_captionButtons = on; emit captionButtonsChanged(); } }
     bool maxHovered() const { return m_maxHover; }
     bool maxPressed() const { return m_maxPress; }
 
@@ -88,6 +88,7 @@ public:
 
 signals:
     void changed();
+    void captionButtonsChanged(); // отдельно от changed: TitleBar.visible зависит от mini/fullscreen, а сам пишет captionButtons — общий сигнал давал Binding loop
     void maxButtonChanged();
 
 private:

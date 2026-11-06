@@ -197,6 +197,7 @@ Window {
                     presenceAnim.start()
                 }
             } else if (player.closing && !win.playerLeaving) {
+                windowMode.reset()            // закрытие не из плеера (ведущий закрыл фильм): мини-режим/полный экран снять
                 win.playerLeaving = true      // медиатека снова видна: её постеры можно найти
                 win.playerHome = Theme.target(win.playerFilm)
                 presenceAnim.stop()
