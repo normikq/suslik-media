@@ -31,6 +31,7 @@ object Storage {
     }
 
     /** Blocking: call off the main thread. A film that is open in the player keeps its reserve. */
+    @OptIn(coil.annotation.ExperimentalCoilApi::class)
     fun clear(ctx: Context) {
         BurstProxy.dropRetired()
         // No player in this process (or none open): the folder holds only leftovers — all of it can go.

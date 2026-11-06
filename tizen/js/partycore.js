@@ -112,7 +112,8 @@
     clearFile: function (r) { return copy(r, { file: null, pendingFileKey: '' }); },
     /** Ответ сервера с комнатой: состояние — только более новое по seq, участники — если пришёл их список. */
     merge: function (r, u) {
-      var head = { id: u.id || r.id, hostId: u.hostId, hostKey: u.hostKey, hostName: u.hostName, hostOnly: u.hostOnly, members: u.members || r.members };
+      var head = { id: u.id || r.id, hostId: u.hostId, hostKey: u.hostKey, hostName: u.hostName, hostOnly: u.hostOnly, members: u.members || r.members,
+        variantOffsets: u.variantOffsets || r.variantOffsets || [] };
       // Ведущий поставил фильм, сервер ещё не подтвердил: фильм и время в старых ответах — прежние, не берём их
       if (r.pendingFileKey != null && (u.file ? u.file.key : '') !== r.pendingFileKey) return copy(r, head);
       head.file = u.file;
@@ -135,26 +136,113 @@
 
   var ROOMS = '/api/rooms';
 
-  function fileRef(key, title) { return { key: key, title: title || '', adId: Number(String(key).split('|')[0]) || 0 }; }
+  function episodeOf(k) {
+    var parse = SM.model && SM.model.parseEpisode;
+    var s = String(k), bar = s.indexOf('|');
+    return parse && bar >= 0 ? parse(s.slice(bar + 1), 1) : null;
+  }
+
+  /** Серии двух ключей просмотра совпадают (у обоих нет серии — это фильм). */
+  function sameEpisode(a, b) {
+    var ea = episodeOf(a), eb = episodeOf(b);
+    if (!ea || !eb) return !ea && !eb;
+    return ea[0] === eb[0] && ea[1] === eb[1];
+  }
+
+  function fileRef(key, title, canonicalId, edition, variants) {
+    var vList = Array.isArray(variants) ? variants : [];
+    return {
+      key: key,
+      title: title || '',
+      canonicalId: canonicalId || null,
+      edition: edition || null,
+      variants: vList,
+      adId: Number(String(key).split('|')[0]) || 0,
+      matches: function (fileKey, otherCid) {
+        if (!fileKey) return false;
+        if (fileKey === key) return true;
+        for (var i = 0; i < vList.length; i++) {
+          if (vList[i] && vList[i].key === fileKey) return true;
+        }
+        if (canonicalId && otherCid && canonicalId === otherCid) {
+          // Как PartyFileRef.matches в Kotlin и C++: та же раздача — не тот фильм, серии должны совпасть
+          var myMag = key.indexOf('|') >= 0 ? key.split('|')[0] : '';
+          var otherMag = fileKey.indexOf('|') >= 0 ? fileKey.split('|')[0] : '';
+          if (myMag && myMag === otherMag) return false;
+          return sameEpisode(key, fileKey);
+        }
+        return false;
+      },
+      /** Индекс фильма комнаты в списке ключей просмотра плеера или -1 (Kotlin/C++ resolveIndex). */
+      resolveIndex: function (keys, myCid, sameWorkHint) {
+        var d = keys.indexOf(key);
+        if (d >= 0) return d;
+        for (var i = 0; i < vList.length; i++) {
+          var vi = vList[i] ? keys.indexOf(vList[i].key) : -1;
+          if (vi >= 0) return vi;
+        }
+        if (key.indexOf('|') < 0) return -1;
+        var sameWork = !!sameWorkHint || !!(canonicalId && canonicalId === myCid);
+        if (!sameWork) {
+          var mine = [key.split('|')[0]];
+          vList.forEach(function (v) { if (v && v.key) mine.push(String(v.key).split('|')[0]); });
+          sameWork = keys.some(function (k) { return mine.indexOf(String(k).split('|')[0]) >= 0; });
+        }
+        if (!sameWork) return -1;
+        var target = episodeOf(key);
+        if (!target) return -1;
+        for (var j = 0; j < keys.length; j++) {
+          var e = episodeOf(keys[j]);
+          if (e && e[0] === target[0] && e[1] === target[1]) return j;
+        }
+        return -1;
+      }
+    };
+  }
 
   function nonEmpty(v) { return typeof v === 'string' && v.trim() ? v : null; }
 
   function parseMember(m) {
     return {
       key: String(m.key || ''), userId: String(m.id || ''), name: nonEmpty(m.name) || 'Гость', buffering: m.buffering === true,
-      avatar: typeof m.avatar === 'string' && m.avatar.indexOf('https://') === 0 ? m.avatar : null
+      avatar: typeof m.avatar === 'string' && m.avatar.indexOf('https://') === 0 ? m.avatar : null,
+      variantKey: nonEmpty(m.variant_key),
+      durationMs: Number(m.duration_ms) > 0 ? Number(m.duration_ms) : null
     };
+  }
+
+  // Раздачи одного фильма разной длины: лишнее обычно в начале (заставка релиз-группы), поэтому место на своей
+  // раздаче = место ведущего + сдвиг, сдвиг = своя длина − длина ведущего. Меньше 1,5 с — хвост кадров, больше 2 мин —
+  // другой монтаж: тогда 0. Те же числа у сервера (rooms.js), ПК (core/Party.h) и Android (PartyProtocol.kt).
+  var SHIFT_MIN_MS = 1500, SHIFT_MAX_MS = 120000;
+  /** Сдвиг своей раздачи myKey от раздачи ведущего hostKey: сохранённая подстройка пары (variant_offsets), иначе разница длин. */
+  function roomShiftMs(saved, hostKey, hostDurationMs, myKey, myDurationMs) {
+    if (hostKey && hostKey === myKey) return 0;
+    var list = saved || [];
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].from === hostKey && list[i].to === myKey) return list[i].offsetMs;
+      if (list[i].from === myKey && list[i].to === hostKey) return -list[i].offsetMs;
+    }
+    return timelineShiftMs(myDurationMs, hostDurationMs);
+  }
+  function timelineShiftMs(myDurationMs, hostDurationMs) {
+    if (!(myDurationMs > 0) || !(hostDurationMs > 0)) return 0;
+    var d = Math.round(myDurationMs - hostDurationMs);
+    return Math.abs(d) >= SHIFT_MIN_MS && Math.abs(d) <= SHIFT_MAX_MS ? d : 0;
   }
 
   function parseRoom(o) {
     var s = o.state && typeof o.state === 'object' ? o.state : null;
-    var f = o.file && typeof o.file === 'object' && nonEmpty(o.file.key) ? fileRef(o.file.key, String(o.file.name || '')) : null;
+    var f = o.file && typeof o.file === 'object' && nonEmpty(o.file.key)
+      ? fileRef(o.file.key, String(o.file.name || ''), nonEmpty(o.file.canonical_id), nonEmpty(o.file.edition), o.file.variants) : null;
     return {
       id: nonEmpty(o.id), hostId: nonEmpty(o.host_id), hostKey: nonEmpty(o.host_key), hostName: String(o.host_name || ''),
       hostOnly: o.controls === 'host', file: f,
       state: s ? { playing: s.playing === true, pos: Number(s.pos) || 0, rate: s.rate == null ? 1 : Number(s.rate) || 1,
         anchorServerMs: Number(s.anchor_server_ms) || 0, seq: Number(s.seq) || 0, waiting: s.waiting === true } : null,
       members: Array.isArray(o.members) ? o.members.filter(function (m) { return m && typeof m === 'object'; }).map(parseMember) : null,
+      variantOffsets: Array.isArray(o.variant_offsets) ? o.variant_offsets.filter(function (v) { return v && nonEmpty(v.from) && nonEmpty(v.to); })
+        .map(function (v) { return { from: v.from, to: v.to, offsetMs: Number(v.offset_ms) || 0 }; }) : null,
       serverTime: s ? Number(s.server_time) || 0 : 0
     };
   }
@@ -169,6 +257,10 @@
       case 'state_changed': return d ? { type: 'state_changed', room: parseRoom(d) } : null;
       case 'member_joined': return d && d.member ? { type: 'member_joined', member: parseMember(d.member) } : null;
       case 'member_left': return d && nonEmpty(d.key) ? { type: 'member_left', key: d.key } : null;
+      case 'refresh_library':
+        var rf = d && d.file && typeof d.file === 'object' && nonEmpty(d.file.key)
+          ? fileRef(d.file.key, String(d.file.name || ''), nonEmpty(d.file.canonical_id), nonEmpty(d.file.edition), d.file.variants) : null;
+        return { type: 'refresh_library', file: rf };
       default: return null;
     }
   }
@@ -193,7 +285,19 @@
     pause: function (ms) { return { type: 'pause', pos: ms / 1000 }; },
     seek: function (ms) { return { type: 'seek', pos: ms / 1000 }; },
     buffering: function (loading) { return { type: 'buffering', buffering: loading }; },
-    changeFile: function (f) { return { type: 'change_file', file: { key: f.key, name: f.title, ad_id: f.adId } }; },
+    /** Свой вариант; durationMs > 0 — длина раздачи (по ней гости на других раздачах сдвигают время). */
+    variantChange: function (variantKey, durationMs) {
+      var o = { type: 'variant_change', variant_key: variantKey };
+      if (durationMs > 0) o.duration_ms = Math.round(durationMs);
+      return o;
+    },
+    changeFile: function (f) {
+      var o = { key: f.key, name: f.title, ad_id: f.adId };
+      if (f.canonicalId) o.canonical_id = f.canonicalId;
+      if (f.edition) o.edition = f.edition;
+      if (Array.isArray(f.variants) && f.variants.length) o.variants = f.variants;
+      return { type: 'change_file', file: o };
+    },
     /** Ведущий закрыл фильм: у гостей плеер тоже закрывается (сервер ставит room.file = null). */
     closeFile: function () { return { type: 'change_file', file: null }; },
     roomOf: function (res) { return res && res.room && typeof res.room === 'object' ? parseRoom(res.room) : null; },
@@ -355,6 +459,7 @@
 
   SM.partycore = {
     sha256hex: sha256hex, Clock: Clock, targetMs: targetMs, room: room, protocol: protocol, Engine: Engine,
+    timelineShiftMs: timelineShiftMs, roomShiftMs: roomShiftMs,
     IDLE: IDLE, SHARED_USER: SHARED_USER, TICK_MS: TICK_MS, TOLERANCE_MS: TOLERANCE_MS,
     CLOCK_WINDOW_MS: CLOCK_WINDOW_MS, CLOCK_RESAMPLE_MS: CLOCK_RESAMPLE_MS
   };

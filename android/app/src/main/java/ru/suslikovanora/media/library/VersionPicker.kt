@@ -19,8 +19,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -56,6 +58,20 @@ fun versionTarget(item: LibraryItem, store: LibraryStore): PlayTarget? {
 @Composable
 fun VersionSheet(title: String, versions: List<LibraryItem>, store: LibraryStore, onDismiss: () -> Unit, onChoose: (LibraryItem) -> Unit) {
     val sections = remember(versions) { versionSections(versions) }
+    val lastPlayedId = remember(versions) {
+        var maxAt = 0L
+        var targetId: Long? = null
+        for (v in versions) {
+            val series = v.playable as? Playable.Series
+            val watched = if (series != null) store.lastWatched(v.m)?.second
+                else (v.playable as? Playable.Movie)?.file?.let { store.watchInfo(watchKey(v.m.id, it)) }
+            if (watched != null && watched.at > maxAt) {
+                maxAt = watched.at
+                targetId = v.m.id
+            }
+        }
+        if (maxAt > 0L) targetId else null
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -74,7 +90,9 @@ fun VersionSheet(title: String, versions: List<LibraryItem>, store: LibraryStore
                     if (secTitle != null) {
                         SectionHeader(secTitle)
                     }
-                    section.items.forEach { v -> VersionRow(v, store, inSection = secTitle != null) { onChoose(v) } }
+                    section.items.forEach { v ->
+                        VersionRow(v, store, inSection = secTitle != null, isLastPlayed = (v.m.id == lastPlayedId)) { onChoose(v) }
+                    }
                 }
             }
         }
@@ -101,20 +119,34 @@ private fun SectionHeader(title: String) {
 }
 
 @Composable
-private fun VersionRow(v: LibraryItem, store: LibraryStore, inSection: Boolean, onClick: () -> Unit) {
+private fun VersionRow(
+    v: LibraryItem,
+    store: LibraryStore,
+    inSection: Boolean,
+    isLastPlayed: Boolean = false,
+    onClick: () -> Unit
+) {
     val series = v.playable as? Playable.Series
     val watched = if (series != null) store.lastWatched(v.m)?.second
         else (v.playable as? Playable.Movie)?.file?.let { store.watchInfo(watchKey(v.m.id, it)) }
-    val baseSpecs = itemSpecs(v, null).first.split(" • ").take(2).joinToString(" • ")
-    val tags = store.tagsOf(v).filter { it == "Dolby Vision" || it == "HDR" }
-    val specs = if (tags.isNotEmpty()) baseSpecs + " • " + tags.joinToString(" • ") else baseSpecs
+    // Regexes over the release name: once per release and per arrival of the server's tags/profiles (tagsVersion — they
+    // are not Compose state), not at every recomposition of the row
+    val specs = remember(v, store.tagsVersion) {
+        val specsPair = itemSpecs(v, null, store.serverProfiles[v.m.id])
+        val baseSpecs = specsPair.first.split(" • ").filter { it.isNotBlank() && !it.endsWith("fps") }.joinToString(" • ")
+        val tags = store.tagsOf(v).filter { (it == "Dolby Vision" || it == "HDR") && it !in baseSpecs }
+        listOf(baseSpecs, tags.joinToString(" • ")).filter { it.isNotBlank() }.joinToString(" • ")
+    }
 
     // what the release holds (shared versionLine: seasons, films, year) • quality
     val heading = listOf(versionLine(v, inSection), specs).filter { it.isNotBlank() }.joinToString(" • ")
 
     val shape = RoundedCornerShape(14.dp)
+    val bg = if (isLastPlayed) Color(0x282563EB) else Color(0x14FFFFFF)
+    val borderCol = if (isLastPlayed) Sm.accent else Sm.glassEdge
+    val borderWidth = if (isLastPlayed) 1.5.dp else 1.dp
     Column(
-        Modifier.fillMaxWidth().clip(shape).background(Color(0x14FFFFFF)).border(1.dp, Sm.glassEdge, shape)
+        Modifier.fillMaxWidth().clip(shape).background(bg).border(borderWidth, borderCol, shape)
             .focusRing(shape).clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 11.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -122,6 +154,18 @@ private fun VersionRow(v: LibraryItem, store: LibraryStore, inSection: Boolean, 
                 heading,
                 color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, modifier = Modifier.weight(1f)
             )
+            if (isLastPlayed) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(end = 8.dp).clip(RoundedCornerShape(8.dp))
+                        .background(Color(0x332563EB)).border(1.dp, Sm.accent.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 7.dp, vertical = 2.dp)
+                ) {
+                    Box(Modifier.size(5.dp).clip(CircleShape).background(Sm.accent))
+                    Spacer(Modifier.width(4.dp))
+                    Text(tr("library.poslednyaya_versiya"), color = Sm.accent, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 10.5.sp)
+                }
+            }
             Text(formatBytes(v.m.size), color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp)
         }
         Text(v.m.name, color = Sm.muted, fontFamily = Onest, fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 3.dp))

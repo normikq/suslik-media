@@ -241,7 +241,7 @@ test('parseLibrary: aiTitle и canAiTitle; неизвестный статус �
     { id: 2, name: 'B', statusCode: 4, files: [], aiTitle: { base: 'X', season: null, status: 'weird' } },
     { id: 3, name: 'C', statusCode: 4, files: [] }
   ] });
-  assert.deepEqual(list[0].aiTitle, { base: 'Тед Лассо', season: 2, model: 'gemini-3.5-flash-lite', at: 5, status: 'suggested', kind: null, stale: false, original: null, year: null });
+  assert.deepEqual(list[0].aiTitle, { base: 'Тед Лассо', season: 2, model: 'gemini-3.5-flash-lite', at: 5, status: 'suggested', kind: null, stale: false, original: null, year: null, edition: null, canonicalId: null });
   assert.equal(list[0].canAiTitle, true);
   assert.equal(list[1].aiTitle, null);
   assert.equal(list[2].aiTitle, null);
@@ -384,4 +384,63 @@ test('tileTitle: ИИ, потом русское название TMDB, пото
   const [ai] = M.prepareItems([mag([file(0, 'Inception.mkv', 4000)], { id: 11, name: 'Inception.2010.1080p',
     aiTitle: { base: 'Начало (2010)', kind: 'movie', status: 'accepted' } })]);
   assert.equal(M.tileTitle(ai, of), 'Начало (2010)');
+});
+
+test('smartQualityScore и qualityScore: шкала разрешения и композитный скоринг', () => {
+  assert.equal(M.qualityScore('Movie.2160p.mkv'), 4);
+  assert.equal(M.qualityScore('Movie.1080p.mkv'), 3);
+  assert.equal(M.qualityScore('Movie.720p.mkv'), 2);
+  assert.equal(M.qualityScore('Movie.480p.mkv'), 1);
+  assert.equal(M.qualityScore('Movie.DVDRip.mkv'), 1);
+  assert.equal(M.qualityScore('Movie.Unknown.mkv'), 0);
+
+  assert.equal(M.smartQualityScore('Dune.2021.2160p.UHD.Remux.DV.TrueHD.Atmos.mkv'), 505);
+  assert.equal(M.smartQualityScore('Movie.1080p.BDRemux.10-bit.DTS-HD.MA.mkv'), 365);
+  assert.equal(M.smartQualityScore('Film.1080p.BDRip.AC3.5.1.mkv'), 325);
+  assert.equal(M.smartQualityScore('Series.S01E01.720p.WEB-DL.DDP5.1.mkv'), 230);
+  assert.equal(M.smartQualityScore('Movie.2160p.HDR10+.DTS:X.BDRip.mkv'), 485);
+  assert.equal(M.smartQualityScore('Old.Show.480p.mkv'), 100);
+  assert.equal(M.smartQualityScore('network.webcam.4kilo.dtswiss.mkv'), 100);
+  assert.equal(M.smartQualityScore('Movie_1080p_x264_DTS5.1.mkv'), 320);
+  assert.equal(M.smartQualityScore('Film.1080p.BluRay.dts.x264.mkv'), 335);
+  assert.equal(M.smartQualityScore('Atmosphere.2020.720p.WEB.mkv'), 210);
+  assert.equal(M.smartQualityScore('Film.1920x1080.HDRip.mkv'), 300);
+
+  const v = M.buildPartyVariant(
+    { m: { id: 42, name: 'Dune.2021.2160p.UHD.Remux.DV.TrueHD.Atmos.mkv', size: 45000000000 } },
+    { path: 'Dune.2021.mkv', size: 45000000000 }
+  );
+  assert.equal(v.key, '42|Dune.2021.mkv');
+  assert.equal(v.quality, '4K');
+  assert.equal(v.audio, 'TrueHD Atmos');
+  assert.equal(v.score, 505);
+  assert.deepEqual(v.hardware_flags, ['dv']);
+  assert.equal(v.bitrate > 0, true);
+  assert.equal(v.label.indexOf('4K') >= 0, true);
+  assert.equal(v.label.indexOf('Мбит/с') < 0, true);
+
+  const vProf = M.buildPartyVariant(
+    { m: { id: 42, name: 'Dune.2021.2160p.UHD.Remux.DV.TrueHD.Atmos.mkv', size: 45000000000 } },
+    { path: 'Dune.2021.mkv', size: 45000000000 },
+    { bitrate: 54.5 }
+  );
+  assert.equal(vProf.label.indexOf('54.5 Мбит/с') >= 0, true);
+
+  const vUnknown = M.buildPartyVariant(
+    { m: { id: 43, name: 'SomeVideo', size: 1000 } },
+    { path: 'video.mkv', size: 1000 }
+  );
+  assert.equal(vUnknown.quality, '');
+  assert.equal(vUnknown.label.indexOf('1080p') < 0, true);
+
+  const vProbed = M.buildPartyVariant(
+    { m: { id: 43, name: 'SomeVideo', size: 1000 } },
+    { path: 'video.mkv', size: 1000 },
+    null,
+    3840,
+    1600
+  );
+  assert.equal(vProbed.quality, '4K');
+  assert.equal(vProbed.label.indexOf('4K') === 0, true);
+  assert.equal(vProbed.score, 400);
 });

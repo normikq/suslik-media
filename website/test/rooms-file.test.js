@@ -70,3 +70,52 @@ test("создание комнаты: файл тоже очищается, н�
   assert.equal(rooms.createRoom(host, { key: "nope" }).file, null);
   assert.equal(rooms.createRoom(host, "9|c.mkv").file, null);
 });
+
+test("change_file: canonical_id, edition и variants сохраняются", () => {
+  const room = rooms.createRoom(host);
+  const variants = [
+    { key: "101|dune.2160p.mkv", label: "4K · DV · Atmos", quality: "4K", audio: "TrueHD Atmos", bitrate: 48.2, offset_ms: 0 },
+    { key: "102|dune.1080p.mkv", label: "1080p · AC3", quality: "1080p", audio: "AC3 5.1", bitrate: 8.1, offset_ms: 0 }
+  ];
+  const res = rooms.handleRoomAction(room.id, host, {
+    type: "change_file",
+    file: {
+      key: "101|dune.2160p.mkv",
+      name: "Дюна (2021)",
+      canonical_id: "m:dune_2021:theatrical",
+      edition: "theatrical",
+      variants
+    }
+  });
+  assert.equal(res.ok, true);
+  assert.equal(room.file.canonical_id, "m:dune_2021:theatrical");
+  assert.equal(room.file.edition, "theatrical");
+  assert.equal(room.file.variants.length, 2);
+  assert.equal(room.file.variants[0].quality, "4K");
+  assert.equal(room.file.variants[1].bitrate, 8.1);
+});
+
+test("variant_change: мусорный ключ отклоняется, а при смене фильма ключи качества у всех сбрасываются", () => {
+  const room = rooms.createRoom(host);
+  rooms.joinRoom(room.id, host, "pc_host");
+  rooms.joinRoom(room.id, guest, "pc_guest");
+  rooms.handleRoomAction(room.id, host, { type: "change_file", client_id: "pc_host", file: { key: "101|a.mkv", name: "A" } });
+  assert.equal(rooms.handleRoomAction(room.id, guest, { type: "variant_change", client_id: "pc_guest", variant_key: "мусор" }).ok, false);
+  assert.equal(rooms.handleRoomAction(room.id, guest, { type: "variant_change", client_id: "pc_guest", variant_key: "102|a.1080.mkv" }).ok, true);
+  assert.equal(room.members.get("pc_guest").variant_key, "102|a.1080.mkv");
+  rooms.handleRoomAction(room.id, host, { type: "change_file", client_id: "pc_host", file: { key: "201|b.mkv", name: "B" } });
+  assert.equal(room.members.get("pc_guest").variant_key, null);
+});
+
+test("variant_change: ключ и серия файла комнаты не меняются (старый клиент ищет только key)", () => {
+  const room = rooms.createRoom(host);
+  rooms.joinRoom(room.id, guest, "pc_guest2");
+  const file = { key: "101|S01E02.2160p.mkv", name: "Серия", canonical_id: "s:x_s1:default",
+    variants: [{ key: "101|S01E02.2160p.mkv", label: "4K" }, { key: "102|S01E02.1080p.mkv", label: "1080p" }] };
+  rooms.handleRoomAction(room.id, host, { type: "change_file", file });
+  const before = JSON.stringify(room.file);
+  const res = rooms.handleRoomAction(room.id, guest, { type: "variant_change", client_id: "pc_guest2", variant_key: "102|S01E02.1080p.mkv" });
+  assert.equal(res.ok, true);
+  assert.equal(JSON.stringify(room.file), before);
+  assert.equal(res.room.file.key, "101|S01E02.2160p.mkv");
+});

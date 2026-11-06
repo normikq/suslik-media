@@ -84,7 +84,7 @@
     if (!id) return;
     stopStream();
     party.roomId = null; party.startedByMe = null; party.room = R.empty();
-    reported = false; outbox = [];
+    reported = false; sentVariant = null; outbox = [];
     api.post(P.leavePath(id), P.clientBody(clientId)).catch(function () {});
     changed();
   };
@@ -93,7 +93,7 @@
     stopStream();
     party.notice = null;
     party.clock.reset();
-    reported = false; outbox = [];
+    reported = false; sentVariant = null; outbox = [];
     party.room = R.merge(R.empty(), update);
     party.roomId = update.id;
     // Вход по коду не включает фильм, который уже в комнате: его открывает «Смотреть вместе», следующий фильм ведущего — сам (app.js)
@@ -119,9 +119,9 @@
   var clockTimer = 0;
 
   /** Ведущий ставит фильм в комнату (сервер ставит его на паузу в начале; мой плеер запустит). */
-  party.putFilm = function (key, title) {
+  party.putFilm = function (key, title, canonicalId, edition, variants) {
     if (!party.inRoom() || !party.isHost() || (party.room.file && party.room.file.key === key)) return;
-    var f = P.fileRef(key, title);
+    var f = P.fileRef(key, title, canonicalId, edition, variants);
     party.room = R.putFile(party.room, f);
     party.startedByMe = key;
     action(P.changeFile(f));
@@ -147,6 +147,39 @@
     if (!party.roomId || loading === reported) return;
     reported = loading;
     send(P.buffering(loading));
+  };
+  party.sendVariantChange = function (variantKey) {
+    if (!party.roomId) return;
+    send(P.variantChange(variantKey));
+  };
+
+  // Что уже сообщили комнате о своём варианте: «ключ|длина|фильм комнаты»
+  var sentVariant = null;
+  /** Свой вариант и длина его раздачи, когда плеер её узнал: тот же ключ и длина повторно не шлются. */
+  party.reportVariant = function (variantKey, durationMs) {
+    if (!party.roomId || !variantKey || !(durationMs > 0)) return;
+    var f = party.room.file;
+    var stamp = variantKey + '|' + Math.round(durationMs) + '|' + (f ? f.key : '');
+    if (stamp === sentVariant) return;
+    sentVariant = stamp;
+    send(P.variantChange(variantKey, durationMs));
+  };
+  /** Длина раздачи ведущего, мс; 0 — ещё не знаем. */
+  party.hostDurationMs = function () {
+    var ms = party.room.members || [];
+    for (var i = 0; i < ms.length; i++) if (R.isCreator(party.room, ms[i]) && ms[i].durationMs) return ms[i].durationMs;
+    return 0;
+  };
+  /** Своя раздача длиннее раздачи ведущего на столько мс (гостю; ведущему — 0). */
+  /** Раздача, которую сейчас смотрит ведущий (иначе — фильм комнаты). */
+  party.hostVariantKey = function () {
+    var ms = party.room.members || [];
+    for (var i = 0; i < ms.length; i++) if (R.isCreator(party.room, ms[i]) && ms[i].variantKey) return ms[i].variantKey;
+    return party.room.file ? party.room.file.key : null;
+  };
+  party.shiftMs = function (myKey, myDurationMs) {
+    if (!party.inRoom() || party.isHost()) return 0;
+    return core.roomShiftMs(party.room.variantOffsets, party.hostVariantKey(), party.hostDurationMs(), myKey, myDurationMs);
   };
 
   function action(body) { if (party.roomId && party.canControl()) send(body); }
@@ -240,7 +273,15 @@
     canSeek: party.canControl,
     targetMs: party.targetMs,
     othersBuffering: party.othersBuffering,
-    takeStartedByMe: function (key) { if (party.startedByMe !== key) return false; party.startedByMe = null; return true; },
+    takeStartedByMe: function (key) {
+      var s = party.startedByMe;
+      if (s == null) return false;
+      if (s !== key) {
+        var f = party.room.file;
+        if (!(f && f.key === s && (f.variants || []).some(function (v) { return v.key === key; }))) return false;
+      }
+      party.startedByMe = null; return true;
+    },
     play: party.play, pause: party.pause, seek: party.seek, reportBuffering: party.reportBuffering
   };
 
@@ -273,12 +314,14 @@
       if (key !== lastKey) {
         lastKey = key;
         var f = party.room.file;
-        if (f && key && key !== f.key && party.isHost() && keys.indexOf(f.key) >= 0) party.putFilm(key, cb.title());
+        if (f && key && key !== f.key && party.isHost() && (keys.indexOf(f.key) >= 0 || (f.resolveIndex && f.resolveIndex(keys, null) >= 0))) party.putFilm(key, cb.title());
       }
       // Ведущий выбрал другую серию: этот плеер переходит на неё, один раз
       var rk = party.room.file ? party.room.file.key : null;
       // Ведущий закрыл фильм (у комнаты его нет): гость, который смотрел его вместе с ним, тоже закрывает
-      if (party.inRoom() && key && rk === key) showedRoomFilm = true;
+      var f = party.room.file;
+      var matchesFilm = f && (typeof f.matches === 'function' ? f.matches(key) : f.key === key);
+      if (party.inRoom() && key && matchesFilm) showedRoomFilm = true;
       else if (!party.inRoom() || rk != null) showedRoomFilm = false;
       else if (showedRoomFilm && !party.isHost()) {
         showedRoomFilm = false;
@@ -286,9 +329,9 @@
         if (cb.close) cb.close();
         return;
       }
-      if (rk == null || rk === key) switchedTo = null;
+      if (rk == null || matchesFilm) switchedTo = null;
       else if (party.inRoom() && switchedTo !== rk && p) {
-        var i = keys.indexOf(rk);
+        var rf = party.room.file, i = rf && rf.resolveIndex ? rf.resolveIndex(keys, null) : keys.indexOf(rk);
         if (i >= 0) {
           switchedTo = rk;
           if (!party.isHost()) episodeNotice = hostWho() + ' включает «' + party.room.file.title + '»';
@@ -296,7 +339,7 @@
           return;
         }
       }
-      if (party.inRoom() && rk === key && key && p) {
+      if (party.inRoom() && matchesFilm && key && p) {
         if (episodeNotice) { cb.notice(episodeNotice); episodeNotice = null; }
         engine.tick(p, key, Date.now());
       } else if (p) engine.idle(p);
@@ -311,7 +354,12 @@
         if (party.isHost() && party.room.file && party.room.file.key === lastKey) party.closeIfNobodyWatches();
       },
       /** Это фильм комнаты, а я гость: перематывать и переключать серии нельзя. */
-      guestLocked: function () { return party.isGuest() && party.room.file != null && party.room.file.key === cb.key(); }
+      guestLocked: function () {
+        if (!party.isGuest() || !party.room.file) return false;
+        var f = party.room.file;
+        var k = cb.key();
+        return typeof f.matches === 'function' ? f.matches(k) : f.key === k;
+      }
     };
   };
 

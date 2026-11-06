@@ -93,9 +93,20 @@
       prepared: false, loading: true, seekStamp: 0, seeking: false, slow: null, party: null,
       urlAt: 0, played: false, retryAt: 0, stalls: 0, stallMs: 0, stallFrom: 0, durAskedAt: 0,
       tc: null, viewer: Math.random().toString(36).slice(2, 10),
-      dubs: model.externalAudioFor(opts.magnet, opts.file), custom: null
+      dubs: model.externalAudioFor(opts.magnet, opts.file), custom: null,
+      activeVariantKey: key, activeVariantUrl: null, switching: false, currentBitrate: 0, recentBuffering: [], lastDowngradePromptAt: 0
     };
     if (opts.resumeAt != null) cur.resume = opts.resumeAt;
+    var variants = (opts.file && opts.file.variants) || (SM.party && SM.party.room && SM.party.room.file && SM.party.room.file.variants) || [];
+    if (variants.length) {
+      cur.activeVariantKey = key;
+      for (var vi = 0; vi < variants.length; vi++) {
+        if (variants[vi].key === key) {
+          cur.currentBitrate = variants[vi].bitrate || 0;
+          break;
+        }
+      }
+    }
     clearTimeout(logSaveTimer); logSaveTimer = 0;
     prevLog = log.length ? [] : loadLog(); // журнал в памяти пуст — приложение запущено заново (может, после зависания)
     log = [];
@@ -246,6 +257,26 @@
       c.tc = { info: r, a: ext ? null : pick, ext: ext ? o.ext : null, base: 0, playedOk: false };
       if (r.durationMs > 0) c.dur = r.durationMs;
       var v = r.video || {};
+      if (v.width || v.height) {
+        var detQ = '';
+        if (v.width >= 3000 || v.height >= 1600) detQ = '4K';
+        else if (v.width >= 1600 || v.height >= 900) detQ = '1080p';
+        else if (v.width >= 1100 || v.height >= 600) detQ = '720p';
+        else detQ = '480p';
+        var activeK = c.activeVariantKey || c.key;
+        var fVars = (c.opts.file && c.opts.file.variants) || [];
+        for (var vi = 0; vi < fVars.length; vi++) {
+          if (fVars[vi].key === activeK) {
+            if (!fVars[vi].quality) {
+              fVars[vi].quality = detQ;
+              if (fVars[vi].label && fVars[vi].label.indexOf(detQ) !== 0) {
+                fVars[vi].label = detQ + ' · ' + fVars[vi].label;
+              }
+            }
+            break;
+          }
+        }
+      }
       note('server stream: video ' + [v.codec, v.profile, v.width + 'x' + v.height, v.pixFmt, v.transfer, v.dv ? 'DV P' + v.dv : ''].filter(Boolean).join(' '));
       note('server stream: ' + (ext ? 'dub "' + o.ext.label + '" offset ' + (ext.offsetMs || 0) + ' ms' : 'audio #' + pick) +
         ' (' + audio.map(function (t) { return t.index + ':' + t.codec + (t.ok ? '' : '→ac3'); }).join(', ') +
@@ -283,6 +314,23 @@
         if (Array.isArray(r.audio) && (c.tc.ext ? model.externalIn(r, c.tc.ext) : r.audio.length)) c.tc.info = r;
         done(serverUrl(c, at));
       }, bad);
+    } else if (c.activeVariantKey && c.activeVariantKey !== c.key) {
+      var parts = c.activeVariantKey.split('|');
+      var adId = parts.length > 1 ? Number(parts[0]) : null;
+      var path = parts.length > 1 ? parts.slice(1).join('|') : null;
+      api.resolveVariantUrl(c.activeVariantKey, adId, path).then(function (res) {
+        if (cur !== c) return;
+        if (res && res.url) {
+          c.activeVariantUrl = res.url;
+          done(res.url);
+        } else {
+          done(c.activeVariantUrl || c.url);
+        }
+      }, function () {
+        if (cur !== c) return;
+        if (c.activeVariantUrl || c.url) done(c.activeVariantUrl || c.url);
+        else bad();
+      });
     } else api.mirrorUrl(c.opts.file).then(done, bad);
   }
 
@@ -323,7 +371,13 @@
           if (cur !== c) return;
           note('buffering start');
           c.loading = true; buffering(true, 0, 'Буферизация…');
-          if (c.prepared && !c.seekBusy) { c.stalls++; c.stallFrom = Date.now(); }
+          if (c.prepared && !c.seekBusy) {
+            c.stalls++;
+            c.stallFrom = Date.now();
+            c.recentBuffering = c.recentBuffering || [];
+            c.recentBuffering.push({ start: c.stallFrom, end: null });
+            checkBufferThrottling(c);
+          }
         },
         onbufferingprogress: function (pct) { if (cur === c) buffering(true, pct); },
         onbufferingcomplete: function () {
@@ -331,7 +385,14 @@
           note('buffering complete');
           c.loading = false;
           if (c.resumeCover) buffering(true, 0); else buffering(false); // переход к месту продолжения ещё впереди
-          if (c.stallFrom) { c.stallMs += Date.now() - c.stallFrom; c.stallFrom = 0; }
+          if (c.stallFrom) {
+            c.stallMs += Date.now() - c.stallFrom;
+            if (c.recentBuffering && c.recentBuffering.length) {
+              c.recentBuffering[c.recentBuffering.length - 1].end = Date.now();
+            }
+            c.stallFrom = 0;
+            checkBufferThrottling(c);
+          }
         },
         oncurrentplaytime: function (ms) {
           if (cur !== c) return;
@@ -488,7 +549,20 @@
       c.tc = null; c.dur = 0; c.serverFailed = true;
       c.opts.toast(dub ? 'Сервер не смог подготовить озвучку «' + dub.label + '» (' + type + ') — открываю без неё'
         : 'Сервер не смог подготовить файл (' + type + ') — открываю как есть');
-      api.mirrorUrl(c.opts.file).then(function (url) { if (cur === c) start(url, at); }).catch(function (e) { if (cur === c) fail('network', api.describe(e)); });
+      if (c.activeVariantKey && c.activeVariantKey !== c.key) {
+        if (c.activeVariantUrl) start(c.activeVariantUrl, at);
+        else {
+          var parts = c.activeVariantKey.split('|');
+          api.resolveVariantUrl(c.activeVariantKey, Number(parts[0]), parts.slice(1).join('|')).then(function (res) {
+            if (cur === c && res && res.url) { c.activeVariantUrl = res.url; start(res.url, at); }
+            else if (cur === c) api.mirrorUrl(c.opts.file).then(function (u) { if (cur === c) start(u, at); });
+          }).catch(function () {
+            if (cur === c) api.mirrorUrl(c.opts.file).then(function (u) { if (cur === c) start(u, at); });
+          });
+        }
+      } else {
+        api.mirrorUrl(c.opts.file).then(function (url) { if (cur === c) start(url, at); }).catch(function (e) { if (cur === c) fail('network', api.describe(e)); });
+      }
       return;
     }
     // Сеть или истёкшая подпись зеркала (12 ч): новая ссылка и то же место, не больше двух раз подряд.
@@ -723,18 +797,28 @@
     var party = SM.party;
     if (!party || !party.inRoom()) return;
     var keys = c.opts.entries.map(function (en) { return model.watchKey(c.opts.magnet.id, en.file); });
+    // Время комнаты — шкала раздачи ведущего: гость на раздаче другой длины смотрит со сдвигом (partycore timelineShiftMs)
+    function shift() { return party.shiftMs(c.key, c.dur || 0); }
     var sp = {
-      get timeMs() { return c.seekTarget != null ? c.seekTarget : c.pos; },
+      get timeMs() { return (c.seekTarget != null ? c.seekTarget : c.pos) - shift(); },
       get busy() { return c.seeking; },
-      get engineMs() { return c.pos; },
+      get engineMs() { return c.pos - shift(); },
       get seekStamp() { return c.seekStamp; },
       get paused() { return c.paused; },
       get running() { return c.prepared && !c.loading && !c.paused; },
       applyPaused: function (p) { if (cur === c && p !== c.paused) togglePause(); },
-      seekTo: function (ms) { if (cur === c) seekTo(c, ms); }
+      seekTo: function (ms) { if (cur === c) seekTo(c, Math.max(0, ms + shift())); }
     };
+    var loggedShift = 0;
     c.party = party.attach({
-      player: function () { return cur === c && c.prepared ? sp : null; },
+      player: function () {
+        if (cur !== c || !c.prepared) return null;
+        // Длина своей раздачи: по ней гости выравнивают время (у ведущего сервер сдвигает комнату при смене раздачи)
+        if (c.dur > 0 && c.key) party.reportVariant(c.key, c.dur);
+        var s = shift();
+        if (s !== loggedShift) { loggedShift = s; note(s === 0 ? 'my version is on the host\'s timeline' : 'my version is ' + Math.abs(s) + ' ms ' + (s > 0 ? 'longer' : 'shorter') + ' than the host\'s: time shifted'); }
+        return sp;
+      },
       key: function () { return c.key; },
       keys: function () { return keys; },
       title: function () { var en = c.opts.entries && c.opts.entries[c.opts.index]; return (en && en.room) || c.opts.title; },
@@ -746,13 +830,151 @@
     el('p-party').className = 'show';
   }
 
+  function checkBufferThrottling(c) {
+    if (!c || c.downgradePromptShown) return;
+    var bitrate = c.currentBitrate || 0;
+    if (bitrate <= 25.0) return;
+    var now = Date.now();
+    c.recentBuffering = (c.recentBuffering || []).filter(function (t) { return now - t.start <= 60000; });
+    var count = c.recentBuffering.length;
+    var totalMs = 0;
+    for (var i = 0; i < count; i++) {
+      var item = c.recentBuffering[i];
+      var end = item.end || now;
+      totalMs += (end - item.start);
+    }
+    if ((count >= 3 || totalMs >= 10000) && (c.currentBitrate || 0) > 25.0) {
+      suggestDowngrade(c);
+    }
+  }
+
+  function suggestDowngrade(c) {
+    var now = Date.now();
+    if (!c || (now - (c.lastDowngradePromptAt || 0) < 60000)) return;
+    var variants = (c.opts.file && c.opts.file.variants) || (SM.party && SM.party.room && SM.party.room.file && SM.party.room.file.variants) || [];
+    if (!variants.length) return;
+    var currentBitrate = c.currentBitrate || 0;
+    var best = null;
+    for (var i = 0; i < variants.length; i++) {
+      var v = variants[i];
+      if (v.key === (c.activeVariantKey || c.key) || v.bitrate >= currentBitrate || v.bitrate <= 0) continue;
+      if (support && typeof support.checkVariantCompatibility === 'function' && !support.checkVariantCompatibility(v).ok) continue;
+      if (v.bitrate <= 25.0) {
+        if (!best || best.bitrate > 25.0 || v.bitrate > best.bitrate) {
+          best = v;
+        }
+      } else if (!best || (best.bitrate > 25.0 && v.bitrate < best.bitrate)) {
+        best = v;
+      }
+    }
+    if (!best) return;
+    c.lastDowngradePromptAt = now;
+    c.downgradePromptShown = true;
+    var targetLabel = best.label || (best.quality + (best.bitrate ? ' (' + best.bitrate.toFixed(1) + ' Мбит/с)' : ''));
+    c.opts.dialog(
+      tr('player.skorost_nedostatochna', { target: targetLabel }),
+      null,
+      [
+        { text: tr('player.da'), run: function () { c.downgradePromptShown = false; switchVariant(best.key); } },
+        { text: tr('player.skryt'), run: function () { c.downgradePromptShown = true; } }
+      ]
+    );
+  }
+
+  function switchVariant(variantKey) {
+    var c = cur;
+    if (c) c.downgradePromptShown = false;
+    if (!c || c.switching || variantKey === (c.activeVariantKey || c.key)) return;
+    c.switching = true;
+    c.opts.toast(tr('player.pereklyuchenie_kachestva'));
+    var p = av();
+    var curTime = 0;
+    try { curTime = p.getCurrentTime(); } catch (e) { curTime = c.pos; }
+    var parts = (variantKey || '').split('|');
+    var adId = parts.length > 1 ? Number(parts[0]) : null;
+    var path = parts.length > 1 ? parts.slice(1).join('|') : null;
+
+    api.resolveVariantUrl(variantKey, adId, path).then(function (res) {
+      if (!res || !res.url || cur !== c) {
+        if (cur === c) {
+          c.switching = false;
+          c.opts.toast(tr('player.ne_udalos_smenit_kachestvo'));
+        }
+        return;
+      }
+      // Как на ПК и Android: у релизов разная длина вступления — место сдвигается на разницу их offset_ms
+      var prevKey = c.activeVariantKey || c.key;
+      var targetOff = 0, prevOff = 0;
+      var variants = (c.opts.file && c.opts.file.variants) || (SM.party && SM.party.room && SM.party.room.file && SM.party.room.file.variants) || [];
+      for (var i = 0; i < variants.length; i++) {
+        var off = Number(variants[i].offset_ms || variants[i].offsetMs) || 0;
+        if (variants[i].key === variantKey) {
+          c.currentBitrate = variants[i].bitrate || 0;
+          targetOff = off;
+        }
+        if (variants[i].key === prevKey) prevOff = off;
+      }
+
+      c.activeVariantKey = variantKey;
+      c.activeVariantUrl = res.url;
+      c.tc = null; // Сбрасываем режим серверного потока
+      c.switching = false;
+      if (SM.party) SM.party.sendVariantChange(variantKey);
+
+      try {
+        p.stop();
+        p.close();
+      } catch (e) {}
+      start(res.url, Math.max(0, curTime + targetOff - prevOff));
+    }).catch(function () {
+      if (cur === c) {
+        c.switching = false;
+        c.opts.toast(tr('player.ne_udalos_smenit_kachestvo'));
+      }
+    });
+  }
+
   // ---- меню звука и субтитров ----
 
   function openMenu() {
     var c = cur;
     var menu = el('menu');
     menu.innerHTML = '';
-    var items = [h('h2', { text: 'Звук' })];
+    var items = [];
+    var variants = (c.opts.file && c.opts.file.variants) || (SM.party && SM.party.room && SM.party.room.file && SM.party.room.file.variants) || [];
+    if (variants.length > 1) {
+      items.push(h('h2', { text: tr('player.kachestvo') }));
+      var hostVariantKey = null;
+      if (SM.party && SM.party.room) {
+        var r = SM.party.room;
+        var hm = r.members && r.members.find(function (m) {
+          return SM.partycore && SM.partycore.room && SM.partycore.room.isHost(r, m.userId, m.key);
+        });
+        if (hm && hm.variantKey) hostVariantKey = hm.variantKey;
+        else if (r.file) hostVariantKey = r.file.key;
+      }
+      var activeKey = c.activeVariantKey || c.key;
+      variants.forEach(function (v) {
+        var on = (v.key === activeKey);
+        var isHost = (hostVariantKey && v.key === hostVariantKey);
+        var comp = support.checkVariantCompatibility(v);
+        var label = v.label || (v.quality + (v.bitrate ? ' (' + v.bitrate.toFixed(1) + ' Мбит/с)' : ''));
+        if (isHost) label += ' [Хост]';
+        if (!comp.ok) label += ' (' + comp.text + ')';
+        var btnClass = (on ? 'sel ' : '') + (!comp.ok ? 'disabled' : '');
+        items.push(SM.ui.button((on ? '● ' : '') + label, function () {
+          closeMenu();
+          if (!on) {
+            if (!comp.ok) {
+              c.opts.toast(comp.text || 'Формат не поддерживается телевизором');
+              return;
+            }
+            switchVariant(v.key);
+          }
+        }, btnClass.trim()));
+      });
+    }
+    items.push(h('h2', { text: 'Звук' }));
     if (!c.audio || !c.audio.tracks.length) items.push(h('p', { class: 'muted', text: 'Нет сведений о дорожках' }));
     else c.audio.tracks.forEach(function (t) {
       var selected = !(c.tc && c.tc.ext) && c.audio.current && c.audio.current.index === t.index;
@@ -967,5 +1189,5 @@
     }
   });
 
-  SM.player = { play: play, close: close, current: function () { return cur ? cur.key : null; }, log: function () { return log.slice(); } };
+  SM.player = { play: play, close: close, switchVariant: switchVariant, current: function () { return cur ? cur.key : null; }, log: function () { return log.slice(); } };
 })(window);

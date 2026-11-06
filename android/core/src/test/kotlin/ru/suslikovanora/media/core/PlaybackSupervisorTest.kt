@@ -10,6 +10,8 @@ private class Sim(stuckLimitMs: Long = 12_000L) {
     val reopens = mutableListOf<Boolean>() // the `fresh` flag of each reopen
     var videoRestarts = 0
     var soundFixes = 0
+    var downgradeSuggestions = 0
+    var lastSuggestedBitrate = 0.0
     val notices = mutableListOf<String>()
 
     var t = 100_000L
@@ -30,6 +32,7 @@ private class Sim(stuckLimitMs: Long = 12_000L) {
             override fun reopen(fresh: Boolean) { reopens += fresh }
             override fun notice(text: String) { notices += text }
             override fun log(message: String) {}
+            override fun suggestDowngrade(currentBitrateMbps: Double) { downgradeSuggestions++; lastSuggestedBitrate = currentBitrateMbps }
         },
         now = { t },
         stuckLimitMs = { stuckLimitMs },
@@ -125,5 +128,29 @@ class PlaybackSupervisorTest {
         s.sup.buffering(100f)
         s.ticks(60, clock = 0)
         assertTrue(s.reopens.size > 3)
+    }
+
+    @Test fun downgradeSuggestionOnFrequentBuffering() {
+        val s = Sim()
+        s.sup.bitrateMbps = 35.0
+        s.warm("heavy_4k")
+        assertEquals(0, s.downgradeSuggestions)
+
+        s.sup.buffering(50f); s.t += 4000; s.sup.buffering(100f); s.ticks(2)
+        s.sup.buffering(40f); s.t += 4000; s.sup.buffering(100f); s.ticks(2)
+        s.sup.buffering(30f); s.t += 4000; s.sup.buffering(100f); s.ticks(2)
+
+        assertTrue(s.downgradeSuggestions >= 1)
+        assertEquals(35.0, s.lastSuggestedBitrate)
+
+        // Works for moderate / unknown bitrates too
+        val sLow = Sim()
+        sLow.sup.bitrateMbps = 12.0
+        sLow.warm("light_1080p")
+        sLow.sup.buffering(50f); sLow.t += 4000; sLow.sup.buffering(100f); sLow.ticks(2)
+        sLow.sup.buffering(50f); sLow.t += 4000; sLow.sup.buffering(100f); sLow.ticks(2)
+        sLow.sup.buffering(50f); sLow.t += 4000; sLow.sup.buffering(100f); sLow.ticks(2)
+        assertEquals(1, sLow.downgradeSuggestions)
+        assertEquals(12.0, sLow.lastSuggestedBitrate)
     }
 }

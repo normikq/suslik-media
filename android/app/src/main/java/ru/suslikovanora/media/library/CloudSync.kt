@@ -38,7 +38,8 @@ object CloudSync {
     private fun parseWatch(key: String, v: Any?): WatchEntry? {
         val p = (v as? String)?.split('|') ?: return null
         if (p.size < 3) return null
-        return WatchEntry(key, p[0].toLongOrNull() ?: return null, p[1].toLongOrNull() ?: 0L, p[2].toLongOrNull() ?: 0L)
+        val cid = p.getOrNull(3)?.ifEmpty { null }
+        return WatchEntry(key, p[0].toLongOrNull() ?: return null, p[1].toLongOrNull() ?: 0L, p[2].toLongOrNull() ?: 0L, cid)
     }
 
     private val filmKeyRe = Regex("""m\d+""")
@@ -46,7 +47,9 @@ object CloudSync {
     private val store = object : SyncStore {
         override fun watch(key: String) = parseWatch(key, watch.getString(key, null))
         override fun putWatch(e: WatchEntry) {
-            watch.edit().putString(e.key, "${e.pos}|${e.len}|${e.at}").apply()
+            val existingCid = e.cid ?: parseWatch(e.key, watch.getString(e.key, null))?.cid
+            val suffix = if (!existingCid.isNullOrEmpty()) "|$existingCid" else ""
+            watch.edit().putString(e.key, "${e.pos}|${e.len}|${e.at}$suffix").apply()
             // Плеер продолжает по "positions" (PlayerWatchProgress): досмотренное и первые секунды — с начала
             val done = e.len > 0 && e.pos > e.len - 15_000L
             positions.edit().apply { if (done || e.pos < 5_000L) remove("w:${e.key}") else putLong("w:${e.key}", e.pos) }.apply()
@@ -56,6 +59,15 @@ object CloudSync {
             ui.edit().apply {
                 e.audio?.let { putString("track:audio:${e.key}", it) }
                 e.spu?.let { putString("track:spu:${e.key}", it) }
+                e.quality?.let { putString("vquality:${e.key}", it) }
+                if (e.key != WatchSync.ANY) {
+                    e.cid?.let {
+                        putString("track:cid:${e.key}", it)
+                        e.audio?.let { a -> putString("track:audio:c$it", a) }
+                        e.spu?.let { s -> putString("track:spu:c$it", s) }
+                        e.quality?.let { q -> putString("vquality:c$it", q) }
+                    }
+                }
                 if (e.key != WatchSync.ANY) e.sidecar?.let { putString("track:sidecar:${e.key}", it) }
                 putLong("track:at:${e.key}", e.at)
             }.apply()
@@ -66,14 +78,15 @@ object CloudSync {
             val seen = HashMap<String, Long>()
             for (w in allWatch()) WatchSync.filmKeyOf(w.key)?.let { k -> if (w.at > (seen[k] ?: 0L)) seen[k] = w.at }
             val keys = ui.all.keys.mapNotNull { k ->
-                listOf("track:audio:", "track:spu:", "track:sidecar:").firstOrNull { k.startsWith(it) }?.let { k.removePrefix(it) }
+                listOf("track:audio:", "track:spu:", "track:sidecar:", "vquality:").firstOrNull { k.startsWith(it) }?.let { k.removePrefix(it) }
                     ?.takeIf { it == WatchSync.ANY || it.matches(filmKeyRe) }
             }.toSet()
             return keys.mapNotNull { k ->
                 val at = trackAt(k).takeIf { it > 0 } ?: if (k == WatchSync.ANY) seen.values.maxOrNull() else seen[k]
                 if (at == null || at <= 0) null
                 else TrackEntry(k, ui.getString("track:audio:$k", null), ui.getString("track:spu:$k", null),
-                    ui.getString("track:sidecar:$k", null), at)
+                    ui.getString("track:sidecar:$k", null), at, ui.getString("vquality:$k", null),
+                    if (k == WatchSync.ANY) null else ui.getString("track:cid:$k", null))
             }
         }
         override var cursor: String?
@@ -96,21 +109,52 @@ object CloudSync {
     }
 
     /** Плеер сохранил прогресс (уже записан в "watch"). */
-    fun noteWatch(key: String, pos: Long, len: Long, at: Long) {
-        if (started && WatchSync.eligible(userId)) sync.noteWatch(WatchEntry(key, pos, len, at))
+    fun noteWatch(key: String, pos: Long, len: Long, at: Long, cid: String? = null) {
+        if (started && WatchSync.eligible(userId)) sync.noteWatch(WatchEntry(key, pos, len, at, cid))
+    }
+
+    /** Ищет прогресс просмотра по прямому ключу или по canonicalId (с учётом сезона/серии для сериалов). */
+    fun watchFor(ctx: Context, key: String?, cid: String? = null): WatchEntry? {
+        val wPrefs = if (started) watch else ctx.applicationContext.getSharedPreferences("watch", Context.MODE_PRIVATE)
+        if (!key.isNullOrBlank()) {
+            parseWatch(key, wPrefs.getString(key, null))?.let { return it }
+        }
+        if (cid.isNullOrBlank()) return null
+        val targetEp = if (key != null && '|' in key) ru.suslikovanora.media.core.episodePair(key.substringAfter('|')) else null
+        var best: WatchEntry? = null
+        for ((k, v) in wPrefs.all) {
+            val s = v as? String ?: continue
+            if (!s.endsWith("|$cid")) continue
+            val e = parseWatch(k, s) ?: continue
+            if (e.cid != cid) continue
+            if (targetEp != null) {
+                val ep = if ('|' in k) ru.suslikovanora.media.core.episodePair(k.substringAfter('|')) else null
+                if (ep != targetEp) continue
+            }
+            if (best == null || e.at > best.at) best = e
+        }
+        return best
     }
 
     /**
      * Выбрали дорожку фильма [filmKey] ("m<id>"; null — фильм не из библиотеки, тогда только общий выбор "*").
      * Поле, которое не меняли, — null. Уже записано в "player_ui".
      */
-    fun noteTrack(filmKey: String?, audio: String?, spu: String?, sidecar: String?, alsoAny: Boolean) {
+    fun noteTrack(filmKey: String?, audio: String?, spu: String?, sidecar: String?, alsoAny: Boolean, quality: String? = null, cid: String? = null) {
         if (!started) return
         val now = System.currentTimeMillis()
         val keys = listOfNotNull(filmKey?.takeIf { it.matches(filmKeyRe) }, WatchSync.ANY.takeIf { alsoAny })
-        ui.edit().apply { keys.forEach { putLong("track:at:$it", now) } }.apply()
+        ui.edit().apply {
+            keys.forEach { putLong("track:at:$it", now) }
+            if (filmKey != null && cid != null) putString("track:cid:$filmKey", cid)
+            if (quality != null) {
+                filmKey?.let { putString("vquality:$it", quality) }
+                if (alsoAny) putString("vquality:*", quality)
+                if (cid != null) putString("vquality:c$cid", quality)
+            }
+        }.apply()
         if (!WatchSync.eligible(userId)) return
-        for (k in keys) sync.noteTrack(TrackEntry(k, audio, spu, if (k == WatchSync.ANY) null else sidecar, now))
+        for (k in keys) sync.noteTrack(TrackEntry(k, audio, spu, if (k == WatchSync.ANY) null else sidecar, now, quality, if (k == WatchSync.ANY) null else cid))
     }
 
     /** Синхронизировать сейчас (главный экран снова виден, вошли). */

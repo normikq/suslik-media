@@ -9,6 +9,7 @@
 #include "suslik/core/Trackers.h"
 
 #include <QDateTime>
+#include <algorithm>
 #include <QElapsedTimer>
 #include <QJsonArray>
 #include <QPointer>
@@ -94,7 +95,15 @@ QString Party::stateLine() const {
 }
 
 bool Party::takeStartedByMe(const QString &key) {
-    if (m_startedByMe != key) return false;
+    if (!m_startedByMe) return false;
+    // Движок тикает с ключом выбранного качества, putFilm помнит ключ просмотра: это один и тот же фильм
+    if (*m_startedByMe != key) {
+        const auto &f = m_room.file;
+        bool same = false;
+        if (f && f->key == *m_startedByMe)
+            for (const auto &v : f->variants) if (v.key == key) { same = true; break; }
+        if (!same) return false;
+    }
     m_startedByMe.reset();
     return true;
 }
@@ -190,6 +199,8 @@ void Party::openLink(const QString &link) {
     m_followed.clear();
     m_room = PartyRoom();
     m_reportedBuffering = false;
+    m_sentVariant.clear();
+    m_sentDuration = 0;
     m_outbox.clear();
     emit changed();
     QPointer<Party> self(this);
@@ -203,6 +214,8 @@ void Party::enter(const RoomUpdate &u) {
     m_notice.clear();
     m_clock.reset();
     m_reportedBuffering = false;
+    m_sentVariant.clear();
+    m_sentDuration = 0;
     m_outbox.clear();
     // Свежий снимок: seq другой комнаты не должен прятать состояние этой
     m_room = PartyRoom().merge(u);
@@ -232,6 +245,8 @@ void Party::leave() {
     m_followed.clear();
     m_room = PartyRoom();
     m_reportedBuffering = false;
+    m_sentVariant.clear();
+    m_sentDuration = 0;
     m_outbox.clear();
     log(S("left room %1").arg(id));
     emit changed();
@@ -263,6 +278,75 @@ void Party::reportBuffering(bool loading) {
     log(loading ? S("loading: the room waits") : S("ready"));
     m_outbox << std::make_pair(*m_roomId, PartyProtocol::withClient(PartyProtocol::buffering(loading), m_clientId));
     pump();
+}
+
+void Party::sendVariantChange(const QString &variantKey) {
+    if (!m_roomId) return;
+    m_outbox << std::make_pair(*m_roomId, PartyProtocol::withClient(PartyProtocol::variantChange(variantKey), m_clientId));
+    pump();
+}
+
+void Party::reportVariant(const QString &variantKey, qint64 durationMs, const core::PartyVariant *variant) {
+    if (!m_roomId || variantKey.isEmpty() || durationMs <= 0) return;
+    const QString file = fileKey();
+    if (variantKey == m_sentVariant && durationMs == m_sentDuration && file == m_sentVariantFile) return;
+    m_sentVariant = variantKey;
+    m_sentDuration = durationMs;
+    m_sentVariantFile = file;
+    bool known = !m_room.file || variantKey == m_room.file->key;
+    if (m_room.file && !known)
+        for (const auto &v : m_room.file->variants) if (v.key == variantKey) { known = true; break; }
+    log(S("my version %1, %2 s long").arg(variantKey.section(QLatin1Char('|'), 1).section(QLatin1Char('/'), -1)).arg(durationMs / 1000));
+    m_outbox << std::make_pair(*m_roomId, PartyProtocol::withClient(PartyProtocol::variantChange(variantKey, durationMs, known ? nullptr : variant), m_clientId));
+    pump();
+}
+
+qint64 Party::hostDurationMs() const {
+    for (const auto &m : m_room.members)
+        if (m_room.isHost(m) && m.durationMs) return *m.durationMs;
+    return 0;
+}
+
+QString Party::hostVariantKey() const {
+    for (const auto &m : m_room.members)
+        if (m_room.isHost(m) && m.variantKey) return *m.variantKey;
+    return fileKey();
+}
+
+qint64 Party::shiftFor(const QString &myKey, qint64 myDurationMs) const {
+    if (!inRoom() || isHost()) return 0;
+    // Ещё не отправленная подстройка важнее снимка комнаты (поток мог прийти без неё)
+    if (m_pendingOffset && m_pendingOffset->from == hostVariantKey() && m_pendingOffset->to == myKey) return m_pendingOffset->offsetMs;
+    return core::roomShiftMs(m_room.variantOffsets, hostVariantKey(), hostDurationMs(), myKey, myDurationMs);
+}
+
+void Party::nudgeShift(const QString &myKey, qint64 myDurationMs, qint64 deltaMs) {
+    if (!m_roomId || isHost() || myKey.isEmpty()) return;
+    const QString host = hostVariantKey();
+    if (host.isEmpty() || host == myKey) return;
+    const core::VariantOffset o{host, myKey, shiftFor(myKey, myDurationMs) + deltaMs};
+    // Здесь — сразу (плеер перемотается сам), не дожидаясь сервера
+    core::PartyRoom r = m_room;
+    r.variantOffsets.erase(std::remove_if(r.variantOffsets.begin(), r.variantOffsets.end(), [&](const core::VariantOffset &v) {
+        return (v.from == host && v.to == myKey) || (v.from == myKey && v.to == host);
+    }), r.variantOffsets.end());
+    r.variantOffsets << o;
+    setRoom(r);
+    m_pendingOffset = o;
+    if (!m_offsetTimer.isActive()) {
+        m_offsetTimer.setSingleShot(true);
+        m_offsetTimer.setInterval(800);
+        disconnect(&m_offsetTimer, nullptr, this, nullptr);
+        connect(&m_offsetTimer, &QTimer::timeout, this, [this] {
+            if (!m_roomId || !m_pendingOffset) return;
+            const auto p = *m_pendingOffset;
+            m_pendingOffset.reset();
+            log(S("my version is set %1 ms from the host's").arg(p.offsetMs));
+            m_outbox << std::make_pair(*m_roomId, PartyProtocol::withClient(PartyProtocol::variantOffset(p.from, p.to, p.offsetMs), m_clientId));
+            pump();
+        });
+    }
+    m_offsetTimer.start();
 }
 
 void Party::action(const QJsonObject &body) {

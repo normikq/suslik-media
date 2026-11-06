@@ -9,7 +9,7 @@ process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "suslik-sync-test-"
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { apply, changesSince, sweep, dropMagnet, _reset } = require("../src/services/sync");
+const { apply, changesSince, getProgress, sweep, dropMagnet, _reset } = require("../src/services/sync");
 
 const DAY = 24 * 3600 * 1000;
 const U = "u_100";
@@ -109,4 +109,74 @@ test("sync: a removed torrent leaves the account", () => {
   const left = changesSince(U, 0, now);
   assert.deepEqual(left.watch.map(w => w.key), ["33|a.mkv"]);
   assert.equal(left.tracks.length, 0);
+});
+
+test("sync: канонический прогресс fallback по canonical_id (cid)", () => {
+  _reset();
+  const now = 1_000 * DAY;
+  // Смотрели 30 минут 1080p Remux на ПК
+  apply(U, {
+    watch: [{
+      key: "101|Dune.2021.1080p.BDRemux.mkv",
+      pos: 1800_000,
+      len: 9000_000,
+      cid: "m:dune_2021:theatrical",
+      at: now
+    }]
+  }, now);
+
+  const changes = changesSince(U, 0, now);
+  assert.equal(changes.watch[0].cid, "m:dune_2021:theatrical");
+
+  // Открываем тот же файл: прямое совпадение
+  const direct = getProgress(U, "101|Dune.2021.1080p.BDRemux.mkv", "m:dune_2021:theatrical");
+  assert.equal(direct.pos, 1800_000);
+
+  // Открываем лёгкий 1080p BDRip на смартфоне: ключ другой, но cid совпадает
+  const fallback = getProgress(U, "102|Dune.2021.1080p.BDRip.mkv", "m:dune_2021:theatrical");
+  assert.ok(fallback);
+  assert.equal(fallback.pos, 1800_000);
+  assert.equal(fallback.cid, "m:dune_2021:theatrical");
+});
+
+test("sync: качество и дорожки сериала с fallback по canonical_id (cid)", () => {
+  const { getTracks } = require("../src/services/sync");
+  const now = 1700_000_000_000;
+  apply(U, {
+    tracks: [{
+      key: "m101",
+      audio: "HDRezka",
+      spu: "__off__",
+      quality: "2160p",
+      cid: "s:fallout_2024:season_1",
+      at: now
+    }]
+  }, now);
+
+  const changes = changesSince(U, 0, now);
+  assert.equal(changes.tracks[0].audio, "HDRezka");
+  assert.equal(changes.tracks[0].quality, "2160p");
+  assert.equal(changes.tracks[0].cid, "s:fallout_2024:season_1");
+
+  // Открываем раздачу 1080p того же сериала (m102): fallback по cid
+  const res = getTracks(U, "m102", "s:fallout_2024:season_1");
+  assert.ok(res);
+  assert.equal(res.audio, "HDRezka");
+  assert.equal(res.quality, "2160p");
+  assert.equal(res.cid, "s:fallout_2024:season_1");
+});
+
+test("sync: поиск по cid видит новые записи и забывает удалённые раздачи", () => {
+  _reset();
+  const { getTracks } = require("../src/services/sync");
+  const now = 1_000 * DAY;
+  apply(U, { watch: [{ key: "101|a.mkv", pos: 10, len: 100, at: now - 5, cid: "m:x_2020:default" }] }, now);
+  assert.equal(getProgress(U, "202|b.mkv", "m:x_2020:default").key, "101|a.mkv");
+  // более свежая запись с тем же cid должна вытеснить прежний результат из индекса
+  apply(U, { watch: [{ key: "202|b.mkv", pos: 50, len: 100, at: now - 1, cid: "m:x_2020:default" }] }, now);
+  assert.equal(getProgress(U, "303|c.mkv", "m:x_2020:default").key, "202|b.mkv");
+  apply(U, { tracks: [{ key: "m101", at: now - 2, audio: "ru", spu: null, sidecar: null, cid: "m:x_2020:default" }] }, now);
+  assert.equal(getTracks(U, "m999", "m:x_2020:default").key, "m101");
+  dropMagnet(202);
+  assert.equal(getProgress(U, "303|c.mkv", "m:x_2020:default").key, "101|a.mkv");
 });

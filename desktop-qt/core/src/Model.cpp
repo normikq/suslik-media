@@ -395,7 +395,7 @@ struct VersionKey {
     std::optional<int> year;
     int quality;
     explicit VersionKey(const LibraryItem &i)
-        : item(i), seasons(itemSeasons(i)), part(itemPart(i)), year(releaseYear(i)), quality(qualityScore(i.m.name)) {}
+        : item(i), seasons(itemSeasons(i)), part(itemPart(i)), year(releaseYear(i)), quality(smartQualityScore(i.m.name)) {}
 };
 
 /// Сезоны по порядку (спецвыпуски после, потом без сезона), часть, год, лучшее качество, больший размер. Порядок полный.
@@ -473,6 +473,10 @@ std::optional<AiTitle> parseAiTitle(const QJsonObject *a) {
         if (const QString o = optString(*a, QStringLiteral("original")).trimmed(); !o.isEmpty()) t.original = o;
     if (hasValue(*a, QStringLiteral("year")))
         if (const int y = int(optLong(*a, QStringLiteral("year"))); y >= 1880 && y <= 2100) t.year = y;
+    if (hasValue(*a, QStringLiteral("edition")))
+        if (const QString ed = optString(*a, QStringLiteral("edition")).trimmed(); !ed.isEmpty()) t.edition = ed;
+    if (hasValue(*a, QStringLiteral("canonical_id")))
+        if (const QString cid = optString(*a, QStringLiteral("canonical_id")).trimmed(); !cid.isEmpty()) t.canonicalId = cid;
     return t;
 }
 
@@ -534,6 +538,25 @@ std::optional<int> nameSeason(const QString &name) {
     if (nums.size() != 1) return std::nullopt;
     const int n = *nums.begin();
     return n > 0 ? std::optional<int>(n) : std::nullopt;
+}
+
+std::optional<std::pair<int, int>> episodePair(const QString &path, int defaultSeason) {
+    return parseEpisode(path, defaultSeason);
+}
+
+QString parseEdition(const QString &name) {
+    if (isBlank(name)) return {};
+    static const RE reExt = rx(NB + QStringLiteral(R"((?:extended|ext[\s._-]?cut|расширенн\p{L}*))") + NA, true);
+    static const RE reDc = rx(NB + QStringLiteral(R"((?:director'?s?[\s._-]?cut|dc|режиссерск\p{L}*))") + NA, true);
+    static const RE reUnr = rx(NB + QStringLiteral(R"((?:unrated|uncut|без[\s._-]?цензур\p{L}*))") + NA, true);
+    static const RE reRem = rx(NB + QStringLiteral(R"((?:remaster(?:ed)?|ремастер\p{L}*))") + NA, true);
+    static const RE reTh = rx(NB + QStringLiteral(R"((?:theatrical|театральн\p{L}*))") + NA, true);
+    if (contains(reExt, name)) return QStringLiteral("extended");
+    if (contains(reDc, name)) return QStringLiteral("directors_cut");
+    if (contains(reUnr, name)) return QStringLiteral("unrated");
+    if (contains(reRem, name)) return QStringLiteral("remastered");
+    if (contains(reTh, name)) return QStringLiteral("theatrical");
+    return {};
 }
 
 std::optional<MFile> mainVideo(const Magnet &m) {
@@ -826,6 +849,55 @@ std::optional<int> itemPart(const LibraryItem &item) {
     return std::nullopt;
 }
 
+int smartQualityScore(const QString &name) {
+    // Вызывается на каждую раздачу при каждой группировке версий: шаблоны компилируются один раз, а не на каждый вызов
+    static const auto rx = [](const char *pat) {
+        return QRegularExpression(QString::fromUtf8(pat), QRegularExpression::CaseInsensitiveOption);
+    };
+    static const QRegularExpression re4k = rx(R"((?:^|[^a-z0-9])(?:2160p|4k|uhd)(?![a-z])|(?:^|\D)3840(?!\d))");
+    static const QRegularExpression re1080 = rx(R"((?:^|\D)1080[pi](?![a-z])|(?:^|\D)1920(?!\d))");
+    static const QRegularExpression re720 = rx(R"((?:^|\D)720p(?![a-z])|(?:^|\D)1280(?!\d))");
+    static const QRegularExpression reDv = rx(R"(dolby[\s._-]?vision|dovi|(?:^|[^a-z])dv(?![a-z]))");
+    static const QRegularExpression reHdr10p = rx(R"(hdr10\+|hdr10plus)");
+    static const QRegularExpression reHdr = rx(R"(hdr10|(?:^|[^a-z])hdr(?![a-z]))");
+    static const QRegularExpression re10bit = rx(R"(10[\s._-]?bit|hi10p)");
+    static const QRegularExpression reAtmosDtsx = rx(R"(atmos(?![a-z])|dts[:._-]?x(?![a-z0-9]))");
+    static const QRegularExpression reTruehd = rx(R"(truehd)");
+    static const QRegularExpression reDtshd = rx(R"(dts[\s._-]?hd)");
+    static const QRegularExpression reDtsDdp = rx(R"((?:^|[^a-z])dts(?![a-z])|dd\+|(?:^|[^a-z])ddp(?![a-z])|(?:^|[^a-z])e[\s._-]?ac[\s._-]?3(?!\d))");
+    static const QRegularExpression reAc3 = rx(R"((?:^|[^a-z])ac[\s._-]?3(?!\d)|(?:^|[^a-z])dd[\s._-]?5\.1|(?:^|[^\d.])5\.1(?!\d))");
+    static const QRegularExpression reRemux = rx(R"(remux)");
+    static const QRegularExpression reBluray = rx(R"(bdrip|brrip|blu[\s._-]?ray)");
+    static const QRegularExpression reWeb = rx(R"((?:^|[^a-z])web(?:[\s._-]?(?:dl|rip))?(?![a-z]))");
+
+    const QString l = name.toLower();
+
+    int rScore = 100;
+    if (l.contains(re4k)) rScore = 400;
+    else if (l.contains(re1080)) rScore = 300;
+    else if (l.contains(re720)) rScore = 200;
+
+    int vScore = 0;
+    if (l.contains(reDv)) vScore = 40;
+    else if (l.contains(reHdr10p)) vScore = 30;
+    else if (l.contains(reHdr)) vScore = 20;
+    else if (l.contains(re10bit)) vScore = 10;
+
+    int aScore = 0;
+    if (l.contains(reAtmosDtsx)) aScore = 40;
+    else if (l.contains(reTruehd)) aScore = 35;
+    else if (l.contains(reDtshd)) aScore = 30;
+    else if (l.contains(reDtsDdp)) aScore = 20;
+    else if (l.contains(reAc3)) aScore = 10;
+
+    int sScore = 0;
+    if (l.contains(reRemux)) sScore = 25;
+    else if (l.contains(reBluray)) sScore = 15;
+    else if (l.contains(reWeb)) sScore = 10;
+
+    return rScore + vScore + aScore + sScore;
+}
+
 int qualityScore(const QString &name) {
     const QString l = name.toLower();
     auto has = [&](const char *s) { return l.contains(QLatin1String(s)); };
@@ -939,16 +1011,25 @@ std::pair<QList<LibraryItem>, QHash<qint64, QList<LibraryItem>>> groupVersions(c
         const QString &base = it.baseTitle;
         if (it.playable.isNone() || !it.m.ready() || isBlank(base)) { shown << it; continue; }
         const QString kind = it.playable.isMovie() ? QStringLiteral("m") : QStringLiteral("s");
+        QString ed;
+        if (const AiTitle *ai = it.m.acceptedAi(); ai && ai->edition && !ai->edition->isEmpty()) {
+            const QString e = *ai->edition;
+            if (e == QLatin1String("theatrical") || e == QLatin1String("extended") || e == QLatin1String("directors_cut") ||
+                e == QLatin1String("unrated") || e == QLatin1String("remastered"))
+                ed = e;
+        }
+        if (ed.isEmpty()) ed = parseEdition(it.m.name);
+        const QString edKey = ed.isEmpty() ? QString() : (QLatin1Char('|') + ed);
         QStringList keys;
         if (posterOf)
-            if (auto p = posterOf(it)) keys << kind + QStringLiteral("|poster|") + *p;
+            if (auto p = posterOf(it)) keys << kind + QStringLiteral("|poster|") + *p + edKey;
         if (kind == QLatin1String("m")) {
             QString year;
             if (const AiTitle *ai = it.m.acceptedAi(); ai && ai->year) year = QString::number(*ai->year);
             else if (const auto y = YEAR_IN_NAME.match(it.m.name); y.hasMatch()) year = y.captured(0);
-            keys << QStringLiteral("m|") + titleKey(base) + QLatin1Char('|') + year;
+            keys << QStringLiteral("m|") + titleKey(base) + QLatin1Char('|') + year + edKey;
         } else {
-            keys << QStringLiteral("s|") + titleKey(base);
+            keys << QStringLiteral("s|") + titleKey(base) + edKey;
         }
         int group = -1;
         for (const QString &k : keys)

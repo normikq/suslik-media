@@ -34,6 +34,8 @@ struct AiTitle {
     bool stale = false;
     std::optional<QString> original;
     std::optional<int> year;
+    std::optional<QString> edition;
+    std::optional<QString> canonicalId;
 
     bool accepted() const { return status == QLatin1String("accepted") && !base.trimmed().isEmpty(); }
     /// «Dune (2021)»: сервер берёт результат TMDB этого года. Пусто без оригинального названия.
@@ -112,6 +114,7 @@ struct Playable {
     bool isNone() const { return kind == Kind::None; }
     bool isMovie() const { return kind == Kind::Movie; }
     bool isSeries() const { return kind == Kind::Series; }
+    std::optional<MFile> movieFile() const { return isMovie() && !file.path.isEmpty() ? std::optional<MFile>(file) : std::nullopt; }
     bool operator==(const Playable &) const = default;
 };
 
@@ -129,6 +132,8 @@ struct LibraryItem {
 
 /// Сезон, который называет раздача, если она называет ровно один.
 std::optional<int> nameSeason(const QString &name);
+std::optional<std::pair<int, int>> episodePair(const QString &path, int defaultSeason = 1);
+QString parseEdition(const QString &name);
 std::optional<MFile> mainVideo(const Magnet &m);
 /// Что играть: по файлам, потом вид и сезон, принятые от ИИ.
 Playable buildPlayable(const Magnet &m);
@@ -170,14 +175,32 @@ struct VersionSection {
     QList<LibraryItem> items;
 };
 
+struct MediaVariant {
+    QString key;
+    qint64 adId = 0;
+    QString label;
+    QString resolution;
+    QString sourceType;
+    QString videoTech;
+    QString audioTech;
+    double bitrateMbps = 0.0;
+    qint64 sizeBytes = 0;
+    qint64 durationSec = 0;
+    qint64 offsetMs = 0;
+    int score = 0;
+    QStringList hardwareFlags;
+    bool operator==(const MediaVariant &) const = default;
+};
+
 std::optional<int> extractYear(const QString &name);
 std::optional<int> releaseYear(const LibraryItem &item);
 std::optional<int> itemPart(const LibraryItem &item);
 int qualityScore(const QString &name);
+int smartQualityScore(const QString &name);
 std::optional<std::pair<int, int>> itemSeasons(const LibraryItem &item);
 QList<LibraryItem> sortVersions(const QList<LibraryItem> &versions);
 QList<VersionSection> versionSections(const QList<LibraryItem> &versions);
-QString versionLine(const LibraryItem &v, bool inSection);
+QString versionLine(const LibraryItem &v, bool inSection = false);
 
 using PosterOf = std::function<std::optional<QString>(const LibraryItem &)>;
 /// Один фильм или сериал, добавленный несколько раз: одна плитка. second — id показанного → все версии по порядку.

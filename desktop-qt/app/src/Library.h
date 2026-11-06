@@ -1,6 +1,7 @@
 #pragma once
 #include "suslik/core/Auth.h"
 #include "suslik/core/Model.h"
+#include "suslik/core/Party.h"
 
 #include <QHash>
 #include <QJsonObject>
@@ -67,6 +68,10 @@ public:
     ApiClient &api() const { return m_api; }
     const QList<LibraryItem> &items() const { return m_items; }
     const LibraryItem *item(qint64 id) const;
+    /// Все версии одного фильма / сериала, сгруппированные groupVersions.
+    QList<core::LibraryItem> versionsOf(qint64 magnetId) const;
+    /// Профиль медиафайла от сервера (/api/tags profiles).
+    std::optional<core::PartyVariant> serverProfile(qint64 magnetId) const;
     /// Раздачи только с озвучкой: в медиатеке их нет, предпросмотру «Озвучки» нужны их файлы.
     const QList<Magnet> &voiceOvers() const { return m_voiceOvers; }
 
@@ -108,6 +113,8 @@ public:
     Q_INVOKABLE QVariantMap categoryCounts(bool mine) const;
     /// Есть ли в медиатеке этот файл раздачи (фильм комнаты «Вместе» по ключу magnetId|путь).
     Q_INVOKABLE bool hasFile(qint64 magnetId, const QString &path) const;
+    /// Есть ли в медиатеке этот фильм (по ключу или каноническому ID, включая другие варианты качества).
+    Q_INVOKABLE bool hasMatchingFilm(const QString &key, const QString &canonicalId = QString()) const;
     /// Код состояния раздачи: -1 — нет в медиатеке, <4 — качается, 4 — готова, >=5 — ошибка.
     Q_INVOKABLE int magnetStatusCode(qint64 magnetId) const;
     /// Текстовый статус раздачи из облака ("Downloading", "Ready", "Error" и т.д.).
@@ -132,11 +139,16 @@ public:
     // ---- строка о видео («1920×1080 · 12 Мбит/с») ----
     std::optional<QString> cachedMediaLine(qint64 id, const MFile &f) const;
     void requestMediaLine(qint64 id, const MFile &f);
+    std::pair<int, int> cachedMediaDimensions(const QString &key) const;
+    std::pair<int, int> cachedMediaDimensions(qint64 id, const QString &path) const;
+    void saveMediaDimensions(const QString &key, int width, int height);
+    void saveMediaDimensions(qint64 id, const QString &path, int width, int height);
 
     // ---- прогресс ----
     std::optional<WatchInfo> watchInfo(const QString &key) const;
+    std::optional<WatchInfo> watchInfoWithFallback(const QString &key, const std::optional<QString> &cid = std::nullopt) const;
     /// Плеер: место в файле (в медиатеку и в облако).
-    void noteWatch(const QString &key, qint64 pos, qint64 len);
+    void noteWatch(const QString &key, qint64 pos, qint64 len, const std::optional<QString> &cid = std::nullopt);
     CloudSync &sync() const { return m_sync; }
     std::optional<std::pair<MFile, WatchInfo>> lastWatched(const Magnet &m) const;
     /// Раздачи, у которых что-то смотрели не раньше since (мс): один проход по прогрессу вместо обхода всех файлов
@@ -231,6 +243,10 @@ private:
     std::shared_ptr<std::function<void()>> m_classifyStep;
     std::vector<std::function<void()>> m_refreshWaiters;
     int m_tagsRound = 0;
+    QHash<qint64, core::PartyVariant> m_serverProfiles;
+    mutable bool m_versionsBuilt = false;
+    mutable QHash<qint64, QList<LibraryItem>> m_versionsMap;
+    mutable QHash<qint64, qint64> m_versionRoot;
 };
 
 } // namespace suslik::app

@@ -248,7 +248,19 @@ class MainActivity : ComponentActivity() {
             if (roomKey == Party.followed) return@LaunchedEffect
             // The host went on within the open playlist: the player follows by itself (PlayerPartySync)
             if (roomKey in Party.playingKeys) { Party.followed = roomKey; return@LaunchedEffect }
+            val rf = Party.file
             val t = ru.suslikovanora.media.library.targetForKey(store.items, roomKey)
+                ?: rf?.let { fileRef ->
+                    store.items.firstNotNullOfOrNull { item ->
+                        val canMatch = (fileRef.canonicalId != null && item.m.aiTitle?.canonicalId == fileRef.canonicalId) ||
+                                fileRef.variants.any { v -> v.key.substringBefore('|') == item.m.id.toString() }
+                        if (canMatch) {
+                            val f = item.m.files.firstOrNull { file -> fileRef.matches(ru.suslikovanora.media.core.watchKey(item.m.id, file)) }
+                                ?: item.m.files.firstOrNull { !it.isFolder }
+                            f?.let { ru.suslikovanora.media.library.targetForKey(store.items, ru.suslikovanora.media.core.watchKey(item.m.id, it)) }
+                        } else null
+                    }
+                }
             if (t == null) {
                 if (lastTriedKey != roomKey) {
                     lastTriedKey = roomKey
@@ -326,8 +338,8 @@ class MainActivity : ComponentActivity() {
                     store = store,
                     onDismiss = { followTarget = null },
                     // the room's place at the moment the links are ready, not when the sheet appeared
-                    autoStartMs = { if (Party.file?.key == key) Party.targetMs() else 0L },
-                    onPlay = { r -> followTarget = null; handlePlay(r.url, r.title, r.playlist, r.subUrls, r.watchKeys, r.audioUrls, r.fromStart, r.episodeSides, r.customAudio, r.watchKey, r.collection, r.markers, r.startMs, r.roomTitles) }
+                    autoStartMs = { if (Party.file?.matches(key) == true) Party.targetMs() else 0L },
+                    onPlay = { r -> followTarget = null; handlePlay(r.url, r.title, r.playlist, r.subUrls, r.watchKeys, r.audioUrls, r.fromStart, r.episodeSides, r.customAudio, r.watchKey, r.collection, r.markers, r.startMs, r.roomTitles, r.variants, r.canonicalId) }
                 )
             }
             playTarget?.let { t ->
@@ -335,7 +347,7 @@ class MainActivity : ComponentActivity() {
                     initial = t,
                     store = store,
                     onDismiss = { playTarget = null },
-                    onPlay = { r -> playTarget = null; handlePlay(r.url, r.title, r.playlist, r.subUrls, r.watchKeys, r.audioUrls, r.fromStart, r.episodeSides, r.customAudio, r.watchKey, r.collection, r.markers, roomTitles = r.roomTitles) }
+                    onPlay = { r -> playTarget = null; handlePlay(r.url, r.title, r.playlist, r.subUrls, r.watchKeys, r.audioUrls, r.fromStart, r.episodeSides, r.customAudio, r.watchKey, r.collection, r.markers, roomTitles = r.roomTitles, variants = r.variants, canonicalId = r.canonicalId) }
                 )
             }
         }
@@ -359,7 +371,9 @@ class MainActivity : ComponentActivity() {
         url: String, title: String?, playlist: String? = null,
         subUrls: List<String> = emptyList(), watchKeys: List<String> = emptyList(), audioUrls: List<String> = emptyList(),
         fromStart: Boolean = false, episodeSides: String? = null, customAudio: String? = null, watchKey: String? = null,
-        collection: Boolean = false, markers: String? = null, startMs: Long? = null, roomTitles: List<String> = emptyList()
+        collection: Boolean = false, markers: String? = null, startMs: Long? = null, roomTitles: List<String> = emptyList(),
+        variants: List<ru.suslikovanora.media.core.party.PartyVariant> = emptyList(),
+        canonicalId: String? = null
     ) {
         val current = watchKey ?: watchKeys.firstOrNull()
         val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return
@@ -368,7 +382,7 @@ class MainActivity : ComponentActivity() {
             return
         }
         // In a room, the host's film becomes the room's film (a guest's other film just plays for them alone)
-        current?.let { key -> if (Party.isHost) Party.putFilm(ru.suslikovanora.media.core.party.PartyFileRef(key, roomTitles.getOrNull(watchKeys.indexOf(key)) ?: title ?: tr("main.video"))) }
+        current?.let { key -> if (Party.isHost) Party.putFilm(ru.suslikovanora.media.core.party.PartyFileRef(key, roomTitles.getOrNull(watchKeys.indexOf(key)) ?: title ?: tr("main.video"), canonicalId = canonicalId, variants = variants)) }
         // A playlist may only come from our own site: it is fetched without any credentials.
         val playlistUri = playlist?.let { runCatching { Uri.parse(it) }.getOrNull() }
             ?.takeIf { it.scheme == "https" && ru.suslikovanora.media.core.SiteAddress.isOwn(it.toString(), ru.suslikovanora.media.net.Api.BASE) }
@@ -376,6 +390,7 @@ class MainActivity : ComponentActivity() {
             addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP) // a second tap reuses the running player instead of stacking another
             putExtra(PlayerActivity.EXTRA_URL, uri.toString())
             putExtra(PlayerActivity.EXTRA_TITLE, title ?: tr("main.video"))
+            canonicalId?.let { putExtra(ru.suslikovanora.media.player.PlayerExtras.CANONICAL_ID, it) }
             playlistUri?.let { putExtra(PlayerActivity.EXTRA_PLAYLIST, it.toString()) }
             if (subUrls.isNotEmpty()) putStringArrayListExtra(PlayerActivity.EXTRA_SUB_URLS, ArrayList(subUrls))
             if (watchKeys.isNotEmpty()) putStringArrayListExtra(PlayerActivity.EXTRA_WATCH_KEYS, ArrayList(watchKeys))
@@ -388,6 +403,26 @@ class MainActivity : ComponentActivity() {
             putExtra(ru.suslikovanora.media.player.PlayerExtras.MARKERS, markers)
             putStringArrayListExtra(ru.suslikovanora.media.player.PlayerExtras.ROOM_TITLES, ArrayList(roomTitles))
             putExtra(ru.suslikovanora.media.player.PlayerExtras.START_MS, startMs ?: -1L)
+            if (variants.isNotEmpty()) {
+                val arr = org.json.JSONArray()
+                for (v in variants) {
+                    arr.put(org.json.JSONObject().apply {
+                        put("key", v.key)
+                        put("label", v.label)
+                        put("quality", v.quality)
+                        put("audio", v.audio)
+                        put("bitrate", v.bitrate)
+                        put("offset_ms", v.offsetMs)
+                        put("score", v.score)
+                        if (v.hardwareFlags.isNotEmpty()) {
+                            val hf = org.json.JSONArray()
+                            for (f in v.hardwareFlags) hf.put(f)
+                            put("hardware_flags", hf)
+                        }
+                    })
+                }
+                putExtra(ru.suslikovanora.media.player.PlayerExtras.VARIANTS, arr.toString())
+            }
         })
     }
 

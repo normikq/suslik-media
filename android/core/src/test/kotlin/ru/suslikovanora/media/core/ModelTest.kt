@@ -663,4 +663,58 @@ class ModelTest {
         val accepted = prepareItems(parseLibrary(aiLibrary("accepted")))[1]
         assertEquals("Тачки 2", tileTitle(accepted) { ru[it] ?: "Другое" })
     }
+
+    @Test
+    fun smartQualityScoreAndQualityScore() {
+        assertEquals(4, qualityScore("Movie.2160p.mkv"))
+        assertEquals(3, qualityScore("Movie.1080p.mkv"))
+        assertEquals(2, qualityScore("Movie.720p.mkv"))
+        assertEquals(1, qualityScore("Movie.480p.mkv"))
+        assertEquals(1, qualityScore("Movie.DVDRip.mkv"))
+        assertEquals(0, qualityScore("Movie.Unknown.mkv"))
+
+        assertEquals(505, smartQualityScore("Dune.2021.2160p.UHD.Remux.DV.TrueHD.Atmos.mkv"))
+        assertEquals(365, smartQualityScore("Movie.1080p.BDRemux.10-bit.DTS-HD.MA.mkv"))
+        assertEquals(325, smartQualityScore("Film.1080p.BDRip.AC3.5.1.mkv"))
+        assertEquals(230, smartQualityScore("Series.S01E01.720p.WEB-DL.DDP5.1.mkv"))
+        assertEquals(485, smartQualityScore("Movie.2160p.HDR10+.DTS:X.BDRip.mkv"))
+        assertEquals(100, smartQualityScore("Old.Show.480p.mkv"))
+        assertEquals(100, smartQualityScore("network.webcam.4kilo.dtswiss.mkv"))
+        assertEquals(320, smartQualityScore("Movie_1080p_x264_DTS5.1.mkv"))
+        assertEquals(335, smartQualityScore("Film.1080p.BluRay.dts.x264.mkv"))
+        assertEquals(210, smartQualityScore("Atmosphere.2020.720p.WEB.mkv"))
+        assertEquals(300, smartQualityScore("Film.1920x1080.HDRip.mkv"))
+
+        val file = MFile(0, "Dune.2021.mkv", "Dune.2021.mkv", false, 45000000000L, "https://link")
+        val m = Magnet(42L, "Dune.2021.2160p.UHD.Remux.DV.TrueHD.Atmos.mkv", "Ready", 4, 45000000000L, 45000000000L, listOf(file), true)
+        val item = prepareItems(listOf(m)).first()
+        val v = buildPartyVariant(item, file)
+        assertEquals("42|Dune.2021.mkv", v.key)
+        assertEquals("4K", v.quality)
+        assertEquals("TrueHD Atmos", v.audio)
+        assertEquals(505, v.score)
+        assertEquals(listOf("dv"), v.hardwareFlags)
+        assertEquals(true, v.bitrate > 0.0)
+        assertEquals(true, v.label.contains("4K"))
+        assertEquals(false, v.label.contains("Мбит/с"))
+
+        val prof = ru.suslikovanora.media.core.party.PartyVariant(
+            key = "42|Dune.2021.mkv",
+            label = "",
+            quality = "4K",
+            audio = "TrueHD Atmos",
+            bitrate = 54.5,
+            offsetMs = 0L,
+            score = 505
+        )
+        val vProf = buildPartyVariant(item, file, prof)
+        assertEquals(54.5, vProf.bitrate, 0.001)
+
+        val fUnknown = MFile(0, "video.mkv", "video.mkv", false, 1000L, null)
+        val mUnknown = Magnet(43L, "SomeVideo", "Ready", 4, 1000L, 1000L, listOf(fUnknown), true)
+        val itemUnknown = prepareItems(listOf(mUnknown)).first()
+        val vUnknown = buildPartyVariant(itemUnknown, fUnknown)
+        assertEquals("", vUnknown.quality)
+        assertEquals(false, vUnknown.label.contains("1080p"))
+    }
 }

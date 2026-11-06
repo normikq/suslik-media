@@ -158,6 +158,7 @@ async function prepare(req, res, { allowTorrent, offsetMs }) {
 
   let movie = null;
   let match = null;
+  let targetMovies = [];
   if (movieMagnetId) {
     const hit = magnets.find(m => m.id === movieMagnetId);
     if (!hit) {
@@ -172,6 +173,25 @@ async function prepare(req, res, { allowTorrent, offsetMs }) {
     if (!files) return null;
     movie = { id: movieMagnetId, name: hit.name || "", files };
     match = ca.matchToMovie(audioFiles, movie, { explicit: true });
+    if (match.ok) {
+      targetMovies.push({ id: hit.id, name: hit.name || "", pairs: match.pairs });
+      const companions = magnets.filter(m => m.statusCode === 4 && m.id !== movieMagnetId && m.id !== audioMagnetId && ca.isSameMovieRelease(m, hit));
+      for (const comp of companions) {
+        let compFiles = comp.files;
+        if (!compFiles) {
+          try {
+            const list = await getMagnetFileList(comp.id);
+            if (list && list.some(f => f.type === "file")) compFiles = list;
+          } catch {}
+        }
+        if (compFiles && compFiles.length) {
+          const compMatch = ca.matchToMovie(audioFiles, { id: comp.id, name: comp.name || "", files: compFiles }, { explicit: true });
+          if (compMatch.ok) {
+            targetMovies.push({ id: comp.id, name: comp.name || "", pairs: compMatch.pairs });
+          }
+        }
+      }
+    }
   } else {
     const first = audioFiles.map(f => ({ f, p: ca.parseAudioName(f.path) })).find(x => x.p.title);
     if (!first) {
@@ -186,24 +206,39 @@ async function prepare(req, res, { allowTorrent, offsetMs }) {
       });
       return null;
     }
-    const results = candidates.map(m => ({ m, r: ca.matchToMovie(audioFiles, m) }));
-    const good = results.filter(x => x.r.ok);
     const allMatches = candidates.map(m => ({ m, r: ca.matchToMovie(audioFiles, m, { explicit: true }) }));
     const allGood = allMatches.filter(x => x.r.ok);
-    if (allGood.length > 1) {
-      fail(res, 409, "AMBIGUOUS", "Подходит несколько раздач с этим фильмом. Выберите нужную.", {
-        candidates: allGood.map(x => ({ id: x.m.id, name: x.m.name }))
-      });
-      return null;
+    if (allGood.length === 0) {
+      const chosen = allMatches[0];
+      movie = { id: chosen.m.id, name: chosen.m.name, files: chosen.m.files };
+      match = chosen.r;
+    } else {
+      const distinctFilms = [];
+      for (const item of allGood) {
+        if (!distinctFilms.some(df => ca.isSameMovieRelease(df.m, item.m))) {
+          distinctFilms.push(item);
+        }
+      }
+      if (distinctFilms.length > 1) {
+        fail(res, 409, "AMBIGUOUS", "Подходит несколько разных фильмов из библиотеки. Выберите нужный.", {
+          candidates: distinctFilms.map(x => ({ id: x.m.id, name: x.m.name }))
+        });
+        return null;
+      }
+      const chosen = allGood[0];
+      movie = { id: chosen.m.id, name: chosen.m.name, files: chosen.m.files };
+      match = chosen.r;
+      targetMovies = allGood.map(x => ({ id: x.m.id, name: x.m.name, pairs: x.r.pairs }));
     }
-    const chosen = good[0] || allGood[0] || results[0];
-    movie = { id: chosen.m.id, name: chosen.m.name, files: chosen.m.files };
-    match = chosen.r;
   }
 
   if (!match.ok) {
     fail(res, 422, match.errors[0].code, match.errors[0].message, { errors: match.errors, movieMagnetId: movie.id });
     return null;
+  }
+
+  if (targetMovies.length === 0 && movie && match.ok) {
+    targetMovies.push({ id: movie.id, name: movie.name || "", pairs: match.pairs });
   }
 
   // У .torrent ссылок на файлы нет: длительность сверится при привязке. Админ может пропустить сверку (ignoreDuration).
@@ -222,7 +257,7 @@ async function prepare(req, res, { allowTorrent, offsetMs }) {
     warnings.push(...d.warnings);
     durations = d.checked;
   }
-  return { movieMagnetId: movie.id, audioMagnetId, fromTorrent: isTorrent, pairs: match.pairs, durations, warnings };
+  return { movieMagnetId: movie.id, targetMovies, audioMagnetId, fromTorrent: isTorrent, pairs: match.pairs, durations, warnings };
 }
 
 const torrentBody = express.raw({ type: "application/x-bittorrent", limit: "1mb" });
@@ -236,6 +271,7 @@ router.post("/api/custom-audio/check", requireLogin, apiLimiter, torrentBody, as
   res.json({
     ok: true,
     movieMagnetId: s.movieMagnetId,
+    targetMovies: s.targetMovies.map(tm => ({ id: tm.id, name: tm.name, pairsCount: tm.pairs.length })),
     audioMagnetId: s.audioMagnetId,
     fromTorrent: s.fromTorrent,
     attachable: !s.fromTorrent,
@@ -260,19 +296,26 @@ router.post("/api/custom-audio/attach", requireLogin, apiLimiter, async (req, re
   const s = await prepare(req, res, { allowTorrent: false, offsetMs: override.offsetMs });
   if (!s) return;
   try {
-    const { created, existing } = ca.addTracks({
-      movieMagnetId: s.movieMagnetId,
-      audioMagnetId: s.audioMagnetId,
-      pairs: s.pairs,
-      author: authorOf(req, res),
-      override
-    });
+    const allCreated = [];
+    const allExisting = [];
+    for (const tm of s.targetMovies) {
+      const { created, existing } = ca.addTracks({
+        movieMagnetId: tm.id,
+        audioMagnetId: s.audioMagnetId,
+        pairs: tm.pairs,
+        author: authorOf(req, res),
+        override
+      });
+      allCreated.push(...created);
+      allExisting.push(...existing);
+    }
     res.set("Cache-Control", "no-store");
-    res.status(created.length ? 201 : 200).json({
+    res.status(allCreated.length ? 201 : 200).json({
       ok: true,
       movieMagnetId: s.movieMagnetId,
-      created: created.map(t => publicTrack(t, req)),
-      existing: existing.map(t => publicTrack(t, req)),
+      targetMovies: s.targetMovies.map(tm => ({ id: tm.id, name: tm.name, pairsCount: tm.pairs.length })),
+      created: allCreated.map(t => publicTrack(t, req)),
+      existing: allExisting.map(t => publicTrack(t, req)),
       warnings: s.warnings
     });
   } catch (err) {
@@ -310,8 +353,9 @@ router.get("/api/custom-audio/:magnetId", requireLogin, apiLimiter, async (req, 
   const movieMagnetId = magnetIdOf(req.params.magnetId);
   if (!movieMagnetId) return fail(res, 400, "BAD_REQUEST", "Некорректный идентификатор magnet-ссылки.");
   markOpened(movieMagnetId);
+  const videoPath = typeof req.query.videoPath === "string" ? req.query.videoPath : undefined;
   // Сбой одной раздачи убирает только её дорожки; 502 — лишь если не получили ни одного списка
-  const { items, failed } = await ca.trackLinks(movieMagnetId);
+  const { items, failed } = await ca.trackLinks(movieMagnetId, videoPath);
   if (failed) return fail(res, 502, "UPSTREAM", "Не удалось получить список файлов озвучки. Попробуйте ещё раз.");
   const expires = String(Math.floor(Date.now() / 1000) + config.MIRROR_TTL);
   const out = items.map(({ track: t, link }) => {

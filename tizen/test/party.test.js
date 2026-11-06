@@ -2,6 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
+require('../js/model.js');
 const C = require('../js/partycore.js');
 const P = C.protocol, R = C.room;
 
@@ -40,6 +41,32 @@ test('parseRoom и события потока', () => {
   assert.equal(P.parseEventLine('data: {oops'), null);
   const left = P.parseEvent(JSON.stringify({ event: 'member_left', data: { key: 'k2' } }));
   assert.deepEqual(left, { type: 'member_left', key: 'k2' });
+
+  const roomWithVariants = P.parseRoom(roomJson(4, '101|dune.mkv', {
+    file: {
+      key: '101|dune.mkv',
+      name: 'Дюна',
+      canonical_id: 'm:dune_2021:theatrical',
+      edition: 'theatrical',
+      variants: [
+        { key: '101|dune.mkv', label: '4K', quality: '4K', audio: 'TrueHD Atmos', bitrate: 48.2, offset_ms: 0 },
+        { key: '102|dune_1080.mkv', label: '1080p', quality: '1080p', audio: 'AC3 5.1', bitrate: 8.1, offset_ms: 0 }
+      ]
+    },
+    members: [{ key: 'k1', id: 'u_1', name: 'Аня', variant_key: '101|dune.mkv' }]
+  }));
+  assert.equal(roomWithVariants.file.canonicalId, 'm:dune_2021:theatrical');
+  assert.equal(roomWithVariants.file.edition, 'theatrical');
+  assert.equal(roomWithVariants.file.variants.length, 2);
+  assert.equal(roomWithVariants.members[0].variantKey, '101|dune.mkv');
+  assert.equal(roomWithVariants.file.matches('102|dune_1080.mkv'), true);
+  assert.equal(roomWithVariants.file.matches('999|other.mkv', 'm:dune_2021:theatrical'), true);
+  assert.equal(roomWithVariants.file.matches('999|other.mkv', 'm:other:default'), false);
+
+  // change_file несёт canonical_id, edition и варианты (имена полей сервера)
+  const sent = P.changeFile(P.fileRef('101|dune.mkv', 'Дюна', 'm:dune_2021:theatrical', 'theatrical', [{ key: '101|dune.mkv' }]));
+  assert.deepEqual(sent, { type: 'change_file', file: { key: '101|dune.mkv', name: 'Дюна', ad_id: 101,
+    canonical_id: 'm:dune_2021:theatrical', edition: 'theatrical', variants: [{ key: '101|dune.mkv' }] } });
 });
 
 test('merge: состояние только новее по seq; фильм ведущего держится до подтверждения', () => {
@@ -161,4 +188,49 @@ test('clearFile: ведущий закрыл фильм — старый отв�
   assert.equal(r.file, null);
   assert.equal(r.state.seq, 7);
   assert.deepEqual(P.closeFile(), { type: 'change_file', file: null });
+});
+
+test('variantChange и buffering: формирование команд протокола', () => {
+  assert.deepEqual(P.variantChange('104921|Dune.1080p.mkv'), {
+    type: 'variant_change',
+    variant_key: '104921|Dune.1080p.mkv'
+  });
+  assert.deepEqual(P.buffering(true), { type: 'buffering', buffering: true });
+});
+
+test('resolveIndex: те же случаи, что в PartyProtocolTest.kt и PartyTest.cpp', () => {
+  const keys = ['10|Show/S01E01.mkv', '10|Show/S01E02.mkv'];
+  const cid = 's:show_s1:default';
+  const ref = (k, c, vs) => C.protocol.fileRef(k, '', c, null, vs);
+  assert.equal(ref('10|Show/S01E02.mkv').resolveIndex(keys, null), 1);
+  assert.equal(ref('20|Show.WEB/S01E02.mkv', cid).resolveIndex(keys, cid), 1);
+  assert.equal(ref('20|Show.WEB/S01E02.mkv', cid).resolveIndex(keys, 's:other'), -1);
+  assert.equal(ref('20|Other/S01E01.mkv', 's:other').resolveIndex(keys, cid), -1);
+  assert.equal(ref('20|Show.WEB/S01E02.mkv', null, [{ key: '10|Show/S01E01.mkv' }]).resolveIndex(keys, null), 0);
+  assert.equal(ref('20|Show.WEB/S01E02.mkv').resolveIndex(keys, null, true), 1);
+  assert.equal(ref('30|a.mkv').resolveIndex(keys, null), -1);
+});
+
+// Те же числа, что в desktop-qt/tests/PartyTest.cpp, PartyProtocolTest.kt и website/test/variant-url.test.js
+test('timelineShiftMs: сдвиг по разнице длин раздач, длина участника и variant_change', () => {
+  assert.equal(C.timelineShiftMs(6021312, 6006805), 14507);
+  assert.equal(C.timelineShiftMs(6006805, 6021312), -14507);
+  assert.equal(C.timelineShiftMs(6000500, 6000000), 0);
+  assert.equal(C.timelineShiftMs(9000000, 6000000), 0);
+  assert.equal(C.timelineShiftMs(6000000, 0), 0);
+  const u = P.parseRoom({ members: [{ key: 'k', id: 'u', name: 'A', duration_ms: 6006805 }, { key: 'k2', id: 'v', name: 'B' }] });
+  assert.equal(u.members[0].durationMs, 6006805);
+  assert.equal(u.members[1].durationMs, null);
+  assert.deepEqual(P.variantChange('1|a.mkv', 6006805), { type: 'variant_change', variant_key: '1|a.mkv', duration_ms: 6006805 });
+  assert.deepEqual(P.variantChange('1|a.mkv'), { type: 'variant_change', variant_key: '1|a.mkv' });
+});
+
+test('roomShiftMs: сохранённая подстройка пары важнее разницы длин, в обе стороны', () => {
+  const saved = P.parseRoom({ variant_offsets: [{ from: '1|A.mkv', to: '2|B.mkv', offset_ms: 18200 }] }).variantOffsets;
+  assert.equal(C.roomShiftMs(saved, '1|A.mkv', 6006805, '2|B.mkv', 6021312), 18200);
+  assert.equal(C.roomShiftMs(saved, '2|B.mkv', 6021312, '1|A.mkv', 6006805), -18200);
+  assert.equal(C.roomShiftMs(saved, '1|A.mkv', 6006805, '3|C.mkv', 6021312), 14507);
+  assert.equal(C.roomShiftMs(saved, '1|A.mkv', 6006805, '1|A.mkv', 6006805), 0);
+  const r = R.merge(R.merge({ members: [], state: { seq: 0 }, variantOffsets: [] }, { members: null, variantOffsets: saved, state: null }), { members: null, state: null });
+  assert.equal(r.variantOffsets.length, 1);
 });

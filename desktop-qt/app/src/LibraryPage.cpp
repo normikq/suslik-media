@@ -1,5 +1,6 @@
 #include "LibraryPage.h"
 
+#include "suslik/core/Store.h"
 #include "suslik/core/Strings.h"
 
 #include <QDateTime>
@@ -74,34 +75,67 @@ QString itemYear(const LibraryItem &item) {
     return S("2024");
 }
 
-std::pair<QString, QString> itemSpecs(const LibraryItem &item, const std::optional<QString> &media) {
+std::pair<QString, QString> itemSpecs(
+    const LibraryItem &item,
+    const std::optional<QString> &media,
+    const std::optional<core::PartyVariant> &serverProf,
+    const std::pair<int, int> &dims
+) {
     const QString name = item.m.name.toLower();
     const QString str = media.value_or(QString()).toLower();
     auto has = [&](const char *a) { return str.contains(S(a)); };
     auto hasN = [&](const char *a) { return name.contains(S(a)); };
+
     QString quality;
-    if (has("3840") || has("2160") || hasN("2160p") || hasN("4k")) quality = S("4K");
-    else if (has("1920") || has("1080") || hasN("1080p")) quality = S("1080p");
-    else if (has("1280") || has("720") || hasN("720p")) quality = S("720p");
-    else quality = S("1080p");
+    if (serverProf.has_value() && !serverProf->quality.isEmpty()) {
+        quality = serverProf->quality;
+    } else if (dims.first > 0 || dims.second > 0) {
+        if (dims.first >= 3000 || dims.second >= 1600) quality = S("4K");
+        else if (dims.first >= 1600 || dims.second >= 900) quality = S("1080p");
+        else if (dims.first >= 1100 || dims.second >= 600) quality = S("720p");
+        else quality = S("480p");
+    } else if (has("3840") || has("2160") || hasN("2160p") || hasN("4k") || hasN("uhd")) {
+        quality = S("4K");
+    } else if (has("1920") || has("1080") || hasN("1080p") || hasN("1080i")) {
+        quality = S("1080p");
+    } else if (has("1280") || has("720") || hasN("720p")) {
+        quality = S("720p");
+    } else if (has("720x480") || has("720x576") || hasN("480p") || hasN("576p") || hasN("dvd")) {
+        quality = S("480p");
+    }
+
     QString codec;
-    if (has("hevc") || has("h.265") || has("h265") || hasN("x265") || hasN("hevc") || hasN("h265") || hasN("h.265")) codec = S("H265");
+    if (has("av1") || hasN("av1")) codec = S("AV1");
+    else if (has("hevc") || has("h.265") || has("h265") || hasN("x265") || hasN("hevc") || hasN("h265") || hasN("h.265")) codec = S("H265");
     else if (has("avc") || has("h.264") || has("h264") || hasN("x264") || hasN("h264") || hasN("h.264")) codec = S("H264");
-    else if (has("av1") || hasN("av1")) codec = S("AV1");
-    else codec = quality == QLatin1String("4K") ? S("H265") : S("H264");
+    else if (quality == QLatin1String("4K")) codec = S("H265");
+
     static const QRegularExpression fpsRe(S("(\\d+(\\.\\d+)?)\\s*fps"));
     auto fm = fpsRe.match(str);
     if (!fm.hasMatch()) fm = fpsRe.match(name);
-    const QString fps = fm.hasMatch() ? fm.captured(0) : S("23.98 fps");
+    const QString fps = fm.hasMatch() ? fm.captured(0) : QString();
+
+    QStringList p1;
+    if (!quality.isEmpty()) p1 << quality;
+    if (!codec.isEmpty()) p1 << codec;
+    if (!fps.isEmpty()) p1 << fps;
+
     static const QRegularExpression brRe(S("(\\d+(\\.\\d+)?)\\s*мбит/с"));
     const auto bm = brRe.match(str);
     QString bitrate;
     if (bm.hasMatch()) bitrate = bm.captured(0);
-    else if (item.m.size > 0) {
+    else if (serverProf.has_value() && serverProf->bitrate > 0) {
+        bitrate = QString::number(serverProf->bitrate, 'f', 1) + S(" Мбит/с");
+    } else if (item.m.size > 0) {
         const double approx = std::clamp(item.m.size * 8.0 / (7200.0 * 1000000.0), 8.0, 75.0);
         bitrate = QString::asprintf(tx(S("library.f_mbit_s")).toUtf8().constData(), approx);
     } else bitrate = tx(S("library.mbit_s_2"));
-    return {quality + S(" • ") + codec + S(" • ") + fps, bitrate + S(" • ") + formatBytes(item.m.size)};
+
+    QStringList p2;
+    if (!bitrate.isEmpty()) p2 << bitrate;
+    if (item.m.size > 0) p2 << formatBytes(item.m.size);
+
+    return {p1.join(S(" • ")), p2.join(S(" • "))};
 }
 
 QStringList collapseTags(const QStringList &all) {
@@ -166,6 +200,20 @@ std::optional<MFile> LibraryPage::currentFile(const LibraryItem &item) const {
     return s.items.value(ei, s.items.first()).file;
 }
 
+/// Размер кадра, пока ffprobe не ответил: по имени раздачи и файла, иначе по профилю сервера. Только для подписи плитки:
+/// в кэш размеров (cachedMediaDimensions) не пишется — там место замеру, а запись из отрисовки планировала сохранение
+/// на диск на каждую плитку при каждой пересборке страницы.
+static std::pair<int, int> guessDims(const QString &magnetName, const QString &fileName, const std::optional<core::PartyVariant> &serverProf) {
+    const QString lower = (magnetName + QLatin1Char(' ') + fileName).toLower();
+    if (lower.contains(S("2160p")) || lower.contains(S("4k")) || lower.contains(S("3840"))) return {3840, 2160};
+    if (lower.contains(S("1080p")) || lower.contains(S("1080i")) || lower.contains(S("1920"))) return {1920, 1080};
+    if (lower.contains(S("720p")) || lower.contains(S("1280"))) return {1280, 720};
+    if (serverProf && serverProf->quality == S("4K")) return {3840, 2160};
+    if (serverProf && serverProf->quality == S("1080p")) return {1920, 1080};
+    if (serverProf && serverProf->quality == S("720p")) return {1280, 720};
+    return {0, 0};
+}
+
 QVariantMap LibraryPage::tileOf(const LibraryItem &item, const QList<LibraryItem> &versions) const {
     const Magnet &m = item.m;
     QVariantMap t;
@@ -199,7 +247,10 @@ QVariantMap LibraryPage::tileOf(const LibraryItem &item, const QList<LibraryItem
         media = m_lib->cachedMediaLine(m.id, *cur);
         if (!media && m.ready()) const_cast<Library *>(m_lib)->requestMediaLine(m.id, *cur);
     }
-    const auto specs = itemSpecs(item, media);
+    const auto serverProf = m_lib->serverProfile(m.id);
+    auto dims = cur ? m_lib->cachedMediaDimensions(m.id, cur->path) : std::pair{0, 0};
+    if (dims.first <= 0 && dims.second <= 0 && cur) dims = guessDims(item.m.name, cur->name, serverProf);
+    const auto specs = itemSpecs(item, media, serverProf, dims);
     t[S("specs1")] = specs.first;
     t[S("specs2")] = specs.second;
     // полоска внизу: прогресс просмотра или загрузки
@@ -294,7 +345,7 @@ void LibraryPage::rebuild() {
     // «Продолжить просмотр»: только на «Главной», без поиска и категории
     m_continue.clear();
     if (!m_mine && q.isEmpty() && m_category == 0) {
-        struct E { QVariantMap map; qint64 at; };
+        struct E { QVariantMap map; qint64 at; QString groupKey; };
         std::vector<E> entries;
         const qint64 now = QDateTime::currentMSecsSinceEpoch();
         const QSet<qint64> recent = m_lib->watchedSince(now - 60LL * 24 * 3600 * 1000);
@@ -379,10 +430,19 @@ void LibraryPage::rebuild() {
                                  : tx(S("library.ostalos_min"), {{"minutes", QString::number(min)}});
             }
             e[S("left")] = left;
-            entries.push_back({e, w.at});
+            const auto vs = m_lib->versionsOf(item.m.id);
+            const qint64 rootId = vs.isEmpty() ? item.m.id : vs.first().m.id;
+            const QString groupKey = coll ? (QString::number(rootId) + QLatin1Char('|') + target.path) : QString::number(rootId);
+            entries.push_back({e, w.at, groupKey});
         }
         std::stable_sort(entries.begin(), entries.end(), [](const E &a, const E &b) { return a.at > b.at; });
-        for (size_t i = 0; i < std::min<size_t>(4, entries.size()); ++i) m_continue << entries[i].map;
+        QSet<QString> seenGroups;
+        for (const auto &entry : entries) {
+            if (seenGroups.contains(entry.groupKey)) continue;
+            seenGroups.insert(entry.groupKey);
+            m_continue << entry.map;
+            if (m_continue.size() >= 4) break;
+        }
     }
     emit resultChanged();
 }
@@ -395,6 +455,44 @@ void LibraryPage::chooseSeason(qint64 id, int seasonIndex) {
 void LibraryPage::open(qint64 id) {
     const auto vs = m_versionsOf.value(id);
     if (vs.size() > 1) {
+        auto &ui = core::Store::of(S("player_ui"));
+        qint64 preferredId = -1;
+        QString savedMag;
+        for (const auto &v : vs) {
+            if (auto m = ui.get(S("vmagnet:m") + QString::number(v.m.id)); m && !m->isEmpty()) { savedMag = *m; break; }
+            if (v.m.aiTitle && v.m.aiTitle->canonicalId && !v.m.aiTitle->canonicalId->isEmpty()) {
+                if (auto m = ui.get(S("vmagnet:c") + *v.m.aiTitle->canonicalId); m && !m->isEmpty()) { savedMag = *m; break; }
+            }
+        }
+        if (savedMag.isEmpty()) {
+            const QString tKey = titleKey(vs.first().baseTitle);
+            if (!tKey.isEmpty()) {
+                if (auto m = ui.get(S("vmagnet:") + tKey); m && !m->isEmpty()) savedMag = *m;
+            }
+        }
+        if (!savedMag.isEmpty()) {
+            const qint64 sId = savedMag.toLongLong();
+            for (const auto &v : vs) {
+                if (v.m.id == sId && v.m.ready()) { preferredId = sId; break; }
+            }
+        }
+        if (preferredId < 0) {
+            qint64 latestAt = 0;
+            for (const auto &v : vs) {
+                if (!v.m.ready()) continue;
+                std::optional<WatchInfo> w;
+                if (v.playable.isSeries()) { if (auto lw = m_lib->lastWatched(v.m)) w = lw->second; }
+                else if (v.playable.isMovie()) w = m_lib->watchInfo(watchKey(v.m.id, v.playable.file));
+                if (w && w->at > latestAt) {
+                    latestAt = w->at;
+                    preferredId = v.m.id;
+                }
+            }
+        }
+        if (preferredId > 0) {
+            chooseVersion(preferredId);
+            return;
+        }
         QVariantList ids;
         for (const auto &v : vs) ids << v.m.id;
         emit versionsRequested(vs.first().baseTitle, ids);
@@ -436,6 +534,20 @@ void LibraryPage::showAi(qint64 id) {
 }
 
 QVariantList LibraryPage::versionRows(const QVariantList &ids) const {
+    qint64 lastPlayedId = -1;
+    qint64 latestAt = 0;
+    for (const auto &vVal : ids) {
+        const qint64 vid = vVal.toLongLong();
+        if (const LibraryItem *it = m_lib->item(vid)) {
+            std::optional<WatchInfo> w;
+            if (it->playable.isSeries()) { if (auto lw = m_lib->lastWatched(it->m)) w = lw->second; }
+            else if (it->playable.isMovie()) w = m_lib->watchInfo(watchKey(it->m.id, it->playable.file));
+            if (w && w->at > latestAt) {
+                latestAt = w->at;
+                lastPlayedId = vid;
+            }
+        }
+    }
     QList<LibraryItem> vs;
     for (const auto &v : ids)
         if (const LibraryItem *it = m_lib->item(v.toLongLong())) vs << *it;
@@ -446,9 +558,25 @@ QVariantList LibraryPage::versionRows(const QVariantList &ids) const {
             std::optional<WatchInfo> w;
             if (v.playable.isSeries()) { if (auto lw = m_lib->lastWatched(v.m)) w = lw->second; }
             else if (v.playable.isMovie()) w = m_lib->watchInfo(watchKey(v.m.id, v.playable.file));
-            QStringList base = itemSpecs(v, std::nullopt).first.split(S(" • ")).mid(0, 2);
-            for (const QString &t : m_lib->tagsOf(v))
-                if (t == S("Dolby Vision") || t == S("HDR")) base << t;
+            const auto cur = currentFile(v);
+            std::optional<QString> media;
+            if (cur) {
+                media = m_lib->cachedMediaLine(v.m.id, *cur);
+                if (!media && v.m.ready()) const_cast<Library *>(m_lib)->requestMediaLine(v.m.id, *cur);
+            }
+            const auto serverProf = m_lib->serverProfile(v.m.id);
+            auto dims = cur ? m_lib->cachedMediaDimensions(v.m.id, cur->path) : std::pair{0, 0};
+            if (dims.first <= 0 && dims.second <= 0 && cur) dims = guessDims(v.m.name, cur->name, serverProf);
+
+            const auto specs = itemSpecs(v, media, serverProf, dims);
+            QStringList base;
+            for (const QString &part : specs.first.split(S(" • "))) {
+                if (!part.trimmed().isEmpty() && !part.endsWith(S("fps"))) base << part;
+            }
+            for (const QString &t : m_lib->tagsOf(v)) {
+                if ((t == S("Dolby Vision") || t == S("HDR")) && !base.contains(t)) base << t;
+            }
+
             QStringList heading;
             for (const QString &h : {versionLine(v, sec.title.has_value()), base.join(S(" • "))})
                 if (!h.trimmed().isEmpty()) heading << h;
@@ -458,6 +586,7 @@ QVariantList LibraryPage::versionRows(const QVariantList &ids) const {
             r[S("size")] = formatBytes(v.m.size);
             r[S("name")] = v.m.name;
             r[S("fraction")] = w && w->fraction() > 0.01f ? (w->watched() ? 1.0 : double(w->fraction())) : 0.0;
+            r[S("isLastPlayed")] = (latestAt > 0 && v.m.id == lastPlayedId);
             rows << r;
         }
         QVariantMap sm;
@@ -473,6 +602,22 @@ QString LibraryPage::versionsLabel(int n) const { return versionsWord(n); }
 void LibraryPage::chooseVersion(qint64 id) {
     const LibraryItem *item = m_lib->item(id);
     if (!item) return;
+    const auto vs = m_lib->versionsOf(id);
+    auto &ui = core::Store::of(S("player_ui"));
+    const QString mag = QString::number(id);
+    ui.put(S("vmagnet:m") + mag, mag);
+    if (!vs.isEmpty()) {
+        for (const auto &v : vs) {
+            ui.put(S("vmagnet:m") + QString::number(v.m.id), mag);
+            if (v.m.aiTitle && v.m.aiTitle->canonicalId && !v.m.aiTitle->canonicalId->isEmpty()) {
+                ui.put(S("vmagnet:c") + *v.m.aiTitle->canonicalId, mag);
+            }
+        }
+        const QString tKey = titleKey(vs.first().baseTitle);
+        if (!tKey.isEmpty()) {
+            ui.put(S("vmagnet:") + tKey, mag);
+        }
+    }
     if (item->playable.isMovie()) { emit playRequested(id, item->playable.file.path); return; }
     if (!item->playable.isSeries() || item->playable.seasons.isEmpty()) return;
     std::optional<QString> saved;

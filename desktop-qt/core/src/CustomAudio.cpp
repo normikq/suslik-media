@@ -1,5 +1,6 @@
 #include "suslik/core/CustomAudio.h"
 #include "suslik/core/MirrorLink.h"
+#include "suslik/core/Model.h"
 #include "JsonOpt.h"
 
 #include <QJsonArray>
@@ -28,6 +29,45 @@ QList<QJsonObject> objects(const QJsonObject &r, const char *key) {
 }
 std::optional<qint64> longOrNull(const QJsonObject &o, const QString &k) {
     return hasValue(o, k) ? std::optional<qint64>(optLong(o, k)) : std::nullopt;
+}
+struct EpInfo {
+    std::optional<int> season;
+    int episode;
+};
+
+std::optional<EpInfo> episodeInfo(const QString &path) {
+    const QString p = QString(path).replace(QLatin1Char('\\'), QLatin1Char('/'));
+    const int slash = p.lastIndexOf(QLatin1Char('/'));
+    const QString name = slash >= 0 ? p.mid(slash + 1) : p;
+
+    static const QRegularExpression sxxeyy(QStringLiteral("(?i)s(\\d{1,2})[ ._-]?e(\\d{1,3})"));
+    auto m = sxxeyy.match(name);
+    if (!m.hasMatch()) m = sxxeyy.match(p);
+    if (m.hasMatch()) return EpInfo{m.captured(1).toInt(), m.captured(2).toInt()};
+
+    static const QRegularExpression nxnn(QStringLiteral("(?i)(?:^|[^\\d])(\\d{1,2})x(\\d{2,3})(?!\\d)"));
+    m = nxnn.match(name);
+    if (!m.hasMatch()) m = nxnn.match(p);
+    if (m.hasMatch()) return EpInfo{m.captured(1).toInt(), m.captured(2).toInt()};
+
+    std::optional<int> folderSeason;
+    static const QRegularExpression dirSeason(QStringLiteral("(?i)(?:^|/)(?:season|сезон)[ ._-]?(\\d{1,2})(?:/|$)"));
+    static const QRegularExpression dirS(QStringLiteral("(?i)(?:^|/)s(\\d{1,2})(?:/|$)"));
+    static const QRegularExpression anySeason(QStringLiteral("(?i)(?:season|сезон)[ ._-]?(\\d{1,2})"));
+    m = dirSeason.match(p);
+    if (!m.hasMatch()) m = dirS.match(p);
+    if (!m.hasMatch()) m = anySeason.match(p);
+    if (m.hasMatch()) folderSeason = m.captured(1).toInt();
+
+    static const QRegularExpression epWord(QStringLiteral("(?i)(?:^|[^a-z0-9а-яё])(?:e|ep|episode|серия)[ ._-]?(\\d{1,3})(?!\\d)"));
+    m = epWord.match(name);
+    if (m.hasMatch()) return EpInfo{folderSeason, m.captured(1).toInt()};
+
+    static const QRegularExpression leadNum(QStringLiteral(R"(^\s*(\d{1,3})(?=[ ._-]|\.[a-zA-Z0-9]+$))"));
+    m = leadNum.match(name);
+    if (m.hasMatch()) return EpInfo{folderSeason, m.captured(1).toInt()};
+
+    return std::nullopt;
 }
 } // namespace
 
@@ -65,9 +105,26 @@ QList<CustomTrack> CustomAudio::forVideo(const QList<CustomTrack> &tracks, const
     (bar < 0 ? *watchKey : watchKey->left(bar)).toLongLong(&ok);
     if (!ok) return {};
     const QString path = bar < 0 ? *watchKey : watchKey->mid(bar + 1);
+    const QString normPath = QString(path).replace(QLatin1Char('\\'), QLatin1Char('/'));
+    const auto epCur = episodeInfo(normPath);
     QList<CustomTrack> out;
-    for (const CustomTrack &t : tracks)
-        if (t.videoPath == path) out << t;
+    for (const CustomTrack &t : tracks) {
+        const QString tNorm = QString(t.videoPath).replace(QLatin1Char('\\'), QLatin1Char('/'));
+        if (tNorm == normPath || t.videoPath == path) {
+            out << t;
+            continue;
+        }
+        if (t.videoPath.isEmpty()) {
+            out << t;
+            continue;
+        }
+        const auto epT = episodeInfo(tNorm);
+        if (epT && epCur && epT->episode == epCur->episode) {
+            const int sT = epT->season.value_or(1);
+            const int sCur = epCur->season.value_or(1);
+            if (sT == sCur) out << t;
+        }
+    }
     return out;
 }
 
@@ -97,6 +154,10 @@ CustomCheck CustomAudio::parseCheck(const QJsonObject &r) {
         if (const auto s = longOrNull(p, QStringLiteral("season"))) pair.season = int(*s);
         if (const auto e = longOrNull(p, QStringLiteral("episode"))) pair.episode = int(*e);
         c.pairs << pair;
+    }
+    for (const QJsonObject &tm : objects(r, "targetMovies")) {
+        if (const auto mid = longOrNull(tm, QStringLiteral("id"))) c.targetMagnetIds << *mid;
+        if (const QString name = optString(tm, QStringLiteral("name")); !name.isEmpty()) c.targetMovieNames << name;
     }
     return c;
 }

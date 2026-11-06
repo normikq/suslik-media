@@ -1,6 +1,7 @@
 "use strict";
 
 const crypto = require("crypto");
+const variantOffsets = require("./variant-offsets");
 
 // Хранилище активных комнат совместного просмотра в памяти
 // roomId -> Room
@@ -20,8 +21,28 @@ function clientKey(clientId) {
   return crypto.createHash("sha256").update(clientId).digest("hex").slice(0, 16);
 }
 
-function publicMember({ streams, buffering_since, client_id, ...m }) {
+function publicMember({ streams, buffering_since, client_id, timeline_key, ...m }) {
   return { ...m, key: clientKey(client_id) };
+}
+
+// Подстройки времени между раздачей ведущего и раздачами остальных (сохранённые гостями, services/variant-offsets.js):
+// [{ from: ключ ведущего, to: ключ участника, offset_ms }] — место на to = место на from + offset_ms
+function variantOffsetsOf(room) {
+  if (!room.file) return [];
+  let hostKey = room.file.key;
+  for (const m of room.members.values()) {
+    if (isRoomHost(room, { id: m.id }, m.client_id) && m.variant_key) { hostKey = m.variant_key; break; }
+  }
+  const out = [];
+  const seen = new Set([hostKey]);
+  for (const m of room.members.values()) {
+    const k = m.variant_key;
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    const ms = variantOffsets.get(hostKey, k);
+    if (ms != null) out.push({ from: hostKey, to: k, offset_ms: ms });
+  }
+  return out;
 }
 
 // Комната ждёт, пока кто-то грузится (waiting): её время стоит на месте
@@ -97,6 +118,7 @@ function getRoomPublicData(room) {
     },
     members: Array.from(room.members.values()).map(publicMember),
     member_count: room.members.size,
+    variant_offsets: variantOffsetsOf(room),
     // Только у комнаты голосового канала (Activity); приложения эти поля не читают
     ...(room.channel_id ? { channel: true, ...activityPublicData(room) } : {})
   };
@@ -512,13 +534,54 @@ function sweepRooms(now = Date.now()) {
 }
 setInterval(sweepRooms, 5 * 60 * 1000).unref?.();
 
+const VARIANT_KEY_RE = /^\d{1,20}\|.{1,900}$/s;
+
+// Раздачи одного фильма разной длины: лишнее обычно в начале (заставка релиз-группы, логотипы), поэтому место на
+// своей раздаче = место ведущего + (своя длина − длина ведущего). Меньше 1,5 с — хвост кадров, не сдвиг; больше 2 мин —
+// другой монтаж, разницей длин его не выровнять. Те же числа — timelineShiftMs в android/core и desktop-qt/core.
+const SHIFT_MIN_MS = 1500;
+const SHIFT_MAX_MS = 120 * 1000;
+function timelineShiftMs(myDurationMs, hostDurationMs) {
+  if (!(myDurationMs > 0) || !(hostDurationMs > 0)) return 0;
+  const d = Math.round(myDurationMs - hostDurationMs);
+  return Math.abs(d) >= SHIFT_MIN_MS && Math.abs(d) <= SHIFT_MAX_MS ? d : 0;
+}
+
+// Длина раздачи из запроса, мс: от 1 с до 24 ч, иначе null
+function durationOf(raw) {
+  const d = Math.round(Number(raw));
+  return Number.isFinite(d) && d >= 1000 && d <= 24 * 3600 * 1000 ? d : null;
+}
+
+// Ключ варианта файла комнаты: формы "<adId>|<путь>"; если у файла есть список пресетов — только из него (или сам файл).
+function variantKeyFor(file, raw) {
+  const key = typeof raw === "string" ? raw.trim() : "";
+  if (!VARIANT_KEY_RE.test(key)) return null;
+  if (file && Array.isArray(file.variants) && file.variants.length) {
+    return key === file.key || file.variants.some(v => v.key === key) ? key : null;
+  }
+  return key;
+}
+
+// Участник, от имени которого пришло действие: аккаунт управляет только собой (client_id гостя наружу не отдаётся).
+function actingMember(room, user, action) {
+  const m = action.client_id ? room.members.get(action.client_id) : null;
+  if (!m) return { member: null };
+  const isAccount = user && user.id && user.id !== "shared" && user.id !== "guest";
+  if (isAccount && m.id && String(m.id) !== String(user.id)) {
+    return { member: null, error: "Недостаточно прав для управления состоянием другого участника." };
+  }
+  return { member: m };
+}
+
 function handleRoomAction(roomId, user, action) {
   const room = getRoom(roomId);
   if (!room) return { ok: false, error: "Комната не найдена." };
 
   // «У меня грузится / готово» — от любого участника, без прав на управление
   if (action.type === "buffering") {
-    const m = action.client_id ? room.members.get(action.client_id) : null;
+    const { member: m, error } = actingMember(room, user, action);
+    if (error) return { ok: false, error };
     if (m) {
       const b = Boolean(action.buffering);
       if (Boolean(m.buffering) !== b) {
@@ -534,6 +597,64 @@ function handleRoomAction(roomId, user, action) {
         broadcast(roomId, "state_changed", getRoomPublicData(room));
       }
     }
+    return { ok: true, room: getRoomPublicData(room) };
+  }
+
+  // Смена пресета качества участником (независимый выбор потока). variant — описание своей раздачи, которой нет в
+  // списке ведущего (гость добавил её сам): она дописывается в список комнаты. duration_ms — длина раздачи участника:
+  // по ней гости на других раздачах сдвигают своё время (timelineShiftMs в клиентах)
+  if (action.type === "variant_change") {
+    const { member: m, error } = actingMember(room, user, action);
+    if (error) return { ok: false, error };
+    if (m) {
+      let changed = false;
+      let vk = variantKeyFor(room.file, action.variant_key);
+      if (!vk && room.file && Array.isArray(room.file.variants) && action.variant && typeof action.variant === "object") {
+        const own = cleanVariant({ ...action.variant, key: action.variant_key });
+        if (own && VARIANT_KEY_RE.test(own.key) && room.file.variants.length < MAX_VARIANTS) {
+          room.file.variants = [...room.file.variants, own];
+          vk = own.key;
+          changed = true;
+        }
+      }
+      if (!vk) return { ok: false, error: "Такого варианта у этого фильма нет." };
+      if (m.variant_key !== vk) {
+        m.variant_key = vk;
+        changed = true;
+      }
+      const d = durationOf(action.duration_ms);
+      if (d && (m.duration_ms !== d || m.timeline_key !== vk)) {
+        // Ведущий перешёл на другую раздачу: время комнаты переезжает на её шкалу, и все, ведущий тоже, перематываются
+        // одной командой. Сдвиг — сохранённая подстройка пары (variant_offset), иначе разница длин (лишнее — в начале)
+        if (m.timeline_key && m.timeline_key !== vk && m.duration_ms && room.file && isRoomHost(room, user, action.client_id)) {
+          const stored = variantOffsets.get(m.timeline_key, vk);
+          const shift = stored != null ? stored : timelineShiftMs(d, m.duration_ms);
+          if (shift !== 0) {
+            room.state.pos = Math.max(0, getEstimatedPos(room.state) + shift / 1000);
+            room.state.anchor_server_ms = Date.now();
+            room.state.seq++;
+          }
+        }
+        m.duration_ms = d;
+        m.timeline_key = vk;
+        changed = true;
+      }
+      if (changed) broadcast(roomId, "state_changed", getRoomPublicData(room));
+    }
+    return { ok: true, room: getRoomPublicData(room) };
+  }
+
+  // Гость подстроил время своей раздачи к раздаче ведущего: offset_ms — место на variant_key минус место на
+  // host_variant_key. Запоминается для пары раздач (services/variant-offsets.js) и включается у всех
+  if (action.type === "variant_offset") {
+    const { member: m, error } = actingMember(room, user, action);
+    if (error) return { ok: false, error };
+    if (!m || !room.file) return { ok: false, error: "Сейчас в комнате нет фильма." };
+    const from = variantKeyFor(room.file, action.host_variant_key);
+    const to = variantKeyFor(room.file, action.variant_key);
+    if (!from || !to || from === to) return { ok: false, error: "Такого варианта у этого фильма нет." };
+    if (variantOffsets.set(from, to, action.offset_ms) == null) return { ok: false, error: "Неверная подстройка." };
+    broadcast(roomId, "state_changed", getRoomPublicData(room));
     return { ok: true, room: getRoomPublicData(room) };
   }
 
@@ -596,7 +717,27 @@ function handleRoomAction(roomId, user, action) {
       state.playing = false;
       // Новый фильм: прежние загрузки не в счёт
       state.waiting = false;
-      for (const m of room.members.values()) { m.buffering = false; m.buffering_since = 0; }
+      // Ключ качества прежнего фильма никому не подходит: у остальных он сбрасывается, клиент пришлёт свой заново
+      for (const m of room.members.values()) { m.buffering = false; m.buffering_since = 0; m.variant_key = null; m.duration_ms = null; m.timeline_key = null; }
+      const actor = action.client_id ? room.members.get(action.client_id) : null;
+      if (actor) {
+        if (!file) {
+          actor.variant_key = null;
+        } else if (variantKeyFor(file, action.variant_key)) {
+          actor.variant_key = variantKeyFor(file, action.variant_key);
+        } else if (actor.variant_key && Array.isArray(file.variants)) {
+          const exact = file.variants.find(v => v.key === actor.variant_key);
+          if (exact) {
+            actor.variant_key = exact.key;
+          } else {
+            const prevMag = String(actor.variant_key).split("|")[0];
+            const byMag = prevMag ? file.variants.find(v => String(v.key || "").split("|")[0] === prevMag) : null;
+            actor.variant_key = byMag ? byMag.key : file.key;
+          }
+        } else {
+          actor.variant_key = file.key;
+        }
+      }
       state.anchor_server_ms = now;
       state.seq++;
       break;
@@ -736,6 +877,33 @@ function dropWatcherIfGone(room, w) {
   activityChanged(room);
 }
 
+function cleanVariant(v) {
+  if (!v || typeof v !== "object") return null;
+  const key = typeof v.key === "string" ? v.key.slice(0, 1000) : "";
+  if (!key || key.indexOf("|") <= 0) return null;
+  const label = typeof v.label === "string" ? v.label.slice(0, 300) : "";
+  const quality = typeof v.quality === "string" ? v.quality.slice(0, 50) : (typeof v.resolution === "string" ? v.resolution.slice(0, 50) : "1080p");
+  const audio = typeof v.audio === "string" ? v.audio.slice(0, 100) : (typeof v.audio_tech === "string" ? v.audio_tech.slice(0, 100) : "");
+  const bitrate = Number(v.bitrate ?? v.bitrate_mbps) || 0;
+  const offset_ms = Number(v.offset_ms) || 0;
+  const score = Number(v.score) || 0;
+  const hardware_flags = Array.isArray(v.hardware_flags)
+    ? v.hardware_flags.filter(x => typeof x === "string" && x.trim()).map(x => x.trim().slice(0, 30))
+    : [];
+  return {
+    key,
+    label: label || quality,
+    quality,
+    audio,
+    bitrate: Math.round(bitrate * 10) / 10,
+    offset_ms,
+    score,
+    hardware_flags
+  };
+}
+
+const MAX_VARIANTS = 30;
+
 function cleanFile(file) {
   if (!file || typeof file !== "object") return null;
   const key = typeof file.key === "string" ? file.key.slice(0, 1000) : "";
@@ -743,7 +911,18 @@ function cleanFile(file) {
   const adId = Number(key.slice(0, bar));
   if (bar <= 0 || !Number.isSafeInteger(adId) || adId <= 0 || bar === key.length - 1) return null;
   const name = typeof file.name === "string" && file.name.trim() ? file.name.trim().slice(0, 300) : key.slice(bar + 1);
-  return { key, name, ad_id: adId };
+  const res = { key, name, ad_id: adId };
+  if (typeof file.canonical_id === "string" && file.canonical_id.trim()) {
+    res.canonical_id = file.canonical_id.trim().slice(0, 200);
+  }
+  if (typeof file.edition === "string" && file.edition.trim()) {
+    res.edition = file.edition.trim().slice(0, 50);
+  }
+  if (Array.isArray(file.variants) && file.variants.length > 0) {
+    const cleaned = file.variants.slice(0, MAX_VARIANTS).map(cleanVariant).filter(Boolean);
+    if (cleaned.length > 0) res.variants = cleaned;
+  }
+  return res;
 }
 
 function channelRoomOrError(roomId) {
@@ -761,9 +940,38 @@ function suggestFile(roomId, user, file) {
   if (room.spin) return { ok: false, error: "Крутится рулетка: дождитесь итога." };
   const f = cleanFile(file);
   if (!f) return { ok: false, error: "Не тот файл." };
-  if (!room.candidates.some(c => c.key === f.key)) {
+  const same = room.candidates.find(c => c.key === f.key || (c.canonical_id && f.canonical_id && c.canonical_id === f.canonical_id));
+  if (same) {
+    // тот же фильм в другом релизе: пополняем список пресетов, чтобы голосующий мог выбрать любой
+    if (f.variants) {
+      const have = new Set((same.variants || []).map(v => v.key));
+      const extra = f.variants.filter(v => !have.has(v.key));
+      if (extra.length) {
+        same.variants = [...(same.variants || []), ...extra].slice(0, MAX_VARIANTS);
+        activityChanged(room);
+      }
+    }
+  } else {
     if (room.candidates.length >= MAX_CANDIDATES) return { ok: false, error: `Не больше ${MAX_CANDIDATES} фильмов в списке.` };
-    room.candidates.push({ key: f.key, name: f.name, by: user.id, by_name: user.name, at: Date.now() });
+    const cand = {
+      key: f.key,
+      name: f.name,
+      by: user.id,
+      by_name: user.name,
+      at: Date.now()
+    };
+    if (f.canonical_id) cand.canonical_id = f.canonical_id;
+    if (f.edition) cand.edition = f.edition;
+    if (typeof file.poster === "string" && (/^\/api\/poster\/img\/[a-zA-Z0-9_\-\.]+$/.test(file.poster) || /^[a-zA-Z0-9_\-\.]+\.(jpg|jpeg|png|webp)$/i.test(file.poster))) {
+      cand.poster = file.poster.slice(0, 500);
+    }
+    const yr = Number(file.year);
+    if (Number.isInteger(yr) && yr >= 1888 && yr <= 2100) cand.year = yr;
+    if (typeof file.original === "string" && file.original.trim()) {
+      cand.original = file.original.trim().slice(0, 200);
+    }
+    if (f.variants) cand.variants = f.variants;
+    room.candidates.push(cand);
     activityChanged(room);
   }
   return { ok: true };
@@ -938,6 +1146,7 @@ module.exports = {
   sweepRooms,
   promoteIfHostGone,
   handleRoomAction,
+  timelineShiftMs,
   getOrCreateChannelRoom,
   addWatcher,
   touchWatcher,

@@ -15,7 +15,9 @@
       model: str(a.model), at: num(a.at), status: a.status,
       kind: ['movie', 'series', 'collection'].indexOf(a.kind) >= 0 ? a.kind : null, stale: a.stale === true,
       original: str(a.original).trim() || null,
-      year: typeof a.year === 'number' && a.year >= 1880 && a.year <= 2100 ? Math.floor(a.year) : null
+      year: typeof a.year === 'number' && a.year >= 1880 && a.year <= 2100 ? Math.floor(a.year) : null,
+      edition: str(a.edition).trim() || null,
+      canonicalId: str(a.canonical_id).trim() || null
     };
   }
 
@@ -448,10 +450,147 @@
     return null;
   }
 
+  function smartQualityScore(name) {
+    var lower = (name || '').toLowerCase();
+    var rScore = 100;
+    if (/(?:^|[^a-z0-9])(?:2160p|4k|uhd)(?![a-z])|(?:^|\D)3840(?!\d)/i.test(lower)) rScore = 400;
+    else if (/(?:^|\D)1080[pi](?![a-z])|(?:^|\D)1920(?!\d)/i.test(lower)) rScore = 300;
+    else if (/(?:^|\D)720p(?![a-z])|(?:^|\D)1280(?!\d)/i.test(lower)) rScore = 200;
+    else rScore = 100;
+
+    var vScore = 0;
+    if (/dolby[\s._-]?vision|dovi|(?:^|[^a-z])dv(?![a-z])/i.test(lower)) vScore = 40;
+    else if (/hdr10\+|hdr10plus/i.test(lower)) vScore = 30;
+    else if (/hdr10|(?:^|[^a-z])hdr(?![a-z])/i.test(lower)) vScore = 20;
+    else if (/10[\s._-]?bit|hi10p/i.test(lower)) vScore = 10;
+    else vScore = 0;
+
+    var aScore = 0;
+    if (/atmos(?![a-z])|dts[:._-]?x(?![a-z0-9])/i.test(lower)) aScore = 40;
+    else if (/truehd/i.test(lower)) aScore = 35;
+    else if (/dts[\s._-]?hd/i.test(lower)) aScore = 30;
+    else if (/(?:^|[^a-z])dts(?![a-z])|dd\+|(?:^|[^a-z])ddp(?![a-z])|(?:^|[^a-z])e[\s._-]?ac[\s._-]?3(?!\d)/i.test(lower)) aScore = 20;
+    else if (/(?:^|[^a-z])ac[\s._-]?3(?!\d)|(?:^|[^a-z])dd[\s._-]?5\.1|(?:^|[^\d.])5\.1(?!\d)/i.test(lower)) aScore = 10;
+    else aScore = 0;
+
+    var sScore = 0;
+    if (/remux/i.test(lower)) sScore = 25;
+    else if (/bdrip|brrip|blu[\s._-]?ray/i.test(lower)) sScore = 15;
+    else if (/(?:^|[^a-z])web(?:[\s._-]?(?:dl|rip))?(?![a-z])/i.test(lower)) sScore = 10;
+    else sScore = 0;
+
+    return rScore + vScore + aScore + sScore;
+  }
+
+  function buildPartyVariant(item, file, serverProfile, width, height) {
+    var mId = (item && item.m && item.m.id) || 0;
+    var wk = watchKey(mId, file || {});
+    var profSameMagnet = serverProfile && (!serverProfile.key || serverProfile.key === wk || serverProfile.key.indexOf(mId + '|') === 0 || serverProfile.ad_id === mId);
+    var prof = profSameMagnet ? serverProfile : null;
+
+    var name = (item && item.m && item.m.name) || '';
+    var filePath = (file && (file.path || file.name)) || '';
+    var combined = (name + ' ' + filePath).trim();
+    var lower = combined.toLowerCase();
+
+    var quality = '';
+    if (/(?:^|[^a-z0-9])(?:2160p|4k|uhd)(?![a-z])|(?:^|\D)3840(?!\d)/i.test(lower)) quality = '4K';
+    else if (/(?:^|\D)1080[pi](?![a-z])|(?:^|\D)1920(?!\d)/i.test(lower)) quality = '1080p';
+    else if (/(?:^|\D)720p(?![a-z])|(?:^|\D)1280(?!\d)/i.test(lower)) quality = '720p';
+    else if (/(?:^|\D)(?:480|576)[pi](?![a-z])|(?:^|[^a-z])dvd/i.test(lower)) quality = '480p';
+    else if (prof && (prof.quality || prof.resolution)) {
+      quality = prof.quality || prof.resolution || '';
+    } else if (width || height) {
+      if (width >= 3000 || height >= 1600) quality = '4K';
+      else if (width >= 1600 || height >= 900) quality = '1080p';
+      else if (width >= 1100 || height >= 600) quality = '720p';
+      else quality = '480p';
+    }
+
+    var audio = 'Stereo';
+    if (/atmos(?![a-z])/i.test(lower)) audio = 'TrueHD Atmos';
+    else if (/truehd/i.test(lower)) audio = 'TrueHD';
+    else if (/dts[:._-]?x(?![a-z0-9])/i.test(lower)) audio = 'DTS:X';
+    else if (/dts[\s._-]?hd/i.test(lower)) audio = 'DTS-HD MA';
+    else if (/(?:^|[^a-z])dts(?![a-z])/i.test(lower)) audio = 'DTS 5.1';
+    else if (/dd\+|(?:^|[^a-z])ddp(?![a-z])|(?:^|[^a-z])e[\s._-]?ac[\s._-]?3(?!\d)|dolby\s*digital\s*plus/i.test(lower)) audio = 'DD+';
+    else if (/(?:^|[^a-z])ac[\s._-]?3(?!\d)|(?:^|[^a-z])dd[\s._-]?5\.1|(?:^|[^\d.])5\.1(?!\d)/i.test(lower)) audio = 'AC3 5.1';
+    if (prof) {
+      var profAudio = prof.audio || prof.audio_tech || '';
+      if (profAudio && profAudio !== 'Stereo' && (audio === 'Stereo' || /dts-hd|dts:x|atmos|truehd/i.test(profAudio))) {
+        audio = profAudio;
+      }
+    }
+
+    var hwFlags = [];
+    if (/dolby[\s._-]?vision|dovi|(?:^|[^a-z])dv(?![a-z])/i.test(lower)) hwFlags.push('dv');
+    if (/hdr10\+|hdr10plus|hdr10|(?:^|[^a-z])hdr(?![a-z])/i.test(lower)) hwFlags.push('hdr');
+    if (/(?:^|[^a-z])dts(?![a-z])/i.test(lower)) hwFlags.push('dts');
+    if (prof) {
+      var pFlags = prof.hardware_flags || prof.hardwareFlags || [];
+      for (var fi = 0; fi < pFlags.length; fi++) {
+        if (hwFlags.indexOf(pFlags[fi]) < 0) hwFlags.push(pFlags[fi]);
+      }
+    }
+
+    var score = smartQualityScore(combined);
+    if (!/(?:^|[^a-z0-9])(?:2160p|4k|uhd)(?![a-z])|(?:^|\D)3840(?!\d)/i.test(lower)
+        && !/(?:^|\D)1080[pi](?![a-z])|(?:^|\D)1920(?!\d)/i.test(lower)
+        && !/(?:^|\D)720p(?![a-z])|(?:^|\D)1280(?!\d)/i.test(lower)
+        && quality) {
+      if (quality === '4K') score += 300;
+      else if (quality === '1080p') score += 200;
+      else if (quality === '720p') score += 100;
+    }
+    if (prof && prof.score > score) score = prof.score;
+
+    var sizeBytes = (file && file.size) || (item && item.m && item.m.size) || 0;
+    var isSeries = item && item.playable && item.playable.kind === 'series';
+    var estDuration = isSeries ? 2700 : 6600;
+    // Размер всей раздачи годится только для одного фильма: сезон или сборник на длину одной серии давали
+    // сотни Мбит/с и ложное «снизить качество» (битрейт 0 — неизвестен)
+    var rateBytes = (file && file.size) || ((isSeries || (item && isCollection(item.playable, item.m))) ? 0 : (item && item.m && item.m.size) || 0);
+    var bitrate = rateBytes > 0 ? Math.round((rateBytes * 8) / (estDuration * 1000000) * 10) / 10 : 0.0;
+    var hasExactBitrate = false;
+    var profBitrate = prof ? (prof.bitrate || prof.bitrate_mbps || 0) : 0;
+    if (profBitrate > 0) {
+      bitrate = profBitrate;
+      hasExactBitrate = true;
+    }
+
+    var parts = [];
+    if (quality) parts.push(quality);
+    if (hwFlags.indexOf('dv') >= 0) parts.push('Dolby Vision');
+    else if (hwFlags.indexOf('hdr') >= 0) parts.push('HDR');
+    else if (/10[\s._-]?bit|hi10p/i.test(lower) || (prof && (prof.video_tech === '10-bit' || (prof.label && prof.label.indexOf('10-bit') >= 0)))) parts.push('10-bit');
+    if (/remux/i.test(lower)) parts.push('BDRemux');
+    else if (/bdrip|brrip|blu[\s._-]?ray/i.test(lower)) parts.push('BDRip');
+    else if (/(?:^|[^a-z0-9])web[\s._-]?(?:dl|rip)(?![a-z0-9])/i.test(lower)) parts.push('WEB-DL');
+    if (audio !== 'Stereo') parts.push(audio);
+
+    var label = parts.join(' · ');
+    if (hasExactBitrate) {
+      label += (label ? ' ' : '') + '(' + bitrate.toFixed(1) + ' Мбит/с)';
+    } else if (sizeBytes > 0) {
+      label += (label ? ' ' : '') + '(' + formatBytes(sizeBytes) + ')';
+    }
+
+    return {
+      key: wk,
+      label: label.trim(),
+      quality: quality,
+      audio: audio,
+      bitrate: bitrate,
+      offset_ms: (prof && (prof.offset_ms || prof.offsetMs)) || 0,
+      score: score,
+      hardware_flags: hwFlags
+    };
+  }
+
   function qualityScore(name) {
     var lower = (name || '').toLowerCase();
     if (/2160p|4k|3840/.test(lower)) return 4;
-    if (/1080p|1080i|1920/.test(lower)) return 3;
+    if (/1080[pi]|1920/.test(lower)) return 3;
     if (/720p|1280/.test(lower)) return 2;
     if (/480p|576p|dvd/.test(lower)) return 1;
     return 0;
@@ -492,13 +631,23 @@
    * лучшее качество и больший размер (sortVersions в Model.kt). Ключ считается один раз на версию и сравнивается поле за
    * полем: так порядок всегда последовательный (сравнение, что пропускает поле, если его нет у одной стороны, зацикливается).
    */
+  function parseEdition(name) {
+    var s = String(name || '').toLowerCase();
+    if (/director(?:'?s)?[\s._-]*cut/i.test(s)) return 'directors_cut';
+    if (/extended(?:\s+cut|\s+edition)?/i.test(s)) return 'extended';
+    if (/theatrical(?:\s+cut|\s+edition)?/i.test(s)) return 'theatrical';
+    if (/unrated/i.test(s)) return 'unrated';
+    if (/remaster(?:ed)?/i.test(s)) return 'remastered';
+    return '';
+  }
+
   function sortVersions(list) {
     if (!list || list.length <= 1) return list ? list.slice() : [];
     var keys = list.map(function (it) {
       var s = itemSeasons(it), p = itemPart(it), y = itemYear(it);
       return [
         s ? (s.min === 0 ? LAST - 1 : s.min) : LAST, s ? s.max - s.min : 0, p != null ? p : LAST, y != null ? y : LAST,
-        -qualityScore(it.m ? it.m.name : ''), -(it.m ? it.m.size : 0), it
+        -smartQualityScore(it.m ? it.m.name : ''), -(it.m ? it.m.size : 0), it
       ];
     });
     keys.sort(function (a, b) {
@@ -536,10 +685,14 @@
       // год принятого ответа ИИ важнее года в имени раздачи (groupVersions в Model.kt)
       var aiy = it.m.aiTitle && it.m.aiTitle.status === 'accepted' && it.m.aiTitle.base ? it.m.aiTitle.year : null;
       var y = aiy ? [null, String(aiy)] : YEAR_IN_NAME.exec(it.m.name);
+      var aiEd = it.m.aiTitle && it.m.aiTitle.status === 'accepted' && it.m.aiTitle.edition ? it.m.aiTitle.edition : '';
+      var rawEd = aiEd ? (aiEd !== 'default' ? aiEd : '') : parseEdition(it.m.name);
+      var ed = (rawEd === 'theatrical' || rawEd === 'extended' || rawEd === 'directors_cut' || rawEd === 'unrated' || rawEd === 'remastered') ? rawEd : '';
+      var edKey = ed ? '|' + ed : '';
       var keys = [];
       var poster = posterOf ? posterOf(it) : null;
-      if (poster) keys.push(kind + '|poster|' + poster);
-      keys.push(kind === 'm' ? 'm|' + titleKey(base) + '|' + (y ? y[1] : '') : 's|' + titleKey(base));
+      if (poster) keys.push(kind + '|poster|' + poster + edKey);
+      keys.push(kind === 'm' ? 'm|' + titleKey(base) + '|' + (y ? y[1] : '') + edKey : 's|' + titleKey(base) + edKey);
       var group = null;
       for (var i = 0; i < keys.length && !group; i++) group = byKey[keys[i]] || null;
       if (!group) { group = [it]; groups.push(group); shown.push(it); keys.forEach(function (k) { byKey[k] = group; }); }
@@ -711,11 +864,11 @@
     parseLibrary: parseLibrary, magnet: magnet, mainVideo: mainVideo, buildPlayable: buildPlayable,
     cleanTitle: cleanTitle, titleKey: titleKey, groupVersions: groupVersions, seriesLine: seriesLine, versionLine: versionLine,
     sortVersions: sortVersions, itemYear: itemYear, itemPart: itemPart, isCollection: isCollection, collectionLabel: collectionLabel,
-    qualityScore: qualityScore, itemSeasons: itemSeasons, nameSeason: nameSeason,
+    qualityScore: qualityScore, smartQualityScore: smartQualityScore, buildPartyVariant: buildPartyVariant, itemSeasons: itemSeasons, nameSeason: nameSeason,
     formatBytes: formatBytes, statusRu: statusRu, episodeLabel: episodeLabel,
     prepareItems: prepareItems, subtitlesFor: subtitlesFor, externalAudioFor: externalAudioFor,
     isVoiceOverOnly: isVoiceOverOnly, dubLabel: dubLabel, customName: customName, externalChoices: externalChoices, externalIn: externalIn,
-    watchKey: watchKey, watchInfo: watchInfo, basename: basename, tileTitle: tileTitle
+    watchKey: watchKey, watchInfo: watchInfo, parseEpisode: parseEpisode, basename: basename, tileTitle: tileTitle
   };
   if (typeof module === 'object' && module.exports) module.exports = SM.model;
 })(typeof window !== 'undefined' ? window : global);

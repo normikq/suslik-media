@@ -39,7 +39,9 @@ object Party {
     var roomId by mutableStateOf<String?>(null)
         private set
     val hostName get() = room.hostName
+    val hostKey get() = room.hostKey
     val hostOnly get() = room.hostOnly
+    fun isHost(m: ru.suslikovanora.media.core.party.PartyMember): Boolean = room.isCreator(m)
     val file get() = room.file
     val state get() = room.state
     val members get() = room.members
@@ -132,6 +134,7 @@ object Party {
             roomId = null; startedByMe = null; followed = null
             synchronized(this) { room = PartyRoom() }
             reportedBuffering = false
+            sentVariant = null
             runCatching { Api.post(PartyProtocol.leavePath(old), PartyProtocol.leaveBody(clientId)) }
         }
         val error = join(id)
@@ -145,6 +148,7 @@ object Party {
         roomId = null; startedByMe = null; followed = null
         synchronized(this) { room = PartyRoom() }
         reportedBuffering = false
+        sentVariant = null
         scope.launch { runCatching { Api.post(PartyProtocol.leavePath(id), PartyProtocol.leaveBody(clientId)) } }
     }
 
@@ -201,6 +205,39 @@ object Party {
         outbox.trySend(id to PartyProtocol.withClient(PartyProtocol.buffering(loading), clientId))
     }
 
+    fun sendVariantChange(variantKey: String) {
+        val id = roomId ?: return
+        outbox.trySend(id to PartyProtocol.withClient(PartyProtocol.variantChange(variantKey), clientId))
+    }
+
+    /** Что уже сообщили комнате о своём варианте: ключ, длина и фильм комнаты в тот момент («вариант|длина|фильм»). */
+    @Volatile private var sentVariant: String? = null
+
+    /** Свой вариант и длина его раздачи, когда плеер её узнал: тот же ключ и длина повторно не шлются.
+     *  [variant] — описание раздачи, которой нет в списке комнаты (гость добавил свою). */
+    fun reportVariant(variantKey: String, durationMs: Long, variant: ru.suslikovanora.media.core.party.PartyVariant?) {
+        val id = roomId ?: return
+        if (variantKey.isBlank() || durationMs <= 0) return
+        val f = file
+        val stamp = "$variantKey|$durationMs|${f?.key.orEmpty()}"
+        if (stamp == sentVariant) return
+        sentVariant = stamp
+        val known = f == null || variantKey == f.key || f.variants.any { it.key == variantKey }
+        AppLog.write("[party] my version ${variantKey.substringAfterLast('/')}, ${durationMs / 1000} s long")
+        outbox.trySend(id to PartyProtocol.withClient(PartyProtocol.variantChange(variantKey, durationMs, if (known) null else variant), clientId))
+    }
+
+    /** Длина раздачи ведущего, мс; 0 — ещё не знаем. */
+    val hostDurationMs: Long get() = members.firstOrNull { isHost(it) }?.durationMs ?: 0L
+
+    /** Раздача, которую сейчас смотрит ведущий (иначе — фильм комнаты). */
+    val hostVariantKey: String? get() = members.firstOrNull { isHost(it) }?.variantKey ?: file?.key
+
+    /** Сдвиг своей раздачи [myKey] от раздачи ведущего: сохранённая гостями подстройка пары, иначе разница длин. */
+    fun shiftFor(myKey: String?, myDurationMs: Long): Long =
+        if (!inRoom || isHost) 0L
+        else ru.suslikovanora.media.core.party.roomShiftMs(room.variantOffsets, hostVariantKey, hostDurationMs, myKey, myDurationMs)
+
     private fun action(body: JSONObject) {
         val id = roomId ?: return
         if (!canControl) return
@@ -225,6 +262,7 @@ object Party {
         notice = null; followed = null
         clock.reset()
         reportedBuffering = false
+        sentVariant = null
         // A fresh snapshot: another room's seq must not hide this one's state
         synchronized(this) { room = PartyRoom().merge(update) }
         // Joining by code does not start the film already in the room: «Смотреть вместе» opens it; the host's next one opens by itself

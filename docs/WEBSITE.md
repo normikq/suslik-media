@@ -36,10 +36,10 @@ website/
 │   │   ├── favorites.js    /api/favorites
 │   │   ├── magnets.js      /api/magnets, /api/torrents, файлы и отмена
 │   │   ├── search.js       /api/search, /api/search/add
-│   │   ├── mirror.js       /api/file/mirror-url, /api/file/proxy, /api/playlist
+│   │   ├── mirror.js       /api/file/mirror-url, /api/file/variant-url, /api/file/proxy, /api/playlist
 │   │   ├── updates.js      /api/app/* (обновления, каналы beta/stable, changelog, отчёты)
 │   │   ├── media.js        /api/media-metadata, /api/poster, /api/poster/img
-│   │   ├── sync.js         /api/sync — прогресс и дорожки по аккаунту Discord
+│   │   ├── sync.js         /api/sync — прогресс и дорожки по аккаунту Discord (с key/cid — запись и по canonical_id)
 │   │   ├── tags.js         /api/tags — метки Dolby Vision / HDR / DTS
 │   │   ├── tvstream.js     /api/file/tv-info, /api/file/tv — поток для Samsung TV (ffmpeg)
 │   │   ├── custom-audio.js /api/custom-audio — внешние озвучки (docs/CUSTOM-AUDIO-API.md)
@@ -127,7 +127,9 @@ website/
 - `GET /api/rooms/:id/events?client_id=…` — поток событий (`init`, `state_changed`, `member_joined`, `member_left`), `X-Accel-Buffering: no`.
   Участник — это открытый поток: закрылся последний поток устройства — его нет в комнате.
 - `POST /api/rooms/:id/leave` — выйти сразу.
-- `POST /api/rooms/:id/action` — `change_file`, `play`, `pause`, `seek`, `rate` — **только ведущий**; `buffering` — любой участник.
+- `POST /api/rooms/:id/action` — `change_file`, `play`, `pause`, `seek`, `rate` — **только ведущий**; `buffering` и `variant_change` — любой участник про себя (аккаунт не может менять другого). `variant_key` проверяется: формат `<adId>|<путь>` и, если у файла есть список `variants`, ключ из него; в `buffering` неверный ключ молча пропускается, в `variant_change` — ошибка. Повторное `suggest` того же фильма (по `canonical_id`) пополняет `variants` кандидата (до 30).
+- `room.file` (протокол комнат): сохраняет `key` (дефолтный файл ведущего для старых клиентов), а также канонический идентификатор `canonical_id`, монтажную версию `edition` и список пресетов качества `variants: [{ key, label, resolution, source_type, video_tech, audio_tech, bitrate_mbps, size_bytes, duration_sec, offset_ms, score, hardware_flags }]`.
+- Голосование и рулетка (`candidates`): хранят канонические сущности с постером TMDB, русским/оригинальным названием, годом, версией монтажа и списком прикреплённых вариантов качества.
 
 Правила доступа и время жизни комнат:
 - **1 аккаунт = 1 активная комната** (`moveAccount`, `findUserActiveRoom`, `accountActiveDevices`): один аккаунт может одновременно смотреть только на одном устройстве. При явном входе или создании комнаты с нового устройства (`client_id`) старое устройство (например, ПК при внезапном отключении электричества, севший телефон или переход на ТВ) автоматически освобождает место, а его зависший поток закрывается. Запомненный выбор устройства (`accountActiveDevices`) защищает от гонки: авто-повторы старого устройства получают 403 и не могут перехватить место у нового устройства во время установки TLS-соединения. Если ушедшее устройство было ведущим, права ведущего переходят к новому устройству при его фактическом подключении к потоку. Повторный вход / переподключение с того же устройства в ту же комнату разрешено. Для входа по общему паролю (`shared`) совместный просмотр нескольких устройств сохраняется.
@@ -165,13 +167,14 @@ website/
   4. Поддерживает HTTP range-запросы (`206 Partial Content`) для мгновенной перемотки.
 
 ### 3.6. Сериалы и Плейлисты
+- `POST /api/file/variant-url` — ссылка зеркала для другого релиза (пресета качества) без выхода из плеера. Тело: `{ variant_key }` вида `<adId>|<путь>` или `{ ad_id, path }`. Ответ: `url`, `variant_key`, `audio` (озвучки рядом с файлом и пользовательские), `subtitles`. Только POST (путь файла не должен попадать в логи nginx). Ответ без озвучек пользователей кэшируется в памяти не дольше срока подписи ссылок и 15 мин; подбор файлов рядом с видео — `services/sidecars.js`. Как и `/api/playlist`, не проверяет, что раздача входит в медиатеку пользователя — любая раздача аккаунта AllDebrid.
 - `POST /api/playlist` — генерация плейлиста сезона `.m3u`.
 - `GET /api/playlist/:id/:name` — отдача подписанного M3U-файла, содержащего список последующих серий до конца сезона с уже сгенерированными зеркальными ссылками.
 
 ### 3.7. Метаданные и Постеры (TMDB)
 - `POST /api/media-metadata` — сведения о видео через ffprobe (не больше двух процессов сразу, одинаковые запросы ждут один анализ).
 - `GET /api/poster` — постер и признак «мультфильм»; для баннера «Продолжить просмотр» ещё `backdrop` (лучший широкий кадр без надписей, `/api/poster/img/w1280/…`), `logo` (логотип названия, русский или английский), `overview` (по-русски), `year`, `rating`. Кадры и логотип берутся из `/{movie|tv}/{id}/images` и карточки TMDB (`addBannerExtras` в `services/posters.js`); любой сбой этих запросов оставляет ответ поиска. Старые клиенты лишние поля игнорируют.
-- `GET /api/tags` (`routes/tags.js`, `services/mediatags.js`) — `{tags: {id: ["Dolby Vision","HDR","DTS-HD MA"]}, pending}`: метки для постеров по самому файлу. ffprobe читает самый большой видеофайл готовой раздачи один раз (запись DOVI → Dolby Vision, PQ/HLG → HDR, дорожка dts → DTS / DTS-HD / DTS-HD MA / DTS:X), по одной раздаче в фоне, пауза 1,5 с, общий лимит ffprobe с `/api/media-metadata`. Ответ хранится в `media-tags.json`, пока раздача есть в AllDebrid (удалённые убираются при запросе, если список настоящий, не устаревшая копия); не вышло — повтор через 6 ч, не больше 3 раз. Клиенты переспрашивают каждые 30 с, пока `pending > 0`; без ответа сервера метки угадываются по названию.
+- `GET /api/tags` (`routes/tags.js`, `services/mediatags.js`) — `{tags: {id: ["Dolby Vision","HDR","DTS-HD MA"]}, profiles: {id: MediaVariant}, pending}`: метки для постеров по самому файлу и композитные профили качества (`MediaVariant`). ffprobe читает самый большой видеофайл готовой раздачи один раз (запись DOVI → Dolby Vision, PQ/HLG → HDR, дорожка dts → DTS / DTS-HD / DTS-HD MA / DTS:X), по одной раздаче в фоне, пауза 1,5 с, общий лимит ffprobe с `/api/media-metadata`. `buildMediaVariant` формирует профиль качества: разрешение (4K/1080p/720p/SD), тип источника (Remux/BDRip/Web-DL/HDTV), видеотехнологии (DV/HDR10+/HDR10/10-bit/SDR), звук (TrueHD Atmos/DTS:X/DTS-HD MA/DTS 5.1/DD+/AC3), битрейт, размер, вычисляет весовой рейтинг `score` (`calculateScore`) и аппаратные метки `hardware_flags` (`dts`, `dv`, `hdr`, `heavy` через `getHardwareFlags`). Ответ хранится в `media-tags.json`, пока раздача есть в AllDebrid (удалённые убираются при запросе, если список настоящий, не устаревшая копия); не вышло — повтор через 6 ч, не больше 3 раз. Клиенты переспрашивают каждые 30 с, пока `pending > 0`; без ответа сервера метки угадываются по названию.
 - `GET /api/poster/img/...` (свой лимит 1000 в минуту) — локальное кэширование и проксирование картинок постеров (чтобы клиенты не зависели от блокировок `image.tmdb.org` и экономили трафик).
 
 ### 3.8. Обновления приложений (App Update Distribution)

@@ -26,4 +26,7 @@ object PlayerExtras {
     const val MARKERS = "media_markers"
     /** What a room shows for each [WATCH_KEYS] entry: «Название · Сезон 1, серия 2» (as Discord on the PC). */
     const val ROOM_TITLES = "media_room_titles"
+    /** Список вариантов качества (JSON array) */
+    const val VARIANTS = "media_variants"
+    const val CANONICAL_ID = "media_canonical_id"
 }

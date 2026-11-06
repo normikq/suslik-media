@@ -8,6 +8,7 @@ Sheet {
     id: d
     readonly property alias model: m
     signal play()
+    signal changeVersion(string title, var ids)
     maxWidth: m.kind === 2 ? 660 : m.kind === 1 ? 540 : 620
     onDismissed: open = false
     function show(magnetId, path) { m.load(magnetId, path); open = true }
@@ -37,6 +38,18 @@ Sheet {
             }
         }
         Connections { target: d; function onOpenChanged() { if (d.open) scroller.contentY = 0 } }
+        C.ScrollBar.vertical: C.ScrollBar {
+            id: vbar
+            visible: scroller.interactive
+            width: 12
+            padding: 4
+            policy: C.ScrollBar.AlwaysOn
+            background: Item {}
+            contentItem: Rectangle {
+                implicitWidth: 4; radius: 2
+                color: vbar.pressed ? "#66FFFFFF" : vbar.hovered ? "#4DFFFFFF" : "#33FFFFFF"
+            }
+        }
         Column {
             id: content
             width: scroller.width
@@ -211,6 +224,44 @@ Sheet {
                 Selector { width: (parent.width - 12) / 2; label: Ui.tx("library.sezon"); value: m.seasonValue; items: m.seasons; onPicked: (i) => m.seasonIndex = i }
                 Selector { width: (parent.width - 12) / 2; label: Ui.tx("library.seriya"); value: m.episodeValue; items: m.episodes; onPicked: (i) => m.episodeIndex = i }
             }
+            Item {
+                visible: m.hasMultipleVersions
+                width: parent.width
+                height: 52
+                Btn {
+                    id: verBtn
+                    anchors.bottom: parent.bottom
+                    width: parent.width; height: 42
+                    hoverUp: 1
+                    onClicked: {
+                        const t = m.versionTitle, ids = m.versionIds
+                        d.open = false
+                        d.changeVersion(t, ids)
+                    }
+                    Rectangle {
+                        anchors.fill: parent; radius: 12
+                        color: verBtn.hovered ? "#1C2232" : Theme.glassFill
+                        border.color: verBtn.hovered ? "#323B50" : Theme.glassEdge
+                    }
+                    Row {
+                        x: 14; width: parent.width - 28; anchors.verticalCenter: parent.verticalCenter
+                        spacing: 8
+                        Text {
+                            width: parent.width - changeLbl.implicitWidth - 16
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: m.versionLabel
+                            color: "white"; font.family: Theme.onest; font.weight: Font.Medium; font.pixelSize: 13
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            id: changeLbl
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: Ui.tx("library.vyberite_versiyu")
+                            color: Theme.accent; font.family: Theme.onest; font.weight: Font.DemiBold; font.pixelSize: 13
+                        }
+                    }
+                }
+            }
             // ---- состояние, место, «Смотреть» ----
             Text {
                 visible: m.kind !== 2
@@ -298,30 +349,6 @@ Sheet {
                 onClicked: d.open = false
                 Rectangle { anchors.fill: parent; radius: 12; color: closeBottom.hovered ? "#1C2232" : "#141824"; border.color: closeBottom.hovered ? "#323B50" : "#242A3A" }
                 Text { anchors.centerIn: parent; text: Ui.tx("library.zakryt"); color: "white"; font.family: Theme.onest; font.weight: Font.DemiBold; font.pixelSize: 14 }
-            }
-        }
-    }
-    // полоса прокрутки — в поле карточки справа, её можно тянуть и щёлкать
-    // (обёртка высотой 1: Column не ставит элементы нулевой высоты)
-    Item {
-        width: parent.width; height: 1
-        C.ScrollBar {
-            id: vbar
-            visible: scroller.interactive
-            orientation: Qt.Vertical
-            x: parent.width + 4
-            y: -1 - scroller.height
-            width: 12; height: scroller.height
-            padding: 4
-            size: scroller.visibleArea.heightRatio
-            position: scroller.visibleArea.yPosition
-            onPositionChanged: if (active) scroller.contentY = position * scroller.contentHeight
-            minimumSize: 24 / Math.max(1, scroller.height)
-            policy: C.ScrollBar.AlwaysOn
-            background: Item {}
-            contentItem: Rectangle {
-                implicitWidth: 4; radius: 2
-                color: vbar.pressed ? "#66FFFFFF" : vbar.hovered ? "#4DFFFFFF" : "#33FFFFFF"
             }
         }
     }

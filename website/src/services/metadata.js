@@ -116,12 +116,14 @@ function runFfprobe(url) {
         const stream = (data.streams || []).find(s => s.width && s.height);
         if (!stream) return reject(new Error("Видеопоток не найден."));
         const rate = Number(stream.bit_rate || data.format?.bit_rate || 0);
+        const durationSec = Math.round(Number(data.format?.duration || stream.duration || 0)) || null;
         resolve({
           width: Number(stream.width),
           height: Number(stream.height),
           codec: stream.codec_name || null,
           bitrate: rate || null,
           bitrateMbps: rate ? Math.round(rate / 100000) / 10 : null,
+          durationSec,
           frameRate: stream.avg_frame_rate || null
         });
       } catch {

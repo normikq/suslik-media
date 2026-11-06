@@ -85,6 +85,8 @@ Library::Library(ApiClient &api, CloudSync &sync, QObject *parent)
 }
 
 void Library::bump() {
+    // Любое изменение медиатеки (флаги «Моё»/«Избранное», названия, постеры) делает версии versionsOf() устаревшими
+    m_versionsBuilt = false;
     // Несколько изменений подряд — один пересчёт страниц.
     // Не чаще раза в 400 мс: фоновые ответы (жанры, постеры, названия — каждые 120 мс) иначе пересобирали
     // страницы медиатеки несколько раз в секунду.
@@ -119,11 +121,40 @@ const LibraryItem *Library::item(qint64 id) const {
     return nullptr;
 }
 
+QList<LibraryItem> Library::versionsOf(qint64 magnetId) const {
+    if (magnetId <= 0 || m_items.isEmpty()) return {};
+    if (!m_versionsBuilt) {
+        const auto [shown, vMap] = groupVersions(m_items, [this](const LibraryItem &i) { return posterPathOf(i); });
+        m_versionsMap = vMap;
+        m_versionRoot.clear();
+        for (auto it = m_versionsMap.constBegin(); it != m_versionsMap.constEnd(); ++it) {
+            for (const auto &ver : it.value()) {
+                m_versionRoot.insert(ver.m.id, it.key());
+            }
+        }
+        m_versionsBuilt = true;
+    }
+    if (const auto rootIt = m_versionRoot.constFind(magnetId); rootIt != m_versionRoot.cend()) {
+        return m_versionsMap.value(*rootIt);
+    }
+    if (const LibraryItem *single = item(magnetId)) return {*single};
+    return {};
+}
+
+std::optional<core::PartyVariant> Library::serverProfile(qint64 magnetId) const {
+    const auto it = m_serverProfiles.constFind(magnetId);
+    if (it != m_serverProfiles.cend()) return *it;
+    return std::nullopt;
+}
+
 void Library::publish(const QList<Magnet> &list) {
     QList<Magnet> library;
     m_voiceOvers.clear();
     for (const Magnet &m : list) (isVoiceOverOnly(m) ? m_voiceOvers : library) << m;
     m_items = prepareItems(library);
+    m_versionsBuilt = false;
+    m_versionsMap.clear();
+    m_versionRoot.clear();
     bump();
 }
 
@@ -232,6 +263,9 @@ void Library::logout() {
     m_api.post(S("/api/logout"), {}, [](const ApiResult &) {});
     m_api.setDeviceToken(std::nullopt);
     m_items.clear();
+    m_versionsBuilt = false;
+    m_versionsMap.clear();
+    m_versionRoot.clear();
     m_voiceOvers.clear();
     applyProfile(std::nullopt);
     m_sync.setUserId(std::nullopt);
@@ -397,6 +431,7 @@ void Library::remove(qint64 id) {
     m_api.post(path, {}, [this, id](const ApiResult &r) {
         if (!r.ok()) { emit actionFailed(ApiClient::describe(r.error)); return; }
         m_items.erase(std::remove_if(m_items.begin(), m_items.end(), [id](const LibraryItem &i) { return i.m.id == id; }), m_items.end());
+        m_versionsBuilt = false;
         bump();
     });
 }
@@ -408,6 +443,7 @@ void Library::setAi(const QHash<qint64, std::optional<AiTitle>> &answers) {
         const auto a = answers.constFind(i.m.id);
         if (a != answers.cend()) i = i.withAiTitle(*a);
     }
+    m_versionsBuilt = false;
     bump();
 }
 
@@ -607,7 +643,7 @@ void Library::recordAnimation(const QString &key, const QJsonObject &j) {
 }
 
 void Library::notePoster(const QString &key, const QString &path) {
-    if (m_posterPaths.value(key) != path) { m_posterPaths.insert(key, path); bump(); }
+    if (m_posterPaths.value(key) != path) { m_posterPaths.insert(key, path); m_versionsBuilt = false; bump(); }
 }
 
 std::optional<QString> Library::posterPathOf(const LibraryItem &item) const {
@@ -752,6 +788,13 @@ void Library::refreshTags(int round) {
             for (const auto &v : it.value().toArray()) list << v.toString();
             m_serverTags.insert(id, list);
         }
+        const QJsonObject profiles = r.json.value(S("profiles")).toObject();
+        for (auto it = profiles.begin(); it != profiles.end(); ++it) {
+            bool ok = false;
+            const qint64 id = it.key().toLongLong(&ok);
+            if (!ok || !it.value().isObject()) continue;
+            m_serverProfiles.insert(id, core::parsePartyVariant(it.value().toObject()));
+        }
         bump();
         // сервер разбирает новые фильмы по одному в фоне: пока остались — спросить ещё
         if (r.json.value(S("pending")).toInt() > 0) QTimer::singleShot(30000, this, [this, round] { refreshTags(round + 1); });
@@ -825,6 +868,32 @@ std::optional<QString> Library::cachedMediaLine(qint64 id, const MFile &f) const
     return parts.join(S(" · "));
 }
 
+std::pair<int, int> Library::cachedMediaDimensions(const QString &key) const {
+    if (key.isEmpty()) return {0, 0};
+    const auto raw = m_mediaIndex.get(key);
+    if (!raw) return {0, 0};
+    const QJsonObject j = QJsonDocument::fromJson(raw->toUtf8()).object();
+    return {j.value(S("width")).toInt(), j.value(S("height")).toInt()};
+}
+
+std::pair<int, int> Library::cachedMediaDimensions(qint64 id, const QString &path) const {
+    return cachedMediaDimensions(QString::number(id) + QLatin1Char('|') + path);
+}
+
+void Library::saveMediaDimensions(const QString &key, int width, int height) {
+    if (key.isEmpty() || width <= 0 || height <= 0) return;
+    const auto raw = m_mediaIndex.get(key);
+    QJsonObject j = raw ? QJsonDocument::fromJson(raw->toUtf8()).object() : QJsonObject{};
+    if (j.value(S("width")).toInt() == width && j.value(S("height")).toInt() == height) return;
+    j.insert(S("width"), width);
+    j.insert(S("height"), height);
+    m_mediaIndex.put(key, QString::fromUtf8(QJsonDocument(j).toJson(QJsonDocument::Compact)));
+}
+
+void Library::saveMediaDimensions(qint64 id, const QString &path, int width, int height) {
+    saveMediaDimensions(QString::number(id) + QLatin1Char('|') + path, width, height);
+}
+
 void Library::requestMediaLine(qint64 id, const MFile &f) {
     const QString key = QString::number(id) + QLatin1Char('|') + f.path;
     if (m_mediaAsked.contains(key) || cachedMediaLine(id, f) || !f.link) return;
@@ -853,8 +922,7 @@ void Library::runMediaQueue() {
 }
 
 // ---- прогресс ----
-std::optional<WatchInfo> Library::watchInfo(const QString &key) const {
-    const auto v = m_watch.get(key);
+static std::optional<WatchInfo> parseWatchInfoVal(const std::optional<QString> &v) {
     if (!v) return std::nullopt;
     const QStringList p = v->split(QLatin1Char('|'));
     if (p.size() < 3) return std::nullopt;
@@ -864,10 +932,86 @@ std::optional<WatchInfo> Library::watchInfo(const QString &key) const {
     return WatchInfo{pos, p[1].toLongLong(), p[2].toLongLong()};
 }
 
-void Library::noteWatch(const QString &key, qint64 pos, qint64 len) {
+std::optional<WatchInfo> Library::watchInfo(const QString &key) const {
+    return parseWatchInfoVal(m_watch.get(key));
+}
+
+std::optional<WatchInfo> Library::watchInfoWithFallback(const QString &key, const std::optional<QString> &cid) const {
+    if (const auto direct = parseWatchInfoVal(m_watch.get(key))) return direct;
+
+    const qsizetype bar = key.indexOf(QLatin1Char('|'));
+    const qint64 magId = bar > 0 ? key.left(bar).toLongLong() : 0;
+    const QString path = bar >= 0 ? key.mid(bar + 1) : QString();
+    const auto targetEp = path.isEmpty() ? std::nullopt : core::episodePair(path);
+
+    std::optional<QString> effCid = (cid && !cid->isEmpty()) ? cid : std::nullopt;
+    if (!effCid && magId > 0) {
+        if (const LibraryItem *it = item(magId)) {
+            if (const auto ai = it->m.acceptedAi(); ai && ai->canonicalId && !ai->canonicalId->isEmpty()) effCid = ai->canonicalId;
+        }
+    }
+
+    std::optional<WatchInfo> best;
+    // 1. Поиск среди других версий (groupVersions) того же фильма/сериала
+    if (magId > 0) {
+        const auto versions = versionsOf(magId);
+        for (const auto &ver : versions) {
+            if (ver.m.id == magId) continue;
+            if (ver.playable.isMovie()) {
+                if (targetEp) continue;
+                const auto w = parseWatchInfoVal(m_watch.get(watchKey(ver.m.id, ver.playable.file)));
+                if (w && (!best || w->at > best->at)) best = w;
+            } else if (targetEp) {
+                for (const auto &s : ver.playable.seasons) {
+                    if (s.season != targetEp->first) continue;
+                    for (const auto &e : s.items) {
+                        if (e.episode == targetEp->second) {
+                            const auto w = parseWatchInfoVal(m_watch.get(watchKey(ver.m.id, e.file)));
+                            if (w && (!best || w->at > best->at)) best = w;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Поиск по canonicalId (cid) в m_watch (в т.ч. пришедшее с других устройств)
+    if (effCid && !effCid->isEmpty()) {
+        const QString cidSuffix = QLatin1Char('|') + *effCid;
+        const QHash<QString, QString> all = m_watch.all();
+        for (auto it = all.cbegin(); it != all.cend(); ++it) {
+            if (it.key() == key || !it.value().endsWith(cidSuffix)) continue;
+            const QStringList p = it.value().split(QLatin1Char('|'));
+            if (p.size() < 4 || p[3] != *effCid) continue;
+            const QString kPath = after(it.key(), QLatin1Char('|'));
+            if (targetEp != core::episodePair(kPath)) continue;
+            bool ok = false;
+            const qint64 pos = p[0].toLongLong(&ok);
+            if (!ok) continue;
+            const WatchInfo w{pos, p[1].toLongLong(), p[2].toLongLong()};
+            if (!best || w.at > best->at) best = w;
+        }
+    }
+    return best;
+}
+
+void Library::noteWatch(const QString &key, qint64 pos, qint64 len, const std::optional<QString> &cid) {
     const qint64 at = QDateTime::currentMSecsSinceEpoch();
-    m_watch.put(key, QStringLiteral("%1|%2|%3").arg(pos).arg(std::max<qint64>(len, 0)).arg(at));
-    m_sync.noteWatch(key, pos, std::max<qint64>(len, 0), at);
+    std::optional<QString> effCid = (cid && !cid->isEmpty()) ? cid : std::nullopt;
+    if (!effCid) {
+        const qint64 magId = before(key, QLatin1Char('|')).toLongLong();
+        if (magId > 0) {
+            if (const LibraryItem *it = item(magId)) {
+                if (const auto ai = it->m.acceptedAi(); ai && ai->canonicalId && !ai->canonicalId->isEmpty()) effCid = ai->canonicalId;
+            }
+        }
+    }
+    const qint64 safeLen = std::max<qint64>(len, 0);
+    const QString val = (effCid && !effCid->isEmpty())
+                            ? QStringLiteral("%1|%2|%3|%4").arg(pos).arg(safeLen).arg(at).arg(*effCid)
+                            : QStringLiteral("%1|%2|%3").arg(pos).arg(safeLen).arg(at);
+    m_watch.put(key, val);
+    m_sync.noteWatch(key, pos, safeLen, at, effCid);
 }
 
 std::optional<std::pair<MFile, WatchInfo>> Library::lastWatched(const Magnet &m) const {
@@ -914,6 +1058,18 @@ bool Library::hasFile(qint64 magnetId, const QString &path) const {
             for (const Episode &e : s.items)
                 if (e.file.path == path) return true;
         return false;
+    }
+    return false;
+}
+
+bool Library::hasMatchingFilm(const QString &key, const QString &canonicalId) const {
+    const qint64 magnetId = key.section(QLatin1Char('|'), 0, 0).toLongLong();
+    const QString path = key.section(QLatin1Char('|'), 1);
+    if (magnetId > 0 && hasFile(magnetId, path)) return true;
+    if (!canonicalId.isEmpty()) {
+        for (const LibraryItem &it : m_items) {
+            if (it.m.aiTitle && it.m.aiTitle->accepted() && it.m.aiTitle->canonicalId == canonicalId) return true;
+        }
     }
     return false;
 }

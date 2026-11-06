@@ -19,6 +19,8 @@ class PlayerWatchProgress(
         fun getCurrentUrl(): String
         fun getCurrentQueueIndex(): Int
         fun getQueueSize(): Int
+        fun getActiveVariantKey(): String? = null
+        fun getCanonicalId(): String? = null
     }
 
     companion object {
@@ -60,8 +62,15 @@ class PlayerWatchProgress(
         return if (key.isBlank()) null else "pos:$key"
     }
 
-    fun savedPosition(url: String = callback.getCurrentUrl()): Long =
-        positionKey(url)?.let { prefs.getLong(it, 0L) } ?: 0L
+    fun savedPosition(url: String = callback.getCurrentUrl()): Long {
+        positionKey(url)?.let { prefs.getLong(it, 0L) }?.takeIf { it > 0L }?.let { return it }
+        callback.getActiveVariantKey()?.takeIf { it.isNotBlank() }?.let { prefs.getLong("w:$it", 0L) }?.takeIf { it > 0L }?.let { return it }
+        val fallback = ru.suslikovanora.media.library.CloudSync.watchFor(context, currentWatchKey(), callback.getCanonicalId())
+        if (fallback != null && fallback.pos >= 5_000L && !(fallback.len > 0L && fallback.pos > fallback.len - 15_000L)) {
+            return fallback.pos
+        }
+        return 0L
+    }
 
     /** Where a film opened from library starts: remembered place, or 0 when «С начала» was chosen. */
     fun startPosition(intent: Intent, url: String = callback.getCurrentUrl()): Long =
@@ -70,19 +79,44 @@ class PlayerWatchProgress(
 
     fun persistPosition(time: Long, length: Long, isEnded: Boolean, url: String = callback.getCurrentUrl()) {
         val key = positionKey(url) ?: return
+        val activeVarKey = callback.getActiveVariantKey()?.takeIf { it.isNotBlank() && '|' in it }
         val nearEnd = length > 0L && time > length - 15_000L
         if (isEnded || nearEnd || time < 5_000L) {
-            prefs.edit().remove(key).apply()
+            prefs.edit().apply {
+                remove(key)
+                if (activeVarKey != null) remove("w:$activeVarKey")
+            }.apply()
         } else {
-            prefs.edit().putLong(key, time).apply()
+            prefs.edit().apply {
+                putLong(key, time)
+                if (activeVarKey != null) putLong("w:$activeVarKey", time)
+            }.apply()
         }
         // Progress for library tiles ("продолжить с …", watched bar). Watched to the end = pos == len.
         currentWatchKey()?.let { wk ->
             if (time < 5_000L && !nearEnd) return@let
             val pos = if (nearEnd || (isEnded && length > 0L)) length else time
+            val len = length.coerceAtLeast(0L)
             val at = System.currentTimeMillis()
-            watchPrefs.edit().putString(wk, "$pos|${length.coerceAtLeast(0L)}|$at").apply()
-            ru.suslikovanora.media.library.CloudSync.noteWatch(wk, pos, length.coerceAtLeast(0L), at)
+            val cid = callback.getCanonicalId()?.takeIf { it.isNotBlank() }
+            val suffix = if (cid != null) "|$cid" else ""
+            watchPrefs.edit().apply {
+                putString(wk, "$pos|$len|$at$suffix")
+                if (activeVarKey != null && activeVarKey != wk) {
+                    putString(activeVarKey, "$pos|$len|$at$suffix")
+                }
+            }.apply()
+            if (activeVarKey != null && activeVarKey != wk) {
+                val activeMag = activeVarKey.substringBefore('|')
+                val activePath = activeVarKey.substringAfter('|')
+                if (activeMag.isNotBlank() && activePath.isNotBlank()) {
+                    context.getSharedPreferences("last_episode", Context.MODE_PRIVATE).edit().putString(activeMag, activePath).apply()
+                }
+            }
+            ru.suslikovanora.media.library.CloudSync.noteWatch(wk, pos, len, at, cid)
+            if (activeVarKey != null && activeVarKey != wk) {
+                ru.suslikovanora.media.library.CloudSync.noteWatch(activeVarKey, pos, len, at, cid)
+            }
         }
     }
 

@@ -81,7 +81,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import java.util.Locale
 import ru.suslikovanora.media.core.TimeRange
+import ru.suslikovanora.media.core.party.PartyVariant
 import ru.suslikovanora.media.tr
 import ru.suslikovanora.media.ui.Onest
 import ru.suslikovanora.media.ui.Sm
@@ -121,6 +123,11 @@ class PlayerUiState {
     var nextIn by mutableIntStateOf(0)
     var showLock by mutableStateOf(true)
     var showMark by mutableStateOf(false)
+    var variants by mutableStateOf<List<PartyVariant>>(emptyList())
+    var activeVariantKey by mutableStateOf<String?>(null)
+    var hostVariantKey by mutableStateOf<String?>(null)
+    var switchingVariant by mutableStateOf(false)
+    var downgradePrompt by mutableStateOf<String?>(null)
     var insets by mutableStateOf(IntArray(4)) // left, top, right, bottom (px): camera cutout and system bars
 
     /** Remote control: where focus goes once the panel is composed ("play", "seek"). */
@@ -151,6 +158,9 @@ class PlayerUiState {
     var onNextNow: () -> Unit = {}
     var onNextCancel: () -> Unit = {}
     var onSkipIntro: () -> Unit = {}
+    var onSelectVariant: (String) -> Unit = {}
+    var onAcceptDowngrade: () -> Unit = {}
+    var onDismissDowngrade: () -> Unit = {}
     /** Any touch on the panel: the hide timer starts again. */
     var onPoke: () -> Unit = {}
 }
@@ -170,6 +180,31 @@ fun PlayerOverlay(s: PlayerUiState) {
             exit = fadeOut(tween(200)) + slideOutVertically(tween(220, easing = FastOutLinearInEasing)) { -it / 3 },
             modifier = Modifier.align(Alignment.TopCenter)
         ) { TopBar(s, pad) }
+
+        if (s.downgradePrompt != null) {
+            Box(
+                Modifier.align(Alignment.TopCenter)
+                    .padding(top = pad.calculateTopPadding() + 56.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(Color(0xE61A1D24))
+                    .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(22.dp))
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(s.downgradePrompt ?: "", color = Color.White, fontFamily = Onest, fontSize = 13.sp)
+                    Box(
+                        Modifier.clip(RoundedCornerShape(14.dp)).background(Color(0x29FFFFFF))
+                            .clickable { s.onAcceptDowngrade() }
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text(tr("player.da"), color = Color.White, fontFamily = Onest, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                    GlassIconButton(onClick = { s.onDismissDowngrade() }, size = 26.dp, description = tr("player.skryt")) {
+                        CloseCrossIcon(color = Color.White.copy(alpha = 0.7f), size = 10.dp)
+                    }
+                }
+            }
+        }
 
         Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
             AnimatedVisibility(
@@ -306,6 +341,12 @@ private fun BottomBar(s: PlayerUiState, pad: PaddingValues) {
             Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp, Alignment.End)) {
                     if (full) {
+                        if (s.variants.size > 1) {
+                            GlassIconButton(onClick = { toggle(s, "quality") }, active = s.picker == "quality", size = btn, description = tr("player.kachestvo")) {
+                                val curQuality = s.variants.find { it.key == s.activeVariantKey }?.quality ?: "HD"
+                                Text(curQuality, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
                         GlassIconButton(onClick = { toggle(s, "audio") }, active = s.picker == "audio", size = btn, description = tr("playertrack.audiodorozhka")) {
                             AudioTrackIcon(color = Color.White, size = 20.dp)
                         }
@@ -352,7 +393,7 @@ fun PlayerSheet(s: PlayerUiState, modifier: Modifier = Modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    when (kind) { "audio" -> tr("playertrack.audiodorozhka"); "spu" -> tr("playertrack.subtitry"); else -> tr("overlay.nastroyki_vosproizvedeniya") },
+                    when (kind) { "audio" -> tr("playertrack.audiodorozhka"); "spu" -> tr("playertrack.subtitry"); "quality" -> tr("player.kachestvo"); else -> tr("overlay.nastroyki_vosproizvedeniya") },
                     color = Color.White, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 14.sp
                 )
                 GlassIconButton(onClick = { s.onPicker(null) }, size = 36.dp, description = tr("player.zakryt")) {
@@ -361,7 +402,20 @@ fun PlayerSheet(s: PlayerUiState, modifier: Modifier = Modifier) {
             }
             Column(Modifier.fillMaxWidth().heightIn(max = 210.dp).verticalScroll(rememberScrollState()).padding(end = 6.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (kind == "more") {
+                if (kind == "quality") {
+                    FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        s.variants.forEachIndexed { i, v ->
+                            val isActive = v.key == s.activeVariantKey
+                            val isHost = !s.hostVariantKey.isNullOrBlank() && v.key == s.hostVariantKey
+                            var label = if (v.label.isNotBlank()) v.label else "${v.quality}${if (v.bitrate > 0) " (${String.format(Locale.US, "%.1f", v.bitrate)} Мбит/с)" else ""}"
+                            if (isHost) label += " [Хост]"
+                            PlayerChip(label, isActive, if (isActive) Modifier.focusRequester(first) else Modifier) {
+                                s.onSelectVariant(v.key)
+                                s.onPicker(null)
+                            }
+                        }
+                    }
+                } else if (kind == "more") {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         SheetLabel(tr("overlay.kadr"))
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {

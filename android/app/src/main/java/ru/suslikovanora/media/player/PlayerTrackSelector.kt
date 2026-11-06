@@ -80,6 +80,17 @@ class PlayerTrackSelector(
     val selectedAudio: Int? get() = selectedAudioId
     val selectedSpu: Int? get() = selectedSpuId
 
+    fun setVariantSidecars(url: String, subs: List<String>, audio: List<String>, customJson: String? = null) {
+        val oldAudio = filesOf(filmUrl)?.audio.orEmpty() + filesOf(url)?.audio.orEmpty()
+        CustomAudioInfo.updateUrls(oldAudio, customJson)
+        if (url.isNotEmpty()) episodeFiles[keyOf(url)] = EpisodeFiles(subs, audio)
+        filmUrl = url
+        attachedAudio.clear()
+        activeSidecar = null
+        pendingAudio = null
+        prefsAppliedForUrl = ""
+    }
+
     fun readSideExtras(i: Intent?) {
         episodeFiles.clear()
         val url = i?.getStringExtra(PlayerExtras.URL).orEmpty()
@@ -391,6 +402,9 @@ class PlayerTrackSelector(
         // current one by itself: the film's own track played and the file sat unused.
         val sidecar = activeSidecar?.takeIf { it != SIDECAR_NONE }
         val fileIdx = sidecar?.let { s -> attachedAudio.indexOfFirst { audioLabel(it) == s } }?.takeIf { it >= 0 }
+        // The track set just now: Media3 applies a selection later, so p.audioTrack still names the old one for a moment
+        // (06.11 journal: smart subtitles were picked for the film's «Flowers Media» while «OnWave» was being made current)
+        var chosenAudio: Int? = null
         runCatching {
             if (fileIdx != null) {
                 val files = attachedAudio.size
@@ -398,6 +412,7 @@ class PlayerTrackSelector(
                 else p.audioFileTrack(fileIdx, files)?.let { id ->
                     p.setAudioTrack(id)
                     selectedAudioId = id
+                    chosenAudio = id
                     syncAudioDelay(p)
                     AppLog.write("[track] voice-over file «$sidecar» made current")
                     callback.onAudioTrackChanged()
@@ -406,11 +421,12 @@ class PlayerTrackSelector(
                 if (id != p.audioTrack) {
                     p.setAudioTrack(id)
                     selectedAudioId = id
+                    chosenAudio = id
                     syncAudioDelay(p)
                     callback.onAudioTrackChanged()
                 }
             }
-            if (smart) applySmartSubs(p)
+            if (smart) applySmartSubs(p, chosenAudio ?: selectedAudioId?.takeIf { id -> p.audioTracks().any { it.id == id } } ?: p.audioTrack)
             else if (spu == SPU_SMART) Unit
             else if (spu == SPU_OFF) {
                 if (p.subtitleTrack != -1) {

@@ -29,6 +29,7 @@ import ru.suslikovanora.media.player.Media3Cache
 import ru.suslikovanora.media.player.Media3Engine
 import ru.suslikovanora.media.player.PlaybackTweaks
 import ru.suslikovanora.media.player.VideoHints
+import ru.suslikovanora.media.library.LibraryStore
 
 import android.app.AlertDialog
 import android.content.Context
@@ -44,36 +45,25 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import android.util.Rational
 import android.view.Gravity
 import android.view.KeyEvent
-import android.view.MotionEvent
-import android.graphics.Rect
-import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
-import android.view.ViewGroup
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.annotation.RequiresApi
-import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
-import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
-import java.net.HttpURLConnection
-import java.net.URL
-import java.util.Locale
 
 class PlayerActivity : ComponentActivity() {
     /** The video engine (VLC or Media3, chosen per file — see [EngineChoice]), made in onCreate; [player] is it while a film is open. */
     private lateinit var engine: HybridEngine
     private val engineChoice by lazy { EngineChoice(this) }
     private val tweaks by lazy { PlaybackTweaks(this) }
+    private val libraryStore by lazy { LibraryStore(this) }
     private var delays = PlaybackTweaks.Delays(0L, 0L) // субтитры / звук этого файла, помнятся на файл
     private var engineLoggedFor = "" // "<engine> <file>" last written to the journal (reconnects do not repeat it)
     private val player: PlayerEngine? get() = if (::engine.isInitialized) engine.takeIf { it.hasPlayer } else null
@@ -213,17 +203,23 @@ class PlayerActivity : ComponentActivity() {
         }
     }
     // Playing but the clock does not move and no buffering is reported = frozen playback.
-    // Runs only while VLC reports "playing" (restarted by the Playing event), so a paused player wakes nobody up.
+    // Runs while VLC reports "playing" or buffering is in progress, so a paused player wakes nobody up.
     private val watchdogRunnable = object : Runnable {
         override fun run() {
             val p = player ?: return
-            if (!p.isPlaying) return // paused: nobody wakes up (restarted by the Playing event)
-            warnIfSoftwareDecoding(p) // once per file; the track may not be known yet at the first picture
-            checkNoPicture(p)
-            diagnostics.checkProcessorOverload(p)
-            checkHeavy()
-            // Network trouble is handled by the reconnect logic; the supervisor judges only real playback.
-            if (!userPaused && !ended && !networkMonitor.isNetworkLost && !audioSession.isPausedForFocus) statsOf(p)?.let { supervisor.tick(it) }
+            if (!p.isPlaying && !buffering) return // paused: nobody wakes up (restarted by the Playing/Buffering event)
+            if (p.isPlaying) {
+                warnIfSoftwareDecoding(p) // once per file; the track may not be known yet at the first picture
+                checkNoPicture(p)
+                diagnostics.checkProcessorOverload(p)
+                checkHeavy()
+            }
+            // Network trouble is handled by the reconnect logic; the supervisor judges real playback and long buffering.
+            if (!userPaused && !ended && !networkMonitor.isNetworkLost && !audioSession.isPausedForFocus) {
+                if (buffering && bufferingShown in 1..99) supervisor.buffering(bufferingShown.toFloat())
+                val st = statsOf(p) ?: if (buffering) PlaybackSupervisor.Stats(perceivedPosition(), 0L, 0L, 0L, 0.0, 0, false, 0, false) else null
+                st?.let { supervisor.tick(it) }
+            }
             handler.postDelayed(this, WATCHDOG_TICK_MS)
         }
     }
@@ -258,6 +254,18 @@ class PlayerActivity : ComponentActivity() {
             handler.postDelayed({ if (!buffering && !networkLost) bufferingLabel.visibility = View.GONE }, 2500L)
         }
         override fun log(message: String) = AppLog.write(message)
+        override fun suggestDowngrade(currentBitrateMbps: Double) {
+            val vars = ui.variants
+            if (vars.isEmpty()) return
+            val curVar = vars.find { it.key == ui.activeVariantKey }
+            val curBr = currentBitrateMbps.takeIf { it > 0.0 } ?: curVar?.bitrate ?: 0.0
+            val best = (if (curBr > 0.0) vars.filter { it.bitrate > 0.0 && it.bitrate < curBr && it.key != ui.activeVariantKey }.maxByOrNull { it.bitrate } else null)
+                ?: vars.filter { it.key != ui.activeVariantKey && (curVar == null || it.score < curVar.score) }.maxByOrNull { it.score }
+                ?: return
+            val label = if (best.label.isNotBlank()) best.label else "${best.quality} (${String.format(java.util.Locale.US, "%.1f", best.bitrate)} Мбит/с)"
+            suggestedDowngradeKey = best.key
+            ui.downgradePrompt = tr("player.skorost_nedostatochna", "target" to label)
+        }
     }, stuckLimitMs = { if (viaReserve()) 30_000L else 8_000L })
 
     private fun statsOf(p: PlayerEngine): PlaybackSupervisor.Stats? {
@@ -348,6 +356,7 @@ class PlayerActivity : ComponentActivity() {
         override fun buffering(percent: Float) {
             val owner = player ?: return
             supervisor.buffering(percent)
+            if (percent < 100f) startWatchdog()
             if (catchingUp) {
                 // the reserve holds the film back on purpose: its own label, no stall timer
                 buffering = percent < 100f
@@ -723,11 +732,15 @@ class PlayerActivity : ComponentActivity() {
             override fun getCurrentUrl(): String = currentUrl
             override fun getCurrentQueueIndex(): Int = playlistQueue.currentIndex
             override fun getQueueSize(): Int = playlistQueue.size
+            override fun getActiveVariantKey(): String? = ui.activeVariantKey
+            override fun getCanonicalId(): String? = canonicalId ?: Party.file?.canonicalId
         })
     }
 
     private val scope = kotlinx.coroutines.MainScope()
     private var sideJob: kotlinx.coroutines.Job? = null
+    private var switchVariantJob: kotlinx.coroutines.Job? = null
+    private var canonicalId: String? = null
 
     private val playlistQueue: PlayerPlaylistQueue by lazy {
         PlayerPlaylistQueue(handler, object : PlayerPlaylistQueue.Callback {
@@ -737,18 +750,23 @@ class PlayerActivity : ComponentActivity() {
                 player?.let { val len = lengthOf(it); if (finished && len > 0L) persistPosition(len, len) else persistPosition(timeOf(it).coerceAtLeast(0L), len) }
             }
             override fun onPlayEntry(entry: PlayerPlaylistQueue.Entry, index: Int) {
+                switchVariantJob?.cancel()
+                switchVariantJob = null
+                ui.switchingVariant = false
                 currentUrl = entry.url
                 resetMarkers()
                 lastKnownLength = 0L
                 lastKnownLengthUrl = ""
                 currentTitle = entry.title
+                val newKey = watchProgress.keys.getOrNull(index)
                 // The room switched a guest to this episode (the host went on to it): from the room's place, not from
                 // where the guest once left it here (that place would load first, and then the room would seek again)
                 val roomKey = ru.suslikovanora.media.party.Party.file?.key
-                playbackPosition = if (roomKey != null && roomKey == roomEntryKey && watchProgress.keys.getOrNull(index) == roomKey &&
+                val targetEpisodePos = if (roomKey != null && (roomKey == roomEntryKey || (newKey != null && ru.suslikovanora.media.party.Party.file?.matches(newKey) == true)) &&
                     ru.suslikovanora.media.party.Party.isGuest) ru.suslikovanora.media.party.Party.targetMs().coerceAtLeast(0L)
                 else savedPosition()
                 roomEntryKey = null
+                playbackPosition = targetEpisodePos
                 lastTime = playbackPosition
                 ended = false
                 userPaused = false
@@ -756,8 +774,29 @@ class PlayerActivity : ComponentActivity() {
                 retryCount = 0
                 needsReload = false
                 ui.time = 0L
+                if (newKey != null) {
+                    val newVars = variantsForWatchKey(newKey)
+                    if (newVars.isNotEmpty()) ui.variants = newVars
+                    val sp = getSharedPreferences("player_ui", Context.MODE_PRIVATE)
+                    val fk = ru.suslikovanora.media.core.sync.WatchSync.filmKeyOf(newKey)
+                    val cid = canonicalId ?: Party.file?.canonicalId
+                    val prefMag = (if (!cid.isNullOrBlank()) sp.getString("vmagnet:c$cid", null) else null)
+                        ?: fk?.let { sp.getString("vmagnet:$it", null) }
+                    val prefQ = (if (!cid.isNullOrBlank()) sp.getString("vquality:c$cid", null) else null)
+                        ?: fk?.let { sp.getString("vquality:$it", null) }
+                        ?: sp.getString("vquality:*", null)
+                    val targetVar = (if (!prefMag.isNullOrBlank()) newVars.find { it.key.substringBefore('|') == prefMag } else null)
+                        ?: (if (!prefQ.isNullOrBlank()) newVars.find { it.quality == prefQ || it.label == prefQ } else null)
+                    ui.activeVariantKey = newKey
+                    if (index > 0 && targetVar != null && targetVar.key != newKey) {
+                        switchVariant(targetVar.key, initialPos = targetEpisodePos)
+                        return
+                    }
+                    fk?.let { sp.edit().putString("vmagnet:$it", newKey.substringBefore('|')).apply() }
+                }
                 if (!trackSelector.needsSidecars(entry.url)) { reconnect(forcePlay = true, startAt = playbackPosition); return }
                 // This episode's own voice-overs and subtitles are signed on the mirror first, then it opens with them.
+                runCatching { player?.pause() }
                 showStatus(tr("play.gotovim_dorozhki"))
                 sideJob?.cancel()
                 sideJob = scope.launch {
@@ -809,22 +848,39 @@ class PlayerActivity : ComponentActivity() {
     private var roomEntryKey: String? = null
     private var seekStamp = 0L // every seek (the user's or the room's) changes it: the room tells its own from the user's
 
+    /** Время комнаты — шкала раздачи ведущего. Гость на раздаче другой длины смотрит со сдвигом (core timelineShiftMs):
+     *  движку отдаётся время в шкале комнаты, перемотка комнаты переводится обратно в свою шкалу. Ведущему — 0. */
+    private fun roomShiftMs(): Long {
+        if (!Party.inRoom || Party.isHost) return 0L
+        // Новый файл ещё не знает длины (VLC отдаёт 0 при открытии): сдвиг прежний
+        val len = lengthOf(player)
+        if (len <= 0L) return loggedShift
+        return Party.shiftFor(ui.activeVariantKey ?: watchProgress.currentWatchKey(), len)
+    }
+    private var loggedShift = 0L
+
     private val syncPlayer = object : ru.suslikovanora.media.core.party.SyncPlayer {
-        override val timeMs: Long get() = perceivedPosition()
+        override val timeMs: Long get() = perceivedPosition() - roomShiftMs()
         override val busy: Boolean get() = userSeeking || tapSeekTarget != null
-        override val engineMs: Long get() = player?.let { timeOf(it) } ?: 0L
+        override val engineMs: Long get() = (player?.let { timeOf(it) } ?: 0L) - roomShiftMs()
         override val seekStamp: Long get() = this@PlayerActivity.seekStamp
         override val paused: Boolean get() = userPaused || ended
         override val running: Boolean get() = player?.isPlaying == true && !buffering
         override val userRate: Float get() = 1f
         override fun applyPaused(paused: Boolean) { if (paused) doPause() else doPlay() }
-        override fun seekTo(ms: Long) = this@PlayerActivity.seekTo(ms)
+        override fun seekTo(ms: Long) = this@PlayerActivity.seekTo((ms + roomShiftMs()).coerceAtLeast(0L))
         override fun setRate(rate: Float) { runCatching { player?.setRate(rate) } }
     }
+
+    /** Версии фильма из своей медиатеки для ключа ownVariantsKey: считаются один раз на файл, не на каждый тик комнаты. */
+    private var ownVariantsKey: String? = null
+    private var ownVariants: List<ru.suslikovanora.media.core.party.PartyVariant> = emptyList()
 
     private val partySync: PlayerPartySync by lazy {
         PlayerPartySync(handler, object : PlayerPartySync.Callback {
             override fun watchKey(): String? = watchProgress.currentWatchKey()
+            override fun activeVariantKey(): String? = ui.activeVariantKey
+            override fun canonicalId(): String? = canonicalId ?: Party.file?.canonicalId
             override fun keys(): List<String> = watchProgress.keys
             override fun title(): String = roomTitles.getOrNull(watchProgress.keys.indexOf(watchProgress.currentWatchKey())) ?: currentTitle
             override fun ready(): Boolean = alive && !leaving && !keptOnStop && player != null && sideJob?.isActive != true
@@ -833,13 +889,82 @@ class PlayerActivity : ComponentActivity() {
                 if (i != playlistQueue.currentIndex) { roomEntryKey = watchProgress.keys.getOrNull(i); playlistQueue.playEntry(i) }
             }
             override fun notice(text: String) = showSeekLabel(text)
-            override fun onTick() { ui.live = partyGuest() }
+            override fun onTick() {
+                ui.live = partyGuest()
+                // Длина своей раздачи: по ней гости выравнивают время (у ведущего сервер сдвигает комнату при смене раздачи)
+                val len = lengthOf(player)
+                val vk = ui.activeVariantKey ?: watchProgress.currentWatchKey()
+                if (Party.inRoom && vk != null && len > 0L) Party.reportVariant(vk, len, ui.variants.find { it.key == vk })
+                val shift = roomShiftMs()
+                if (shift != loggedShift) {
+                    loggedShift = shift
+                    AppLog.write(if (shift == 0L) "[party] my version is on the host's timeline"
+                        else "[party] my version is ${kotlin.math.abs(shift)} ms ${if (shift > 0) "longer" else "shorter"} than the host's: time shifted")
+                }
+                val rf = Party.file
+                if (rf != null && rf.variants.isNotEmpty()) {
+                    // Свои раздачи гостя (их нет у ведущего) остаются в списке рядом с вариантами комнаты
+                    val wk = watchProgress.currentWatchKey()
+                    if (wk != ownVariantsKey) { ownVariantsKey = wk; ownVariants = wk?.let { variantsForWatchKey(it) }.orEmpty() }
+                    val own = ownVariants.filter { o -> rf.variants.none { it.key == o.key } }
+                    val merged = if (own.isEmpty()) rf.variants else (rf.variants + own).sortedByDescending { it.score }
+                    if (merged != ui.variants) ui.variants = merged
+                    ui.hostVariantKey = Party.members.find { Party.isHost(it) }?.variantKey ?: rf.key
+                    if (ui.activeVariantKey == null) {
+                        ui.activeVariantKey = rf.variants.find { it.key == watchProgress.currentWatchKey() }?.key ?: rf.variants.first().key
+                    }
+                    val curV = rf.variants.find { it.key == ui.activeVariantKey }
+                    if (curV != null && curV.bitrate > 0 && supervisor.bitrateMbps <= 0.0) {
+                        supervisor.bitrateMbps = curV.bitrate
+                    }
+                }
+            }
             override fun close() = leave()
+            override fun variantsFor(key: String): List<ru.suslikovanora.media.core.party.PartyVariant> = variantsForWatchKey(key)
         })
     }
 
+    private fun variantsForWatchKey(key: String): List<ru.suslikovanora.media.core.party.PartyVariant> {
+        if (!key.contains('|')) return emptyList()
+        val magnetId = key.substringBefore('|').toLongOrNull() ?: return emptyList()
+        val filePath = key.substringAfter('|')
+        val store = libraryStore
+        val versions = store.versionsOf(magnetId)
+        val item = versions.find { it.m.id == magnetId } ?: store.items.find { it.m.id == magnetId }
+        val isSeries = item?.playable is ru.suslikovanora.media.core.Playable.Series
+        val sNum = if (isSeries) {
+            (item!!.playable as ru.suslikovanora.media.core.Playable.Series).seasons.firstNotNullOfOrNull { s ->
+                s.items.find { it.file.path == filePath }?.let { s.season to it.episode }
+            }
+        } else null
+
+        val vars = ArrayList<ru.suslikovanora.media.core.party.PartyVariant>()
+        for (ver in versions) {
+            val vFile = if (ver.m.id == magnetId) {
+                ver.m.files.find { it.path == filePath } ?: ru.suslikovanora.media.core.MFile(0, filePath, filePath, false, 0L, null)
+            } else if (ver.playable is ru.suslikovanora.media.core.Playable.Series && sNum != null) {
+                (ver.playable as ru.suslikovanora.media.core.Playable.Series).seasons
+                    .find { it.season == sNum.first }
+                    ?.items?.find { it.episode == sNum.second }?.file
+            } else if (ver.playable is ru.suslikovanora.media.core.Playable.Movie) {
+                (ver.playable as ru.suslikovanora.media.core.Playable.Movie).file
+            } else {
+                ru.suslikovanora.media.core.mainVideo(ver.m)
+            }
+            if (vFile != null) {
+                vars += ru.suslikovanora.media.core.buildPartyVariant(ver, vFile, store.serverProfiles[ver.m.id])
+            }
+        }
+        if (vars.isEmpty() && item != null) {
+            val f = item.m.files.find { it.path == filePath } ?: ru.suslikovanora.media.core.MFile(0, filePath, filePath, false, 0L, null)
+            vars += ru.suslikovanora.media.core.buildPartyVariant(item, f, store.serverProfiles[magnetId])
+        }
+        vars.sortByDescending { it.score }
+        return vars
+    }
+
     /** A guest of the room watching its film: pause / play, seeking and episodes are the host's. */
-    private fun partyGuest(): Boolean = Party.isGuest && Party.file?.key == watchProgress.currentWatchKey()
+    private fun partyGuest(): Boolean = Party.isGuest && (Party.file?.matches(watchProgress.currentWatchKey(), canonicalId) == true)
     /** The host holds the pause (or the room waits for someone loading): a guest cannot lift it. */
     private fun partyPlayLocked(): Boolean = partyGuest() && Party.state.let { !it.playing || it.waiting }
     private fun guestBlocks(what: String): Boolean {
@@ -962,6 +1087,9 @@ class PlayerActivity : ComponentActivity() {
         ui.onSubDelay = { ms -> setDelays(delays.copy(subtitleMs = PlaybackTweaks.clamp(ms))) }
         ui.onAudioDelay = { ms -> setDelays(delays.copy(audioMs = PlaybackTweaks.clamp(ms))) }
         ui.onVolume = { v -> setSystemVolume(v); ui.volume = v; controlsOverlay.keepShown() }
+        ui.onSelectVariant = { key -> switchVariant(key) }
+        ui.onAcceptDowngrade = { acceptDowngrade() }
+        ui.onDismissDowngrade = { dismissDowngrade() }
         // From the card: the current one counts as watched (it may be on its end credits)
         ui.onNextNow = { playlistQueue.hideNextCard(); if (!guestBlocks("episode")) playlistQueue.playNext(finished = true) }
         ui.onSkipIntro = { skipIntro(); showControlsTemporarily() }
@@ -976,6 +1104,7 @@ class PlayerActivity : ComponentActivity() {
         panel.title = currentTitle
         panel.scale = SCALES[scaleIndex].second
         panel.ui = ui
+        panel.onQuality = { openPicker(if (ui.picker == "quality") null else "quality") }
         panel.onAudio = { openPicker(if (ui.picker == "audio") null else "audio") }
         panel.onSubs = { openPicker(if (ui.picker == "spu") null else "spu") }
         panel.onScale = { cycleScale() }
@@ -1059,6 +1188,10 @@ class PlayerActivity : ComponentActivity() {
 
         pipController.setup()
         showControlsTemporarily()
+        scope.launch {
+            libraryStore.restoreSnapshot()
+            if (libraryStore.serverProfiles.isEmpty()) libraryStore.refreshTags()
+        }
         intent.getStringExtra(EXTRA_PLAYLIST)?.takeIf { it.isNotBlank() }?.let { fetchPlaylist(it) }
         partySync.start(syncPlayer)
     }
@@ -1477,6 +1610,137 @@ class PlayerActivity : ComponentActivity() {
         }
     }
 
+    private var suggestedDowngradeKey: String? = null
+
+    private fun acceptDowngrade() {
+        val key = suggestedDowngradeKey ?: return
+        dismissDowngrade()
+        switchVariant(key)
+    }
+
+    private fun dismissDowngrade() {
+        suggestedDowngradeKey = null
+        ui.downgradePrompt = null
+    }
+
+    private fun switchVariant(variantKey: String, initialPos: Long? = null) {
+        if (variantKey.isBlank() || (initialPos == null && variantKey == ui.activeVariantKey) || ui.switchingVariant) return
+        val prevVariantKey = ui.activeVariantKey
+        ui.activeVariantKey = variantKey
+        ui.switchingVariant = true
+        showSeekLabel(tr("player.pereklyuchenie_kachestva"))
+        val currentPos = initialPos ?: perceivedPosition()
+        val expectedKey = watchProgress.currentWatchKey()
+        switchVariantJob?.cancel()
+        switchVariantJob = scope.launch {
+            try {
+                var adId: Long? = null
+                var path: String? = null
+                if ('|' in variantKey) {
+                    adId = variantKey.substringBefore('|').toLongOrNull()
+                    path = variantKey.substringAfter('|')
+                }
+                val res = ru.suslikovanora.media.net.Api.resolveVariantUrl(variantKey, adId, path)
+                if (!alive || leaving || watchProgress.currentWatchKey() != expectedKey) {
+                    ui.switchingVariant = false
+                    return@launch
+                }
+                val newUrl = res.optString("url")
+                if (newUrl.isBlank()) {
+                    ui.activeVariantKey = prevVariantKey
+                    showSeekLabel(tr("player.ne_udalos_smenit_kachestvo"))
+                    ui.switchingVariant = false
+                    if (initialPos != null) reconnect(forcePlay = true, startAt = initialPos)
+                    return@launch
+                }
+                ui.switchingVariant = false
+                currentUrl = newUrl
+                val currentVariant = ui.variants.find { it.key == variantKey }
+                if (currentVariant != null && currentVariant.bitrate > 0) {
+                    supervisor.bitrateMbps = currentVariant.bitrate
+                }
+                val qv: String? = currentVariant?.let { if (it.quality.isNotBlank()) it.quality else it.label }
+                if (!qv.isNullOrBlank()) {
+                    val sp = getSharedPreferences("player_ui", Context.MODE_PRIVATE)
+                    val fk = ru.suslikovanora.media.core.sync.WatchSync.filmKeyOf(watchProgress.currentWatchKey())
+                    val newFk = ru.suslikovanora.media.core.sync.WatchSync.filmKeyOf(variantKey)
+                    val mag = variantKey.substringBefore('|')
+                    val cid = canonicalId ?: Party.file?.canonicalId
+                    sp.edit().apply {
+                        if (fk != null) putString("vquality:$fk", qv)
+                        if (newFk != null && newFk != fk) putString("vquality:$newFk", qv)
+                        putString("vquality:*", qv)
+                        if (cid != null) putString("vquality:c$cid", qv)
+                        if (mag.isNotBlank()) {
+                            if (fk != null) putString("vmagnet:$fk", mag)
+                            if (newFk != null) putString("vmagnet:$newFk", mag)
+                            if (cid != null) putString("vmagnet:c$cid", mag)
+                        }
+                    }.apply()
+                    ru.suslikovanora.media.library.CloudSync.noteTrack(fk, null, null, null, alsoAny = true, quality = qv, cid = cid)
+                    if (newFk != null && newFk != fk) {
+                        ru.suslikovanora.media.library.CloudSync.noteTrack(newFk, null, null, null, alsoAny = false, quality = qv, cid = cid)
+                    }
+                }
+                Party.sendVariantChange(variantKey)
+
+                val newAudios = ArrayList<String>()
+                val customObj = org.json.JSONObject()
+                fun collectAudio(arr: org.json.JSONArray?) {
+                    if (arr == null) return
+                    for (i in 0 until arr.length()) {
+                        val item = arr.optJSONObject(i) ?: continue
+                        val u = item.optString("url")
+                        if (u.isNullOrBlank()) continue
+                        if (u !in newAudios) newAudios += u
+                        val title = item.optString("title")
+                        val lang = item.optString("lang").takeIf { it.isNotBlank() && it != "und" }
+                        val menuName = if (!lang.isNullOrBlank() && !title.isNullOrBlank() && !title.endsWith(" [$lang]", ignoreCase = true)) "$title [$lang]" else title
+                        val offsetMs = if (item.has("offsetMs")) item.optLong("offsetMs", 0L) else item.optLong("offset_ms", 0L)
+                        if (!menuName.isNullOrBlank() || offsetMs != 0L) {
+                            customObj.put(u, org.json.JSONObject().put("title", menuName).put("offsetMs", offsetMs))
+                        }
+                    }
+                }
+                collectAudio(res.optJSONArray("audio"))
+                collectAudio(res.optJSONArray("customAudio"))
+                val newSubs = ArrayList<String>()
+                val subsArr = res.optJSONArray("subtitles")
+                if (subsArr != null) {
+                    for (i in 0 until subsArr.length()) {
+                        val u = subsArr.optJSONObject(i)?.optString("url")
+                        if (!u.isNullOrBlank()) newSubs += u
+                    }
+                }
+                trackSelector.setVariantSidecars(newUrl, newSubs, newAudios, customObj.toString())
+
+                val prevVariant = ui.variants.find { it.key == prevVariantKey }
+                val targetOffsetMs = currentVariant?.offsetMs ?: 0L
+                val prevOffsetMs = prevVariant?.offsetMs ?: 0L
+                val offsetDiff = targetOffsetMs - prevOffsetMs
+                val targetPos = if (initialPos != null) maxOf(0L, initialPos) else maxOf(0L, currentPos + offsetDiff)
+
+                val p = createPlayer(newUrl, targetPos)
+                if (!userPaused && !ended) {
+                    audioSession.requestAudioFocus()
+                    p.play()
+                    handler.removeCallbacks(stallRunnable)
+                    handler.postDelayed(stallRunnable, openTimeout())
+                }
+                startWatchdog()
+            } catch (e: Throwable) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                AppLog.write("[player] switchVariant failed: ${e.message}")
+                if (watchProgress.currentWatchKey() == expectedKey) {
+                    ui.activeVariantKey = prevVariantKey
+                    if (initialPos != null) reconnect(forcePlay = true, startAt = initialPos)
+                }
+                showSeekLabel(tr("player.ne_udalos_smenit_kachestvo"))
+                ui.switchingVariant = false
+            }
+        }
+    }
+
     private fun togglePlay() {
         if (player?.isPlaying == true && !needsReload) doPause() else userPlay()
         showControlsTemporarily()
@@ -1611,6 +1875,43 @@ class PlayerActivity : ComponentActivity() {
     private fun readSideExtras(i: Intent?) {
         trackSelector.readSideExtras(i)
         watchProgress.readIntent(i)
+        val varsRaw = i?.getStringExtra(PlayerExtras.VARIANTS)
+        if (!varsRaw.isNullOrBlank() && ui.variants.isEmpty()) {
+            val arr = runCatching { org.json.JSONArray(varsRaw) }.getOrNull()
+            if (arr != null) {
+                val list = ArrayList<ru.suslikovanora.media.core.party.PartyVariant>()
+                for (idx in 0 until arr.length()) {
+                    val o = arr.optJSONObject(idx) ?: continue
+                    val hfArr = o.optJSONArray("hardware_flags")
+                    val hf = ArrayList<String>()
+                    if (hfArr != null) for (j in 0 until hfArr.length()) hf += hfArr.optString(j)
+                    list += ru.suslikovanora.media.core.party.PartyVariant(
+                        key = o.optString("key"),
+                        label = o.optString("label"),
+                        quality = o.optString("quality", "1080p"),
+                        audio = o.optString("audio", "Stereo"),
+                        bitrate = o.optDouble("bitrate", 0.0),
+                        offsetMs = if (o.has("offset_ms")) o.optLong("offset_ms", 0L) else o.optLong("offsetMs", 0L),
+                        score = o.optInt("score", 0),
+                        hardwareFlags = hf
+                    )
+                }
+                if (list.isNotEmpty()) {
+                    ui.variants = list
+                    val curKey = watchProgress.currentWatchKey()
+                    ui.activeVariantKey = list.find { it.key == curKey }?.key ?: list.first().key
+                    val curV = list.find { it.key == ui.activeVariantKey }
+                    if (curV != null && curV.bitrate > 0) {
+                        supervisor.bitrateMbps = curV.bitrate
+                    }
+                }
+            }
+        }
+        // The room's canonical id only for the room's own file (a guest following the host): a guest's other film without
+        // one must not pass for the room's work, or findEpisodeIndex would match its episodes by number
+        val openedKeys = i?.getStringArrayListExtra(EXTRA_WATCH_KEYS).orEmpty() + listOfNotNull(i?.getStringExtra(PlayerExtras.WATCH_KEY))
+        canonicalId = i?.getStringExtra(PlayerExtras.CANONICAL_ID)
+            ?: Party.file?.takeIf { f -> openedKeys.any { k -> k == f.key || f.variants.any { it.key == k } } }?.canonicalId
         panel.collection = i?.getBooleanExtra(PlayerExtras.COLLECTION, false) == true
         markerQueries = i?.getStringExtra(PlayerExtras.MARKERS)?.let { runCatching { org.json.JSONArray(it) }.getOrNull() }
         roomTitles = i?.getStringArrayListExtra(PlayerExtras.ROOM_TITLES).orEmpty()
@@ -2009,6 +2310,9 @@ class PlayerActivity : ComponentActivity() {
         setIntent(intent)
         val url = intent.getStringExtra(EXTRA_URL)?.takeIf { it.isNotBlank() } ?: return
         if (url == currentUrl) return
+        switchVariantJob?.cancel()
+        switchVariantJob = null
+        ui.switchingVariant = false
         // Another film chosen while this one was parked behind the lock screen / in the background: wake the player
         // up first (receivers, video surface) without resuming the old film — the new one replaces it right below.
         if (keptOnStop) { playOnStart = false; handler.removeCallbacks(idleReleaseRunnable); resumeAfterStop()

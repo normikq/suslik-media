@@ -86,7 +86,7 @@
         : 'Пока не выбран: фильм включает ' + (r.hostName || 'создатель комнаты') + '.' })];
       if (host) film.push(keyed(button('К медиатеке', function () { SM.app.shell('home', true); }, 'primary'), 'lib'));
     } else {
-      var known = SM.app.findKey(f.key) != null;
+      var known = (SM.app.findKey(f.key) != null) || (f.variants && f.variants.some(function (v) { return SM.app.findKey(v.key) != null; }));
       film = [
         h('p', { class: 'room-film', text: f.title || f.key.substring(f.key.lastIndexOf('/') + 1) }),
         h('p', { id: 'room-time', class: r.state.playing && r.state.waiting ? 'warn-text' : 'muted', text: stateText() + ' · ' + ui.clock(party.targetMs()) }),

@@ -3,7 +3,7 @@
 const express = require("express");
 const { apiLimiter } = require("../middleware/rate-limit");
 const { requireLogin } = require("../middleware/auth");
-const { apply, changesSince, OWNER_RE } = require("../services/sync");
+const { apply, changesSince, lookup, OWNER_RE } = require("../services/sync");
 
 const router = express.Router();
 
@@ -21,7 +21,13 @@ router.get("/api/sync", requireLogin, apiLimiter, (req, res) => {
   const id = owner(req, res);
   if (!id) return;
   res.set("Cache-Control", "no-store");
-  res.json(changesSince(id, req.query.since));
+  const out = changesSince(id, req.query.since);
+  if (typeof req.query.key === "string" || typeof req.query.cid === "string") {
+    const { progress, trackChoice } = lookup(id, req.query);
+    out.progress = progress;
+    out.trackChoice = trackChoice;
+  }
+  res.json(out);
 });
 
 // Отдать свои изменения и сразу получить чужие: { since, watch: [...], tracks: [...] }

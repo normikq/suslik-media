@@ -49,14 +49,71 @@ Sheet {
                             height: rc.implicitHeight + 22
                             hoverUp: 1
                             onClicked: { const id = modelData.id, p = vp.page; vp.open = false; p.chooseVersion(id) }
-                            Glass { anchors.fill: parent; hovered: row.hovered }
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: 14
+                                color: row.modelData.isLastPlayed ? (row.hovered ? "#332563EB" : "#202563EB") : (Theme.simple ? (row.hovered ? "#1B2640" : "#141B2C") : (row.hovered ? Theme.glassFillHover : Theme.glassFill))
+                                border.color: row.modelData.isLastPlayed ? (row.hovered ? "#9960A5FA" : Theme.accentEdge) : (row.hovered ? Theme.glassEdgeHover : Theme.glassEdge)
+                                border.width: row.modelData.isLastPlayed ? 1.5 : 1
+                            }
                             Column {
                                 id: rc
                                 x: 14; y: 11; width: parent.width - 28
                                 Item {
-                                    width: parent.width; height: hd.implicitHeight
-                                    Text { id: hd; width: parent.width - sz.implicitWidth - 12; text: row.modelData.heading; color: "white"; font.family: Theme.onest; font.weight: Font.DemiBold; font.pixelSize: 15; wrapMode: Text.Wrap }
-                                    Text { id: sz; anchors.right: parent.right; text: row.modelData.size; color: Theme.muted; font.family: Theme.onest; font.pixelSize: 13 }
+                                    width: parent.width; height: Math.max(hd.implicitHeight, rightBox.implicitHeight)
+                                    Text {
+                                        id: hd
+                                        anchors.left: parent.left
+                                        anchors.right: rightBox.left
+                                        anchors.rightMargin: 12
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: row.modelData.heading
+                                        color: "white"
+                                        font.family: Theme.onest
+                                        font.weight: Font.DemiBold
+                                        font.pixelSize: 15
+                                        wrapMode: Text.Wrap
+                                    }
+                                    Row {
+                                        id: rightBox
+                                        anchors.right: parent.right
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        spacing: 8
+                                        Rectangle {
+                                            visible: !!row.modelData.isLastPlayed
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            height: 20
+                                            radius: 10
+                                            color: "#332563EB"
+                                            border.color: Theme.accentEdge
+                                            width: lastPlayedRow.width + 14
+                                            Row {
+                                                id: lastPlayedRow
+                                                anchors.centerIn: parent
+                                                spacing: 5
+                                                Rectangle {
+                                                    width: 6; height: 6; radius: 3; color: Theme.accent
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                }
+                                                Text {
+                                                    text: Ui.tx("library.poslednyaya_versiya")
+                                                    color: Theme.accent
+                                                    font.family: Theme.onest
+                                                    font.weight: Font.SemiBold
+                                                    font.pixelSize: 11
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                }
+                                            }
+                                        }
+                                        Text {
+                                            id: sz
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            text: row.modelData.size
+                                            color: Theme.muted
+                                            font.family: Theme.onest
+                                            font.pixelSize: 13
+                                        }
+                                    }
                                 }
                                 Text { topPadding: 3; width: parent.width; text: row.modelData.name; color: Theme.muted; font.family: Theme.onest; font.pixelSize: 12; elide: Text.ElideRight }
                                 Item {

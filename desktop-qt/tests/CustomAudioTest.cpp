@@ -46,16 +46,39 @@ private slots:
         QCOMPARE(CustomAudio::byMenuName(t, S("HDRezka [rus]"))->id, S("t1"));
         QCOMPARE(CustomAudio::byMenuName(t, S("Other.MKA [und]"))->id, S("t2"));
         QVERIFY(!CustomAudio::byMenuName(t, S("HDRezka")));
+
+        // Season/Episode matching test: Season 1 Ep 1 must NOT match Season 2 Ep 1
+        CustomTrack s1e1, s2e1;
+        s1e1.id = S("s1e1");
+        s1e1.videoPath = S("Season 1/S01E01.mkv");
+        s1e1.audioPath = S("Dub/s1e1.mka");
+        s1e1.url = S("https://x/s1e1.mka");
+        s2e1.id = S("s2e1");
+        s2e1.videoPath = S("Season 2/S02E01.mkv");
+        s2e1.audioPath = S("Dub/s2e1.mka");
+        s2e1.url = S("https://x/s2e1.mka");
+        const QList<CustomTrack> seasonTracks{s1e1, s2e1};
+
+        const auto foundS1 = CustomAudio::forVideo(seasonTracks, S("10|Season 1/S01E01.mkv"));
+        QCOMPARE(foundS1.size(), 1);
+        QCOMPARE(foundS1[0].id, S("s1e1"));
+
+        const auto foundS2 = CustomAudio::forVideo(seasonTracks, S("10|Season 2/S02E01.mkv"));
+        QCOMPARE(foundS2.size(), 1);
+        QCOMPARE(foundS2[0].id, S("s2e1"));
     }
 
     void readsCheckAndAttach() {
         const auto c = CustomAudio::parseCheck(json("{\"movieMagnetId\": 12, \"pairs\": ["
-                                                    "{\"videoPath\": \"v.mkv\", \"audioPath\": \"a.mka\", \"voice\": \"LostFilm\", \"season\": 1, \"episode\": null, \"offsetMs\": null}]}"));
+                                                    "{\"videoPath\": \"v.mkv\", \"audioPath\": \"a.mka\", \"voice\": \"LostFilm\", \"season\": 1, \"episode\": null, \"offsetMs\": null}],"
+                                                    "\"targetMovies\": [{\"id\": 12, \"name\": \"Dune 1\"}, {\"id\": 13, \"name\": \"Dune 2\"}]}"));
         QCOMPARE(c.movieMagnetId.value(), 12);
         QVERIFY(c.attachable);
         QCOMPARE(c.pairs[0].season.value(), 1);
         QVERIFY(!c.pairs[0].episode);
         QVERIFY(!c.pairs[0].offsetMs);
+        QCOMPARE(c.targetMagnetIds, (QList<qint64>{12, 13}));
+        QCOMPARE(c.targetMovieNames, (QStringList{S("Dune 1"), S("Dune 2")}));
         const auto a = CustomAudio::parseAttached(json("{\"created\": [{\"id\": \"a\"}], \"existing\": [{\"id\": \"b\"}]}"));
         QCOMPARE(a.size(), 2);
         QCOMPARE(a[0].value(S("id")).toString(), S("a"));

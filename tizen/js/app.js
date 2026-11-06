@@ -17,7 +17,7 @@
   ];
   var tabs = SM.tabs = SM.tabs || {};
 
-  var state = { items: [], loadedAt: 0, tab: 'home', focusKey: null, user: null, pages: {} };
+  var state = { items: [], loadedAt: 0, tab: 'home', focusKey: null, user: null, pages: {}, serverProfiles: {} };
 
   // Экран уходит: отписки (комната, таймеры вкладок)
   var leaving = [];
@@ -156,6 +156,7 @@
       state.items = model.prepareItems(model.parseLibrary(json).filter(function (m) { return !model.isVoiceOverOnly(m); }));
       state.loadedAt = Date.now();
       posters.fill(state.items, function () { if (state.tab === 'home' || state.tab === 'mine') refreshTab(); });
+      refreshTags(0);
       return state.items;
     }, function (e) {
       loading = null;
@@ -171,6 +172,18 @@
 
   /** Медиатека устарела (добавили раздачу): обновится при следующем открытии вкладки. */
   function libraryChanged() { state.loadedAt = 0; }
+
+  /** Профили качества с сервера: ffprobe анализирует раздачи в фоне. */
+  function refreshTags(round) {
+    if ((round || 0) >= 40) return;
+    api.get('/api/tags').then(function (r) {
+      if (!r || !r.profiles) return;
+      for (var k in r.profiles) {
+        state.serverProfiles[k] = r.profiles[k];
+      }
+      if (r.pending > 0) setTimeout(function () { refreshTags((round || 0) + 1); }, 30000);
+    }).catch(function () {});
+  }
 
   // ---- оболочка с вкладками ----
 
@@ -315,6 +328,12 @@
    */
   function continueList() {
     var out = [];
+    var grouped = groupedVersions(state.items);
+    var rootOf = {};
+    for (var vid in (grouped.versions || {})) {
+      var g = grouped.versions[vid];
+      g.forEach(function (v) { rootOf[v.m.id] = g[0].m.id; });
+    }
     state.items.forEach(function (it) {
       if (!it.m.ready) return;
       var entries = null, best = null;
@@ -328,13 +347,24 @@
       entries.forEach(function (en, j) { if (en.file.path === best.f.path) i = j; });
       if (i < 0) return;
       var info = model.watchInfo(best.w.pos, best.w.len, best.w.at);
+      var rootId = rootOf[it.m.id] || it.m.id;
+      var isColl = it.playable.kind === 'series' && it.playable.seasons.length > 0 && it.playable.seasons[0].items.length > 0 && !!it.playable.seasons[0].items[0].title;
+      var groupKey = isColl ? (rootId + '|' + best.f.path) : String(rootId);
       if (info.watched) {
         if (i + 1 >= entries.length) return;
-        out.push({ it: it, entries: entries, index: i + 1, at: best.w.at, fraction: 0, next: true });
-      } else if (best.w.pos > 30000) out.push({ it: it, entries: entries, index: i, at: best.w.at, fraction: info.fraction, next: false });
+        out.push({ it: it, entries: entries, index: i + 1, at: best.w.at, fraction: 0, next: true, groupKey: groupKey });
+      } else if (best.w.pos > 30000) out.push({ it: it, entries: entries, index: i, at: best.w.at, fraction: info.fraction, next: false, groupKey: groupKey });
     });
     out.sort(function (a, b) { return b.at - a.at; });
-    return out.slice(0, 12);
+    var deduped = [], seen = {};
+    for (var k = 0; k < out.length; k++) {
+      var item = out[k];
+      if (seen[item.groupKey]) continue;
+      seen[item.groupKey] = true;
+      deduped.push(item);
+      if (deduped.length >= 12) break;
+    }
+    return deduped;
   }
 
   function continueCard(c) {
@@ -386,12 +416,28 @@
 
   /** «Какую версию включить?»: строка на раздачу — серии и сезоны в ней, размер и имя; открывает её экран. */
   function pickVersion(title, versions) {
-    // versions уже упорядочены groupVersions (sortVersions)
+    var maxAt = 0, lastPlayedId = null;
+    versions.forEach(function (v) {
+      v.m.files.forEach(function (f) {
+        var w = watch.raw(model.watchKey(v.m.id, f));
+        if (w && w.at && w.at > maxAt) {
+          maxAt = w.at;
+          lastPlayedId = v.m.id;
+        }
+      });
+    });
     dialog(tr('library.pick_version_title'), title + ' · ' + versionsWord(versions.length), versions.map(function (v) {
-      var q = /2160p|4k/i.test(v.m.name) ? '4K' : /720p/i.test(v.m.name) ? '720p' : '1080p';
+      var prof = state.serverProfiles && state.serverProfiles[v.m.id];
+      var q = '';
+      if (prof && prof.quality) q = prof.quality;
+      else if (/2160p|4k|3840/i.test(v.m.name)) q = '4K';
+      else if (/1080[pi]|1920/i.test(v.m.name)) q = '1080p';
+      else if (/720p|1280/i.test(v.m.name)) q = '720p';
+      else if (/480|576|dvd/i.test(v.m.name)) q = '480p';
       var line = model.versionLine(v); // сезоны / фильмы сборника / год (versionLine в Model.kt)
-      var head = (line ? line + ' • ' : '') + q;
-      return { text: head + ' · ' + model.formatBytes(v.m.size) + ' · ' + shorten(v.m.name, 60), run: function () { details(v); } };
+      var head = [line, q].filter(Boolean).join(' • ');
+      var prefix = (maxAt > 0 && v.m.id === lastPlayedId) ? ('[' + tr('library.poslednyaya_versiya') + '] ') : '';
+      return { text: prefix + head + ' · ' + model.formatBytes(v.m.size) + ' · ' + shorten(v.m.name, 60), run: function () { details(v); } };
     }), 'versions');
   }
   function shorten(s, n) { return s.length > n ? s.substring(0, n - 1) + '…' : s; }
@@ -418,6 +464,25 @@
   }
 
   /** Постеры: /api/poster?q= → путь картинки → blob (нужен токен). Не больше трёх запросов сразу. */
+  /**
+   * groupVersions по списку раздач, пока не сменились сам список и пути постеров: на ТВ пересчёт всей медиатеки
+   * (регулярки сезонов, частей, года, качества) при каждом показе «Продолжить» и каждом открытии заметен.
+   * «Продолжить» и открытие фильма группируют один state.items (новый массив после каждой загрузки). byId — группа любой версии.
+   */
+  var groupMemo = [];
+  function groupedVersions(list) {
+    var pv = posters.version();
+    for (var i = 0; i < groupMemo.length; i++) if (groupMemo[i].list === list && groupMemo[i].pv === pv) return groupMemo[i].res;
+    var res = model.groupVersions(list, function (it) { return posters.pathOf(it.posterQueries); });
+    res.byId = {};
+    for (var vid in (res.versions || {})) {
+      var g = res.versions[vid];
+      for (var j = 0; j < g.length; j++) res.byId[g[j].m.id] = g;
+    }
+    groupMemo = [{ list: list, pv: pv, res: res }].concat(groupMemo.filter(function (m) { return m.list !== list; })).slice(0, 2);
+    return res;
+  }
+
   var posters = (function () {
     // Не больше 60 картинок в памяти (у ТВ 2018 года на страницу ~200 МБ): дольше всех не показанные освобождаются.
     // Путь картинки на сервере ([paths]) помним всегда: повторный показ — без нового /api/poster
@@ -438,6 +503,13 @@
     function savePaths() {
       clearTimeout(saveTimer);
       saveTimer = setTimeout(function () { try { var keep = {}; Object.keys(paths).forEach(function (k) { if (paths[k]) keep[k] = paths[k]; }); localStorage.setItem(PATHS_KEY, JSON.stringify(keep)); } catch (e) { /* место кончилось */ } }, 1500);
+    }
+    // Растёт, когда меняется путь постера: от путей зависит, какие раздачи — версии одного фильма (groupedVersions)
+    var pathsVersion = 0;
+    function setPath(q, p) {
+      var v = typeof p === 'string' && p.indexOf('/api/poster/img/') === 0 ? p : null;
+      if (paths[q] !== v) { paths[q] = v; pathsVersion++; }
+      return v;
     }
     function pathOf(queries) {
       for (var i = 0; i < queries.length; i++) if (typeof paths[queries[i]] === 'string') return paths[queries[i]];
@@ -460,9 +532,7 @@
         if (!todo.length) { filling = false; if (n) done(); return; }
         var q = todo.shift();
         api.get('/api/poster?q=' + encodeURIComponent(q)).then(function (r) {
-          var p = r.poster;
-          paths[q] = typeof p === 'string' && p.indexOf('/api/poster/img/') === 0 ? p : null;
-          if (paths[q]) { n++; savePaths(); }
+          if (setPath(q, r.poster)) { n++; savePaths(); }
           if (noteTitle(q, r)) n++;
         }, function () {}).then(function () { setTimeout(next, 150); });
       })();
@@ -484,8 +554,7 @@
     function load(q) {
       if (cache[q] !== undefined) return Promise.resolve(cache[q]);
       var path = paths[q] !== undefined ? Promise.resolve(paths[q]) : api.get('/api/poster?q=' + encodeURIComponent(q)).then(function (r) {
-        var p = r.poster;
-        paths[q] = typeof p === 'string' && p.indexOf('/api/poster/img/') === 0 ? p : null;
+        setPath(q, r.poster);
         savePaths();
         noteTitle(q, r);
         return paths[q];
@@ -498,6 +567,7 @@
     return {
       has: function (q) { return !!cache[q]; },
       pathOf: pathOf,
+      version: function () { return pathsVersion; },
       titleOf: titleOf,
       fill: fill,
       want: function (q, cb) {
@@ -608,9 +678,62 @@
       ]);
       return;
     }
+    if (!en.file.variants || !en.file.variants.length) {
+      var versions = groupedVersions(state.items || []).byId[it.m.id];
+      if (!versions || !versions.length) versions = [it];
+      var vars = [];
+      for (var vi = 0; vi < versions.length; vi++) {
+        var ver = versions[vi];
+        var matchingFile = null;
+        if (ver.m.id === it.m.id) {
+          matchingFile = en.file;
+        } else if (ver.playable && ver.playable.kind === 'series' && it.playable && it.playable.kind === 'series') {
+          var sNum = typeof en.season === 'number' ? en.season : -1;
+          var epNum = -1;
+          if (it.playable.seasons) {
+            for (var si = 0; si < it.playable.seasons.length; si++) {
+              var s = it.playable.seasons[si];
+              if (s.season === sNum) {
+                for (var ei = 0; ei < (s.items || []).length; ei++) {
+                  if (s.items[ei].file && s.items[ei].file.path === en.file.path) {
+                    epNum = s.items[ei].episode;
+                    break;
+                  }
+                }
+              }
+              if (epNum >= 0) break;
+            }
+          }
+          if (ver.playable.seasons) {
+            for (var vsi = 0; vsi < ver.playable.seasons.length; vsi++) {
+              var vs = ver.playable.seasons[vsi];
+              if (vs.season === sNum) {
+                for (var vei = 0; vei < (vs.items || []).length; vei++) {
+                  if (vs.items[vei].episode === epNum && vs.items[vei].file) {
+                    matchingFile = vs.items[vei].file;
+                    break;
+                  }
+                }
+              }
+              if (matchingFile) break;
+            }
+          }
+        } else if (ver.playable && ver.playable.kind === 'movie') {
+          matchingFile = ver.playable.file || model.mainVideo(ver.m);
+        } else {
+          matchingFile = model.mainVideo(ver.m);
+        }
+        if (matchingFile) {
+          vars.push(model.buildPartyVariant(ver, matchingFile, state.serverProfiles && state.serverProfiles[ver.m.id]));
+        }
+      }
+      if (!vars.length) vars.push(model.buildPartyVariant(it, en.file, state.serverProfiles && state.serverProfiles[it.m.id]));
+      vars.sort(function (a, b) { return b.score - a.score; });
+      en.file.variants = vars;
+    }
     var check = support.checkFile(en.file.path);
     var go = function () {
-      if (party.isHost()) party.putFilm(key, en.room || en.label);
+      if (party.isHost()) party.putFilm(key, en.room || en.label, en.file.canonical_id || '', en.file.edition || '', en.file.variants || []);
       show(h('div')); // экран под плеером пустой: старый не держит фокус и подписки
       posters.drop();
       SM.player.play({
@@ -633,14 +756,25 @@
     var f = party.room.file;
     if (!f) return;
     followed = f.key;
-    if (SM.player.current() === f.key) return;
-    var found = findKey(f.key);
+    var targetKey = f.key;
+    if (f.variants && f.variants.length) {
+      var best = support.pickBestCompatibleVariant(f.variants);
+      if (best && best.key) targetKey = best.key;
+    }
+    if (SM.player.current() === targetKey || SM.player.current() === f.key) return;
+    var found = findKey(targetKey) || findKey(f.key);
+    if (!found && f && f.variants) {
+      for (var vi = 0; vi < f.variants.length; vi++) {
+        found = findKey(f.variants[vi].key);
+        if (found) break;
+      }
+    }
     var go = function (hit) {
       if (!hit) { toast(tr('together.room_film_not_found')); return; }
       open(hit.it, hit.entries, hit.index, { back: function () { shell('party', true); }, room: true, resumeAt: party.targetMs() });
     };
     if (found) go(found);
-    else loadLibrary(true).then(function () { go(findKey(f.key)); }, function () {});
+    else loadLibrary(true).then(function () { go(findKey(targetKey) || findKey(f.key)); }, function () {});
   }
 
   function findKey(key) {

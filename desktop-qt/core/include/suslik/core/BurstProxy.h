@@ -124,6 +124,12 @@ public:
 
     /// Плеер знает длину фильма: средний битрейт (размер ÷ длина) задаёт рывки с первой секунды.
     void setDuration(const QString &url, qint64 ms);
+    /// Сколько вперёд качает играющая озвучка/субтитры (second) и когда начинает снова (first): ~2 мин её самой
+    /// по её битрейту — total байт на длину фильма filmMs; длина неизвестна — 4 МБ пробы. См. BurstProxy.kt sideReserve.
+    static std::pair<qint64, qint64> sideReserve(qint64 total, qint64 filmMs, qint64 cap);
+    /// Заголовок Range -> (from, to); to = -1 - до конца. Суффикс `bytes=-N` - последние N байт, нужен размер файла total;
+    /// пока он неизвестен, отдаётся весь файл, а не кусок с начала. См. BurstProxy.kt parseRange.
+    static std::pair<qint64, qint64> parseRange(const QString &range, qint64 total);
     /// Фильм читается через запас прямо сейчас.
     bool isActive(const QString &url) const;
     /// МБ скачано впереди плеера в читаемом окне; пусто — не через запас.

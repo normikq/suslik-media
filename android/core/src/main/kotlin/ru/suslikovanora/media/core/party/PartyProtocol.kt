@@ -16,12 +16,94 @@ data class PartyMember(
     val userId: String,
     val name: String,
     val buffering: Boolean = false,
-    val avatar: String? = null
+    val avatar: String? = null,
+    val variantKey: String? = null,
+    /** Длина раздачи, которую участник смотрит (мс): по ней гости на других раздачах сдвигают время. */
+    val durationMs: Long? = null
 )
 
-/** Фильм комнаты: ключ просмотра `magnetId|путь` (тот же, что у прогресса в медиатеке). */
-data class PartyFileRef(val key: String, val title: String) {
+/** Раздачи одного фильма разной длины: лишнее обычно в начале (заставка релиз-группы), поэтому место на своей
+ *  раздаче = место ведущего + сдвиг, сдвиг = своя длина − длина ведущего. Меньше 1,5 с — хвост кадров, больше 2 мин —
+ *  другой монтаж: тогда 0. Те же числа у сервера (rooms.js) и ПК (core/Party.h). */
+/** Подстройка, сохранённая гостем: место на [to] = место на [from] + [offsetMs]. */
+data class VariantOffset(val from: String, val to: String, val offsetMs: Long)
+
+/** Сдвиг своей раздачи [myKey] от раздачи ведущего [hostKey]: сохранённая подстройка пары, иначе разница длин. */
+fun roomShiftMs(saved: List<VariantOffset>, hostKey: String?, hostDurationMs: Long, myKey: String?, myDurationMs: Long): Long {
+    if (hostKey != null && hostKey == myKey) return 0
+    for (o in saved) {
+        if (o.from == hostKey && o.to == myKey) return o.offsetMs
+        if (o.from == myKey && o.to == hostKey) return -o.offsetMs
+    }
+    return timelineShiftMs(myDurationMs, hostDurationMs)
+}
+
+const val TIMELINE_SHIFT_MIN_MS = 1500L
+const val TIMELINE_SHIFT_MAX_MS = 120_000L
+fun timelineShiftMs(myDurationMs: Long, hostDurationMs: Long): Long {
+    if (myDurationMs <= 0 || hostDurationMs <= 0) return 0
+    val d = myDurationMs - hostDurationMs
+    return if (kotlin.math.abs(d) in TIMELINE_SHIFT_MIN_MS..TIMELINE_SHIFT_MAX_MS) d else 0
+}
+
+data class PartyVariant(
+    val key: String,
+    val label: String,
+    val quality: String = "1080p",
+    val audio: String = "Stereo",
+    val bitrate: Double = 0.0,
+    val offsetMs: Long = 0L,
+    val score: Int = 0,
+    val hardwareFlags: List<String> = emptyList()
+)
+
+/** Фильм комнаты: ключ просмотра `magnetId|путь`, канонический ID и варианты качества. */
+data class PartyFileRef(
+    val key: String,
+    val title: String,
+    val canonicalId: String? = null,
+    val edition: String? = null,
+    val variants: List<PartyVariant> = emptyList()
+) {
     val adId: Long get() = key.substringBefore('|').toLongOrNull() ?: 0L
+
+    /** Признаёт фильм комнаты по прямому ключу, варианту или canonical_id */
+    fun matches(fileKey: String?, otherCanonicalId: String? = null): Boolean {
+        if (fileKey == null) return false
+        if (fileKey == key) return true
+        if (variants.any { it.key == fileKey }) return true
+        if (canonicalId != null && otherCanonicalId != null && canonicalId == otherCanonicalId) {
+            val myMag = key.substringBefore('|', "")
+            val otherMag = fileKey.substringBefore('|', "")
+            if (myMag.isNotEmpty() && myMag == otherMag) return false
+            val myEp = if ('|' in key) ru.suslikovanora.media.core.episodePair(key.substringAfter('|')) else null
+            val otherEp = if ('|' in fileKey) ru.suslikovanora.media.core.episodePair(fileKey.substringAfter('|')) else null
+            if (myEp != otherEp) return false
+            return true
+        }
+        return false
+    }
+
+    /**
+     * Index of the room's film in a player's playlist ([keys] = watch keys), or -1. The same rules on every platform
+     * (C++ `PartyFileRef::resolveIndex`, JS `fileRef().resolveIndex`): the film's own key, then any of its variants, then
+     * the same episode (S/E) of the same work. Another show's S01E01 is never taken for the room's one.
+     * [sameWorkHint]: the caller knows the work is the same (e.g. the library groups the two releases as versions).
+     */
+    fun resolveIndex(keys: List<String>, myCanonicalId: String?, sameWorkHint: Boolean = false): Int {
+        keys.indexOf(key).let { if (it >= 0) return it }
+        for (v in variants) keys.indexOf(v.key).let { if (it >= 0) return it }
+        if ('|' !in key) return -1
+        val sameWork = sameWorkHint ||
+            (!canonicalId.isNullOrBlank() && canonicalId == myCanonicalId) ||
+            (listOf(key) + variants.map { it.key }).any { rk ->
+                val mag = rk.substringBefore('|')
+                keys.any { it.substringBefore('|') == mag }
+            }
+        if (!sameWork) return -1
+        val target = ru.suslikovanora.media.core.episodePair(key.substringAfter('|')) ?: return -1
+        return keys.indexOfFirst { '|' in it && ru.suslikovanora.media.core.episodePair(it.substringAfter('|')) == target }
+    }
 }
 
 /**
@@ -63,6 +145,8 @@ data class PartyRoom(
     val file: PartyFileRef? = null,
     val state: PartyState = PartyState.Idle,
     val members: List<PartyMember> = emptyList(),
+    /** Подстройки времени между раздачей ведущего и раздачами участников (сервер: variant-offsets.js). */
+    val variantOffsets: List<VariantOffset> = emptyList(),
     /**
      * Ведущий поставил этот фильм, сервер ещё не подтвердил: ответы на прежние действия везут старый фильм и его
      * состояние — их фильм и состояние не берём, иначе ведущего вернуло бы на прошлую серию (журнал 20.10, 20:59:30).
@@ -94,7 +178,7 @@ data class PartyRoom(
         if (pendingFileKey != null && (u.file?.key ?: NO_FILE) != pendingFileKey) {
             // Старый ответ: участники и ведущий — свежие, фильм и время — ещё прежние
             return copy(id = u.id ?: id, hostId = u.hostId, hostKey = u.hostKey, hostName = u.hostName,
-                hostOnly = u.hostOnly, members = u.members ?: members)
+                hostOnly = u.hostOnly, members = u.members ?: members, variantOffsets = u.variantOffsets ?: variantOffsets)
         }
         return mergeNow(u).copy(pendingFileKey = null)
     }
@@ -107,7 +191,8 @@ data class PartyRoom(
         hostOnly = u.hostOnly,
         file = u.file,
         state = u.state?.takeIf { it.seq >= state.seq } ?: state,
-        members = u.members ?: members
+        members = u.members ?: members,
+        variantOffsets = u.variantOffsets ?: variantOffsets
     )
 
     /** Событие потока. `Init` с участником ([PartyEvent.Init.myUserId]) приложение запоминает само. */
@@ -137,7 +222,8 @@ data class RoomUpdate(
     val state: PartyState?,
     val members: List<PartyMember>?,
     /** `state.server_time`: ещё одна точка для [PartyClock]. 0 — нет. */
-    val serverTime: Long
+    val serverTime: Long,
+    val variantOffsets: List<VariantOffset>? = null
 )
 
 /** Событие потока комнаты (`/api/rooms/<id>/events`, строки `data: {...}`). */
@@ -190,12 +276,75 @@ object PartyProtocol {
     fun pause(posMs: Long): JSONObject = JSONObject().put("type", "pause").put("pos", posMs / 1000.0)
     fun seek(posMs: Long): JSONObject = JSONObject().put("type", "seek").put("pos", posMs / 1000.0)
     fun buffering(loading: Boolean): JSONObject = JSONObject().put("type", "buffering").put("buffering", loading)
+    /** Свой вариант качества; [durationMs] > 0 — длина раздачи, [variant] — описание (своей раздачи нет у ведущего). */
+    fun variantChange(variantKey: String, durationMs: Long = 0, variant: PartyVariant? = null): JSONObject {
+        val obj = JSONObject().put("type", "variant_change").put("variant_key", variantKey)
+        if (durationMs > 0) obj.put("duration_ms", durationMs)
+        if (variant != null) obj.put("variant", variantJson(variant))
+        return obj
+    }
+    /** Гость подстроил время: место на [variantKey] = место на [hostVariantKey] + [offsetMs] (запоминается для пары). */
+    fun variantOffset(hostVariantKey: String, variantKey: String, offsetMs: Long): JSONObject = JSONObject()
+        .put("type", "variant_offset").put("host_variant_key", hostVariantKey).put("variant_key", variantKey).put("offset_ms", offsetMs)
+    fun variantJson(v: PartyVariant): JSONObject = JSONObject()
+        .put("key", v.key)
+        .put("label", v.label)
+        .put("quality", v.quality)
+        .put("audio", v.audio)
+        .put("bitrate", v.bitrate)
+        .put("offset_ms", v.offsetMs)
+        .put("score", v.score)
+        .put("hardware_flags", JSONArray(v.hardwareFlags))
     fun changeFile(f: PartyFileRef): JSONObject = JSONObject().put("type", "change_file").put("file", fileJson(f))
     /** Ведущий закрыл фильм: у гостей плеер тоже закрывается (сервер ставит `room.file = null`). */
     fun closeFile(): JSONObject = JSONObject().put("type", "change_file").put("file", JSONObject.NULL)
     fun withClient(body: JSONObject, clientId: String): JSONObject = body.put("client_id", clientId)
 
-    fun fileJson(f: PartyFileRef): JSONObject = JSONObject().put("key", f.key).put("name", f.title).put("ad_id", f.adId)
+    fun fileJson(f: PartyFileRef): JSONObject {
+        val obj = JSONObject().put("key", f.key).put("name", f.title).put("ad_id", f.adId)
+        f.canonicalId?.let { obj.put("canonical_id", it) }
+        f.edition?.let { obj.put("edition", it) }
+        if (f.variants.isNotEmpty()) {
+            val arr = JSONArray()
+            for (v in f.variants) arr.put(variantJson(v))
+            obj.put("variants", arr)
+        }
+        return obj
+    }
+
+    fun parseFileRef(f: JSONObject?): PartyFileRef? {
+        if (f == null) return null
+        val key = f.optString("key")
+        if (key.isBlank()) return null
+        val title = f.optString("name")
+        val canonicalId = f.optString("canonical_id").takeIf { it.isNotBlank() }
+        val edition = f.optString("edition").takeIf { it.isNotBlank() }
+        val variantsArr = f.optJSONArray("variants")
+        val variants = ArrayList<PartyVariant>()
+        if (variantsArr != null) {
+            for (i in 0 until variantsArr.length()) {
+                val vObj = variantsArr.optJSONObject(i) ?: continue
+                val vKey = vObj.optString("key")
+                if (vKey.isBlank()) continue
+                val flagsArr = vObj.optJSONArray("hardware_flags")
+                val flags = ArrayList<String>()
+                if (flagsArr != null) {
+                    for (j in 0 until flagsArr.length()) flags += flagsArr.optString(j)
+                }
+                variants += PartyVariant(
+                    key = vKey,
+                    label = vObj.optString("label"),
+                    quality = vObj.optString("quality").ifBlank { vObj.optString("resolution", "") },
+                    audio = vObj.optString("audio").ifBlank { vObj.optString("audio_tech", "Stereo") },
+                    bitrate = vObj.optDouble("bitrate", vObj.optDouble("bitrate_mbps", 0.0)),
+                    offsetMs = vObj.optLong("offset_ms", 0L),
+                    score = vObj.optInt("score", 0),
+                    hardwareFlags = flags
+                )
+            }
+        }
+        return PartyFileRef(key, title, canonicalId, edition, variants)
+    }
 
     /** Комната из ответа создания / входа / действия (`{room: {...}}`), если она там есть. */
     fun roomOf(res: JSONObject): RoomUpdate? = res.optJSONObject("room")?.let(::parseRoom)
@@ -212,22 +361,27 @@ object PartyProtocol {
             hostKey = room.optString("host_key").ifBlank { null },
             hostName = room.optString("host_name"),
             hostOnly = room.optString("controls") == "host",
-            file = room.optJSONObject("file")?.let { f ->
-                val key = f.optString("key")
-                if (key.isBlank()) null else PartyFileRef(key, f.optString("name"))
-            },
+            file = room.optJSONObject("file")?.let(::parseFileRef),
             state = s?.let {
                 PartyState(it.optBoolean("playing"), it.optDouble("pos", 0.0), it.optDouble("rate", 1.0),
                     it.optLong("anchor_server_ms"), it.optLong("seq"), it.optBoolean("waiting"))
             },
             members = room.optJSONArray("members")?.let(::parseMembers),
-            serverTime = s?.optLong("server_time") ?: 0L
+            serverTime = s?.optLong("server_time") ?: 0L,
+            variantOffsets = room.optJSONArray("variant_offsets")?.let { arr ->
+                (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.mapNotNull { o ->
+                    val from = o.optString("from"); val to = o.optString("to")
+                    if (from.isBlank() || to.isBlank()) null else VariantOffset(from, to, o.optLong("offset_ms", 0L))
+                }
+            }
         )
     }
 
     fun parseMember(m: JSONObject): PartyMember = PartyMember(
         m.optString("key"), m.optString("id"), m.optString("name").ifBlank { "Гость" },
-        m.optBoolean("buffering"), m.optString("avatar").takeIf { it.startsWith("https://") }
+        m.optBoolean("buffering"), m.optString("avatar").takeIf { it.startsWith("https://") },
+        m.optString("variant_key").takeIf { it.isNotBlank() },
+        m.optLong("duration_ms", 0L).takeIf { it > 0 }
     )
 
     private fun parseMembers(arr: JSONArray): List<PartyMember> =
@@ -249,7 +403,7 @@ object PartyProtocol {
             "member_left" -> msg.optJSONObject("data")?.optString("key")?.ifBlank { null }?.let { PartyEvent.MemberLeft(it) }
             "refresh_library" -> {
                 val f = msg.optJSONObject("data")?.optJSONObject("file")
-                val ref = if (f != null) PartyFileRef(f.optString("key"), f.optString("name")) else null
+                val ref = parseFileRef(f)
                 PartyEvent.RefreshLibrary(ref)
             }
             else -> null

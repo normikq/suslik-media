@@ -10,13 +10,21 @@ import org.json.JSONObject
  */
 
 /** Прогресс файла: ключ "magnetId|path" ([ru.suslikovanora.media.core.watchKey]), как в "watch" приложений. */
-data class WatchEntry(val key: String, val pos: Long, val len: Long, val at: Long)
+data class WatchEntry(val key: String, val pos: Long, val len: Long, val at: Long, val cid: String? = null)
 
 /**
  * Выбор дорожек фильма или сериала: ключ [filmKey] ("m<magnetId>") или [ANY] (последний выбор вообще).
  * null — это поле не менялось (сервер оставит прежнее). [sidecar] — файл озвучки рядом с фильмом (только Android).
  */
-data class TrackEntry(val key: String, val audio: String?, val spu: String?, val sidecar: String?, val at: Long)
+data class TrackEntry(
+    val key: String,
+    val audio: String?,
+    val spu: String?,
+    val sidecar: String?,
+    val at: Long,
+    val quality: String? = null,
+    val cid: String? = null
+)
 
 /** Хранилище приложения: откуда брать своё и куда класть пришедшее с других устройств. Вызывается с потока синхронизации. */
 interface SyncStore {
@@ -62,7 +70,15 @@ class WatchSync(private val store: SyncStore) {
     fun noteTrack(e: TrackEntry) = synchronized(lock) {
         val old = pendingTracks.remove(e.key)
         pendingTracks[e.key] = if (old == null) e
-            else TrackEntry(e.key, e.audio ?: old.audio, e.spu ?: old.spu, e.sidecar ?: old.sidecar, maxOf(e.at, old.at))
+            else TrackEntry(
+                e.key,
+                e.audio ?: old.audio,
+                e.spu ?: old.spu,
+                e.sidecar ?: old.sidecar,
+                maxOf(e.at, old.at),
+                e.quality ?: old.quality,
+                e.cid ?: old.cid
+            )
     }
 
     val hasPending: Boolean get() = synchronized(lock) { pendingWatch.isNotEmpty() || pendingTracks.isNotEmpty() }
@@ -114,12 +130,23 @@ class WatchSync(private val store: SyncStore) {
         val t = pendingTracks.values.take(BATCH)
         val body = JSONObject()
             .put("since", since.coerceAtLeast(0))
-            .put("watch", JSONArray().apply { w.forEach { put(JSONObject().put("key", it.key).put("pos", it.pos).put("len", it.len).put("at", it.at)) } })
-            .put("tracks", JSONArray().apply {
-                t.forEach { put(JSONObject().put("key", it.key).put("audio", it.audio ?: JSONObject.NULL).put("spu", it.spu ?: JSONObject.NULL)
-                    .put("sidecar", it.sidecar ?: JSONObject.NULL).put("at", it.at)) }
+            .put("watch", JSONArray().apply {
+                w.forEach {
+                    val obj = JSONObject().put("key", it.key).put("pos", it.pos).put("len", it.len).put("at", it.at)
+                    if (it.cid != null) obj.put("cid", it.cid)
+                    put(obj)
+                }
             })
-        Sent(user, body, w, t, startedAt).also { it.more = pendingWatch.size > w.size || pendingTracks.size > t.size }
+            .put("tracks", JSONArray().apply {
+                t.forEach {
+                    val obj = JSONObject().put("key", it.key).put("audio", it.audio ?: JSONObject.NULL).put("spu", it.spu ?: JSONObject.NULL)
+                        .put("sidecar", it.sidecar ?: JSONObject.NULL).put("at", it.at)
+                    if (it.quality != null) obj.put("quality", it.quality)
+                    if (it.cid != null) obj.put("cid", it.cid)
+                    put(obj)
+                }
+            })
+        Sent(user, body, w, t, startedAt).also { it.more = pendingWatch.size > BATCH || pendingTracks.size > BATCH }
     }
 
     /** Ответ сервера: пришедшее новее своего ложится в хранилище. Возвращает, сколько записей поменялось. */
@@ -130,7 +157,8 @@ class WatchSync(private val store: SyncStore) {
         res.optJSONArray("watch")?.let { a ->
             for (i in 0 until a.length()) {
                 val o = a.optJSONObject(i) ?: continue
-                val e = WatchEntry(o.optString("key"), o.optLong("pos", -1), o.optLong("len", 0), o.optLong("at", 0))
+                val cid = if (o.isNull("cid")) null else o.optString("cid").ifEmpty { null }
+                val e = WatchEntry(o.optString("key"), o.optLong("pos", -1), o.optLong("len", 0), o.optLong("at", 0), cid)
                 if ('|' !in e.key || e.pos < 0 || e.at <= 0) continue
                 val mine = store.watch(e.key)
                 if (mine != null && mine.at >= e.at) continue
@@ -143,7 +171,7 @@ class WatchSync(private val store: SyncStore) {
             for (i in 0 until a.length()) {
                 val o = a.optJSONObject(i) ?: continue
                 fun str(k: String) = if (o.isNull(k)) null else o.optString(k).ifEmpty { null }
-                val e = TrackEntry(o.optString("key"), str("audio"), str("spu"), str("sidecar"), o.optLong("at", 0))
+                val e = TrackEntry(o.optString("key"), str("audio"), str("spu"), str("sidecar"), o.optLong("at", 0), str("quality"), str("cid"))
                 if (e.key.isEmpty() || e.at <= 0) continue
                 if (store.trackAt(e.key) >= e.at) continue
                 if (pendingTracks[e.key]?.let { it.at >= e.at } == true) continue

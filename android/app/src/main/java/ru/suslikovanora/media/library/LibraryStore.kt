@@ -25,6 +25,8 @@ enum class StatusKind { Info, Ok, Error }
 
 val MEDIA_UNKNOWN: String get() = tr("library.razreshenie_n_d")
 
+private val FRAME_RATE_RE = Regex("""^(\d+)/(\d+)$""")
+
 /** Same text as the site's formatMediaInfo(). */
 fun formatMediaInfo(m: JSONObject): String {
     val parts = ArrayList<String>()
@@ -34,7 +36,7 @@ fun formatMediaInfo(m: JSONObject): String {
     parts += if (br > 0) java.math.BigDecimal(br).setScale(1, java.math.RoundingMode.HALF_UP).stripTrailingZeros().toPlainString() + tr("library.mbit_s") else tr("library.bitreyt_n_d")
     m.optString("codec").takeIf { it.isNotBlank() }?.let { parts += it.uppercase() }
     val fr = m.optString("frameRate")
-    Regex("""^(\d+)/(\d+)$""").find(fr)?.let { mt ->
+    FRAME_RATE_RE.find(fr)?.let { mt ->
         val a = mt.groupValues[1].toDouble(); val b = mt.groupValues[2].toDouble()
         if (b > 0 && a / b > 0) parts += java.math.BigDecimal(a / b).setScale(2, java.math.RoundingMode.HALF_UP).stripTrailingZeros().toPlainString() + " fps"
     }
@@ -56,8 +58,28 @@ class LibraryStore(context: Context) {
     private val titlePrefs = app.getSharedPreferences("poster_title", Context.MODE_PRIVATE) // query -> "time|Русское название" or "time|"
     private val episodePrefs = app.getSharedPreferences("last_episode", Context.MODE_PRIVATE)
 
-    init {
-        loadCachedAnimationFlags()
+    companion object {
+        @Volatile private var sharedMagnets: List<Magnet> = emptyList()
+        @Volatile private var sharedItems: List<LibraryItem> = emptyList()
+        private val sharedPosterPaths = java.util.concurrent.ConcurrentHashMap<String, String>()
+        private val sharedServerTags = java.util.concurrent.ConcurrentHashMap<Long, List<String>>()
+        private val sharedServerProfiles = java.util.concurrent.ConcurrentHashMap<Long, ru.suslikovanora.media.core.party.PartyVariant>()
+    }
+
+    fun ensureLoadedSync() {
+        if (items.isNotEmpty()) return
+        if (sharedItems.isNotEmpty()) {
+            magnets = sharedMagnets
+            items = sharedItems
+            return
+        }
+        val list = runCatching { parseLibrary(JSONObject(snapshotFile.readText())) }.getOrNull() ?: return
+        val filtered = list.filterNot { isVoiceOverOnly(it) }
+        val prepared = prepareItems(filtered)
+        magnets = filtered
+        items = prepared
+        sharedMagnets = filtered
+        sharedItems = prepared
     }
 
     private fun loadCachedAnimationFlags() {
@@ -91,6 +113,8 @@ class LibraryStore(context: Context) {
         val prepared = withContext(Dispatchers.Default) { prepareItems(list) }
         magnets = list
         items = prepared
+        sharedMagnets = list
+        sharedItems = prepared
     }
 
     // A torrent of only .mka is an uploaded voice-over (/api/custom-audio): it plays inside its film, not as a tile (as on the PC).
@@ -286,42 +310,73 @@ class LibraryStore(context: Context) {
     private val posterMemory = HashMap<String, String?>()
 
     /** Poster path per query: films with the same poster are one film (versions are merged by it, see groupVersions). */
-    private val posterPaths = androidx.compose.runtime.mutableStateMapOf<String, String>()
+    private val posterPaths = java.util.concurrent.ConcurrentHashMap<String, String>()
     var posterVersion by mutableStateOf(0)
         private set
 
     fun posterPathOf(item: LibraryItem): String? = item.posterQueries.firstNotNullOfOrNull { posterPaths[it.lowercase()] }
 
-    private fun notePoster(key: String, path: String) {
-        if (posterPaths[key] != path) { posterPaths[key] = path; posterVersion++ }
+    @Volatile private var cachedVersionsItems: List<LibraryItem>? = null
+    @Volatile private var cachedVersionsPosterVer: Int = -1
+    @Volatile private var cachedVersionsById: Map<Long, List<LibraryItem>> = emptyMap()
+
+    fun versionsOf(magnetId: Long): List<LibraryItem> {
+        if (items.isEmpty()) ensureLoadedSync()
+        val all = items
+        if (all.isEmpty()) return emptyList()
+        val pVer = posterVersion
+        var byId = cachedVersionsById
+        if (cachedVersionsItems !== all || cachedVersionsPosterVer != pVer) {
+            val (_, versionsMap) = groupVersions(all) { posterPathOf(it) }
+            val map = HashMap<Long, List<LibraryItem>>(all.size * 2)
+            for (item in all) map[item.m.id] = listOf(item)
+            for ((_, list) in versionsMap) {
+                for (ver in list) map[ver.m.id] = list
+            }
+            byId = map
+            cachedVersionsById = map
+            cachedVersionsItems = all
+            cachedVersionsPosterVer = pVer
+        }
+        return byId[magnetId] ?: emptyList()
+    }
+
+    private fun notePoster(key: String, path: String, bump: Boolean = true): Boolean {
+        sharedPosterPaths[key] = path
+        if (posterPaths.put(key, path) != path) {
+            if (bump) posterVersion++
+            return true
+        }
+        return false
     }
 
     // The Russian title TMDB has for a poster query (the server's title_ru): a tile shows it unless the AI's one was accepted
-    private val ruTitles = androidx.compose.runtime.mutableStateMapOf<String, String>()
+    private val ruTitles = java.util.concurrent.ConcurrentHashMap<String, String>()
     /** What the tile says under the poster (see [tileTitle]). */
     fun titleOf(item: LibraryItem): String = tileTitle(item) { ruTitles[it] }
     /** Grows when a title changes: the sorted / searched list depends on them. */
     var titleVersion by mutableStateOf(0)
         private set
 
-    private fun noteTitle(key: String, t: String) {
-        if (t.isEmpty()) { if (ruTitles.remove(key) != null) titleVersion++ }
-        else if (ruTitles.put(key, t) != t) titleVersion++
+    private fun noteTitle(key: String, t: String, bump: Boolean = true): Boolean {
+        val changed = if (t.isEmpty()) ruTitles.remove(key) != null else ruTitles.put(key, t) != t
+        if (changed && bump) titleVersion++
+        return changed
     }
 
-    private fun recordTitle(key: String, j: JSONObject) {
+    private fun recordTitle(key: String, j: JSONObject, bump: Boolean = true): Boolean {
         val t = j.optString("title_ru").takeIf { j.has("title_ru") && !j.isNull("title_ru") }?.trim().orEmpty()
         titlePrefs.edit().putString(key, "${System.currentTimeMillis()}|$t").apply()
-        noteTitle(key, t)
+        return noteTitle(key, t, bump)
     }
 
     /** Loads the saved title; false when it is missing or old (a found title is kept 30 days, «none» 3). */
-    private fun titleKnown(key: String): Boolean {
-        val v = titlePrefs.getString(key, null) ?: return false
+    private fun titleKnown(key: String, bump: Boolean = true): Pair<Boolean, Boolean> {
+        val v = titlePrefs.getString(key, null) ?: return false to false
         val t = v.substringAfter('|', "")
         val at = v.substringBefore('|').toLongOrNull() ?: 0L
-        if (t.isNotEmpty()) noteTitle(key, t)
-        return System.currentTimeMillis() - at < (if (t.isEmpty()) 3L else 30L) * 86_400_000L
+        val changed = if (t.isNotEmpty()) noteTitle(key, t, bump) else false
+        return (System.currentTimeMillis() - at < (if (t.isEmpty()) 3L else 30L) * 86_400_000L) to changed
     }
 
     fun cachedPoster(queries: List<String>): String? {
@@ -438,7 +493,10 @@ class LibraryStore(context: Context) {
     }
 
     // ---- Dolby Vision / HDR / DTS marks: the server looks into the file (ffprobe, kept until the film is deleted) ----
-    private val serverTags = androidx.compose.runtime.mutableStateMapOf<Long, List<String>>()
+    private val serverTags = java.util.concurrent.ConcurrentHashMap<Long, List<String>>()
+    val serverProfiles = java.util.concurrent.ConcurrentHashMap<Long, ru.suslikovanora.media.core.party.PartyVariant>()
+    var tagsVersion by mutableStateOf(0)
+        private set
     // The guess by the names runs regexes over every file of the torrent: once per film, not at every look at a tile
     private val guessedTags = java.util.concurrent.ConcurrentHashMap<Long, List<String>>()
     fun tagsOf(item: LibraryItem): List<String> = serverTags[item.m.id] ?: guessedTags.getOrPut(item.m.id) { itemTags(item) }
@@ -447,12 +505,36 @@ class LibraryStore(context: Context) {
     suspend fun refreshTags() {
         repeat(40) {
             val j = try { Api.get("/api/tags") } catch (e: CancellationException) { throw e } catch (_: Exception) { return }
+            var changed = false
             val tags = j.optJSONObject("tags")
             if (tags != null) for (k in tags.keys()) {
                 val a = tags.optJSONArray(k) ?: continue
                 val id = k.toLongOrNull() ?: continue
-                serverTags[id] = (0 until a.length()).map { a.getString(it) }
+                val list = (0 until a.length()).map { a.getString(it) }
+                if (serverTags.put(id, list) != list) changed = true
+                sharedServerTags[id] = list
             }
+            val profiles = j.optJSONObject("profiles")
+            if (profiles != null) for (k in profiles.keys()) {
+                val p = profiles.optJSONObject(k) ?: continue
+                val id = k.toLongOrNull() ?: continue
+                val flagsArr = p.optJSONArray("hardware_flags")
+                val flags = ArrayList<String>()
+                if (flagsArr != null) for (fi in 0 until flagsArr.length()) flags += flagsArr.optString(fi)
+                val prof = ru.suslikovanora.media.core.party.PartyVariant(
+                    key = p.optString("key"),
+                    label = p.optString("label"),
+                    quality = p.optString("resolution").ifBlank { p.optString("quality", "") },
+                    audio = p.optString("audio_tech").ifBlank { p.optString("audio", "Stereo") },
+                    bitrate = p.optDouble("bitrate_mbps", p.optDouble("bitrate", 0.0)),
+                    offsetMs = p.optLong("offset_ms", 0L),
+                    score = p.optInt("score", 0),
+                    hardwareFlags = flags
+                )
+                if (serverProfiles.put(id, prof) != prof) changed = true
+                sharedServerProfiles[id] = prof
+            }
+            if (changed) tagsVersion++
             if (j.optInt("pending", 0) <= 0) return
             kotlinx.coroutines.delay(30_000)
         }
@@ -466,6 +548,8 @@ class LibraryStore(context: Context) {
     suspend fun classifyAnimation() {
         val todo = ArrayList<String>()
         val now = System.currentTimeMillis()
+        var postersChanged = false
+        var titlesChanged = false
         for (item in items) {
             val needGenre = !(isCartoon(item) || isAnime(item))
             var genreKnown = !needGenre
@@ -473,8 +557,13 @@ class LibraryStore(context: Context) {
             var titleFresh = false
             for (q in item.posterQueries) {
                 val key = q.lowercase()
-                if (titleKnown(key)) titleFresh = true
-                posterPrefs.getString(key, null)?.substringAfter('|', "")?.takeIf { it.startsWith("/api/poster/img/") }?.let { notePoster(key, it); posterKnown = true }
+                val (fresh, tChg) = titleKnown(key, bump = false)
+                if (fresh) titleFresh = true
+                if (tChg) titlesChanged = true
+                posterPrefs.getString(key, null)?.substringAfter('|', "")?.takeIf { it.startsWith("/api/poster/img/") }?.let {
+                    if (notePoster(key, it, bump = false)) postersChanged = true
+                    posterKnown = true
+                }
                 animPrefs.getString(key, null)?.let { v ->
                     val at = v.substringBefore('|').toLongOrNull() ?: 0L
                     if (now - at < 60L * 86_400_000L) {
@@ -485,6 +574,8 @@ class LibraryStore(context: Context) {
             }
             if (!genreKnown || !posterKnown || !titleFresh) item.posterQueries.firstOrNull()?.let { todo += it }
         }
+        if (postersChanged) { posterVersion++; postersChanged = false }
+        if (titlesChanged) { titleVersion++; titlesChanged = false }
         Animation.version++
         var asked = 0
         for (q in todo.distinct().take(80)) {
@@ -496,16 +587,22 @@ class LibraryStore(context: Context) {
                     posterPrefs.edit().putString(key, "${System.currentTimeMillis()}|$url").apply()
                     posterMemory[key] = url
                 }
-                if (url != null) notePoster(key, url)
+                if (url != null && notePoster(key, url, bump = false)) postersChanged = true
                 if (j.has("animation")) recordAnimation(key, j)
-                recordTitle(key, j)
+                if (recordTitle(key, j, bump = false)) titlesChanged = true
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
             }
-            if (++asked % 5 == 0) Animation.version++
+            if (++asked % 5 == 0) {
+                if (postersChanged) { posterVersion++; postersChanged = false }
+                if (titlesChanged) { titleVersion++; titlesChanged = false }
+                Animation.version++
+            }
             kotlinx.coroutines.delay(120)
         }
+        if (postersChanged) posterVersion++
+        if (titlesChanged) titleVersion++
         Animation.version++
     }
 
@@ -564,35 +661,51 @@ class LibraryStore(context: Context) {
 
     // ---- watch progress written by the player (prefs "watch": "magnetId|path" -> "pos|len|at") ----
     private val watchPrefs = app.getSharedPreferences("watch", Context.MODE_PRIVATE)
-    private val watchMemory = java.util.concurrent.ConcurrentHashMap<String, WatchInfo>()
-    // Files never watched: most of the library. Without this every look read the prefs again for each of them.
-    private val watchMissing = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    /** All of the prefs read in one pass, never changed after: a reset swaps in a new one, so no reader sees half of it. */
+    private class WatchSnap(val byKey: Map<String, WatchInfo>, val magnets: Set<Long>)
+    @Volatile private var watchSnap: WatchSnap? = null
+    private val watchLock = Any()
+    private var watchGen = 0 // under watchLock: a load started before a reset does not publish its (old) result
     /** Bumped when the app comes back from the player, so tiles re-read their progress. */
     var watchVersion by mutableStateOf(0)
         private set
     fun bumpWatch() {
-        watchMemory.clear()
-        watchMissing.clear()
+        invalidateWatch()
         watchVersion++
     }
 
-    fun watchInfo(key: String): WatchInfo? {
-        watchMemory[key]?.let { return it }
-        if (key in watchMissing) return null
-        val v = watchPrefs.getString(key, null) ?: run { watchMissing += key; return null }
-        val parts = v.split('|')
-        if (parts.size < 3) return null
-        val info = WatchInfo(parts[0].toLongOrNull() ?: return null, parts[1].toLongOrNull() ?: 0L, parts[2].toLongOrNull() ?: 0L)
-        watchMemory[key] = info
-        return info
+    private fun invalidateWatch() = synchronized(watchLock) { watchGen++; watchSnap = null }
+
+    private fun watchSnapshot(): WatchSnap {
+        watchSnap?.let { return it }
+        val gen = synchronized(watchLock) { watchGen }
+        val byKey = HashMap<String, WatchInfo>()
+        val magnets = HashSet<Long>()
+        for ((k, v) in watchPrefs.all) {
+            val s = v as? String ?: continue
+            val parts = s.split('|')
+            if (parts.size < 3) continue
+            val pos = parts[0].toLongOrNull() ?: continue
+            val len = parts[1].toLongOrNull() ?: 0L
+            val at = parts[2].toLongOrNull() ?: 0L
+            byKey[k] = WatchInfo(pos, len, at)
+            k.substringBefore('|').toLongOrNull()?.let { magnets += it }
+        }
+        val snap = WatchSnap(byKey, magnets)
+        synchronized(watchLock) { if (gen == watchGen) watchSnap = snap }
+        return snap
     }
+
+    fun watchInfo(key: String): WatchInfo? = watchSnapshot().byKey[key]
 
     /** Most recently watched file of a torrent (to pre-select the episode and show "Продолжить"). */
     fun lastWatched(m: Magnet): Pair<MFile, WatchInfo>? {
+        val snap = watchSnapshot()
+        if (m.id !in snap.magnets) return null
         var best: Pair<MFile, WatchInfo>? = null
         for (f in m.files) {
             if (f.isFolder) continue
-            val w = watchInfo(watchKey(m.id, f)) ?: continue
+            val w = snap.byKey[watchKey(m.id, f)] ?: continue
             if (best == null || w.at > best.second.at) best = f to w
         }
         return best
@@ -614,7 +727,7 @@ class LibraryStore(context: Context) {
      */
     @OptIn(coil.annotation.ExperimentalCoilApi::class)
     private suspend fun cleanUp(list: List<LibraryItem>) = withContext(Dispatchers.IO) {
-        watchMemory.clear()
+        invalidateWatch()
         episodeMemory.clear()
         val keep = LibraryKeep(list)
         if (!keep.usable) return@withContext
@@ -649,5 +762,24 @@ class LibraryStore(context: Context) {
     fun saveEpisode(id: Long, path: String) {
         episodeMemory[id] = path
         episodePrefs.edit().putString(id.toString(), path).apply()
+    }
+
+    init {
+        if (sharedItems.isNotEmpty()) {
+            magnets = sharedMagnets
+            items = sharedItems
+        }
+        if (sharedPosterPaths.isNotEmpty()) {
+            posterPaths.putAll(sharedPosterPaths)
+        } else {
+            loadCachedAnimationFlags()
+            for ((k, v) in posterPrefs.all) {
+                val url = (v as? String)?.substringAfter('|', "")?.takeIf { it.startsWith("/api/poster/img/") } ?: continue
+                posterPaths[k] = url
+                sharedPosterPaths[k] = url
+            }
+        }
+        if (sharedServerTags.isNotEmpty()) serverTags.putAll(sharedServerTags)
+        if (sharedServerProfiles.isNotEmpty()) serverProfiles.putAll(sharedServerProfiles)
     }
 }

@@ -146,7 +146,7 @@ Item {
                         readonly property string key: party.fileKey
                         readonly property var magnetId: key === "" ? 0 : Number(key.split("|")[0])
                         readonly property string path: key === "" ? "" : key.substring(key.indexOf("|") + 1)
-                        readonly property bool known: { lib.version; return key !== "" && lib.hasFile(magnetId, path) }
+                        readonly property bool known: { lib.version; return key !== "" && (lib.hasFile(magnetId, path) || lib.hasMatchingFilm(key, party.canonicalId)) }
                         readonly property int magnetCode: { lib.version; return key !== "" ? lib.magnetStatusCode(magnetId) : -1 }
                         readonly property bool failed: magnetCode >= 5
                         property int pollCount: 0

@@ -14,10 +14,22 @@ class PlayerModel;
 
 class PartySync : public QObject, private core::SyncPlayer {
     Q_OBJECT
+    /// Гость смотрит другую раздачу, чем ведущий: можно подстроить время к нему (кнопки в плеере).
+    Q_PROPERTY(bool canNudge READ canNudge NOTIFY shiftChanged)
+    /// Сдвиг своей раздачи от раздачи ведущего, мс.
+    Q_PROPERTY(qint64 shift READ shiftMs NOTIFY shiftChanged)
 public:
     PartySync(PlayerModel &player, Party &party, QObject *parent = nullptr);
 
+    bool canNudge() const;
+    /// Сдвинуть свою раздачу относительно ведущего: + — у меня та же сцена позже (перемотаться вперёд).
+    Q_INVOKABLE void nudge(qint64 deltaMs);
+
+signals:
+    void shiftChanged();
+
 private:
+    QString myVariantKey() const;
     // core::SyncPlayer
     qint64 timeMs() const override;
     bool busy() const override;
@@ -30,6 +42,10 @@ private:
     void seekTo(qint64 ms) override;
     void setRate(float rate) override;
 
+public:
+    /// Своя раздача сдвинута от раздачи ведущего на столько мс (гостю; ведущему — 0): см. core::roomShiftMs.
+    qint64 shiftMs() const;
+private:
     void onOpen();
     void onEntry();
     void onRoom();
@@ -44,6 +60,8 @@ private:
     QString m_roomKey;          ///< фильм комнаты в прошлый раз (смена — onRoom)
     QString m_episodeNotice;    ///< ведущий включил другую серию: сказать, когда она пойдёт
     bool m_showedRoomFilm = false;
+    qint64 m_loggedShift = 0;   ///< сдвиг, о котором уже написали в журнал
+    bool m_shownCanNudge = false;
 };
 
 } // namespace suslik::app

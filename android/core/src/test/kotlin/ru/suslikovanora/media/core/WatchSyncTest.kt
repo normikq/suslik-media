@@ -173,4 +173,22 @@ class WatchSyncTest {
         assertFalse(WatchSync.eligible("shared"))
         assertFalse(WatchSync.eligible(null))
     }
+
+    @Test
+    fun trackQualityAndCidSync() {
+        val store = MemStore()
+        store.cursor = "u_1|10"
+        val sync = WatchSync(store)
+        sync.noteTrack(TrackEntry("m5", "HDRezka", "__off__", null, 150, "2160p", "s:fallout:s1"))
+        val t = sync.request("u_1").body.getJSONArray("tracks").getJSONObject(0)
+        assertEquals("HDRezka", t.getString("audio"))
+        assertEquals("2160p", t.getString("quality"))
+        assertEquals("s:fallout:s1", t.getString("cid"))
+
+        val sent = sync.request("u_1")
+        sync.onResponse(sent, JSONObject("""{"now":30,"watch":[],
+            "tracks":[{"key":"m6","audio":"Dub","spu":null,"sidecar":null,"at":250,"quality":"1080p","cid":"s:fallout:s1"}]}"""))
+        assertEquals("1080p", store.t["m6"]?.quality)
+        assertEquals("s:fallout:s1", store.t["m6"]?.cid)
+    }
 }

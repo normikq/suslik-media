@@ -17,6 +17,7 @@ struct WatchEntry {
     qint64 pos = 0;
     qint64 len = 0;
     qint64 at = 0;
+    std::optional<QString> cid = std::nullopt;
     bool operator==(const WatchEntry &) const = default;
 };
 
@@ -26,6 +27,8 @@ struct TrackEntry {
     std::optional<QString> audio;
     std::optional<QString> spu;
     std::optional<QString> sidecar;
+    std::optional<QString> quality;
+    std::optional<QString> cid;
     qint64 at = 0;
     bool operator==(const TrackEntry &) const = default;
 };

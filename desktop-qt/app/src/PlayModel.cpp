@@ -10,6 +10,7 @@
 
 #include <QJsonArray>
 #include <QPointer>
+#include <QTimer>
 #include <algorithm>
 #include <memory>
 
@@ -164,7 +165,9 @@ QString PlayModel::poster() const {
     return it ? m_lib->posterPath(it->posterQueries) : QString();
 }
 
-std::optional<WatchInfo> PlayModel::watch() const { return m_lib ? m_lib->watchInfo(watchKey(m_id, currentFile())) : std::nullopt; }
+std::optional<WatchInfo> PlayModel::watch() const {
+    return (m_lib && m_id > 0) ? m_lib->watchInfoWithFallback(watchKey(m_id, currentFile())) : std::nullopt;
+}
 
 QStringList PlayModel::chips() const {
     const LibraryItem *it = item();
@@ -289,6 +292,33 @@ bool PlayModel::favorite() const { const LibraryItem *it = item(); return it && 
 void PlayModel::toggleMine() { if (const LibraryItem *it = item()) m_lib->setMine(m_id, !it->m.mine); }
 void PlayModel::toggleFavorite() { if (const LibraryItem *it = item()) m_lib->setFavorite(m_id, !it->m.favorite); }
 
+bool PlayModel::hasMultipleVersions() const {
+    return m_lib && m_id > 0 && m_lib->versionsOf(m_id).size() > 1;
+}
+
+QString PlayModel::versionLabel() const {
+    if (!m_lib || m_id <= 0 || !hasMultipleVersions()) return {};
+    const LibraryItem *it = item();
+    if (!it) return {};
+    const MFile cur = currentFile();
+    const auto [w, h] = m_lib->cachedMediaDimensions(m_id, cur.path);
+    const auto pv = core::buildPartyVariant(*it, cur, m_lib->serverProfile(m_id), w, h);
+    if (!pv.label.isEmpty()) return pv.label;
+    return versionLine(*it);
+}
+
+QString PlayModel::versionTitle() const {
+    const LibraryItem *it = item();
+    return it ? it->baseTitle : currentTitle();
+}
+
+QVariantList PlayModel::versionIds() const {
+    QVariantList out;
+    if (!m_lib) return out;
+    for (const auto &v : m_lib->versionsOf(m_id)) out << v.m.id;
+    return out;
+}
+
 // Очередь плеера: весь сериал (все сезоны) или сборник — со ссылками, чтобы «предыдущая» и «следующая» шли через сезоны;
 // сервер берёт до PLAYLIST_MAX пунктов — у длинного сериала столько вокруг этой серии.
 QList<MFile> PlayModel::queueFiles() const {
@@ -334,6 +364,7 @@ void PlayModel::fetch() {
 
     struct State {
         int left = 0;
+        bool finished = false;
         std::optional<QString> mirror;
         QVector<std::optional<QString>> subs, audio;
     };
@@ -346,7 +377,8 @@ void PlayModel::fetch() {
     const QString title = currentTitle();
     ApiClient *apiP = &api;
     auto finish = [self, gen, st, queue, title, apiP, subs, audio]() {
-        if (!self || self->m_gen != gen) return;
+        if (st->finished || !self || self->m_gen != gen) return;
+        st->finished = true;
         for (int i = 0; i < st->subs.size(); ++i)
             if (const auto &u = st->subs[i]) { self->m_subs << *u; self->m_sidePaths.insert(*u, subs[i].path); }
         for (int i = 0; i < st->audio.size(); ++i)
@@ -378,6 +410,11 @@ void PlayModel::fetch() {
         api.get(mirrorPath(subs[i]), [st, step, urlOf, i](const ApiResult &r) { st->subs[i] = urlOf(r); step(); });
     for (int i = 0; i < audio.size(); ++i)
         api.get(mirrorPath(audio[i]), [st, step, urlOf, i](const ApiResult &r) { st->audio[i] = urlOf(r); step(); });
+    if (!subs.isEmpty() || !audio.isEmpty()) {
+        QTimer::singleShot(5000, this, [st, finish]() {
+            if (!st->finished && st->mirror) finish();
+        });
+    }
     m_lib->saveEpisode(m_id, file.path);
 }
 
@@ -441,7 +478,11 @@ void PlayModel::play() {
     r.fromStart = m_fromStart;
     r.collection = m_collection;
     r.startMs = m_startMs;
-    if (it) r.posterQueries = it->posterQueries;
+    if (it) {
+        r.posterQueries = it->posterQueries;
+        if (it->m.aiTitle) r.canonicalId = it->m.aiTitle->canonicalId;
+        r.seriesTitle = it->baseTitle;
+    }
     if (m_playlist) {
         r.queue = queueFiles();
         for (int i = 0; i < r.queue.size(); ++i) {
@@ -457,6 +498,49 @@ void PlayModel::play() {
         r.presence << presenceOf(cur);
         r.markerQueries << markerQueryOf(cur).value_or(MarkerQuery{});
     }
+    QList<core::PartyVariant> vars;
+    if (m_lib) {
+        const auto versions = m_lib->versionsOf(m_id);
+        for (const auto &ver : versions) {
+            core::MFile vFile;
+            if (ver.m.id == m_id) {
+                vFile = cur;
+            } else if (m_series && it) {
+                int curSeasonNum = -1, curEpNum = -1;
+                if (m_season >= 0 && m_season < it->playable.seasons.size()) {
+                    const auto &s = it->playable.seasons[m_season];
+                    curSeasonNum = s.season;
+                    if (m_episode >= 0 && m_episode < s.items.size()) curEpNum = s.items[m_episode].episode;
+                }
+                for (const auto &s : ver.playable.seasons) {
+                    if (s.season == curSeasonNum) {
+                        for (const auto &e : s.items) {
+                            if (e.episode == curEpNum && !e.file.path.isEmpty()) { vFile = e.file; break; }
+                        }
+                    }
+                    if (!vFile.path.isEmpty()) break;
+                }
+            } else if (m_collection) {
+                const auto colFilms = collectionFilms(ver);
+                if (m_film >= 0 && m_film < colFilms.size()) vFile = colFilms[m_film].file;
+            } else {
+                if (auto mf = ver.playable.movieFile()) vFile = *mf;
+                else if (auto mv = mainVideo(ver.m)) vFile = *mv;
+            }
+            if (!vFile.path.isEmpty()) {
+                const auto [w, h] = m_lib ? m_lib->cachedMediaDimensions(ver.m.id, vFile.path) : std::pair{0, 0};
+                vars << core::buildPartyVariant(ver, vFile, m_lib->serverProfile(ver.m.id), w, h);
+            }
+        }
+    }
+    if (vars.isEmpty() && it) {
+        const auto [w, h] = m_lib ? m_lib->cachedMediaDimensions(m_id, cur.path) : std::pair{0, 0};
+        vars << core::buildPartyVariant(*it, cur, m_lib ? m_lib->serverProfile(m_id) : std::nullopt, w, h);
+    }
+    std::sort(vars.begin(), vars.end(), [](const auto &a, const auto &b) { return a.score > b.score; });
+    r.variants = vars;
+    r.activeVariantKey = core::watchKey(m_id, cur);
+
     m_request = r;
     emit playRequested();
 }

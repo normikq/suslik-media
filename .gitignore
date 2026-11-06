@@ -1,4 +1,5 @@
 **/build/
+build-test/
 **/.gradle/
 **/.kotlin/
 **/local.properties

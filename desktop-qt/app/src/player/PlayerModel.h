@@ -78,13 +78,19 @@ class PlayerModel : public QObject, private core::PlaybackSupervisor::Actions {
     /// Плеер показывает фильм комнаты (ведущий или гость): скорость — комнаты, своя не действует.
     Q_PROPERTY(bool partyFilm READ partyFilm NOTIFY partyChanged)
     Q_PROPERTY(bool playLocked READ playLocked NOTIFY partyChanged)
+    Q_PROPERTY(QVariantList qualityVariants READ qualityVariants NOTIFY qualityVariantsChanged)
+    Q_PROPERTY(QString activeVariantKey READ activeVariantKey NOTIFY activeVariantKeyChanged)
+    Q_PROPERTY(QString hostVariantKey READ hostVariantKey NOTIFY hostVariantKeyChanged)
+    Q_PROPERTY(bool switchingVariant READ switchingVariant NOTIFY switchingVariantChanged)
+    Q_PROPERTY(QString suggestedDowngradeKey READ suggestedDowngradeKey NOTIFY suggestedDowngradeChanged)
+    Q_PROPERTY(QString suggestedDowngradeLabel READ suggestedDowngradeLabel NOTIFY suggestedDowngradeChanged)
 
 public:
     explicit PlayerModel(QObject *parent = nullptr);
     ~PlayerModel() override;
 
     Library *library() const { return m_lib; }
-    void setLibrary(Library *l) { m_lib = l; }
+    void setLibrary(Library *l);
     MpvEngine *engine() const { return m_engine; }
     bool isOpen() const { return m_open; }
     bool closing() const { return m_closing; }
@@ -103,6 +109,8 @@ public:
     QString status() const { return m_status; }
     qint64 time() const { return m_time; }
     qint64 length() const { return m_length; }
+    /// Длина открытого сейчас файла; 0 — новый файл свою ещё не сообщил (на экране пока прежняя).
+    qint64 fileLength() const { return m_lengthFresh ? m_length : 0; }
     qint64 bufferedMs() const { return m_bufferedMs; }
     int volume() const { return m_volume; }
     bool muted() const { return m_muted; }
@@ -124,6 +132,17 @@ public:
     int subsFetching() const { return m_subsFetching; }
     QString saveDelayText() const;
     QString deleteTrackText() const;
+    QVariantList qualityVariants() const;
+    QString activeVariantKey() const { return m_activeVariantKey; }
+    QString hostVariantKey() const;
+    bool switchingVariant() const { return m_switchingVariant; }
+    QString suggestedDowngradeKey() const { return m_suggestedDowngradeKey; }
+    QString suggestedDowngradeLabel() const { return m_suggestedDowngradeLabel; }
+    QList<core::PartyVariant> requestVariants() const { return m_req.variants; }
+
+    Q_INVOKABLE void switchVariant(const QString &variantKey);
+    Q_INVOKABLE void acceptSuggestedDowngrade();
+    Q_INVOKABLE void dismissSuggestedDowngrade();
 
     /// Открыть то, что собрало окно «Смотреть».
     Q_INVOKABLE void start(suslik::app::PlayModel *from);
@@ -176,6 +195,10 @@ public:
     /// Гость, а ведущий держит паузу (или комната ждёт загрузку): снять её гость не может.
     bool playLocked() const;
     QString currentWatchKey() const { return watchKey(); }
+    QString activeWatchKey() const { return !m_activeVariantKey.isEmpty() ? m_activeVariantKey : watchKey(); }
+    QString canonicalId() const { return m_canonicalId; }
+    std::optional<QString> edition() const;
+    int findEpisodeIndex(const core::PartyFileRef &f) const;
     /// Открыт ли этот файл в очереди плеера (гость комнаты: ведущий перешёл к серии, которая уже в ней).
     Q_INVOKABLE bool hasWatchKey(const QString &key) const { return m_open && !m_closing && m_req.watchKeys.contains(key); }
     QStringList watchKeys() const { return m_req.watchKeys; }
@@ -213,6 +236,11 @@ signals:
     void infoChanged();
     void tracksExtraChanged();
     void partyChanged();
+    void qualityVariantsChanged();
+    void activeVariantKeyChanged();
+    void hostVariantKeyChanged();
+    void switchingVariantChanged();
+    void suggestedDowngradeChanged();
     /// Короткая надпись поверх (громкость, скорость…).
     void flashed(const QString &text);
     /// Плеер закрылся (окно убирает экран плеера).
@@ -234,6 +262,7 @@ private:
     void reopen(bool fresh) override;
     void notice(const QString &text) override { flash(text); }
     void log(const QString &message) override;
+    void suggestDowngrade(double currentBitrateMbps) override;
 
     void begin();
     void loadPlaylist();
@@ -277,14 +306,21 @@ private:
     QString sideFileName(const QString &url) const;
     std::pair<QString, QString> sideName(const QString &sideUrl, const QString &videoUrl) const;
     QStringList preferFirst(const QStringList &urls, const std::optional<QString> &saved, const QString &videoUrl) const;
+    void rebuildVariantsForEntry(int i);
+    /// Медиатека изменилась (добавили раздачу): список качества открытого фильма пересобирается.
+    void refreshVariants();
 
     QPointer<Library> m_lib;
+    QMetaObject::Connection m_libConn;
+    /// Вариант ведущего, который сейчас показан в списке качества: метка [Хост] обновляется, когда он меняется.
+    QString m_shownHostKey;
     MpvEngine *m_engine;
     core::PlaybackSupervisor m_supervisor;
     std::unique_ptr<core::CatchUp> m_catchUp;
 
     PlayRequest m_req;
     std::optional<core::CustomTrack> m_preview;
+    QList<core::CustomTrack> m_variantCustom;
     QString m_poster;
     QList<Entry> m_queue;
     QHash<int, Sides> m_sidecars;
@@ -293,6 +329,7 @@ private:
     QHash<QString, std::pair<QString, QString>> m_sideTitles;
     int m_index = 0;
     QString m_title, m_currentUrl;
+    QString m_seriesTitle;
     quint64 m_gen = 0;
 
     bool m_open = false, m_closing = false, m_started = false, m_playing = false, m_switching = false;
@@ -306,6 +343,7 @@ private:
     bool m_crop219 = false;
     qint64 m_audioDelay = 0, m_subDelay = 0;
     qint64 m_time = 0, m_length = 0, m_lastGood = 0, m_bufferedMs = 0;
+    bool m_lengthFresh = false; ///< m_length — длина открытого сейчас файла (не прежнего)
     QString m_status;
     int m_retries = 0;
     bool m_prefsApplied = false;
@@ -330,6 +368,11 @@ private:
     std::optional<core::CustomTrack> m_activeCustom;
     bool m_endCut = false;
     QString m_deleteArmed;
+    QString m_activeVariantKey;
+    QString m_canonicalId;
+    bool m_switchingVariant = false;
+    QString m_suggestedDowngradeKey;
+    QString m_suggestedDowngradeLabel;
     int m_subsFetching = 0;
     /// Внешние субтитры: один менеджер сети на плеер (соединения и TLS-сессии переиспользуются между сериями).
     QNetworkAccessManager *m_subsNam = nullptr;

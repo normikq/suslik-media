@@ -108,6 +108,23 @@ class CustomAudioIndex {
         }
     }
 
+    /** Обновляет озвучки только для текущей серии при смене варианта качества, не стирая остальные серии плейлиста. */
+    fun updateUrls(removeUrls: Collection<String>, json: String?) {
+        for (u in removeUrls) {
+            val fk = MirrorLink.fileKey(u)
+            val oldInfo = byKey.remove(fk)
+            byWrapped.remove(u)
+            if (oldInfo != null) {
+                byWrapped.entries.removeIf { it.value === oldInfo }
+            }
+        }
+        val o = json?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return
+        for (url in o.keys()) {
+            val t = o.optJSONObject(url) ?: continue
+            byKey[MirrorLink.fileKey(url)] = Info(t.optString("title"), t.optLong("offsetMs"))
+        }
+    }
+
     fun of(url: String): Info? = byWrapped[url] ?: byKey[MirrorLink.fileKey(url)]
 
     /** [wrapped] — это [url] через локальный запас. */

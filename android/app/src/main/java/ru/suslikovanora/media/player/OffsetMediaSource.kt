@@ -30,11 +30,11 @@ class OffsetMediaSource(source: MediaSource, offsetMs: Long) : WrappingMediaSour
 
     private class Period(val inner: MediaPeriod, private val offsetUs: Long) : MediaPeriod, MediaPeriod.Callback {
         private var callback: MediaPeriod.Callback? = null
-        private fun out(us: Long) = if (us == C.TIME_END_OF_SOURCE || us == C.TIME_UNSET) us else us + offsetUs
+        private fun out(us: Long) = if (us == C.TIME_END_OF_SOURCE || us == C.TIME_UNSET) us else maxOf(0L, us + offsetUs)
 
         override fun prepare(callback: MediaPeriod.Callback, positionUs: Long) {
             this.callback = callback
-            inner.prepare(this, positionUs - offsetUs)
+            inner.prepare(this, maxOf(0L, positionUs - offsetUs))
         }
         override fun maybeThrowPrepareError() = inner.maybeThrowPrepareError()
         override fun getTrackGroups() = inner.trackGroups
@@ -45,7 +45,7 @@ class OffsetMediaSource(source: MediaSource, offsetMs: Long) : WrappingMediaSour
             streams: Array<SampleStream?>, streamResetFlags: BooleanArray, positionUs: Long
         ): Long {
             val child = Array(streams.size) { (streams[it] as Stream?)?.inner }
-            val start = inner.selectTracks(selections, mayRetainStreamFlags, child, streamResetFlags, positionUs - offsetUs)
+            inner.selectTracks(selections, mayRetainStreamFlags, child, streamResetFlags, maxOf(0L, positionUs - offsetUs))
             for (i in streams.indices) {
                 val c = child[i]
                 streams[i] = when {
@@ -54,20 +54,25 @@ class OffsetMediaSource(source: MediaSource, offsetMs: Long) : WrappingMediaSour
                     else -> Stream(c, offsetUs)
                 }
             }
-            return start + offsetUs
+            return positionUs
         }
 
-        override fun discardBuffer(positionUs: Long, toKeyframe: Boolean) = inner.discardBuffer(positionUs - offsetUs, toKeyframe)
-        override fun readDiscontinuity() = out(inner.readDiscontinuity())
-        override fun seekToUs(positionUs: Long) = inner.seekToUs(positionUs - offsetUs) + offsetUs
-        override fun getAdjustedSeekPositionUs(positionUs: Long, seekParameters: SeekParameters) =
-            inner.getAdjustedSeekPositionUs(positionUs - offsetUs, seekParameters) + offsetUs
+        override fun discardBuffer(positionUs: Long, toKeyframe: Boolean) = inner.discardBuffer(maxOf(0L, positionUs - offsetUs), toKeyframe)
+        override fun readDiscontinuity(): Long {
+            val d = inner.readDiscontinuity()
+            return if (d == C.TIME_UNSET) C.TIME_UNSET else maxOf(0L, d + offsetUs)
+        }
+        override fun seekToUs(positionUs: Long): Long {
+            inner.seekToUs(maxOf(0L, positionUs - offsetUs))
+            return positionUs
+        }
+        override fun getAdjustedSeekPositionUs(positionUs: Long, seekParameters: SeekParameters) = positionUs
         override fun getBufferedPositionUs() = out(inner.bufferedPositionUs)
         override fun getNextLoadPositionUs() = out(inner.nextLoadPositionUs)
         override fun continueLoading(loadingInfo: LoadingInfo) =
-            inner.continueLoading(loadingInfo.buildUpon().setPlaybackPositionUs(loadingInfo.playbackPositionUs - offsetUs).build())
+            inner.continueLoading(loadingInfo.buildUpon().setPlaybackPositionUs(maxOf(0L, loadingInfo.playbackPositionUs - offsetUs)).build())
         override fun isLoading() = inner.isLoading
-        override fun reevaluateBuffer(positionUs: Long) = inner.reevaluateBuffer(positionUs - offsetUs)
+        override fun reevaluateBuffer(positionUs: Long) = inner.reevaluateBuffer(maxOf(0L, positionUs - offsetUs))
 
         override fun onPrepared(mediaPeriod: MediaPeriod) { callback?.onPrepared(this) }
         override fun onContinueLoadingRequested(source: MediaPeriod) { callback?.onContinueLoadingRequested(this) }
@@ -78,9 +83,9 @@ class OffsetMediaSource(source: MediaSource, offsetMs: Long) : WrappingMediaSour
         override fun maybeThrowError() = inner.maybeThrowError()
         override fun readData(formatHolder: FormatHolder, buffer: DecoderInputBuffer, readFlags: Int): Int {
             val r = inner.readData(formatHolder, buffer, readFlags)
-            if (r == C.RESULT_BUFFER_READ) buffer.timeUs += offsetUs
+            if (r == C.RESULT_BUFFER_READ && !buffer.isEndOfStream) buffer.timeUs += offsetUs
             return r
         }
-        override fun skipData(positionUs: Long) = inner.skipData(positionUs - offsetUs)
+        override fun skipData(positionUs: Long) = inner.skipData(maxOf(0L, positionUs - offsetUs))
     }
 }

@@ -150,15 +150,7 @@ enum class Category(val label: String) {
     Other(tr("library.drugoe"))
 }
 
-fun itemYear(item: LibraryItem): String {
-    val match = Regex("""\b(19\d{2}|20\d{2})\b""").find(item.m.name)
-    if (match != null) return match.value
-    for (f in item.m.files) {
-        val fMatch = Regex("""\b(19\d{2}|20\d{2})\b""").find(f.name)
-        if (fMatch != null) return fMatch.value
-    }
-    return "2024"
-}
+fun itemYear(item: LibraryItem): String = releaseYear(item)?.toString() ?: "2024"
 
 fun isAnime(item: LibraryItem): Boolean {
     val text = (item.m.name + " " + item.baseTitle).lowercase()
@@ -194,31 +186,49 @@ fun itemTypeLabel(item: LibraryItem): String {
     }
 }
 
-fun itemSpecs(item: LibraryItem, mediaStr: String?): Pair<String, String> {
+private val FPS_RE = Regex("""(\d+(\.\d+)?)\s*fps""")
+private val BITRATE_RE = Regex("""(\d+(\.\d+)?)\s*мбит/с""")
+
+fun itemSpecs(
+    item: LibraryItem,
+    mediaStr: String?,
+    serverProf: ru.suslikovanora.media.core.party.PartyVariant? = null,
+    dims: Pair<Int, Int> = Pair(0, 0)
+): Pair<String, String> {
     val name = item.m.name.lowercase()
     val str = mediaStr?.lowercase().orEmpty()
 
     val quality = when {
-        str.contains("3840") || str.contains("2160") || name.contains("2160p") || name.contains("4k") -> "4K"
-        str.contains("1920") || str.contains("1080") || name.contains("1080p") -> "1080p"
+        serverProf != null && serverProf.quality.isNotBlank() -> serverProf.quality
+        dims.first >= 3000 || dims.second >= 1600 -> "4K"
+        dims.first >= 1600 || dims.second >= 900 -> "1080p"
+        dims.first >= 1100 || dims.second >= 600 -> "720p"
+        dims.first > 0 || dims.second > 0 -> "480p"
+        str.contains("3840") || str.contains("2160") || name.contains("2160p") || name.contains("4k") || name.contains("uhd") -> "4K"
+        str.contains("1920") || str.contains("1080") || name.contains("1080p") || name.contains("1080i") -> "1080p"
         str.contains("1280") || str.contains("720") || name.contains("720p") -> "720p"
-        else -> "1080p"
+        str.contains("480p") || name.contains("480p") || name.contains("576p") || name.contains("dvd") -> "480p"
+        else -> ""
     }
 
     val codec = when {
+        str.contains("av1") || name.contains("av1") -> "AV1"
         str.contains("hevc") || str.contains("h.265") || str.contains("h265") || name.contains("x265") || name.contains("hevc") || name.contains("h265") || name.contains("h.265") -> "H265"
         str.contains("avc") || str.contains("h.264") || str.contains("h264") || name.contains("x264") || name.contains("h264") || name.contains("h.264") -> "H264"
-        str.contains("av1") || name.contains("av1") -> "AV1"
         quality == "4K" -> "H265"
-        else -> "H264"
+        else -> ""
     }
 
-    val fpsMatch = Regex("""(\d+(\.\d+)?)\s*fps""").find(str) ?: Regex("""(\d+(\.\d+)?)\s*fps""").find(name)
-    val fps = fpsMatch?.value ?: "23.98 fps"
+    val fpsMatch = FPS_RE.find(str) ?: FPS_RE.find(name)
+    val fps = fpsMatch?.value.orEmpty()
 
-    val brMatch = Regex("""(\d+(\.\d+)?)\s*мбит/с""").find(str)
+    val p1 = listOf(quality, codec, fps).filter { it.isNotBlank() }
+
+    val brMatch = BITRATE_RE.find(str)
     val bitrate = if (brMatch != null) {
         brMatch.value
+    } else if (serverProf != null && serverProf.bitrate > 0) {
+        String.format(Locale.ROOT, "%.1f Мбит/с", serverProf.bitrate)
     } else if (item.m.size > 0) {
         val durH = 1.5
         val mbps = (item.m.size * 8.0) / (durH * 3600.0 * 1_000_000.0)
@@ -228,7 +238,8 @@ fun itemSpecs(item: LibraryItem, mediaStr: String?): Pair<String, String> {
     }
 
     val sz = formatBytes(item.m.size)
-    return Pair("$quality • $codec • $fps", "$bitrate • $sz")
+    val p2 = listOf(bitrate, sz).filter { it.isNotBlank() }
+    return Pair(p1.joinToString(" • "), p2.joinToString(" • "))
 }
 
 data class ContinueEntry(
@@ -294,31 +305,45 @@ private fun filmSub(item: LibraryItem, file: MFile): String {
     return if (films.size > 1 && idx >= 0) tr("library.film_p", "p" to (idx + 1)) + " · " + title else title
 }
 
-internal fun continueEntries(items: List<LibraryItem>, store: LibraryStore): List<ContinueEntry> = items.mapNotNull { item ->
-    if (!item.m.ready) return@mapNotNull null
-    val (file, w) = store.lastWatched(item.m) ?: return@mapNotNull null
-    if (System.currentTimeMillis() - w.at > 60L * 24 * 3600 * 1000) return@mapNotNull null
-    if (store.continueHiddenAt(item.m.id) >= w.at) return@mapNotNull null
-    val isColl = isCollection(item.playable, item.m)
-    if (!w.watched) {
-        val t = targetFor(item, file) ?: return@mapNotNull null
-        val queries = continueItemPosterQueries(item, file)
-        val sub = if (isColl) filmSub(item, file) else {
-            t.label.removePrefix(item.baseTitle).removePrefix(" · ").ifBlank { tr("library.film") }
+internal fun continueEntries(items: List<LibraryItem>, store: LibraryStore): List<ContinueEntry> {
+    val raw = items.mapNotNull { item ->
+        if (!item.m.ready) return@mapNotNull null
+        val (file, w) = store.lastWatched(item.m) ?: return@mapNotNull null
+        if (System.currentTimeMillis() - w.at > 60L * 24 * 3600 * 1000) return@mapNotNull null
+        if (store.continueHiddenAt(item.m.id) >= w.at) return@mapNotNull null
+        val isColl = isCollection(item.playable, item.m)
+        val vs = store.versionsOf(item.m.id)
+        val rootId = vs.firstOrNull()?.m?.id ?: item.m.id
+        val groupKey = if (isColl) "$rootId|${file.path}" else "$rootId"
+        if (!w.watched) {
+            val t = targetFor(item, file) ?: return@mapNotNull null
+            val queries = continueItemPosterQueries(item, file)
+            val sub = if (isColl) filmSub(item, file) else {
+                t.label.removePrefix(item.baseTitle).removePrefix(" · ").ifBlank { tr("library.film") }
+            }
+            ContinueEntry(item, t, sub, w.fraction, w.pos, w.len, w.at, queries) to groupKey
+        } else {
+            val series = item.playable as? Playable.Series ?: return@mapNotNull null
+            val next = nextEpisode(series, file) ?: return@mapNotNull null
+            if (store.watchInfo(watchKey(item.m.id, next))?.watched == true) return@mapNotNull null
+            val t = targetFor(item, next) ?: return@mapNotNull null
+            val queries = continueItemPosterQueries(item, next)
+            val sub = if (isColl) tr("library.dalshe") + filmSub(item, next) else {
+                tr("library.dalshe") + t.label.removePrefix(item.baseTitle).removePrefix(" · ")
+            }
+            ContinueEntry(item, t, sub, 0f, 0L, 0L, w.at, queries) to groupKey
         }
-        ContinueEntry(item, t, sub, w.fraction, w.pos, w.len, w.at, queries)
-    } else {
-        val series = item.playable as? Playable.Series ?: return@mapNotNull null
-        val next = nextEpisode(series, file) ?: return@mapNotNull null
-        if (store.watchInfo(watchKey(item.m.id, next))?.watched == true) return@mapNotNull null
-        val t = targetFor(item, next) ?: return@mapNotNull null
-        val queries = continueItemPosterQueries(item, next)
-        val sub = if (isColl) tr("library.dalshe") + filmSub(item, next) else {
-            tr("library.dalshe") + t.label.removePrefix(item.baseTitle).removePrefix(" · ")
+    }.sortedByDescending { it.first.at }
+
+    val seen = HashSet<String>()
+    val result = ArrayList<ContinueEntry>()
+    for ((entry, key) in raw) {
+        if (seen.add(key)) {
+            result.add(entry)
         }
-        ContinueEntry(item, t, sub, 0f, 0L, 0L, w.at, queries)
     }
-}.sortedByDescending { it.at }
+    return result
+}
 
 /** «Продолжить просмотр» shows the last four (the phone's row and the TV banner); «Очистить» hides them all. */
 const val CONTINUE_SHOWN = 4
@@ -428,8 +453,23 @@ fun LibraryScreen(
             PageBar(curPage, pageCount) { n -> page = n; scope.launch { gridState.scrollToItem(0) } }
         }
     }
+    val context = LocalContext.current
     pick?.let { vs ->
-        VersionSheet(vs.first().baseTitle, vs, store, onDismiss = { pick = null }) { v -> pick = null; versionTarget(v, store)?.let(onPlay) }
+        VersionSheet(vs.first().baseTitle, vs, store, onDismiss = { pick = null }) { v ->
+            pick = null
+            val mag = v.m.id.toString()
+            val sp = context.getSharedPreferences("player_ui", Context.MODE_PRIVATE)
+            val tKey = titleKey(vs.first().baseTitle)
+            val cId = v.m.aiTitle?.canonicalId ?: vs.first().m.aiTitle?.canonicalId
+            sp.edit().apply {
+                if (tKey.isNotBlank()) putString("vmagnet:$tKey", mag)
+                if (!cId.isNullOrBlank()) putString("vmagnet:c$cId", mag)
+                for (ver in vs) {
+                    putString("vmagnet:m${ver.m.id}", mag)
+                }
+            }.apply()
+            versionTarget(v, store)?.let(onPlay)
+        }
     }
 }
 
@@ -996,7 +1036,7 @@ private fun PosterArtwork(
 ) {
     val context = LocalContext.current
     val m = item.m
-    val baseTitle = store.titleOf(item)
+    val baseTitle = remember(item, store.titleVersion) { store.titleOf(item) }
 
     Box(
         Modifier.fillMaxWidth().aspectRatio(2f / 3f)
@@ -1025,7 +1065,7 @@ private fun PosterArtwork(
             MineMark(group.any { it.m.mine }, Modifier.align(Alignment.TopStart).padding(8.dp)) { on -> group.map { store.setMine(it.m, on) }.firstOrNull { it != null } }
             FavStar(group.any { it.m.favorite }, Modifier.align(Alignment.TopEnd).padding(8.dp)) { on -> group.map { store.setFavorite(it.m, on) }.firstOrNull { it != null } }
             // Dolby Vision / HDR / DTS under the star
-            val tags = remember(item, versions, group.flatMap { store.tagsOf(it) }) { collapseTags(group.flatMap { store.tagsOf(it) }) }
+            val tags = remember(item.m.id, versions, store.tagsVersion) { collapseTags(group.flatMap { store.tagsOf(it) }) }
             if (tags.isNotEmpty()) {
                 Column(Modifier.align(Alignment.TopEnd).padding(top = 46.dp, end = 8.dp), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     for (t in tags) TagChip(t)
@@ -1092,12 +1132,13 @@ private fun TileDetails(
 ) {
     val m = item.m
     val playable = item.playable
+    val displayTitle = remember(item, store.titleVersion) { store.titleOf(item) }
     Column(Modifier.padding(start = 2.dp, end = 2.dp, top = 8.dp)) {
         // As on the PC: the plain title (the AI's one once accepted, else TMDB's Russian one), not the release name with its tags
-        Text(store.titleOf(item), color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp, lineHeight = 18.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(displayTitle, color = Sm.text, fontFamily = Onest, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp, lineHeight = 18.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Text("${itemYear(item)} • ${itemTypeLabel(item)} · ${formatBytes(m.size)}", color = Sm.muted, fontFamily = Onest, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
         if (m.ready && media != null) {
-            val specs = remember(item, media) { itemSpecs(item, media) }
+            val specs = remember(item, media, store.tagsVersion) { itemSpecs(item, media, store.serverProfiles[item.m.id]) }
             Text(specs.first, color = Color(0xFFB0B7C6), fontFamily = Onest, fontSize = 11.5.sp, modifier = Modifier.padding(top = 2.dp))
         }
         val lastNow = last

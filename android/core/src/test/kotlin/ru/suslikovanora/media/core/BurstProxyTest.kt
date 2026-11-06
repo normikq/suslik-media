@@ -185,6 +185,34 @@ class BurstProxyTest {
         assertEquals(16.78, BurstProxy.bitrateMbit(url)!!, 0.05)
     }
 
+    @Test fun rangeParsing() {
+        assertEquals(100L to 199L, BurstProxy.parseRange("bytes=100-199", 1000))
+        assertEquals(100L to -1L, BurstProxy.parseRange("bytes=100-", 1000))
+        assertEquals(488L to 999L, BurstProxy.parseRange("bytes=-512", 1000))   // the last 512 bytes
+        assertEquals(0L to 999L, BurstProxy.parseRange("bytes=-5000", 1000))    // longer than the file: all of it
+        assertEquals(0L to -1L, BurstProxy.parseRange("bytes=-512", -1))        // size unknown: not a piece from the start
+        assertEquals(0L to -1L, BurstProxy.parseRange("bytes=-0", 1000))
+        assertEquals(0L to -1L, BurstProxy.parseRange(null, 1000))
+        assertEquals(0L to -1L, BurstProxy.parseRange("garbage", 1000))
+    }
+
+    @Test fun playingVoiceOverGathersMinutesOfItselfNotOfTheFilm() {
+        val mb = 1L shl 20
+        val ring = 12 * mb                                              // a voice-over's ring at the default 96 MB
+        // 06.11 journal: OnWave AAC 2.0, 42 MB over a 1813 s episode (~185 kbit/s) → ~2 min ≈ 2.8 MB, not 9 MB
+        val (low, high) = BurstProxy.sideReserve(42 * mb, 1_813_000, ring)
+        assertTrue(high in (2 * mb)..(3 * mb), "high $high")
+        assertTrue(low in (mb / 2)..mb, "low $low")
+        // AC3 5.1 at 640 kbit/s: ~9.6 MB fits the ring
+        val (_, ac3) = BurstProxy.sideReserve(80_000L * 2700, 2_700_000, ring)
+        assertTrue(ac3 in (9 * mb)..(ring * 7 / 8), "ac3 $ac3")
+        // a tiny file (subtitles) still gets 1 MB; a huge one stops at 7/8 of the ring
+        assertEquals(mb, BurstProxy.sideReserve(200_000, 1_813_000, ring).second)
+        assertEquals(ring * 7 / 8, BurstProxy.sideReserve(2_000 * mb, 1_813_000, ring).second)
+        // the length is not known yet: the probe's 4 MB, as before
+        assertEquals(2 * mb to 4 * mb, BurstProxy.sideReserve(42 * mb, 0, ring))
+    }
+
     @Test fun slowNetworkIsKnownWhileTheFirstBurstStillRuns() {
         slowOrigin = true
         val local = BurstProxy.wrap(url)

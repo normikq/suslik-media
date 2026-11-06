@@ -14,14 +14,20 @@ qint64 nowMs() { return QDateTime::currentMSecsSinceEpoch(); }
 
 bool PlayerModel::partyGuest() const {
     const Party *p = Party::instance();
-    const QString key = watchKey();
-    return p && m_open && p->guest() && !key.isEmpty() && p->fileKey() == key;
+    const QString key = activeWatchKey();
+    if (!p || !m_open || !p->guest() || key.isEmpty()) return false;
+    const auto f = p->file();
+    if (f) return f->matches(key, m_canonicalId) || f->matches(watchKey(), m_canonicalId);
+    return p->fileKey() == key || p->fileKey() == watchKey();
 }
 
 bool PlayerModel::partyFilm() const {
     const Party *p = Party::instance();
-    const QString key = watchKey();
-    return p && m_open && p->inRoom() && !key.isEmpty() && p->fileKey() == key;
+    const QString key = activeWatchKey();
+    if (!p || !m_open || !p->inRoom() || key.isEmpty()) return false;
+    const auto f = p->file();
+    if (f) return f->matches(key, m_canonicalId) || f->matches(watchKey(), m_canonicalId);
+    return p->fileKey() == key || p->fileKey() == watchKey();
 }
 
 bool PlayerModel::playLocked() const {
@@ -68,5 +74,31 @@ void PlayerModel::roomPlayEntry(int i) {
 }
 
 void PlayerModel::engineRate(double r) { m_engine->setRate(r); }
+
+std::optional<QString> PlayerModel::edition() const {
+    if (!m_lib) return std::nullopt;
+    const QString k = activeWatchKey();
+    const qint64 magId = k.section(QLatin1Char('|'), 0, 0).toLongLong();
+    const core::LibraryItem *it = magId > 0 ? m_lib->item(magId) : m_lib->item(m_req.magnetId);
+    if (!it) return std::nullopt;
+    if (const auto ai = it->m.acceptedAi(); ai && ai->edition && !ai->edition->isEmpty() && *ai->edition != QLatin1String("default")) {
+        return ai->edition;
+    }
+    const QString parsed = core::parseEdition(it->m.name);
+    if (!parsed.isEmpty() && parsed != QLatin1String("default")) return parsed;
+    return std::nullopt;
+}
+
+int PlayerModel::findEpisodeIndex(const core::PartyFileRef &f) const {
+    // Две раздачи, которые медиатека считает версиями одной работы, — та же работа и без canonical_id
+    bool hint = false;
+    if (m_lib && m_req.magnetId > 0) {
+        const qint64 roomMag = f.key.section(QLatin1Char('|'), 0, 0).toLongLong();
+        if (roomMag > 0)
+            for (const auto &ver : m_lib->versionsOf(m_req.magnetId))
+                if (ver.m.id == roomMag) { hint = true; break; }
+    }
+    return f.resolveIndex(m_req.watchKeys, m_canonicalId, hint);
+}
 
 } // namespace suslik::app

@@ -41,6 +41,12 @@ object BurstProxy {
     private const val PROBE_AHEAD = 4L shl 20      // before a window proves to be real playback
     private const val PROBE_LIMIT = 6L shl 20      // read sequentially this far = playback → bursts
     private const val PROBE_IDLE_MS = 500L         // a probe the player has not read for this long stops at PROBE_AHEAD (a fast network fills the ring in 3 s)
+    private const val SIDE_PROBE_LIMIT = 512L shl 10 // voice-over/subs: 512 KB sequentially = playback (128 kbps audio takes minutes to reach 6 MB)
+    private const val SIDE_IDLE_MS = 5_000L        // a playing voice-over reads every 1-2 s; don't kill it after 500 ms
+    private const val SIDE_AHEAD_SEC = 120.0        // a playing voice-over gathers ~2 min of itself (its own bitrate, not the film's)
+    private const val SIDE_LOW_SEC = 30.0
+    private const val SIDE_MIN_AHEAD = 1L shl 20
+    private const val SIDE_MIN_LOW = 256L shl 10
     private const val CHUNK = 256 * 1024
     private const val NEAR = 8L shl 20             // a request this close to a window's end joins it (the downloader gets there in a moment)
     private const val NEAR_MIN = 1L shl 20         // ...but at most what the network brings in NEAR_SEC (see Source.near)
@@ -58,6 +64,10 @@ object BurstProxy {
     private val byUrl = ConcurrentHashMap<String, String>()     // stable key of the url (see keyOf) -> token
     // The film's own files besides the video (voice-overs, subtitles; see keepOnly): a small ring each, cut from capBytes.
     @Volatile private var sideKeys: Set<String> = emptySet()
+    // The film being opened (keepOnly: its video's key) and its length (setDuration): a voice-over's bitrate is its
+    // size ÷ this length, see [sideReserve]
+    @Volatile private var mainKey: String? = null
+    @Volatile private var filmLength: Pair<String, Long>? = null
     /** Over the limit, a window the player read this recently (counted from the film's last read) still stays. */
     @Volatile internal var recentMs = 10_000L
     private val trimLock = Any()
@@ -222,8 +232,38 @@ object BurstProxy {
         }
         if (sources[token]?.broken == true) return url // this stream did not work through the proxy: go direct
         val name = url.substringBefore('?').substringAfterLast('/').ifBlank { "stream" }
-        return "http://127.0.0.1:${s.localPort}/s/$token/${URLEncoder.encode(java.net.URLDecoder.decode(name, "UTF-8"), "UTF-8").replace("+", "%20")}"
+        return "http://127.0.0.1:${s.localPort}/s/$token/${URLEncoder.encode(runCatching { java.net.URLDecoder.decode(name, "UTF-8") }.getOrDefault(name), "UTF-8").replace("+", "%20")}"
     }
+
+    /**
+     * How far ahead a playing voice-over / subtitles file fills ([high]) and when it starts again ([low]): ~2 min of
+     * itself at its own bitrate — [total] bytes over the film's [filmMs]. Sized like the film (its bitrate unknown, so the
+     * floor of ¾ of the ring) one AAC voice-over pulled 9 MB (~6 min) at full speed right after a seek, when the video
+     * needed the network (06.11 journal: 16 MB in 10 s at 13.9 Mbit/s on mobile, the picture stood ~10 s).
+     * Not the measured reading speed: Media3 reads a merged voice-over far ahead of playback. Unknown length → the
+     * probe's 4 MB, as before.
+     */
+    /**
+     * `Range` header → (from, to); to = -1 means "to the end". A suffix range `bytes=-N` is the last N bytes: needs the
+     * file size ([total]); while it is unknown the whole file is served instead of a wrong piece from the start.
+     */
+    internal fun parseRange(range: String?, total: Long): Pair<Long, Long> {
+        val r = range?.trim()?.removePrefix("bytes=")?.split('-') ?: return 0L to -1L
+        val a = r.getOrNull(0)?.trim()?.toLongOrNull()
+        val b = r.getOrNull(1)?.trim()?.toLongOrNull()
+        if (a == null && b != null) return if (b > 0 && total > 0) maxOf(0L, total - b) to total - 1 else 0L to -1L
+        return (a ?: 0L) to (b ?: -1L)
+    }
+
+    internal fun sideReserve(total: Long, filmMs: Long, cap: Long): Pair<Long, Long> {
+        if (total <= 0 || filmMs <= 0) return PROBE_AHEAD / 2 to PROBE_AHEAD
+        val rate = total * 1000.0 / filmMs
+        val high = (rate * SIDE_AHEAD_SEC).toLong().coerceIn(SIDE_MIN_AHEAD, maxOf(SIDE_MIN_AHEAD, cap * 7 / 8))
+        val low = (rate * SIDE_LOW_SEC).toLong().coerceIn(minOf(SIDE_MIN_LOW, high / 2), high / 2)
+        return low to high
+    }
+
+    private fun sideLengthMs(): Long = filmLength?.takeIf { it.first == mainKey }?.second ?: 0L
 
     /**
      * The files of the film being opened now ([urls]: the video first, then its voice-overs and subtitles): every other
@@ -237,6 +277,7 @@ object BurstProxy {
         if (urls.isNotEmpty()) {
             val keys = urls.map { keyOf(it) }
             sideKeys = keys.drop(1).toSet() - keys.first()
+            mainKey = keys.first()
             val keep = keys.toSet()
             for ((key, token) in byUrl.entries.toList()) if (key !in keep) { byUrl.remove(key); sources.remove(token)?.close() }
             return
@@ -271,7 +312,7 @@ object BurstProxy {
             if (used <= budget) return
             val filmLast = all.filter { it.first.retiredAt == 0L }.maxOfOrNull { it.second.lastReadAt } ?: 0L
             fun stays(s: Source, w: Window) =
-                s.retiredAt == 0L && (w.readers > 0 || filmLast - w.lastReadAt < recentMs || (!s.side() && w === s.current()))
+                s.retiredAt == 0L && (w.readers > 0 || filmLast - w.lastReadAt < recentMs || w === s.current())
             for ((s, w) in all.filterNot { (s, w) -> stays(s, w) }.sortedBy { it.second.lastReadAt }) {
                 if (used <= budget) break
                 val freed = w.diskBytes()
@@ -296,7 +337,8 @@ object BurstProxy {
             val src = sources[token] ?: continue
             if (src.retiredAt == 0L) continue // playing now
             val link = MirrorLink.param(key, "link").orEmpty()
-            if (link.isNotEmpty() && !keep(link)) { byUrl.remove(key); sources.remove(token)?.close(); n++ }
+            // keep() can take a while: the film may have been opened again meanwhile (wrap() clears retiredAt) — look again
+            if (link.isNotEmpty() && !keep(link) && src.retiredAt != 0L) { byUrl.remove(key); sources.remove(token)?.close(); n++ }
         }
         return n
     }
@@ -315,6 +357,8 @@ object BurstProxy {
     fun dropAll() {
         for ((key, token) in byUrl.entries.toList()) { byUrl.remove(key); sources.remove(token)?.close() }
         sideKeys = emptySet()
+        mainKey = null
+        filmLength = null
     }
 
     /**
@@ -325,6 +369,7 @@ object BurstProxy {
      */
     fun setDuration(url: String, ms: Long) {
         if (ms <= 0) return
+        keyOf(url).let { k -> if (k !in sideKeys) filmLength = k to ms }
         val src = sourceOf(url) ?: return
         val total = src.total
         if (total <= 0) return
@@ -584,8 +629,8 @@ object BurstProxy {
         // Changed under [lock]; volatile because some readers look without it (windowAt, keptMb, the info panel).
         @Volatile var written = 0L  // bytes from [start] available (contiguous)
         @Volatile var readPos = start // where the player reads now
-        var sequential = 0L         // bytes read in order (decides probe → burst)
-        var consumedTotal = 0L      // bytes the player has taken from this window (decides when the short start-up reserve ends)
+        @Volatile var sequential = 0L // bytes read in order (decides probe → burst)
+        @Volatile var consumedTotal = 0L // bytes the player has taken from this window (decides when the short start-up reserve ends)
         @Volatile var lastReadAt = System.currentTimeMillis()
         @Volatile var eof = false
         @Volatile var error: String? = null
@@ -660,7 +705,7 @@ object BurstProxy {
         var gateAt = 0L              // while held, the player gets nothing from here on
         fun held() = System.currentTimeMillis() < heldUntil
         fun validFrom() = start + maxOf(0L, written - CAP)
-        fun burst() = sequential >= PROBE_LIMIT
+        fun burst() = sequential >= (if (src.side()) SIDE_PROBE_LIMIT else PROBE_LIMIT)
 
         /** How far ahead to fill, and when to start again (radio wakes up). Sized by the film's bitrate. */
         // Up to ~110 s ahead (or what the reserve holds), refill when ~25 s are left. A small reserve keeps a part of
@@ -678,11 +723,11 @@ object BurstProxy {
                 else -> 55.0 + (ratio - 2.0) / 1.2 * 75.0
             }
         }
-        private fun high(): Long = if (!burst()) PROBE_AHEAD else {
+        private fun high(): Long = if (!burst()) PROBE_AHEAD else if (src.side()) sideReserve(src.total, sideLengthMs(), CAP).second else {
             val full = (src.sizing() * reserveSeconds()).toLong().coerceIn(minOf(24L shl 20, CAP * 3 / 4), CAP * 7 / 8)
             if (ramping()) minOf(full, rampAhead()) else full
         }
-        private fun low(): Long = if (!burst()) PROBE_AHEAD / 2 else
+        private fun low(): Long = if (!burst()) PROBE_AHEAD / 2 else if (src.side()) sideReserve(src.total, sideLengthMs(), CAP).first else
             (src.sizing() * 25).toLong().coerceIn(minOf(6L shl 20, high() / 3), high() / 2)
 
         // Start-up reserve: right after an open or a seek only ~24 MB (≥ 10 s of the film) is fetched; the full reserve is
@@ -876,7 +921,8 @@ object BurstProxy {
                     // ...unless the player has stopped taking data here: an external voice-over that is not playing (mpv
                     // read its header and index and keeps the connection open). 18.10 journal: 8 voice-overs of one episode
                     // pulled 3–32 MB each in the first 10 s next to the video, only one of them played.
-                    if (!burst() && !held() && ahead >= PROBE_AHEAD && System.currentTimeMillis() - lastReadAt > PROBE_IDLE_MS) {
+                    val idleLimit = if (src.side()) SIDE_IDLE_MS else PROBE_IDLE_MS
+                    if (!burst() && !held() && ahead >= PROBE_AHEAD && System.currentTimeMillis() - lastReadAt > idleLimit) {
                         why = "player idle"; return
                     }
                     val n = input.read(buf)
@@ -1027,11 +1073,7 @@ object BurstProxy {
                 val src = sources[token]
                 val out = s.getOutputStream()
                 if (src == null || fromBrowser || (method != "GET" && method != "HEAD")) { status(out, "404 Not Found"); return }
-                var from = 0L; var to = -1L
-                range?.removePrefix("bytes=")?.split('-')?.let { r ->
-                    from = r.getOrNull(0)?.toLongOrNull() ?: 0L
-                    to = r.getOrNull(1)?.toLongOrNull() ?: -1L
-                }
+                val (from, to) = parseRange(range, src.total)
                 if (src.serveTail(out, method, range, from, to)) return // the end of the file: from memory, no window
                 val reading = arrayOf(src.windowFor(from)) // the window read now (a bridge hands over to the next one)
                 reading[0].let { w -> synchronized(w.lock) { w.readers++; w.lastReadAt = System.currentTimeMillis(); w.lock.notifyAll() } }

@@ -109,7 +109,12 @@ private:
 /// «2014» из названия раздачи или файлов (как на плитке старой версии; без года — «2024»).
 QString itemYear(const LibraryItem &item);
 /// Строки характеристик плитки: «1080p • H265 • 23.98 fps» и «12 Мбит/с • 8,4 ГБ».
-std::pair<QString, QString> itemSpecs(const LibraryItem &item, const std::optional<QString> &media);
+std::pair<QString, QString> itemSpecs(
+    const LibraryItem &item,
+    const std::optional<QString> &media = std::nullopt,
+    const std::optional<core::PartyVariant> &serverProf = std::nullopt,
+    const std::pair<int, int> &dims = {0, 0}
+);
 /// Одна отметка для картинки и одна для звука.
 QStringList collapseTags(const QStringList &all);
 

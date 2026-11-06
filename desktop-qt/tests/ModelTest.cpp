@@ -459,6 +459,27 @@ private slots:
         const LibraryItem accepted = prepareItems(parseLibrary(aiLibrary(S("accepted"))))[1];
         QCOMPARE(tileTitle(accepted, [](const QString &x) -> std::optional<QString> { return x == S("тачки 2") ? S("Тачки 2 (TMDB)") : S("Другое"); }), S("Тачки 2"));
     }
+
+    void smartQualityScoreAndQualityScore() {
+        QCOMPARE(qualityScore(S("Movie.2160p.mkv")), 4);
+        QCOMPARE(qualityScore(S("Movie.1080p.mkv")), 3);
+        QCOMPARE(qualityScore(S("Movie.720p.mkv")), 2);
+        QCOMPARE(qualityScore(S("Movie.480p.mkv")), 1);
+        QCOMPARE(qualityScore(S("Movie.DVDRip.mkv")), 1);
+        QCOMPARE(qualityScore(S("Movie.Unknown.mkv")), 0);
+
+        QCOMPARE(smartQualityScore(S("Dune.2021.2160p.UHD.Remux.DV.TrueHD.Atmos.mkv")), 505);
+        QCOMPARE(smartQualityScore(S("Movie.1080p.BDRemux.10-bit.DTS-HD.MA.mkv")), 365);
+        QCOMPARE(smartQualityScore(S("Film.1080p.BDRip.AC3.5.1.mkv")), 325);
+        QCOMPARE(smartQualityScore(S("Series.S01E01.720p.WEB-DL.DDP5.1.mkv")), 230);
+        QCOMPARE(smartQualityScore(S("Movie.2160p.HDR10+.DTS:X.BDRip.mkv")), 485);
+        QCOMPARE(smartQualityScore(S("Old.Show.480p.mkv")), 100);
+        QCOMPARE(smartQualityScore(S("network.webcam.4kilo.dtswiss.mkv")), 100);
+        QCOMPARE(smartQualityScore(S("Movie_1080p_x264_DTS5.1.mkv")), 320);
+        QCOMPARE(smartQualityScore(S("Film.1080p.BluRay.dts.x264.mkv")), 335);
+        QCOMPARE(smartQualityScore(S("Atmosphere.2020.720p.WEB.mkv")), 210);
+        QCOMPARE(smartQualityScore(S("Film.1920x1080.HDRip.mkv")), 300);
+    }
 };
 
 QTEST_APPLESS_MAIN(ModelTest)

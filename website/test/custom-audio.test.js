@@ -427,3 +427,15 @@ test("аудит: без снимка библиотеки раздачу не �
   assert.equal(ca.mayBeLibraryFilm([{ id: 5, statusCode: 1 }], 5), false);
   assert.equal(ca.mayBeLibraryFilm([], 5), false);
 });
+
+test("isSameMovieRelease: одинаковые фильмы разных качеств считаются одной раздачей", () => {
+  const m1 = { id: 10, name: "Dune.2021.2160p.UHD.HDR.Remux.mkv", aiTitle: { base: "Dune", year: 2021, canonical_id: "m:dune_2021" } };
+  const m2 = { id: 20, name: "Dune.2021.1080p.BDRip.x264.mkv", aiTitle: { base: "Dune", year: 2021, canonical_id: "m:dune_2021" } };
+  const m3 = { id: 30, name: "Dune.1984.1080p.BDRemux.mkv", aiTitle: { base: "Dune", year: 1984, canonical_id: "m:dune_1984" } };
+  assert.equal(ca.isSameMovieRelease(m1, m2), true);
+  assert.equal(ca.isSameMovieRelease(m1, m3), false);
+
+  const s1 = { id: 40, name: "Fallout.S01.2160p.WEB-DL" };
+  const s2 = { id: 50, name: "Fallout.S01.1080p.WEB-DL" };
+  assert.equal(ca.isSameMovieRelease(s1, s2), true);
+});

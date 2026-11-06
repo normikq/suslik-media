@@ -46,6 +46,7 @@ public:
 
     bool inRoom() const { return m_roomId.has_value(); }
     QString roomId() const { return m_roomId.value_or(QString()); }
+    const core::PartyRoom &room() const { return m_room; }
     bool isHost() const { return m_room.isHost(m_myUserId, m_myKey); }
     bool guest() const { return inRoom() && !isHost(); }
     bool connected() const { return m_connected; }
@@ -97,6 +98,19 @@ public:
     void pause(qint64 posMs) override { action(core::PartyProtocol::pause(posMs)); }
     void seek(qint64 posMs) override { if (canSeek()) action(core::PartyProtocol::seek(posMs)); }
     void reportBuffering(bool loading) override;
+    void sendVariantChange(const QString &variantKey);
+    /// Свой вариант и длина его раздачи, когда плеер её узнал (PartySync): тот же ключ и длина повторно не шлются.
+    /// variant — описание раздачи, которой нет в списке комнаты (гость добавил свою).
+    void reportVariant(const QString &variantKey, qint64 durationMs, const core::PartyVariant *variant);
+    /// Длина раздачи ведущего, мс; 0 — ещё не знаем.
+    qint64 hostDurationMs() const;
+    /// Раздача, которую сейчас смотрит ведущий (иначе — фильм комнаты).
+    QString hostVariantKey() const;
+    /// Насколько своя раздача myKey (длиной myDurationMs) сдвинута от раздачи ведущего: сохранённая подстройка пары,
+    /// иначе разница длин. Ведущему — 0.
+    qint64 shiftFor(const QString &myKey, qint64 myDurationMs) const;
+    /// Гость двигает свою раздачу относительно ведущего на deltaMs: сразу здесь, на сервере — для пары раздач.
+    void nudgeShift(const QString &myKey, qint64 myDurationMs, qint64 deltaMs);
 
 signals:
     void changed();
@@ -135,6 +149,12 @@ private:
     QString m_notice, m_followed;
     std::optional<QString> m_startedByMe;
     bool m_reportedBuffering = false;
+    /// Что уже сообщили комнате о своём варианте: ключ, длина и фильм комнаты в тот момент.
+    QString m_sentVariant, m_sentVariantFile;
+    qint64 m_sentDuration = 0;
+    /// Подстройка, которую гость ещё не отправил (щелчки подряд уходят одним действием).
+    std::optional<core::VariantOffset> m_pendingOffset;
+    QTimer m_offsetTimer;
     bool m_busy = false;
     QString m_error;
 

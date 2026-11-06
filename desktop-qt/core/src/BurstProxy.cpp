@@ -17,6 +17,7 @@
 #include <QUuid>
 
 #include <algorithm>
+#include <tuple>
 #include <atomic>
 #include <condition_variable>
 #include <cstring>
@@ -60,6 +61,12 @@ constexpr int MAX_WINDOWS = 3;              // на поток (фильм + д�
 constexpr qint64 PROBE_AHEAD = 4 * MB;      // пока окно не доказало, что это воспроизведение
 constexpr qint64 PROBE_LIMIT = 6 * MB;      // прочитано подряд столько — воспроизведение, рывки
 constexpr qint64 PROBE_IDLE_MS = 500;       // проба, которую плеер не читает столько, стоит на PROBE_AHEAD
+constexpr qint64 SIDE_PROBE_LIMIT = 512 * 1024; // озвучка/субтитры: 512 КБ подряд — уже воспроизведение (128 кбит/с до 6 МБ идут минуты)
+constexpr qint64 SIDE_IDLE_MS = 5000;           // играющая озвучка читается раз в 1–2 с: не обрывать её через 500 мс
+constexpr double SIDE_AHEAD_SEC = 120.0;        // играющая озвучка копит ~2 мин себя (по своему битрейту, не фильма)
+constexpr double SIDE_LOW_SEC = 30.0;
+constexpr qint64 SIDE_MIN_AHEAD = 1 * MB;
+constexpr qint64 SIDE_MIN_LOW = 256 * 1024;
 constexpr qint64 CHUNK = 256 * 1024;
 constexpr qint64 NEAR = 8 * MB;             // запрос так близко к концу окна присоединяется к нему
 constexpr qint64 NEAR_MIN = 1 * MB;         // ...но не дальше, чем сеть принесёт за NEAR_SEC
@@ -253,7 +260,7 @@ struct Window : std::enable_shared_from_this<Window> {
     qint64 end() const { return start + written; }
     qint64 diskBytes() const { return std::min<qint64>(written, CAP); }
     qint64 validFrom() const { return start + std::max<qint64>(0, written - CAP); }
-    bool burst() const { return sequential >= PROBE_LIMIT; }
+    bool burst() const { return sequential >= (src->side() ? SIDE_PROBE_LIMIT : PROBE_LIMIT); }
     bool held() const { return nowMs() < heldUntil; }
 
     void checkStall(qint64 now);
@@ -319,6 +326,11 @@ struct BurstProxy::Impl : std::enable_shared_from_this<BurstProxy::Impl> {
     std::function<void(const QString &)> logFn;
     std::function<void(qint64)> onBytes;
     QSet<QString> sideKeys;
+    // Открываемый фильм (keepOnly: ключ его видео) и его длина (setDuration): битрейт озвучки — её размер ÷ эту длину
+    QString mainKey;
+    QString filmLengthKey;
+    qint64 filmLengthMs = 0;
+    qint64 sideLengthMs() const { std::lock_guard g(cfg); return filmLengthKey == mainKey ? filmLengthMs : 0; }
 
     mutable std::mutex mapMutex;
     QHash<QString, std::shared_ptr<Source>> sources; // token → источник
@@ -469,6 +481,9 @@ struct BurstProxy::Impl : std::enable_shared_from_this<BurstProxy::Impl> {
         for (auto &s : gone) s->close();
         std::lock_guard g(cfg);
         sideKeys.clear();
+        mainKey.clear();
+        filmLengthKey.clear();
+        filmLengthMs = 0;
     }
 
     void shutdown() {
@@ -689,12 +704,14 @@ double Window::reserveSeconds() const {
 
 qint64 Window::high() const {
     if (!burst()) return PROBE_AHEAD;
+    if (src->side()) return BurstProxy::sideReserve(src->total, p->sideLengthMs(), CAP).second;
     const qint64 full = std::clamp(static_cast<qint64>(src->sizing() * reserveSeconds()), std::min(24 * MB, CAP * 3 / 4), CAP * 7 / 8);
     return ramping() ? std::min(full, rampAhead()) : full;
 }
 
 qint64 Window::low() const {
     if (!burst()) return PROBE_AHEAD / 2;
+    if (src->side()) return BurstProxy::sideReserve(src->total, p->sideLengthMs(), CAP).first;
     const qint64 h = high();
     return std::clamp(static_cast<qint64>(src->sizing() * 25), std::min(6 * MB, h / 3), h / 2);
 }
@@ -907,7 +924,8 @@ void Window::fetch() {
         if (burst() && to < 0 && ahead >= high()) { why = QStringLiteral("reserve full"); return; }
         if (ahead >= CAP * 7 / 8) { why = QStringLiteral("ring full"); return; }
         // ...или плеер перестал брать данные: невыбранная озвучка (mpv прочитал заголовок и держит соединение).
-        if (!burst() && !held() && ahead >= PROBE_AHEAD && nowMs() - lastReadAt > PROBE_IDLE_MS) { why = QStringLiteral("player idle"); return; }
+        const qint64 idleLimit = src->side() ? SIDE_IDLE_MS : PROBE_IDLE_MS;
+        if (!burst() && !held() && ahead >= PROBE_AHEAD && nowMs() - lastReadAt > idleLimit) { why = QStringLiteral("player idle"); return; }
         const qint64 n = res->read(buf, CHUNK);
         if (n < 0) {
             // Конец ответа. Конец файла — только если пришло всё до размера; полный ограниченный ответ — конец рывка;
@@ -1038,15 +1056,15 @@ void BurstProxy::Impl::trimToBudget() {
 }
 
 QString BurstProxy::Impl::wrap(const QString &url) {
-    const QString d = directory();
-    if (d.isEmpty() || !url.startsWith(QLatin1String("https://"))) return url;
+    const QString cacheDir = directory();
+    if (cacheDir.isEmpty() || !url.startsWith(QLatin1String("https://"))) return url;
     const qint64 cap = capBytes;
     if (cap <= 0) return url;
     // Файлы запаса (закрытый раньше фильм) освобождают место для нового: см. keepOnly.
-    const qint64 free = std::max<qint64>(0, QStorageInfo(d).bytesAvailable());
-    if (free + diskBytesIn(d) < cap + 300 * MB) return url;
-    const quint16 port = ensureServer();
-    if (!port) return url;
+    const qint64 free = std::max<qint64>(0, QStorageInfo(cacheDir).bytesAvailable());
+    if (free + diskBytesIn(cacheDir) < cap + 300 * MB) return url;
+    const quint16 srvPort = ensureServer();
+    if (!srvPort) return url;
     const QString key = MirrorLink::fileKey(url);
     std::shared_ptr<Source> src;
     QString token;
@@ -1068,7 +1086,7 @@ QString BurstProxy::Impl::wrap(const QString &url) {
     QString name = fileOf(url);
     if (name.trimmed().isEmpty()) name = QStringLiteral("stream");
     const QString decoded = formDecode(name).value_or(name);
-    return QStringLiteral("http://127.0.0.1:%1/s/%2/%3").arg(port).arg(token, formEncode(decoded).replace(QLatin1Char('+'), QLatin1String("%20")));
+    return QStringLiteral("http://127.0.0.1:%1/s/%2/%3").arg(srvPort).arg(token, formEncode(decoded).replace(QLatin1Char('+'), QLatin1String("%20")));
 }
 
 void BurstProxy::Impl::keepOnly(const QStringList &urls) {
@@ -1078,7 +1096,7 @@ void BurstProxy::Impl::keepOnly(const QStringList &urls) {
         for (const auto &u : urls) keys << MirrorLink::fileKey(u);
         QSet<QString> sideSet(keys.begin() + 1, keys.end());
         sideSet.remove(keys.first());
-        { std::lock_guard g(cfg); sideKeys = sideSet; }
+        { std::lock_guard g(cfg); sideKeys = sideSet; mainKey = keys.first(); }
         const QSet<QString> keep(keys.begin(), keys.end());
         {
             std::lock_guard g(mapMutex);
@@ -1132,6 +1150,7 @@ int BurstProxy::Impl::forgetRetired(const std::function<bool(const QString &)> &
         if (link.isEmpty() || keep(link)) continue;
         {
             std::lock_guard g(mapMutex);
+            if (s->retiredAt == 0) continue; // keep() долгий: фильм могли открыть снова (wrap() сбрасывает retiredAt)
             byUrl.remove(key);
             sources.remove(s->token);
         }
@@ -1181,16 +1200,7 @@ void BurstProxy::Impl::serve(qintptr fd) {
             status(s, "404 Not Found");
         } else {
             qint64 from = 0, to = -1;
-            if (range) {
-                QString r = *range;
-                if (r.startsWith(QLatin1String("bytes="))) r = r.mid(6);
-                const QStringList ab = r.split(QLatin1Char('-'));
-                bool ok = false;
-                const qint64 a = ab.value(0).toLongLong(&ok);
-                from = ok ? a : 0;
-                const qint64 z = ab.value(1).toLongLong(&ok);
-                to = ok ? z : -1;
-            }
+            if (range) std::tie(from, to) = BurstProxy::parseRange(*range, src->total);
             if (!src->serveTail(s, method, range.has_value(), from, to)) { // конец файла — из памяти, без окна
                 std::shared_ptr<Window> reading = src->windowFor(from); // мост передаёт чтение следующему окну
                 { std::lock_guard g(reading->lock); ++reading->readers; reading->lastReadAt = nowMs(); reading->cv.notify_all(); }
@@ -1343,8 +1353,37 @@ void BurstProxy::onScreenOn() {
     d->resetConnectionsAsync([impl] { for (auto &s : impl->allSources()) for (auto &w : s->windows()) w->wake(); });
 }
 
+std::pair<qint64, qint64> BurstProxy::parseRange(const QString &range, qint64 total) {
+    QString r = range.trimmed();
+    if (r.startsWith(QLatin1String("bytes="))) r = r.mid(6);
+    const QStringList ab = r.split(QLatin1Char('-'));
+    bool okA = false, okB = false;
+    const qint64 a = ab.value(0).trimmed().toLongLong(&okA);
+    const qint64 b = ab.value(1).trimmed().toLongLong(&okB);
+    if (!okA && okB)
+        return (b > 0 && total > 0) ? std::pair<qint64, qint64>{std::max<qint64>(0, total - b), total - 1}
+                                    : std::pair<qint64, qint64>{0, -1};
+    return {okA ? a : 0, okB ? b : -1};
+}
+
+std::pair<qint64, qint64> BurstProxy::sideReserve(qint64 total, qint64 filmMs, qint64 cap) {
+    // Озвучка AAC по меркам фильма (битрейт не известен — нижняя граница ¾ кольца) тянула 9 МБ (~6 мин) на полной
+    // скорости сразу после перемотки, когда сеть нужна видео (журнал 06.11). Не по скорости чтения: Media3 и mpv
+    // читают озвучку далеко вперёд воспроизведения.
+    if (total <= 0 || filmMs <= 0) return {PROBE_AHEAD / 2, PROBE_AHEAD};
+    const double rate = total * 1000.0 / filmMs;
+    const qint64 high = std::clamp(static_cast<qint64>(rate * SIDE_AHEAD_SEC), SIDE_MIN_AHEAD, std::max(SIDE_MIN_AHEAD, cap * 7 / 8));
+    const qint64 low = std::clamp(static_cast<qint64>(rate * SIDE_LOW_SEC), std::min(SIDE_MIN_LOW, high / 2), high / 2);
+    return {low, high};
+}
+
 void BurstProxy::setDuration(const QString &url, qint64 ms) {
     if (ms <= 0) return;
+    {
+        const QString k = MirrorLink::fileKey(url);
+        std::lock_guard g(d->cfg);
+        if (!d->sideKeys.contains(k)) { d->filmLengthKey = k; d->filmLengthMs = ms; }
+    }
     auto src = d->sourceOf(url);
     if (!src) return;
     const qint64 total = src->total;

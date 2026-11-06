@@ -168,7 +168,7 @@ Window {
         enabled: win.pendingRoomKey !== ""
         function onVersionChanged() { win.playRoomKey() }
     }
-    Dialogs { id: dialogs; anchors.fill: parent }
+    Dialogs { id: dialogs; anchors.fill: parent; defaultPage: win.tab === 1 ? minePage.model : libraryPage.model }
     SettingsSheet { id: settingsSheet; anchors.fill: parent }
     WhatsNew { anchors.fill: parent }
     // Экран плеера: вылет из постера и отлёт обратно (Main.kt + ExitFlight.kt). playerPresence: 0 — медиатека, 1 — плеер.
@@ -197,6 +197,7 @@ Window {
                     presenceAnim.start()
                 }
             } else if (player.closing && !win.playerLeaving) {
+                windowMode.reset()            // закрытие не из плеера (ведущий закрыл фильм): мини-режим/полный экран снять
                 win.playerLeaving = true      // медиатека снова видна: её постеры можно найти
                 win.playerHome = Theme.target(win.playerFilm)
                 presenceAnim.stop()

@@ -50,13 +50,59 @@ struct PartyMember {
     QString key, userId, name;
     bool buffering = false;
     std::optional<QString> avatar;
+    std::optional<QString> variantKey;
+    /// Длина раздачи, которую участник смотрит (мс): по ней гости на других раздачах сдвигают время.
+    std::optional<qint64> durationMs;
     bool operator==(const PartyMember &o) const = default;
 };
 
-/// Фильм комнаты: ключ просмотра `magnetId|путь` (тот же, что у прогресса в медиатеке).
+/// Раздачи одного фильма разной длины: лишнее обычно в начале (заставка релиз-группы), поэтому место на своей
+/// раздаче = место ведущего + сдвиг, сдвиг = своя длина − длина ведущего. Меньше 1,5 с — хвост кадров, больше 2 мин —
+/// другой монтаж: тогда 0. Те же числа у сервера (rooms.js) и Kotlin (PartyProtocol.kt).
+inline constexpr qint64 TIMELINE_SHIFT_MIN_MS = 1500;
+inline constexpr qint64 TIMELINE_SHIFT_MAX_MS = 120 * 1000;
+qint64 timelineShiftMs(qint64 myDurationMs, qint64 hostDurationMs);
+
+/// Подстройка времени между раздачами, сохранённая гостем (сервер: services/variant-offsets.js): место на to = место
+/// на from + offsetMs.
+struct VariantOffset {
+    QString from, to;
+    qint64 offsetMs = 0;
+    bool operator==(const VariantOffset &o) const = default;
+};
+/// Сдвиг своей раздачи myKey относительно раздачи ведущего hostKey: сохранённая подстройка пары, иначе разница длин.
+qint64 roomShiftMs(const QList<VariantOffset> &saved, const QString &hostKey, qint64 hostDurationMs,
+                   const QString &myKey, qint64 myDurationMs);
+
+struct PartyVariant {
+    QString key;
+    QString label;
+    QString quality = QStringLiteral("1080p");
+    QString audio = QStringLiteral("Stereo");
+    double bitrate = 0.0;
+    qint64 offsetMs = 0;
+    int score = 0;
+    QStringList hardwareFlags;
+    bool operator==(const PartyVariant &o) const = default;
+};
+
+struct LibraryItem;
+struct MFile;
+PartyVariant parsePartyVariant(const QJsonObject &obj);
+PartyVariant buildPartyVariant(const LibraryItem &item, const MFile &file, const std::optional<PartyVariant> &serverProfile = std::nullopt, int width = 0, int height = 0);
+
+/// Фильм комнаты: ключ просмотра `magnetId|путь` (тот же, что у прогресса в медиатеке), canonical_id и варианты.
 struct PartyFileRef {
     QString key, title;
+    std::optional<QString> canonicalId;
+    std::optional<QString> edition;
+    QList<PartyVariant> variants;
+
     qint64 adId() const;
+    bool matches(const QString &fileKey, const QString &otherCanonicalId = QString()) const;
+    /// Индекс фильма комнаты в списке ключей просмотра плеера или -1: свой ключ, затем варианты, затем та же серия (S/E)
+    /// той же работы. Те же правила, что у Kotlin `resolveIndex` и JS; sameWorkHint — вызывающий знает, что работа та же.
+    int resolveIndex(const QStringList &keys, const QString &myCanonicalId, bool sameWorkHint = false) const;
     bool operator==(const PartyFileRef &o) const = default;
 };
 
@@ -82,6 +128,7 @@ struct RoomUpdate {
     std::optional<PartyFileRef> file;
     std::optional<PartyState> state;
     std::optional<QList<PartyMember>> members;
+    std::optional<QList<VariantOffset>> variantOffsets;
     /// state.server_time: ещё одна точка для часов. 0 — нет.
     qint64 serverTime = 0;
 };
@@ -117,10 +164,12 @@ struct PartyRoom {
     std::optional<PartyFileRef> file;
     PartyState state;
     QList<PartyMember> members;
+    QList<VariantOffset> variantOffsets;
     /// Ведущий поставил этот фильм, сервер ещё не подтвердил: ответы на прежние действия со старым фильмом его не возвращают.
     std::optional<QString> pendingFileKey;
 
     bool isHost(const std::optional<QString> &myUserId, const QString &myKey) const;
+    bool isHost(const PartyMember &m) const { return isCreator(m); }
     bool isCreator(const PartyMember &m) const;
     bool othersBuffering(const QString &myKey) const;
     PartyRoom putFile(const PartyFileRef &f) const;
@@ -156,12 +205,18 @@ public:
     static QJsonObject pause(qint64 posMs);
     static QJsonObject seek(qint64 posMs);
     static QJsonObject buffering(bool loading);
+    /// Свой вариант качества; durationMs > 0 — длина раздачи, variant — описание (своей раздачи нет у ведущего).
+    static QJsonObject variantChange(const QString &variantKey, qint64 durationMs = 0, const PartyVariant *variant = nullptr);
+    static QJsonObject variantJson(const PartyVariant &v);
+    /// Гость подстроил время: место на variantKey = место на hostVariantKey + offsetMs (запоминается для пары).
+    static QJsonObject variantOffset(const QString &hostVariantKey, const QString &variantKey, qint64 offsetMs);
     static QJsonObject changeFile(const PartyFileRef &f);
     /// Ведущий закрыл фильм: у гостей плеер тоже закрывается.
     static QJsonObject closeFile();
     static QJsonObject withClient(QJsonObject body, const QString &clientId);
     static QJsonObject fileJson(const PartyFileRef &f);
 
+    static std::optional<PartyFileRef> parseFileRef(const QJsonObject &f);
     static std::optional<RoomUpdate> roomOf(const QJsonObject &res);
     static std::optional<QString> hostIdOf(const QJsonObject &res);
     static std::optional<QString> memberIdOf(const QJsonObject &res);

@@ -47,8 +47,16 @@ function load() {
       const t = new Map();
       for (const [k, e] of Object.entries(data.w || {})) if (WATCH_KEY_RE.test(k) && e && num(e.u) !== null) w.set(k, e);
       for (const [k, e] of Object.entries(data.t || {})) if (TRACK_KEY_RE.test(k) && e && num(e.u) !== null) t.set(k, e);
-      if (w.size || t.size) users.set(owner, { w, t });
+      if (w.size || t.size) {
+        const d = { w, t, u: 0 };
+        d.u = lastUse(d);
+        users.set(owner, d);
+      }
     }
+    // Выстраиваем LRU-порядок по возрастанию времени использования
+    const sorted = [...users.entries()].sort((a, b) => a[1].u - b[1].u);
+    users.clear();
+    for (const [k, v] of sorted) users.set(k, v);
   } catch {}
 }
 load();
@@ -59,22 +67,19 @@ const persist = makeJsonWriter(
   3000
 );
 
-function bucket(owner, create) {
+function bucket(owner, create, now = Date.now()) {
   let d = users.get(owner);
   if (!d && create) {
-    d = { w: new Map(), t: new Map() };
-    users.set(owner, d);
-    if (users.size > MAX_USERS) {
-      // давно не заходивший пользователь уходит первым
-      let oldest = null;
-      let oldestAt = Infinity;
-      for (const [o, x] of users) {
-        if (o === owner) continue;
-        const at = lastUse(x);
-        if (at < oldestAt) { oldest = o; oldestAt = at; }
-      }
-      if (oldest) users.delete(oldest);
+    if (users.size >= MAX_USERS) {
+      const oldestKey = users.keys().next().value;
+      if (oldestKey !== undefined) users.delete(oldestKey);
     }
+    d = { w: new Map(), t: new Map(), u: now };
+    users.set(owner, d);
+  } else if (d && create) {
+    d.u = Math.max(d.u || 0, now);
+    users.delete(owner);
+    users.set(owner, d);
   }
   return d || null;
 }
@@ -108,7 +113,7 @@ function apply(owner, body, now = Date.now()) {
   const watch = Array.isArray(body?.watch) ? body.watch.slice(0, MAX_BATCH) : [];
   const tracks = Array.isArray(body?.tracks) ? body.tracks.slice(0, MAX_BATCH) : [];
   if (!watch.length && !tracks.length) return { watch: 0, tracks: 0 };
-  const d = bucket(owner, true);
+  const d = bucket(owner, true, now);
   const oldest = now - idleMs();
   let nw = 0;
   let nt = 0;
@@ -123,7 +128,8 @@ function apply(owner, body, now = Date.now()) {
     if (at < oldest) continue;
     const old = d.w.get(key);
     if (old && old.a > at) continue;
-    d.w.set(key, { p: pos, l: len, a: at, c: now, u: now });
+    const cid = typeof it?.cid === "string" && it.cid.trim() ? it.cid.trim().slice(0, 200) : (typeof it?.canonical_id === "string" ? it.canonical_id.trim().slice(0, 200) : null);
+    d.w.set(key, { p: pos, l: len, a: at, c: now, u: now, ...(cid ? { cid } : (old?.cid ? { cid: old.cid } : {})) });
     touch(d, "m" + m[1], now);
     touch(d, "*", now);
     nw++;
@@ -134,8 +140,10 @@ function apply(owner, body, now = Date.now()) {
     const au = text(it?.audio);
     const sp = text(it?.spu);
     const sc = text(it?.sidecar);
-    if (!TRACK_KEY_RE.test(key) || at === null || au === undefined || sp === undefined || sc === undefined) continue;
-    if (au === null && sp === null && sc === null) continue;
+    const qv = text(it?.quality ?? it?.qv);
+    const rawCid = key === "*" ? null : (typeof it?.cid === "string" && it.cid.trim() ? it.cid.trim().slice(0, 200) : (typeof it?.canonical_id === "string" && it.canonical_id.trim() ? it.canonical_id.trim().slice(0, 200) : null));
+    if (!TRACK_KEY_RE.test(key) || at === null || au === undefined || sp === undefined || sc === undefined || qv === undefined) continue;
+    if (au === null && sp === null && sc === null && qv === null) continue;
     at = Math.min(at, now);
     if (at < oldest) continue;
     const old = d.t.get(key);
@@ -145,6 +153,8 @@ function apply(owner, body, now = Date.now()) {
       au: au ?? old?.au ?? null,
       sp: sp ?? old?.sp ?? null,
       sc: sc ?? old?.sc ?? null,
+      qv: qv ?? old?.qv ?? null,
+      cid: key === "*" ? null : (rawCid ?? old?.cid ?? null),
       a: at,
       c: now,
       u: now
@@ -153,6 +163,7 @@ function apply(owner, body, now = Date.now()) {
   }
   trim(d.w, MAX_WATCH);
   trim(d.t, MAX_TRACKS);
+  d.ci = null;
   if (!d.w.size && !d.t.size) users.delete(owner);
   if (nw || nt) persist();
   return { watch: nw, tracks: nt };
@@ -164,11 +175,68 @@ function changesSince(owner, since = 0, now = Date.now()) {
   const d = OWNER_RE.test(String(owner || "")) ? users.get(owner) : null;
   if (!d) return out;
   const from = num(since) ?? 0;
-  for (const [key, e] of d.w) if (e.c >= from) out.watch.push({ key, pos: e.p, len: e.l, at: e.a });
+  for (const [key, e] of d.w) {
+    if (e.c >= from) {
+      const w = { key, pos: e.p, len: e.l, at: e.a };
+      if (e.cid) w.cid = e.cid;
+      out.watch.push(w);
+    }
+  }
   for (const [key, e] of d.t) {
-    if (e.c >= from) out.tracks.push({ key, audio: e.au ?? null, spu: e.sp ?? null, sidecar: e.sc ?? null, at: e.a });
+    if (e.c >= from) {
+      const entry = { key, audio: e.au ?? null, spu: e.sp ?? null, sidecar: e.sc ?? null, at: e.a };
+      if (e.qv) entry.quality = e.qv;
+      if (e.cid) entry.cid = e.cid;
+      out.tracks.push(entry);
+    }
   }
   return out;
+}
+
+/** Ключ дорожек для файла "<magnetId>|<путь>": дорожки хранятся на раздачу ("m<magnetId>"). */
+function trackKeyFor(key) {
+  return key && /^d+|/.test(key) ? "m" + key.split("|")[0] : key;
+}
+
+// Самая свежая запись на каждый canonical_id (прогресс и дорожки отдельно). Строится по требованию и сбрасывается
+// при любом изменении, поэтому поиск по cid — O(1), а не обход всех записей пользователя при каждом запросе.
+function cidIndex(d) {
+  if (d.ci) return d.ci;
+  const w = new Map();
+  const t = new Map();
+  for (const [k, e] of d.w) if (e.cid && !(w.get(e.cid)?.e.a >= e.a)) w.set(e.cid, { k, e });
+  for (const [k, e] of d.t) if (k !== "*" && e.cid && !(t.get(e.cid)?.e.a >= e.a)) t.set(e.cid, { k, e });
+  d.ci = { w, t };
+  return d.ci;
+}
+
+const trackOut = (key, e) => ({ key, audio: e.au ?? null, spu: e.sp ?? null, sidecar: e.sc ?? null, quality: e.qv ?? null, cid: e.cid ?? null, at: e.a });
+
+/** Дорожки: сначала по key, если нет — запись с тем же canonical_id (самая свежая). */
+function getTracks(owner, key, canonicalId = null) {
+  const d = OWNER_RE.test(String(owner || "")) ? users.get(owner) : null;
+  if (!d) return null;
+  if (key && d.t.has(key)) return trackOut(key, d.t.get(key));
+  const hit = canonicalId ? cidIndex(d).t.get(canonicalId) : null;
+  return hit ? trackOut(hit.k, hit.e) : null;
+}
+
+/** Прогресс просмотра: сначала по fileKey, если нет — запись с тем же canonical_id (самая свежая). */
+function getProgress(owner, fileKey, canonicalId = null) {
+  const d = OWNER_RE.test(String(owner || "")) ? users.get(owner) : null;
+  if (!d) return null;
+  const out = (k, e) => ({ key: k, pos: e.p, len: e.l, at: e.a, cid: e.cid || null });
+  if (fileKey && d.w.has(fileKey)) return out(fileKey, d.w.get(fileKey));
+  const hit = canonicalId ? cidIndex(d).w.get(canonicalId) : null;
+  return hit ? out(hit.k, hit.e) : null;
+}
+
+/** Прогресс и дорожки по key/cid одним ответом (query: key, cid, track_key). */
+function lookup(owner, q = {}) {
+  const key = typeof q.key === "string" ? q.key : null;
+  const cid = typeof q.cid === "string" ? q.cid : null;
+  const trackKey = typeof q.track_key === "string" ? q.track_key : trackKeyFor(key);
+  return { progress: getProgress(owner, key, cid), trackChoice: getTracks(owner, trackKey, cid) };
 }
 
 /** Удалить всё, чем не пользовались дольше срока. Возвращает, сколько записей удалено. */
@@ -178,7 +246,7 @@ function sweep(now = Date.now()) {
   for (const [owner, d] of users) {
     for (const map of [d.w, d.t]) {
       for (const [k, e] of map) {
-        if (!(e.u >= oldest)) { map.delete(k); n++; }
+        if (!(e.u >= oldest)) { map.delete(k); n++; d.ci = null; }
       }
     }
     if (!d.w.size && !d.t.size) users.delete(owner);
@@ -196,6 +264,7 @@ function dropMagnet(id) {
   for (const [owner, d] of users) {
     for (const k of d.w.keys()) if (k.startsWith(prefix)) { d.w.delete(k); changed = true; }
     if (d.t.delete("m" + key)) changed = true;
+    if (changed) d.ci = null;
     if (!d.w.size && !d.t.size) users.delete(owner);
   }
   if (changed) persist();
@@ -212,6 +281,9 @@ setInterval(() => sweep(), SWEEP_EVERY_MS).unref();
 module.exports = {
   apply,
   changesSince,
+  getProgress,
+  getTracks,
+  lookup,
   sweep,
   dropMagnet,
   OWNER_RE,

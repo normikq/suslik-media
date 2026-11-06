@@ -15,12 +15,26 @@ Sheet {
         library: lib
         onPlayRequested: { d.open = false; player.start(m) }
     }
+    // Ведущий только что включил фильм: место комнаты ещё 0 (он сообщит своё через пару секунд). Открыть сейчас значило бы
+    // грузить начало файла и тут же перематывать — ждём место не дольше 2,5 с
+    property double since: 0
+    function go() {
+        if (d.open && m.canWatch) m.playAt(party.fileKey === d.key ? party.roomMs() : 0)
+    }
+    function tryGo() {
+        if (!d.open || !m.canWatch) return
+        if (party.fileKey === d.key && party.roomMs() < 2000 && Date.now() - since < 2500) settle.start()
+        else { settle.stop(); go() }
+    }
+    Timer { id: settle; interval: 2500; onTriggered: d.go() }
     // ссылки готовы — сразу с места комнаты (в момент готовности, а не когда окно появилось)
     Connections {
         target: m
-        function onChanged() {
-            if (d.open && m.canWatch) m.playAt(party.fileKey === d.key ? party.roomMs() : 0)
-        }
+        function onChanged() { d.tryGo() }
+    }
+    Connections {
+        target: party
+        function onChanged() { if (settle.running) d.tryGo() }
     }
 
     property string lastTriedKey: ""
@@ -46,9 +60,11 @@ Sheet {
         party.followed = key
         lastTriedKey = ""
         d.key = key
+        since = Date.now()
+        settle.stop()
         m.load(id, path)
         open = true
-        if (m.canWatch) m.playAt(party.roomMs())
+        tryGo()
     }
     Connections { target: party; function onChanged() { d.check() } }
     Connections { target: lib; function onVersionChanged() { d.check() } }

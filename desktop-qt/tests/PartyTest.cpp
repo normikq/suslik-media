@@ -4,6 +4,7 @@
 #include "TestUtil.h"
 
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QTest>
 
 using namespace suslik::core;
@@ -178,6 +179,8 @@ private slots:
         QVERIFY(!shared.isHost(S("shared"), S("kb")));
         QVERIFY(shared.isCreator(a));
         QVERIFY(!shared.isCreator(b));
+        QVERIFY(shared.isHost(a));
+        QVERIFY(!shared.isHost(b));
         PartyRoom discord; discord.hostId = S("u1"); discord.hostKey = S("ka");
         QVERIFY(discord.isHost(S("u1"), S("kb")));
         QVERIFY(!discord.isHost(S("u2"), S("ka")));
@@ -242,6 +245,36 @@ private slots:
         QCOMPARE(play.value(S("type")).toString(), S("play"));
         QVERIFY(qAbs(play.value(S("pos")).toDouble() - 12.34) < 1e-9);
         QCOMPARE(play.value(S("client_id")).toString(), S("pc_1"));
+        const auto vchange = PartyProtocol::variantChange(S("104921|Dune.1080p.mkv"));
+        QCOMPARE(vchange.value(S("type")).toString(), S("variant_change"));
+        QCOMPARE(vchange.value(S("variant_key")).toString(), S("104921|Dune.1080p.mkv"));
+        QVERIFY(!vchange.contains(S("duration_ms")));
+        PartyVariant rip;
+        rip.key = S("12|Rip.mkv");
+        rip.label = S("1080p · Rip");
+        const auto vfull = PartyProtocol::variantChange(rip.key, 6021312, &rip);
+        QCOMPARE(qint64(vfull.value(S("duration_ms")).toDouble()), qint64(6021312));
+        QCOMPARE(vfull.value(S("variant")).toObject().value(S("label")).toString(), S("1080p · Rip"));
+        // Сдвиг по разнице длин: те же числа, что в PartyProtocolTest.kt и website/test/variant-url.test.js
+        QCOMPARE(timelineShiftMs(6021312, 6006805), qint64(14507));
+        QCOMPARE(timelineShiftMs(6006805, 6021312), qint64(-14507));
+        QCOMPARE(timelineShiftMs(6000500, 6000000), qint64(0));
+        QCOMPARE(timelineShiftMs(9000000, 6000000), qint64(0));
+        QCOMPARE(timelineShiftMs(6000000, 0), qint64(0));
+        const auto withLen = PartyProtocol::parseMember(QJsonDocument::fromJson(R"({"key":"k","id":"u","name":"A","duration_ms":6006805})").object());
+        QCOMPARE(withLen.durationMs.value_or(0), qint64(6006805));
+        QVERIFY(!PartyProtocol::parseMember(QJsonDocument::fromJson(R"({"key":"k","id":"u","name":"A"})").object()).durationMs);
+        // Сохранённая подстройка пары важнее разницы длин, в обе стороны
+        const auto room = PartyProtocol::parseRoom(QJsonDocument::fromJson(R"({"variant_offsets":[{"from":"1|A.mkv","to":"2|B.mkv","offset_ms":18200}]})").object());
+        QVERIFY(room.variantOffsets);
+        const QList<VariantOffset> saved = *room.variantOffsets;
+        QCOMPARE(roomShiftMs(saved, S("1|A.mkv"), 6006805, S("2|B.mkv"), 6021312), qint64(18200));
+        QCOMPARE(roomShiftMs(saved, S("2|B.mkv"), 6021312, S("1|A.mkv"), 6006805), qint64(-18200));
+        QCOMPARE(roomShiftMs(saved, S("1|A.mkv"), 6006805, S("3|C.mkv"), 6021312), qint64(14507));
+        QCOMPARE(roomShiftMs(saved, S("1|A.mkv"), 6006805, S("1|A.mkv"), 6006805), qint64(0));
+        const auto vo = PartyProtocol::variantOffset(S("1|A.mkv"), S("2|B.mkv"), 18200);
+        QCOMPARE(vo.value(S("type")).toString(), S("variant_offset"));
+        QCOMPARE(qint64(vo.value(S("offset_ms")).toDouble()), qint64(18200));
         const auto file = PartyProtocol::changeFile(PartyFileRef{S("42|a.mkv"), S("A")}).value(S("file")).toObject();
         QCOMPARE(qint64(file.value(S("ad_id")).toDouble()), 42);
         QCOMPARE(PartyProtocol::eventsPath(S("x"), S("pc_1")), S("/api/rooms/x/events?client_id=pc_1"));
@@ -535,6 +568,108 @@ private slots:
         QVERIFY(notes.isEmpty());
         for (int i = 0; i < 10; ++i) { now += 400; e.tick(p, KEY, now); }
         QCOMPARE(notes, (QList<PartyNotice>{{PartyNotice::Kind::Waiting, 0}}));
+    }
+
+    // Те же случаи, что в PartyProtocolTest.kt (resolveIndexFixtures) и tizen/test/party.test.js
+    void resolveIndexFixtures() {
+        const QStringList keys{S("10|Show/S01E01.mkv"), S("10|Show/S01E02.mkv")};
+        const QString cid = S("s:show_s1:default");
+        auto ref = [](const QString &k, const QString &c = QString(), const QList<PartyVariant> &vs = {}) {
+            PartyFileRef r; r.key = k; if (!c.isEmpty()) r.canonicalId = c; r.variants = vs; return r;
+        };
+        PartyVariant v; v.key = S("10|Show/S01E01.mkv");
+        QCOMPARE(ref(S("10|Show/S01E02.mkv")).resolveIndex(keys, QString()), 1);
+        QCOMPARE(ref(S("20|Show.WEB/S01E02.mkv"), cid).resolveIndex(keys, cid), 1);
+        QCOMPARE(ref(S("20|Show.WEB/S01E02.mkv"), cid).resolveIndex(keys, S("s:other")), -1);
+        QCOMPARE(ref(S("20|Other/S01E01.mkv"), S("s:other")).resolveIndex(keys, cid), -1);
+        QCOMPARE(ref(S("20|Show.WEB/S01E02.mkv"), QString(), {v}).resolveIndex(keys, QString()), 0);
+        QCOMPARE(ref(S("20|Show.WEB/S01E02.mkv")).resolveIndex(keys, QString(), true), 1);
+        QCOMPARE(ref(S("30|a.mkv")).resolveIndex(keys, QString()), -1);
+    }
+
+    void canonicalContextAndVariants() {
+        PartyVariant v1{S("101|Dune.2021.2160p.Remux.mkv"), S("4K Remux"), S("4K"), S("TrueHD Atmos"), 48.2, 0, 505, {S("dv"), S("hdr")}};
+        PartyVariant v2{S("102|Dune.2021.1080p.BDRip.mkv"), S("1080p BDRip"), S("1080p"), S("AC3 5.1"), 8.1, 0, 335, {}};
+        PartyFileRef ref{v1.key, S("Дюна (2021)"), S("m:dune_2021:theatrical"), S("theatrical"), {v1, v2}};
+
+        // matches() checks
+        QVERIFY(ref.matches(v1.key));
+        QVERIFY(ref.matches(v2.key)); // variant matches
+        QVERIFY(ref.matches(S("any_file.mkv"), S("m:dune_2021:theatrical"))); // canonical matches
+        QVERIFY(!ref.matches(S("other.mkv"), S("m:other_film:theatrical")));
+        QVERIFY(!ref.matches(QString()));
+
+        // JSON serialization and parsing
+        const QJsonObject json = PartyProtocol::fileJson(ref);
+        QCOMPARE(json.value(S("canonical_id")).toString(), S("m:dune_2021:theatrical"));
+        QCOMPARE(json.value(S("edition")).toString(), S("theatrical"));
+        QCOMPARE(json.value(S("variants")).toArray().size(), 2);
+
+        const auto parsed = PartyProtocol::parseFileRef(json);
+        QVERIFY(parsed.has_value());
+        QCOMPARE(parsed->canonicalId.value_or(QString()), S("m:dune_2021:theatrical"));
+        QCOMPARE(parsed->edition.value_or(QString()), S("theatrical"));
+        QCOMPARE(parsed->variants.size(), 2);
+        QCOMPARE(parsed->variants[0].score, 505);
+        QCOMPARE(parsed->variants[1].bitrate, 8.1);
+    }
+
+    void parsePartyVariantTest() {
+        const QJsonObject o{
+            {S("key"), S("42|video.mkv")},
+            {S("label"), S("4K HDR")},
+            {S("resolution"), S("4K")},
+            {S("audio_tech"), S("TrueHD Atmos")},
+            {S("bitrate_mbps"), 45.5},
+            {S("offset_ms"), 1500},
+            {S("score"), 500},
+            {S("hardware_flags"), QJsonArray{S("dv"), S("hdr")}}
+        };
+        const PartyVariant v = parsePartyVariant(o);
+        QCOMPARE(v.key, S("42|video.mkv"));
+        QCOMPARE(v.label, S("4K HDR"));
+        QCOMPARE(v.quality, S("4K"));
+        QCOMPARE(v.audio, S("TrueHD Atmos"));
+        QCOMPARE(v.bitrate, 45.5);
+        QCOMPARE(v.offsetMs, 1500);
+        QCOMPARE(v.score, 500);
+        QCOMPARE(v.hardwareFlags, QStringList({S("dv"), S("hdr")}));
+    }
+
+    void buildPartyVariantTest() {
+        const MFile f = testutil::file(0, S("Dune.2021.mkv"), 45000);
+        const Magnet m = testutil::magnet(42, S("Dune.2021.2160p.UHD.Remux.DV.TrueHD.Atmos.mkv"), S("Ready"), 4, 45000000000LL, 45000000000LL, {f});
+        const LibraryItem item = prepareItems({m}).first();
+        const PartyVariant v = buildPartyVariant(item, f);
+
+        QCOMPARE(v.key, S("42|Dune.2021.mkv"));
+        QCOMPARE(v.quality, S("4K"));
+        QCOMPARE(v.audio, S("TrueHD Atmos"));
+        QCOMPARE(v.score, 505);
+        QCOMPARE(v.hardwareFlags, QStringList{S("dv")});
+        QVERIFY(v.bitrate > 0.0);
+        QVERIFY(v.label.contains(S("4K")));
+        QVERIFY(!v.label.contains(S("Мбит/с"))); // Без профиля сервера битрейт не показывается как факт в подписи
+
+        PartyVariant prof;
+        prof.key = S("42|Dune.2021.mkv");
+        prof.bitrate = 54.5;
+        const PartyVariant vProf = buildPartyVariant(item, f, prof);
+        QCOMPARE(vProf.bitrate, 54.5);
+
+        // Неизвестное разрешение не подменяется на 1080p
+        const MFile fUnknown = testutil::file(0, S("video.mkv"), 1000);
+        const Magnet mUnknown = testutil::magnet(43, S("SomeVideo"), S("Ready"), 4, 1000LL, 1000LL, {fUnknown});
+        const LibraryItem itemUnknown = prepareItems({mUnknown}).first();
+        const PartyVariant vUnknown = buildPartyVariant(itemUnknown, fUnknown);
+        QVERIFY(vUnknown.quality.isEmpty());
+        QVERIFY(!vUnknown.label.contains(S("1080p")));
+
+        // Размеры потока из ffprobe (3840x1600) дают 4K
+        const PartyVariant vProbed = buildPartyVariant(itemUnknown, fUnknown, std::nullopt, 3840, 1600);
+        QCOMPARE(vProbed.quality, S("4K"));
+        QVERIFY(vProbed.label.startsWith(S("4K")));
+        QCOMPARE(vProbed.score, 400);
     }
 };
 

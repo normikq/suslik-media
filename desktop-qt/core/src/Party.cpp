@@ -1,5 +1,6 @@
 // Перенос android/core/.../core/party: PartyModels.kt, PartyProtocol.kt, PartySyncEngine.kt.
 #include "suslik/core/Party.h"
+#include "suslik/core/Model.h"
 
 #include <QRegularExpression>
 #include <QUrl>
@@ -63,6 +64,44 @@ qint64 PartyFileRef::adId() const {
     return ok ? v : 0;
 }
 
+bool PartyFileRef::matches(const QString &fileKey, const QString &otherCanonicalId) const {
+    if (fileKey.isEmpty()) return false;
+    if (fileKey == key) return true;
+    for (const auto &v : variants) {
+        if (v.key == fileKey) return true;
+    }
+    if (canonicalId && !canonicalId->isEmpty() && !otherCanonicalId.isEmpty() && *canonicalId == otherCanonicalId) {
+        const QString myMag = key.contains(QLatin1Char('|')) ? key.section(QLatin1Char('|'), 0, 0) : QString();
+        const QString otherMag = fileKey.contains(QLatin1Char('|')) ? fileKey.section(QLatin1Char('|'), 0, 0) : QString();
+        if (!myMag.isEmpty() && myMag == otherMag) return false;
+        const auto ep1 = key.contains(QLatin1Char('|')) ? episodePair(key.section(QLatin1Char('|'), 1)) : std::nullopt;
+        const auto ep2 = fileKey.contains(QLatin1Char('|')) ? episodePair(fileKey.section(QLatin1Char('|'), 1)) : std::nullopt;
+        if (ep1 != ep2) return false;
+        return true;
+    }
+    return false;
+}
+
+int PartyFileRef::resolveIndex(const QStringList &keys, const QString &myCanonicalId, bool sameWorkHint) const {
+    if (const int d = int(keys.indexOf(key)); d >= 0) return d;
+    for (const auto &v : variants)
+        if (const int i = int(keys.indexOf(v.key)); i >= 0) return i;
+    if (!key.contains(QLatin1Char('|'))) return -1;
+    auto mag = [](const QString &k) { return k.section(QLatin1Char('|'), 0, 0); };
+    bool sameWork = sameWorkHint || (canonicalId && !canonicalId->isEmpty() && *canonicalId == myCanonicalId);
+    if (!sameWork) {
+        QStringList mine{mag(key)};
+        for (const auto &v : variants) mine << mag(v.key);
+        for (const auto &k : keys) if (mine.contains(mag(k))) { sameWork = true; break; }
+    }
+    if (!sameWork) return -1;
+    const auto target = episodePair(key.section(QLatin1Char('|'), 1));
+    if (!target) return -1;
+    for (int i = 0; i < keys.size(); ++i)
+        if (keys[i].contains(QLatin1Char('|')) && episodePair(keys[i].section(QLatin1Char('|'), 1)) == target) return i;
+    return -1;
+}
+
 qint64 PartyState::targetMs(qint64 serverNowMs) const {
     const double base = pos * 1000.0;
     if (!playing || waiting) return qint64(base);
@@ -111,6 +150,7 @@ PartyRoom PartyRoom::merge(const RoomUpdate &u) const {
         if (u.id) r.id = u.id;
         r.hostId = u.hostId; r.hostKey = u.hostKey; r.hostName = u.hostName; r.hostOnly = u.hostOnly;
         if (u.members) r.members = *u.members;
+        if (u.variantOffsets) r.variantOffsets = *u.variantOffsets;
         return r;
     }
     if (u.id) r.id = u.id;
@@ -118,6 +158,7 @@ PartyRoom PartyRoom::merge(const RoomUpdate &u) const {
     r.file = u.file;
     if (u.state && u.state->seq >= state.seq) r.state = *u.state;
     if (u.members) r.members = *u.members;
+    if (u.variantOffsets) r.variantOffsets = *u.variantOffsets;
     r.pendingFileKey.reset();
     return r;
 }
@@ -177,10 +218,99 @@ QJsonObject PartyProtocol::play(qint64 posMs) { return {{S("type"), S("play")}, 
 QJsonObject PartyProtocol::pause(qint64 posMs) { return {{S("type"), S("pause")}, {S("pos"), double(posMs) / 1000.0}}; }
 QJsonObject PartyProtocol::seek(qint64 posMs) { return {{S("type"), S("seek")}, {S("pos"), double(posMs) / 1000.0}}; }
 QJsonObject PartyProtocol::buffering(bool loading) { return {{S("type"), S("buffering")}, {S("buffering"), loading}}; }
+QJsonObject PartyProtocol::variantChange(const QString &variantKey, qint64 durationMs, const PartyVariant *variant) {
+    QJsonObject obj{{S("type"), S("variant_change")}};
+    if (!variantKey.isEmpty()) obj.insert(S("variant_key"), variantKey);
+    if (durationMs > 0) obj.insert(S("duration_ms"), double(durationMs));
+    if (variant) obj.insert(S("variant"), variantJson(*variant));
+    return obj;
+}
+
+QJsonObject PartyProtocol::variantOffset(const QString &hostVariantKey, const QString &variantKey, qint64 offsetMs) {
+    return {{S("type"), S("variant_offset")}, {S("host_variant_key"), hostVariantKey}, {S("variant_key"), variantKey},
+            {S("offset_ms"), double(offsetMs)}};
+}
+
+qint64 roomShiftMs(const QList<VariantOffset> &saved, const QString &hostKey, qint64 hostDurationMs,
+                   const QString &myKey, qint64 myDurationMs) {
+    if (!hostKey.isEmpty() && hostKey == myKey) return 0;
+    for (const auto &o : saved) {
+        if (o.from == hostKey && o.to == myKey) return o.offsetMs;
+        if (o.from == myKey && o.to == hostKey) return -o.offsetMs;
+    }
+    return timelineShiftMs(myDurationMs, hostDurationMs);
+}
+
+qint64 timelineShiftMs(qint64 myDurationMs, qint64 hostDurationMs) {
+    if (myDurationMs <= 0 || hostDurationMs <= 0) return 0;
+    const qint64 d = myDurationMs - hostDurationMs;
+    const qint64 a = d < 0 ? -d : d;
+    return a >= TIMELINE_SHIFT_MIN_MS && a <= TIMELINE_SHIFT_MAX_MS ? d : 0;
+}
+
+QJsonObject PartyProtocol::variantJson(const PartyVariant &v) {
+    QJsonObject vo{{S("key"), v.key}, {S("label"), v.label}, {S("quality"), v.quality},
+                   {S("audio"), v.audio}, {S("bitrate"), v.bitrate}, {S("offset_ms"), double(v.offsetMs)},
+                   {S("score"), double(v.score)}};
+    QJsonArray fa;
+    for (const auto &flag : v.hardwareFlags) fa.append(flag);
+    vo.insert(S("hardware_flags"), fa);
+    return vo;
+}
 QJsonObject PartyProtocol::changeFile(const PartyFileRef &f) { return {{S("type"), S("change_file")}, {S("file"), fileJson(f)}}; }
 QJsonObject PartyProtocol::closeFile() { return {{S("type"), S("change_file")}, {S("file"), QJsonValue::Null}}; }
 QJsonObject PartyProtocol::withClient(QJsonObject body, const QString &clientId) { body.insert(S("client_id"), clientId); return body; }
-QJsonObject PartyProtocol::fileJson(const PartyFileRef &f) { return {{S("key"), f.key}, {S("name"), f.title}, {S("ad_id"), double(f.adId())}}; }
+QJsonObject PartyProtocol::fileJson(const PartyFileRef &f) {
+    QJsonObject obj{{S("key"), f.key}, {S("name"), f.title}, {S("ad_id"), double(f.adId())}};
+    if (f.canonicalId) obj.insert(S("canonical_id"), *f.canonicalId);
+    if (f.edition) obj.insert(S("edition"), *f.edition);
+    if (!f.variants.isEmpty()) {
+        QJsonArray arr;
+        for (const auto &v : f.variants) arr.append(variantJson(v));
+        obj.insert(S("variants"), arr);
+    }
+    return obj;
+}
+
+PartyVariant parsePartyVariant(const QJsonObject &vo) {
+    PartyVariant v;
+    v.key = json::str(vo, S("key"));
+    v.label = json::str(vo, S("label"));
+    v.quality = json::str(vo, S("resolution"));
+    if (v.quality.isEmpty()) v.quality = json::str(vo, S("quality"));
+    v.audio = json::str(vo, S("audio_tech"));
+    if (v.audio.isEmpty()) v.audio = json::str(vo, S("audio"));
+    if (v.audio.isEmpty()) v.audio = S("Stereo");
+    v.bitrate = optDouble(vo, S("bitrate_mbps"), optDouble(vo, S("bitrate"), 0.0));
+    v.offsetMs = json::optLong(vo, S("offset_ms"));
+    v.score = int(optDouble(vo, S("score"), 0));
+    const QJsonValue flags = vo.value(S("hardware_flags"));
+    if (flags.isArray()) {
+        for (const auto &fl : flags.toArray()) v.hardwareFlags << fl.toString();
+    }
+    return v;
+}
+
+std::optional<PartyFileRef> PartyProtocol::parseFileRef(const QJsonObject &f) {
+    const QString key = json::str(f, S("key"));
+    if (key.trimmed().isEmpty()) return std::nullopt;
+    PartyFileRef ref;
+    ref.key = key;
+    ref.title = json::str(f, S("name"));
+    ref.canonicalId = nonBlank(json::str(f, S("canonical_id")));
+    ref.edition = nonBlank(json::str(f, S("edition")));
+    const QJsonValue vars = f.value(S("variants"));
+    if (vars.isArray()) {
+        for (const auto &val : vars.toArray()) {
+            if (!val.isObject()) continue;
+            const QJsonObject vo = val.toObject();
+            PartyVariant v = parsePartyVariant(vo);
+            if (v.key.isEmpty()) continue;
+            ref.variants << v;
+        }
+    }
+    return ref;
+}
 
 std::optional<RoomUpdate> PartyProtocol::roomOf(const QJsonObject &res) {
     const QJsonValue v = res.value(S("room"));
@@ -207,9 +337,7 @@ RoomUpdate PartyProtocol::parseRoom(const QJsonObject &room) {
     u.hostOnly = json::str(room, S("controls")) == S("host");
     const QJsonValue fv = room.value(S("file"));
     if (fv.isObject()) {
-        const QJsonObject f = fv.toObject();
-        const QString key = json::str(f, S("key"));
-        if (!key.trimmed().isEmpty()) u.file = PartyFileRef{key, json::str(f, S("name"))};
+        u.file = parseFileRef(fv.toObject());
     }
     const QJsonValue sv = room.value(S("state"));
     if (sv.isObject()) {
@@ -225,6 +353,17 @@ RoomUpdate PartyProtocol::parseRoom(const QJsonObject &room) {
             if (m.isObject()) list << parseMember(m.toObject());
         u.members = list;
     }
+    const QJsonValue ov = room.value(S("variant_offsets"));
+    if (ov.isArray()) {
+        QList<VariantOffset> offs;
+        for (const auto &o : ov.toArray()) {
+            if (!o.isObject()) continue;
+            const QJsonObject oo = o.toObject();
+            VariantOffset vo{json::str(oo, S("from")), json::str(oo, S("to")), json::optLong(oo, S("offset_ms"))};
+            if (!vo.from.isEmpty() && !vo.to.isEmpty()) offs << vo;
+        }
+        u.variantOffsets = offs;
+    }
     return u;
 }
 
@@ -237,6 +376,9 @@ PartyMember PartyProtocol::parseMember(const QJsonObject &m) {
     p.buffering = json::optBool(m, S("buffering"));
     const QString avatar = json::str(m, S("avatar"));
     if (avatar.startsWith(S("https://"))) p.avatar = avatar;
+    const QString vk = json::str(m, S("variant_key"));
+    if (!vk.isEmpty()) p.variantKey = vk;
+    if (const qint64 d = json::optLong(m, S("duration_ms")); d > 0) p.durationMs = d;
     return p;
 }
 
@@ -300,7 +442,7 @@ std::optional<PartyEvent> PartyProtocol::parseEvent(const QString &text) {
     if (event == S("refresh_library")) {
         e.kind = PartyEvent::Kind::RefreshLibrary;
         const QJsonValue f = data.value(S("file"));
-        if (f.isObject()) e.file = PartyFileRef{json::str(f.toObject(), S("key")), json::str(f.toObject(), S("name"))};
+        if (f.isObject()) e.file = parseFileRef(f.toObject());
         return e;
     }
     return std::nullopt;
@@ -384,6 +526,7 @@ void PartySyncEngine::tick(SyncPlayer &player, const QString &key, qint64 now) {
     }
 
     // 2. Пауза / пуск здесь: сообщаем комнате сразу
+    bool softResume = false; // гость снял свою паузу: небольшое отставание догоняем скоростью, а не перемоткой
     if (m_lastSeq >= 0 && !loading && p != m_prevP) {
         if (m_link.canControl()) {
             log(S("[party] local %1 at %2").arg(p ? S("pause") : S("play")).arg(t));
@@ -396,7 +539,7 @@ void PartySyncEngine::tick(SyncPlayer &player, const QString &key, qint64 now) {
         // Гость: пауза только у него; пуск возвращает его к месту ведущего
         m_localHold = p;
         log(p ? S("[party] guest pause (local only)") : S("[party] guest goes on: back to the room"));
-        if (!p) m_lastSeq = -1;
+        if (!p) { m_lastSeq = -1; softResume = true; }
     }
 
     // 3. Следуем за комнатой
@@ -423,7 +566,8 @@ void PartySyncEngine::tick(SyncPlayer &player, const QString &key, qint64 now) {
         m_lastSeq = s.seq;
         restoreRate(player);
         const bool alreadyGoing = m_pendingAt > 0 && std::llabs(m_pendingTo - target) < 1000;
-        const bool needSeek = std::llabs(t - target) > 1000 && !alreadyGoing;
+        const qint64 seekAbove = softResume ? qint64(DriftController::HARD_SEEK_THRESHOLD_SEC * 1000) : 1000;
+        const bool needSeek = std::llabs(t - target) > seekAbove && !alreadyGoing;
         // Комната играет, но ждёт других, а нам ещё перематываться: грузим без паузы
         const bool pauseNow = needSeek && s.playing && !m_localHold ? false : wantPaused;
         if (p != pauseNow && !(loading && !pauseNow)) { player.applyPaused(pauseNow); np = pauseNow; }
@@ -477,6 +621,139 @@ qint64 PartySyncEngine::seekRoom(SyncPlayer &player, qint64 target, qint64 now) 
     m_pendingAt = now; m_pendingTo = target; m_pendingT = -1;
     m_seenSeek = player.seekStamp();
     return target;
+}
+
+PartyVariant buildPartyVariant(const LibraryItem &item, const MFile &file, const std::optional<PartyVariant> &serverProfile, int width, int height) {
+    const QString wKey = watchKey(item.m.id, file);
+    const QString mPrefix = QString::number(item.m.id) + QLatin1Char('|');
+    const PartyVariant *sp = (serverProfile.has_value() && (serverProfile->key.isEmpty() || serverProfile->key == wKey || serverProfile->key.startsWith(mPrefix)))
+                                 ? &*serverProfile
+                                 : nullptr;
+    const QString combined = (item.m.name + QLatin1Char(' ') + file.name).trimmed();
+    const QString l = combined.toLower();
+
+    static const auto rx = [](const char *pat) {
+        return QRegularExpression(QString::fromUtf8(pat), QRegularExpression::CaseInsensitiveOption);
+    };
+    static const QRegularExpression re4k = rx(R"((?:^|[^a-z0-9])(?:2160p|4k|uhd)(?![a-z])|(?:^|\D)3840(?!\d))");
+    static const QRegularExpression re1080 = rx(R"((?:^|\D)1080[pi](?![a-z])|(?:^|\D)1920(?!\d))");
+    static const QRegularExpression re720 = rx(R"((?:^|\D)720p(?![a-z])|(?:^|\D)1280(?!\d))");
+    static const QRegularExpression re480 = rx(R"((?:^|\D)(?:480|576)[pi](?![a-z])|(?:^|[^a-z])dvd)");
+    static const QRegularExpression reAtmos = rx(R"(atmos(?![a-z]))");
+    static const QRegularExpression reTruehd = rx(R"(truehd)");
+    static const QRegularExpression reDtsx = rx(R"(dts[:._-]?x(?![a-z0-9]))");
+    static const QRegularExpression reDtshd = rx(R"(dts[\s._-]?hd)");
+    static const QRegularExpression reDts = rx(R"((?:^|[^a-z])dts(?![a-z]))");
+    static const QRegularExpression reDdp = rx(R"(dd\+|(?:^|[^a-z])ddp(?![a-z])|(?:^|[^a-z])e[\s._-]?ac[\s._-]?3(?!\d)|dolby\s*digital\s*plus)");
+    static const QRegularExpression reAc3 = rx(R"((?:^|[^a-z])ac[\s._-]?3(?!\d)|(?:^|[^a-z])dd[\s._-]?5\.1|(?:^|[^\d.])5\.1(?!\d))");
+    static const QRegularExpression reDv = rx(R"(dolby[\s._-]?vision|dovi|(?:^|[^a-z])dv(?![a-z]))");
+    static const QRegularExpression reHdr = rx(R"(hdr10\+|hdr10plus|hdr10|(?:^|[^a-z])hdr(?![a-z]))");
+    static const QRegularExpression re10bit = rx(R"(10[\s._-]?bit|hi10p)");
+    static const QRegularExpression reRemux = rx(R"(remux)");
+    static const QRegularExpression reBdrip = rx(R"(bdrip|brrip|blu[\s._-]?ray)");
+    static const QRegularExpression reWebdl = rx(R"((?:^|[^a-z0-9])web[\s._-]?(?:dl|rip)(?![a-z0-9]))");
+
+    const bool has4k = l.contains(re4k);
+    const bool has1080 = !has4k && l.contains(re1080);
+    const bool has720 = !has4k && !has1080 && l.contains(re720);
+
+    QString quality;
+    if (has4k) quality = QStringLiteral("4K");
+    else if (has1080) quality = QStringLiteral("1080p");
+    else if (has720) quality = QStringLiteral("720p");
+    else if (l.contains(re480)) quality = QStringLiteral("480p");
+    else if (width > 0 || height > 0) {
+        if (width >= 3000 || height >= 1600) quality = QStringLiteral("4K");
+        else if (width >= 1600 || height >= 900) quality = QStringLiteral("1080p");
+        else if (width >= 1100 || height >= 600) quality = QStringLiteral("720p");
+        else quality = QStringLiteral("480p");
+    } else if (sp && !sp->quality.isEmpty()) {
+        quality = sp->quality;
+    }
+
+    QString audio = QStringLiteral("Stereo");
+    if (l.contains(reAtmos)) audio = QStringLiteral("TrueHD Atmos");
+    else if (l.contains(reTruehd)) audio = QStringLiteral("TrueHD");
+    else if (l.contains(reDtsx)) audio = QStringLiteral("DTS:X");
+    else if (l.contains(reDtshd)) audio = QStringLiteral("DTS-HD MA");
+    else if (l.contains(reDts)) audio = QStringLiteral("DTS 5.1");
+    else if (l.contains(reDdp)) audio = QStringLiteral("DD+");
+    else if (l.contains(reAc3)) audio = QStringLiteral("AC3 5.1");
+    if (sp && !sp->audio.isEmpty() && sp->audio != QStringLiteral("Stereo")) {
+        const QString spAudioL = sp->audio.toLower();
+        if (audio == QStringLiteral("Stereo")
+            || spAudioL.contains(QStringLiteral("dts-hd"))
+            || spAudioL.contains(QStringLiteral("dts:x"))
+            || spAudioL.contains(QStringLiteral("atmos"))
+            || spAudioL.contains(QStringLiteral("truehd"))) {
+            audio = sp->audio;
+        }
+    }
+
+    QStringList hwFlags;
+    if (l.contains(reDv)) hwFlags << QStringLiteral("dv");
+    if (l.contains(reHdr)) hwFlags << QStringLiteral("hdr");
+    if (l.contains(reDts)) hwFlags << QStringLiteral("dts");
+    if (sp) {
+        for (const QString &fl : sp->hardwareFlags) {
+            if (!hwFlags.contains(fl)) hwFlags << fl;
+        }
+    }
+
+    int score = smartQualityScore(combined);
+    if (!has4k && !has1080 && !has720 && (width > 0 || height > 0)) {
+        if (quality == QStringLiteral("4K")) score += 300;
+        else if (quality == QStringLiteral("1080p")) score += 200;
+        else if (quality == QStringLiteral("720p")) score += 100;
+    }
+    if (sp && sp->score > score) score = sp->score;
+
+    const qint64 sizeBytes = file.size > 0 ? file.size : item.m.size;
+    const bool isSeries = item.playable.isSeries();
+    const double estDuration = isSeries ? 2700.0 : 6600.0;
+    // Размер всей раздачи годится только для одного фильма: сезон или сборник на длину одной серии давали
+    // сотни Мбит/с и ложное «снизить качество» (битрейт 0 — неизвестен)
+    const qint64 rateBytes = file.size > 0 ? file.size : (isSeries || isCollection(item.playable, &item.m)) ? 0 : item.m.size;
+    double bitrate = rateBytes > 0 ? std::round((rateBytes * 8.0) / (estDuration * 1000000.0) * 10.0) / 10.0 : 0.0;
+    bool hasExactBitrate = false;
+    if (sp && sp->bitrate > 0) {
+        bitrate = sp->bitrate;
+        hasExactBitrate = true;
+    }
+
+    QStringList parts;
+    if (!quality.isEmpty()) parts << quality;
+    if (hwFlags.contains(QStringLiteral("dv"))) parts << QStringLiteral("Dolby Vision");
+    else if (hwFlags.contains(QStringLiteral("hdr"))) {
+        if (sp && sp->label.contains(QStringLiteral("HDR10+"))) parts << QStringLiteral("HDR10+");
+        else parts << QStringLiteral("HDR");
+    } else if (l.contains(re10bit) || (sp && sp->label.contains(QStringLiteral("10-bit")))) {
+        parts << QStringLiteral("10-bit");
+    }
+    if (l.contains(reRemux)) parts << QStringLiteral("BDRemux");
+    else if (l.contains(reBdrip)) parts << QStringLiteral("BDRip");
+    else if (l.contains(reWebdl)) parts << QStringLiteral("WEB-DL");
+    if (audio != QStringLiteral("Stereo")) parts << audio;
+
+    QString label = parts.join(QStringLiteral(" · "));
+    if (hasExactBitrate) {
+        if (!label.isEmpty()) label += QLatin1Char(' ');
+        label += QStringLiteral("(%1 Мбит/с)").arg(QString::number(bitrate, 'f', 1));
+    } else if (sizeBytes > 0) {
+        if (!label.isEmpty()) label += QLatin1Char(' ');
+        label += QStringLiteral("(%1)").arg(formatBytes(sizeBytes));
+    }
+
+    PartyVariant v;
+    v.key = wKey;
+    v.label = label;
+    v.quality = quality;
+    v.audio = audio;
+    v.bitrate = bitrate;
+    v.offsetMs = 0;
+    v.score = score;
+    v.hardwareFlags = hwFlags;
+    return v;
 }
 
 } // namespace suslik::core

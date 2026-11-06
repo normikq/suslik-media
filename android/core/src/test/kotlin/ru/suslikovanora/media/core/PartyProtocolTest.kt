@@ -7,6 +7,9 @@ import ru.suslikovanora.media.core.party.PartyMember
 import ru.suslikovanora.media.core.party.PartyProtocol
 import ru.suslikovanora.media.core.party.PartyRoom
 import ru.suslikovanora.media.core.party.PartyState
+import ru.suslikovanora.media.core.party.PartyVariant
+import ru.suslikovanora.media.core.party.timelineShiftMs
+import ru.suslikovanora.media.core.party.roomShiftMs
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -193,5 +196,99 @@ class PartyProtocolTest {
         val body = PartyProtocol.closeFile()
         assertEquals("change_file", body.getString("type"))
         assertTrue(body.isNull("file"))
+    }
+
+    @Test
+    fun canonicalContextAndVariants() {
+        val v1 = ru.suslikovanora.media.core.party.PartyVariant(
+            key = "101|Dune.2021.2160p.Remux.mkv",
+            label = "4K Remux",
+            quality = "4K",
+            audio = "TrueHD Atmos",
+            bitrate = 48.2,
+            offsetMs = 0L,
+            score = 505,
+            hardwareFlags = listOf("dv", "hdr")
+        )
+        val v2 = ru.suslikovanora.media.core.party.PartyVariant(
+            key = "102|Dune.2021.1080p.BDRip.mkv",
+            label = "1080p BDRip",
+            quality = "1080p",
+            audio = "AC3 5.1",
+            bitrate = 8.1,
+            offsetMs = 0L,
+            score = 335
+        )
+        val ref = PartyFileRef(
+            key = v1.key,
+            title = "Дюна (2021)",
+            canonicalId = "m:dune_2021:theatrical",
+            edition = "theatrical",
+            variants = listOf(v1, v2)
+        )
+
+        // matches()
+        assertTrue(ref.matches(v1.key))
+        assertTrue(ref.matches(v2.key))
+        assertTrue(ref.matches("any.mkv", "m:dune_2021:theatrical"))
+        assertFalse(ref.matches("other.mkv", "m:other:theatrical"))
+        assertFalse(ref.matches(null))
+
+        // JSON serialization and parsing
+        val json = PartyProtocol.fileJson(ref)
+        assertEquals("m:dune_2021:theatrical", json.optString("canonical_id"))
+        assertEquals("theatrical", json.optString("edition"))
+        assertEquals(2, json.optJSONArray("variants")?.length())
+
+        val parsed = PartyProtocol.parseFileRef(json)
+        assertEquals(ref.key, parsed?.key)
+        assertEquals(ref.canonicalId, parsed?.canonicalId)
+        assertEquals(ref.edition, parsed?.edition)
+        assertEquals(2, parsed?.variants?.size)
+        assertEquals(505, parsed?.variants?.get(0)?.score)
+        assertEquals(8.1, parsed?.variants?.get(1)?.bitrate)
+
+        val vChange = PartyProtocol.variantChange("104921|Dune.1080p.mkv")
+        assertEquals("variant_change", vChange.optString("type"))
+        assertEquals("104921|Dune.1080p.mkv", vChange.optString("variant_key"))
+        assertEquals(false, vChange.has("duration_ms"))
+        val vFull = PartyProtocol.variantChange("12|Rip.mkv", 6021312L, PartyVariant(key = "12|Rip.mkv", label = "1080p · Rip"))
+        assertEquals(6021312L, vFull.optLong("duration_ms"))
+        assertEquals("1080p · Rip", vFull.optJSONObject("variant")?.optString("label"))
+    }
+
+    // Same numbers as desktop-qt/tests/PartyTest.cpp (timelineShift) and website/test/variant-url.test.js
+    @Test
+    fun timelineShift() {
+        assertEquals(14507L, timelineShiftMs(6021312L, 6006805L))
+        assertEquals(-14507L, timelineShiftMs(6006805L, 6021312L))
+        assertEquals(0L, timelineShiftMs(6000500L, 6000000L))
+        assertEquals(0L, timelineShiftMs(9000000L, 6000000L))
+        assertEquals(0L, timelineShiftMs(6000000L, 0L))
+        val m = PartyProtocol.parseMember(org.json.JSONObject("""{"key":"k","id":"u","name":"A","variant_key":"1|a.mkv","duration_ms":6006805}"""))
+        assertEquals(6006805L, m.durationMs)
+        assertEquals(null, PartyProtocol.parseMember(org.json.JSONObject("""{"key":"k","id":"u","name":"A"}""")).durationMs)
+        // Сохранённая подстройка пары важнее разницы длин, в обе стороны
+        val saved = PartyProtocol.parseRoom(org.json.JSONObject("""{"variant_offsets":[{"from":"1|A.mkv","to":"2|B.mkv","offset_ms":18200}]}""")).variantOffsets.orEmpty()
+        assertEquals(18200L, roomShiftMs(saved, "1|A.mkv", 6006805L, "2|B.mkv", 6021312L))
+        assertEquals(-18200L, roomShiftMs(saved, "2|B.mkv", 6021312L, "1|A.mkv", 6006805L))
+        assertEquals(14507L, roomShiftMs(saved, "1|A.mkv", 6006805L, "3|C.mkv", 6021312L))
+        assertEquals(0L, roomShiftMs(saved, "1|A.mkv", 6006805L, "1|A.mkv", 6006805L))
+        assertEquals("variant_offset", PartyProtocol.variantOffset("1|A.mkv", "2|B.mkv", 18200L).optString("type"))
+    }
+
+    // Same fixtures as desktop-qt/tests/PartyTest.cpp (resolveIndexFixtures) and tizen/test/party.test.js
+    @Test
+    fun resolveIndexFixtures() {
+        val keys = listOf("10|Show/S01E01.mkv", "10|Show/S01E02.mkv")
+        val cid = "s:show_s1:default"
+        fun v(k: String) = PartyVariant(key = k, label = k)
+        assertEquals(1, PartyFileRef("10|Show/S01E02.mkv", "").resolveIndex(keys, null))
+        assertEquals(1, PartyFileRef("20|Show.WEB/S01E02.mkv", "", canonicalId = cid).resolveIndex(keys, cid))
+        assertEquals(-1, PartyFileRef("20|Show.WEB/S01E02.mkv", "", canonicalId = cid).resolveIndex(keys, "s:other"))
+        assertEquals(-1, PartyFileRef("20|Other/S01E01.mkv", "", canonicalId = "s:other").resolveIndex(keys, cid))
+        assertEquals(0, PartyFileRef("20|Show.WEB/S01E02.mkv", "", variants = listOf(v("10|Show/S01E01.mkv"))).resolveIndex(keys, null))
+        assertEquals(1, PartyFileRef("20|Show.WEB/S01E02.mkv", "").resolveIndex(keys, null, sameWorkHint = true))
+        assertEquals(-1, PartyFileRef("30|a.mkv", "").resolveIndex(keys, null))
     }
 }

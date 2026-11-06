@@ -200,6 +200,7 @@ QVariantList AudioAttachModel::sources() const {
         out << QVariantMap{{S("key"), s.key}, {S("name"), s.name}, {S("torrent"), !s.torrent.isEmpty()}, {S("busy"), s.busy},
                            {S("note"), s.note}, {S("noteOk"), s.noteOk}, {S("valid"), s.valid}, {S("done"), s.done},
                            {S("candidates"), cands}, {S("rows"), rows},
+                           {S("targetCount"), int(s.targetIds.size())}, {S("targetNames"), s.targetNames.join(S(", "))},
                            {S("moviePoster"), movie ? const_cast<Library *>(m_lib)->posterPath(movie->posterQueries) : QString()},
                            {S("canCheck"), !s.busy && !s.done && s.valid != 1}};
     }
@@ -212,7 +213,8 @@ void AudioAttachModel::say(qint64 key, const QString &text, bool ok) {
 
 void AudioAttachModel::addInput(const QString &text) {
     QStringList links;
-    for (const QString &w : text.split(QRegularExpression(S("\\s+")), Qt::SkipEmptyParts))
+    static const QRegularExpression wsRe(S("\\s+"));
+    for (const QString &w : text.split(wsRe, Qt::SkipEmptyParts))
         if (w.trimmed().startsWith(S("magnet:?"))) links << w.trimmed();
     if (links.isEmpty()) { setNote(tx(S("add.vstavte_ssylku_kotoraya_nachin"))); return; }
     for (const QString &l : links) add(l, QString());
@@ -353,6 +355,8 @@ void AudioAttachModel::runCheck(qint64 key) {
         Source *s = self->find(key);
         if (!s) return;
         s->valid = 1;
+        s->targetIds = c.targetMagnetIds;
+        s->targetNames = c.targetMovieNames;
         if (c.movieMagnetId) s->movieId = c.movieMagnetId;
         auto fill = [self, key, aid, c](const QList<CustomTrack> &bound) {
             if (!self) return;
@@ -417,8 +421,9 @@ void AudioAttachModel::attach(qint64 key) {
     QSet<QString> edited; // задержку поменяли руками: только её можно записать поверх уже привязанной дорожки
     for (const Row &r : s->rows) {
         const qint64 v = parseOffset(r.offset).value_or(0);
-        wanted.insert(r.pair.audioPath, v);
-        if (v != r.initial) edited.insert(r.pair.audioPath);
+        const QString pairKey = r.pair.videoPath + QLatin1Char('|') + r.pair.audioPath;
+        wanted.insert(pairKey, v);
+        if (v != r.initial) edited.insert(pairKey);
     }
     s->busy = true;
     emit changed();
@@ -432,7 +437,9 @@ void AudioAttachModel::attach(qint64 key) {
         const int n = int(tracks.size());
         auto finish = [self, key, aid, wanted, left, failedN, n] {
             if (--*left > 0 || !self) return;
-            for (auto it = wanted.cbegin(); it != wanted.cend(); ++it) AudioDesk::rememberOffset(aid, it.key(), it.value());
+            for (auto it = wanted.cbegin(); it != wanted.cend(); ++it) {
+                AudioDesk::rememberOffset(aid, it.key().section(QLatin1Char('|'), 1), it.value());
+            }
             AudioDesk::donePending(aid);
             Source *s = self->find(key);
             if (!s) return;
@@ -443,10 +450,11 @@ void AudioAttachModel::attach(qint64 key) {
         };
         for (const QJsonObject &t : tracks) {
             const QString path = t.value(S("audioPath")).toString();
-            if (!wanted.contains(path)) continue;
+            const QString pairKey = t.value(S("videoPath")).toString() + QLatin1Char('|') + path;
+            if (!wanted.contains(pairKey)) continue;
             // 23.10: повторная привязка вернула уже бывшие дорожки, и задержка по умолчанию записалась поверх подобранной
-            if (t.value(S("existing")).toBool() && !edited.contains(path)) continue;
-            const qint64 want = wanted.value(path);
+            if (t.value(S("existing")).toBool() && !edited.contains(pairKey)) continue;
+            const qint64 want = wanted.value(pairKey);
             if (want == t.value(S("offsetMs")).toInteger()) continue;
             ++*left;
             AudioDesk::saveOffset(*self->m_lib, t.value(S("id")).toString(), want, [failedN, finish](bool ok) { if (!ok) ++*failedN; finish(); });
