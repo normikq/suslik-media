@@ -230,6 +230,14 @@ object Party {
     /** Длина раздачи ведущего, мс; 0 — ещё не знаем. */
     val hostDurationMs: Long get() = members.firstOrNull { isHost(it) }?.durationMs ?: 0L
 
+    /** Раздача, которую сейчас смотрит ведущий (иначе — фильм комнаты). */
+    val hostVariantKey: String? get() = members.firstOrNull { isHost(it) }?.variantKey ?: file?.key
+
+    /** Сдвиг своей раздачи [myKey] от раздачи ведущего: сохранённая гостями подстройка пары, иначе разница длин. */
+    fun shiftFor(myKey: String?, myDurationMs: Long): Long =
+        if (!inRoom || isHost) 0L
+        else ru.suslikovanora.media.core.party.roomShiftMs(room.variantOffsets, hostVariantKey, hostDurationMs, myKey, myDurationMs)
+
     private fun action(body: JSONObject) {
         val id = roomId ?: return
         if (!canControl) return

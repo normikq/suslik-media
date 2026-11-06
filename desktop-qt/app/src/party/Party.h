@@ -104,6 +104,13 @@ public:
     void reportVariant(const QString &variantKey, qint64 durationMs, const core::PartyVariant *variant);
     /// Длина раздачи ведущего, мс; 0 — ещё не знаем.
     qint64 hostDurationMs() const;
+    /// Раздача, которую сейчас смотрит ведущий (иначе — фильм комнаты).
+    QString hostVariantKey() const;
+    /// Насколько своя раздача myKey (длиной myDurationMs) сдвинута от раздачи ведущего: сохранённая подстройка пары,
+    /// иначе разница длин. Ведущему — 0.
+    qint64 shiftFor(const QString &myKey, qint64 myDurationMs) const;
+    /// Гость двигает свою раздачу относительно ведущего на deltaMs: сразу здесь, на сервере — для пары раздач.
+    void nudgeShift(const QString &myKey, qint64 myDurationMs, qint64 deltaMs);
 
 signals:
     void changed();
@@ -145,6 +152,9 @@ private:
     /// Что уже сообщили комнате о своём варианте: ключ, длина и фильм комнаты в тот момент.
     QString m_sentVariant, m_sentVariantFile;
     qint64 m_sentDuration = 0;
+    /// Подстройка, которую гость ещё не отправил (щелчки подряд уходят одним действием).
+    std::optional<core::VariantOffset> m_pendingOffset;
+    QTimer m_offsetTimer;
     bool m_busy = false;
     QString m_error;
 

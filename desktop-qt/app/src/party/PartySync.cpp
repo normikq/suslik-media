@@ -53,7 +53,27 @@ PartySync::PartySync(PlayerModel &player, Party &party, QObject *parent)
 // движку отдаётся время в шкале комнаты, перемотка комнаты переводится обратно в свою шкалу
 qint64 PartySync::shiftMs() const {
     if (!m_party.inRoom() || m_party.isHost()) return 0;
-    return timelineShiftMs(m_player.length(), m_party.hostDurationMs());
+    // Новый файл ещё не сообщил длину: сдвиг прежний (иначе он скакнул бы на длине прежнего файла)
+    if (m_player.fileLength() <= 0) return m_loggedShift;
+    return m_party.shiftFor(myVariantKey(), m_player.fileLength());
+}
+
+QString PartySync::myVariantKey() const {
+    return m_player.activeVariantKey().isEmpty() ? m_player.activeWatchKey() : m_player.activeVariantKey();
+}
+
+void PartySync::nudge(qint64 deltaMs) {
+    if (!canNudge() || deltaMs == 0) return;
+    const qint64 t = m_player.syncTimeMs();
+    m_party.nudgeShift(myVariantKey(), m_player.fileLength(), deltaMs);
+    // Подстройка меньше допуска дрейфа (0,3 с) сама не перемотала бы: место сдвигается сразу на столько же
+    m_player.roomSeekTo(std::max<qint64>(0, t + deltaMs));
+    emit shiftChanged();
+}
+
+bool PartySync::canNudge() const {
+    return m_watching && m_party.inRoom() && !m_party.isHost() && !m_party.hostVariantKey().isEmpty() &&
+           m_party.hostVariantKey() != myVariantKey();
 }
 
 qint64 PartySync::timeMs() const { return m_player.syncTimeMs() - shiftMs(); }
@@ -164,15 +184,18 @@ void PartySync::tick() {
         }
         // Длина своей раздачи: по ней гости выравнивают время (у ведущего — сервер сдвигает комнату при смене раздачи)
         const QString vk = m_player.activeVariantKey().isEmpty() ? key : m_player.activeVariantKey();
-        if (m_player.length() > 0) {
+        if (m_player.fileLength() > 0) {
             const auto vars = m_player.requestVariants();
             const core::PartyVariant *mine = nullptr;
             for (const auto &v : vars) if (v.key == vk) { mine = &v; break; }
-            m_party.reportVariant(vk, m_player.length(), mine);
+            m_party.reportVariant(vk, m_player.fileLength(), mine);
         }
         const qint64 shift = shiftMs();
+        const bool can = canNudge();
+        if (can != m_shownCanNudge) { m_shownCanNudge = can; emit shiftChanged(); }
         if (shift != m_loggedShift) {
             m_loggedShift = shift;
+            emit shiftChanged();
             PlayerLog::write(shift == 0 ? S("[party] my version is on the host's timeline")
                                         : S("[party] my version is %1 ms %2 than the host's: time shifted")
                                               .arg(std::abs(shift)).arg(shift > 0 ? S("longer") : S("shorter")));

@@ -137,12 +137,19 @@ PlayerModel::PlayerModel(QObject *parent)
         const qint64 l = m_engine->lengthMs();
         if (l > 0 && !m_switching) {
             m_length = l;
+            m_lengthFresh = true;
             Reserve::proxy().setDuration(m_currentUrl, l);
             emit timeChanged();
         }
     });
     connect(m_engine, &MpvEngine::opened, this, [this] {
         m_switching = false;
+        // длина, пришедшая во время смены серии, тогда не принималась: файл открыт — она его
+        if (const qint64 l = m_engine->lengthMs(); l > 0 && !m_lengthFresh) {
+            m_length = l;
+            m_lengthFresh = true;
+            emit timeChanged();
+        }
         emit stateChanged();
     });
     connect(m_engine, &MpvEngine::tracksChanged, this, [this] {
@@ -463,6 +470,8 @@ void PlayerModel::open(const QString &url, qint64 startAt, const Sides &sides) {
     const QStringList audio = preferFirst(sides.audio, pref(S("audio")) ? pref(S("audio")) : ui().get(S("audio:*")), url);
     const QStringList subs = preferFirst(sides.subs, pref(S("spu")) ? pref(S("spu")) : ui().get(S("spu:*")), url);
     const quint64 gen = ++m_gen;
+    // Длина на экране остаётся прежней до новой, но комнате сообщается только длина этого файла
+    m_lengthFresh = false;
     m_ensureAudioTimer.stop();
     setStatus(tx(S("player.otkryvaem")));
     m_prefsApplied = false;

@@ -25,6 +25,19 @@ data class PartyMember(
 /** Раздачи одного фильма разной длины: лишнее обычно в начале (заставка релиз-группы), поэтому место на своей
  *  раздаче = место ведущего + сдвиг, сдвиг = своя длина − длина ведущего. Меньше 1,5 с — хвост кадров, больше 2 мин —
  *  другой монтаж: тогда 0. Те же числа у сервера (rooms.js) и ПК (core/Party.h). */
+/** Подстройка, сохранённая гостем: место на [to] = место на [from] + [offsetMs]. */
+data class VariantOffset(val from: String, val to: String, val offsetMs: Long)
+
+/** Сдвиг своей раздачи [myKey] от раздачи ведущего [hostKey]: сохранённая подстройка пары, иначе разница длин. */
+fun roomShiftMs(saved: List<VariantOffset>, hostKey: String?, hostDurationMs: Long, myKey: String?, myDurationMs: Long): Long {
+    if (hostKey != null && hostKey == myKey) return 0
+    for (o in saved) {
+        if (o.from == hostKey && o.to == myKey) return o.offsetMs
+        if (o.from == myKey && o.to == hostKey) return -o.offsetMs
+    }
+    return timelineShiftMs(myDurationMs, hostDurationMs)
+}
+
 const val TIMELINE_SHIFT_MIN_MS = 1500L
 const val TIMELINE_SHIFT_MAX_MS = 120_000L
 fun timelineShiftMs(myDurationMs: Long, hostDurationMs: Long): Long {
@@ -132,6 +145,8 @@ data class PartyRoom(
     val file: PartyFileRef? = null,
     val state: PartyState = PartyState.Idle,
     val members: List<PartyMember> = emptyList(),
+    /** Подстройки времени между раздачей ведущего и раздачами участников (сервер: variant-offsets.js). */
+    val variantOffsets: List<VariantOffset> = emptyList(),
     /**
      * Ведущий поставил этот фильм, сервер ещё не подтвердил: ответы на прежние действия везут старый фильм и его
      * состояние — их фильм и состояние не берём, иначе ведущего вернуло бы на прошлую серию (журнал 20.10, 20:59:30).
@@ -163,7 +178,7 @@ data class PartyRoom(
         if (pendingFileKey != null && (u.file?.key ?: NO_FILE) != pendingFileKey) {
             // Старый ответ: участники и ведущий — свежие, фильм и время — ещё прежние
             return copy(id = u.id ?: id, hostId = u.hostId, hostKey = u.hostKey, hostName = u.hostName,
-                hostOnly = u.hostOnly, members = u.members ?: members)
+                hostOnly = u.hostOnly, members = u.members ?: members, variantOffsets = u.variantOffsets ?: variantOffsets)
         }
         return mergeNow(u).copy(pendingFileKey = null)
     }
@@ -176,7 +191,8 @@ data class PartyRoom(
         hostOnly = u.hostOnly,
         file = u.file,
         state = u.state?.takeIf { it.seq >= state.seq } ?: state,
-        members = u.members ?: members
+        members = u.members ?: members,
+        variantOffsets = u.variantOffsets ?: variantOffsets
     )
 
     /** Событие потока. `Init` с участником ([PartyEvent.Init.myUserId]) приложение запоминает само. */
@@ -206,7 +222,8 @@ data class RoomUpdate(
     val state: PartyState?,
     val members: List<PartyMember>?,
     /** `state.server_time`: ещё одна точка для [PartyClock]. 0 — нет. */
-    val serverTime: Long
+    val serverTime: Long,
+    val variantOffsets: List<VariantOffset>? = null
 )
 
 /** Событие потока комнаты (`/api/rooms/<id>/events`, строки `data: {...}`). */
@@ -266,6 +283,9 @@ object PartyProtocol {
         if (variant != null) obj.put("variant", variantJson(variant))
         return obj
     }
+    /** Гость подстроил время: место на [variantKey] = место на [hostVariantKey] + [offsetMs] (запоминается для пары). */
+    fun variantOffset(hostVariantKey: String, variantKey: String, offsetMs: Long): JSONObject = JSONObject()
+        .put("type", "variant_offset").put("host_variant_key", hostVariantKey).put("variant_key", variantKey).put("offset_ms", offsetMs)
     fun variantJson(v: PartyVariant): JSONObject = JSONObject()
         .put("key", v.key)
         .put("label", v.label)
@@ -347,7 +367,13 @@ object PartyProtocol {
                     it.optLong("anchor_server_ms"), it.optLong("seq"), it.optBoolean("waiting"))
             },
             members = room.optJSONArray("members")?.let(::parseMembers),
-            serverTime = s?.optLong("server_time") ?: 0L
+            serverTime = s?.optLong("server_time") ?: 0L,
+            variantOffsets = room.optJSONArray("variant_offsets")?.let { arr ->
+                (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.mapNotNull { o ->
+                    val from = o.optString("from"); val to = o.optString("to")
+                    if (from.isBlank() || to.isBlank()) null else VariantOffset(from, to, o.optLong("offset_ms", 0L))
+                }
+            }
         )
     }
 

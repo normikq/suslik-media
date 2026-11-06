@@ -150,6 +150,7 @@ PartyRoom PartyRoom::merge(const RoomUpdate &u) const {
         if (u.id) r.id = u.id;
         r.hostId = u.hostId; r.hostKey = u.hostKey; r.hostName = u.hostName; r.hostOnly = u.hostOnly;
         if (u.members) r.members = *u.members;
+        if (u.variantOffsets) r.variantOffsets = *u.variantOffsets;
         return r;
     }
     if (u.id) r.id = u.id;
@@ -157,6 +158,7 @@ PartyRoom PartyRoom::merge(const RoomUpdate &u) const {
     r.file = u.file;
     if (u.state && u.state->seq >= state.seq) r.state = *u.state;
     if (u.members) r.members = *u.members;
+    if (u.variantOffsets) r.variantOffsets = *u.variantOffsets;
     r.pendingFileKey.reset();
     return r;
 }
@@ -222,6 +224,21 @@ QJsonObject PartyProtocol::variantChange(const QString &variantKey, qint64 durat
     if (durationMs > 0) obj.insert(S("duration_ms"), double(durationMs));
     if (variant) obj.insert(S("variant"), variantJson(*variant));
     return obj;
+}
+
+QJsonObject PartyProtocol::variantOffset(const QString &hostVariantKey, const QString &variantKey, qint64 offsetMs) {
+    return {{S("type"), S("variant_offset")}, {S("host_variant_key"), hostVariantKey}, {S("variant_key"), variantKey},
+            {S("offset_ms"), double(offsetMs)}};
+}
+
+qint64 roomShiftMs(const QList<VariantOffset> &saved, const QString &hostKey, qint64 hostDurationMs,
+                   const QString &myKey, qint64 myDurationMs) {
+    if (!hostKey.isEmpty() && hostKey == myKey) return 0;
+    for (const auto &o : saved) {
+        if (o.from == hostKey && o.to == myKey) return o.offsetMs;
+        if (o.from == myKey && o.to == hostKey) return -o.offsetMs;
+    }
+    return timelineShiftMs(myDurationMs, hostDurationMs);
 }
 
 qint64 timelineShiftMs(qint64 myDurationMs, qint64 hostDurationMs) {
@@ -335,6 +352,17 @@ RoomUpdate PartyProtocol::parseRoom(const QJsonObject &room) {
         for (const auto &m : mv.toArray())
             if (m.isObject()) list << parseMember(m.toObject());
         u.members = list;
+    }
+    const QJsonValue ov = room.value(S("variant_offsets"));
+    if (ov.isArray()) {
+        QList<VariantOffset> offs;
+        for (const auto &o : ov.toArray()) {
+            if (!o.isObject()) continue;
+            const QJsonObject oo = o.toObject();
+            VariantOffset vo{json::str(oo, S("from")), json::str(oo, S("to")), json::optLong(oo, S("offset_ms"))};
+            if (!vo.from.isEmpty() && !vo.to.isEmpty()) offs << vo;
+        }
+        u.variantOffsets = offs;
     }
     return u;
 }

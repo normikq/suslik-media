@@ -1,6 +1,7 @@
 "use strict";
 
 const crypto = require("crypto");
+const variantOffsets = require("./variant-offsets");
 
 // Хранилище активных комнат совместного просмотра в памяти
 // roomId -> Room
@@ -20,8 +21,28 @@ function clientKey(clientId) {
   return crypto.createHash("sha256").update(clientId).digest("hex").slice(0, 16);
 }
 
-function publicMember({ streams, buffering_since, client_id, ...m }) {
+function publicMember({ streams, buffering_since, client_id, timeline_key, ...m }) {
   return { ...m, key: clientKey(client_id) };
+}
+
+// Подстройки времени между раздачей ведущего и раздачами остальных (сохранённые гостями, services/variant-offsets.js):
+// [{ from: ключ ведущего, to: ключ участника, offset_ms }] — место на to = место на from + offset_ms
+function variantOffsetsOf(room) {
+  if (!room.file) return [];
+  let hostKey = room.file.key;
+  for (const m of room.members.values()) {
+    if (isRoomHost(room, { id: m.id }, m.client_id) && m.variant_key) { hostKey = m.variant_key; break; }
+  }
+  const out = [];
+  const seen = new Set([hostKey]);
+  for (const m of room.members.values()) {
+    const k = m.variant_key;
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    const ms = variantOffsets.get(hostKey, k);
+    if (ms != null) out.push({ from: hostKey, to: k, offset_ms: ms });
+  }
+  return out;
 }
 
 // Комната ждёт, пока кто-то грузится (waiting): её время стоит на месте
@@ -97,6 +118,7 @@ function getRoomPublicData(room) {
     },
     members: Array.from(room.members.values()).map(publicMember),
     member_count: room.members.size,
+    variant_offsets: variantOffsetsOf(room),
     // Только у комнаты голосового канала (Activity); приложения эти поля не читают
     ...(room.channel_id ? { channel: true, ...activityPublicData(room) } : {})
   };
@@ -601,20 +623,38 @@ function handleRoomAction(roomId, user, action) {
         changed = true;
       }
       const d = durationOf(action.duration_ms);
-      if (d && m.duration_ms !== d) {
-        // Ведущий перешёл на раздачу другой длины: время комнаты переезжает на её шкалу (лишнее — в начале раздачи),
-        // и все, ведущий тоже, перематываются одной командой
-        const shift = m.duration_ms ? timelineShiftMs(d, m.duration_ms) : 0;
-        if (shift !== 0 && isRoomHost(room, user, action.client_id) && room.file) {
-          room.state.pos = Math.max(0, getEstimatedPos(room.state) + shift / 1000);
-          room.state.anchor_server_ms = Date.now();
-          room.state.seq++;
+      if (d && (m.duration_ms !== d || m.timeline_key !== vk)) {
+        // Ведущий перешёл на другую раздачу: время комнаты переезжает на её шкалу, и все, ведущий тоже, перематываются
+        // одной командой. Сдвиг — сохранённая подстройка пары (variant_offset), иначе разница длин (лишнее — в начале)
+        if (m.timeline_key && m.timeline_key !== vk && m.duration_ms && room.file && isRoomHost(room, user, action.client_id)) {
+          const stored = variantOffsets.get(m.timeline_key, vk);
+          const shift = stored != null ? stored : timelineShiftMs(d, m.duration_ms);
+          if (shift !== 0) {
+            room.state.pos = Math.max(0, getEstimatedPos(room.state) + shift / 1000);
+            room.state.anchor_server_ms = Date.now();
+            room.state.seq++;
+          }
         }
         m.duration_ms = d;
+        m.timeline_key = vk;
         changed = true;
       }
       if (changed) broadcast(roomId, "state_changed", getRoomPublicData(room));
     }
+    return { ok: true, room: getRoomPublicData(room) };
+  }
+
+  // Гость подстроил время своей раздачи к раздаче ведущего: offset_ms — место на variant_key минус место на
+  // host_variant_key. Запоминается для пары раздач (services/variant-offsets.js) и включается у всех
+  if (action.type === "variant_offset") {
+    const { member: m, error } = actingMember(room, user, action);
+    if (error) return { ok: false, error };
+    if (!m || !room.file) return { ok: false, error: "Сейчас в комнате нет фильма." };
+    const from = variantKeyFor(room.file, action.host_variant_key);
+    const to = variantKeyFor(room.file, action.variant_key);
+    if (!from || !to || from === to) return { ok: false, error: "Такого варианта у этого фильма нет." };
+    if (variantOffsets.set(from, to, action.offset_ms) == null) return { ok: false, error: "Неверная подстройка." };
+    broadcast(roomId, "state_changed", getRoomPublicData(room));
     return { ok: true, room: getRoomPublicData(room) };
   }
 
@@ -678,7 +718,7 @@ function handleRoomAction(roomId, user, action) {
       // Новый фильм: прежние загрузки не в счёт
       state.waiting = false;
       // Ключ качества прежнего фильма никому не подходит: у остальных он сбрасывается, клиент пришлёт свой заново
-      for (const m of room.members.values()) { m.buffering = false; m.buffering_since = 0; m.variant_key = null; m.duration_ms = null; }
+      for (const m of room.members.values()) { m.buffering = false; m.buffering_since = 0; m.variant_key = null; m.duration_ms = null; m.timeline_key = null; }
       const actor = action.client_id ? room.members.get(action.client_id) : null;
       if (actor) {
         if (!file) {

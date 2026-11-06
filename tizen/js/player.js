@@ -798,7 +798,7 @@
     if (!party || !party.inRoom()) return;
     var keys = c.opts.entries.map(function (en) { return model.watchKey(c.opts.magnet.id, en.file); });
     // Время комнаты — шкала раздачи ведущего: гость на раздаче другой длины смотрит со сдвигом (partycore timelineShiftMs)
-    function shift() { return party.shiftMs(c.dur || 0); }
+    function shift() { return party.shiftMs(c.key, c.dur || 0); }
     var sp = {
       get timeMs() { return (c.seekTarget != null ? c.seekTarget : c.pos) - shift(); },
       get busy() { return c.seeking; },

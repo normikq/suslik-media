@@ -9,6 +9,7 @@
 #include "suslik/core/Trackers.h"
 
 #include <QDateTime>
+#include <algorithm>
 #include <QElapsedTimer>
 #include <QJsonArray>
 #include <QPointer>
@@ -304,6 +305,48 @@ qint64 Party::hostDurationMs() const {
     for (const auto &m : m_room.members)
         if (m_room.isHost(m) && m.durationMs) return *m.durationMs;
     return 0;
+}
+
+QString Party::hostVariantKey() const {
+    for (const auto &m : m_room.members)
+        if (m_room.isHost(m) && m.variantKey) return *m.variantKey;
+    return fileKey();
+}
+
+qint64 Party::shiftFor(const QString &myKey, qint64 myDurationMs) const {
+    if (!inRoom() || isHost()) return 0;
+    // Ещё не отправленная подстройка важнее снимка комнаты (поток мог прийти без неё)
+    if (m_pendingOffset && m_pendingOffset->from == hostVariantKey() && m_pendingOffset->to == myKey) return m_pendingOffset->offsetMs;
+    return core::roomShiftMs(m_room.variantOffsets, hostVariantKey(), hostDurationMs(), myKey, myDurationMs);
+}
+
+void Party::nudgeShift(const QString &myKey, qint64 myDurationMs, qint64 deltaMs) {
+    if (!m_roomId || isHost() || myKey.isEmpty()) return;
+    const QString host = hostVariantKey();
+    if (host.isEmpty() || host == myKey) return;
+    const core::VariantOffset o{host, myKey, shiftFor(myKey, myDurationMs) + deltaMs};
+    // Здесь — сразу (плеер перемотается сам), не дожидаясь сервера
+    core::PartyRoom r = m_room;
+    r.variantOffsets.erase(std::remove_if(r.variantOffsets.begin(), r.variantOffsets.end(), [&](const core::VariantOffset &v) {
+        return (v.from == host && v.to == myKey) || (v.from == myKey && v.to == host);
+    }), r.variantOffsets.end());
+    r.variantOffsets << o;
+    setRoom(r);
+    m_pendingOffset = o;
+    if (!m_offsetTimer.isActive()) {
+        m_offsetTimer.setSingleShot(true);
+        m_offsetTimer.setInterval(800);
+        disconnect(&m_offsetTimer, nullptr, this, nullptr);
+        connect(&m_offsetTimer, &QTimer::timeout, this, [this] {
+            if (!m_roomId || !m_pendingOffset) return;
+            const auto p = *m_pendingOffset;
+            m_pendingOffset.reset();
+            log(S("my version is set %1 ms from the host's").arg(p.offsetMs));
+            m_outbox << std::make_pair(*m_roomId, PartyProtocol::withClient(PartyProtocol::variantOffset(p.from, p.to, p.offsetMs), m_clientId));
+            pump();
+        });
+    }
+    m_offsetTimer.start();
 }
 
 void Party::action(const QJsonObject &body) {

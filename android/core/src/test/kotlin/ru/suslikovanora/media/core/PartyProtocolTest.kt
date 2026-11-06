@@ -9,6 +9,7 @@ import ru.suslikovanora.media.core.party.PartyRoom
 import ru.suslikovanora.media.core.party.PartyState
 import ru.suslikovanora.media.core.party.PartyVariant
 import ru.suslikovanora.media.core.party.timelineShiftMs
+import ru.suslikovanora.media.core.party.roomShiftMs
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -267,6 +268,13 @@ class PartyProtocolTest {
         val m = PartyProtocol.parseMember(org.json.JSONObject("""{"key":"k","id":"u","name":"A","variant_key":"1|a.mkv","duration_ms":6006805}"""))
         assertEquals(6006805L, m.durationMs)
         assertEquals(null, PartyProtocol.parseMember(org.json.JSONObject("""{"key":"k","id":"u","name":"A"}""")).durationMs)
+        // Сохранённая подстройка пары важнее разницы длин, в обе стороны
+        val saved = PartyProtocol.parseRoom(org.json.JSONObject("""{"variant_offsets":[{"from":"1|A.mkv","to":"2|B.mkv","offset_ms":18200}]}""")).variantOffsets.orEmpty()
+        assertEquals(18200L, roomShiftMs(saved, "1|A.mkv", 6006805L, "2|B.mkv", 6021312L))
+        assertEquals(-18200L, roomShiftMs(saved, "2|B.mkv", 6021312L, "1|A.mkv", 6006805L))
+        assertEquals(14507L, roomShiftMs(saved, "1|A.mkv", 6006805L, "3|C.mkv", 6021312L))
+        assertEquals(0L, roomShiftMs(saved, "1|A.mkv", 6006805L, "1|A.mkv", 6006805L))
+        assertEquals("variant_offset", PartyProtocol.variantOffset("1|A.mkv", "2|B.mkv", 18200L).optString("type"))
     }
 
     // Same fixtures as desktop-qt/tests/PartyTest.cpp (resolveIndexFixtures) and tizen/test/party.test.js

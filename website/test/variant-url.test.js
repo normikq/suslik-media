@@ -334,6 +334,37 @@ test("комнаты: ведущий перешёл на раздачу друг
   assert.equal(room.members.get("g4_client").duration_ms, null);
 });
 
+test("комнаты: подстройка гостя запоминается для пары раздач и сдвигает комнату при смене раздачи ведущим", () => {
+  const offsets = require("../src/services/variant-offsets");
+  const host = { id: "h5", name: "Host" };
+  const guest = { id: "g5", name: "Guest" };
+  const A = "40|Remux.mkv", B = "41|Rip.mkv";
+  const file = { key: A, name: "Film", variants: [{ key: A, label: "Remux" }, { key: B, label: "Rip" }] };
+  const room = rooms.createRoom(host, file, "all", "h5_client");
+  assert.equal(rooms.joinRoom(room.id, host, "h5_client").ok, true);
+  assert.equal(rooms.joinRoom(room.id, guest, "g5_client").ok, true);
+  rooms.handleRoomAction(room.id, host, { type: "pause", client_id: "h5_client", pos: 1000 });
+  rooms.handleRoomAction(room.id, host, { type: "variant_change", client_id: "h5_client", variant_key: A, duration_ms: 6006805 });
+  rooms.handleRoomAction(room.id, guest, { type: "variant_change", client_id: "g5_client", variant_key: B, duration_ms: 6021312 });
+  assert.deepEqual(rooms.getRoomPublicData(room).variant_offsets, []);
+  assert.equal(rooms.getRoomPublicData(room).members.some(m => "timeline_key" in m), false);
+
+  // гость подстроил: на B то же место на 18,2 с позже, чем на A
+  assert.equal(rooms.handleRoomAction(room.id, guest, { type: "variant_offset", client_id: "g5_client", host_variant_key: A, variant_key: B, offset_ms: 18200 }).ok, true);
+  assert.deepEqual(rooms.getRoomPublicData(room).variant_offsets, [{ from: A, to: B, offset_ms: 18200 }]);
+  assert.equal(offsets.get(B, A), -18200);
+  // чужая раздача и мусор отклоняются
+  assert.equal(rooms.handleRoomAction(room.id, guest, { type: "variant_offset", client_id: "g5_client", host_variant_key: A, variant_key: "99|x.mkv", offset_ms: 1 }).ok, false);
+  assert.equal(rooms.handleRoomAction(room.id, guest, { type: "variant_offset", client_id: "g5_client", host_variant_key: A, variant_key: B, offset_ms: 1e9 }).ok, false);
+
+  // ведущий перешёл на B: комната сдвигается на подстройку пары, а не на разницу длин
+  rooms.handleRoomAction(room.id, host, { type: "variant_change", client_id: "h5_client", variant_key: B, duration_ms: 6021312 });
+  assert.equal(room.state.pos, 1018.2);
+  // и обратно на A
+  rooms.handleRoomAction(room.id, host, { type: "variant_change", client_id: "h5_client", variant_key: A, duration_ms: 6006805 });
+  assert.equal(Math.round(room.state.pos * 1000), 1000000);
+});
+
 test("комнаты: аккаунт не меняет качество другого участника", () => {
   const host = { id: "u_1", name: "A" };
   const other = { id: "u_2", name: "B" };

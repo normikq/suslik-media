@@ -109,6 +109,8 @@ public:
     QString status() const { return m_status; }
     qint64 time() const { return m_time; }
     qint64 length() const { return m_length; }
+    /// Длина открытого сейчас файла; 0 — новый файл свою ещё не сообщил (на экране пока прежняя).
+    qint64 fileLength() const { return m_lengthFresh ? m_length : 0; }
     qint64 bufferedMs() const { return m_bufferedMs; }
     int volume() const { return m_volume; }
     bool muted() const { return m_muted; }
@@ -341,6 +343,7 @@ private:
     bool m_crop219 = false;
     qint64 m_audioDelay = 0, m_subDelay = 0;
     qint64 m_time = 0, m_length = 0, m_lastGood = 0, m_bufferedMs = 0;
+    bool m_lengthFresh = false; ///< m_length — длина открытого сейчас файла (не прежнего)
     QString m_status;
     int m_retries = 0;
     bool m_prefsApplied = false;

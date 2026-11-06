@@ -264,6 +264,17 @@ private slots:
         const auto withLen = PartyProtocol::parseMember(QJsonDocument::fromJson(R"({"key":"k","id":"u","name":"A","duration_ms":6006805})").object());
         QCOMPARE(withLen.durationMs.value_or(0), qint64(6006805));
         QVERIFY(!PartyProtocol::parseMember(QJsonDocument::fromJson(R"({"key":"k","id":"u","name":"A"})").object()).durationMs);
+        // Сохранённая подстройка пары важнее разницы длин, в обе стороны
+        const auto room = PartyProtocol::parseRoom(QJsonDocument::fromJson(R"({"variant_offsets":[{"from":"1|A.mkv","to":"2|B.mkv","offset_ms":18200}]})").object());
+        QVERIFY(room.variantOffsets);
+        const QList<VariantOffset> saved = *room.variantOffsets;
+        QCOMPARE(roomShiftMs(saved, S("1|A.mkv"), 6006805, S("2|B.mkv"), 6021312), qint64(18200));
+        QCOMPARE(roomShiftMs(saved, S("2|B.mkv"), 6021312, S("1|A.mkv"), 6006805), qint64(-18200));
+        QCOMPARE(roomShiftMs(saved, S("1|A.mkv"), 6006805, S("3|C.mkv"), 6021312), qint64(14507));
+        QCOMPARE(roomShiftMs(saved, S("1|A.mkv"), 6006805, S("1|A.mkv"), 6006805), qint64(0));
+        const auto vo = PartyProtocol::variantOffset(S("1|A.mkv"), S("2|B.mkv"), 18200);
+        QCOMPARE(vo.value(S("type")).toString(), S("variant_offset"));
+        QCOMPARE(qint64(vo.value(S("offset_ms")).toDouble()), qint64(18200));
         const auto file = PartyProtocol::changeFile(PartyFileRef{S("42|a.mkv"), S("A")}).value(S("file")).toObject();
         QCOMPARE(qint64(file.value(S("ad_id")).toDouble()), 42);
         QCOMPARE(PartyProtocol::eventsPath(S("x"), S("pc_1")), S("/api/rooms/x/events?client_id=pc_1"));

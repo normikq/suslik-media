@@ -63,6 +63,17 @@ inline constexpr qint64 TIMELINE_SHIFT_MIN_MS = 1500;
 inline constexpr qint64 TIMELINE_SHIFT_MAX_MS = 120 * 1000;
 qint64 timelineShiftMs(qint64 myDurationMs, qint64 hostDurationMs);
 
+/// Подстройка времени между раздачами, сохранённая гостем (сервер: services/variant-offsets.js): место на to = место
+/// на from + offsetMs.
+struct VariantOffset {
+    QString from, to;
+    qint64 offsetMs = 0;
+    bool operator==(const VariantOffset &o) const = default;
+};
+/// Сдвиг своей раздачи myKey относительно раздачи ведущего hostKey: сохранённая подстройка пары, иначе разница длин.
+qint64 roomShiftMs(const QList<VariantOffset> &saved, const QString &hostKey, qint64 hostDurationMs,
+                   const QString &myKey, qint64 myDurationMs);
+
 struct PartyVariant {
     QString key;
     QString label;
@@ -117,6 +128,7 @@ struct RoomUpdate {
     std::optional<PartyFileRef> file;
     std::optional<PartyState> state;
     std::optional<QList<PartyMember>> members;
+    std::optional<QList<VariantOffset>> variantOffsets;
     /// state.server_time: ещё одна точка для часов. 0 — нет.
     qint64 serverTime = 0;
 };
@@ -152,6 +164,7 @@ struct PartyRoom {
     std::optional<PartyFileRef> file;
     PartyState state;
     QList<PartyMember> members;
+    QList<VariantOffset> variantOffsets;
     /// Ведущий поставил этот фильм, сервер ещё не подтвердил: ответы на прежние действия со старым фильмом его не возвращают.
     std::optional<QString> pendingFileKey;
 
@@ -195,6 +208,8 @@ public:
     /// Свой вариант качества; durationMs > 0 — длина раздачи, variant — описание (своей раздачи нет у ведущего).
     static QJsonObject variantChange(const QString &variantKey, qint64 durationMs = 0, const PartyVariant *variant = nullptr);
     static QJsonObject variantJson(const PartyVariant &v);
+    /// Гость подстроил время: место на variantKey = место на hostVariantKey + offsetMs (запоминается для пары).
+    static QJsonObject variantOffset(const QString &hostVariantKey, const QString &variantKey, qint64 offsetMs);
     static QJsonObject changeFile(const PartyFileRef &f);
     /// Ведущий закрыл фильм: у гостей плеер тоже закрывается.
     static QJsonObject closeFile();

@@ -96,6 +96,7 @@ const SYNC_FILE = path.join(DATA_DIR, "sync.json"); // прогресс и до�
 const AUDIO_TRACKS_FILE = path.join(DATA_DIR, "audio-tracks.json"); // внешние озвучки, привязанные к фильмам (services/custom-audio.js)
 const AI_TITLE_FILE = path.join(DATA_DIR, "ai-titles.json"); // названия, предложенные ИИ, и кулдауны (services/aititle.js)
 const MARKERS_FILE = path.join(DATA_DIR, "markers-cache.json"); // заставки и титры из AniSkip (services/markers.js)
+const VARIANT_OFFSETS_FILE = path.join(DATA_DIR, "variant-offsets.json"); // подстройка времени между раздачами в комнатах (services/variant-offsets.js)
 // (Комнаты совместного просмотра живут только в памяти: после перезапуска приложения входят заново)
 
 if (!process.env.SESSION_SECRET) {
@@ -156,6 +157,7 @@ module.exports = {
   AUDIO_TRACKS_FILE,
   AI_TITLE_FILE,
   MARKERS_FILE,
+  VARIANT_OFFSETS_FILE,
   GEMINI_API_KEY,
   AI_TITLE_MODEL,
   AI_TITLE_COOLDOWN_MIN,

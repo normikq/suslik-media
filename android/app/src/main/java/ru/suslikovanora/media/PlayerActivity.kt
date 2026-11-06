@@ -850,9 +850,13 @@ class PlayerActivity : ComponentActivity() {
 
     /** Время комнаты — шкала раздачи ведущего. Гость на раздаче другой длины смотрит со сдвигом (core timelineShiftMs):
      *  движку отдаётся время в шкале комнаты, перемотка комнаты переводится обратно в свою шкалу. Ведущему — 0. */
-    private fun roomShiftMs(): Long =
-        if (!Party.inRoom || Party.isHost) 0L
-        else ru.suslikovanora.media.core.party.timelineShiftMs(lengthOf(player), Party.hostDurationMs)
+    private fun roomShiftMs(): Long {
+        if (!Party.inRoom || Party.isHost) return 0L
+        // Новый файл ещё не знает длины (VLC отдаёт 0 при открытии): сдвиг прежний
+        val len = lengthOf(player)
+        if (len <= 0L) return loggedShift
+        return Party.shiftFor(ui.activeVariantKey ?: watchProgress.currentWatchKey(), len)
+    }
     private var loggedShift = 0L
 
     private val syncPlayer = object : ru.suslikovanora.media.core.party.SyncPlayer {

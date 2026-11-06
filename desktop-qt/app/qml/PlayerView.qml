@@ -571,6 +571,29 @@ Item {
                             }
                         }
                     }
+                    // Гость на другой раздаче, чем ведущий: подстроить время (запоминается для пары раздач)
+                    Column {
+                        width: parent.width
+                        spacing: 6
+                        visible: partySync.canNudge
+                        Text {
+                            width: parent.width
+                            text: {
+                                var s = partySync.shift / 1000
+                                return Ui.tx("player.sdvig_k_vedushchemu", { shift: (s > 0 ? "+" : s < 0 ? "−" : "") + Math.abs(s).toFixed(1) + " с" })
+                            }
+                            color: "white"; font.family: Theme.onest; font.pixelSize: 13
+                        }
+                        Flow {
+                            width: parent.width
+                            spacing: 6
+                            Chip_ { label: Ui.tx("player.ya_otstayu") + " +1 с"; onClicked: partySync.nudge(1000) }
+                            Chip_ { label: "+0,1 с"; onClicked: partySync.nudge(100) }
+                            Chip_ { label: Ui.tx("player.ya_speshu") + " −1 с"; onClicked: partySync.nudge(-1000) }
+                            Chip_ { label: "−0,1 с"; onClicked: partySync.nudge(-100) }
+                        }
+                        Text { width: parent.width; wrapMode: Text.WordWrap; text: Ui.tx("player.sdvig_podskazka"); color: "#73FFFFFF"; font.family: Theme.onest; font.pixelSize: 12 }
+                    }
                 }
             }
 

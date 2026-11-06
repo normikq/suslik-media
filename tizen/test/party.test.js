@@ -224,3 +224,13 @@ test('timelineShiftMs: сдвиг по разнице длин раздач, д�
   assert.deepEqual(P.variantChange('1|a.mkv', 6006805), { type: 'variant_change', variant_key: '1|a.mkv', duration_ms: 6006805 });
   assert.deepEqual(P.variantChange('1|a.mkv'), { type: 'variant_change', variant_key: '1|a.mkv' });
 });
+
+test('roomShiftMs: сохранённая подстройка пары важнее разницы длин, в обе стороны', () => {
+  const saved = P.parseRoom({ variant_offsets: [{ from: '1|A.mkv', to: '2|B.mkv', offset_ms: 18200 }] }).variantOffsets;
+  assert.equal(C.roomShiftMs(saved, '1|A.mkv', 6006805, '2|B.mkv', 6021312), 18200);
+  assert.equal(C.roomShiftMs(saved, '2|B.mkv', 6021312, '1|A.mkv', 6006805), -18200);
+  assert.equal(C.roomShiftMs(saved, '1|A.mkv', 6006805, '3|C.mkv', 6021312), 14507);
+  assert.equal(C.roomShiftMs(saved, '1|A.mkv', 6006805, '1|A.mkv', 6006805), 0);
+  const r = R.merge(R.merge({ members: [], state: { seq: 0 }, variantOffsets: [] }, { members: null, variantOffsets: saved, state: null }), { members: null, state: null });
+  assert.equal(r.variantOffsets.length, 1);
+});

@@ -112,7 +112,8 @@
     clearFile: function (r) { return copy(r, { file: null, pendingFileKey: '' }); },
     /** Ответ сервера с комнатой: состояние — только более новое по seq, участники — если пришёл их список. */
     merge: function (r, u) {
-      var head = { id: u.id || r.id, hostId: u.hostId, hostKey: u.hostKey, hostName: u.hostName, hostOnly: u.hostOnly, members: u.members || r.members };
+      var head = { id: u.id || r.id, hostId: u.hostId, hostKey: u.hostKey, hostName: u.hostName, hostOnly: u.hostOnly, members: u.members || r.members,
+        variantOffsets: u.variantOffsets || r.variantOffsets || [] };
       // Ведущий поставил фильм, сервер ещё не подтвердил: фильм и время в старых ответах — прежние, не берём их
       if (r.pendingFileKey != null && (u.file ? u.file.key : '') !== r.pendingFileKey) return copy(r, head);
       head.file = u.file;
@@ -214,6 +215,16 @@
   // раздаче = место ведущего + сдвиг, сдвиг = своя длина − длина ведущего. Меньше 1,5 с — хвост кадров, больше 2 мин —
   // другой монтаж: тогда 0. Те же числа у сервера (rooms.js), ПК (core/Party.h) и Android (PartyProtocol.kt).
   var SHIFT_MIN_MS = 1500, SHIFT_MAX_MS = 120000;
+  /** Сдвиг своей раздачи myKey от раздачи ведущего hostKey: сохранённая подстройка пары (variant_offsets), иначе разница длин. */
+  function roomShiftMs(saved, hostKey, hostDurationMs, myKey, myDurationMs) {
+    if (hostKey && hostKey === myKey) return 0;
+    var list = saved || [];
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].from === hostKey && list[i].to === myKey) return list[i].offsetMs;
+      if (list[i].from === myKey && list[i].to === hostKey) return -list[i].offsetMs;
+    }
+    return timelineShiftMs(myDurationMs, hostDurationMs);
+  }
   function timelineShiftMs(myDurationMs, hostDurationMs) {
     if (!(myDurationMs > 0) || !(hostDurationMs > 0)) return 0;
     var d = Math.round(myDurationMs - hostDurationMs);
@@ -230,6 +241,8 @@
       state: s ? { playing: s.playing === true, pos: Number(s.pos) || 0, rate: s.rate == null ? 1 : Number(s.rate) || 1,
         anchorServerMs: Number(s.anchor_server_ms) || 0, seq: Number(s.seq) || 0, waiting: s.waiting === true } : null,
       members: Array.isArray(o.members) ? o.members.filter(function (m) { return m && typeof m === 'object'; }).map(parseMember) : null,
+      variantOffsets: Array.isArray(o.variant_offsets) ? o.variant_offsets.filter(function (v) { return v && nonEmpty(v.from) && nonEmpty(v.to); })
+        .map(function (v) { return { from: v.from, to: v.to, offsetMs: Number(v.offset_ms) || 0 }; }) : null,
       serverTime: s ? Number(s.server_time) || 0 : 0
     };
   }
@@ -446,7 +459,7 @@
 
   SM.partycore = {
     sha256hex: sha256hex, Clock: Clock, targetMs: targetMs, room: room, protocol: protocol, Engine: Engine,
-    timelineShiftMs: timelineShiftMs,
+    timelineShiftMs: timelineShiftMs, roomShiftMs: roomShiftMs,
     IDLE: IDLE, SHARED_USER: SHARED_USER, TICK_MS: TICK_MS, TOLERANCE_MS: TOLERANCE_MS,
     CLOCK_WINDOW_MS: CLOCK_WINDOW_MS, CLOCK_RESAMPLE_MS: CLOCK_RESAMPLE_MS
   };

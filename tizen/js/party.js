@@ -171,9 +171,15 @@
     return 0;
   };
   /** Своя раздача длиннее раздачи ведущего на столько мс (гостю; ведущему — 0). */
-  party.shiftMs = function (myDurationMs) {
+  /** Раздача, которую сейчас смотрит ведущий (иначе — фильм комнаты). */
+  party.hostVariantKey = function () {
+    var ms = party.room.members || [];
+    for (var i = 0; i < ms.length; i++) if (R.isCreator(party.room, ms[i]) && ms[i].variantKey) return ms[i].variantKey;
+    return party.room.file ? party.room.file.key : null;
+  };
+  party.shiftMs = function (myKey, myDurationMs) {
     if (!party.inRoom() || party.isHost()) return 0;
-    return core.timelineShiftMs(myDurationMs, party.hostDurationMs());
+    return core.roomShiftMs(party.room.variantOffsets, party.hostVariantKey(), party.hostDurationMs(), myKey, myDurationMs);
   };
 
   function action(body) { if (party.roomId && party.canControl()) send(body); }

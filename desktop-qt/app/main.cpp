@@ -183,6 +183,7 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty(QStringLiteral("windowMode"), &windowMode);
     engine.rootContext()->setContextProperty(QStringLiteral("mpvInstall"), &mpvInstall);
     engine.rootContext()->setContextProperty(QStringLiteral("party"), &party);
+    engine.rootContext()->setContextProperty(QStringLiteral("partySync"), &partySync);
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app, [] { QCoreApplication::exit(1); },
                      Qt::QueuedConnection);
     // Ошибки QML (TypeError в обработчике и т.п.) — в журнал: без этого кнопка просто «не реагировала» без следа
