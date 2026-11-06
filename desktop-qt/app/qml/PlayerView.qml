@@ -381,6 +381,36 @@ Item {
         }
     }
 
+    // ---- короткая подсказка поверх таймлайна (flash: «паузу снимает создатель» и др.) ----
+    Rectangle {
+        id: flashToast
+        property string text: ""
+        z: 50
+        visible: opacity > 0.01 && !pv.mini
+        opacity: flashTimer.running ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: 200 } }
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: pv.barsShown ? col.height + 28 : 48
+        width: Math.min(parent.width - 48, flashLabel.implicitWidth + 36)
+        height: 40; radius: 20
+        color: "#E61A1D24"; border.color: "#33FFFFFF"
+        Text {
+            id: flashLabel
+            anchors.centerIn: parent
+            width: parent.width - 36
+            horizontalAlignment: Text.AlignHCenter
+            text: flashToast.text
+            color: "white"; elide: Text.ElideRight
+            font.family: Theme.onest; font.pixelSize: 13
+        }
+        Timer { id: flashTimer; interval: 2500 }
+        Connections {
+            target: player
+            function onFlashed(text) { flashToast.text = text; flashTimer.restart() }
+        }
+    }
+
     // ---- нижняя панель ----
     Item {
         id: bottom

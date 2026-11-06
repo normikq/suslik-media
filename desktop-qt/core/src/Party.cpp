@@ -486,6 +486,7 @@ void PartySyncEngine::tick(SyncPlayer &player, const QString &key, qint64 now) {
     }
 
     // 2. Пауза / пуск здесь: сообщаем комнате сразу
+    bool softResume = false; // гость снял свою паузу: небольшое отставание догоняем скоростью, а не перемоткой
     if (m_lastSeq >= 0 && !loading && p != m_prevP) {
         if (m_link.canControl()) {
             log(S("[party] local %1 at %2").arg(p ? S("pause") : S("play")).arg(t));
@@ -498,7 +499,7 @@ void PartySyncEngine::tick(SyncPlayer &player, const QString &key, qint64 now) {
         // Гость: пауза только у него; пуск возвращает его к месту ведущего
         m_localHold = p;
         log(p ? S("[party] guest pause (local only)") : S("[party] guest goes on: back to the room"));
-        if (!p) m_lastSeq = -1;
+        if (!p) { m_lastSeq = -1; softResume = true; }
     }
 
     // 3. Следуем за комнатой
@@ -525,7 +526,8 @@ void PartySyncEngine::tick(SyncPlayer &player, const QString &key, qint64 now) {
         m_lastSeq = s.seq;
         restoreRate(player);
         const bool alreadyGoing = m_pendingAt > 0 && std::llabs(m_pendingTo - target) < 1000;
-        const bool needSeek = std::llabs(t - target) > 1000 && !alreadyGoing;
+        const qint64 seekAbove = softResume ? qint64(DriftController::HARD_SEEK_THRESHOLD_SEC * 1000) : 1000;
+        const bool needSeek = std::llabs(t - target) > seekAbove && !alreadyGoing;
         // Комната играет, но ждёт других, а нам ещё перематываться: грузим без паузы
         const bool pauseNow = needSeek && s.playing && !m_localHold ? false : wantPaused;
         if (p != pauseNow && !(loading && !pauseNow)) { player.applyPaused(pauseNow); np = pauseNow; }

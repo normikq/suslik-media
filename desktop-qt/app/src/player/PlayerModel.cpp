@@ -992,6 +992,8 @@ void PlayerModel::evError(const QString &message) {
 
 void PlayerModel::togglePause() {
     if (!m_open || m_closing) return;
+    // гость: пока ведущий держит паузу, кнопка гостя не действует (ни снять, ни поставить свою)
+    if (!m_byRoom && partyGuest() && Party::instance() && !Party::instance()->playing()) { flash(tx(S("party.pauzu_snimaet_sozdatel"))); return; }
     if (m_pausedAt != 0 && !m_byRoom && playLocked()) { flash(tx(S("party.pauzu_snimaet_sozdatel"))); return; }
     if (m_pausedAt == 0) {
         m_playing = false;
