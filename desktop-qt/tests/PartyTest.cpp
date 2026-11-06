@@ -293,6 +293,58 @@ private slots:
         QCOMPARE(PartyProtocol::remoteReplyPath(S("842190")), S("/api/rooms/842190/rutracker/reply"));
     }
 
+    // Приглушение, когда говорят в Discord: те же случаи, что в PartyProtocolTest.kt (voiceDuck*)
+    void voiceDuckParsing() {
+        const auto init = PartyProtocol::voiceOf(S(R"(data: {"event":"init","room":{"id":"842190","voice":{"active":true,"speakers":["u_2"]}},"member":{"id":"u_1"},"my_voice_duck":{"enabled":true,"level":30}})"));
+        QVERIFY(init);
+        QCOMPARE(init->speakers.value_or(QStringList{}), QStringList{S("u_2")});
+        QCOMPARE(init->duck.value_or(VoiceDuck{}), (VoiceDuck{true, 30}));
+        QVERIFY(!init->forUser);
+        // обычная комната приложений: без voice, но со своей настройкой
+        const auto plain = PartyProtocol::voiceOf(S(R"(data: {"event":"init","room":{"id":"ab"},"my_voice_duck":{"enabled":false,"level":10}})"));
+        QVERIFY(plain && !plain->speakers && plain->duck);
+        const auto vc = PartyProtocol::voiceOf(S(R"(data: {"event":"voice_changed","data":{"active":false,"speakers":[]},"time":1})"));
+        QVERIFY(vc && vc->speakers && vc->speakers->isEmpty());
+        const auto sc = PartyProtocol::voiceOf(S(R"(data: {"event":"settings_changed","data":{"for_user":"u_1","voice_duck":{"enabled":true,"level":47}}})"));
+        QVERIFY(sc);
+        QCOMPARE(sc->forUser.value_or(QString()), S("u_1"));
+        QCOMPARE(sc->duck->level, 50); // к шагу 10
+        QVERIFY(!PartyProtocol::voiceOf(S(R"(data: {"event":"settings_changed","data":{"voice_duck":{"enabled":true,"level":10}}})")));
+        QVERIFY(!PartyProtocol::voiceOf(S(R"(data: {"event":"member_left","data":{"key":"k"}})")));
+        QVERIFY(!PartyProtocol::voiceOf(S(R"(data: {"event":"state_changed","data":{"id":"ab"}})")));
+        QVERIFY(!PartyProtocol::voiceOf(S(": ping")));
+        // события приглушения не ломают поток комнаты: parseEventLine их не знает
+        QVERIFY(!PartyProtocol::parseEventLine(S(R"(data: {"event":"voice_changed","data":{"active":true,"speakers":["u_2"]}})")));
+    }
+
+    void voiceDuckFactor() {
+        const std::optional<QString> me = S("u_1");
+        VoiceState v;
+        QCOMPARE(v.factor(me), 1.0);
+        QVERIFY(v.apply(VoiceUpdate{QStringList{S("u_2")}, std::nullopt, std::nullopt}, me));
+        QCOMPARE(v.factor(me), 0.9); // по умолчанию 10 %
+        // говорю я — свой фильм не глушится, даже если говорит и другой
+        v.apply(VoiceUpdate{QStringList{S("u_2"), S("u_1")}, std::nullopt, std::nullopt}, me);
+        QCOMPARE(v.factor(me), 1.0);
+        v.apply(VoiceUpdate{QStringList{S("u_2")}, std::nullopt, std::nullopt}, me);
+        // чужая настройка не применяется
+        QVERIFY(!v.apply(VoiceUpdate{std::nullopt, VoiceDuck{true, 100}, S("u_9")}, me));
+        QCOMPARE(v.factor(me), 0.9);
+        QVERIFY(v.apply(VoiceUpdate{std::nullopt, VoiceDuck{true, 100}, S("u_1")}, me));
+        QCOMPARE(v.factor(me), 0.0);
+        v.apply(VoiceUpdate{std::nullopt, VoiceDuck{false, 100}, std::nullopt}, me);
+        QCOMPARE(v.factor(me), 1.0);
+        v.apply(VoiceUpdate{std::nullopt, VoiceDuck{true, 0}, std::nullopt}, me);
+        QCOMPARE(v.factor(me), 1.0);
+        v.apply(VoiceUpdate{std::nullopt, VoiceDuck{true, 40}, std::nullopt}, me);
+        QVERIFY(qAbs(v.factor(me) - 0.6) < 1e-9);
+        v.apply(VoiceUpdate{QStringList{}, std::nullopt, std::nullopt}, me);
+        QCOMPARE(v.factor(me), 1.0);
+        // без своего id (вход по общему паролю) глушит любой говорящий
+        v.apply(VoiceUpdate{QStringList{S("u_1")}, std::nullopt, std::nullopt}, me);
+        QVERIFY(qAbs(v.factor(std::nullopt) - 0.6) < 1e-9);
+    }
+
     void pendingFileIsNotOverwrittenByStaleAnswers() {
         const auto r0 = PartyRoom().merge(PartyProtocol::parseRoom(room()));
         const PartyFileRef next{S("42|Season 1/e02.mkv"), S("Серия 2")};

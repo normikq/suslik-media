@@ -41,6 +41,8 @@ PartySync::PartySync(PlayerModel &player, Party &party, QObject *parent)
     connect(&m_player, &PlayerModel::openChanged, this, &PartySync::onOpen);
     connect(&m_player, &PlayerModel::entryChanged, this, &PartySync::onEntry);
     connect(&m_party, &Party::changed, this, &PartySync::onRoom);
+    // кто-то говорит в Discord — фильм тише (Party::duckFactor)
+    connect(&m_party, &Party::duckChanged, this, [this] { m_player.setDuck(m_party.duckFactor()); });
     // гость / не гость, пауза ведущего — у кнопок плеера
     connect(&m_party, &Party::changed, &m_player, &PlayerModel::partyChanged);
     connect(&m_player, &PlayerModel::entryChanged, &m_player, &PlayerModel::partyChanged);

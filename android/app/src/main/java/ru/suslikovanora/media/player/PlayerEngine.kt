@@ -110,6 +110,11 @@ interface PlayerEngine {
     /** Playback speed (the shared room evens out a small drift with 0.95–1.05×). */
     fun setRate(rate: Float)
     val volume: Int
+    /**
+     * Громкость самого плеера, 0–100 (системная не трогается): приглушение, когда говорят в Discord.
+     * Движок помнит её и ставит заново новому плееру (открытие следующего файла).
+     */
+    fun setPlayerVolume(percent: Int)
     fun seekTo(ms: Long)
     fun seekToFraction(fraction: Float)
 

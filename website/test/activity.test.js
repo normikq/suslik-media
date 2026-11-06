@@ -384,3 +384,112 @@ test("сервер: страница Activity встраивается толь�
     server.close();
   }
 });
+
+// ---- Приглушение фильма, когда говорят в Discord ----
+const voiceDuck = require("../src/services/voice-duck");
+const dan = findOrCreateUser({ id: "200000000000000001", username: "dan", global_name: "Дэн", avatar: null }, "allow");
+const eve = findOrCreateUser({ id: "200000000000000002", username: "eve", global_name: "Ева", avatar: null }, "allow");
+
+test("приглушение: настройка по умолчанию 10 %, шаг 10, только аккаунт Discord", () => {
+  assert.deepEqual(voiceDuck.getVoiceDuck(dan.id), { enabled: true, level: 10 });
+  assert.deepEqual(voiceDuck.getVoiceDuck("shared"), { enabled: true, level: 10 });
+  assert.equal(voiceDuck.setVoiceDuck(dan.id, { enabled: true, level: 15 }), null);
+  assert.equal(voiceDuck.setVoiceDuck(dan.id, { enabled: true, level: 110 }), null);
+  assert.equal(voiceDuck.setVoiceDuck(dan.id, { enabled: "yes", level: 10 }), null);
+  assert.equal(voiceDuck.setVoiceDuck("shared", { enabled: false, level: 10 }), null);
+  assert.deepEqual(voiceDuck.setVoiceDuck(dan.id, { enabled: false, level: 100 }), { enabled: false, level: 100 });
+  assert.deepEqual(voiceDuck.getVoiceDuck(dan.id), { enabled: false, level: 100 });
+  voiceDuck.setVoiceDuck(dan.id, { enabled: true, level: 10 });
+});
+
+test("приглушение: говорящие сводятся в один список, конец фразы — с задержкой, сообщает только пульт", async t => {
+  const room = rooms.getOrCreateChannelRoom("555555555555555555", dan);
+  const events = [];
+  const stopListen = rooms.addListener(room.id, msg => {
+    const m = JSON.parse(msg);
+    if (m.event === "voice_changed" || m.event === "settings_changed") events.push(m);
+  });
+  // не у пульта — нельзя
+  assert.equal(rooms.reportSpeaking(room.id, dan, eve.id, true).status, 403);
+  const leaveD = rooms.addWatcher(room, dan);
+  const leaveE = rooms.addWatcher(room, eve);
+  assert.equal(rooms.reportSpeaking(room.id, dan, "1001", true).status, 400);
+  assert.deepEqual(rooms.getRoomPublicData(room).voice, { active: false, speakers: [] });
+
+  const t0 = Date.now();
+  assert.equal(rooms.reportSpeaking(room.id, dan, eve.id, true, t0).changed, true);
+  // тот же говорящий от второго пульта — без нового события
+  assert.equal(rooms.reportSpeaking(room.id, eve, eve.id, true, t0).changed, false);
+  assert.equal(events.length, 1);
+  assert.deepEqual(events[0].data, { active: true, speakers: [eve.id] });
+  assert.deepEqual(rooms.getRoomPublicData(room).voice, { active: true, speakers: [eve.id] });
+  // «замолчал» неизвестный — ничего
+  assert.equal(rooms.reportSpeaking(room.id, dan, dan.id, false).changed, false);
+
+  // конец фразы: ещё 1,5 с в списке (паузы между словами не дёргают громкость), потом voice_changed пустой
+  rooms.reportSpeaking(room.id, dan, eve.id, false);
+  assert.equal(room.speakers.has(eve.id), true);
+  await new Promise(r => setTimeout(r, 1700));
+  assert.equal(room.speakers.has(eve.id), false);
+  assert.deepEqual(events.at(-1).data, { active: false, speakers: [] });
+
+  // заговорила снова в паузе — запись продлевается без события
+  rooms.reportSpeaking(room.id, dan, eve.id, true);
+  rooms.reportSpeaking(room.id, dan, eve.id, false);
+  const n = events.length;
+  rooms.reportSpeaking(room.id, dan, eve.id, true);
+  assert.equal(events.length, n);
+  rooms.reportSpeaking(room.id, dan, eve.id, false);
+
+  // настройка — только комнатам, где человек есть; for_user — чей
+  rooms.notifyUserSettings(dan.id, { voice_duck: { enabled: true, level: 50 } });
+  const s = events.find(e => e.event === "settings_changed");
+  assert.deepEqual(s.data, { for_user: dan.id, voice_duck: { enabled: true, level: 50 } });
+  const before = events.length;
+  rooms.notifyUserSettings(carol.id, { voice_duck: { enabled: true, level: 50 } });
+  assert.equal(events.length, before);
+
+  await new Promise(r => setTimeout(r, 1700));
+  stopListen();
+  leaveD();
+  leaveE();
+  t.diagnostic(`событий: ${events.length}`);
+});
+
+test("приглушение: маршруты — только из Activity, говорящий — участник канала", async () => {
+  const { createApp } = require("../src/app");
+  const server = createApp().listen(0, "127.0.0.1");
+  await new Promise(r => server.once("listening", r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const { token } = issueActivityToken(eve.id);
+    const auth = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+    const got = await (await fetch(`${base}/api/activity/voice-duck`, { headers: auth })).json();
+    assert.deepEqual(got.voice_duck, { enabled: true, level: 10 });
+    const bad = await fetch(`${base}/api/activity/voice-duck`, { method: "POST", headers: auth, body: JSON.stringify({ enabled: true, level: 25 }) });
+    assert.equal(bad.status, 400);
+    const ok = await (await fetch(`${base}/api/activity/voice-duck`, { method: "POST", headers: auth, body: JSON.stringify({ enabled: true, level: 30 }) })).json();
+    assert.deepEqual(ok.voice_duck, { enabled: true, level: 30 });
+    assert.deepEqual(voiceDuck.getVoiceDuck(eve.id), { enabled: true, level: 30 });
+
+    const room = rooms.getOrCreateChannelRoom("666666666666666666", eve);
+    const notHere = await fetch(`${base}/api/activity/rooms/${room.id}/speaking`, { method: "POST", headers: auth, body: JSON.stringify({ user_id: "200000000000000001", speaking: true }) });
+    assert.equal(notHere.status, 403);
+    const leave = rooms.addWatcher(room, eve);
+    const junk = await fetch(`${base}/api/activity/rooms/${room.id}/speaking`, { method: "POST", headers: auth, body: JSON.stringify({ user_id: "u_1", speaking: true }) });
+    assert.equal(junk.status, 400);
+    const sp = await (await fetch(`${base}/api/activity/rooms/${room.id}/speaking`, { method: "POST", headers: auth, body: JSON.stringify({ user_id: "200000000000000001", speaking: true }) })).json();
+    assert.equal(sp.changed, true);
+    assert.deepEqual(rooms.getRoomPublicData(room).voice.speakers, [dan.id]);
+    rooms.reportSpeaking(room.id, eve, dan.id, false);
+
+    // ключ устройства (приложение) не шлёт события речи и не меняет настройку
+    const devHeaders = { "Content-Type": "application/json" };
+    const noAct = await fetch(`${base}/api/activity/rooms/${room.id}/speaking`, { method: "POST", headers: devHeaders, body: JSON.stringify({ user_id: "200000000000000001", speaking: true }) });
+    assert.equal(noAct.status, 401);
+    await new Promise(r => setTimeout(r, 1700));
+    leave();
+  } finally {
+    server.close();
+  }
+});

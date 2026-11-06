@@ -409,4 +409,70 @@ object PartyProtocol {
             else -> null
         }
     }
+
+    /**
+     * Строка потока с тем, что касается приглушения: voice_changed, settings_changed, init (room.voice и
+     * my_voice_duck), state_changed (data.voice). Иначе — null. Тот же разбор, что PartyProtocol::voiceOf на ПК.
+     */
+    fun voiceOf(line: String): VoiceUpdate? {
+        if (!line.startsWith("data:")) return null
+        val msg = runCatching { JSONObject(line.removePrefix("data:").trim()) }.getOrNull() ?: return null
+        val u = when (msg.optString("event")) {
+            "voice_changed" -> VoiceUpdate(speakers = speakersOf(msg.optJSONObject("data")) ?: return null)
+            "settings_changed" -> {
+                val d = msg.optJSONObject("data") ?: return null
+                val who = d.optString("for_user").ifBlank { null } ?: return null
+                val duck = d.optJSONObject("voice_duck") ?: return null
+                VoiceUpdate(duck = parseVoiceDuck(duck), forUser = who)
+            }
+            "init" -> VoiceUpdate(
+                speakers = speakersOf(msg.optJSONObject("room")?.optJSONObject("voice")),
+                duck = msg.optJSONObject("my_voice_duck")?.let(::parseVoiceDuck)
+            )
+            "state_changed" -> VoiceUpdate(speakers = speakersOf(msg.optJSONObject("data")?.optJSONObject("voice")))
+            else -> return null
+        }
+        return if (u.speakers == null && u.duck == null) null else u
+    }
+
+    fun parseVoiceDuck(o: JSONObject): VoiceDuck {
+        val enabled = o.opt("enabled") as? Boolean ?: true
+        val lv = o.opt("level") as? Number
+        val level = if (lv == null) 10 else (Math.round(lv.toDouble() / 10.0).toInt() * 10).coerceIn(0, 100)
+        return VoiceDuck(enabled, level)
+    }
+
+    private fun speakersOf(voice: JSONObject?): List<String>? {
+        voice ?: return null
+        val arr = voice.optJSONArray("speakers") ?: return emptyList()
+        val out = ArrayList<String>()
+        for (i in 0 until arr.length()) {
+            val id = arr.optString(i)
+            if (id.isNotEmpty() && id !in out) out += id
+        }
+        return out
+    }
+}
+
+/** Приглушение фильма, когда говорят в Discord (website: services/voice-duck.js): своя настройка аккаунта.
+ *  level — насколько тише, %: 10 — громкость × 0,9, 100 — тишина. */
+data class VoiceDuck(val enabled: Boolean = true, val level: Int = 10)
+
+/** Что о приглушении сказал поток комнаты. forUser — чья настройка (settings_changed); null — своя (init). */
+data class VoiceUpdate(val speakers: List<String>? = null, val duck: VoiceDuck? = null, val forUser: String? = null)
+
+/** Приглушение в плеере: настройка и кто говорит. Сам говорящий свой фильм не глушит. Как VoiceState на ПК. */
+data class VoiceState(val duck: VoiceDuck = VoiceDuck(), val speakers: List<String> = emptyList()) {
+    /** Новое состояние после события; чужая настройка пропускается. */
+    fun apply(u: VoiceUpdate, myUserId: String?): VoiceState {
+        val d = if (u.duck != null && (u.forUser == null || u.forUser == myUserId)) u.duck else duck
+        return VoiceState(d, u.speakers ?: speakers)
+    }
+
+    /** Множитель громкости: 1 — как есть, 0,9 — на 10 % тише, 0 — тишина. */
+    fun factor(myUserId: String?): Double {
+        if (!duck.enabled || speakers.isEmpty()) return 1.0
+        if (myUserId != null && myUserId in speakers) return 1.0
+        return (1.0 - duck.level / 100.0).coerceIn(0.0, 1.0)
+    }
 }

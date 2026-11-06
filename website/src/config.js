@@ -90,6 +90,7 @@ const MEDIA_CACHE_FILE = path.join(DATA_DIR, "media-metadata-cache.json");
 const USERS_FILE = path.join(DATA_DIR, "users.json");
 const DEVICES_FILE = path.join(DATA_DIR, "devices.json");
 const SHELF_FILE = path.join(DATA_DIR, "shelf.json");
+const VOICE_DUCK_FILE = path.join(DATA_DIR, "voice-duck.json"); // приглушение фильма, когда говорят в Discord (services/voice-duck.js)
 const TAGS_FILE = path.join(DATA_DIR, "media-tags.json"); // Dolby Vision / HDR / DTS по ffprobe, до удаления раздачи (services/mediatags.js)
 const USAGE_FILE = path.join(DATA_DIR, "usage.json"); // когда раздачу последний раз открывали (services/cleanup.js)
 const SYNC_FILE = path.join(DATA_DIR, "sync.json"); // прогресс и дорожки пользователей Discord (services/sync.js)
@@ -151,6 +152,7 @@ module.exports = {
   USERS_FILE,
   DEVICES_FILE,
   SHELF_FILE,
+  VOICE_DUCK_FILE,
   USAGE_FILE,
   TAGS_FILE,
   SYNC_FILE,

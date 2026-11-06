@@ -82,7 +82,8 @@ function createRoom(hostUser, file = null, controls = "all", hostClientId = null
     watchers: new Map(), // user.id -> { id, name, avatar, streams, seen_until, expire } (addWatcher / touchWatcher)
     candidates: [], // [{ key, name, by, by_name, at }]
     poll: null, // { ends_at, votes: Map(user.id -> key), timer }
-    spin: null // «Рулетка»: { key, name, started_at, ends_at, timer } — барабан крутится у всех, потом победитель включается
+    spin: null, // «Рулетка»: { key, name, started_at, ends_at, timer } — барабан крутится у всех, потом победитель включается
+    speakers: new Map() // кто говорит в голосовом канале (приглушение): user.id -> { until, timer } (reportSpeaking)
   };
 
   rooms.set(id, room);
@@ -811,8 +812,64 @@ function activityPublicData(room) {
     watchers: Array.from(room.watchers.values()).map(({ id, name, avatar }) => ({ id, name, avatar })),
     candidates: room.candidates.map(c => ({ ...c })),
     poll: poll ? { ends_at: poll.ends_at, tally, votes, all_voted: allVoted(room) } : null,
-    spin: room.spin ? { key: room.spin.key, name: room.spin.name, started_at: room.spin.started_at, ends_at: room.spin.ends_at } : null
+    spin: room.spin ? { key: room.spin.key, name: room.spin.name, started_at: room.spin.started_at, ends_at: room.spin.ends_at } : null,
+    voice: voicePublicData(room)
   };
+}
+
+// ---- Приглушение: кто говорит в голосовом канале (docs/DISCORD-ACTIVITY.md, «Приглушение») ----
+// Говорящих видит клиент Discord у каждого, кто открыл Activity (SPEAKING_START / SPEAKING_STOP); все пульты канала
+// шлют одно и то же, сервер сводит в один список. Говорящий числится ещё SPEAK_LINGER_MS после конца фразы
+// (гистерезис: паузы между словами не дёргают громкость). Пока человек говорит, пульт повторяет «говорит» раз в 10 с;
+// без повторов (пульт закрыли посреди фразы) запись живёт SPEAK_TTL_MS. Плеерам уходит только смена списка:
+// voice_changed { active, speakers: [user.id] } — каждый плеер сам глушит, если говорит не он.
+// Кто и когда говорил, не хранится и не пишется в журнал.
+const SPEAK_LINGER_MS = 1500;
+const SPEAK_TTL_MS = 25 * 1000;
+const MAX_SPEAKERS = 50;
+
+function voicePublicData(room) {
+  const speakers = room.speakers ? Array.from(room.speakers.keys()) : [];
+  return { active: speakers.length > 0, speakers };
+}
+
+function dropSpeaker(room, id, entry) {
+  if (room.speakers.get(id) !== entry) return;
+  room.speakers.delete(id);
+  if (rooms.get(room.id) === room) broadcast(room.id, "voice_changed", voicePublicData(room));
+}
+
+/**
+ * Событие речи от пульта комнаты голосового канала. userId — участник канала (u_<discord id>), speaking — начал
+ * или закончил говорить. Сообщить может только тот, кто сейчас у пульта этой комнаты.
+ */
+function reportSpeaking(roomId, reporter, userId, speaking, now = Date.now()) {
+  const room = rooms.get(roomId);
+  if (!room || !room.channel_id) return { ok: false, status: 404, error: "Комната не найдена." };
+  if (!reporter || !room.watchers.has(reporter.id)) return { ok: false, status: 403, error: "Только у пульта комнаты." };
+  const id = String(userId || "");
+  if (!/^u_\d{5,25}$/.test(id)) return { ok: false, status: 400, error: "Нет участника канала." };
+  const old = room.speakers.get(id);
+  if (!old && !speaking) return { ok: true, changed: false };
+  if (!old && room.speakers.size >= MAX_SPEAKERS) return { ok: true, changed: false };
+  if (old) clearTimeout(old.timer);
+  const entry = { until: now + (speaking ? SPEAK_TTL_MS : SPEAK_LINGER_MS), timer: null };
+  entry.timer = setTimeout(() => dropSpeaker(room, id, entry), entry.until - now);
+  entry.timer.unref?.();
+  room.speakers.set(id, entry);
+  if (!old) broadcast(room.id, "voice_changed", voicePublicData(room));
+  return { ok: true, changed: !old };
+}
+
+/** Человек изменил свою настройку (приглушение): его плеерам в комнатах — settings_changed, чужие пропускают. */
+function notifyUserSettings(userId, data) {
+  const uid = String(userId || "");
+  if (!uid) return;
+  for (const room of rooms.values()) {
+    let here = room.watchers.has(uid);
+    if (!here) for (const m of room.members.values()) if (m && String(m.id) === uid) { here = true; break; }
+    if (here) broadcast(room.id, "settings_changed", { for_user: uid, ...data });
+  }
 }
 
 // Проголосовали все, кто сейчас у пульта (голосуют только из Activity)
@@ -1148,6 +1205,8 @@ module.exports = {
   handleRoomAction,
   timelineShiftMs,
   getOrCreateChannelRoom,
+  reportSpeaking,
+  notifyUserSettings,
   addWatcher,
   touchWatcher,
   suggestFile,

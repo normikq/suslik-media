@@ -1,6 +1,7 @@
 /*
  * Связь с клиентом Discord изнутри Activity (iframe): то же, что делает @discord/embedded-app-sdk (2.x), но без сборщика —
- * рукопожатие, ожидание READY и команды postMessage-ом. Нужны AUTHORIZE, AUTHENTICATE, SET_ACTIVITY и OPEN_EXTERNAL_LINK.
+ * рукопожатие, ожидание READY и команды postMessage-ом. Нужны AUTHORIZE, AUTHENTICATE, SET_ACTIVITY, OPEN_EXTERNAL_LINK
+ * и SUBSCRIBE (SPEAKING_START / SPEAKING_STOP — кто говорит в канале, для приглушения фильма).
  * Протокол: [opcode, payload]; 0 — рукопожатие, 1 — кадр (команда/ответ/событие), 2 — закрытие, 3 — HELLO (старый).
  */
 (function (g) {
@@ -20,7 +21,7 @@
   };
   var inDiscord = !!(info.frameId && info.instanceId && g.parent && g.parent !== g);
 
-  var source = null, target = '*', pending = {}, ready = null, readyResolve = null, onClose = null;
+  var source = null, target = '*', pending = {}, ready = null, readyResolve = null, onClose = null, listeners = {};
 
   function nonce() {
     if (g.crypto && g.crypto.randomUUID) return g.crypto.randomUUID();
@@ -43,7 +44,9 @@
     if (op === CLOSE) { if (onClose) onClose(p); return; }
     if (op !== FRAME) return;
     if (p.cmd === 'DISPATCH') {
-      if (p.evt === 'READY' && readyResolve) { readyResolve(p.data || {}); readyResolve = null; }
+      if (p.evt === 'READY' && readyResolve) { readyResolve(p.data || {}); readyResolve = null; return; }
+      var f = listeners[p.evt];
+      if (f) { try { f(p.data || {}); } catch (e) { /* ошибка обработчика не ломает связь */ } }
       return;
     }
     var w = p.nonce && pending[p.nonce];
@@ -73,12 +76,14 @@
     return ready;
   }
 
-  function command(cmd, args) {
+  function command(cmd, args, evt) {
     if (!source) return Promise.reject(new Error('Discord ещё не готов.'));
     var n = nonce();
     return new Promise(function (resolve, reject) {
       pending[n] = { resolve: resolve, reject: reject };
-      source.postMessage([FRAME, { cmd: cmd, args: args || {}, nonce: n }], target);
+      var frame = { cmd: cmd, args: args || {}, nonce: n };
+      if (evt) frame.evt = evt;
+      source.postMessage([FRAME, frame], target);
     });
   }
 
@@ -96,6 +101,11 @@
     setActivity: function (activity) { return command('SET_ACTIVITY', { activity: activity }); },
     /** Ссылка во внешнем браузере (Discord спросит «Покинуть Discord?»). */
     openExternal: function (url) { return command('OPEN_EXTERNAL_LINK', { url: url }); },
+    /** Подписка на событие клиента (DISPATCH evt): f(data) на каждое. Нужен вход AUTHENTICATE с нужным scope. */
+    subscribe: function (evt, args, f) {
+      listeners[evt] = f;
+      return command('SUBSCRIBE', args, evt);
+    },
     onClose: function (f) { onClose = f; }
   };
 })(window);

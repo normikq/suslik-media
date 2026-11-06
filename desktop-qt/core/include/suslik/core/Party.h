@@ -150,6 +150,33 @@ struct RemoteTrackerRequest {
     QString id, kind, query, topicId, title, target, by;
 };
 
+/// Приглушение фильма, когда говорят в Discord (website: services/voice-duck.js): своя настройка аккаунта.
+/// level — насколько тише, %: 10 — громкость × 0,9, 100 — тишина.
+struct VoiceDuck {
+    bool enabled = true;
+    int level = 10;
+    bool operator==(const VoiceDuck &o) const = default;
+};
+
+/// Что о приглушении сказал поток комнаты: кто говорит (voice_changed, room.voice в init и state_changed)
+/// и/или своя настройка (my_voice_duck в init, settings_changed с for_user).
+struct VoiceUpdate {
+    std::optional<QStringList> speakers;
+    std::optional<VoiceDuck> duck;
+    /// settings_changed: чья настройка (чужую пропускаем). Пусто — своя (init).
+    std::optional<QString> forUser;
+};
+
+/// Приглушение в плеере: настройка и кто говорит. Сам говорящий свой фильм не глушит.
+struct VoiceState {
+    VoiceDuck duck;
+    QStringList speakers;
+    /// Применить событие; false — ничего не поменялось (или настройка чужая).
+    bool apply(const VoiceUpdate &u, const std::optional<QString> &myUserId);
+    /// Множитель громкости: 1 — как есть, 0,9 — на 10 % тише, 0 — тишина.
+    double factor(const std::optional<QString> &myUserId) const;
+};
+
 /// Снимок комнаты, как его видит приложение. Меняется только через merge и reduce.
 struct PartyRoom {
     static inline const QString SHARED_USER = QStringLiteral("shared");
@@ -229,6 +256,10 @@ public:
     static std::optional<RemoteTrackerRequest> remoteRequestOf(const QString &line);
     /// Путь ответа ПК на такой запрос.
     static QString remoteReplyPath(const QString &roomId);
+    /// Строка потока с тем, что касается приглушения (voice_changed, settings_changed, init, state_changed);
+    /// иначе — пусто.
+    static std::optional<VoiceUpdate> voiceOf(const QString &line);
+    static VoiceDuck parseVoiceDuck(const QJsonObject &o);
 };
 
 /// Плеер, которым управляет комната.

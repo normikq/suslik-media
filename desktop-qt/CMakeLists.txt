@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 # Suslik Media для Windows на C++/Qt (с 3.0.0 заменила Kotlin-версию). Устройство — docs/DESKTOP.md.
-project(SuslikMediaQt VERSION 3.1.5 LANGUAGES CXX)
+project(SuslikMediaQt VERSION 3.1.6 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

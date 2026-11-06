@@ -22,6 +22,8 @@
     find: { mode: 'library', q: '', asked: '', server: null, serverErr: '', providers: [], pc: null, busy: 0, notes: {},
       page: 0, filtersOpen: false, f: null },
     stream: null, streamOk: false, pollTimer: 0, retry: 0,
+    // приглушение фильма, когда говорят в Discord: настройка аккаунта ({ enabled, level }) и видит ли страница говорящих
+    duck: null, duckSaving: false, voiceState: 'off',
     // библиотека: категория и сортировка (помнятся в браузере)
     lib: { cat: 'all', sort: 'new' },
     // моя медиатека: категория и сортировка
@@ -133,17 +135,36 @@
     });
   }
 
-  // Вход просит и rpc.activities.write — статус «Смотрит …» в профиле (presence ниже). Отказался в окне Discord —
-  // второй раз спрашиваем только identify и больше статус не просим (помним в браузере).
-  var loggingIn = null, PRESENCE_SCOPE = 'rpc.activities.write';
-  function wantPresence() { try { return localStorage.getItem('sm.act.nopresence') !== '1'; } catch (e) { return true; } }
+  // Вход просит и rpc.activities.write — статус «Смотрит …» в профиле (presence ниже), и rpc.voice.read — кто говорит
+  // в канале (приглушение фильма, voice ниже). Discord не дал (отказ в окне, scope не одобрен) — спрашиваем без
+  // rpc.voice.read, потом и без статуса; от чего отказались, больше не просим (помним в браузере).
+  var loggingIn = null, PRESENCE_SCOPE = 'rpc.activities.write', VOICE_SCOPE = 'rpc.voice.read';
+  function wants(flag) { try { return localStorage.getItem(flag) !== '1'; } catch (e) { return true; } }
+  function refuse(flag) { try { localStorage.setItem(flag, '1'); } catch (x) { /* без хранилища */ } }
   function authorize() {
-    var scopes = wantPresence() ? ['identify', PRESENCE_SCOPE] : ['identify'];
-    return D.authorize(S.clientId, scopes).catch(function (e) {
-      if (scopes.length < 2 || !(e && e.code === 5000)) throw e;
-      try { localStorage.setItem('sm.act.nopresence', '1'); } catch (x) { /* без хранилища */ }
-      return D.authorize(S.clientId, ['identify']);
-    });
+    var tries = [];
+    if (wants('sm.act.nopresence') && wants('sm.act.novoice')) tries.push({ scopes: ['identify', PRESENCE_SCOPE, VOICE_SCOPE], off: 'sm.act.novoice' });
+    if (wants('sm.act.nopresence')) tries.push({ scopes: ['identify', PRESENCE_SCOPE], off: 'sm.act.nopresence' });
+    tries.push({ scopes: ['identify'] });
+    function attempt(i) {
+      return D.authorize(S.clientId, tries[i].scopes).catch(function (e) {
+        if (!tries[i].off) throw e;
+        // помним только отказ человека в окне (5000); другой сбой (scope не одобрен для приложения) — спросим и в следующий раз
+        if (e && e.code === 5000) refuse(tries[i].off);
+        return attempt(i + 1);
+      });
+    }
+    return attempt(0);
+  }
+  // Токен Discord (разрешён статус или голос): один AUTHENTICATE, потом статус и подписка на речь.
+  // Старый сервер не присылает discord_scopes — тогда токен только для статуса
+  function authenticateRpc(token, scopes) {
+    scopes = scopes || [PRESENCE_SCOPE];
+    D.authenticate(token).then(function () {
+      if (scopes.indexOf(PRESENCE_SCOPE) >= 0) presence.ready();
+      if (scopes.indexOf(VOICE_SCOPE) >= 0) voice.start();
+      else voice.unavailable();
+    }, function () { voice.unavailable(); });
   }
   function login() {
     if (loggingIn) return loggingIn;
@@ -156,7 +177,8 @@
       S.token = r.token;
       S.site = r.site_url || '';
       S.me = r.user;
-      if (r.discord_token) presence.auth(r.discord_token);
+      if (r.discord_token) authenticateRpc(r.discord_token, r.discord_scopes);
+      else voice.unavailable();
     }).then(function () { loggingIn = null; }, function (e) { loggingIn = null; throw e; });
     return loggingIn;
   }
@@ -400,9 +422,7 @@
   // Discord не принял — пробуем без картинки, потом как «Играет» (старые клиенты знают только этот тип).
   var presence = (function () {
     var ready = false, last = '', timer = 0, type = 3, withImage = true;
-    function auth(token) {
-      D.authenticate(token).then(function () { ready = true; last = ''; update(); }, function () { ready = false; });
-    }
+    function setReady() { ready = true; last = ''; update(); }
     function cut(t) { t = String(t || '').trim(); if (t.length > 128) t = t.slice(0, 127) + '…'; return t.length >= 2 ? t : t + '  '; }
     function build() {
       var r = S.room, f = r.file, info = f ? resolve(f.key) : null, people = (r.watchers || []).length || 1;
@@ -441,8 +461,68 @@
       });
     }
     function update() { if (ready && !timer) timer = setTimeout(send, 1500); }
-    return { auth: auth, update: update };
+    return { ready: setReady, update: update };
   })();
+
+  // ---- приглушение: кто говорит в канале (SPEAKING_START / SPEAKING_STOP) → сервер ----
+  // Страница ничего не глушит сама: только сообщает серверу, он сводит пульты канала и рассылает плеерам
+  // voice_changed. Пока человек говорит, повторяем «говорит» раз в 10 с: так сервер не держит запись вечно,
+  // если пульт закрыли посреди фразы. Кто и когда говорил, страница не хранит.
+  var voice = (function () {
+    var started = false, talking = {}; // discord id -> таймер повтора
+    function send(userId, speaking) {
+      if (!S.room || !S.token) return;
+      api('api/activity/rooms/' + S.room.id + '/speaking', { user_id: userId, speaking: speaking }).catch(function () { /* не дошло — громкость не главное */ });
+    }
+    function idOf(d) {
+      var id = d && (d.user_id || (d.user && d.user.id));
+      if (!id || !/^\d{5,25}$/.test(String(id))) return null;
+      if (d.channel_id && D.info.channelId && String(d.channel_id) !== String(D.info.channelId)) return null;
+      return String(id);
+    }
+    function onStart(d) {
+      var id = idOf(d);
+      if (!id || talking[id]) return;
+      talking[id] = setInterval(function () { send(id, true); }, 10000);
+      send(id, true);
+    }
+    function onStop(d) {
+      var id = idOf(d);
+      if (!id || !talking[id]) return;
+      clearInterval(talking[id]);
+      delete talking[id];
+      send(id, false);
+    }
+    function start() {
+      if (started || !D.info.channelId) return;
+      started = true;
+      var args = { channel_id: D.info.channelId };
+      Promise.all([D.subscribe('SPEAKING_START', args, onStart), D.subscribe('SPEAKING_STOP', args, onStop)]).then(function () {
+        S.voiceState = 'on';
+        render();
+      }, function () {
+        started = false;
+        S.voiceState = 'failed';
+        render();
+      });
+    }
+    function unavailable() { if (!started) { S.voiceState = 'denied'; render(); } }
+    return { start: start, unavailable: unavailable };
+  })();
+
+  function loadDuck() {
+    return api('api/activity/voice-duck').then(function (r) { S.duck = r.voice_duck || null; }, function () { /* без меню */ });
+  }
+  function saveDuck(next) {
+    var prev = S.duck;
+    S.duck = next;
+    S.duckSaving = true;
+    render();
+    api('api/activity/voice-duck', next).then(function (r) { S.duck = r.voice_duck || next; }, function (e) {
+      S.duck = prev;
+      toast(errText(e), true);
+    }).then(function () { S.duckSaving = false; render(); });
+  }
 
   // ---- категории и сортировка медиатеки (как на ПК: LibraryView.itemCategory) ----
   var ANIME_RE = /(^|[^a-zа-яё])(?:anime|аниме|anilibria)(?![a-zа-яё])|\[(?:horriblesubs|erai-raws|subsplease|judas)\]/i;
@@ -845,7 +925,8 @@
         h('div', { class: 'row', style: 'margin-top:12px' }, [btn('small', 'copy', 'Скопировать', copyCode),
           btn('small', 'chat', 'Позвать в чат', invite, { title: 'Отправить в чат голосового канала код и ссылку на комнату' })])
       ]),
-      viewPeople()
+      viewPeople(),
+      viewDuck()
     ]);
     return h('div', { class: 'grid2' }, [card, side]);
   }
@@ -875,6 +956,29 @@
       h('div', { class: 'h' }, ['В комнате · ' + list.length]),
       rows.length ? h('div', { class: 'people' }, rows) : h('div', { class: 'muted', text: 'Пока никого.' }),
       h('div', { class: 'small muted', style: 'margin-top:10px', text: '«Смотрит» — открыл фильм в приложении.' })
+    ]);
+  }
+
+  // Меню «Приглушение»: своя настройка аккаунта, действует на свои ПК и телефон в комнате канала
+  function duckText(v) { return v === 100 ? 'тишина' : v === 0 ? 'не тише' : 'тише на ' + v + ' %'; }
+  function viewDuck() {
+    var d = S.duck;
+    if (!d || !S.me || !/^u_\d+$/.test(S.me.id)) return null;
+    var label = h('span', { class: 'duck-value', text: duckText(d.level) });
+    var range = h('input', { type: 'range', min: '0', max: '100', step: '10', value: String(d.level), class: 'duck-range',
+      'aria-label': 'Насколько тише', disabled: !d.enabled || S.duckSaving,
+      on: {
+        input: function (e) { label.textContent = duckText(Number(e.target.value)); },
+        change: function (e) { saveDuck({ enabled: d.enabled, level: Number(e.target.value) }); }
+      } });
+    var note = S.voiceState === 'denied' ? 'Discord не разрешил этой странице видеть, кто говорит: с вашего пульта речь не учитывается. Приглушение работает, если Activity открыта у кого-то ещё в канале.'
+      : S.voiceState === 'failed' ? 'Discord не прислал, кто говорит: с вашего пульта речь не учитывается.'
+      : 'Пока кто-то в канале говорит, фильм у вас на ПК и телефоне становится тише. Ваш собственный голос ваш фильм не глушит. Работает, пока Activity открыта хотя бы у одного в канале.';
+    return h('div', { class: 'panel' }, [
+      h('div', { class: 'h', text: 'Приглушение' }),
+      check(d.enabled, 'Приглушать фильм, когда говорят в Discord', function (on) { saveDuck({ enabled: on, level: d.level }); }),
+      h('div', { class: 'row duck-row' + (d.enabled ? '' : ' muted') }, [range, label]),
+      h('div', { class: 'small muted', style: 'margin-top:10px', text: note })
     ]);
   }
 
@@ -1826,6 +1930,7 @@
       S.room = r.room;
       if (r.me) S.me = r.me;
       bootLine('Загружаем медиатеку…');
+      loadDuck().then(render);
       return loadLibrary().catch(function (e) { toast('Медиатека не загрузилась: ' + errText(e), true); });
     }).then(function () {
       render();

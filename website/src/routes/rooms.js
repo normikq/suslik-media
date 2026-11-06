@@ -4,6 +4,7 @@ const express = require("express");
 const { requireLogin, resolveAuth } = require("../middleware/auth");
 const { roomLimiter } = require("../middleware/rate-limit");
 const { sseSender } = require("../utils/helpers");
+const { getVoiceDuck } = require("../services/voice-duck");
 const {
   createRoom,
   getRoom,
@@ -114,7 +115,8 @@ router.get("/api/rooms/:id/events", requireLogin, (req, res) => {
   // Отправляем текущее состояние сразу при подключении
   // Себе — и свой client_id, остальные видят только отпечаток (key)
   const me = { ...publicMember(joined.member), client_id: joined.member.client_id };
-  res.write(`data: ${JSON.stringify({ event: "init", room: getRoomPublicData(room), member: me })}\n\n`);
+  // my_voice_duck — своя настройка приглушения (в комнате голосового канала Discord приходит voice_changed)
+  res.write(`data: ${JSON.stringify({ event: "init", room: getRoomPublicData(room), member: me, my_voice_duck: getVoiceDuck(req.user.id) })}\n\n`);
 
   // Запись в оборванный поток — не повод падать: ошибку сокета гасим, закрытие разберёт «close»
   res.on("error", () => {});

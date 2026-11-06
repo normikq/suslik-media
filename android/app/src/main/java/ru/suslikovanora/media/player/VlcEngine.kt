@@ -85,6 +85,7 @@ class VlcEngine(private val context: Context) : PlayerEngine {
         this.media = item
         p.media = item
         player = p
+        if (playerVolume != 100) p.volume = playerVolume
         opened++
         if (old != null) replaced = old to oldMedia
     }
@@ -148,7 +149,10 @@ class VlcEngine(private val context: Context) : PlayerEngine {
         if (owner !== player) return@EventListener
         val l = listener ?: return@EventListener
         when (event.type) {
-            MediaPlayer.Event.Playing -> l.playing()
+            MediaPlayer.Event.Playing -> {
+                if (playerVolume != 100) owner.volume = playerVolume
+                l.playing()
+            }
             MediaPlayer.Event.Paused -> l.paused()
             MediaPlayer.Event.Stopped -> l.stopped()
             MediaPlayer.Event.ESAdded -> l.tracksChanged()
@@ -178,6 +182,11 @@ class VlcEngine(private val context: Context) : PlayerEngine {
     override val rate: Float get() = player?.rate ?: 1f
     override fun setRate(rate: Float) { player?.rate = rate }
     override val volume: Int get() = player?.volume ?: 0
+    private var playerVolume = 100
+    override fun setPlayerVolume(percent: Int) {
+        playerVolume = percent.coerceIn(0, 100)
+        player?.volume = playerVolume
+    }
     override fun seekTo(ms: Long) { player?.setTime(ms) }
     override fun seekToFraction(fraction: Float) { player?.position = fraction }
 

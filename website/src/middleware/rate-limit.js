@@ -145,6 +145,16 @@ const roomLimiter = rateLimit({
   handler: (req, res, next, options) => res.status(options.statusCode).json({ error: "Слишком много команд комнате." })
 });
 
+// События речи из Activity (приглушение): у каждого пульта в канале — начало и конец каждой фразы и повтор
+// «ещё говорит» раз в 10 с. Пять говорящих болтают без пауз — около сотни в минуту; лимит только от сбоев
+const speakingLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 600,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  handler: (req, res, next, options) => res.status(options.statusCode).json({ error: "Слишком много событий речи." })
+});
+
 // Вход из Discord Activity: ещё без ключа, а адрес у всех один — прокси Discord (адрес человека он не передаёт).
 // Каждый запуск Activity входит заново, поэтому удачные входы не считаются: лимит тратят только неудачные
 // (поддельный код, нет доступа), и обычные запуски у друзей его не съедают. Мусор вместо кода отсекается ещё
@@ -163,6 +173,7 @@ module.exports = {
   deviceAuthLimiter,
   devicePollLimiter,
   roomLimiter,
+  speakingLimiter,
   loginLimiter,
   apiLimiter,
   posterLimiter,

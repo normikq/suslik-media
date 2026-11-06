@@ -325,7 +325,7 @@ class Media3Engine(private val context: Context) : PlayerEngine {
         val reserve = Uri.parse(media.url).host == LOCAL_HOST
         // the back buffer and the audio sink's capabilities are fixed when the player is built
         if (exo != null && (builtViaReserve != reserve || builtPassthrough != passthrough)) release()
-        val p = exo ?: build(reserve).also { exo = it; view.player = it }
+        val p = exo ?: build(reserve).also { exo = it; view.player = it; it.volume = playerVolume / 100f }
         this.media = media
         extraAudio.clear()
         opened++
@@ -507,6 +507,11 @@ class Media3Engine(private val context: Context) : PlayerEngine {
     override val rate: Float get() = exo?.playbackParameters?.speed ?: 1f
     override fun setRate(rate: Float) { exo?.setPlaybackSpeed(rate) }
     override val volume: Int get() = ((exo?.volume ?: 0f) * 100).toInt()
+    private var playerVolume = 100
+    override fun setPlayerVolume(percent: Int) {
+        playerVolume = percent.coerceIn(0, 100)
+        exo?.volume = playerVolume / 100f
+    }
     /**
      * A far jump lands on the nearest keyframe: an exact one first fetched and decoded the film from the keyframe before
      * the target without showing it (18.10 journal, BDRip 16.9 Mbit/s on LTE at ~10: 131 such pictures ≈ 5.5 s of film,

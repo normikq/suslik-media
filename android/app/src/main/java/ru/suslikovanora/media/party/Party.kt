@@ -22,6 +22,8 @@ import ru.suslikovanora.media.core.party.PartyMember
 import ru.suslikovanora.media.core.party.PartyProtocol
 import ru.suslikovanora.media.core.party.PartyRoom
 import ru.suslikovanora.media.core.party.RoomUpdate
+import ru.suslikovanora.media.core.party.VoiceState
+import ru.suslikovanora.media.core.party.VoiceUpdate
 import ru.suslikovanora.media.net.Api
 import ru.suslikovanora.media.tr
 import java.util.concurrent.TimeUnit
@@ -54,6 +56,12 @@ object Party {
         private set
 
     val inRoom get() = roomId != null
+
+    /** Приглушение, когда говорят в Discord: своя настройка и кто говорит (voice_changed, settings_changed). */
+    private var voice = VoiceState()
+    /** Множитель громкости фильма: 1 — как есть, 0,9 — на 10 % тише (PlayerActivity плавно ведёт к нему плеер). */
+    var duckFactor by mutableStateOf(1.0)
+        private set
     /** Only the host picks the film, pauses and seeks for everyone (the server checks it too). */
     val isHost get() = room.isHost(myUserId, myKey)
     /** In a room, not its host: the library is closed, the room's film plays (see MainActivity). */
@@ -146,7 +154,7 @@ object Party {
         val id = roomId ?: return
         stopStream()
         roomId = null; startedByMe = null; followed = null
-        synchronized(this) { room = PartyRoom() }
+        synchronized(this) { room = PartyRoom(); voice = VoiceState(voice.duck); noteDuck() }
         reportedBuffering = false
         sentVariant = null
         scope.launch { runCatching { Api.post(PartyProtocol.leavePath(id), PartyProtocol.leaveBody(clientId)) } }
@@ -311,6 +319,8 @@ object Party {
                         while (isActive && roomId == id) {
                             val line = src.readUtf8Line() ?: break
                             PartyProtocol.parseEventLine(line)?.let(::onEvent)
+                            // после onEvent: init уже назвал свой id (чья настройка, говорю ли я)
+                            PartyProtocol.voiceOf(line)?.let(::onVoice)
                         }
                     }
                 } catch (e: Exception) {
@@ -334,11 +344,28 @@ object Party {
     // Under the same lock as apply(): «member joined/left» from the stream and the answer to my own action (outbox thread)
     // both rewrite [room]; without the lock one of the two changes could be lost
     @Synchronized private fun onEvent(e: PartyEvent) {
-        if (e is PartyEvent.Init) e.myUserId?.let { myUserId = it }
+        if (e is PartyEvent.Init) {
+            e.myUserId?.let { myUserId = it }
+            // новый поток (вход, переподключение): говорящих назовёт сам init
+            voice = VoiceState(voice.duck)
+        }
         if (e is PartyEvent.RefreshLibrary) {
             onRefreshLibrary?.invoke()
             return
         }
         room = room.reduce(e)
+    }
+
+    @Synchronized private fun onVoice(u: VoiceUpdate) {
+        voice = voice.apply(u, myUserId)
+        noteDuck()
+    }
+
+    private fun noteDuck() {
+        val f = if (inRoom) voice.factor(myUserId) else 1.0
+        if (f == duckFactor) return
+        duckFactor = f
+        // кто говорит, в журнал не пишем: только что громкость сменилась
+        AppLog.write("[party] voice duck: " + if (f < 1.0) "x%.2f".format(java.util.Locale.ROOT, f) else "off")
     }
 }

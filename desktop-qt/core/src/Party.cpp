@@ -11,6 +11,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QUuid>
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 
@@ -398,6 +399,75 @@ std::optional<RemoteTrackerRequest> PartyProtocol::remoteRequestOf(const QString
     if (r.kind == S("search") && !r.query.isEmpty()) return r;
     if (r.kind == S("add") && !r.topicId.isEmpty() && !r.target.isEmpty()) return r;
     return std::nullopt;
+}
+
+VoiceDuck PartyProtocol::parseVoiceDuck(const QJsonObject &o) {
+    VoiceDuck d;
+    if (o.value(S("enabled")).isBool()) d.enabled = o.value(S("enabled")).toBool();
+    const QJsonValue lv = o.value(S("level"));
+    if (lv.isDouble()) d.level = std::clamp(int(std::lround(lv.toDouble() / 10.0)) * 10, 0, 100);
+    return d;
+}
+
+namespace {
+std::optional<QStringList> speakersOf(const QJsonValue &voice) {
+    if (!voice.isObject()) return std::nullopt;
+    QStringList out;
+    for (const QJsonValue &v : voice.toObject().value(S("speakers")).toArray()) {
+        const QString id = v.toString();
+        if (!id.isEmpty() && !out.contains(id)) out << id;
+    }
+    return out;
+}
+} // namespace
+
+std::optional<VoiceUpdate> PartyProtocol::voiceOf(const QString &line) {
+    if (!line.startsWith(S("data:"))) return std::nullopt;
+    const auto doc = QJsonDocument::fromJson(line.mid(5).trimmed().toUtf8());
+    if (!doc.isObject()) return std::nullopt;
+    const QJsonObject msg = doc.object();
+    const QString event = json::str(msg, S("event"));
+    const QJsonValue data = msg.value(S("data"));
+    VoiceUpdate u;
+    if (event == S("voice_changed")) {
+        u.speakers = speakersOf(data);
+        if (!u.speakers) return std::nullopt;
+    } else if (event == S("settings_changed")) {
+        const QJsonObject d = data.toObject();
+        const QString who = json::str(d, S("for_user"));
+        if (who.isEmpty() || !d.value(S("voice_duck")).isObject()) return std::nullopt;
+        u.forUser = who;
+        u.duck = parseVoiceDuck(d.value(S("voice_duck")).toObject());
+    } else if (event == S("init")) {
+        u.speakers = speakersOf(msg.value(S("room")).toObject().value(S("voice")));
+        if (msg.value(S("my_voice_duck")).isObject()) u.duck = parseVoiceDuck(msg.value(S("my_voice_duck")).toObject());
+    } else if (event == S("state_changed")) {
+        u.speakers = speakersOf(data.toObject().value(S("voice")));
+    } else {
+        return std::nullopt;
+    }
+    if (!u.speakers && !u.duck) return std::nullopt;
+    return u;
+}
+
+bool VoiceState::apply(const VoiceUpdate &u, const std::optional<QString> &myUserId) {
+    bool changed = false;
+    if (u.duck && (!u.forUser || (myUserId && *u.forUser == *myUserId)) && duck != *u.duck) {
+        duck = *u.duck;
+        changed = true;
+    }
+    if (u.speakers && speakers != *u.speakers) {
+        speakers = *u.speakers;
+        changed = true;
+    }
+    return changed;
+}
+
+double VoiceState::factor(const std::optional<QString> &myUserId) const {
+    if (!duck.enabled || speakers.isEmpty()) return 1.0;
+    // Говорит сам владелец этого устройства — его фильм не глушим (даже если с ним говорит кто-то ещё)
+    if (myUserId && speakers.contains(*myUserId)) return 1.0;
+    return std::clamp(1.0 - duck.level / 100.0, 0.0, 1.0);
 }
 
 QString PartyProtocol::remoteReplyPath(const QString &roomId) {
