@@ -17,6 +17,7 @@
 #include <QUuid>
 
 #include <algorithm>
+#include <tuple>
 #include <atomic>
 #include <condition_variable>
 #include <cstring>
@@ -1149,6 +1150,7 @@ int BurstProxy::Impl::forgetRetired(const std::function<bool(const QString &)> &
         if (link.isEmpty() || keep(link)) continue;
         {
             std::lock_guard g(mapMutex);
+            if (s->retiredAt == 0) continue; // keep() долгий: фильм могли открыть снова (wrap() сбрасывает retiredAt)
             byUrl.remove(key);
             sources.remove(s->token);
         }
@@ -1198,16 +1200,7 @@ void BurstProxy::Impl::serve(qintptr fd) {
             status(s, "404 Not Found");
         } else {
             qint64 from = 0, to = -1;
-            if (range) {
-                QString r = *range;
-                if (r.startsWith(QLatin1String("bytes="))) r = r.mid(6);
-                const QStringList ab = r.split(QLatin1Char('-'));
-                bool ok = false;
-                const qint64 a = ab.value(0).toLongLong(&ok);
-                from = ok ? a : 0;
-                const qint64 z = ab.value(1).toLongLong(&ok);
-                to = ok ? z : -1;
-            }
+            if (range) std::tie(from, to) = BurstProxy::parseRange(*range, src->total);
             if (!src->serveTail(s, method, range.has_value(), from, to)) { // конец файла — из памяти, без окна
                 std::shared_ptr<Window> reading = src->windowFor(from); // мост передаёт чтение следующему окну
                 { std::lock_guard g(reading->lock); ++reading->readers; reading->lastReadAt = nowMs(); reading->cv.notify_all(); }
@@ -1358,6 +1351,19 @@ void BurstProxy::onScreenOn() {
     // Будим, только когда пул пуст: иначе возьмут мёртвые сокеты.
     auto impl = d.get();
     d->resetConnectionsAsync([impl] { for (auto &s : impl->allSources()) for (auto &w : s->windows()) w->wake(); });
+}
+
+std::pair<qint64, qint64> BurstProxy::parseRange(const QString &range, qint64 total) {
+    QString r = range.trimmed();
+    if (r.startsWith(QLatin1String("bytes="))) r = r.mid(6);
+    const QStringList ab = r.split(QLatin1Char('-'));
+    bool okA = false, okB = false;
+    const qint64 a = ab.value(0).trimmed().toLongLong(&okA);
+    const qint64 b = ab.value(1).trimmed().toLongLong(&okB);
+    if (!okA && okB)
+        return (b > 0 && total > 0) ? std::pair<qint64, qint64>{std::max<qint64>(0, total - b), total - 1}
+                                    : std::pair<qint64, qint64>{0, -1};
+    return {okA ? a : 0, okB ? b : -1};
 }
 
 std::pair<qint64, qint64> BurstProxy::sideReserve(qint64 total, qint64 filmMs, qint64 cap) {

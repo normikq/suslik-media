@@ -406,6 +406,17 @@ private slots:
         QCOMPARE(BurstProxy::sideReserve(42 * mb, 0, ring), (std::pair<qint64, qint64>{2 * mb, 4 * mb}));
     }
 
+    void rangeParsing() {
+        using P = std::pair<qint64, qint64>;
+        QCOMPARE(BurstProxy::parseRange(S("bytes=100-199"), 1000), (P{100, 199}));
+        QCOMPARE(BurstProxy::parseRange(S("bytes=100-"), 1000), (P{100, -1}));
+        QCOMPARE(BurstProxy::parseRange(S("bytes=-512"), 1000), (P{488, 999}));   // последние 512 байт
+        QCOMPARE(BurstProxy::parseRange(S("bytes=-5000"), 1000), (P{0, 999}));    // больше файла - весь файл
+        QCOMPARE(BurstProxy::parseRange(S("bytes=-512"), -1), (P{0, -1}));        // размер неизвестен - не кусок с начала
+        QCOMPARE(BurstProxy::parseRange(S("bytes=-0"), 1000), (P{0, -1}));
+        QCOMPARE(BurstProxy::parseRange(S("garbage"), 1000), (P{0, -1}));
+    }
+
     void slowNetworkIsKnownWhileTheFirstBurstStillRuns() {
         origin->slowOrigin = true;
         const QString local = proxy->wrap(url);

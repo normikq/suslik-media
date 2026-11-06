@@ -232,7 +232,7 @@ object BurstProxy {
         }
         if (sources[token]?.broken == true) return url // this stream did not work through the proxy: go direct
         val name = url.substringBefore('?').substringAfterLast('/').ifBlank { "stream" }
-        return "http://127.0.0.1:${s.localPort}/s/$token/${URLEncoder.encode(java.net.URLDecoder.decode(name, "UTF-8"), "UTF-8").replace("+", "%20")}"
+        return "http://127.0.0.1:${s.localPort}/s/$token/${URLEncoder.encode(runCatching { java.net.URLDecoder.decode(name, "UTF-8") }.getOrDefault(name), "UTF-8").replace("+", "%20")}"
     }
 
     /**
@@ -243,6 +243,18 @@ object BurstProxy {
      * Not the measured reading speed: Media3 reads a merged voice-over far ahead of playback. Unknown length → the
      * probe's 4 MB, as before.
      */
+    /**
+     * `Range` header → (from, to); to = -1 means "to the end". A suffix range `bytes=-N` is the last N bytes: needs the
+     * file size ([total]); while it is unknown the whole file is served instead of a wrong piece from the start.
+     */
+    internal fun parseRange(range: String?, total: Long): Pair<Long, Long> {
+        val r = range?.trim()?.removePrefix("bytes=")?.split('-') ?: return 0L to -1L
+        val a = r.getOrNull(0)?.trim()?.toLongOrNull()
+        val b = r.getOrNull(1)?.trim()?.toLongOrNull()
+        if (a == null && b != null) return if (b > 0 && total > 0) maxOf(0L, total - b) to total - 1 else 0L to -1L
+        return (a ?: 0L) to (b ?: -1L)
+    }
+
     internal fun sideReserve(total: Long, filmMs: Long, cap: Long): Pair<Long, Long> {
         if (total <= 0 || filmMs <= 0) return PROBE_AHEAD / 2 to PROBE_AHEAD
         val rate = total * 1000.0 / filmMs
@@ -325,7 +337,8 @@ object BurstProxy {
             val src = sources[token] ?: continue
             if (src.retiredAt == 0L) continue // playing now
             val link = MirrorLink.param(key, "link").orEmpty()
-            if (link.isNotEmpty() && !keep(link)) { byUrl.remove(key); sources.remove(token)?.close(); n++ }
+            // keep() can take a while: the film may have been opened again meanwhile (wrap() clears retiredAt) — look again
+            if (link.isNotEmpty() && !keep(link) && src.retiredAt != 0L) { byUrl.remove(key); sources.remove(token)?.close(); n++ }
         }
         return n
     }
@@ -616,8 +629,8 @@ object BurstProxy {
         // Changed under [lock]; volatile because some readers look without it (windowAt, keptMb, the info panel).
         @Volatile var written = 0L  // bytes from [start] available (contiguous)
         @Volatile var readPos = start // where the player reads now
-        var sequential = 0L         // bytes read in order (decides probe → burst)
-        var consumedTotal = 0L      // bytes the player has taken from this window (decides when the short start-up reserve ends)
+        @Volatile var sequential = 0L // bytes read in order (decides probe → burst)
+        @Volatile var consumedTotal = 0L // bytes the player has taken from this window (decides when the short start-up reserve ends)
         @Volatile var lastReadAt = System.currentTimeMillis()
         @Volatile var eof = false
         @Volatile var error: String? = null
@@ -1060,11 +1073,7 @@ object BurstProxy {
                 val src = sources[token]
                 val out = s.getOutputStream()
                 if (src == null || fromBrowser || (method != "GET" && method != "HEAD")) { status(out, "404 Not Found"); return }
-                var from = 0L; var to = -1L
-                range?.removePrefix("bytes=")?.split('-')?.let { r ->
-                    from = r.getOrNull(0)?.toLongOrNull() ?: 0L
-                    to = r.getOrNull(1)?.toLongOrNull() ?: -1L
-                }
+                val (from, to) = parseRange(range, src.total)
                 if (src.serveTail(out, method, range, from, to)) return // the end of the file: from memory, no window
                 val reading = arrayOf(src.windowFor(from)) // the window read now (a bridge hands over to the next one)
                 reading[0].let { w -> synchronized(w.lock) { w.readers++; w.lastReadAt = System.currentTimeMillis(); w.lock.notifyAll() } }

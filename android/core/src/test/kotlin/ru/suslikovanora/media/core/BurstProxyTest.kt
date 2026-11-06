@@ -185,6 +185,17 @@ class BurstProxyTest {
         assertEquals(16.78, BurstProxy.bitrateMbit(url)!!, 0.05)
     }
 
+    @Test fun rangeParsing() {
+        assertEquals(100L to 199L, BurstProxy.parseRange("bytes=100-199", 1000))
+        assertEquals(100L to -1L, BurstProxy.parseRange("bytes=100-", 1000))
+        assertEquals(488L to 999L, BurstProxy.parseRange("bytes=-512", 1000))   // the last 512 bytes
+        assertEquals(0L to 999L, BurstProxy.parseRange("bytes=-5000", 1000))    // longer than the file: all of it
+        assertEquals(0L to -1L, BurstProxy.parseRange("bytes=-512", -1))        // size unknown: not a piece from the start
+        assertEquals(0L to -1L, BurstProxy.parseRange("bytes=-0", 1000))
+        assertEquals(0L to -1L, BurstProxy.parseRange(null, 1000))
+        assertEquals(0L to -1L, BurstProxy.parseRange("garbage", 1000))
+    }
+
     @Test fun playingVoiceOverGathersMinutesOfItselfNotOfTheFilm() {
         val mb = 1L shl 20
         val ring = 12 * mb                                              // a voice-over's ring at the default 96 MB
