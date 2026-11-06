@@ -220,7 +220,7 @@ void Party::enter(const RoomUpdate &u) {
     m_outbox.clear();
     // Свежий снимок: seq другой комнаты не должен прятать состояние этой
     m_room = PartyRoom().merge(u);
-    m_voice.speakers.clear();
+    m_voice.clearSpeakers();
     // Вход по коду не включает фильм, который уже в комнате: его откроет «Смотреть вместе»; следующий ведущего — сам
     m_followed = m_room.file ? m_room.file->key : QString();
     const QString id = *u.id;
@@ -522,11 +522,30 @@ void Party::onRemoteRequest(const RemoteTrackerRequest &rq) {
 }
 
 void Party::onVoice(const VoiceUpdate &u) {
-    if (m_voice.apply(u, m_myUserId)) noteDuck();
+    m_voice.apply(u, m_myUserId, QDateTime::currentMSecsSinceEpoch());
+    noteDuck();
+    scheduleVoice();
+}
+
+// Кто-то говорит, но порог (min_ms) ещё не набран: проверить, когда наберётся
+void Party::scheduleVoice() {
+    const qint64 due = m_voice.nextDueMs(QDateTime::currentMSecsSinceEpoch());
+    if (due < 0) { m_voiceTimer.stop(); return; }
+    if (!m_voiceTimerWired) {
+        m_voiceTimerWired = true;
+        m_voiceTimer.setSingleShot(true);
+        connect(&m_voiceTimer, &QTimer::timeout, this, [this] {
+            m_voice.tick(QDateTime::currentMSecsSinceEpoch());
+            noteDuck();
+            scheduleVoice();
+        });
+    }
+    m_voiceTimer.start(int(std::min<qint64>(due, 60000)) + 1);
 }
 
 void Party::resetVoice() {
-    m_voice.speakers.clear();
+    m_voice.clearSpeakers();
+    m_voiceTimer.stop();
     noteDuck();
 }
 

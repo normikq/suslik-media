@@ -231,8 +231,8 @@ router.get("/api/activity/voice-duck", requireLogin, apiLimiter, (req, res) => {
 });
 router.post("/api/activity/voice-duck", requireLogin, roomLimiter, (req, res) => {
   if (!req.activity) return res.status(403).json({ error: "Только из Discord Activity." });
-  const saved = setVoiceDuck(req.user.id, { enabled: req.body?.enabled, level: req.body?.level });
-  if (!saved) return res.status(400).json({ error: "Уровень — от 0 до 100 с шагом 10." });
+  const saved = setVoiceDuck(req.user.id, { enabled: req.body?.enabled, level: req.body?.level, min_ms: req.body?.min_ms });
+  if (!saved) return res.status(400).json({ error: "Уровень — от 0 до 100 % с шагом 10, задержка — от 0 до 2000 мс с шагом 100." });
   rooms.notifyUserSettings(req.user.id, { voice_duck: saved });
   res.json({ ok: true, voice_duck: saved });
 });
@@ -298,6 +298,11 @@ router.post("/api/activity/rooms/:id/roulette", requireLogin, roomLimiter, (req,
   reply(res, rooms.spinRoulette(req.params.id, req.user, rooms.spinMs(req.body?.seconds))));
 router.post("/api/activity/rooms/:id/roulette/cancel", requireLogin, roomLimiter, (req, res) =>
   reply(res, rooms.cancelSpin(req.params.id, req.user)));
+// Ведущий: передать комнату тому, кто в ней сейчас; закрыть комнату (код перестаёт работать)
+router.post("/api/activity/rooms/:id/host", requireLogin, roomLimiter, (req, res) =>
+  reply(res, rooms.transferHost(req.params.id, req.user, String(req.body?.user_id ?? ""))));
+router.post("/api/activity/rooms/:id/close", requireLogin, roomLimiter, (req, res) =>
+  reply(res, rooms.closeRoom(req.params.id, req.user)));
 
 // «Позвать в чат»: бот пишет в текстовый чат голосового канала код комнаты и ссылку /join/<код>.
 // Бот не настроен или не может писать в канал — { fallback: true, link }: страница копирует ссылку сама.

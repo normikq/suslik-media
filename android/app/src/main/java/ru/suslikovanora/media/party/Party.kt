@@ -58,7 +58,9 @@ object Party {
     val inRoom get() = roomId != null
 
     /** Приглушение, когда говорят в Discord: своя настройка и кто говорит (voice_changed, settings_changed). */
-    private var voice = VoiceState()
+    private val voice = VoiceState()
+    /** Ждём, когда фраза наберёт порог min_ms (короткий шорох не глушит). */
+    private var voiceTimer: Job? = null
     /** Множитель громкости фильма: 1 — как есть, 0,9 — на 10 % тише (PlayerActivity плавно ведёт к нему плеер). */
     var duckFactor by mutableStateOf(1.0)
         private set
@@ -154,7 +156,7 @@ object Party {
         val id = roomId ?: return
         stopStream()
         roomId = null; startedByMe = null; followed = null
-        synchronized(this) { room = PartyRoom(); voice = VoiceState(voice.duck); noteDuck() }
+        synchronized(this) { room = PartyRoom(); voice.clearSpeakers(); voiceTimer?.cancel(); noteDuck() }
         reportedBuffering = false
         sentVariant = null
         scope.launch { runCatching { Api.post(PartyProtocol.leavePath(id), PartyProtocol.leaveBody(clientId)) } }
@@ -347,7 +349,7 @@ object Party {
         if (e is PartyEvent.Init) {
             e.myUserId?.let { myUserId = it }
             // новый поток (вход, переподключение): говорящих назовёт сам init
-            voice = VoiceState(voice.duck)
+            voice.clearSpeakers()
         }
         if (e is PartyEvent.RefreshLibrary) {
             onRefreshLibrary?.invoke()
@@ -357,8 +359,24 @@ object Party {
     }
 
     @Synchronized private fun onVoice(u: VoiceUpdate) {
-        voice = voice.apply(u, myUserId)
+        voice.apply(u, myUserId, android.os.SystemClock.elapsedRealtime())
         noteDuck()
+        scheduleVoice()
+    }
+
+    // Кто-то говорит, но порог ещё не набран: проверить, когда наберётся
+    @Synchronized private fun scheduleVoice() {
+        voiceTimer?.cancel()
+        val due = voice.nextDueMs(android.os.SystemClock.elapsedRealtime())
+        if (due < 0) return
+        voiceTimer = scope.launch {
+            delay(due.coerceAtMost(60_000L) + 1)
+            synchronized(this@Party) {
+                voice.tick(android.os.SystemClock.elapsedRealtime())
+                noteDuck()
+            }
+            scheduleVoice()
+        }
     }
 
     private fun noteDuck() {

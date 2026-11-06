@@ -140,6 +140,7 @@ private:
     void resetVoice();
     /// duckFactor изменился с прошлого раза — сказать плееру.
     void noteDuck();
+    void scheduleVoice();
     void action(const QJsonObject &body);
     void pump();
     void setRoom(const core::PartyRoom &r) { m_room = r; emit changed(); }
@@ -151,6 +152,8 @@ private:
     core::PartyRoom m_room;
     core::VoiceState m_voice;
     double m_lastDuck = 1.0;
+    QTimer m_voiceTimer;
+    bool m_voiceTimerWired = false;
     std::optional<QString> m_roomId;
     std::optional<QString> m_myUserId;
     const QString m_clientId;

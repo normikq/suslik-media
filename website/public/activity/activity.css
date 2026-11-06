@@ -209,7 +209,8 @@ button { font: inherit; color: inherit; }
 .check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); cursor: pointer; }
 .check input { accent-color: var(--electric); width: 16px; height: 16px; }
 /* «Приглушение»: ползунок уровня и подпись */
-.duck-row { margin-top: 10px; align-items: center; gap: 10px; }
+.duck-field { margin-top: 12px; }
+.duck-row { margin-top: 4px; align-items: center; gap: 10px; }
 .duck-range { flex: 1; min-width: 0; accent-color: var(--electric); }
 .duck-range:disabled { opacity: 0.5; }
 .duck-value { min-width: 96px; font-size: 13px; color: var(--muted); text-align: right; }
