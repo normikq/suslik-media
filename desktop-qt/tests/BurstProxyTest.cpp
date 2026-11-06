@@ -389,6 +389,23 @@ private slots:
         QVERIFY(qAbs(*proxy->bitrateMbit(url) - 16.78) < 0.05);
     }
 
+    void playingVoiceOverGathersMinutesOfItselfNotOfTheFilm() {
+        const qint64 mb = 1 << 20;
+        const qint64 ring = 12 * mb; // кольцо озвучки при запасе 96 МБ
+        // журнал 06.11: OnWave AAC 2.0, 42 МБ на серию 1813 с (~185 кбит/с) → ~2 мин ≈ 2,8 МБ, а не 9 МБ
+        const auto [low, high] = BurstProxy::sideReserve(42 * mb, 1813000, ring);
+        QVERIFY2(high >= 2 * mb && high <= 3 * mb, qPrintable(QString::number(high)));
+        QVERIFY2(low >= mb / 2 && low <= mb, qPrintable(QString::number(low)));
+        // AC3 5.1, 640 кбит/с: ~9,6 МБ помещаются в кольцо
+        const qint64 ac3 = BurstProxy::sideReserve(80000LL * 2700, 2700000, ring).second;
+        QVERIFY2(ac3 >= 9 * mb && ac3 <= ring * 7 / 8, qPrintable(QString::number(ac3)));
+        // маленький файл (субтитры) — всё равно 1 МБ; огромный — не больше 7/8 кольца
+        QCOMPARE(BurstProxy::sideReserve(200000, 1813000, ring).second, mb);
+        QCOMPARE(BurstProxy::sideReserve(2000 * mb, 1813000, ring).second, ring * 7 / 8);
+        // длина ещё не известна: 4 МБ пробы, как раньше
+        QCOMPARE(BurstProxy::sideReserve(42 * mb, 0, ring), (std::pair<qint64, qint64>{2 * mb, 4 * mb}));
+    }
+
     void slowNetworkIsKnownWhileTheFirstBurstStillRuns() {
         origin->slowOrigin = true;
         const QString local = proxy->wrap(url);
