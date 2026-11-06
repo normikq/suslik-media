@@ -797,18 +797,28 @@
     var party = SM.party;
     if (!party || !party.inRoom()) return;
     var keys = c.opts.entries.map(function (en) { return model.watchKey(c.opts.magnet.id, en.file); });
+    // Время комнаты — шкала раздачи ведущего: гость на раздаче другой длины смотрит со сдвигом (partycore timelineShiftMs)
+    function shift() { return party.shiftMs(c.dur || 0); }
     var sp = {
-      get timeMs() { return c.seekTarget != null ? c.seekTarget : c.pos; },
+      get timeMs() { return (c.seekTarget != null ? c.seekTarget : c.pos) - shift(); },
       get busy() { return c.seeking; },
-      get engineMs() { return c.pos; },
+      get engineMs() { return c.pos - shift(); },
       get seekStamp() { return c.seekStamp; },
       get paused() { return c.paused; },
       get running() { return c.prepared && !c.loading && !c.paused; },
       applyPaused: function (p) { if (cur === c && p !== c.paused) togglePause(); },
-      seekTo: function (ms) { if (cur === c) seekTo(c, ms); }
+      seekTo: function (ms) { if (cur === c) seekTo(c, Math.max(0, ms + shift())); }
     };
+    var loggedShift = 0;
     c.party = party.attach({
-      player: function () { return cur === c && c.prepared ? sp : null; },
+      player: function () {
+        if (cur !== c || !c.prepared) return null;
+        // Длина своей раздачи: по ней гости выравнивают время (у ведущего сервер сдвигает комнату при смене раздачи)
+        if (c.dur > 0 && c.key) party.reportVariant(c.key, c.dur);
+        var s = shift();
+        if (s !== loggedShift) { loggedShift = s; note(s === 0 ? 'my version is on the host\'s timeline' : 'my version is ' + Math.abs(s) + ' ms ' + (s > 0 ? 'longer' : 'shorter') + ' than the host\'s: time shifted'); }
+        return sp;
+      },
       key: function () { return c.key; },
       keys: function () { return keys; },
       title: function () { var en = c.opts.entries && c.opts.entries[c.opts.index]; return (en && en.room) || c.opts.title; },

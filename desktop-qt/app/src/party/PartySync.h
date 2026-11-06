@@ -30,6 +30,8 @@ private:
     void seekTo(qint64 ms) override;
     void setRate(float rate) override;
 
+    /// Своя раздача длиннее раздачи ведущего на столько мс (гостю; ведущему — 0): см. core::timelineShiftMs.
+    qint64 shiftMs() const;
     void onOpen();
     void onEntry();
     void onRoom();
@@ -44,6 +46,7 @@ private:
     QString m_roomKey;          ///< фильм комнаты в прошлый раз (смена — onRoom)
     QString m_episodeNotice;    ///< ведущий включил другую серию: сказать, когда она пойдёт
     bool m_showedRoomFilm = false;
+    qint64 m_loggedShift = 0;   ///< сдвиг, о котором уже написали в журнал
 };
 
 } // namespace suslik::app

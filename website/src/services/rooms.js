@@ -514,6 +514,23 @@ setInterval(sweepRooms, 5 * 60 * 1000).unref?.();
 
 const VARIANT_KEY_RE = /^\d{1,20}\|.{1,900}$/s;
 
+// Раздачи одного фильма разной длины: лишнее обычно в начале (заставка релиз-группы, логотипы), поэтому место на
+// своей раздаче = место ведущего + (своя длина − длина ведущего). Меньше 1,5 с — хвост кадров, не сдвиг; больше 2 мин —
+// другой монтаж, разницей длин его не выровнять. Те же числа — timelineShiftMs в android/core и desktop-qt/core.
+const SHIFT_MIN_MS = 1500;
+const SHIFT_MAX_MS = 120 * 1000;
+function timelineShiftMs(myDurationMs, hostDurationMs) {
+  if (!(myDurationMs > 0) || !(hostDurationMs > 0)) return 0;
+  const d = Math.round(myDurationMs - hostDurationMs);
+  return Math.abs(d) >= SHIFT_MIN_MS && Math.abs(d) <= SHIFT_MAX_MS ? d : 0;
+}
+
+// Длина раздачи из запроса, мс: от 1 с до 24 ч, иначе null
+function durationOf(raw) {
+  const d = Math.round(Number(raw));
+  return Number.isFinite(d) && d >= 1000 && d <= 24 * 3600 * 1000 ? d : null;
+}
+
 // Ключ варианта файла комнаты: формы "<adId>|<путь>"; если у файла есть список пресетов — только из него (или сам файл).
 function variantKeyFor(file, raw) {
   const key = typeof raw === "string" ? raw.trim() : "";
@@ -561,17 +578,42 @@ function handleRoomAction(roomId, user, action) {
     return { ok: true, room: getRoomPublicData(room) };
   }
 
-  // Смена пресета качества участником (независимый выбор потока)
+  // Смена пресета качества участником (независимый выбор потока). variant — описание своей раздачи, которой нет в
+  // списке ведущего (гость добавил её сам): она дописывается в список комнаты. duration_ms — длина раздачи участника:
+  // по ней гости на других раздачах сдвигают своё время (timelineShiftMs в клиентах)
   if (action.type === "variant_change") {
     const { member: m, error } = actingMember(room, user, action);
     if (error) return { ok: false, error };
     if (m) {
-      const vk = variantKeyFor(room.file, action.variant_key);
+      let changed = false;
+      let vk = variantKeyFor(room.file, action.variant_key);
+      if (!vk && room.file && Array.isArray(room.file.variants) && action.variant && typeof action.variant === "object") {
+        const own = cleanVariant({ ...action.variant, key: action.variant_key });
+        if (own && VARIANT_KEY_RE.test(own.key) && room.file.variants.length < MAX_VARIANTS) {
+          room.file.variants = [...room.file.variants, own];
+          vk = own.key;
+          changed = true;
+        }
+      }
       if (!vk) return { ok: false, error: "Такого варианта у этого фильма нет." };
       if (m.variant_key !== vk) {
         m.variant_key = vk;
-        broadcast(roomId, "state_changed", getRoomPublicData(room));
+        changed = true;
       }
+      const d = durationOf(action.duration_ms);
+      if (d && m.duration_ms !== d) {
+        // Ведущий перешёл на раздачу другой длины: время комнаты переезжает на её шкалу (лишнее — в начале раздачи),
+        // и все, ведущий тоже, перематываются одной командой
+        const shift = m.duration_ms ? timelineShiftMs(d, m.duration_ms) : 0;
+        if (shift !== 0 && isRoomHost(room, user, action.client_id) && room.file) {
+          room.state.pos = Math.max(0, getEstimatedPos(room.state) + shift / 1000);
+          room.state.anchor_server_ms = Date.now();
+          room.state.seq++;
+        }
+        m.duration_ms = d;
+        changed = true;
+      }
+      if (changed) broadcast(roomId, "state_changed", getRoomPublicData(room));
     }
     return { ok: true, room: getRoomPublicData(room) };
   }
@@ -636,7 +678,7 @@ function handleRoomAction(roomId, user, action) {
       // Новый фильм: прежние загрузки не в счёт
       state.waiting = false;
       // Ключ качества прежнего фильма никому не подходит: у остальных он сбрасывается, клиент пришлёт свой заново
-      for (const m of room.members.values()) { m.buffering = false; m.buffering_since = 0; m.variant_key = null; }
+      for (const m of room.members.values()) { m.buffering = false; m.buffering_since = 0; m.variant_key = null; m.duration_ms = null; }
       const actor = action.client_id ? room.members.get(action.client_id) : null;
       if (actor) {
         if (!file) {
@@ -1064,6 +1106,7 @@ module.exports = {
   sweepRooms,
   promoteIfHostGone,
   handleRoomAction,
+  timelineShiftMs,
   getOrCreateChannelRoom,
   addWatcher,
   touchWatcher,

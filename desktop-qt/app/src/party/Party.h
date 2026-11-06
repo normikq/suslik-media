@@ -99,6 +99,11 @@ public:
     void seek(qint64 posMs) override { if (canSeek()) action(core::PartyProtocol::seek(posMs)); }
     void reportBuffering(bool loading) override;
     void sendVariantChange(const QString &variantKey);
+    /// Свой вариант и длина его раздачи, когда плеер её узнал (PartySync): тот же ключ и длина повторно не шлются.
+    /// variant — описание раздачи, которой нет в списке комнаты (гость добавил свою).
+    void reportVariant(const QString &variantKey, qint64 durationMs, const core::PartyVariant *variant);
+    /// Длина раздачи ведущего, мс; 0 — ещё не знаем.
+    qint64 hostDurationMs() const;
 
 signals:
     void changed();
@@ -137,6 +142,9 @@ private:
     QString m_notice, m_followed;
     std::optional<QString> m_startedByMe;
     bool m_reportedBuffering = false;
+    /// Что уже сообщили комнате о своём варианте: ключ, длина и фильм комнаты в тот момент.
+    QString m_sentVariant, m_sentVariantFile;
+    qint64 m_sentDuration = 0;
     bool m_busy = false;
     QString m_error;
 

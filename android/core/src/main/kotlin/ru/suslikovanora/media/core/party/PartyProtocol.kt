@@ -17,8 +17,21 @@ data class PartyMember(
     val name: String,
     val buffering: Boolean = false,
     val avatar: String? = null,
-    val variantKey: String? = null
+    val variantKey: String? = null,
+    /** Длина раздачи, которую участник смотрит (мс): по ней гости на других раздачах сдвигают время. */
+    val durationMs: Long? = null
 )
+
+/** Раздачи одного фильма разной длины: лишнее обычно в начале (заставка релиз-группы), поэтому место на своей
+ *  раздаче = место ведущего + сдвиг, сдвиг = своя длина − длина ведущего. Меньше 1,5 с — хвост кадров, больше 2 мин —
+ *  другой монтаж: тогда 0. Те же числа у сервера (rooms.js) и ПК (core/Party.h). */
+const val TIMELINE_SHIFT_MIN_MS = 1500L
+const val TIMELINE_SHIFT_MAX_MS = 120_000L
+fun timelineShiftMs(myDurationMs: Long, hostDurationMs: Long): Long {
+    if (myDurationMs <= 0 || hostDurationMs <= 0) return 0
+    val d = myDurationMs - hostDurationMs
+    return if (kotlin.math.abs(d) in TIMELINE_SHIFT_MIN_MS..TIMELINE_SHIFT_MAX_MS) d else 0
+}
 
 data class PartyVariant(
     val key: String,
@@ -246,8 +259,22 @@ object PartyProtocol {
     fun pause(posMs: Long): JSONObject = JSONObject().put("type", "pause").put("pos", posMs / 1000.0)
     fun seek(posMs: Long): JSONObject = JSONObject().put("type", "seek").put("pos", posMs / 1000.0)
     fun buffering(loading: Boolean): JSONObject = JSONObject().put("type", "buffering").put("buffering", loading)
-    fun variantChange(variantKey: String): JSONObject =
-        JSONObject().put("type", "variant_change").put("variant_key", variantKey)
+    /** Свой вариант качества; [durationMs] > 0 — длина раздачи, [variant] — описание (своей раздачи нет у ведущего). */
+    fun variantChange(variantKey: String, durationMs: Long = 0, variant: PartyVariant? = null): JSONObject {
+        val obj = JSONObject().put("type", "variant_change").put("variant_key", variantKey)
+        if (durationMs > 0) obj.put("duration_ms", durationMs)
+        if (variant != null) obj.put("variant", variantJson(variant))
+        return obj
+    }
+    fun variantJson(v: PartyVariant): JSONObject = JSONObject()
+        .put("key", v.key)
+        .put("label", v.label)
+        .put("quality", v.quality)
+        .put("audio", v.audio)
+        .put("bitrate", v.bitrate)
+        .put("offset_ms", v.offsetMs)
+        .put("score", v.score)
+        .put("hardware_flags", JSONArray(v.hardwareFlags))
     fun changeFile(f: PartyFileRef): JSONObject = JSONObject().put("type", "change_file").put("file", fileJson(f))
     /** Ведущий закрыл фильм: у гостей плеер тоже закрывается (сервер ставит `room.file = null`). */
     fun closeFile(): JSONObject = JSONObject().put("type", "change_file").put("file", JSONObject.NULL)
@@ -259,18 +286,7 @@ object PartyProtocol {
         f.edition?.let { obj.put("edition", it) }
         if (f.variants.isNotEmpty()) {
             val arr = JSONArray()
-            for (v in f.variants) {
-                arr.put(JSONObject()
-                    .put("key", v.key)
-                    .put("label", v.label)
-                    .put("quality", v.quality)
-                    .put("audio", v.audio)
-                    .put("bitrate", v.bitrate)
-                    .put("offset_ms", v.offsetMs)
-                    .put("score", v.score)
-                    .put("hardware_flags", JSONArray(v.hardwareFlags))
-                )
-            }
+            for (v in f.variants) arr.put(variantJson(v))
             obj.put("variants", arr)
         }
         return obj
@@ -338,7 +354,8 @@ object PartyProtocol {
     fun parseMember(m: JSONObject): PartyMember = PartyMember(
         m.optString("key"), m.optString("id"), m.optString("name").ifBlank { "Гость" },
         m.optBoolean("buffering"), m.optString("avatar").takeIf { it.startsWith("https://") },
-        m.optString("variant_key").takeIf { it.isNotBlank() }
+        m.optString("variant_key").takeIf { it.isNotBlank() },
+        m.optLong("duration_ms", 0L).takeIf { it > 0 }
     )
 
     private fun parseMembers(arr: JSONArray): List<PartyMember> =

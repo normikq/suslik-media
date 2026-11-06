@@ -51,8 +51,17 @@ struct PartyMember {
     bool buffering = false;
     std::optional<QString> avatar;
     std::optional<QString> variantKey;
+    /// Длина раздачи, которую участник смотрит (мс): по ней гости на других раздачах сдвигают время.
+    std::optional<qint64> durationMs;
     bool operator==(const PartyMember &o) const = default;
 };
+
+/// Раздачи одного фильма разной длины: лишнее обычно в начале (заставка релиз-группы), поэтому место на своей
+/// раздаче = место ведущего + сдвиг, сдвиг = своя длина − длина ведущего. Меньше 1,5 с — хвост кадров, больше 2 мин —
+/// другой монтаж: тогда 0. Те же числа у сервера (rooms.js) и Kotlin (PartyProtocol.kt).
+inline constexpr qint64 TIMELINE_SHIFT_MIN_MS = 1500;
+inline constexpr qint64 TIMELINE_SHIFT_MAX_MS = 120 * 1000;
+qint64 timelineShiftMs(qint64 myDurationMs, qint64 hostDurationMs);
 
 struct PartyVariant {
     QString key;
@@ -183,7 +192,9 @@ public:
     static QJsonObject pause(qint64 posMs);
     static QJsonObject seek(qint64 posMs);
     static QJsonObject buffering(bool loading);
-    static QJsonObject variantChange(const QString &variantKey);
+    /// Свой вариант качества; durationMs > 0 — длина раздачи, variant — описание (своей раздачи нет у ведущего).
+    static QJsonObject variantChange(const QString &variantKey, qint64 durationMs = 0, const PartyVariant *variant = nullptr);
+    static QJsonObject variantJson(const PartyVariant &v);
     static QJsonObject changeFile(const PartyFileRef &f);
     /// Ведущий закрыл фильм: у гостей плеер тоже закрывается.
     static QJsonObject closeFile();

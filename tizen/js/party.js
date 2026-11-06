@@ -84,7 +84,7 @@
     if (!id) return;
     stopStream();
     party.roomId = null; party.startedByMe = null; party.room = R.empty();
-    reported = false; outbox = [];
+    reported = false; sentVariant = null; outbox = [];
     api.post(P.leavePath(id), P.clientBody(clientId)).catch(function () {});
     changed();
   };
@@ -93,7 +93,7 @@
     stopStream();
     party.notice = null;
     party.clock.reset();
-    reported = false; outbox = [];
+    reported = false; sentVariant = null; outbox = [];
     party.room = R.merge(R.empty(), update);
     party.roomId = update.id;
     // Вход по коду не включает фильм, который уже в комнате: его открывает «Смотреть вместе», следующий фильм ведущего — сам (app.js)
@@ -151,6 +151,29 @@
   party.sendVariantChange = function (variantKey) {
     if (!party.roomId) return;
     send(P.variantChange(variantKey));
+  };
+
+  // Что уже сообщили комнате о своём варианте: «ключ|длина|фильм комнаты»
+  var sentVariant = null;
+  /** Свой вариант и длина его раздачи, когда плеер её узнал: тот же ключ и длина повторно не шлются. */
+  party.reportVariant = function (variantKey, durationMs) {
+    if (!party.roomId || !variantKey || !(durationMs > 0)) return;
+    var f = party.room.file;
+    var stamp = variantKey + '|' + Math.round(durationMs) + '|' + (f ? f.key : '');
+    if (stamp === sentVariant) return;
+    sentVariant = stamp;
+    send(P.variantChange(variantKey, durationMs));
+  };
+  /** Длина раздачи ведущего, мс; 0 — ещё не знаем. */
+  party.hostDurationMs = function () {
+    var ms = party.room.members || [];
+    for (var i = 0; i < ms.length; i++) if (R.isCreator(party.room, ms[i]) && ms[i].durationMs) return ms[i].durationMs;
+    return 0;
+  };
+  /** Своя раздача длиннее раздачи ведущего на столько мс (гостю; ведущему — 0). */
+  party.shiftMs = function (myDurationMs) {
+    if (!party.inRoom() || party.isHost()) return 0;
+    return core.timelineShiftMs(myDurationMs, party.hostDurationMs());
   };
 
   function action(body) { if (party.roomId && party.canControl()) send(body); }

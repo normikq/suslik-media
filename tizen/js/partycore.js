@@ -205,8 +205,19 @@
     return {
       key: String(m.key || ''), userId: String(m.id || ''), name: nonEmpty(m.name) || 'Гость', buffering: m.buffering === true,
       avatar: typeof m.avatar === 'string' && m.avatar.indexOf('https://') === 0 ? m.avatar : null,
-      variantKey: nonEmpty(m.variant_key)
+      variantKey: nonEmpty(m.variant_key),
+      durationMs: Number(m.duration_ms) > 0 ? Number(m.duration_ms) : null
     };
+  }
+
+  // Раздачи одного фильма разной длины: лишнее обычно в начале (заставка релиз-группы), поэтому место на своей
+  // раздаче = место ведущего + сдвиг, сдвиг = своя длина − длина ведущего. Меньше 1,5 с — хвост кадров, больше 2 мин —
+  // другой монтаж: тогда 0. Те же числа у сервера (rooms.js), ПК (core/Party.h) и Android (PartyProtocol.kt).
+  var SHIFT_MIN_MS = 1500, SHIFT_MAX_MS = 120000;
+  function timelineShiftMs(myDurationMs, hostDurationMs) {
+    if (!(myDurationMs > 0) || !(hostDurationMs > 0)) return 0;
+    var d = Math.round(myDurationMs - hostDurationMs);
+    return Math.abs(d) >= SHIFT_MIN_MS && Math.abs(d) <= SHIFT_MAX_MS ? d : 0;
   }
 
   function parseRoom(o) {
@@ -261,8 +272,11 @@
     pause: function (ms) { return { type: 'pause', pos: ms / 1000 }; },
     seek: function (ms) { return { type: 'seek', pos: ms / 1000 }; },
     buffering: function (loading) { return { type: 'buffering', buffering: loading }; },
-    variantChange: function (variantKey) {
-      return { type: 'variant_change', variant_key: variantKey };
+    /** Свой вариант; durationMs > 0 — длина раздачи (по ней гости на других раздачах сдвигают время). */
+    variantChange: function (variantKey, durationMs) {
+      var o = { type: 'variant_change', variant_key: variantKey };
+      if (durationMs > 0) o.duration_ms = Math.round(durationMs);
+      return o;
     },
     changeFile: function (f) {
       var o = { key: f.key, name: f.title, ad_id: f.adId };
@@ -432,6 +446,7 @@
 
   SM.partycore = {
     sha256hex: sha256hex, Clock: Clock, targetMs: targetMs, room: room, protocol: protocol, Engine: Engine,
+    timelineShiftMs: timelineShiftMs,
     IDLE: IDLE, SHARED_USER: SHARED_USER, TICK_MS: TICK_MS, TOLERANCE_MS: TOLERANCE_MS,
     CLOCK_WINDOW_MS: CLOCK_WINDOW_MS, CLOCK_RESAMPLE_MS: CLOCK_RESAMPLE_MS
   };

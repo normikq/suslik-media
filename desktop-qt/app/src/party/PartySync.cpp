@@ -49,15 +49,22 @@ PartySync::PartySync(PlayerModel &player, Party &party, QObject *parent)
 
 // ---- плеер для движка синхронизации ----
 
-qint64 PartySync::timeMs() const { return m_player.syncTimeMs(); }
+// Время комнаты — шкала раздачи ведущего. Гость на раздаче другой длины смотрит со сдвигом (timelineShiftMs):
+// движку отдаётся время в шкале комнаты, перемотка комнаты переводится обратно в свою шкалу
+qint64 PartySync::shiftMs() const {
+    if (!m_party.inRoom() || m_party.isHost()) return 0;
+    return timelineShiftMs(m_player.length(), m_party.hostDurationMs());
+}
+
+qint64 PartySync::timeMs() const { return m_player.syncTimeMs() - shiftMs(); }
 bool PartySync::busy() const { return m_player.syncBusy(); }
-qint64 PartySync::engineMs() const { return m_player.engineMs(); }
+qint64 PartySync::engineMs() const { return m_player.engineMs() - shiftMs(); }
 qint64 PartySync::seekStamp() const { return m_player.seekStamp(); }
 bool PartySync::paused() const { return m_player.paused(); }
 bool PartySync::running() const { return m_player.running(); }
 float PartySync::userRate() const { return float(m_player.rate()); }
 void PartySync::applyPaused(bool p) { m_player.roomSetPaused(p); }
-void PartySync::seekTo(qint64 ms) { m_player.roomSeekTo(ms); }
+void PartySync::seekTo(qint64 ms) { m_player.roomSeekTo(std::max<qint64>(0, ms + shiftMs())); }
 void PartySync::setRate(float r) { m_player.engineRate(r); }
 
 // ---- открыли, сменили серию, закрыли ----
@@ -154,6 +161,21 @@ void PartySync::tick() {
         if (!m_episodeNotice.isEmpty()) {
             m_player.showNotice(m_episodeNotice);
             m_episodeNotice.clear();
+        }
+        // Длина своей раздачи: по ней гости выравнивают время (у ведущего — сервер сдвигает комнату при смене раздачи)
+        const QString vk = m_player.activeVariantKey().isEmpty() ? key : m_player.activeVariantKey();
+        if (m_player.length() > 0) {
+            const auto vars = m_player.requestVariants();
+            const core::PartyVariant *mine = nullptr;
+            for (const auto &v : vars) if (v.key == vk) { mine = &v; break; }
+            m_party.reportVariant(vk, m_player.length(), mine);
+        }
+        const qint64 shift = shiftMs();
+        if (shift != m_loggedShift) {
+            m_loggedShift = shift;
+            PlayerLog::write(shift == 0 ? S("[party] my version is on the host's timeline")
+                                        : S("[party] my version is %1 ms %2 than the host's: time shifted")
+                                              .arg(std::abs(shift)).arg(shift > 0 ? S("longer") : S("shorter")));
         }
         m_engine.tick(*this, key, QDateTime::currentMSecsSinceEpoch());
     } else {

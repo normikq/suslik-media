@@ -284,6 +284,56 @@ test("комнаты: variant_key проверяется по списку пр�
   assert.equal(room.members.get("g2_client").variant_key, "11|Film.1080p.mkv");
 });
 
+test("комнаты: своя раздача гостя с описанием дописывается в список комнаты", () => {
+  const host = { id: "h3", name: "Host" };
+  const guest = { id: "g3", name: "Guest" };
+  const file = { key: "10|Film.2160p.mkv", name: "Film", variants: [{ key: "10|Film.2160p.mkv", label: "4K" }] };
+  const room = rooms.createRoom(host, file);
+  assert.equal(rooms.joinRoom(room.id, guest, "g3_client").ok, true);
+  const res = rooms.handleRoomAction(room.id, guest, {
+    type: "variant_change", client_id: "g3_client", variant_key: "12|Film.BDRip.mkv",
+    variant: { label: "1080p · BDRip", quality: "1080p", bitrate: 12.5 }
+  });
+  assert.equal(res.ok, true);
+  assert.equal(room.members.get("g3_client").variant_key, "12|Film.BDRip.mkv");
+  assert.deepEqual(room.file.variants.map(v => v.key), ["10|Film.2160p.mkv", "12|Film.BDRip.mkv"]);
+  assert.equal(room.file.variants[1].label, "1080p · BDRip");
+});
+
+test("комнаты: сдвиг по разнице длин раздач", () => {
+  assert.equal(rooms.timelineShiftMs(6021312, 6006805), 14507);
+  assert.equal(rooms.timelineShiftMs(6006805, 6021312), -14507);
+  assert.equal(rooms.timelineShiftMs(6000500, 6000000), 0);      // хвост кадров
+  assert.equal(rooms.timelineShiftMs(9000000, 6000000), 0);      // другой монтаж
+  assert.equal(rooms.timelineShiftMs(6000000, 0), 0);
+});
+
+test("комнаты: ведущий перешёл на раздачу другой длины — время комнаты сдвигается, гость — нет", () => {
+  const host = { id: "h4", name: "Host" };
+  const guest = { id: "g4", name: "Guest" };
+  const file = { key: "20|Remux.mkv", name: "Film", variants: [{ key: "20|Remux.mkv", label: "Remux" }, { key: "21|Rip.mkv", label: "Rip" }] };
+  const room = rooms.createRoom(host, file, "all", "h4_client");
+  assert.equal(rooms.joinRoom(room.id, host, "h4_client").ok, true);
+  assert.equal(rooms.joinRoom(room.id, guest, "g4_client").ok, true);
+  rooms.handleRoomAction(room.id, host, { type: "pause", client_id: "h4_client", pos: 1000 });
+
+  // первая длина ничего не сдвигает
+  rooms.handleRoomAction(room.id, host, { type: "variant_change", client_id: "h4_client", variant_key: "20|Remux.mkv", duration_ms: 6006805 });
+  assert.equal(room.state.pos, 1000);
+  const seq = room.state.seq;
+  // гость на другой раздаче: комната не двигается
+  rooms.handleRoomAction(room.id, guest, { type: "variant_change", client_id: "g4_client", variant_key: "21|Rip.mkv", duration_ms: 6021312 });
+  assert.equal(room.state.pos, 1000);
+  assert.equal(rooms.getRoomPublicData(room).members.find(m => m.name === "Guest").duration_ms, 6021312);
+  // ведущий переключился на длинную раздачу: место комнаты +14,5 с, одной командой
+  rooms.handleRoomAction(room.id, host, { type: "variant_change", client_id: "h4_client", variant_key: "21|Rip.mkv", duration_ms: 6021312 });
+  assert.equal(room.state.pos, 1014.507);
+  assert.equal(room.state.seq, seq + 1);
+  // новый фильм: длины забываются
+  rooms.handleRoomAction(room.id, host, { type: "change_file", client_id: "h4_client", file: { key: "30|Other.mkv", name: "Other" } });
+  assert.equal(room.members.get("g4_client").duration_ms, null);
+});
+
 test("комнаты: аккаунт не меняет качество другого участника", () => {
   const host = { id: "u_1", name: "A" };
   const other = { id: "u_2", name: "B" };

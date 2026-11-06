@@ -4,6 +4,7 @@
 #include "TestUtil.h"
 
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QTest>
 
 using namespace suslik::core;
@@ -247,6 +248,22 @@ private slots:
         const auto vchange = PartyProtocol::variantChange(S("104921|Dune.1080p.mkv"));
         QCOMPARE(vchange.value(S("type")).toString(), S("variant_change"));
         QCOMPARE(vchange.value(S("variant_key")).toString(), S("104921|Dune.1080p.mkv"));
+        QVERIFY(!vchange.contains(S("duration_ms")));
+        PartyVariant rip;
+        rip.key = S("12|Rip.mkv");
+        rip.label = S("1080p · Rip");
+        const auto vfull = PartyProtocol::variantChange(rip.key, 6021312, &rip);
+        QCOMPARE(qint64(vfull.value(S("duration_ms")).toDouble()), qint64(6021312));
+        QCOMPARE(vfull.value(S("variant")).toObject().value(S("label")).toString(), S("1080p · Rip"));
+        // Сдвиг по разнице длин: те же числа, что в PartyProtocolTest.kt и website/test/variant-url.test.js
+        QCOMPARE(timelineShiftMs(6021312, 6006805), qint64(14507));
+        QCOMPARE(timelineShiftMs(6006805, 6021312), qint64(-14507));
+        QCOMPARE(timelineShiftMs(6000500, 6000000), qint64(0));
+        QCOMPARE(timelineShiftMs(9000000, 6000000), qint64(0));
+        QCOMPARE(timelineShiftMs(6000000, 0), qint64(0));
+        const auto withLen = PartyProtocol::parseMember(QJsonDocument::fromJson(R"({"key":"k","id":"u","name":"A","duration_ms":6006805})").object());
+        QCOMPARE(withLen.durationMs.value_or(0), qint64(6006805));
+        QVERIFY(!PartyProtocol::parseMember(QJsonDocument::fromJson(R"({"key":"k","id":"u","name":"A"})").object()).durationMs);
         const auto file = PartyProtocol::changeFile(PartyFileRef{S("42|a.mkv"), S("A")}).value(S("file")).toObject();
         QCOMPARE(qint64(file.value(S("ad_id")).toDouble()), 42);
         QCOMPARE(PartyProtocol::eventsPath(S("x"), S("pc_1")), S("/api/rooms/x/events?client_id=pc_1"));

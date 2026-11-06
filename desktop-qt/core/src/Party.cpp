@@ -216,10 +216,29 @@ QJsonObject PartyProtocol::play(qint64 posMs) { return {{S("type"), S("play")}, 
 QJsonObject PartyProtocol::pause(qint64 posMs) { return {{S("type"), S("pause")}, {S("pos"), double(posMs) / 1000.0}}; }
 QJsonObject PartyProtocol::seek(qint64 posMs) { return {{S("type"), S("seek")}, {S("pos"), double(posMs) / 1000.0}}; }
 QJsonObject PartyProtocol::buffering(bool loading) { return {{S("type"), S("buffering")}, {S("buffering"), loading}}; }
-QJsonObject PartyProtocol::variantChange(const QString &variantKey) {
+QJsonObject PartyProtocol::variantChange(const QString &variantKey, qint64 durationMs, const PartyVariant *variant) {
     QJsonObject obj{{S("type"), S("variant_change")}};
     if (!variantKey.isEmpty()) obj.insert(S("variant_key"), variantKey);
+    if (durationMs > 0) obj.insert(S("duration_ms"), double(durationMs));
+    if (variant) obj.insert(S("variant"), variantJson(*variant));
     return obj;
+}
+
+qint64 timelineShiftMs(qint64 myDurationMs, qint64 hostDurationMs) {
+    if (myDurationMs <= 0 || hostDurationMs <= 0) return 0;
+    const qint64 d = myDurationMs - hostDurationMs;
+    const qint64 a = d < 0 ? -d : d;
+    return a >= TIMELINE_SHIFT_MIN_MS && a <= TIMELINE_SHIFT_MAX_MS ? d : 0;
+}
+
+QJsonObject PartyProtocol::variantJson(const PartyVariant &v) {
+    QJsonObject vo{{S("key"), v.key}, {S("label"), v.label}, {S("quality"), v.quality},
+                   {S("audio"), v.audio}, {S("bitrate"), v.bitrate}, {S("offset_ms"), double(v.offsetMs)},
+                   {S("score"), double(v.score)}};
+    QJsonArray fa;
+    for (const auto &flag : v.hardwareFlags) fa.append(flag);
+    vo.insert(S("hardware_flags"), fa);
+    return vo;
 }
 QJsonObject PartyProtocol::changeFile(const PartyFileRef &f) { return {{S("type"), S("change_file")}, {S("file"), fileJson(f)}}; }
 QJsonObject PartyProtocol::closeFile() { return {{S("type"), S("change_file")}, {S("file"), QJsonValue::Null}}; }
@@ -230,15 +249,7 @@ QJsonObject PartyProtocol::fileJson(const PartyFileRef &f) {
     if (f.edition) obj.insert(S("edition"), *f.edition);
     if (!f.variants.isEmpty()) {
         QJsonArray arr;
-        for (const auto &v : f.variants) {
-            QJsonObject vo{{S("key"), v.key}, {S("label"), v.label}, {S("quality"), v.quality},
-                           {S("audio"), v.audio}, {S("bitrate"), v.bitrate}, {S("offset_ms"), double(v.offsetMs)},
-                           {S("score"), double(v.score)}};
-            QJsonArray fa;
-            for (const auto &flag : v.hardwareFlags) fa.append(flag);
-            vo.insert(S("hardware_flags"), fa);
-            arr.append(vo);
-        }
+        for (const auto &v : f.variants) arr.append(variantJson(v));
         obj.insert(S("variants"), arr);
     }
     return obj;
@@ -339,6 +350,7 @@ PartyMember PartyProtocol::parseMember(const QJsonObject &m) {
     if (avatar.startsWith(S("https://"))) p.avatar = avatar;
     const QString vk = json::str(m, S("variant_key"));
     if (!vk.isEmpty()) p.variantKey = vk;
+    if (const qint64 d = json::optLong(m, S("duration_ms")); d > 0) p.durationMs = d;
     return p;
 }
 

@@ -848,18 +848,29 @@ class PlayerActivity : ComponentActivity() {
     private var roomEntryKey: String? = null
     private var seekStamp = 0L // every seek (the user's or the room's) changes it: the room tells its own from the user's
 
+    /** Время комнаты — шкала раздачи ведущего. Гость на раздаче другой длины смотрит со сдвигом (core timelineShiftMs):
+     *  движку отдаётся время в шкале комнаты, перемотка комнаты переводится обратно в свою шкалу. Ведущему — 0. */
+    private fun roomShiftMs(): Long =
+        if (!Party.inRoom || Party.isHost) 0L
+        else ru.suslikovanora.media.core.party.timelineShiftMs(lengthOf(player), Party.hostDurationMs)
+    private var loggedShift = 0L
+
     private val syncPlayer = object : ru.suslikovanora.media.core.party.SyncPlayer {
-        override val timeMs: Long get() = perceivedPosition()
+        override val timeMs: Long get() = perceivedPosition() - roomShiftMs()
         override val busy: Boolean get() = userSeeking || tapSeekTarget != null
-        override val engineMs: Long get() = player?.let { timeOf(it) } ?: 0L
+        override val engineMs: Long get() = (player?.let { timeOf(it) } ?: 0L) - roomShiftMs()
         override val seekStamp: Long get() = this@PlayerActivity.seekStamp
         override val paused: Boolean get() = userPaused || ended
         override val running: Boolean get() = player?.isPlaying == true && !buffering
         override val userRate: Float get() = 1f
         override fun applyPaused(paused: Boolean) { if (paused) doPause() else doPlay() }
-        override fun seekTo(ms: Long) = this@PlayerActivity.seekTo(ms)
+        override fun seekTo(ms: Long) = this@PlayerActivity.seekTo((ms + roomShiftMs()).coerceAtLeast(0L))
         override fun setRate(rate: Float) { runCatching { player?.setRate(rate) } }
     }
+
+    /** Версии фильма из своей медиатеки для ключа ownVariantsKey: считаются один раз на файл, не на каждый тик комнаты. */
+    private var ownVariantsKey: String? = null
+    private var ownVariants: List<ru.suslikovanora.media.core.party.PartyVariant> = emptyList()
 
     private val partySync: PlayerPartySync by lazy {
         PlayerPartySync(handler, object : PlayerPartySync.Callback {
@@ -876,9 +887,24 @@ class PlayerActivity : ComponentActivity() {
             override fun notice(text: String) = showSeekLabel(text)
             override fun onTick() {
                 ui.live = partyGuest()
+                // Длина своей раздачи: по ней гости выравнивают время (у ведущего сервер сдвигает комнату при смене раздачи)
+                val len = lengthOf(player)
+                val vk = ui.activeVariantKey ?: watchProgress.currentWatchKey()
+                if (Party.inRoom && vk != null && len > 0L) Party.reportVariant(vk, len, ui.variants.find { it.key == vk })
+                val shift = roomShiftMs()
+                if (shift != loggedShift) {
+                    loggedShift = shift
+                    AppLog.write(if (shift == 0L) "[party] my version is on the host's timeline"
+                        else "[party] my version is ${kotlin.math.abs(shift)} ms ${if (shift > 0) "longer" else "shorter"} than the host's: time shifted")
+                }
                 val rf = Party.file
                 if (rf != null && rf.variants.isNotEmpty()) {
-                    ui.variants = rf.variants
+                    // Свои раздачи гостя (их нет у ведущего) остаются в списке рядом с вариантами комнаты
+                    val wk = watchProgress.currentWatchKey()
+                    if (wk != ownVariantsKey) { ownVariantsKey = wk; ownVariants = wk?.let { variantsForWatchKey(it) }.orEmpty() }
+                    val own = ownVariants.filter { o -> rf.variants.none { it.key == o.key } }
+                    val merged = if (own.isEmpty()) rf.variants else (rf.variants + own).sortedByDescending { it.score }
+                    if (merged != ui.variants) ui.variants = merged
                     ui.hostVariantKey = Party.members.find { Party.isHost(it) }?.variantKey ?: rf.key
                     if (ui.activeVariantKey == null) {
                         ui.activeVariantKey = rf.variants.find { it.key == watchProgress.currentWatchKey() }?.key ?: rf.variants.first().key

@@ -198,6 +198,8 @@ void Party::openLink(const QString &link) {
     m_followed.clear();
     m_room = PartyRoom();
     m_reportedBuffering = false;
+    m_sentVariant.clear();
+    m_sentDuration = 0;
     m_outbox.clear();
     emit changed();
     QPointer<Party> self(this);
@@ -211,6 +213,8 @@ void Party::enter(const RoomUpdate &u) {
     m_notice.clear();
     m_clock.reset();
     m_reportedBuffering = false;
+    m_sentVariant.clear();
+    m_sentDuration = 0;
     m_outbox.clear();
     // Свежий снимок: seq другой комнаты не должен прятать состояние этой
     m_room = PartyRoom().merge(u);
@@ -240,6 +244,8 @@ void Party::leave() {
     m_followed.clear();
     m_room = PartyRoom();
     m_reportedBuffering = false;
+    m_sentVariant.clear();
+    m_sentDuration = 0;
     m_outbox.clear();
     log(S("left room %1").arg(id));
     emit changed();
@@ -277,6 +283,27 @@ void Party::sendVariantChange(const QString &variantKey) {
     if (!m_roomId) return;
     m_outbox << std::make_pair(*m_roomId, PartyProtocol::withClient(PartyProtocol::variantChange(variantKey), m_clientId));
     pump();
+}
+
+void Party::reportVariant(const QString &variantKey, qint64 durationMs, const core::PartyVariant *variant) {
+    if (!m_roomId || variantKey.isEmpty() || durationMs <= 0) return;
+    const QString file = fileKey();
+    if (variantKey == m_sentVariant && durationMs == m_sentDuration && file == m_sentVariantFile) return;
+    m_sentVariant = variantKey;
+    m_sentDuration = durationMs;
+    m_sentVariantFile = file;
+    bool known = !m_room.file || variantKey == m_room.file->key;
+    if (m_room.file && !known)
+        for (const auto &v : m_room.file->variants) if (v.key == variantKey) { known = true; break; }
+    log(S("my version %1, %2 s long").arg(variantKey.section(QLatin1Char('|'), 1).section(QLatin1Char('/'), -1)).arg(durationMs / 1000));
+    m_outbox << std::make_pair(*m_roomId, PartyProtocol::withClient(PartyProtocol::variantChange(variantKey, durationMs, known ? nullptr : variant), m_clientId));
+    pump();
+}
+
+qint64 Party::hostDurationMs() const {
+    for (const auto &m : m_room.members)
+        if (m_room.isHost(m) && m.durationMs) return *m.durationMs;
+    return 0;
 }
 
 void Party::action(const QJsonObject &body) {

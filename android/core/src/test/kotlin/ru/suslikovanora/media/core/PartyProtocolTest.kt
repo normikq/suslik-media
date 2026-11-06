@@ -8,6 +8,7 @@ import ru.suslikovanora.media.core.party.PartyProtocol
 import ru.suslikovanora.media.core.party.PartyRoom
 import ru.suslikovanora.media.core.party.PartyState
 import ru.suslikovanora.media.core.party.PartyVariant
+import ru.suslikovanora.media.core.party.timelineShiftMs
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -249,6 +250,23 @@ class PartyProtocolTest {
         val vChange = PartyProtocol.variantChange("104921|Dune.1080p.mkv")
         assertEquals("variant_change", vChange.optString("type"))
         assertEquals("104921|Dune.1080p.mkv", vChange.optString("variant_key"))
+        assertEquals(false, vChange.has("duration_ms"))
+        val vFull = PartyProtocol.variantChange("12|Rip.mkv", 6021312L, PartyVariant(key = "12|Rip.mkv", label = "1080p · Rip"))
+        assertEquals(6021312L, vFull.optLong("duration_ms"))
+        assertEquals("1080p · Rip", vFull.optJSONObject("variant")?.optString("label"))
+    }
+
+    // Same numbers as desktop-qt/tests/PartyTest.cpp (timelineShift) and website/test/variant-url.test.js
+    @Test
+    fun timelineShift() {
+        assertEquals(14507L, timelineShiftMs(6021312L, 6006805L))
+        assertEquals(-14507L, timelineShiftMs(6006805L, 6021312L))
+        assertEquals(0L, timelineShiftMs(6000500L, 6000000L))
+        assertEquals(0L, timelineShiftMs(9000000L, 6000000L))
+        assertEquals(0L, timelineShiftMs(6000000L, 0L))
+        val m = PartyProtocol.parseMember(org.json.JSONObject("""{"key":"k","id":"u","name":"A","variant_key":"1|a.mkv","duration_ms":6006805}"""))
+        assertEquals(6006805L, m.durationMs)
+        assertEquals(null, PartyProtocol.parseMember(org.json.JSONObject("""{"key":"k","id":"u","name":"A"}""")).durationMs)
     }
 
     // Same fixtures as desktop-qt/tests/PartyTest.cpp (resolveIndexFixtures) and tizen/test/party.test.js

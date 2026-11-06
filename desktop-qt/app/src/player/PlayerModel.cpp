@@ -189,6 +189,15 @@ PlayerModel::PlayerModel(QObject *parent)
         if (changed) emit qualityVariantsChanged();
     });
 
+    // Ведущий сменил качество: у гостей метка [Хост] переезжает на его вариант (комната шлёт variant_key участника)
+    connect(this, &PlayerModel::partyChanged, this, [this] {
+        const QString h = hostVariantKey();
+        if (h == m_shownHostKey) return;
+        m_shownHostKey = h;
+        emit hostVariantKeyChanged();
+        emit qualityVariantsChanged();
+    });
+
     m_tickTimer.setInterval(1000);
     connect(&m_tickTimer, &QTimer::timeout, this, &PlayerModel::tick);
     m_superTimer.setInterval(2000);
@@ -658,6 +667,29 @@ void PlayerModel::rebuildVariantsForEntry(int i) {
     }
     std::sort(vars.begin(), vars.end(), [](const auto &a, const auto &b) { return a.score > b.score; });
     m_req.variants = vars;
+}
+
+void PlayerModel::setLibrary(Library *l) {
+    if (m_lib == l) return;
+    if (m_libConn) disconnect(m_libConn);
+    m_lib = l;
+    if (l) m_libConn = connect(l, &Library::versionChanged, this, &PlayerModel::refreshVariants);
+}
+
+void PlayerModel::refreshVariants() {
+    if (!m_open || m_closing || m_preview || m_req.magnetId <= 0) return;
+    const auto before = m_req.variants;
+    rebuildVariantsForEntry(m_index);
+    // Новые раздачи добавляются к прежнему списку: варианты, пришедшие от комнаты (их нет в своей медиатеке), не теряются
+    for (const auto &v : before) {
+        bool have = false;
+        for (const auto &n : m_req.variants) if (n.key == v.key) { have = true; break; }
+        if (!have) m_req.variants << v;
+    }
+    std::stable_sort(m_req.variants.begin(), m_req.variants.end(), [](const auto &a, const auto &b) { return a.score > b.score; });
+    if (m_req.variants == before) return;
+    PlayerLog::write(S("quality: %1 version(s) of the film now").arg(m_req.variants.size()));
+    emit qualityVariantsChanged();
 }
 
 void PlayerModel::playEntry(int i) {

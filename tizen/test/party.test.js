@@ -210,3 +210,17 @@ test('resolveIndex: те же случаи, что в PartyProtocolTest.kt и Pa
   assert.equal(ref('20|Show.WEB/S01E02.mkv').resolveIndex(keys, null, true), 1);
   assert.equal(ref('30|a.mkv').resolveIndex(keys, null), -1);
 });
+
+// Те же числа, что в desktop-qt/tests/PartyTest.cpp, PartyProtocolTest.kt и website/test/variant-url.test.js
+test('timelineShiftMs: сдвиг по разнице длин раздач, длина участника и variant_change', () => {
+  assert.equal(C.timelineShiftMs(6021312, 6006805), 14507);
+  assert.equal(C.timelineShiftMs(6006805, 6021312), -14507);
+  assert.equal(C.timelineShiftMs(6000500, 6000000), 0);
+  assert.equal(C.timelineShiftMs(9000000, 6000000), 0);
+  assert.equal(C.timelineShiftMs(6000000, 0), 0);
+  const u = P.parseRoom({ members: [{ key: 'k', id: 'u', name: 'A', duration_ms: 6006805 }, { key: 'k2', id: 'v', name: 'B' }] });
+  assert.equal(u.members[0].durationMs, 6006805);
+  assert.equal(u.members[1].durationMs, null);
+  assert.deepEqual(P.variantChange('1|a.mkv', 6006805), { type: 'variant_change', variant_key: '1|a.mkv', duration_ms: 6006805 });
+  assert.deepEqual(P.variantChange('1|a.mkv'), { type: 'variant_change', variant_key: '1|a.mkv' });
+});

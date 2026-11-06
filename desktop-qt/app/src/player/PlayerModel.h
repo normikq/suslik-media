@@ -90,7 +90,7 @@ public:
     ~PlayerModel() override;
 
     Library *library() const { return m_lib; }
-    void setLibrary(Library *l) { m_lib = l; }
+    void setLibrary(Library *l);
     MpvEngine *engine() const { return m_engine; }
     bool isOpen() const { return m_open; }
     bool closing() const { return m_closing; }
@@ -305,8 +305,13 @@ private:
     std::pair<QString, QString> sideName(const QString &sideUrl, const QString &videoUrl) const;
     QStringList preferFirst(const QStringList &urls, const std::optional<QString> &saved, const QString &videoUrl) const;
     void rebuildVariantsForEntry(int i);
+    /// Медиатека изменилась (добавили раздачу): список качества открытого фильма пересобирается.
+    void refreshVariants();
 
     QPointer<Library> m_lib;
+    QMetaObject::Connection m_libConn;
+    /// Вариант ведущего, который сейчас показан в списке качества: метка [Хост] обновляется, когда он меняется.
+    QString m_shownHostKey;
     MpvEngine *m_engine;
     core::PlaybackSupervisor m_supervisor;
     std::unique_ptr<core::CatchUp> m_catchUp;
