@@ -189,8 +189,8 @@ class MpvEngine(private val context: Context) : PlayerEngine {
         MPVLib.setPropertyString("start", if (media.startMs > 0L) num(media.startMs / 1000.0) else "none")
         // External voice-overs / subtitles are part of the file from the start (opened with it, before the first frame),
         // as VLC's slaves were. `-append` adds one item without splitting it at ':' (the path-list separator).
-        MPVLib.setPropertyString("audio-files", "")
-        MPVLib.setPropertyString("sub-files", "")
+        MPVLib.command(arrayOf("change-list", "audio-files", "clr", ""))
+        MPVLib.command(arrayOf("change-list", "sub-files", "clr", ""))
         for (u in media.audioFiles) MPVLib.command(arrayOf("change-list", "audio-files", "append", u))
         for (u in media.subtitleFiles) MPVLib.command(arrayOf("change-list", "sub-files", "append", u))
         applyScale(scale)
@@ -209,8 +209,8 @@ class MpvEngine(private val context: Context) : PlayerEngine {
         Core.silence() // события остановленного файла уже никому
         runCatching {
             MPVLib.command(arrayOf("stop"))
-            MPVLib.setPropertyString("audio-files", "")
-            MPVLib.setPropertyString("sub-files", "")
+            MPVLib.command(arrayOf("change-list", "audio-files", "clr", ""))
+            MPVLib.command(arrayOf("change-list", "sub-files", "clr", ""))
         }
         detachSurface()
         attachedAudio.clear()

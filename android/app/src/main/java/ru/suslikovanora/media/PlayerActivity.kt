@@ -1304,7 +1304,11 @@ class PlayerActivity : ComponentActivity() {
      */
     private fun buildMedia(url: String, positionMs: Long): EngineMedia {
         // «Настройки» on the main screen: reserve size (0 = off) and the player's own buffer.
-        val reserveBytes = PlaybackSettings.burstMb(this).toLong() shl 20
+        var reserveBytes = PlaybackSettings.burstMb(this).toLong() shl 20
+        // Blu-ray .m2ts / .ts: ffmpeg probes the duration with dozens of seeks over the whole file; direct to the mirror
+        // each seek is a new HTTPS connection and the open fails. Only the proxy (tail cache, reused connection) copes,
+        // so these containers use it even when the reserve is switched off in the settings (a small one).
+        if (reserveBytes <= 0L && url.substringBefore('?').substringAfterLast('.').lowercase() in setOf("m2ts", "mts", "ts")) reserveBytes = 96L shl 20
         val episode = trackSelector.allEpisodeUrls(url)
         // Both engines read through the same reserve (BurstProxy): it downloads in bursts sized to the network and the
         // film. A file switched from Media3 to VLC keeps what was already downloaded.
