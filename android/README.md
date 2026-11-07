@@ -26,7 +26,7 @@
 ## Ядро `core/`
 
 `android/core/` — отдельная сборка Gradle (`includeBuild("core")` в `settings.gradle.kts`, зависимость `ru.suslikovanora.media:core`)
-на чистом Kotlin без Android API: запас `BurstProxy`, сторож `PlaybackSupervisor`, Blu-ray (`TsClock`/`TsPlayback`), модель медиатеки,
+на чистом Kotlin без Android API: запас `BurstProxy`, сторож `PlaybackSupervisor`, модель медиатеки,
 вход, синхронизация, комнаты, поиск, заставки, адрес сервера. Пакеты — `ru.suslikovanora.media.core.*`. До 03.11 это был общий модуль
 `shared/` в корне. У ПК свой C++-перенос (`desktop-qt/core/`), у ТВ и сайта — JS-переносы: правило, изменённое здесь, меняйте и там.
 

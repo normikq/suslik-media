@@ -4,7 +4,6 @@ import ru.suslikovanora.media.core.*
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import ru.suslikovanora.media.player.PlayerAudioSession
-import ru.suslikovanora.media.player.PlayerBluRayController
 import ru.suslikovanora.media.player.PlayerControlsOverlay
 import ru.suslikovanora.media.player.PlayerDiagnostics
 import ru.suslikovanora.media.player.EngineListener
@@ -168,7 +167,6 @@ class PlayerActivity : ComponentActivity() {
     private val seekWatchdogRunnable: Runnable = Runnable {
         val target = pendingSeekPos ?: return@Runnable
         val p = player ?: return@Runnable
-        if (bluRayController.onWatchdog(p, currentUrl, userPaused, target)) return@Runnable
         if (userPaused) {
             // User paused playback: do not wake up the device or re-seek in the background
             return@Runnable
@@ -286,7 +284,6 @@ class PlayerActivity : ComponentActivity() {
     private val engineListener = object : EngineListener {
         override fun playing() {
             val owner = player ?: return
-            bluRayController.onPlaying(owner, currentUrl) // Blu-ray: the length to the reserve, continue at the saved place
             supervisor.playing()
             bufferingShown = 0
             playWhenReady = true
@@ -410,24 +407,13 @@ class PlayerActivity : ComponentActivity() {
         // the new episode's. 18.10 journal: «next» at 18 s of Ep.01 opened Ep.02 at 21 s and saved that as its place.
         if (sideJob?.isActive == true) return
         if (lengthChanged) { BurstProxy.setDuration(currentUrl, owner.lengthMs); checkHeavy() }
-        // Blu-ray continued at a saved place: VLC may count from 0 there — timeOf() adds the known offset.
-        val t = bluRayController.handleTimeUpdate(owner, currentUrl)
+        val t = timeOf(owner)
         if (t > 0L) {
             val pending = pendingSeekPos
             if (pending == null) {
                 lastTime = t
                 playbackPosition = t
                 maybePersist(t)
-            } else if (bluRayController.isSeeking) {
-                // a position seek (Blu-ray): accepted as soon as VLC reports the new place
-                if (!bluRayController.isSettling(t)) {
-                    bluRayController.clearSeekTarget()
-                    pendingSeekPos = null
-                    handler.removeCallbacks(seekWatchdogRunnable)
-                    lastTime = t
-                    playbackPosition = t
-                    bluRayController.onSettled(currentUrl, t, owner.fraction)
-                }
             } else if (kotlin.math.abs(t - pending) <= SEEK_CONFIRM_TOLERANCE_MS ||
                        (owner.isPlaying && !buffering && lastTime != t && kotlin.math.abs(t - pending) <= 25_000L)) {
                 pendingSeekPos = null
@@ -603,39 +589,10 @@ class PlayerActivity : ComponentActivity() {
         })
     }
 
-    private val bluRayController: PlayerBluRayController by lazy {
-        PlayerBluRayController(handler, object : PlayerBluRayController.Callback {
-            override fun isActivityAlive(): Boolean = alive && !isFinishing && !isDestroyed
-            override fun showStatus(text: String) = this@PlayerActivity.showStatus(text)
-            override fun onDurationProbed(url: String, durationMs: Long, mbit: Double) {
-                checkHeavy()
-            }
-            override fun onProbeCompleted() {
-                initializePlayer()
-            }
-            override fun reconnect(forcePlay: Boolean, startAt: Long) {
-                this@PlayerActivity.reconnect(forcePlay = forcePlay, startAt = startAt)
-            }
-            override fun scheduleSeekWatchdog() {
-                handler.postDelayed(seekWatchdogRunnable, SEEK_CONFIRM_TIMEOUT_MS)
-            }
-            override fun onSeekSettled(target: Long) {
-                pendingSeekPos = null
-                lastTime = target
-                playbackPosition = target
-            }
-            override fun clearPendingSeekIfMatches(positionMs: Long) {
-                if (pendingSeekPos == positionMs) pendingSeekPos = null
-            }
-        })
-    }
-
     private val trackSelector: PlayerTrackSelector by lazy {
         PlayerTrackSelector(this, handler, object : PlayerTrackSelector.Callback {
             override fun onAudioTrackChanged() {
                 supervisor.seeked()
-                handler.removeCallbacks(reseekRunnable)
-                handler.postDelayed(reseekRunnable, 120L)
                 watchTrackSwitch("audio")
             }
             override fun onSubtitleTrackChanged() = watchTrackSwitch("subtitles")
@@ -646,7 +603,6 @@ class PlayerActivity : ComponentActivity() {
         })
     }
 
-    private val reseekRunnable = Runnable { reseekHereNow() }
 
     // After a switch of the sound or subtitles the film could stay at «Буферизация 0%» until the viewer seeked
     // (16.10, report). A seek is what restarts the decoders, so if the wait does not move for a few seconds after a
@@ -1237,7 +1193,6 @@ class PlayerActivity : ComponentActivity() {
             finish()
             return
         }
-        if (bluRayController.probeFirst(currentUrl)) return // Blu-ray: its length first (comes back here)
         val url = currentUrl.takeIf { it.isNotBlank() } ?: run { finish(); return }
         try {
             val position = pendingSeekPos ?: playbackPosition
@@ -1264,11 +1219,9 @@ class PlayerActivity : ComponentActivity() {
     private fun createPlayer(url: String, positionMs: Long): PlayerEngine {
         catchUp.quiet(15_000L); catchUpFrom = positionMs + CATCH_UP_AFTER_PLAYED_MS
         diagnostics.onMediaOpened(positionMs)
-        // A Blu-ray or regular stream reopened at a saved place: until the jump there the bar shows that place, not
-        // VLC's 0:00, and the position is not saved over it (see tsPlaying / tsOpenLanded).
-        if (bluRayController.onPlayerCreated(url, positionMs)) {
-            pendingSeekPos = positionMs
-        } else if (positionMs > 0L) {
+        // Reopened at a saved place: until the engine reports it, the bar shows that place, not 0:00, and the
+        // position is not saved over it.
+        if (positionMs > 0L) {
             pendingSeekPos = positionMs
             handler.removeCallbacks(seekWatchdogRunnable)
             handler.postDelayed(seekWatchdogRunnable, SEEK_CONFIRM_TIMEOUT_MS)
@@ -1504,11 +1457,7 @@ class PlayerActivity : ComponentActivity() {
             return
         }
         pendingSeekPos = t
-        when (bluRayController.seek(p, currentUrl, t, userPaused)) {
-            PlayerBluRayController.SeekResult.REOPENING -> return
-            PlayerBluRayController.SeekResult.NOT_TS -> p.seekTo(t)
-            PlayerBluRayController.SeekResult.HANDLED -> Unit
-        }
+        p.seekTo(t)
         hasSeekedOk = true
         ended = false
         handler.postDelayed(seekWatchdogRunnable, SEEK_CONFIRM_TIMEOUT_MS)
@@ -1519,24 +1468,6 @@ class PlayerActivity : ComponentActivity() {
 
 
 
-    /**
-     * A seek to the current moment (flushed LibVLC's 3-6 s network read-ahead buffer so a newly chosen audio track
-     * was heard almost immediately). Neither engine needs it now: Media3 switches the sound itself, mpv re-reads
-     * the newly chosen track from its cache by itself. Kept for an engine that would.
-     */
-    private fun reseekHereNow() {
-        val p = player ?: return
-        if (p.kind == EngineKind.MEDIA3 || p.kind == EngineKind.MPV) return
-        if (userPaused || !p.isPlaying || buffering) return
-        supervisor.seeked()
-        if (bluRayController.isTsMode(p, currentUrl)) {
-            val pos = p.fraction
-            if (pos > 0.001f) p.seekToFraction(pos)
-        } else {
-            val t = p.timeMs
-            if (t > 0L) p.seekTo(t)
-        }
-    }
     private fun handleError(fromEof: Boolean = false) {
         root.keepScreenOn = false
         handler.removeCallbacks(stallRunnable)
@@ -1797,7 +1728,7 @@ class PlayerActivity : ComponentActivity() {
     private fun checkHeavy() {
         val limit = PlaybackSettings.heavyMbit(this)
         if (limit <= 0 || heavyDialog != null || isFinishing) return
-        val mbit = BurstProxy.bitrateMbit(currentUrl) ?: bluRayController.getBitrateMbit(currentUrl) ?: player?.bitrateMbit ?: return
+        val mbit = BurstProxy.bitrateMbit(currentUrl) ?: player?.bitrateMbit ?: return
         val name = Uri.parse(currentUrl).lastPathSegment ?: return
         if (mbit < limit || name in heavyOk || !TrafficMeter.isMetered(this)) return
         heavyOk += name
@@ -1814,13 +1745,13 @@ class PlayerActivity : ComponentActivity() {
             .show()
     }
 
-    // ---- Blu-ray (.m2ts): length and time delegated to PlayerBluRayController ------------------
+    // ---- the film's length and time (the engine's; mpv and Media3 know both for Blu-ray .m2ts too) ---------
     private var lastKnownLength = 0L
     private var lastKnownLengthUrl = ""
 
-    /** The film's length: VLC's, or for a transport stream the one read from its clock (0 = unknown). */
+    /** The film's length (0 = unknown); the last known one stays while the same file reopens. */
     private fun lengthOf(p: PlayerEngine?): Long {
-        val len = bluRayController.lengthOf(p, currentUrl)
+        val len = p?.lengthMs ?: 0L
         if (len > 0L) {
             lastKnownLength = len
             lastKnownLengthUrl = currentUrl
@@ -1829,8 +1760,7 @@ class PlayerActivity : ComponentActivity() {
         return if (lastKnownLengthUrl == currentUrl) lastKnownLength else 0L
     }
 
-    /** The film's time: VLC's, plus the offset when VLC counts a continued Blu-ray from 0. */
-    private fun timeOf(p: PlayerEngine?): Long = bluRayController.timeOf(p, currentUrl)
+    private fun timeOf(p: PlayerEngine?): Long = p?.timeMs ?: 0L
 
     // ---- a network slower than the film: one longer wait instead of a stutter every few seconds ------------------
     // 12.10 journal (LTE 12 Mbit/s, film 13.2): the reserve stayed at 0 MB, VLC stopped for 3–6 s every 15–30 s, and
@@ -2252,7 +2182,7 @@ class PlayerActivity : ComponentActivity() {
         handler.removeCallbacks(reattachRunnable); surfaceLost = false
         // Nothing may restart playback (or reconnect) behind the lock screen.
         trackSelector.stop()
-        for (r in listOf(watchdogRunnable, stallRunnable, reconnectRunnable, seekWatchdogRunnable, reseekRunnable, trackSwitchRunnable, videoBackRunnable))
+        for (r in listOf(watchdogRunnable, stallRunnable, reconnectRunnable, seekWatchdogRunnable, trackSwitchRunnable, videoBackRunnable))
             handler.removeCallbacks(r)
         networkMonitor.unregister()
         needsReload = false; retryCount = 0; reconnectScheduled = false

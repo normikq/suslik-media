@@ -167,7 +167,7 @@ state = { file:{ad_id, idx}, playing, pos, rate, anchor_server_ms, seq }
 ### Код
 - `android/core/…/party/`: чистая логика без UI — `PartyClock` (offset), `DriftController`, `PartyState`, протокол сообщений. Тесты в `android/core/src/test` (`android-core.yml` их запускает).
 - Интерфейс `SyncPlayer { position; seek(ms); setRate(r); play(); pause(); isBuffering }`.
-  Адаптеры: ПК — за `PlayerEngine`; Android — `PlayerActivity` для Media3 и VLC (на Blu-ray позицию берём из `TsClock`/`TsPlayback`).
+  Адаптеры: ПК — за `PlayerEngine`; Android — `PlayerActivity` для Media3 и mpv.
 - UI: кнопка «Смотреть вместе» в плеере, список участников, ссылка-приглашение.
 - Web: то же на `<video>`, если сайт играет видео в браузере.
 

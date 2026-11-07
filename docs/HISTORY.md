@@ -460,3 +460,4 @@ Tizen-часть #77 (постоянный `client_id`, часы, серия с 
 - Теги `vlc` в настройке и в памяти `EngineChoice` читаются как mpv (`EngineKind.ofTag`, `EngineKindTest`). Android 7 — только Media3 (AAR с minSdk 26).
 - VC-1 не отдаётся аппаратному декодеру (`hwdec-codecs`), субтитрам libass — шрифт Onest (`files/mpv/subfont.ttf`), `CatchUp`-перемотка после ожидания запаса выключена.
 - На устройствах не проверено; список проверки — `docs/ANDROID-MPV.md` §0.
+- Удалены `TsClock`, `TsPlayback`, `PlayerBluRayController` (обходы libVLC для `.m2ts` по HTTP: длина по PCR, перемотка по доле, сдвиг часов): mpv знает длину и время Blu-ray сам. Проба концов файла перед первым открытием `.m2ts` больше не задерживает старт.
