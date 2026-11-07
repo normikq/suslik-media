@@ -2,7 +2,7 @@
 
 const express = require("express");
 const { requireLogin, resolveAuth } = require("../middleware/auth");
-const { roomLimiter } = require("../middleware/rate-limit");
+const { roomLimiter, roomLookupLimiter } = require("../middleware/rate-limit");
 const { sseSender } = require("../utils/helpers");
 const { getVoiceDuck } = require("../services/voice-duck");
 const {
@@ -18,7 +18,9 @@ const {
   previewMember,
   publicMember,
   leaveRoom,
-  handleRoomAction
+  handleRoomAction,
+  transferHost,
+  isDeviceDisplaced
 } = require("../services/rooms");
 
 const router = express.Router();
@@ -39,14 +41,14 @@ router.post("/api/rooms", requireLogin, roomLimiter, (req, res) => {
 });
 
 // 2. Получение информации о комнате
-router.get("/api/rooms/:id", requireLogin, (req, res) => {
+router.get("/api/rooms/:id", requireLogin, roomLookupLimiter, (req, res) => {
   const room = getRoom(req.params.id);
   if (!room) return res.status(404).json({ error: "Комната не найдена." });
   res.json({ ok: true, room: getRoomPublicData(room) });
 });
 
 // 3. Вход в комнату
-router.post("/api/rooms/:id/join", requireLogin, roomLimiter, (req, res) => {
+router.post("/api/rooms/:id/join", requireLogin, roomLookupLimiter, roomLimiter, (req, res) => {
   const room = getRoom(req.params.id);
   if (!room) return res.status(404).json({ error: "Комната не найдена." });
 
@@ -80,11 +82,26 @@ router.post("/api/rooms/:id/leave", requireLogin, (req, res) => {
 
 // 5. Отправка команды управления (play, pause, seek, rate, buffering)
 router.post("/api/rooms/:id/action", requireLogin, roomLimiter, (req, res) => {
+  // Аккаунт перешёл на другое устройство: это — старое, его команды не принимаются (приложение ставит плеер на паузу)
+  if (isDeviceDisplaced(req.user, req.body && req.body.client_id)) {
+    return res.status(403).json({ error: "Вы вошли в комнату с другого устройства.", code: "displaced" });
+  }
   const result = handleRoomAction(req.params.id, req.user, req.body);
   if (!result.ok) {
     return res.status(400).json({ error: result.error });
   }
   res.json(result);
+});
+
+// 5а. Передать ведущего тому, кто сейчас в комнате (user_id или key — отпечаток устройства; client_id — своё устройство)
+router.post("/api/rooms/:id/host", requireLogin, roomLimiter, (req, res) => {
+  const { user_id, key, client_id } = req.body || {};
+  if (isDeviceDisplaced(req.user, client_id)) {
+    return res.status(403).json({ error: "Вы вошли в комнату с другого устройства.", code: "displaced" });
+  }
+  const result = transferHost(req.params.id, req.user, user_id, typeof client_id === "string" ? client_id : null, key);
+  if (!result.ok) return res.status(400).json({ error: result.error });
+  res.json({ ok: true });
 });
 
 // 6. Поток событий реального времени (Server-Sent Events)

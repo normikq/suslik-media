@@ -12,7 +12,7 @@ const rooms = new Map();
 const roomListeners = new Map();
 
 // Пустая комната живёт столько, потом удаляется (и та, куда после создания так никто и не вошёл)
-const EMPTY_ROOM_TTL_MS = 30 * 60 * 1000;
+const EMPTY_ROOM_TTL_MS = 5 * 60 * 1000;
 // Комната голосового канала, где никого не осталось (docs/DISCORD-ACTIVITY.md, «Комната»)
 const CHANNEL_ROOM_TTL_MS = 5 * 60 * 1000;
 
@@ -56,7 +56,7 @@ function getEstimatedPos(state) {
 }
 
 function createRoom(hostUser, file = null, controls = "all", hostClientId = null, fixedId = null) {
-  const id = fixedId || crypto.randomBytes(6).toString("hex"); // 12 hex chars
+  const id = fixedId || shortRoomId(); // шестизначный код, как в Activity
   const normHostClientId = typeof hostClientId === "string" && hostClientId.trim() ? hostClientId.trim().slice(0, 64) : null;
 
   const room = {
@@ -66,6 +66,7 @@ function createRoom(hostUser, file = null, controls = "all", hostClientId = null
     // Устройство создателя: при общем пароле у всех один id "shared", ведущего отличает только оно
     host_client_id: normHostClientId,
     host_absent_since: 0, // когда ведущего нет в комнате (noteHostAbsence); 0 — он здесь
+    had_members: false, // кто-нибудь уже открывал поток комнаты: до этого комната создателя «его», усыновлять её рано
     file: cleanFile(file), // { key, name, ad_id }: из тела запроса — та же проверка, что у change_file
     controls: controls === "host" ? "host" : "all",
     state: {
@@ -221,6 +222,18 @@ function touchAccountActiveDevice(userId, clientId) {
   if (!userId || userId === "shared" || userId === "guest" || !clientId) return;
   const cur = accountActiveDevices.get(String(userId));
   if (cur && cur.clientId === clientId) cur.at = Date.now();
+}
+
+// Это устройство вытеснено: аккаунт перешёл на другое (оно подключено или только что выбрано). Его команды комнате
+// не принимаются, иначе старое устройство с открытым плеером продолжало бы ставить паузу и перематывать всем
+function isDeviceDisplaced(user, clientId) {
+  const userId = user && user.id ? String(user.id) : null;
+  if (!userId || userId === "shared" || userId === "guest") return false;
+  const cid = typeof clientId === "string" && clientId.trim() ? clientId.trim().slice(0, 64) : null;
+  if (!cid) return false;
+  const active = accountActiveDevices.get(userId);
+  if (!active || active.clientId === cid) return false;
+  return isDeviceInAnyRoom(active.clientId) || Date.now() - active.at < PENDING_DEVICE_TTL_MS;
 }
 
 // Поиск активной комнаты, где уже подключен пользователь с другого устройства.
@@ -401,6 +414,7 @@ function joinRoom(roomId, user, clientId = null) {
 
   const fresh = memberOf(user, clientId);
   adoptIfHostAbsent(room, user, fresh.client_id);
+  room.had_members = true;
   const existing = room.members.get(fresh.client_id);
   const member = existing ? Object.assign(existing, { last_seen: fresh.last_seen }) : { ...fresh, streams: 0 };
   member.streams++;
@@ -507,10 +521,14 @@ function noteHostAbsence(room) {
   setTimeout(() => promoteIfHostGone(room), HOST_GRACE_MS).unref?.();
 }
 
-// Комната голосового канала была пуста, и её ведущий давно не вернулся: новый человек в комнате становится ведущим.
-// Иначе комната, где все вышли, отдавалась бы тому, кто первым открыл её в канале, даже если его уже нет
+// Комната была пуста, и её ведущий давно не вернулся: новый человек в комнате становится ведущим. Иначе комната,
+// где все вышли, оставалась бы за тем, кого уже нет, и никто не мог бы включить фильм или поставить паузу.
+// Обычная комната, куда ещё никто не заходил (создатель не успел открыть поток), создателя не теряет
 function adoptIfHostAbsent(room, user, clientId) {
-  if (!room.channel_id || !user || !user.id || user.id === "guest" || user.id === "shared") return;
+  if (!user || !user.id || user.id === "guest") return;
+  // Общий пароль: один id на всех, ведущего отличает устройство — без него ведущим не стать
+  if (user.id === "shared" && !clientId) return;
+  if (!room.channel_id && !room.had_members) return;
   if (hostPresent(room)) {
     room.host_absent_since = 0;
     return;
@@ -574,7 +592,7 @@ function sweepRooms(now = Date.now()) {
     }
   }
 }
-setInterval(sweepRooms, 5 * 60 * 1000).unref?.();
+setInterval(sweepRooms, 30 * 1000).unref?.();
 
 const VARIANT_KEY_RE = /^\d{1,20}\|.{1,900}$/s;
 
@@ -823,7 +841,12 @@ function shortRoomId() {
     const id = String(crypto.randomInt(100000, 1000000));
     if (!rooms.has(id)) return id;
   }
-  return crypto.randomBytes(6).toString("hex");
+  // Все 900 000 кодов заняты — на деле недостижимо; код шире, но тоже из цифр
+  for (let i = 0; i < 50; i++) {
+    const id = String(crypto.randomInt(10000000, 100000000));
+    if (!rooms.has(id)) return id;
+  }
+  throw new Error("Не удалось подобрать код комнаты.");
 }
 
 function getOrCreateChannelRoom(channelId, user) {
@@ -1240,21 +1263,32 @@ function cancelPoll(roomId, user) {
 }
 
 // «Сделать ведущим»: передаёт комнату тому, кто сейчас в ней (у пульта или с плеером). Передать может только ведущий.
-function transferHost(roomId, user, targetId) {
-  const { room, error } = channelRoomOrError(roomId);
-  if (!room) return { ok: false, error };
-  if (!isRoomHost(room, user, null)) return { ok: false, error: "Ведущего передаёт только ведущий." };
+// target: id участника (user_id) или отпечаток устройства (key) — при общем пароле id у всех один.
+// clientId — устройство того, кто передаёт (при общем пароле ведущего отличает только оно)
+function transferHost(roomId, user, targetId, clientId = null, targetKey = null) {
+  const room = getRoom(roomId);
+  if (!room) return { ok: false, error: "Комната не найдена." };
+  if (!isRoomHost(room, user, clientId)) return { ok: false, error: "Ведущего передаёт только ведущий." };
   const id = String(targetId || "");
-  if (!id) return { ok: false, error: "Не выбран участник." };
-  if (id === String(room.host_id)) return { ok: true };
-  if (id === "guest" || id === "shared") return { ok: false, error: "Ведущим может быть только участник с аккаунтом." };
-  const member = Array.from(room.members.values()).find(m => m && String(m.id) === id);
-  const watcher = room.watchers.get(id);
-  if (!member && !watcher) return { ok: false, error: "Ведущим можно сделать только того, кто сейчас в комнате." };
-  const who = member || watcher;
-  setHost(room, { id: who.id, name: who.name }, member ? member.client_id : null);
+  const key = typeof targetKey === "string" ? targetKey : "";
+  if (!id && !key) return { ok: false, error: "Не выбран участник." };
+  if (key) {
+    const m = Array.from(room.members.values()).find(x => x && clientKey(x.client_id) === key);
+    if (!m) return { ok: false, error: "Ведущим можно сделать только того, кто сейчас в комнате." };
+    if (m.id === "guest") return { ok: false, error: "Ведущим может быть только участник с аккаунтом." };
+    if (m.id === room.host_id && m.client_id === room.host_client_id) return { ok: true };
+    setHost(room, { id: m.id, name: m.name }, m.client_id);
+  } else {
+    if (id === String(room.host_id)) return { ok: true };
+    if (id === "guest" || id === "shared") return { ok: false, error: "Ведущим может быть только участник с аккаунтом." };
+    const member = Array.from(room.members.values()).find(m => m && String(m.id) === id);
+    const watcher = room.watchers.get(id);
+    if (!member && !watcher) return { ok: false, error: "Ведущим можно сделать только того, кто сейчас в комнате." };
+    const who = member || watcher;
+    setHost(room, { id: who.id, name: who.name }, member ? member.client_id : null);
+  }
   broadcast(room.id, "state_changed", getRoomPublicData(room));
-  activityChanged(room);
+  if (room.channel_id) activityChanged(room);
   return { ok: true };
 }
 
@@ -1309,6 +1343,7 @@ module.exports = {
   sweepRooms,
   promoteIfHostGone,
   handleRoomAction,
+  isDeviceDisplaced,
   timelineShiftMs,
   getOrCreateChannelRoom,
   reportSpeaking,

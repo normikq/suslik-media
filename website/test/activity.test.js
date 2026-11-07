@@ -580,15 +580,54 @@ test("закрыть комнату может только ведущий: ко
   rooms.closeRoom(fresh.id, bob);
 });
 
-test("пустая комната канала удаляется через 5 минут, обычная — через 30", () => {
+test("пустая комната канала удаляется через 5 минут, обычная — тоже через 5", () => {
   const channel = rooms.getOrCreateChannelRoom("191919191919191919", alice);
   const leave = rooms.addWatcher(channel, alice);
   leave();
   const plain = rooms.createRoom(alice);
-  const later = Date.now() + 6 * 60 * 1000;
-  rooms.sweepRooms(later);
+  assert.match(plain.id, /^\d{6}$/, "код обычной комнаты — шесть цифр");
+  rooms.sweepRooms(Date.now() + 4 * 60 * 1000);
+  assert.ok(rooms.getRoom(plain.id), "обычная комната ещё ждёт 5 минут");
+  rooms.sweepRooms(Date.now() + 6 * 60 * 1000);
   assert.equal(rooms.getRoom(channel.id), null, "канал: через 6 минут уже нет");
-  assert.ok(rooms.getRoom(plain.id), "обычная комната ещё ждёт 30 минут");
-  rooms.sweepRooms(Date.now() + 31 * 60 * 1000);
-  assert.equal(rooms.getRoom(plain.id), null);
+  assert.equal(rooms.getRoom(plain.id), null, "обычная: тоже");
+});
+
+test("брошенная обычная комната: вошедший по коду через минуту становится ведущим", () => {
+  const room = rooms.createRoom(alice, null, "all", "pc_alice");
+  // Создатель ещё не открыл поток: комната его
+  assert.equal(rooms.joinRoom(room.id, bob, "pc_bob").ok, true);
+  assert.equal(room.host_id, alice.id, "комнату создателя до первого входа не усыновляют");
+  rooms.leaveRoom(room.id, "pc_bob", true);
+  room.empty_since = Date.now() - 2 * 60 * 1000;
+  room.host_absent_since = Date.now() - 2 * 60 * 1000;
+  assert.equal(rooms.joinRoom(room.id, carol, "pc_carol").ok, true);
+  assert.equal(room.host_id, carol.id, "ведущего давно нет — им становится вошедший");
+  assert.equal(rooms.isRoomHost(room, carol, "pc_carol"), true);
+  rooms.leaveRoom(room.id, "pc_carol", true);
+});
+
+test("ручная передача ведущего в обычной комнате", () => {
+  const room = rooms.createRoom(alice, null, "all", "pc_alice");
+  rooms.joinRoom(room.id, alice, "pc_alice");
+  rooms.joinRoom(room.id, bob, "pc_bob");
+  assert.equal(rooms.transferHost(room.id, bob, bob.id, "pc_bob").ok, false, "гость не передаёт");
+  assert.equal(rooms.transferHost(room.id, alice, bob.id, "pc_alice").ok, true);
+  assert.equal(room.host_id, bob.id);
+  assert.equal(room.host_client_id, "pc_bob");
+  rooms.leaveRoom(room.id, "pc_alice", true);
+  rooms.leaveRoom(room.id, "pc_bob", true);
+});
+
+test("вход с другого устройства: старое устройство вытеснено, его команды не принимаются", () => {
+  const room = rooms.createRoom(alice, null, "all", "pc_old");
+  assert.equal(rooms.joinRoom(room.id, alice, "pc_old").ok, true);
+  assert.equal(rooms.isDeviceDisplaced(alice, "pc_old"), false);
+  rooms.moveAccount(alice, "an_new", room.id);
+  assert.equal(rooms.isDeviceDisplaced(alice, "pc_old"), true, "старое устройство вытеснено");
+  assert.equal(rooms.isDeviceDisplaced(alice, "an_new"), false, "новое — нет");
+  assert.equal(rooms.isDeviceDisplaced(alice, null), false, "старые приложения без client_id не трогаем");
+  assert.equal(rooms.joinRoom(room.id, alice, "pc_old").ok, false, "и войти оно уже не может");
+  assert.equal(rooms.joinRoom(room.id, alice, "an_new").ok, true);
+  rooms.leaveRoom(room.id, "an_new", true);
 });

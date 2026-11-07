@@ -371,6 +371,15 @@ void Party::pump() {
                 if (const auto u = PartyProtocol::roomOf(r.json)) setRoom(m_room.merge(*u));
         } else {
             log(S("action %1 failed: %2").arg(body.value(S("type")).toString(), ApiClient::describe(r.error)));
+            // Аккаунт перешёл на другое устройство: это — старое, его команды комната не принимает
+            if (r.code == 403 && m_roomId == id) {
+                leave();
+                m_notice = tx(S("party.vhod_bolshe_ne_deystvuet"));
+                emit changed();
+                emit kicked();
+                m_sending = false;
+                return;
+            }
             if (body.value(S("type")).toString() == S("change_file") && m_roomId == id) setRoom(m_room.fileRejected());
         }
         pump();
@@ -431,6 +440,7 @@ void Party::startStream(const QString &id) {
             leave();
             m_notice = tx(S("party.vhod_bolshe_ne_deystvuet"));
             emit changed();
+            emit kicked();
             return;
         }
         log(S("stream: %1").arg(code > 0 ? S("HTTP %1").arg(code) : reply->errorString()));

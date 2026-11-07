@@ -51,6 +51,9 @@ object Party {
         private set
     /** Why the app left the room by itself (shown on the room page until the next create / join). */
     var notice by mutableStateOf<String?>(null)
+    /** Grows each time the server put this device out of the room (the account joined from another one): the player pauses. */
+    var kickedTick by mutableStateOf(0)
+        private set
     /** My user id on the server (the shared password account is "shared"). */
     var myUserId by mutableStateOf<String?>(null)
         private set
@@ -198,6 +201,10 @@ object Party {
                     if (roomId == id) PartyProtocol.roomOf(res)?.let { apply(it) }
                 } catch (e: Exception) {
                     AppLog.write("[party] action ${body.optString("type")} failed: ${Api.describe(e)}")
+                    // The account went to another device: this one is out, its commands must not move the room
+                    if (e is Api.HttpError && e.code == 403 && roomId == id) {
+                        leave(); notice = tr("party.vhod_bolshe_ne_deystvuet"); kickedTick++
+                    }
                     if (body.optString("type") == "change_file") synchronized(this@Party) { room = room.fileRejected() }
                 }
             }
@@ -312,7 +319,7 @@ object Party {
                             // The sign-in no longer works (signed out, access revoked): repeating makes no sense
                             401, 403 -> {
                                 AppLog.write("[party] stream: HTTP ${res.code}, leaving the room")
-                                leave(); notice = tr("party.vhod_bolshe_ne_deystvuet"); return@launch
+                                leave(); notice = tr("party.vhod_bolshe_ne_deystvuet"); kickedTick++; return@launch
                             }
                         }
                         if (!res.isSuccessful) throw java.io.IOException("HTTP ${res.code}")

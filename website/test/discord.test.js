@@ -167,20 +167,20 @@ test("rooms: client ids are not shown to others (a guest cannot act as the host'
   assert.equal(handleRoomAction(room.id, shared, { type: "change_file", file: film, client_id: data.host_key }).ok, false);
 });
 
-test("rooms: an empty room is removed after 30 minutes, even if nobody ever came in", () => {
+test("rooms: an empty room is removed after 5 minutes, even if nobody ever came in", () => {
   const { getRoom, sweepRooms, leaveRoom } = require("../src/services/rooms");
   const host = { id: "u_30", name: "Host" };
   const never = createRoom(host, null, "all", "pc_x");
   const used = createRoom(host, null, "all", "pc_y");
   joinRoom(used.id, host, "pc_y");
-  const later = Date.now() + 31 * 60 * 1000;
+  const later = Date.now() + 6 * 60 * 1000;
   sweepRooms(later);
   assert.equal(getRoom(never.id), null);
   assert.ok(getRoom(used.id)); // в ней кто-то есть
   leaveRoom(used.id, "pc_y");
-  sweepRooms(Date.now() + 10 * 60 * 1000);
+  sweepRooms(Date.now() + 2 * 60 * 1000);
   assert.ok(getRoom(used.id)); // пуста недавно
-  sweepRooms(Date.now() + 31 * 60 * 1000);
+  sweepRooms(Date.now() + 6 * 60 * 1000);
   assert.equal(getRoom(used.id), null);
 });
 

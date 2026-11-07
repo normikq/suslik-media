@@ -44,6 +44,10 @@
   party.isCreator = function (m) { return R.isCreator(party.room, m); };
   party.targetMs = function () { return core.targetMs(party.room.state, party.clock.serverNow(mono())); };
   party.othersBuffering = function () { return R.othersBuffering(party.room, party.myKey); };
+  // Аккаунт вошёл в комнату с другого устройства: это вытеснено (плееру — пауза)
+  party.kickListeners = [];
+  party.onKicked = function (f) { party.kickListeners.push(f); };
+  function kicked() { party.kickListeners.forEach(function (f) { try { f(); } catch (e) { /* плеер закрыт */ } }); }
   party.onChange = function (f) { party.listeners.push(f); return function () { party.listeners = party.listeners.filter(function (x) { return x !== f; }); }; };
 
   /** Запрос, ответ которого везёт server_time: ещё одна точка для часов. */
@@ -198,7 +202,11 @@
     timed(api.post(P.actionPath(job.id), job.body)).then(function (res) {
       var u = P.roomOf(res);
       if (u && party.roomId === job.id) { party.room = R.merge(party.room, u); changed(); }
-    }).catch(function () {
+    }).catch(function (err) {
+      if (err && err.code === 403 && party.roomId === job.id) {
+        party.leave(); party.notice = 'Вы вышли из комнаты: вход больше не действует. Войдите снова.'; changed(); kicked(); outbox.length = 0;
+        return;
+      }
       if (job.body.type === 'change_file') party.room = R.fileRejected(party.room);
     }).then(function () { sending = false; pump(); });
   }
@@ -248,7 +256,7 @@
         party.connected = false;
         if (party.roomId !== id) return;
         if (x.status === 404) { party.leave(); party.notice = 'Комната закрыта.'; changed(); return; }
-        if (x.status === 401 || x.status === 403) { party.leave(); party.notice = 'Вы вышли из комнаты: вход больше не действует. Войдите снова.'; changed(); return; }
+        if (x.status === 401 || x.status === 403) { party.leave(); party.notice = 'Вы вышли из комнаты: вход больше не действует. Войдите снова.'; changed(); kicked(); return; }
         changed();
         retryTimer = setTimeout(connect, Math.min(15000, 1000 * Math.pow(2, Math.min(failures, 4))));
         failures++;
