@@ -25,3 +25,8 @@ if(SM_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)
 endif()
+# Кинотеатр в Cyberpunk 2077 (cinema/host, docs/CYBERPUNK.md): отдельная программа на том же ядре и плеере mpv
+option(SM_CINEMA "Собирать хост кинотеатра Cyberpunk 2077" OFF)
+if(SM_CINEMA)
+  add_subdirectory(../cinema/host cinema)
+endif()

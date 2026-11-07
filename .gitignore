@@ -26,3 +26,8 @@ tizen/js/site.js
 
 # служебная папка выкладки сайта (scripts/deploy-website.sh), если DEPLOY_PATH указывает сюда
 website/.deploy/
+
+# Кинотеатр Cyberpunk 2077: локальная сборка хоста и файлы разведки из игры
+build-cinema/
+cinema/recon/SuslikCinemaRecon/recon.log
+cinema/recon/SuslikCinemaRecon/corners.txt
