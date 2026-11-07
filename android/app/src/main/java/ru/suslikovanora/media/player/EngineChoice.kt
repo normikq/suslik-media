@@ -7,10 +7,13 @@ import ru.suslikovanora.media.PlaybackSettings
 import java.util.Locale
 
 /**
- * Какой движок открывает файл. Настройка «Плеер» = VLC — VLC, кроме Dolby Vision (его VLC не умеет). Иначе Media3, кроме:
- *  - контейнеров, которые Media3 не читает или читает нестабильно (Blu-ray `.m2ts`, `.ts`, `.iso`, `.avi`) — сразу VLC;
+ * Какой движок открывает файл. Настройка «Плеер» = mpv — mpv, кроме Dolby Vision (его маршрут — Media3). Иначе Media3, кроме:
+ *  - контейнеров, которые Media3 не читает или читает нестабильно (Blu-ray `.m2ts`, `.ts`, `.avi`) — сразу mpv
+ *    (`.iso` не открывает никто: плеер сразу говорит об этом, core.isDiscImage);
  *  - файлов, для которых движок уже выбран раньше (Media3 не справился — запомнено [remember]): «Продолжить»
  *    сразу открывает их в нужном движке, без повторной попытки и переключения посреди просмотра.
+ *    Записи до 2.8.0 с тегом «vlc» открываются в mpv (он занял место VLC).
+ * На Android 7 (libmpv — с Android 8) всё идёт в Media3.
  */
 class EngineChoice(context: Context) {
     data class Pick(val kind: EngineKind, val reason: String)
@@ -19,18 +22,19 @@ class EngineChoice(context: Context) {
     private val prefs = app.getSharedPreferences("player_engine", Context.MODE_PRIVATE)
 
     fun choose(url: String): Pick {
+        if (!MpvEngine.supported) return Pick(EngineKind.MEDIA3, "Android ${android.os.Build.VERSION.SDK_INT}: mpv needs Android 8")
         val ext = Uri.parse(url).lastPathSegment.orEmpty().substringAfterLast('.', "").lowercase(Locale.ROOT)
-        if (ext in VLC_ONLY) return Pick(EngineKind.VLC, ".$ext: Media3 cannot read this container")
+        if (ext in MPV_ONLY) return Pick(EngineKind.MPV, ".$ext: Media3 cannot read this container")
         remembered(url)?.let { return Pick(it.kind, "remembered for this file (${it.reason})") }
-        // libVLC 3.6 has no Dolby Vision: even with «Плеер: VLC» such a file goes to Media3 (its decoder, or the base layer by itself)
-        if (VideoHints.isDolbyVision(url)) return Pick(EngineKind.MEDIA3, "Dolby Vision: libVLC shows only the base layer")
-        if (PlaybackSettings.engine(app) == EngineKind.VLC) return Pick(EngineKind.VLC, "setting: VLC")
+        // Dolby Vision stays with Media3 (the phone's DV decoder, or the base layer by itself) even with «Плеер: mpv»
+        if (VideoHints.isDolbyVision(url)) return Pick(EngineKind.MEDIA3, "Dolby Vision: Media3's route")
+        if (PlaybackSettings.engine(app) == EngineKind.MPV) return Pick(EngineKind.MPV, "setting: mpv")
         return Pick(EngineKind.MEDIA3, "setting: Media3")
     }
 
     fun remembered(url: String): Pick? {
         val v = prefs.getString(MirrorLink.fileKey(url), null) ?: return null
-        val kind = EngineKind.values().firstOrNull { v.startsWith(it.tag + "|") } ?: return null
+        val kind = EngineKind.ofTag(v.substringBefore('|')) ?: return null
         return Pick(kind, v.substringAfter('|').substringAfter('|'))
     }
 
@@ -45,7 +49,7 @@ class EngineChoice(context: Context) {
     }
 
     companion object {
-        private val VLC_ONLY = setOf("m2ts", "mts", "ts", "iso", "avi")
+        private val MPV_ONLY = setOf("m2ts", "mts", "ts", "avi")
         private const val MAX_FILES = 400
     }
 }

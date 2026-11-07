@@ -53,7 +53,7 @@ android {
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
-        // Debug build («Suslik Debug»): the release app plus a detailed journal (system, network, VLC, reserve, HTTP
+        // Debug build («Suslik Debug»): the release app plus a detailed journal (system, network, mpv, reserve, HTTP
         // timings, UI frames) for tracing what to optimise. Its own package — installs next to the normal app, own
         // login and settings, never updates itself. Optimised like the release (fair numbers), names kept readable,
         // profileable from a computer. Built by CI as a separate artifact; never published to the site.
@@ -72,13 +72,13 @@ android {
         applicationId = "ru.suslikovanora.media"
         minSdk = 24
         targetSdk = 35
-        versionCode = 80
-        versionName = "2.7.7"
+        versionCode = 83
+        versionName = "2.8.2"
         buildConfigField("boolean", "DIAG", "false")
         buildConfigField("String", "SITE_URL", "\"$siteUrl\"")
         manifestPlaceholders["appLabel"] = "Suslik Media — медиатека"
 
-        // Package native VLC libraries only for 64-bit ARM Android devices.
+        // Package native libraries (mpv, FFmpeg) only for 64-bit ARM Android devices.
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
@@ -95,9 +95,11 @@ dependencies {
     // Installs the ready-made start-up profiles of Compose & co. at install time: smooth first launches and scrolls,
     // less CPU (and battery) than running that code interpreted until the JIT warms up.
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
-    // Origin-restricted JS bridge (addWebMessageListener) and document-start scripts.
-    // VLC engine: handles more containers/protocols than the platform player.
-    implementation("org.videolan.android:libvlc-all:3.6.0")
+    // mpv engine (player/MpvEngine.kt): libmpv 0.40 with FFmpeg (MediaCodec, dav1d) and the MPVLib JNI wrapper, from
+    // github.com/jarnedemeulemeester/libmpv-android (wrapper MIT; FFmpeg inside is built with --enable-gpl --enable-version3,
+    // so the APK is GPLv3 — fine for this private app, see docs/ANDROID-MPV.md). 1.0.0 needs Kotlin 2.2 (we are on 2.0).
+    // Its native libraries are for Android 8+ (minSdk 26): on Android 7 everything plays in Media3 (MpvEngine.supported).
+    implementation("dev.jdtech.mpv:libmpv:0.5.1")
 
     // Native library UI
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
@@ -111,7 +113,7 @@ dependencies {
     implementation("com.google.zxing:core:3.5.3") // QR code of the sign-in link on the TV screen
     implementation("io.coil-kt:coil-compose:2.7.0")
 
-    // Media3 (ExoPlayer) — the second player engine next to VLC (player/Media3Engine.kt), with the FFmpeg audio decoder
+    // Media3 (ExoPlayer) — the default player engine next to mpv (player/Media3Engine.kt), with the FFmpeg audio decoder
     // (DTS, TrueHD, AC3, E-AC3; ~0.6 MB, arm64). The decoder is not on Maven: android/ffmpeg/build.sh (CI:
     // media3-ffmpeg.yml) builds it into libs/. Its version must match MEDIA3_VERSION in build.sh.
     val media3 = "1.5.1"
@@ -121,4 +123,6 @@ dependencies {
     implementation("androidx.media3:media3-datasource-okhttp:$media3")
     implementation("androidx.media3:media3-database:$media3")
     implementation("androidx.media3:media3-ui:$media3")
+
+    testImplementation(kotlin("test")) // plain JVM tests of the app's own rules (app/src/test)
 }
