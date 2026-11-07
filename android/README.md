@@ -3,7 +3,7 @@
 > 📖 **Полная документация:** [docs/ANDROID.md](../docs/ANDROID.md); история версий — [docs/HISTORY.md](../docs/HISTORY.md).
 
 Нативное приложение (Kotlin, Jetpack Compose) для телефонов и Android TV: медиатека, «Мои», «Вместе» (совместный просмотр),
-поиск раздач, добавление magnet/.torrent, настройки. Плеер — libVLC 3.6 или Media3 (выбор — `player/EngineChoice`), оба
+поиск раздач, добавление magnet/.torrent, настройки. Плеер — Media3 или mpv (libmpv 0.40, `player/MpvEngine`; выбор — `player/EngineChoice`), оба
 читают фильм через запас `BurstProxy` из ядра `core/`. Пакет `ru.suslikovanora.media`; отладочная сборка «Suslik Debug» —
 `ru.suslikovanora.media.diag` ([DEBUG-BUILD.md](DEBUG-BUILD.md)).
 
@@ -26,7 +26,7 @@
 ## Ядро `core/`
 
 `android/core/` — отдельная сборка Gradle (`includeBuild("core")` в `settings.gradle.kts`, зависимость `ru.suslikovanora.media:core`)
-на чистом Kotlin без Android API: запас `BurstProxy`, сторож `PlaybackSupervisor`, Blu-ray (`TsClock`/`TsPlayback`), модель медиатеки,
+на чистом Kotlin без Android API: запас `BurstProxy`, сторож `PlaybackSupervisor`, модель медиатеки,
 вход, синхронизация, комнаты, поиск, заставки, адрес сервера. Пакеты — `ru.suslikovanora.media.core.*`. До 03.11 это был общий модуль
 `shared/` в корне. У ПК свой C++-перенос (`desktop-qt/core/`), у ТВ и сайта — JS-переносы: правило, изменённое здесь, меняйте и там.
 

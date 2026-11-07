@@ -8,8 +8,8 @@
 | Папка | Что |
 |---|---|
 | `website/` | Node/Express, API и зеркало файлов `/api/file/proxy/<имя>?link=…&exp=…&sig=…` (HTTP/1.1, nginx без http2) |
-| `android/` | Kotlin, Compose, libVLC 3.6 и Media3 (оба через `BurstProxy`, выбор — `player/EngineChoice`), Android TV. `PlayerActivity.kt` (~1900 строк), `player/PlayerExtras.kt` (ключи Intent), `net/Api.kt`, `Diag.kt`, `AppLog.kt`. Gradle wrapper — `android/gradlew` (8.10.2) |
-| `android/core/` | Ядро Android без Android API (бывший общий `shared/`, до 03.11 его делила Kotlin-версия ПК): `BurstProxy`, `PlaybackSupervisor`, `TsClock`/`TsPlayback`, `MirrorLink` (ключ файла и подпись адреса зеркала), `CatchUp` («копим запас»), `clockText`, `Versions`, `Changelog`, `Model`, `PlaybackPresets`, `LibraryKeep`; `party/` — протокол комнат (`PartyProtocol`: `PartyRoom`, разбор SSE, команды) и `PartySyncEngine` (тик 400 мс), `auth/` — сессия, код устройства, «Мои фильмы» (`Auth.kt`), `sync/` — прогресс по аккаунту, `search/` — разбор и фильтр раздач, `audio/` — внешние озвучки, `MarkersDetector` — заставки и титры, `SiteAddress` — адрес сервера из `SITE_URL`. Отдельная сборка Gradle (`includeBuild("core")`, `ru.suslikovanora.media:core`), пакеты `ru.suslikovanora.media.core.*`, тесты на JVM |
+| `android/` | Kotlin, Compose, Media3 и mpv (libmpv 0.40, `player/MpvEngine`, с 2.8.0 вместо libVLC; оба через `BurstProxy`, выбор — `player/EngineChoice`), Android TV. `PlayerActivity.kt` (~1900 строк), `player/PlayerExtras.kt` (ключи Intent), `net/Api.kt`, `Diag.kt`, `AppLog.kt`. Gradle wrapper — `android/gradlew` (8.10.2) |
+| `android/core/` | Ядро Android без Android API (бывший общий `shared/`, до 03.11 его делила Kotlin-версия ПК): `BurstProxy`, `PlaybackSupervisor`, `MirrorLink` (ключ файла и подпись адреса зеркала), `CatchUp` («копим запас»), `clockText`, `Versions`, `Changelog`, `Model`, `PlaybackPresets`, `LibraryKeep`; `party/` — протокол комнат (`PartyProtocol`: `PartyRoom`, разбор SSE, команды) и `PartySyncEngine` (тик 400 мс), `auth/` — сессия, код устройства, «Мои фильмы» (`Auth.kt`), `sync/` — прогресс по аккаунту, `search/` — разбор и фильтр раздач, `audio/` — внешние озвучки, `MarkersDetector` — заставки и титры, `SiteAddress` — адрес сервера из `SITE_URL`. Отдельная сборка Gradle (`includeBuild("core")`, `ru.suslikovanora.media:core`), пакеты `ru.suslikovanora.media.core.*`, тесты на JVM |
 | `desktop-qt/` | ПК-версия на C++20/Qt 6 (QML, libmpv), с 3.0.0 заменила Kotlin-версию (Compose Desktop, `desktop/` удалена 03.11). `core/` — C++-перенос `android/core/` и сетевой части ПК с тестами Qt Test, `app/` — интерфейс (`qml/`, `src/`, `src/player/` — mpv рисует в FBO Qt Quick, `src/party/`, `src/trackers/`), `resources/` — шрифты, значки, строки, `changelog.json`, `libmpv.properties`, `installer/` — MSI (WiX 3) и мастер установки на WPF. Подробно — `docs/DESKTOP.md`, CI `desktop-qt.yml` |
 | `tizen/` | Samsung TV (Tizen 4.0+, веб-приложение без сборщика, ES2017 — Chromium 56): вход по коду, медиатека, плеер `webapis.avplay` по ссылке зеркала (без `BurstProxy`), предупреждения о неподдерживаемом (`js/support.js`). Сборка `tizen/build.sh` (`SITE_URL`, `TIZEN_PROFILE`), тесты `node --test tizen/test/*.test.js`. Подробно: `tizen/README.md` |
 | `scripts/`, `install-android-debug.bat` | выкладка сайта по SSH; сборка и установка «Suslik Debug» на телефон по ADB |
@@ -42,7 +42,7 @@ Changelog (русский) — `android/app/src/main/assets/changelog.json`, `de
 
 ## Сборка и выпуск
 
-- Тесты ядра Android (`android-core.yml`) идут на пуш с изменениями в `android/core/`: `android/core/src/test/...` (модель и слияние версий, `BurstProxy`, `TsClock`, зеркало, комнаты, вход, синхронизация, поиск, заставки, `SiteAddressTest` и др.).
+- Тесты ядра Android (`android-core.yml`) идут на пуш с изменениями в `android/core/`: `android/core/src/test/...` (модель и слияние версий, `BurstProxy`, зеркало, комнаты, вход, синхронизация, поиск, заставки, `SiteAddressTest` и др.).
   Тесты ядра ПК (Qt Test) — `desktop-qt.yml` на пуш в `desktop-qt/` (сборка и `ctest` на Linux). Логи заданий CI читаются через `mcp__github__get_job_logs`. Локально Gradle в облачной сессии плагины не скачивает — компиляция Kotlin только в CI.
 - Выкладка сайта — только по команде владельца: workflow `website-deploy.yml` (вручную) или `scripts/deploy-website.sh` по SSH-ключу; секреты `DEPLOY_*`, данные и `.env` на сервере не трогаются, при неответе — откат. Подробно `docs/DEPLOY.md`.
 - Серверные модульные тесты: `website/test/*.test.js` (`node --test`). Статическая проверка: `npm run check`.
@@ -80,6 +80,7 @@ Changelog (русский) — `android/app/src/main/assets/changelog.json`, `de
 Журнал версий (2.0.0.4 → 3.1.5, причины решений и замеры) — `docs/HISTORY.md`, новые записи снизу. Читай его, когда нужна причина конкретного решения.
 
 Состояние на 06.11:
+- **Android 2.8.0 (код 81) — mpv вместо libVLC** (07.11, ветка `feature/android-mpv`, не выпущено, на устройствах не проверено): `docs/ANDROID-MPV.md` §0 — что сделано и что проверить.
 - **ПК 3.1.5, Android 2.7.6 (код 79), Tizen 0.2.15** (06.11, PR #92): бесшовное переключение качества в плеере, автоопределение нехватки скорости, внешние озвучки ко всем релизам фильма, синхронизация прогресса по canonical_id, аппаратные защиты звука Tizen (DTS guard), фиксы локализации и окон добавления.
 - **ПК 3.1.4, Android 2.7.5 (код 78), Tizen 0.2.14** (04.11): композитные профили качества, умный скоринг релизов, разделение монтажных версий, протокол совместного просмотра пресетов качества, фикс смены серии в комнатах на Android (PR #92).
 - **ПК 3.1.3, Android 2.7.4 (код 77), Tizen 0.2.13** (04.11): вытеснение старых устройств в комнатах «Вместе» (PR #89, #90) при отключении питания или смене устройства, защита от гонки, передача прав ведущего новому устройству.
@@ -102,7 +103,7 @@ Changelog (русский) — `android/app/src/main/assets/changelog.json`, `de
   и в списке, меню правки в полях, прокрутка окна запуска, тосты с переносом, правки плеера («Вместе», подсказки, громкость). Windows-часть заголовка на устройстве не проверена.
 - **Сервер.** Код `website/` впереди выложенного. По заметкам не выложены: метки `/api/tags` и баннер (24.10), «Определить через ИИ» (`docs/AI-TITLE.md`),
   заставки `/api/markers` (`docs/MARKERS.md`), озвучки для ТВ (`docs/CUSTOM-AUDIO-API.md` §8), путь сервера (`docs/MIGRATION.md`), подбор по настроению `/api/search/ai-discovery` (`docs/AI-DISCOVERY.md`). Что выложено на самом деле — уточнять у владельца.
-- **Платформы.** ПК — C++/Qt и только mpv, рисует в сцене QML (`docs/DESKTOP.md` §5). Android — libVLC и Media3. Samsung TV (`tizen/`) — UE40NU7100 владельца:
+- **Платформы.** ПК — C++/Qt и только mpv, рисует в сцене QML (`docs/DESKTOP.md` §5). Android — Media3 и mpv (до 2.8.0 — libVLC). Samsung TV (`tizen/`) — UE40NU7100 владельца:
   DTS/TrueHD не играет, сервер не перекодирует, приложение предупреждает; ставится только с подписью профилем «mixed» (`tizen/README.md`).
 - Журнал ПК из консоли Claude читать только через `//localhost/C$/Users/nanar/AppData/Roaming/...` (`%APPDATA%` у пакета Claude — старая копия).
 

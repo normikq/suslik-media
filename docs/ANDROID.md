@@ -11,7 +11,7 @@
 - **Видеоплеер:** нативный **libVLC 3.6** для Android (`org.videolan.android:libvlc-all`).
 - **Сетевой слой:** OkHttp 4 (с кастомной стратегией ретраев на мобильных сетях).
 - **Асинхронность:** Kotlin Coroutines & Flow.
-- **Ядро:** `android/core/` — сборка Gradle `includeBuild("core")`, зависимость `ru.suslikovanora.media:core` (модели, локальный прокси `BurstProxy`, сторож плеера `PlaybackSupervisor`, Blu-ray расчеты `TsClock`); чистый Kotlin, тесты на JVM (`android-core.yml`).
+- **Ядро:** `android/core/` — сборка Gradle `includeBuild("core")`, зависимость `ru.suslikovanora.media:core` (модели, локальный прокси `BurstProxy`, сторож плеера `PlaybackSupervisor`); чистый Kotlin, тесты на JVM (`android-core.yml`).
 
 Идентификатор пакета:
 - Релизная сборка: `ru.suslikovanora.media`
@@ -57,7 +57,6 @@ android/
 │   │   │   ├── PlayerAudioSession.kt      MediaSession, AudioFocus, наушники, громкость
 │   │   │   ├── PlayerGestures.kt          Жесты: перемотка, яркость, громкость, pinch-to-zoom
 │   │   │   ├── PlayerNetworkMonitor.kt    Мониторинг сети, сигнал на бесшовный reconnect
-│   │   │   ├── PlayerBluRayController.kt  Поддержка .m2ts / TsClock, перемотка без дрейфа
 │   │   │   ├── PlayerTrackSelector.kt     Выбор дорожек аудио/субтитров, внешние sidecars
 │   │   │   ├── PlayerPipController.kt     Режим «Картинка в картинке» (Picture-in-Picture)
 │   │   │   ├── PlayerWatchProgress.kt     Фиксация прогресса просмотра (последние 15 с = просмотрено)
@@ -108,7 +107,6 @@ android/
 | `PlayerAudioSession.kt` | Управление `MediaSessionCompat` для системных медиа-нотификаций и Bluetooth-кнопок. Реализация `AudioFocusRequest` (приглушение звука при вызовах и навигации). Реакция на `ACTION_AUDIO_BECOMING_NOISY` (автоматическая пауза при отключении наушников). |
 | `PlayerGestures.kt` | Обработка touch-событий в Compose: горизонтальный свайп для перемотки с визуальным таймкодом; вертикальный свайп по левому краю — яркость экрана (`WindowAttributes.screenBrightness`); вертикальный свайп по правому краю — громкость; pinch-to-zoom для изменения масштабирования кадра (Fill / Fit / 100%); двойной тап по краям экрана для шага перемотки ±10 с. |
 | `PlayerNetworkMonitor.kt` | Слушатель `ConnectivityManager.NetworkCallback`. Отслеживает переход между Wi-Fi и мобильной сетью, а также смену IP при обрыве VPN (`tun0`). Инициирует мягкий реконнект видеопотока с сохранением точной миллисекунды. |
-| `PlayerBluRayController.kt` | Работа с потоками Blu-ray (`.m2ts`) поверх общего `TsPlayback` (как на ПК): длительность по меткам PCR (`TsClock`), перемотка по контрольным точкам без накопления погрешности на VBR потоках, «Продолжить» со смещением времени. |
 | `PlayerTrackSelector.kt` | Списки дорожек для шторок (`audioChoices` / `subtitleChoices`) и выбор (`pickAudio` / `pickSubtitle`). Загрузка внешних аудиодорожек и субтитров (sidecars): у каждой серии плейлиста свои, при переходе к серии их адреса подписываются заново (`/api/file/mirror-url`). Мгновенный сброс буфера `reseekHereNow` для устранения 3-секундной задержки смены аудио. Сохранение предпочтений языка. |
 | `PlayerPipController.kt` | Вход в режим «Картинка в картинке» (PiP): расчет соотношения сторон `PictureInPictureParams.Builder.setAspectRatio` с учетом реального SAR видеоряда. Автоматический вход при сворачивании на Android 12+ (`setAutoEnterEnabled(true)`). |
 | `PlayerWatchProgress.kt` | Сохранение текущей позиции просмотра в SharedPreferences по композитному ключу раздачи и пути файла. В последние 15 с серия считается просмотренной, а сохранённое место сбрасывается в начало. Защита от перезаписи сохранённой позиции значением 00:00 во время открытия потока. |

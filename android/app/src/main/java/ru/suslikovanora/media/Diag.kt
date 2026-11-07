@@ -49,10 +49,10 @@ import java.util.concurrent.atomic.AtomicLong
  *  [net]   network switches as Android reports them (available / lost / capabilities / blocked);
  *  [event] screen on/off, charger, power saving, doze, activities shown and hidden, memory pressure;
  *  [http]  every request: DNS, TCP, TLS, reused connection or not, time to the first byte, size (no query strings);
- *  [vlc] / [proxy]  from the player (PlayerActivity): playback statistics and the reserve's windows every 5 s;
+ *  [mpv] / [proxy]  from the player (PlayerActivity): playback statistics and the reserve's windows every 5 s;
  *  [battery] `dumpsys batterystats` of the app when a film is closed (needs DUMP, granted via adb).
  *
- * Next to the journal: logcat.log (the app's own Android log, incl. VLC and StrictMode), system.log (warnings of the
+ * Next to the journal: logcat.log (the app's own Android log, incl. mpv (detailed journal) and StrictMode), system.log (warnings of the
  * whole system — only with READ_LOGS granted via adb), batterystats-*.txt.
  *
  * In the normal app [on] is a compile-time false: R8 removes all of this.
@@ -84,8 +84,14 @@ object Diag {
             2, 5, TimeUnit.SECONDS)
     }
 
-    fun vlcVerbose(ctx: Context): Boolean = on && prefs(ctx).getBoolean("vlc_verbose", false)
-    fun setVlcVerbose(ctx: Context, v: Boolean) = prefs(ctx).edit().putBoolean("vlc_verbose", v).apply()
+    fun mpvVerbose(ctx: Context): Boolean = on && prefs(ctx).getBoolean("mpv_verbose", false)
+    fun setMpvVerbose(ctx: Context, v: Boolean) = prefs(ctx).edit().putBoolean("mpv_verbose", v).apply()
+    /**
+     * mpv выводит кадры прямо на поверхность (`mediacodec_embed`), а не через GL: так на ТВ работает MEMC.
+     * По умолчанию включено; в отладочной сборке можно вернуть вывод через GL для сравнения.
+     */
+    fun mpvDirect(ctx: Context): Boolean = prefs(ctx).getBoolean("mpv_direct", true)
+    fun setMpvDirect(ctx: Context, v: Boolean) = prefs(ctx).edit().putBoolean("mpv_direct", v).apply()
     private fun prefs(ctx: Context) = ctx.getSharedPreferences("diag", Context.MODE_PRIVATE)
 
     /** «📍» in the player / «Метка» in the settings: a visible marker in the journal («here it stuttered»). */

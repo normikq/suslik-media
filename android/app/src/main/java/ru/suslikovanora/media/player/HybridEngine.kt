@@ -18,9 +18,9 @@ class HybridEngine(private val context: Context) : PlayerEngine {
     override val videoView: View get() = container
     override var listener: EngineListener? = null
 
-    private var vlc: VlcEngine? = null
+    private var mpv: MpvEngine? = null
     private var media3: Media3Engine? = null
-    private var active: PlayerEngine = engine(EngineKind.VLC)
+    private var active: PlayerEngine = engine(if (MpvEngine.supported) EngineKind.MPV else EngineKind.MEDIA3)
 
     override val kind: EngineKind get() = active.kind
     private var opened = 0
@@ -46,7 +46,7 @@ class HybridEngine(private val context: Context) : PlayerEngine {
     }
 
     private fun engine(kind: EngineKind): PlayerEngine = when (kind) {
-        EngineKind.VLC -> vlc ?: VlcEngine(context).also { vlc = it; add(it) }
+        EngineKind.MPV -> mpv ?: MpvEngine(context).also { mpv = it; add(it) }
         EngineKind.MEDIA3 -> media3 ?: Media3Engine(context).also { media3 = it; add(it) }
     }
 
@@ -62,7 +62,7 @@ class HybridEngine(private val context: Context) : PlayerEngine {
         if (next !== active && active.hasPlayer) active.release()
         active = next
         next.setPlayerVolume(playerVolume)
-        for (e in listOfNotNull(vlc, media3)) e.videoView.visibility = if (e === active) View.VISIBLE else View.GONE
+        for (e in listOfNotNull(mpv, media3)) e.videoView.visibility = if (e === active) View.VISIBLE else View.GONE
     }
 
     override fun open(media: EngineMedia, scale: VideoScale) {
@@ -72,7 +72,7 @@ class HybridEngine(private val context: Context) : PlayerEngine {
     }
 
     override fun release() {
-        vlc?.release()
+        mpv?.release()
         media3?.release()
     }
 
@@ -121,5 +121,6 @@ class HybridEngine(private val context: Context) : PlayerEngine {
     override val bufferedPositionMs: Long get() = active.bufferedPositionMs
     override val bitrateMbit: Double? get() = active.bitrateMbit
     override val handlesSurfaceItself: Boolean get() = active.handlesSurfaceItself
+    override val hardwareDecoder: String? get() = active.hardwareDecoder
     override fun diagLine(): String? = active.diagLine()
 }

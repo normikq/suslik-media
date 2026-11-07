@@ -559,12 +559,17 @@ QString parseEdition(const QString &name) {
     return {};
 }
 
+bool isDiscImage(const QString &nameOrUrl) {
+    const QString path = nameOrUrl.section(QLatin1Char('?'), 0, 0).section(QLatin1Char('#'), 0, 0);
+    return path.endsWith(QLatin1String(".iso"), Qt::CaseInsensitive);
+}
+
 std::optional<MFile> mainVideo(const Magnet &m) {
     QList<MFile> vids, real;
     for (const MFile &f : m.files)
         if (!f.isFolder && contains(VIDEO_EXT, f.path)) vids << f;
     for (const MFile &f : vids)
-        if (!f.path.endsWith(QLatin1String(".iso"), Qt::CaseInsensitive)) real << f;
+        if (!isDiscImage(f.path)) real << f;
     const QList<MFile> &pool = real.isEmpty() ? vids : real;
     if (pool.isEmpty()) return std::nullopt;
     const MFile *best = &pool.first();

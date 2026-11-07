@@ -1,3 +1,2 @@
-# libVLC uses JNI and reflection: keep its classes.
--keep class org.videolan.** { *; }
--dontwarn org.videolan.**
+# libmpv: the native side calls MPVLib's static methods and its observer interfaces by name (JNI).
+-keep class dev.jdtech.mpv.** { *; }
