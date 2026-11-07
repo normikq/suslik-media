@@ -60,7 +60,7 @@ end
 -- Вызов с записью, доступна ли функция (первый результат хранится в R.api).
 local function try(name, fn)
     local ok, a, b, c = pcall(fn)
-    if R.api[name] == nil then R.api[name] = ok and "ok" or ("ERR " .. tostring(a)) end
+    if R.api[name] == nil then R.api[name] = ok and (a ~= nil and "ok" or "ok, nil") or ("ERR " .. tostring(a)) end
     if ok then return a, b, c end
     return nil
 end
@@ -117,24 +117,63 @@ local function fovNow()
     return comp, settings, zoom
 end
 
+local function nonZero(v)
+    return v and (math.abs(v.x) + math.abs(v.y) + math.abs(v.z)) > 0.001
+end
+
+-- Из объекта Transform (или чего-то с .position) — позиция, если она не нулевая.
+local function posOf(obj)
+    if obj == nil or type(obj) == "boolean" or type(obj) == "number" then return nil end
+    local ok, p = pcall(function() return obj.position end)
+    if not ok or p == nil then return nil end
+    local v = vec(p)
+    if nonZero(v) then return v end
+    return nil
+end
+
+-- Позиция глаз (камеры) разными способами. GetActiveCameraWorldTransform в CET 1.38 требует out-параметр.
+-- Возвращает список {name, pos}: в снимке пишутся все, для расчёта берётся первый.
+local function eyeCandidates(cs)
+    local out = {}
+    local function put(name, v) if nonZero(v) then out[#out + 1] = { name = name, pos = v } end end
+    put("WorldTransform(out)", try("CamPos.WorldTransformOut", function()
+        local t = Transform.new()
+        local r1, r2 = cs:GetActiveCameraWorldTransform(t)
+        return posOf(r2) or posOf(r1) or posOf(t)
+    end))
+    put("FPP.GetLocalToWorld", try("CamPos.FPPLocalToWorld", function()
+        local m = Game.GetPlayer():GetFPPCameraComponent():GetLocalToWorld()
+        local okA, a = pcall(function() return m:GetTranslation() end)
+        if okA and a then return vec(a) end
+        return vec(Matrix.GetTranslation(m))
+    end))
+    put("FPP.GetLocalPosition+player", try("CamPos.FPPLocalPosition", function()
+        local p = vec(Game.GetPlayer():GetWorldPosition())
+        local l = vec(Game.GetPlayer():GetFPPCameraComponent():GetLocalPosition())
+        if not (p and l) then return nil end
+        -- локальное смещение камеры почти всегда вертикальное (высота глаз); поворот игрока не учитываем
+        return { x = p.x + l.x, y = p.y + l.y, z = p.z + l.z }
+    end))
+    return out
+end
+
 local function camera()
     local cs = Game.GetCameraSystem()
     local c = {}
-    local t = try("Camera.GetActiveCameraWorldTransform", function() return cs:GetActiveCameraWorldTransform() end)
-    if t then
-        c.pos = vec(try("Transform.position", function() return t.position end))
-        c.q = try("Transform.orientation", function()
-            local q = t.orientation
-            return { i = q.i, j = q.j, k = q.k, r = q.r }
-        end)
+    c.eyes = eyeCandidates(cs)
+    if c.eyes[1] then
+        c.pos = c.eyes[1].pos
+        c.posSource = c.eyes[1].name
     end
     c.f = vec(try("Camera.GetActiveCameraForward", function() return cs:GetActiveCameraForward() end))
     c.r = vec(try("Camera.GetActiveCameraRight", function() return cs:GetActiveCameraRight() end))
     c.u = vec(try("Camera.GetActiveCameraUp", function() return cs:GetActiveCameraUp() end))
     if not c.pos then
-        -- запасной путь: позиция игрока (без высоты глаз) — только чтобы журнал не был пустым
-        c.pos = vec(try("Player.GetWorldPosition", function() return Game.GetPlayer():GetWorldPosition() end))
+        -- запасной путь: ноги игрока + примерная высота глаз стоя. Неточно: только чтобы было с чем сравнить
+        local p = vec(try("Player.GetWorldPosition", function() return Game.GetPlayer():GetWorldPosition() end))
+        if p then c.pos = { x = p.x, y = p.y, z = p.z + 1.7 } end
         c.posFromPlayer = true
+        c.posSource = "player+1.7"
     end
     if c.f and (not c.r or not c.u) then
         c.r = norm(cross(c.f, { x = 0, y = 0, z = 1 }))
@@ -215,7 +254,8 @@ local function raycast(c, dist)
                 local mat = ""
                 pcall(function() mat = Game.NameToString(res.material) end)
                 hits[#hits + 1] = string.format("%s d=%.3f p=%s mat=%s", g, d, vstr(p), mat)
-                if not best or d < best.d then best = { p = p, d = d, group = g } end
+                -- ближе 5 см — луч начался внутри предмета (камера в стене/полу): такое попадание не годится
+                if d > 0.05 and (not best or d < best.d) then best = { p = p, d = d, group = g, mat = mat } end
             end
         end
     end
@@ -225,10 +265,15 @@ end
 -- ---------- действия ----------
 
 local function logCamera(prefix, c)
-    log(string.format("%s cam.pos=%s%s f=%s r=%s u=%s%s q=%s", prefix, vstr(c.pos),
-        c.posFromPlayer and "(player!)" or "", vstr(c.f), vstr(c.r), vstr(c.u),
-        c.derivedAxes and "(axes derived)" or "",
-        c.q and string.format("(i=%.5f j=%.5f k=%.5f r=%.5f)", c.q.i, c.q.j, c.q.k, c.q.r) or "nil"))
+    log(string.format("%s cam.pos=%s [%s] f=%s r=%s u=%s%s", prefix, vstr(c.pos), tostring(c.posSource),
+        vstr(c.f), vstr(c.r), vstr(c.u), c.derivedAxes and "(axes derived)" or ""))
+    for _, e in ipairs(c.eyes or {}) do log(string.format("%s   eye %s = %s", prefix, e.name, vstr(e.pos))) end
+end
+
+local function logLookAt(prefix, o)
+    if not o then log(prefix .. "lookAt none"); return end
+    log(string.format("%slookAt class=%s name=%s id=%s pos=%s fwd=%s right=%s up=%s", prefix, tostring(o.cls),
+        tostring(o.name), tostring(o.id), vstr(o.pos), vstr(o.fwd), vstr(o.right), vstr(o.up)))
 end
 
 local function snapshot(tag)
@@ -242,19 +287,7 @@ local function snapshot(tag)
     local ppos = vec(try("Player.GetWorldPosition", function() return player:GetWorldPosition() end))
     local yaw = try("Player.GetWorldYaw", function() return player:GetWorldYaw() end)
     log(string.format("  player.pos=%s yaw=%s", vstr(ppos), fmt(yaw)))
-    local eul = c.q and try("Quaternion.ToEulerAngles", function()
-        local q = Quaternion.new(c.q.i, c.q.j, c.q.k, c.q.r)
-        local e = GetSingleton("Quaternion"):ToEulerAngles(q)
-        return string.format("roll=%.3f pitch=%.3f yaw=%.3f", e.roll, e.pitch, e.yaw)
-    end)
-    log("  cam.euler " .. tostring(eul))
-    local o = lookAt()
-    if o then
-        log(string.format("  lookAt class=%s name=%s id=%s pos=%s fwd=%s right=%s up=%s", tostring(o.cls),
-            tostring(o.name), tostring(o.id), vstr(o.pos), vstr(o.fwd), vstr(o.right), vstr(o.up)))
-    else
-        log("  lookAt none")
-    end
+    logLookAt("  ", lookAt())
     local best, hits = raycast(c, 15)
     for _, h in ipairs(hits or {}) do log("  ray " .. h) end
     if best then log(string.format("  ray.best %s d=%.3f p=%s", best.group, best.d, vstr(best.p))) end
@@ -304,10 +337,9 @@ local function markCorner()
     log(string.format("=== CORNER %d (%s)", i, CORNER_NAMES[i]))
     logCamera("  ", c)
     for _, h in ipairs(hits or {}) do log("  ray " .. h) end
-    local o = lookAt()
-    if o then log(string.format("  lookAt class=%s pos=%s fwd=%s", tostring(o.cls), vstr(o.pos), vstr(o.fwd))) end
+    logLookAt("  ", lookAt())
     if not best then
-        R.status = "corner " .. i .. ": ray hit nothing"
+        R.status = "corner " .. i .. ": ray hit nothing (or started inside an object)"
         log("  no hit")
         return
     end
@@ -315,7 +347,7 @@ local function markCorner()
     R.nextCorner = i % 4 + 1
     saveCorners()
     R.status = string.format("corner %d (%s) = %s", i, CORNER_NAMES[i], vstr(best.p))
-    log("  saved " .. vstr(best.p))
+    log(string.format("  saved %s (%s, %.3f m, %s)", vstr(best.p), best.group, best.d, tostring(best.mat)))
     if #R.corners == 4 then
         local a, b, d = R.corners[1], R.corners[2], R.corners[4]
         local wv, hv = sub(b, a), sub(d, a)
