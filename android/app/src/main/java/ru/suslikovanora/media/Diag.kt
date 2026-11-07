@@ -86,8 +86,11 @@ object Diag {
 
     fun mpvVerbose(ctx: Context): Boolean = on && prefs(ctx).getBoolean("mpv_verbose", false)
     fun setMpvVerbose(ctx: Context, v: Boolean) = prefs(ctx).edit().putBoolean("mpv_verbose", v).apply()
-    /** Отладка: mpv выводит кадры прямо на поверхность (`mediacodec_embed`), а не через GL. Для проверки MEMC на ТВ. */
-    fun mpvDirect(ctx: Context): Boolean = on && prefs(ctx).getBoolean("mpv_direct", false)
+    /**
+     * mpv выводит кадры прямо на поверхность (`mediacodec_embed`), а не через GL: так на ТВ работает MEMC.
+     * По умолчанию включено; в отладочной сборке можно вернуть вывод через GL для сравнения.
+     */
+    fun mpvDirect(ctx: Context): Boolean = prefs(ctx).getBoolean("mpv_direct", true)
     fun setMpvDirect(ctx: Context, v: Boolean) = prefs(ctx).edit().putBoolean("mpv_direct", v).apply()
     private fun prefs(ctx: Context) = ctx.getSharedPreferences("diag", Context.MODE_PRIVATE)
 

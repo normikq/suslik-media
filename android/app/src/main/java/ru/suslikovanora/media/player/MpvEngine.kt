@@ -145,7 +145,7 @@ class MpvEngine(private val context: Context) : PlayerEngine {
         // картинки нет, звук идёт. Новый файл — видео снова auto.
         parkedVid = -1
         MPVLib.setPropertyString("vid", "auto")
-        // Отладка (Diag.mpvDirect): декодер пишет прямо в поверхность, как Media3, — без копии в память и GL-вывода.
+        // Diag.mpvDirect (по умолчанию): декодер пишет прямо в поверхность, как Media3, — без копии в память и GL-вывода (MEMC).
         MPVLib.setPropertyString("hwdec", if (media.hardwareDecoding) (if (Diag.mpvDirect(context)) "mediacodec" else HWDEC) else "no")
         val secs = num(maxOf(1.0, media.cacheMs / 1000.0))
         MPVLib.setPropertyString("cache-secs", secs)
