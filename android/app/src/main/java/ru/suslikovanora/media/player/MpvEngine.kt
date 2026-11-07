@@ -6,6 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import android.view.Gravity
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
@@ -50,6 +51,37 @@ class MpvEngine(private val context: Context) : PlayerEngine {
     }
     override val videoView: View get() = container
 
+    private var scale = VideoScale.BEST_FIT
+
+    /**
+     * Режим «Напрямую» (`mediacodec_embed`): декодер сам заполняет всю поверхность, пропорции mpv не держит — на
+     * телефоне картинка растягивалась. Поэтому SurfaceView получает размер под пропорции видео (вписать / обрезать
+     * по краям / растянуть / 16:9), а лишнее обрезает контейнер. В режиме `gpu` mpv сам рисует чёрные поля.
+     */
+    private fun layoutSurface() {
+        val cw = container.width
+        val ch = container.height
+        var w = cw
+        var h = ch
+        if (cw > 0 && ch > 0 && Diag.mpvDirect(context) && scale != VideoScale.FILL) {
+            val ar = if (scale == VideoScale.RATIO_16_9) 16.0 / 9.0 else {
+                val vw = Core.videoW
+                val vh = Core.videoH
+                if (vw > 0 && vh > 0) vw.toDouble() / vh * (Core.videoPar.takeIf { it > 0 } ?: 1.0) else 0.0
+            }
+            if (ar > 0) {
+                val boxAr = cw.toDouble() / ch
+                val fitWidth = if (scale == VideoScale.FIT_SCREEN) ar < boxAr else ar >= boxAr
+                if (fitWidth) { w = cw; h = (cw / ar).roundToInt() } else { h = ch; w = (ch * ar).roundToInt() }
+            }
+        }
+        val lp = surfaceView.layoutParams as FrameLayout.LayoutParams
+        if (lp.width != w || lp.height != h || lp.gravity != Gravity.CENTER) {
+            lp.width = w; lp.height = h; lp.gravity = Gravity.CENTER
+            surfaceView.layoutParams = lp
+        }
+    }
+
     /** Текст текущего субтитра из mpv (`sub-text`, без тегов ASS). Пустая строка — субтитра нет. */
     fun showSubtitle(text: String) {
         if (!Diag.mpvDirect(context)) { subtitleView.setCues(null); return }
@@ -75,6 +107,10 @@ class MpvEngine(private val context: Context) : PlayerEngine {
     private var surfaceH = 0
 
     init {
+        container.clipChildren = true
+        container.addOnLayoutChangeListener { _, l, t, r, b, oldL, oldT, oldR, oldB ->
+            if (r - l != oldR - oldL || b - t != oldB - oldT) layoutSurface()
+        }
         surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
                 surfaceReady = true
@@ -306,6 +342,8 @@ class MpvEngine(private val context: Context) : PlayerEngine {
     override fun setScale(scale: VideoScale) { if (Core.created) applyScale(scale) }
 
     private fun applyScale(scale: VideoScale) {
+        this.scale = scale
+        container.post { layoutSurface() }
         // VLC's four: fit inside, fill the screen cropping (panscan), stretch, 16:9
         MPVLib.setPropertyString("keepaspect", if (scale == VideoScale.FILL) "no" else "yes")
         MPVLib.setPropertyDouble("panscan", if (scale == VideoScale.FIT_SCREEN) 1.0 else 0.0)
@@ -693,6 +731,7 @@ class MpvEngine(private val context: Context) : PlayerEngine {
             videoW = int("video-params/w") ?: 0
             videoH = int("video-params/h") ?: 0
             videoPar = dbl("video-params/par") ?: 0.0
+            owner?.let { o -> o.container.post { o.layoutSurface() } }
         }
     }
 
