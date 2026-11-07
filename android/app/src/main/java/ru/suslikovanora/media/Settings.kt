@@ -78,11 +78,12 @@ object PlaybackSettings {
     fun heavyMbit(ctx: Context) = prefs(ctx).getInt("heavy_mbit", HEAVY_DEFAULT)
     fun setHeavyMbit(ctx: Context, v: Int) = prefs(ctx).edit().putInt("heavy_mbit", v).apply()
     /**
-     * «Плеер» (for testing the new engine): VLC — every film in VLC, as before; Media3 — films in Media3, and in VLC
-     * only what Media3 cannot play (player/EngineChoice). Media3 by default (2.4.3); VLC only for whoever picked it.
+     * «Плеер»: mpv — every film in mpv; Media3 — films in Media3, and in mpv only what Media3 cannot play
+     * (player/EngineChoice). Media3 by default (2.4.3). «vlc» saved before 2.8.0 means mpv now (it took VLC's place).
      */
     fun engine(ctx: Context): ru.suslikovanora.media.player.EngineKind =
-        if (prefs(ctx).getString("player_engine", "media3") == "vlc") ru.suslikovanora.media.player.EngineKind.VLC
+        if (ru.suslikovanora.media.player.EngineKind.ofTag(prefs(ctx).getString("player_engine", "media3")) == ru.suslikovanora.media.player.EngineKind.MPV &&
+            ru.suslikovanora.media.player.MpvEngine.supported) ru.suslikovanora.media.player.EngineKind.MPV
         else ru.suslikovanora.media.player.EngineKind.MEDIA3
     fun setEngine(ctx: Context, kind: ru.suslikovanora.media.player.EngineKind) = prefs(ctx).edit().putString("player_engine", kind.tag).apply()
     /**
@@ -241,14 +242,14 @@ private fun ChannelSection() {
     offer?.let { UpdateDialog(it) { offer = null } }
 }
 
-/** «Плеер»: VLC or Media3 (VLC stays the fallback for what Media3 cannot play). */
+/** «Плеер»: mpv or Media3 (mpv stays the fallback for what Media3 cannot play). */
 @Composable
 private fun EngineSection() {
     val ctx = LocalContext.current
     var engine by remember { mutableStateOf(PlaybackSettings.engine(ctx)) }
     Section(tr("settings.pleer"), tr("settings.pleer_opisanie"), top = 18.dp)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf(ru.suslikovanora.media.player.EngineKind.VLC to "VLC", ru.suslikovanora.media.player.EngineKind.MEDIA3 to "Media3").forEach { (k, label) ->
+        listOf(ru.suslikovanora.media.player.EngineKind.MPV to "mpv", ru.suslikovanora.media.player.EngineKind.MEDIA3 to "Media3").forEach { (k, label) ->
             ChannelOption(label, engine == k, Modifier.weight(1f)) { engine = k; PlaybackSettings.setEngine(ctx, k) }
         }
     }
@@ -387,7 +388,7 @@ private fun JournalSection() {
 private fun DiagSection() {
     val ctx = LocalContext.current
     var state by remember { mutableStateOf<String?>(null) }
-    var verbose by remember { mutableStateOf(Diag.vlcVerbose(ctx)) }
+    var verbose by remember { mutableStateOf(Diag.mpvVerbose(ctx)) }
     Section(tr("settings.otladochnaya_sborka"), tr("settings.otladochnaya_sborka_opisanie", "packageName" to ctx.packageName, "p" to Diag.permissions(ctx)), top = 18.dp)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         ru.suslikovanora.media.library.OutlineButton(tr("settings.metka"), Modifier.weight(1f)) { state = tr("settings.metka_p_zapisana_v", "p" to Diag.mark("settings")) }
@@ -409,10 +410,10 @@ private fun DiagSection() {
         }
         ru.suslikovanora.media.library.OutlineButton(tr("settings.ochistit"), Modifier.weight(1f)) { Diag.clearJournal(); state = tr("settings.starye_chasti_udaleny") }
     }
-    Section(tr("settings.zhurnal_vlc"), tr("settings.zhurnal_vlc_opisanie"), top = 12.dp)
+    Section(tr("settings.zhurnal_mpv"), tr("settings.zhurnal_mpv_opisanie"), top = 12.dp)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        ChannelOption(tr("settings.obychnyy"), !verbose, Modifier.weight(1f)) { verbose = false; Diag.setVlcVerbose(ctx, false) }
-        ChannelOption(tr("settings.podrobnyy"), verbose, Modifier.weight(1f)) { verbose = true; Diag.setVlcVerbose(ctx, true) }
+        ChannelOption(tr("settings.obychnyy"), !verbose, Modifier.weight(1f)) { verbose = false; Diag.setMpvVerbose(ctx, false) }
+        ChannelOption(tr("settings.podrobnyy"), verbose, Modifier.weight(1f)) { verbose = true; Diag.setMpvVerbose(ctx, true) }
     }
     state?.let { Text(it, color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 6.dp)) }
 }

@@ -3,7 +3,7 @@
 > 📖 **Полная документация:** [docs/ANDROID.md](../docs/ANDROID.md); история версий — [docs/HISTORY.md](../docs/HISTORY.md).
 
 Нативное приложение (Kotlin, Jetpack Compose) для телефонов и Android TV: медиатека, «Мои», «Вместе» (совместный просмотр),
-поиск раздач, добавление magnet/.torrent, настройки. Плеер — libVLC 3.6 или Media3 (выбор — `player/EngineChoice`), оба
+поиск раздач, добавление magnet/.torrent, настройки. Плеер — Media3 или mpv (libmpv 0.40, `player/MpvEngine`; выбор — `player/EngineChoice`), оба
 читают фильм через запас `BurstProxy` из ядра `core/`. Пакет `ru.suslikovanora.media`; отладочная сборка «Suslik Debug» —
 `ru.suslikovanora.media.diag` ([DEBUG-BUILD.md](DEBUG-BUILD.md)).
 

@@ -1,4 +1,8 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- libmpv says Android 8+: the app still installs on 7 and plays everything in Media3 there (MpvEngine.supported). -->
+    <uses-sdk tools:overrideLibrary="dev.jdtech.mpv" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Updates from the own server: lets the app open the system installer for a downloaded APK. -->
@@ -16,7 +20,7 @@
         android:usesCleartextTraffic="true"
         android:enableOnBackInvokedCallback="true"
         android:theme="@style/AppTheme">
-        <!-- All configChanges listed so fold/theme/PiP changes do not recreate the activity and restart VLC. -->
+        <!-- All configChanges listed so fold/theme/PiP changes do not recreate the activity and restart the player. -->
         <activity
             android:name=".PlayerActivity"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density|uiMode|keyboardHidden|keyboard|navigation"

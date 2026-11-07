@@ -59,7 +59,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 
 class PlayerActivity : ComponentActivity() {
-    /** The video engine (VLC or Media3, chosen per file — see [EngineChoice]), made in onCreate; [player] is it while a film is open. */
+    /** The video engine (mpv or Media3, chosen per file — see [EngineChoice]), made in onCreate; [player] is it while a film is open. */
     private lateinit var engine: HybridEngine
     private val engineChoice by lazy { EngineChoice(this) }
     private val tweaks by lazy { PlaybackTweaks(this) }
@@ -382,20 +382,25 @@ class PlayerActivity : ComponentActivity() {
         }
         override fun timeChanged() = timeOrLengthChanged(lengthChanged = false)
         override fun lengthChanged() = timeOrLengthChanged(lengthChanged = true)
-        override fun unsupported(reason: String) = fallBackToVlc(reason)
+        override fun unsupported(reason: String) = fallBackToMpv(reason)
     }
 
     /**
-     * Media3 cannot play this file (codec, container, no index, decoder error): it goes to VLC + BurstProxy at the same
+     * Media3 cannot play this file (codec, container, no index, decoder error): it goes to mpv + BurstProxy at the same
      * moment, and stays there next time (EngineChoice remembers). The reserve (BurstProxy) is the same for both engines:
      * what Media3 downloaded is kept.
      */
-    private fun fallBackToVlc(reason: String) {
+    private fun fallBackToMpv(reason: String) {
         if (engine.kind != EngineKind.MEDIA3 || player == null || currentUrl.isBlank()) return
         val at = perceivedPosition()
-        AppLog.write("[engine] media3 → vlc at ${at / 1000}s: $reason")
-        engineChoice.remember(currentUrl, EngineKind.VLC, reason)
-        showStatus(tr("player.pereklyuchaem_na_vlc"))
+        if (!ru.suslikovanora.media.player.MpvEngine.supported) {
+            // Android 7: no mpv — Media3 is all there is (the error shows as usual)
+            AppLog.write("[engine] media3 cannot play this at ${at / 1000}s ($reason), mpv needs Android 8")
+            return
+        }
+        AppLog.write("[engine] media3 → mpv at ${at / 1000}s: $reason")
+        engineChoice.remember(currentUrl, EngineKind.MPV, reason)
+        showStatus(tr("player.pereklyuchaem_na_mpv"))
         restartClean(play = !userPaused)
     }
 
@@ -720,8 +725,8 @@ class PlayerActivity : ComponentActivity() {
             override fun isKeptOnStop(): Boolean = keptOnStop
             override fun getPerceivedPosition(): Long = perceivedPosition()
             override fun onReopenWithoutHardwareDecoder(startAt: Long) {
-                // Media3 has no software video decoder: a picture the phone's decoder does not give is VLC's job.
-                if (engine.kind == EngineKind.MEDIA3) fallBackToVlc("decoder gives no picture")
+                // Media3 has no software video decoder: a picture the phone's decoder does not give is mpv's job (FFmpeg).
+                if (engine.kind == EngineKind.MEDIA3 && ru.suslikovanora.media.player.MpvEngine.supported) fallBackToMpv("decoder gives no picture")
                 else reconnect(forcePlay = !userPaused, startAt = startAt)
             }
         })
@@ -1243,7 +1248,7 @@ class PlayerActivity : ComponentActivity() {
             showControlsTemporarily()
         } catch (e: Exception) {
             releasePlayer()
-            Toast.makeText(this, tr("player.vlc_ne_smog_otkryt", "p" to (e.localizedMessage ?: tr("player.oshibka_istochnika"))), Toast.LENGTH_LONG).show()
+            Toast.makeText(this, tr("player.ne_smog_otkryt", "p" to (e.localizedMessage ?: tr("player.oshibka_istochnika"))), Toast.LENGTH_LONG).show()
         }
     }
 
@@ -1507,12 +1512,13 @@ class PlayerActivity : ComponentActivity() {
 
 
     /**
-     * A seek to the current moment (flushes LibVLC's 3-6 s network read-ahead buffer so a newly chosen
-     * audio track is heard almost immediately).
+     * A seek to the current moment (flushed LibVLC's 3-6 s network read-ahead buffer so a newly chosen audio track
+     * was heard almost immediately). Neither engine needs it now: Media3 switches the sound itself, mpv re-reads
+     * the newly chosen track from its cache by itself. Kept for an engine that would.
      */
     private fun reseekHereNow() {
         val p = player ?: return
-        if (p.kind == EngineKind.MEDIA3) return // Media3 switches the sound itself, without VLC's read-ahead to flush
+        if (p.kind == EngineKind.MEDIA3 || p.kind == EngineKind.MPV) return
         if (userPaused || !p.isPlaying || buffering) return
         supervisor.seeked()
         if (bluRayController.isTsMode(p, currentUrl)) {
@@ -1578,16 +1584,14 @@ class PlayerActivity : ComponentActivity() {
         ui.time = time
         if (length > 0L) {
             ui.length = length
-            // Preloaded buffer: VLC network caching (time buffer ~6s) + BurstProxy disk buffer
-            // Media3 knows what it has in memory itself; the reserve on disk comes after that.
+            // Preloaded buffer: what the engine holds in memory (Media3's buffer, mpv's demuxer cache) + BurstProxy disk buffer.
             val diskBufferMs = BurstProxy.aheadMs(currentUrl, length)
             // At the end of an episode the clock can be past the length (VLC, a seek near the end, the old episode's
             // clock against the new one's length): coerceIn(time, length) then threw and the player crashed back to
             // the library, which also dropped a shared-viewing room. Same fix as the PC's in 4e7a9c0.
             val from = minOf(time, length)
             ui.buffered = p.bufferedPositionMs.takeIf { it >= 0L }?.let { (it + diskBufferMs).coerceIn(from, length) } ?: run {
-                val vlcTimeBufferMs = if (p.isPlaying || buffering) 6_000L else 0L
-                (time + vlcTimeBufferMs + diskBufferMs).coerceIn(from, length)
+                (time + diskBufferMs).coerceIn(from, length)
             }
         } else {
             ui.length = 0L
@@ -1865,8 +1869,9 @@ class PlayerActivity : ComponentActivity() {
         if (!catchingUp) return
         handler.removeCallbacks(catchUpRunnable)
         val t = perceivedPosition()
-        // Media3's decoders need no restart; VLC's do (see CatchUp.end), from what is already on the phone.
-        val restartHere = catchUp.end(currentUrl, restart && player != null && !userPaused && t > 0L && player?.kind == EngineKind.VLC)
+        // Neither Media3's nor mpv's decoders need the restart VLC's did (see CatchUp.end): mpv drops late pictures
+        // and catches up with the clock by itself. Kept as a switch — to be measured on the phone (docs/ANDROID-MPV.md).
+        val restartHere = catchUp.end(currentUrl, restart && player != null && !userPaused && t > 0L && RESTART_AFTER_CATCH_UP)
         if (player == null || userPaused) return
         if (restartHere) { seekTo(t); return }
         // VLC is still buffering: its usual watch over a silent buffering starts again
@@ -1970,11 +1975,9 @@ class PlayerActivity : ComponentActivity() {
             val w = root.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
             val h = w * 9 / 16
             sp.height = h; sp.topMargin = i.top
-            // VLC's own sizing (libVLC VideoHelper) swaps width and height when a wide area sits on a screen held
-            // upright — it took the 16:9 strip for a tall 9:16 one: the picture came out small and cut, «Заполнить»
-            // showed only its middle. A slightly-taller-than-wide video area avoids that swap; centred on the strip,
-            // the fitted picture lands exactly in it (the extra above/below is empty and clipped).
-            videoLayout.layoutParams = (videoLayout.layoutParams as FrameLayout.LayoutParams).apply { width = -1; height = w + dp(2); gravity = Gravity.CENTER }
+            // The video area is exactly the 16:9 strip (libVLC needed a slightly-taller-than-wide one against its own
+            // width/height swap; mpv and Media3 fit and crop inside whatever area they get).
+            videoLayout.layoutParams = (videoLayout.layoutParams as FrameLayout.LayoutParams).apply { width = -1; height = h; gravity = Gravity.CENTER }
             pp.topMargin = i.top + h
             panel.bottomInsetPx = i.bottom
             infoPanel.visibility = View.VISIBLE
@@ -2427,7 +2430,9 @@ class PlayerActivity : ComponentActivity() {
         private const val WATCHDOG_TICK_MS = 2_000L
         private const val FAST_RESUME_MS = 20_000L // back within this: just continue the paused player
         private const val CATCH_UP_AFTER_PLAYED_MS = 5_000L // film played at a new place before a wait for a reserve
-        private const val IDLE_RELEASE_MS = 10 * 60_000L // locked longer than this: free VLC and the connection
+        private const val IDLE_RELEASE_MS = 10 * 60_000L // locked longer than this: free the player and the connection
+        /** CatchUp.end's seek-in-place after a long wait for the reserve (VLC's frozen decoder): off for mpv and Media3. */
+        private const val RESTART_AFTER_CATCH_UP = false
         const val EXTRA_SUB_URLS = PlayerExtras.SUB_URLS
         const val EXTRA_WATCH_KEYS = PlayerExtras.WATCH_KEYS
         const val EXTRA_AUDIO_URLS = PlayerExtras.AUDIO_URLS
