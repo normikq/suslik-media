@@ -26,6 +26,9 @@ local R = {
     fovManual = 70.0,
     fovScale = 1.0,    -- подстройка, если рамка «дышит» относительно телевизора
     recording = false,
+    hist = {},         -- положения камеры за последние 0,5 с (onUpdate): рамка по камере «N мс назад»
+    delayMs = 0,       -- на сколько отстаёт картинка игры от камеры (генерация кадров, очередь кадров)
+    draws = 0, updates = 0, rateT = 0, drawRate = 0, updateRate = 0,
     recordLeft = 0,
     recordFrames = 0,
     lastSnap = nil,
@@ -326,6 +329,7 @@ local function loadCorners()
     end
     f:close()
     log("corners loaded: " .. #R.corners)
+    R.needOrder = #R.corners == 4 -- старый файл мог быть отмечен в другом порядке: разберём, когда будет камера
 end
 
 local CORNER_NAMES = { "top-left", "top-right", "bottom-right", "bottom-left" }
@@ -349,6 +353,16 @@ local function markCorner()
     R.status = string.format("corner %d (%s) = %s", i, CORNER_NAMES[i], vstr(best.p))
     log(string.format("  saved %s (%s, %.3f m, %s)", vstr(best.p), best.group, best.d, tostring(best.mat)))
     if #R.corners == 4 then
+        local ordered, ok = orderCorners(R.corners, c.pos)
+        if ok then
+            local changed = false
+            for k = 1, 4 do if ordered[k] ~= R.corners[k] then changed = true end end
+            R.corners = ordered
+            saveCorners()
+            if changed then log("  corners reordered to TL, TR, BR, BL") end
+        else
+            log("  corners: can't tell top/left of each, kept as marked")
+        end
         local a, b, d = R.corners[1], R.corners[2], R.corners[4]
         local wv, hv = sub(b, a), sub(d, a)
         local w, h = math.sqrt(dot(wv, wv)), math.sqrt(dot(hv, hv))
@@ -379,6 +393,54 @@ local function recordFrame(dt)
     end
 end
 
+-- ---------- задержка ----------
+
+local function nowSec()
+    local ok, c = pcall(os.clock) -- на Windows — время с запуска процесса
+    return ok and c or 0
+end
+
+local function pushPose()
+    local c = camera()
+    if not (c.pos and c.f and c.r and c.u) then return end
+    local t = nowSec()
+    local h = R.hist
+    h[#h + 1] = { t = t, pos = c.pos, f = c.f, r = c.r, u = c.u }
+    while #h > 2 and h[1].t < t - 0.5 do table.remove(h, 1) end
+end
+
+local function lerp(a, b, k) return add(a, mul(sub(b, a), k)) end
+
+-- Камера на момент t (между двумя записями — линейно). nil — истории не хватает.
+local function poseAt(t)
+    local h = R.hist
+    for i = #h, 2, -1 do
+        local a, b = h[i - 1], h[i]
+        if a.t <= t and t <= b.t then
+            local k = (b.t > a.t) and (t - a.t) / (b.t - a.t) or 0
+            return { pos = lerp(a.pos, b.pos, k), f = norm(lerp(a.f, b.f, k)), r = norm(lerp(a.r, b.r, k)),
+                u = norm(lerp(a.u, b.u, k)) }
+        end
+    end
+    return nil
+end
+
+-- Углы по местам ЛВ, ПВ, ПН, ЛН относительно зрителя (в каком порядке их ни отметили). false — не разобрать.
+local function orderCorners(cs, eye)
+    local ctr = mul(add(add(cs[1], cs[2]), add(cs[3], cs[4])), 0.25)
+    local f = norm(sub(ctr, eye))
+    local right = norm(cross(f, { x = 0, y = 0, z = 1 }))
+    local out = {}
+    for _, p in ipairs(cs) do
+        local d = sub(p, ctr)
+        local left = dot(d, right) < 0
+        local idx = (d.z > 0) and (left and 1 or 2) or (left and 4 or 3)
+        if out[idx] then return cs, false end
+        out[idx] = p
+    end
+    return out, true
+end
+
 -- ---------- рисование ----------
 
 local COL_FRAME = 0xFF00FF00 -- ABGR: зелёный
@@ -399,8 +461,16 @@ local function drawHud()
             local cx, cy = W / 2, H / 2
             ImGui.ImDrawListAddLine(dl, cx - 12, cy, cx + 12, cy, COL_CROSS, 1.5)
             ImGui.ImDrawListAddLine(dl, cx, cy - 12, cx, cy + 12, COL_CROSS, 1.5)
+            if R.needOrder then
+                local c0 = camera()
+                if c0.pos and not c0.posFromPlayer then
+                    local ordered, okO = orderCorners(R.corners, c0.pos)
+                    if okO then R.corners = ordered; saveCorners(); log("loaded corners ordered TL, TR, BR, BL") end
+                    R.needOrder = false
+                end
+            end
             if #R.corners == 4 then
-                local c = camera()
+                local c = (R.delayMs > 0 and poseAt(nowSec() - R.delayMs / 1000)) or camera()
                 local comp, settings = fovNow()
                 local fv = fovUsed(comp, settings)
                 local mode = R.fovModes[R.fovMode]
@@ -417,7 +487,8 @@ local function drawHud()
                 if pts[1] and pts[3] then ImGui.ImDrawListAddLine(dl, pts[1][1], pts[1][2], pts[3][1], pts[3][2], COL_FRAME, 1.0) end
                 if pts[2] and pts[4] then ImGui.ImDrawListAddLine(dl, pts[2][1], pts[2][2], pts[4][1], pts[4][2], COL_FRAME, 1.0) end
                 ImGui.ImDrawListAddText(dl, 20, H - 40, COL_TEXT,
-                    string.format("Suslik recon: fov %.2f (%s, %s x%.3f)", fv, mode, R.fovSources[R.fovSource], R.fovScale))
+                    string.format("Suslik recon: fov %.2f (%s, %s x%.3f), delay %d ms, draw %d/s, update %d/s", fv, mode,
+                        R.fovSources[R.fovSource], R.fovScale, R.delayMs, R.drawRate, R.updateRate))
             end
         end)
         if not ok and R.api["Hud.draw"] == nil then
@@ -453,9 +524,13 @@ local function drawWindow()
         if used then R.fovScale = v end
         local m, usedM = ImGui.SliderFloat("Manual FOV", R.fovManual, 30, 120)
         if usedM then R.fovManual = m end
+        local dm, usedD = ImGui.SliderInt("Delay ms", R.delayMs, 0, 150)
+        if usedD then R.delayMs = dm end
+        ImGui.Text(string.format("draw %d/s, update %d/s", R.drawRate, R.updateRate))
         if ImGui.Button("Log 'frame matches TV'") then
-            log(string.format("=== MATCH confirmed: mode=%s source=%s scale=%.4f manual=%.2f", R.fovModes[R.fovMode],
-                R.fovSources[R.fovSource], R.fovScale, R.fovManual))
+            log(string.format("=== MATCH confirmed: mode=%s source=%s scale=%.4f manual=%.2f delay=%dms draw=%d/s update=%d/s",
+                R.fovModes[R.fovMode], R.fovSources[R.fovSource], R.fovScale, R.fovManual, R.delayMs, R.drawRate,
+                R.updateRate))
             snapshot("match")
         end
         ImGui.Separator()
@@ -483,9 +558,18 @@ registerForEvent("onOverlayClose", function() R.overlayOpen = false end)
 
 registerForEvent("onUpdate", function(dt)
     if R.recording then pcall(recordFrame, dt) end
+    R.updates = R.updates + 1
+    if R.hud and #R.corners == 4 then pcall(pushPose) end
 end)
 
 registerForEvent("onDraw", function()
+    R.draws = R.draws + 1
+    local t = nowSec()
+    if t - R.rateT >= 1 then
+        local span = t - R.rateT
+        R.drawRate, R.updateRate = math.floor(R.draws / span + 0.5), math.floor(R.updates / span + 0.5)
+        R.draws, R.updates, R.rateT = 0, 0, t
+    end
     if R.hud then drawHud() end
     drawWindow()
 end)
