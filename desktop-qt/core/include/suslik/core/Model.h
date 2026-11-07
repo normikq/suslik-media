@@ -134,6 +134,9 @@ struct LibraryItem {
 std::optional<int> nameSeason(const QString &name);
 std::optional<std::pair<int, int>> episodePair(const QString &path, int defaultSeason = 1);
 QString parseEdition(const QString &name);
+/// Образ диска (.iso): плеер его по ссылке зеркала не откроет (mpv — только через libbluray с диска), сразу говорит об этом.
+/// nameOrUrl — путь файла в раздаче или адрес зеркала (имя — в пути, до '?'). Как isDiscImage в android/core (Model.kt).
+bool isDiscImage(const QString &nameOrUrl);
 std::optional<MFile> mainVideo(const Magnet &m);
 /// Что играть: по файлам, потом вид и сезон, принятые от ИИ.
 Playable buildPlayable(const Magnet &m);

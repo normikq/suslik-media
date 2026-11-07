@@ -9,6 +9,7 @@
 #include "suslik/core/ApiClient.h"
 #include "suslik/core/CloudSync.h"
 #include "suslik/core/MarkersDetector.h"
+#include "suslik/core/Model.h"
 #include "suslik/core/Store.h"
 #include "suslik/core/Strings.h"
 #include "suslik/core/TimeText.h"
@@ -470,6 +471,15 @@ void PlayerModel::sidecars(int i, std::function<void(const Sides &)> done) {
 }
 
 void PlayerModel::open(const QString &url, qint64 startAt, const Sides &sides) {
+    // Образ диска по ссылке зеркала mpv не открывает (Blu-ray-образ — только через libbluray с диска): раньше это была
+    // вечная «Загрузка» с переподключениями. Сразу говорим и не открываем (как ТВ, tizen/js/support.js).
+    if (isDiscImage(url)) {
+        ++m_gen;
+        m_engine->stop();
+        PlayerLog::write(S("open %1: disc image (.iso), not opened").arg(QUrl(url).fileName()));
+        setStatus(tx(S("player.obraz_diska")));
+        return;
+    }
     const QStringList audio = preferFirst(sides.audio, pref(S("audio")) ? pref(S("audio")) : ui().get(S("audio:*")), url);
     const QStringList subs = preferFirst(sides.subs, pref(S("spu")) ? pref(S("spu")) : ui().get(S("spu:*")), url);
     const quint64 gen = ++m_gen;

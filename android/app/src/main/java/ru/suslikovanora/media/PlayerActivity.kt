@@ -1229,6 +1229,14 @@ class PlayerActivity : ComponentActivity() {
 
     private fun initializePlayer() {
         if (player != null) return
+        // A disc image never opens over the mirror (mpv reads .iso only from a disc, with libbluray): it used to "load"
+        // forever. Say so at once and leave, like the TV app (tizen/js/support.js).
+        if (isDiscImage(currentUrl)) {
+            AppLog.write("[engine] ${Uri.parse(currentUrl).lastPathSegment}: disc image (.iso), not opened")
+            Toast.makeText(this, tr("player.obraz_diska"), Toast.LENGTH_LONG).show()
+            finish()
+            return
+        }
         if (bluRayController.probeFirst(currentUrl)) return // Blu-ray: its length first (comes back here)
         val url = currentUrl.takeIf { it.isNotBlank() } ?: run { finish(); return }
         try {

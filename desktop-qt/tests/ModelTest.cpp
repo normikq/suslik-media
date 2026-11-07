@@ -148,6 +148,14 @@ private slots:
         QVERIFY(!mainVideo(magnet(3, S("Doc"), S("Готово"), 4, 0, 0, {file(0, S("readme.txt"), 1)})));
     }
 
+    void discImageByNameOrMirrorUrl() {
+        QVERIFY(isDiscImage(S("Film/BD/Disc.ISO")));
+        QVERIFY(isDiscImage(S("https://host/api/file/proxy/Disc.iso?link=x&exp=1&sig=y")));
+        QVERIFY(!isDiscImage(S("Film.mkv")));
+        QVERIFY(!isDiscImage(S("https://host/api/file/proxy/Film.mkv?link=https%3A%2F%2Fa%2FDisc.iso")));
+        QVERIFY(!isDiscImage(S("Film.iso.mkv")));
+    }
+
     void buildPlayableSingleMovie() {
         const auto p = buildPlayable(magnet(1, S("Avatar"), S("Готово"), 4, 0, 0, {file(0, S("Avatar.sample.mkv"), 30), file(1, S("Avatar.mkv"), 8000)}));
         QVERIFY(p.isMovie());

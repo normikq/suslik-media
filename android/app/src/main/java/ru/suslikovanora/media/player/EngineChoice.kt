@@ -8,7 +8,8 @@ import java.util.Locale
 
 /**
  * Какой движок открывает файл. Настройка «Плеер» = mpv — mpv, кроме Dolby Vision (его маршрут — Media3). Иначе Media3, кроме:
- *  - контейнеров, которые Media3 не читает или читает нестабильно (Blu-ray `.m2ts`, `.ts`, `.iso`, `.avi`) — сразу mpv;
+ *  - контейнеров, которые Media3 не читает или читает нестабильно (Blu-ray `.m2ts`, `.ts`, `.avi`) — сразу mpv
+ *    (`.iso` не открывает никто: плеер сразу говорит об этом, core.isDiscImage);
  *  - файлов, для которых движок уже выбран раньше (Media3 не справился — запомнено [remember]): «Продолжить»
  *    сразу открывает их в нужном движке, без повторной попытки и переключения посреди просмотра.
  *    Записи до 2.8.0 с тегом «vlc» открываются в mpv (он занял место VLC).
@@ -48,7 +49,7 @@ class EngineChoice(context: Context) {
     }
 
     companion object {
-        private val MPV_ONLY = setOf("m2ts", "mts", "ts", "iso", "avi")
+        private val MPV_ONLY = setOf("m2ts", "mts", "ts", "avi")
         private const val MAX_FILES = 400
     }
 }
