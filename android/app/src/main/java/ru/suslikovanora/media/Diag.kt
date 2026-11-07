@@ -86,6 +86,9 @@ object Diag {
 
     fun mpvVerbose(ctx: Context): Boolean = on && prefs(ctx).getBoolean("mpv_verbose", false)
     fun setMpvVerbose(ctx: Context, v: Boolean) = prefs(ctx).edit().putBoolean("mpv_verbose", v).apply()
+    /** Отладка: mpv выводит кадры прямо на поверхность (`mediacodec_embed`), а не через GL. Для проверки MEMC на ТВ. */
+    fun mpvDirect(ctx: Context): Boolean = on && prefs(ctx).getBoolean("mpv_direct", false)
+    fun setMpvDirect(ctx: Context, v: Boolean) = prefs(ctx).edit().putBoolean("mpv_direct", v).apply()
     private fun prefs(ctx: Context) = ctx.getSharedPreferences("diag", Context.MODE_PRIVATE)
 
     /** «📍» in the player / «Метка» in the settings: a visible marker in the journal («here it stuttered»). */

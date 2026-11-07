@@ -415,6 +415,13 @@ private fun DiagSection() {
         ChannelOption(tr("settings.obychnyy"), !verbose, Modifier.weight(1f)) { verbose = false; Diag.setMpvVerbose(ctx, false) }
         ChannelOption(tr("settings.podrobnyy"), verbose, Modifier.weight(1f)) { verbose = true; Diag.setMpvVerbose(ctx, true) }
     }
+    // Отладка MEMC: вывод через GL (как было) или прямо на поверхность (как Media3). Действует со следующего открытия фильма.
+    var direct by remember { mutableStateOf(Diag.mpvDirect(ctx)) }
+    Section("Вывод mpv (отладка)", "«Напрямую» — декодер пишет в поверхность, как Media3: проверка MEMC на ТВ. Со следующего открытия фильма.", top = 12.dp)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ChannelOption("Через GL", !direct, Modifier.weight(1f)) { direct = false; Diag.setMpvDirect(ctx, false); state = "Вывод: через GL" }
+        ChannelOption("Напрямую", direct, Modifier.weight(1f)) { direct = true; Diag.setMpvDirect(ctx, true); state = "Вывод: напрямую" }
+    }
     state?.let { Text(it, color = Sm.muted, fontFamily = Onest, fontSize = 12.5.sp, modifier = Modifier.padding(top = 6.dp)) }
 }
 

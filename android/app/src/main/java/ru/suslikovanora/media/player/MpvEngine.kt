@@ -9,6 +9,9 @@ import android.util.Log
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
+import android.widget.FrameLayout
+import androidx.media3.common.text.Cue
+import androidx.media3.ui.SubtitleView
 import dev.jdtech.mpv.MPVLib
 import ru.suslikovanora.media.AppLog
 import ru.suslikovanora.media.Diag
@@ -39,7 +42,20 @@ import kotlin.math.roundToInt
  */
 class MpvEngine(private val context: Context) : PlayerEngine {
     private val surfaceView = SurfaceView(context)
-    override val videoView: View get() = surfaceView
+    /** Субтитры в режиме «Напрямую» (Diag.mpvDirect): mpv не рисует их на поверхность, текст выводит этот слой. */
+    private val subtitleView = SubtitleView(context)
+    private val container = FrameLayout(context).apply {
+        addView(surfaceView, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        addView(subtitleView, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+    }
+    override val videoView: View get() = container
+
+    /** Текст текущего субтитра из mpv (`sub-text`, без тегов ASS). Пустая строка — субтитра нет. */
+    fun showSubtitle(text: String) {
+        if (!Diag.mpvDirect(context)) { subtitleView.setCues(null); return }
+        val clean = text.replace("\\N", "\n").replace(Regex("\\{[^}]*\\}"), "").trim()
+        subtitleView.setCues(if (clean.isEmpty()) null else listOf(Cue.Builder().setText(clean).build()))
+    }
     override var listener: EngineListener? = null
     override val kind = EngineKind.MPV
 
@@ -62,6 +78,7 @@ class MpvEngine(private val context: Context) : PlayerEngine {
         surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
                 surfaceReady = true
+                AppLog.write("[mpv] surface created · live ${Core.owner === this@MpvEngine}")
                 if (Core.owner === this@MpvEngine) attachSurface()
             }
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
@@ -70,23 +87,33 @@ class MpvEngine(private val context: Context) : PlayerEngine {
             }
             override fun surfaceDestroyed(holder: SurfaceHolder) {
                 surfaceReady = false
+                AppLog.write("[mpv] surface destroyed · attached $surfaceAttached")
                 detachSurface()
             }
         })
     }
 
     private fun attachSurface() {
-        if (surfaceAttached || !surfaceReady || !Core.created) return
-        val s = surfaceView.holder.surface ?: return
-        if (!s.isValid) return
+        if (surfaceAttached) return
+        if (!surfaceReady || !Core.created) {
+            if (Core.owner === this) AppLog.write("[mpv] surface not ready for the film (ready $surfaceReady, core ${Core.created})")
+            return
+        }
+        val s = surfaceView.holder.surface
+        if (s == null || !s.isValid) {
+            AppLog.write("[mpv] surface invalid (holder surface ${if (s == null) "null" else "not valid"})")
+            return
+        }
         Core.surfaceOwner?.takeIf { it !== this }?.detachSurface()
         runCatching {
             MPVLib.attachSurface(s)
             MPVLib.setOptionString("force-window", "yes")
             if (surfaceW > 0 && surfaceH > 0) MPVLib.setPropertyString("android-surface-size", "${surfaceW}x$surfaceH")
-            MPVLib.setPropertyString("vo", "gpu")
+            val vo = if (Diag.mpvDirect(context)) "mediacodec_embed" else "gpu"
+            MPVLib.setPropertyString("vo", vo)
             surfaceAttached = true
             Core.surfaceOwner = this
+            AppLog.write("[mpv] surface attached · vo $vo")
         }.onFailure { AppLog.write("[mpv] attach surface failed: $it") }
     }
 
@@ -114,7 +141,12 @@ class MpvEngine(private val context: Context) : PlayerEngine {
         Core.verbose = Diag.mpvVerbose(context)
         MPVLib.setPropertyString("msg-level", if (Core.verbose) "all=v" else "all=warn")
         MPVLib.setPropertyBoolean("pause", true) // как новый плеер: играет после play()
-        MPVLib.setPropertyString("hwdec", if (media.hardwareDecoding) HWDEC else "no")
+        // Видео, «спрятанное» на паузе экрана (setVideoEnabled(false) → vid=no), остаётся выключенным у нового файла:
+        // картинки нет, звук идёт. Новый файл — видео снова auto.
+        parkedVid = -1
+        MPVLib.setPropertyString("vid", "auto")
+        // Отладка (Diag.mpvDirect): декодер пишет прямо в поверхность, как Media3, — без копии в память и GL-вывода.
+        MPVLib.setPropertyString("hwdec", if (media.hardwareDecoding) (if (Diag.mpvDirect(context)) "mediacodec" else HWDEC) else "no")
         val secs = num(maxOf(1.0, media.cacheMs / 1000.0))
         MPVLib.setPropertyString("cache-secs", secs)
         MPVLib.setPropertyString("demuxer-readahead-secs", secs)
@@ -406,6 +438,7 @@ class MpvEngine(private val context: Context) : PlayerEngine {
         @Volatile private var seeking = false
         private var lastTimePost = 0L
         private var logLines = 0
+        private var logVerboseLines = 0
 
         fun ensure(context: Context) {
             if (created) return
@@ -486,7 +519,7 @@ class MpvEngine(private val context: Context) : PlayerEngine {
                     if (!current()) return
                     fileSerial++
                     loaded = false; eof = false; playingSent = false; endSent = false; seeking = false
-                    logLines = 0
+                    logLines = 0; logVerboseLines = 0
                     bufferingSent = true
                     post { buffering(0f) }
                 }
@@ -541,6 +574,7 @@ class MpvEngine(private val context: Context) : PlayerEngine {
                 "track-list" -> if (current() && loaded) { readTracks(); post { tracksChanged() } }
                 "chapter-list" -> if (current() && loaded) readChapters()
                 "hwdec-current" -> if (current()) hwdec = null
+                "sub-text" -> main.post { owner?.showSubtitle("") }
             }
         }
 
@@ -603,6 +637,10 @@ class MpvEngine(private val context: Context) : PlayerEngine {
             if (!current()) return
             when (property) {
                 "hwdec-current" -> hwdec = value
+                "sub-text" -> {
+                    val o = owner
+                    if (o != null) main.post { if (owner === o) o.showSubtitle(value) }
+                }
             }
         }
 
@@ -612,7 +650,11 @@ class MpvEngine(private val context: Context) : PlayerEngine {
             if (level <= MPVLib.MPV_LOG_LEVEL_WARN) {
                 // the same warning can come with every frame: a few hundred lines per file at most
                 if (logLines++ < 300) AppLog.write("[mpv] $prefix: $line")
-            } else if (verbose) Log.d("mpv", "[$prefix] $line")
+            } else if (verbose) {
+                Log.d("mpv", "[$prefix] $line")
+                // Подробный режим: строки уходят и в журнал плеера (иначе видны только в logcat). Не больше 1500 на файл.
+                if (logVerboseLines++ < 1500) AppLog.write("[mpv:v] $prefix: $line")
+            }
         }
 
         private fun str(p: String) = runCatching { MPVLib.getPropertyString(p) }.getOrNull()
@@ -682,6 +724,7 @@ class MpvEngine(private val context: Context) : PlayerEngine {
             "current-tracks/sub/id" to MPVLib.MPV_FORMAT_INT64,
             "current-tracks/video/id" to MPVLib.MPV_FORMAT_INT64,
             "hwdec-current" to MPVLib.MPV_FORMAT_STRING,
+            "sub-text" to MPVLib.MPV_FORMAT_STRING,
             "track-list" to MPVLib.MPV_FORMAT_NONE,
             "chapter-list" to MPVLib.MPV_FORMAT_NONE
         )
