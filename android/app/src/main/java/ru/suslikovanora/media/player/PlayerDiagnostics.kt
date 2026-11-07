@@ -119,7 +119,7 @@ class PlayerDiagnostics(
             }
             diagPrev = st
         }
-        if (p?.kind == EngineKind.MEDIA3) p.diagLine()?.let { sb.append(" · ").append(it.removePrefix("[media3] ")) }
+        p?.diagLine()?.let { sb.append(" · ").append(it.removePrefix("[${p.kind.tag}] ")) }
         BurstProxy.aheadMb(callback.getCurrentUrl())?.let { sb.append(" · reserve ahead %.1f MB".format(it)) }
         AppLog.write(sb.toString())
         AppLog.write("[proxy] " + BurstProxy.snapshot())
@@ -136,24 +136,24 @@ class PlayerDiagnostics(
         val st = p.stats() ?: return
         if (st.displayedPictures > 0 || st.decodedVideo < 60) return
         if (p.kind == EngineKind.MEDIA3) {
-            // VLC gets the file with its usual hardware-first start (and the same check there).
-            AppLog.write("video: ${st.decodedVideo} pictures decoded by Media3, none shown — the file goes to VLC")
+            // mpv gets the file with its usual hardware-first start (and the same check there).
+            AppLog.write("video: ${st.decodedVideo} pictures decoded by Media3, none shown — the file goes to mpv")
             callback.onReopenWithoutHardwareDecoder(callback.getPerceivedPosition())
             return
         }
         softwareVideo += currentUrl
-        AppLog.write("video: ${st.decodedVideo} pictures decoded, none shown — reopening with VLC's own decoder")
+        AppLog.write("video: ${st.decodedVideo} pictures decoded, none shown — reopening with mpv's own decoder (FFmpeg)")
         callback.onReopenWithoutHardwareDecoder(callback.getPerceivedPosition())
     }
 
     /**
-     * A file the processor decodes (VC-1, AV1 in VLC, no hardware decoder) on a weak chip: the picture falls behind
+     * A file the processor decodes (VC-1, AV1 without a hardware decoder) on a weak chip: the picture falls behind
      * while the sound goes on (25.10 journal, Hisense TV, VC-1 1080p: 4–15 of 24 pictures a second, one core at 100%).
      * Over 5 s windows: fewer than 70% of the expected pictures shown (or many lost) twice in a row -> one notice per file.
      */
     fun checkProcessorOverload(p: PlayerEngine) {
         val url = callback.getCurrentUrl()
-        if (p.kind != EngineKind.VLC || url !in cpuDecoded || overloadWarned == url) return
+        if (p.kind != EngineKind.MPV || url !in cpuDecoded || overloadWarned == url) return
         val st = p.stats() ?: return
         val vt = p.videoTrack ?: return
         val fps = if (vt.frameRateNum > 0 && vt.frameRateDen > 0) vt.frameRateNum.toDouble() / vt.frameRateDen else 24.0
@@ -176,62 +176,37 @@ class PlayerDiagnostics(
         val currentUrl = callback.getCurrentUrl()
         if (decodeCheckedUrl == currentUrl) return
         val t = p.videoTrack ?: return
-        decodeCheckedUrl = currentUrl
         val codec = t.codec?.lowercase(Locale.ROOT)?.trim()
         if (p.kind == EngineKind.MEDIA3) {
+            decodeCheckedUrl = currentUrl
             // Media3 plays only what a decoder takes (the decoder's name is in the journal). AV1 is hardware here.
             // VC-1: Samsung's c2.sec.vc1.decoder takes it and shows it with black flashes (23.10 journal, «Corpse Bride»
             // BDRemux: every picture counted as shown, none lost — the black ones come from the decoder itself). Media3
-            // has no decoder of its own for it: the file goes to VLC, straight to VLC's own decoder.
+            // has no decoder of its own for it: the file goes to mpv, straight to FFmpeg's decoder.
             if (codec != null && VC1.any { codec.contains(it) } && currentUrl !in softwareVideo) {
                 softwareVideo += currentUrl
                 cpuDecoded += currentUrl
-                AppLog.write("video: ${t.codec} ${t.width}x${t.height} — the phone's VC-1 decoder flashes black, the file goes to VLC's own decoder")
+                AppLog.write("video: ${t.codec} ${t.width}x${t.height} — the phone's VC-1 decoder flashes black, the file goes to mpv's own decoder")
                 callback.onReopenWithoutHardwareDecoder(callback.getPerceivedPosition())
                 return
             }
             AppLog.write("video: ${t.codec} ${t.width}x${t.height}")
             return
         }
-        // VC-1 (old Blu-rays): the phone's own decoder takes it but gives no pictures — sound over a black screen
-        // (12.10, Samsung c2.sec.vc1.decoder: «Unsupported mime video/wvc1», dequeueOutputBuffer failed). VLC's own
-        // decoder plays it fine: open this file once more without hardware decoding, at the same moment.
-        if (codec != null && VC1.any { codec.contains(it) } && currentUrl !in softwareVideo) {
-            softwareVideo += currentUrl
-            cpuDecoded += currentUrl
-            AppLog.write("video: $codec ${t.width}x${t.height} — the hardware decoder gives no picture for VC-1, reopening with VLC's own decoder")
-            callback.onReopenWithoutHardwareDecoder(callback.getPerceivedPosition())
-            return
-        }
-        // VLC names the codec by description ("aomedia's av1 video"), so AV1 never matched below and no warning was shown (16.10).
-        // libVLC 3.6.0's own MediaCodec module has no AV1 at all (no "video/av01" in libvlc.so): it always goes to software
-        // dav1d, even where the phone has an AV1 hardware decoder.
-        if (codec != null && (codec.contains("av1") || codec.contains("av01"))) {
-            cpuDecoded += currentUrl
-            AppLog.write("video: ${t.codec} ${t.width}x${t.height}, VLC has no hardware AV1 decoder (processor will decode)")
-            Toast.makeText(context, tr("player.av1_processorom", "w" to t.width, "h" to t.height), Toast.LENGTH_LONG).show()
-            return
-        }
-        val mime = when (codec) {
-            "h264", "avc1", "x264" -> "video/avc"
-            "hevc", "h265", "hev1", "hvc1" -> "video/hevc"
-            "av01", "av1" -> "video/av01"
-            "vp90", "vp09", "vp9" -> "video/x-vnd.on2.vp9"
-            "vp80", "vp8" -> "video/x-vnd.on2.vp8"
-            "mpgv", "mp2v" -> "video/mpeg2"
-            else -> { AppLog.write("video: $codec ${t.width}x${t.height}"); return }
-        }
-        val hw = runCatching {
-            android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).codecInfos.any { info ->
-                if (info.isEncoder || info.supportedTypes.none { it.equals(mime, true) }) return@any false
-                val hardware = if (Build.VERSION.SDK_INT >= 29) info.isHardwareAccelerated
-                else !info.name.startsWith("OMX.google.") && !info.name.startsWith("c2.android.")
-                hardware && runCatching { info.getCapabilitiesForType(mime).videoCapabilities.isSizeSupported(t.width, t.height) }.getOrDefault(true)
-            }
-        }.getOrDefault(true)
-        AppLog.write("video: ${t.codec} ${t.width}x${t.height}, hardware decoder ${if (hw) "available" else "NOT available (processor will decode)"}")
-        if (!hw) cpuDecoded += currentUrl
-        if (!hw) Toast.makeText(context, tr("player.processorom_decodirovanie", "w" to t.width, "h" to t.height), Toast.LENGTH_LONG).show()
+        // mpv says itself which decoder it took: «mediacodec-copy» — the phone's, «no» — the processor (FFmpeg). It
+        // never gives VC-1 to the phone (MpvEngine.HWDEC_CODECS) and falls back to the processor by itself when the
+        // phone's decoder refuses a file (AV1 without a hardware decoder goes to dav1d).
+        val hw = p.hardwareDecoder ?: return // not known yet: the next video output asks again
+        decodeCheckedUrl = currentUrl
+        val software = hw.isBlank() || hw == "no"
+        AppLog.write("video: ${t.codec} ${t.width}x${t.height}, decoder ${if (software) "processor (FFmpeg)" else hw}")
+        if (!software) return
+        cpuDecoded += currentUrl
+        // a file reopened without hardware decoding on purpose (black screen, VC-1) needs no notice
+        if (currentUrl in softwareVideo && codec != null && VC1.any { codec.contains(it) }) return
+        val av1 = codec != null && (codec.contains("av1") || codec.contains("av01"))
+        Toast.makeText(context, tr(if (av1) "player.av1_processorom" else "player.processorom_decodirovanie", "w" to t.width, "h" to t.height),
+            Toast.LENGTH_LONG).show()
     }
 
     /**

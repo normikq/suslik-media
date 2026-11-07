@@ -22,6 +22,8 @@
     find: { mode: 'library', q: '', asked: '', server: null, serverErr: '', providers: [], pc: null, busy: 0, notes: {},
       page: 0, filtersOpen: false, f: null },
     stream: null, streamOk: false, pollTimer: 0, retry: 0,
+    // приглушение фильма, когда говорят в Discord: настройка аккаунта ({ enabled, level }) и видит ли страница говорящих
+    duck: null, duckSaving: false, voiceState: 'off',
     // библиотека: категория и сортировка (помнятся в браузере)
     lib: { cat: 'all', sort: 'new' },
     // моя медиатека: категория и сортировка
@@ -133,17 +135,36 @@
     });
   }
 
-  // Вход просит и rpc.activities.write — статус «Смотрит …» в профиле (presence ниже). Отказался в окне Discord —
-  // второй раз спрашиваем только identify и больше статус не просим (помним в браузере).
-  var loggingIn = null, PRESENCE_SCOPE = 'rpc.activities.write';
-  function wantPresence() { try { return localStorage.getItem('sm.act.nopresence') !== '1'; } catch (e) { return true; } }
+  // Вход просит и rpc.activities.write — статус «Смотрит …» в профиле (presence ниже), и rpc.voice.read — кто говорит
+  // в канале (приглушение фильма, voice ниже). Discord не дал (отказ в окне, scope не одобрен) — спрашиваем без
+  // rpc.voice.read, потом и без статуса; от чего отказались, больше не просим (помним в браузере).
+  var loggingIn = null, PRESENCE_SCOPE = 'rpc.activities.write', VOICE_SCOPE = 'rpc.voice.read';
+  function wants(flag) { try { return localStorage.getItem(flag) !== '1'; } catch (e) { return true; } }
+  function refuse(flag) { try { localStorage.setItem(flag, '1'); } catch (x) { /* без хранилища */ } }
   function authorize() {
-    var scopes = wantPresence() ? ['identify', PRESENCE_SCOPE] : ['identify'];
-    return D.authorize(S.clientId, scopes).catch(function (e) {
-      if (scopes.length < 2 || !(e && e.code === 5000)) throw e;
-      try { localStorage.setItem('sm.act.nopresence', '1'); } catch (x) { /* без хранилища */ }
-      return D.authorize(S.clientId, ['identify']);
-    });
+    var tries = [];
+    if (wants('sm.act.nopresence') && wants('sm.act.novoice')) tries.push({ scopes: ['identify', PRESENCE_SCOPE, VOICE_SCOPE], off: 'sm.act.novoice' });
+    if (wants('sm.act.nopresence')) tries.push({ scopes: ['identify', PRESENCE_SCOPE], off: 'sm.act.nopresence' });
+    tries.push({ scopes: ['identify'] });
+    function attempt(i) {
+      return D.authorize(S.clientId, tries[i].scopes).catch(function (e) {
+        if (!tries[i].off) throw e;
+        // помним только отказ человека в окне (5000); другой сбой (scope не одобрен для приложения) — спросим и в следующий раз
+        if (e && e.code === 5000) refuse(tries[i].off);
+        return attempt(i + 1);
+      });
+    }
+    return attempt(0);
+  }
+  // Токен Discord (разрешён статус или голос): один AUTHENTICATE, потом статус и подписка на речь.
+  // Старый сервер не присылает discord_scopes — тогда токен только для статуса
+  function authenticateRpc(token, scopes) {
+    scopes = scopes || [PRESENCE_SCOPE];
+    D.authenticate(token).then(function () {
+      if (scopes.indexOf(PRESENCE_SCOPE) >= 0) presence.ready();
+      if (scopes.indexOf(VOICE_SCOPE) >= 0) voice.start();
+      else voice.unavailable();
+    }, function () { voice.unavailable(); });
   }
   function login() {
     if (loggingIn) return loggingIn;
@@ -156,7 +177,8 @@
       S.token = r.token;
       S.site = r.site_url || '';
       S.me = r.user;
-      if (r.discord_token) presence.auth(r.discord_token);
+      if (r.discord_token) authenticateRpc(r.discord_token, r.discord_scopes);
+      else voice.unavailable();
     }).then(function () { loggingIn = null; }, function (e) { loggingIn = null; throw e; });
     return loggingIn;
   }
@@ -400,9 +422,7 @@
   // Discord не принял — пробуем без картинки, потом как «Играет» (старые клиенты знают только этот тип).
   var presence = (function () {
     var ready = false, last = '', timer = 0, type = 3, withImage = true;
-    function auth(token) {
-      D.authenticate(token).then(function () { ready = true; last = ''; update(); }, function () { ready = false; });
-    }
+    function setReady() { ready = true; last = ''; update(); }
     function cut(t) { t = String(t || '').trim(); if (t.length > 128) t = t.slice(0, 127) + '…'; return t.length >= 2 ? t : t + '  '; }
     function build() {
       var r = S.room, f = r.file, info = f ? resolve(f.key) : null, people = (r.watchers || []).length || 1;
@@ -441,8 +461,76 @@
       });
     }
     function update() { if (ready && !timer) timer = setTimeout(send, 1500); }
-    return { auth: auth, update: update };
+    return { ready: setReady, update: update };
   })();
+
+  // ---- приглушение: кто говорит в канале (SPEAKING_START / SPEAKING_STOP) → сервер ----
+  // Страница ничего не глушит сама: только сообщает серверу, он сводит пульты канала и рассылает плеерам
+  // voice_changed. Пока человек говорит, повторяем «говорит» раз в 5 с: так сервер не держит запись вечно,
+  // если пульт закрыли посреди фразы. Кто и когда говорил, страница не хранит.
+  // События одного человека уходят строго по очереди: два запроса подряд («говорит», сразу «замолчал») по разным
+  // соединениям могли прийти на сервер наоборот — и фильм оставался приглушённым до следующей фразы.
+  var voice = (function () {
+    var started = false, talking = {}, queue = {}; // discord id -> таймер повтора; discord id -> последний запрос
+    function send(userId, speaking) {
+      if (!S.room || !S.token) return;
+      var roomId = S.room.id, body = { user_id: userId, speaking: speaking };
+      var prev = queue[userId] || Promise.resolve();
+      var next = prev.then(function () {
+        return api('api/activity/rooms/' + roomId + '/speaking', body).catch(function () { /* не дошло — громкость не главное */ });
+      });
+      queue[userId] = next;
+      next.then(function () { if (queue[userId] === next) delete queue[userId]; });
+    }
+    function idOf(d) {
+      var id = d && (d.user_id || (d.user && d.user.id));
+      if (!id || !/^\d{5,25}$/.test(String(id))) return null;
+      if (d.channel_id && D.info.channelId && String(d.channel_id) !== String(D.info.channelId)) return null;
+      return String(id);
+    }
+    function onStart(d) {
+      var id = idOf(d);
+      if (!id || talking[id]) return;
+      talking[id] = setInterval(function () { send(id, true); }, 5000);
+      send(id, true);
+    }
+    function onStop(d) {
+      var id = idOf(d);
+      if (!id || !talking[id]) return;
+      clearInterval(talking[id]);
+      delete talking[id];
+      send(id, false);
+    }
+    function start() {
+      if (started || !D.info.channelId) return;
+      started = true;
+      var args = { channel_id: D.info.channelId };
+      Promise.all([D.subscribe('SPEAKING_START', args, onStart), D.subscribe('SPEAKING_STOP', args, onStop)]).then(function () {
+        S.voiceState = 'on';
+        render();
+      }, function () {
+        started = false;
+        S.voiceState = 'failed';
+        render();
+      });
+    }
+    function unavailable() { if (!started) { S.voiceState = 'denied'; render(); } }
+    return { start: start, unavailable: unavailable };
+  })();
+
+  function loadDuck() {
+    return api('api/activity/voice-duck').then(function (r) { S.duck = r.voice_duck || null; }, function () { /* без меню */ });
+  }
+  function saveDuck(next) {
+    var prev = S.duck;
+    S.duck = next;
+    S.duckSaving = true;
+    render();
+    api('api/activity/voice-duck', next).then(function (r) { S.duck = r.voice_duck || next; }, function (e) {
+      S.duck = prev;
+      toast(errText(e), true);
+    }).then(function () { S.duckSaving = false; render(); });
+  }
 
   // ---- категории и сортировка медиатеки (как на ПК: LibraryView.itemCategory) ----
   var ANIME_RE = /(^|[^a-zа-яё])(?:anime|аниме|anilibria)(?![a-zа-яё])|\[(?:horriblesubs|erai-raws|subsplease|judas)\]/i;
@@ -569,12 +657,36 @@
     if (refreshing || !S.room) return;
     refreshing = true;
     api('api/activity/rooms/' + S.room.id).then(function (r) { noteServerTime(r.server_time); setRoom(r.room); }, function (e) {
-      if (e.status === 404) reopenRoom();
+      if (e.status === 404) roomClosed();
     }).then(function () { refreshing = false; });
   }
-  // Комнату удалили (сервер перезапустился, все ушли): та же кнопка Activity открывает новую
+  // Комнату удалили (сервер перезапустился, все ушли): та же кнопка Activity открывает новую.
+  // Комнату закрыл ведущий (roomClosed) — новую открываем только по кнопке «Открыть новую комнату»
   function reopenRoom() {
-    api('api/activity/room', { channel_id: D.info.channelId }).then(function (r) { setRoom(r.room); startStream(); }, function () {});
+    api('api/activity/room', { channel_id: D.info.channelId }).then(function (r) { S.closed = false; setRoom(r.room); startStream(); }, function () {});
+  }
+  // Комнату закрыл ведущий: поток и опрос стоят, на экране — «Комната закрыта»
+  function roomClosed() {
+    if (S.stream) S.stream.abort();
+    stopPolling();
+    S.room = null;
+    S.closed = true;
+    S.tab = 'now';
+    render();
+  }
+  function closeRoomNow() {
+    S.closeAsk = false;
+    api('api/activity/rooms/' + S.room.id + '/close', {}).then(roomClosed, function (e) { toast(errText(e), true); render(); });
+  }
+  function renderClosed() {
+    app.replaceChildren(
+      h('div', { class: 'top' }, [h('div', { class: 'brand' }, [h('span', { class: 'brand-mark' }), h('span', { text: 'Вместе' })])]),
+      h('div', { class: 'page' }, [h('div', { class: 'panel' }, [
+        h('div', { class: 'h', text: 'Комната закрыта' }),
+        h('div', { class: 'muted', text: 'Ведущий закрыл комнату: код больше не работает, список фильмов сброшен.' }),
+        h('div', { class: 'row', style: 'margin-top:12px' }, [btn('lamp small', 'play', 'Открыть новую комнату', reopenRoom)])
+      ])])
+    );
   }
 
   var memberRefresh = 0;
@@ -586,6 +698,9 @@
       case 'member_left':
         clearTimeout(memberRefresh);
         memberRefresh = setTimeout(refreshRoom, 300);
+        break;
+      case 'room_closed':
+        roomClosed();
         break;
       case 'spin_cancelled':
         // Ведущий остановил барабан: свой снимок барабана убираем сразу (обычный итог тоже приходит со spin: null,
@@ -730,7 +845,7 @@
   // ---- отрисовка ----
   function render() {
     syncReel();
-    if (!S.room) return;
+    if (!S.room) { if (S.closed) renderClosed(); return; }
     var top = h('div', { class: 'top' }, [
       h('div', { class: 'brand' }, [h('span', { class: 'brand-mark' }), h('span', { text: 'Вместе' })]),
       h('div', { class: 'grow' }),
@@ -845,7 +960,8 @@
         h('div', { class: 'row', style: 'margin-top:12px' }, [btn('small', 'copy', 'Скопировать', copyCode),
           btn('small', 'chat', 'Позвать в чат', invite, { title: 'Отправить в чат голосового канала код и ссылку на комнату' })])
       ]),
-      viewPeople()
+      viewPeople(),
+      viewDuck()
     ]);
     return h('div', { class: 'grid2' }, [card, side]);
   }
@@ -862,19 +978,74 @@
       p.player = true;
       if (m.buffering) p.buffering = true;
     });
+    var host = isHost();
+    function giveHost(p) {
+      // roomCall при ошибке сам показывает тост и отдаёт undefined
+      roomCall('host', { user_id: p.id }).then(function (r) { if (r) toast('Ведущий — ' + p.name + '.'); });
+    }
     var rows = list.map(function (p) {
       var av = h('div', { class: 'avatar', text: p.avatar ? '' : (p.name || '?').slice(0, 1).toUpperCase() });
       if (p.avatar && /^https:\/\/cdn\.discordapp\.com\//.test(p.avatar)) av.style.backgroundImage = 'url("' + p.avatar + '")';
+      // Ведущему — передать комнату любому, кто сейчас в ней (кроме себя)
+      var canGive = host && S.me && p.id !== S.me.id && p.id !== r.host_id;
       return h('div', { class: 'person' }, [
         av, h('span', { class: 'name', text: p.name + (S.me && p.id === S.me.id ? ' (вы)' : '') }),
         p.id === r.host_id ? h('span', { class: 'tag lamp' }, [icon('crown'), 'Ведущий']) : null,
-        p.buffering ? h('span', { class: 'tag lamp', text: 'Грузится' }) : p.player ? h('span', { class: 'tag' }, [icon('devices'), 'Смотрит']) : null
+        p.buffering ? h('span', { class: 'tag lamp', text: 'Грузится' }) : p.player ? h('span', { class: 'tag' }, [icon('devices'), 'Смотрит']) : null,
+        canGive ? btn('icon small', 'crown', null, function () { giveHost(p); }, { title: 'Сделать ведущим' }) : null
       ]);
     });
+    // «Закрыть комнату» — в два нажатия (диалоги Discord не открывает): первое нажатие просит подтвердить 4 секунды
+    var closeBtn = null;
+    if (host) {
+      closeBtn = S.closeAsk
+        ? btn('small', 'close', 'Точно закрыть комнату?', closeRoomNow, { title: 'Код перестанет работать, у всех участников комната закроется' })
+        : btn('small', 'close', 'Закрыть комнату', function () {
+            S.closeAsk = true;
+            render();
+            setTimeout(function () { if (S.closeAsk) { S.closeAsk = false; render(); } }, 4000);
+          }, { title: 'Код перестанет работать, у всех участников комната закроется' });
+    }
     return h('div', { class: 'panel' }, [
       h('div', { class: 'h' }, ['В комнате · ' + list.length]),
       rows.length ? h('div', { class: 'people' }, rows) : h('div', { class: 'muted', text: 'Пока никого.' }),
-      h('div', { class: 'small muted', style: 'margin-top:10px', text: '«Смотрит» — открыл фильм в приложении.' })
+      h('div', { class: 'small muted', style: 'margin-top:10px', text: '«Смотрит» — открыл фильм в приложении.' + (host ? ' Корона у участника — передать ему комнату.' : '') }),
+      closeBtn ? h('div', { class: 'row', style: 'margin-top:12px' }, [closeBtn]) : null
+    ]);
+  }
+
+  // Меню «Приглушение»: своя настройка аккаунта, действует на свои ПК и телефон в комнате канала
+  function duckText(v) { return v === 100 ? 'тишина' : v === 0 ? 'не тише' : 'тише на ' + v + ' %'; }
+  function delayText(ms) { return ms === 0 ? 'сразу' : (ms / 1000).toLocaleString('ru-RU', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' с'; }
+  /** Ползунок настройки: подпись меняется на ходу, сохраняется, когда отпустили. */
+  function duckSlider(d, opts) {
+    var label = h('span', { class: 'duck-value', text: opts.text(d[opts.key]) });
+    var range = h('input', { type: 'range', min: String(opts.min), max: String(opts.max), step: String(opts.step), value: String(d[opts.key]),
+      class: 'duck-range', 'aria-label': opts.aria, disabled: !d.enabled || S.duckSaving,
+      on: {
+        input: function (e) { label.textContent = opts.text(Number(e.target.value)); },
+        change: function (e) { var next = duckCopy(d); next[opts.key] = Number(e.target.value); saveDuck(next); }
+      } });
+    return h('div', { class: 'duck-field' + (d.enabled ? '' : ' muted') }, [
+      h('div', { class: 'small muted', text: opts.title }),
+      h('div', { class: 'row duck-row' }, [range, label])
+    ]);
+  }
+  function duckCopy(d) { return { enabled: d.enabled, level: d.level, min_ms: d.min_ms == null ? 400 : d.min_ms }; }
+  function viewDuck() {
+    var d = S.duck;
+    if (!d || !S.me || !/^u_\d+$/.test(S.me.id)) return null;
+    d = duckCopy(d);
+    var note = S.voiceState === 'denied' ? 'Discord не разрешил этой странице видеть, кто говорит: с вашего пульта речь не учитывается. Приглушение работает, если Activity открыта у кого-то ещё в канале.'
+      : S.voiceState === 'failed' ? 'Discord не прислал, кто говорит: с вашего пульта речь не учитывается.'
+      : 'Пока кто-то в канале говорит, фильм у вас на ПК и телефоне становится тише. Ваш собственный голос ваш фильм не глушит. Работает, пока Activity открыта хотя бы у одного в канале.';
+    return h('div', { class: 'panel' }, [
+      h('div', { class: 'h', text: 'Приглушение' }),
+      check(d.enabled, 'Приглушать фильм, когда говорят в Discord', function (on) { var next = duckCopy(d); next.enabled = on; saveDuck(next); }),
+      duckSlider(d, { key: 'level', min: 0, max: 100, step: 10, title: 'Насколько тише', aria: 'Насколько тише', text: duckText }),
+      duckSlider(d, { key: 'min_ms', min: 0, max: 2000, step: 100, title: 'Глушить, если говорят дольше', aria: 'Глушить, если говорят дольше',
+        text: delayText }),
+      h('div', { class: 'small muted', style: 'margin-top:10px', text: note })
     ]);
   }
 
@@ -1826,6 +1997,7 @@
       S.room = r.room;
       if (r.me) S.me = r.me;
       bootLine('Загружаем медиатеку…');
+      loadDuck().then(render);
       return loadLibrary().catch(function (e) { toast('Медиатека не загрузилась: ' + errText(e), true); });
     }).then(function () {
       render();

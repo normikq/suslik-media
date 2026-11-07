@@ -218,9 +218,17 @@ private fun parseEpisode(path: String, defaultSeason: Int = 1): Pair<Int, Int>? 
     return null
 }
 
+/**
+ * Образ диска (.iso). Плееры его по ссылке зеркала не открывают (mpv читает Blu-ray-образ только через libbluray
+ * с диска, FFmpeg по HTTP видит байты UDF и бесконечно «грузит»): плеер сразу говорит об этом (ТВ — `support.js`).
+ * [nameOrUrl] — путь файла в раздаче или адрес зеркала (имя файла — в пути, до `?`).
+ */
+fun isDiscImage(nameOrUrl: String): Boolean =
+    nameOrUrl.substringBefore('?').substringBefore('#').endsWith(".iso", ignoreCase = true)
+
 fun mainVideo(m: Magnet): MFile? {
     val vids = m.files.filter { !it.isFolder && VIDEO_EXT.containsMatchIn(it.path) }
-    val real = vids.filter { !it.path.endsWith(".iso", ignoreCase = true) }
+    val real = vids.filter { !isDiscImage(it.path) }
     return (real.ifEmpty { vids }).maxByOrNull { it.size }
 }
 

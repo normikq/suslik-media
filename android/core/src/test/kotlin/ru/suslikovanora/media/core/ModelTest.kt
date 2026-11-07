@@ -214,6 +214,15 @@ class ModelTest {
     }
 
     @Test
+    fun discImageByNameOrMirrorUrl() {
+        assertTrue(isDiscImage("Film/BD/Disc.ISO"))
+        assertTrue(isDiscImage("https://host/api/file/proxy/Disc.iso?link=x&exp=1&sig=y"))
+        assertFalse(isDiscImage("Film.mkv"))
+        assertFalse(isDiscImage("https://host/api/file/proxy/Film.mkv?link=https%3A%2F%2Fa%2FDisc.iso"))
+        assertFalse(isDiscImage("Film.iso.mkv"))
+    }
+
+    @Test
     fun buildPlayableSingleMovie() {
         val m = Magnet(1, "Avatar", "Готово", 4, 0, 0, listOf(
             file(0, "Avatar.sample.mkv", 30),

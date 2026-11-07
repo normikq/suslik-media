@@ -11,7 +11,7 @@ object MirrorLink {
     /**
      * The file's identity: the same film has a different signed address each time it is opened, so the address itself
      * cannot recognise it. Path plus the `link` parameter; other addresses are used as they are. One rule for the
-     * reserve (BurstProxy), the Blu-ray clock (TsClock) and the engine choice (Android).
+     * reserve (BurstProxy), and the engine choice (Android).
      */
     fun fileKey(url: String): String {
         val link = url.substringAfter('?', "").split('&').firstOrNull { it.startsWith("link=") } ?: return url

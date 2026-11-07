@@ -23,8 +23,18 @@ data class EngineStats(
     val skippedPictures: Int = 0
 )
 
-/** Какой движок играет: libVLC (через запас BurstProxy) или Media3 (ExoPlayer, тоже через запас BurstProxy). */
-enum class EngineKind(val tag: String) { VLC("vlc"), MEDIA3("media3") }
+/**
+ * Какой движок играет: mpv (libmpv, через запас BurstProxy) или Media3 (ExoPlayer, тоже через запас BurstProxy).
+ * [legacy] — прежние теги того же места: до 2.8.0 там был libVLC («vlc» в настройке и в запомненных файлах).
+ */
+enum class EngineKind(val tag: String, val legacy: Set<String> = emptySet()) {
+    MPV("mpv", setOf("vlc")), MEDIA3("media3");
+
+    companion object {
+        /** Тег из настроек или из памяти [EngineChoice] (в том числе прежний «vlc») или null. */
+        fun ofTag(tag: String?): EngineKind? = values().firstOrNull { it.tag == tag || tag in it.legacy }
+    }
+}
 
 /** Режим кадра (кнопка «⤢» и щипок). */
 enum class VideoScale { BEST_FIT, FIT_SCREEN, FILL, RATIO_16_9 }
@@ -54,7 +64,7 @@ interface EngineListener {
     fun stopped() {}
     /** Появилась новая дорожка (внешняя озвучка приходит чуть позже). */
     fun tracksChanged() {}
-    /** Сменилась текущая звуковая дорожка (VLC сам включает файл озвучки уже после [tracksChanged]). */
+    /** Сменилась текущая звуковая дорожка (движок может сам включить файл озвучки уже после [tracksChanged]). */
     fun audioSelected() {}
     /** Поток кончился. Обрыв сети тоже выглядит так: настоящий ли это конец, решает плеер. */
     fun endReached() {}
@@ -74,7 +84,7 @@ interface EngineListener {
 
 /**
  * Всё, что [ru.suslikovanora.media.PlayerActivity] требует от видеодвижка (как `PlayerEngine` на ПК).
- * Реализации: [VlcEngine] (libVLC), [Media3Engine] (ExoPlayer); [HybridEngine] переключает их для каждого файла. Один объект на экран плеера; вызывается только из главного потока.
+ * Реализации: [MpvEngine] (libmpv), [Media3Engine] (ExoPlayer); [HybridEngine] переключает их для каждого файла. Один объект на экран плеера; вызывается только из главного потока.
  * Пока плеера нет ([hasPlayer] = false), чтение возвращает нули, а команды ничего не делают.
  */
 interface PlayerEngine {
@@ -110,6 +120,11 @@ interface PlayerEngine {
     /** Playback speed (the shared room evens out a small drift with 0.95–1.05×). */
     fun setRate(rate: Float)
     val volume: Int
+    /**
+     * Громкость самого плеера, 0–100 (системная не трогается): приглушение, когда говорят в Discord.
+     * Движок помнит её и ставит заново новому плееру (открытие следующего файла).
+     */
+    fun setPlayerVolume(percent: Int)
     fun seekTo(ms: Long)
     fun seekToFraction(fraction: Float)
 
@@ -125,7 +140,7 @@ interface PlayerEngine {
     fun addAudioFile(url: String)
     /**
      * Из какого подключённого файла озвучки дорожка [id]: номер файла в порядке подключения (их [files]) или null — дорожка фильма.
-     * VLC: дорожки файлов идут после дорожек фильма в порядке подключения.
+     * По умолчанию дорожки файлов идут после дорожек фильма в порядке подключения (mpv сверяет ещё и адрес файла).
      */
     fun audioFileOf(id: Int, files: Int): Int? {
         if (files <= 0) return null
@@ -140,7 +155,7 @@ interface PlayerEngine {
         val base = tracks.size - files
         return if (base >= 1 && index in 0 until files) tracks[base + index].id else null
     }
-    /** Задержка звука (загруженная озвучка со сдвигом). Media3 сдвигает сам файл озвучки ([CustomAudioInfo]), здесь — только VLC. */
+    /** Задержка звука (загруженная озвучка со сдвигом). Media3 сдвигает сам файл озвучки ([CustomAudioInfo]), здесь — только mpv. */
     fun setAudioDelayMs(ms: Long) {}
     /** Сдвиг звука, выставленный зрителем (+ — звук позже): складывается с задержкой озвучки, запоминается на файл ([PlaybackTweaks]). */
     fun setAudioSyncMs(ms: Long) {}
@@ -164,12 +179,14 @@ interface PlayerEngine {
 
     fun stats(): EngineStats?
 
-    /** Сколько файла уже загружено вперёд (мс позиции), если движок знает это сам; -1 — нет (VLC: см. BurstProxy). */
+    /** Сколько файла уже загружено вперёд (мс позиции), если движок знает это сам; -1 — нет (mpv: см. BurstProxy). */
     val bufferedPositionMs: Long get() = -1L
-    /** Средний битрейт файла (размер ÷ длительность), если движок знает размер; null — нет (VLC: BurstProxy). */
+    /** Средний битрейт файла (размер ÷ длительность), если движок знает размер; null — нет (mpv: BurstProxy). */
     val bitrateMbit: Double? get() = null
     /** Движок сам переживает смену поверхности (PiP, блокировка): плееру не нужно переподключать видео. */
     val handlesSurfaceItself: Boolean get() = false
+    /** Аппаратный декодер видео, которым играет движок («mediacodec-copy»; «no» — процессор); null — не знает. */
+    val hardwareDecoder: String? get() = null
     /** Строка для журнала Suslik Debug (запас, оценка сети, декодеры). */
     fun diagLine(): String? = null
 }

@@ -384,3 +384,211 @@ test("сервер: страница Activity встраивается толь�
     server.close();
   }
 });
+
+// ---- Приглушение фильма, когда говорят в Discord ----
+const voiceDuck = require("../src/services/voice-duck");
+const dan = findOrCreateUser({ id: "200000000000000001", username: "dan", global_name: "Дэн", avatar: null }, "allow");
+const eve = findOrCreateUser({ id: "200000000000000002", username: "eve", global_name: "Ева", avatar: null }, "allow");
+
+test("приглушение: настройка по умолчанию 10 %, шаг 10, только аккаунт Discord", () => {
+  assert.deepEqual(voiceDuck.getVoiceDuck(dan.id), { enabled: true, level: 10, min_ms: 400 });
+  assert.deepEqual(voiceDuck.getVoiceDuck("shared"), { enabled: true, level: 10, min_ms: 400 });
+  assert.equal(voiceDuck.setVoiceDuck(dan.id, { enabled: true, level: 10, min_ms: 450 }), null);
+  assert.equal(voiceDuck.setVoiceDuck(dan.id, { enabled: true, level: 10, min_ms: 2100 }), null);
+  assert.equal(voiceDuck.setVoiceDuck(dan.id, { enabled: true, level: 15 }), null);
+  assert.equal(voiceDuck.setVoiceDuck(dan.id, { enabled: true, level: 110 }), null);
+  assert.equal(voiceDuck.setVoiceDuck(dan.id, { enabled: "yes", level: 10 }), null);
+  assert.equal(voiceDuck.setVoiceDuck("shared", { enabled: false, level: 10 }), null);
+  assert.deepEqual(voiceDuck.setVoiceDuck(dan.id, { enabled: false, level: 100, min_ms: 800 }), { enabled: false, level: 100, min_ms: 800 });
+  // без min_ms (старая страница) задержка не сбрасывается
+  assert.deepEqual(voiceDuck.setVoiceDuck(dan.id, { enabled: false, level: 100 }), { enabled: false, level: 100, min_ms: 800 });
+  assert.deepEqual(voiceDuck.getVoiceDuck(dan.id), { enabled: false, level: 100, min_ms: 800 });
+  voiceDuck.setVoiceDuck(dan.id, { enabled: true, level: 10, min_ms: 400 });
+});
+
+test("приглушение: говорящие сводятся в один список, конец фразы — с задержкой, сообщает только пульт", async t => {
+  const room = rooms.getOrCreateChannelRoom("555555555555555555", dan);
+  const events = [];
+  const stopListen = rooms.addListener(room.id, msg => {
+    const m = JSON.parse(msg);
+    if (m.event === "voice_changed" || m.event === "settings_changed") events.push(m);
+  });
+  // не у пульта — нельзя
+  assert.equal(rooms.reportSpeaking(room.id, dan, eve.id, true).status, 403);
+  const leaveD = rooms.addWatcher(room, dan);
+  const leaveE = rooms.addWatcher(room, eve);
+  assert.equal(rooms.reportSpeaking(room.id, dan, "1001", true).status, 400);
+  assert.deepEqual(rooms.getRoomPublicData(room).voice, { active: false, speakers: [], talking: [] });
+
+  const t0 = Date.now();
+  assert.equal(rooms.reportSpeaking(room.id, dan, eve.id, true, t0).changed, true);
+  // тот же говорящий от второго пульта — без нового события
+  assert.equal(rooms.reportSpeaking(room.id, eve, eve.id, true, t0).changed, false);
+  assert.equal(events.length, 1);
+  assert.deepEqual(events[0].data, { active: true, speakers: [eve.id], talking: [eve.id] });
+  assert.deepEqual(rooms.getRoomPublicData(room).voice, { active: true, speakers: [eve.id], talking: [eve.id] });
+  // «замолчал» неизвестный — ничего
+  assert.equal(rooms.reportSpeaking(room.id, dan, dan.id, false).changed, false);
+
+  // конец фразы: ещё 1,5 с в списке (паузы между словами не дёргают громкость), потом voice_changed пустой
+  rooms.reportSpeaking(room.id, dan, eve.id, false);
+  assert.equal(room.speakers.has(eve.id), true);
+  // замолчала: ещё в speakers, но уже не в talking — плеер, чей порог не набран, не глушит
+  assert.deepEqual(events.at(-1).data, { active: true, speakers: [eve.id], talking: [] });
+  await new Promise(r => setTimeout(r, 1700));
+  assert.equal(room.speakers.has(eve.id), false);
+  assert.deepEqual(events.at(-1).data, { active: false, speakers: [], talking: [] });
+
+  // повтор «говорит» без перемены — без события; заговорила снова в паузе — событие (talking снова с ней)
+  rooms.reportSpeaking(room.id, dan, eve.id, true);
+  const n = events.length;
+  rooms.reportSpeaking(room.id, dan, eve.id, true);
+  assert.equal(events.length, n);
+  rooms.reportSpeaking(room.id, dan, eve.id, false);
+  rooms.reportSpeaking(room.id, dan, eve.id, true);
+  assert.deepEqual(events.at(-1).data.talking, [eve.id]);
+  rooms.reportSpeaking(room.id, dan, eve.id, false);
+
+  // настройка — только комнатам, где человек есть; for_user — чей
+  rooms.notifyUserSettings(dan.id, { voice_duck: { enabled: true, level: 50 } });
+  const s = events.find(e => e.event === "settings_changed");
+  assert.deepEqual(s.data, { for_user: dan.id, voice_duck: { enabled: true, level: 50 } });
+  const before = events.length;
+  rooms.notifyUserSettings(carol.id, { voice_duck: { enabled: true, level: 50 } });
+  assert.equal(events.length, before);
+
+  await new Promise(r => setTimeout(r, 1700));
+  stopListen();
+  leaveD();
+  leaveE();
+  t.diagnostic(`событий: ${events.length}`);
+});
+
+test("приглушение: маршруты — только из Activity, говорящий — участник канала", async () => {
+  const { createApp } = require("../src/app");
+  const server = createApp().listen(0, "127.0.0.1");
+  await new Promise(r => server.once("listening", r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const { token } = issueActivityToken(eve.id);
+    const auth = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+    const got = await (await fetch(`${base}/api/activity/voice-duck`, { headers: auth })).json();
+    assert.deepEqual(got.voice_duck, { enabled: true, level: 10, min_ms: 400 });
+    const bad = await fetch(`${base}/api/activity/voice-duck`, { method: "POST", headers: auth, body: JSON.stringify({ enabled: true, level: 25 }) });
+    assert.equal(bad.status, 400);
+    const ok = await (await fetch(`${base}/api/activity/voice-duck`, { method: "POST", headers: auth, body: JSON.stringify({ enabled: true, level: 30, min_ms: 600 }) })).json();
+    assert.deepEqual(ok.voice_duck, { enabled: true, level: 30, min_ms: 600 });
+    assert.deepEqual(voiceDuck.getVoiceDuck(eve.id), { enabled: true, level: 30, min_ms: 600 });
+
+    const room = rooms.getOrCreateChannelRoom("666666666666666666", eve);
+    const notHere = await fetch(`${base}/api/activity/rooms/${room.id}/speaking`, { method: "POST", headers: auth, body: JSON.stringify({ user_id: "200000000000000001", speaking: true }) });
+    assert.equal(notHere.status, 403);
+    const leave = rooms.addWatcher(room, eve);
+    const junk = await fetch(`${base}/api/activity/rooms/${room.id}/speaking`, { method: "POST", headers: auth, body: JSON.stringify({ user_id: "u_1", speaking: true }) });
+    assert.equal(junk.status, 400);
+    const sp = await (await fetch(`${base}/api/activity/rooms/${room.id}/speaking`, { method: "POST", headers: auth, body: JSON.stringify({ user_id: "200000000000000001", speaking: true }) })).json();
+    assert.equal(sp.changed, true);
+    assert.deepEqual(rooms.getRoomPublicData(room).voice.speakers, [dan.id]);
+    rooms.reportSpeaking(room.id, eve, dan.id, false);
+
+    // ключ устройства (приложение) не шлёт события речи и не меняет настройку
+    const devHeaders = { "Content-Type": "application/json" };
+    const noAct = await fetch(`${base}/api/activity/rooms/${room.id}/speaking`, { method: "POST", headers: devHeaders, body: JSON.stringify({ user_id: "200000000000000001", speaking: true }) });
+    assert.equal(noAct.status, 401);
+    await new Promise(r => setTimeout(r, 1700));
+    leave();
+  } finally {
+    server.close();
+  }
+});
+
+test("приглушение: «замолчал» сразу после «говорит» не оставляет запись, бот может снять говорящего", () => {
+  const room = rooms.getOrCreateChannelRoom("777777777777777777", dan);
+  const events = [];
+  const stop = rooms.addListener(room.id, msg => { const m = JSON.parse(msg); if (m.event === "voice_changed") events.push(m.data); });
+  const leave = rooms.addWatcher(room, dan);
+  // фраза короче ответа бота: оба события засчитаны по порядку, запись уходит через 1,5 с, а не висит
+  rooms.reportSpeaking(room.id, dan, eve.id, true);
+  rooms.reportSpeaking(room.id, dan, eve.id, false);
+  assert.ok(room.speakers.get(eve.id).until - Date.now() <= 1500);
+  // бот: говорящего нет в канале — снимается сразу
+  assert.equal(rooms.dropSpeaker(room.id, eve.id), true);
+  assert.equal(room.speakers.size, 0);
+  assert.deepEqual(events.at(-1), { active: false, speakers: [], talking: [] });
+  assert.equal(rooms.dropSpeaker(room.id, eve.id), false);
+  // без повторов «говорит» запись живёт не дольше 12 с
+  rooms.reportSpeaking(room.id, dan, eve.id, true);
+  assert.ok(room.speakers.get(eve.id).until - Date.now() <= 12000);
+  rooms.dropSpeaker(room.id, eve.id);
+  stop();
+  leave();
+});
+
+test("ведущего можно передать тому, кто в комнате; передать может только ведущий", () => {
+  const room = rooms.getOrCreateChannelRoom("161616161616161616", alice);
+  const leaveA = rooms.addWatcher(room, alice);
+  const leaveB = rooms.addWatcher(room, bob);
+  const leaveC = rooms.addWatcher(room, carol);
+  assert.equal(rooms.transferHost(room.id, bob, bob.id).ok, false, "гость не передаёт");
+  assert.equal(rooms.transferHost(room.id, alice, "999").ok, false, "нет в комнате");
+  assert.equal(rooms.transferHost(room.id, alice, bob.id).ok, true);
+  assert.equal(room.host_id, bob.id);
+  assert.equal(room.host_name, bob.name);
+  assert.equal(rooms.transferHost(room.id, alice, carol.id).ok, false, "бывший ведущий уже не ведущий");
+  assert.equal(rooms.transferHost(room.id, bob, bob.id).ok, true, "себе — без ошибки");
+  // Передача ведущему с плеером: его устройство становится ведущим устройством
+  const joined = rooms.joinRoom(room.id, carol, "pc_carol");
+  assert.equal(joined.ok, true);
+  assert.equal(rooms.transferHost(room.id, bob, carol.id).ok, true);
+  assert.equal(room.host_client_id, "pc_carol");
+  assert.equal(rooms.isRoomHost(room, carol, "pc_carol"), true);
+  rooms.leaveRoom(room.id, "pc_carol", true);
+  leaveA(); leaveB(); leaveC();
+});
+
+test("ведущий вышел из пустой комнаты: тот, кто вошёл позже минуты, становится ведущим", () => {
+  const room = rooms.getOrCreateChannelRoom("171717171717171717", alice);
+  const leaveA = rooms.addWatcher(room, alice);
+  leaveA(); // комната пуста, ведущего нет
+  assert.equal(room.host_id, alice.id, "ведущий записан, но его нет");
+  assert.ok(room.host_absent_since > 0);
+  // Вошёл сразу — ведущий ещё не «устарел»
+  const leaveB = rooms.addWatcher(room, bob);
+  assert.equal(room.host_id, alice.id);
+  leaveB();
+  // Прошло больше минуты без ведущего — новый человек становится ведущим
+  room.host_absent_since = Date.now() - 61 * 1000;
+  const leaveC = rooms.addWatcher(room, carol);
+  assert.equal(room.host_id, carol.id);
+  assert.equal(room.host_absent_since, 0);
+  leaveC();
+});
+
+test("закрыть комнату может только ведущий: код перестаёт работать, в канале заводится новая", () => {
+  const room = rooms.getOrCreateChannelRoom("181818181818181818", alice);
+  const leaveA = rooms.addWatcher(room, alice);
+  const leaveB = rooms.addWatcher(room, bob);
+  assert.equal(rooms.closeRoom(room.id, bob).ok, false);
+  assert.ok(rooms.getRoom(room.id));
+  assert.equal(rooms.closeRoom(room.id, alice).ok, true);
+  assert.equal(rooms.getRoom(room.id), null);
+  const fresh = rooms.getOrCreateChannelRoom("181818181818181818", bob);
+  assert.notEqual(fresh.id, room.id);
+  assert.equal(fresh.host_id, bob.id);
+  assert.equal(rooms.closeRoom(room.id, alice).ok, false, "уже закрыта");
+  leaveA(); leaveB();
+  rooms.closeRoom(fresh.id, bob);
+});
+
+test("пустая комната канала удаляется через 5 минут, обычная — через 30", () => {
+  const channel = rooms.getOrCreateChannelRoom("191919191919191919", alice);
+  const leave = rooms.addWatcher(channel, alice);
+  leave();
+  const plain = rooms.createRoom(alice);
+  const later = Date.now() + 6 * 60 * 1000;
+  rooms.sweepRooms(later);
+  assert.equal(rooms.getRoom(channel.id), null, "канал: через 6 минут уже нет");
+  assert.ok(rooms.getRoom(plain.id), "обычная комната ещё ждёт 30 минут");
+  rooms.sweepRooms(Date.now() + 31 * 60 * 1000);
+  assert.equal(rooms.getRoom(plain.id), null);
+});

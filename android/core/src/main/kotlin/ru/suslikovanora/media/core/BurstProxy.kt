@@ -418,7 +418,8 @@ object BurstProxy {
 
     /**
      * A small piece of a stream straight from the mirror, not through the reserve (its windows stay as they are):
-     * bytes [from] … [from] + [len] − 1 and the file's size. Blocking, gives up after 15 s. For TsClock.
+     * bytes [from] … [from] + [len] − 1 and the file's size. Blocking, gives up after 15 s. (TsClock used it for
+     * Blu-ray under VLC; kept for reading a file's own structure, e.g. a disc image's, without disturbing the reserve.)
      */
     fun readRange(url: String, from: Long, len: Int): Pair<ByteArray, Long>? = runCatching {
         val up = upstream ?: return null

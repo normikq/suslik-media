@@ -453,3 +453,11 @@ Tizen-часть #77 (постоянный `client_id`, часы, серия с 
 - Комнаты: `variant_key` проверяется по `room.file.variants`; проверка владельца действия — `actingMember`; повторное предложение фильма пополняет пресеты кандидата.
 - Синхронизация: поиск по `canonical_id` через индекс (сбрасывается при изменении записей), `lookup` один на `GET /api/sync`; `/api/sync/lookup` убран (клиенты им не пользовались).
 - Открыто: `/api/file/variant-url` (как и `/api/playlist`) не проверяет, что `ad_id` входит в медиатеку пользователя. Не выложено на сервер.
+
+**Android 2.8.0 (код 81, 07.11, ветка `feature/android-mpv`) — mpv вместо libVLC:**
+- Запасной движок (Blu-ray/TS/AVI/ISO, отказ Media3, «Плеер: mpv») — `player/MpvEngine.kt` на `dev.jdtech.mpv:libmpv:0.5.1` (mpv 0.40). 1.0.0 не подошла: собрана Kotlin 2.2, проект на 2.0.21.
+- libVLC удалён: нативные библиотеки 44 → 23 МБ, diag-APK 28 МБ. FFmpeg в AAR собран как GPLv3 — APK тоже GPLv3 (частное приложение).
+- Теги `vlc` в настройке и в памяти `EngineChoice` читаются как mpv (`EngineKind.ofTag`, `EngineKindTest`). Android 7 — только Media3 (AAR с minSdk 26).
+- VC-1 не отдаётся аппаратному декодеру (`hwdec-codecs`), субтитрам libass — шрифт Onest (`files/mpv/subfont.ttf`), `CatchUp`-перемотка после ожидания запаса выключена.
+- На устройствах не проверено; список проверки — `docs/ANDROID-MPV.md` §0.
+- Удалены `TsClock`, `TsPlayback`, `PlayerBluRayController` (обходы libVLC для `.m2ts` по HTTP: длина по PCR, перемотка по доле, сдвиг часов): mpv знает длину и время Blu-ray сам. Проба концов файла перед первым открытием `.m2ts` больше не задерживает старт.

@@ -10,7 +10,7 @@ const fs = require("fs");
 const path = require("path");
 const config = require("../config");
 const { requireLogin, resolveAuth } = require("../middleware/auth");
-const { activityAuthLimiter, roomLimiter, apiLimiter, searchLimiter } = require("../middleware/rate-limit");
+const { activityAuthLimiter, roomLimiter, apiLimiter, searchLimiter, speakingLimiter } = require("../middleware/rate-limit");
 const { DISCORD_FRAME_ANCESTORS, isActivityPage } = require("../middleware/security");
 const { exchangeOAuthCode, fetchMe, revokeOAuthToken, checkGuildMember, inviteMessage, sendChannelMessage, userVoiceChannel } = require("../services/discord");
 const { findOrCreateUser } = require("../services/users");
@@ -18,6 +18,7 @@ const { issueActivityToken, revokeActivityToken } = require("../services/activit
 const { basePath, sseSender } = require("../utils/helpers");
 const rooms = require("../services/rooms");
 const pcSearch = require("../services/pc-search");
+const { getVoiceDuck, setVoiceDuck } = require("../services/voice-duck");
 
 const router = express.Router();
 
@@ -109,9 +110,13 @@ function requireOAuthCode(req, res, next) {
   next();
 }
 
+// Scope, ради которых странице нужен токен Discord (commands.authenticate)
+const DISCORD_RPC_SCOPES = ["rpc.activities.write", "rpc.voice.read"];
+
 // 1. Вход: одноразовый код из commands.authorize Discord SDK → ключ Activity.
-// Если человек разрешил rpc.activities.write (статус «Смотрит …» в профиле Discord), токен Discord не отзывается, а
-// отдаётся странице: с ним она зовёт commands.authenticate и потом SET_ACTIVITY. Сервер его не хранит.
+// Если человек разрешил rpc.activities.write (статус «Смотрит …» в профиле Discord) или rpc.voice.read (кто говорит —
+// приглушение фильма), токен Discord не отзывается, а отдаётся странице: с ним она зовёт commands.authenticate и потом
+// SET_ACTIVITY и SUBSCRIBE SPEAKING_*. Сервер его не хранит.
 router.post("/api/auth/discord/activity", requireOAuthCode, activityAuthLimiter, async (req, res) => {
   if (!config.DISCORD_ENABLED) return res.status(503).json({ error: "Вход через Discord не настроен на сервере." });
   const code = typeof req.body?.code === "string" ? req.body.code.trim() : "";
@@ -124,7 +129,8 @@ router.post("/api/auth/discord/activity", requireOAuthCode, activityAuthLimiter,
     outstanding = tokenData.access_token;
     const me = await fetchMe(outstanding);
     const scopes = String(tokenData.scope || "").split(/\s+/);
-    const presence = scopes.includes("rpc.activities.write") ? outstanding : null;
+    const rpcScopes = DISCORD_RPC_SCOPES.filter(sc => scopes.includes(sc));
+    const presence = rpcScopes.length ? outstanding : null;
     if (!presence) {
       revokeOAuthToken(outstanding);
       outstanding = null;
@@ -151,7 +157,7 @@ router.post("/api/auth/discord/activity", requireOAuthCode, activityAuthLimiter,
       expires_in,
       site_url: siteUrl(req),
       user: { id: user.id, name: user.name, avatar: user.avatar, role: user.role },
-      ...(presence ? { discord_token: presence } : {})
+      ...(presence ? { discord_token: presence, discord_scopes: rpcScopes } : {})
     });
   } catch (err) {
     if (outstanding) revokeOAuthToken(outstanding);
@@ -217,6 +223,59 @@ router.get("/api/activity/rooms/:id", requireLogin, (req, res) => {
   res.json({ ok: true, room: rooms.getRoomPublicData(room), server_time: Date.now() });
 });
 
+// 3а. Приглушение фильма, когда говорят в Discord (docs/DISCORD-ACTIVITY.md, «Приглушение»).
+// Настройка — на аккаунте: меню в Activity, читают и плееры (init потока комнаты и settings_changed).
+router.get("/api/activity/voice-duck", requireLogin, apiLimiter, (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ ok: true, voice_duck: getVoiceDuck(req.user.id) });
+});
+router.post("/api/activity/voice-duck", requireLogin, roomLimiter, (req, res) => {
+  if (!req.activity) return res.status(403).json({ error: "Только из Discord Activity." });
+  const saved = setVoiceDuck(req.user.id, { enabled: req.body?.enabled, level: req.body?.level, min_ms: req.body?.min_ms });
+  if (!saved) return res.status(400).json({ error: "Уровень — от 0 до 100 % с шагом 10, задержка — от 0 до 2000 мс с шагом 100." });
+  rooms.notifyUserSettings(req.user.id, { voice_duck: saved });
+  res.json({ ok: true, voice_duck: saved });
+});
+
+// Событие речи от клиента Discord (SPEAKING_START / SPEAKING_STOP): user_id — id Discord того, кто говорит.
+// Ключ Activity можно взять и вне Discord, поэтому говорящий проверяется ботом: он сейчас в голосовом канале комнаты
+// (ответ помним VOICE_CHECK_MS). Бота нет или Discord не ответил — верим пульту: последствие — только громкость.
+// Начало речи засчитывается сразу, а бот спрашивается в фоне: если ждать его ответа, короткая фраза успевала
+// закончиться раньше — «замолчал» отбрасывался (записи ещё нет), а «говорит» вставал после него и держал фильм
+// приглушённым до следующей фразы. Бот сказал «не в канале» — запись снимается.
+const VOICE_CHECK_MS = 10 * 1000;
+const voiceChecks = new Map(); // discord id -> { channel, at }
+const voiceChecking = new Map(); // discord id -> Promise (один запрос к боту на человека)
+function knownVoiceChannel(discordId, now = Date.now()) {
+  const c = voiceChecks.get(discordId);
+  return c && now - c.at <= VOICE_CHECK_MS ? c : null;
+}
+function checkSpeakerLater(discordId, roomId, channelId) {
+  if (!config.DISCORD_BOT_TOKEN || !config.DISCORD_GUILD_ID || voiceChecking.has(discordId)) return;
+  const p = userVoiceChannel(discordId).then(channel => {
+    const now = Date.now();
+    voiceChecks.set(discordId, { channel, at: now });
+    if (voiceChecks.size > 500) for (const [id, v] of voiceChecks) if (now - v.at > VOICE_CHECK_MS) voiceChecks.delete(id);
+    if (channel !== channelId) rooms.dropSpeaker(roomId, `u_${discordId}`);
+  }, () => { /* Discord не ответил — верим пульту */ }).finally(() => voiceChecking.delete(discordId));
+  voiceChecking.set(discordId, p);
+}
+router.post("/api/activity/rooms/:id/speaking", requireLogin, speakingLimiter, (req, res) => {
+  if (!req.activity) return res.status(403).json({ error: "Только из Discord Activity." });
+  const room = rooms.getRoom(req.params.id);
+  if (!room || !room.channel_id) return res.status(404).json({ error: "Комната не найдена." });
+  const discordId = String(req.body?.user_id ?? "");
+  if (!/^\d{5,25}$/.test(discordId)) return res.status(400).json({ error: "Нет участника канала." });
+  const speaking = req.body?.speaking === true;
+  // Конец фразы не проверяем: он только возвращает громкость
+  const known = speaking ? knownVoiceChannel(discordId) : null;
+  if (known && known.channel !== room.channel_id) return res.json({ ok: true, changed: false });
+  const r = rooms.reportSpeaking(room.id, req.user, `u_${discordId}`, speaking);
+  if (!r.ok) return res.status(r.status || 400).json({ error: r.error });
+  if (speaking && !known) checkSpeakerLater(discordId, room.id, room.channel_id);
+  res.json({ ok: true, changed: r.changed });
+});
+
 // 4. Предложения и голосование
 function reply(res, result) {
   if (!result.ok) return res.status(400).json({ error: result.error });
@@ -239,6 +298,11 @@ router.post("/api/activity/rooms/:id/roulette", requireLogin, roomLimiter, (req,
   reply(res, rooms.spinRoulette(req.params.id, req.user, rooms.spinMs(req.body?.seconds))));
 router.post("/api/activity/rooms/:id/roulette/cancel", requireLogin, roomLimiter, (req, res) =>
   reply(res, rooms.cancelSpin(req.params.id, req.user)));
+// Ведущий: передать комнату тому, кто в ней сейчас; закрыть комнату (код перестаёт работать)
+router.post("/api/activity/rooms/:id/host", requireLogin, roomLimiter, (req, res) =>
+  reply(res, rooms.transferHost(req.params.id, req.user, String(req.body?.user_id ?? ""))));
+router.post("/api/activity/rooms/:id/close", requireLogin, roomLimiter, (req, res) =>
+  reply(res, rooms.closeRoom(req.params.id, req.user)));
 
 // «Позвать в чат»: бот пишет в текстовый чат голосового канала код комнаты и ссылку /join/<код>.
 // Бот не настроен или не может писать в канал — { fallback: true, link }: страница копирует ссылку сама.
