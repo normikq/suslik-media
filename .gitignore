@@ -31,3 +31,4 @@ website/.deploy/
 build-cinema/
 cinema/recon/SuslikCinemaRecon/recon.log
 cinema/recon/SuslikCinemaRecon/corners.txt
+cinema/recon/SuslikCinemaRecon/screen.txt

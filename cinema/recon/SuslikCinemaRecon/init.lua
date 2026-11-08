@@ -29,7 +29,9 @@ local R = {
     recording = false,
     hist = {},         -- положения камеры за последние 0,5 с (onUpdate): рамка по камере «N мс назад»
     delayMs = 0,       -- на сколько отстаёт картинка игры от камеры (генерация кадров, очередь кадров)
-    lagFrames = 0,     -- сдвиг рамки в кадрах по экранным углам: >0 — рамка из прошлых кадров, <0 — упреждение
+    -- экран центром: точка на стекле, нормаль, размер и сдвиги (как у TVKit); углы считаются из них
+    screen = nil,      -- { c, n, w, h, sr, su, sn }
+    lagFrames = -1,    -- сдвиг рамки в кадрах по экранным углам: >0 — рамка из прошлых кадров, <0 — упреждение
     qhist = {},        -- экранные углы последних кадров (для lagFrames)
     draws = 0, updates = 0, rateT = 0, drawRate = 0, updateRate = 0,
     recordLeft = 0,
@@ -274,7 +276,7 @@ local function raycast(c, dist)
                     -- и рамка по ней «висит» перед экраном
                     local glass = mat:find("glass") ~= nil
                     local better = not best or (glass and not best.glass) or (glass == best.glass and d < best.d)
-                    if better then best = { p = p, d = d, group = g, mat = mat, glass = glass } end
+                    if better then best = { p = p, d = d, group = g, mat = mat, glass = glass, n = vec(res.normal) } end
                 end
             end
         end
@@ -407,6 +409,113 @@ local function orderCorners(cs, eye)
         out[idx] = p
     end
     return out, true
+end
+
+-- ---------- экран центром ----------
+
+local SCREEN_FILE = "screen.txt"
+
+-- Оси экрана для зрителя: n — к зрителю, r — вправо, u — вверх (горизонт мира сохраняется).
+local function screenAxes(n)
+    local f = mul(n, -1)
+    local r = norm(cross(f, { x = 0, y = 0, z = 1 }))
+    local u = norm(cross(r, f))
+    return r, u
+end
+
+local function cornersFromScreen(sc)
+    local r, u = screenAxes(sc.n)
+    local c = add(add(add(sc.c, mul(r, sc.sr)), mul(u, sc.su)), mul(sc.n, sc.sn))
+    local hw, hh = sc.w / 2, sc.h / 2
+    return {
+        add(add(c, mul(r, -hw)), mul(u, hh)),  -- ЛВ
+        add(add(c, mul(r, hw)), mul(u, hh)),   -- ПВ
+        add(add(c, mul(r, hw)), mul(u, -hh)),  -- ПН
+        add(add(c, mul(r, -hw)), mul(u, -hh)), -- ЛН
+    }
+end
+
+local function saveScreen()
+    local sc = R.screen
+    if not sc then return end
+    local f = io.open(SCREEN_FILE, "w")
+    if not f then return end
+    f:write(string.format("%.5f %.5f %.5f %.5f %.5f %.5f %.4f %.4f %.4f %.4f %.4f\n", sc.c.x, sc.c.y, sc.c.z,
+        sc.n.x, sc.n.y, sc.n.z, sc.w, sc.h, sc.sr, sc.su, sc.sn))
+    f:close()
+end
+
+local function applyScreen()
+    if not R.screen then return end
+    R.corners = cornersFromScreen(R.screen)
+    R.nextCorner = 1
+    saveCorners()
+    saveScreen()
+end
+
+local function loadScreen()
+    local f = io.open(SCREEN_FILE, "r")
+    if not f then return end
+    local line = f:read("*l")
+    f:close()
+    local v = {}
+    for x in (line or ""):gmatch("%S+") do v[#v + 1] = tonumber(x) end
+    if #v < 11 then return end
+    R.screen = { c = { x = v[1], y = v[2], z = v[3] }, n = { x = v[4], y = v[5], z = v[6] }, w = v[7], h = v[8],
+        sr = v[9], su = v[10], sn = v[11] }
+    R.corners = cornersFromScreen(R.screen)
+    log(string.format("screen loaded: %.3f x %.3f m", R.screen.w, R.screen.h))
+end
+
+-- Наведите прицел на центр экрана телевизора. Нормаль — от объекта TV (точнее) или от поверхности под лучом.
+local function markCenter()
+    local c = camera()
+    local best, hits = raycast(c, 15)
+    log("=== CENTER")
+    logCamera("  ", c)
+    for _, h in ipairs(hits or {}) do log("  ray " .. h) end
+    local o = lookAt()
+    logLookAt("  ", o)
+    if not best then
+        R.status = "center: ray hit nothing"
+        return
+    end
+    local n, src = nil, ""
+    if o and o.cls == "TV" and o.fwd then
+        n, src = norm({ x = o.fwd.x, y = o.fwd.y, z = 0 }), "TV entity"
+    elseif best.n then
+        n, src = norm(best.n), "surface"
+    else
+        n, src = norm(mul(c.f, -1)), "camera"
+    end
+    if dot(n, sub(c.pos, best.p)) < 0 then n = mul(n, -1) end -- нормаль к зрителю
+    local old = R.screen
+    R.screen = { c = best.p, n = n, w = old and old.w or 1.15, h = old and old.h or 1.15 * 9 / 16, sr = 0, su = 0, sn = 0 }
+    applyScreen()
+    R.status = string.format("center %s, normal from %s", vstr(best.p), src)
+    log(string.format("  center=%s normal=%s (%s) size %.3f x %.3f", vstr(best.p), vstr(n), src, R.screen.w, R.screen.h))
+end
+
+local function screenControls()
+    local sc = R.screen
+    if not sc then
+        ImGui.Text("Screen: aim at the TV centre and press 'Mark centre'")
+        return
+    end
+    local changed = false
+    local function slider(label, val, lo, hi)
+        local v, used = ImGui.SliderFloat(label, val, lo, hi, "%.3f")
+        if used then changed = true; return v end
+        return val
+    end
+    sc.w = slider("Width m", sc.w, 0.2, 4.0)
+    if R.lock169 ~= false then sc.h = sc.w * 9 / 16 else sc.h = slider("Height m", sc.h, 0.1, 3.0) end
+    local lock, usedLock = ImGui.Checkbox("16:9", R.lock169 ~= false)
+    if usedLock then R.lock169 = lock; changed = true end
+    sc.sr = slider("Shift right m", sc.sr, -0.5, 0.5)
+    sc.su = slider("Shift up m", sc.su, -0.5, 0.5)
+    sc.sn = slider("Shift out m", sc.sn, -0.2, 0.2)
+    if changed then applyScreen() end
 end
 
 local CORNER_NAMES = { "top-left", "top-right", "bottom-right", "bottom-left" }
@@ -551,6 +660,8 @@ local function drawWindow()
         ImGui.SameLine()
         if ImGui.Button("Mark corner " .. R.nextCorner .. " (" .. CORNER_NAMES[R.nextCorner] .. ")") then markCorner() end
         ImGui.SameLine()
+        if ImGui.Button("Mark centre") then markCenter() end
+        ImGui.SameLine()
         if ImGui.Button("Reset corners") then
             R.corners = {}; R.nextCorner = 1; saveCorners(); log("corners reset")
         end
@@ -580,6 +691,14 @@ local function drawWindow()
             snapshot("match")
         end
         ImGui.Separator()
+        ImGui.Separator()
+        screenControls()
+        if R.screen and ImGui.Button("Log screen") then
+            local sc = R.screen
+            log(string.format("=== SCREEN c=%s n=%s w=%.4f h=%.4f shift r=%.4f u=%.4f n=%.4f", vstr(sc.c), vstr(sc.n),
+                sc.w, sc.h, sc.sr, sc.su, sc.sn))
+        end
+        ImGui.Separator()
         ImGui.Text("Corners: " .. #R.corners .. "/4")
         ImGui.Text(R.status)
     end
@@ -597,6 +716,7 @@ registerForEvent("onInit", function()
     local cw = try("Codeware", function() return Codeware and Codeware.Version() end)
     log("Codeware=" .. tostring(cw))
     loadCorners()
+    loadScreen()
 end)
 
 registerForEvent("onOverlayOpen", function() R.overlayOpen = true end)
@@ -630,6 +750,7 @@ end)
 
 registerHotkey("SuslikRecon_Snapshot", "Suslik recon: snapshot", function() snapshot("hotkey") end)
 registerHotkey("SuslikRecon_Corner", "Suslik recon: mark next TV corner", function() markCorner() end)
+registerHotkey("SuslikRecon_Center", "Suslik recon: mark TV screen centre", function() markCenter() end)
 registerHotkey("SuslikRecon_Hud", "Suslik recon: show/hide frame", function() R.hud = not R.hud end)
 registerHotkey("SuslikRecon_Record", "Suslik recon: record camera 10 s", function()
     if not R.recording then startRecord() end
