@@ -258,7 +258,13 @@ local function raycast(c, dist)
                 pcall(function() mat = Game.NameToString(res.material) end)
                 hits[#hits + 1] = string.format("%s d=%.3f p=%s mat=%s", g, d, vstr(p), mat)
                 -- ближе 5 см — луч начался внутри предмета (камера в стене/полу): такое попадание не годится
-                if d > 0.05 and (not best or d < best.d) then best = { p = p, d = d, group = g, mat = mat } end
+                if d > 0.05 then
+                    -- стекло экрана важнее корпуса: коллизия корпуса (Static, plastic) стоит на ~5 см ближе стекла,
+                    -- и рамка по ней «висит» перед экраном
+                    local glass = mat:find("glass") ~= nil
+                    local better = not best or (glass and not best.glass) or (glass == best.glass and d < best.d)
+                    if better then best = { p = p, d = d, group = g, mat = mat, glass = glass } end
+                end
             end
         end
     end
