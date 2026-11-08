@@ -1156,11 +1156,22 @@ class PlayerActivity : ComponentActivity() {
         intent.getStringExtra(EXTRA_PLAYLIST)?.takeIf { it.isNotBlank() }?.let { fetchPlaylist(it) }
         partySync.start(syncPlayer)
         startVoiceDuck()
+        startKickWatch()
     }
 
     // ---- приглушение, когда говорят в Discord (Party.duckFactor): громкость самого плеера, системная не трогается ----
     // Спад быстрый (~200 мс), возврат мягкий (~1,5 с; сервер ещё 1,5 с держит говорящего после фразы). Как PlayerModel::setDuck на ПК.
     private var duckNow = 1.0
+    // Аккаунт вошёл в комнату с другого устройства: это вытеснено — плеер встаёт на паузу, комнату больше не двигает
+    private fun startKickWatch() {
+        scope.launch {
+            var seen = Party.kickedTick
+            androidx.compose.runtime.snapshotFlow { Party.kickedTick }.collect { t ->
+                if (t != seen) { seen = t; AppLog.write("[party] kicked from the room: another device of the account joined"); doPause() }
+            }
+        }
+    }
+
     private fun startVoiceDuck() {
         scope.launch {
             var anim: kotlinx.coroutines.Job? = null

@@ -137,6 +137,15 @@ const devicePollLimiter = rateLimit({
 });
 
 // Совместный просмотр: команды ведущего, «грузится», вход. Живой просмотр шлёт единицы в минуту — лимит только от сбоев
+// Код комнаты — шесть цифр (900 000 вариантов): перебор по одному коду режем отдельно, настоящему человеку хватает с запасом
+const roomLookupLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 40,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  handler: (req, res, next, options) => res.status(options.statusCode).json({ error: "Слишком много попыток подобрать комнату. Подождите минуту." })
+});
+
 const roomLimiter = rateLimit({
   windowMs: 60 * 1000,
   limit: 300,
@@ -173,6 +182,7 @@ module.exports = {
   deviceAuthLimiter,
   devicePollLimiter,
   roomLimiter,
+  roomLookupLimiter,
   speakingLimiter,
   loginLimiter,
   apiLimiter,

@@ -1189,5 +1189,8 @@
     }
   });
 
+  // Аккаунт вошёл в комнату с другого устройства: этот плеер встаёт на паузу
+  if (SM.party && SM.party.onKicked) SM.party.onKicked(function () { if (cur && cur.prepared && !cur.paused) togglePause(); });
+
   SM.player = { play: play, close: close, switchVariant: switchVariant, current: function () { return cur ? cur.key : null; }, log: function () { return log.slice(); } };
 })(window);

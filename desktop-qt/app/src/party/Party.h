@@ -122,6 +122,8 @@ signals:
     void refreshLibraryRequested();
     /// Сменился duckFactor (заговорили, замолчали, другая настройка, вышли из комнаты).
     void duckChanged();
+    /// Аккаунт вошёл в комнату с другого устройства: это вытеснено — плееру встать на паузу.
+    void kicked();
 
 private:
     using Done = std::function<void(const core::ApiResult &)>;

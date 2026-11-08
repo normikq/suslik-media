@@ -136,7 +136,7 @@ shelf(user_id, ad_id, hidden, favorite, progress_json)    -- личное сос
 ### Транспорт
 WebSocket `/ws/party` (библиотека `ws`). nginx без http2 — это нормально, нужны только заголовки `Upgrade/Connection` и `proxy_read_timeout` ≥ 1 ч. Аутентификация — сессия или токен устройства, проверка `Origin`.
 
-Комната: `party(id, host_user, file, state, members, controls)`. Приглашение — ссылка `https://<сайт>/r/<id>` (id случайный, 128 бит), её можно кинуть в Discord; открыть может только участник сервера с ролью.
+Комната: `party(id, host_user, file, state, members, controls)`. Приглашение — ссылка `https://<сайт>/r/<id>` (id — шестизначный код; перебор режет `roomLookupLimiter`), её можно кинуть в Discord; открыть может только участник сервера с ролью.
 
 ### Состояние и сообщения
 ```
