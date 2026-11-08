@@ -6,6 +6,7 @@
 #include "player/MpvEngine.h"
 #include "player/PlayerLog.h"
 
+#include "suslik/core/Store.h"
 #include "suslik/core/Strings.h"
 #include "suslik/core/TimeText.h"
 
@@ -41,6 +42,7 @@ CinemaParty::CinemaParty(app::Party &party, CinemaSession &session, app::MpvEngi
           }
           if (!text.isEmpty()) m_session.notify(text);
       }) {
+    m_createdRoom = Store::of(S("cinema")).get(S("created_room")).value_or(QString());
     m_timer.setInterval(int(PartySyncEngine::TICK_MS));
     connect(&m_timer, &QTimer::timeout, this, &CinemaParty::tick);
     m_timer.start();
@@ -49,17 +51,22 @@ CinemaParty::CinemaParty(app::Party &party, CinemaSession &session, app::MpvEngi
     connect(&m_followRetry, &QTimer::timeout, this, &CinemaParty::follow);
     connect(&m_party, &app::Party::changed, this, &CinemaParty::onRoom);
     connect(&m_party, &app::Party::refreshLibraryRequested, this, [this] {
-        if (!m_party.isHost()) follow();
+        if (!leads()) follow();
     });
     connect(&m_session, &CinemaSession::opened, this, &CinemaParty::onOpened);
     connect(&m_lib, &app::Library::versionChanged, this, [this] {
-        if (m_party.guest() && m_party.fileKey() != m_followed) follow();
+        if (follows() && m_party.fileKey() != m_followed) follow();
     });
     // вышли из аккаунта — и из комнаты (как у ПК)
     connect(&m_lib, &app::Library::authenticatedChanged, this, [this] {
         if (m_lib.authenticated() == 0 && m_party.inRoom()) m_party.leave();
     });
     m_session.setControlLock([this] { return lockReason(); });
+    m_session.setPlayLock([this] {
+        return follows() && !m_party.fileKey().isEmpty()
+            ? S("Фильм выбирает %1. Чтобы включить свой, выйдите из комнаты.").arg(m_party.hostWho())
+            : QString();
+    });
     m_session.setExtraCommands([this](const QString &op, const QJsonObject &c) { return command(op, c); });
     m_session.setExtraStatus([this](QJsonObject &o) { status(o); });
 }
@@ -67,8 +74,13 @@ CinemaParty::CinemaParty(app::Party &party, CinemaSession &session, app::MpvEngi
 // ---- команды и состояние для телефона ----
 
 bool CinemaParty::command(const QString &op, const QJsonObject &c) {
-    if (op == QLatin1String("roomCreate")) m_party.create();
-    else if (op == QLatin1String("roomJoin")) m_party.join(c.value(S("code")).toString().trimmed());
+    if (op == QLatin1String("roomCreate")) {
+        m_creating = true;
+        m_party.create();
+    } else if (op == QLatin1String("roomJoin")) {
+        m_creating = false;
+        m_party.join(c.value(S("code")).toString().trimmed());
+    }
     else if (op == QLatin1String("roomLeave")) m_party.leave();
     else if (op == QLatin1String("roomScreen")) copyScreen();
     else if (op == QLatin1String("roomFollow")) { // гость остановил фильм и снова идёт за ведущим
@@ -86,7 +98,7 @@ void CinemaParty::status(QJsonObject &o) const {
         QJsonArray names;
         for (const auto &m : m_party.memberList()) names.append(m.name);
         r.insert(S("code"), m_party.roomId());
-        r.insert(S("host"), m_party.isHost());
+        r.insert(S("host"), leads());
         r.insert(S("hostName"), m_party.hostWho());
         r.insert(S("members"), names);
         r.insert(S("title"), m_party.fileTitle());
@@ -99,7 +111,7 @@ void CinemaParty::status(QJsonObject &o) const {
 }
 
 QString CinemaParty::lockReason() const {
-    if (m_party.guest() && roomFilm()) return S("Паузой и перемоткой управляет %1").arg(m_party.hostWho());
+    if (follows() && roomFilm()) return S("Паузой и перемоткой управляет %1").arg(m_party.hostWho());
     return {};
 }
 
@@ -115,7 +127,7 @@ bool CinemaParty::roomFilm() const {
 
 // Время комнаты — шкала раздачи ведущего; гость на раздаче другой длины смотрит со сдвигом (как PartySync у ПК)
 qint64 CinemaParty::shiftMs() const {
-    if (!m_party.inRoom() || m_party.isHost() || m_mpv.lengthMs() <= 0) return 0;
+    if (!m_party.inRoom() || leads() || m_mpv.lengthMs() <= 0) return 0;
     return m_party.shiftFor(m_session.playingKey(), m_mpv.lengthMs());
 }
 
@@ -135,7 +147,7 @@ void CinemaParty::setRate(float r) { m_mpv.setRate(r); }
 
 /// Ведущий включил фильм: он становится фильмом комнаты (как PartySync::onOpen у ПК).
 void CinemaParty::onOpened(const QString &key) {
-    if (!m_party.inRoom() || !m_party.isHost() || key.isEmpty()) return;
+    if (!leads() || key.isEmpty()) return;
     PartyFileRef ref{key, m_session.playingTitle()};
     ref.canonicalId = m_session.canonicalId();
     ref.edition = m_session.edition();
@@ -144,9 +156,31 @@ void CinemaParty::onOpened(const QString &key) {
     m_party.putFilm(ref);
 }
 
+bool CinemaParty::leads() const { return m_party.inRoom() && m_party.isHost() && !m_party.followOnly(); }
+bool CinemaParty::follows() const { return m_party.inRoom() && !leads(); }
+
+void CinemaParty::syncRole() {
+    if (!m_party.inRoom()) {
+        m_party.setFollowOnly(false);
+        return;
+    }
+    const QString id = m_party.roomId();
+    if (m_creating) {
+        m_creating = false;
+        m_createdRoom = id;
+        Store::of(S("cinema")).put(S("created_room"), id);
+    }
+    const bool follow = m_party.isHost() && id != m_createdRoom;
+    if (follow == m_party.followOnly()) return;
+    app::PlayerLog::write(follow ? S("[party] тот же аккаунт, что у ведущего, вошёл по коду: иду за комнатой")
+                                 : S("[party] веду комнату"));
+    m_party.setFollowOnly(follow);
+}
+
 void CinemaParty::onRoom() {
+    syncRole();
     // ведущий создал комнату, когда фильм уже шёл: фильм — в комнату
-    if (m_party.inRoom() && m_party.isHost() && m_party.fileKey().isEmpty() && !m_session.playingKey().isEmpty() &&
+    if (leads() && m_party.fileKey().isEmpty() && !m_session.playingKey().isEmpty() &&
         m_mpv.loaded() && m_party.watching == 0)
         onOpened(m_session.playingKey());
     follow();
@@ -154,7 +188,7 @@ void CinemaParty::onRoom() {
 
 /// Гость идёт за ведущим (PartyFollow.qml у ПК): фильм и место комнаты, без выбора релиза.
 void CinemaParty::follow() {
-    if (!m_party.guest()) {
+    if (!follows()) {
         m_followed.clear();
         return;
     }
@@ -204,7 +238,7 @@ void CinemaParty::setWatching(bool on) {
     m_party.watching += on ? 1 : -1;
     // ведущий остановил фильм: комната остаётся без него (если никто его здесь больше не показывает)
     const auto &f = m_party.file();
-    if (!on && m_party.inRoom() && m_party.isHost() && !m_lastKey.isEmpty() &&
+    if (!on && leads() && !m_lastKey.isEmpty() &&
         (m_party.fileKey() == m_lastKey || (f && f->matches(m_lastKey, m_session.canonicalId().value_or(QString())))))
         m_party.closeIfNobodyWatches();
 }
@@ -212,7 +246,7 @@ void CinemaParty::setWatching(bool on) {
 // ---- экран в мире игры ----
 
 void CinemaParty::shareScreen() {
-    if (!m_readScreen || !m_party.inRoom() || !m_party.isHost()) return;
+    if (!m_readScreen || !leads()) return;
     if (m_screenCheck.isValid() && m_screenCheck.elapsed() < 2000) return;
     m_screenCheck.restart();
     const QJsonObject sc = m_readScreen();
@@ -225,7 +259,7 @@ void CinemaParty::shareScreen() {
 }
 
 void CinemaParty::copyScreen() {
-    if (!m_party.guest()) {
+    if (!follows()) {
         m_session.notify(S("Экран берут у ведущего, а ведущий здесь вы."));
         return;
     }

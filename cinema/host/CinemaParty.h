@@ -59,6 +59,12 @@ private:
     void setRate(float rate) override;
 
     bool roomFilm() const;
+    /// Ведёт комнату: аккаунт ведущего и комнату создали здесь. Тот же аккаунт, вошедший по коду (комната Discord
+    /// Activity, где ведущий — тот же человек в Discord), только идёт за комнатой: фильм, пауза и перемотка — оттуда.
+    bool leads() const;
+    bool follows() const;
+    /// Роль после входа в комнату (app::Party::setFollowOnly).
+    void syncRole();
     qint64 shiftMs() const;
     void onOpened(const QString &key);
     void onRoom();
@@ -89,6 +95,8 @@ private:
     QJsonObject m_sharedScreen; ///< что уже отправили в комнату m_sharedRoom
     QString m_sharedRoom;
     QElapsedTimer m_screenCheck;
+    bool m_creating = false; ///< с телефона создают комнату: следующая — своя
+    QString m_createdRoom;   ///< комната, созданная здесь (хранится: после перезапуска хост снова её ведёт)
 };
 
 } // namespace suslik::cinema

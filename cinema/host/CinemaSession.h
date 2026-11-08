@@ -88,6 +88,8 @@ public:
     qint64 syncTimeMs() const;
     /// Пауза и перемотка заперты (гость комнаты): причина или пусто.
     void setControlLock(std::function<QString()> why) { m_lock = std::move(why); }
+    /// Свой фильм с пульта заперт (гость комнаты, в которой идёт фильм): причина или пусто.
+    void setPlayLock(std::function<QString()> why) { m_playLock = std::move(why); }
     /// Свои команды пульта (комната) и свои поля состояния.
     void setExtraCommands(std::function<bool(const QString &, const QJsonObject &)> f) { m_extra = std::move(f); }
     void setExtraStatus(std::function<void(QJsonObject &)> f) { m_extraStatus = std::move(f); }
@@ -160,6 +162,7 @@ private:
     bool m_seeking = false;
     QElapsedTimer m_seekAt;
     std::function<QString()> m_lock;
+    std::function<QString()> m_playLock;
     std::function<bool(const QString &, const QJsonObject &)> m_extra;
     std::function<void(QJsonObject &)> m_extraStatus;
 };

@@ -89,8 +89,12 @@ public:
 
     // core::PartyLink
     core::PartyState state() const override { return m_room.state; }
-    bool canControl() const override { return inRoom() && isHost(); }
-    bool canSeek() const override { return inRoom() && isHost(); }
+    bool canControl() const override { return inRoom() && isHost() && !m_followOnly; }
+    bool canSeek() const override { return inRoom() && isHost() && !m_followOnly; }
+    /// Кинотеатр (cinema/): устройство аккаунта ведущего, вошедшее по коду (например, в комнату Discord Activity), только
+    /// идёт за комнатой — не ставит свой фильм, его пауза и перемотка остаются у него. ПК-версия не включает.
+    void setFollowOnly(bool on) { if (m_followOnly != on) { m_followOnly = on; emit changed(); } }
+    bool followOnly() const { return m_followOnly; }
     qint64 targetMs() const override;
     bool othersBuffering() const override { return m_room.othersBuffering(m_myKey); }
     bool takeStartedByMe(const QString &key) override;
@@ -161,6 +165,7 @@ private:
     std::optional<core::VariantOffset> m_pendingOffset;
     QTimer m_offsetTimer;
     bool m_busy = false;
+    bool m_followOnly = false;
     QString m_error;
 
     QList<std::pair<QString, QJsonObject>> m_outbox;

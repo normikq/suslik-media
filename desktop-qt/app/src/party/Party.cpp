@@ -256,7 +256,7 @@ void Party::leave() {
 // ---- фильм и действия ----
 
 void Party::putFilm(const PartyFileRef &f) {
-    if (!inRoom() || !isHost() || (m_room.file && m_room.file->key == f.key)) return;
+    if (!inRoom() || !isHost() || m_followOnly || (m_room.file && m_room.file->key == f.key)) return;
     setRoom(m_room.putFile(f));
     m_startedByMe = f.key;
     action(PartyProtocol::changeFile(f));

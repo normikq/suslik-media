@@ -614,6 +614,11 @@ void CinemaSession::remote(const QJsonObject &c) {
         QPointer<CinemaSession> self(this);
         m_lib.refreshThen([self] { if (self) emit self->libraryChanged(); });
     } else if (op == QLatin1String("play")) {
+        // гость комнаты не включает свой фильм поверх фильма комнаты (как у ПК): комната всё равно вернула бы его
+        if (const QString why = m_playLock ? m_playLock() : QString(); !why.isEmpty()) {
+            note(why);
+            return;
+        }
         PlayArgs a;
         a.query = QString::number(c.value(S("id")).toInteger());
         a.release = c.value(S("release")).toInteger(0);
