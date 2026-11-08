@@ -19,7 +19,8 @@ local R = {
     corners = {},      -- до 4 точек {x,y,z}
     nextCorner = 1,
     hud = false,       -- рамка и прицел поверх игры
-    fovModes = { "vertical", "horizontal", "horizontal_16x9" },
+    -- game — проекция самой игры (CameraSystem:ProjectPoint): без угадывания FOV, как в TVKit
+    fovModes = { "game", "vertical", "horizontal", "horizontal_16x9" },
     fovMode = 1,
     fovSources = { "component", "settings", "manual" },
     fovSource = 1,
@@ -193,12 +194,20 @@ local function fovUsed(comp, settings)
     return v * R.fovScale
 end
 
--- Простая камера-обскура: точка мира -> пиксели окна. nil — точка за камерой.
+-- Точка мира -> пиксели окна. nil — точка за камерой.
+-- mode "game": проекция игры (камера текущего кадра, её FOV и соотношение сторон); остальные — своя камера-обскура.
 local function project(p, c, W, H, fovDeg, mode)
     if not (c.pos and c.f and c.r and c.u) or W <= 0 or H <= 0 then return nil end
     local d = sub(p, c.pos)
     local xc, yc, zc = dot(d, c.r), dot(d, c.u), dot(d, c.f)
     if zc < 0.05 then return nil end
+    if mode == "game" then
+        local q = try("Camera.ProjectPoint", function()
+            return Game.GetCameraSystem():ProjectPoint(Vector4.new(p.x, p.y, p.z, 1))
+        end)
+        if not q then return nil end
+        return (q.x + 1) * W / 2, (1 - q.y) * H / 2, zc
+    end
     local aspect = W / H
     local t = math.tan(math.rad(fovDeg) / 2)
     local tx, ty
@@ -302,15 +311,17 @@ local function snapshot(tag)
     if best then log(string.format("  ray.best %s d=%.3f p=%s", best.group, best.d, vstr(best.p))) end
     -- где наша формула видит углы (по всем вариантам FOV) — сверить со скриншотом
     for i, p in ipairs(R.corners) do
+        local gx, gy = project(p, c, W, H, 0, "game")
+        log(string.format("  corner%d game -> %s", i, gx and string.format("px=(%.1f, %.1f)", gx, gy) or "behind/none"))
         for _, mode in ipairs(R.fovModes) do
-            for _, srcName in ipairs({ "component", "settings" }) do
+            if mode ~= "game" then for _, srcName in ipairs({ "component", "settings" }) do
                 local fv = (srcName == "component") and comp or settings
                 if fv and fv > 0 then
                     local x, y, z = project(p, c, W, H, fv, mode)
                     log(string.format("  corner%d %s/%s fov=%.3f -> %s", i, mode, srcName, fv,
                         x and string.format("px=(%.1f, %.1f) depth=%.3f", x, y, z) or "behind"))
                 end
-            end
+            end end
         end
     end
     R.lastSnap = { c = c, comp = comp, settings = settings, W = W, H = H }
