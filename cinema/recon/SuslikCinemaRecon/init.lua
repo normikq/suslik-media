@@ -18,7 +18,7 @@ local R = {
     api = {},          -- имя -> "ok" / текст ошибки
     corners = {},      -- до 4 точек {x,y,z}
     nextCorner = 1,
-    hud = false,       -- рамка и прицел поверх игры
+    hud = true,        -- рамка и прицел поверх игры (после Reload all mods тоже включены)
     -- game — проекция самой игры (CameraSystem:ProjectPoint): без угадывания FOV, как в TVKit
     fovModes = { "game", "vertical", "horizontal", "horizontal_16x9" },
     fovMode = 1,
@@ -527,6 +527,13 @@ end
 local CORNER_NAMES = { "top-left", "top-right", "bottom-right", "bottom-left" }
 
 local function markCorner()
+    if R.screen then
+        -- экран был задан центром: отметка углов начинает новый набор, а не портит один угол
+        R.screen = nil
+        os.remove(SCREEN_FILE)
+        R.corners, R.nextCorner = {}, 1
+        log("screen (centre mode) cleared: marking corners from 1")
+    end
     local c = camera()
     local best, hits = raycast(c, 15)
     local i = R.nextCorner
