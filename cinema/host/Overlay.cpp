@@ -15,18 +15,20 @@ namespace suslik::cinema {
 namespace {
 
 #ifdef Q_OS_WIN
-enum HotkeyId { HkCalibrate = 0x5C01, HkPause, HkHide, HkQuit };
+enum HotkeyId { HkCalibrate = 0x5C01, HkPause, HkHide, HkQuit, HkLeadUp, HkLeadDown, HkRecord };
 
-QString exeOf(DWORD pid) {
+QString exePathOf(DWORD pid) {
     HANDLE p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
     if (!p) return {};
     wchar_t buf[MAX_PATH];
     DWORD n = MAX_PATH;
-    QString name;
-    if (QueryFullProcessImageNameW(p, 0, buf, &n)) name = QString::fromWCharArray(buf, int(n)).section(QLatin1Char('\\'), -1);
+    QString path;
+    if (QueryFullProcessImageNameW(p, 0, buf, &n)) path = QString::fromWCharArray(buf, int(n));
     CloseHandle(p);
-    return name;
+    return path;
 }
+
+QString exeOf(DWORD pid) { return exePathOf(pid).section(QLatin1Char('\\'), -1); }
 
 struct Find {
     QString exe;
@@ -46,9 +48,10 @@ BOOL CALLBACK findTop(HWND h, LPARAM lp) {
 }
 
 /// Клиентская область окна игры в физических пикселях экрана.
-QRect gameClientRect(const QString &exe) {
+QRect gameClientRect(const QString &exe, HWND *hwnd) {
     Find f{exe};
     EnumWindows(findTop, reinterpret_cast<LPARAM>(&f));
+    *hwnd = f.found;
     if (!f.found || IsIconic(f.found)) return {};
     RECT r;
     GetClientRect(f.found, &r);
@@ -56,9 +59,19 @@ QRect gameClientRect(const QString &exe) {
     ClientToScreen(f.found, &tl);
     return QRect(tl.x, tl.y, r.right - r.left, r.bottom - r.top);
 }
+Overlay *g_overlay = nullptr;
 #endif
 
 } // namespace
+
+#ifdef Q_OS_WIN
+/// Смена активного окна (SetWinEventHook): экран прячется сразу, как только игра ушла на задний план.
+struct ForegroundHook {
+    static void CALLBACK proc(HWINEVENTHOOK, DWORD, HWND, LONG, LONG, DWORD, DWORD) {
+        if (g_overlay) g_overlay->checkForeground();
+    }
+};
+#endif
 
 Overlay::Overlay(QString gameExe, QObject *parent) : QObject(parent), m_gameExe(std::move(gameExe)) {}
 
@@ -70,12 +83,38 @@ void Overlay::attach(QWindow *window) {
     connect(t, &QTimer::timeout, this, &Overlay::followGame);
     t->start();
     followGame();
+#ifdef Q_OS_WIN
+    g_overlay = this;
+    m_winEventHook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr, &ForegroundHook::proc,
+                                     0, 0, WINEVENT_OUTOFCONTEXT);
+#endif
+}
+
+void Overlay::checkForeground() {
+    bool active = true;
+#ifdef Q_OS_WIN
+    if (m_gameFound && m_window) {
+        const HWND fg = GetForegroundWindow();
+        active = fg == reinterpret_cast<HWND>(m_gameHwnd) || fg == reinterpret_cast<HWND>(m_window->winId());
+        // Окно игры в Borderless тоже «всегда сверху»: активируясь, оно встаёт над оверлеем. Поднимаем оверлей
+        // при каждой смене активного окна и раз в 0,5 с (followGame), не забирая фокус.
+        if (active)
+            SetWindowPos(reinterpret_cast<HWND>(m_window->winId()), HWND_TOPMOST, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+    }
+#endif
+    if (active == m_gameActive) return;
+    m_gameActive = active;
+    app::PlayerLog::write(QStringLiteral("[cinema] игра %1").arg(active ? QStringLiteral("на переднем плане") : QStringLiteral("в фоне")));
+    emit gameActiveChanged();
 }
 
 Overlay::~Overlay() {
 #ifdef Q_OS_WIN
+    if (m_winEventHook) UnhookWinEvent(static_cast<HWINEVENTHOOK>(m_winEventHook));
+    if (g_overlay == this) g_overlay = nullptr;
     if (m_hotkeys)
-        for (int id = HkCalibrate; id <= HkQuit; ++id) UnregisterHotKey(nullptr, id);
+        for (int id = HkCalibrate; id <= HkRecord; ++id) UnregisterHotKey(nullptr, id);
 #endif
     if (m_hotkeys) QGuiApplication::instance()->removeNativeEventFilter(this);
 }
@@ -109,7 +148,14 @@ void Overlay::followGame() {
     if (!m_window) return;
     QRect r;
 #ifdef Q_OS_WIN
-    if (!m_gameExe.isEmpty()) r = gameClientRect(m_gameExe);
+    HWND hwnd = nullptr;
+    if (!m_gameExe.isEmpty()) r = gameClientRect(m_gameExe, &hwnd);
+    if (hwnd && quintptr(hwnd) != m_gameHwnd) {
+        DWORD pid = 0;
+        GetWindowThreadProcessId(hwnd, &pid);
+        m_gameExePath = exePathOf(pid);
+    }
+    m_gameHwnd = quintptr(hwnd);
 #endif
     const bool found = !r.isEmpty();
     if (found != m_gameFound) {
@@ -117,6 +163,7 @@ void Overlay::followGame() {
         app::PlayerLog::write(QStringLiteral("[cinema] окно %1 %2").arg(m_gameExe, found ? QStringLiteral("найдено") : QStringLiteral("не найдено")));
         emit gameChanged();
     }
+    checkForeground();
     if (!found) {
         // Без игры — весь основной экран (физические пиксели)
         QScreen *s = QGuiApplication::primaryScreen();
@@ -145,6 +192,9 @@ void Overlay::registerHotkeys() {
     RegisterHotKey(nullptr, HkPause, mod, 'P');
     RegisterHotKey(nullptr, HkHide, mod, 'H');
     RegisterHotKey(nullptr, HkQuit, mod, 'Q');
+    RegisterHotKey(nullptr, HkLeadUp, MOD_CONTROL | MOD_ALT, VK_PRIOR);
+    RegisterHotKey(nullptr, HkLeadDown, MOD_CONTROL | MOD_ALT, VK_NEXT);
+    RegisterHotKey(nullptr, HkRecord, mod, 'R');
     QGuiApplication::instance()->installNativeEventFilter(this);
 #endif
 }
@@ -159,6 +209,9 @@ bool Overlay::nativeEventFilter(const QByteArray &type, void *message, qintptr *
     case HkPause: emit hotkey(QStringLiteral("pause")); break;
     case HkHide: emit hotkey(QStringLiteral("hide")); break;
     case HkQuit: emit hotkey(QStringLiteral("quit")); break;
+    case HkLeadUp: emit hotkey(QStringLiteral("lead+")); break;
+    case HkLeadDown: emit hotkey(QStringLiteral("lead-")); break;
+    case HkRecord: emit hotkey(QStringLiteral("rec")); break;
     default: return false;
     }
     return true;

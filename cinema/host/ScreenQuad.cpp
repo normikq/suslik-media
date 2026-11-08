@@ -46,6 +46,29 @@ bool ScreenQuad::setCornersPx(const Quad &px) {
     return true;
 }
 
+bool ScreenQuad::setLiveFrac(const Quad &frac) {
+    if (!isConvex(frac)) return false;
+    m_frac = frac;
+    recompute();
+    return true;
+}
+
+void ScreenQuad::setLiveTransform(const QTransform &toFrac) {
+    if (m_view.isEmpty()) return;
+    // Доли окна -> логические пиксели окна. QTransform: сначала левая, потом правая.
+    m_matrix = QMatrix4x4(toFrac * QTransform::fromScale(m_view.width(), m_view.height()));
+    m_valid = true;
+    emit changed();
+}
+
+void ScreenQuad::setSourceSize(double w, double h) {
+    if (w <= 0 || h <= 0 || (w == m_srcW && h == m_srcH)) return;
+    m_srcW = w;
+    m_srcH = h;
+    emit sourceSizeChanged();
+    recompute();
+}
+
 void ScreenQuad::reset() {
     m_frac = {QPointF(0.30, 0.28), QPointF(0.68, 0.22), QPointF(0.70, 0.66), QPointF(0.28, 0.62)};
     recompute();

@@ -4,6 +4,7 @@
 #include <QMatrix4x4>
 #include <QObject>
 #include <QSizeF>
+#include <QTransform>
 #include <QVariantList>
 
 namespace suslik::cinema {
@@ -16,9 +17,10 @@ class ScreenQuad : public QObject {
     Q_PROPERTY(QVariantList corners READ corners NOTIFY changed)
     /// Размер окна в логических пикселях (его задаёт QML).
     Q_PROPERTY(QSizeF viewSize READ viewSize WRITE setViewSize NOTIFY changed)
-    /// Размер кадра до преобразования (в нём рисуются видео и тестовая картинка).
-    Q_PROPERTY(double sourceWidth READ sourceWidth CONSTANT)
-    Q_PROPERTY(double sourceHeight READ sourceHeight CONSTANT)
+    /// Размер кадра до преобразования (в нём рисуется видео; буфер mpv того же размера). С игрой его подбирает
+    /// GameLink по размеру экрана на мониторе, без игры — 1920×1080.
+    Q_PROPERTY(double sourceWidth READ sourceWidth NOTIFY sourceSizeChanged)
+    Q_PROPERTY(double sourceHeight READ sourceHeight NOTIFY sourceSizeChanged)
     Q_PROPERTY(QMatrix4x4 matrix READ matrix NOTIFY changed)
     Q_PROPERTY(bool valid READ valid NOTIFY changed)
 
@@ -28,8 +30,9 @@ public:
     QVariantList corners() const;
     QSizeF viewSize() const { return m_view; }
     void setViewSize(const QSizeF &s);
-    double sourceWidth() const { return 1920; }
-    double sourceHeight() const { return 1080; }
+    double sourceWidth() const { return m_srcW; }
+    double sourceHeight() const { return m_srcH; }
+    void setSourceSize(double w, double h);
     QMatrix4x4 matrix() const { return m_matrix; }
     bool valid() const { return m_valid; }
 
@@ -37,6 +40,10 @@ public:
     Q_INVOKABLE bool setCorner(int i, double fx, double fy);
     /// Все углы в пикселях окна (команда set_rect от игры).
     bool setCornersPx(const Quad &px);
+    /// Углы от игры (доли окна) в каждом кадре: не сохраняются, вывернутый четырёхугольник не принимается.
+    bool setLiveFrac(const Quad &frac);
+    /// Преобразование от игры: кадр (0,0)-(sourceWidth,sourceHeight) -> доли окна (однородное, w — глубина).
+    void setLiveTransform(const QTransform &toFrac);
     /// Прямоугольник по центру с наклоном — чтобы сразу было видно перспективу.
     Q_INVOKABLE void reset();
     Q_INVOKABLE bool save() const;
@@ -44,12 +51,14 @@ public:
 
 signals:
     void changed();
+    void sourceSizeChanged();
 
 private:
     void recompute();
 
     Quad m_frac;
     QSizeF m_view;
+    double m_srcW = 1920, m_srcH = 1080;
     QMatrix4x4 m_matrix;
     bool m_valid = false;
 };

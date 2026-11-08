@@ -25,9 +25,13 @@ public:
     bool calibrating() const { return m_calibrating; }
     void setCalibrating(bool on);
     bool gameFound() const { return m_gameFound; }
+    /// Полный путь exe найденной игры (по нему GameLink ищет папку мода).
+    QString gameExePath() const { return m_gameExePath; }
+    /// Окно игры (или наше в калибровке) на переднем плане. Без игры — всегда true.
+    bool gameActive() const { return m_gameActive; }
 
     /// Глобальные клавиши каркаса (фокус у игры): Ctrl+Alt+C калибровка, Ctrl+Alt+P пауза, Ctrl+Alt+H скрыть,
-    /// Ctrl+Alt+Q выход.
+    /// Ctrl+Alt+Q выход, Ctrl+Alt+PgUp/PgDn — поправка упреждения.
     void registerHotkeys();
 
     bool nativeEventFilter(const QByteArray &type, void *message, qintptr *result) override;
@@ -35,16 +39,23 @@ public:
 signals:
     void calibratingChanged();
     void gameChanged();
+    void gameActiveChanged();
     void hotkey(const QString &name);
 
 private:
     void applyStyles();
     void followGame();
+    void checkForeground();
+    friend struct ForegroundHook;
 
     QWindow *m_window = nullptr;
     QString m_gameExe;
     bool m_calibrating = false;
     bool m_gameFound = false;
+    bool m_gameActive = true;
+    QString m_gameExePath;
+    quintptr m_gameHwnd = 0;
+    void *m_winEventHook = nullptr;
     QRect m_lastRect;
     bool m_hotkeys = false;
 };

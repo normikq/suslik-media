@@ -2,11 +2,11 @@
 # берёт оттуда ядро (suslik_core) и плеер mpv (MpvEngine, MpvVideo) без копий.
 find_package(Qt6 6.4 REQUIRED COMPONENTS Gui Quick OpenGL)
 
-set(SM_CINEMA_VERSION 0.1.0)
+set(SM_CINEMA_VERSION 0.2.0)
 set(SM_APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/../../desktop-qt/app/src)
 
 # Геометрия экрана — отдельной библиотекой, чтобы проверять тестами без окна.
-add_library(suslik_cinema_geom STATIC QuadMath.cpp QuadMath.h)
+add_library(suslik_cinema_geom STATIC QuadMath.cpp QuadMath.h GameView.cpp GameView.h)
 target_include_directories(suslik_cinema_geom PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(suslik_cinema_geom PUBLIC Qt6::Gui)
 
@@ -16,6 +16,7 @@ qt_add_executable(suslik_cinema WIN32
   ScreenQuad.cpp ScreenQuad.h
   Overlay.cpp Overlay.h
   GameAudio.cpp GameAudio.h
+  GameLink.cpp GameLink.h
   CinemaSettings.cpp
   ${SM_APP_SRC}/AppDir.cpp ${SM_APP_SRC}/AppDir.h
   ${SM_APP_SRC}/player/Mpv.cpp ${SM_APP_SRC}/player/Mpv.h
@@ -44,7 +45,7 @@ qt_add_qml_module(suslik_cinema
 target_compile_definitions(suslik_cinema PRIVATE SM_VERSION="${SM_CINEMA_VERSION}")
 target_link_libraries(suslik_cinema PRIVATE suslik_core suslik_cinema_geom Qt6::Gui Qt6::Quick Qt6::OpenGL)
 if(WIN32)
-  target_link_libraries(suslik_cinema PRIVATE opengl32 ole32 user32)
+  target_link_libraries(suslik_cinema PRIVATE opengl32 ole32 user32 dwmapi)
 endif()
 if(MSVC)
   target_compile_options(suslik_cinema PRIVATE /utf-8)
@@ -59,4 +60,10 @@ if(SM_BUILD_TESTS)
     target_compile_options(QuadMathTest PRIVATE /utf-8)
   endif()
   add_test(NAME QuadMathTest COMMAND QuadMathTest)
+  add_executable(GameViewTest tests/GameViewTest.cpp)
+  target_link_libraries(GameViewTest PRIVATE suslik_cinema_geom Qt6::Test)
+  if(MSVC)
+    target_compile_options(GameViewTest PRIVATE /utf-8)
+  endif()
+  add_test(NAME GameViewTest COMMAND GameViewTest)
 endif()

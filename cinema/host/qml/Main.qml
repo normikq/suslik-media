@@ -21,18 +21,60 @@ Window {
         id: screen
         width: quad.sourceWidth
         height: quad.sourceHeight
-        visible: quad.valid && !host.hidden
+        // С модом: прозрачность от игры (вне кадра, за стеной, пауза); без мода — ручная калибровка
+        visible: quad.valid && !host.hidden && opacity > 0.001
+        opacity: link.live && !overlay.calibrating ? link.opacity : 1
         transform: Matrix4x4 { matrix: quad.matrix }
 
-        Rectangle { anchors.fill: parent; color: "black" }
-        MpvVideo {
+        // Слой с прозрачной каймой 2 px: при перспективе край сглаживается фильтрацией текстуры (мягкий край)
+        Item {
             anchors.fill: parent
-            visible: host.hasFile
-            engine: mpvEngine
+            layer.enabled: true
+            layer.smooth: true
+            Item {
+                anchors.fill: parent
+                anchors.margins: 2
+                Rectangle { anchors.fill: parent; color: "black" }
+                // Ядро mpv создаётся до первого кадра (main.cpp), файл открывается после: рисовальщик уже готов.
+                // update() на смену состояния — чтобы рисовальщик переподключился, если ядро пересоздано
+                MpvVideo {
+                    id: video
+                    anchors.fill: parent
+                    visible: host.hasFile
+                    engine: mpvEngine
+                    Connections {
+                        target: mpvEngine
+                        function onStateChanged() { video.update() }
+                    }
+                }
+                // Тестовая картинка нарисована под 1920×1080 и масштабируется под размер буфера
+                TestPattern {
+                    width: 1920
+                    height: 1080
+                    scale: Math.min(parent.width / 1920, parent.height / 1080)
+                    transformOrigin: Item.TopLeft
+                    visible: !host.hasFile
+                }
+            }
         }
-        TestPattern {
-            anchors.fill: parent
-            visible: !host.hasFile
+    }
+
+    // Подсказка хоста (поправка упреждения): внизу окна, кликов не принимает
+    Rectangle {
+        visible: link.osd !== ""
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 90
+        radius: 8
+        color: "#cc101018"
+        width: osdText.implicitWidth + 32
+        height: osdText.implicitHeight + 16
+        Text {
+            id: osdText
+            anchors.centerIn: parent
+            color: "white"
+            font.pixelSize: 18
+            text: link.osd
         }
     }
 
