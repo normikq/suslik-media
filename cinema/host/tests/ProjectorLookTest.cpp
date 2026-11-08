@@ -98,6 +98,60 @@ private slots:
         QCOMPARE(patchDefines(src, {{"UNKNOWN", "1.0"}}), src);
     }
 
+    /// Шейдер «в зале» (in-world.glsl): для SDR подстановок нет, для HDR — только существующие #define,
+    /// значения встают, структура шейдера не страдает.
+    void sceneShaderDefinesHitFile() {
+        QFile file(QString(SM_SCENE_DIR) + "/in-world.glsl");
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray src = file.readAll();
+        QVERIFY(!src.isEmpty());
+
+        QVERIFY(sceneShaderDefines(false).isEmpty());
+
+        const auto hdr = sceneShaderDefines(true);
+        QVERIFY(!hdr.isEmpty());
+
+        const QString srcStr = QString::fromUtf8(src);
+        for (const auto &d : hdr) {
+            const QRegularExpression re(QStringLiteral(R"(^#define\s+%1\s+)").arg(QString::fromLatin1(d.first)),
+                                        QRegularExpression::MultilineOption);
+            QVERIFY2(re.match(srcStr).hasMatch(), d.first.constData());
+        }
+
+        const QByteArray patched = patchDefines(src, hdr);
+        const QString patchedStr = QString::fromUtf8(patched);
+        for (const auto &d : hdr) {
+            const QString pat = QStringLiteral(R"(^#define\s+%1\s+%2\b)")
+                                    .arg(QString::fromLatin1(d.first),
+                                         QRegularExpression::escape(QString::fromUtf8(d.second)));
+            const QRegularExpression rePatched(pat, QRegularExpression::MultilineOption);
+            QVERIFY2(rePatched.match(patchedStr).hasMatch(), d.first.constData());
+        }
+
+        QVERIFY(patched.contains("//!HOOK OUTPUT"));
+    }
+
+    /// Проходы GRAINLIGHT с кадра фильма (MAIN) на кадр буфера (OUTPUT): только строки //!HOOK, остальное как было.
+    void hookAtOutputMovesMainPasses() {
+        const char *const baseFiles[] = {"35mm-1-sutil.glsl", "35mm-2-cine2000.glsl", "35mm-3-veterana.glsl",
+                                         "35mm-4-equilibrado.glsl"};
+        for (const char *name : baseFiles) {
+            const QByteArray src = readShader(name);
+            QVERIFY2(!src.isEmpty(), name);
+            QVERIFY2(src.contains("//!HOOK MAIN"), name);
+            const QByteArray out = hookAtOutput(src);
+            QVERIFY2(!out.contains("//!HOOK MAIN"), name);
+            QCOMPARE(out.count("//!HOOK OUTPUT"), src.count("//!HOOK MAIN") + src.count("//!HOOK OUTPUT"));
+            QCOMPARE(out.count("//!BIND HOOKED"), src.count("//!BIND HOOKED"));
+            QByteArray srcStripped = src;
+            srcStripped.replace("//!HOOK MAIN", "").replace("//!HOOK OUTPUT", "").replace('\r', "");
+            QByteArray outStripped = out;
+            outStripped.replace("//!HOOK MAIN", "").replace("//!HOOK OUTPUT", "").replace('\r', "");
+            QCOMPARE(outStripped, srcStripped);
+        }
+        QCOMPARE(hookAtOutput("x\n//!HOOK MAINLINE\n//!HOOK  MAIN \n"), QByteArray("x\n//!HOOK MAINLINE\n//!HOOK OUTPUT\n"));
+    }
+
     /// Фильтры звука плёнки: количество, пустой для 0, lavfi-строки для 1 и 2.
     void filmSound() {
         QCOMPARE(filmSoundCount(), 3);

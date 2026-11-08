@@ -22,6 +22,8 @@
 #include "RemoteLink.h"
 #include "SpatialSound.h"
 #include "Projector.h"
+#include "RoomScreen.h"
+#include "SceneProbe.h"
 #include "ScreenQuad.h"
 
 #include "AppDir.h"
@@ -47,6 +49,8 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickWindow>
+#include <QSaveFile>
+#include <QDateTime>
 #include <QSGRendererInterface>
 #include <QThread>
 #include <QTimer>
@@ -249,6 +253,9 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty(QStringLiteral("quad"), &quad);
     engine.rootContext()->setContextProperty(QStringLiteral("link"), &link);
     engine.rootContext()->setContextProperty(QStringLiteral("mpvEngine"), &mpv);
+    // «Вписать в сцену»: свет игры вокруг экрана -> затемнение кадра, свет зала на полотне, отсвет (Main.qml)
+    cinema::SceneProbe scene(&quad);
+    engine.rootContext()->setContextProperty(QStringLiteral("scene"), &scene);
     engine.load(QUrl(QStringLiteral("qrc:/qt/qml/SuslikCinema/Main.qml")));
     if (engine.rootObjects().isEmpty()) return 1;
     auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
@@ -256,6 +263,18 @@ int main(int argc, char *argv[]) {
 
     overlay.attach(window);
     overlay.registerHotkeys();
+    scene.attach(window);
+    // мерить свет, только когда фильм виден поверх идущей игры (иначе держать последний)
+    auto syncScene = [&] {
+        scene.setActive(!host.blank() && !host.hidden() && quad.valid() && !link.gamePaused()
+                        && (cli.isSet(noGameOpt) || overlay.gameActive()));
+    };
+    syncScene();
+    QObject::connect(&host, &cinema::Host::blankChanged, &app, syncScene);
+    QObject::connect(&host, &cinema::Host::hiddenChanged, &app, syncScene);
+    QObject::connect(&quad, &cinema::ScreenQuad::changed, &app, syncScene);
+    QObject::connect(&link, &cinema::GameLink::gamePausedChanged, &app, syncScene);
+    QObject::connect(&overlay, &cinema::Overlay::gameActiveChanged, &app, syncScene);
     if (cli.isSet(calibrateOpt)) overlay.setCalibrating(true);
 
     // Мод: папка — рядом с exe игры; углы экрана — в каждом кадре оверлея, до синхронизации сцены
@@ -349,7 +368,10 @@ int main(int argc, char *argv[]) {
             for (const auto &[k, v] : std::initializer_list<std::pair<const char *, const char *>>{
                      {"scale", "bilinear"}, {"dscale", "bilinear"}, {"cscale", "bilinear"},
                      {"correct-downscaling", "no"}, {"linear-downscaling", "no"}, {"sigmoid-upscaling", "no"},
-                     {"deband", "no"}, {"dither-depth", "no"}, {"hdr-compute-peak", "no"}})
+                     {"deband", "no"}, {"dither-depth", "no"}, {"hdr-compute-peak", "no"},
+                     // HDR -> SDR: bt.2446a держит насыщенность и средние тона (по умолчанию картинка тусклее и
+                     // блёклее); дальше света мягко сжимает шейдер «в зале» со своими значениями для HDR
+                     {"tone-mapping", "bt.2446a"}})
                 a->set_property_string(h.get(), k, v);
         }
     }
@@ -370,9 +392,22 @@ int main(int argc, char *argv[]) {
         spatial.setMode(cinema::Audio3D(session.audio3d()), session.option(QStringLiteral("muffle")));
         spatial.setFilmSound(session.filmSound());
         projector.setPreset(session.projector());
+        const bool inScene = session.option(QStringLiteral("scene"));
+        projector.setScene(inScene);
+        scene.setEnabled(inScene);
+        const cinema::SceneTuning tuning = session.tuning();
+        projector.setTuning(tuning);
+        scene.setTuning(tuning);
     };
     syncAudio3d();
     QObject::connect(&session, &cinema::CinemaSession::optionChanged, &app, syncAudio3d);
+    // HDR-фильм (PQ/HLG) — шейдер «в зале» со своими значениями (ProjectorLook: sceneShaderDefines)
+    auto syncHdr = [&] {
+        const QString g = mpv.property(QStringLiteral("video-params/gamma"));
+        if (!g.isEmpty()) projector.setHdr(g == QLatin1String("pq") || g == QLatin1String("hlg"));
+    };
+    QObject::connect(&mpv, &app::MpvEngine::videoSizeChanged, &app, syncHdr);
+    QObject::connect(&mpv, &app::MpvEngine::stateChanged, &app, syncHdr);
     const int startVolume = cli.isSet(volumeOpt) ? std::clamp(cli.value(volumeOpt).toInt(), 0, 150) : -1;
     auto tryOpen = [&mpv, &host, &spatial, &projector, pending, startVolume] {
         if (pending->opened || pending->frames < 3 || pending->url.isEmpty()) return;
@@ -439,6 +474,20 @@ int main(int argc, char *argv[]) {
     // Комната «Вместе»: те же комнаты, что у ПК, Android и ТВ (app::Party и общий движок синхронизации)
     app::Party party(api);
     cinema::CinemaParty cinemaParty(party, session, mpv, library);
+    // Экран в мире игры: ведущий делится своим (screens.json мода), гость по кнопке пульта ставит такой же
+    // (room-screen.json — мод читает его и ставит экран, init.lua: applyRoomScreen)
+    cinemaParty.setScreenIO(
+        [&link] {
+            if (link.modDir().isEmpty()) return QJsonObject();
+            QFile f(QDir(link.modDir()).filePath(QStringLiteral("screens.json")));
+            return f.open(QIODevice::ReadOnly) ? cinema::screenFromCalib(f.readAll()) : QJsonObject();
+        },
+        [&link](const QJsonObject &screen) {
+            const QByteArray text = cinema::roomScreenFile(screen, QDateTime::currentMSecsSinceEpoch());
+            if (link.modDir().isEmpty() || text.isEmpty()) return false;
+            QSaveFile f(QDir(link.modDir()).filePath(QStringLiteral("room-screen.json")));
+            return f.open(QIODevice::WriteOnly) && f.write(text) == text.size() && f.commit();
+        });
     if (!site.isEmpty()) {
         session.startRemote();
         sync.start();

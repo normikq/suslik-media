@@ -28,11 +28,45 @@ Window {
         opacity: host.blank ? 0 : link.live && !overlay.calibrating ? link.opacity : 1
         transform: Matrix4x4 { matrix: quad.matrix }
 
-        // Слой с прозрачной каймой 2 px: при перспективе край сглаживается фильтрацией текстуры (мягкий край)
+        // Свет экрана в зале: отсвет на стене, сцене и потолке вокруг полотна, как у настоящего экрана
+        // (qml/shaders/spill.frag). Только прибавляет свет: тёмный кадр вокруг ничего не затемняет, яркий — светит.
+        // Цвет — край кадра и средний цвет из уменьшенной копии с мипмапами (размытие почти бесплатное).
+        // Сила — от света игры (scene, SceneProbe): в тёмном зале заметнее, на свету почти не видно
+        ShaderEffectSource {
+            id: glowSrc
+            sourceItem: video
+            textureSize: Qt.size(256, 144)
+            mipmap: true
+            smooth: true
+            hideSource: false
+            live: spill.visible
+            visible: false
+        }
+        ShaderEffect {
+            id: spill
+            // поле вокруг полотна, доля его размера; «Размер отсвета» на телефоне — scene.spillSize
+            readonly property real margin: Math.min(0.5, 0.25 * scene.spillSize)
+            x: -parent.width * margin
+            y: -parent.height * margin
+            width: parent.width * (1 + 2 * margin)
+            height: parent.height * (1 + 2 * margin)
+            visible: host.hasFile && scene.enabled && strength > 0.005
+            property variant frame: glowSrc
+            property real strength: scene.glow * 1.6
+            property real aspect: parent.width / Math.max(1, parent.height)
+            property real falloff: 0.09 * scene.spillSize // спад света, доля высоты полотна
+            Behavior on strength { NumberAnimation { duration: 600 } }
+            fragmentShader: "qrc:/shaders/spill.frag.qsb"
+        }
+
+        // Слой с прозрачной каймой 2 px: при перспективе край сглаживается фильтрацией текстуры (мягкий край).
+        // Мипмапы: экран на мониторе меньше кадра (около 1230 из 1920 по ширине) и под углом — без них
+        // уменьшение берёт каждую вторую точку, на мелких деталях рябь и муар
         Item {
             anchors.fill: parent
             layer.enabled: true
             layer.smooth: true
+            layer.mipmap: true
             Item {
                 anchors.fill: parent
                 anchors.margins: 2
@@ -48,6 +82,23 @@ Window {
                         target: mpvEngine
                         function onStateChanged() { video.update() }
                     }
+                }
+                // «Вписать в сцену»: кадр темнее в тёмном зале (полотно отражает, а не светится) и подсвечен светом
+                // зала — чёрное у полотна в освещённой сцене не чёрное. Значения плавно идут за светом игры
+                Rectangle {
+                    anchors.fill: parent
+                    visible: video.visible && scene.enabled
+                    color: "black"
+                    opacity: 1 - scene.dim
+                    Behavior on opacity { NumberAnimation { duration: 600 } }
+                }
+                Rectangle {
+                    anchors.fill: parent
+                    visible: video.visible && scene.enabled
+                    color: scene.lift
+                    opacity: scene.liftAmount
+                    Behavior on opacity { NumberAnimation { duration: 600 } }
+                    Behavior on color { ColorAnimation { duration: 600 } }
                 }
                 // Тестовая картинка нарисована под 1920×1080 и масштабируется под размер буфера
                 TestPattern {

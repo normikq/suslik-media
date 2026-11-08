@@ -13,6 +13,7 @@
 local STATE_FILE = "state.json"
 local SCREEN_FILE = "screen.json"
 local CALIB_FILE = "screens.json"
+local ROOM_SCREEN_FILE = "room-screen.json" -- экран ведущего комнаты «Вместе»: пишет хост по кнопке пульта
 local OCCL_EVERY = 6        -- лучи на загораживание раз в N кадров (~10 раз в секунду)
 local OCCL_DEPTH = 0.4      -- выступы стены не дальше стольких м от плоскости экрана его не загораживают
 local PROBE = 0.25          -- точки для подгонки линзы игры: x/z = ±PROBE
@@ -330,6 +331,31 @@ local function loadCalib()
     end
     S.screen = sc
     note(string.format("screen loaded: %.2f x %.2f m", sc.w, sc.h))
+end
+
+-- Экран ведущего комнаты «Вместе»: гость нажал на пульте «Экран как у ведущего», хост записал room-screen.json
+-- (те же поля, что screens.json, и id). Новый id — ставим экран; свои прозрачность при предметах и глубину — свои.
+local function roomScreenId()
+    local f = io.open(ROOM_SCREEN_FILE, "r")
+    if not f then return nil, nil end
+    local s = f:read("*a")
+    f:close()
+    return s:match('"id":([%d%.eE%+]+)'), s
+end
+
+local function applyRoomScreen()
+    local id, s = roomScreenId()
+    if not id or id == S.roomScreenId then return end
+    S.roomScreenId = id
+    local sc = parseCalib(s)
+    if not sc then
+        note("room-screen.json: no screen in it")
+        return
+    end
+    if S.screen then sc.occl, sc.od = S.screen.occl, S.screen.od end
+    S.screen = sc
+    applyScreen()
+    note(string.format("screen from the room host: %.2f x %.2f m", sc.w, sc.h))
 end
 
 -- Луч из камеры по взгляду: стекло экрана важнее корпуса (коллизия корпуса на ~5 см ближе стекла).
@@ -937,6 +963,7 @@ end
 registerForEvent("onInit", function()
     loadSettings()
     loadCalib()
+    S.roomScreenId = roomScreenId() -- прежний экран ведущего уже стоит (или заменён своим): не ставить снова
     loadSpeakers()
     -- rev с отметкой времени: хост увидит новый экран и после перезапуска мода
     S.rev = math.floor(os.time() % 100000) * 10
@@ -956,6 +983,11 @@ registerForEvent("onOverlayClose", function() S.overlayOpen = false end)
 
 registerForEvent("onUpdate", function()
     guard("state", writeState)
+    local now = os.clock()
+    if now - (S.roomPoll or 0) >= 1 then
+        S.roomPoll = now
+        guard("roomScreen", applyRoomScreen)
+    end
 end)
 
 registerForEvent("onDraw", function()

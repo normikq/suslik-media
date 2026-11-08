@@ -5,6 +5,7 @@
 #include <QScreen>
 #include <QTimer>
 #include <QWindow>
+#include <iterator>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -60,6 +61,20 @@ QRect gameClientRect(const QString &exe, HWND *hwnd) {
     ClientToScreen(f.found, &tl);
     return QRect(tl.x, tl.y, r.right - r.left, r.bottom - r.top);
 }
+
+/// Окно-спутник игры: с фокусом у него игра всё ещё на экране. Телефон VAO (V's API Overlay, пульт кинотеатра)
+/// в режиме курсора забирает фокус себе (окно «V's API Overlay (overlay window)», pythonw.exe); оверлей NVIDIA —
+/// так же, как считает сам VAO (DEFAULT_FOCUS_IGNORE).
+bool isCompanion(HWND h) {
+    wchar_t buf[128];
+    const int n = GetWindowTextW(h, buf, int(std::size(buf)));
+    if (n > 0 && QString::fromWCharArray(buf, n).startsWith(QLatin1String("V's API Overlay"))) return true;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(h, &pid);
+    const QString exe = exeOf(pid);
+    return exe.compare(QLatin1String("NVIDIA Overlay.exe"), Qt::CaseInsensitive) == 0
+        || exe.compare(QLatin1String("nvcontainer.exe"), Qt::CaseInsensitive) == 0;
+}
 Overlay *g_overlay = nullptr;
 #endif
 
@@ -96,12 +111,18 @@ void Overlay::checkForeground() {
 #ifdef Q_OS_WIN
     if (m_gameFound && m_window) {
         const HWND fg = GetForegroundWindow();
-        active = fg == reinterpret_cast<HWND>(m_gameHwnd) || fg == reinterpret_cast<HWND>(m_window->winId());
+        const HWND own = reinterpret_cast<HWND>(m_window->winId());
+        const bool companion = fg && fg != own && fg != reinterpret_cast<HWND>(m_gameHwnd) && isCompanion(fg);
+        // Пока фокус переходит между окнами, активного окна нет (0): прежнее состояние, без мигания экрана
+        active = !fg ? m_gameActive : fg == reinterpret_cast<HWND>(m_gameHwnd) || fg == own || companion;
+        if (companion != (m_below != 0))
+            app::PlayerLog::write(companion ? QStringLiteral("[cinema] фокус у спутника игры (телефон VAO / оверлей): экран под ним")
+                                            : QStringLiteral("[cinema] спутник игры закрыт: экран снова сверху"));
+        if (fg) m_below = companion ? quintptr(fg) : 0;
         // Окно игры в Borderless тоже «всегда сверху»: активируясь, оно встаёт над оверлеем. Поднимаем оверлей
-        // при каждой смене активного окна и раз в 0,5 с (followGame), не забирая фокус.
+        // при каждой смене активного окна и раз в 0,5 с (followGame), не забирая фокус; телефон VAO — выше экрана
         if (active)
-            SetWindowPos(reinterpret_cast<HWND>(m_window->winId()), HWND_TOPMOST, 0, 0, 0, 0,
-                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+            SetWindowPos(own, insertAfter(), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
     }
 #endif
     if (active == m_gameActive) return;
@@ -145,6 +166,14 @@ void Overlay::applyStyles() {
 #endif
 }
 
+#ifdef Q_OS_WIN
+HWND Overlay::insertAfter() const {
+    // под окном-спутником с фокусом (телефон VAO), пока оно видно; иначе — над всеми
+    const HWND below = reinterpret_cast<HWND>(m_below);
+    return below && IsWindow(below) && IsWindowVisible(below) ? below : HWND_TOPMOST;
+}
+#endif
+
 void Overlay::followGame() {
     if (!m_window) return;
     QRect r;
@@ -177,7 +206,7 @@ void Overlay::followGame() {
     app::PlayerLog::write(QStringLiteral("[cinema] область %1,%2 %3x%4").arg(r.x()).arg(r.y()).arg(r.width()).arg(r.height()));
 #ifdef Q_OS_WIN
     // В физических пикселях: Qt сам пересчитает в логические по WM_SIZE / WM_DPICHANGED
-    SetWindowPos(reinterpret_cast<HWND>(m_window->winId()), HWND_TOPMOST, r.x(), r.y(), r.width(), r.height(),
+    SetWindowPos(reinterpret_cast<HWND>(m_window->winId()), insertAfter(), r.x(), r.y(), r.width(), r.height(),
                  SWP_NOACTIVATE);
 #else
     m_window->setGeometry(r);

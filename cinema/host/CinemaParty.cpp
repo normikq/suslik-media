@@ -11,6 +11,7 @@
 
 #include <QDateTime>
 #include <QJsonArray>
+#include <QPointer>
 
 namespace suslik::cinema {
 
@@ -69,6 +70,7 @@ bool CinemaParty::command(const QString &op, const QJsonObject &c) {
     if (op == QLatin1String("roomCreate")) m_party.create();
     else if (op == QLatin1String("roomJoin")) m_party.join(c.value(S("code")).toString().trimmed());
     else if (op == QLatin1String("roomLeave")) m_party.leave();
+    else if (op == QLatin1String("roomScreen")) copyScreen();
     else if (op == QLatin1String("roomFollow")) { // гость остановил фильм и снова идёт за ведущим
         m_followed.clear();
         m_seenKey.clear();
@@ -207,7 +209,50 @@ void CinemaParty::setWatching(bool on) {
         m_party.closeIfNobodyWatches();
 }
 
+// ---- экран в мире игры ----
+
+void CinemaParty::shareScreen() {
+    if (!m_readScreen || !m_party.inRoom() || !m_party.isHost()) return;
+    if (m_screenCheck.isValid() && m_screenCheck.elapsed() < 2000) return;
+    m_screenCheck.restart();
+    const QJsonObject sc = m_readScreen();
+    if (sc.isEmpty() || (sc == m_sharedScreen && m_sharedRoom == m_party.roomId())) return;
+    m_sharedScreen = sc;
+    m_sharedRoom = m_party.roomId();
+    m_party.shareScreen(sc);
+    app::PlayerLog::write(S("[party] экран в комнату: %1 × %2 м").arg(sc.value(S("w")).toDouble(), 0, 'f', 2)
+                              .arg(sc.value(S("h")).toDouble(), 0, 'f', 2));
+}
+
+void CinemaParty::copyScreen() {
+    if (!m_party.guest()) {
+        m_session.notify(S("Экран берут у ведущего, а ведущий здесь вы."));
+        return;
+    }
+    if (!m_applyScreen) return;
+    QPointer<CinemaParty> self(this);
+    m_party.fetchRoom([self](const QJsonObject &room, const QString &error) {
+        if (!self) return;
+        if (!error.isEmpty()) {
+            self->m_session.notify(S("Экран ведущего не получить: ") + error);
+            return;
+        }
+        const QJsonObject sc = room.value(S("screen")).toObject();
+        if (sc.isEmpty()) {
+            self->m_session.notify(S("%1 ещё не поставил экран в игре.").arg(self->m_party.hostWho()));
+            return;
+        }
+        if (!self->m_applyScreen(sc)) {
+            self->m_session.notify(S("Экран ведущего не записать в папку мода."));
+            return;
+        }
+        self->m_session.notify(S("Экран как у ведущего: %1 × %2 м").arg(sc.value(S("w")).toDouble(), 0, 'f', 2)
+                                   .arg(sc.value(S("h")).toDouble(), 0, 'f', 2));
+    });
+}
+
 void CinemaParty::tick() {
+    shareScreen();
     const bool film = roomFilm();
     // длина файла нужна сдвигу между раздачами: без неё гость на другой раздаче получил бы лишнюю перемотку
     const bool ready = film && m_mpv.loaded() && m_mpv.lengthMs() > 0;

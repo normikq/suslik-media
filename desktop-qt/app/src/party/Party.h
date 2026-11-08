@@ -99,6 +99,11 @@ public:
     void seek(qint64 posMs) override { if (canSeek()) action(core::PartyProtocol::seek(posMs)); }
     void reportBuffering(bool loading) override;
     void sendVariantChange(const QString &variantKey);
+    /// Кинотеатр в Cyberpunk (cinema/): ведущий делится, где в мире игры стоит его экран (действие screen; ПК-версия
+    /// не вызывает). screen — поля screens.json мода: c, n, w, h, sr, su, sn, ar, fit.
+    void shareScreen(const QJsonObject &screen);
+    /// Свежие данные комнаты с сервера (GET /api/rooms/<id>): кинотеатр берёт из них экран ведущего.
+    void fetchRoom(std::function<void(const QJsonObject &room, const QString &error)> done);
     /// Свой вариант и длина его раздачи, когда плеер её узнал (PartySync): тот же ключ и длина повторно не шлются.
     /// variant — описание раздачи, которой нет в списке комнаты (гость добавил свою).
     void reportVariant(const QString &variantKey, qint64 durationMs, const core::PartyVariant *variant);

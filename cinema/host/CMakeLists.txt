@@ -1,13 +1,13 @@
 # Suslik Cinema — хост кинотеатра для Cyberpunk 2077 (docs/CYBERPUNK.md). Подключается из desktop-qt с -DSM_CINEMA=ON:
 # берёт оттуда ядро (suslik_core) и плеер mpv (MpvEngine, MpvVideo) без копий.
-find_package(Qt6 6.4 REQUIRED COMPONENTS Gui Quick OpenGL)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Gui Quick OpenGL ShaderTools)
 
-set(SM_CINEMA_VERSION 0.8.0)
+set(SM_CINEMA_VERSION 0.9.0)
 set(SM_APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/../../desktop-qt/app/src)
 
 # Геометрия экрана — отдельной библиотекой, чтобы проверять тестами без окна.
 add_library(suslik_cinema_geom STATIC QuadMath.cpp QuadMath.h GameView.cpp GameView.h SpatialAudio.cpp SpatialAudio.h
-  ProjectorLook.cpp ProjectorLook.h)
+  ProjectorLook.cpp ProjectorLook.h SceneLight.cpp SceneLight.h RoomScreen.cpp RoomScreen.h)
 target_include_directories(suslik_cinema_geom PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(suslik_cinema_geom PUBLIC Qt6::Gui)
 # Выбор релиза и проверка адреса зеркала — тоже без окна и сети
@@ -28,6 +28,7 @@ qt_add_executable(suslik_cinema WIN32
   CinemaParty.cpp CinemaParty.h
   SpatialSound.cpp SpatialSound.h
   Projector.cpp Projector.h
+  SceneProbe.cpp SceneProbe.h
   CinemaTrackers.cpp
   ${SM_APP_SRC}/party/Party.cpp ${SM_APP_SRC}/party/Party.h
   ${SM_APP_SRC}/AppDir.cpp ${SM_APP_SRC}/AppDir.h
@@ -65,6 +66,12 @@ qt_add_resources(suslik_cinema sm_cinema_res PREFIX /res BASE ${SM_RES} FILES ${
 file(GLOB SM_GRAINLIGHT CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/grainlight/*.glsl)
 qt_add_resources(suslik_cinema sm_grainlight PREFIX /grainlight BASE ${CMAKE_CURRENT_SOURCE_DIR}/grainlight
   FILES ${SM_GRAINLIGHT} ${CMAKE_CURRENT_SOURCE_DIR}/grainlight/LICENSE)
+# Шейдер «в зале» (scene/in-world.glsl): вписывает кадр в освещение игры, ставится после эффекта проектора
+qt_add_resources(suslik_cinema sm_scene PREFIX /scene BASE ${CMAKE_CURRENT_SOURCE_DIR}/scene
+  FILES ${CMAKE_CURRENT_SOURCE_DIR}/scene/in-world.glsl)
+# Шейдеры Qt Quick (отсвет экрана вокруг полотна): qsb при сборке -> :/shaders/<имя>.qsb
+qt_add_shaders(suslik_cinema "sm_cinema_shaders" PREFIX "/shaders" BASE ${CMAKE_CURRENT_SOURCE_DIR}/qml/shaders
+  FILES ${CMAKE_CURRENT_SOURCE_DIR}/qml/shaders/spill.frag)
 
 # Адрес сервера — как у ПК-версии: SITE_URL / -DSM_SITE_URL (в репозиторий не пишем); иначе --site при запуске
 target_compile_definitions(suslik_cinema PRIVATE SM_VERSION="${SM_CINEMA_VERSION}" SM_SITE_URL="${SM_SITE_URL}")
@@ -100,11 +107,25 @@ if(SM_BUILD_TESTS)
   add_test(NAME SpatialAudioTest COMMAND SpatialAudioTest)
   add_executable(ProjectorLookTest tests/ProjectorLookTest.cpp)
   target_link_libraries(ProjectorLookTest PRIVATE suslik_cinema_geom Qt6::Test)
-  target_compile_definitions(ProjectorLookTest PRIVATE SM_GRAINLIGHT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/grainlight")
+  target_compile_definitions(ProjectorLookTest PRIVATE SM_GRAINLIGHT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/grainlight"
+    SM_SCENE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/scene")
   if(MSVC)
     target_compile_options(ProjectorLookTest PRIVATE /utf-8)
   endif()
   add_test(NAME ProjectorLookTest COMMAND ProjectorLookTest)
+  add_executable(SceneLightTest tests/SceneLightTest.cpp)
+  target_link_libraries(SceneLightTest PRIVATE suslik_cinema_geom Qt6::Test)
+  target_compile_definitions(SceneLightTest PRIVATE SM_MOD_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../mod/SuslikCinema")
+  if(MSVC)
+    target_compile_options(SceneLightTest PRIVATE /utf-8)
+  endif()
+  add_test(NAME SceneLightTest COMMAND SceneLightTest)
+  add_executable(RoomScreenTest tests/RoomScreenTest.cpp)
+  target_link_libraries(RoomScreenTest PRIVATE suslik_cinema_geom Qt6::Test)
+  if(MSVC)
+    target_compile_options(RoomScreenTest PRIVATE /utf-8)
+  endif()
+  add_test(NAME RoomScreenTest COMMAND RoomScreenTest)
   add_executable(ReleasePickTest tests/ReleasePickTest.cpp)
   target_link_libraries(ReleasePickTest PRIVATE suslik_cinema_pick Qt6::Test)
   if(MSVC)

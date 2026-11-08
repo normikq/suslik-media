@@ -349,6 +349,21 @@ void Party::nudgeShift(const QString &myKey, qint64 myDurationMs, qint64 deltaMs
     m_offsetTimer.start();
 }
 
+void Party::shareScreen(const QJsonObject &screen) {
+    action(QJsonObject{{S("type"), S("screen")}, {S("screen"), screen}});
+}
+
+void Party::fetchRoom(std::function<void(const QJsonObject &, const QString &)> done) {
+    if (!m_roomId) {
+        done({}, S("Нет комнаты."));
+        return;
+    }
+    timedGet(PartyProtocol::roomPath(*m_roomId), [done](const ApiResult &r) {
+        if (!r.ok()) done({}, ApiClient::describe(r.error));
+        else done(r.json.value(S("room")).toObject(), {});
+    });
+}
+
 void Party::action(const QJsonObject &body) {
     if (!m_roomId || !canControl()) return;
     m_outbox << std::make_pair(*m_roomId, PartyProtocol::withClient(body, m_clientId));

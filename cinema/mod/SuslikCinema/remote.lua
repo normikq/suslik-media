@@ -10,10 +10,23 @@ local R = {}
 -- Пресеты проектора хоста (ProjectorLook.cpp, тот же порядок) и звука плёнки
 R.PROJECTOR_ALL = { "выкл", "тонкий", "кино 2000-х", "старая копия", "сбалансированный", "немое кино", "домашний проектор" }
 R.FILM_SOUND_ALL = { "как есть", "оптика 35 мм", "винил" }
+-- Ползунки вкладки «Картинка» (хост: SceneKnob в SceneLight.cpp — те же ключи, пределы и значения по умолчанию)
+R.LOOK = {
+    { id = "exposure", title = "Яркость", min = 0.6, max = 1.4, def = 1.0 },
+    { id = "satur", title = "Насыщенность", min = 0.6, max = 1.5, def = 1.0 },
+    { id = "highlights", title = "Светлые места: мягче / ярче", min = -0.3, max = 0.3, def = 0.0 },
+    { id = "bloom", title = "Свечение ярких мест", min = 0.0, max = 3.0, def = 1.0 },
+    { id = "soften", title = "Мягкость", min = 0.0, max = 3.0, def = 1.0 },
+    { id = "fabric", title = "Фактура полотна", min = 0.0, max = 3.0, def = 1.0 },
+    { id = "adapt", title = "Подстройка под свет зала", min = 0.0, max = 2.0, def = 1.0 },
+    { id = "lift", title = "Свет зала на полотне", min = 0.0, max = 2.0, def = 1.0 },
+    { id = "spill", title = "Отсвет вокруг экрана", min = 0.0, max = 3.0, def = 1.0 },
+    { id = "spillSize", title = "Размер отсвета", min = 0.5, max = 2.0, def = 1.0 },
+}
 
 local MOD = "SuslikCinema"
 local HELPER = "SuslikCinema_host"
-local W, H = 560, 780
+local W, H = 560, 824
 local ROWS = 8
 
 local VAO
@@ -21,7 +34,7 @@ local menu
 local st = {
     host = nil, lib = {}, libRev = -1, cmds = {}, n = 0, sid = nil,
     page = "lib", built = nil, filter = "", listPage = 1, film = nil, season = nil, episode = nil,
-    fromStart = false, msgN = -1, dragSeek = false, dragVol = false, polls = 0, code = "",
+    fromStart = false, msgN = -1, dragSeek = false, dragVol = false, polls = 0, code = "", dragLook = {},
 }
 local w = {} -- виджеты текущей страницы
 
@@ -273,6 +286,8 @@ local function build(page)
         w.leave = button("Выйти из комнаты", 20, 270, W - 40, 50, function() send("roomLeave") end)
         w.toRemote = button("Пульт", 20, 330, W - 40, 48, function() st.page = "remote" end)
         w.follow = button("Включить фильм комнаты", 20, 386, W - 40, 48, function() send("roomFollow"); st.page = "remote" end)
+        -- экран в мире игры как у ведущего (хост берёт его из комнаты, мод ставит по room-screen.json)
+        w.copyScreen = button("Экран как у ведущего", 20, 442, W - 40, 48, function() send("roomScreen") end)
         button("Медиатека", 20, H - 100, W - 40, 44, function() st.page = "lib" end)
         R.live()
     elseif page == "film" then
@@ -315,6 +330,24 @@ local function build(page)
         menu:Checkbox{ text = "С начала", checked = st.fromStart, x = 20, y = y + 6, w = 260, h = 36,
             onChange = function(v) st.fromStart = v and true or false end }
         button("Назад", 20, H - 100, W - 40, 44, function() st.page = "lib" end)
+        R.live()
+    elseif page == "look" then
+        -- «Картинка»: подстройка «Вписать в сцену» (хост: SceneKnob); значение уходит, когда ползунок отпущен
+        header("Картинка")
+        w.look = {}
+        for i, k in ipairs(R.LOOK) do
+            local y = 56 + (i - 1) * 60
+            local label = menu:Text{ text = k.title, x = 20, y = y, w = W - 40, h = 22, size = 14, color = "#D4D4D8" }
+            local sl = menu:Slider{ x = 20, y = y + 24, w = W - 40, h = 28, min = k.min, max = k.max, value = k.def,
+                onChange = function(v, _, final)
+                    st.dragLook[k.id] = not final
+                    setText(label, string.format("%s: %.2f", k.title, v))
+                    if final then send("opt", { key = "look", id = k.id, v = v }) end
+                end }
+            w.look[k.id] = { label = label, slider = sl }
+        end
+        button("Сбросить", 20, 666, (W - 50) / 2, 48, function() send("opt", { key = "look", reset = true }) end)
+        button("Пульт", 30 + (W - 50) / 2, 666, (W - 50) / 2, 48, function() st.page = "remote" end)
         R.live()
     elseif page == "remote" then
         header("Пульт")
@@ -363,6 +396,10 @@ local function build(page)
         w.filmSound = button("", 30 + (W - 50) / 2, 684, (W - 50) / 2, 44, function()
             send("opt", { key = "filmSound", v = ((st.host and st.host.filmSound or 0) + 1) % #R.FILM_SOUND_ALL })
         end, { size = 14 })
+        -- «Вписать в сцену»: кадр подстраивается под свет игры вокруг экрана, отсвет на стенах (хост: SceneProbe)
+        w.scene = menu:Checkbox{ text = "Вписать в сцену", checked = true, x = 20, y = 740, w = (W - 50) / 2, h = 36,
+            onChange = function(v) send("opt", { key = "scene", on = v and true or false }) end }
+        button("Картинка…", 30 + (W - 50) / 2, 736, (W - 50) / 2, 44, function() st.page = "look" end, { size = 14 })
         button("Стоп", 20, 520, (W - 50) / 2, 48, function() send("stop"); st.page = "lib" end)
         button("Медиатека", 30 + (W - 50) / 2, 520, (W - 50) / 2, 48, function() st.page = "lib" end)
         R.live()
@@ -473,6 +510,7 @@ function R.live()
         vis(w.leave, r["in"] and true or false)
         vis(w.toRemote, p ~= nil)
         vis(w.follow, (r["in"] and not r.host and (r.title or "") ~= "" and not r.watching) and true or false)
+        vis(w.copyScreen, (r["in"] and not r.host) and true or false)
     elseif st.built == "film" then
         local it = st.film
         if it.k == "s" then
@@ -508,8 +546,19 @@ function R.live()
         setText(w.projector, "Проектор: " .. (R.PROJECTOR_ALL[(h.projector or 0) + 1] or "выкл"))
         setText(w.filmSound, "Звук плёнки: " .. (R.FILM_SOUND_ALL[(h.filmSound or 0) + 1] or "как есть"))
         if w.muffle._v ~= h.muffle then w.muffle._v = h.muffle; w.muffle:SetValue(h.muffle ~= false) end
+        if w.scene._v ~= h.scene then w.scene._v = h.scene; w.scene:SetValue(h.scene ~= false) end
         if w.mute._v ~= h.muteGame then w.mute._v = h.muteGame; w.mute:SetValue(h.muteGame and true or false) end
         if w.pauseGame._v ~= h.pauseWithGame then w.pauseGame._v = h.pauseWithGame; w.pauseGame:SetValue(h.pauseWithGame and true or false) end
+    elseif st.built == "look" and w.look then
+        local look = h.look or {}
+        for _, k in ipairs(R.LOOK) do
+            local it = w.look[k.id]
+            local v = tonumber(look[k.id]) or k.def
+            if not st.dragLook[k.id] then
+                if it.slider._v ~= v then it.slider._v = v; it.slider:SetValue(v) end
+                setText(it.label, string.format("%s: %.2f", k.title, v))
+            end
+        end
     end
 end
 

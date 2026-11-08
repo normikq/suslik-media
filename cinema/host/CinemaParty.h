@@ -6,6 +6,7 @@
 #include <QObject>
 #include <QString>
 #include <QTimer>
+#include <functional>
 
 namespace suslik::app {
 class Library;
@@ -29,7 +30,15 @@ class CinemaParty : public QObject, private core::SyncPlayer {
 public:
     CinemaParty(app::Party &party, CinemaSession &session, app::MpvEngine &mpv, app::Library &lib, QObject *parent = nullptr);
 
-    /// Команды пульта: roomCreate, roomJoin{code}, roomLeave, roomFollow (гость снова за ведущим). false — не команда комнаты.
+    /// Экран в мире игры. read — свой экран (screens.json мода: c, n, w, h, sr, su, sn, ar, fit) или пусто;
+    /// apply — поставить у себя экран ведущего (файл для мода). Ведущий делится своим сам, когда он меняется.
+    void setScreenIO(std::function<QJsonObject()> read, std::function<bool(const QJsonObject &)> apply) {
+        m_readScreen = std::move(read);
+        m_applyScreen = std::move(apply);
+    }
+
+    /// Команды пульта: roomCreate, roomJoin{code}, roomLeave, roomFollow (гость снова за ведущим),
+    /// roomScreen (гость ставит экран как у ведущего). false — не команда комнаты.
     bool command(const QString &op, const QJsonObject &c);
     /// Поле "room" состояния для телефона.
     void status(QJsonObject &o) const;
@@ -56,6 +65,10 @@ private:
     void follow();
     void tick();
     void setWatching(bool on);
+    /// Ведущий: свой экран изменился (или новая комната) — отправить в комнату. Не чаще раза в 2 с.
+    void shareScreen();
+    /// Гость: взять экран ведущего из комнаты и поставить у себя.
+    void copyScreen();
 
     app::Party &m_party;
     CinemaSession &m_session;
@@ -71,6 +84,11 @@ private:
     QString m_seenKey;
     qint64 m_seenSeq = -1; ///< seq комнаты, когда фильм увидели: изменился — ведущий сообщил своё место
     QElapsedTimer m_seenAt;
+    std::function<QJsonObject()> m_readScreen;
+    std::function<bool(const QJsonObject &)> m_applyScreen;
+    QJsonObject m_sharedScreen; ///< что уже отправили в комнату m_sharedRoom
+    QString m_sharedRoom;
+    QElapsedTimer m_screenCheck;
 };
 
 } // namespace suslik::cinema

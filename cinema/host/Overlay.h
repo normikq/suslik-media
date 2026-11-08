@@ -5,6 +5,7 @@
 #include <QString>
 
 class QWindow;
+struct HWND__;
 
 /// Окно-оверлей поверх игры (Windows): прозрачное, всегда сверху, без кнопки на панели задач.
 /// В обычном режиме пропускает клики и не берёт фокус (игра остаётся активной); в режиме калибровки — принимает мышь.
@@ -58,6 +59,11 @@ private:
     void *m_winEventHook = nullptr;
     QRect m_lastRect;
     bool m_hotkeys = false;
+    /// Окно-спутник игры с фокусом (телефон VAO): экран держится под ним, а не над ним.
+    quintptr m_below = 0;
+#ifdef Q_OS_WIN
+    HWND__ *insertAfter() const;
+#endif
 };
 
 } // namespace suslik::cinema

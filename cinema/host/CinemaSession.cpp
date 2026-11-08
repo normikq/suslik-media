@@ -586,9 +586,20 @@ int CinemaSession::filmSound() const {
     return std::clamp(Store::of(S("settings")).get(S("remote_filmSound")).value_or(S("0")).toInt(), 0, filmSoundCount() - 1);
 }
 
+SceneTuning CinemaSession::tuning() const {
+    SceneTuning t;
+    for (const SceneKnob &k : sceneKnobs()) {
+        const auto v = Store::of(S("settings")).get(S("remote_look_") + QLatin1String(k.id));
+        bool ok = false;
+        const double d = v ? v->toDouble(&ok) : 0;
+        if (ok) t.insert(QLatin1String(k.id), sceneKnobClamp(QLatin1String(k.id), d));
+    }
+    return t;
+}
+
 bool CinemaSession::option(const QString &key) const {
     const auto v = Store::of(S("settings")).get(S("remote_") + key);
-    return v ? *v == QLatin1String("1") : true; // по умолчанию обе включены
+    return v ? *v == QLatin1String("1") : true; // по умолчанию все включены
 }
 
 void CinemaSession::remote(const QJsonObject &c) {
@@ -622,7 +633,18 @@ void CinemaSession::remote(const QJsonObject &c) {
         } else if (key == QLatin1String("filmSound")) {
             Store::of(S("settings")).put(S("remote_filmSound"),
                                          QString::number(std::clamp(c.value(S("v")).toInt(), 0, filmSoundCount() - 1)));
-        } else if (key == QLatin1String("muteGame") || key == QLatin1String("pauseWithGame") || key == QLatin1String("muffle")) {
+        } else if (key == QLatin1String("look")) {
+            // вкладка «Картинка»: один ползунок {id, v} или сброс всех {reset: true}
+            if (c.value(S("reset")).toBool()) {
+                for (const SceneKnob &k : sceneKnobs()) Store::of(S("settings")).put(S("remote_look_") + QLatin1String(k.id), std::nullopt);
+            } else {
+                const QString id = c.value(S("id")).toString();
+                if (!sceneKnob(id)) return;
+                Store::of(S("settings")).put(S("remote_look_") + id,
+                                             QString::number(sceneKnobClamp(id, c.value(S("v")).toDouble()), 'f', 3));
+            }
+        } else if (key == QLatin1String("muteGame") || key == QLatin1String("pauseWithGame") || key == QLatin1String("muffle")
+                   || key == QLatin1String("scene")) {
             Store::of(S("settings")).put(S("remote_") + key, c.value(S("on")).toBool() ? S("1") : S("0"));
         } else {
             return;
@@ -668,8 +690,14 @@ QJsonObject CinemaSession::status() const {
                   {S("code"), m_lib.pairingCode()}, {S("url"), m_lib.pairingUrl()},
                   {S("site"), !m_api.base().isEmpty()}, {S("busy"), m_busy}, {S("msg"), m_msg}, {S("msgN"), m_msgN},
                   {S("muteGame"), option(S("muteGame"))}, {S("pauseWithGame"), option(S("pauseWithGame"))},
-                  {S("audio3d"), audio3d()}, {S("muffle"), option(S("muffle"))},
+                  {S("audio3d"), audio3d()}, {S("muffle"), option(S("muffle"))}, {S("scene"), option(S("scene"))},
                   {S("projector"), projector()}, {S("filmSound"), filmSound()}};
+    {
+        const SceneTuning t = tuning();
+        QJsonObject look;
+        for (const SceneKnob &k : sceneKnobs()) look.insert(QLatin1String(k.id), tuningValue(t, k.id));
+        o.insert(S("look"), look);
+    }
     if (m_extraStatus) m_extraStatus(o);
     if (m_mpv && m_mpv->loaded() && !m_key.isEmpty()) {
         auto tracks = [](const QVariantList &list) {

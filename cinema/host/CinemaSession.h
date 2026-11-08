@@ -1,5 +1,6 @@
 #pragma once
 #include "ReleasePick.h"
+#include "SceneLight.h"
 
 #include <QElapsedTimer>
 #include <QJsonArray>
@@ -93,13 +94,16 @@ public:
     /// Сообщение на телефон и в журнал.
     void notify(const QString &text) { note(text); }
 
-    /// Настройки пульта (хранилище settings): muteGame — глушить игру во время фильма, pauseWithGame — пауза с игрой.
+    /// Настройки пульта (хранилище settings): muteGame — глушить игру во время фильма, pauseWithGame — пауза с игрой,
+    /// scene — «вписать в сцену» (SceneProbe и шейдер «в зале»).
     bool option(const QString &key) const;
     /// 3D-звук: 0 — выкл, 1 — стерео, 2 — объёмный, 3 — колонки (muffle — «за стеной глуше», option).
     int audio3d() const;
     /// Эффект проектора (ProjectorLook, 0 — выкл) и звук плёнки (0 — как есть).
     int projector() const;
     int filmSound() const;
+    /// Вкладка «Картинка» пульта: ползунки «Вписать в сцену» (SceneKnob), remote_look_<id>.
+    SceneTuning tuning() const;
 
 signals:
     void ready(const QString &url, qint64 startMs);

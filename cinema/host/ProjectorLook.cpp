@@ -41,6 +41,18 @@ QByteArray patchDefines(QByteArray src, const QList<QPair<QByteArray, QByteArray
     return src;
 }
 
+QByteArray hookAtOutput(QByteArray src) {
+    static const QRegularExpression re(QStringLiteral("^//!HOOK[ \t]+MAIN[ \t\r]*$"), QRegularExpression::MultilineOption);
+    QString text = QString::fromUtf8(src);
+    text.replace(re, QStringLiteral("//!HOOK OUTPUT"));
+    return text.toUtf8();
+}
+
+QList<QPair<QByteArray, QByteArray>> sceneShaderDefines(bool hdr) {
+    if (!hdr) return {};
+    return {{"SHOULDER", "0.78"}, {"WHITE_DESAT", "0.08"}, {"SATUR", "1.06"}, {"EXPOSURE", "0.95"}, {"BLOOM", "0.10"}};
+}
+
 int filmSoundCount() { return 3; }
 
 QString filmSoundTitle(int i) {
