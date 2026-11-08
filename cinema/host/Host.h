@@ -7,8 +7,11 @@ namespace suslik::cinema {
 /// Состояние хоста для QML каркаса.
 class Host : public QObject {
     Q_OBJECT
-    /// Открыт фильм (иначе на экране тестовая картинка).
+    /// Плеер на экране (иначе тестовая картинка). Ядро mpv рисует, только пока плеер на экране, поэтому в режиме
+    /// пульта он там всегда, а без фильма экран прячет blank.
     Q_PROPERTY(bool hasFile READ hasFile CONSTANT)
+    /// Пульт: фильм не выбран или остановлен — экран не показываем.
+    Q_PROPERTY(bool blank READ blank WRITE setBlank NOTIFY blankChanged)
     /// Экран скрыт клавишей (позже — когда телевизор вне кадра).
     Q_PROPERTY(bool hidden READ hidden WRITE setHidden NOTIFY hiddenChanged)
     Q_PROPERTY(QString version READ version CONSTANT)
@@ -23,14 +26,22 @@ public:
         m_hidden = h;
         emit hiddenChanged();
     }
+    bool blank() const { return m_blank; }
+    void setBlank(bool b) {
+        if (b == m_blank) return;
+        m_blank = b;
+        emit blankChanged();
+    }
     QString version() const { return QStringLiteral(SM_VERSION); }
 
 signals:
     void hiddenChanged();
+    void blankChanged();
 
 private:
     bool m_hasFile;
     bool m_hidden = false;
+    bool m_blank = false;
 };
 
 } // namespace suslik::cinema

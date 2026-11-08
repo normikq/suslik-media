@@ -55,6 +55,8 @@ public:
     void frame(const QSizeF &viewSize);
 
     double opacity() const { return m_opacity; }
+    /// Игра на паузе (меню игры) — по state.json мода.
+    bool gamePaused() const { return m_live && m_state.paused; }
     bool live() const { return m_live; }
     QString osd() const { return m_osd; }
 
@@ -62,6 +64,7 @@ signals:
     void opacityChanged();
     void liveChanged();
     void osdChanged();
+    void gamePausedChanged();
 
 private:
     struct State {

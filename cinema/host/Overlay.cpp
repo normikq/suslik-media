@@ -15,7 +15,8 @@ namespace suslik::cinema {
 namespace {
 
 #ifdef Q_OS_WIN
-enum HotkeyId { HkCalibrate = 0x5C01, HkPause, HkHide, HkQuit, HkLeadUp, HkLeadDown, HkRecord };
+enum HotkeyId { HkCalibrate = 0x5C01, HkPause, HkHide, HkQuit, HkLeadUp, HkLeadDown, HkRecord,
+                HkSeekFwd, HkSeekBack, HkJumpFwd, HkJumpBack, HkAudio, HkSub, HkStats };
 
 QString exePathOf(DWORD pid) {
     HANDLE p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
@@ -114,7 +115,7 @@ Overlay::~Overlay() {
     if (m_winEventHook) UnhookWinEvent(static_cast<HWINEVENTHOOK>(m_winEventHook));
     if (g_overlay == this) g_overlay = nullptr;
     if (m_hotkeys)
-        for (int id = HkCalibrate; id <= HkRecord; ++id) UnregisterHotKey(nullptr, id);
+        for (int id = HkCalibrate; id <= HkStats; ++id) UnregisterHotKey(nullptr, id);
 #endif
     if (m_hotkeys) QGuiApplication::instance()->removeNativeEventFilter(this);
 }
@@ -195,6 +196,14 @@ void Overlay::registerHotkeys() {
     RegisterHotKey(nullptr, HkLeadUp, MOD_CONTROL | MOD_ALT, VK_PRIOR);
     RegisterHotKey(nullptr, HkLeadDown, MOD_CONTROL | MOD_ALT, VK_NEXT);
     RegisterHotKey(nullptr, HkRecord, mod, 'R');
+    // Пульт этапа 1 (до телефона VAO): ←/→ — 10 с (с повтором), ↑/↓ — 10 мин, A — озвучка, S — субтитры, I — сводка mpv
+    RegisterHotKey(nullptr, HkSeekFwd, MOD_CONTROL | MOD_ALT, VK_RIGHT);
+    RegisterHotKey(nullptr, HkSeekBack, MOD_CONTROL | MOD_ALT, VK_LEFT);
+    RegisterHotKey(nullptr, HkJumpFwd, mod, VK_UP);
+    RegisterHotKey(nullptr, HkJumpBack, mod, VK_DOWN);
+    RegisterHotKey(nullptr, HkAudio, mod, 'A');
+    RegisterHotKey(nullptr, HkSub, mod, 'S');
+    RegisterHotKey(nullptr, HkStats, mod, 'I');
     QGuiApplication::instance()->installNativeEventFilter(this);
 #endif
 }
@@ -212,6 +221,13 @@ bool Overlay::nativeEventFilter(const QByteArray &type, void *message, qintptr *
     case HkLeadUp: emit hotkey(QStringLiteral("lead+")); break;
     case HkLeadDown: emit hotkey(QStringLiteral("lead-")); break;
     case HkRecord: emit hotkey(QStringLiteral("rec")); break;
+    case HkSeekFwd: emit hotkey(QStringLiteral("seek+")); break;
+    case HkSeekBack: emit hotkey(QStringLiteral("seek-")); break;
+    case HkJumpFwd: emit hotkey(QStringLiteral("jump+")); break;
+    case HkJumpBack: emit hotkey(QStringLiteral("jump-")); break;
+    case HkAudio: emit hotkey(QStringLiteral("audio")); break;
+    case HkSub: emit hotkey(QStringLiteral("sub")); break;
+    case HkStats: emit hotkey(QStringLiteral("stats")); break;
     default: return false;
     }
     return true;

@@ -80,6 +80,8 @@ public:
     Q_INVOKABLE void start();
     Q_INVOKABLE void login(const QString &password);
     Q_INVOKABLE void startDeviceAuth();
+    /// Открывать ли страницу подтверждения кода в браузере (кинотеатр в игре показывает код сам — без браузера поверх игры).
+    void setOpenPairingPage(bool on) { m_openPairing = on; }
     Q_INVOKABLE void cancelDeviceAuth();
     Q_INVOKABLE void openPairingPage();
     Q_INVOKABLE void logout();
@@ -216,6 +218,7 @@ private:
     int m_statusKind = 0;
     QString m_profileName, m_profileNote, m_avatar;
     std::optional<DevicePairing> m_pairing;
+    bool m_openPairing = true;
     QTimer m_pollTimer;
     qint64 m_aiReadyAt = 0;
     bool m_aiBusy = false;

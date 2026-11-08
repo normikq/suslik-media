@@ -21,9 +21,11 @@ Window {
         id: screen
         width: quad.sourceWidth
         height: quad.sourceHeight
-        // С модом: прозрачность от игры (вне кадра, за стеной, пауза); без мода — ручная калибровка
-        visible: quad.valid && !host.hidden && opacity > 0.001
-        opacity: link.live && !overlay.calibrating ? link.opacity : 1
+        // С модом: прозрачность от игры (вне кадра, за стеной, пауза); без мода — ручная калибровка.
+        // Пульт без фильма (blank) — прозрачность 0, но не visible: false: рисовальщик mpv должен существовать
+        // до открытия файла (иначе mpv выключает видео), а невидимому элементу он не создаётся.
+        visible: quad.valid && !host.hidden && (host.blank || opacity > 0.001)
+        opacity: host.blank ? 0 : link.live && !overlay.calibrating ? link.opacity : 1
         transform: Matrix4x4 { matrix: quad.matrix }
 
         // Слой с прозрачной каймой 2 px: при перспективе край сглаживается фильтрацией текстуры (мягкий край)

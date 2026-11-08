@@ -221,8 +221,10 @@ void GameLink::frame(const QSizeF &view) {
         m_clock.sample(now, s.pose.t);
         if (s.cam) m_pred.push(s.pose);
         else m_pred.reset();
+        const bool wasPaused = m_state.paused;
         m_state = s;
         m_lastNewSec = now;
+        if (wasPaused != s.paused) emit gamePausedChanged();
         ++m_statStates;
         setLive(true);
     }

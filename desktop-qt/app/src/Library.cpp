@@ -220,7 +220,7 @@ void Library::startDeviceAuth() {
         m_pairing = DeviceAuth::parsePairing(r.json, m_api.site());
         if (!m_pairing) { emit loginFinished(tx(S("api.oshibka_servera"))); return; }
         emit pairingChanged();
-        openPairingPage();
+        if (m_openPairing) openPairingPage();
         m_pollTimer.start();
     });
 }

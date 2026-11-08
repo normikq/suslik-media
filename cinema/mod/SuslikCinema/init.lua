@@ -4,7 +4,8 @@
 -- Файлы в папке мода:
 --   screens.json — калибровка: центр на стекле, нормаль, размер, сдвиги (пишется при изменении);
 --   screen.json  — углы экрана в мире для хоста, rev растёт при каждом изменении;
---   state.json   — каждый кадр: {seq, t, pos, f, r, u, kx, ky, ox, oy, W, H, visible, occl, paused, cal, rev, end}.
+--   state.json   — каждый кадр: {seq, t, pos, f, r, u, kx, ky, ox, oy, W, H, visible, occl, paused, cal, rev, end};
+--   remote.json, host.json, library.json, host.txt — пульт на телефоне VAO (remote.lua).
 --                  Пишется целиком на месте; хост берёт файл, только если seq == end (иначе он недописан).
 -- Игру мод не меняет: не трогает сохранения, настройки и объекты. Надписи латиницей (шрифт CET без кириллицы).
 
@@ -534,6 +535,9 @@ registerForEvent("onInit", function()
     -- rev с отметкой времени: хост увидит новый экран и после перезапуска мода
     S.rev = math.floor(os.time() % 100000) * 10
     applyScreen()
+    -- пульт на телефоне V's API Overlay (remote.lua): без VAO мод работает, как раньше
+    local ok, remote = pcall(require, "remote")
+    if ok and remote then guard("remote", remote.init) else note("remote.lua: " .. tostring(remote)) end
 end)
 
 registerForEvent("onOverlayOpen", function() S.overlayOpen = true end)

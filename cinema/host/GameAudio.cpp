@@ -98,7 +98,13 @@ int forEachSession(const QString &exe, const std::function<void(const QString &,
 
 } // namespace
 
-GameAudio::GameAudio(QString exeName) : m_exe(std::move(exeName)) {}
+GameAudio::GameAudio(QString exeName) : m_exe(std::move(exeName)) {
+    QFile f(stateFile());
+    if (!f.open(QIODevice::ReadOnly)) return;
+    const QJsonObject o = QJsonDocument::fromJson(f.readAll()).object();
+    if (o.value(QStringLiteral("exe")).toString(m_exe).compare(m_exe, Qt::CaseInsensitive) != 0) return;
+    for (const auto &v : o.value(QStringLiteral("sessions")).toArray()) m_pending << v.toString();
+}
 
 GameAudio::~GameAudio() {
     if (muted()) unmute();
@@ -110,12 +116,18 @@ int GameAudio::mute() {
     const int seen = forEachSession(m_exe, [&](const QString &id, ISimpleAudioVolume *v) {
         BOOL was = FALSE;
         v->GetMute(&was);
-        if (was) return; // приглушено игроком — не наше
+        const bool ourBefore = m_pending.removeAll(id) > 0;
+        if (was) {
+            // приглушено нами раньше (Windows помнит) — наше; иначе приглушил игрок — не трогаем
+            if (ourBefore && !m_ours.contains(id)) { m_ours << id; ++changed; }
+            return;
+        }
         if (SUCCEEDED(v->SetMute(TRUE, nullptr))) {
             if (!m_ours.contains(id)) m_ours << id;
             ++changed;
         }
     });
+    m_active = true;
     saveState();
     app::PlayerLog::write(QStringLiteral("[cinema] звук игры: приглушено %1 из %2 сессий %3").arg(changed).arg(seen).arg(m_exe));
     return seen < 0 ? -1 : changed;
@@ -127,41 +139,77 @@ int GameAudio::mute() {
 int GameAudio::unmute() {
 #ifdef Q_OS_WIN
     int changed = 0;
-    const QStringList ours = m_ours;
+    QStringList left = m_ours;
     forEachSession(m_exe, [&](const QString &id, ISimpleAudioVolume *v) {
-        if (ours.contains(id) && SUCCEEDED(v->SetMute(FALSE, nullptr))) ++changed;
+        if (!left.contains(id)) return;
+        if (SUCCEEDED(v->SetMute(FALSE, nullptr))) { ++changed; left.removeAll(id); }
     });
+    for (const QString &id : left)
+        if (!m_pending.contains(id)) m_pending << id;
     m_ours.clear();
+    m_active = false;
     saveState();
-    app::PlayerLog::write(QStringLiteral("[cinema] звук игры: возвращено %1 сессий").arg(changed));
+    app::PlayerLog::write(left.isEmpty() ? QStringLiteral("[cinema] звук игры: возвращено %1 сессий").arg(changed)
+                                         : QStringLiteral("[cinema] звук игры: возвращено %1 сессий, %2 — когда игра запустится")
+                                               .arg(changed).arg(left.size()));
     return changed;
 #else
     return -1;
 #endif
 }
 
+int GameAudio::restorePending() {
+#ifdef Q_OS_WIN
+    if (m_pending.isEmpty()) return 0;
+    int changed = 0;
+    forEachSession(m_exe, [&](const QString &id, ISimpleAudioVolume *v) {
+        if (m_pending.contains(id) && SUCCEEDED(v->SetMute(FALSE, nullptr))) { ++changed; m_pending.removeAll(id); }
+    });
+    if (changed > 0) {
+        saveState();
+        app::PlayerLog::write(QStringLiteral("[cinema] звук игры возвращён после прошлого сеанса: %1 сессий").arg(changed));
+    }
+    return changed;
+#else
+    return 0;
+#endif
+}
+
 void GameAudio::saveState() const {
-    if (m_ours.isEmpty()) {
+    QStringList all = m_ours;
+    for (const QString &id : m_pending)
+        if (!all.contains(id)) all << id;
+    if (all.isEmpty()) {
         QFile::remove(stateFile());
         return;
     }
     QSaveFile f(stateFile());
     if (!f.open(QIODevice::WriteOnly)) return;
     f.write(QJsonDocument(QJsonObject{{QStringLiteral("exe"), m_exe},
-                                      {QStringLiteral("sessions"), QJsonArray::fromStringList(m_ours)}})
+                                      {QStringLiteral("sessions"), QJsonArray::fromStringList(all)}})
                 .toJson());
     f.commit();
 }
 
 int GameAudio::recoverAfterCrash(const QString &exeName) {
-    QFile f(stateFile());
-    if (!f.open(QIODevice::ReadOnly)) return 0;
-    const QJsonObject o = QJsonDocument::fromJson(f.readAll()).object();
-    f.close();
-    GameAudio a(o.value(QStringLiteral("exe")).toString(exeName));
-    for (const auto &v : o.value(QStringLiteral("sessions")).toArray()) a.m_ours << v.toString();
-    app::PlayerLog::write(QStringLiteral("[cinema] прошлый сеанс не вернул звук игры — возвращаем"));
-    return a.unmute();
+    GameAudio a(exeName);
+    return a.restorePending();
+}
+
+int GameAudio::unmuteAll(const QString &exeName) {
+#ifdef Q_OS_WIN
+    int changed = 0;
+    const int seen = forEachSession(exeName, [&](const QString &, ISimpleAudioVolume *v) {
+        BOOL was = FALSE;
+        v->GetMute(&was);
+        if (was && SUCCEEDED(v->SetMute(FALSE, nullptr))) ++changed;
+    });
+    QFile::remove(stateFile());
+    return seen < 0 ? -1 : changed;
+#else
+    Q_UNUSED(exeName);
+    return -1;
+#endif
 }
 
 } // namespace suslik::cinema

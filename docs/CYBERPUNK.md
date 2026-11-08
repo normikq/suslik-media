@@ -1,7 +1,8 @@
 # Кинотеатр Suslik Media в Cyberpunk 2077
 
 V смотрит фильм из медиатеки на экране телевизора в мире игры (ПК, Borderless). Плеер — libmpv, как в ПК-версии,
-поэтому кодеки те же. Звук игры на время фильма приглушается (можно отключить). «Вместе» в первый выпуск не входит.
+поэтому кодеки те же. Звук игры на время фильма приглушается (можно отключить). Комнаты «Вместе» — общие с ПК,
+Android и ТВ (хост 0.5.0).
 
 ## Устройство
 
@@ -28,7 +29,8 @@ VAO (`docs/bin/.../VsAPIOverlay`, чужой мод) используем тол
 | `cinema/recon/SuslikCinemaRecon/` | мод CET для разведки: только журнал, инструкция — `cinema/recon/README.md` |
 | `cinema/mod/SuslikCinema/` | мод CET: экран центром, `state.json` каждый кадр, инструкция — `cinema/mod/README.md` |
 | `cinema/host/` | хост `suslik-cinema.exe`: подключается из `desktop-qt` с `-DSM_CINEMA=ON` |
-| `cinema/helper/` | этап 3 (команды из интерфейса VAO) |
+| `cinema/mod/SuslikCinema/remote.lua` | пульт на телефоне VAO (этап 3), тест — `cinema/mod/tests/remote_test.lua` (LuaJIT) |
+| `cinema/mod/SuslikCinema/companion/cinema_helper.py` | helper VAO: запускает хост с телефона |
 
 ### Хост (каркас, 0.1.0)
 
@@ -40,15 +42,50 @@ VAO (`docs/bin/.../VsAPIOverlay`, чужой мод) используем тол
   Окно игры в Borderless тоже «всегда сверху» и при активации встаёт над оверлеем, поэтому оверлей поднимается
   (`SetWindowPos(HWND_TOPMOST)`, без фокуса) при каждой смене активного окна и раз в 0,5 с.
 - `GameAudio`: приглушает только сессии игры, сессии, приглушённые игроком, не трогает. Список приглушённых нами сессий хранится в
-  `game-mute.json`. После сбоя хост при запуске возвращает звук (`recoverAfterCrash`).
+  `game-mute.json`. Windows помнит приглушение программы, а сессия игры после перезапуска та же: если игру закрыли во
+  время фильма (или хост упал), сессия остаётся в файле и звук ей возвращается, когда игра снова запущена (проверка
+  раз в 3 с, `restorePending`). До 0.3.1 хост в этом случае забывал сессию — новая игра шла без звука (08.11).
+  `--unmute-game` снимает приглушение со всех сессий игры.
+- Хост — один (`SingleInstance` ПК-версии, замок в папке данных): новый запуск просит прежний закрыться (место — на
+  сервер, звук — игре) и ждёт до 10 с. Две копии рисовали два оверлея и путали звук игры (08.11).
 - `CinemaSettings.cpp`: заглушка `PlaybackSettings::cacheMs()`, чтобы не тянуть настройки всего приложения.
 - Папка данных — `%APPDATA%\SuslikCinema` (`SUSLIK_APPDIR`), журнал `player.log` с тегом `[cinema]`.
   libmpv берётся у ПК-версии (`%APPDATA%\SuslikMediaQt\mpv`, `SUSLIK_MPV_DIR`).
 
-Запуск: `suslik-cinema.exe [--file <путь|адрес>] [--no-game] [--no-mute] [--calibrate] [--mute-test]
-[--mod-dir <папка>] [--lead-ms <мс>] [--present-frames <n>]`.
+Запуск: `suslik-cinema.exe [--file <путь|адрес>] [--remote] [--pattern] [--no-game] [--no-mute] [--calibrate] [--mute-test]
+[--mod-dir <папка>] [--lead-ms <мс>] [--present-frames <n>]`; медиатека — см. «Медиатека и воспроизведение».
 Клавиши: Ctrl+Alt+C — ручная калибровка без мода (тянуть углы, S — сохранить, R — сбросить), Ctrl+Alt+P — пауза,
 Ctrl+Alt+H — скрыть, Ctrl+Alt+Q — выход, Ctrl+Alt+PgUp/PgDn — поправка упреждения ±4 мс (`cinema.json`).
+
+### Медиатека и воспроизведение (этап 1, 0.3.0)
+
+```
+suslik-cinema.exe --site <адрес> --login      вход по коду устройства (адрес запоминается)
+suslik-cinema.exe --list [слова]              плитки: id, название, релизы с подписью и счётом
+suslik-cinema.exe --play <id|название> [--quality 4K|1080p|<часть подписи>] [--release <id>]
+                  [--season N] [--episode N] [--from-start] [--reserve-mb <МБ>]
+```
+
+- Из `desktop-qt/app/src` без копий: `Library` (вход, `/api/library`, прогресс, «последняя серия»), `AudioAttach`
+  (его зовёт `Library`), `player/Reserve` (общий `BurstProxy`, новая подпись через `/api/file/mirror-url`).
+  Из ядра: `CloudSync`/`WatchSync`, `groupVersions`, `buildPartyVariant`. Своё у хоста — `CinemaSession`
+  (ключи и пульт), `ReleasePick` (выбор релиза, проверка адреса; тест `ReleasePickTest`) и `CinemaSettings.cpp`
+  (`burstMb`, `cacheMs`, `reserveDir` вместо `Settings.cpp` ПК-версии, хранилище `settings` хоста).
+- Адрес сервера: `SUSLIK_SITE` → сохранённый `--site` → `SM_SITE_URL` сборки. В репозитории его нет.
+  Данные (cookie, токен устройства, прогресс) — свои в `%APPDATA%\SuslikCinema`: хост входит как отдельное
+  устройство («Suslik Media Windows», имя задаёт `Library`). Строки статусов — `desktop-qt/resources/strings/ru.json`.
+- Выбор релиза: версии плитки (`versionsOf`), у сериала — та же серия в каждой версии, у сборника — тот же фильм;
+  `--release` → `--quality` (качество или часть подписи) → выбор пользователя в плеерах (`vmagnet:m<id>`,
+  `vquality:m<id>`, `vquality:c<canonical_id>`, `vquality:*` — приходят по аккаунту) → лучший по счёту.
+- Адрес файла — `/api/file/mirror-url`; хост открывает его, только если это свой сервер, https и путь
+  `/api/file/proxy/` (`isMirrorUrl`), иначе отказ. Дальше — `BurstProxy` (`wrap`, `keepOnly`, длина фильма).
+- Прогресс: с сохранённого места (`watchInfoWithFallback`, досмотренное — с начала), раз в 10 с, на паузе,
+  после перемотки, в конце и при выходе (`Library::noteWatch` → облако, `kick` при выходе, выход через 1,5 с).
+  Если место с другого устройства пришло в первые 30 с, а человек не перематывал, — переход туда.
+- Фильм открывается, когда готовы и рисовальщик (пара кадров сцены), и адрес от сервера.
+- Пульт до телефона VAO: Ctrl+Alt+←/→ — 10 с, Ctrl+Alt+↑/↓ — 10 мин, Ctrl+Alt+A — озвучка, Ctrl+Alt+S — субтитры,
+  Ctrl+Alt+I — сводка mpv. Раз в 10 с в журнале `[mpv] … avsync=… [proxy] …`, запросы — `[http]` без параметров.
+- Проверки и матрица кодеков — `cinema/TEST.md`.
 
 ### Экран в мире (этап 2, 0.2.0)
 
@@ -110,17 +147,71 @@ Ctrl+Alt+H — скрыть, Ctrl+Alt+Q — выход, Ctrl+Alt+PgUp/PgDn — �
 
 ```
 cmake -S desktop-qt -B build-cinema -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=C:/Qt/6.5.3/msvc2019_64 -DSM_BUILD_APP=OFF -DSM_CINEMA=ON
-cmake --build build-cinema --target suslik_cinema QuadMathTest GameViewTest
+cmake --build build-cinema --target suslik_cinema QuadMathTest GameViewTest ReleasePickTest
 C:/Qt/6.5.3/msvc2019_64/bin/windeployqt --release --no-translations --qmldir cinema/host/qml build-cinema/cinema/suslik-cinema.exe
 ```
 
+Перед сборкой — `vcvars64.bat` (у владельца `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build`).
+После правок заголовков — удалить `build-cinema\cinema\CMakeFiles\suslik_cinema.dir\*.obj` и папки
+`suslik_cinema_autogen`. Вывод хоста виден только в окне `cmd` (AttachConsole), в перенаправленный файл он не попадает —
+смотрите `player.log`.
+
 Без `windeployqt` exe запускается только с Qt в PATH (иначе «не обнаружила Qt6Quick.dll»).
 
-### Протокол хост ↔ helper (этап 3)
+### Пульт на телефоне VAO (этап 3, хост 0.4.0)
 
-localhost TCP, одна JSON-строка на сообщение. Команды: `login_code`, `list`, `play{id, release, audio, sub}`, `pause`,
-`seek{pos}`, `volume{v}`, `mute{on}`, `set_rect{corners}`, `calibrate{on}`, `stop`.
-События: `state{pos, dur, paused}`, `error{msg}`, `progress{…}`, `mute{state}`.
+Вместо задуманного TCP между helper и хостом — файлы в папке мода, как `state.json`: Lua в CET сокетов не умеет,
+helper был бы только пересыльщиком файлов, а запись на месте с `seq`/`end` уже проверена на `state.json`.
+Helper нужен для одного: Lua не может запустить программу.
+
+| Файл | Кто пишет | Что |
+|---|---|---|
+| `remote.json` | мод (`remote.lua`) | `{"sid", "cmds": [{"n", "at", "op", …}]}` — последние 12 команд; хост выполняет новые по `n` (`RemoteLink::takeNew`), старше 30 с (после запуска хоста — 15 с) пропускает; новый `sid` — мод перезапущен, счёт заново |
+| `host.json` | хост (`RemoteLink`) | состояние раз в 0,3 с при изменении и раз в секунду для признака жизни (`time` — секунды Unix): `auth, user, code, url, site, busy, msg, msgN, muteGame, pauseWithGame, libRev, play{title, rel, pos, dur, paused, buf, vol, audio[], subs[]}`; мод берёт файл, только если `seq == end` |
+| `library.json` | хост | `{seq = libRev, items: [{id, t, y, k (m/s/c), ok, st, s: [{n, e[]}], n, rel: [{id, l}]}]}` — не чаще раза в секунду и только при изменении |
+| `host.txt` | хост | путь к `suslik-cinema.exe` |
+
+Команды: `login`, `cancelLogin`, `logout`, `refresh`, `play{id, release, season, episode, fromStart}`, `toggle`,
+`seek{ms}`, `seekBy{ms}`, `audio{id?}`, `sub{id?}` (без id — следующая), `volume{v}`, `stop`, `opt{key, on}`, `quit`.
+
+- Телефон: значок «Suslik Cinema» (`VAO.RegisterApp`), окно `SuslikCinema_remote`. Страницы: хост не запущен
+  (кнопка запуска, при открытии окна запускается сам) → вход по коду (код крупно, «Открыть страницу на ПК» —
+  `VAO.OpenUrl`; хост браузер сам не открывает: `Library::setOpenPairingPage(false)`) → медиатека (поиск без учёта
+  регистра, в том числе русского, по 8 плиток) → фильм (сезон и серия, сборник — номер фильма; «Смотреть» — релиз
+  как в плеерах, или конкретный релиз; «С начала») → пульт (место ползунком, ±10 с, ±10 мин, пауза, громкость,
+  озвучка и субтитры по кругу, флажки, «Стоп»).
+- Helper `companion/cinema_helper.py` (`VAO.RegisterHelper`, без автозапуска): хост жив (`host.json` моложе 4 с) —
+  ничего; иначе запускает `host.txt --remote` отдельным процессом (`DETACHED_PROCESS`, отрыв от задания VAO) и ждёт
+  ответа до 15 с. Хост, запущенный с `--remote`, не трогает уже запущенный (обычный запуск просит его закрыться).
+- Хост теперь всегда с плеером: без фильма экран пуст (`Host.blank`, прозрачность 0 — рисовальщик mpv должен
+  существовать до открытия файла). Тестовая картинка — `--pattern`.
+- «Глушить звук игры во время фильма» и «Пауза фильма вместе с игрой» (`paused` из `state.json`) — флажки пульта,
+  хранятся в `settings` хоста (`remote_muteGame`, `remote_pauseWithGame`), по умолчанию включены. Фильм ставится на
+  паузу и когда окно игры пропало; продолжается сам, только если паузу ставил хост.
+
+### Комнаты «Вместе» (хост 0.5.0)
+
+Те же комнаты, что у ПК, Android и ТВ: сервер `/api/rooms`, код комнаты, ведущий, гости. Без своих копий:
+`app::Party` из ПК-версии (создание, вход по коду, поток событий, часы, права, варианты раздач и сдвиг времени между
+ними) и общий движок синхронизации ядра `core::PartySyncEngine` (тот же, что у Android и ПК: дрейф, ожидание
+буферизации, пауза и перемотка ведущего). Своё у хоста — `CinemaParty`, как `PartySync` у ПК-версии: плеер хоста
+для движка (`SyncPlayer`: место, пауза, перемотка, скорость; метка перемотки — `CinemaSession::seekStamp`).
+
+- Ведущий включил фильм (телефон или `--play`) — он становится фильмом комнаты (`putFilm`: ключ, название,
+  canonical_id, монтаж, варианты релизов). Комнату создали, когда фильм уже шёл, — тоже. «Стоп» ведущего — комната
+  без фильма (`closeIfNobodyWatches`).
+- Гость сразу открывает фильм ведущего с места комнаты (как `PartyFollow.qml` у ПК: только что включённый фильм
+  ждёт место ведущего до 2,5 с); фильма нет в медиатеке — она перечитывается один раз. Ведущий сменил фильм или
+  серию — гость за ним; закрыл — у гостя фильм останавливается. «Стоп» гостя — он ждёт кнопку «Включить фильм
+  комнаты». Пауза и перемотка гостя заперты («Паузой и перемоткой управляет …»).
+- Подсказки движка («ставит паузу», «перематывает на…», «ждём загрузку») — всплывашками на телефоне (строки
+  `ru.json` ПК-версии). Выход из аккаунта — выход из комнаты.
+- Просьбы Discord Activity поискать на RuTracker через этот ПК кинотеатр отклоняет (`CinemaTrackers.cpp`:
+  браузерный мост ПК-версии сюда не тянем).
+- Телефон: «Смотреть вместе» в медиатеке и строка комнаты на пульте → страница «Вместе» (код, «Войти», «Создать
+  комнату»; в комнате — ведущий, участники, фильм и его состояние, «Выйти из комнаты»). Команды `roomCreate`,
+  `roomJoin{code}`, `roomLeave`, `roomFollow`; состояние — `room{in, code, host, hostName, members[], title, line,
+  connected, busy, error, watching}` в `host.json`.
 
 ## Итоги разведки (этап 0, 08.11)
 
@@ -176,7 +267,7 @@ localhost TCP, одна JSON-строка на сообщение. Команд�
 
 Закрыт (см. раздел «Экран в мире»). Мод и хост синхронизированы, экран позиционируется по камере игры.
 
-### Этап 1. Хост: воспроизведение без игры (следующий)
+### Этап 1. Хост: воспроизведение без игры (в коде, 0.3.0; проверка — `cinema/TEST.md`)
 
 - Вход по коду устройства (`Auth`).
 - Медиатека и выбор релиза по пресету (`PlaybackPresets`).
@@ -186,7 +277,7 @@ localhost TCP, одна JSON-строка на сообщение. Команд�
 - Матрица кодеков в `cinema/TEST.md`: старт, перемотка на 10 мин, смена дорожки, синхронность звука.
 - Звук фильма — mpv напрямую (стерео); звук игры приглушается (`GameAudio`).
 
-### Этап 3. Мост и интерфейс
+### Этап 3. Мост и интерфейс (в коде, хост 0.4.0; см. «Пульт на телефоне VAO»)
 
 - Helper `cinema/helper/cinema_helper.py` через `VAO.RegisterHelper`: запускает хост, держит TCP с ним
   (протокол выше), передаёт команды из телефона VAO.
@@ -209,6 +300,12 @@ Codeware и VAO, `docs/CYBERPUNK.md` для пользователя. Стаби
 
 - Ветка `feature/cyberpunk-cinema` (рабочая копия `../suslik-cinema`), на GitHub не отправлена.
 - Этапы 0 и 2 закрыты. Сделаны мод `SuslikCinema` и хост 0.2.0 (`GameLink`, `GameView`, тесты `QuadMathTest` и `GameViewTest` проходят).
+- Комнаты «Вместе» в коде (хост 0.5.0, 08.11): собирается, `remote_test.lua` — 54 проверки; команды комнаты
+  без сервера не роняют хост. С настоящей комнатой и вторым устройством не проверено — `cinema/TEST.md`.
+- Этап 3 в коде (хост 0.4.0, 08.11): пульт на телефоне VAO. Собирается, `RemoteLinkTest` и `remote_test.lua`
+  (34 проверки, LuaJIT) проходят, обмен файлами проверен хостом без игры. В игре не проверено — `cinema/TEST.md`.
+- Этап 1 в коде (хост 0.3.0, 08.11): `--login`, `--list`, `--play`, выбор релиза, зеркало, `BurstProxy`, прогресс,
+  пульт клавишами. Собирается локально, `ReleasePickTest` проходит. С сервером и в игре не проверено — `cinema/TEST.md`.
 - Проверено владельцем в игре: экран на телевизоре в квартире V держится с поправкой −24 мс (генерация кадров DLSS ×3)
   лучше рамки разведки; видео mpv, в том числе 4K HDR remux, без рывков и мигания; большие экраны; оверлей над окном
   игры. Владелец: «всё воспроизводит хорошо».
