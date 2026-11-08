@@ -31,6 +31,12 @@ local R = {
     delayMs = 0,       -- на сколько отстаёт картинка игры от камеры (генерация кадров, очередь кадров)
     -- экран центром: точка на стекле, нормаль, размер и сдвиги (как у TVKit); углы считаются из них
     screen = nil,      -- { c, n, w, h, sr, su, sn }
+    -- упреждение по повороту камеры: frames — сдвиг экранных углов (Lag frames), pose — поворот камеры
+    -- вперёд на leadMs с затуханием при остановке и перепроекция с фокусом, подогнанным под ProjectPoint
+    predModes = { "pose", "frames" },
+    predMode = 1,
+    leadMs = 15,
+    pose = { yaw = nil, pitch = nil, wy = 0, wp = 0, still = 0, t = nil },
     lagFrames = -1,    -- сдвиг рамки в кадрах по экранным углам: >0 — рамка из прошлых кадров, <0 — упреждение
     qhist = {},        -- экранные углы последних кадров (для lagFrames)
     draws = 0, updates = 0, rateT = 0, drawRate = 0, updateRate = 0,
@@ -579,6 +585,64 @@ local function recordFrame(dt)
     end
 end
 
+-- ---------- упреждение по повороту ----------
+
+local function wrapPi(a)
+    while a > math.pi do a = a - 2 * math.pi end
+    while a < -math.pi do a = a + 2 * math.pi end
+    return a
+end
+
+-- Углы на экране с упреждением: камера поворачивается вперёд на leadMs по сглаженной угловой скорости,
+-- углы перепроецируются той же «линзой», что у игры (kx, ky подгоняются под ProjectPoint каждый кадр).
+local function predictPose(c, ndc, W, H)
+    local P = R.pose
+    local t = nowSec()
+    local yaw = math.atan2(c.f.y, c.f.x)
+    local pitch = math.asin(math.max(-1, math.min(1, c.f.z)))
+    if P.t and t > P.t then
+        local dt = t - P.t
+        if dt > 0.001 and dt < 0.1 then
+            local ry, rp = wrapPi(yaw - P.yaw) / dt, (pitch - P.pitch) / dt
+            local a = 0.5
+            P.wy, P.wp = a * P.wy + (1 - a) * ry, a * P.wp + (1 - a) * rp
+            -- остановка: быстро гасим скорость, чтобы рамка не проскакивала и не «возвращалась»
+            if math.abs(ry) < 0.01 and math.abs(rp) < 0.01 then P.still = P.still + 1 else P.still = 0 end
+            if P.still >= 1 then P.wy, P.wp = P.wy * 0.4, P.wp * 0.4 end
+        else
+            P.wy, P.wp = 0, 0
+        end
+    end
+    P.yaw, P.pitch, P.t = yaw, pitch, t
+    -- фокус игры: ndc = k * (x/z) по каждой оси (наименьшие квадраты по четырём углам)
+    local sxa, saa, syb, sbb = 0, 0, 0, 0
+    for i = 1, 4 do
+        local d = sub(R.corners[i], c.pos)
+        local zc = dot(d, c.f)
+        if zc < 0.05 or not ndc[i] then return nil end
+        local a, b = dot(d, c.r) / zc, dot(d, c.u) / zc
+        sxa, saa = sxa + ndc[i][1] * a, saa + a * a
+        syb, sbb = syb + ndc[i][2] * b, sbb + b * b
+    end
+    if saa < 1e-9 or sbb < 1e-9 then return nil end
+    local kx, ky = sxa / saa, syb / sbb
+    local lead = R.leadMs / 1000
+    local lim = math.rad(5)
+    local py = yaw + math.max(-lim, math.min(lim, P.wy * lead))
+    local pp = pitch + math.max(-lim, math.min(lim, P.wp * lead))
+    local f = { x = math.cos(pp) * math.cos(py), y = math.cos(pp) * math.sin(py), z = math.sin(pp) }
+    local r = norm(cross(f, { x = 0, y = 0, z = 1 }))
+    local u = cross(r, f)
+    local out = {}
+    for i = 1, 4 do
+        local d = sub(R.corners[i], c.pos)
+        local zc = dot(d, f)
+        if zc < 0.05 then return nil end
+        out[i] = { (1 + kx * dot(d, r) / zc) * W / 2, (1 - ky * dot(d, u) / zc) * H / 2 }
+    end
+    return out
+end
+
 -- ---------- рисование ----------
 
 local COL_FRAME = 0xFF00FF00 -- ABGR: зелёный
@@ -618,10 +682,18 @@ local function drawHud()
                     pts[i] = x and { x, y } or nil
                 end
                 -- сдвиг во времени в экранных координатах: работает и для проекции игры (её камеру назад не отмотать)
+                if mode == "game" and R.predModes[R.predMode] == "pose" and c.f then
+                    local ndc = {}
+                    for i = 1, 4 do
+                        if pts[i] then ndc[i] = { pts[i][1] / W * 2 - 1, 1 - pts[i][2] / H * 2 } end
+                    end
+                    local pp = predictPose(c, ndc, W, H)
+                    if pp then pts = pp end
+                end
                 local qh = R.qhist
                 qh[#qh + 1] = pts
                 while #qh > 8 do table.remove(qh, 1) end
-                local lag = R.lagFrames
+                local lag = (R.predModes[R.predMode] == "frames") and R.lagFrames or 0
                 if lag > 0 and #qh > lag then
                     pts = qh[#qh - lag]
                 elseif lag < 0 and #qh >= 2 then
@@ -640,8 +712,8 @@ local function drawHud()
                 if pts[1] and pts[3] then ImGui.ImDrawListAddLine(dl, pts[1][1], pts[1][2], pts[3][1], pts[3][2], COL_FRAME, 1.0) end
                 if pts[2] and pts[4] then ImGui.ImDrawListAddLine(dl, pts[2][1], pts[2][2], pts[4][1], pts[4][2], COL_FRAME, 1.0) end
                 ImGui.ImDrawListAddText(dl, 20, H - 40, COL_TEXT,
-                    string.format("Suslik recon: %s, lag %d frames, delay %d ms, draw %d/s, update %d/s", mode,
-                        R.lagFrames, R.delayMs, R.drawRate, R.updateRate))
+                    string.format("Suslik recon: %s, predict %s (lead %d ms, lag %d), draw %d/s, update %d/s", mode,
+                        R.predModes[R.predMode], R.leadMs, R.lagFrames, R.drawRate, R.updateRate))
             end
         end)
         if not ok and R.api["Hud.draw"] == nil then
@@ -679,7 +751,12 @@ local function drawWindow()
         if used then R.fovScale = v end
         local m, usedM = ImGui.SliderFloat("Manual FOV", R.fovManual, 30, 120)
         if usedM then R.fovManual = m end
-        local lf, usedL = ImGui.SliderInt("Lag frames (<0 = predict)", R.lagFrames, -3, 4)
+        if ImGui.Button("Predict: " .. R.predModes[R.predMode]) then
+            R.predMode = R.predMode % #R.predModes + 1; log("predict " .. R.predModes[R.predMode])
+        end
+        local lm, usedLm = ImGui.SliderInt("Lead ms (pose)", R.leadMs, 0, 60)
+        if usedLm then R.leadMs = lm end
+        local lf, usedL = ImGui.SliderInt("Lag frames (frames, <0 = predict)", R.lagFrames, -3, 4)
         if usedL then R.lagFrames = lf; log("lag frames " .. lf) end
         local dm, usedD = ImGui.SliderInt("Delay ms (not for game mode)", R.delayMs, -100, 150)
         if usedD then R.delayMs = dm end
