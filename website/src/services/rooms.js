@@ -124,6 +124,8 @@ function getRoomPublicData(room) {
     members: Array.from(room.members.values()).map(publicMember),
     member_count: room.members.size,
     variant_offsets: variantOffsetsOf(room),
+    // Экран кинотеатра ведущего в Cyberpunk (cinema/, действие screen): только у комнаты, где им поделились
+    ...(room.screen ? { screen: room.screen } : {}),
     // Только у комнаты голосового канала (Activity); приложения эти поля не читают
     ...(room.channel_id ? { channel: true, ...activityPublicData(room) } : {})
   };
@@ -719,6 +721,16 @@ function handleRoomAction(roomId, user, action) {
   }
 
   const isHost = isRoomHost(room, user, action.client_id);
+  // Экран кинотеатра в Cyberpunk 2077 (cinema/): ведущий делится, где в мире стоит его экран, гость по кнопке на
+  // телефоне ставит такой же у себя. Сервер только проверяет, хранит и рассылает; приложения и ТВ поле не читают
+  if (action.type === "screen") {
+    if (!isHost) return { ok: false, error: "Экраном делится только тот, кто создал комнату." };
+    const screen = action.screen == null ? null : cleanScreen(action.screen);
+    if (action.screen != null && !screen) return { ok: false, error: "Неверный формат экрана." };
+    room.screen = screen;
+    broadcast(roomId, "state_changed", getRoomPublicData(room));
+    return { ok: true, room: getRoomPublicData(room) };
+  }
   // Фильм комнаты выбирает только ведущий; пауза и перемотка — по настройке комнаты
   if (action.type === "change_file" && !isHost) {
     return { ok: false, error: "Фильм выбирает только тот, кто создал комнату." };
@@ -1044,6 +1056,30 @@ function cleanVariant(v) {
 
 const MAX_VARIANTS = 30;
 
+// Экран кинотеатра (cinema/mod, screens.json): центр c и нормаль n в мире игры, размер w×h (м), сдвиги sr/su/sn,
+// пропорции ar (0 — свободная высота), вписывание fit. Всё — числа в разумных пределах, лишние поля отбрасываются
+const SCREEN_FITS = new Set(["fit", "fill", "stretch"]);
+function cleanScreen(s) {
+  if (!s || typeof s !== "object" || Array.isArray(s)) return null;
+  const num = (v, min, max) => (typeof v === "number" && Number.isFinite(v) && v >= min && v <= max ? Math.round(v * 1e4) / 1e4 : null);
+  const vec = (a, lim) => {
+    if (!Array.isArray(a) || a.length !== 3) return null;
+    const out = a.map(v => num(v, -lim, lim));
+    return out.includes(null) ? null : out;
+  };
+  const c = vec(s.c, 100000);
+  const n = vec(s.n, 1.0001);
+  const w = num(s.w, 0.05, 200);
+  const h = num(s.h, 0.05, 200);
+  if (!c || !n || w == null || h == null) return null;
+  if (Math.hypot(n[0], n[1], n[2]) < 0.5) return null;
+  const opt = (v, min, max) => (v == null ? 0 : num(v, min, max));
+  const sr = opt(s.sr, -100, 100), su = opt(s.su, -100, 100), sn = opt(s.sn, -100, 100), ar = opt(s.ar, 0, 10);
+  if (sr == null || su == null || sn == null || ar == null) return null;
+  const fit = SCREEN_FITS.has(s.fit) ? s.fit : "fit";
+  return { c, n, w, h, sr, su, sn, ar, fit };
+}
+
 function cleanFile(file) {
   if (!file || typeof file !== "object") return null;
   const key = typeof file.key === "string" ? file.key.slice(0, 1000) : "";
@@ -1344,6 +1380,7 @@ module.exports = {
   promoteIfHostGone,
   handleRoomAction,
   isDeviceDisplaced,
+  cleanScreen,
   timelineShiftMs,
   getOrCreateChannelRoom,
   reportSpeaking,
