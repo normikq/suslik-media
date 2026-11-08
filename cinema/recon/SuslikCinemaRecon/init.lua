@@ -332,6 +332,64 @@ local function loadCorners()
     R.needOrder = #R.corners == 4 -- старый файл мог быть отмечен в другом порядке: разберём, когда будет камера
 end
 
+-- ---------- задержка ----------
+
+local function nowSec()
+    local ok, c = pcall(os.clock) -- на Windows — время с запуска процесса
+    return ok and c or 0
+end
+
+local function pushPose()
+    local c = camera()
+    if not (c.pos and c.f and c.r and c.u) then return end
+    local t = nowSec()
+    local h = R.hist
+    h[#h + 1] = { t = t, pos = c.pos, f = c.f, r = c.r, u = c.u }
+    while #h > 2 and h[1].t < t - 0.5 do table.remove(h, 1) end
+end
+
+local function lerp(a, b, k) return add(a, mul(sub(b, a), k)) end
+
+local function blend(a, b, k)
+    return { pos = lerp(a.pos, b.pos, k), f = norm(lerp(a.f, b.f, k)), r = norm(lerp(a.r, b.r, k)),
+        u = norm(lerp(a.u, b.u, k)) }
+end
+
+-- Камера на момент t (между двумя записями — линейно; позже последней — упреждение по двум последним).
+-- nil — истории не хватает.
+local function poseAt(t)
+    local h = R.hist
+    if #h >= 2 and t > h[#h].t then
+        local a, b = h[#h - 1], h[#h]
+        if b.t <= a.t then return nil end
+        return blend(a, b, math.min((t - a.t) / (b.t - a.t), 4))
+    end
+    for i = #h, 2, -1 do
+        local a, b = h[i - 1], h[i]
+        if a.t <= t and t <= b.t then
+            local k = (b.t > a.t) and (t - a.t) / (b.t - a.t) or 0
+            return blend(a, b, k)
+        end
+    end
+    return nil
+end
+
+-- Углы по местам ЛВ, ПВ, ПН, ЛН относительно зрителя (в каком порядке их ни отметили). false — не разобрать.
+local function orderCorners(cs, eye)
+    local ctr = mul(add(add(cs[1], cs[2]), add(cs[3], cs[4])), 0.25)
+    local f = norm(sub(ctr, eye))
+    local right = norm(cross(f, { x = 0, y = 0, z = 1 }))
+    local out = {}
+    for _, p in ipairs(cs) do
+        local d = sub(p, ctr)
+        local left = dot(d, right) < 0
+        local idx = (d.z > 0) and (left and 1 or 2) or (left and 4 or 3)
+        if out[idx] then return cs, false end
+        out[idx] = p
+    end
+    return out, true
+end
+
 local CORNER_NAMES = { "top-left", "top-right", "bottom-right", "bottom-left" }
 
 local function markCorner()
@@ -393,54 +451,6 @@ local function recordFrame(dt)
     end
 end
 
--- ---------- задержка ----------
-
-local function nowSec()
-    local ok, c = pcall(os.clock) -- на Windows — время с запуска процесса
-    return ok and c or 0
-end
-
-local function pushPose()
-    local c = camera()
-    if not (c.pos and c.f and c.r and c.u) then return end
-    local t = nowSec()
-    local h = R.hist
-    h[#h + 1] = { t = t, pos = c.pos, f = c.f, r = c.r, u = c.u }
-    while #h > 2 and h[1].t < t - 0.5 do table.remove(h, 1) end
-end
-
-local function lerp(a, b, k) return add(a, mul(sub(b, a), k)) end
-
--- Камера на момент t (между двумя записями — линейно). nil — истории не хватает.
-local function poseAt(t)
-    local h = R.hist
-    for i = #h, 2, -1 do
-        local a, b = h[i - 1], h[i]
-        if a.t <= t and t <= b.t then
-            local k = (b.t > a.t) and (t - a.t) / (b.t - a.t) or 0
-            return { pos = lerp(a.pos, b.pos, k), f = norm(lerp(a.f, b.f, k)), r = norm(lerp(a.r, b.r, k)),
-                u = norm(lerp(a.u, b.u, k)) }
-        end
-    end
-    return nil
-end
-
--- Углы по местам ЛВ, ПВ, ПН, ЛН относительно зрителя (в каком порядке их ни отметили). false — не разобрать.
-local function orderCorners(cs, eye)
-    local ctr = mul(add(add(cs[1], cs[2]), add(cs[3], cs[4])), 0.25)
-    local f = norm(sub(ctr, eye))
-    local right = norm(cross(f, { x = 0, y = 0, z = 1 }))
-    local out = {}
-    for _, p in ipairs(cs) do
-        local d = sub(p, ctr)
-        local left = dot(d, right) < 0
-        local idx = (d.z > 0) and (left and 1 or 2) or (left and 4 or 3)
-        if out[idx] then return cs, false end
-        out[idx] = p
-    end
-    return out, true
-end
-
 -- ---------- рисование ----------
 
 local COL_FRAME = 0xFF00FF00 -- ABGR: зелёный
@@ -470,7 +480,7 @@ local function drawHud()
                 end
             end
             if #R.corners == 4 then
-                local c = (R.delayMs > 0 and poseAt(nowSec() - R.delayMs / 1000)) or camera()
+                local c = (R.delayMs ~= 0 and poseAt(nowSec() - R.delayMs / 1000)) or camera()
                 local comp, settings = fovNow()
                 local fv = fovUsed(comp, settings)
                 local mode = R.fovModes[R.fovMode]
@@ -524,7 +534,7 @@ local function drawWindow()
         if used then R.fovScale = v end
         local m, usedM = ImGui.SliderFloat("Manual FOV", R.fovManual, 30, 120)
         if usedM then R.fovManual = m end
-        local dm, usedD = ImGui.SliderInt("Delay ms", R.delayMs, 0, 150)
+        local dm, usedD = ImGui.SliderInt("Delay ms (<0 = predict)", R.delayMs, -100, 150)
         if usedD then R.delayMs = dm end
         ImGui.Text(string.format("draw %d/s, update %d/s", R.drawRate, R.updateRate))
         if ImGui.Button("Log 'frame matches TV'") then
