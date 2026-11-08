@@ -762,9 +762,9 @@ local function drawWindow()
         if usedD then R.delayMs = dm end
         ImGui.Text(string.format("draw %d/s, update %d/s", R.drawRate, R.updateRate))
         if ImGui.Button("Log 'frame matches TV'") then
-            log(string.format("=== MATCH confirmed: mode=%s source=%s scale=%.4f manual=%.2f lag=%d delay=%dms draw=%d/s update=%d/s",
-                R.fovModes[R.fovMode], R.fovSources[R.fovSource], R.fovScale, R.fovManual, R.lagFrames, R.delayMs, R.drawRate,
-                R.updateRate))
+            log(string.format("=== MATCH confirmed: mode=%s source=%s scale=%.4f manual=%.2f predict=%s lead=%dms lag=%d delay=%dms draw=%d/s update=%d/s",
+                R.fovModes[R.fovMode], R.fovSources[R.fovSource], R.fovScale, R.fovManual, R.predModes[R.predMode],
+                R.leadMs, R.lagFrames, R.delayMs, R.drawRate, R.updateRate))
             snapshot("match")
         end
         ImGui.Separator()
