@@ -29,6 +29,8 @@ local R = {
     recording = false,
     hist = {},         -- положения камеры за последние 0,5 с (onUpdate): рамка по камере «N мс назад»
     delayMs = 0,       -- на сколько отстаёт картинка игры от камеры (генерация кадров, очередь кадров)
+    lagFrames = 0,     -- сдвиг рамки в кадрах по экранным углам: >0 — рамка из прошлых кадров, <0 — упреждение
+    qhist = {},        -- экранные углы последних кадров (для lagFrames)
     draws = 0, updates = 0, rateT = 0, drawRate = 0, updateRate = 0,
     recordLeft = 0,
     recordFrames = 0,
@@ -506,6 +508,21 @@ local function drawHud()
                     local x, y = project(R.corners[i], c, W, H, fv, mode)
                     pts[i] = x and { x, y } or nil
                 end
+                -- сдвиг во времени в экранных координатах: работает и для проекции игры (её камеру назад не отмотать)
+                local qh = R.qhist
+                qh[#qh + 1] = pts
+                while #qh > 8 do table.remove(qh, 1) end
+                local lag = R.lagFrames
+                if lag > 0 and #qh > lag then
+                    pts = qh[#qh - lag]
+                elseif lag < 0 and #qh >= 2 then
+                    local prev, out = qh[#qh - 1], {}
+                    for i = 1, 4 do
+                        local a, b = prev[i], pts[i]
+                        out[i] = (a and b) and { b[1] + (b[1] - a[1]) * -lag, b[2] + (b[2] - a[2]) * -lag } or b
+                    end
+                    pts = out
+                end
                 for i = 1, 4 do
                     local a, b = pts[i], pts[i % 4 + 1]
                     if a and b then ImGui.ImDrawListAddLine(dl, a[1], a[2], b[1], b[2], COL_FRAME, 2.0) end
@@ -514,8 +531,8 @@ local function drawHud()
                 if pts[1] and pts[3] then ImGui.ImDrawListAddLine(dl, pts[1][1], pts[1][2], pts[3][1], pts[3][2], COL_FRAME, 1.0) end
                 if pts[2] and pts[4] then ImGui.ImDrawListAddLine(dl, pts[2][1], pts[2][2], pts[4][1], pts[4][2], COL_FRAME, 1.0) end
                 ImGui.ImDrawListAddText(dl, 20, H - 40, COL_TEXT,
-                    string.format("Suslik recon: fov %.2f (%s, %s x%.3f), delay %d ms, draw %d/s, update %d/s", fv, mode,
-                        R.fovSources[R.fovSource], R.fovScale, R.delayMs, R.drawRate, R.updateRate))
+                    string.format("Suslik recon: %s, lag %d frames, delay %d ms, draw %d/s, update %d/s", mode,
+                        R.lagFrames, R.delayMs, R.drawRate, R.updateRate))
             end
         end)
         if not ok and R.api["Hud.draw"] == nil then
@@ -551,12 +568,14 @@ local function drawWindow()
         if used then R.fovScale = v end
         local m, usedM = ImGui.SliderFloat("Manual FOV", R.fovManual, 30, 120)
         if usedM then R.fovManual = m end
-        local dm, usedD = ImGui.SliderInt("Delay ms (<0 = predict)", R.delayMs, -100, 150)
+        local lf, usedL = ImGui.SliderInt("Lag frames (<0 = predict)", R.lagFrames, -3, 4)
+        if usedL then R.lagFrames = lf; log("lag frames " .. lf) end
+        local dm, usedD = ImGui.SliderInt("Delay ms (not for game mode)", R.delayMs, -100, 150)
         if usedD then R.delayMs = dm end
         ImGui.Text(string.format("draw %d/s, update %d/s", R.drawRate, R.updateRate))
         if ImGui.Button("Log 'frame matches TV'") then
-            log(string.format("=== MATCH confirmed: mode=%s source=%s scale=%.4f manual=%.2f delay=%dms draw=%d/s update=%d/s",
-                R.fovModes[R.fovMode], R.fovSources[R.fovSource], R.fovScale, R.fovManual, R.delayMs, R.drawRate,
+            log(string.format("=== MATCH confirmed: mode=%s source=%s scale=%.4f manual=%.2f lag=%d delay=%dms draw=%d/s update=%d/s",
+                R.fovModes[R.fovMode], R.fovSources[R.fovSource], R.fovScale, R.fovManual, R.lagFrames, R.delayMs, R.drawRate,
                 R.updateRate))
             snapshot("match")
         end
