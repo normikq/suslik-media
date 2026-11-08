@@ -84,6 +84,8 @@ int forEachSession(const QString &exe, const std::function<void(const QString &,
                     instance = QString::fromWCharArray(id);
                     CoTaskMemFree(id);
                 }
+                // без идентификатора сессии ключи совпали бы у всех таких сессий
+                if (instance.isEmpty()) instance = QStringLiteral("pid%1#%2#%3").arg(pid).arg(d).arg(i);
                 Com<ISimpleAudioVolume> vol;
                 if (FAILED(ctl->QueryInterface(__uuidof(ISimpleAudioVolume), reinterpret_cast<void **>(vol.put())))) continue;
                 ++seen;
@@ -127,9 +129,11 @@ int GameAudio::mute() {
             ++changed;
         }
     });
-    m_active = true;
+    // нечего было глушить (Core Audio нет, у игры ещё нет сессии звука) — не «приглушено»: следующая проверка
+    // попробует снова
+    m_active = seen > 0;
     saveState();
-    app::PlayerLog::write(QStringLiteral("[cinema] звук игры: приглушено %1 из %2 сессий %3").arg(changed).arg(seen).arg(m_exe));
+    if (seen != 0) app::PlayerLog::write(QStringLiteral("[cinema] звук игры: приглушено %1 из %2 сессий %3").arg(changed).arg(seen).arg(m_exe));
     return seen < 0 ? -1 : changed;
 #else
     return -1;

@@ -2,11 +2,11 @@
 # берёт оттуда ядро (suslik_core) и плеер mpv (MpvEngine, MpvVideo) без копий.
 find_package(Qt6 6.4 REQUIRED COMPONENTS Gui Quick OpenGL)
 
-set(SM_CINEMA_VERSION 0.5.0)
+set(SM_CINEMA_VERSION 0.6.0)
 set(SM_APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/../../desktop-qt/app/src)
 
 # Геометрия экрана — отдельной библиотекой, чтобы проверять тестами без окна.
-add_library(suslik_cinema_geom STATIC QuadMath.cpp QuadMath.h GameView.cpp GameView.h)
+add_library(suslik_cinema_geom STATIC QuadMath.cpp QuadMath.h GameView.cpp GameView.h SpatialAudio.cpp SpatialAudio.h)
 target_include_directories(suslik_cinema_geom PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(suslik_cinema_geom PUBLIC Qt6::Gui)
 # Выбор релиза и проверка адреса зеркала — тоже без окна и сети
@@ -25,6 +25,7 @@ qt_add_executable(suslik_cinema WIN32
   CinemaSession.cpp CinemaSession.h
   RemoteLink.cpp RemoteLink.h
   CinemaParty.cpp CinemaParty.h
+  SpatialSound.cpp SpatialSound.h
   CinemaTrackers.cpp
   ${SM_APP_SRC}/party/Party.cpp ${SM_APP_SRC}/party/Party.h
   ${SM_APP_SRC}/AppDir.cpp ${SM_APP_SRC}/AppDir.h
@@ -85,6 +86,12 @@ if(SM_BUILD_TESTS)
     target_compile_options(GameViewTest PRIVATE /utf-8)
   endif()
   add_test(NAME GameViewTest COMMAND GameViewTest)
+  add_executable(SpatialAudioTest tests/SpatialAudioTest.cpp)
+  target_link_libraries(SpatialAudioTest PRIVATE suslik_cinema_geom Qt6::Test)
+  if(MSVC)
+    target_compile_options(SpatialAudioTest PRIVATE /utf-8)
+  endif()
+  add_test(NAME SpatialAudioTest COMMAND SpatialAudioTest)
   add_executable(ReleasePickTest tests/ReleasePickTest.cpp)
   target_link_libraries(ReleasePickTest PRIVATE suslik_cinema_pick Qt6::Test)
   if(MSVC)

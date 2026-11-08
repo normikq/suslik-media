@@ -386,6 +386,7 @@ void MpvEngine::setSubDelayMs(qint64 ms) { set("sub-delay", num(ms / 1000.0)); }
 void MpvEngine::setSubScale(int percent) { set("sub-scale", QString::number(percent / 100.0)); }
 void MpvEngine::setNightMode(bool on) { set("af", on ? S(kNightFilter) : QString()); }
 void MpvEngine::setPanScan(double val) { set("panscan", QString::number(val, 'f', 2)); }
+void MpvEngine::setKeepAspect(bool on) { set("keepaspect", on ? S("yes") : S("no")); }
 void MpvEngine::setAudioTrack(int id) { set("aid", id < 0 ? S("no") : QString::number(id)); }
 void MpvEngine::setSubTrack(int id) { set("sid", id < 0 ? S("no") : QString::number(id)); }
 void MpvEngine::removeAudioTrack(int id) { if (id >= 0) command({S("audio-remove"), QString::number(id)}); }

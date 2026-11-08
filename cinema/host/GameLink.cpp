@@ -116,6 +116,17 @@ void GameLink::setModDir(const QString &dir) {
                               .arg(d, QFileInfo::exists(d) ? QStringLiteral("есть") : QStringLiteral("папки нет")));
 }
 
+bool GameLink::listener(CameraPose &cam, V3 &center, double &width, double &wall) const {
+    if (!m_live || !m_state.cam || !m_hasScreen) return false;
+    cam = m_state.pose;
+    center = (m_corners[0] + m_corners[1] + m_corners[2] + m_corners[3]) * 0.25;
+    const V3 top = m_corners[1] - m_corners[0];
+    width = std::sqrt(dot(top, top));
+    // occl: стена (Static) — 1, предмет (Dynamic) — 0,5; глушит только стена
+    wall = std::clamp((m_occlSmooth - 0.5) * 2, 0.0, 1.0);
+    return true;
+}
+
 void GameLink::setAdjustMs(int ms) {
     ms = std::clamp(ms, -100, 100);
     if (ms == m_adjustMs) {
@@ -189,6 +200,12 @@ void GameLink::loadScreen() {
     m_normal = normalized(v3(o.value(QStringLiteral("n"))));
     const double w = o.value(QStringLiteral("w")).toDouble(), h = o.value(QStringLiteral("h")).toDouble();
     m_aspect = (w > 0 && h > 0) ? w / h : 16.0 / 9.0;
+    QString fit = o.value(QStringLiteral("fit")).toString(QStringLiteral("fit"));
+    if (fit != QLatin1String("fill") && fit != QLatin1String("stretch")) fit = QStringLiteral("fit");
+    if (fit != m_fit) {
+        m_fit = fit;
+        emit fitChanged(fit);
+    }
     m_srcW = 0; // пересчитать буфер кадра под новый размер
     app::PlayerLog::write(QStringLiteral("[cinema] экран rev %1: %2 × %3 м").arg(m_screenRev).arg(w, 0, 'f', 2).arg(h, 0, 'f', 2));
 }

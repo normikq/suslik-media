@@ -39,7 +39,7 @@ public:
 private:
     // core::SyncPlayer — плеер хоста в шкале раздачи ведущего (сдвиг shiftMs, как у ПК)
     qint64 timeMs() const override;
-    bool busy() const override { return false; }
+    bool busy() const override;
     qint64 engineMs() const override;
     qint64 seekStamp() const override;
     bool paused() const override;
@@ -69,6 +69,7 @@ private:
     QString m_followed;   ///< фильм комнаты, за которым гость уже пошёл
     QString m_refreshed;  ///< фильм комнаты, ради которого уже перечитывали медиатеку
     QString m_seenKey;
+    qint64 m_seenSeq = -1; ///< seq комнаты, когда фильм увидели: изменился — ведущий сообщил своё место
     QElapsedTimer m_seenAt;
 };
 

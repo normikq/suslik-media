@@ -20,6 +20,7 @@
 #include "Host.h"
 #include "Overlay.h"
 #include "RemoteLink.h"
+#include "SpatialSound.h"
 #include "ScreenQuad.h"
 
 #include "AppDir.h"
@@ -121,11 +122,12 @@ int main(int argc, char *argv[]) {
     QCommandLineOption siteOpt(QStringLiteral("site"), QStringLiteral("Адрес сервера (сохраняется)"), QStringLiteral("url"));
     QCommandLineOption remoteOpt(QStringLiteral("remote"), QStringLiteral("Запуск с телефона VAO: без фильма, уже запущенный хост не трогать"));
     QCommandLineOption patternOpt(QStringLiteral("pattern"), QStringLiteral("Тестовая картинка вместо плеера (калибровка)"));
+    QCommandLineOption volumeOpt(QStringLiteral("volume"), QStringLiteral("Громкость фильма 0–150"), QStringLiteral("v"));
     QCommandLineOption unmuteOpt(QStringLiteral("unmute-game"), QStringLiteral("Вернуть звук игре, чьё бы ни было приглушение"));
     QCommandLineOption reserveOpt(QStringLiteral("reserve-mb"), QStringLiteral("Запас на фильм, МБ (сохраняется; 0 — без запаса)"),
                                   QStringLiteral("mb"));
     cli.addOptions({fileOpt, gameOpt, noGameOpt, noMuteOpt, muteTestOpt, calibrateOpt, modDirOpt, leadOpt, presentOpt, loginOpt,
-                    listOpt, playOpt, qualityOpt, releaseOpt, seasonOpt, episodeOpt, fromStartOpt, siteOpt, reserveOpt, unmuteOpt, remoteOpt, patternOpt});
+                    listOpt, playOpt, qualityOpt, releaseOpt, seasonOpt, episodeOpt, fromStartOpt, siteOpt, reserveOpt, unmuteOpt, remoteOpt, patternOpt, volumeOpt});
     cli.process(app);
     const QString gameExe = cli.value(gameOpt);
 
@@ -266,6 +268,13 @@ int main(int argc, char *argv[]) {
     QObject::connect(&overlay, &cinema::Overlay::gameChanged, &app, syncLink);
     QObject::connect(&overlay, &cinema::Overlay::gameActiveChanged, &app, syncLink);
     QObject::connect(&overlay, &cinema::Overlay::calibratingChanged, &app, syncLink);
+    // Фильм на экране других пропорций (21:9, 2.39:1 на стене кинозала): вписать с полями, заполнить с обрезкой
+    // краёв или растянуть — по выбору в моде
+    QObject::connect(&link, &cinema::GameLink::fitChanged, &app, [&](const QString &fit) {
+        mpv.setKeepAspect(fit != QLatin1String("stretch"));
+        mpv.setPanScan(fit == QLatin1String("fill") ? 1.0 : 0.0);
+        say(QStringLiteral("[cinema] картинка на экране: ") + fit);
+    });
     QObject::connect(&mpv, &app::MpvEngine::videoSizeChanged, &app, [&] {
         link.setVideoWidth(mpv.videoWidth());
         say(QStringLiteral("[cinema] видео %1×%2").arg(mpv.videoWidth()).arg(mpv.videoHeight()));
@@ -315,6 +324,7 @@ int main(int argc, char *argv[]) {
     pendingAudio.setInterval(3000);
     QObject::connect(&pendingAudio, &QTimer::timeout, &app, [&] {
         if (overlay.gameFound() && audio.hasPending() && !audio.muted()) audio.restorePending();
+        syncMute(); // игра завела сессию звука позже начала фильма
     });
     pendingAudio.start();
     // Запустили хост ещё раз: место — на сервер, звук — игре, потом выход (новый ждёт до 10 с)
@@ -351,12 +361,20 @@ int main(int argc, char *argv[]) {
     };
     auto pending = std::make_shared<Pending>();
     if (!file.isEmpty()) pending->url = file;
-    auto tryOpen = [&mpv, &host, pending] {
+    // 3D-звук (идея TVKit): звук фильма — от экрана в мире игры; цепочка фильтров — после каждого открытия
+    cinema::SpatialSound spatial(mpv, link);
+    auto syncAudio3d = [&] { spatial.setMode(cinema::Audio3D(session.audio3d()), session.option(QStringLiteral("muffle"))); };
+    syncAudio3d();
+    QObject::connect(&session, &cinema::CinemaSession::optionChanged, &app, syncAudio3d);
+    const int startVolume = cli.isSet(volumeOpt) ? std::clamp(cli.value(volumeOpt).toInt(), 0, 150) : -1;
+    auto tryOpen = [&mpv, &host, &spatial, pending, startVolume] {
         if (pending->opened || pending->frames < 3 || pending->url.isEmpty()) return;
         pending->opened = true;
         host.setBlank(false);
         say(QStringLiteral("[cinema] открываю %1 с %2 с").arg(pending->url.section(QLatin1Char('?'), 0, 0)).arg(pending->startMs / 1000));
         mpv.open(pending->url, pending->startMs, false, QStringLiteral("rus,ru"), QStringLiteral("rus,ru"), {}, {});
+        spatial.install();
+        if (startVolume >= 0) mpv.setVolume(startVolume);
     };
     QObject::connect(window, &QQuickWindow::frameSwapped, &app, [window, pending, tryOpen] {
         if (pending->frames < 3) window->update();

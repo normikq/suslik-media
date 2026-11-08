@@ -58,7 +58,7 @@ def main():
         if host_alive():
             print("Suslik Cinema: host started", flush=True)
             return 0
-    print("Suslik Cinema: the host did not answer in 15 s (see %%APPDATA%%\\SuslikCinema\\player.log)", flush=True)
+    print("Suslik Cinema: the host did not answer in 15 s (see %APPDATA%\\SuslikCinema\\player.log)", flush=True)
     return 2
 
 

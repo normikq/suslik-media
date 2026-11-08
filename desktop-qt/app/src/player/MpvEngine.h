@@ -81,6 +81,8 @@ public:
     Q_INVOKABLE void setSubScale(int percent);
     Q_INVOKABLE void setNightMode(bool on);
     Q_INVOKABLE void setPanScan(double val);
+    /// false — растянуть картинку на всю область вывода без сохранения пропорций (mpv keepaspect).
+    Q_INVOKABLE void setKeepAspect(bool on);
     Q_INVOKABLE void setAudioTrack(int id);
     Q_INVOKABLE void setSubTrack(int id);
     Q_INVOKABLE void removeAudioTrack(int id);

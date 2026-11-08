@@ -50,12 +50,18 @@ local function decode(s)
             if s:sub(j, j) == '"' then i = j + 1 break end
             local e = s:sub(j + 1, j + 1)
             if e == "u" then
-                local cp = tonumber(s:sub(j + 2, j + 5), 16) or 63
+                local cp = tonumber(s:sub(j + 2, j + 5), 16) or 0xFFFD
                 i = j + 6
-                if cp >= 0xD800 and cp <= 0xDBFF and s:sub(i, i + 1) == "\\u" then
-                    local lo = tonumber(s:sub(i + 2, i + 5), 16) or 0xDC00
-                    cp = 0x10000 + (cp - 0xD800) * 0x400 + (lo - 0xDC00)
-                    i = i + 6
+                if cp >= 0xD800 and cp <= 0xDBFF then
+                    local lo = s:sub(i, i + 1) == "\\u" and tonumber(s:sub(i + 2, i + 5), 16)
+                    if lo and lo >= 0xDC00 and lo <= 0xDFFF then
+                        cp = 0x10000 + (cp - 0xD800) * 0x400 + (lo - 0xDC00)
+                        i = i + 6
+                    else
+                        cp = 0xFFFD -- одинокий высокий суррогат: знак замены, а не битый UTF-8
+                    end
+                elseif cp >= 0xDC00 and cp <= 0xDFFF then
+                    cp = 0xFFFD
                 end
                 parts[#parts + 1] = utf8char(cp)
             else
@@ -86,12 +92,13 @@ local function decode(s)
                 if d ~= "," then error("object") end
             end
         elseif c == "[" then
-            local a = {}
+            local a, n = {}, 0
             i = i + 1
             ws()
             if s:sub(i, i) == "]" then i = i + 1 return a end
             while true do
-                a[#a + 1] = value()
+                n = n + 1
+                a[n] = value() -- null — дыра на своём месте, индексы остальных не сдвигаются
                 ws()
                 local d = s:sub(i, i)
                 i = i + 1
@@ -110,7 +117,7 @@ local function decode(s)
     end
     local ok, v = pcall(value)
     if ok then return v end
-    return nil
+    return nil, tostring(v) .. " at " .. i
 end
 
 local function enc(v)
@@ -119,6 +126,7 @@ local function enc(v)
         return '"' .. (v:gsub('[%c"\\]', function(c) return string.format("\\u%04x", c:byte()) end)) .. '"'
     elseif t == "boolean" then return v and "true" or "false"
     elseif t == "number" then
+        if v ~= v or v == math.huge or v == -math.huge then return "null" end -- NaN и бесконечность — не JSON
         if v == math.floor(v) then return string.format("%.0f", v) end
         return string.format("%.3f", v)
     end
@@ -205,21 +213,23 @@ local function build(page)
     if page == "nohost" then
         header("Suslik Cinema")
         w.info = menu:Text{ text = "", x = 20, y = 70, w = W - 40, h = 120, size = 16, wrap = true }
-        button("Запустить хост", 20, 200, W - 40, 50, function() VAO.StartHelper(HELPER) end)
+        button("Запустить хост", 20, 200, W - 40, 50, function() R.startHost(true) end)
     elseif page == "nosite" then
         header("Suslik Cinema")
         menu:Text{ text = "Хосту не задан адрес сервера. Один раз в cmd:\nsuslik-cinema.exe --site <адрес> --login",
             x = 20, y = 70, w = W - 40, h = 120, size = 16, wrap = true }
     elseif page == "wait" then
         header("Suslik Cinema")
-        menu:Text{ text = "Проверяю вход…", x = 20, y = 70, w = W - 40, h = 40, size = 16 }
+        menu:Text{ text = "Проверяю вход… Если это надолго — у хоста нет связи с сервером (он повторяет сам).",
+            x = 20, y = 70, w = W - 40, h = 80, size = 16, wrap = true }
     elseif page == "login" then
         header("Вход в Suslik Media")
         w.code = menu:Text{ text = "", x = 20, y = 70, w = W - 40, h = 60, size = 40, align = "center", color = "#FDE047" }
         w.url = menu:Text{ text = "", x = 20, y = 140, w = W - 40, h = 80, size = 14, wrap = true, color = "#A1A1AA" }
         w.get = button("Получить код", 20, 230, W - 40, 50, function() send("login") end)
         w.open = button("Открыть страницу на ПК", 20, 290, W - 40, 50, function()
-            if st.host and st.host.url ~= "" then VAO.OpenUrl(st.host.url) end
+            local url = st.host and st.host.url
+            if type(url) == "string" and url ~= "" then VAO.OpenUrl(url) end
         end)
         w.cancel = button("Отмена", 20, 350, W - 40, 44, function() send("cancelLogin") end)
     elseif page == "lib" then
@@ -336,10 +346,28 @@ local function build(page)
         w.pauseGame = menu:Checkbox{ text = "Пауза фильма вместе с игрой", checked = true, x = 20, y = 466, w = W - 40, h = 36,
             onChange = function(v) send("opt", { key = "pauseWithGame", on = v and true or false }) end }
         w.roomLine = button("", 20, 580, W - 40, 44, function() st.page = "room" end, { align = "left", size = 14 })
+        -- 3D-звук (как у TVKit: выкл / стерео / объёмный) и «за стеной глуше»
+        w.audio3d = button("", 20, 632, (W - 50) / 2, 44, function()
+            local v = ((st.host and st.host.audio3d or 2) + 1) % 3
+            send("opt", { key = "audio3d", v = v })
+        end, { size = 14 })
+        w.muffle = menu:Checkbox{ text = "За стеной глуше", checked = true, x = 30 + (W - 50) / 2, y = 636, w = (W - 50) / 2, h = 36,
+            onChange = function(v) send("opt", { key = "muffle", on = v and true or false }) end }
         button("Стоп", 20, 520, (W - 50) / 2, 48, function() send("stop"); st.page = "lib" end)
         button("Медиатека", 30 + (W - 50) / 2, 520, (W - 50) / 2, 48, function() st.page = "lib" end)
         R.live()
     end
+end
+
+-- Хост запускается не мгновенно (до 15 с): повторное открытие окна не должно запускать второй helper.
+function R.startHost(force)
+    if not VAO.StartHelper then return end
+    local state = VAO.HelperStatus and VAO.HelperStatus(HELPER)
+    if state == "starting" or state == "running" then return end
+    local now = os.clock()
+    if not force and st.helperAt and now - st.helperAt < 20 then return end
+    st.helperAt = now
+    VAO.StartHelper(HELPER)
 end
 
 function R.seasonNumber()
@@ -457,7 +485,7 @@ function R.live()
         if not st.dragVol and w.vol._v ~= p.vol then w.vol._v = p.vol; w.vol:SetValue(p.vol or 100) end
         setText(w.toggle, p.paused and "Играть" or "Пауза")
         local function sel(list, none)
-            for _, t in ipairs(list or {}) do if t.sel then return t.l end end
+            for _, t in ipairs(list or {}) do if t.sel then return t.l or "?" end end
             return none
         end
         setText(w.audio, "Озвучка: " .. sel(p.audio, "—") .. "  (" .. #(p.audio or {}) .. ")")
@@ -465,6 +493,9 @@ function R.live()
         local r = h.room or {}
         setText(w.roomLine, r["in"] and ("Вместе · комната " .. (r.code or "") .. " · " .. (r.host and "вы ведущий" or ("ведущий " .. (r.hostName or ""))))
             or "Смотреть вместе…")
+        local modes = { [0] = "выкл", [1] = "стерео", [2] = "объёмный" }
+        setText(w.audio3d, "3D-звук: " .. (modes[h.audio3d or 2] or "объёмный"))
+        if w.muffle._v ~= h.muffle then w.muffle._v = h.muffle; w.muffle:SetValue(h.muffle ~= false) end
         if w.mute._v ~= h.muteGame then w.mute._v = h.muteGame; w.mute:SetValue(h.muteGame and true or false) end
         if w.pauseGame._v ~= h.pauseWithGame then w.pauseGame._v = h.pauseWithGame; w.pauseGame:SetValue(h.pauseWithGame and true or false) end
     end
@@ -501,13 +532,17 @@ function R.poll()
     local h = raw and decode(raw)
     if h and h.seq and h.seq == h["end"] then
         st.host = h
-        if h.libRev ~= st.libRev then
+        -- новая версия — сразу; та же, что не прочиталась, — не чаще раза в секунду
+        if h.libRev ~= st.libRev and (h.libRev ~= st.libFailRev or os.clock() >= (st.libRetryAt or 0)) then
             local lraw = readFile("library.json")
             local lib = lraw and decode(lraw)
             if lib and lib.seq == lib["end"] and lib.seq == h.libRev then
                 st.lib = lib.items or {}
                 st.libRev = h.libRev
                 if st.built == "lib" then R.updateList() end
+            else
+                st.libFailRev = h.libRev -- недописан или ещё прежний: не перечитываем 4 раза в секунду
+                st.libRetryAt = os.clock() + 1
             end
         end
         if h.msgN and h.msgN ~= st.msgN then
@@ -532,7 +567,7 @@ function R.init()
             st.builtKey = nil
             R.poll()
             -- хоста нет — запускаем сразу (helper сам ничего не делает, если хост уже идёт)
-            if not alive() and VAO.StartHelper then VAO.StartHelper(HELPER) end
+            if not alive() then R.startHost() end
         end })
     if VAO.RegisterHelper then
         VAO.RegisterHelper{ id = HELPER, mod = MOD, script = "companion/cinema_helper.py", name = "Suslik Cinema host",

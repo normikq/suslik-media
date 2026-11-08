@@ -152,6 +152,14 @@ check(byText(m, "Субтитры: выкл.  (0)") ~= nil, "субтитров 
 local pg = find(m, function(wd) return wd.kind == "checkbox" and tostring(wd.props.text):find("Пауза фильма", 1, true) end)
 check(pg and pg.props.checked == false, "флажок паузы — как у хоста")
 check(VAO.toasts[1] == "Готово", "новое сообщение хоста — всплывашка")
+check(byText(m, "3D-звук: объёмный") ~= nil, "3D-звук по умолчанию — объёмный")
+click(m, "3D-звук:")
+op, raw = lastCmd()
+check(op == "opt" and raw:find('"key":"audio3d"', 1, true) and raw:find('"v":0', 1, true), "3D-звук по кругу: объёмный → выкл: " .. raw)
+local mf = find(m, function(wd) return wd.kind == "checkbox" and wd.props.text == "За стеной глуше" end)
+mf.props.onChange(false)
+op, raw = lastCmd()
+check(op == "opt" and raw:find('"key":"muffle"', 1, true) and raw:find('"on":false', 1, true), "флажок «за стеной глуше»")
 click(m, "+10 мин")
 op, raw = lastCmd()
 check(op == "seekBy" and raw:find('"ms":600000', 1, true), "+10 мин")
@@ -206,6 +214,30 @@ check(byText(m, "Вместе · комната AB12 · ведущий Nora") ~=
 write("host.json", '{"seq":9,"time":' .. os.time() .. ',"auth":1,"play":{"title":"об')
 VAO.tick()
 check(byText(m, "12:34 / 1:40:06") ~= nil, "недописанный файл пропущен, прежнее состояние осталось")
+
+-- 8. краевые случаи ревью 08.11: суррогаты, null в массиве, дорожка без подписи, повторный запуск helper
+write("library.json", '{"seq":6,"items":[{"id":1,"t":"A\\uD83D\\u0041B","k":"m","ok":true,"rel":[null,{"id":1,"l":"x"}]},' ..
+    '{"id":2,"t":"\\uD83D\\uDE00","k":"m","ok":true,"rel":[]}],"end":6}\n')
+write("host.json", status{ seq = 10, rev = 6, body = '"auth":1,"code":"","busy":"","msg":"","msgN":1,' ..
+    '"play":{"title":"T","rel":"r","pos":1,"dur":10,"paused":false,"buf":false,"vol":100,"audio":[{"id":1,"sel":true}],"subs":[]}' })
+VAO.tick()
+check(byText(m, "Озвучка: ?") ~= nil, "выбранная дорожка без подписи — «?», без ошибки")
+click(m, "Медиатека")
+VAO.tick()
+check(byText(m, "A\239\191\189AB") ~= nil, "одинокий высокий суррогат — знак замены, следующая буква цела")
+check(byText(m, "\240\159\152\128") ~= nil, "пара суррогатов — один символ")
+local started = #VAO.started
+os.remove("host.json")
+m.visible = false
+m:Show()
+m.visible = false
+m:Show()
+check(#VAO.started == started, "окно открыли ещё раз за 20 с без хоста — второй helper не запускается")
+-- хост замолчал: последний host.json старше 4 с
+write("host.json", '{"seq":11,"time":' .. (os.time() - 10) .. ',"auth":1,"end":11}\n')
+VAO.tick()
+click(m, "Запустить хост")
+check(#VAO.started == started + 1, "кнопка «Запустить хост» запускает сразу")
 
 print(string.format("%d checks, %d failed", checks, failures))
 os.exit(failures == 0 and 0 or 1)

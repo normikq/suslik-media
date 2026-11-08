@@ -120,8 +120,9 @@ void CinemaSession::whenLibrary(std::function<void()> then) {
         *fired = true;
         ctx->deleteLater();
     };
-    auto go = [fired, finish, then] {
-        if (*fired) return;
+    QPointer<CinemaSession> self(this);
+    auto go = [self, fired, finish, then] {
+        if (*fired || !self) return; // refreshThen Library может ответить, когда нас уже нет
         finish();
         then();
     };
@@ -405,6 +406,7 @@ bool CinemaSession::playKey(const QString &key, qint64 startMs) {
 
 void CinemaSession::stop() {
     flush();
+    m_busy.clear(); // адрес зеркала ещё мог быть в пути: его ответ теперь пропускается (m_key пуст)
     m_key.clear();
     m_tileKey.clear();
     m_title.clear();
@@ -418,7 +420,14 @@ void CinemaSession::stop() {
 void CinemaSession::noteSeek(qint64 toMs) {
     m_seekTarget = toMs;
     m_seekAt.start();
+    m_seeking = true;
     ++m_seekStamp;
+}
+
+bool CinemaSession::seeking() const {
+    // перемотка mpv ещё идёт (seekDone не пришёл); не дольше 3 с — потерянный seekDone не должен навсегда
+    // запереть движок комнаты
+    return m_seeking && m_seekAt.isValid() && m_seekAt.elapsed() < 3000;
 }
 
 void CinemaSession::roomSeek(qint64 ms) {
@@ -443,7 +452,10 @@ void CinemaSession::attach(app::MpvEngine &mpv) {
         if (m_mpv->loaded() && !m_saveTimer.isActive()) m_saveTimer.start();
         if (m_mpv->paused()) savePos();
     });
-    connect(&mpv, &app::MpvEngine::seekDone, this, &CinemaSession::savePos);
+    connect(&mpv, &app::MpvEngine::seekDone, this, [this] {
+        m_seeking = false;
+        savePos();
+    });
     connect(&mpv, &app::MpvEngine::finished, this, [this] {
         if (m_key.isEmpty() || m_mpv->lengthMs() <= 0) return;
         m_lib.noteWatch(m_key, m_mpv->lengthMs(), m_mpv->lengthMs(), m_cid);
@@ -533,8 +545,20 @@ void CinemaSession::startRemote() {
     m_lib.setOpenPairingPage(false); // код — на телефоне; браузер поверх игры не нужен (кнопка на телефоне откроет)
     connect(&m_lib, &app::Library::authenticatedChanged, this, [this] {
         emit statusChanged();
-        if (m_lib.authenticated() == 1) m_lib.refreshThen([this] { emit libraryChanged(); });
+        if (m_lib.authenticated() == 1) {
+            QPointer<CinemaSession> self(this);
+            m_lib.refreshThen([self] { if (self) emit self->libraryChanged(); });
+        }
     });
+    // Сессию не проверили (нет сети при запуске): повторяем раз в 30 с и говорим телефону, почему он ждёт
+    auto *retry = new QTimer(this);
+    retry->setInterval(30000);
+    connect(retry, &QTimer::timeout, this, [this, retry] {
+        if (m_lib.authenticated() >= 0) { retry->stop(); return; }
+        note(S("Сервер не отвечает — проверьте интернет. Пробую ещё раз…"));
+        m_lib.start();
+    });
+    retry->start();
     connect(&m_lib, &app::Library::pairingChanged, this, &CinemaSession::statusChanged);
     connect(&m_lib, &app::Library::profileChanged, this, &CinemaSession::statusChanged);
     connect(&m_lib, &app::Library::versionChanged, this, &CinemaSession::libraryChanged);
@@ -545,6 +569,12 @@ void CinemaSession::startRemote() {
         m_libStarted = true;
         m_lib.start();
     }
+}
+
+int CinemaSession::audio3d() const {
+    bool ok = false;
+    const int v = Store::of(S("settings")).get(S("remote_audio3d")).value_or(S("2")).toInt(&ok);
+    return ok ? std::clamp(v, 0, 2) : 2; // по умолчанию — объёмный, как HRTF по умолчанию у TVKit
 }
 
 bool CinemaSession::option(const QString &key) const {
@@ -561,11 +591,13 @@ void CinemaSession::remote(const QJsonObject &c) {
     } else if (op == QLatin1String("logout")) {
         m_lib.logout();
     } else if (op == QLatin1String("refresh")) {
-        m_lib.refreshThen([this] { emit libraryChanged(); });
+        QPointer<CinemaSession> self(this);
+        m_lib.refreshThen([self] { if (self) emit self->libraryChanged(); });
     } else if (op == QLatin1String("play")) {
         PlayArgs a;
         a.query = QString::number(c.value(S("id")).toInteger());
         a.release = c.value(S("release")).toInteger(0);
+        a.quality = c.value(S("quality")).toString();
         a.season = c.value(S("season")).toInt(-1);
         a.episode = c.value(S("episode")).toInt(-1);
         a.fromStart = c.value(S("fromStart")).toBool();
@@ -574,8 +606,13 @@ void CinemaSession::remote(const QJsonObject &c) {
         stop();
     } else if (op == QLatin1String("opt")) {
         const QString key = c.value(S("key")).toString();
-        if (key != QLatin1String("muteGame") && key != QLatin1String("pauseWithGame")) return;
-        Store::of(S("settings")).put(S("remote_") + key, c.value(S("on")).toBool() ? S("1") : S("0"));
+        if (key == QLatin1String("audio3d")) {
+            Store::of(S("settings")).put(S("remote_audio3d"), QString::number(std::clamp(c.value(S("v")).toInt(2), 0, 2)));
+        } else if (key == QLatin1String("muteGame") || key == QLatin1String("pauseWithGame") || key == QLatin1String("muffle")) {
+            Store::of(S("settings")).put(S("remote_") + key, c.value(S("on")).toBool() ? S("1") : S("0"));
+        } else {
+            return;
+        }
         emit optionChanged(key);
         emit statusChanged();
     } else if (op == QLatin1String("quit")) {
@@ -616,7 +653,8 @@ QJsonObject CinemaSession::status() const {
     QJsonObject o{{S("auth"), m_lib.authenticated()}, {S("user"), m_lib.profileName()},
                   {S("code"), m_lib.pairingCode()}, {S("url"), m_lib.pairingUrl()},
                   {S("site"), !m_api.base().isEmpty()}, {S("busy"), m_busy}, {S("msg"), m_msg}, {S("msgN"), m_msgN},
-                  {S("muteGame"), option(S("muteGame"))}, {S("pauseWithGame"), option(S("pauseWithGame"))}};
+                  {S("muteGame"), option(S("muteGame"))}, {S("pauseWithGame"), option(S("pauseWithGame"))},
+                  {S("audio3d"), audio3d()}, {S("muffle"), option(S("muffle"))}};
     if (m_extraStatus) m_extraStatus(o);
     if (m_mpv && m_mpv->loaded() && !m_key.isEmpty()) {
         auto tracks = [](const QVariantList &list) {

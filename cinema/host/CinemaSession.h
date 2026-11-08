@@ -5,6 +5,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QObject>
+#include <QPointer>
 #include <QString>
 #include <QTimer>
 #include <functional>
@@ -81,6 +82,8 @@ public:
     /// Перемотка от комнаты (движок синхронизации) и метки для него.
     void roomSeek(qint64 ms);
     qint64 seekStamp() const { return m_seekStamp; }
+    /// Перемотка ещё идёт (движок комнаты ждёт её, как PartySync у ПК ждёт syncBusy).
+    bool seeking() const;
     qint64 syncTimeMs() const;
     /// Пауза и перемотка заперты (гость комнаты): причина или пусто.
     void setControlLock(std::function<QString()> why) { m_lock = std::move(why); }
@@ -92,6 +95,8 @@ public:
 
     /// Настройки пульта (хранилище settings): muteGame — глушить игру во время фильма, pauseWithGame — пауза с игрой.
     bool option(const QString &key) const;
+    /// 3D-звук: 0 — выкл, 1 — стерео, 2 — объёмный (muffle — «за стеной глуше», option).
+    int audio3d() const;
 
 signals:
     void ready(const QString &url, qint64 startMs);
@@ -124,7 +129,7 @@ private:
     core::ApiClient &m_api;
     core::CloudSync &m_sync;
     app::Library &m_lib;
-    app::MpvEngine *m_mpv = nullptr;
+    QPointer<app::MpvEngine> m_mpv;
     QTimer m_saveTimer;
     QString m_key;     ///< ключ прогресса играющего файла (magnetId|путь)
     QString m_tileKey; ///< тот же фильм у показанной плитки, если играет другая версия
@@ -145,6 +150,7 @@ private:
     core::PartyVariant m_variant;
     std::optional<QString> m_edition;
     qint64 m_seekStamp = 0, m_seekTarget = 0;
+    bool m_seeking = false;
     QElapsedTimer m_seekAt;
     std::function<QString()> m_lock;
     std::function<bool(const QString &, const QJsonObject &)> m_extra;

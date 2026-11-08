@@ -117,6 +117,7 @@ qint64 CinemaParty::shiftMs() const {
     return m_party.shiftFor(m_session.playingKey(), m_mpv.lengthMs());
 }
 
+bool CinemaParty::busy() const { return m_session.seeking(); }
 qint64 CinemaParty::timeMs() const { return m_session.syncTimeMs() - shiftMs(); }
 qint64 CinemaParty::engineMs() const { return m_mpv.timeMs() - shiftMs(); }
 qint64 CinemaParty::seekStamp() const { return m_session.seekStamp(); }
@@ -175,8 +176,10 @@ void CinemaParty::follow() {
     if (key != m_seenKey) {
         m_seenKey = key;
         m_seenAt.start();
+        m_seenSeq = m_party.state().seq;
     }
-    if (m_party.roomMs() < 2000 && m_seenAt.elapsed() < 2500) {
+    // ждём, только пока место ещё не приходило: комната с тех пор изменилась — ведущий его сообщил
+    if (m_party.roomMs() < 2000 && m_seenAt.elapsed() < 2500 && m_party.state().seq == m_seenSeq) {
         m_followRetry.start();
         return;
     }
@@ -206,7 +209,8 @@ void CinemaParty::setWatching(bool on) {
 
 void CinemaParty::tick() {
     const bool film = roomFilm();
-    const bool ready = film && m_mpv.loaded();
+    // длина файла нужна сдвигу между раздачами: без неё гость на другой раздаче получил бы лишнюю перемотку
+    const bool ready = film && m_mpv.loaded() && m_mpv.lengthMs() > 0;
     if (film) m_lastKey = m_session.playingKey();
     setWatching(film);
     if (!ready) {

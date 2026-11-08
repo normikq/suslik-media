@@ -13,12 +13,13 @@ local STATE_FILE = "state.json"
 local SCREEN_FILE = "screen.json"
 local CALIB_FILE = "screens.json"
 local OCCL_EVERY = 6        -- лучи на загораживание раз в N кадров (~10 раз в секунду)
+local OCCL_DEPTH = 0.4      -- выступы стены не дальше стольких м от плоскости экрана его не загораживают
 local PROBE = 0.25          -- точки для подгонки линзы игры: x/z = ±PROBE
 
 local S = {
     seq = 0,
     rev = 0,
-    screen = nil,           -- { c, n, w, h, sr, su, sn, lock }
+    screen = nil,           -- { c, n, w, h, sr, su, sn, ar, fit, occl }
     corners = nil,          -- 4 угла в мире: ЛВ, ПВ, ПН, ЛН
     normal = nil,
     occl = 0,
@@ -29,7 +30,8 @@ local S = {
     userHidden = false,     -- экран скрыт клавишей мода
     hideArmed = true,       -- прятать экран, когда оружие в руках (оверлей рисуется поверх оружия и прицела)
     offDist = 0,            -- дальше этого расстояния до экрана, м, экран гаснет (0 — не выключать)
-    npcAlpha = 0.25,        -- прозрачность экрана, когда в прицеле NPC перед экраном
+    npcAlpha = 0.25,        -- прозрачность экрана, когда в прицеле NPC перед экраном (1 — не менять)
+    objFade = true,         -- предметы (Dynamic) перед экраном делают его полупрозрачным
     npc = false,            -- NPC перед экраном (подтверждено двумя проверками подряд)
     npcRaw = false,
     occlRaw = -1,           -- прошлое сырое значение лучей: новое принимается, только если повторилось
@@ -158,6 +160,7 @@ local function saveSettings()
     if not f then return end
     f:write("hideArmed=", S.hideArmed and "1" or "0", "\n")
     f:write(string.format("offDist=%.1f\nnpcAlpha=%.2f\n", S.offDist, S.npcAlpha))
+    f:write("objFade=", S.objFade and "1" or "0", "\n")
     f:close()
 end
 
@@ -169,6 +172,17 @@ local function loadSettings()
     if t:match("hideArmed=0") then S.hideArmed = false end
     S.offDist = tonumber(t:match("offDist=([%d%.]+)")) or S.offDist
     S.npcAlpha = tonumber(t:match("npcAlpha=([%d%.]+)")) or S.npcAlpha
+    if t:match("objFade=0") then S.objFade = false end
+end
+
+-- Пропорции экрана (ar = ширина / высота; 0 — высота своим ползунком) и как вписать в него фильм.
+local ASPECTS = { { "16:9", 16 / 9 }, { "21:9", 64 / 27 }, { "2.39:1 (cinema)", 2.39 }, { "32:9", 32 / 9 },
+    { "4:3", 4 / 3 }, { "Free (height slider)", 0 } }
+local FITS = { { "fit", "Fit: whole picture, black bars" }, { "fill", "Fill: no bars, edges cropped" },
+    { "stretch", "Stretch to the screen" } }
+local function fitKnown(f)
+    for _, v in ipairs(FITS) do if v[1] == f then return f end end
+    return "fit"
 end
 
 -- ---------- экран ----------
@@ -206,6 +220,20 @@ local function writeFile(name, text)
     return true
 end
 
+-- Калибровку (её долго подгонять) пишем через временный файл: сбой посреди записи не портит прежнюю.
+-- os.rename на Windows не заменяет существующий файл, поэтому старый сначала удаляется; если сбой пришёлся между
+-- удалением и переименованием, loadCalib прочитает .tmp.
+local function writeFileSafe(name, text)
+    local tmp = name .. ".tmp"
+    local f = io.open(tmp, "w")
+    if not f then return false end
+    local ok = f:write(text) ~= nil
+    f:close()
+    if not ok then return false end
+    os.remove(name)
+    return os.rename(tmp, name) == true
+end
+
 local function writeScreen()
     if not S.corners then
         writeFile(SCREEN_FILE, string.format('{"rev":%d,"corners":null}\n', S.rev))
@@ -213,8 +241,8 @@ local function writeScreen()
     end
     local cs = {}
     for i = 1, 4 do cs[i] = v3json(S.corners[i], 4) end
-    writeFile(SCREEN_FILE, string.format('{"rev":%d,"w":%.4f,"h":%.4f,"n":%s,"corners":[%s]}\n', S.rev,
-        S.screen.w, S.screen.h, v3json(S.normal), table.concat(cs, ",")))
+    writeFile(SCREEN_FILE, string.format('{"rev":%d,"w":%.4f,"h":%.4f,"fit":"%s","n":%s,"corners":[%s]}\n', S.rev,
+        S.screen.w, S.screen.h, fitKnown(S.screen.fit), v3json(S.normal), table.concat(cs, ",")))
 end
 
 local function saveCalib()
@@ -223,10 +251,12 @@ local function saveCalib()
         os.remove(CALIB_FILE)
         return
     end
-    writeFile(CALIB_FILE, string.format(
-        '{"version":1,"c":%s,"n":%s,"w":%.4f,"h":%.4f,"sr":%.4f,"su":%.4f,"sn":%.4f,"lock":%s,"occl":%s}\n',
-        v3json(sc.c), v3json(sc.n), sc.w, sc.h, sc.sr, sc.su, sc.sn, sc.lock and "true" or "false",
-        sc.occl == false and "false" or "true"))
+    local saved = writeFileSafe(CALIB_FILE, string.format(
+        '{"version":1,"c":%s,"n":%s,"w":%.4f,"h":%.4f,"sr":%.4f,"su":%.4f,"sn":%.4f,"lock":%s,"ar":%.4f,' ..
+        '"fit":"%s","occl":%s,"od":%.3f}\n',
+        v3json(sc.c), v3json(sc.n), sc.w, sc.h, sc.sr, sc.su, sc.sn, (sc.ar or 0) > 0 and "true" or "false",
+        sc.ar or 0, fitKnown(sc.fit), sc.occl == false and "false" or "true", sc.od or OCCL_DEPTH))
+    if not saved then note("could not save screens.json (is the mod folder writable?)") end
 end
 
 -- Экран изменился: новые углы, rev + 1, оба файла.
@@ -242,11 +272,7 @@ local function applyScreen()
     saveCalib()
 end
 
-local function loadCalib()
-    local f = io.open(CALIB_FILE, "r")
-    if not f then return end
-    local s = f:read("*a")
-    f:close()
+local function parseCalib(s)
     local function arr(key)
         local x, y, z = s:match('"' .. key .. '":%[([^,]+),([^,]+),([^%]]+)%]')
         if not x then return nil end
@@ -254,9 +280,27 @@ local function loadCalib()
     end
     local function num(key) return tonumber(s:match('"' .. key .. '":([%-%d%.eE]+)')) end
     local sc = { c = arr("c"), n = arr("n"), w = num("w"), h = num("h"), sr = num("sr") or 0, su = num("su") or 0,
-        sn = num("sn") or 0, lock = s:match('"lock":false') == nil, occl = s:match('"occl":false') == nil }
-    if not (sc.c and sc.n and sc.w and sc.h) then
-        note("screens.json is damaged, mark the screen again")
+        sn = num("sn") or 0, ar = num("ar"), fit = fitKnown(s:match('"fit":"(%a+)"')),
+        occl = s:match('"occl":false') == nil, od = num("od") or OCCL_DEPTH }
+    if not (sc.c and sc.n and sc.w and sc.h) then return nil end
+    -- старая калибровка без ar: галочка 16:9 (lock) — 16:9, иначе свободная высота
+    if not sc.ar then sc.ar = s:match('"lock":false') and 0 or 16 / 9 end
+    return sc
+end
+
+local function loadCalib()
+    local function read(name)
+        local f = io.open(name, "r")
+        if not f then return nil end
+        local s = f:read("*a")
+        f:close()
+        return s
+    end
+    local main, tmp = read(CALIB_FILE), read(CALIB_FILE .. ".tmp")
+    local sc = main and parseCalib(main)
+    if not sc and tmp then sc = parseCalib(tmp) end -- запись прервалась между удалением и переименованием
+    if not sc then
+        if main or tmp then note("screens.json is damaged, mark the screen again") end
         return
     end
     S.screen = sc
@@ -315,8 +359,9 @@ local function markCenter()
     if dot(n, sub(c.pos, hit.p)) < 0 then n = mul(n, -1) end
     local old = S.screen
     S.screen = { c = hit.p, n = n, w = old and old.w or 1.16, h = old and old.h or 1.16 * 9 / 16,
-        sr = old and old.sr or 0, su = old and old.su or 0, sn = 0, lock = not old or old.lock,
-        occl = not old or old.occl ~= false }
+        sr = old and old.sr or 0, su = old and old.su or 0, sn = 0, ar = old and old.ar or 16 / 9,
+        fit = old and old.fit or "fit", occl = not old or old.occl ~= false,
+        od = old and old.od or OCCL_DEPTH }
     applyScreen()
     note(string.format("centre %s (%s, %s), normal from %s", vstr(hit.p), hit.group, hit.mat, src))
 end
@@ -346,18 +391,21 @@ local function occlusion(c)
     local cs = S.corners
     local sq = Game.GetSpatialQueriesSystem()
     local ctr = mul(add(add(cs[1], cs[2]), add(cs[3], cs[4])), 0.25)
-    local margin = 0.12 + math.max(0, -(S.screen.sn or 0))
+    -- Лучи кончаются не на экране, а в od м перед его плоскостью (по нормали, а не вдоль луча): выступы стены
+    -- над экраном (колонки, карнизы, ступени) не загораживают; экран, утопленный в стену (sn < 0), — тоже
+    local depth = (S.screen.od or OCCL_DEPTH) + math.max(0, -(S.screen.sn or 0))
     local pts = { ctr, cs[1], cs[2], cs[3], cs[4] }
     local sum = 0
     for _, p in ipairs(pts) do
         local d = sub(c.pos, p)
         local len = math.sqrt(dot(d, d))
         local w = 0
+        local margin = len > 0 and depth / math.max(0.2, dot(d, S.normal) / len) or 0
         if len > margin + 0.45 then
             local to = add(p, mul(d, margin / len))
             -- луч начинается в 35 см от глаз к экрану: тело и оружие V не считаются преградой
             local from = add(c.pos, mul(d, -0.35 / len))
-            for _, g in ipairs({ "Static", "Vehicle", "Dynamic" }) do
+            for _, g in ipairs(S.objFade and { "Static", "Vehicle", "Dynamic" } or { "Static", "Vehicle" }) do
                 local ok, hit, res = pcall(function()
                     return sq:SyncRaycastByCollisionGroup(Vector4.new(from.x, from.y, from.z, 1),
                         Vector4.new(to.x, to.y, to.z, 1), g, false, false)
@@ -365,8 +413,8 @@ local function occlusion(c)
                 if ok and hit and res then
                     local hp = vec(res.position)
                     local hd = hp and math.sqrt(dot(sub(hp, c.pos), sub(hp, c.pos))) or 0
-                    -- ближе 30 см — луч вышел из тела V, это не преграда
-                    if hd > 0.3 then
+                    -- луч начинается в 35 см от глаз, так что ближе 50 см — это руки и тело V, не преграда
+                    if hd > 0.5 then
                         w = math.max(w, (g == "Dynamic") and 0.5 or 1)
                         if w >= 1 then break end
                     end
@@ -403,7 +451,7 @@ local function fadeFactor(c)
         if dist >= S.offDist then f = 0
         elseif dist > S.offDist - edge then f = (S.offDist - dist) / edge end
     end
-    if S.npc then f = f * S.npcAlpha end
+    if S.npc and S.npcAlpha < 1 then f = f * S.npcAlpha end
     return f
 end
 
@@ -480,6 +528,12 @@ local function drawFrame()
     ImGui.End()
 end
 
+-- Пункт списка. Selectable(label, selected) в CET возвращает состояние «выбран», а не «нажат»: выбранный пункт
+-- отвечал true каждый кадр и перебивал нажатый выше него. Поэтому флаг не передаём, текущий пункт — со значком.
+local function pick(label, current)
+    return ImGui.Selectable((current and "> " or "   ") .. label .. "##" .. label) == true
+end
+
 local function drawWindow()
     if ImGui.Begin("Suslik Cinema") then
         ImGui.Text("Aim at the TV screen centre (or any wall) and press 'Mark centre' (or the hotkey).")
@@ -501,14 +555,61 @@ local function drawWindow()
             end
             -- Ctrl+клик по ползунку — ввести число
             sc.w = slider("Width m", sc.w, 0.2, 40.0)
-            local lock, usedLock = ImGui.Checkbox("16:9", sc.lock)
-            if usedLock then sc.lock = lock; changed = true end
-            if sc.lock then sc.h = sc.w * 9 / 16 else sc.h = slider("Height m", sc.h, 0.1, 25.0) end
+            -- пропорции: 21:9 и 2.39:1 — для широких стен (кинозал), Free — высота своим ползунком
+            local arName = "Free (height slider)"
+            for _, a in ipairs(ASPECTS) do
+                if a[2] > 0 and math.abs((sc.ar or 0) - a[2]) < 0.005 then arName = a[1] end
+            end
+            if ImGui.BeginCombo("Aspect", arName) then
+                for _, a in ipairs(ASPECTS) do
+                    if pick(a[1], a[1] == arName) then sc.ar = a[2]; changed = true end
+                end
+                ImGui.EndCombo()
+            end
+            if (sc.ar or 0) > 0 then sc.h = sc.w / sc.ar else sc.h = slider("Height m", sc.h, 0.1, 25.0) end
+            local fitName = FITS[1][2]
+            for _, v in ipairs(FITS) do if v[1] == fitKnown(sc.fit) then fitName = v[2] end end
+            if ImGui.BeginCombo("Picture", fitName) then
+                for _, v in ipairs(FITS) do
+                    if pick(v[2], v[2] == fitName) then sc.fit = v[1]; changed = true end
+                end
+                ImGui.EndCombo()
+            end
+            -- Края в стороны: двигается один край, другой стоит на месте (растянуть по стене). Пропорции при этом
+            -- становятся свободными — высота не меняется.
+            S.edgeStep = S.edgeStep or 0.25
+            local function edge(label, dw, side)
+                if ImGui.Button(label) then
+                    local nw = math.max(0.2, math.min(60, sc.w + dw * S.edgeStep))
+                    sc.sr = sc.sr + side * (nw - sc.w) / 2
+                    sc.w = nw
+                    if (sc.ar or 0) > 0 then sc.ar = 0 end
+                    changed = true
+                end
+            end
+            ImGui.Text("Left edge")
+            ImGui.SameLine(); edge("<##el", 1, -1)
+            ImGui.SameLine(); edge(">##el", -1, -1)
+            ImGui.SameLine(); ImGui.Text("   Right edge")
+            ImGui.SameLine(); edge("<##er", -1, 1)
+            ImGui.SameLine(); edge(">##er", 1, 1)
+            ImGui.SameLine()
+            ImGui.PushItemWidth(90)
+            if ImGui.BeginCombo("step##edge", string.format("%.2f m", S.edgeStep)) then
+                for _, st in ipairs({ 0.01, 0.05, 0.25, 1, 5 }) do
+                    if pick(string.format("%.2f m", st), st == S.edgeStep) then S.edgeStep = st end
+                end
+                ImGui.EndCombo()
+            end
+            ImGui.PopItemWidth()
             sc.sr = slider("Shift right m", sc.sr, -15.0, 15.0)
             sc.su = slider("Shift up m", sc.su, -5.0, 15.0)
             sc.sn = slider("Shift out m", sc.sn, -0.5, 5.0)
             local oc, usedOc = ImGui.Checkbox("Hide behind walls", sc.occl ~= false)
             if usedOc then sc.occl = oc; changed = true end
+            if sc.occl ~= false then
+                sc.od = slider("Ignore bumps up to m (in front of the screen)", sc.od or OCCL_DEPTH, 0.05, 3.0)
+            end
             if changed then applyScreen() end
             ImGui.Text(string.format("Screen %.2f x %.2f m, visible %s, occluded %.0f%%", sc.w, sc.h,
                 S.visible and "yes" or "no", S.occl * 100))
@@ -517,7 +618,9 @@ local function drawWindow()
         if usedHa then S.hideArmed = ha; saveSettings() end
         local od, usedOd = ImGui.SliderFloat("Turn off beyond m (0 = never)", S.offDist, 0, 200, "%.0f")
         if usedOd then S.offDist = od; saveSettings() end
-        local na, usedNa = ImGui.SliderFloat("Opacity with NPC in front", S.npcAlpha, 0.05, 0.85, "%.2f")
+        local of, usedOf = ImGui.Checkbox("See-through when objects are in front", S.objFade)
+        if usedOf then S.objFade = of; saveSettings() end
+        local na, usedNa = ImGui.SliderFloat("Opacity with NPC in front (1 = solid)", S.npcAlpha, 0.05, 1.0, "%.2f")
         if usedNa then S.npcAlpha = na; saveSettings() end
         local fr, usedFr = ImGui.Checkbox("Green frame (check without the host)", S.frame)
         if usedFr then S.frame = fr end

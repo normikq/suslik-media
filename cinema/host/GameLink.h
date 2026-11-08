@@ -55,6 +55,9 @@ public:
     void frame(const QSizeF &viewSize);
 
     double opacity() const { return m_opacity; }
+    /// Для 3D-звука: камера последнего кадра игры, центр экрана, его ширина (м) и «за стеной» 0…1 (сглаженно).
+    /// false — мода нет, камеры или экрана нет.
+    bool listener(CameraPose &cam, V3 &center, double &width, double &wall) const;
     /// Игра на паузе (меню игры) — по state.json мода.
     bool gamePaused() const { return m_live && m_state.paused; }
     bool live() const { return m_live; }
@@ -65,6 +68,8 @@ signals:
     void liveChanged();
     void osdChanged();
     void gamePausedChanged();
+    /// Режим картинки экрана из мода сменился: fit (поля), fill (обрезать края), stretch (растянуть).
+    void fitChanged(const QString &fit);
 
 private:
     struct State {
@@ -110,6 +115,7 @@ private:
     std::array<V3, 4> m_corners{};
     V3 m_normal;
     double m_aspect = 16.0 / 9.0;
+    QString m_fit = QStringLiteral("fit");
     bool m_hasScreen = false;
     qint64 m_screenRev = -1;
 
