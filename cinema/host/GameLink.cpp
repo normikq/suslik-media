@@ -11,6 +11,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
+#include <QStringList>
 
 #include <algorithm>
 #include <cmath>
@@ -127,6 +128,18 @@ bool GameLink::listener(CameraPose &cam, V3 &center, double &width, double &wall
     return true;
 }
 
+bool GameLink::speakers(CameraPose &cam, SpeakerSet &set) const {
+    if (!m_live || !m_state.cam) return false;
+    cam = m_state.pose;
+    set = SpeakerSet{};
+    set.has = m_spkHas;
+    set.pos = m_spkPos;
+    set.wall = m_state.socc;
+    CameraPose unused;
+    set.screen = listener(unused, set.center, set.width, set.screenWall);
+    return true;
+}
+
 void GameLink::setAdjustMs(int ms) {
     ms = std::clamp(ms, -100, 100);
     if (ms == m_adjustMs) {
@@ -183,6 +196,9 @@ bool GameLink::readState(State &s) {
     s.occl = o.value(QStringLiteral("occl")).toDouble();
     s.hide = o.value(QStringLiteral("hide")).toString();
     s.fade = std::clamp(o.value(QStringLiteral("fade")).toDouble(1), 0.0, 1.0);
+    const QJsonObject socc = o.value(QStringLiteral("socc")).toObject();
+    for (int i = 0; i < kSpeakers; ++i)
+        s.socc[i] = std::clamp(socc.value(QLatin1String(speakerName(i))).toDouble(), 0.0, 1.0);
     return true;
 }
 
@@ -190,6 +206,18 @@ void GameLink::loadScreen() {
     const QJsonObject o = QJsonDocument::fromJson(readShared(m_screenPath)).object();
     if (o.isEmpty()) return; // недописан — попробуем в следующем кадре
     m_screenRev = o.value(QStringLiteral("rev")).toInteger(-1);
+    // колонки (раздел Speakers мода) — есть и без экрана
+    const QJsonObject spk = o.value(QStringLiteral("spk")).toObject();
+    QStringList placed;
+    for (int i = 0; i < kSpeakers; ++i) {
+        const QJsonValue v = spk.value(QLatin1String(speakerName(i)));
+        m_spkHas[i] = v.isArray() && v.toArray().size() == 3;
+        if (m_spkHas[i]) {
+            m_spkPos[i] = v3(v);
+            placed << QLatin1String(speakerName(i));
+        }
+    }
+    if (!placed.isEmpty()) app::PlayerLog::write(QStringLiteral("[cinema] колонки: %1").arg(placed.join(QLatin1Char(' '))));
     const QJsonArray cs = o.value(QStringLiteral("corners")).toArray();
     m_hasScreen = cs.size() == 4;
     if (!m_hasScreen) {

@@ -1,5 +1,6 @@
 #pragma once
 #include "GameView.h"
+#include "SpatialAudio.h"
 
 #include <QElapsedTimer>
 #include <QFile>
@@ -58,6 +59,9 @@ public:
     /// Для 3D-звука: камера последнего кадра игры, центр экрана, его ширина (м) и «за стеной» 0…1 (сглаженно).
     /// false — мода нет, камеры или экрана нет.
     bool listener(CameraPose &cam, V3 &center, double &width, double &wall) const;
+    /// Для 3D-звука «колонки»: камера, колонки из мода (screen.json, «за стеной» — из state.json) и экран как запасное
+    /// место. false — мода или камеры нет.
+    bool speakers(CameraPose &cam, SpeakerSet &set) const;
     /// Игра на паузе (меню игры) — по state.json мода.
     bool gamePaused() const { return m_live && m_state.paused; }
     bool live() const { return m_live; }
@@ -82,6 +86,7 @@ private:
         double fade = 1;
         QString hide; ///< мод просит спрятать экран: weapon, wheel, user
         qint64 rev = -1;
+        std::array<double, kSpeakers> socc{}; ///< колонка за стеной (луч мода от камеры), 0 или 1
     };
     bool readState(State &s);
     void loadScreen();
@@ -117,6 +122,8 @@ private:
     double m_aspect = 16.0 / 9.0;
     QString m_fit = QStringLiteral("fit");
     bool m_hasScreen = false;
+    std::array<bool, kSpeakers> m_spkHas{};
+    std::array<V3, kSpeakers> m_spkPos{};
     qint64 m_screenRev = -1;
 
     QString m_osd;

@@ -2,11 +2,12 @@
 # берёт оттуда ядро (suslik_core) и плеер mpv (MpvEngine, MpvVideo) без копий.
 find_package(Qt6 6.4 REQUIRED COMPONENTS Gui Quick OpenGL)
 
-set(SM_CINEMA_VERSION 0.6.0)
+set(SM_CINEMA_VERSION 0.8.0)
 set(SM_APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/../../desktop-qt/app/src)
 
 # Геометрия экрана — отдельной библиотекой, чтобы проверять тестами без окна.
-add_library(suslik_cinema_geom STATIC QuadMath.cpp QuadMath.h GameView.cpp GameView.h SpatialAudio.cpp SpatialAudio.h)
+add_library(suslik_cinema_geom STATIC QuadMath.cpp QuadMath.h GameView.cpp GameView.h SpatialAudio.cpp SpatialAudio.h
+  ProjectorLook.cpp ProjectorLook.h)
 target_include_directories(suslik_cinema_geom PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(suslik_cinema_geom PUBLIC Qt6::Gui)
 # Выбор релиза и проверка адреса зеркала — тоже без окна и сети
@@ -26,6 +27,7 @@ qt_add_executable(suslik_cinema WIN32
   RemoteLink.cpp RemoteLink.h
   CinemaParty.cpp CinemaParty.h
   SpatialSound.cpp SpatialSound.h
+  Projector.cpp Projector.h
   CinemaTrackers.cpp
   ${SM_APP_SRC}/party/Party.cpp ${SM_APP_SRC}/party/Party.h
   ${SM_APP_SRC}/AppDir.cpp ${SM_APP_SRC}/AppDir.h
@@ -59,6 +61,10 @@ qt_add_qml_module(suslik_cinema
 # Строки интерфейса ПК-версии (Library пишет статусы через tx) — тот же файл, без копии
 set(SM_RES ${CMAKE_CURRENT_SOURCE_DIR}/../../desktop-qt/resources)
 qt_add_resources(suslik_cinema sm_cinema_res PREFIX /res BASE ${SM_RES} FILES ${SM_RES}/strings/ru.json)
+# Эффект проектора: шейдеры GRAINLIGHT (MIT, grainlight/LICENSE) — ресурсами, хост пишет их в папку данных
+file(GLOB SM_GRAINLIGHT CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/grainlight/*.glsl)
+qt_add_resources(suslik_cinema sm_grainlight PREFIX /grainlight BASE ${CMAKE_CURRENT_SOURCE_DIR}/grainlight
+  FILES ${SM_GRAINLIGHT} ${CMAKE_CURRENT_SOURCE_DIR}/grainlight/LICENSE)
 
 # Адрес сервера — как у ПК-версии: SITE_URL / -DSM_SITE_URL (в репозиторий не пишем); иначе --site при запуске
 target_compile_definitions(suslik_cinema PRIVATE SM_VERSION="${SM_CINEMA_VERSION}" SM_SITE_URL="${SM_SITE_URL}")
@@ -92,6 +98,13 @@ if(SM_BUILD_TESTS)
     target_compile_options(SpatialAudioTest PRIVATE /utf-8)
   endif()
   add_test(NAME SpatialAudioTest COMMAND SpatialAudioTest)
+  add_executable(ProjectorLookTest tests/ProjectorLookTest.cpp)
+  target_link_libraries(ProjectorLookTest PRIVATE suslik_cinema_geom Qt6::Test)
+  target_compile_definitions(ProjectorLookTest PRIVATE SM_GRAINLIGHT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/grainlight")
+  if(MSVC)
+    target_compile_options(ProjectorLookTest PRIVATE /utf-8)
+  endif()
+  add_test(NAME ProjectorLookTest COMMAND ProjectorLookTest)
   add_executable(ReleasePickTest tests/ReleasePickTest.cpp)
   target_link_libraries(ReleasePickTest PRIVATE suslik_cinema_pick Qt6::Test)
   if(MSVC)

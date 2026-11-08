@@ -1,11 +1,14 @@
 #include "SpatialSound.h"
 #include "GameLink.h"
+#include "ProjectorLook.h"
 
 #include "player/Mpv.h"
 #include "player/MpvEngine.h"
 #include "player/PlayerLog.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 namespace suslik::cinema {
 
@@ -19,6 +22,31 @@ const char *SpatialSound::filterChain() {
     return "@c3d:lavfi=[aformat=channel_layouts=stereo,channelsplit=channel_layout=stereo[L][R];"
            "[L]lowpass@lpl=f=20000,volume@gl=1[l];[R]lowpass@lpr=f=20000,volume@gr=1[r];"
            "[l][r]join=inputs=2:channel_layout=stereo,volume@gm=1]";
+}
+
+// Колонки: фильм в 7.1 (стерео встаёт на FL/FR, 5.1 — на свои каналы, тылы 5.1 «back» — на BL/BR; куда их
+// поставить в раскладке 5.1, решает speakerPlace), канал → оба уха (lowpass@lN/rN, volume@glN/grN) → amix по уху.
+// amix normalize=0 — простая сумма: уровни каналов уже в громкостях (speakerLevel).
+const char *SpatialSound::speakerChain() {
+    static const QByteArray chain = [] {
+        QByteArray g = "@c3d:lavfi=[aformat=channel_layouts=7.1,channelsplit=channel_layout=7.1";
+        for (int i = 0; i < kSpeakers; ++i) g += "[c" + QByteArray::number(i) + "]";
+        g += ";";
+        QByteArray ls, rs;
+        for (int i = 0; i < kSpeakers; ++i) {
+            const QByteArray n = QByteArray::number(i);
+            g += "[c" + n + "]asplit=2[a" + n + "][b" + n + "];";
+            g += "[a" + n + "]lowpass@l" + n + "=f=20000,volume@gl" + n + "=1[l" + n + "];";
+            g += "[b" + n + "]lowpass@r" + n + "=f=20000,volume@gr" + n + "=1[r" + n + "];";
+            ls += "[l" + n + "]";
+            rs += "[r" + n + "]";
+        }
+        const QByteArray mix = "amix=inputs=" + QByteArray::number(kSpeakers) + ":normalize=0";
+        g += ls + mix + "[lm];" + rs + mix + "[rm];";
+        g += "[lm][rm]join=inputs=2:channel_layout=stereo]";
+        return g;
+    }();
+    return chain.constData();
 }
 
 SpatialSound::SpatialSound(app::MpvEngine &mpv, GameLink &link, QObject *parent) : QObject(parent), m_mpv(mpv), m_link(link) {
@@ -37,14 +65,28 @@ void SpatialSound::setMode(Audio3D mode, bool muffle) {
     }
 }
 
+void SpatialSound::setFilmSound(int preset) {
+    preset = std::clamp(preset, 0, filmSoundCount() - 1);
+    if (preset == m_film) return;
+    m_film = preset;
+    app::PlayerLog::write(S("[audio3d] звук плёнки: %1").arg(filmSoundTitle(preset)));
+    install();
+}
+
 void SpatialSound::install() {
     const app::mpv::Handle h = m_mpv.current();
     const app::mpv::Api *a = app::mpv::api();
     if (!h || !a) return;
     // выкл — цепочки нет вовсе: звук как в ПК-версии
-    const int rc = a->set_property_string(h.get(), "af", m_mode == Audio3D::Off ? "" : filterChain());
+    // звук плёнки — до 3D-звука: фильтры по каналам, колонкам достаётся уже «плёночный» 5.1
+    QByteArray chain = filmSoundFilter(m_film);
+    const char *c3d = m_mode == Audio3D::Off ? "" : m_mode == Audio3D::Speakers ? speakerChain() : filterChain();
+    if (*c3d) chain += (chain.isEmpty() ? "" : ",") + QByteArray(c3d);
+    const int rc = a->set_property_string(h.get(), "af", chain.constData());
     m_installed = rc >= 0 && m_mode != Audio3D::Off;
     m_cur = m_sent = SpatialMix{};
+    // в новой цепочке громкости 1 и фильтры открыты — как SpeakerMix{}; уровни каналов дойдут со сглаживанием
+    m_spkCur = m_spkSent = SpeakerMix{};
     if (rc < 0) app::PlayerLog::write(S("[audio3d] цепочка не встала: %1").arg(QString::fromUtf8(a->error_string(rc))));
 }
 
@@ -58,8 +100,38 @@ void SpatialSound::send(const char *target, const char *cmd, double value) {
     a->command_async(h.get(), 0, args);
 }
 
+void SpatialSound::tickSpeakers() {
+    CameraPose cam;
+    SpeakerSet set;
+    const bool live = m_link.speakers(cam, set);
+    const SpeakerMix target = speakerMix(live ? &cam : nullptr, set, m_muffle);
+    m_spkCur = approach(m_spkCur, target, 0.3);
+    auto moved = [](double a, double b) { return std::abs(a - b) > 0.005; };
+    auto movedHz = [](double a, double b) { return std::abs(std::log(a / b)) > 0.03; };
+    char name[16];
+    for (int i = 0; i < kSpeakers; ++i) {
+        const EarMix &c = m_spkCur.ch[i];
+        EarMix &s = m_spkSent.ch[i];
+        if (moved(c.gainL, s.gainL)) { std::snprintf(name, sizeof name, "volume@gl%d", i); send(name, "volume", c.gainL); s.gainL = c.gainL; }
+        if (moved(c.gainR, s.gainR)) { std::snprintf(name, sizeof name, "volume@gr%d", i); send(name, "volume", c.gainR); s.gainR = c.gainR; }
+        if (movedHz(c.lowpassL, s.lowpassL)) { std::snprintf(name, sizeof name, "lowpass@l%d", i); send(name, "f", c.lowpassL); s.lowpassL = c.lowpassL; }
+        if (movedHz(c.lowpassR, s.lowpassR)) { std::snprintf(name, sizeof name, "lowpass@r%d", i); send(name, "f", c.lowpassR); s.lowpassR = c.lowpassR; }
+    }
+    if (++m_logTick % 200 == 0) { // раз в 10 с — в журнал: уши каждого канала
+        QString line = S("[audio3d] колонки%1:").arg(live ? QString() : S(" (нет камеры)"));
+        for (int i = 0; i < kSpeakers; ++i)
+            line += S(" %1%2 %3/%4").arg(S(speakerName(i)), set.has[i] ? QString() : S("*"))
+                        .arg(m_spkCur.ch[i].gainL, 0, 'f', 2).arg(m_spkCur.ch[i].gainR, 0, 'f', 2);
+        app::PlayerLog::write(line);
+    }
+}
+
 void SpatialSound::tick() {
     if (!m_installed || !m_mpv.loaded()) return;
+    if (m_mode == Audio3D::Speakers) {
+        tickSpeakers();
+        return;
+    }
     SpatialMix target; // нет камеры (игра не идёт, мода нет) — звук как есть
     CameraPose cam;
     V3 center;

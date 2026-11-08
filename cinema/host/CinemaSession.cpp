@@ -1,4 +1,5 @@
 #include "CinemaSession.h"
+#include "ProjectorLook.h"
 
 #include "Library.h"
 #include "Settings.h"
@@ -574,7 +575,15 @@ void CinemaSession::startRemote() {
 int CinemaSession::audio3d() const {
     bool ok = false;
     const int v = Store::of(S("settings")).get(S("remote_audio3d")).value_or(S("2")).toInt(&ok);
-    return ok ? std::clamp(v, 0, 2) : 2; // по умолчанию — объёмный, как HRTF по умолчанию у TVKit
+    return ok ? std::clamp(v, 0, 3) : 2; // по умолчанию — объёмный, как HRTF по умолчанию у TVKit
+}
+
+int CinemaSession::projector() const {
+    return projectorClamp(Store::of(S("settings")).get(S("remote_projector")).value_or(S("0")).toInt());
+}
+
+int CinemaSession::filmSound() const {
+    return std::clamp(Store::of(S("settings")).get(S("remote_filmSound")).value_or(S("0")).toInt(), 0, filmSoundCount() - 1);
 }
 
 bool CinemaSession::option(const QString &key) const {
@@ -607,7 +616,12 @@ void CinemaSession::remote(const QJsonObject &c) {
     } else if (op == QLatin1String("opt")) {
         const QString key = c.value(S("key")).toString();
         if (key == QLatin1String("audio3d")) {
-            Store::of(S("settings")).put(S("remote_audio3d"), QString::number(std::clamp(c.value(S("v")).toInt(2), 0, 2)));
+            Store::of(S("settings")).put(S("remote_audio3d"), QString::number(std::clamp(c.value(S("v")).toInt(2), 0, 3)));
+        } else if (key == QLatin1String("projector")) {
+            Store::of(S("settings")).put(S("remote_projector"), QString::number(projectorClamp(c.value(S("v")).toInt())));
+        } else if (key == QLatin1String("filmSound")) {
+            Store::of(S("settings")).put(S("remote_filmSound"),
+                                         QString::number(std::clamp(c.value(S("v")).toInt(), 0, filmSoundCount() - 1)));
         } else if (key == QLatin1String("muteGame") || key == QLatin1String("pauseWithGame") || key == QLatin1String("muffle")) {
             Store::of(S("settings")).put(S("remote_") + key, c.value(S("on")).toBool() ? S("1") : S("0"));
         } else {
@@ -654,7 +668,8 @@ QJsonObject CinemaSession::status() const {
                   {S("code"), m_lib.pairingCode()}, {S("url"), m_lib.pairingUrl()},
                   {S("site"), !m_api.base().isEmpty()}, {S("busy"), m_busy}, {S("msg"), m_msg}, {S("msgN"), m_msgN},
                   {S("muteGame"), option(S("muteGame"))}, {S("pauseWithGame"), option(S("pauseWithGame"))},
-                  {S("audio3d"), audio3d()}, {S("muffle"), option(S("muffle"))}};
+                  {S("audio3d"), audio3d()}, {S("muffle"), option(S("muffle"))},
+                  {S("projector"), projector()}, {S("filmSound"), filmSound()}};
     if (m_extraStatus) m_extraStatus(o);
     if (m_mpv && m_mpv->loaded() && !m_key.isEmpty()) {
         auto tracks = [](const QVariantList &list) {

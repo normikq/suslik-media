@@ -4,7 +4,8 @@
 -- Файлы в папке мода:
 --   screens.json — калибровка: центр на стекле, нормаль, размер, сдвиги (пишется при изменении);
 --   screen.json  — углы экрана в мире для хоста, rev растёт при каждом изменении;
---   state.json   — каждый кадр: {seq, t, pos, f, r, u, kx, ky, ox, oy, W, H, visible, occl, paused, cal, rev, end};
+--   state.json   — каждый кадр: {seq, t, pos, f, r, u, kx, ky, ox, oy, W, H, visible, occl, paused, cal, socc, rev, end};
+--   speakers.json — колонки 5.1/7.1 для 3D-звука «колонки» (хосту уходят в screen.json, ключ spk);
 --   remote.json, host.json, library.json, host.txt — пульт на телефоне VAO (remote.lua).
 --                  Пишется целиком на месте; хост берёт файл, только если seq == end (иначе он недописан).
 -- Игру мод не меняет: не трогает сохранения, настройки и объекты. Надписи латиницей (шрифт CET без кириллицы).
@@ -15,6 +16,17 @@ local CALIB_FILE = "screens.json"
 local OCCL_EVERY = 6        -- лучи на загораживание раз в N кадров (~10 раз в секунду)
 local OCCL_DEPTH = 0.4      -- выступы стены не дальше стольких м от плоскости экрана его не загораживают
 local PROBE = 0.25          -- точки для подгонки линзы игры: x/z = ±PROBE
+
+-- Колонки: каждый канал фильма звучит из своей точки (хост, режим 3D-звука «колонки»). Имена — как каналы FFmpeg.
+local SPK_FILE = "speakers.json"
+local SPK_ALL = { "FL", "FR", "FC", "LFE", "BL", "BR", "SL", "SR" }
+local SPK_LAYOUTS = {
+    ["5.1"] = { "FL", "FR", "FC", "LFE", "SL", "SR" },
+    ["7.1"] = { "FL", "FR", "FC", "LFE", "SL", "SR", "BL", "BR" },
+}
+local SPK_LABEL = { FL = "Front left", FR = "Front right", FC = "Centre", LFE = "Subwoofer",
+    SL = "Surround left", SR = "Surround right", BL = "Back left", BR = "Back right" }
+local REMOTE = nil          -- remote.lua (пульт VAO), если загрузился: через него окно мода шлёт команды хосту
 
 local S = {
     seq = 0,
@@ -38,6 +50,9 @@ local S = {
     fade = 1,               -- множитель прозрачности для хоста: дистанция и NPC перед экраном
     status = "",
     lastErr = nil,
+    -- колонки: p — точки по именам (хранятся все, хосту — только каналы раскладки), sel — следующая для клавиши,
+    -- occ — за стеной (луч от камеры, одна колонка за кадр, подтверждение двумя проверками)
+    spk = { layout = "5.1", p = {}, sel = 1, occ = {}, occRaw = {}, occIdx = 0, show = true },
 }
 
 -- ---------- векторы ----------
@@ -234,15 +249,25 @@ local function writeFileSafe(name, text)
     return os.rename(tmp, name) == true
 end
 
+-- Колонки раскладки, которые поставлены: {"FL":[x,y,z],…}
+local function spkJson()
+    local parts = {}
+    for _, n in ipairs(SPK_LAYOUTS[S.spk.layout]) do
+        local p = S.spk.p[n]
+        if p then parts[#parts + 1] = '"' .. n .. '":' .. v3json(p, 3) end
+    end
+    return "{" .. table.concat(parts, ",") .. "}"
+end
+
 local function writeScreen()
     if not S.corners then
-        writeFile(SCREEN_FILE, string.format('{"rev":%d,"corners":null}\n', S.rev))
+        writeFile(SCREEN_FILE, string.format('{"rev":%d,"spk":%s,"corners":null}\n', S.rev, spkJson()))
         return
     end
     local cs = {}
     for i = 1, 4 do cs[i] = v3json(S.corners[i], 4) end
-    writeFile(SCREEN_FILE, string.format('{"rev":%d,"w":%.4f,"h":%.4f,"fit":"%s","n":%s,"corners":[%s]}\n', S.rev,
-        S.screen.w, S.screen.h, fitKnown(S.screen.fit), v3json(S.normal), table.concat(cs, ",")))
+    writeFile(SCREEN_FILE, string.format('{"rev":%d,"w":%.4f,"h":%.4f,"fit":"%s","n":%s,"spk":%s,"corners":[%s]}\n',
+        S.rev, S.screen.w, S.screen.h, fitKnown(S.screen.fit), v3json(S.normal), spkJson(), table.concat(cs, ",")))
 end
 
 local function saveCalib()
@@ -364,6 +389,173 @@ local function markCenter()
         od = old and old.od or OCCL_DEPTH }
     applyScreen()
     note(string.format("centre %s (%s, %s), normal from %s", vstr(hit.p), hit.group, hit.mat, src))
+end
+
+-- ---------- колонки ----------
+
+local function saveSpeakers()
+    local parts = {}
+    for _, n in ipairs(SPK_ALL) do
+        local p = S.spk.p[n]
+        if p then parts[#parts + 1] = '"' .. n .. '":' .. v3json(p, 3) end
+    end
+    if not writeFileSafe(SPK_FILE, string.format('{"version":1,"layout":"%s","p":{%s}}\n', S.spk.layout,
+            table.concat(parts, ","))) then
+        note("could not save speakers.json (is the mod folder writable?)")
+    end
+end
+
+local function loadSpeakers()
+    local f = io.open(SPK_FILE, "r") or io.open(SPK_FILE .. ".tmp", "r")
+    if not f then return end
+    local s = f:read("*a") or ""
+    f:close()
+    local layout = s:match('"layout":"([%d%.]+)"')
+    if SPK_LAYOUTS[layout] then S.spk.layout = layout end
+    local count = 0
+    for _, n in ipairs(SPK_ALL) do
+        local x, y, z = s:match('"' .. n .. '":%[([^,]+),([^,]+),([^%]]+)%]')
+        if x and tonumber(x) and tonumber(y) and tonumber(z) then
+            S.spk.p[n] = { x = tonumber(x), y = tonumber(y), z = tonumber(z) }
+            count = count + 1
+        end
+    end
+    if count > 0 then note(string.format("speakers loaded: %s, %d placed", S.spk.layout, count)) end
+end
+
+-- Колонки изменились: хосту — новый screen.json (rev + 1), себе — speakers.json.
+local function applySpeakers()
+    S.spk.occ, S.spk.occRaw = {}, {}
+    S.rev = S.rev + 1
+    writeScreen()
+    saveSpeakers()
+end
+
+-- Один луч по Static (стены, пол, мебель): точка попадания или nil.
+local function staticHit(from, to)
+    local sq = Game.GetSpatialQueriesSystem()
+    local ok, hit, res = pcall(function()
+        return sq:SyncRaycastByCollisionGroup(Vector4.new(from.x, from.y, from.z, 1),
+            Vector4.new(to.x, to.y, to.z, 1), "Static", false, false)
+    end)
+    if ok and hit and res then return vec(res.position) end
+    return nil
+end
+
+local function selNext(name)
+    local names = SPK_LAYOUTS[S.spk.layout]
+    for i, n in ipairs(names) do
+        if n == name then S.spk.sel = i % #names + 1 end
+    end
+end
+
+-- Колонка туда, куда смотрит прицел: в 20 см перед поверхностью (не в стене, иначе луч «за стеной» её заглушит).
+local function placeAim(name)
+    local c = camera()
+    if not c then note("no camera"); return end
+    local hit = aimHit(c, 40)
+    local p
+    if hit and hit.d > 0.5 then
+        p = add(hit.p, mul(norm(sub(c.pos, hit.p)), 0.2))
+    else
+        p = add(c.pos, mul(c.f, 3)) -- никуда не попали: 3 м перед собой
+    end
+    S.spk.p[name] = p
+    selNext(name)
+    applySpeakers()
+    note(string.format("%s at %s (aim)", SPK_LABEL[name], vstr(p)))
+end
+
+-- Колонка там, где сейчас голова V (высота ушей).
+local function placeHere(name)
+    local c = camera()
+    if not c then note("no camera"); return end
+    S.spk.p[name] = c.pos
+    selNext(name)
+    applySpeakers()
+    note(string.format("%s at %s (here)", SPK_LABEL[name], vstr(c.pos)))
+end
+
+-- Расстановка по ITU вокруг места V и экрана: фронт у краёв экрана (не уже ±22°), центр на экране, боковые
+-- ±110° (5.1) или ±90° и тылы ±150° (7.1). Колонка, которая ушла бы в стену, встаёт в 25 см перед ней.
+local function autoSpeakers()
+    local c = camera()
+    if not c then note("no camera"); return end
+    if not S.corners then note("auto: mark the screen first"); return end
+    local cs = S.corners
+    local ctr = mul(add(add(cs[1], cs[2]), add(cs[3], cs[4])), 0.25)
+    local seat = c.pos
+    local to = sub(ctr, seat)
+    to.z = 0
+    local d = math.sqrt(dot(to, to))
+    if d < 0.7 then note("auto: step back from the screen"); return end
+    local f = mul(to, 1 / d)
+    local r = norm(cross(f, { x = 0, y = 0, z = 1 }))
+    local function at(deg, radius, z)
+        local a = math.rad(deg)
+        local p = add(seat, add(mul(f, math.cos(a) * radius), mul(r, math.sin(a) * radius)))
+        p.z = z
+        local dd = sub(p, seat)
+        local len = math.sqrt(dot(dd, dd))
+        if len < 0.01 then return p end
+        local hit = staticHit(add(seat, mul(dd, 0.35 / len)), p)
+        if hit then
+            local hd = math.sqrt(dot(sub(hit, seat), sub(hit, seat)))
+            p = add(seat, mul(dd, math.max(0.4, hd - 0.25) / len))
+        end
+        return p
+    end
+    local hw = (S.screen and S.screen.w or 1.2) / 2
+    local fa = math.max(22, math.min(45, math.deg(math.atan(hw * 0.9 / d))))
+    local fr = d / math.cos(math.rad(fa))
+    local rs = math.max(1.2, math.min(d * 0.8, 4))
+    local ear = seat.z + 0.2
+    local P = S.spk.p
+    P.FC = add(ctr, mul(norm(sub(seat, ctr)), 0.15))
+    P.FL = at(-fa, fr, ctr.z)
+    P.FR = at(fa, fr, ctr.z)
+    P.LFE = at(fa * 0.6, d, math.min(ctr.z, seat.z) - 0.4)
+    if S.spk.layout == "7.1" then
+        P.SL, P.SR = at(-90, rs, ear), at(90, rs, ear)
+        P.BL, P.BR = at(-150, rs, ear), at(150, rs, ear)
+    else
+        P.SL, P.SR = at(-110, rs, ear), at(110, rs, ear)
+    end
+    applySpeakers()
+    note(string.format("speakers %s placed around you (%.1f m to the screen)", S.spk.layout, d))
+end
+
+-- Колонка за стеной: один луч за кадр по кругу (так 8 колонок проверяются ~8 раз в секунду).
+local function speakerOcclusion(c)
+    local names = SPK_LAYOUTS[S.spk.layout]
+    for _ = 1, #names do
+        S.spk.occIdx = S.spk.occIdx % #names + 1
+        local n = names[S.spk.occIdx]
+        local p = S.spk.p[n]
+        if p then
+            local d = sub(p, c.pos)
+            local len = math.sqrt(dot(d, d))
+            local raw = 0
+            if len > 0.8 then
+                -- от 35 см перед глазами (не тело V) до 30 см перед колонкой (не её собственная стена)
+                local hit = staticHit(add(c.pos, mul(d, 0.35 / len)), add(c.pos, mul(d, (len - 0.3) / len)))
+                if hit then raw = 1 end
+            end
+            if S.spk.occRaw[n] == raw then S.spk.occ[n] = raw end
+            S.spk.occRaw[n] = raw
+            return
+        end
+    end
+end
+
+-- ',"socc":{…}' для state.json или пусто, если колонок нет.
+local function spkOccJson()
+    local parts = {}
+    for _, n in ipairs(SPK_LAYOUTS[S.spk.layout]) do
+        if S.spk.p[n] then parts[#parts + 1] = string.format('"%s":%d', n, S.spk.occ[n] or 0) end
+    end
+    if #parts == 0 then return "" end
+    return ',"socc":{' .. table.concat(parts, ",") .. "}"
 end
 
 -- ---------- кадр ----------
@@ -493,36 +685,63 @@ local function writeState()
         S.npc, S.npcRaw = false, false
     end
     S.fade = S.visible and fadeFactor(c) or 1
+    speakerOcclusion(c)
     writeFile(STATE_FILE, string.format(
         '{"seq":%d,"t":%.4f,"pos":%s,"f":%s,"r":%s,"u":%s,"kx":%.6f,"ky":%.6f,"ox":%.6f,"oy":%.6f,' ..
-        '"W":%d,"H":%d,"visible":%s,"occl":%.2f,"paused":%s,"cal":%s,"hide":%s,"fade":%.2f,"rev":%d,"end":%d}\n',
+        '"W":%d,"H":%d,"visible":%s,"occl":%.2f,"paused":%s,"cal":%s,"hide":%s,"fade":%.2f%s,"rev":%d,"end":%d}\n',
         S.seq, t, v3json(c.pos, 4), v3json(c.f, 6), v3json(c.r, 6), v3json(c.u, 6), kx, ky, ox, oy, W, H,
         S.visible and "true" or "false", S.occl, isPaused() and "true" or "false",
-        S.overlayOpen and "true" or "false", S.hideWhy and ('"' .. S.hideWhy .. '"') or "null", S.fade, S.rev, S.seq))
+        S.overlayOpen and "true" or "false", S.hideWhy and ('"' .. S.hideWhy .. '"') or "null", S.fade, spkOccJson(),
+        S.rev, S.seq))
     S.cam, S.kx, S.ky, S.ox, S.oy, S.W, S.H = c, kx, ky, ox, oy, W, H
 end
 
 -- ---------- рисование ----------
 
+-- Рамка экрана (S.frame) и метки колонок (окно мода открыто или рамка включена).
 local function drawFrame()
     local c, cs = S.cam, S.corners
-    if not (c and cs and S.kx and S.W > 0) then return end
-    local pts = {}
-    for i = 1, 4 do
-        local d = sub(cs[i], c.pos)
+    if not (c and S.kx and S.W > 0) then return end
+    local function proj(p)
+        local d = sub(p, c.pos)
         local z = dot(d, c.f)
-        if z < 0.05 then return end
-        pts[i] = { (1 + S.kx * dot(d, c.r) / z + S.ox) * S.W / 2, (1 - S.ky * dot(d, c.u) / z - S.oy) * S.H / 2 }
+        if z < 0.05 then return nil end
+        return { (1 + S.kx * dot(d, c.r) / z + S.ox) * S.W / 2, (1 - S.ky * dot(d, c.u) / z - S.oy) * S.H / 2 }
     end
+    local pts
+    if S.frame and cs then
+        pts = {}
+        for i = 1, 4 do
+            pts[i] = proj(cs[i])
+            if not pts[i] then pts = nil; break end
+        end
+    end
+    local marks = {}
+    if S.spk.show then
+        for _, n in ipairs(SPK_LAYOUTS[S.spk.layout]) do
+            local p = S.spk.p[n] and proj(S.spk.p[n])
+            if p then marks[#marks + 1] = { p, n } end
+        end
+    end
+    if not pts and #marks == 0 then return end
     ImGui.SetNextWindowPos(0, 0)
     ImGui.SetNextWindowSize(S.W, S.H)
     local flags = ImGuiWindowFlags.NoDecoration + ImGuiWindowFlags.NoInputs + ImGuiWindowFlags.NoBackground
         + ImGuiWindowFlags.NoSavedSettings + ImGuiWindowFlags.NoFocusOnAppearing + ImGuiWindowFlags.NoBringToFrontOnFocus
     if ImGui.Begin("##SuslikCinemaFrame", flags) then
         local dl = ImGui.GetWindowDrawList()
-        for i = 1, 4 do
-            local a, b = pts[i], pts[i % 4 + 1]
-            ImGui.ImDrawListAddLine(dl, a[1], a[2], b[1], b[2], 0xFF00FF00, 2.0)
+        if pts then
+            for i = 1, 4 do
+                local a, b = pts[i], pts[i % 4 + 1]
+                ImGui.ImDrawListAddLine(dl, a[1], a[2], b[1], b[2], 0xFF00FF00, 2.0)
+            end
+        end
+        for _, m in ipairs(marks) do
+            local x, y, n = m[1][1], m[1][2], m[2]
+            -- за стеной — серым; рисование в pcall: в старых CET другие сигнатуры draw list
+            local col = (S.spk.occ[n] == 1) and 0xFF909090 or 0xFF00D0FF
+            pcall(ImGui.ImDrawListAddCircleFilled, dl, x, y, 7, col, 16)
+            pcall(ImGui.ImDrawListAddText, dl, x + 10, y - 8, col, n)
         end
     end
     ImGui.End()
@@ -532,6 +751,87 @@ end
 -- отвечал true каждый кадр и перебивал нажатый выше него. Поэтому флаг не передаём, текущий пункт — со значком.
 local function pick(label, current)
     return ImGui.Selectable((current and "> " or "   ") .. label .. "##" .. label) == true
+end
+
+-- Раздел «Projector»: эффект кинопроектора хоста (шейдеры GRAINLIGHT) и звук плёнки. Латиницей: шрифт CET без
+-- кириллицы; порядок — как в ProjectorLook.cpp.
+local PROJECTOR_EN = { "Off", "Subtle", "2000s cinema", "Worn print", "Balanced", "Silent film", "Home projector" }
+local FILM_SOUND_EN = { "As is", "35mm optical", "Vinyl" }
+local function drawProjector()
+    if not ImGui.CollapsingHeader("Projector look (film grain, flicker, dust)") then return end
+    if not (REMOTE and REMOTE.send) then
+        ImGui.Text("Needs the phone remote (V's API Overlay).")
+        return
+    end
+    local h = REMOTE.hostState and REMOTE.hostState() or nil
+    if not h then ImGui.Text("Host is not running.") end
+    local function combo(label, names, cur, key)
+        if ImGui.BeginCombo(label, names[cur + 1] or names[1]) then
+            for i, n in ipairs(names) do
+                if pick(n, i - 1 == cur) then REMOTE.send("opt", { key = key, v = i - 1 }) end
+            end
+            ImGui.EndCombo()
+        end
+    end
+    combo("Look", PROJECTOR_EN, h and h.projector or 0, "projector")
+    combo("Film sound", FILM_SOUND_EN, h and h.filmSound or 0, "filmSound")
+    ImGui.Text("Shaders: GRAINLIGHT (MIT). Silent film and Home projector are our own tunings.")
+end
+
+-- Раздел «Speakers»: раскладка, точки колонок, авто, включить режим на хосте.
+local function drawSpeakers()
+    if not ImGui.CollapsingHeader("Speakers (5.1 / 7.1 sound)") then return end
+    ImGui.Text("Each movie channel plays from its own speaker. Aim at a spot and press 'Aim', or stand there")
+    ImGui.Text("and press 'Here'. The hotkey places the next one ('>') at the aim. Not placed: centre goes between")
+    ImGui.Text("the fronts, others to the screen. Then set 3D sound to 'Speakers' (button below or phone remote).")
+    if ImGui.BeginCombo("Layout", S.spk.layout) then
+        for _, l in ipairs({ "5.1", "7.1" }) do
+            if pick(l, l == S.spk.layout) then
+                S.spk.layout = l
+                if S.spk.sel > #SPK_LAYOUTS[l] then S.spk.sel = 1 end
+                applySpeakers()
+            end
+        end
+        ImGui.EndCombo()
+    end
+    local c = S.cam
+    for i, n in ipairs(SPK_LAYOUTS[S.spk.layout]) do
+        local p = S.spk.p[n]
+        ImGui.Text((i == S.spk.sel and "> " or "   ") .. SPK_LABEL[n])
+        ImGui.SameLine(150)
+        if ImGui.Button("Aim##" .. n) then placeAim(n) end
+        ImGui.SameLine()
+        if ImGui.Button("Here##" .. n) then placeHere(n) end
+        ImGui.SameLine()
+        if p then
+            if ImGui.Button("X##" .. n) then
+                S.spk.p[n] = nil
+                applySpeakers()
+            end
+            ImGui.SameLine()
+            local dist = c and math.sqrt(dot(sub(p, c.pos), sub(p, c.pos))) or 0
+            ImGui.Text(string.format("%.1f m%s", dist, S.spk.occ[n] == 1 and ", behind a wall" or ""))
+        else
+            ImGui.Text("not placed")
+        end
+    end
+    if ImGui.Button("Auto: around me and the screen") then autoSpeakers() end
+    ImGui.SameLine()
+    if ImGui.Button("Clear all") then
+        S.spk.p = {}
+        S.spk.sel = 1
+        applySpeakers()
+    end
+    local sh, usedSh = ImGui.Checkbox("Show speaker markers", S.spk.show)
+    if usedSh then S.spk.show = sh end
+    if REMOTE and REMOTE.send then
+        if ImGui.Button("Use speakers for 3D sound") then
+            REMOTE.send("opt", { key = "audio3d", v = 3 })
+            note("asked the host: 3D sound = speakers")
+        end
+        ImGui.SameLine()
+        if ImGui.Button("Back to surround") then REMOTE.send("opt", { key = "audio3d", v = 2 }) end
+    end
 end
 
 local function drawWindow()
@@ -624,6 +924,8 @@ local function drawWindow()
         if usedNa then S.npcAlpha = na; saveSettings() end
         local fr, usedFr = ImGui.Checkbox("Green frame (check without the host)", S.frame)
         if usedFr then S.frame = fr end
+        drawProjector()
+        drawSpeakers()
         if S.kx then ImGui.Text(string.format("Lens kx %.4f ky %.4f, frame %d", S.kx, S.ky, S.seq)) end
         ImGui.Text(S.status)
     end
@@ -635,12 +937,18 @@ end
 registerForEvent("onInit", function()
     loadSettings()
     loadCalib()
+    loadSpeakers()
     -- rev с отметкой времени: хост увидит новый экран и после перезапуска мода
     S.rev = math.floor(os.time() % 100000) * 10
     applyScreen()
     -- пульт на телефоне V's API Overlay (remote.lua): без VAO мод работает, как раньше
     local ok, remote = pcall(require, "remote")
-    if ok and remote then guard("remote", remote.init) else note("remote.lua: " .. tostring(remote)) end
+    if ok and remote then
+        REMOTE = remote
+        guard("remote", remote.init)
+    else
+        note("remote.lua: " .. tostring(remote))
+    end
 end)
 
 registerForEvent("onOverlayOpen", function() S.overlayOpen = true end)
@@ -651,7 +959,7 @@ registerForEvent("onUpdate", function()
 end)
 
 registerForEvent("onDraw", function()
-    if S.frame then guard("frame", drawFrame) end
+    if S.frame or (S.overlayOpen and S.spk.show) then guard("frame", drawFrame) end
     if S.overlayOpen then drawWindow() end
 end)
 
@@ -664,3 +972,6 @@ end)
 registerHotkey("SuslikCinema_Center", "Suslik Cinema: mark TV screen centre", function() markCenter() end)
 registerHotkey("SuslikCinema_Hide", "Suslik Cinema: hide/show screen", function() S.userHidden = not S.userHidden end)
 registerHotkey("SuslikCinema_Frame", "Suslik Cinema: show/hide green frame", function() S.frame = not S.frame end)
+registerHotkey("SuslikCinema_Speaker", "Suslik Cinema: place next speaker at aim", function()
+    guard("speaker", placeAim, SPK_LAYOUTS[S.spk.layout][S.spk.sel] or "FL")
+end)

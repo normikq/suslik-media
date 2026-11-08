@@ -95,8 +95,11 @@ public:
 
     /// Настройки пульта (хранилище settings): muteGame — глушить игру во время фильма, pauseWithGame — пауза с игрой.
     bool option(const QString &key) const;
-    /// 3D-звук: 0 — выкл, 1 — стерео, 2 — объёмный (muffle — «за стеной глуше», option).
+    /// 3D-звук: 0 — выкл, 1 — стерео, 2 — объёмный, 3 — колонки (muffle — «за стеной глуше», option).
     int audio3d() const;
+    /// Эффект проектора (ProjectorLook, 0 — выкл) и звук плёнки (0 — как есть).
+    int projector() const;
+    int filmSound() const;
 
 signals:
     void ready(const QString &url, qint64 startMs);

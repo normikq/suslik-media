@@ -7,6 +7,9 @@
 --   library.json (хост → мы)  медиатека, перечитываем, когда в host.json меняется libRev;
 --   host.txt     (хост → helper) путь к exe: companion/cinema_helper.py запускает по нему хост.
 local R = {}
+-- Пресеты проектора хоста (ProjectorLook.cpp, тот же порядок) и звука плёнки
+R.PROJECTOR_ALL = { "выкл", "тонкий", "кино 2000-х", "старая копия", "сбалансированный", "немое кино", "домашний проектор" }
+R.FILM_SOUND_ALL = { "как есть", "оптика 35 мм", "винил" }
 
 local MOD = "SuslikCinema"
 local HELPER = "SuslikCinema_host"
@@ -346,13 +349,20 @@ local function build(page)
         w.pauseGame = menu:Checkbox{ text = "Пауза фильма вместе с игрой", checked = true, x = 20, y = 466, w = W - 40, h = 36,
             onChange = function(v) send("opt", { key = "pauseWithGame", on = v and true or false }) end }
         w.roomLine = button("", 20, 580, W - 40, 44, function() st.page = "room" end, { align = "left", size = 14 })
-        -- 3D-звук (как у TVKit: выкл / стерео / объёмный) и «за стеной глуше»
+        -- 3D-звук (как у TVKit: выкл / стерео / объёмный; колонки 5.1/7.1 — расставляются в меню мода) и «за стеной глуше»
         w.audio3d = button("", 20, 632, (W - 50) / 2, 44, function()
-            local v = ((st.host and st.host.audio3d or 2) + 1) % 3
+            local v = ((st.host and st.host.audio3d or 2) + 1) % 4
             send("opt", { key = "audio3d", v = v })
         end, { size = 14 })
         w.muffle = menu:Checkbox{ text = "За стеной глуше", checked = true, x = 30 + (W - 50) / 2, y = 636, w = (W - 50) / 2, h = 36,
             onChange = function(v) send("opt", { key = "muffle", on = v and true or false }) end }
+        -- эффект кинопроектора (шейдеры GRAINLIGHT) и звук плёнки — по кругу
+        w.projector = button("", 20, 684, (W - 50) / 2, 44, function()
+            send("opt", { key = "projector", v = ((st.host and st.host.projector or 0) + 1) % #R.PROJECTOR_ALL })
+        end, { size = 14 })
+        w.filmSound = button("", 30 + (W - 50) / 2, 684, (W - 50) / 2, 44, function()
+            send("opt", { key = "filmSound", v = ((st.host and st.host.filmSound or 0) + 1) % #R.FILM_SOUND_ALL })
+        end, { size = 14 })
         button("Стоп", 20, 520, (W - 50) / 2, 48, function() send("stop"); st.page = "lib" end)
         button("Медиатека", 30 + (W - 50) / 2, 520, (W - 50) / 2, 48, function() st.page = "lib" end)
         R.live()
@@ -493,8 +503,10 @@ function R.live()
         local r = h.room or {}
         setText(w.roomLine, r["in"] and ("Вместе · комната " .. (r.code or "") .. " · " .. (r.host and "вы ведущий" or ("ведущий " .. (r.hostName or ""))))
             or "Смотреть вместе…")
-        local modes = { [0] = "выкл", [1] = "стерео", [2] = "объёмный" }
+        local modes = { [0] = "выкл", [1] = "стерео", [2] = "объёмный", [3] = "колонки" }
         setText(w.audio3d, "3D-звук: " .. (modes[h.audio3d or 2] or "объёмный"))
+        setText(w.projector, "Проектор: " .. (R.PROJECTOR_ALL[(h.projector or 0) + 1] or "выкл"))
+        setText(w.filmSound, "Звук плёнки: " .. (R.FILM_SOUND_ALL[(h.filmSound or 0) + 1] or "как есть"))
         if w.muffle._v ~= h.muffle then w.muffle._v = h.muffle; w.muffle:SetValue(h.muffle ~= false) end
         if w.mute._v ~= h.muteGame then w.mute._v = h.muteGame; w.mute:SetValue(h.muteGame and true or false) end
         if w.pauseGame._v ~= h.pauseWithGame then w.pauseGame._v = h.pauseWithGame; w.pauseGame:SetValue(h.pauseWithGame and true or false) end
@@ -552,6 +564,11 @@ function R.poll()
     end
     if visible then refresh() end
 end
+
+-- Команда хосту из окна мода (CET): например, включить 3D-звук «колонки» после расстановки.
+function R.send(op, fields) send(op, fields) end
+-- Последнее состояние хоста (host.json) или nil: окно мода показывает по нему пресет проектора.
+function R.hostState() return st.host end
 
 function R.init()
     VAO = GetMod("VsAPIOverlay")

@@ -21,6 +21,7 @@
 #include "Overlay.h"
 #include "RemoteLink.h"
 #include "SpatialSound.h"
+#include "Projector.h"
 #include "ScreenQuad.h"
 
 #include "AppDir.h"
@@ -363,17 +364,24 @@ int main(int argc, char *argv[]) {
     if (!file.isEmpty()) pending->url = file;
     // 3D-звук (идея TVKit): звук фильма — от экрана в мире игры; цепочка фильтров — после каждого открытия
     cinema::SpatialSound spatial(mpv, link);
-    auto syncAudio3d = [&] { spatial.setMode(cinema::Audio3D(session.audio3d()), session.option(QStringLiteral("muffle"))); };
+    // эффект кинопроектора (шейдеры GRAINLIGHT) и звук плёнки — с пульта, как 3D-звук
+    cinema::Projector projector(mpv);
+    auto syncAudio3d = [&] {
+        spatial.setMode(cinema::Audio3D(session.audio3d()), session.option(QStringLiteral("muffle")));
+        spatial.setFilmSound(session.filmSound());
+        projector.setPreset(session.projector());
+    };
     syncAudio3d();
     QObject::connect(&session, &cinema::CinemaSession::optionChanged, &app, syncAudio3d);
     const int startVolume = cli.isSet(volumeOpt) ? std::clamp(cli.value(volumeOpt).toInt(), 0, 150) : -1;
-    auto tryOpen = [&mpv, &host, &spatial, pending, startVolume] {
+    auto tryOpen = [&mpv, &host, &spatial, &projector, pending, startVolume] {
         if (pending->opened || pending->frames < 3 || pending->url.isEmpty()) return;
         pending->opened = true;
         host.setBlank(false);
         say(QStringLiteral("[cinema] открываю %1 с %2 с").arg(pending->url.section(QLatin1Char('?'), 0, 0)).arg(pending->startMs / 1000));
         mpv.open(pending->url, pending->startMs, false, QStringLiteral("rus,ru"), QStringLiteral("rus,ru"), {}, {});
         spatial.install();
+        projector.install();
         if (startVolume >= 0) mpv.setVolume(startVolume);
     };
     QObject::connect(window, &QQuickWindow::frameSwapped, &app, [window, pending, tryOpen] {
