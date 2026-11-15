@@ -25,6 +25,9 @@ class TorrentInspectorTest {
         val film = "d4:infod6:lengthi1e4:name9:video.mkvee".toByteArray(Charsets.ISO_8859_1)
         assertNull(TorrentInspector.rejectionForTorrent(film))
         assertNull(TorrentInspector.rejectionForTorrent("мусор".toByteArray())) // не разобрали — не мешаем
+        // Обрезанный файл: длина строки без «:» до конца — не разобрали, без исключения наружу
+        assertNull(TorrentInspector.rejectionForTorrent("d4:infod4:name12".toByteArray(Charsets.ISO_8859_1)))
+        assertTrue(TorrentInspector.extractFilesFromTorrentBytes("d4:infod4:name12".toByteArray(Charsets.ISO_8859_1)).isEmpty())
     }
 
     @Test fun magnetName() {

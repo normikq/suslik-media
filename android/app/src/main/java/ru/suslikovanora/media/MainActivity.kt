@@ -144,8 +144,11 @@ class MainActivity : ComponentActivity() {
             else -> null
         }?.trim() ?: return
         val link = Regex("""magnet:\?\S+""", RegexOption.IGNORE_CASE).find(text)?.value
-            ?: Regex("""https?://\S+""", RegexOption.IGNORE_CASE).find(text)?.value ?: return
-        add.mode = 0; add.input = link; add.status = tr("main.nazhmite_dobavit_chtoby_otprav"); add.statusOk = true
+        // Only magnets are added (AddModel.submitInput): a shared web link used to land in the field with «press Add»
+        // and was refused on the press. Now it says so at once.
+        add.mode = 0
+        if (link != null) { add.input = link; add.status = tr("main.nazhmite_dobavit_chtoby_otprav"); add.statusOk = true }
+        else { add.status = tr("add.vstavte_ssylku_kotoraya_nachin"); add.statusOk = false }
         tab = Tab.Links
     }
 

@@ -194,6 +194,9 @@ class BurstProxyTest {
         assertEquals(0L to -1L, BurstProxy.parseRange("bytes=-0", 1000))
         assertEquals(0L to -1L, BurstProxy.parseRange(null, 1000))
         assertEquals(0L to -1L, BurstProxy.parseRange("garbage", 1000))
+        assertEquals(100L to 199L, BurstProxy.parseRange("Bytes=100-199", 1000)) // the unit's name in any case
+        assertEquals(100L to -1L, BurstProxy.parseRange("bytes=100-50", 1000))   // the end before the start: from the start on
+        assertEquals(0L to -1L, BurstProxy.parseRange("bytes=0-10, 20-30", 1000)) // several ranges: from the first one's start
     }
 
     @Test fun playingVoiceOverGathersMinutesOfItselfNotOfTheFilm() {

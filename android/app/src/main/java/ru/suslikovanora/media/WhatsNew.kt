@@ -40,6 +40,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -84,8 +90,9 @@ fun WhatsNew(enabled: Boolean) {
 private fun WhatsNewCard(current: String, releases: List<Changelog.Release>, onDone: () -> Unit) {
     val scope = rememberCoroutineScope()
     val shown = remember { Animatable(0f) }
-    val items = remember { releases.map { Animatable(0f) } } // each block slides in a little after the previous one
-    LaunchedEffect(Unit) {
+    val items = remember(releases) { releases.map { Animatable(0f) } } // each block slides in a little after the previous one
+    val scroll = rememberScrollState()
+    LaunchedEffect(releases) {
         launch { shown.animateTo(1f, tween(380, easing = Sm.ease)) }
         items.forEachIndexed { i, a -> launch { delay(180L + i * 110L); a.animateTo(1f, tween(460, easing = Sm.ease)) } }
     }
@@ -109,13 +116,20 @@ private fun WhatsNewCard(current: String, releases: List<Changelog.Release>, onD
             }
                 .widthIn(max = 520.dp).padding(18.dp).glassSheet(RoundedCornerShape(22.dp))
                 .keepFocusInside()
+                // Remote control: focus stays on the button below, and the notes have nothing to stop on — up / down
+                // scroll them (a long list did not fit on the TV screen and could not be read to the end).
+                .onPreviewKeyEvent { ev ->
+                    val step = when (ev.key) { Key.DirectionDown -> 1; Key.DirectionUp -> -1; else -> 0 }
+                    if (step == 0 || !(if (step > 0) scroll.canScrollForward else scroll.canScrollBackward)) false
+                    else { if (ev.type == KeyEventType.KeyDown) scope.launch { scroll.animateScrollBy(step * 240f) }; true }
+                }
                 .noFocus().clickable(remember { MutableInteractionSource() }, indication = null) {}
                 .padding(start = 22.dp, end = 22.dp, top = 22.dp, bottom = 18.dp)
         ) {
             Text(tr("whatsnew.chto_novogo"), color = Sm.text, fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 21.sp)
             Text(tr("whatsnew.suslik_media_obnovilsya_do", "current" to current), color = Sm.muted, fontFamily = Onest, fontSize = 13.5.sp,
                 modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
-            Column(Modifier.weight(1f, fill = false).heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
+            Column(Modifier.weight(1f, fill = false).heightIn(max = 520.dp).verticalScroll(scroll),
                 verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 releases.forEachIndexed { i, r ->
                     val a = items[i]

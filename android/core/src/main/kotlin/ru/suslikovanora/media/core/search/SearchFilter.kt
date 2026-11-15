@@ -144,10 +144,13 @@ data class SearchFilterCriteria(
         return when (sort) {
             SearchSort.DEFAULT -> {
                 if (query.isNotBlank()) {
-                    filtered.sortedWith(
-                        compareByDescending<SearchHit> { computeRelevanceScore(it, query) }
-                            .thenByDescending { it.seeders }
-                    )
+                    // The score once per hit, not at every comparison of the sort (it normalises and splits the texts)
+                    filtered.map { it to computeRelevanceScore(it, query) }
+                        .sortedWith(
+                            compareByDescending<Pair<SearchHit, Int>> { it.second }
+                                .thenByDescending { it.first.seeders }
+                        )
+                        .map { it.first }
                 } else {
                     filtered.sortedByDescending { it.seeders }
                 }

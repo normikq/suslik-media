@@ -108,6 +108,10 @@ class AddModel(context: Context, private val scope: CoroutineScope, private val 
     val chosen = mutableStateListOf<PickedTorrent>()
     val history = mutableStateListOf<AddEntry>()
     private val polling = HashMap<Long, Job>()
+    // Rows of the list are told apart by this key: the clock alone can give two rows added in one go the same one
+    // (LazyColumn throws on equal keys).
+    private val rowIds = java.util.concurrent.atomic.AtomicLong()
+    private fun rowKey(prefix: String) = "$prefix:${System.nanoTime()}-${rowIds.incrementAndGet()}"
 
     init {
         runCatching {
@@ -144,7 +148,7 @@ class AddModel(context: Context, private val scope: CoroutineScope, private val 
             ?: tr("add.zagruzka_po_magnet_ssylke")
 
     private fun addMagnet(link: String) {
-        val e = AddEntry("m:" + System.nanoTime(), magnetName(link), 0, tr("add.otpravlyayu"), -1, false, false, System.currentTimeMillis())
+        val e = AddEntry(rowKey("m"),magnetName(link), 0, tr("add.otpravlyayu"), -1, false, false, System.currentTimeMillis())
         history.add(0, e)
         // Имя dn уже говорит, что это не видео — на сервер не отправляем
         TorrentInspector.rejectionForMagnetName(e.title)?.let { e.status = it; e.failed = true; save(); return }
@@ -159,7 +163,7 @@ class AddModel(context: Context, private val scope: CoroutineScope, private val 
     fun uploadChosen(context: Context) {
         val list = chosen.toList(); chosen.clear()
         for (t in list) {
-            val e = AddEntry("t:" + System.nanoTime(), t.name.removeSuffix(".torrent"), 0, tr("add.otpravlyayu"), -1, false, false, System.currentTimeMillis())
+            val e = AddEntry(rowKey("t"),t.name.removeSuffix(".torrent"), 0, tr("add.otpravlyayu"), -1, false, false, System.currentTimeMillis())
             history.add(0, e)
             scope.launch {
                 try {
@@ -297,8 +301,11 @@ fun AddScreen(m: AddModel, listState: LazyListState, onLogout: () -> Unit, modif
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             LampButton(if (m.busy) tr("add.vypolnyaetsya") else tr("add.dobavit"), enabled = !m.busy && m.input.isNotBlank(), modifier = Modifier.weight(1f)) { m.submitInput() }
                             OutlineButton(tr("add.vstavit")) {
-                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                val t = cm.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()?.trim()
+                                // The clipboard is another app's data: no service, an empty clip or no access is «nothing there»
+                                val t = runCatching {
+                                    (context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)?.primaryClip
+                                        ?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()?.trim()
+                                }.getOrNull()
                                 if (t.isNullOrBlank()) { m.status = tr("add.v_bufere_obmena_net"); m.statusOk = false } else m.input = t
                             }
                         }

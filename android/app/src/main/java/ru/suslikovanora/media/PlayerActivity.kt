@@ -583,9 +583,11 @@ class PlayerActivity : ComponentActivity() {
             override fun onRewind() { tapSeek(false) }
             override fun isPlaying(): Boolean = player?.isPlaying == true
             override fun onTransientPause() { player?.pause() }
-            override fun onFocusLossPause() { supervisor.paused(); player?.pause() }
+            // Another app took the sound for good / the headphones came out: a pause like the user's own (doPause sets
+            // userPaused). Without it a reconnect or a network change started the film again by itself — out loud.
+            override fun onFocusLossPause() { doPause() }
             override fun onFocusGainResume() { supervisor.resumed(); player?.play() }
-            override fun onBecomingNoisy() { player?.pause() }
+            override fun onBecomingNoisy() { doPause() }
         })
     }
 
@@ -955,7 +957,7 @@ class PlayerActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         ru.suslikovanora.media.net.Api.init(this)
         CrashReports.init(this)
-        alive = true
+        screens++; alive = true
         CrashReports.playerRunning(this, true) // still set at the next start = this screen died (native crash)
         BurstProxy.log = { AppLog.write(it) }
         diagnostics.onResume()
@@ -1323,7 +1325,8 @@ class PlayerActivity : ComponentActivity() {
         val episode = trackSelector.allEpisodeUrls(url)
         // Both engines read through the same reserve (BurstProxy): it downloads in bursts sized to the network and the
         // film. A file switched from Media3 to VLC keeps what was already downloaded.
-        if (!media3Swept) { media3Swept = true; scope.launch(kotlinx.coroutines.Dispatchers.IO) { Media3Cache.clearAll(applicationContext) } } // Media3's own disk cache of the first 2.2.1 builds
+        // Not on the screen's scope: closing the player at once cancelled the sweep, and the flag kept it from running again
+        if (!media3Swept) { media3Swept = true; val app = applicationContext; Thread({ runCatching { Media3Cache.clearAll(app) } }, "media3-sweep").apply { isDaemon = true; start() } } // Media3's own disk cache of the first 2.2.1 builds
         BurstProxy.capBytes = reserveBytes
         val main = burst(url)
         // Only what this episode needs stays in the stream cache (the previous episode's files are dropped).
@@ -2316,7 +2319,10 @@ class PlayerActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        alive = false
+        // A closed player is destroyed a moment after the next one is created: what belongs to the process (the flag,
+        // the «running» mark, the reserve) is left alone while another player screen exists.
+        val last = --screens <= 0
+        if (last) { screens = 0; alive = false }
         scope.cancel()
         heavyDialog?.let { runCatching { it.dismiss() } }; heavyDialog = null
         AppLog.write("player closed: %.0f MB fetched in this session (%s)".format(
@@ -2324,12 +2330,12 @@ class PlayerActivity : ComponentActivity() {
         TrafficMeter.flush(this)
         diagnostics.onDestroy()
         orientationWatch?.disable(); orientationWatch = null
-        CrashReports.playerRunning(this, false)
+        if (last) CrashReports.playerRunning(this, false)
         supervisor.closed()
         partySync.stop()
         handler.removeCallbacksAndMessages(null)
         if (keptOnStop) { keptOnStop = false; releasePlayer() }
-        if (isFinishing) BurstProxy.clear() // the film's cached part is no longer needed
+        if (isFinishing && last) BurstProxy.clear() // the film's cached part is no longer needed
         audioSession.release()
         controlsOverlay.destroy()
         for (sv in hookedSurfaces) runCatching { sv.holder.removeCallback(surfaceCallback) }
@@ -2369,6 +2375,8 @@ class PlayerActivity : ComponentActivity() {
     companion object {
         /** This screen exists right now (CrashReports tells a crash from a normal close by it). */
         @Volatile var alive = false
+        /** Player screens created and not yet destroyed (main thread only). */
+        private var screens = 0
         const val EXTRA_URL = PlayerExtras.URL
         const val EXTRA_TITLE = PlayerExtras.TITLE
         const val EXTRA_PLAYLIST = PlayerExtras.PLAYLIST

@@ -122,8 +122,13 @@ object Updater {
     /** Streams the APK into the app cache; [onProgress] gets 0..1. */
     suspend fun download(ctx: Context, info: Info, onProgress: (Float) -> Unit): File = withContext(Dispatchers.IO) {
         val dir = File(ctx.cacheDir, "updates").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
-        val out = File(dir, "suslik-media-${info.version}.apk")
-        Api.plain.newCall(Request.Builder().url(Api.BASE + info.url).get().build()).execute().use { res ->
+        // The version and the address come from the server's answer: the name stays a plain file name inside updates/,
+        // and the file is taken only from our own server (a full address or «@host» in `url` would lead elsewhere).
+        val name = info.version.filter { it.isLetterOrDigit() || it == '.' || it == '-' || it == '_' }.take(40).ifEmpty { "update" }
+        val out = File(dir, "suslik-media-$name.apk")
+        val from = Api.BASE + info.url
+        if (!SiteAddress.isOwn(from, Api.BASE)) throw Api.HttpError(0, tr("updater.server_ne_otdal_fayl", "code" to 0))
+        Api.plain.newCall(Request.Builder().url(from).get().build()).execute().use { res ->
             if (!res.isSuccessful) throw Api.HttpError(res.code, tr("updater.server_ne_otdal_fayl", "code" to res.code))
             val body = res.body ?: throw Api.HttpError(res.code, tr("updater.pustoy_otvet"))
             val total = body.contentLength().takeIf { it > 0 } ?: info.size
@@ -140,6 +145,10 @@ object Updater {
                 }
             }
         }
+        // Another app inside (a wrong file on the server) is not handed to the installer. The signature Android checks
+        // itself: an update over the installed app must be signed with the same key. Unreadable — the installer says so.
+        val pkg = runCatching { ctx.packageManager.getPackageArchiveInfo(out.path, 0)?.packageName }.getOrNull()
+        if (pkg != null && pkg != ctx.packageName) { out.delete(); throw Api.HttpError(0, tr("updater.server_ne_otdal_fayl", "code" to 0)) }
         out
     }
 

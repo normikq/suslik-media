@@ -11,6 +11,8 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.Call
 import okhttp3.Request
 import org.json.JSONObject
@@ -116,14 +118,24 @@ object Party {
 
     fun othersBuffering(): Boolean = room.othersBuffering(myKey)
 
-    suspend fun create(): String? = try {
-        val res = timed { Api.post(PartyProtocol.ROOMS, PartyProtocol.createBody(clientId), repeatable = false) }
-        myUserId = PartyProtocol.hostIdOf(res) // the creator is the host
-        enter(roomOf(res))
-        null
-    } catch (e: Exception) { Api.describe(e) }
+    /**
+     * One entry at a time (create / join / a room link): two at once — a double tap, a link arriving while joining —
+     * each started its own event stream, and the first one stayed running with nobody to stop it.
+     */
+    private val entering = Mutex()
 
-    suspend fun join(code: String): String? {
+    suspend fun create(): String? = entering.withLock {
+        try {
+            val res = timed { Api.post(PartyProtocol.ROOMS, PartyProtocol.createBody(clientId), repeatable = false) }
+            myUserId = PartyProtocol.hostIdOf(res) // the creator is the host
+            enter(roomOf(res))
+            null
+        } catch (e: Exception) { Api.describe(e) }
+    }
+
+    suspend fun join(code: String): String? = entering.withLock { joinNow(code) }
+
+    private suspend fun joinNow(code: String): String? {
         val id = PartyProtocol.normalizeCode(code)
         if (id.isEmpty()) return tr("party.vvedite_kod")
         return try {
@@ -138,7 +150,9 @@ object Party {
      * suslik://room/<код> из Discord Activity: в эту комнату (из прежней — сначала выйдя: сервер не пускает одно устройство
      * в две). Гостю фильм ведущего откроется сам (без «Смотреть вместе»). null — получилось, иначе текст ошибки.
      */
-    suspend fun openLink(link: String): String? {
+    suspend fun openLink(link: String): String? = entering.withLock { openLinkNow(link) }
+
+    private suspend fun openLinkNow(link: String): String? {
         val id = PartyProtocol.roomFromLink(link) ?: return null
         AppLog.write("[party] link to room $id")
         if (roomId == id) { followed = null; return null }
@@ -150,7 +164,7 @@ object Party {
             sentVariant = null
             runCatching { Api.post(PartyProtocol.leavePath(old), PartyProtocol.leaveBody(clientId)) }
         }
-        val error = join(id)
+        val error = joinNow(id)
         if (error == null) followed = null
         return error
     }
