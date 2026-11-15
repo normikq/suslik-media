@@ -9,10 +9,6 @@ Item {
     anchors.fill: parent
     visible: true
     Component.onCompleted: keys.forceActiveFocus()
-    Connections {
-        target: player
-        function onOpenChanged() { if (player.open && !player.closing) keys.forceActiveFocus() }
-    }
 
     readonly property bool mini: windowMode.mini
     readonly property bool compact: width < 880

@@ -128,8 +128,18 @@ void TrackerSettingsModel::capture() {
     m_browserStatus.clear();
     emit changed();
     QPointer<TrackerSettingsModel> self(this);
+    // адрес из поля ввода: браузер открывает только https-зеркала RuTracker, как и поиск
+    QString urlError;
+    const QString rtUrl = RuTracker::validateUrl(m_rtUrl, &urlError);
+    if (rtUrl.isEmpty()) {
+        m_busy = false;
+        m_browserStatus = urlError.isEmpty() ? tx(S("trackers.invalid_url")) : urlError;
+        m_browserStatusKind = 0;
+        emit changed();
+        return;
+    }
     if (Browsers::isChromium(target.type) && BrowserBridge::isAvailable(target.type)) {
-        BrowserBridge::instance().loginAndCapture(target.type, m_rtUrl, this,
+        BrowserBridge::instance().loginAndCapture(target.type, rtUrl, this,
             [self](const QString &msg) {
                 if (!self) return;
                 self->m_browserStatus = msg;
@@ -165,7 +175,7 @@ void TrackerSettingsModel::capture() {
         return;
     }
     // Chromium без программы: сессия, уже сохранённая в своём профиле
-    BrowserBridge::instance().existingCookies(target.type, S("https://rutracker.org"), this, [self, target, name](std::optional<QString> c) {
+    BrowserBridge::instance().existingCookies(target.type, rtUrl, this, [self, target, name](std::optional<QString> c) {
         if (!self) return;
         self->m_busy = false;
         if (c && !c->trimmed().isEmpty()) self->captured(target.type, *c);

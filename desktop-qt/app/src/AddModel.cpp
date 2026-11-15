@@ -137,7 +137,8 @@ void AddModel::follow(qint64 key, qint64 id, bool readyNow, int round, qint64 st
         update(key, [](Added &a) { a.note = tx(S("add.dobavleno_alldebrid_kachaet")); });
         started = nowMs();
     }
-    if (round >= 120) return;
+    // ~27 минут: дальше не спрашиваем, но и «качает…» навсегда не оставляем
+    if (round >= 120) { update(key, [](Added &a) { a.note = tx(S("add.dolgo_kachaet")); a.progress = -1; }); return; }
     QPointer<AddModel> self(this);
     QTimer::singleShot(nowMs() - started < 60000 ? 4000 : 15000, this, [self, key, id, round, started] {
         if (!self) return;

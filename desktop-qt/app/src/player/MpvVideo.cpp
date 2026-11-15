@@ -1,6 +1,8 @@
 #include "MpvVideo.h"
 
+#include <QCoreApplication>
 #include <QOpenGLContext>
+#include <QPointer>
 #include <QOpenGLFramebufferObject>
 #include <QOpenGLFunctions>
 #include <QQuickOpenGLUtils>
@@ -39,12 +41,13 @@ public:
         // Уведомление о готовности кадра из потока mpv — запрашиваем перерисовку в GUI-потоке.
         a->render_context_set_update_callback(m_ctx, [](void *p) {
             auto *self = static_cast<MpvRenderer *>(p);
-            if (self && self->m_item) {
-                QPointer<MpvVideo> item = self->m_item;
-                QMetaObject::invokeMethod(item, [item] {
-                    if (item) item->update();
-                }, Qt::QueuedConnection);
-            }
+            // Сам элемент из потока mpv не трогаем (GUI-поток может удалять его прямо сейчас): событие — приложению,
+            // жив ли элемент, проверяется уже в GUI-потоке.
+            if (!self || !qApp) return;
+            QPointer<MpvVideo> item = self->m_item;
+            QMetaObject::invokeMethod(qApp, [item] {
+                if (item) item->update();
+            }, Qt::QueuedConnection);
         }, this);
     }
 

@@ -63,6 +63,8 @@ QNetworkRequest ApiClient::request(const QString &pathOrUrl) const {
     req.setAttribute(QNetworkRequest::CookieSaveControlAttribute, QNetworkRequest::Manual);
     // Сессия, токен устройства и бета-код — только своему серверу (аватар идёт с CDN Discord)
     if (DeviceAuth::isOwnServer(url, m_base)) {
+        // Переадресация на чужой адрес унесла бы туда и эти заголовки (Qt копирует запрос целиком): только свой сервер
+        req.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::SameOriginRedirectPolicy);
         if (const QString c = cookieHeader(); !c.isEmpty()) req.setRawHeader("Cookie", c.toUtf8());
         if (const auto t = deviceToken()) req.setRawHeader(DeviceAuth::TOKEN_HEADER, t->toUtf8());
         if (m_betaCode)
@@ -131,7 +133,8 @@ void ApiClient::run(QNetworkRequest req, const QByteArray &verb, const QByteArra
             cb(r);
             return;
         }
-        if (ownCookies) {
+        // Cookie принимаем только от своего сервера: чужой (аватар с CDN) подложил бы свои в запросы к нему
+        if (ownCookies && DeviceAuth::isOwnServer(reply->url().toString(), m_base)) {
             QList<QByteArray> setCookies;
             for (const auto &[name, value] : reply->rawHeaderPairs())
                 if (name.compare("set-cookie", Qt::CaseInsensitive) == 0) setCookies << value.split('\n');

@@ -48,6 +48,8 @@ private slots:
         QCOMPARE(RuTracker::validateUrl(S("https://m.rutracker.nl")), S("https://m.rutracker.nl"));
 
         QCOMPARE(RuTracker::normalizeCookie(S("Cookie: bb_session=abc")), S("bb_session=abc; bb_ssl=1"));
+        // переводы строк из буфера обмена в заголовок запроса не попадают
+        QCOMPARE(RuTracker::normalizeCookie(S("bb_session=abc\r\nX-Evil: 1; bb_ssl=1\n")), S("bb_session=abcX-Evil: 1; bb_ssl=1"));
         const auto map = RuTracker::parseCookieMap(S("bb_session=abc; empty=; bb_guid=g1; bb_session=xyz"));
         QCOMPARE(RuTracker::cookieHeader(map), S("bb_session=xyz; bb_guid=g1; bb_ssl=1"));
         QCOMPARE(RuTracker::cookieDomain(S("https://www.rutracker.org")), S("rutracker.org"));
@@ -77,7 +79,7 @@ private slots:
             "<td><a class=\"tLink\" href=\"viewtopic.php?t=124\">Dune: Spice Wars</a></td></tr>"
             "<tr id=\"trs-tr-125\" class=\"tCenter\"><td><a class=\"gen f\" href=\"tracker.php?f=9\">Зарубежные сериалы</a></td>"
             "<td><a class=\"tLink\" href=\"viewtopic.php?t=125\">Дюна: Пророчество (Сезон 1) WEB-DL 1080p</a></td>"
-            "<td><a href=\"magnet:?xt=urn:btih:ABC\">m</a></td></tr></table>");
+            "<td><a href=\"magnet:?xt=urn:btih:ABC&amp;tr=udp%3A%2F%2Ft.example\">m</a></td></tr></table>");
         const auto hits = RuTracker::parseHtml(html);
         QCOMPARE(hits.size(), 2); // игра отсеяна
         const auto &h = hits[0];
@@ -93,7 +95,8 @@ private slots:
         QVERIFY(h.magnet.value_or(QString()).startsWith(S("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=")));
         QVERIFY(!h.date.isEmpty());
         QCOMPARE(hits[1].kind, S("series"));
-        QCOMPARE(hits[1].magnet.value_or(QString()), S("magnet:?xt=urn:btih:ABC"));
+        // «&amp;» из атрибута href — обычный «&» в ссылке
+        QCOMPARE(hits[1].magnet.value_or(QString()), S("magnet:?xt=urn:btih:ABC&tr=udp%3A%2F%2Ft.example"));
     }
 
     void parsesBrowserJson() {

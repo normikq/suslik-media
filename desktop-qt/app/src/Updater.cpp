@@ -160,7 +160,10 @@ void Updater::install() {
     QDir().mkpath(tempDir());
     QString ext = info.file.section(QLatin1Char('.'), -1).toLower();
     if (ext != S("msi") && ext != S("exe")) ext = S("msi");
-    const QString path = QDir(tempDir()).filePath(S("Suslik-Media-%1.%2").arg(info.version, ext));
+    // версия приходит с сервера и идёт в имя файла: только буквы, цифры, точка и дефис (без «..» и разделителей пути)
+    static const QRegularExpression unsafe(S("[^0-9A-Za-z.-]|\\.{2,}"));
+    const QString version = QString(info.version).remove(unsafe).left(32);
+    const QString path = QDir(tempDir()).filePath(S("Suslik-Media-%1.%2").arg(version.isEmpty() ? S("update") : version, ext));
     auto *file = new QFile(path, this);
     if (!file->open(QIODevice::WriteOnly)) {
         delete file;
@@ -174,9 +177,11 @@ void Updater::install() {
     QNetworkReply *reply = m_api.network()->get(req);
     auto hash = std::make_shared<QCryptographicHash>(QCryptographicHash::Sha256);
     auto got = std::make_shared<qint64>(0);
-    connect(reply, &QNetworkReply::readyRead, this, [reply, file, hash, got] {
+    // Сумма считается по принятым байтам, а не по файлу: несохранённый кусок (нет места) она бы не заметила
+    auto saved = std::make_shared<bool>(true);
+    connect(reply, &QNetworkReply::readyRead, this, [reply, file, hash, got, saved] {
         const QByteArray chunk = reply->readAll();
-        file->write(chunk);
+        if (file->write(chunk) != chunk.size()) *saved = false;
         hash->addData(chunk);
         *got += chunk.size();
     });
@@ -185,10 +190,10 @@ void Updater::install() {
         const double p = total > 0 ? std::floor(double(done) * 100 / double(total)) / 100 : 0;
         if (p != m_progress) { m_progress = p; emit stateChanged(); }
     });
-    connect(reply, &QNetworkReply::finished, this, [this, reply, file, hash, got, info, path] {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, file, hash, got, saved, info, path] {
         reply->deleteLater();
         const QByteArray rest = reply->readAll();
-        file->write(rest);
+        if (file->write(rest) != rest.size() || !file->flush()) *saved = false;
         hash->addData(rest);
         *got += rest.size();
         file->close();
@@ -197,8 +202,10 @@ void Updater::install() {
         const qint64 total = reply->header(QNetworkRequest::ContentLengthHeader).isValid()
                                  ? reply->header(QNetworkRequest::ContentLengthHeader).toLongLong() : info.size;
         QString err;
-        if (reply->error() != QNetworkReply::NoError && code == 0) err = reply->errorString();
+        // и обрыв после «200 OK»: без этого его ловили только размер и сумма
+        if (reply->error() != QNetworkReply::NoError && (code == 0 || code == 200)) err = reply->errorString();
         else if (code != 200) err = tx(S("update.server_ne_otdal_fayl"), {{S("p"), QString::number(code)}});
+        else if (!*saved) err = tx(S("update.fayl_povrezhden"));
         // Обрезанный, битый или подменённый файл не должен дойти до msiexec: размер и SHA-256 обязаны совпасть.
         // Без суммы от сервера не ставим вовсе (сервер отдаёт её с 2.x, routes/updates.js).
         else if ((total > 0 && *got != total) || !Safety::sha256Matches(info.sha256, QString::fromLatin1(hash->result().toHex())))
