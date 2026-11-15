@@ -1,16 +1,15 @@
 "use strict";
 
-const fs = require("fs");
 const crypto = require("crypto");
 const path = require("path");
 const config = require("../config");
-const { makeJsonWriter } = require("../utils/json-writer");
+const { makeJsonWriter, readJsonFile } = require("../utils/json-writer");
 const { getAvatarUrl, checkGuildMember } = require("./discord");
 
 // Загрузка пользователей
 let usersMap = new Map();
 try {
-  const data = JSON.parse(fs.readFileSync(config.USERS_FILE, "utf8"));
+  const data = readJsonFile(config.USERS_FILE) || {};
   for (const [id, u] of Object.entries(data)) {
     if (u && typeof u === "object") usersMap.set(id, u);
   }
@@ -21,7 +20,7 @@ const saveUsers = makeJsonWriter(config.USERS_FILE, () => Object.fromEntries(use
 // Загрузка устройств (токены устройств для TV / ПК)
 let devicesMap = new Map();
 try {
-  const data = JSON.parse(fs.readFileSync(config.DEVICES_FILE, "utf8"));
+  const data = readJsonFile(config.DEVICES_FILE) || {};
   for (const [hash, d] of Object.entries(data)) {
     if (d && typeof d === "object") devicesMap.set(hash, d);
   }

@@ -172,9 +172,25 @@ router.post("/api/auth/discord/activity/logout", (req, res) => {
 });
 
 // 2. Комната голосового канала: первый, кто открыл Activity, — ведущий
-router.post("/api/activity/room", requireLogin, roomLimiter, (req, res) => {
+router.post("/api/activity/room", requireLogin, roomLimiter, async (req, res) => {
   if (!req.activity) return res.status(403).json({ error: "Только из Discord Activity." });
-  const room = rooms.getOrCreateChannelRoom(req.body?.channel_id, req.user);
+  const channelId = String(req.body?.channel_id ?? "");
+  // channel_id прислал клиент. Новую комнату канала (её создатель — ведущий) открывает только тот, кто сейчас сам в
+  // этом голосовом канале: иначе ключом Activity можно было заранее занять ведущего чужого канала. Проверяет бот;
+  // бота нет или Discord не ответил — верим, как раньше (в уже открытую комнату и так входят по коду).
+  // Бот видит только сервер проекта: «не в голосовом» (null) может значить канал другого сервера — его не отклоняем
+  if (/^\d{5,25}$/.test(channelId) && !rooms.hasChannelRoom(channelId) && req.user.discord_id &&
+      config.DISCORD_BOT_TOKEN && config.DISCORD_GUILD_ID) {
+    try {
+      const actual = await userVoiceChannel(req.user.discord_id);
+      if (actual && actual !== channelId) {
+        return res.status(403).json({ error: "Откройте Activity из голосового канала, в котором вы сейчас." });
+      }
+    } catch (err) {
+      console.warn("Комната канала, проверка голосового канала:", err.response?.status || "", err.message);
+    }
+  }
+  const room = rooms.getOrCreateChannelRoom(channelId, req.user);
   if (!room) return res.status(400).json({ error: "Activity открыта не в голосовом канале." });
   res.json({ ok: true, room: rooms.getRoomPublicData(room), me: { id: req.user.id, name: req.user.name, avatar: req.user.avatar } });
 });
@@ -202,7 +218,10 @@ router.get("/api/activity/rooms/:id/events", requireLogin, (req, res) => {
   const removeListener = rooms.addListener(room.id, msg => send(`data: ${msg}\n\n`));
   send(`data: ${JSON.stringify({ event: "init", room: rooms.getRoomPublicData(room), server_time: Date.now() })}\n\n`);
   const pingTimer = setInterval(() => {
-    if (!resolveAuth(req)) return res.end();
+    if (!resolveAuth(req)) {
+      clearInterval(pingTimer);
+      return res.end();
+    }
     send(": ping\n\n");
   }, 20000);
   pingTimer.unref?.();

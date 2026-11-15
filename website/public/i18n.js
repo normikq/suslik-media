@@ -25,6 +25,11 @@
   }
 
   function tr(key, params, fallback) {
+    // tr(key, "запасной текст") — строка вторым аргументом считается запасным текстом, а не параметрами
+    if (typeof params === "string" && fallback === undefined) {
+      fallback = params;
+      params = null;
+    }
     var val = getNested(strings, key);
     if (typeof val === "string") {
       return format(val, params);

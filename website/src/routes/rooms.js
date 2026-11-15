@@ -66,7 +66,13 @@ router.post("/api/rooms/:id/join", requireLogin, roomLookupLimiter, roomLimiter,
 router.post("/api/rooms/:id/leave", requireLogin, (req, res) => {
   const { client_id } = req.body || {};
   if (client_id) {
-    leaveRoom(req.params.id, client_id, true);
+    // Выйти можно только своим местом: участник аккаунта Discord — только с тем же id. При общем пароле id у всех
+    // "shared", и своё место отличает лишь client_id (он не публикуется: другим виден только отпечаток key)
+    const room = getRoom(req.params.id);
+    const m = room && room.members.get(String(client_id));
+    if (m && (req.user.id === "shared" || String(m.id) === String(req.user.id))) {
+      leaveRoom(req.params.id, m.client_id, true);
+    }
   } else if (req.user && req.user.id && req.user.id !== "shared") {
     const room = getRoom(req.params.id);
     if (room) {
@@ -144,12 +150,18 @@ router.get("/api/rooms/:id/events", requireLogin, (req, res) => {
   const pingTimer = setInterval(() => {
     // Вход отозван (бот снял роль, вышли, пароль отключён): поток закрывается, а не слушает комнату дальше.
     // Заодно так раз в 15 минут перепроверяется роль у тех, кто только смотрит.
-    if (!resolveAuth(req)) return res.end();
+    if (!resolveAuth(req)) {
+      clearInterval(pingTimer);
+      return res.end();
+    }
     send(": ping\n\n");
   }, 20000);
 
   // Обрыв соединения (res, а не req: у req «close» бывает и раньше, когда запрос просто дочитан)
-  res.on("close", () => {
+  let closed = false;
+  const onClose = () => {
+    if (closed) return;
+    closed = true;
     clearInterval(pingTimer);
     removeListener();
     unregisterMemberStream(room.id, joined.member.client_id, res);
@@ -157,7 +169,10 @@ router.get("/api/rooms/:id/events", requireLogin, (req, res) => {
     if (joined && joined.member && room.members.get(joined.member.client_id) === joined.member) {
       leaveRoom(room.id, joined.member.client_id);
     }
-  });
+  };
+  res.on("close", onClose);
+  // Клиент ушёл раньше, чем подписались на «close» (событие уже было): иначе он остался бы в комнате призраком
+  if (res.destroyed || (req.socket && req.socket.destroyed)) onClose();
 });
 
 module.exports = router;

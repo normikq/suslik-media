@@ -396,7 +396,8 @@ router.delete("/api/custom-audio/:trackId", requireLogin, apiLimiter, async (req
   if (audioMagnetId && !ca.hasAudioMagnetTracks(audioMagnetId)) {
     const magnets = await libraryMagnets();
     const isLibraryFilm = ca.mayBeLibraryFilm(magnets, audioMagnetId);
-    if (!isLibraryFilm && isOwner(audioMagnetId, req)) {
+    // Пока ждали медиатеку, к раздаче могли привязать новую дорожку: проверяем ещё раз прямо перед удалением
+    if (!isLibraryFilm && isOwner(audioMagnetId, req) && !ca.hasAudioMagnetTracks(audioMagnetId)) {
       try {
         await deleteMagnet(audioMagnetId);
         libraryChanged();

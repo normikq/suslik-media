@@ -122,7 +122,33 @@ function makeJsonWriter(file, collect, delayMs = 2000) {
   return schedule;
 }
 
+// Чтение файла данных при запуске. Нет файла — null. Файл испорчен (не JSON, обрыв при записи) — тоже null, но сам
+// файл откладывается в «<имя>.corrupt-<время>»: иначе первое же сохранение пустой коллекции молча затёрло бы его,
+// и данные нельзя было бы восстановить руками
+function readJsonFile(file) {
+  let text;
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch (err) {
+    if (err.code !== "ENOENT") console.error(`Не удалось прочитать ${path.basename(file)}:`, err.message);
+    return null;
+  }
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    const backup = `${file}.corrupt-${Date.now()}`;
+    try {
+      fs.renameSync(file, backup);
+      console.error(`${path.basename(file)} испорчен (${err.message}): отложен в ${path.basename(backup)}, начинаем с пустого.`);
+    } catch (e) {
+      console.error(`${path.basename(file)} испорчен (${err.message}), отложить не удалось:`, e.message);
+    }
+    return null;
+  }
+}
+
 module.exports = {
+  readJsonFile,
   makeJsonWriter,
   pendingWriters
 };

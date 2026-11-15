@@ -1350,17 +1350,20 @@ function searchRow(r) {
   row.append(act);
   return row;
 }
+let searchGen = 0; // номер последнего поиска: ответ прошлого, медленного, не перетирает новый
 async function runSearch(ev) {
   if (ev) ev.preventDefault();
   const q = $("searchInput").value.trim(), btn = $("searchBtn"), st = $("searchStatus");
   if (q.length < 2) { st.textContent = "Введите минимум 2 символа."; st.className = "status error"; return; }
+  const gen = ++searchGen;
   btn.disabled = true; btn.textContent = "Ищем…";
   st.textContent = "Опрашиваем трекеры…"; st.className = "status";
   $("searchResults").textContent = ""; $("searchMore").classList.add("hidden"); $("searchTools").classList.add("hidden");
   try {
     const cleaned = SM.searchcore.cleanQuery(q) || q;
     const data = await api("/api/search?q=" + encodeURIComponent(cleaned));
-    const all = (data.results || []).map(SM.searchcore.toHit).filter(Boolean);
+    if (gen !== searchGen) return;
+    const all =(data.results || []).map(SM.searchcore.toHit).filter(Boolean);
     searchState.items = all.filter(x => !SM.searchcore.isNonVideo(x.title));
     searchState.nonVideo = all.length - searchState.items.length;
     searchState.query = cleaned;
@@ -1375,8 +1378,8 @@ async function runSearch(ev) {
       st.textContent = `Найдено ${searchState.items.length} за ${(data.tookMs / 1000).toFixed(1)} с` + (failed ? ` · не ответили: ${failed}` : "");
       st.className = "status success";
     }
-  } catch (err) { st.textContent = err.message; st.className = "status error"; }
-  finally { btn.disabled = false; btn.textContent = "Найти"; }
+  } catch (err) { if (gen === searchGen) { st.textContent = err.message; st.className = "status error"; } }
+  finally { if (gen === searchGen) { btn.disabled = false; btn.textContent = "Найти"; } }
 }
 async function addSearchResult(r, btn, note) {
   btn.disabled = true; btn.textContent = "Добавляю…"; note.textContent = ""; note.className = "sr-note";
@@ -1481,7 +1484,13 @@ function formatBytes(value) {
   while(n>=1024 && i<units.length-1){n/=1024;i++;}
   return `${n.toFixed(i===0?0:1)} ${units[i]}`;
 }
-async function loadLibrary() {
+// Одна загрузка за раз: checkSession и setTab("library") при открытой вкладке звали её одновременно
+let libraryLoading = null;
+function loadLibrary() {
+  if (!libraryLoading) libraryLoading = loadLibraryNow().finally(() => { libraryLoading = null; });
+  return libraryLoading;
+}
+async function loadLibraryNow() {
   const status=$("libraryStatus"), button=$("refreshLibrary");
   button.disabled=true; status.textContent=tr("library.loading", null, "Загрузка медиатеки…"); status.className="status";
   try {
@@ -2621,7 +2630,7 @@ function getItemSpecs(m) {
   return { quality, codec, type, cat };
 }
 
-function tileSig(m){ return JSON.stringify([(serverTagMap[m.id]||[]).join(),m.name,m.status,m.statusCode,m.size,m.downloaded,Boolean(m.favorite),Boolean(m.mine),m.canRemove!==false,(m.files||[]).length,libraryViewMode]); }
+function tileSig(m){ return JSON.stringify([(serverTagMap[m.id]||[]).join(),m.name,m.aiTitle||null,m.status,m.statusCode,m.size,m.downloaded,Boolean(m.favorite),Boolean(m.mine),m.canRemove!==false,(m.files||[]).length,libraryViewMode]); }
 
 function renderLibrary(animate=true) {
   const target=$("libraryResults"), query=$("librarySearch") ? $("librarySearch").value.trim().toLowerCase() : "";

@@ -422,6 +422,8 @@ function joinRoom(roomId, user, clientId = null) {
   member.streams++;
   room.members.set(member.client_id, member);
   room.empty_since = 0;
+  // Ведущий вернулся: отсчёт его отсутствия сбрасывается (иначе следующий уход унаследовал бы старую отметку)
+  if (room.host_absent_since && hostPresent(room)) room.host_absent_since = 0;
 
   if (isAccount && fresh.client_id) {
     setAccountActiveDevice(userId, fresh.client_id, roomId);
@@ -520,7 +522,22 @@ function noteHostAbsence(room) {
     return;
   }
   if (!room.host_absent_since) room.host_absent_since = Date.now();
-  setTimeout(() => promoteIfHostGone(room), HOST_GRACE_MS).unref?.();
+  // Один таймер на комнату. Срабатывает по отметке отсутствия, а не по времени запуска: ведущий мог вернуться и
+  // снова уйти — тогда отсчёт идёт заново, и прежний таймер не должен отдать комнату раньше минуты
+  if (room.host_timer) return;
+  const check = () => {
+    room.host_timer = null;
+    if (rooms.get(room.id) !== room || !room.host_absent_since) return;
+    const left = room.host_absent_since + HOST_GRACE_MS - Date.now();
+    if (left > 0) {
+      room.host_timer = setTimeout(check, left);
+      room.host_timer.unref?.();
+      return;
+    }
+    promoteIfHostGone(room);
+  };
+  room.host_timer = setTimeout(check, room.host_absent_since + HOST_GRACE_MS - Date.now());
+  room.host_timer.unref?.();
 }
 
 // Комната была пуста, и её ведущий давно не вернулся: новый человек в комнате становится ведущим. Иначе комната,
@@ -590,6 +607,7 @@ function sweepRooms(now = Date.now()) {
       roomListeners.delete(id);
       if (room.poll && room.poll.timer) clearTimeout(room.poll.timer);
       if (room.spin && room.spin.timer) clearTimeout(room.spin.timer);
+      if (room.host_timer) clearTimeout(room.host_timer);
       if (room.channel_id && channelRooms.get(room.channel_id) === id) channelRooms.delete(room.channel_id);
     }
   }
@@ -859,6 +877,10 @@ function shortRoomId() {
     if (!rooms.has(id)) return id;
   }
   throw new Error("Не удалось подобрать код комнаты.");
+}
+
+function hasChannelRoom(channelId) {
+  return rooms.has(channelRooms.get(String(channelId || "")));
 }
 
 function getOrCreateChannelRoom(channelId, user) {
@@ -1383,6 +1405,7 @@ module.exports = {
   cleanScreen,
   timelineShiftMs,
   getOrCreateChannelRoom,
+  hasChannelRoom,
   reportSpeaking,
   dropSpeaker,
   notifyUserSettings,

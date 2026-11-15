@@ -524,7 +524,8 @@ function trim() {
   if (results.size <= MAX_RESULTS) return;
   // принятые названия не вытесняем: на них держатся плитка, постер и слияние версий
   const order = [...results].filter(([, r]) => r.status !== "accepted").sort((a, b) => a[1].at - b[1].at);
-  const gone = new Set(order.slice(0, results.size - MAX_RESULTS).map(([k]) => k));
+  // Вытесняем с запасом (до 90 %): иначе на пределе сортировка всех записей шла бы на каждой новой
+  const gone = new Set(order.slice(0, results.size - Math.floor(MAX_RESULTS * 0.9)).map(([k]) => k));
   for (const k of gone) results.delete(k);
   for (const [id, k] of byId) if (gone.has(k)) byId.delete(id);
 }
