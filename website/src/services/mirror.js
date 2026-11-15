@@ -4,7 +4,7 @@ const crypto = require("crypto");
 const https = require("https");
 const axios = require("axios");
 const config = require("../config");
-const { safeHttpsUrl, contentDisposition } = require("../utils/helpers");
+const { safeHttpsUrl, contentDisposition, publicOnlyLookup } = require("../utils/helpers");
 
 const MIRROR_CSP = "sandbox; default-src 'none'";
 
@@ -69,7 +69,10 @@ function mirrorLog(req, msg) {
 }
 
 function mirrorAuth(req, res, next) {
-  if (req.session && req.session.authenticated) {
+  // Сеанс проверяется целиком (resolveAuth): роль «denied», отозванный ключ устройства приложения, выключенный общий
+  // пароль — такой сеанс файлы не получает. Подписанная ссылка ниже действует до своего срока, как и раньше.
+  // require здесь, а не наверху: middleware/auth тянет services/*, которые сами подключают этот модуль
+  if (req.session && req.session.authenticated && require("../middleware/auth").resolveAuth(req)) {
     mirrorLog(req, "auth: session");
     return next();
   }
@@ -138,7 +141,13 @@ async function resolveDirect(key, fresh) {
 }
 
 // Keep-alive towards the file host: a seek or reconnect does not pay a new TCP+TLS handshake every time.
-const upstreamAgent = new https.Agent({ keepAlive: true, maxSockets: 64, maxFreeSockets: 8, keepAliveMsecs: 15000 });
+// lookup: адрес от AllDebrid (и редиректы с него) не должен вести во внутреннюю сеть сервера (SSRF)
+const upstreamAgent = new https.Agent({ keepAlive: true, maxSockets: 64, maxFreeSockets: 8, keepAliveMsecs: 15000, lookup: publicOnlyLookup });
+
+// Редирект хоста файла — только на https (тот же агент с проверкой адреса); на http — отказ
+function httpsOnlyRedirect(options) {
+  if (options.protocol !== "https:") throw new Error("Хост файла перенаправил на небезопасный адрес.");
+}
 
 async function openUpstream(key, rangeHeaders) {
   let lastErr;
@@ -152,6 +161,7 @@ async function openUpstream(key, rangeHeaders) {
         maxRedirects: 5,
         decompress: false,
         httpsAgent: upstreamAgent,
+        beforeRedirect: httpsOnlyRedirect,
         validateStatus: status => (status >= 200 && status < 300) || status === 206 || status === 416
       });
       return { entry, upstream };

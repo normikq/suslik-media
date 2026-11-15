@@ -185,6 +185,8 @@ async function userVoiceChannel(discordId) {
 /** Сообщение ботом в канал. Бросает ошибку axios (403 — у бота нет прав писать в этот канал). */
 async function sendChannelMessage(channelId, message) {
   if (!config.DISCORD_BOT_TOKEN) throw Object.assign(new Error("Бот Discord не настроен."), { code: "no_bot" });
+  // id канала уходит в путь запроса к Discord: только цифры (snowflake), иначе путь можно подменить
+  if (!/^\d{5,25}$/.test(String(channelId || ""))) throw new Error("Некорректный канал Discord.");
   const res = await axios.post(`${DISCORD_API_BASE}/channels/${channelId}/messages`, message, {
     headers: { Authorization: `Bot ${config.DISCORD_BOT_TOKEN}`, "Content-Type": "application/json" },
     timeout: 8000

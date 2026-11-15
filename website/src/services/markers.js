@@ -150,7 +150,8 @@ async function fetchAniSkip(malId, episode, durationSec) {
 
 function trim() {
   if (store.size <= MAX_ENTRIES) return;
-  const old = [...store.entries()].sort((a, b) => a[1].at - b[1].at).slice(0, store.size - MAX_ENTRIES);
+  // Вытесняем с запасом (до 90 %): иначе на пределе сортировка всех записей шла бы на каждой новой
+  const old = [...store.entries()].sort((a, b) => a[1].at - b[1].at).slice(0, store.size - Math.floor(MAX_ENTRIES * 0.9));
   for (const [k] of old) store.delete(k);
 }
 

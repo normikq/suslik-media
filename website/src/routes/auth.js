@@ -123,7 +123,8 @@ router.get("/api/auth/discord/start", (req, res) => {
   };
   res.cookie("s_ostate", state, tmpCookie);
   // Запасная копия адреса возврата: сеанс до входа может не сохраниться
-  res.cookie("s_oret", encodeURIComponent(returnTo), tmpCookie);
+  // res.cookie сам кодирует значение (encodeURIComponent), а callback раскодирует один раз — второй слой не нужен
+  res.cookie("s_oret", returnTo, tmpCookie);
 
   const redirectUri = getRedirectUri(req);
   const discordUrl = new URL("https://discord.com/oauth2/authorize");

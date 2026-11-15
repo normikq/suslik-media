@@ -255,10 +255,12 @@
   // Вместе с путём помним сведения TMDB для категорий и сортировки (m): рейтинг, мультфильм ли, язык оригинала, год,
   // оригинальное название, открытый адрес постера (для статуса в Discord) и жанры.
   var posters = (function () {
-    var DAY = 864e5, known = {}, titles = {}, urls = {}, waits = {}, queue = [], active = 0, asking = {};
+    // Словари без прототипа: название «constructor» или «toString» иначе находило бы методы Object.prototype
+    function dict(o) { var d = Object.create(null); if (o && typeof o === 'object') for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) d[k] = o[k]; return d; }
+    var DAY = 864e5, known = dict(), titles = dict(), urls = dict(), waits = dict(), queue = [], active = 0, asking = dict();
     try {
-      known = JSON.parse(localStorage.getItem('sm.act.posters') || '{}') || {};
-      titles = JSON.parse(localStorage.getItem('sm.act.titles') || '{}') || {};
+      known = dict(JSON.parse(localStorage.getItem('sm.act.posters') || '{}'));
+      titles = dict(JSON.parse(localStorage.getItem('sm.act.titles') || '{}'));
     } catch (e) { /* без хранилища */ }
     // Запись без сведений (m) — из прошлой версии страницы: спросим заново
     function fresh(q) {
@@ -612,6 +614,7 @@
   // ---- поток событий комнаты (с переходом на опрос, если прокси Discord держит поток) ----
   function startStream() {
     if (S.stream) S.stream.abort();
+    if (!S.room) { S.stream = null; return; } // комнату закрыли, пока ждали переподключения
     var ctrl = new AbortController(), id = S.room.id, gotData = false;
     S.stream = ctrl;
     var fallback = setTimeout(function () { if (!gotData) startPolling(); }, 7000);
@@ -668,6 +671,7 @@
   // Комнату закрыл ведущий: поток и опрос стоят, на экране — «Комната закрыта»
   function roomClosed() {
     if (S.stream) S.stream.abort();
+    S.stream = null; // запланированное переподключение сверяет S.stream со своим потоком и не запустится
     stopPolling();
     S.room = null;
     S.closed = true;
@@ -765,7 +769,7 @@
     if (!y) return null;
     ai = it.m.aiTitle;
     var ed = ai && ai.status === 'accepted' && ai.edition ? ai.edition : 'default';
-    return 'm:' + model.titleKey(it.baseTitle).replace(/s+/g, '_') + '_' + y + ':' + ed;
+    return 'm:' + model.titleKey(it.baseTitle).replace(/\s+/g, '_') + '_' + y + ':' + ed;
   }
   /** Этот фильм (любой его релиз) уже в списке предложений? Сериалы — по файлу: у каждой серии свой вариант. */
   function inCandidates(it, key) {

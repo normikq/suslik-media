@@ -1,9 +1,8 @@
 "use strict";
 
-const fs = require("fs");
 const axios = require("axios");
 const config = require("../config");
-const { makeJsonWriter } = require("../utils/json-writer");
+const { makeJsonWriter, readJsonFile } = require("../utils/json-writer");
 const { treeCache, persistTreeCache } = require("./alldebrid");
 const { deleteOwner, releaseTrackedDownload } = require("./downloads");
 const { dropEverywhere } = require("./shelf");
@@ -19,7 +18,7 @@ const customAudio = require("./custom-audio");
 // до выкладки нет, поэтому по сроку ничего не удаляется ещё 10 дней. Выключить: AUTO_CLEAN=false.
 const usage = new Map(); // magnet id -> ms последнего открытия
 try {
-  for (const [id, t] of Object.entries(JSON.parse(fs.readFileSync(config.USAGE_FILE, "utf8")))) {
+  for (const [id, t] of Object.entries(readJsonFile(config.USAGE_FILE) || {})) {
     if (Number.isFinite(t)) usage.set(String(id), t);
   }
 } catch {}

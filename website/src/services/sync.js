@@ -1,8 +1,7 @@
 "use strict";
 
-const fs = require("fs");
 const config = require("../config");
-const { makeJsonWriter } = require("../utils/json-writer");
+const { makeJsonWriter, readJsonFile } = require("../utils/json-writer");
 
 // ---- Синхронизация просмотра по аккаунту Discord ---------------------------------------------------------------
 // Что хранится у пользователя (u_<id>), чтобы ПК, телефон и ТВ продолжали с одного места:
@@ -40,7 +39,7 @@ function text(v) {
 
 function load() {
   try {
-    const saved = JSON.parse(fs.readFileSync(config.SYNC_FILE, "utf8"));
+    const saved = readJsonFile(config.SYNC_FILE);
     for (const [owner, data] of Object.entries(saved || {})) {
       if (!OWNER_RE.test(owner) || !data || typeof data !== "object") continue;
       const w = new Map();
@@ -195,7 +194,7 @@ function changesSince(owner, since = 0, now = Date.now()) {
 
 /** Ключ дорожек для файла "<magnetId>|<путь>": дорожки хранятся на раздачу ("m<magnetId>"). */
 function trackKeyFor(key) {
-  return key && /^d+|/.test(key) ? "m" + key.split("|")[0] : key;
+  return key && /^\d+\|/.test(key) ? "m" + key.split("|")[0] : key;
 }
 
 // Самая свежая запись на каждый canonical_id (прогресс и дорожки отдельно). Строится по требованию и сбрасывается

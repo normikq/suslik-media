@@ -111,7 +111,8 @@ router.get("/api/app/download/:platform/:name", requireLogin, (req, res) => {
 });
 
 router.post("/api/app/upload", serviceLimiter, (req, res) => {
-  if (req.body && Object.keys(req.body).length) {
+  // express.json / urlencoded уже прочитали тело (в том числе пустой {}): дальше на диск попал бы 0 байт
+  if (req.is(["application/json", "application/x-www-form-urlencoded"]) || (req.body && Object.keys(req.body).length)) {
     return res.status(400).json({ error: 'Укажите -H "Content-Type: application/octet-stream"' });
   }
   if (!updateTokenOk(req)) {
@@ -133,14 +134,18 @@ router.post("/api/app/upload", serviceLimiter, (req, res) => {
   const LIMIT = 500 * 1024 * 1024;
   req.on("data", c => {
     size += c.length;
-    if (size > LIMIT) {
-      req.destroy();
-      out.destroy();
-      fs.rm(tmp, { force: true }, () => {});
-    }
+    if (size > LIMIT) req.destroy(new Error("Слишком большой файл."));
   });
-  req.pipe(out); // на диск потоком — без буфера в памяти
-  out.on("finish", () => {
+  // На диск потоком — без буфера в памяти. pipeline закрывает файл и при обрыве загрузки: недокачанное не
+  // становится релизом (до rename дело не доходит), временный файл удаляется
+  require("stream").pipeline(req, out, err => {
+    if (err) {
+      fs.rm(tmp, { force: true }, () => {});
+      if (!res.headersSent && !res.destroyed) {
+        res.status(size > LIMIT ? 413 : 500).json({ error: size > LIMIT ? "Слишком большой файл." : err.message });
+      }
+      return;
+    }
     if (size === 0 || size > LIMIT) {
       fs.rm(tmp, { force: true }, () => {});
       return res.status(400).json({ error: "Пустой или слишком большой файл." });
@@ -159,10 +164,6 @@ router.post("/api/app/upload", serviceLimiter, (req, res) => {
       }
       res.json({ ok: true, file: name, size, channel: dir === config.BETA_DIR ? "beta" : "stable" });
     });
-  });
-  out.on("error", err => {
-    fs.rm(tmp, { force: true }, () => {});
-    if (!res.headersSent) res.status(500).json({ error: err.message });
   });
 });
 

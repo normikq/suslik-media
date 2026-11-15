@@ -47,12 +47,22 @@ function withoutCookie(opts) {
   const headers = Object.fromEntries(Object.entries(opts.headers || {}).filter(([k]) => k.toLowerCase() !== "cookie"));
   return { ...opts, headers };
 }
+async function assertPublicHttp(url) {
+  const u = new URL(url);
+  if (u.protocol !== "https:" && u.protocol !== "http:") throw new Error("редирект на неподдерживаемый адрес");
+  const { isPrivateAddress } = require("./src/utils/helpers");
+  const host = u.hostname.replace(/^\[|\]$/g, "");
+  const list = await require("dns").promises.lookup(host, { all: true });
+  if (list.some(a => isPrivateAddress(a.address))) throw new Error("редирект во внутреннюю сеть");
+}
 async function getFollow(url, opts = {}) {
   let cur = url;
   for (let i = 0; i < 4; i++) {
     const r = await request(cur, opts);
     if (r.status >= 300 && r.status < 400 && r.headers.location) {
       const next = new URL(String(r.headers.location), cur).toString();
+      // Адрес трекера задан в .env, а редирект — нет: во внутреннюю сеть сервера (SSRF) и не на http(s) не идём
+      await assertPublicHttp(next);
       if (siteOf(next) !== siteOf(cur)) opts = withoutCookie(opts);
       cur = next;
       continue;
@@ -438,7 +448,7 @@ function make(h) {
     async resolve(r) { // инфо-хеш со страницы раздачи -> magnet
       if (viaTorapi(r)) return torapiResolve(r);
       const base = kzBase(), cookie = await kzCookie();
-      const page = await fetchPage(`${base}/details.php?id=${r.lazy.id}`, { headers: { Cookie: cookie }, charset: "windows-1251" });
+      const page = await fetchPage(`${base}/details.php?id=${encodeURIComponent(r.lazy.id)}`, { headers: { Cookie: cookie }, charset: "windows-1251" });
       const hm = /Инфо\s*хеш[\s\S]{0,200}?\b([0-9a-f]{40})\b/i.exec(page.text);
       const hash = hm ? normHash(hm[1]) : "";
       return { magnet: "", infoHash: hash };
@@ -446,7 +456,7 @@ function make(h) {
     async download(r) {
       if (viaTorapi(r) && !kzAccount()) throw new Error("Файл .torrent Kinozal отдаёт только с аккаунтом — используется magnet");
       const cookie = await kzCookie();
-      const res = await fetchPage(`${kzDl()}/download.php?id=${r.lazy.id}`, { headers: { Cookie: cookie, Referer: `${kzBase()}/details.php?id=${r.lazy.id}` }, buffer: true });
+      const res = await fetchPage(`${kzDl()}/download.php?id=${encodeURIComponent(r.lazy.id)}`, { headers: { Cookie: cookie, Referer: `${kzBase()}/details.php?id=${encodeURIComponent(r.lazy.id)}` }, buffer: true });
       if (res.status !== 200 || res.buf[0] !== 0x64) throw new Error("Kinozal не отдал .torrent (нужна авторизация или недостаточно рейтинга)");
       return res.buf;
     }

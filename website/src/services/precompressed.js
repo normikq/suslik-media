@@ -39,19 +39,31 @@ function pageCsp(html) {
   ].join("; ");
 }
 
+// Файл на диске сверяется не чаще раза в STAT_EVERY_MS: главная и стили отдаются на каждом заходе
+const STAT_EVERY_MS = 2000;
+
 function precompressed(name) {
-  const file = path.join(config.PUBLIC_DIR, name);
+  const root = path.resolve(config.PUBLIC_DIR);
+  const file = path.resolve(root, String(name));
+  // Только файлы внутри public/: «../» в имени не выводит за её пределы
+  if (!file.startsWith(root + path.sep)) return null;
+  const hit = precompressedCache.get(name);
+  const now = Date.now();
+  if (hit && now - (hit.checkedAt || 0) < STAT_EVERY_MS) return hit;
   let st;
   try {
     st = fs.statSync(file);
   } catch {
     return null;
   }
-  const hit = precompressedCache.get(name);
-  if (hit && hit.mtime === st.mtimeMs) return hit;
+  if (hit && hit.mtime === st.mtimeMs) {
+    hit.checkedAt = now;
+    return hit;
+  }
   const raw = fs.readFileSync(file);
   const entry = {
     mtime: st.mtimeMs,
+    checkedAt: now,
     raw,
     csp: name.endsWith(".html") ? pageCsp(raw.toString("utf8")) : null,
     gz: zlib.gzipSync(raw, { level: 9 }),

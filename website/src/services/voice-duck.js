@@ -1,8 +1,7 @@
 "use strict";
 
-const fs = require("fs");
 const config = require("../config");
-const { makeJsonWriter } = require("../utils/json-writer");
+const { makeJsonWriter, readJsonFile } = require("../utils/json-writer");
 
 // ---- Приглушение фильма, когда говорят в Discord: настройка аккаунта ----
 // Говорящих видит только клиент Discord (Activity), громкость меняет каждый плеер сам. Настройку видят и Activity
@@ -29,7 +28,7 @@ function clean(v) {
 }
 
 try {
-  for (const [owner, v] of Object.entries(JSON.parse(fs.readFileSync(config.VOICE_DUCK_FILE, "utf8")))) {
+  for (const [owner, v] of Object.entries(readJsonFile(config.VOICE_DUCK_FILE) || {})) {
     const c = clean(v);
     if (OWNER_RE.test(owner) && c) settings.set(owner, c);
   }
