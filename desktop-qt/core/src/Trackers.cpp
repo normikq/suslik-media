@@ -160,7 +160,9 @@ QString RuTracker::unescapeHtml(const QString &s) {
 }
 
 QString RuTracker::normalizeCookie(const QString &raw) {
-    QString s = raw.trimmed();
+    // вставленное из буфера с переводами строк не должно дописать свои заголовки в запрос
+    static const QRegularExpression control(S(R"([\x00-\x1F\x7F])"));
+    QString s = QString(raw).remove(control).trimmed();
     if (s.startsWith(S("Cookie:"), Qt::CaseInsensitive)) s = s.mid(7).trimmed();
     if (!s.contains(S("bb_ssl=")) && s.contains(S("bb_session="))) s += S("; bb_ssl=1");
     return s;
@@ -269,7 +271,7 @@ QList<SearchHit> RuTracker::parseHtml(const QString &html) {
         const QString kind = kindOf(forum, title);
 
         std::optional<QString> magnet;
-        if (const auto mm = magnetRx.match(r); mm.hasMatch()) magnet = mm.captured(1);
+        if (const auto mm = magnetRx.match(r); mm.hasMatch()) magnet = unescapeHtml(mm.captured(1)); // в атрибуте «&» записан как &amp;
         else magnet = buildMagnet(r, title);
 
         qint64 size = 0;

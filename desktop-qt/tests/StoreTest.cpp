@@ -43,6 +43,13 @@ private slots:
         QCOMPARE(v.size(), 4);
     }
 
+    void delayedSaveAfterResetIsHarmless() {
+        Store::of(S("watch")).put(S("k"), S("v")); // запись отложена на 400 мс
+        Store::resetForTests();                    // хранилище уничтожено раньше таймера (деструктор пишет сам)
+        QTest::qWait(600);                         // таймер срабатывает: к уничтоженному хранилищу не обращается
+        QCOMPARE(Store::of(S("watch")).get(S("k")).value(), S("v"));
+    }
+
     void savesAndReloads() {
         Store &s = Store::of(S("watch"));
         s.put(S("1|a.mkv"), S("10|20|30"));

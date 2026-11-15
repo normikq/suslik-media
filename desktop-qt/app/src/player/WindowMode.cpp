@@ -36,7 +36,10 @@ WindowMode::~WindowMode() {
 }
 
 void WindowMode::setWindow(QWindow *w) {
-    if (m_w) m_w->removeEventFilter(this);
+    if (m_w) {
+        m_w->removeEventFilter(this);
+        disconnect(m_w, nullptr, this, nullptr); // сигналы прежнего окна — тоже
+    }
     m_w = w;
     m_hwnd = w && w->handle() ? quintptr(w->winId()) : 0;
     if (!w) return;

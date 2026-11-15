@@ -50,7 +50,10 @@ Store::Store(const QString &name)
     load();
 }
 
-Store::~Store() { flush(); }
+Store::~Store() {
+    m_alive.reset();
+    flush();
+}
 
 void Store::load() {
     for (const QString &src : {m_file, m_bak}) {
@@ -105,10 +108,19 @@ void Store::scheduleSave() {
         m_pending = true;
     }
     // Запись в фоне и пачкой: плеер сохраняет место раз в 10 с, переписывать файл каждый раз незачем
-    if (auto *app = QCoreApplication::instance())
-        QMetaObject::invokeMethod(app, [this] { QTimer::singleShot(400, QCoreApplication::instance(), [this] { flush(); }); }, Qt::QueuedConnection);
-    else
-        flush();
+    if (QCoreApplication::instance()) flushLater(400);
+    else flush();
+}
+
+void Store::flushLater(int ms) {
+    auto *app = QCoreApplication::instance();
+    if (!app) return;
+    // this — только пока хранилище живо: resetForTests() и свои Store (не из of()) уничтожаются раньше таймера
+    const std::weak_ptr<int> alive = m_alive;
+    QMetaObject::invokeMethod(app, [this, alive, ms] {
+        if (alive.expired()) return;
+        QTimer::singleShot(ms, QCoreApplication::instance(), [this, alive] { if (!alive.expired()) flush(); });
+    }, Qt::QueuedConnection);
 }
 
 void Store::flush() {
@@ -139,8 +151,7 @@ void Store::flush() {
         if (m_pending) return; // уже есть новая запись в очереди
         m_pending = true;
     }
-    if (auto *app = QCoreApplication::instance())
-        QMetaObject::invokeMethod(app, [this] { QTimer::singleShot(5000, QCoreApplication::instance(), [this] { flush(); }); }, Qt::QueuedConnection);
+    flushLater(5000);
 }
 
 QHash<QString, QString> Store::parseProperties(const QByteArray &bytes) {

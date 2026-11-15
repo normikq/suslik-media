@@ -182,6 +182,7 @@ void SearchModel::refilter(bool resetPage) {
 
 void SearchModel::run(const QString &rawQuery) {
     const QString rawQ = rawQuery.trimmed();
+    if (!m_lib) return; // медиатека ещё не привязана (свойство QML)
     if (rawQ.size() < 2 || m_busy) {
         m_status = tx(S("search.vvedite_minimum_simvola"));
         m_statusOk = false;
@@ -336,7 +337,8 @@ void SearchModel::follow(const QString &hitId, qint64 id, bool readyNow, int rou
         setNote(hitId, tx(S("add.dobavleno_alldebrid_kachaet")), true);
         started = nowMs();
     }
-    if (round >= 60) return;
+    // ~12 минут: дальше не спрашиваем, но и «качает…» навсегда не оставляем
+    if (round >= 60) { setNote(hitId, tx(S("add.dolgo_kachaet")), true); return; }
     QPointer<SearchModel> self(this);
     QTimer::singleShot(nowMs() - started < 60000 ? 4000 : 15000, this, [self, hitId, id, round, started] {
         if (!self) return;

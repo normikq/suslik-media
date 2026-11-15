@@ -335,7 +335,7 @@ Item {
                     visible: sc.src.targetCount > 1
                     topPadding: 6
                     width: parent.width
-                    text: "[✓] Привяжется ко всем раздачам фильма (" + sc.src.targetCount + ")" + (sc.src.targetNames ? ": " + sc.src.targetNames : "")
+                    text: "[✓] " + Ui.tx("audio.privyazhetsya_ko_vsem", { n: sc.src.targetCount }) + (sc.src.targetNames ? ": " + sc.src.targetNames : "")
                     color: Theme.ok
                     wrapMode: Text.WordWrap
                     font.family: Theme.onest; font.weight: Font.Medium; font.pixelSize: 13

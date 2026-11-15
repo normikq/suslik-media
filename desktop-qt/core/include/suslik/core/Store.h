@@ -3,6 +3,7 @@
 #include <QMutex>
 #include <QString>
 #include <QStringList>
+#include <memory>
 #include <optional>
 
 /// Маленькое хранилище «ключ — значение» на диске (постеры, прогресс, настройки, cookie): файл `<имя>.properties`
@@ -46,6 +47,9 @@ private:
     QMutex m_fileLock;
     QHash<QString, QString> m_values;
     bool m_pending = false;
+    /// Отложенные записи (таймер в главном потоке) держат слабую ссылку: хранилище уничтожено — запись не идёт.
+    std::shared_ptr<int> m_alive = std::make_shared<int>(0);
+    void flushLater(int ms);
 };
 
 } // namespace suslik::core

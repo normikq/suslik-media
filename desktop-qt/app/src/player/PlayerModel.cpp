@@ -594,7 +594,9 @@ void PlayerModel::fetchSubtitles(quint64 gen, const QStringList &urls, const QSt
             r->deleteLater();
             const int code = r->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
             if (r->error() == QNetworkReply::NoError && code >= 200 && code < 300 && self) {
-                QString ext = self->sideFileName(urls[i]).section(QLatin1Char('.'), -1).left(8);
+                // расширение — из имени в адресе: в имя файла идут только буквы и цифры
+                static const QRegularExpression notAlnum(S("[^0-9A-Za-z]"));
+                QString ext = self->sideFileName(urls[i]).section(QLatin1Char('.'), -1).remove(notAlnum).left(8);
                 if (ext.isEmpty()) ext = S("srt");
                 QFile f(dir.filePath(S("%1-%2.%3").arg(stamp).arg(i).arg(ext)));
                 if (f.open(QIODevice::WriteOnly)) { f.write(r->readAll()); st->local[i] = f.fileName(); }

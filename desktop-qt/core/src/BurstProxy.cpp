@@ -254,7 +254,7 @@ struct Window : std::enable_shared_from_this<Window> {
     std::atomic<qint64> heldUntil{0};
     qint64 gateAt = 0; // под lock
 
-    std::mutex lock;
+    mutable std::mutex lock;
     std::condition_variable cv;
 
     qint64 end() const { return start + written; }
@@ -666,7 +666,7 @@ bool Window::stopped() const { return p->screenOff || src->retiredAt != 0 || !p-
 QString Window::describe(qint64 now) const {
     QString state;
     if (closed) state = QStringLiteral("closed");
-    else if (hasError) state = QStringLiteral("error(%1)").arg(error);
+    else if (hasError) { std::lock_guard g(lock); state = QStringLiteral("error(%1)").arg(error); } // error пишет fail() под lock
     else if (eof) state = QStringLiteral("eof");
     else if (m_downloading) state = QStringLiteral("downloading");
     else state = QStringLiteral("resting");
@@ -858,7 +858,7 @@ void Window::fetch() {
     { std::lock_guard g(m_respMutex); m_response = res; }
     m_downloading = true;
     Finally done{[&] {
-        m_file.flush();
+        // файл здесь не трогаем: он под lock (read() и close() — в других потоках), ringWrite сбрасывает запись сам
         res->close();
         {
             std::lock_guard g(m_respMutex);
@@ -965,10 +965,17 @@ void Window::ringWrite(qint64 abs, const char *buf, qint64 n) {
     while (off < n) {
         const qint64 at = (pos - start) % CAP;
         const qint64 len = std::min(n - off, CAP - at);
-        m_file.seek(at);
-        m_file.write(buf + off, len);
+        // Не записалось (нет места, файл отняли) — в кольце мусор: written не растёт, поток дальше идёт без запаса
+        if (!m_file.seek(at) || m_file.write(buf + off, len) != len) {
+            src->broken = true;
+            throw FatalUpstream(QStringLiteral("reserve file: ") + m_file.errorString());
+        }
         off += len;
         pos += len;
+    }
+    if (!m_file.flush()) {
+        src->broken = true;
+        throw FatalUpstream(QStringLiteral("reserve file: ") + m_file.errorString());
     }
 }
 

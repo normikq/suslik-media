@@ -61,6 +61,17 @@ int main(int argc, char *argv[]) {
     // Единый нативный стек OpenGL для Qt Quick и libmpv: прямой рендеринг видео в FBO сцены,
     // минимальное потребление ОЗУ (без дублирования DirectX/OpenGL драйверов) и абсолютная стабильность.
     QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
+    // Запуск по ссылке: Windows подставляет адрес в «"exe" "%1"» как есть, и кавычка в адресе дописала бы программе
+    // свои параметры (Qt понимает -platformpluginpath и подобные — это чужая DLL). При ссылке остаётся только она.
+    static char *linkArgs[3] = {nullptr, nullptr, nullptr};
+    for (int i = 1; i < argc; ++i) {
+        if (qstrnicmp(argv[i], "suslik:", 7) != 0) continue;
+        linkArgs[0] = argv[0];
+        linkArgs[1] = argv[i];
+        argc = 2;
+        argv = linkArgs;
+        break;
+    }
     QGuiApplication app(argc, argv);
     // QPixmapCache (картинки виджетов и значки) — 4 МБ достаточно (постеры живут в кэше текстур QML).
     QPixmapCache::setCacheLimit(4 * 1024);

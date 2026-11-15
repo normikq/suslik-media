@@ -21,6 +21,8 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QCoreApplication>
+#include <QPointer>
 #include <QProcess>
 #include <QSettings>
 #include <QTcpServer>
@@ -986,8 +988,9 @@ private:
         m_idle.stop();
         BrowserType type = BrowserBridge::preferredType();
         QString exe = Browsers::executable(type);
+        // запасной браузер — со своим профилем и именем (type), а не выбранного
         for (const auto t : {BrowserType::EDGE, BrowserType::CHROME, BrowserType::YANDEX})
-            if (exe.isEmpty()) exe = Browsers::executable(t);
+            if (exe.isEmpty()) { exe = Browsers::executable(t); if (!exe.isEmpty()) type = t; }
         if (exe.isEmpty()) {
             *err = S("Подходящий браузер (Edge, Chrome, Яндекс) не найден на компьютере");
             return 0;
@@ -1087,9 +1090,13 @@ void BrowserBridge::post(std::function<void()> job) {
 }
 
 namespace {
+/// Ответ — в поток получателя (GUI). Вызывается из потока браузера, где получателя трогать нельзя: его могли
+/// удалить, пока шёл запрос. Поэтому событие идёт приложению, а жив ли получатель, проверяется уже в его потоке.
 template <class F>
-void deliver(QObject *ctx, F &&f) {
-    if (ctx) QMetaObject::invokeMethod(ctx, std::forward<F>(f), Qt::QueuedConnection);
+void deliver(const QPointer<QObject> &ctx, F &&f) {
+    auto *app = QCoreApplication::instance();
+    if (!app) return;
+    QMetaObject::invokeMethod(app, [ctx, f = std::forward<F>(f)]() mutable { if (ctx) f(); }, Qt::QueuedConnection);
 }
 } // namespace
 
@@ -1128,7 +1135,7 @@ QString BrowserBridge::profileDir(BrowserType t) {
 
 void BrowserBridge::searchHtml(const QString &baseUrl, const QString &query, const CookieList &cookies, QObject *ctx,
                                std::function<void(std::optional<QString>, QString)> cb) {
-    post([w = m_worker, baseUrl, query, cookies, ctx, cb = std::move(cb)] {
+    post([w = m_worker, baseUrl, query, cookies, ctx = QPointer<QObject>(ctx), cb = std::move(cb)] {
         const auto r = w->search(baseUrl, query, cookies);
         deliver(ctx, [cb, r] { cb(r.json, r.error); });
     });
@@ -1136,7 +1143,7 @@ void BrowserBridge::searchHtml(const QString &baseUrl, const QString &query, con
 
 void BrowserBridge::downloadTorrent(const QString &baseUrl, const QString &topicId, const CookieList &cookies, QObject *ctx,
                                     std::function<void(QByteArray)> cb) {
-    post([w = m_worker, baseUrl, topicId, cookies, ctx, cb = std::move(cb)] {
+    post([w = m_worker, baseUrl, topicId, cookies, ctx = QPointer<QObject>(ctx), cb = std::move(cb)] {
         const QByteArray b = w->torrent(baseUrl, topicId, cookies);
         deliver(ctx, [cb, b] { cb(b); });
     });
@@ -1144,14 +1151,14 @@ void BrowserBridge::downloadTorrent(const QString &baseUrl, const QString &topic
 
 void BrowserBridge::checkConnection(const QString &baseUrl, const CookieList &cookies, QObject *ctx,
                                     std::function<void(bool, QString, QString)> cb) {
-    post([w = m_worker, baseUrl, cookies, ctx, cb = std::move(cb)] {
+    post([w = m_worker, baseUrl, cookies, ctx = QPointer<QObject>(ctx), cb = std::move(cb)] {
         const auto r = w->check(baseUrl, cookies);
         deliver(ctx, [cb, r] { cb(r.ok, r.message, r.cookie); });
     });
 }
 
 void BrowserBridge::existingCookies(BrowserType t, const QString &baseUrl, QObject *ctx, std::function<void(std::optional<QString>)> cb) {
-    post([w = m_worker, t, baseUrl, ctx, cb = std::move(cb)] {
+    post([w = m_worker, t, baseUrl, ctx = QPointer<QObject>(ctx), cb = std::move(cb)] {
         const auto r = w->existing(t, baseUrl);
         deliver(ctx, [cb, r] { cb(r); });
     });
@@ -1159,7 +1166,7 @@ void BrowserBridge::existingCookies(BrowserType t, const QString &baseUrl, QObje
 
 void BrowserBridge::loginAndCapture(BrowserType t, const QString &baseUrl, QObject *ctx, std::function<void(QString)> onStatus,
                                     std::function<void(bool, QString)> cb) {
-    post([w = m_worker, t, baseUrl, ctx, onStatus = std::move(onStatus), cb = std::move(cb)] {
+    post([w = m_worker, t, baseUrl, ctx = QPointer<QObject>(ctx), onStatus = std::move(onStatus), cb = std::move(cb)] {
         const auto r = w->login(t, baseUrl, [ctx, onStatus](const QString &s) { deliver(ctx, [onStatus, s] { onStatus(s); }); });
         deliver(ctx, [cb, r] { cb(r.first, r.second); });
     });

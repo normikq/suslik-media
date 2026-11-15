@@ -35,7 +35,16 @@ struct MediaControls::Impl {
 
 MediaControls::MediaControls(QObject *parent) : QObject(parent), d(std::make_unique<Impl>()) {}
 
-MediaControls::~MediaControls() { stop(); }
+MediaControls::~MediaControls() {
+    stop();
+    // обработчики кнопок Windows зовёт из своего потока: после удаления объекта им приходить незачем
+    if (d && d->smtc) {
+        try {
+            d->smtc.ButtonPressed(d->buttonToken);
+            d->smtc.PlaybackPositionChangeRequested(d->seekToken);
+        } catch (...) {}
+    }
+}
 
 void MediaControls::attach(QWindow *w) {
     if (d->smtc || !w) return;

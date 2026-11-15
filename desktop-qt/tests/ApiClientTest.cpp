@@ -49,6 +49,25 @@ private slots:
         QVERIFY(api.request(S("https://cdn.discordapp.com/a.png")).rawHeader("X-Device-Token").isEmpty());
     }
 
+    void foreignServerCannotSetCookies() {
+        FakeServer own, cdn;
+        cdn.response = "HTTP/1.1 200 OK\r\nSet-Cookie: sid=evil; Path=/\r\n\r\npng";
+        ApiClient api(own.base());
+        const ApiResult r = wait([&](auto cb) { api.bytes(cdn.base() + S("/a.png"), cb); });
+        QCOMPARE(r.bytes, QByteArray("png"));
+        QCOMPARE(api.cookieHeader(), QString());
+    }
+
+    void redirectToForeignServerIsNotFollowed() {
+        FakeServer own, other;
+        own.response = "HTTP/1.1 302 Found\r\nLocation: " + other.base().toUtf8() + "/x\r\n\r\n";
+        ApiClient api(own.base());
+        api.setDeviceToken(S("tok"));
+        const ApiResult r = wait([&](auto cb) { api.get(S("/api/session"), cb); });
+        QVERIFY(!r.ok());
+        QVERIFY(other.requests.isEmpty()); // токен и cookie за переадресацией на чужой адрес не уходят
+    }
+
     void expiredCookieIsRemoved() {
         ApiClient api(S("https://site.test"));
         api.storeCookies({"sid=abc; Path=/", "dev=1"});

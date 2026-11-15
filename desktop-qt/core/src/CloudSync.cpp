@@ -4,6 +4,7 @@
 
 #include <QDateTime>
 #include <QHash>
+#include <QPointer>
 #include <QRegularExpression>
 #include <QSet>
 
@@ -152,7 +153,10 @@ void CloudSync::tick() {
 
 void CloudSync::round(const QString &user, int rounds, int changedSoFar, qint64 startedAt) {
     const WatchSync::Sent sent = m_sync->request(user);
-    m_api.post(QString::fromLatin1(WatchSync::PATH), sent.body, [this, sent, user, rounds, changedSoFar, startedAt](const ApiResult &r) {
+    // ответ приходит от ApiClient: он живёт дольше синхронизации
+    QPointer<CloudSync> self(this);
+    m_api.post(QString::fromLatin1(WatchSync::PATH), sent.body, [this, self, sent, user, rounds, changedSoFar, startedAt](const ApiResult &r) {
+        if (!self) return;
         if (!r.ok()) {
             emit log(QStringLiteral("[sync] failed: ") + r.error.message);
             m_lastPull = startedAt - 4 * 60000LL; // повтор через минуту, а не через пять
