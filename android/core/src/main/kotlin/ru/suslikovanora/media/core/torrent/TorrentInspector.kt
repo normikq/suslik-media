@@ -186,6 +186,8 @@ object TorrentInspector {
             while (pos < bytes.size && bytes[pos].toInt().toChar() != ':') {
                 pos++
             }
+            // No ':' up to the end of the file: a cut-off string (the length below would come out negative)
+            if (pos >= bytes.size) throw IllegalArgumentException("Unterminated bencode string length")
             val len = String(bytes, start, pos - start, Charsets.US_ASCII).toIntOrNull() ?: 0
             pos++ // skip ':'
             val actualLen = len.coerceAtMost(bytes.size - pos)

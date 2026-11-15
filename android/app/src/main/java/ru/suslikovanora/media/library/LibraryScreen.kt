@@ -853,7 +853,11 @@ fun SearchField(value: String, onValue: (String) -> Unit, placeholder: String, p
             keyboardType = if (password) androidx.compose.ui.text.input.KeyboardType.Password else androidx.compose.ui.text.input.KeyboardType.Text,
             showKeyboardOnFocus = if (tv) false else null
         ),
-        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onAny = { focus.clearFocus(); onDone?.invoke() }),
+        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onAny = {
+            // TV: focus stays on the field (cleared, the remote had nothing to move from), only the keyboard goes
+            if (tv) keyboard?.hide() else focus.clearFocus()
+            onDone?.invoke()
+        }),
         modifier = Modifier.fillMaxWidth()
             .onFocusChanged {
                 focused = it.isFocused

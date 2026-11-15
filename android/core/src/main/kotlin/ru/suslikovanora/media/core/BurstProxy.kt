@@ -221,7 +221,9 @@ object BurstProxy {
         if (runCatching { d.usableSpace }.getOrDefault(0L) + diskBytes(d) < cap + (300L shl 20)) return url
         val s = ensureServer() ?: return url
         val key = keyOf(url)
-        val token = byUrl.getOrPut(key) {
+        // computeIfAbsent, not getOrPut: two wrap() calls for the same file at once must not each create a Source
+        // (getOrPut may run its block twice; the loser's Source stayed in [sources] for good).
+        val token = byUrl.computeIfAbsent(key) {
             val t = UUID.randomUUID().toString().replace("-", "")
             sources[t] = Source(t, url)
             t
@@ -248,10 +250,13 @@ object BurstProxy {
      * file size ([total]); while it is unknown the whole file is served instead of a wrong piece from the start.
      */
     internal fun parseRange(range: String?, total: Long): Pair<Long, Long> {
-        val r = range?.trim()?.removePrefix("bytes=")?.split('-') ?: return 0L to -1L
+        val t = range?.trim() ?: return 0L to -1L
+        // The unit's name is case-insensitive (RFC 9110); several ranges are answered from the first one's start to the end.
+        val r = (if (t.startsWith("bytes=", ignoreCase = true)) t.substring(6) else t).split('-')
         val a = r.getOrNull(0)?.trim()?.toLongOrNull()
         val b = r.getOrNull(1)?.trim()?.toLongOrNull()
         if (a == null && b != null) return if (b > 0 && total > 0) maxOf(0L, total - b) to total - 1 else 0L to -1L
+        if (a != null && b != null && b < a) return a to -1L // «100-50»: not a range, from its start to the end
         return (a ?: 0L) to (b ?: -1L)
     }
 
@@ -331,20 +336,23 @@ object BurstProxy {
      * Closed films still kept on disk (see [keepOnly]) whose file [keep] no longer accepts — they left the library:
      * removed now. Returns how many.
      */
-    fun forgetRetired(keep: (link: String) -> Boolean): Int {
+    fun forgetRetired(keep: (link: String) -> Boolean): Int = forgetRetired(linkless = false, keep)
+
+    /** [linkless]: also the streams whose address has no `link` parameter (nothing to ask [keep] about). */
+    private fun forgetRetired(linkless: Boolean, keep: (link: String) -> Boolean): Int {
         var n = 0
         for ((key, token) in byUrl.entries.toList()) {
             val src = sources[token] ?: continue
             if (src.retiredAt == 0L) continue // playing now
             val link = MirrorLink.param(key, "link").orEmpty()
             // keep() can take a while: the film may have been opened again meanwhile (wrap() clears retiredAt) — look again
-            if (link.isNotEmpty() && !keep(link) && src.retiredAt != 0L) { byUrl.remove(key); sources.remove(token)?.close(); n++ }
+            if ((if (link.isEmpty()) linkless else !keep(link)) && src.retiredAt != 0L) { byUrl.remove(key); sources.remove(token)?.close(); n++ }
         }
         return n
     }
 
     /** «Очистить кэш»: every closed film kept on disk goes now (a film that is playing stays). Returns how many. */
-    fun dropRetired(): Int = forgetRetired { false }
+    fun dropRetired(): Int = forgetRetired(linkless = true) { false }
 
     /** The reserve has its folder in this process (a player was opened): its files are in use, see [dropRetired]. */
     val initialized: Boolean get() = dir != null
@@ -676,6 +684,9 @@ object BurstProxy {
         /** Screen on: ends a retry pause / wait at once. */
         fun wake() { synchronized(lock) { kicked = true; lock.notifyAll() } }
 
+        /** Was there a [kick] / [wake] since the last look? Under the lock: one that comes in right now is not lost. */
+        private fun takeKick(): Boolean = synchronized(lock) { val k = kicked; kicked = false; k }
+
         fun end() = start + written
         fun cap() = CAP
         fun diskBytes() = written.coerceAtMost(CAP)
@@ -781,7 +792,7 @@ object BurstProxy {
                     if (stopped()) { kicked = false; stalledWhy = null; continue } // stopped on purpose, not a failure
                     if (e is Renewed) { log("reserve: signature expired → new address, repeating"); continue }
                     val stalled = stalledWhy; stalledWhy = null
-                    val netChange = kicked; kicked = false
+                    val netChange = takeKick()
                     val isConnError = stalled != null || e is SocketTimeoutException
                     if (stalled != null) {
                         runCatching { resetConnections() }
@@ -804,7 +815,7 @@ object BurstProxy {
                             else -> 30_000L
                         }
                         pause(backoffMs)
-                        if (kicked) { kicked = false; failures = 0; offlineCycles = 0 }
+                        if (takeKick()) { failures = 0; offlineCycles = 0 }
                         continue
                     }
                     offlineCycles = 0
@@ -819,7 +830,7 @@ object BurstProxy {
                     } else {
                         pause(minOf(8_000L, 500L shl minOf(failures, 4))) // a network change wakes it
                     }
-                    if (kicked) { kicked = false; failures = 0; offlineCycles = 0 }
+                    if (takeKick()) { failures = 0; offlineCycles = 0 }
                 }
             }
         }
@@ -898,7 +909,8 @@ object BurstProxy {
                     code in 400..499 -> throw FatalUpstream("HTTP $code")
                     code !in 200..299 -> throw IOException("HTTP $code")
                 }
-                r.header("content-type")?.let { src.type = it }
+                // Goes into the local answer's header as it is: no line breaks from the mirror's header
+                r.header("content-type")?.filter { it >= ' ' && it != '\u007f' }?.takeIf { it.isNotBlank() }?.let { src.type = it }
                 if (src.total < 0) {
                     src.total = r.header("content-range")?.substringAfterLast('/')?.toLongOrNull()
                         ?: r.header("content-length")?.toLongOrNull()?.let { it + from } ?: -1L

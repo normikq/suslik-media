@@ -56,6 +56,8 @@ fun LoginScreen(store: LibraryStore, onLoggedIn: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
 
     fun openBrowser(url: String) {
+        // The address comes from the server's answer: only a web page is opened (not intent:, file:, another app's scheme)
+        if (!url.startsWith("https://", ignoreCase = true) && !url.startsWith("http://", ignoreCase = true)) return
         runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) }
     }
     // While the code is on the screen: ask the server every 2 s whether the browser has confirmed it

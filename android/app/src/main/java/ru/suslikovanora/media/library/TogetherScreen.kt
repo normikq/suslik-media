@@ -136,7 +136,8 @@ private fun RoomPanel() {
 private fun FilmPanel(store: LibraryStore, onLibrary: () -> Unit, onOpen: (PlayTarget) -> Unit) {
     // The room's clock moves while it plays: the shown time is refreshed every second
     var tick by remember { mutableIntStateOf(0) }
-    LaunchedEffect(Unit) { while (true) { delay(1000); tick++ } }
+    val running = Party.file != null && Party.state.playing // no film or a pause: the time stands, nothing to redraw
+    LaunchedEffect(running) { while (running) { delay(1000); tick++ } }
     Panel {
         Text(tr("party.film"), fontFamily = Unbounded, fontWeight = FontWeight.Medium, fontSize = 17.sp, color = Sm.text)
         val f = Party.file

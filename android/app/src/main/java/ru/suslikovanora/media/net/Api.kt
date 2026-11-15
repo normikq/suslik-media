@@ -68,6 +68,20 @@ object Api {
         }
     }
 
+    /**
+     * A redirect to another host repeats the request with everything [CookieBridge] added (OkHttp itself drops only
+     * `Authorization`): the session cookie, the device token and the beta code would go to that host. Seen by every
+     * request that really goes out, so they are taken off there.
+     */
+    private object OwnHeadersOnly : Interceptor {
+        private val ours = listOf("Cookie", "X-Beta-Code", ru.suslikovanora.media.core.auth.DeviceAuth.TOKEN_HEADER)
+        override fun intercept(chain: Interceptor.Chain): Response {
+            val req = chain.request()
+            if (ours.none { req.header(it) != null } || SiteAddress.isOwn(req.url.toString(), BASE)) return chain.proceed(req)
+            return chain.proceed(req.newBuilder().apply { ours.forEach { removeHeader(it) } }.build())
+        }
+    }
+
     private fun authPrefs() = appCtx?.getSharedPreferences("auth", android.content.Context.MODE_PRIVATE)
 
     /** Discord sign-in by device code: the server's token for this phone, sent with every request to our server. */
@@ -116,6 +130,7 @@ object Api {
             .readTimeout(30, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .addInterceptor(CookieBridge)
+            .addNetworkInterceptor(OwnHeadersOnly)
             .apply { if (ru.suslikovanora.media.Diag.on) eventListenerFactory(ru.suslikovanora.media.Diag.http) } // debug build: [http] timings
             .build()
     }

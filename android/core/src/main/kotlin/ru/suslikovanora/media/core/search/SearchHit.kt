@@ -26,6 +26,8 @@ data class SearchHit(
 ) {
     companion object {
         private val defaultDateFmt = SimpleDateFormat("dd.MM.yyyy", Locale.ROOT)
+        /** SimpleDateFormat is not thread-safe, and answers are parsed on whatever thread asked. */
+        private fun defaultDate(ms: Long): String = synchronized(defaultDateFmt) { defaultDateFmt.format(Date(ms)) }
 
         fun fromJson(r: JSONObject, formatDate: ((Long) -> String)? = null): SearchHit? {
             val id = r.optString("id")
@@ -38,7 +40,7 @@ data class SearchHit(
             val d = r.opt("date").let { v ->
                 when (v) {
                     is Number -> if (v.toLong() > 0) {
-                        formatDate?.invoke(v.toLong()) ?: defaultDateFmt.format(Date(v.toLong()))
+                        formatDate?.invoke(v.toLong()) ?: defaultDate(v.toLong())
                     } else ""
                     is String -> v.take(10)
                     else -> ""

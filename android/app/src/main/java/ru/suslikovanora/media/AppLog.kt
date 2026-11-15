@@ -33,10 +33,11 @@ object AppLog {
 
     fun write(msg: String) {
         val f = file ?: return
-        val line = "${fmt.format(Date())}  $msg\n"
+        val at = Date() // the moment of the call; formatted on the writer's thread (SimpleDateFormat is not thread-safe)
         runCatching {
             writer.execute {
                 runCatching {
+                    val line = "${fmt.format(at)}  $msg\n"
                     if (f.length() > limit) { val old = File(f.parentFile, "player.old.log"); old.delete(); f.renameTo(old) }
                     f.appendText(line)
                 }

@@ -139,42 +139,49 @@ class LibraryStore(context: Context) {
     fun seen(id: Long) = id in seen
     fun markSeen(id: Long) { seen += id }
 
+    /** One writer of library.json at a time: a refresh and a tap on a tile used to read and rewrite it over each other. */
+    private val snapshotLock = Mutex()
+
+    /** Changes the saved copy's list of torrents in place. */
+    private suspend fun patchSnapshot(change: (org.json.JSONArray) -> Unit) = withContext(Dispatchers.IO) {
+        snapshotLock.withLock {
+            runCatching {
+                val root = JSONObject(snapshotFile.readText())
+                root.optJSONArray("magnets")?.let(change)
+                snapshotFile.writeText(root.toString())
+            }
+        }
+    }
+
+    // Shown at once, taken back if the server refused. Only this torrent's flag is changed (and taken back): putting
+    // the whole earlier list back used to undo a refresh or another tap that came in while the request was on its way.
+    private fun showFavorite(id: Long, on: Boolean) {
+        magnets = magnets.map { if (it.id == id) it.copy(favorite = on) else it }
+        items = items.map { if (it.m.id == id) it.copy(m = it.m.copy(favorite = on)) else it }
+    }
+    private fun showMine(id: Long, on: Boolean) {
+        magnets = magnets.map { if (it.id == id) it.copy(mine = on) else it }
+        items = items.map { if (it.m.id == id) it.copy(m = it.m.copy(mine = on)) else it }
+    }
+
     /** Favourite on/off for this device; the list updates at once, the server keeps it per device cookie. */
     suspend fun setFavorite(m: Magnet, on: Boolean): String? {
-        val beforeM = magnets; val beforeI = items
-        magnets = magnets.map { if (it.id == m.id) it.copy(favorite = on) else it }
-        items = items.map { if (it.m.id == m.id) it.copy(m = it.m.copy(favorite = on)) else it }
+        showFavorite(m.id, on)
         return try {
             Api.post("/api/favorites", JSONObject().put("id", m.id).put("favorite", on))
-            withContext(Dispatchers.IO) {
-                runCatching {
-                    val root = JSONObject(snapshotFile.readText())
-                    val arr = root.optJSONArray("magnets")
-                    if (arr != null) for (i in 0 until arr.length()) arr.optJSONObject(i)?.takeIf { it.optLong("id") == m.id }?.put("favorite", on)
-                    snapshotFile.writeText(root.toString())
-                }
-            }
+            patchSnapshot { arr -> for (i in 0 until arr.length()) arr.optJSONObject(i)?.takeIf { it.optLong("id") == m.id }?.put("favorite", on) }
             null
-        } catch (e: CancellationException) { throw e } catch (e: Exception) { magnets = beforeM; items = beforeI; Api.describe(e) }
+        } catch (e: CancellationException) { throw e } catch (e: Exception) { showFavorite(m.id, m.favorite); Api.describe(e) }
     }
 
     /** «Мои фильмы» on/off: only this user's list; the torrent stays in the shared library. */
     suspend fun setMine(m: Magnet, on: Boolean): String? {
-        val beforeM = magnets; val beforeI = items
-        magnets = magnets.map { if (it.id == m.id) it.copy(mine = on) else it }
-        items = items.map { if (it.m.id == m.id) it.copy(m = it.m.copy(mine = on)) else it }
+        showMine(m.id, on)
         return try {
             withContext(kotlinx.coroutines.NonCancellable) { Api.post(Shelf.PATH, Shelf.body(m.id, on)) }
-            withContext(Dispatchers.IO) {
-                runCatching {
-                    val root = JSONObject(snapshotFile.readText())
-                    val arr = root.optJSONArray("magnets")
-                    if (arr != null) for (i in 0 until arr.length()) arr.optJSONObject(i)?.takeIf { it.optLong("id") == m.id }?.put("mine", on)
-                    snapshotFile.writeText(root.toString())
-                }
-            }
+            patchSnapshot { arr -> for (i in 0 until arr.length()) arr.optJSONObject(i)?.takeIf { it.optLong("id") == m.id }?.put("mine", on) }
             null
-        } catch (e: CancellationException) { throw e } catch (e: Exception) { magnets = beforeM; items = beforeI; Api.describe(e) }
+        } catch (e: CancellationException) { throw e } catch (e: Exception) { showMine(m.id, m.mine); Api.describe(e) }
     }
 
     suspend fun restoreSnapshot() {
@@ -257,7 +264,7 @@ class LibraryStore(context: Context) {
         magnets = emptyList()
         items = emptyList()
         loadedOnce = false
-        withContext(Dispatchers.IO) { runCatching { snapshotFile.delete() } }
+        withContext(Dispatchers.IO) { snapshotLock.withLock { runCatching { snapshotFile.delete() } } }
     }
 
     suspend fun refresh() {
@@ -272,7 +279,7 @@ class LibraryStore(context: Context) {
             prunePosters() // once per start: pictures not shown for 7 days
             loadedOnce = true
             lastRefreshAt = System.currentTimeMillis()
-            withContext(Dispatchers.IO) { runCatching { snapshotFile.writeText(json.toString()) } }
+            withContext(Dispatchers.IO) { snapshotLock.withLock { runCatching { snapshotFile.writeText(json.toString()) } } }
             status = if (json.optBoolean("stale")) tr("library.alldebrid_ne_otvetil_pokazana", "size" to list.size)
             else tr("library.zagruzheno_size_torrent_ov", "size" to list.size)
             statusKind = if (json.optBoolean("stale")) StatusKind.Info else StatusKind.Ok
@@ -289,14 +296,7 @@ class LibraryStore(context: Context) {
         Api.post("/api/magnets/${m.id}/${if (m.downloading) "cancel" else "delete"}")
         magnets = magnets.filter { it.id != m.id }
         items = items.filter { it.m.id != m.id }
-        withContext(Dispatchers.IO) {
-            runCatching {
-                val root = JSONObject(snapshotFile.readText())
-                val arr = root.optJSONArray("magnets")
-                if (arr != null) for (i in arr.length() - 1 downTo 0) if (arr.optJSONObject(i)?.optLong("id") == m.id) arr.remove(i)
-                snapshotFile.writeText(root.toString())
-            }
-        }
+        patchSnapshot { arr -> for (i in arr.length() - 1 downTo 0) if (arr.optJSONObject(i)?.optLong("id") == m.id) arr.remove(i) }
         null
     } catch (e: CancellationException) {
         throw e

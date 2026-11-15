@@ -402,8 +402,11 @@ class Media3Engine(private val context: Context) : PlayerEngine {
         override fun onPlayerError(error: PlaybackException) {
             val cause = error.cause?.let { "${it.javaClass.simpleName}: ${it.message}" } ?: error.message
             AppLog.write("[media3] error ${error.errorCodeName}: $cause")
-            // Network / HTTP trouble: the usual reconnect (again in Media3). Anything else — the file is VLC's.
-            if (error.errorCode in 2000..2999) listener?.failed() else report("error ${error.errorCodeName}")
+            // Network / HTTP trouble: the usual reconnect (again in Media3). A timeout of the player itself (a surface
+            // or a release that did not answer) says nothing about the file either: it must not send it to mpv for good
+            // (EngineChoice remembers). Anything else — the file is mpv's.
+            if (error.errorCode in 2000..2999 || error.errorCode == PlaybackException.ERROR_CODE_TIMEOUT) listener?.failed()
+            else report("error ${error.errorCodeName}")
         }
     }
 
