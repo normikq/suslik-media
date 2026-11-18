@@ -64,7 +64,7 @@ router.post("/api/search/add", requireLogin, apiLimiter, async (req, res) => {
         return adUploadMagnet(lz.magnet);
       });
       // Через TorAPI (без аккаунта) .torrent недоступен: остаётся только magnet, его ошибка и показывается.
-      if (r.lazy.via !== "torapi") {
+      if (r.lazy.via !== "torapi" && torrentSearch.canDownloadLazy(r)) {
         attempts.push(async () => adUploadTorrent(await torrentSearch.downloadLazy(r), fileName));
       }
     }

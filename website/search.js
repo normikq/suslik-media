@@ -292,10 +292,15 @@ async function resolveLazy(r) {
   const x = await p.resolve(r);
   return { magnet: x.magnet || buildMagnet(x.infoHash, r.title), infoHash: x.infoHash || "" };
 }
+/** У трекера этой раздачи есть скачивание .torrent (иначе ошибкой добавления остаётся ошибка magnet). */
+function canDownloadLazy(r) {
+  const p = providers[r.providerKey];
+  return Boolean(r.lazy && p && p.download);
+}
 async function downloadLazy(r) {
   const p = providers[r.providerKey];
   if (!r.lazy || !p || !p.download) throw new Error("Для этого результата нет файла .torrent.");
   return p.download(r);
 }
 
-module.exports = { resolveLazy, downloadLazy, search, getResult, enabledProviders, trustedTorrentOrigins, buildMagnet, hashFromMagnet, parseSize, providers };
+module.exports = { resolveLazy, downloadLazy, canDownloadLazy, search, getResult, enabledProviders, trustedTorrentOrigins, buildMagnet, hashFromMagnet, parseSize, providers };

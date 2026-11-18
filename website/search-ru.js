@@ -499,6 +499,7 @@ function make(h) {
       if (!a) continue;
       const mg = /href="(magnet:\?xt=urn:btih:[^"]+)"/i.exec(row);
       const magnet = mg ? decodeHtml(mg[1]) : "";
+      const dl = /href="[^"]*download\.php\?id=(\d+)/i.exec(row); // [ DL ] — .torrent (только после входа)
       const cells = [...row.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map(c => c[1]);
       // ячейка размера: «<u>байты</u> 2.36 GB». Единицу ищем только в ячейке целиком (перед ней допустимы байты),
       // чтобы не поймать «700MB» из названия; точные байты из <u> надёжнее округлённого текста.
@@ -510,7 +511,8 @@ function make(h) {
       out.push({
         title: text(a[2]), size, seeders: int(text(seed ? seed[1] : "")), leechers: int(text(leech ? leech[1] : "")),
         date: ruDate(text(cells[cells.length - 1] || "")),
-        infoHash: magnet ? normHash((/btih:([0-9a-f]{40})/i.exec(magnet) || [])[1]) : "", magnet, lazy: { topic: a[1] }
+        infoHash: magnet ? normHash((/btih:([0-9a-f]{40})/i.exec(magnet) || [])[1]) : "", magnet,
+        lazy: dl ? { topic: a[1], dl: dl[1] } : { topic: a[1] }
       });
     }
     return out;
@@ -581,6 +583,27 @@ function make(h) {
       const page = await fetchPage(`${base}/forum/viewtopic.php?t=${r.lazy.topic}`, { headers: { Cookie: cookie }, charset: "windows-1251" });
       const mg = /href="(magnet:\?xt=urn:btih:[^"]+)"/i.exec(page.text);
       return { magnet: mg ? decodeHtml(mg[1]) : "", infoHash: mg ? normHash((/btih:([0-9a-f]{40})/i.exec(mg[1]) || [])[1]) : "" };
+    },
+    // У части раздач (старые, закрытые правообладателем) magnet нет нигде — только «Скачать» .torrent, и его NNM-Club
+    // отдаёт только вошедшим (гостя download.php переадресует на вход).
+    async download(r) {
+      if (!nnmHasAuth()) {
+        throw new Error("У этой раздачи NNM-Club нет magnet-ссылки, а файл .torrent сайт отдаёт только после входа: задайте на сервере NNMCLUB_USER/NNMCLUB_PASS или NNMCLUB_COOKIE");
+      }
+      const base = nnmBase(), cookie = await nnmCookie();
+      const topicUrl = `${base}/forum/viewtopic.php?t=${r.lazy.topic}`;
+      let id = r.lazy.dl;
+      if (!id) {
+        const page = await fetchPage(topicUrl, { headers: { Cookie: cookie }, charset: "windows-1251" });
+        id = (/href="[^"]*download\.php\?id=(\d+)/i.exec(page.text) || [])[1];
+        if (!id) throw new Error("На странице раздачи NNM-Club нет ни magnet-ссылки, ни файла .torrent (раздача закрыта?)");
+      }
+      const res = await fetchPage(`${base}/forum/download.php?id=${encodeURIComponent(id)}`, { headers: { Cookie: cookie, Referer: topicUrl }, buffer: true });
+      if (res.status !== 200 || res.buf[0] !== 0x64) {
+        sessions.delete("nnmclub"); // вход мог протухнуть — в следующий раз войдём заново
+        throw new Error("NNM-Club не отдал .torrent (вход не принят или раздача закрыта)");
+      }
+      return res.buf;
     }
   };
 
