@@ -12,6 +12,9 @@ const { reserveDownloadSlot, releaseTrackedDownload, canRemove, isLibraryAdmin }
 const { deleteMagnet } = require("../services/cleanup");
 const { getLibrary, libraryChanged } = require("../services/library");
 
+const cacheCheck = require("../services/cachecheck");
+const { hashFromMagnet } = require("../../search");
+
 const router = express.Router();
 
 // Magnet support: submit a magnet, check its status, then retrieve available files.
@@ -23,6 +26,8 @@ router.post("/api/magnets", requireLogin, apiLimiter, async (req, res) => {
   const slot = reserveDownloadSlot(req, res);
   if (!slot) return;
   try {
+    // Идёт проверка кеша этой раздачи — дождаться, иначе она удалит только что добавленное
+    await cacheCheck.get().settle(hashFromMagnet(magnet));
     const item = await adUploadMagnet(magnet);
     slot.attach(item.id, Boolean(item.ready) || Number(item.statusCode) === 4);
     const hash = typeof item.hash === "string" ? item.hash.trim().toLowerCase() : null;

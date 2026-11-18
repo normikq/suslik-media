@@ -562,6 +562,8 @@
   "search.tolko_serialy": "Только сериалы",
   "search.utochnit_p_p_rus": "Уточнить: 1080p, 2160p, rus…",
   "search.v_biblioteku": "＋ В библиотеку",
+  "search.cached_yes": "⚡ в кеше",
+  "search.cached_no": "нет в кеше — придётся качать",
   "search.vse": "Всё",
   "search.vvedite_minimum_simvola": "Введите минимум 2 символа.",
   "settings.animatsii": "Анимации",

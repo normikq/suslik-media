@@ -91,7 +91,7 @@ public:
     void setRefine(const QString &r) { m_criteria.refine = r; refilter(true); }
 
     int page() const { return m_page; }
-    void setPage(int p) { m_page = p; emit changed(); }
+    void setPage(int p) { m_page = p; checkCache(); emit changed(); }
     int pageSize() const { return m_pageSize; }
     void setPageSize(int s) { m_pageSize = s; m_page = 1; emit changed(); }
     int totalPages() const { return std::max<int>(1, (int(m_shown.size()) + m_pageSize - 1) / m_pageSize); }
@@ -139,6 +139,10 @@ signals:
 private:
     int safePage() const { return std::clamp(m_page, 1, totalPages()); }
     void refilter(bool resetPage);
+    /// Спросить сервер, какие раздачи текущей страницы и начала списка есть в кеше AllDebrid (POST /api/search/cached).
+    void checkCache();
+    /// true — в кеше, false — нет, nullopt — неизвестно (нет хэша или ещё не спросили).
+    std::optional<bool> cachedState(const core::SearchHit &h) const;
     void publish(bool ruPending, const std::optional<std::pair<QList<core::SearchHit>, QString>> &ru);
     void setNote(const QString &id, const QString &text, bool ok);
     void follow(const QString &hitId, qint64 id, bool readyNow, int round = 0, qint64 started = 0);
@@ -161,6 +165,8 @@ private:
     bool m_statusOk = true;
     int m_page = 1, m_pageSize = 25;
     int m_gen = 0;
+    QHash<QString, bool> m_cache; ///< infohash -> есть ли в кеше AllDebrid
+    QSet<QString> m_cacheAsked;
 
     bool m_aiMode = false, m_aiBusy = false, m_aiStatusOk = true;
     QString m_aiStatus, m_aiQuery;

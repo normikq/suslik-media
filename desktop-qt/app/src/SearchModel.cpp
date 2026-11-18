@@ -10,6 +10,7 @@
 
 #include <QDateTime>
 #include <QJsonArray>
+#include <QJsonObject>
 #include <QJsonValue>
 #include <QLocale>
 #include <QPointer>
@@ -17,6 +18,8 @@
 #include <QSet>
 #include <QTimer>
 #include <QUrl>
+
+#include <algorithm>
 
 namespace suslik::app {
 
@@ -92,6 +95,13 @@ QVariantList badges(const ReleaseInfo &r) {
     return out;
 }
 
+/// infohash из magnet (40 hex, нижний регистр) или пусто.
+QString hitHash(const SearchHit &h) {
+    static const QRegularExpression re(S("xt=urn:btih:([0-9a-fA-F]{40})"));
+    const auto m = re.match(h.magnet.value_or(QString()));
+    return m.hasMatch() ? m.captured(1).toLower() : QString();
+}
+
 bool visibleHit(const SearchHit &h) {
     return TrackerSettings::isSourceEnabledForHit(h.source) && !ReleaseParser::isNonVideo(h.title);
 }
@@ -165,6 +175,7 @@ QVariantList SearchModel::rows() const {
             {S("note"), note != m_notes.constEnd() ? note->first : QString()},
             {S("noteOk"), note != m_notes.constEnd() ? note->second : true},
             {S("canAdd"), note == m_notes.constEnd() || !note->second},
+            {S("cached"), [&] { const auto c = cachedState(h); return c ? (*c ? 1 : 0) : -1; }()},
         };
     }
     return out;
@@ -175,9 +186,44 @@ void SearchModel::refilter(bool resetPage) {
     for (const auto &h : m_hits)
         if (visibleHit(h)) pre << h;
     m_shown = m_criteria.filter(pre);
+    // Нет в кеше AllDebrid — в конец списка (порядок внутри групп сохраняется)
+    std::stable_partition(m_shown.begin(), m_shown.end(), [this](const SearchHit &h) { return cachedState(h) != std::optional<bool>(false); });
     if (resetPage) m_page = 1;
     m_page = safePage();
+    checkCache();
     emit changed();
+}
+
+std::optional<bool> SearchModel::cachedState(const SearchHit &h) const {
+    const QString hash = hitHash(h);
+    const auto it = hash.isEmpty() ? m_cache.constEnd() : m_cache.constFind(hash);
+    if (it == m_cache.constEnd()) return std::nullopt;
+    return *it;
+}
+
+void SearchModel::checkCache() {
+    if (!m_lib || m_shown.isEmpty()) return;
+    QJsonArray hashes;
+    auto take = [&](int from, int to) {
+        for (int i = from; i < to && hashes.size() < 60; ++i) {
+            const QString h = hitHash(m_shown[i]);
+            if (h.isEmpty() || m_cache.contains(h) || m_cacheAsked.contains(h)) continue;
+            m_cacheAsked.insert(h);
+            hashes.append(h);
+        }
+    };
+    take(fromIndex(), toIndex()); // сначала то, что на экране
+    take(0, int(m_shown.size()));
+    if (hashes.isEmpty()) return;
+    QPointer<SearchModel> self(this);
+    m_lib->api().post(S("/api/search/cached"), {{S("hashes"), hashes}}, [self](const ApiResult &r) {
+        if (!self || !r.ok()) return; // без пометок — не страшно
+        const QJsonObject got = r.json.value(S("cached")).toObject();
+        bool any = false;
+        for (auto it = got.begin(); it != got.end(); ++it)
+            if (it.value().isBool()) { self->m_cache.insert(it.key(), it.value().toBool()); any = true; }
+        if (any) self->refilter(false);
+    });
 }
 
 void SearchModel::run(const QString &rawQuery) {

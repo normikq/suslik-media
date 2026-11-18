@@ -10,6 +10,7 @@ const { reserveDownloadSlot } = require("../services/downloads");
 const { adUploadMagnet, adUploadTorrent, fetchTorrentFromIndexer } = require("../services/alldebrid");
 const torrentSearch = require("../../search");
 const aiDiscovery = require("../services/aidiscovery");
+const cacheCheck = require("../services/cachecheck");
 
 const router = express.Router();
 
@@ -21,6 +22,19 @@ router.get("/api/search", requireLogin, searchLimiter, async (req, res) => {
     res.status(err.status || 502).json({
       error: err.status ? err.message : "Не удалось выполнить поиск. Попробуйте ещё раз."
     });
+  }
+});
+
+// Есть ли раздачи в кеше AllDebrid: { hashes: [40 hex] } (до 60) -> { cached: { <hash>: true|false } }.
+// Хэши, которые проверить не удалось, в ответ не попадают. Подробности — src/services/cachecheck.js.
+router.post("/api/search/cached", requireLogin, apiLimiter, async (req, res) => {
+  res.setHeader("Cache-Control", "private, no-store");
+  if (!config.ALLDEBRID_API_KEY) return res.json({ cached: {} });
+  try {
+    res.json({ cached: await cacheCheck.get().check(req.body?.hashes) });
+  } catch (err) {
+    console.warn("[cachecheck]", err.message);
+    res.json({ cached: {} });
   }
 });
 
@@ -53,6 +67,7 @@ router.post("/api/search/add", requireLogin, apiLimiter, async (req, res) => {
         return got.magnet ? adUploadMagnet(got.magnet) : adUploadTorrent(got.bytes, fileName);
       });
     }
+    await cacheCheck.get().settle(r.infoHash);
     let item = null;
     let lastErr = null;
     for (const attempt of attempts) {
