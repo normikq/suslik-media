@@ -9,7 +9,10 @@
 const CACHED_TTL_MS = 6 * 60 * 60 * 1000; // кешированное редко пропадает
 const UNCACHED_TTL_MS = 30 * 60 * 1000; // некешированное может докачаться у кого-то ещё
 const MAX_HASHES = 60; // за один запрос клиента
-const CHUNK = 20; // магнетов в одном magnet/upload
+const MAX_CHECK = 80; // вместе с хэшами, найденными по id
+const CHUNK = 10; // магнетов в одном magnet/upload
+const RETRY_CHUNK = 3;
+const RETRY_ROUNDS = 3;
 const MAX_KNOWN = 20000;
 
 const HASH_RE = /^[0-9a-f]{40}$/;
@@ -22,7 +25,7 @@ function normHash(h) {
 /**
  * deps: {
  *   account(): Promise<Array<{ id, hash, statusCode }>>  — что сейчас в аккаунте,
- *   upload(hashes): Promise<Array<{ hash, id, ready } | null>> — magnet/upload пачкой, по порядку,
+ *   upload(hashes): Promise<Array<{ hash, id, ready } | { error } | null>> — magnet/upload пачкой, по порядку,
  *   remove(id): Promise<void>,
  *   isProtected(id): boolean — у раздачи есть владелец (её добавили сами),
  *   changed(): void — сбросить кеш медиатеки,
@@ -67,32 +70,41 @@ function createCacheChecker(deps) {
       else toUpload.push(h);
     }
     let touched = false;
-    for (let i = 0; i < toUpload.length; i += CHUNK) {
-      const part = toUpload.slice(i, i + CHUNK);
-      let items;
-      try {
-        items = await deps.upload(part);
-      } catch (err) {
-        console.warn("[cachecheck] upload:", err.message);
-        break; // остальное — «неизвестно»
-      }
-      const victims = [];
-      part.forEach((h, idx) => {
-        const it = items && items[idx];
-        if (!it || it.id === undefined || it.id === null) return; // ошибка по этой раздаче — неизвестно
-        out.set(h, Boolean(it.ready));
-        const id = String(it.id);
-        if (!accountIds.has(id)) victims.push(id);
-      });
-      if (victims.length) touched = true;
-      for (const id of victims) {
-        if (deps.isProtected(id)) continue;
+    // Отказ по отдельной раздаче (чаще всего «слишком много активных загрузок») — повтор мелкими пачками,
+    // когда добавленные проверкой уже удалены
+    let todo = toUpload;
+    for (let round = 0; round < RETRY_ROUNDS && todo.length; round++) {
+      const size = round === 0 ? CHUNK : RETRY_CHUNK;
+      const failed = [];
+      for (let i = 0; i < todo.length; i += size) {
+        const part = todo.slice(i, i + size);
+        let items;
         try {
-          await deps.remove(id);
+          items = await deps.upload(part);
         } catch (err) {
-          console.warn("[cachecheck] delete", id, err.message);
+          console.warn("[cachecheck] upload:", err.message);
+          failed.push(...todo.slice(i));
+          break;
         }
+        const victims = [];
+        const errors = new Set();
+        part.forEach((h, idx) => {
+          const it = items && items[idx];
+          if (!it || it.id === undefined || it.id === null) {
+            failed.push(h);
+            if (it && it.error) errors.add(String(it.error));
+            return;
+          }
+          out.set(h, Boolean(it.ready));
+          const id = String(it.id);
+          if (!accountIds.has(id)) victims.push(id);
+        });
+        if (errors.size) console.warn("[cachecheck] AllDebrid отказал:", [...errors].join(", "));
+        if (victims.length) touched = true;
+        await Promise.all(victims.filter(id => !deps.isProtected(id)).map(id =>
+          deps.remove(id).catch(err => console.warn("[cachecheck] delete", id, err.message))));
       }
+      todo = failed;
     }
     if (touched) deps.changed();
     return out;
@@ -100,7 +112,7 @@ function createCacheChecker(deps) {
 
   /** hashes -> { hash: true|false } (неизвестные не попадают в ответ) */
   async function check(rawHashes) {
-    const hashes = [...new Set((Array.isArray(rawHashes) ? rawHashes : []).map(normHash).filter(Boolean))].slice(0, MAX_HASHES);
+    const hashes = [...new Set((Array.isArray(rawHashes) ? rawHashes : []).map(normHash).filter(Boolean))].slice(0, MAX_CHECK);
     const result = {};
     const waits = [];
     const missing = [];
@@ -184,7 +196,9 @@ function get() {
       }
       return hashes.map((h, i) => {
         const it = byHash.get(h) || (items[i] && !items[i].error && !items[i].hash ? items[i] : null);
-        return it ? { hash: h, id: it.id, ready: Boolean(it.ready) } : null;
+        if (it) return { hash: h, id: it.id, ready: Boolean(it.ready) };
+        const bad = items[i] && items[i].error;
+        return bad ? { error: bad.code || bad.message || "error" } : null;
       });
     },
     async remove(id) {
@@ -196,4 +210,38 @@ function get() {
   return instance;
 }
 
-module.exports = { createCacheChecker, get, normHash, MAX_HASHES };
+// ---- Раздачи закрытых трекеров: хэш есть только на странице раздачи --------------------------------
+
+const MAX_IDS = 20; // страниц раздач за один запрос клиента
+const RESOLVE_PARALLEL = 4;
+
+/** id результатов поиска -> { id: hash } (у кого хэш узнать не вышло, тех нет). Узнанный хэш запоминается в результате. */
+async function hashesForIds(rawIds, torrentSearch = require("../../search")) {
+  const ids = [...new Set((Array.isArray(rawIds) ? rawIds : []).filter(x => typeof x === "string" && x.length <= 64))].slice(0, MAX_IDS);
+  const out = {};
+  const lazy = [];
+  for (const id of ids) {
+    const r = torrentSearch.getResult(id);
+    if (!r) continue;
+    const h = normHash(r.infoHash) || normHash(torrentSearch.hashFromMagnet(r.magnet)) || normHash(r.resolvedHash);
+    if (h) out[id] = h;
+    else if (r.lazy && !r.resolveFailed) lazy.push([id, r]);
+  }
+  let next = 0;
+  async function worker() {
+    while (next < lazy.length) {
+      const [id, r] = lazy[next++];
+      try {
+        const x = await torrentSearch.resolveLazy(r);
+        const h = normHash(x.infoHash) || normHash(torrentSearch.hashFromMagnet(x.magnet));
+        if (h) { r.resolvedHash = h; out[id] = h; } else r.resolveFailed = true;
+      } catch (err) {
+        console.warn("[cachecheck] resolve:", err.message);
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(RESOLVE_PARALLEL, lazy.length) }, worker));
+  return out;
+}
+
+module.exports = { createCacheChecker, get, hashesForIds, normHash, MAX_HASHES, MAX_IDS };

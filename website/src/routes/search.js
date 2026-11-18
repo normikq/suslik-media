@@ -25,16 +25,23 @@ router.get("/api/search", requireLogin, searchLimiter, async (req, res) => {
   }
 });
 
-// Есть ли раздачи в кеше AllDebrid: { hashes: [40 hex] } (до 60) -> { cached: { <hash>: true|false } }.
-// Хэши, которые проверить не удалось, в ответ не попадают. Подробности — src/services/cachecheck.js.
+// Есть ли раздачи в кеше AllDebrid: { hashes: [40 hex] (до 60), ids: [id результата без magnet] (до 20) }
+// -> { cached: { <hash>: true|false }, ids: { <id>: true|false } }. Для ids хэш берётся со страницы раздачи
+// (закрытые трекеры). Что проверить не удалось, в ответ не попадает. Подробности — src/services/cachecheck.js.
 router.post("/api/search/cached", requireLogin, apiLimiter, async (req, res) => {
   res.setHeader("Cache-Control", "private, no-store");
-  if (!config.ALLDEBRID_API_KEY) return res.json({ cached: {} });
+  if (!config.ALLDEBRID_API_KEY) return res.json({ cached: {}, ids: {} });
   try {
-    res.json({ cached: await cacheCheck.get().check(req.body?.hashes) });
+    const byId = await cacheCheck.hashesForIds(req.body?.ids);
+    const hashes = (Array.isArray(req.body?.hashes) ? req.body.hashes : []).slice(0, cacheCheck.MAX_HASHES);
+    const all = [...new Set([...Object.values(byId), ...hashes])];
+    const cached = await cacheCheck.get().check(all);
+    const ids = {};
+    for (const [id, h] of Object.entries(byId)) if (typeof cached[h] === "boolean") ids[id] = cached[h];
+    res.json({ cached, ids });
   } catch (err) {
     console.warn("[cachecheck]", err.message);
-    res.json({ cached: {} });
+    res.json({ cached: {}, ids: {} });
   }
 });
 
@@ -67,7 +74,7 @@ router.post("/api/search/add", requireLogin, apiLimiter, async (req, res) => {
         return got.magnet ? adUploadMagnet(got.magnet) : adUploadTorrent(got.bytes, fileName);
       });
     }
-    await cacheCheck.get().settle(r.infoHash);
+    await cacheCheck.get().settle(r.infoHash || r.resolvedHash);
     let item = null;
     let lastErr = null;
     for (const attempt of attempts) {

@@ -19,8 +19,6 @@
 #include <QTimer>
 #include <QUrl>
 
-#include <algorithm>
-
 namespace suslik::app {
 
 using namespace suslik::core;
@@ -100,6 +98,14 @@ QString hitHash(const SearchHit &h) {
     static const QRegularExpression re(S("xt=urn:btih:([0-9a-fA-F]{40})"));
     const auto m = re.match(h.magnet.value_or(QString()));
     return m.hasMatch() ? m.captured(1).toLower() : QString();
+}
+
+/// Ключ пометки кеша: infohash, а у раздач закрытых трекеров с сервера (magnet появится только при добавлении) — "id:" + id;
+/// их хэш сервер берёт со страницы раздачи.
+QString cacheKey(const SearchHit &h) {
+    const QString hash = hitHash(h);
+    if (!hash.isEmpty()) return hash;
+    return h.localTrackerId || h.id.isEmpty() ? QString() : S("id:") + h.id;
 }
 
 bool visibleHit(const SearchHit &h) {
@@ -186,8 +192,6 @@ void SearchModel::refilter(bool resetPage) {
     for (const auto &h : m_hits)
         if (visibleHit(h)) pre << h;
     m_shown = m_criteria.filter(pre);
-    // Нет в кеше AllDebrid — в конец списка (порядок внутри групп сохраняется)
-    std::stable_partition(m_shown.begin(), m_shown.end(), [this](const SearchHit &h) { return cachedState(h) != std::optional<bool>(false); });
     if (resetPage) m_page = 1;
     m_page = safePage();
     checkCache();
@@ -195,34 +199,45 @@ void SearchModel::refilter(bool resetPage) {
 }
 
 std::optional<bool> SearchModel::cachedState(const SearchHit &h) const {
-    const QString hash = hitHash(h);
-    const auto it = hash.isEmpty() ? m_cache.constEnd() : m_cache.constFind(hash);
+    const QString key = cacheKey(h);
+    const auto it = key.isEmpty() ? m_cache.constEnd() : m_cache.constFind(key);
     if (it == m_cache.constEnd()) return std::nullopt;
     return *it;
 }
 
 void SearchModel::checkCache() {
     if (!m_lib || m_shown.isEmpty()) return;
-    QJsonArray hashes;
+    QJsonArray hashes, ids;
     auto take = [&](int from, int to) {
-        for (int i = from; i < to && hashes.size() < 60; ++i) {
-            const QString h = hitHash(m_shown[i]);
-            if (h.isEmpty() || m_cache.contains(h) || m_cacheAsked.contains(h)) continue;
-            m_cacheAsked.insert(h);
-            hashes.append(h);
+        for (int i = from; i < to; ++i) {
+            const QString key = cacheKey(m_shown[i]);
+            if (key.isEmpty() || m_cache.contains(key) || m_cacheAsked.contains(key)) continue;
+            if (key.startsWith(S("id:"))) {
+                if (ids.size() >= 20) continue;
+                ids.append(m_shown[i].id);
+            } else {
+                if (hashes.size() >= 60) continue;
+                hashes.append(key);
+            }
+            m_cacheAsked.insert(key);
         }
     };
     take(fromIndex(), toIndex()); // сначала то, что на экране
     take(0, int(m_shown.size()));
-    if (hashes.isEmpty()) return;
+    if (hashes.isEmpty() && ids.isEmpty()) return;
     QPointer<SearchModel> self(this);
-    m_lib->api().post(S("/api/search/cached"), {{S("hashes"), hashes}}, [self](const ApiResult &r) {
+    m_lib->api().post(S("/api/search/cached"), {{S("hashes"), hashes}, {S("ids"), ids}}, [self](const ApiResult &r) {
         if (!self || !r.ok()) return; // без пометок — не страшно
-        const QJsonObject got = r.json.value(S("cached")).toObject();
         bool any = false;
-        for (auto it = got.begin(); it != got.end(); ++it)
-            if (it.value().isBool()) { self->m_cache.insert(it.key(), it.value().toBool()); any = true; }
-        if (any) self->refilter(false);
+        auto put = [&](const QJsonObject &got, const QString &prefix) {
+            for (auto it = got.begin(); it != got.end(); ++it)
+                if (it.value().isBool()) { self->m_cache.insert(prefix + it.key(), it.value().toBool()); any = true; }
+        };
+        put(r.json.value(S("cached")).toObject(), QString());
+        put(r.json.value(S("ids")).toObject(), S("id:"));
+        if (!any) return;
+        emit self->changed(); // порядок не меняется — только пометки
+        self->checkCache();  // следующая порция
     });
 }
 

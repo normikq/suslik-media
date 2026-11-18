@@ -1302,40 +1302,39 @@ function renderSearchProviders(list) {
 function filteredSearchItems() {
   // Тот же разбор релизов, пресеты, качество и сортировка, что на ПК (searchcore.js)
   searchState.hiddenKind = searchState.nonVideo || 0;
-  const list = SM.searchcore.filter(searchState.items, {
+  return SM.searchcore.filter(searchState.items, {
     query: searchState.query || "", kind: $("searchKind").value, preset: $("searchPreset").value, resolution: $("searchRes").value || null,
     onlySeeded: $("searchHideDead").checked, onlyRu: $("searchOnlyRu").checked, refine: $("searchFilter").value, sort: $("searchSort").value
   });
-  // Нет в кеше AllDebrid — в конец списка (порядок внутри групп сохраняется)
-  return list.filter(r => searchCached(r) !== false).concat(list.filter(r => searchCached(r) === false));
 }
 // ---- Кеш AllDebrid: true — откроется сразу, false — придётся качать, undefined — неизвестно ----
-const searchCache = new Map(); // infohash -> true|false
+// Ключ — infohash; у раздач закрытых трекеров magnet нет до добавления, их хэш сервер берёт со страницы раздачи по id
+const searchCache = new Map(); // ключ -> true|false
 const searchCacheAsked = new Set();
 function searchHash(r) {
   const m = /xt=urn:btih:([0-9a-f]{40})/i.exec(r.magnet || "");
   return m ? m[1].toLowerCase() : "";
 }
-function searchCached(r) { const h = searchHash(r); return h ? searchCache.get(h) : undefined; }
-async function checkSearchCache(items, gen) {
-  const hashes = [];
+function searchCacheKey(r) { return searchHash(r) || (r.id ? "id:" + r.id : ""); }
+async function checkSearchCache(items) {
+  const hashes = [], ids = [];
   for (const r of items) {
-    const h = searchHash(r);
-    if (h && !searchCache.has(h) && !searchCacheAsked.has(h)) { searchCacheAsked.add(h); hashes.push(h); }
-    if (hashes.length >= 60) break;
+    const key = searchCacheKey(r);
+    if (!key || searchCache.has(key) || searchCacheAsked.has(key)) continue;
+    if (key.startsWith("id:")) { if (ids.length >= 20) continue; ids.push(r.id); }
+    else { if (hashes.length >= 60) continue; hashes.push(key); }
+    searchCacheAsked.add(key);
   }
-  if (!hashes.length) return;
+  if (!hashes.length && !ids.length) return;
   let got = {};
-  try { got = (await api("/api/search/cached", { method: "POST", body: JSON.stringify({ hashes }) })).cached || {}; }
+  try { got = await api("/api/search/cached", { method: "POST", body: JSON.stringify({ hashes, ids }) }); }
   catch { /* без пометок — не страшно */ }
-  for (const h of hashes) if (typeof got[h] === "boolean") searchCache.set(h, got[h]);
-  if (gen !== searchGen || !Object.keys(got).length) return;
-  if (searchState.busy) {
-    // Пользователь уже добавляет раздачу — список не перестраиваем, только красим
-    for (const row of $("searchResults").querySelectorAll(".sr-row[data-hash]")) markSearchRow(row, searchCache.get(row.dataset.hash));
-  } else {
-    renderSearchResults(true, Math.max(searchState.shown, SEARCH_PAGE));
-  }
+  for (const [h, v] of Object.entries(got.cached || {})) if (typeof v === "boolean") searchCache.set(h, v);
+  for (const [id, v] of Object.entries(got.ids || {})) if (typeof v === "boolean") searchCache.set("id:" + id, v);
+  // Порядок не меняется — только красим уже показанные строки
+  for (const row of $("searchResults").querySelectorAll(".sr-row[data-cache-key]")) markSearchRow(row, searchCache.get(row.dataset.cacheKey));
+  // Следующая порция (ids — по 20 за раз)
+  if (Object.keys(got.cached || {}).length || Object.keys(got.ids || {}).length) checkSearchCache(items);
 }
 function markSearchRow(row, cached) {
   row.classList.toggle("uncached", cached === false);
@@ -1344,17 +1343,17 @@ function markSearchRow(row, cached) {
   tag.textContent = cached === true ? "⚡ в кеше" : cached === false ? "нет в кеше — придётся качать" : "";
   tag.className = "cache-tag " + (cached === true ? "cache-yes" : cached === false ? "cache-no" : "");
 }
-function renderSearchResults(reset = true, count = SEARCH_PAGE) {
+function renderSearchResults(reset = true) {
   const box = $("searchResults");
   const items = filteredSearchItems();
   if (reset) { box.textContent = ""; searchState.shown = 0; }
   $("searchHidden").textContent = searchState.hiddenKind ? `Скрыто как не фильмы и не сериалы: ${searchState.hiddenKind} (игры, софт, музыка, книги, трейлеры).` : "";
-  const next = items.slice(searchState.shown, searchState.shown + count);
+  const next = items.slice(searchState.shown, searchState.shown + SEARCH_PAGE);
   for (const r of next) box.append(searchRow(r));
   searchState.shown += next.length;
   $("searchMore").classList.toggle("hidden", searchState.shown >= items.length);
   if (reset && !items.length && searchState.items.length) box.append(srEl("p", "file-meta", "Ничего не подходит под фильтр."));
-  checkSearchCache(items.slice(0, searchState.shown), searchGen);
+  checkSearchCache(items.slice(0, searchState.shown));
 }
 function searchRow(r) {
   const row = srEl("div", "sr-row");
@@ -1371,13 +1370,13 @@ function searchRow(r) {
   if (r.kind === "series") meta.append(srEl("span", "", "сериал")); else if (r.kind === "movie") meta.append(srEl("span", "", "фильм")); else if (r.kind === "cartoon") meta.append(srEl("span", "", "мультфильм"));
   meta.append(srEl("span", "", r.source));
   if (r.date) meta.append(srEl("span", "", r.date));
-  const hash = searchHash(r);
-  if (hash) { row.dataset.hash = hash; meta.append(srEl("span", "cache-tag")); markSearchRow(row, searchCache.get(hash)); }
+  const cacheKey = searchCacheKey(r);
+  if (cacheKey) { row.dataset.cacheKey = cacheKey; meta.append(srEl("span", "cache-tag")); markSearchRow(row, searchCache.get(cacheKey)); }
   row.append(meta);
   const act = srEl("div", "sr-actions");
   const add = srEl("button", "", "＋ В библиотеку"); add.type = "button";
   const note = srEl("span", "sr-note");
-  add.addEventListener("click", () => { searchState.busy = true; addSearchResult(r, add, note); });
+  add.addEventListener("click", () => addSearchResult(r, add, note));
   act.append(add);
   if (r.magnet) {
     const mg = srEl("button", "secondary", "Magnet"); mg.type = "button";
@@ -1408,7 +1407,6 @@ async function runSearch(ev) {
     searchState.items = all.filter(x => !SM.searchcore.isNonVideo(x.title));
     searchState.nonVideo = all.length - searchState.items.length;
     searchState.query = cleaned;
-    searchState.busy = false;
     renderSearchProviders(data.providers);
     renderSearchResults(true);
     const failed = (data.providers || []).filter(p => !p.ok).length;

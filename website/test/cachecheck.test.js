@@ -2,7 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { createCacheChecker } = require("../src/services/cachecheck");
+const { createCacheChecker, hashesForIds } = require("../src/services/cachecheck");
 
 const H = c => c.repeat(40);
 
@@ -84,16 +84,47 @@ test("одновременные запросы одного хэша — одн
   assert.equal(log.uploads.length, 1);
 });
 
-test("не больше 60 хэшей, пачками по 20", async () => {
+test("не больше 80 хэшей, пачками по 10", async () => {
   const ready = {};
   const hashes = [];
-  for (let i = 0; i < 70; i++) {
+  for (let i = 0; i < 90; i++) {
     const h = i.toString(16).padStart(40, "0");
     hashes.push(h);
     ready[h] = i % 2 === 0;
   }
   const { deps, log } = fake({ ready });
   const r = await createCacheChecker(deps).check(hashes);
-  assert.equal(Object.keys(r).length, 60);
-  assert.deepEqual(log.uploads.map(u => u.length), [20, 20, 20]);
+  assert.equal(Object.keys(r).length, 80);
+  assert.deepEqual(log.uploads.map(u => u.length), [10, 10, 10, 10, 10, 10, 10, 10]);
+});
+
+test("отказ AllDebrid по раздаче — повтор мелкими пачками после удаления", async () => {
+  const { deps, log } = fake({ ready: { [H("a")]: false, [H("b")]: false } });
+  let first = true;
+  const upload = deps.upload;
+  deps.upload = async hashes => {
+    if (first) { first = false; log.uploads.push(hashes); return hashes.map(h => (h === H("b") ? { error: "MAGNET_TOO_MANY_ACTIVE" } : { hash: h, id: 1, ready: false })); }
+    return upload(hashes);
+  };
+  const r = await createCacheChecker(deps).check([H("a"), H("b")]);
+  assert.deepEqual(r, { [H("a")]: false, [H("b")]: false });
+  assert.deepEqual(log.uploads[1], [H("b")]);
+});
+
+test("хэш раздачи закрытого трекера — со страницы раздачи, один раз", async () => {
+  const results = {
+    a: { infoHash: H("a") },
+    b: { lazy: { topic: 1 } },
+    c: { lazy: { topic: 2 } },
+    d: { magnet: "magnet:?xt=urn:btih:" + H("d").toUpperCase() }
+  };
+  let resolves = 0;
+  const ts = {
+    getResult: id => results[id],
+    hashFromMagnet: m => (/btih:([0-9a-z]+)/i.exec(m || "") || [])[1] || "",
+    async resolveLazy(r) { resolves++; return r.lazy.topic === 1 ? { infoHash: H("b"), magnet: "" } : { infoHash: "", magnet: "" }; }
+  };
+  assert.deepEqual(await hashesForIds(["a", "b", "c", "d", "zzz", 5], ts), { a: H("a"), b: H("b"), d: H("d") });
+  assert.deepEqual(await hashesForIds(["b", "c"], ts), { b: H("b") });
+  assert.equal(resolves, 2);
 });
