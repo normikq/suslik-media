@@ -45,6 +45,11 @@ function recordOwner(id, dev, ip) {
   persistOwners();
 }
 
+/** У раздачи есть владелец — её добавили через приложение или сайт (проверка кеша такую не удаляет). */
+function hasOwner(id) {
+  return magnetOwners.has(String(id));
+}
+
 function isLibraryAdmin(req) {
   // Админ Discord. Не «shared» (общий пароль — это все сразу; роль у него и так "user", проверка id — страховка)
   return Boolean(req.user && req.user.role === "admin" && req.user.id !== "shared");
@@ -185,6 +190,7 @@ module.exports = {
   removeChecker,
   isLibraryAdmin,
   recordOwner,
+  hasOwner,
   deleteOwner,
   adoptOwners,
   ownedBy,

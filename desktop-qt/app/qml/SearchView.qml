@@ -548,8 +548,9 @@ Item {
             width: parent.width
             height: Math.max(col.implicitHeight, addBtn.height) + 28
             radius: 12
-            color: hov.hovered ? "#171B25" : Theme.booth
-            border.color: hov.hovered ? "#3E475C" : "transparent"
+            // Нет в кеше AllDebrid (cached === 0) — красноватая строка: сначала скачается, смотреть сразу не выйдет
+            color: hr.hit.cached === 0 ? (hov.hovered ? "#2A1A1D" : "#1E1416") : (hov.hovered ? "#171B25" : Theme.booth)
+            border.color: hr.hit.cached === 0 ? (hov.hovered ? "#7A3A40" : "#4A2A2E") : (hov.hovered ? "#3E475C" : "transparent")
             Behavior on color { ColorAnimation { duration: 200 } }
             Behavior on border.color { ColorAnimation { duration: 200 } }
             Rectangle {
@@ -566,7 +567,7 @@ Item {
                 Text {
                     width: parent.width
                     text: hr.hit.title
-                    color: Theme.text
+                    color: hr.hit.cached === 0 ? Theme.bad : Theme.text
                     wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight
                     font.family: Theme.onest; font.weight: Font.DemiBold; font.pixelSize: 15
                 }
@@ -592,6 +593,12 @@ Item {
                     Text { visible: hr.hit.size !== ""; text: hr.hit.size; color: Theme.text; font.family: Theme.onest; font.weight: Font.Medium; font.pixelSize: 13 }
                     Text { text: "↑ " + hr.hit.seeders; color: hr.hit.seeders > 0 ? Theme.ok : Theme.muted; font.family: Theme.onest; font.weight: Font.DemiBold; font.pixelSize: 13 }
                     Info { text: "↓ " + hr.hit.leechers }
+                    Text {
+                        visible: hr.hit.cached !== -1
+                        text: hr.hit.cached === 1 ? Ui.tx("search.cached_yes") : Ui.tx("search.cached_no")
+                        color: hr.hit.cached === 1 ? Theme.ok : Theme.bad
+                        font.family: Theme.onest; font.weight: Font.DemiBold; font.pixelSize: 13
+                    }
                     Rectangle {
                         visible: hr.hit.ru
                         width: ruText.implicitWidth + 12; height: ruText.implicitHeight + 2

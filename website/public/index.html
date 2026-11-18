@@ -372,6 +372,7 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
 .sr-meta .seed{color:#9be6bd}.sr-meta .seed.zero{color:#ff9caa}
 .sr-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .sr-actions button{padding:9px 13px;font-size:13px}
+.sr-row.uncached .sr-title{color:#ff9caa}.sr-meta .cache-yes{color:#9be6bd}.sr-meta .cache-no{color:#ff9caa;font-weight:600}
 .sr-note{font-size:12px;color:var(--muted)}.sr-note.error{color:#ff9caa}.sr-note.success{color:#9be6bd}
 @media(max-width:600px){.search-form{flex-direction:column}.sr-actions button{flex:1 1 auto}}
 </style>
@@ -1301,21 +1302,59 @@ function renderSearchProviders(list) {
 function filteredSearchItems() {
   // Тот же разбор релизов, пресеты, качество и сортировка, что на ПК (searchcore.js)
   searchState.hiddenKind = searchState.nonVideo || 0;
-  return SM.searchcore.filter(searchState.items, {
+  const list = SM.searchcore.filter(searchState.items, {
     query: searchState.query || "", kind: $("searchKind").value, preset: $("searchPreset").value, resolution: $("searchRes").value || null,
     onlySeeded: $("searchHideDead").checked, onlyRu: $("searchOnlyRu").checked, refine: $("searchFilter").value, sort: $("searchSort").value
   });
+  // Нет в кеше AllDebrid — в конец списка (порядок внутри групп сохраняется)
+  return list.filter(r => searchCached(r) !== false).concat(list.filter(r => searchCached(r) === false));
 }
-function renderSearchResults(reset = true) {
+// ---- Кеш AllDebrid: true — откроется сразу, false — придётся качать, undefined — неизвестно ----
+const searchCache = new Map(); // infohash -> true|false
+const searchCacheAsked = new Set();
+function searchHash(r) {
+  const m = /xt=urn:btih:([0-9a-f]{40})/i.exec(r.magnet || "");
+  return m ? m[1].toLowerCase() : "";
+}
+function searchCached(r) { const h = searchHash(r); return h ? searchCache.get(h) : undefined; }
+async function checkSearchCache(items, gen) {
+  const hashes = [];
+  for (const r of items) {
+    const h = searchHash(r);
+    if (h && !searchCache.has(h) && !searchCacheAsked.has(h)) { searchCacheAsked.add(h); hashes.push(h); }
+    if (hashes.length >= 60) break;
+  }
+  if (!hashes.length) return;
+  let got = {};
+  try { got = (await api("/api/search/cached", { method: "POST", body: JSON.stringify({ hashes }) })).cached || {}; }
+  catch { /* без пометок — не страшно */ }
+  for (const h of hashes) if (typeof got[h] === "boolean") searchCache.set(h, got[h]);
+  if (gen !== searchGen || !Object.keys(got).length) return;
+  if (searchState.busy) {
+    // Пользователь уже добавляет раздачу — список не перестраиваем, только красим
+    for (const row of $("searchResults").querySelectorAll(".sr-row[data-hash]")) markSearchRow(row, searchCache.get(row.dataset.hash));
+  } else {
+    renderSearchResults(true, Math.max(searchState.shown, SEARCH_PAGE));
+  }
+}
+function markSearchRow(row, cached) {
+  row.classList.toggle("uncached", cached === false);
+  const tag = row.querySelector(".cache-tag");
+  if (!tag) return;
+  tag.textContent = cached === true ? "⚡ в кеше" : cached === false ? "нет в кеше — придётся качать" : "";
+  tag.className = "cache-tag " + (cached === true ? "cache-yes" : cached === false ? "cache-no" : "");
+}
+function renderSearchResults(reset = true, count = SEARCH_PAGE) {
   const box = $("searchResults");
   const items = filteredSearchItems();
   if (reset) { box.textContent = ""; searchState.shown = 0; }
   $("searchHidden").textContent = searchState.hiddenKind ? `Скрыто как не фильмы и не сериалы: ${searchState.hiddenKind} (игры, софт, музыка, книги, трейлеры).` : "";
-  const next = items.slice(searchState.shown, searchState.shown + SEARCH_PAGE);
+  const next = items.slice(searchState.shown, searchState.shown + count);
   for (const r of next) box.append(searchRow(r));
   searchState.shown += next.length;
   $("searchMore").classList.toggle("hidden", searchState.shown >= items.length);
   if (reset && !items.length && searchState.items.length) box.append(srEl("p", "file-meta", "Ничего не подходит под фильтр."));
+  checkSearchCache(items.slice(0, searchState.shown), searchGen);
 }
 function searchRow(r) {
   const row = srEl("div", "sr-row");
@@ -1332,11 +1371,13 @@ function searchRow(r) {
   if (r.kind === "series") meta.append(srEl("span", "", "сериал")); else if (r.kind === "movie") meta.append(srEl("span", "", "фильм")); else if (r.kind === "cartoon") meta.append(srEl("span", "", "мультфильм"));
   meta.append(srEl("span", "", r.source));
   if (r.date) meta.append(srEl("span", "", r.date));
+  const hash = searchHash(r);
+  if (hash) { row.dataset.hash = hash; meta.append(srEl("span", "cache-tag")); markSearchRow(row, searchCache.get(hash)); }
   row.append(meta);
   const act = srEl("div", "sr-actions");
   const add = srEl("button", "", "＋ В библиотеку"); add.type = "button";
   const note = srEl("span", "sr-note");
-  add.addEventListener("click", () => addSearchResult(r, add, note));
+  add.addEventListener("click", () => { searchState.busy = true; addSearchResult(r, add, note); });
   act.append(add);
   if (r.magnet) {
     const mg = srEl("button", "secondary", "Magnet"); mg.type = "button";
@@ -1367,6 +1408,7 @@ async function runSearch(ev) {
     searchState.items = all.filter(x => !SM.searchcore.isNonVideo(x.title));
     searchState.nonVideo = all.length - searchState.items.length;
     searchState.query = cleaned;
+    searchState.busy = false;
     renderSearchProviders(data.providers);
     renderSearchResults(true);
     const failed = (data.providers || []).filter(p => !p.ok).length;
