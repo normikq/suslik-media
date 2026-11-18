@@ -91,7 +91,7 @@ public:
     void setRefine(const QString &r) { m_criteria.refine = r; refilter(true); }
 
     int page() const { return m_page; }
-    void setPage(int p) { m_page = p; checkCache(); emit changed(); }
+    void setPage(int p) { m_page = p; emit changed(); }
     int pageSize() const { return m_pageSize; }
     void setPageSize(int s) { m_pageSize = s; m_page = 1; emit changed(); }
     int totalPages() const { return std::max<int>(1, (int(m_shown.size()) + m_pageSize - 1) / m_pageSize); }
@@ -104,6 +104,8 @@ public:
 
     Q_INVOKABLE void run(const QString &query);
     Q_INVOKABLE void add(const QString &hitId);
+    /// Строки, которые сейчас видны на экране: только их раздачи проверяются на кеш AllDebrid.
+    Q_INVOKABLE void seen(const QStringList &hitIds);
     /// Подбор по настроению. fresh — не из памяти сервера и другие фильмы («Кинорулетка», «Ещё варианты»).
     Q_INVOKABLE void runAi(const QString &query, bool fresh = false);
 
@@ -139,8 +141,8 @@ signals:
 private:
     int safePage() const { return std::clamp(m_page, 1, totalPages()); }
     void refilter(bool resetPage);
-    /// Спросить сервер, какие раздачи текущей страницы и начала списка есть в кеше AllDebrid (POST /api/search/cached).
-    void checkCache();
+    /// Спросить сервер, какие из этих раздач есть в кеше AllDebrid (POST /api/search/cached).
+    void checkCache(const QList<core::SearchHit> &hits);
     /// true — в кеше, false — нет, nullopt — неизвестно (нет хэша или ещё не спросили).
     std::optional<bool> cachedState(const core::SearchHit &h) const;
     void publish(bool ruPending, const std::optional<std::pair<QList<core::SearchHit>, QString>> &ru);

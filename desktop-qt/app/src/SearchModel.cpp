@@ -194,7 +194,6 @@ void SearchModel::refilter(bool resetPage) {
     m_shown = m_criteria.filter(pre);
     if (resetPage) m_page = 1;
     m_page = safePage();
-    checkCache();
     emit changed();
 }
 
@@ -205,25 +204,29 @@ std::optional<bool> SearchModel::cachedState(const SearchHit &h) const {
     return *it;
 }
 
-void SearchModel::checkCache() {
-    if (!m_lib || m_shown.isEmpty()) return;
+void SearchModel::seen(const QStringList &hitIds) {
+    const QSet<QString> want(hitIds.begin(), hitIds.end());
+    QList<SearchHit> hits;
+    for (int i = fromIndex(); i < toIndex(); ++i)
+        if (want.contains(m_shown[i].id)) hits << m_shown[i];
+    checkCache(hits);
+}
+
+void SearchModel::checkCache(const QList<SearchHit> &hits) {
+    if (!m_lib) return;
     QJsonArray hashes, ids;
-    auto take = [&](int from, int to) {
-        for (int i = from; i < to; ++i) {
-            const QString key = cacheKey(m_shown[i]);
-            if (key.isEmpty() || m_cache.contains(key) || m_cacheAsked.contains(key)) continue;
-            if (key.startsWith(S("id:"))) {
-                if (ids.size() >= 20) continue;
-                ids.append(m_shown[i].id);
-            } else {
-                if (hashes.size() >= 60) continue;
-                hashes.append(key);
-            }
-            m_cacheAsked.insert(key);
+    for (const auto &h : hits) {
+        const QString key = cacheKey(h);
+        if (key.isEmpty() || m_cache.contains(key) || m_cacheAsked.contains(key)) continue;
+        if (key.startsWith(S("id:"))) {
+            if (ids.size() >= 20) continue;
+            ids.append(h.id);
+        } else {
+            if (hashes.size() >= 60) continue;
+            hashes.append(key);
         }
-    };
-    take(fromIndex(), toIndex()); // сначала то, что на экране
-    take(0, int(m_shown.size()));
+        m_cacheAsked.insert(key);
+    }
     if (hashes.isEmpty() && ids.isEmpty()) return;
     QPointer<SearchModel> self(this);
     m_lib->api().post(S("/api/search/cached"), {{S("hashes"), hashes}, {S("ids"), ids}}, [self](const ApiResult &r) {
@@ -236,8 +239,7 @@ void SearchModel::checkCache() {
         put(r.json.value(S("cached")).toObject(), QString());
         put(r.json.value(S("ids")).toObject(), S("id:"));
         if (!any) return;
-        emit self->changed(); // порядок не меняется — только пометки
-        self->checkCache();  // следующая порция
+        emit self->changed(); // порядок не меняется — только пометки; QML заново пришлёт видимое (seen), если что-то не влезло
     });
 }
 

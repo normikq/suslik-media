@@ -1333,9 +1333,24 @@ async function checkSearchCache(items) {
   for (const [id, v] of Object.entries(got.ids || {})) if (typeof v === "boolean") searchCache.set("id:" + id, v);
   // Порядок не меняется — только красим уже показанные строки
   for (const row of $("searchResults").querySelectorAll(".sr-row[data-cache-key]")) markSearchRow(row, searchCache.get(row.dataset.cacheKey));
-  // Следующая порция (ids — по 20 за раз)
-  if (Object.keys(got.cached || {}).length || Object.keys(got.ids || {}).length) checkSearchCache(items);
+  // На экране осталось непроверенное (больше лимита за раз) — следующая порция
+  if (Object.keys(got.cached || {}).length || Object.keys(got.ids || {}).length) flushSearchSeen();
 }
+// Проверяются только строки, которые пользователь видит (и чуть ниже экрана), а не вся выдача
+const searchSeenRows = new Set();
+let searchSeenTimer = 0;
+function flushSearchSeen() {
+  clearTimeout(searchSeenTimer);
+  searchSeenTimer = setTimeout(() => {
+    const items = [];
+    for (const row of searchSeenRows) if (row.isConnected && row._hit) items.push(row._hit); else searchSeenRows.delete(row);
+    checkSearchCache(items);
+  }, 250);
+}
+const searchSeenObserver = "IntersectionObserver" in window ? new IntersectionObserver(entries => {
+  for (const e of entries) { if (e.isIntersecting) searchSeenRows.add(e.target); else searchSeenRows.delete(e.target); }
+  flushSearchSeen();
+}, { rootMargin: "0px 0px 200px 0px" }) : null;
 function markSearchRow(row, cached) {
   row.classList.toggle("uncached", cached === false);
   const tag = row.querySelector(".cache-tag");
@@ -1346,14 +1361,14 @@ function markSearchRow(row, cached) {
 function renderSearchResults(reset = true) {
   const box = $("searchResults");
   const items = filteredSearchItems();
-  if (reset) { box.textContent = ""; searchState.shown = 0; }
+  if (reset) { box.textContent = ""; searchState.shown = 0; searchSeenRows.clear(); if (searchSeenObserver) searchSeenObserver.disconnect(); }
   $("searchHidden").textContent = searchState.hiddenKind ? `Скрыто как не фильмы и не сериалы: ${searchState.hiddenKind} (игры, софт, музыка, книги, трейлеры).` : "";
   const next = items.slice(searchState.shown, searchState.shown + SEARCH_PAGE);
   for (const r of next) box.append(searchRow(r));
   searchState.shown += next.length;
   $("searchMore").classList.toggle("hidden", searchState.shown >= items.length);
   if (reset && !items.length && searchState.items.length) box.append(srEl("p", "file-meta", "Ничего не подходит под фильтр."));
-  checkSearchCache(items.slice(0, searchState.shown));
+  if (!searchSeenObserver) checkSearchCache(next); // старый браузер — хотя бы новая порция
 }
 function searchRow(r) {
   const row = srEl("div", "sr-row");
@@ -1371,7 +1386,11 @@ function searchRow(r) {
   meta.append(srEl("span", "", r.source));
   if (r.date) meta.append(srEl("span", "", r.date));
   const cacheKey = searchCacheKey(r);
-  if (cacheKey) { row.dataset.cacheKey = cacheKey; meta.append(srEl("span", "cache-tag")); markSearchRow(row, searchCache.get(cacheKey)); }
+  if (cacheKey) {
+    row.dataset.cacheKey = cacheKey; row._hit = r;
+    meta.append(srEl("span", "cache-tag")); markSearchRow(row, searchCache.get(cacheKey));
+    if (searchSeenObserver && !searchCache.has(cacheKey)) searchSeenObserver.observe(row);
+  }
   row.append(meta);
   const act = srEl("div", "sr-actions");
   const add = srEl("button", "", "＋ В библиотеку"); add.type = "button";

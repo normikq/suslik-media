@@ -42,8 +42,27 @@ Item {
     }
     function runVibe(q, fresh) { aiField.text = q; s.runAi(q, fresh) }
 
+    // Кеш AllDebrid проверяется только для строк на экране (и чуть ниже): после прокрутки, смены страницы и ответа
+    Timer {
+        id: seenTimer
+        interval: 250
+        onTriggered: {
+            const ids = []
+            for (let i = 0; i < hitRep.count; ++i) {
+                const it = hitRep.itemAt(i)
+                if (!it) continue
+                const y = it.mapToItem(flick, 0, 0).y
+                if (y + it.height > 0 && y < flick.height + 200) ids.push(it.hit.id)
+            }
+            if (ids.length) s.seen(ids)
+        }
+    }
+    Connections { target: s; function onChanged() { seenTimer.restart() } }
+
     Flickable {
         id: flick
+        onContentYChanged: seenTimer.restart()
+        onHeightChanged: seenTimer.restart()
         anchors.fill: parent
         contentHeight: content.height + 56
         clip: true
@@ -322,6 +341,7 @@ Item {
             Item { visible: !s.aiMode && s.shownCount > 0 && s.totalPages > 1; width: 1; height: 10 }
 
             Repeater {
+                id: hitRep
                 model: s.aiMode ? [] : s.rows
                 delegate: HitRow { width: content.width; hit: modelData }
             }
