@@ -3,7 +3,7 @@
 Три машины: **CDN** (Европа, Linux, HDD 1 ТБ), **основной сервер** (сайт), **кодировщик** (Ubuntu + NVIDIA).
 Подробности — `infra/cdn/README.md`, `encoder/README.md`, `docs/HLS-SERVER.md`, `docs/DEPLOY.md`. Контракт — `docs/HLS.md`.
 
-Порядок: 0 → 1 (CDN) → 2 (сайт, HLS выключен) → 3 (кодировщик) → 4 (бета на себя) → 5 (всем).
+Порядок: 0 → 1 (CDN) → 2 (сайт, HLS выключен) → 3 (кодировщик) → 4 (бета на себя) → 4а (архив, по желанию) → 5 (всем).
 До шага 4 пользователи ничего не замечают.
 
 ## 0. Подготовка
@@ -258,6 +258,31 @@ journalctl -u suslik-encoder -f            # плюс /var/log/suslik-encoder/
 
 Если что-то не так — шаг 6 (откат), это не задевает обычный просмотр.
 
+## 4а. Архив на Google Drive (по желанию)
+
+Запасная копия готовых фильмов (`docs/HLS.md` §17): вытесненное с CDN не пропадает, по «Смотреть» CDN возвращает его из архива за минуты,
+без кодировщика и исходника. Включается только на CDN, сайту настройки не нужны. Подробно — `infra/cdn/README.md`, раздел «Архив на Google Drive».
+
+1. **rclone ≥ 1.54** на CDN: `rclone version`; если старее — `curl https://rclone.org/install.sh | sudo bash`.
+2. **Remote** (`sudo rclone config --config /etc/hls-cdn/rclone.conf`):
+   - `gdrive`, тип `drive`, `client_id`/`client_secret` — **пусто** (пока нет своего ключа API работает встроенный, медленнее);
+     на вопрос про браузер — `n`, команду `rclone authorize "drive" "…"` выполнить на ПК с браузером, токен вставить обратно;
+   - `gdrive-crypt`, тип `crypt`, `remote = gdrive:suslik-hls`, шифрование имён и папок, пароль и соль — сгенерировать.
+   **Пароль и соль crypt сохранить в менеджер паролей** — без них архив не прочитать.
+3. Проверка: `sudo rclone --config /etc/hls-cdn/rclone.conf lsd gdrive-crypt:` (в Диске видны только зашифрованные имена).
+4. Включение:
+   ```bash
+   sudo nano /etc/hls-cdn/cdn.env      # HLS_ARCHIVE_REMOTE=gdrive-crypt:hls   (по желанию HLS_ARCHIVE_BWLIMIT=20M)
+   cd suslik-media/infra/cdn && sudo ./install.sh
+   sudo /usr/local/lib/hls-cdn/hls-archive.sh --enqueue-existing     # однократно: то, что уже на диске
+   ```
+5. Наблюдение: `journalctl -u hls-archive -n 50`, `journalctl -u hls-restore -f`; в админке — сводка «в архиве», у версий метка «есть в архиве».
+   Проверка возврата: в админке у версии «в архиве» → «Достать из архива» (или дождаться вытеснения и нажать «Смотреть»).
+
+Лимит Google — 750 ГБ загрузки в сутки: первая выгрузка всего диска займёт больше суток, rclone сам продолжит на следующих запусках.
+**Свой ключ API позже:** OAuth client (Desktop) в Google Cloud Console + включить Drive API, вписать `client_id`/`client_secret` в секцию `[gdrive]`
+`/etc/hls-cdn/rclone.conf`, `sudo rclone config reconnect gdrive: --config /etc/hls-cdn/rclone.conf`. Код и архив не меняются.
+
 ## 5. Всем
 
 Добавить id в `HLS_BETA_USERS` через запятую или убрать строку целиком (= все), перезапустить сайт.
@@ -268,6 +293,7 @@ journalctl -u suslik-encoder -f            # плюс /var/log/suslik-encoder/
 | Что | Как |
 |---|---|
 | Выключить HLS для всех | `HLS_ENABLED=false` в `.env`, перезапустить сайт. Плеер вернётся к прежнему поведению, зеркало работает как было |
+| Выключить архив | `HLS_ARCHIVE_REMOTE=` в `cdn.env`, `sudo ./install.sh` — новые копии не делаются, сделанные остаются |
 | Остановить кодирование | `sudo systemctl stop suslik-encoder` (задание вернётся в очередь по истечении аренды) |
 | Откатить код сайта | `docs/DEPLOY.md` (резервная копия `.deploy/backup-<время>.tgz`) |
 | Ассет плохой | админка → «Перекодировать с этой раздачи» или «Удалить» (удаляется на CDN при следующем запуске `evict`) |
