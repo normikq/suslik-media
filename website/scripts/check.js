@@ -28,6 +28,7 @@ const files = [
   "poster-query.js",
   path.join("public", "redesign.js"),
   path.join("public", "home.js"),
+  path.join("public", "hls-player.js"),
   path.join("public", "activity", "activity.js"),
   path.join("public", "activity", "discord.js"),
   path.join("public", "activity", "join.js")
