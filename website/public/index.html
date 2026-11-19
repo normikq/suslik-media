@@ -2314,6 +2314,7 @@ let psFileToken=0;
 async function psLoad(s,file,label,playlistReq,magnet){
   const open=playSheetToken, mine=++psFileToken, live=()=>open===playSheetToken&&mine===psFileToken;
   s._file=file; s._label=label;
+  const pg=s.querySelector(".ps-page"); pg.classList.toggle("hidden",!magnet||nativeApp()); if(magnet) pg.href="watch/"+magnet.id+"?f="+encodeURIComponent(file.path); // страница фильма (watch.html)
   psSyncShelf(s); psSyncAi(s); psSyncSelection(s); psWatchInfo(s);
   const sub=s.querySelector(".ps-status"); sub.textContent="Готовим к просмотру…"; sub.classList.remove("err");
   fillWatch(s,null,"Готовим к просмотру…");
@@ -2351,6 +2352,7 @@ function ensurePlaySheet(){
       '<div class="ps-resume-bar"><span class="ps-bar"><i></i></span><em></em></div></div>'+
     '<a class="sheet-btn ps-watch disabled" data-act="player" rel="noopener noreferrer">'+PS_ICON_PLAY+'<span></span></a>'+
     '<div class="ps-pick hidden"></div>'+
+    '<a class="ps-page hidden" data-act="page" style="display:block;text-align:center;margin:8px 0;font-weight:600">Страница фильма →</a>'+
     '<div class="ps-shelf"><button type="button" class="ps-btn secondary" data-act="mine"></button><button type="button" class="ps-btn secondary" data-act="fav"></button></div>'+
     '<div class="ps-ai hidden"></div>'+
     '<button type="button" class="ps-close-bottom secondary sheet-cancel">Закрыть</button></div>';

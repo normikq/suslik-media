@@ -30,6 +30,8 @@ const files = [
   path.join("public", "home.js"),
   path.join("public", "hls-player.js"),
   path.join("public", "hls-admin.js"),
+  path.join("public", "library-model.js"),
+  path.join("public", "watch.js"),
   path.join("public", "activity", "activity.js"),
   path.join("public", "activity", "discord.js"),
   path.join("public", "activity", "join.js")
@@ -53,7 +55,7 @@ for (const file of files) {
   checkJavaScript(file, fs.readFileSync(path.join(root, file), "utf8"));
 }
 
-for (const file of [path.join("public", "index.html"), path.join("public", "hls-admin.html")]) {
+for (const file of [path.join("public", "index.html"), path.join("public", "hls-admin.html"), path.join("public", "watch.html")]) {
   const html = fs.readFileSync(path.join(root, file), "utf8");
   const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)];
   if (!/<html[^>]*lang=["']ru["']/i.test(html)) {
