@@ -115,7 +115,7 @@ fi
 "$RRSYNC" -help 2>&1 | grep -q -- '-wo' || echo "ВНИМАНИЕ: $RRSYNC не знает -wo — нужна версия rrsync из rsync 3.2.4+" >&2
 
 install -d -m 755 "$LIB"
-install -m 755 bin/hls-upload-shell bin/hls-finalize evict.sh hls-archive.sh hls-restore.sh test.sh make-sample.sh "$LIB/"
+install -m 755 bin/hls-upload-shell bin/hls-finalize bin/hls-finalize-audio evict.sh hls-archive.sh hls-restore.sh test.sh make-sample.sh "$LIB/"
 install -m 644 lib-sign.sh lib-archive.sh "$LIB/"
 if [ -f ../../docs/hls-fixtures/vectors.json ]; then install -m 644 ../../docs/hls-fixtures/vectors.json "$LIB/"; fi
 # без секретов: читается пользователем hls-upload
