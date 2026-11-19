@@ -174,7 +174,7 @@ check "case3b: archived.spool пуст" test ! -s "$S3/archived.spool"
 reset_site
 mkprof "$ROOT3" dddddddddddddddd v1 100 $((NOW - D))
 : > "$Q3/dddddddddddddddd.v1"
-OUT3C=$(FAKE_RCLONE_FAIL="copy=7" bash "$CDN/hls-archive.sh" --env "$T/cdn.env" --root "$ROOT3" --state-dir "$S3" --queue "$Q3" --now "$NOW" 2>&1 | tr -d '\r')
+OUT3C=$(FAKE_RCLONE_FAIL="sync=7" bash "$CDN/hls-archive.sh" --env "$T/cdn.env" --root "$ROOT3" --state-dir "$S3" --queue "$Q3" --now "$NOW" 2>&1 | tr -d '\r')
 RC3C=$?
 [ -n "${VERBOSE:-}" ] && printf '%s\n' "$OUT3C"
 check "case3c: код возврата != 0" test "$RC3C" -ne 0
@@ -389,7 +389,7 @@ REQ9=$(last_req "POST-internal_hls_restored")
 check "case9: restored ok == true" test "$(printf '%s' "$REQ9" | jq_clean -r '.[0].ok')" = "true"
 EXP_BYTES9=$(du -sb "$ROOT9/178e77a7ddb10079/v1" | awk '{print $1}')
 check "case9: restored bytes совпадает с du -sb" test "$(printf '%s' "$REQ9" | jq_clean -r '.[0].bytes')" = "$EXP_BYTES9"
-check "case9: rclone copy не вызывался" bash -c '! grep -q "copy" "$1"' _ "$FAKE_RCLONE_LOG"
+check "case9: rclone copy не вызывался" bash -c '! grep -qE "copy|sync" "$1"' _ "$FAKE_RCLONE_LOG"
 
 echo "Итог: $PASS ok, $FAIL FAIL"
 [ "$FAIL" -eq 0 ]

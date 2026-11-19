@@ -82,7 +82,8 @@ for q in "$QUEUE"/*; do
     rm -f -- "$q"; continue
   fi
   m0=$(stat -c %Y -- "$src")
-  rc=0; out=$("$RCLONE" copy "${RCLONE_ARGS[@]}" "${COPY_ARGS[@]}" "$src/" "$REMOTE/$hid/v1/" 2>&1) || rc=$?
+  # sync, а не copy: при перезаливе v1 с тем же hls_id в архиве не остаются файлы старой версии
+  rc=0; out=$("$RCLONE" sync "${RCLONE_ARGS[@]}" "${COPY_ARGS[@]}" "$src/" "$REMOTE/$hid/v1/" 2>&1) || rc=$?
   if [ "$rc" = 7 ]; then
     warn "rclone copy $hid/v1: фатальная ошибка (лимит загрузки Google?) — остаток очереди на следующем запуске: $(tail -n 2 <<< "$out" | tr '\n' ' ')"
     RC=1; break

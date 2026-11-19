@@ -26,6 +26,10 @@ case "$cmd" in
     s=$(map "${args[1]}"); d=$(map "${args[2]}")
     need_dir "$s"; mkdir -p "$d"; cp -R "$s/." "$d/"
     ;;
+  sync)   # как copy, но лишнее в приёмнике удаляется
+    s=$(map "${args[1]}"); d=$(map "${args[2]}")
+    need_dir "$s"; rm -rf -- "$d"; mkdir -p "$d"; cp -R "$s/." "$d/"
+    ;;
   check)
     s=$(map "${args[1]}"); d=$(map "${args[2]}")
     need_dir "$s"; need_dir "$d"
