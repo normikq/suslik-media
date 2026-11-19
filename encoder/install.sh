@@ -102,7 +102,9 @@ if [ "$ENCODER" = nvenc ]; then
   gpu=$(nvidia-smi --query-gpu=name,driver_version --format=csv,noheader 2>/dev/null | head -1) || true
   [ -n "$gpu" ] || die "nvidia-smi не видит видеокарту (драйвер загружен? перезагрузка после установки?)"
   ok "видеокарта: $gpu"
-  "$FFMPEG" -hide_banner -encoders 2>/dev/null | grep -q hevc_nvenc || die "в ffmpeg нет hevc_nvenc"
+  # вывод — в переменную: с pipefail «ffmpeg | grep -q» падает от SIGPIPE, даже когда строка найдена
+  encoders=$("$FFMPEG" -hide_banner -encoders 2>/dev/null || true)
+  grep -q hevc_nvenc <<<"$encoders" || die "в ffmpeg нет hevc_nvenc"
 fi
 
 # --- пользователь и каталоги -------------------------------------------------
