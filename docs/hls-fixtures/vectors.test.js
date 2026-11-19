@@ -229,7 +229,7 @@ test('8) JSON-фикстуры: парсинг и валидация схем', 
     if (file.startsWith('variant-url-')) {
       const { hls } = data;
       assert.ok(hls && typeof hls === 'object');
-      assert.ok(['none', 'encoding', 'ready'].includes(hls.status));
+      assert.ok(['none', 'encoding', 'restoring', 'ready'].includes(hls.status));
       assert.equal(typeof hls.direct_ok, 'boolean');
       assert.ok(hls.direct && typeof hls.direct === 'object');
       assert.equal(typeof hls.direct.ext, 'string');
