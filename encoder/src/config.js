@@ -57,6 +57,8 @@ function loadConfig(env = process.env) {
       tmpDir: env.SM_CDN_TMP_DIR || '',         // подпапка внутри корня rrsync у hls-upload (сам корень — /srv/hls/.tmp/); пусто — прямо в корень
       // команда, которую ssh выполняет на CDN после rsync; подстановки {tmp} {name} {hls_id} {profile}
       finalizeCmd: env.SM_CDN_FINALIZE_CMD || 'finalize {name}',
+      // то же для задания «звук» (§18): CDN переносит каждую xN/ в /srv/hls/<hls_id>/<profile>/xN/
+      finalizeAudioCmd: env.SM_CDN_FINALIZE_AUDIO_CMD || 'finalize-audio {name}',
       localDir: env.SM_UPLOAD_LOCAL_DIR ? path.resolve(env.SM_UPLOAD_LOCAL_DIR) : '', // mode=local: «CDN» в папке
     },
     once: bool(env.SM_ONCE, false),              // одно задание и выход (для проверки)

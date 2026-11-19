@@ -41,6 +41,29 @@ GET /internal/hls/next ──204──► пауза SM_IDLE_S
 - **v1-copy** — `-c:v copy` одной дорожкой (`1080p/`), звук в AAC. Решает сервер по probe.
 - `SM_ENCODER=x265` — то же на процессоре (медленно), `x264` — H.264 (`avc1`), только для проверки без видеокарты.
 
+## Задания «звук» — внешние озвучки (`docs/HLS.md` §18)
+
+Задание с `type: "audio"` (без `type` — видео, как выше) добавляет к уже выложенному профилю внешние озвучки (`.mka` из раздачи
+или привязанные через `/api/custom-audio`): `{job_id, hls_id, profile, duration_ms, tracks:[{key, dir, mirror_url, offset_ms, name, language}]}`
+(`next-job-audio.json`). Без ffprobe, отпечатка и probe; код — `src/audiojob.js`.
+
+```
+для каждой дорожки (x0…x7) — своя команда ffmpeg по mirror_url (-reconnect…, как у видео):
+   offset > 0 → adelay=<offset>:all=1 (тишина в начале)
+   offset < 0 → -ss |offset| до -i (первые |offset| мс дорожки пропускаются)
+   apad + -t duration_ms — длина ровно как у видео (короткая дорожка дополняется тишиной, длинная обрезается)
+   первая звуковая дорожка файла (-map 0:a:0) → AAC-LC стерео 128 кбит, 48 кГц, HLS fMP4 single_file по 6 с → xN/index.m3u8 + xN/audio.m4s
+проверка: EXT-X-MAP, BYTERANGE без дыр до конца audio.m4s, сумма EXTINF = duration_ms ± 1 с
+rsync → <hls_id>.<profile>.a<rand>/ (только папки xN/), ssh «finalize-audio <имя>» → ответ «ok <hls_id>/<profile> <байт>»
+POST /internal/hls/audio-done {job_id, hls_id, profile, tracks:[{key, dir, codec:"mp4a.40.2", channels:2, bytes}]}
+```
+
+Сдвиг — как на ТВ (`docs/CUSTOM-AUDIO-API.md` §8): место в дорожке = место в видео − `offset_ms`; `offset_ms` уже с `shift_ms` ассета — его считает сайт.
+`progress` идёт со стадиями `encode` (общая доля по всем дорожкам и `eta_s`), `verify`, `upload`.
+Любая дорожка с ошибкой — `failed` всего задания: нет файла (404/410), нет звука, битый файл — `retryable=false`; сеть, подпись, 5xx — `retryable=true`.
+Плохое задание (`dir` не `x0…x7`, повтор `dir`, больше 8 дорожек, нет `duration_ms`) — `failed` без повтора; неизвестный `type` — тоже.
+`SM_UPLOAD_MODE=local` — каждая `xN/` переносится в `<SM_UPLOAD_LOCAL_DIR>/<hls_id>/<profile>/xN/` с заменой, остальное в профиле не трогается.
+
 ## Переменные окружения
 
 | Переменная | По умолчанию | Что |
@@ -54,6 +77,7 @@ GET /internal/hls/next ──204──► пауза SM_IDLE_S
 | `SM_CDN_SSH_PORT` | — | порт ssh |
 | `SM_CDN_TMP_DIR` | пусто | подпапка для rsync внутри корня rrsync у `hls-upload` (корень на CDN уже `/srv/hls/.tmp/`); обычно не задаётся |
 | `SM_CDN_FINALIZE_CMD` | `finalize {name}` (так принимает `infra/cdn/bin/hls-upload-shell`, ответ `ok <hls_id>/<profile> <байт>`) | команда по ssh после rsync; подстановки `{name}` (имя папки в `.tmp`), `{tmp}` (`.tmp/<name>`), `{hls_id}`, `{profile}` |
+| `SM_CDN_FINALIZE_AUDIO_CMD` | `finalize-audio {name}` | то же для задания «звук» (папка `<hls_id>.<profile>.a<rand>` только с `xN/`); те же подстановки |
 | `SM_UPLOAD_MODE` | `rsync` | `rsync` или `local` (копия в папку — для проверки без CDN) |
 | `SM_UPLOAD_LOCAL_DIR` | — | корень «CDN» для `local`: `<dir>/.tmp/<name>/` → `<dir>/<hls_id>/<profile>/` |
 | `SM_RSYNC`, `SM_SSH` | `rsync`, `ssh` | пути к программам |
@@ -185,6 +209,8 @@ npm test                    # = node --test: отпечаток (vectors.json), 
 Интеграционный тест сам делает образец (testsrc2 1080p, 2 × AC3 5.1, SRT, MKV, 36 с), гоняет весь цикл через заглушку
 и проверяет: EXT-X-MAP и EXT-X-BYTERANGE, непрерывные смещения до размера `.m4s`, ключевые кадры 1080p и 720p на одних
 временах с шагом 6 с, `subs.vtt` и его плейлист, `manifest.json`, `done`; затем v1-copy, alias, wait, лимит размера.
+`test/audio.test.js` — задание «звук»: аргументы ffmpeg для сдвигов +, −, 0; на образце `.mka` (AC3 5.1, 34 с, `duration_ms` 36000) —
+сдвиги −2000 и +1500 (плейлисты, AAC-LC стерео, длина 36 с, тишина в начале при +), `audio-done`, замена той же `xN`, ошибка на несуществующем файле.
 Кодировщик — nvenc, если он работает, иначе x265; задать явно: `SM_TEST_ENCODER=x265 npm test`. Оставить файлы: `SM_TEST_KEEP=1`.
 ffmpeg не в PATH — `SM_FFMPEG`/`SM_FFPROBE`. Без ffmpeg интеграционный тест пропускается.
 
@@ -192,9 +218,11 @@ ffmpeg не в PATH — `SM_FFMPEG`/`SM_FFPROBE`. Без ffmpeg интеграц
 
 ```
 node stub/server.js D:\films\sample.mkv --port 8787 --profile v1      # или v1-copy | alias | wait
+node stub/server.js D:\films\dub.mka --port 8787 --profile audio --duration-ms 60000 --offsets -2000,1500   # задание «звук»
 # в другом окне:
 set SM_SITE_URL=http://127.0.0.1:8787& set HLS_WORKER_TOKEN=test-token& set SM_UPLOAD_MODE=local& set SM_UPLOAD_LOCAL_DIR=D:\hls-cdn& set SM_ONCE=1& node index.js
 ```
 
 Заглушка отдаёт `next-job.json` (с `mirror_url` на этот файл, Range поддерживается), на probe — `probe-response-*.json`
-из `docs/hls-fixtures/`, принимает progress/done/failed; что пришло — `GET /stub/state`.
+из `docs/hls-fixtures/`, принимает progress/done/audio-done/failed; что пришло — `GET /stub/state`.
+С `--profile audio` `/next` отдаёт `next-job-audio.json` с дорожками на этот файл (по одной на каждый `--offsets`).

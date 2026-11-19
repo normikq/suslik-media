@@ -28,6 +28,7 @@ function createApi({ siteUrl, token, timeoutMs = 30000 }) {
     probe: (b) => call('POST', 'probe', b),
     progress: (b) => call('POST', 'progress', b),
     done: (b) => call('POST', 'done', b),
+    audioDone: (b) => call('POST', 'audio-done', b),
     failed: (b) => call('POST', 'failed', b),
   };
 }
