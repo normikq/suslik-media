@@ -1,24 +1,26 @@
 #!/bin/bash
 # install.sh — установка кодировщика HLS Suslik Media на Ubuntu с NVIDIA (от root, можно запускать повторно).
 #
-#   sudo ./install.sh [--no-start] [--once]
+#   sudo ./install.sh [--no-start] [--once] [--now]
 #
 # Перед первым запуском: заполнить /etc/suslik-encoder.env (образец — suslik-encoder.env.example; скрипт сам положит его, если файла нет).
 # Что делает: пакеты (ffmpeg, nodejs, rsync, ssh из apt); проверка версий, NVENC и zscale; пользователь suslik-encoder;
 # ssh-ключ для hls-upload на CDN и ключ хоста CDN; доступ к /dev/nvidia*; пробное кодирование NVENC; проверка сайта и CDN;
 # служба systemd suslik-encoder (включается и перезапускается). --no-start — не запускать службу; --once — после установки
-# выполнить одно задание (или одно «204») от пользователя службы и показать журнал.
+# выполнить одно задание (или одно «204») от пользователя службы и показать журнал. Идёт кодирование — служба перезапустится
+# после текущего фильма (метка .restart); --now — перезапустить сразу (текущее задание вернётся в очередь).
 # Код берётся из той папки, где лежит этот скрипт (рекомендуется /opt/suslik/encoder; /home не подходит — ProtectHome).
 set -euo pipefail
 cd "$(dirname "$0")"
 DIR=$(pwd -P)
 
-START=1; ONCE=0
+START=1; ONCE=0; NOW=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-start) START=0 ;;
     --once) ONCE=1 ;;
-    -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
+    --now) NOW=1 ;;
+    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
     *) echo "неизвестный ключ $1" >&2; exit 2 ;;
   esac
   shift
@@ -212,9 +214,18 @@ fi
 
 if [ "$START" = 1 ]; then
   systemctl enable suslik-encoder >/dev/null 2>&1
-  systemctl restart suslik-encoder
-  sleep 3
-  if systemctl is-active --quiet suslik-encoder; then ok "запущена"; else warn "не запустилась: journalctl -u suslik-encoder -n 50"; fi
+  # идёт кодирование (в $WORK есть папка задания) — не прерываем: метка .restart, воркер доделает фильм,
+  # выйдет и systemd (Restart=always) поднимет его уже с новым кодом. --now — перезапустить сразу.
+  busy=$(find "$WORK" -mindepth 1 -maxdepth 1 ! -name .lock ! -name .restart -print -quit 2>/dev/null || true)
+  if systemctl is-active --quiet suslik-encoder && [ -n "$busy" ] && [ "$NOW" = 0 ]; then
+    install -m 644 -o "$USER_NAME" -g "$USER_NAME" /dev/null "$WORK/.restart"
+    ok "идёт кодирование — служба перезапустится сама после текущего фильма (сразу: sudo $0 --now)"
+  else
+    rm -f "$WORK/.restart"
+    systemctl restart suslik-encoder
+    sleep 3
+    if systemctl is-active --quiet suslik-encoder; then ok "запущена"; else warn "не запустилась: journalctl -u suslik-encoder -n 50"; fi
+  fi
 else
   ok "установлена, не запущена (--no-start): sudo systemctl enable --now suslik-encoder"
 fi

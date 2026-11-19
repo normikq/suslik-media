@@ -96,7 +96,7 @@
     done: "готово"
   };
   const PRIORITIES = ["Смотрят сейчас", "Следующие серии", "Новая раздача", "Остальное", "Улучшение качества"];
-  const PROFILE_STATUS = { ready: "готово", encoding: "кодируется", cold: "в архиве", restoring: "достаём из архива" };
+  const PROFILE_STATUS = { ready: "готово", encoding: "кодируется", queued: "в очереди", failed: "ошибка", cold: "в архиве", restoring: "достаём из архива" };
 
   const stateText = s => STATES[s] || String(s || "—");
   const stageText = s => (s ? STAGES[s] || String(s) : "");
@@ -341,7 +341,8 @@
       const stage = stageText(j.stage);
       if (stage) meta.push(stage);
       meta.push(`${progressPercent(j.progress)}%`);
-      meta.push(`осталось ${formatEta(j.eta_s)}`);
+      // «осталось» — только при кодировании: на разборе файла и выгрузке оценки нет
+      if (j.stage === "encode" && j.eta_s != null) meta.push(`осталось ${formatEta(j.eta_s)}`);
     }
     if (j.size) meta.push(formatBytes(j.size));
     if (j.attempts) meta.push(`попыток: ${j.attempts}`);
@@ -398,7 +399,7 @@
       const row = el("div", "profile");
       const info = el("div");
       info.append(el("b", null, name + " "));
-      info.append(el("span", "tag " + (p.status === "ready" ? "ready" : p.status === "cold" ? "" : "running"), profileStatusText(p.status)));
+      info.append(el("span", "tag " + (p.status === "ready" ? "ready" : p.status === "cold" || p.status === "queued" ? "" : p.status === "failed" ? "error" : "running"), profileStatusText(p.status)));
       if (p.archived && p.status === "ready") info.append(el("span", "tag", "есть в архиве"));
       if (pending.includes(name)) info.append(el("span", "tag pending", p.archived ? "ждёт удаления на CDN и в архиве" : "ждёт удаления на CDN"));
       const bits = [formatBytes(p.status === "cold" || p.status === "restoring" ? p.archive_bytes || p.bytes : p.bytes)];

@@ -52,11 +52,14 @@ function acquireLock(workDir) {
   return () => { try { if (Number(fs.readFileSync(lock, 'utf8')) === process.pid) fs.rmSync(lock); } catch { /* ignore */ } };
 }
 
-/** Чистка временных файлов (всё, кроме .lock). */
+/** Метка «перезапуститься после текущего задания» (её ставит install.sh при обновлении). */
+const RESTART_MARK = '.restart';
+
+/** Чистка временных файлов (всё, кроме .lock и метки перезапуска). */
 function cleanWork(workDir) {
   if (!fs.existsSync(workDir)) return;
   for (const e of fs.readdirSync(workDir)) {
-    if (e === '.lock') continue;
+    if (e === '.lock' || e === RESTART_MARK) continue;
     fs.rmSync(path.join(workDir, e), { recursive: true, force: true });
   }
 }
@@ -65,6 +68,13 @@ async function runLoop({ cfg, api, log, signal, ffmpegVersion, keepWork = false,
   cleanWork(cfg.workDir);
   for (;;) {
     if (signal?.aborted) break;
+    // обновление: дорабатываем текущее задание, новое не берём — выходим, systemd запустит уже новый код
+    const mark = path.join(cfg.workDir, RESTART_MARK);
+    if (fs.existsSync(mark)) {
+      try { fs.rmSync(mark, { force: true }); } catch { /* ignore */ }
+      log.info('[loop] метка .restart — выходим для перезапуска с новым кодом');
+      return 'restart';
+    }
     let job = null;
     try {
       job = await api.next();
@@ -94,4 +104,4 @@ async function runLoop({ cfg, api, log, signal, ffmpegVersion, keepWork = false,
   }
 }
 
-module.exports = { runLoop, checkTools, acquireLock, cleanWork, parseFfmpegVersion, versionOk };
+module.exports = { runLoop, checkTools, acquireLock, cleanWork, parseFfmpegVersion, versionOk, RESTART_MARK };

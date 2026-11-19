@@ -603,8 +603,9 @@ function progress(body, now = Date.now()) {
   const p = Number(body.progress);
   const eta = Number(body.eta_s);
   job.progress = Number.isFinite(p) ? Math.min(1, Math.max(0, p)) : job.progress;
-  job.eta_s = Number.isFinite(eta) && eta >= 0 ? Math.round(eta) : null;
   if (typeof body.stage === "string") job.stage = body.stage.slice(0, 32);
+  // оценка «осталось» осмысленна только при кодировании (на разборе файла, выгрузке и т. п. — нет)
+  job.eta_s = job.stage === "encode" && Number.isFinite(eta) && eta >= 0 ? Math.round(eta) : null;
   job.state = "running";
   job.leased_until = t + LEASE_S;
   store.putJob(job.job_id, job);
@@ -1241,13 +1242,21 @@ function adminState(now = Date.now()) {
   let bytes = 0;
   let ready = 0;
   const arch = { archived: 0, archive_bytes: 0, cold: 0, restoring: 0 };
+  const t = sec(now);
+  // версия «encoding» показывается по её заданию: взято воркером — кодируется, ждёт — в очереди, упало — ошибка
+  const encState = (id, name) => {
+    const j = [...store.allJobs().values()].find(x => x.hls_id === id && (x.profile || "v1") === name);
+    if (!j) return "encoding";
+    if (j.state === "failed") return "failed";
+    return j.state === "running" && (j.leased_until || 0) > t ? "encoding" : "queued";
+  };
   const assets = [...store.allAssets()].map(([id, a]) => {
     const profiles = {};
     let total = 0;
     for (const [name, p] of Object.entries(a.profiles || {})) {
       const restoring = p.status === "cold" && !!p.restore_requested_at;
       profiles[name] = {
-        status: restoring ? "restoring" : p.status,
+        status: restoring ? "restoring" : p.status === "encoding" ? encState(id, name) : p.status,
         bytes: p.bytes || 0,
         created_at: p.created_at || null,
         encoder: p.manifest?.encoder || null,
