@@ -2,6 +2,7 @@
 
 const fs = require("fs");
 const crypto = require("crypto");
+const { EventEmitter } = require("events");
 const config = require("../config");
 const { makeJsonWriter } = require("../utils/json-writer");
 
@@ -433,6 +434,20 @@ function mayBeLibraryFilm(magnets, magnetId) {
   return !Array.isArray(magnets) || magnets.some(m => m.id === magnetId && m.statusCode === 4);
 }
 
+// ---- События ----------------------------------------------------------------------------------------------------
+// Для модулей, которым важны изменения дорожек (HLS, docs/HLS.md §18), без жёсткой связности:
+//   "added" [дорожка] — новые привязки; "offset" дорожка — изменили сдвиг; "removed" [дорожка] — удалены
+//   (DELETE или удаление раздачи с фильмом/озвучкой). Дорожка — как у getTrack (с movieMagnetId и videoPath).
+// Ошибка обработчика не мешает изменению.
+const events = new EventEmitter();
+function emit(name, payload) {
+  try {
+    events.emit(name, payload);
+  } catch (err) {
+    console.warn(`[custom-audio] обработчик ${name}:`, err.message);
+  }
+}
+
 // ---- Хранилище ---------------------------------------------------------------------------------------------------
 const store = new Map(); // "magnetId|videoPath" -> [запись]
 const keyById = new Map(); // id дорожки -> ключ store
@@ -566,7 +581,10 @@ function addTracks({ movieMagnetId, audioMagnetId, pairs, author, override = {} 
     total++;
     created.push(view(key, track));
   }
-  if (created.length) persist();
+  if (created.length) {
+    persist();
+    emit("added", created);
+  }
   return { created, existing };
 }
 
@@ -588,6 +606,7 @@ function setOffset(id, offsetMs) {
   if (!hit) return null;
   hit.t.offsetMs = offsetMs;
   persist();
+  emit("offset", view(hit.key, hit.t));
   return hit.t;
 }
 
@@ -600,7 +619,9 @@ function removeTrack(id) {
   if (hit.list.length === 0) store.delete(hit.key);
   unindexAudioMagnet(hit.t.audioMagnetId, hit.key, hit.list);
   persist();
-  return view(hit.key, hit.t);
+  const removed = view(hit.key, hit.t);
+  emit("removed", [removed]);
+  return removed;
 }
 
 function hasAudioMagnetTracks(audioMagnetId) {
@@ -613,11 +634,13 @@ function dropMagnet(magnetId) {
   const targetId = Number(magnetId);
   const prefix = `${magnetId}|`;
   let n = 0;
+  const removed = [];
   for (const [key, list] of store) {
     if (key.startsWith(prefix)) {
       n += list.length;
       store.delete(key);
       for (const t of list) {
+        removed.push(view(key, t));
         keyById.delete(t.id);
         unindexAudioMagnet(t.audioMagnetId, key, null);
       }
@@ -631,7 +654,11 @@ function dropMagnet(magnetId) {
       const keep = list.filter(t => t.audioMagnetId !== targetId);
       if (keep.length !== list.length) {
         n += list.length - keep.length;
-        for (const t of list) if (t.audioMagnetId === targetId) keyById.delete(t.id);
+        for (const t of list) {
+          if (t.audioMagnetId !== targetId) continue;
+          removed.push(view(key, t));
+          keyById.delete(t.id);
+        }
         if (keep.length) store.set(key, keep);
         else store.delete(key);
       }
@@ -639,6 +666,7 @@ function dropMagnet(magnetId) {
     keysByAudioMagnet.delete(targetId);
   }
   if (n) { total = Math.max(0, total - n); persist(); }
+  if (removed.length) emit("removed", removed);
   return n;
 }
 
@@ -738,6 +766,7 @@ function _reset() {
 }
 
 module.exports = {
+  events,
   AUDIO_EXT,
   MAX_OFFSET_MS,
   MAX_PER_VIDEO,
@@ -762,5 +791,6 @@ module.exports = {
   isSameMovieRelease,
   mayBeLibraryFilm,
   baseName,
+  langTag,
   _reset
 };

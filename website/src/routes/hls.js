@@ -13,6 +13,7 @@ const { findFile } = require("../services/sidecars");
 const { cachedMagnetHash } = require("../services/library");
 const hls = require("../services/hls");
 const store = require("../services/hls-store");
+const hlsAudio = require("../services/hls-audio");
 
 // ---- HLS: маршруты (docs/HLS.md §10, задача T4; устройство — docs/HLS-SERVER.md) ----
 // /internal/hls/* — кодировщик (Bearer HLS_WORKER_TOKEN) и CDN (Bearer HLS_CDN_TOKEN), свой парсер JSON до 256 КБ;
@@ -75,13 +76,45 @@ const json256 = express.json({ limit: "256kb" });
 const worker = [bearer("HLS_WORKER_TOKEN"), json256];
 const cdn = [bearer("HLS_CDN_TOKEN"), json256];
 
+/**
+ * Задание «звук» (§18) для воркера — ровно поля фикстуры next-job-audio.json, у каждой дорожки mirror_url на файл
+ * озвучки (sidecar — в раздаче фильма, custom — в раздаче озвучки). Файла озвучки больше нет — дорожка пропускается;
+ * не осталось ни одной → { gone }. AllDebrid не ответил — исключение (failed с повтором).
+ */
+async function audioJobBody(job, base) {
+  const tracks = [];
+  for (const t of job.tracks || []) {
+    if (!t.src || t.src.ad_id == null || !t.src.path) continue;
+    const r = await mirrorUrlFor(t.src.ad_id, t.src.path, base);
+    if (r.gone) continue;
+    tracks.push({ key: t.key, dir: t.dir, mirror_url: r.url, offset_ms: t.offset_ms, name: t.name, language: t.language });
+  }
+  if (!tracks.length) return { gone: true };
+  return { body: { job_id: job.job_id, type: "audio", hls_id: job.hls_id, profile: job.profile, duration_ms: job.duration_ms, tracks } };
+}
+
 // Задание в аренду + mirror_url. Файла больше нет в раздаче → задание failed (без повтора), AllDebrid не ответил →
-// failed с повтором; берётся следующее (не больше 3 за запрос). Пусто → 204.
+// failed с повтором; берётся следующее (не больше 3 за запрос). Пусто → 204. Задание «звук» (§18) — свой формат.
 internal.get("/internal/hls/next", ...worker, wrap(async (req, res) => {
   const base = publicBase(req);
   for (let i = 0; i < 3; i++) {
     const job = hls.next();
     if (!job) break;
+    if (job.type === "audio") {
+      let r;
+      try {
+        r = await audioJobBody(job, base);
+      } catch (err) {
+        hls.failed({ job_id: job.job_id, stage: "mirror", error: `AllDebrid: ${err.message || "ошибка"}`, retryable: true });
+        continue;
+      }
+      if (r.gone) {
+        hls.failed({ job_id: job.job_id, stage: "mirror", error: "Файлов озвучки нет в раздаче.", retryable: false });
+        continue;
+      }
+      res.setHeader("Cache-Control", "no-store");
+      return res.json(r.body);
+    }
     let r;
     try {
       r = await mirrorUrlFor(job.ad_id, job.path, base);
@@ -115,6 +148,11 @@ internal.post("/internal/hls/done", ...worker, wrap(async (req, res) => {
   res.json(hls.done(body(req)));
 }));
 
+// §18: итог задания «звук» — дорожки xN в manifest.audio профиля
+internal.post("/internal/hls/audio-done", ...worker, wrap(async (req, res) => {
+  res.json(hlsAudio.audioDone(body(req)));
+}));
+
 internal.post("/internal/hls/failed", ...worker, wrap(async (req, res) => {
   const job = hls.failed(body(req));
   if (!job) return res.status(404).json({ error: "Задание не найдено.", code: "unknown_job" });
@@ -127,7 +165,8 @@ internal.get("/internal/hls/pending-deletes", ...cdn, wrap(async (req, res) => {
   res.json(hls.pendingDeletes());
 }));
 
-// Неизвестные hls_id/профили (уже убранные, чужие) пропускаются: ответ всё равно 200
+// Неизвестные hls_id/профили (уже убранные, чужие) пропускаются: ответ всё равно 200. С path ("xN", §18) — удалена
+// только папка внешней озвучки, профиль остаётся
 internal.post("/internal/hls/evicted", ...cdn, wrap(async (req, res) => {
   const b = req.body;
   const list = Array.isArray(b) ? b : Array.isArray(b?.items) ? b.items : null;
@@ -227,6 +266,8 @@ async function variantHls(req, { adId, path, size }) {
     st = hls.statusFor(adId, path);
   }
   const block = { status: st.status };
+  // §18: внешних озвучек этого видео ещё нет в HLS — задание «звук» с приоритетом 1 (в фоне, не чаще раза в 5 мин)
+  if (st.status === "ready" && st.hls_id) hlsAudio.onWatch(st.hls_id);
   if (st.status === "ready") {
     const exp = Math.floor(Date.now() / 1000) + hls.MASTER_TTL_S;
     block.url = `${publicBase(req)}/api/hls/${st.hls_id}/master.m3u8?exp=${exp}&sig=${hls.signMaster(st.hls_id, exp)}`;

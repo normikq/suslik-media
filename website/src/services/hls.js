@@ -1,6 +1,7 @@
 "use strict";
 
 const crypto = require("crypto");
+const { EventEmitter } = require("events");
 const config = require("../config");
 const store = require("./hls-store");
 
@@ -37,6 +38,18 @@ class HlsError extends Error {
 }
 
 const sec = now => Math.floor(now / 1000);
+const EXT_DIR_RE = /^x[0-7]$/; // §18: папки внешних озвучек внутри профиля
+
+// События для связанных модулей (внешние озвучки §18, services/hls-audio.js) без жёсткой связности:
+// "profile-ready" { hls_id, profile } — после done видео-профиля.
+const events = new EventEmitter();
+function emit(name, payload) {
+  try {
+    events.emit(name, payload);
+  } catch (err) {
+    console.warn(`[hls] обработчик ${name}:`, err.message);
+  }
+}
 const normPath = p => String(p ?? "").replace(/\\/g, "/");
 
 // ---- §4 Идентификаторы ----
@@ -301,6 +314,19 @@ function nextSeq() {
 }
 
 function publicJob(j) {
+  if (store.isAudioJob(j)) {
+    return {
+      job_id: j.job_id,
+      type: "audio",
+      hls_id: j.hls_id,
+      profile: j.profile,
+      duration_ms: j.duration_ms ?? null,
+      keys: Array.isArray(j.keys) ? [...j.keys] : [],
+      tracks: Array.isArray(j.tracks) ? j.tracks.map(t => ({ ...t, src: t.src ? { ...t.src } : null })) : null,
+      priority: j.priority,
+      leased_until: j.leased_until || 0
+    };
+  }
   return {
     job_id: j.job_id,
     hls_id: j.hls_id || null,
@@ -440,7 +466,7 @@ function onLibrary(magnets, now = Date.now()) {
 /** Задание, которое сейчас кодирует ассет (в аренде), кроме exceptId. */
 function liveEncoder(assetId, exceptId, nowS) {
   for (const j of store.allJobs().values()) {
-    if (j.job_id !== exceptId && j.hls_id === assetId && j.profile && j.state === "running" && (j.leased_until || 0) > nowS) return j;
+    if (j.job_id !== exceptId && !store.isAudioJob(j) && j.hls_id === assetId && j.profile && j.state === "running" && (j.leased_until || 0) > nowS) return j;
   }
   return null;
 }
@@ -448,20 +474,51 @@ function liveEncoder(assetId, exceptId, nowS) {
 // Порядок выдачи: приоритет, затем кто раньше поставлен (seq — порядковый номер постановки)
 const jobOrder = (a, b) => a.priority - b.priority || (a.created_at || 0) - (b.created_at || 0) || (a.seq || 0) - (b.seq || 0);
 
+/**
+ * Снимок задания «звук» (§18) по ассету: { tracks, duration_ms } | { wait: true } (профиль не на CDN: в архиве или
+ * кодируется) | { gone: true } (профиля нет, он ждёт удаления или ни одной дорожки задания уже нет).
+ * tracks: [{ key, dir, offset_ms, name, language, kind, src: {ad_id, path} }] — src нужен маршруту для mirror_url.
+ */
+function audioSnapshot(j) {
+  const a = store.getAsset(j.hls_id);
+  const v = a?.profiles?.[j.profile];
+  if (!v || (a.pending_delete || []).includes(j.profile)) return { gone: true };
+  if (v.status !== "ready") return { wait: true };
+  const ext = a.ext_audio && typeof a.ext_audio === "object" ? a.ext_audio : {};
+  const tracks = (Array.isArray(j.keys) ? j.keys : []).filter(k => ext[k] && EXT_DIR_RE.test(ext[k].dir)).map(k => {
+    const e = ext[k];
+    return { key: k, dir: e.dir, offset_ms: Number(e.offset_ms) || 0, name: e.name || e.dir, language: e.language || null, kind: e.kind,
+      src: e.src ? { ad_id: String(e.src.ad_id), path: e.src.path } : null };
+  });
+  if (!tracks.length) return { gone: true };
+  return { tracks, duration_ms: a.duration_ms || v.manifest?.duration_ms || null };
+}
+
 /** Выдать следующее задание в аренду (или null → 204). Просроченная аренда возвращает задание в очередь. */
 function next(now = Date.now()) {
   const t = sec(now);
   let best = null;
-  for (const j of store.allJobs().values()) {
+  for (const j of [...store.allJobs().values()]) {
     if (j.state === "running" && (j.leased_until || 0) <= t) {
       j.state = "queued";
       j.leased_until = 0;
       store.putJob(j.job_id, j);
     }
     if (j.state !== "queued" || (j.leased_until || 0) > t) continue;
+    if (store.isAudioJob(j)) {
+      const snap = audioSnapshot(j);
+      if (snap.gone) { store.deleteJob(j.job_id); continue; }
+      if (snap.wait) continue;
+    }
     if (!best || jobOrder(j, best) < 0) best = j;
   }
   if (!best) return null;
+  if (store.isAudioJob(best)) {
+    // что именно и с каким сдвигом выдано воркеру: audio-done пишет в manifest этот сдвиг
+    const snap = audioSnapshot(best);
+    best.tracks = snap.tracks;
+    best.duration_ms = snap.duration_ms;
+  }
   best.state = "running";
   best.leased_until = t + LEASE_S;
   store.putJob(best.job_id, best);
@@ -509,6 +566,7 @@ function startEncode(job, id, asset, profile, t) {
 function handleProbe(jobOrId, body, now = Date.now()) {
   const job = getLiveJob(jobOrId);
   if (!job) throw new HlsError("unknown_job", "Задание не найдено.", 404);
+  if (store.isAudioJob(job)) throw new HlsError("bad_request", "У задания «звук» нет probe.");
   const fp = typeof body?.fingerprint === "string" ? body.fingerprint.toLowerCase() : "";
   if (!HEX64.test(fp)) throw new HlsError("bad_request", "Неверный отпечаток.");
   const dur = Number(body.duration_ms);
@@ -659,6 +717,7 @@ function done(body, now = Date.now()) {
       console.warn("[hls] не удалось поставить v1:", err.message);
     }
   }
+  emit("profile-ready", { hls_id: id, profile });
   return { ok: true, active_profile: asset.active_profile };
 }
 
@@ -678,7 +737,7 @@ function failed(body, now = Date.now()) {
   } else {
     job.state = "failed";
     job.leased_until = 0;
-    const a = job.hls_id && job.profile ? store.getAsset(job.hls_id) : null;
+    const a = job.hls_id && job.profile && !store.isAudioJob(job) ? store.getAsset(job.hls_id) : null;
     if (a) {
       if (a.profiles?.[job.profile]?.status === "encoding") delete a.profiles[job.profile];
       a.error = job.error;
@@ -690,16 +749,21 @@ function failed(body, now = Date.now()) {
 }
 
 /**
- * GET /internal/hls/pending-deletes → { items: [{hls_id, profile, archive?}] }. archive: true — у версии есть копия
- * в архиве (§17), CDN удаляет и её.
+ * GET /internal/hls/pending-deletes → { items: [{hls_id, profile, archive?} | {hls_id, profile, path}] }. archive: true —
+ * у версии есть копия в архиве (§17), CDN удаляет и её. path: "xN" — удалить только папку внешней озвучки (§18);
+ * у версии, которая сама ждёт удаления, такие элементы не выдаются.
  */
 function pendingDeletes() {
   const items = [];
   for (const [id, a] of store.allAssets()) {
-    for (const profile of Array.isArray(a.pending_delete) ? a.pending_delete : []) {
+    const whole = Array.isArray(a.pending_delete) ? a.pending_delete : [];
+    for (const profile of whole) {
       const item = { hls_id: id, profile };
       if (a.profiles?.[profile]?.archived === true) item.archive = true;
       items.push(item);
+    }
+    for (const p of Array.isArray(a.pending_delete_paths) ? a.pending_delete_paths : []) {
+      if (p && !whole.includes(p.profile) && EXT_DIR_RE.test(p.path)) items.push({ hls_id: id, profile: p.profile, path: p.path });
     }
   }
   return { items };
@@ -709,6 +773,7 @@ function pendingDeletes() {
 function dropProfile(id, a, profile) {
   delete a.profiles[profile];
   a.pending_delete = (a.pending_delete || []).filter(p => p !== profile);
+  if (Array.isArray(a.pending_delete_paths)) a.pending_delete_paths = a.pending_delete_paths.filter(p => p && p.profile !== profile);
   if (a.active_profile === profile) {
     a.active_profile = ["v1", "v1-copy"].find(p => a.profiles[p]?.status === "ready") || null;
   }
@@ -732,6 +797,18 @@ function evicted(list) {
     const id = String(it?.hls_id || "");
     const a = store.getAsset(id);
     if (!a || !PROFILES.has(it?.profile) || !a.profiles?.[it.profile]) continue;
+    if (it.path !== undefined && it.path !== null && it.path !== "") {
+      // §18: удалена только папка внешней озвучки xN — профиль остаётся, папка снова свободна
+      const path = String(it.path);
+      const list = Array.isArray(a.pending_delete_paths) ? a.pending_delete_paths : [];
+      const keep = list.filter(p => !(p && p.profile === it.profile && p.path === path));
+      if (keep.length !== list.length) {
+        a.pending_delete_paths = keep;
+        store.putAsset(id, a);
+        n++;
+      }
+      continue;
+    }
     const v = a.profiles[it.profile];
     const deleting = (a.pending_delete || []).includes(it.profile);
     const archived = it.archived === true || v.archived === true;
@@ -975,7 +1052,7 @@ function statusFor(adId, path, now = Date.now()) {
         if (checkRestoreTimeout(al.hls_id, a, cold, now)) return statusFor(adId, path, now);
         return { ...res, status: "restoring", profile: cold, shift_ms: al.shift_ms || 0, eta: restoreEta(v, now) };
       }
-      const enc = [...store.allJobs().values()].find(j => j.hls_id === al.hls_id && j.profile && j.state !== "failed");
+      const enc = [...store.allJobs().values()].find(j => !store.isAudioJob(j) && j.hls_id === al.hls_id && j.profile && j.state !== "failed");
       if (enc) {
         return { ...res, status: "encoding", profile: enc.profile, shift_ms: al.shift_ms || 0, eta: enc.eta_s ?? null, progress: enc.progress ?? 0, state: enc.state };
       }
@@ -1225,10 +1302,48 @@ function requestDelete(id, profile, now = Date.now()) {
   return { hls_id: id, pending_delete: a.pending_delete, removed: false };
 }
 
+/** Задание «звук» для админки: файл — источник ассета, tracks — названия озвучек (§18). */
+function adminAudioJob(j) {
+  const a = store.getAsset(j.hls_id);
+  const ext = a?.ext_audio || {};
+  const src = a?.source || {};
+  return {
+    job_id: j.job_id,
+    type: "audio",
+    hls_id: j.hls_id,
+    profile: j.profile,
+    ad_id: src.ad_id != null ? String(src.ad_id) : null,
+    path: src.path || null,
+    size: 0,
+    priority: j.priority,
+    leased_until: j.leased_until || 0,
+    tracks: (Array.isArray(j.keys) ? j.keys : []).map(k => ({ key: k, dir: ext[k]?.dir || null, name: ext[k]?.name || k }))
+  };
+}
+
+/** Внешние озвучки ассета для админки: по номеру папки; profiles — версии, где дорожка уже в manifest. */
+function adminExternal(a) {
+  const ext = a?.ext_audio && typeof a.ext_audio === "object" ? a.ext_audio : {};
+  const out = Object.entries(ext).map(([key, e]) => ({
+    key,
+    dir: e.dir,
+    kind: e.kind || (key.startsWith("custom:") ? "custom" : "file"),
+    name: e.name || key,
+    language: e.language || null,
+    offset_ms: Number(e.offset_ms) || 0,
+    bytes: Number(e.bytes) || 0,
+    profiles: Object.entries(a.profiles || {})
+      .filter(([, v]) => (v?.manifest?.audio || []).some(x => x.external?.key === key))
+      .map(([name]) => name)
+  }));
+  out.sort((x, y) => Number(String(x.dir).slice(1)) - Number(String(y.dir).slice(1)));
+  return { tracks: out, pending: (Array.isArray(a?.pending_delete_paths) ? a.pending_delete_paths : []).map(p => ({ profile: p.profile, path: p.path })) };
+}
+
 /** Состояние для админки: очередь, ассеты с профилями и размерами, последнее cdn-stats. */
 function adminState(now = Date.now()) {
   const jobs = [...store.allJobs().values()].sort(jobOrder).map(j => ({
-    ...publicJob(j),
+    ...(store.isAudioJob(j) ? adminAudioJob(j) : publicJob(j)),
     state: j.state,
     attempts: j.attempts || 0,
     progress: j.progress ?? 0,
@@ -1245,7 +1360,7 @@ function adminState(now = Date.now()) {
   const t = sec(now);
   // версия «encoding» показывается по её заданию: взято воркером — кодируется, ждёт — в очереди, упало — ошибка
   const encState = (id, name) => {
-    const j = [...store.allJobs().values()].find(x => x.hls_id === id && (x.profile || "v1") === name);
+    const j = [...store.allJobs().values()].find(x => !store.isAudioJob(x) && x.hls_id === id && (x.profile || "v1") === name);
     if (!j) return "encoding";
     if (j.state === "failed") return "failed";
     return j.state === "running" && (j.leased_until || 0) > t ? "encoding" : "queued";
@@ -1291,7 +1406,8 @@ function adminState(now = Date.now()) {
       error: a.error || null,
       profiles,
       bytes: total,
-      aliases
+      aliases,
+      external: adminExternal(a)
     };
   }).sort((x, y) => (y.last_access || 0) - (x.last_access || 0));
   const count = st => jobs.filter(j => j.state === st).length;
@@ -1321,6 +1437,8 @@ function _reset() {
 
 module.exports = {
   HlsError,
+  events,
+  EXT_DIR_RE,
   PROFILES,
   MASTER_TTL_S,
   LEASE_S,
@@ -1376,5 +1494,10 @@ module.exports = {
   retryJob,
   requestDelete,
   adminState,
+  // для services/hls-audio.js (§18)
+  newJobId,
+  nextSeq,
+  jobOrder,
+  cleanName,
   _reset
 };
