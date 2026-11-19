@@ -135,6 +135,33 @@ internal.post("/internal/hls/evicted", ...cdn, wrap(async (req, res) => {
   res.json({ ok: true, removed: hls.evicted(list) });
 }));
 
+// ---- §17 холодный архив (тоже CDN) ----
+
+const listOf = req => {
+  const b = req.body;
+  return Array.isArray(b) ? b : Array.isArray(b?.items) ? b.items : null;
+};
+
+// Копия версии проверена в архиве: [{hls_id, profile, bytes, at}]
+internal.post("/internal/hls/archived", ...cdn, wrap(async (req, res) => {
+  const list = listOf(req);
+  if (!list) return res.status(400).json({ error: "Ожидается массив [{hls_id, profile, bytes, at}].", code: "bad_request" });
+  res.json({ ok: true, archived: hls.archived(list) });
+}));
+
+// Что вернуть из архива на CDN (запросы «Смотреть» и админки); здесь же считаются тайм-ауты
+internal.get("/internal/hls/pending-restores", ...cdn, wrap(async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json(hls.pendingRestores());
+}));
+
+// Итог возврата: [{hls_id, profile, ok, bytes?, error?}]
+internal.post("/internal/hls/restored", ...cdn, wrap(async (req, res) => {
+  const list = listOf(req);
+  if (!list) return res.status(400).json({ error: "Ожидается массив [{hls_id, profile, ok}].", code: "bad_request" });
+  res.json({ ok: true, ...hls.restored(list) });
+}));
+
 internal.post("/internal/hls/cdn-stats", ...cdn, wrap(async (req, res) => {
   hls.cdnStats(body(req));
   res.json({ ok: true });
@@ -186,6 +213,19 @@ async function variantHls(req, { adId, path, size }) {
     }
     st = hls.statusFor(adId, path);
   }
+  // «Смотреть» на версии в архиве (в т.ч. найденной только что через enqueue по hls_id) сразу просит CDN вернуть её
+  // (§17); повтор — отметка «ждёт пользователь»
+  if ((st.status === "cold" || st.status === "restoring") && st.hls_id) {
+    try {
+      hls.requestRestore(st.hls_id, st.profile, Date.now(), {
+        user: true,
+        file: { ad_id: String(adId), path, size: Number(size) || 0, hash: cachedMagnetHash(adId) }
+      });
+    } catch (err) {
+      console.warn("[hls] не удалось запросить возврат из архива:", err.message);
+    }
+    st = hls.statusFor(adId, path);
+  }
   const block = { status: st.status };
   if (st.status === "ready") {
     const exp = Math.floor(Date.now() / 1000) + hls.MASTER_TTL_S;
@@ -196,6 +236,11 @@ async function variantHls(req, { adId, path, size }) {
     if (st.profile) block.profile = st.profile;
     block.eta = st.eta ?? null;
     block.progress = st.progress ?? 0;
+  } else if (st.status === "restoring") {
+    block.eta = st.eta ?? null;
+    if (st.profile) block.profile = st.profile;
+  } else if (st.status === "cold") {
+    block.status = "none"; // запрос возврата не удался — для клиента как «нет»
   }
   const d = hls.directFor(adId, path);
   block.direct_ok = d.direct_ok;
@@ -237,6 +282,12 @@ router.post("/api/hls/admin/reencode", ...admin, wrap(async (req, res) => {
 router.post("/api/hls/admin/delete", ...admin, wrap(async (req, res) => {
   const b = body(req);
   res.json({ ok: true, ...hls.requestDelete(String(b.hls_id || ""), b.profile || null) });
+}));
+
+// Достать версию из архива вручную: {hls_id, profile?}. Не cold → 409 not_cold, уже запрошено → ok (already: true)
+router.post("/api/hls/admin/restore", ...admin, wrap(async (req, res) => {
+  const b = body(req);
+  res.json(hls.requestRestore(String(b.hls_id || ""), b.profile || null));
 }));
 
 module.exports = { router, internal, variantHls, bearer };

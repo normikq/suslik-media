@@ -14,6 +14,7 @@ const fxNone = loadJson("variant-url-none.json");
 const fxEncoding = loadJson("variant-url-encoding.json");
 const fxReady = loadJson("variant-url-ready.json");
 const fxMp4Direct = loadJson("variant-url-mp4-direct.json");
+const fxRestoring = loadJson("variant-url-restoring.json");
 const masterM3u8 = fs.readFileSync(path.join(fixturesDir, "master-v1.m3u8"), "utf8");
 
 const canPlayChrome = m => /video\/(mp4|webm)/.test(m) && !/dtsc|ac-3|ec-3|mlpa|hvc1/.test(m);
@@ -125,6 +126,29 @@ test("pickSource и messageFor: статус encoding", () => {
   const resNoEta = hlsPlayer.pickSource(noEta, CHROME_HEVC);
   assert.equal(resNoEta.etaMin, null);
   assert.equal(hlsPlayer.messageFor(resNoEta), "Готовим для браузера");
+});
+
+test("pickSource и messageFor: статус restoring (возврат из архива, §17)", () => {
+  for (const caps of [CHROME_HEVC, FIREFOX, SAFARI, NOTHING]) {
+    const res = hlsPlayer.pickSource(fxRestoring, caps);
+    assert.equal(res.kind, "wait");
+    assert.equal(res.restoring, true);
+    assert.equal(res.etaMin, 3);
+    assert.equal(hlsPlayer.messageFor(res), "Достаём из архива, примерно 3 мин");
+  }
+
+  const noEta = structuredClone(fxRestoring);
+  noEta.hls.eta = null;
+  assert.equal(hlsPlayer.messageFor(hlsPlayer.pickSource(noEta, CHROME_HEVC)), "Достаём из архива");
+
+  // direct_ok: играем зеркало и ждём HLS, как при encoding
+  const direct = structuredClone(fxRestoring);
+  direct.hls.direct_ok = true;
+  direct.hls.direct = { ext: "mp4", vcodec: "h264", acodec: "aac" };
+  const res = hlsPlayer.pickSource(direct, CHROME_HEVC);
+  assert.equal(res.kind, "direct");
+  assert.equal(res.upgrade, true);
+  assert.equal(res.url, direct.url);
 });
 
 test("pickSource и messageFor: статус none", () => {

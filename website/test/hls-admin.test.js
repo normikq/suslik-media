@@ -315,6 +315,13 @@ test("POST админки с cookie с чужого сайта отклоняе�
   assert.equal(r.status, 403);
 });
 
+test("hls-admin.js: статусы архива и ошибка not_cold", () => {
+  assert.equal(ui.profileStatusText("cold"), "в архиве");
+  assert.equal(ui.profileStatusText("restoring"), "достаём из архива");
+  assert.equal(ui.profileStatusText("ready"), "готово");
+  assert.equal(ui.errorText(409, { error: "Версии нет в архиве.", code: "not_cold" }), "Этой версии нет в архиве.");
+});
+
 test("hls-admin.js: форматирование и тексты ошибок", () => {
   assert.equal(typeof globalThis.document, "undefined");
 

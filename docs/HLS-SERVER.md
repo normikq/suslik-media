@@ -194,3 +194,62 @@ POST — с cookie сайта (как остальной сайт, `sameOriginWr
 `progress` со стадией `wait`, `evicted` с неизвестными, variant-url (none / encoding / ready, серии N+1 и N+2, статус мимо кэша, без `HLS_ENABLED` и не в бете —
 без `hls`), master.m3u8 (звук, субтитры, 403/410/404, только 720p и avc1), CSP, `/vendor/hls.min.js`, админка, reencode с переносом алиасов,
 `meta.acodecs` в `direct_ok`, `dovi`.
+
+## Архив (§17)
+
+Холодный архив на CDN (Google Drive через rclone, `docs/HLS.md` §17). Сайт настроек не получает: всё узнаёт из отчётов CDN.
+
+### Версия на сайте
+
+Поля в записи версии (`hls-assets.json` → `profiles[<профиль>]`, переживают перезапуск):
+
+| Поле | Что |
+|---|---|
+| `archived`, `archive_bytes`, `archived_at` | копия проверена в архиве (`POST /internal/hls/archived`) |
+| `status: "cold"` | вытеснена с CDN, есть в архиве; ассет и алиасы остаются |
+| `restore_requested_at` | запрошен возврат (секунды); есть — для клиента и админки статус `restoring` |
+| `restore_attempts`, `restore_timeouts`, `restore_error` | неудачи `restored` подряд, тайм-ауты (30 мин без ответа), последняя ошибка |
+| `restore_user`, `restore_file` | возврат ждёт пользователь (`variant-url`) и на каком файле он нажал «Смотреть» |
+
+`readyProfile` считает готовой только `ready`: у `cold` `master.m3u8` → 404. Переиспользование (§8: алиас, отпечаток, ключ, отложенное
+кодирование серий, reencode) считает `cold` доступной (`availableProfile`) — новый файл получает алиас, при «Смотреть» версию возвращают.
+
+### Запросы CDN (`Bearer HLS_CDN_TOKEN`, тело до 256 КБ, неизвестные записи пропускаются, ответ 200)
+
+| Запрос | Что делает сайт | Ответ |
+|---|---|---|
+| `POST /internal/hls/archived` `[{hls_id, profile, bytes, at}]` | у `ready`/`cold` версии `archived: true`, `archive_bytes`, `archived_at` | `{ok, archived: N}` |
+| `POST /internal/hls/evicted` `[{…, archived?}]` | `archived: true` или версия уже `archived` → `cold` (`evicted_at`), `active_profile` — другая готовая версия, иначе прежний; версия ждёт удаления → запись удаляется, как раньше | `{ok, removed: N}` |
+| `GET /internal/hls/pending-restores` | сначала считает тайм-ауты; запросы `cold`-версий не из `pending_delete`, старые первыми | `{items:[{hls_id, profile, requested_at}]}` |
+| `POST /internal/hls/restored` `[{hls_id, profile, ok, bytes?, error?}]` | `ok` → `ready`, `bytes`, `last_access` = сейчас, запрос снят, `archived` остаётся; ошибка — см. ниже | `{ok, restored, failed, dropped}` |
+| `GET /internal/hls/pending-deletes` | у версии с `archived: true` — `archive: true` | `{items:[{hls_id, profile, archive?}]}` |
+
+### Возврат
+
+- `variant-url` на `cold` вызывает `requestRestore(hls_id, profile, now, {user, file})` и отвечает `hls.status: "restoring"`, `eta` = `30 + archive_bytes / 40 МБ/с`
+  минус сколько уже ждём (не меньше 10 с), `profile`, `direct_ok`, `direct`. Повторное «Смотреть» запрос не дублирует. Если запросить не удалось — `none`.
+  Файл без алиаса, но с тем же `hls_id` у `cold`-ассета: сначала `enqueue` ставит алиас, затем тот же запрос возврата.
+- Админка: `POST /api/hls/admin/restore {hls_id, profile?}` → `{ok, hls_id, profile, requested_at, already}`; не `cold` (или ждёт удаления) → `409 not_cold`,
+  нет ассета → `404 unknown_asset`, нет профиля → `404 unknown_profile`, не админ → 403.
+- Ошибка `ok:false`: `not_in_archive` или третья неудача подряд, или третий тайм-аут (нет ответа 30 мин; считается при опросе `pending-restores`
+  и при `variant-url` этого файла) → у версии `archived: false`, запись версии удаляется (без версий — ассет и алиасы), файл ставится на кодирование:
+  если ждёт пользователь — его файл с приоритетом 0, иначе источник ассета с тем же `hls_id`, приоритет 3. Иная ошибка — запрос остаётся, тайм-аут считается заново.
+- Только что возвращённую версию CDN не вытесняет (< 2 ч после обращения) — правило CDN, сайт его не проверяет.
+
+### Удаление
+
+Удаление из админки и `replaceAsset` (после перекодирования) ставят все версии, в т.ч. `cold`, в `pending_delete`; у архивных в `pending-deletes` — `archive: true`.
+Запрос возврата для версии из `pending_delete` не выдаётся и не ставится. После `evicted` (CDN пришлёт `archived:false`) запись удаляется.
+`forgetMagnet` ассеты не удаляет (§10), поэтому пункт §17 про `forget` последнего источника сейчас ничего не делает.
+
+### Админка (`GET /api/hls/admin/state`)
+
+У профиля: `status` (`cold` или `restoring` вместо `cold` с запросом), `archived`, `archive_bytes`, `archived_at`, `restore_requested_at`, `restore_attempts`,
+`restore_error`, `eta_s` (у `restoring`). В `totals`: `archived` (версий с копией), `archive_bytes`, `cold`, `restoring`; `bytes` — только то, что на CDN (без `cold`).
+
+### Тесты архива
+
+`website/test/hls-archive.test.js`: `archived` по HTTP; `evicted` с архивом → `cold`, ассет и алиас живы, master 404; без архива — удаление; `variant-url`
+на `cold` → `restoring` (`eta` 150), запрос в `pending-restores`; `restored` ok → `ready`, master 200; `not_in_archive` → версия удалена, задание приоритет 0;
+три тайм-аута и три ошибки подряд; `archive: true` в `pending-deletes`; удаление `cold` из админки; токены (без, чужой, воркера — 401); фикстуры §17;
+перезапуск (перечитывание JSON); `admin/restore` (401/403/409, `already`) и сводка в `state`.

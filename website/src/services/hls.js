@@ -22,6 +22,11 @@ const COPY_MAX_KEYINT_S = 10;
 const VIDEO_EXT = /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|wmv|mpg|mpeg)$/i;
 const HEX16 = /^[0-9a-f]{16}$/;
 const HEX64 = /^[0-9a-f]{64}$/i;
+// §17 холодный архив
+const RESTORE_TIMEOUT_S = 30 * 60; // нет ответа CDN на запрос возврата 30 мин — тайм-аут
+const RESTORE_MAX_TRIES = 3; // неудач подряд или тайм-аутов — и версия забывается, файл кодируется заново
+const RESTORE_BASE_S = 30; // eta возврата: 30 с + archive_bytes / 40 МБ/с
+const RESTORE_RATE = 40 * 1000 * 1000;
 
 class HlsError extends Error {
   constructor(code, message, status = 400) {
@@ -249,10 +254,23 @@ function decideProfile(body, size = 0) {
 
 // ---- Ассеты ----
 
-/** Профиль, который сейчас можно играть (active_profile и он ready), или null. */
+/** Профиль, который сейчас можно играть (active_profile и он ready), или null. cold (в архиве) не готов. */
 function readyProfile(a) {
   const p = a?.active_profile;
   return p && a.profiles?.[p]?.status === "ready" ? p : null;
+}
+
+/** Холодная версия ассета (§17: вытеснена с CDN, есть в архиве): active_profile, если он cold, иначе первая cold. */
+function coldProfile(a) {
+  if (!a?.profiles) return null;
+  const p = a.active_profile;
+  if (p && a.profiles[p]?.status === "cold") return p;
+  return ["v1", "v1-copy"].find(x => a.profiles[x]?.status === "cold") || null;
+}
+
+/** Ассет можно переиспользовать (§8): есть готовая версия или версия в архиве (её вернут при «Смотреть»). */
+function availableProfile(a) {
+  return readyProfile(a) || coldProfile(a);
 }
 
 /** Обновить last_access (master.m3u8, T4). */
@@ -321,8 +339,8 @@ function enqueue(opts, now = Date.now()) {
 
   if (!profile) {
     const al = store.getAlias(adId, path);
-    if (al && readyProfile(store.getAsset(al.hls_id))) return { skipped: "ready", hls_id: al.hls_id };
-    if (readyProfile(store.getAsset(id))) {
+    if (al && availableProfile(store.getAsset(al.hls_id))) return { skipped: "ready", hls_id: al.hls_id };
+    if (availableProfile(store.getAsset(id))) {
       store.setAlias(adId, path, id, 0);
       return { skipped: "ready", hls_id: id };
     }
@@ -384,7 +402,7 @@ function enqueueMagnet(m, priority = 2, now = Date.now()) {
     const path = normPath(f.path);
     const episode = episodeOf(path);
     const key = store.reuseKeyOf({ ...info, episode });
-    if (key && store.assetsByReuseKey(key).some(id => readyProfile(store.getAsset(id)))) continue;
+    if (key && store.assetsByReuseKey(key).some(id => availableProfile(store.getAsset(id)))) continue;
     try {
       const r = enqueue({ ad_id: m.id, path, size: Number(f.size) || 0, hash: m.hash, priority, ...info, episode }, now);
       if (r.job) n++;
@@ -470,7 +488,8 @@ function waitJob(job, t) {
 
 function startEncode(job, id, asset, profile, t) {
   asset.profiles = asset.profiles || {};
-  if (asset.profiles[profile]?.status !== "ready") asset.profiles[profile] = { status: "encoding", created_at: t };
+  const ps = asset.profiles[profile]?.status;
+  if (ps !== "ready" && ps !== "cold") asset.profiles[profile] = { status: "encoding", created_at: t };
   delete asset.error;
   store.putAsset(id, asset);
   if (!store.getAlias(job.ad_id, job.path)) store.setAlias(job.ad_id, job.path, id, 0);
@@ -521,7 +540,8 @@ function handleProbe(jobOrId, body, now = Date.now()) {
   if (job.profile && job.hls_id) {
     const a = store.getAsset(job.hls_id);
     if (a && (!a.fingerprint || a.fingerprint === fp)) {
-      if (a.profiles?.[job.profile]?.status === "ready") return finishAlias(job, job.hls_id, store.getAlias(job.ad_id, job.path)?.shift_ms || 0);
+      const ps = a.profiles?.[job.profile]?.status;
+      if (ps === "ready" || ps === "cold") return finishAlias(job, job.hls_id, store.getAlias(job.ad_id, job.path)?.shift_ms || 0);
       if (liveEncoder(job.hls_id, job.job_id, t)) return waitJob(job, t);
       if (!a.fingerprint) a.fingerprint = fp;
       if (!a.duration_ms && durationMs) a.duration_ms = durationMs;
@@ -533,7 +553,7 @@ function handleProbe(jobOrId, body, now = Date.now()) {
   // 1. Тот же файл: совпал отпечаток
   const hit = store.assetByFingerprint(fp);
   if (hit) {
-    if (readyProfile(hit.asset)) return finishAlias(job, hit.id, 0);
+    if (availableProfile(hit.asset)) return finishAlias(job, hit.id, 0);
     if (liveEncoder(hit.id, job.job_id, t)) return waitJob(job, t);
     return startEncode(job, hit.id, hit.asset, decideProfile(body, job.size), t);
   }
@@ -548,7 +568,7 @@ function handleProbe(jobOrId, body, now = Date.now()) {
     const a = store.getAsset(id);
     if (!canReuse(a, me)) continue;
     const s = shiftMs(a.duration_ms, durationMs);
-    if (readyProfile(a)) {
+    if (availableProfile(a)) {
       if (!best || Math.abs(s) < Math.abs(best.s)) best = { id, s };
     } else if (liveEncoder(id, job.job_id, t)) {
       encoding = true;
@@ -668,35 +688,248 @@ function failed(body, now = Date.now()) {
   return publicJob(job);
 }
 
-/** GET /internal/hls/pending-deletes → { items: [{hls_id, profile}] }. */
+/**
+ * GET /internal/hls/pending-deletes → { items: [{hls_id, profile, archive?}] }. archive: true — у версии есть копия
+ * в архиве (§17), CDN удаляет и её.
+ */
 function pendingDeletes() {
   const items = [];
   for (const [id, a] of store.allAssets()) {
-    for (const profile of Array.isArray(a.pending_delete) ? a.pending_delete : []) items.push({ hls_id: id, profile });
+    for (const profile of Array.isArray(a.pending_delete) ? a.pending_delete : []) {
+      const item = { hls_id: id, profile };
+      if (a.profiles?.[profile]?.archived === true) item.archive = true;
+      items.push(item);
+    }
   }
   return { items };
 }
 
+/** Убрать версию из записи ассета; без версий — ассет и алиасы удаляются. → true, если ассет удалён. */
+function dropProfile(id, a, profile) {
+  delete a.profiles[profile];
+  a.pending_delete = (a.pending_delete || []).filter(p => p !== profile);
+  if (a.active_profile === profile) {
+    a.active_profile = ["v1", "v1-copy"].find(p => a.profiles[p]?.status === "ready") || null;
+  }
+  if (!Object.keys(a.profiles).length) {
+    store.deleteAsset(id);
+    return true;
+  }
+  store.putAsset(id, a);
+  return false;
+}
+
 /**
- * POST /internal/hls/evicted: [{hls_id, profile, last_access}] удалены с диска CDN. Профиль исчезает из записи;
- * без профилей — исчезают ассет и его алиасы. → сколько профилей убрано.
+ * POST /internal/hls/evicted: [{hls_id, profile, last_access, archived?}] удалены с диска CDN. Готовая версия с копией
+ * в архиве (archived: true в отчёте или уже у версии) становится cold: ассет и алиасы остаются (§17). Иначе (и всегда,
+ * если версия ждёт удаления — тогда CDN удалил и архивную копию) профиль исчезает из записи; без профилей — исчезают
+ * ассет и его алиасы. → сколько профилей убрано или стало cold.
  */
 function evicted(list) {
   let n = 0;
   for (const it of Array.isArray(list) ? list : []) {
     const id = String(it?.hls_id || "");
     const a = store.getAsset(id);
-    if (!a || !PROFILES.has(it.profile) || !a.profiles?.[it.profile]) continue;
-    delete a.profiles[it.profile];
-    a.pending_delete = (a.pending_delete || []).filter(p => p !== it.profile);
-    if (a.active_profile === it.profile) {
-      a.active_profile = ["v1", "v1-copy"].find(p => a.profiles[p]?.status === "ready") || null;
+    if (!a || !PROFILES.has(it?.profile) || !a.profiles?.[it.profile]) continue;
+    const v = a.profiles[it.profile];
+    const deleting = (a.pending_delete || []).includes(it.profile);
+    const archived = it.archived === true || v.archived === true;
+    if (!deleting && archived && (v.status === "ready" || v.status === "cold")) {
+      if (v.status === "cold") continue; // уже вытеснена
+      v.status = "cold";
+      v.archived = true;
+      v.evicted_at = Number.isSafeInteger(Number(it.last_access)) && Number(it.last_access) > 0 ? Number(it.last_access) : null;
+      if (a.active_profile === it.profile) {
+        // играть может другая готовая версия; иначе active_profile остаётся — после возврата снова она
+        a.active_profile = ["v1", "v1-copy"].find(p => a.profiles[p]?.status === "ready") || it.profile;
+      }
+      store.putAsset(id, a);
+      n++;
+      continue;
     }
+    dropProfile(id, a, it.profile);
     n++;
-    if (!Object.keys(a.profiles).length) store.deleteAsset(id);
-    else store.putAsset(id, a);
   }
   return n;
+}
+
+// ---- §17 Холодный архив ----
+
+const archiveBytesOf = v => Number(v?.archive_bytes) || Number(v?.bytes) || 0;
+
+/** Ожидаемое время возврата из архива, секунды: 30 + archive_bytes / 40 МБ/с минус сколько уже ждём (не меньше 10). */
+function restoreEta(v, now = Date.now()) {
+  const full = Math.round(RESTORE_BASE_S + archiveBytesOf(v) / RESTORE_RATE);
+  const waited = v?.restore_requested_at ? Math.max(0, sec(now) - v.restore_requested_at) : 0;
+  return Math.max(10, full - waited);
+}
+
+/**
+ * POST /internal/hls/archived: [{hls_id, profile, bytes, at}] — копия проверена в архиве. У версии (ready или cold)
+ * archived: true, archive_bytes, archived_at. Неизвестные — пропускаются. → сколько отмечено.
+ */
+function archived(list, now = Date.now()) {
+  let n = 0;
+  for (const it of Array.isArray(list) ? list : []) {
+    const id = String(it?.hls_id || "");
+    const a = store.getAsset(id);
+    const v = a && PROFILES.has(it?.profile) ? a.profiles?.[it.profile] : null;
+    if (!v || (v.status !== "ready" && v.status !== "cold")) continue;
+    const bytes = Number(it.bytes);
+    const at = Number(it.at);
+    v.archived = true;
+    v.archive_bytes = Number.isSafeInteger(bytes) && bytes >= 0 ? bytes : Number(v.bytes) || 0;
+    v.archived_at = Number.isSafeInteger(at) && at > 0 ? at : sec(now);
+    store.putAsset(id, a);
+    n++;
+  }
+  return n;
+}
+
+/**
+ * Запросить возврат cold-версии из архива (variant-url — opts.user и opts.file — файл, который ждёт пользователь; админка — без).
+ * Без profile — cold-версия ассета. Уже запрошено → ok (already: true; у запроса появляется отметка «ждёт пользователь»).
+ * Нет ассета/версии → 404, версия не cold (или ждёт удаления) → 409 not_cold. → { ok, hls_id, profile, requested_at, already }.
+ */
+function requestRestore(id, profile, now = Date.now(), opts = {}) {
+  const key = String(id || "");
+  const a = store.getAsset(key);
+  if (!a) throw new HlsError("unknown_asset", "Ассет не найден.", 404);
+  if (profile !== undefined && profile !== null && !PROFILES.has(profile)) throw new HlsError("bad_request", "Неверный профиль.");
+  const p = profile || coldProfile(a);
+  if (!p) throw new HlsError("not_cold", "Версии нет в архиве.", 409);
+  const v = a.profiles?.[p];
+  if (!v) throw new HlsError("unknown_profile", "У ассета нет такого профиля.", 404);
+  if (v.status !== "cold" || (a.pending_delete || []).includes(p)) throw new HlsError("not_cold", "Версии нет в архиве.", 409);
+  const already = !!v.restore_requested_at;
+  if (!already) {
+    v.restore_requested_at = sec(now);
+    v.restore_attempts = 0;
+    v.restore_timeouts = 0;
+    delete v.restore_error;
+  }
+  if (opts.user) {
+    v.restore_user = true;
+    const f = opts.file;
+    if (f && f.ad_id != null && typeof f.path === "string" && f.path) {
+      v.restore_file = { ad_id: String(f.ad_id), path: normPath(f.path), size: Number(f.size) || 0, hash: f.hash || null };
+    }
+  }
+  store.putAsset(key, a);
+  return { ok: true, hls_id: key, profile: p, requested_at: v.restore_requested_at, already };
+}
+
+/**
+ * Возврат не удался окончательно (not_in_archive, 3 неудачи подряд или 3 тайм-аута): у версии archived: false, запись версии
+ * удаляется (без версий — ассет и алиасы), файл ставится на кодирование заново: приоритет 0, если ждёт пользователь, иначе 3.
+ * Кодируется один файл: тот, на котором пользователь нажал «Смотреть», иначе источник ассета (с тем же hls_id).
+ */
+function giveUpRestore(id, a, profile, reason, now) {
+  const v = a.profiles[profile];
+  const user = v.restore_user === true;
+  const s = a.source && a.source.ad_id != null && a.source.path ? a.source : null;
+  const uf = user && v.restore_file ? v.restore_file : null;
+  const sameAsSource = uf && s && String(s.ad_id) === uf.ad_id && normPath(s.path) === uf.path;
+  const file = uf && !sameAsSource ? uf : s ? { ad_id: String(s.ad_id), path: s.path, size: s.size, hash: s.hash, hls_id: id } : null;
+  v.archived = false;
+  console.warn(`[hls] возврат ${id}/${profile} из архива не удался (${reason}): кодируем заново`);
+  const info = { canonical_id: a.canonical_id || null, edition: a.edition || null, episode: a.episode || null };
+  dropProfile(id, a, profile);
+  if (!file) return;
+  try {
+    enqueue({ ad_id: file.ad_id, path: file.path, size: Number(file.size) || 0, hash: file.hash || null, priority: user ? 0 : 3,
+      ...(file.hls_id ? { hls_id: file.hls_id, ...info } : {}) }, now);
+  } catch (err) {
+    console.warn("[hls] не удалось поставить в очередь после архива:", err.message);
+  }
+}
+
+/**
+ * Тайм-аут запроса возврата у версии: нет ответа 30 мин → запрос заново (requested_at = сейчас); третий тайм-аут →
+ * giveUpRestore. → true, если версия забыта (запись ассета изменилась или удалена).
+ */
+function checkRestoreTimeout(id, a, p, now = Date.now()) {
+  const t = sec(now);
+  const v = a.profiles?.[p];
+  if (v?.status !== "cold" || !v.restore_requested_at || t - v.restore_requested_at < RESTORE_TIMEOUT_S) return false;
+  v.restore_timeouts = (v.restore_timeouts || 0) + 1;
+  if (v.restore_timeouts >= RESTORE_MAX_TRIES) {
+    giveUpRestore(id, a, p, "нет ответа", now);
+    return true;
+  }
+  v.restore_requested_at = t;
+  store.putAsset(id, a);
+  return false;
+}
+
+/** Тайм-ауты всех запросов возврата (при опросе pending-restores). */
+function checkRestoreTimeouts(now = Date.now()) {
+  for (const [id, a] of [...store.allAssets()]) {
+    for (const p of Object.keys(a.profiles || {})) {
+      if (checkRestoreTimeout(id, a, p, now)) break;
+    }
+  }
+}
+
+/** GET /internal/hls/pending-restores → { items: [{hls_id, profile, requested_at}] } (старые запросы первыми). */
+function pendingRestores(now = Date.now()) {
+  checkRestoreTimeouts(now);
+  const items = [];
+  for (const [id, a] of store.allAssets()) {
+    for (const [p, v] of Object.entries(a.profiles || {})) {
+      if (v?.status === "cold" && v.restore_requested_at && !(a.pending_delete || []).includes(p)) {
+        items.push({ hls_id: id, profile: p, requested_at: v.restore_requested_at });
+      }
+    }
+  }
+  items.sort((x, y) => x.requested_at - y.requested_at);
+  return { items };
+}
+
+function clearRestore(v) {
+  for (const k of ["restore_requested_at", "restore_attempts", "restore_timeouts", "restore_error", "restore_user", "restore_file"]) delete v[k];
+}
+
+/**
+ * POST /internal/hls/restored: [{hls_id, profile, ok, bytes?, error?}]. ok → версия ready (archived остаётся), last_access = сейчас.
+ * ok:false: not_in_archive или третья неудача подряд → giveUpRestore; иная — повтор при следующем опросе.
+ * Неизвестные и не cold — пропускаются. → { restored, failed, dropped }.
+ */
+function restored(list, now = Date.now()) {
+  const r = { restored: 0, failed: 0, dropped: 0 };
+  const t = sec(now);
+  for (const it of Array.isArray(list) ? list : []) {
+    const id = String(it?.hls_id || "");
+    const a = store.getAsset(id);
+    const v = a && PROFILES.has(it?.profile) ? a.profiles?.[it.profile] : null;
+    if (!v || v.status !== "cold") continue;
+    if (it.ok === true) {
+      v.status = "ready";
+      const bytes = Number(it.bytes);
+      if (Number.isSafeInteger(bytes) && bytes > 0) v.bytes = bytes;
+      v.restored_at = t;
+      delete v.evicted_at;
+      clearRestore(v);
+      const cur = a.active_profile;
+      if (!cur || cur === it.profile || a.profiles[cur]?.status !== "ready" || it.profile === "v1") a.active_profile = it.profile;
+      a.last_access = t;
+      store.putAsset(id, a);
+      r.restored++;
+      continue;
+    }
+    const error = String(it.error || "error").slice(0, 200);
+    v.restore_attempts = (v.restore_attempts || 0) + 1;
+    v.restore_error = error;
+    if (error === "not_in_archive" || v.restore_attempts >= RESTORE_MAX_TRIES) {
+      giveUpRestore(id, a, it.profile, error, now);
+      r.dropped++;
+      continue;
+    }
+    v.restore_requested_at = t; // CDN ответил — тайм-аут считается заново, запрос остаётся в pending-restores
+    store.putAsset(id, a);
+    r.failed++;
+  }
+  return r;
 }
 
 let lastCdnStats = null;
@@ -718,10 +951,10 @@ function cdnStats(body, now = Date.now()) {
 const getCdnStats = () => lastCdnStats;
 
 /**
- * Статус файла раздачи для variant-url (T4): { status: "none"|"encoding"|"ready", hls_id, profile, shift_ms, eta,
+ * Статус файла раздачи для variant-url (T4): { status: "none"|"encoding"|"ready"|"cold"|"restoring", hls_id, profile, shift_ms, eta,
  * progress, state }. eta — секунды (null — неизвестно). state — состояние задания (queued/running/failed) или null.
  */
-function statusFor(adId, path) {
+function statusFor(adId, path, now = Date.now()) {
   const key = String(adId);
   const p = normPath(path);
   const al = store.getAlias(key, p);
@@ -732,6 +965,15 @@ function statusFor(adId, path) {
     if (a) {
       const prof = readyProfile(a);
       if (prof) return { ...res, status: "ready", profile: prof, shift_ms: al.shift_ms || 0 };
+      const cold = coldProfile(a);
+      if (cold && !(a.pending_delete || []).includes(cold)) {
+        const v = a.profiles[cold];
+        // cold без запроса: variant-url сам запрашивает возврат (§17) и спрашивает статус снова
+        if (!v.restore_requested_at) return { ...res, status: "cold", profile: cold, shift_ms: al.shift_ms || 0 };
+        // CDN не отвечает (не опрашивает pending-restores) — тайм-ауты считаются и здесь
+        if (checkRestoreTimeout(al.hls_id, a, cold, now)) return statusFor(adId, path, now);
+        return { ...res, status: "restoring", profile: cold, shift_ms: al.shift_ms || 0, eta: restoreEta(v, now) };
+      }
       const enc = [...store.allJobs().values()].find(j => j.hls_id === al.hls_id && j.profile && j.state !== "failed");
       if (enc) {
         return { ...res, status: "encoding", profile: enc.profile, shift_ms: al.shift_ms || 0, eta: enc.eta_s ?? null, progress: enc.progress ?? 0, state: enc.state };
@@ -897,7 +1139,7 @@ function reencode(opts, now = Date.now()) {
   if (!replaces) {
     const info = reuseInfoFor(adId);
     const key = store.reuseKeyOf({ ...info, episode: episodeOf(path) });
-    replaces = store.assetsByReuseKey(key).find(x => readyProfile(store.getAsset(x))) || null;
+    replaces = store.assetsByReuseKey(key).find(x => availableProfile(store.getAsset(x))) || null;
   }
   // перекодирование этого файла или этого ассета уже в очереди — второе не ставим
   for (const j of store.allJobs().values()) {
@@ -998,12 +1240,28 @@ function adminState(now = Date.now()) {
   }));
   let bytes = 0;
   let ready = 0;
+  const arch = { archived: 0, archive_bytes: 0, cold: 0, restoring: 0 };
   const assets = [...store.allAssets()].map(([id, a]) => {
     const profiles = {};
     let total = 0;
     for (const [name, p] of Object.entries(a.profiles || {})) {
-      profiles[name] = { status: p.status, bytes: p.bytes || 0, created_at: p.created_at || null, encoder: p.manifest?.encoder || null };
-      total += Number(p.bytes) || 0;
+      const restoring = p.status === "cold" && !!p.restore_requested_at;
+      profiles[name] = {
+        status: restoring ? "restoring" : p.status,
+        bytes: p.bytes || 0,
+        created_at: p.created_at || null,
+        encoder: p.manifest?.encoder || null,
+        archived: p.archived === true,
+        archive_bytes: p.archived === true ? archiveBytesOf(p) : 0,
+        archived_at: p.archived_at || null,
+        restore_requested_at: p.restore_requested_at || null,
+        restore_attempts: p.restore_attempts || 0,
+        restore_error: p.restore_error || null,
+        eta_s: restoring ? restoreEta(p, now) : null
+      };
+      if (p.status !== "cold") total += Number(p.bytes) || 0; // на CDN; cold — только в архиве
+      if (p.archived === true) { arch.archived++; arch.archive_bytes += archiveBytesOf(p); }
+      if (p.status === "cold") arch[restoring ? "restoring" : "cold"]++;
     }
     bytes += total;
     if (readyProfile(a)) ready++;
@@ -1037,7 +1295,7 @@ function adminState(now = Date.now()) {
       cdn_token: !!config.HLS_CDN_TOKEN
     },
     now: sec(now),
-    totals: { jobs: jobs.length, queued: count("queued"), running: count("running"), failed: count("failed"), assets: assets.length, ready, bytes },
+    totals: { jobs: jobs.length, queued: count("queued"), running: count("running"), failed: count("failed"), assets: assets.length, ready, bytes, ...arch },
     queue: jobs,
     assets,
     cdn: getCdnStats()
@@ -1059,6 +1317,8 @@ module.exports = {
   LEASE_S,
   WAIT_RETRY_S,
   MAX_ATTEMPTS,
+  RESTORE_TIMEOUT_S,
+  RESTORE_MAX_TRIES,
   // чистые функции
   hlsId,
   signCdn,
@@ -1087,6 +1347,13 @@ module.exports = {
   failed,
   pendingDeletes,
   evicted,
+  archived,
+  pendingRestores,
+  restored,
+  requestRestore,
+  restoreEta,
+  coldProfile,
+  availableProfile,
   cdnStats,
   getCdnStats,
   statusFor,
