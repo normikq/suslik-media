@@ -66,6 +66,13 @@ const DISCORD_ENABLED = Boolean(DISCORD_CLIENT_ID && DISCORD_CLIENT_SECRET);
 // Discord Activity: внешний адрес сайта для ссылок «Открыть в приложении» (внутри Activity видно только discordsays.com)
 const ACTIVITY_SITE_URL = (process.env.ACTIVITY_SITE_URL || "").trim().replace(/\/+$/, "");
 const PASSWORD_AUTH_ENABLED = process.env.PASSWORD_AUTH_ENABLED !== "false" && Boolean(SITE_PASSWORD);
+// HLS (docs/HLS.md §13): только из .env, доменов и секретов по умолчанию нет. Выключено — сайт ведёт себя как раньше.
+const HLS_ENABLED = process.env.HLS_ENABLED === "true";
+const HLS_CDN_URL = (process.env.HLS_CDN_URL || "").trim().replace(/\/+$/, "");
+const HLS_SIGN_SECRET = process.env.HLS_SIGN_SECRET || "";
+const HLS_WORKER_TOKEN = process.env.HLS_WORKER_TOKEN || "";
+const HLS_CDN_TOKEN = process.env.HLS_CDN_TOKEN || "";
+const HLS_BETA_USERS = (process.env.HLS_BETA_USERS || "").split(",").map(s => s.trim()).filter(Boolean);
 
 // Where small runtime files live (sessions, library cache, metadata cache). Defaults to the website folder.
 const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : ROOT_DIR;
@@ -98,6 +105,10 @@ const AUDIO_TRACKS_FILE = path.join(DATA_DIR, "audio-tracks.json"); // внеш�
 const AI_TITLE_FILE = path.join(DATA_DIR, "ai-titles.json"); // названия, предложенные ИИ, и кулдауны (services/aititle.js)
 const MARKERS_FILE = path.join(DATA_DIR, "markers-cache.json"); // заставки и титры из AniSkip (services/markers.js)
 const VARIANT_OFFSETS_FILE = path.join(DATA_DIR, "variant-offsets.json"); // подстройка времени между раздачами в комнатах (services/variant-offsets.js)
+// HLS (services/hls-store.js, docs/HLS.md §3): ассеты, алиасы файлов раздач, очередь кодирования
+const HLS_ASSETS_FILE = path.join(DATA_DIR, "hls-assets.json");
+const HLS_ALIASES_FILE = path.join(DATA_DIR, "hls-aliases.json");
+const HLS_QUEUE_FILE = path.join(DATA_DIR, "hls-queue.json");
 // (Комнаты совместного просмотра живут только в памяти: после перезапуска приложения входят заново)
 
 if (!process.env.SESSION_SECRET) {
@@ -160,6 +171,15 @@ module.exports = {
   AI_TITLE_FILE,
   MARKERS_FILE,
   VARIANT_OFFSETS_FILE,
+  HLS_ASSETS_FILE,
+  HLS_ALIASES_FILE,
+  HLS_QUEUE_FILE,
+  HLS_ENABLED,
+  HLS_CDN_URL,
+  HLS_SIGN_SECRET,
+  HLS_WORKER_TOKEN,
+  HLS_CDN_TOKEN,
+  HLS_BETA_USERS,
   GEMINI_API_KEY,
   AI_TITLE_MODEL,
   AI_TITLE_COOLDOWN_MIN,

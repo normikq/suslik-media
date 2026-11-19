@@ -92,6 +92,8 @@ function forget(id) {
   dropMagnet(key);
   customAudio.dropMagnet(Number(key));
   aiTitle.dropMagnet(key);
+  // HLS: алиасы и задания раздачи (ассеты остаются и находятся снова по отпечатку, docs/HLS.md §11)
+  require("./hls").forgetMagnet(key);
   if (usage.delete(key)) persistUsage();
   if (treeCache.delete(Number(id))) persistTreeCache();
 }
