@@ -1,6 +1,6 @@
 'use strict';
 
-// Одно задание: ffprobe → отпечаток → probe → alias | wait | encode → проверка → manifest → CDN → done.
+// Одно задание (видео; «звук» — audiojob.js): ffprobe → отпечаток → probe → alias | wait | encode → проверка → manifest → CDN → done.
 // Любая ошибка → POST failed {stage, error, retryable}. Пока идёт работа, раз в progressSec — progress (аренда).
 
 const fs = require('node:fs');
@@ -11,6 +11,7 @@ const { buildPlan, buildFfmpegArgs, planDirs } = require('./plan');
 const { finalizeOutput } = require('./manifest');
 const { upload } = require('./upload');
 const { run, lastLine } = require('./proc');
+const { processAudioJob } = require('./audiojob');
 
 class JobError extends Error {
   constructor(stage, msg, retryable) { super(msg); this.stage = stage; this.retryable = retryable; }
@@ -27,6 +28,8 @@ const sleep = (ms, signal) => new Promise((resolve) => {
  * @returns {Promise<{result:'done'|'alias'|'failed'|'aborted', ...}>}
  */
 async function processJob(job, ctx) {
+  // задание «звук» (§18): внешние озвучки в xN/; без type — видео, как раньше
+  if (job.type === 'audio') return processAudioJob(job, ctx, JobError);
   const { cfg, api, log, signal } = ctx;
   const state = { stage: 'probe', progress: 0, eta_s: null, fps: null };
   const jobDir = path.join(cfg.workDir, String(job.job_id).replace(/[^\w.-]/g, '_'));
@@ -39,6 +42,9 @@ async function processJob(job, ctx) {
   };
 
   try {
+    if (job.type !== undefined && job.type !== null && job.type !== 'video') {
+      throw new JobError('probe', `неизвестный тип задания ${job.type}`, false);
+    }
     if (!job.job_id || !job.mirror_url || !Number.isSafeInteger(job.size)) {
       throw new JobError('probe', 'задание без job_id/mirror_url/size', false);
     }

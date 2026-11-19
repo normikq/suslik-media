@@ -5,6 +5,7 @@
 // «зеркало» — локальный файл с поддержкой Range.
 //
 //   node stub/server.js <видеофайл> [--port 8787] [--profile v1|v1-copy|alias|wait] [--jobs 1] [--token test-token]
+//   node stub/server.js <озвучка.mka> --profile audio [--duration-ms 60000] [--offsets -2000,1500]   — задание «звук» (§18)
 //
 // Затем воркер: SM_SITE_URL=http://127.0.0.1:8787 HLS_WORKER_TOKEN=test-token SM_UPLOAD_MODE=local
 //               SM_UPLOAD_LOCAL_DIR=./work-cdn SM_ONCE=1 node index.js
@@ -58,10 +59,12 @@ function readJson(req, limit = 256 * 1024) {
 /**
  * @param opts.mediaFile  локальный файл, который отдаёт «зеркало»
  * @param opts.profile    v1 | v1-copy | alias | wait (wait → один раз wait, потом encode v1)
+ * @param opts.profile    … | audio — /next отдаёт задание «звук» (next-job-audio.json), mediaFile — озвучка (.mka)
  * @param opts.jobs       сколько заданий выдать через /next
+ * @param opts.audio      для audio: {duration_ms, tracks:[{offset_ms, missing?}]} — missing: mirror_url на несуществующий файл (404)
  */
-function createStub({ mediaFile, profile = 'v1', jobs = 1, token = 'test-token', port = 0, host = '127.0.0.1', waitS = 1, log = () => {} } = {}) {
-  const state = { next: 0, probe: [], progress: [], done: [], failed: [], issued: [] };
+function createStub({ mediaFile, profile = 'v1', jobs = 1, token = 'test-token', port = 0, host = '127.0.0.1', waitS = 1, audio = null, log = () => {} } = {}) {
+  const state = { next: 0, probe: [], progress: [], done: [], audioDone: [], failed: [], issued: [] };
   let left = jobs;
   let waited = false;
   const size = fs.statSync(mediaFile).size;
@@ -79,6 +82,7 @@ function createStub({ mediaFile, profile = 'v1', jobs = 1, token = 'test-token',
     };
     try {
       if (url.pathname.startsWith('/media/')) { serveFile(req, res, mediaFile); return; }
+      if (url.pathname.startsWith('/missing/')) { res.writeHead(404).end(); return; }
       if (url.pathname === '/stub/state') { send(200, state); return; }
       if (!url.pathname.startsWith('/internal/hls/')) { send(404, { error: 'not found' }); return; }
       if (req.headers.authorization !== `Bearer ${token}`) { send(401, { error: 'unauthorized' }); return; }
@@ -88,6 +92,31 @@ function createStub({ mediaFile, profile = 'v1', jobs = 1, token = 'test-token',
         if (left <= 0) { send(204); return; }
         left--;
         const addr = server.address();
+        if (profile === 'audio') {
+          const base = fixture('next-job-audio.json');
+          const spec = audio || { duration_ms: base.duration_ms, tracks: base.tracks.map((t) => ({ offset_ms: t.offset_ms })) };
+          const job = {
+            ...base,
+            job_id: `j_stub_a${state.issued.length + 1}`,
+            hls_id: hlsId,
+            duration_ms: spec.duration_ms,
+            tracks: spec.tracks.map((t, i) => {
+              const src = base.tracks[i % base.tracks.length];
+              const file = t.missing ? `missing-${i}.mka` : name;
+              return {
+                ...src,
+                key: t.key || `custom:${100 + i}`,
+                dir: t.dir || `x${i}`,
+                offset_ms: t.offset_ms ?? 0,
+                mirror_url: `http://${host}:${addr.port}/${t.missing ? 'missing' : 'media'}/${encodeURIComponent(file)}?link=stub&exp=0&sig=stub`,
+              };
+            }),
+          };
+          state.issued.push(job);
+          log(`next → ${job.job_id} (звук, ${job.tracks.length} дорож.)`);
+          send(200, job);
+          return;
+        }
         const job = {
           ...base,
           job_id: `j_stub_${state.issued.length + 1}`,
@@ -114,6 +143,7 @@ function createStub({ mediaFile, profile = 'v1', jobs = 1, token = 'test-token',
         return;
       }
       if (ep === 'progress') { state.progress.push(body); send(200, { ok: true }); return; }
+      if (ep === 'audio-done') { state.audioDone.push(body); log(`audio-done ${JSON.stringify(body)}`); send(200, { ok: true }); return; }
       if (ep === 'done') { state.done.push(body); log(`done ${JSON.stringify(body)}`); send(200, { ok: true }); return; }
       if (ep === 'failed') { state.failed.push(body); log(`failed ${JSON.stringify(body)}`); send(200, { ok: true }); return; }
       send(404, { error: 'not found' });
@@ -137,10 +167,13 @@ if (require.main === module) {
   const opt = (k, d) => { const i = argv.indexOf(`--${k}`); return i >= 0 ? argv[i + 1] : d; };
   const file = argv.find((a, i) => !a.startsWith('--') && !(i > 0 && argv[i - 1].startsWith('--')));
   if (!file) {
-    console.error('usage: node stub/server.js <видеофайл> [--port 8787] [--profile v1|v1-copy|alias|wait] [--jobs 1] [--token test-token]');
+    console.error('usage: node stub/server.js <видеофайл> [--port 8787] [--profile v1|v1-copy|alias|wait|audio] [--jobs 1] [--token test-token]');
+    console.error('       audio: [--duration-ms 60000] [--offsets -2000,1500]');
     process.exit(2);
   }
+  const offsets = String(opt('offsets', '0')).split(',').map((x) => Number(x) || 0);
   createStub({
+    audio: { duration_ms: Number(opt('duration-ms', 60000)), tracks: offsets.map((o) => ({ offset_ms: o })) },
     mediaFile: path.resolve(file), port: Number(opt('port', 8787)), profile: opt('profile', 'v1'),
     jobs: Number(opt('jobs', 1)), token: opt('token', 'test-token'), log: (m) => console.log(`[stub] ${m}`),
   }).then((s) => console.log(`[stub] ${s.url} (hls_id ${s.hlsId})`));
