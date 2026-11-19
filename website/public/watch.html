@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#060911">
+  <title>Suslik Media</title>
+  <link rel="icon" href="../favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" sizes="128x128" href="../brand-mark.png">
+  <link rel="stylesheet" href="../watch.css?v=1">
+</head>
+<body>
+<!-- Страница фильма: /watch/<номер раздачи>. Без встроенных скриптов — CSP пускает только файлы сайта (watch.js).
+     Устройство и ручная проверка — docs/HLS-CLIENT.md «Страница фильма». -->
+<main class="wp" id="wp">
+  <nav class="wp-nav"><a class="wp-back" id="wpBack" href="../">← Медиатека</a></nav>
+
+  <section class="wp-state" id="wpLoading"><div class="wp-spinner" aria-hidden="true"></div><p>Загружаем фильм…</p></section>
+
+  <section class="wp-state hidden" id="wpLogin">
+    <h1 class="wp-h1">Нужно войти</h1>
+    <p class="wp-muted">Фильмы медиатеки видны только после входа.</p>
+    <div class="wp-row">
+      <a class="wp-btn primary hidden" id="wpLoginDiscord" href="../">Войти через Discord</a>
+      <a class="wp-btn" id="wpLoginSite" href="../">Войти на сайте</a>
+    </div>
+  </section>
+
+  <section class="wp-state hidden" id="wpMissing">
+    <h1 class="wp-h1">Не найдено</h1>
+    <p class="wp-muted" id="wpMissingText">Такого фильма нет в медиатеке — возможно, его удалили.</p>
+    <div class="wp-row"><a class="wp-btn primary" id="wpMissingBack" href="../">Открыть медиатеку</a></div>
+  </section>
+
+  <article class="hidden" id="wpPage">
+    <header class="wp-head">
+      <h1 class="wp-h1" id="wpTitle"></h1>
+      <div class="wp-orig hidden" id="wpOrig"></div>
+    </header>
+
+    <section class="wp-card">
+      <div class="wp-poster" id="wpPoster"><img alt="" decoding="async" id="wpPosterImg" class="hidden"><span class="wp-poster-ph" id="wpPosterPh" aria-hidden="true"></span></div>
+      <div class="wp-facts">
+        <div class="wp-badges" id="wpBadges"></div>
+        <table class="wp-table"><tbody id="wpFacts"></tbody></table>
+        <p class="wp-muted wp-small hidden" id="wpFactsNote"></p>
+      </div>
+    </section>
+
+    <section class="wp-about hidden" id="wpAbout">
+      <h2 class="wp-h2" id="wpAboutTitle"></h2>
+      <p id="wpOverview"></p>
+    </section>
+
+    <section class="wp-watch" id="wpWatch" aria-label="Просмотр">
+      <h2 class="wp-watch-title" id="wpNow"></h2>
+
+      <div class="wp-group hidden" id="wpAudioBox">
+        <div class="wp-label">Озвучка:</div>
+        <div class="wp-grid3" id="wpAudio" role="radiogroup" aria-label="Озвучка"></div>
+      </div>
+
+      <div class="wp-compact" id="wpCompact">
+        <label class="wp-field hidden" id="wpSubsBox"><span>Субтитры</span><select id="wpSubs" aria-label="Субтитры"></select></label>
+        <label class="wp-field hidden" id="wpQualityBox"><span>Качество</span><select id="wpQuality" aria-label="Качество"></select></label>
+      </div>
+
+      <div class="wp-group hidden" id="wpVersionsBox">
+        <div class="wp-label">Версия:</div>
+        <div class="wp-chips" id="wpVersions"></div>
+      </div>
+
+      <div class="wp-group hidden" id="wpSeasonsBox">
+        <div class="wp-tabs" id="wpSeasons" role="tablist" aria-label="Сезон"></div>
+        <div class="wp-eps" id="wpEpisodes"></div>
+      </div>
+
+      <div class="wp-player" id="wpPlayer">
+        <div class="wp-screen" id="wpScreen"></div>
+        <div class="wp-overlay hidden" id="wpOverlay">
+          <p id="wpOverlayText"></p>
+          <div class="wp-row">
+            <a class="wp-btn primary hidden" id="wpOverlayWatch" href="#">▶ Смотреть</a>
+            <a class="wp-btn hidden" id="wpOverlayApp" rel="noopener noreferrer" href="#">Открыть в приложении</a>
+          </div>
+        </div>
+        <div class="wp-next hidden" id="wpNext" role="status">
+          <span id="wpNextText"></span>
+          <button type="button" class="wp-btn primary" id="wpNextNow">Сейчас</button>
+          <button type="button" class="wp-btn" id="wpNextCancel">Отмена</button>
+        </div>
+      </div>
+      <div class="wp-under">
+        <span class="wp-muted wp-small" id="wpStatus"></span>
+        <button type="button" class="wp-btn wp-small-btn" id="wpCopy">Скопировать ссылку</button>
+      </div>
+    </section>
+  </article>
+</main>
+<script src="../library-model.js?v=1"></script>
+<script src="../hls-player.js" defer></script>
+<script src="../watch.js?v=1" defer></script>
+</body>
+</html>
