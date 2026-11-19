@@ -1,0 +1,4 @@
+{
+  "action": "wait",
+  "retry_after_s": 60
+}

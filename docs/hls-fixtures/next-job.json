@@ -1,0 +1,12 @@
+{
+  "job_id": "j_01JD3X8Q",
+  "ad_id": "412345678",
+  "path": "Movie.2010.1080p/Movie.2010.1080p.mkv",
+  "size": 8589934592,
+  "hash": "0123456789abcdef0123456789abcdef01234567",
+  "mirror_url": "https://site.example.org/api/file/proxy/Movie.2010.1080p.mkv?link=...&exp=...&sig=...",
+  "canonical_id": "m:movie2010:default",
+  "edition": "default",
+  "episode": null,
+  "priority": 2
+}
