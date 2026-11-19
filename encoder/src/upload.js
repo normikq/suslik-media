@@ -40,6 +40,9 @@ async function uploadRsync(cfg, srcDir, hlsId, profile, { signal, log }) {
   log?.info(`[upload] ssh ${u.ssh} ${cmd}`);
   const f = await run(u.sshBin, [...sshOpts(u), u.ssh, cmd], { signal, timeoutMs: 10 * 60 * 1000 });
   if (f.code !== 0) throw new Error(`finalize exit ${f.code}: ${lastLine(f.stderr)}`);
+  // CDN (infra/cdn/bin/hls-finalize) отвечает «ok <hls_id>/<profile> <байт>»
+  const answer = lastLine(f.stdout);
+  if (!answer.startsWith(`ok ${hlsId}/${profile}`)) throw new Error(`finalize: неожиданный ответ «${answer}»`);
   return { tmp };
 }
 
