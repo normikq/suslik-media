@@ -95,7 +95,8 @@ sig = base64url_без_паддинга( md5_raw( "<exp><hls_id> <HLS_SIGN_SECRE
 Node: crypto.createHash("md5").update(`${exp}${hlsId} ${secret}`).digest("base64url")
 ```
 
-nginx: `secure_link $1,$2; secure_link_md5 "$secure_link_expires$3 <secret>";` по захватам из пути;
+nginx: `secure_link $hls_sig,$hls_exp; secure_link_md5 "$secure_link_expires$hls_hid <secret>";` по **именованным** захватам из пути
+(безымянные `$1…$3` затирает `rewrite` в том же location; конфиг — `infra/cdn/nginx/hls-cdn.conf.template`);
 `$secure_link` пусто → **403**, `"0"` (истёк) → **410**. Срок — 12 ч. Профиль в подпись не входит (переключение `active_profile` не меняет подпись).
 Вектор: `vectors.json → sign`.
 
@@ -236,3 +237,15 @@ T1, T2, T3 — параллельно; T5 и T6 — тоже. До T4 плеер
 2. `direct_ok` по `media-tags.json` (одна запись на раздачу, звук по меткам) — допущение v1.
 3. Подпись мастера — на `SESSION_SECRET`, как у зеркала.
 4. T7 и T8 — описать позже.
+
+## 16. Уточнения по итогам T1–T3 (19.11)
+
+- **probe:** у видеодорожки воркер передаёт `dovi: bool` (Dolby Vision → только `v1`). `keyframe_interval_max_s` воркер меряет, только если файл проходит в `v1-copy` по остальным условиям, иначе `null`.
+- **alias:** после `action:"alias"` воркер `done` не шлёт — сервер закрывает задание и пишет алиас в ответе на probe.
+- **wait и стадии:** во время `wait` воркер шлёт `progress` со `stage:"wait"` (продлевает аренду). Стадии: `probe`, `fingerprint`, `wait`, `encode`, `verify`, `upload`, `done`.
+- **Раскладка:** у исходника ≤ 720p есть только `720p/`; мастер строится строго по массивам `manifest.video/audio/subtitles`. `BANDWIDTH` — пик по сегментам видео + самая тяжёлая звуковая дорожка, `AVERAGE-BANDWIDTH` — среднее. У `v1-copy` `encoder:"copy"`, видео может быть `avc1`.
+- **Выкладка на CDN:** `rsync` в `.tmp/<hls_id>.<profile>.<rand>/`, затем `ssh hls-upload@<cdn> finalize <имя>` → `ok <hls_id>/<profile> <байт>`; `done` — только после `ok` (`infra/cdn/README.md`).
+- **Вытеснение:** «сначала фильмы с несколькими версиями» на CDN = ассет с несколькими профилями (удаляется менее свежий). Уборка от 85 % до 80 %. Профиль, к которому обращались < 2 ч назад, не удаляется даже по `pending-deletes`. `evicted` может прийти для профиля, которого уже нет на диске (`last_access` = 0), и для неизвестных сайту — сайт принимает и пропускает.
+- **Очередь:** первая сборка медиатеки после старта сервера ничего не ставит в очередь; `canonical_id` для переиспользования — только подтверждённый владельцем; совпал отпечаток, но ассет ещё кодируется → `wait`. `shift_ms` = длительность ассета − длительность файла.
+- **Секрет:** `HLS_SIGN_SECRET` — только символы `A-Z a-z 0-9 . _ ~ + / = -` (идёт в строку nginx).
+- **Тесты на Node 24:** только с маской или файлом — `node --test docs/hls-fixtures/*.test.js`, `node --test website/test/*.test.js`.
