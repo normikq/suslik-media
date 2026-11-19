@@ -7,7 +7,8 @@
 # Что делает: пакеты; HDD в /srv/hls с noatime (только уже размеченный раздел — форматирование руками, см. README);
 # пользователь hls-upload с rrsync; nginx из шаблона (секрет — отдельным файлом 0640); certbot (webroot);
 # ufw (ssh, 80, 443); fail2ban (sshd + перебор подписей); logrotate; таймер evict.sh; по --sample — образец для test.sh;
-# при HLS_ARCHIVE_REMOTE в cdn.env — холодный архив: rclone, очередь, таймер hls-archive и служба hls-restore (README).
+# при HLS_ARCHIVE_REMOTE в cdn.env — холодный архив: rclone, очередь, таймер hls-archive и служба hls-restore (README);
+# при HLS_ARCHIVE_STREAM=1 и архиве — ещё просмотр прямо из архива: служба hls-archive-serve и @hls_archive в nginx (§20).
 set -euo pipefail
 cd "$(dirname "$0")"
 SRC=$(pwd)
@@ -52,6 +53,15 @@ SSH_PORT=${SSH_PORT:-22}
 ARCHIVE_REMOTE=${HLS_ARCHIVE_REMOTE:-}
 RCLONE_CONF=${HLS_RCLONE_CONFIG:-/etc/hls-cdn/rclone.conf}
 ARCHIVE_QUEUE=${HLS_ARCHIVE_QUEUE:-/var/lib/hls-archive-queue}
+ARCHIVE_STREAM=0
+if [ "${HLS_ARCHIVE_STREAM:-0}" = 1 ]; then
+  if [ -n "$ARCHIVE_REMOTE" ]; then ARCHIVE_STREAM=1
+  else echo "ВНИМАНИЕ: HLS_ARCHIVE_STREAM=1 без HLS_ARCHIVE_REMOTE — просмотр из архива не включается" >&2; fi
+fi
+if [ "$ARCHIVE_STREAM" = 1 ]; then
+  # пустое значение systemd подставил бы как есть («--vfs-cache-max-size G»)
+  [[ ${HLS_ARCHIVE_CACHE_GB-20} =~ ^[1-9][0-9]{0,4}$ ]] || { echo "HLS_ARCHIVE_CACHE_GB: целое число гигабайт (по умолчанию 20)" >&2; exit 1; }
+fi
 
 step "Пакеты"
 export DEBIAN_FRONTEND=noninteractive
@@ -153,10 +163,11 @@ install -m 644 nginx/logrotate-hls /etc/logrotate.d/nginx-hls
 CERT=/etc/letsencrypt/live/$HLS_CDN_DOMAIN/fullchain.pem
 KEY=/etc/letsencrypt/live/$HLS_CDN_DOMAIN/privkey.pem
 render_full() {
+  # + /etc/nginx/hls-archive-stream.conf и …-server.conf: просмотр прямо из архива (§20) или пустые
   HLS_CDN_DOMAIN=$HLS_CDN_DOMAIN HLS_CORS_ORIGIN=$HLS_CORS_ORIGIN HLS_ROOT=$HLS_ROOT HLS_TLS_CERT=$CERT HLS_TLS_KEY=$KEY \
   HLS_SECRET_CONF=/etc/nginx/hls-secret.conf HLS_LOG_DIR=$HLS_LOG_DIR \
-    envsubst '${HLS_CDN_DOMAIN} ${HLS_CORS_ORIGIN} ${HLS_ROOT} ${HLS_TLS_CERT} ${HLS_TLS_KEY} ${HLS_SECRET_CONF} ${HLS_LOG_DIR}' \
-    < nginx/hls-cdn.conf.template > /etc/nginx/conf.d/hls-cdn.conf
+  HLS_ARCHIVE_STREAM=$ARCHIVE_STREAM HLS_ARCHIVE_REMOTE=$ARCHIVE_REMOTE HLS_ARCHIVE_ADDR=127.0.0.1:8781 \
+    bash nginx/render.sh /etc/nginx/conf.d/hls-cdn.conf /etc/nginx
 }
 if [ ! -f "$CERT" ]; then
   if [ "$CERTBOT" = 1 ]; then
@@ -222,7 +233,7 @@ systemctl enable --now hls-evict.timer
 systemctl list-timers hls-evict.timer --no-pager || true
 
 step "Холодный архив"
-install -m 644 systemd/hls-archive.service systemd/hls-archive.timer systemd/hls-restore.service /etc/systemd/system/
+install -m 644 systemd/hls-archive.service systemd/hls-archive.timer systemd/hls-restore.service systemd/hls-archive-serve.service /etc/systemd/system/
 systemctl daemon-reload
 if [ -f "$RCLONE_CONF" ]; then chown root:root "$RCLONE_CONF"; chmod 600 "$RCLONE_CONF"; fi
 if [ -n "$ARCHIVE_REMOTE" ]; then
@@ -234,6 +245,28 @@ if [ -n "$ARCHIVE_REMOTE" ]; then
 else
   systemctl disable --now hls-archive.timer hls-restore.service >/dev/null 2>&1 || true
   echo "архив выключен (HLS_ARCHIVE_REMOTE пуст)"
+fi
+
+step "Просмотр прямо из архива"
+if [ "$ARCHIVE_STREAM" = 1 ]; then
+  # кэш rclone — на системном диске, не в $HLS_ROOT (вытеснение считает только $HLS_ROOT)
+  install -d -m 700 /var/cache/hls-archive
+  systemctl enable hls-archive-serve.service >/dev/null
+  systemctl restart hls-archive-serve.service
+  code=000
+  for _ in $(seq 1 30); do
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 http://127.0.0.1:8781/ || true)
+    [ "$code" = 200 ] && break
+    sleep 2
+  done
+  if [ "$code" = 200 ]; then
+    echo "hls-archive-serve отвечает (127.0.0.1:8781, кэш до ${HLS_ARCHIVE_CACHE_GB:-20} ГБ в /var/cache/hls-archive)"
+  else
+    echo "ВНИМАНИЕ: hls-archive-serve не отвечает (код $code), холодные версии не играют (502): journalctl -u hls-archive-serve -n 50" >&2
+  fi
+else
+  systemctl disable --now hls-archive-serve.service >/dev/null 2>&1 || true
+  echo "выключен (нужны HLS_ARCHIVE_STREAM=1 и HLS_ARCHIVE_REMOTE); кэш /var/cache/hls-archive, если остался, можно удалить"
 fi
 
 if [ "$SAMPLE" = 1 ]; then
