@@ -9,6 +9,10 @@
 //
 // Затем воркер: SM_SITE_URL=http://127.0.0.1:8787 HLS_WORKER_TOKEN=test-token SM_UPLOAD_MODE=local
 //               SM_UPLOAD_LOCAL_DIR=./work-cdn SM_ONCE=1 node index.js
+//
+// Снятие задания из админки (§19): GET /stub/cancel — текущее (последнее выданное) задание снято, дальше на его
+// progress/probe/done/audio-done/failed — 410 {code:"cancelled"}; ?code=unknown_job — 404 {code:"unknown_job"};
+// ?job_id=… — конкретное задание. Из теста — stub.cancel(jobId?, code?).
 
 const http = require('node:http');
 const fs = require('node:fs');
@@ -62,9 +66,18 @@ function readJson(req, limit = 256 * 1024) {
  * @param opts.profile    … | audio — /next отдаёт задание «звук» (next-job-audio.json), mediaFile — озвучка (.mka)
  * @param opts.jobs       сколько заданий выдать через /next
  * @param opts.audio      для audio: {duration_ms, tracks:[{offset_ms, missing?}]} — missing: mirror_url на несуществующий файл (404)
+ * state.cancelled — {job_id: code} снятых; state.cancelHits — сколько запросов получили 410/404 отмены
  */
 function createStub({ mediaFile, profile = 'v1', jobs = 1, token = 'test-token', port = 0, host = '127.0.0.1', waitS = 1, audio = null, log = () => {} } = {}) {
-  const state = { next: 0, probe: [], progress: [], done: [], audioDone: [], failed: [], issued: [] };
+  const state = { next: 0, probe: [], progress: [], done: [], audioDone: [], failed: [], issued: [], cancelled: {}, cancelHits: 0 };
+  /** Снять задание (по умолчанию — последнее выданное); code: cancelled (410) | unknown_job (404). */
+  const cancel = (jobId, code = 'cancelled') => {
+    const id = jobId || state.issued[state.issued.length - 1]?.job_id;
+    if (!id) return null;
+    state.cancelled[id] = code === 'unknown_job' ? 'unknown_job' : 'cancelled';
+    log(`cancel ${id} → ${state.cancelled[id]}`);
+    return id;
+  };
   let left = jobs;
   let waited = false;
   const size = fs.statSync(mediaFile).size;
@@ -84,6 +97,11 @@ function createStub({ mediaFile, profile = 'v1', jobs = 1, token = 'test-token',
       if (url.pathname.startsWith('/media/')) { serveFile(req, res, mediaFile); return; }
       if (url.pathname.startsWith('/missing/')) { res.writeHead(404).end(); return; }
       if (url.pathname === '/stub/state') { send(200, state); return; }
+      if (url.pathname === '/stub/cancel') {
+        const id = cancel(url.searchParams.get('job_id'), url.searchParams.get('code') || undefined);
+        send(id ? 200 : 404, id ? { ok: true, job_id: id, code: state.cancelled[id] } : { error: 'нет заданий' });
+        return;
+      }
       if (!url.pathname.startsWith('/internal/hls/')) { send(404, { error: 'not found' }); return; }
       if (req.headers.authorization !== `Bearer ${token}`) { send(401, { error: 'unauthorized' }); return; }
       const ep = url.pathname.slice('/internal/hls/'.length);
@@ -131,6 +149,16 @@ function createStub({ mediaFile, profile = 'v1', jobs = 1, token = 'test-token',
       }
       if (req.method !== 'POST') { send(405, { error: 'method' }); return; }
       const body = await readJson(req);
+      const gone = state.cancelled[body.job_id];
+      if (gone && ['probe', 'progress', 'done', 'audio-done', 'failed'].includes(ep)) {
+        // запрос записываем (тесты проверяют, что failed/done не слались), отвечаем как сайт после снятия
+        const list = { probe: state.probe, progress: state.progress, done: state.done, 'audio-done': state.audioDone, failed: state.failed }[ep];
+        list.push(body);
+        state.cancelHits++;
+        log(`${ep} ${body.job_id} → снято (${gone})`);
+        send(gone === 'unknown_job' ? 404 : 410, { error: gone === 'unknown_job' ? 'unknown job' : 'job cancelled', code: gone });
+        return;
+      }
       if (ep === 'probe') {
         state.probe.push(body);
         let r;
@@ -155,7 +183,7 @@ function createStub({ mediaFile, profile = 'v1', jobs = 1, token = 'test-token',
   return new Promise((resolve) => {
     server.listen(port, host, () => {
       const p = server.address().port;
-      resolve({ url: `http://${host}:${p}`, state, hlsId, close: () => new Promise((r) => { server.closeAllConnections?.(); server.close(() => r()); }) });
+      resolve({ url: `http://${host}:${p}`, state, hlsId, cancel, close: () => new Promise((r) => { server.closeAllConnections?.(); server.close(() => r()); }) });
     });
   });
 }
@@ -176,5 +204,5 @@ if (require.main === module) {
     audio: { duration_ms: Number(opt('duration-ms', 60000)), tracks: offsets.map((o) => ({ offset_ms: o })) },
     mediaFile: path.resolve(file), port: Number(opt('port', 8787)), profile: opt('profile', 'v1'),
     jobs: Number(opt('jobs', 1)), token: opt('token', 'test-token'), log: (m) => console.log(`[stub] ${m}`),
-  }).then((s) => console.log(`[stub] ${s.url} (hls_id ${s.hlsId})`));
+  }).then((s) => console.log(`[stub] ${s.url} (hls_id ${s.hlsId}); снять текущее задание: GET ${s.url}/stub/cancel`));
 }
