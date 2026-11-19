@@ -274,3 +274,294 @@ test("экспорт модуля: attach и detectCaps определены, gl
   assert.equal(typeof hlsPlayer.detectCaps, "function");
   assert.equal(globalThis.SuslikHls, undefined);
 });
+
+test("levelLabel: определение ярлыка качества по разрешению", () => {
+  assert.equal(hlsPlayer.levelLabel({ width: 1920, height: 800 }), "1080p");
+  assert.equal(hlsPlayer.levelLabel({ height: 1040 }), "1080p");
+  assert.equal(hlsPlayer.levelLabel({ width: 1920, height: 1080 }), "1080p");
+
+  assert.equal(hlsPlayer.levelLabel({ width: 1280, height: 534 }), "720p");
+  assert.equal(hlsPlayer.levelLabel({ height: 694 }), "720p");
+  assert.equal(hlsPlayer.levelLabel({ width: 1280, height: 720 }), "720p");
+
+  assert.equal(hlsPlayer.levelLabel({ height: 2160 }), "4K");
+  assert.equal(hlsPlayer.levelLabel({ width: 3840, height: 1600 }), "4K");
+  assert.equal(hlsPlayer.levelLabel({ height: 1440 }), "1440p");
+  assert.equal(hlsPlayer.levelLabel({ height: 576 }), "480p");
+
+  assert.equal(hlsPlayer.levelLabel({}), "");
+  assert.equal(hlsPlayer.levelLabel(null), "");
+});
+
+test("levelList: сортировка уровней от лучшего к худшему и уточнение битрейта при дублях", () => {
+  const levels = [
+    { width: 1280, height: 534, bitrate: 3300000 },
+    { width: 1920, height: 800, bitrate: 5400000 }
+  ];
+  assert.deepEqual(hlsPlayer.levelList(levels), [
+    { index: 1, height: 800, label: "1080p" },
+    { index: 0, height: 534, label: "720p" }
+  ]);
+
+  const dupLevels = [
+    { width: 1920, height: 1080, bitrate: 4000000 },
+    { width: 1920, height: 1080, bitrate: 8000000 }
+  ];
+  assert.deepEqual(hlsPlayer.levelList(dupLevels), [
+    { index: 1, height: 1080, label: "1080p · 8 Мбит" },
+    { index: 0, height: 1080, label: "1080p · 4 Мбит" }
+  ]);
+
+  assert.deepEqual(hlsPlayer.levelList(null), []);
+  assert.deepEqual(hlsPlayer.levelList(undefined), []);
+  assert.deepEqual(hlsPlayer.levelList({}), []);
+});
+
+test("showQualityMenu: меню качества показывается только для hlsjs и более чем одного уровня", () => {
+  const twoLevels = [
+    { width: 1920, height: 800, bitrate: 5400000 },
+    { width: 1280, height: 534, bitrate: 3300000 }
+  ];
+  assert.equal(hlsPlayer.showQualityMenu(twoLevels, "hlsjs"), true);
+  assert.equal(hlsPlayer.showQualityMenu([twoLevels[0]], "hlsjs"), false);
+  assert.equal(hlsPlayer.showQualityMenu(twoLevels, "native"), false);
+  assert.equal(hlsPlayer.showQualityMenu(null, "hlsjs"), false);
+});
+
+test("readQuality и saveQuality: сохранение и чтение выбранного качества", () => {
+  assert.equal(hlsPlayer.QUALITY_KEY, "suslik.hls.quality");
+
+  const makeStorage = () => ({
+    data: {},
+    getItem(k) {
+      return k in this.data ? this.data[k] : null;
+    },
+    setItem(k, v) {
+      this.data[k] = String(v);
+    }
+  });
+
+  const st = makeStorage();
+  assert.equal(hlsPlayer.readQuality(st), null);
+  assert.equal(hlsPlayer.saveQuality(st, "720p"), true);
+  assert.equal(hlsPlayer.readQuality(st), "720p");
+
+  assert.equal(hlsPlayer.saveQuality(st, -1), true);
+  assert.equal(hlsPlayer.readQuality(st), "auto");
+
+  assert.equal(hlsPlayer.saveQuality(st, null), true);
+  assert.equal(hlsPlayer.readQuality(st), "auto");
+
+  assert.equal(hlsPlayer.readQuality(null), null);
+  assert.equal(hlsPlayer.saveQuality(null, "720p"), false);
+
+  const brokenStorage = {
+    getItem() {
+      throw new Error("read fail");
+    },
+    setItem() {
+      throw new Error("write fail");
+    }
+  };
+  assert.equal(hlsPlayer.readQuality(brokenStorage), null);
+  assert.equal(hlsPlayer.saveQuality(brokenStorage, "720p"), false);
+});
+
+test("startLevelFor: выбор стартового уровня по сохранённому ярлыку", () => {
+  const levels = [
+    { width: 1920, height: 800, bitrate: 5400000 },
+    { width: 1280, height: 534, bitrate: 3300000 }
+  ];
+  assert.equal(hlsPlayer.startLevelFor(levels, "720p"), 1);
+  assert.equal(hlsPlayer.startLevelFor(levels, "1080p"), 0);
+  assert.equal(hlsPlayer.startLevelFor(levels, "auto"), -1);
+  assert.equal(hlsPlayer.startLevelFor(levels, null), -1);
+  assert.equal(hlsPlayer.startLevelFor(levels, "4K"), -1);
+
+  const dupLevels = [
+    { width: 1920, height: 1080, bitrate: 4000000 },
+    { width: 1920, height: 1080, bitrate: 8000000 }
+  ];
+  assert.equal(hlsPlayer.startLevelFor(dupLevels, "1080p"), 1);
+});
+
+test("autoLabel: подпись режима Авто с текущим уровнем", () => {
+  const levels = [
+    { width: 1920, height: 800, bitrate: 5400000 },
+    { width: 1280, height: 534, bitrate: 3300000 }
+  ];
+  assert.equal(hlsPlayer.autoLabel(levels, 0), "Авто (сейчас 1080p)");
+  assert.equal(hlsPlayer.autoLabel(levels, 1), "Авто (сейчас 720p)");
+  assert.equal(hlsPlayer.autoLabel(levels, -1), "Авто");
+  assert.equal(hlsPlayer.autoLabel(null, 0), "Авто");
+});
+
+test("hlsConfig: параметры конфигурации hls.js", () => {
+  const cfg125 = hlsPlayer.hlsConfig(125);
+  assert.equal(cfg125.startPosition, 125);
+  assert.equal(cfg125.backBufferLength, 90);
+  assert.equal(cfg125.maxBufferLength, 30);
+  assert.equal(cfg125.maxMaxBufferLength, 120);
+  assert.equal(cfg125.abrEwmaDefaultEstimate, 5000000);
+  assert.equal(cfg125.autoStartLoad, false);
+  assert.equal(cfg125.startLevel, -1);
+  assert.equal(cfg125.enableWorker, true);
+  assert.equal("capLevelToPlayerSize" in cfg125, false);
+
+  const cfg0 = hlsPlayer.hlsConfig(0);
+  assert.equal(cfg0.startPosition, -1);
+});
+
+test("secToMs: перевод секунд в миллисекунды", () => {
+  assert.equal(hlsPlayer.secToMs(12.5), 12500);
+  assert.equal(hlsPlayer.secToMs(undefined), 0);
+  assert.equal(hlsPlayer.secToMs(-3), 0);
+  assert.equal(hlsPlayer.secToMs("abc"), 0);
+});
+
+test("playerState: вычисление состояния плеера", () => {
+  assert.equal(hlsPlayer.playerState(null), null);
+
+  assert.deepEqual(hlsPlayer.playerState({ error: "Ошибка X" }), {
+    kind: "error",
+    message: "Ошибка X"
+  });
+
+  const waitState = hlsPlayer.playerState({
+    source: { kind: "wait", etaMin: 14, progress: 0.3 }
+  });
+  assert.equal(waitState.kind, "preparing");
+  assert.equal(waitState.etaMin, 14);
+  assert.equal(waitState.message, "Готовим для браузера, примерно 14 мин");
+
+  const restoringState = hlsPlayer.playerState({
+    source: { kind: "wait", restoring: true, etaMin: 3 }
+  });
+  assert.equal(restoringState.message, "Достаём из архива, примерно 3 мин");
+
+  const soonState = hlsPlayer.playerState({ source: { kind: "soon" } });
+  assert.equal(soonState.kind, "preparing");
+  assert.equal(soonState.etaMin, null);
+
+  const unsupportedState = hlsPlayer.playerState({
+    source: { kind: "unsupported" }
+  });
+  assert.equal(unsupportedState.kind, "unsupported");
+  assert.equal(unsupportedState.message, "Этот браузер не показывает такое видео");
+
+  const legacyState = hlsPlayer.playerState({ source: { kind: "legacy" } });
+  assert.equal(legacyState.kind, "unsupported");
+  assert.equal(typeof legacyState.message, "string");
+  assert.ok(legacyState.message.length > 0);
+
+  const L = [
+    { width: 1920, height: 800, bitrate: 5400000 },
+    { width: 1280, height: 534, bitrate: 3300000 }
+  ];
+  const tracks = {
+    audio: [
+      { name: "Русский (Дубляж)", lang: "ru" },
+      { name: "", lang: "en" }
+    ],
+    subs: [{ name: "English", lang: "en" }],
+    audioNow: 0,
+    subNow: -1
+  };
+
+  assert.deepEqual(
+    hlsPlayer.playerState({
+      source: { kind: "hls" },
+      engine: "hlsjs",
+      levels: L,
+      level: -1,
+      levelNow: 1,
+      tracks
+    }),
+    {
+      kind: "hls",
+      levels: [
+        { index: 0, height: 800, label: "1080p" },
+        { index: 1, height: 534, label: "720p" }
+      ],
+      level: -1,
+      levelNow: 1,
+      qualityLabel: "Авто (сейчас 720p)",
+      audio: [
+        { index: 0, name: "Русский (Дубляж)", lang: "ru" },
+        { index: 1, name: "EN", lang: "en" }
+      ],
+      audioIndex: 0,
+      subtitles: [{ index: 0, name: "English", lang: "en" }],
+      subtitleIndex: -1
+    }
+  );
+
+  const manualState = hlsPlayer.playerState({
+    source: { kind: "hls" },
+    engine: "hlsjs",
+    levels: L,
+    level: 0,
+    levelNow: 1,
+    tracks,
+    note: "Переключились на прямой файл."
+  });
+  assert.equal(manualState.level, 0);
+  assert.equal(manualState.qualityLabel, "1080p");
+  assert.equal(manualState.message, "Переключились на прямой файл.");
+
+  const nativeState = hlsPlayer.playerState({
+    source: { kind: "hls" },
+    engine: "native",
+    levels: L,
+    level: 0,
+    levelNow: 0,
+    tracks
+  });
+  assert.deepEqual(nativeState.levels, []);
+  assert.equal(nativeState.level, -1);
+  assert.equal(nativeState.qualityLabel, "");
+
+  const singleLevelState = hlsPlayer.playerState({
+    source: { kind: "hls" },
+    engine: "hlsjs",
+    levels: [L[0]],
+    level: 0,
+    levelNow: 0,
+    tracks
+  });
+  assert.deepEqual(singleLevelState.levels, []);
+  assert.equal(singleLevelState.level, -1);
+  assert.equal(singleLevelState.qualityLabel, "");
+
+  const mirrorState = hlsPlayer.playerState({
+    source: { kind: "direct" },
+    tracks: null,
+    note: "Переключились на прямой файл."
+  });
+  assert.equal(mirrorState.kind, "mirror");
+  assert.deepEqual(mirrorState.levels, []);
+  assert.deepEqual(mirrorState.audio, []);
+  assert.equal(mirrorState.audioIndex, -1);
+  assert.deepEqual(mirrorState.subtitles, []);
+  assert.equal(mirrorState.subtitleIndex, -1);
+  assert.equal(mirrorState.message, "Переключились на прямой файл.");
+});
+
+test("экспорт модуля: mount и attach определены, mount в Node без DOM выбрасывает ошибку", () => {
+  assert.equal(typeof hlsPlayer.mount, "function");
+  assert.equal(typeof hlsPlayer.attach, "function");
+  assert.throws(() => hlsPlayer.mount({}, {}));
+});
+
+test("интеграция с master-v1.m3u8: levelList и showQualityMenu", () => {
+  const { variants } = hlsPlayer.parseMasterMedia(masterM3u8);
+  const levels = variants.map(v => {
+    const [width, height] = v.resolution.split("x").map(Number);
+    return { width, height, bitrate: v.bandwidth };
+  });
+  assert.deepEqual(
+    hlsPlayer.levelList(levels).map(l => l.label),
+    ["1080p", "720p"]
+  );
+  assert.equal(hlsPlayer.showQualityMenu(levels, "hlsjs"), true);
+});

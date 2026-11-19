@@ -1,5 +1,7 @@
 /* Встроенный плеер сайта: HLS (hls.js, в Safari — нативно) и прямой файл через зеркало.
  * Контракт ответа POST /api/file/variant-url — docs/HLS.md §9–10, устройство и ручная проверка — docs/HLS-CLIENT.md «T5».
+ * Два режима на общем коде: attach() — кнопка и плеер поверх окна фильма (index.html), mount() — плеер внутри
+ * элемента страницы фильма /watch/<id> (контракт — docs/HLS-CLIENT.md «Встраиваемый режим»).
  * Внешний файл без сборщика (ES2017): CSP страницы пускает только 'self' и хеши встроенных скриптов.
  * В Node грузится без DOM (module.exports) — чистые функции проверяет website/test/hls-player.test.js.
  * Приложение Android (window.__suslikApp >= 2 и SuslikNative) играет само — там модуль ничего не делает. */
@@ -184,6 +186,165 @@
     return Math.round(w.pos);
   }
 
+  function trackLabel(t, i, kind) {
+    return (t && t.name) || (t && t.lang ? t.lang.toUpperCase() : (kind === "audio" ? "Дорожка " : "Субтитры ") + (i + 1));
+  }
+
+  // ---------- Качество (чистые функции) ----------
+
+  const QUALITY_KEY = "suslik.hls.quality"; // localStorage: "auto" или подпись уровня ("1080p")
+  const STD_LEVELS = [
+    { label: "4K", w: 3840, h: 2160 },
+    { label: "1440p", w: 2560, h: 1440 },
+    { label: "1080p", w: 1920, h: 1080 },
+    { label: "720p", w: 1280, h: 720 },
+    { label: "480p", w: 854, h: 480 },
+    { label: "360p", w: 640, h: 360 },
+    { label: "240p", w: 426, h: 240 }
+  ];
+
+  /**
+   * Подпись уровня hls.js ({width, height}) по ближайшему стандарту. Кадр часто обрезан по высоте
+   * (1920×800, 1280×534) или по ширине — поэтому хватает, чтобы ширина или высота была ≥ 85 % стандарта:
+   * 1040 → 1080p, 694 → 720p, 2160 → 4K. Размера нет — "".
+   */
+  function levelLabel(level) {
+    const l = level || {};
+    const w = Number(l.width) || 0, h = Number(l.height) || 0;
+    if (w <= 0 && h <= 0) return "";
+    for (const s of STD_LEVELS) if (w >= s.w * 0.85 || h >= s.h * 0.85) return s.label;
+    return (h > 0 ? h : Math.round(w * 9 / 16)) + "p";
+  }
+
+  function levelBitrate(l) { return Number(l && (l.averageBitrate || l.bitrate || l.maxBitrate)) || 0; }
+
+  /** Уровни для меню, от лучшего к худшему: [{index (в hls.levels), height, label}]. Одинаковые подписи различает битрейт. */
+  function levelList(levels) {
+    const list = (Array.isArray(levels) ? levels : []).map((l, index) => {
+      const w = Number(l && l.width) || 0, h = Number(l && l.height) || 0;
+      return { index, height: h, area: w && h ? w * h : h * h, bitrate: levelBitrate(l), label: levelLabel(l) || "Уровень " + (index + 1) };
+    });
+    list.sort((a, b) => (b.area - a.area) || (b.bitrate - a.bitrate) || (a.index - b.index));
+    const count = {};
+    list.forEach(x => { count[x.label] = (count[x.label] || 0) + 1; });
+    list.forEach(x => {
+      if (count[x.label] > 1 && x.bitrate) x.label += " · " + (Math.round(x.bitrate / 1e5) / 10) + " Мбит";
+    });
+    return list.map(x => ({ index: x.index, height: x.height, label: x.label }));
+  }
+
+  /** Меню качества — только у hls.js и только если уровней больше одного (Safari и зеркало уровней не дают, у v1-copy уровень один). */
+  function showQualityMenu(levels, engine) {
+    return engine === "hlsjs" && Array.isArray(levels) && levels.length > 1;
+  }
+
+  /** Прошлый выбор качества: "auto", подпись уровня или null (не выбирали / хранилище недоступно). */
+  function readQuality(storage) {
+    try {
+      const v = storage && storage.getItem(QUALITY_KEY);
+      return v ? String(v) : null;
+    } catch (e) { return null; }
+  }
+  /** Запомнить выбор: подпись уровня или "auto" (null, "", -1 — тоже авто). true — записалось. */
+  function saveQuality(storage, label) {
+    const v = label && label !== -1 ? String(label) : "auto";
+    try {
+      if (!storage) return false;
+      storage.setItem(QUALITY_KEY, v);
+      return true;
+    } catch (e) { return false; }
+  }
+
+  /** Индекс уровня для прошлого выбора (по подписи; из одинаковых — с большим битрейтом), иначе -1 (авто). */
+  function startLevelFor(levels, saved) {
+    if (!saved || saved === "auto" || !Array.isArray(levels)) return -1;
+    let best = -1;
+    levels.forEach((l, i) => {
+      if (levelLabel(l) !== saved) return;
+      if (best < 0 || levelBitrate(l) > levelBitrate(levels[best])) best = i;
+    });
+    return best;
+  }
+
+  /** Текст пункта «Авто»: «Авто (сейчас 1080p)», пока уровень не известен — «Авто». */
+  function autoLabel(levels, levelNow) {
+    const l = Array.isArray(levels) && levelNow >= 0 ? levels[levelNow] : null;
+    const t = l ? levelLabel(l) : "";
+    return t ? "Авто (сейчас " + t + ")" : "Авто";
+  }
+
+  /**
+   * Настройки hls.js. Загрузка стартует вручную (autoStartLoad: false) — после MANIFEST_PARSED, когда известны уровни
+   * и можно поставить запомненное качество до первого сегмента.
+   */
+  function hlsConfig(startSec) {
+    return {
+      startPosition: startSec > 0 ? startSec : -1,
+      autoStartLoad: false,
+      enableWorker: true,
+      startLevel: -1, // авто: по оценке канала (abrEwmaDefaultEstimate), а не «первый уровень из манифеста»
+      // capLevelToPlayerSize не ставим: на странице фильма плеер уже 1920 пикселей, и hls.js держал 720p даже на хорошем
+      // канале (жалоба «качество не переключается»). Наши файлы лёгкие (v1: 1080p ≤ 5 Мбит), «Авто» решает по скорости канала.
+      // Назад 90 с остаётся в памяти — короткая перемотка назад («что он сказал?») без повторной загрузки.
+      // По умолчанию у hls.js назад хранится всё (Infinity): на двухчасовом фильме упираемся в квоту MediaSource
+      // (~150 МБ на видео в Chrome) и браузер сам выкидывает куски. 90 с при 5 Мбит ≈ 56 МБ.
+      backBufferLength: 90,
+      // Вперёд 30 с обычно, до 120 с на быстром канале: хватает пережить провал скорости, а вместе с буфером
+      // назад остаётся в квоте (≈ 56 + 75 МБ). Больше (по умолчанию 600 с) — качаем то, что при перемотке выбросим.
+      maxBufferLength: 30,
+      maxMaxBufferLength: 120,
+      // Первая оценка канала 5 Мбит (по умолчанию 0,5 Мбит — старт с худшего уровня). ABR сравнивает с
+      // AVERAGE-BANDWIDTH × 0,95: у 1080p v1 это ≈ 3,6 Мбит, так что на нормальном канале сразу 1080p,
+      // на слабом первый же сегмент даст настоящую оценку и ABR опустится до 720p.
+      abrEwmaDefaultEstimate: 5000000
+    };
+  }
+
+  /** Сообщение, когда в ответе нет блока hls (HLS выключен или пользователь не в бете). */
+  const LEGACY_MESSAGE = "Просмотр в браузере пока недоступен";
+
+  /**
+   * Состояние для onState встраиваемого плеера (страница фильма). Чистая функция.
+   * s: {source (pickSource), error (текст), engine ("hlsjs"|"native"|null), levels (hls.levels), level (-1 авто),
+   *     levelNow (что играет), tracks {audio, subs, audioNow, subNow} (listTracks), note (текст под плеером)}.
+   * Возвращает {kind: hls|mirror|preparing|unsupported|error, message?, etaMin?, levels, level, levelNow, qualityLabel,
+   *             audio, audioIndex, subtitles, subtitleIndex} или null (ещё ничего не известно).
+   */
+  function playerState(s) {
+    const x = s || {};
+    if (x.error) return { kind: "error", message: String(x.error) };
+    const src = x.source;
+    if (!src) return null;
+    switch (src.kind) {
+      case "wait": return { kind: "preparing", message: messageFor(src), etaMin: src.etaMin || null };
+      case "soon": return { kind: "preparing", message: messageFor(src), etaMin: null };
+      case "unsupported": return { kind: "unsupported", message: messageFor(src) };
+      case "legacy": return { kind: "unsupported", message: LEGACY_MESSAGE };
+      case "hls": case "direct": break;
+      default: return null;
+    }
+    const st = { kind: src.kind === "hls" ? "hls" : "mirror" };
+    if (x.note) st.message = String(x.note);
+    const q = src.kind === "hls" && showQualityMenu(x.levels, x.engine);
+    st.levels = q ? levelList(x.levels) : [];
+    st.level = q && x.level >= 0 && x.level < x.levels.length ? x.level : -1;
+    st.levelNow = q && x.levelNow >= 0 && x.levelNow < x.levels.length ? x.levelNow : -1;
+    st.qualityLabel = q ? (st.level >= 0 ? levelLabel(x.levels[st.level]) : autoLabel(x.levels, st.levelNow)) : "";
+    const t = x.tracks || {};
+    const audio = Array.isArray(t.audio) ? t.audio : [], subs = Array.isArray(t.subs) ? t.subs : [];
+    st.audio = audio.map((a, i) => ({ index: i, name: trackLabel(a, i, "audio"), lang: (a && a.lang) || "" }));
+    st.audioIndex = t.audioNow >= 0 && t.audioNow < audio.length ? t.audioNow : (audio.length ? 0 : -1);
+    st.subtitles = subs.map((a, i) => ({ index: i, name: trackLabel(a, i, "sub"), lang: (a && a.lang) || "" }));
+    st.subtitleIndex = t.subNow >= 0 && t.subNow < subs.length ? t.subNow : -1;
+    return st;
+  }
+
+  /** startAt встраиваемого режима (секунды файла) → мс. */
+  function secToMs(sec) {
+    const n = Number(sec);
+    return Number.isFinite(n) && n > 0 ? Math.round(n * 1000) : 0;
+  }
+
   // ---------- Браузер ----------
 
   const hasDom = typeof document !== "undefined";
@@ -227,20 +388,38 @@
     return hlsJsTask;
   }
 
+  function localStore() { try { return root.localStorage || null; } catch (e) { return null; } }
+
+  // Цвета и шрифт — переменные redesign.css (с запасными значениями, если страница без него).
   const CSS = [
     "#playSheet .ps-hls{display:flex;flex-direction:column;gap:8px;margin:10px 0 0}",
-    "#playSheet .ps-hls-note{font:400 13px var(--ui,system-ui);color:#8e96a8}",
-    "#playSheet .ps-hls-btn{display:flex;align-items:center;justify-content:center;gap:8px;height:44px;border-radius:12px;border:1px solid #2a3346;background:#161c28;color:#e8ecf4;font:600 13.5px var(--ui,system-ui);cursor:pointer}",
+    "#playSheet .ps-hls-note{font:400 13px var(--ui,system-ui);color:var(--muted,#8e96a8)}",
+    "#playSheet .ps-hls-btn{display:flex;align-items:center;justify-content:center;gap:8px;height:44px;border-radius:12px;border:1px solid #2a3346;background:var(--film,#161c28);color:var(--text,#eef0f5);font:600 13.5px var(--ui,system-ui);cursor:pointer}",
     "#playSheet .ps-hls-btn:hover{border-color:#4d86ff}",
     "#playSheet .ps-hls-btn[disabled]{opacity:.45;pointer-events:none}",
     ".shls{position:fixed;inset:0;z-index:10000;background:#000;display:flex;flex-direction:column}",
-    ".shls video{flex:1 1 auto;width:100%;min-height:0;background:#000}",
-    ".shls-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 16px;background:#0b0e14;color:#e8ecf4;font:500 13px var(--ui,system-ui)}",
+    ".shls-player{display:flex;flex-direction:column;color:var(--text,#eef0f5);font:500 13px var(--ui,system-ui)}",
+    ".shls .shls-player{flex:1 1 auto;min-height:0}",
+    ".shls-stage{position:relative;background:#000}",
+    ".shls .shls-stage{flex:1 1 auto;min-height:0}",
+    ".shls-stage video{display:block;width:100%;height:100%;background:#000}",
+    ".shls-embed{width:100%;min-width:0}",
+    ".shls-embed .shls-stage{height:0;padding-top:56.25%;border-radius:14px;overflow:hidden;border:1px solid var(--line,#222838)}",
+    ".shls-embed .shls-stage video{position:absolute;inset:0}",
+    ".shls-screen{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:16px;text-align:center;background:rgba(6,9,17,.88);font:500 14px/1.4 var(--ui,system-ui)}",
+    ".shls-screen[hidden]{display:none}",
+    ".shls-screen.err .shls-msg{color:#ff9b8f}",
+    ".shls-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 16px;background:var(--booth,#10141e)}",
+    ".shls-embed .shls-bar{padding:8px 0 0;background:transparent}",
     ".shls-title{flex:1 1 160px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
-    ".shls-bar select,.shls-bar button{height:34px;border-radius:9px;border:1px solid #2a3346;background:#161c28;color:#e8ecf4;font:inherit;padding:0 10px;max-width:100%}",
-    ".shls-note{padding:6px 16px;background:#0b0e14;color:#8e96a8;font:400 12.5px var(--ui,system-ui)}",
+    ".shls-bar select,.shls-bar button,.shls-btn{height:34px;border-radius:10px;border:1px solid var(--line2,#2e374c);background:var(--film,#161c28);color:var(--text,#eef0f5);font:inherit;padding:0 10px;max-width:100%;cursor:pointer}",
+    ".shls-bar select:hover,.shls-bar button:hover,.shls-btn:hover{border-color:var(--glass-edge-hover,rgba(96,165,250,.45))}",
+    ".shls-bar select:focus-visible,.shls-bar button:focus-visible,.shls-btn:focus-visible{outline:2px solid var(--electric,#2563eb);outline-offset:1px}",
+    ".shls-btn[disabled]{opacity:.45;pointer-events:none}",
+    ".shls-note{padding:6px 16px;background:var(--booth,#10141e);color:var(--muted,#8e96a8);font:400 12.5px var(--ui,system-ui)}",
+    ".shls-embed .shls-note{padding:6px 0 0;background:transparent}",
     ".shls-note:empty{display:none}",
-    ".shls-note.err{color:#ff9b8f}"
+    "@media (max-width:600px){.shls-bar{gap:6px;padding:6px 10px}.shls-title{flex-basis:100%}.shls-bar select{flex:1 1 0;min-width:0}}"
   ].join("\n");
   function ensureStyle() {
     if (document.getElementById("shls-style")) return;
@@ -259,6 +438,17 @@
 
   function requestVariant(api, adId, path) {
     return api("/api/file/variant-url", { method: "POST", body: JSON.stringify({ ad_id: String(adId), path }) });
+  }
+
+  /** Запрос к API по умолчанию (как api() в index.html): адрес от места hls-player.js — сервер может быть не в корне. */
+  function defaultApi(path, opts) {
+    const o = opts || {};
+    const url = new URL(String(path).replace(/^\//, ""), SELF_SRC || document.baseURI).toString();
+    const init = Object.assign({ credentials: "same-origin" }, o, { headers: Object.assign({ "Content-Type": "application/json" }, o.headers || {}) });
+    return fetch(url, init).then(r => r.json().catch(() => ({ error: "Некорректный ответ сервера" })).then(data => {
+      if (!r.ok) throw new Error(data.error || "Не удалось выполнить запрос (" + r.status + ")");
+      return data;
+    }));
   }
 
   /** «Открыть в приложении»: та же ссылка, что у кнопки «Смотреть» (приложение Android, PotPlayer, VLC). */
@@ -301,7 +491,7 @@
     if (src.kind === "hls" || src.kind === "direct") {
       const b = el("button", "ps-hls-btn", "▶ Смотреть в браузере");
       b.type = "button";
-      b.addEventListener("click", () => openPlayer(ctx, resp, src, caps));
+      b.addEventListener("click", () => openOverlay(ctx, resp, src, caps));
       box.appendChild(b);
       return;
     }
@@ -323,89 +513,96 @@
     }
   }
 
-  // ---------- Плеер ----------
+  // ---------- Плеер (общий для оверлея и встраиваемого режима) ----------
 
-  let current = null;
-
-  function openPlayer(ctx, resp, src, caps) {
-    if (current) closePlayer(current);
+  /**
+   * Рисует плеер внутри o.host и возвращает его состояние P. Источник ставит loadFile().
+   * o: {host, overlay, api, controls, autoplay, title, barStart: [элементы в начало панели],
+   *     appButton(P) → кнопка «Открыть в приложении» или null, onState, onEnded, onTime}.
+   */
+  function createPlayer(o) {
     ensureStyle();
-    const ov = el("div", "shls");
-    ov.setAttribute("role", "dialog");
-    ov.setAttribute("aria-modal", "true");
-    ov.setAttribute("aria-label", "Плеер");
+    const box = el("div", "shls-player" + (o.overlay ? "" : " shls-embed"));
+    const stage = el("div", "shls-stage");
     const video = el("video");
-    video.controls = true;
+    video.controls = true; // перемотка, громкость, полноэкранный режим — у браузера
     video.playsInline = true;
     video.setAttribute("playsinline", "");
     video.preload = "auto";
-    const bar = el("div", "shls-bar");
-    const close = el("button", "", "Закрыть");
-    close.type = "button";
-    const titleText = (document.querySelector("#playSheet .ps-title") || {}).textContent || (ctx.file && ctx.file.name) || "";
-    const title = el("div", "shls-title", titleText);
-    const audioSel = el("select");
-    audioSel.setAttribute("aria-label", "Озвучка");
-    const subSel = el("select");
-    subSel.setAttribute("aria-label", "Субтитры");
-    audioSel.hidden = subSel.hidden = true;
-    bar.append(close, title, audioSel, subSel);
+    if (o.title) video.setAttribute("aria-label", o.title);
+    const screen = el("div", "shls-screen");
+    screen.hidden = true;
+    stage.append(video, screen);
+    box.appendChild(stage);
+    let qualitySel = null, audioSel = null, subSel = null;
+    if (o.controls) {
+      const bar = el("div", "shls-bar");
+      (o.barStart || []).forEach(n => bar.appendChild(n));
+      const sel = (label) => { const s = el("select"); s.setAttribute("aria-label", label); s.title = label; s.hidden = true; return s; };
+      qualitySel = sel("Качество");
+      audioSel = sel("Озвучка");
+      subSel = sel("Субтитры");
+      bar.append(qualitySel, audioSel, subSel);
+      box.appendChild(bar);
+    }
     const note = el("div", "shls-note");
-    ov.append(video, bar, note);
-    document.body.appendChild(ov);
+    box.appendChild(note);
+    o.host.appendChild(box);
 
     const P = {
-      ctx, resp, src, caps, ov, video, note, audioSel, subSel,
-      hls: null, shiftMs: 0, pending: null, closed: false,
+      o, api: o.api, box, video, screen, note, qualitySel, audioSel, subSel, caps: detectCaps(),
+      hls: null, engine: null, shiftMs: 0, src: null, view: null, resp: null, pending: null, closed: false,
+      adId: "", path: "", key: "", startMs: 0, token: 0, error: "", noteText: "",
       errState: { net: 0, media: 0, refreshed: false },
-      choice: { audio: null, sub: null },
-      syncOff: false, lastSaved: -1, saveTimer: 0, pollTimer: 0,
-      key: String(ctx.magnet.id) + "|" + ctx.file.path
+      choice: { audio: null, sub: null }, level: -1, levelNow: -1,
+      syncOff: false, lastSaved: -1, saveTimer: 0, pollTimer: 0, prepTimer: 0, lastState: "", unbinds: []
     };
-    current = P;
 
-    const onKey = e => {
-      if (e.key !== "Escape" || P.closed) return;
-      if (document.fullscreenElement) return; // первый Esc — выход из полноэкранного
-      e.stopImmediatePropagation();
-      e.preventDefault();
-      closePlayer(P);
-    };
     const onHide = () => saveProgress(P, true);
-    window.addEventListener("keydown", onKey, true);
     window.addEventListener("pagehide", onHide);
-    P.unbind = () => { window.removeEventListener("keydown", onKey, true); window.removeEventListener("pagehide", onHide); };
-    close.addEventListener("click", () => closePlayer(P));
-
-    audioSel.addEventListener("change", () => setAudio(P, Number(audioSel.value)));
-    subSel.addEventListener("change", () => setSub(P, Number(subSel.value)));
+    P.unbinds.push(() => window.removeEventListener("pagehide", onHide));
+    if (qualitySel) qualitySel.addEventListener("change", () => setQuality(P, Number(qualitySel.value)));
+    if (audioSel) audioSel.addEventListener("change", () => setAudio(P, Number(audioSel.value)));
+    if (subSel) subSel.addEventListener("change", () => setSub(P, Number(subSel.value)));
     video.addEventListener("pause", () => {
       saveProgress(P, true);
       if (P.pending && !video.ended && !P.closed) switchTo(P, P.pending, true);
     });
-    video.addEventListener("ended", () => saveProgress(P, true));
+    video.addEventListener("ended", () => {
+      saveProgress(P, true);
+      if (typeof o.onEnded === "function" && !P.closed) { try { o.onEnded(); } catch (e) { /* страница */ } }
+    });
+    video.addEventListener("timeupdate", () => {
+      if (typeof o.onTime === "function" && P.src && !P.closed) { try { o.onTime(fileMsNow(P) / 1000); } catch (e) { /* страница */ } }
+    });
     video.addEventListener("error", () => onVideoError(P));
     video.textTracks && video.textTracks.addEventListener && video.textTracks.addEventListener("addtrack", () => fillTracks(P));
     video.audioTracks && video.audioTracks.addEventListener && video.audioTracks.addEventListener("addtrack", () => fillTracks(P));
     P.saveTimer = setInterval(() => { if (!video.paused) saveProgress(P, false); }, SAVE_EVERY_MS);
-
-    start(P, src, resumeMs(ctx.watch), false);
+    return P;
   }
 
-  function closePlayer(P) {
+  function destroyPlayer(P) {
     if (P.closed) return;
     saveProgress(P, true);
     P.closed = true;
+    P.token++;
     clearInterval(P.saveTimer);
-    clearTimeout(P.pollTimer);
+    clearTimers(P);
     teardown(P);
-    if (P.unbind) P.unbind();
-    P.ov.remove();
-    if (current === P) current = null;
+    P.unbinds.forEach(f => f());
+    P.box.remove();
+  }
+
+  function clearTimers(P) {
+    clearTimeout(P.pollTimer);
+    clearTimeout(P.prepTimer);
   }
 
   function teardown(P) {
     if (P.hls) { try { P.hls.destroy(); } catch (e) { /* уже */ } P.hls = null; }
+    P.engine = null;
+    P.levelNow = -1;
     try { P.video.pause(); } catch (e) { /* нет */ }
     P.video.removeAttribute("src");
     while (P.video.firstChild) P.video.removeChild(P.video.firstChild);
@@ -417,26 +614,117 @@
     return toFileMs(Number.isFinite(t) ? t * 1000 : 0, P.shiftMs);
   }
 
-  function setNote(P, text, err) {
-    P.note.textContent = text || "";
-    P.note.classList.toggle("err", !!err);
-    const old = P.note.querySelector("button");
-    if (old) old.remove();
+  /** Сообщить странице состояние (только если оно поменялось). */
+  function emit(P) {
+    if (P.closed || typeof P.o.onState !== "function") return;
+    const playing = P.view && (P.view.kind === "hls" || P.view.kind === "direct");
+    const st = playerState({
+      source: P.view, error: P.error, engine: P.engine,
+      levels: P.hls ? P.hls.levels : null, level: P.level, levelNow: P.levelNow,
+      tracks: playing ? listTracks(P) : null, note: P.noteText
+    });
+    if (!st) return;
+    const j = JSON.stringify(st);
+    if (j === P.lastState) return;
+    P.lastState = j;
+    try { P.o.onState(st); } catch (e) { /* ошибка страницы не ломает плеер */ }
   }
+
+  function setNote(P, text) {
+    P.noteText = text || "";
+    P.note.textContent = P.noteText;
+    emit(P);
+  }
+
+  /** Экран поверх видео: «Готовим…», «Этот браузер не показывает…», ошибка; пустой текст — убрать. */
+  function showScreen(P, text, opts) {
+    const s = P.screen;
+    s.replaceChildren();
+    s.hidden = !text;
+    s.classList.toggle("err", !!(opts && opts.err));
+    if (!text) return;
+    s.appendChild(el("div", "shls-msg", text));
+    const b = opts && opts.app && typeof P.o.appButton === "function" ? P.o.appButton(P) : null;
+    if (b) s.appendChild(b);
+  }
+
   function fail(P, text) {
     teardown(P);
-    setNote(P, text + " Откройте в приложении.", true);
-    const sheet = P.ctx.sheet;
-    const b = appButton(sheet);
-    b.style.marginLeft = "8px";
-    b.addEventListener("click", () => closePlayer(P));
-    P.note.appendChild(b);
+    clearTimers(P);
+    P.src = null;
+    P.error = text;
+    showScreen(P, text + " Откройте в приложении.", { err: true, app: true });
+    emit(P);
+  }
+
+  /**
+   * Открыть файл (adId, path) с места startMs (время файла). given: {resp, src} — уже спрошенный variant-url (оверлей).
+   * Ждём кодирования — экран с сообщением и опрос раз в минуту; готово — запуск.
+   */
+  async function loadFile(P, adId, path, startMs, given) {
+    if (P.closed) return;
+    const token = ++P.token;
+    if (P.src) saveProgress(P, true);
+    clearTimers(P);
+    teardown(P);
+    Object.assign(P, {
+      adId: String(adId), path: String(path), key: String(adId) + "|" + path, startMs: startMs || 0,
+      src: null, view: null, resp: null, pending: null, error: "", lastSaved: -1, level: -1,
+      errState: { net: 0, media: 0, refreshed: false }
+    });
+    setNote(P, "");
+    let resp = given && given.resp, src = given && given.src;
+    if (!src) {
+      showScreen(P, "Загружаем…");
+      try { resp = await requestVariant(P.api, adId, path); } catch (e) {
+        if (token === P.token) fail(P, "Не удалось получить ссылку на фильм.");
+        return;
+      }
+      if (token !== P.token) return;
+      src = pickSource(resp, P.caps);
+    }
+    P.resp = resp;
+    if (src.kind === "hls" || src.kind === "direct") {
+      showScreen(P, "");
+      start(P, src, P.startMs, !P.o.autoplay);
+      return;
+    }
+    P.view = src;
+    showScreen(P, src.kind === "legacy" ? LEGACY_MESSAGE : messageFor(src), { app: true });
+    emit(P);
+    if (src.kind === "wait" || src.kind === "soon") schedulePrep(P, token);
+  }
+
+  // Файл ещё готовится (встраиваемый режим): раз в минуту спрашиваем, не готов ли; готов — запускаем.
+  function schedulePrep(P, token) {
+    clearTimeout(P.prepTimer);
+    P.prepTimer = setTimeout(async () => {
+      if (token !== P.token) return;
+      let r = null;
+      try { r = await requestVariant(P.api, P.adId, P.path); } catch (e) { /* следующий раз */ }
+      if (token !== P.token) return;
+      const next = r ? pickSource(r, P.caps) : P.view;
+      if (next.kind === "hls" || next.kind === "direct") {
+        P.resp = r;
+        showScreen(P, "");
+        start(P, next, P.startMs, !P.o.autoplay);
+        return;
+      }
+      if (next.kind !== "legacy") {
+        P.view = next;
+        showScreen(P, messageFor(next), { app: true });
+        emit(P);
+      }
+      schedulePrep(P, token);
+    }, POLL_SHEET_MS);
   }
 
   /** Запустить источник с места fileMs (время файла раздачи). */
   async function start(P, src, fileMs, paused) {
     teardown(P);
     P.src = src;
+    P.view = src;
+    P.error = "";
     P.shiftMs = src.kind === "hls" ? src.shiftMs : 0;
     P.errState = { net: 0, media: 0, refreshed: P.errState.refreshed };
     const at = toHlsMs(fileMs, P.shiftMs) / 1000;
@@ -451,6 +739,7 @@
       seekOnMeta();
       video.src = src.url;
       if (src.upgrade) schedulePoll(P);
+      fillTracks(P);
       return;
     }
     let engine = src.engine;
@@ -462,22 +751,41 @@
         else if (src.fallback) { setNote(P, ""); start(P, src.fallback, fileMs, paused); return; }
         else { fail(P, "Не удалось запустить плеер."); return; }
       } else {
-        const hls = new Hls({ startPosition: at > 0 ? at : -1, enableWorker: true, capLevelToPlayerSize: true });
+        const hls = new Hls(hlsConfig(at));
         P.hls = hls;
+        P.engine = "hlsjs";
         const E = Hls.Events;
-        hls.on(E.MANIFEST_PARSED, () => { fillTracks(P); go(); });
+        hls.on(E.MANIFEST_PARSED, () => {
+          if (P.hls !== hls) return;
+          // запомненное качество ставим до первого сегмента; нет такого уровня — авто
+          const lv = startLevelFor(hls.levels, readQuality(localStore()));
+          P.level = showQualityMenu(hls.levels, "hlsjs") ? lv : -1;
+          if (P.level >= 0) { hls.startLevel = P.level; hls.loadLevel = P.level; }
+          hls.startLoad(at > 0 ? at : -1);
+          fillTracks(P);
+          go();
+        });
+        hls.on(E.LEVEL_SWITCHED, (_e, data) => {
+          if (P.hls !== hls) return;
+          P.levelNow = data && data.level >= 0 ? data.level : -1;
+          fillQuality(P);
+          emit(P);
+        });
         hls.on(E.AUDIO_TRACKS_UPDATED, () => fillTracks(P));
         hls.on(E.SUBTITLE_TRACKS_UPDATED, () => fillTracks(P));
         hls.on(E.FRAG_LOADED, () => { P.errState.net = 0; });
         hls.on(E.ERROR, (_e, data) => onHlsError(P, hls, data));
         hls.loadSource(src.url);
         hls.attachMedia(video);
+        emit(P);
         return;
       }
     }
-    // нативный HLS (Safari)
+    // нативный HLS (Safari): уровни выбирает сам браузер, меню качества нет
+    P.engine = "native";
     seekOnMeta();
     video.src = src.url;
+    fillTracks(P);
   }
 
   function onHlsError(P, hls, data) {
@@ -521,10 +829,10 @@
 
   // Подпись истекла (410/403) или сеть сменилась — новая ссылка на тот же ассет.
   async function refreshAndRestart(P) {
-    const pos = fileMsNow(P), paused = P.video.paused;
+    const pos = fileMsNow(P), paused = P.video.paused, token = P.token;
     let r = null;
-    try { r = await requestVariant(P.ctx.api, P.ctx.magnet.id, P.ctx.file.path); } catch (e) { /* ниже */ }
-    if (P.closed) return;
+    try { r = await requestVariant(P.api, P.adId, P.path); } catch (e) { /* ниже */ }
+    if (P.closed || token !== P.token) return;
     const next = r ? pickSource(r, P.caps) : null;
     if (next && next.kind === "hls") { P.resp = r; start(P, next, pos, paused); }
     else fallback(P);
@@ -534,11 +842,12 @@
   // (или при следующем запуске / следующей серии, там окно фильма само спросит variant-url).
   function schedulePoll(P) {
     clearTimeout(P.pollTimer);
+    const token = P.token;
     P.pollTimer = setTimeout(async () => {
-      if (P.closed || !P.src || P.src.kind !== "direct") return;
+      if (P.closed || token !== P.token || !P.src || P.src.kind !== "direct") return;
       let r = null;
-      try { r = await requestVariant(P.ctx.api, P.ctx.magnet.id, P.ctx.file.path); } catch (e) { /* следующий раз */ }
-      if (P.closed || !P.src || P.src.kind !== "direct") return;
+      try { r = await requestVariant(P.api, P.adId, P.path); } catch (e) { /* следующий раз */ }
+      if (P.closed || token !== P.token || !P.src || P.src.kind !== "direct") return;
       const next = r ? pickSource(r, P.caps) : null;
       if (next && next.kind === "hls") {
         next.fallback = next.fallback || P.src;
@@ -556,6 +865,38 @@
     P.pending = null;
     setNote(P, "");
     start(P, src, pos, paused);
+  }
+
+  // ---------- Качество ----------
+
+  /** Выбор качества: индекс в hls.levels или -1 (авто). Запоминается для следующих запусков. */
+  function setQuality(P, i) {
+    const hls = P.hls;
+    if (!hls || P.closed || !showQualityMenu(hls.levels, P.engine)) return;
+    const idx = Number(i);
+    if (!(idx === -1 || (Number.isInteger(idx) && idx >= 0 && idx < hls.levels.length))) return;
+    P.level = idx;
+    saveQuality(localStore(), idx >= 0 ? levelLabel(hls.levels[idx]) : "auto");
+    // Уровень — сразу: hls.js сбрасывает буфер вперёд и грузит ближайший сегмент нового качества.
+    // Авто — без сброса: ABR решает со следующего сегмента.
+    if (idx >= 0) hls.currentLevel = idx;
+    else hls.loadLevel = -1;
+    fillQuality(P);
+    emit(P);
+  }
+
+  function fillQuality(P) {
+    const sel = P.qualitySel;
+    if (!sel) return;
+    const levels = P.hls ? P.hls.levels : null;
+    if (!showQualityMenu(levels, P.engine)) { sel.hidden = true; return; }
+    sel.replaceChildren();
+    const auto = el("option", "", autoLabel(levels, P.levelNow));
+    auto.value = "-1";
+    sel.appendChild(auto);
+    levelList(levels).forEach(l => { const o = el("option", "", l.label); o.value = String(l.index); sel.appendChild(o); });
+    sel.value = String(P.level >= 0 ? P.level : -1);
+    sel.hidden = false;
   }
 
   // ---------- Дорожки ----------
@@ -587,27 +928,26 @@
     return { audio: a, subs: s, audioNow, subNow };
   }
 
-  function trackLabel(t, i, kind) {
-    return t.name || (t.lang ? t.lang.toUpperCase() : (kind === "audio" ? "Дорожка " : "Субтитры ") + (i + 1));
-  }
-
   function fillTracks(P) {
     if (P.closed) return;
     const L = listTracks(P);
     const fill = (sel, list, now, kind) => {
+      if (!sel) return;
       sel.replaceChildren();
       if (kind === "sub") { const o = el("option", "", "Без субтитров"); o.value = "-1"; sel.appendChild(o); }
       list.forEach((t, i) => { const o = el("option", "", trackLabel(t, i, kind)); o.value = String(i); sel.appendChild(o); });
       sel.value = String(now >= 0 ? now : (kind === "sub" ? -1 : 0));
       sel.hidden = kind === "audio" ? list.length < 2 : list.length === 0;
     };
-    // прошлый выбор (до переключения зеркало → HLS) или DEFAULT из master
+    // прошлый выбор (до переключения зеркало → HLS или в прошлой серии) или DEFAULT из master
     const wantA = pickTrack(L.audio, P.choice.audio, 0);
     if (wantA >= 0 && wantA !== L.audioNow && L.audio.length > 1) { applyAudio(P, wantA); L.audioNow = wantA; }
     const wantS = pickTrack(L.subs, P.choice.sub, -1);
     if (wantS !== L.subNow && (P.choice.sub || wantS >= 0)) { applySub(P, wantS, L.subs); L.subNow = wantS; }
     fill(P.audioSel, L.audio, L.audioNow, "audio");
     fill(P.subSel, L.subs, L.subNow, "sub");
+    fillQuality(P);
+    emit(P);
   }
 
   function applyAudio(P, i) {
@@ -625,16 +965,23 @@
     }
   }
   function setAudio(P, i) {
+    if (P.closed) return;
     const L = listTracks(P);
     const t = L.audio[i];
     if (!t) return;
     P.choice.audio = { name: t.name, lang: t.lang };
     applyAudio(P, i);
+    if (P.audioSel) P.audioSel.value = String(i);
+    emit(P);
   }
   function setSub(P, i) {
+    if (P.closed) return;
     const L = listTracks(P);
-    P.choice.sub = i < 0 ? { off: true } : (L.subs[i] ? { name: L.subs[i].name, lang: L.subs[i].lang } : null);
+    if (i >= 0 && !L.subs[i]) return;
+    P.choice.sub = i < 0 ? { off: true } : { name: L.subs[i].name, lang: L.subs[i].lang };
     applySub(P, i, L.subs);
+    if (P.subSel) P.subSel.value = String(i < 0 ? -1 : i);
+    emit(P);
   }
 
   // ---------- Позиция ----------
@@ -653,13 +1000,108 @@
     const len = dur > 0 ? toFileMs(dur, P.shiftMs) : 0;
     const body = JSON.stringify({ watch: [{ key: P.key, pos, len, at: Date.now() }] });
     let req;
-    try { req = P.ctx.api("/api/sync", { method: "POST", body, keepalive: true }); } catch (e) { return; }
+    try { req = P.api("/api/sync", { method: "POST", body, keepalive: true }); } catch (e) { return; }
     if (req && req.catch) req.catch(e => { if (/Discord|403/.test(String(e && e.message))) P.syncOff = true; });
+  }
+
+  // ---------- Оверлей из окна фильма ----------
+
+  let current = null;
+
+  function openOverlay(ctx, resp, src, caps) {
+    if (current) closeOverlay(current);
+    ensureStyle();
+    const ov = el("div", "shls");
+    ov.setAttribute("role", "dialog");
+    ov.setAttribute("aria-modal", "true");
+    ov.setAttribute("aria-label", "Плеер");
+    document.body.appendChild(ov);
+    const close = el("button", "", "Закрыть");
+    close.type = "button";
+    const titleText = (document.querySelector("#playSheet .ps-title") || {}).textContent || (ctx.file && ctx.file.name) || "";
+    const P = createPlayer({
+      host: ov, overlay: true, api: ctx.api, controls: true, autoplay: true, title: titleText,
+      barStart: [close, el("div", "shls-title", titleText)],
+      appButton: P => {
+        const b = appButton(ctx.sheet);
+        b.className = "shls-btn";
+        b.addEventListener("click", () => closeOverlay(P));
+        return b;
+      }
+    });
+    P.caps = caps;
+    P.ov = ov;
+    current = P;
+    const onKey = e => {
+      if (e.key !== "Escape" || P.closed) return;
+      if (document.fullscreenElement) return; // первый Esc — выход из полноэкранного
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      closeOverlay(P);
+    };
+    window.addEventListener("keydown", onKey, true);
+    P.unbinds.push(() => window.removeEventListener("keydown", onKey, true));
+    close.addEventListener("click", () => closeOverlay(P));
+    loadFile(P, ctx.magnet.id, ctx.file.path, resumeMs(ctx.watch), { resp, src });
+  }
+
+  function closeOverlay(P) {
+    destroyPlayer(P);
+    if (P.ov) P.ov.remove();
+    if (current === P) current = null;
+  }
+
+  // ---------- Встраиваемый режим (страница фильма /watch/<id>) ----------
+
+  /**
+   * SuslikHls.mount(container, opts) → controller. Плеер 16:9 внутри container, без оверлея.
+   * opts: {adId, path, title?, startAt? (сек файла), autoplay?, api?, controls?, onState?(state), onEnded?(), onTime?(sec),
+   *        onOpenApp?() — если задано, на экранах «Готовим…»/ошибки есть кнопка «Открыть в приложении»}.
+   * controller: {load(adId, path, startAt?), setQuality(index|-1), setAudio(index), setSubtitle(index|-1),
+   *              play(), pause(), currentTime() → сек файла, destroy()}.
+   */
+  function mount(container, opts) {
+    if (!hasDom || !container || typeof container.appendChild !== "function") throw new Error("SuslikHls.mount: нужен элемент-контейнер");
+    const o = opts || {};
+    const P = createPlayer({
+      host: container, overlay: false,
+      api: typeof o.api === "function" ? o.api : defaultApi,
+      controls: o.controls === true, autoplay: !!o.autoplay, title: o.title || "",
+      barStart: o.controls === true && o.title ? [el("div", "shls-title", String(o.title))] : [],
+      onState: o.onState, onEnded: o.onEnded, onTime: o.onTime,
+      appButton: typeof o.onOpenApp === "function" ? () => {
+        const b = el("button", "shls-btn", "Открыть в приложении");
+        b.type = "button";
+        b.addEventListener("click", () => { try { o.onOpenApp(); } catch (e) { /* страница */ } });
+        return b;
+      } : null
+    });
+    if (o.adId != null && o.path != null) loadFile(P, o.adId, o.path, secToMs(o.startAt));
+    return {
+      load(adId, path, startAt) { if (adId != null && path != null) loadFile(P, adId, path, secToMs(startAt)); },
+      setQuality(i) { setQuality(P, i); },
+      setAudio(i) { setAudio(P, Number(i)); },
+      setSubtitle(i) { setSub(P, Number(i)); },
+      play() {
+        if (P.closed) return;
+        P.o.autoplay = true; // ещё готовится — запустится, когда будет готово
+        if (P.src) { const p = P.video.play(); if (p && p.catch) p.catch(() => {}); }
+      },
+      pause() {
+        if (P.closed) return;
+        P.o.autoplay = false;
+        P.video.pause();
+      },
+      currentTime() { return P.src ? fileMsNow(P) / 1000 : P.startMs / 1000; },
+      destroy() { destroyPlayer(P); }
+    };
   }
 
   return {
     pickSource, directMime, hlsEngine, toHlsMs, toFileMs, etaMinutes, messageFor,
     parseMasterMedia, pickTrack, hlsErrorAction, resumeMs,
-    attach, detectCaps
+    levelLabel, levelList, showQualityMenu, readQuality, saveQuality, startLevelFor, autoLabel, hlsConfig,
+    playerState, trackLabel, secToMs, QUALITY_KEY,
+    attach, mount, detectCaps
   };
 });
