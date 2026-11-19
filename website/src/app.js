@@ -25,6 +25,7 @@ const customAudioRoutes = require("./routes/custom-audio");
 const aiTitleRoutes = require("./routes/aititle");
 const markersRoutes = require("./routes/markers");
 const activity = require("./routes/activity");
+const hlsRoutes = require("./routes/hls");
 
 function createApp() {
   const app = express();
@@ -70,6 +71,9 @@ function createApp() {
     next();
   });
 
+  // HLS: кодировщик и CDN (Bearer-токены, без cookie) — свой парсер JSON до 256 КБ, поэтому до общего (20 КБ)
+  app.use(hlsRoutes.internal);
+
   // Body parsers
   app.use("/api/playlist", express.json({ limit: "200kb" }));
   app.use("/api/app/changelog", express.json({ limit: "200kb" }));
@@ -100,6 +104,7 @@ function createApp() {
   app.use(customAudioRoutes);
   app.use(aiTitleRoutes);
   app.use(markersRoutes);
+  app.use(hlsRoutes.router);
   app.use(activity.router);
 
   // Static files

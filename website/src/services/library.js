@@ -131,7 +131,15 @@ async function getLibrary() {
   }
 }
 
+/** infohash раздачи из последней загруженной медиатеки, без запроса к AllDebrid (для hls_id, docs/HLS.md §4); иначе null. */
+function cachedMagnetHash(id) {
+  const data = (libraryFresh && libraryFresh.data) || libraryLastGood;
+  const m = data && Array.isArray(data.magnets) ? data.magnets.find(x => String(x.id) === String(id)) : null;
+  return (m && m.hash) || null;
+}
+
 module.exports = {
+  cachedMagnetHash,
   libraryChanged,
   buildLibrary,
   getLibrary

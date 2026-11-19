@@ -89,3 +89,107 @@ node --test ../docs/hls-fixtures/*.test.js
 и перестройку индексов с диска. `hls-disabled.test.js` проверяет, что при выключенном HLS сайт работает как раньше.
 
 ## T4 — API
+
+Маршруты — `website/src/routes/hls.js`. Регистрация в `app.js`: `hlsRoutes.internal` — до общего `express.json({limit: "20kb"})`,
+`hlsRoutes.router` — вместе с остальными маршрутами. Блок `hls` в variant-url добавляет `routes/mirror.js` через `variantHls()`.
+
+### Уточнения контракта (T4)
+
+- **done присылает manifest целиком.** Тело `POST /internal/hls/done` — как `done-request.json` плюс поле `manifest`: содержимое
+  `manifest.json` профиля (как `hls-fixtures/manifest.json`). Без `manifest` или без `manifest.video` → `400 {code: "bad_manifest"}`, профиль не становится ready.
+  Сервер хранит в `profiles.<p>` поля `manifest_sha256` (как прислано) и `manifest` (только поля для master: `duration_ms`, `encoder`,
+  `video[] {dir, codec, width, height, bandwidth, avg_bandwidth, fps}`, `audio[] {dir, codec, channels, language, name, default}`,
+  `subtitles[] {dir, language, name, forced}`; до 4 видео, 4 звуковых, 6 субтитров).
+- **master.m3u8** строится строго по `manifest.video` (у исходника ≤ 720p — только `720p/`, у v1-copy — одна дорожка, кодек может быть `avc1…`),
+  звук — по `manifest.audio`, субтитры — по `manifest.subtitles`. `CODECS` = кодек видео + кодек звука по умолчанию. Нет звука — без `AUDIO=`,
+  нет субтитров — без `SUBTITLES=`. Ни одна дорожка не `default` — `DEFAULT=YES` у первой. `FORCED=YES` идёт с `AUTOSELECT=YES`.
+- **probe:** у видеодорожки `dovi: true` → всегда `v1`.
+- **progress** принимает любую стадию (`probe`, `fingerprint`, `wait`, `encode`, `verify`, `upload`, `done`) и продлевает аренду; во время `wait` воркер шлёт её сам.
+- После `alias` воркер `done` не шлёт: задание закрывает сам probe.
+- **evicted** принимает массив или `{items: [...]}`; неизвестные `hls_id`/профили и `last_access: 0` пропускаются, ответ `200 {ok, removed}`.
+- **next:** если файла уже нет в раздаче — задание `failed` без повтора; AllDebrid не ответил — `failed` с повтором. Берётся следующее (до 3 за запрос).
+- `HLS_SIGN_SECRET` — только `A-Z a-z 0-9 . _ ~ + / = -` (nginx). Иначе при старте с `HLS_ENABLED` — предупреждение в журнал (`config.HLS_SECRET_RE`).
+- **direct_ok:** `mediatags.js` теперь пишет в `meta.acodecs` кодеки звука из ffprobe (`["aac","ac3"]`). Если они есть, `computeDirectOk` смотрит на них:
+  годятся `aac`, `mp3`, `opus`, `vorbis`, `flac`; в `direct.acodec` — первый неподходящий (`dts`, `truehd`, `ac3`, `eac3` или имя ffprobe), иначе первый.
+  Старые записи без `acodecs` — по меткам, как раньше (появятся при следующем разборе раздачи). Видимые метки не изменились.
+
+### Внутренние запросы (`/internal/hls/*`)
+
+Bearer-токен сравнивается через `timingSafeEqual` (по sha256). Токен в `.env` не задан → `503 {code: "not_configured"}`; нет или чужой → `401 {code: "unauthorized"}`
+(токен CDN к запросам воркера не подходит, и наоборот). Тело разбирается только после проверки токена, до 256 КБ (больше → 413).
+Ошибки `HlsError` → `{error, code}` с её HTTP-кодом. Лимит — 300 запросов в минуту с адреса (`hlsInternalLimiter`).
+
+| Запрос | Токен | Ответ |
+|---|---|---|
+| `GET /internal/hls/next` | воркер | задание (`next-job.json`) с `mirror_url` — подписанная ссылка зеркала `/api/file/proxy/<имя>?link&exp&sig` на 12 ч; пусто → `204` |
+| `POST /internal/hls/probe` | воркер | `alias` / `encode` / `wait`; неизвестное задание → `404 unknown_job` |
+| `POST /internal/hls/progress` | воркер | `{ok, leased_until}`; неизвестное задание → `404 unknown_job` (воркеру — бросить его) |
+| `POST /internal/hls/done` | воркер | `{ok, active_profile}`; `400 bad_manifest`, `404 unknown_asset` |
+| `POST /internal/hls/failed` | воркер | `{ok, state, attempts}` (`state: null` — задание уже снято); `404 unknown_job` |
+| `GET /internal/hls/pending-deletes` | CDN | `{items: [{hls_id, profile}]}` |
+| `POST /internal/hls/evicted` | CDN | `{ok, removed}` |
+| `POST /internal/hls/cdn-stats` | CDN | `{ok}` |
+
+### master.m3u8
+
+`GET /api/hls/<hls_id>/master.m3u8?exp&sig` — без cookie. HLS выключен → 404; подпись неверна → 403; срок вышел → 410; нет ассета, не ready или нет manifest → 404;
+CDN не настроен (`HLS_CDN_URL`/`HLS_SIGN_SECRET`) → 503. Ответ `application/vnd.apple.mpegurl`, `Cache-Control: no-store`, ссылки CDN с тем же `exp`.
+Обновляет `last_access`. Лимит — `hlsLimiter` (как `mirrorUrlLimiter`, 300/мин).
+
+### variant-url
+
+Блок `hls` (§10) собирается на каждый ответ, в 15-минутный кэш не попадает: кэш хранит ответ без `hls`, подпись мастера свежая (12 ч).
+Блока нет, если `HLS_ENABLED` выключен или пользователя нет в `HLS_BETA_USERS`. Если статус `none` и файл — видео, он ставится в очередь с приоритетом 0,
+а следующие две серии того же сезона (`nextEpisodes`, по `episodeOf`) — с приоритетом 1 (кроме упавших заданий). Ответ уже с новым статусом:
+после постановки — `encoding` с `progress: 0` и `eta: null`. `none` остаётся у файлов не-видео и если поставить не удалось.
+`hash` для `hls_id` берётся из последней медиатеки в памяти (`library.cachedMagnetHash`), без запроса к AllDebrid.
+
+### CSP и hls.js
+
+`pageCsp()`: origin `HLS_CDN_URL` (без пути) в `connect-src` и `media-src`, всегда `worker-src 'self' blob:`.
+Плеер — `website/public/vendor/hls.min.js`, **hls.js 1.7.4** (npm, `dist/hls.min.js`, выпуск 28.10.2026,
+sha256 `cfc70cc9e9fc63d071919e087670abc760c8fd1bc889b88588026e4d22193bbe`), лицензия Apache-2.0 — `vendor/hls.js.LICENSE`.
+Отдаётся `express.static` как `application/javascript`. `scripts/check.js` папку `vendor/` не проверяет. Файл `.map` не кладём.
+
+### Админка (для T6)
+
+Все запросы — `requireLogin` + `isLibraryAdmin` (Discord-пользователь с ролью admin): без входа → 401, не админ → `403 {code: "forbidden"}`.
+POST — с cookie сайта (как остальной сайт, `sameOriginWrites`) или с `X-Device-Token`. Ошибки — `{error, code}`. Лимит — `hlsLimiter`.
+
+**`GET /api/hls/admin/state`** →
+
+```
+{ enabled, configured: {cdn_url, sign_secret, worker_token, cdn_token},   // bool: что задано в .env
+  now,                                                                     // unix-с
+  totals: {jobs, queued, running, failed, assets, ready, bytes},
+  queue: [{ job_id, hls_id, ad_id, path, size, hash, canonical_id, edition, episode, priority, profile, leased_until,
+            state, attempts, progress, eta_s, stage, created_at, error: {stage, error, at} | null, force, replaces }],
+            // порядок — как выдаёт next (приоритет, потом очередь постановки)
+  assets: [{ hls_id, source: {ad_id, path, size, hash}, canonical_id, edition, episode, duration_ms, active_profile,
+             pending_delete: [profile], last_access, error, bytes,
+             profiles: { "v1"|"v1-copy": {status: "encoding"|"ready", bytes, created_at, encoder} },
+             aliases: [{ad_id, path, shift_ms}] }],                        // по last_access, свежие сверху
+  cdn: {disk_total, disk_used, assets, profiles, at, received_at} | null } // последнее cdn-stats (в памяти)
+```
+
+**`POST /api/hls/admin/retry {job_id}`** → `{ok, job}`. Задание снова в очереди сразу, попытки с нуля, ошибка ассета снята.
+Нет задания → `404 unknown_job`; задание в аренде у воркера → `409 busy`.
+
+**`POST /api/hls/admin/reencode {ad_id, path, hls_id?}`** → `{ok, job, replaces}`. Новый источник: файл раздачи кодируется в `v1` с приоритетом 0,
+без переиспользования (probe всегда `encode`), в ассет со своим `hls_id` (по этому файлу). `hls_id` — какой ассет он заменяет; по умолчанию —
+тот, что сейчас играет этот файл, иначе готовый по ключу переиспользования. После `done` алиасы старого ассета переходят на новый
+(сдвиг пересчитывается по длительностям; разница > 2 мин — алиас остаётся на старом), у старого `active_profile: null` и все профили в `pending_delete`.
+Пока идёт кодирование, старый ассет играет как раньше. Если `hls_id` нового совпал со старым (тот же файл) — файлы на CDN перезаписываются на месте.
+Файла нет в раздаче → `404 unknown_file`; не видео → `400`; файл сейчас кодируется → `409 busy`; нет такого `hls_id` → `404 unknown_asset`.
+
+**`POST /api/hls/admin/delete {hls_id, profile?}`** → `{ok, hls_id, pending_delete, removed}`. Профиль (или все без `profile`) уходит в `pending_delete`;
+если это `active_profile`, играть начинает другой готовый профиль или никакой. CDN удаляет файлы и присылает `evicted` — тогда запись исчезает
+(без профилей — ассет и его алиасы). Без `profile` снимаются и задания ассета вне аренды; ассет без профилей удаляется сразу (`removed: true`).
+Нет ассета → `404 unknown_asset`, нет профиля → `404 unknown_profile`.
+
+### Тесты T4
+
+`website/test/hls-api.test.js`: токены воркера и CDN (401, 503), лимит тела 256 КБ на `/internal` и 20 КБ на остальном, `next` с `mirror_url` и 204,
+`progress` со стадией `wait`, `evicted` с неизвестными, variant-url (none / encoding / ready, серии N+1 и N+2, статус мимо кэша, без `HLS_ENABLED` и не в бете —
+без `hls`), master.m3u8 (звук, субтитры, 403/410/404, только 720p и avc1), CSP, `/vendor/hls.min.js`, админка, reencode с переносом алиасов,
+`meta.acodecs` в `direct_ok`, `dovi`.

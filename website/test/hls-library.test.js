@@ -70,7 +70,7 @@ test("готовая версия по ключу переиспользован
   const a = hls.enqueue({ ad_id: "1", path: "A/Movie.mkv", size: 10, priority: 2, ...cid }, NOW).job;
   hls.next(NOW);
   const r = hls.handleProbe(a.job_id, { fingerprint: fp(1), duration_ms: 7200000, format: {}, streams: [] }, NOW);
-  hls.done({ job_id: a.job_id, hls_id: r.hls_id, profile: r.profile, manifest_sha256: "a".repeat(64), bytes: 1 }, NOW);
+  hls.done({ job_id: a.job_id, hls_id: r.hls_id, profile: r.profile, manifest_sha256: "a".repeat(64), manifest: require("../../docs/hls-fixtures/manifest.json"), bytes: 1 }, NOW);
   // enqueueMagnet берёт canonical_id из «Определить через ИИ»: подменяем ответ подтверждённым
   const ai = require("../src/services/aititle");
   const orig = ai.resultFor;

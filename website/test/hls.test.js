@@ -71,7 +71,7 @@ function encodeDone(job, body) {
       job_id: job.job_id,
       hls_id: r.hls_id,
       profile: r.profile,
-      manifest_sha256: "a".repeat(64),
+      manifest_sha256: "a".repeat(64), manifest: require("../../docs/hls-fixtures/manifest.json"),
       bytes: 1000
     },
     NOW
@@ -285,7 +285,7 @@ test("12. Параллельные probe одного отпечатка: wait �
       job_id: j1.job_id,
       hls_id: p1.hls_id,
       profile: p1.profile,
-      manifest_sha256: "a".repeat(64),
+      manifest_sha256: "a".repeat(64), manifest: require("../../docs/hls-fixtures/manifest.json"),
       bytes: 1000
     },
     NOW
@@ -372,7 +372,7 @@ test("15. Переход v1-copy -> v1 -> pending_delete -> evicted", () => {
       job_id: v.job_id,
       hls_id: a.hls_id,
       profile: "v1",
-      manifest_sha256: "b".repeat(64),
+      manifest_sha256: "b".repeat(64), manifest: require("../../docs/hls-fixtures/manifest.json"),
       bytes: 2000
     },
     NOW
