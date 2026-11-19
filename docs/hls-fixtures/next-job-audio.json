@@ -1,0 +1,25 @@
+{
+  "job_id": "j_a01JD3X8Q",
+  "type": "audio",
+  "hls_id": "178e77a7ddb10079",
+  "profile": "v1",
+  "duration_ms": 7951200,
+  "tracks": [
+    {
+      "key": "custom:42",
+      "dir": "x0",
+      "mirror_url": "https://site.example.org/api/file/proxy/HDRezka.mka?link=...&exp=...&sig=...",
+      "offset_ms": -4200,
+      "name": "HDRezka",
+      "language": "ru"
+    },
+    {
+      "key": "file:Movie.2010.1080p/Audio/Movie.2010.LostFilm.mka",
+      "dir": "x1",
+      "mirror_url": "https://site.example.org/api/file/proxy/Movie.2010.LostFilm.mka?link=...&exp=...&sig=...",
+      "offset_ms": 0,
+      "name": "LostFilm",
+      "language": "ru"
+    }
+  ]
+}

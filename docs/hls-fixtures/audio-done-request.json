@@ -1,0 +1,21 @@
+{
+  "job_id": "j_a01JD3X8Q",
+  "hls_id": "178e77a7ddb10079",
+  "profile": "v1",
+  "tracks": [
+    {
+      "key": "custom:42",
+      "dir": "x0",
+      "codec": "mp4a.40.2",
+      "channels": 2,
+      "bytes": 127216000
+    },
+    {
+      "key": "file:Movie.2010.1080p/Audio/Movie.2010.LostFilm.mka",
+      "dir": "x1",
+      "codec": "mp4a.40.2",
+      "channels": 2,
+      "bytes": 127216000
+    }
+  ]
+}
