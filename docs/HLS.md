@@ -336,5 +336,9 @@ POST /internal/hls/audio-done { job_id, hls_id, profile, tracks: [{ key, dir, co
 Уточнения реализации (19.11): из `.mka` берётся первая звуковая дорожка; 404/410 от зеркала на файле озвучки — `failed` без повтора
 (файла нет), сеть/5xx/истёкшая подпись — с повтором. `name`, `language`, `offset_ms` сайт берёт из своего задания, в `audio-done` их нет.
 В конце плейлиста дорожки бывает хвостовой сегмент ~0,02 с (кадры AAC) — это нормально.
+Ключи — `custom:<id дорожки>` (вид `custom:trk_…`; в фикстурах условно `custom:42`) и `file:<путь>`. Язык: ISO 639-2 из custom-audio
+переводится в 639-1 (`rus` → `ru`, `und` → без языка); у озвучки из раздачи — по тегу `[rus]` или кириллице в имени, иначе `null`.
+`shift_ms` алиаса прибавляется и к озвучкам из его раздачи. Ответ `audio-done` — `{ ok, added, skipped }`.
+После `finalize-audio` CDN сам заново ставит `v1` в архивацию; сайт флаг `archived` не сбрасывает.
 
 Фикстуры: `next-job-audio.json`, `audio-done-request.json`, `pending-deletes-audio.json`, `manifest-external.json`.
