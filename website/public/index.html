@@ -2334,6 +2334,7 @@ async function psLoad(s,file,label,playlistReq,magnet){
   sub.textContent=mUrl?"Можно смотреть":(err?.message||"Не удалось открыть фильм");
   sub.classList.toggle("err",!mUrl);
   if(mUrl&&magnet&&s.dataset.kind!=="movie") saveLastEpisode(magnet.id,file.path);
+  if(window.SuslikHls) SuslikHls.attach({sheet:s,file,magnet,mirrorUrl:mUrl,live,api,watch:magnet?watchOf(magnet.id,file):null}); // встроенный плеер (hls-player.js)
 }
 function ensurePlaySheet(){
   let s=document.getElementById("playSheet");
@@ -3044,6 +3045,7 @@ checkSession();
 })();
 </script>
 
+<script src="hls-player.js" defer></script>
 <script src="redesign.js?v=6" defer></script>
 <script src="home.js?v=8" defer></script>
 </body>
