@@ -1,0 +1,21 @@
+[Unit]
+Description=Suslik Media CDN: возврат версий из холодного архива (hls-restore.sh)
+After=network-online.target nginx.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/lib/hls-cdn/hls-restore.sh
+Restart=on-failure
+RestartSec=30
+# rclone обновляет токен Google в rclone.conf — /etc/hls-cdn должен быть доступен на запись
+Environment=RCLONE_CACHE_DIR=/var/cache/hls-rclone
+CacheDirectory=hls-rclone
+ProtectSystem=strict
+ReadWritePaths=/srv/hls /var/lib/hls-evict /etc/hls-cdn
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

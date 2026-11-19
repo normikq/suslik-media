@@ -1,0 +1,10 @@
+[Unit]
+Description=Suslik Media CDN: hls-archive.sh раз в 5 минут
+
+[Timer]
+OnBootSec=10min
+OnUnitInactiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

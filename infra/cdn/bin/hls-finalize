@@ -45,5 +45,15 @@ else
   mv -T -- "$src" "$dst"
 fi
 
+# Очередь архивации (§17): только v1 (v1-copy временный), только при включённом архиве (HLS_ARCHIVE_QUEUE в upload.env).
+# Возврат из архива (hls-restore.sh) зовёт finalize с HLS_FINALIZE_NO_ARCHIVE=1: копия в архиве уже есть.
+# Ошибка постановки не отменяет приём: профиль на месте, его доберёт «hls-archive.sh --enqueue-existing».
+if [ "$prof" = v1 ] && [ -n "${HLS_ARCHIVE_QUEUE:-}" ] && [ "${HLS_FINALIZE_NO_ARCHIVE:-0}" != 1 ]; then
+  if ! : > "$HLS_ARCHIVE_QUEUE/$hid.v1" 2>/dev/null; then
+    echo "finalize: ВНИМАНИЕ: не удалось поставить $hid/v1 в очередь архивации" >&2
+    logger -t hls-finalize "не поставлен в очередь архивации: $hid/v1" 2>/dev/null || true
+  fi
+fi
+
 logger -t hls-finalize "ok $hid/$prof $bytes" 2>/dev/null || true
 echo "ok $hid/$prof $bytes"

@@ -6,7 +6,8 @@
 # Перед первым запуском: заполнить /etc/hls-cdn/cdn.env (образец — cdn.env.example; скрипт сам положит его, если файла нет).
 # Что делает: пакеты; HDD в /srv/hls с noatime (только уже размеченный раздел — форматирование руками, см. README);
 # пользователь hls-upload с rrsync; nginx из шаблона (секрет — отдельным файлом 0640); certbot (webroot);
-# ufw (ssh, 80, 443); fail2ban (sshd + перебор подписей); logrotate; таймер evict.sh; по --sample — образец для test.sh.
+# ufw (ssh, 80, 443); fail2ban (sshd + перебор подписей); logrotate; таймер evict.sh; по --sample — образец для test.sh;
+# при HLS_ARCHIVE_REMOTE в cdn.env — холодный архив: rclone, очередь, таймер hls-archive и служба hls-restore (README).
 set -euo pipefail
 cd "$(dirname "$0")"
 SRC=$(pwd)
@@ -19,7 +20,7 @@ while [ $# -gt 0 ]; do
     --sample) SAMPLE=1 ;;
     --no-certbot) CERTBOT=0 ;;
     --no-ufw) UFW=0 ;;
-    -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
     *) echo "неизвестный ключ $1" >&2; exit 2 ;;
   esac
   shift
@@ -48,11 +49,25 @@ SSH_PORT=${SSH_PORT:-22}
 [[ ${HLS_CORS_ORIGIN:-} =~ ^https?://[A-Za-z0-9.:-]+$ ]] || { echo "HLS_CORS_ORIGIN: origin вида https://site.example.org" >&2; exit 1; }
 [ -n "${SM_SITE_URL:-}" ] || echo "ВНИМАНИЕ: SM_SITE_URL пуст — evict.sh не сможет отчитываться сайту" >&2
 [ -n "${HLS_CDN_TOKEN:-}" ] || echo "ВНИМАНИЕ: HLS_CDN_TOKEN пуст — evict.sh не сможет отчитываться сайту" >&2
+ARCHIVE_REMOTE=${HLS_ARCHIVE_REMOTE:-}
+RCLONE_CONF=${HLS_RCLONE_CONFIG:-/etc/hls-cdn/rclone.conf}
+ARCHIVE_QUEUE=${HLS_ARCHIVE_QUEUE:-/var/lib/hls-archive-queue}
 
 step "Пакеты"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
 apt-get install -y -q nginx rsync jq curl ufw fail2ban certbot gettext-base openssh-server util-linux logrotate
+# rclone — для холодного архива; уже стоит (например, с rclone.org) — не трогаем. Нужен ≥ 1.54 (--drive-stop-on-upload-limit):
+# в Ubuntu 22.04 пакет 1.53 — тогда ставить с rclone.org (README, «Архив на Google Drive»).
+command -v rclone >/dev/null || apt-get install -y -q rclone || echo "ВНИМАНИЕ: rclone из apt не поставился" >&2
+if command -v rclone >/dev/null; then
+  rv=$(rclone version 2>/dev/null | sed -n '1s/^rclone v\([0-9]*\)\.\([0-9]*\).*/\1 \2/p')
+  read -r rmaj rmin <<< "${rv:-0 0}"
+  if [ "$rmaj" -lt 1 ] || { [ "$rmaj" = 1 ] && [ "$rmin" -lt 54 ]; }; then
+    msg="rclone ${rmaj}.${rmin} старше 1.54 — поставьте свежий: curl https://rclone.org/install.sh | sudo bash"
+    if [ -n "$ARCHIVE_REMOTE" ]; then echo "$msg" >&2; exit 1; else echo "ВНИМАНИЕ: $msg" >&2; fi
+  fi
+fi
 
 step "Диск $HLS_ROOT"
 mkdir -p "$HLS_ROOT"
@@ -100,11 +115,17 @@ fi
 "$RRSYNC" -help 2>&1 | grep -q -- '-wo' || echo "ВНИМАНИЕ: $RRSYNC не знает -wo — нужна версия rrsync из rsync 3.2.4+" >&2
 
 install -d -m 755 "$LIB"
-install -m 755 bin/hls-upload-shell bin/hls-finalize evict.sh test.sh make-sample.sh "$LIB/"
-install -m 644 lib-sign.sh "$LIB/"
+install -m 755 bin/hls-upload-shell bin/hls-finalize evict.sh hls-archive.sh hls-restore.sh test.sh make-sample.sh "$LIB/"
+install -m 644 lib-sign.sh lib-archive.sh "$LIB/"
 if [ -f ../../docs/hls-fixtures/vectors.json ]; then install -m 644 ../../docs/hls-fixtures/vectors.json "$LIB/"; fi
 # без секретов: читается пользователем hls-upload
 printf 'HLS_ROOT=%s\nRRSYNC=%s\nLIB_DIR=%s\n' "$HLS_ROOT" "$RRSYNC" "$LIB" > /etc/hls-cdn/upload.env
+if [ -n "$ARCHIVE_REMOTE" ]; then
+  # Очередь архивации: hls-finalize (от hls-upload) кладёт <hls_id>.v1; каталог только его, root читает и чистит.
+  # Отдельно от /var/lib/hls-evict (0700 root), чтобы hls-upload не получал доступа к состоянию.
+  install -d -o hls-upload -g hls-upload -m 700 "$ARCHIVE_QUEUE"
+  printf 'HLS_ARCHIVE_QUEUE=%s\n' "$ARCHIVE_QUEUE" >> /etc/hls-cdn/upload.env
+fi
 chmod 644 /etc/hls-cdn/upload.env
 
 install -d -o hls-upload -g hls-upload -m 700 /home/hls-upload/.ssh
@@ -188,6 +209,21 @@ install -m 644 systemd/hls-evict.service systemd/hls-evict.timer /etc/systemd/sy
 systemctl daemon-reload
 systemctl enable --now hls-evict.timer
 systemctl list-timers hls-evict.timer --no-pager || true
+
+step "Холодный архив"
+install -m 644 systemd/hls-archive.service systemd/hls-archive.timer systemd/hls-restore.service /etc/systemd/system/
+systemctl daemon-reload
+if [ -f "$RCLONE_CONF" ]; then chown root:root "$RCLONE_CONF"; chmod 600 "$RCLONE_CONF"; fi
+if [ -n "$ARCHIVE_REMOTE" ]; then
+  [ -f "$RCLONE_CONF" ] || { echo "HLS_ARCHIVE_REMOTE задан, но нет $RCLONE_CONF — сначала rclone config (README, «Архив на Google Drive»)" >&2; exit 1; }
+  systemctl enable --now hls-archive.timer
+  systemctl enable hls-restore.service
+  systemctl restart hls-restore.service
+  echo "архив: $ARCHIVE_REMOTE; уже лежащие на диске v1 — однократно: $LIB/hls-archive.sh --enqueue-existing"
+else
+  systemctl disable --now hls-archive.timer hls-restore.service >/dev/null 2>&1 || true
+  echo "архив выключен (HLS_ARCHIVE_REMOTE пуст)"
+fi
 
 if [ "$SAMPLE" = 1 ]; then
   step "Образец для test.sh"
