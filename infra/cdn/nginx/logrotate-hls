@@ -1,0 +1,13 @@
+# /etc/logrotate.d/nginx-hls — evict.sh читает hls-access.log и hls-access.log.1 (без сжатия)
+/var/log/nginx/hls-access.log /var/log/nginx/hls-error.log {
+    daily
+    rotate 14
+    missingok
+    notifempty
+    compress
+    delaycompress
+    sharedscripts
+    postrotate
+        [ -s /run/nginx.pid ] && kill -USR1 "$(cat /run/nginx.pid)"
+    endscript
+}

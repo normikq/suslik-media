@@ -1,0 +1,49 @@
+#!/bin/bash
+# Приём загруженного профиля: ${HLS_ROOT}/.tmp/<hls_id>.<profile>.<rand>/ → ${HLS_ROOT}/<hls_id>/<profile>/ (rename, одна ФС).
+# Вызывается через «ssh hls-upload@<cdn> finalize <имя>» (см. hls-upload-shell) от пользователя hls-upload.
+# Вывод: «ok <hls_id>/<profile> <байт>» и код 0; иначе сообщение в stderr и код ≠ 0.
+set -euo pipefail
+umask 022
+
+[ -r /etc/hls-cdn/upload.env ] && . /etc/hls-cdn/upload.env
+HLS_ROOT=${HLS_ROOT:-/srv/hls}
+TMP="$HLS_ROOT/.tmp"
+
+die() { echo "finalize: $*" >&2; exit 1; }
+
+name=${1:-}
+# hls_id — 16 hex (§4), профиль — v1 | v1-copy (§4), rand — от воркера.
+[[ $name =~ ^([0-9a-f]{16})\.(v1|v1-copy)\.([A-Za-z0-9_-]{4,64})$ ]] || die "плохое имя: ${name:0:100}"
+hid=${BASH_REMATCH[1]}
+prof=${BASH_REMATCH[2]}
+src="$TMP/$name"
+dst="$HLS_ROOT/$hid/$prof"
+
+[ -d "$src" ] && [ ! -L "$src" ] || die "нет папки .tmp/$name"
+[ -f "$src/manifest.json" ] || die "нет manifest.json"
+# только обычные файлы и папки: ссылки и прочее могли бы вывести nginx за пределы профиля
+bad=$(find "$src" ! -type f ! -type d -print -quit)
+[ -z "$bad" ] || die "недопустимый файл: ${bad#"$TMP/"}"
+
+chmod -R u=rwX,go=rX "$src"
+touch "$src"                 # отметка времени выкладки — начальное «последнее обращение» для evict.sh
+bytes=$(du -sb "$src" | cut -f1)
+
+# Общая блокировка с evict.sh: не удалить <hls_id>/ между mkdir и mv.
+exec 9>>"$TMP/.lock"
+flock -w 120 9 || die "занято (блокировка .tmp/.lock)"
+
+mkdir -p "$HLS_ROOT/$hid"
+chmod 755 "$HLS_ROOT/$hid"
+if [ -e "$dst" ]; then
+  # Перезалив профиля: старый уводим в .tmp, новый ставим, старый удаляем. Окно 404 — между двумя rename.
+  old="$TMP/.old.$hid.$prof.$$"
+  mv -T -- "$dst" "$old"
+  mv -T -- "$src" "$dst"
+  rm -rf -- "$old"
+else
+  mv -T -- "$src" "$dst"
+fi
+
+logger -t hls-finalize "ok $hid/$prof $bytes" 2>/dev/null || true
+echo "ok $hid/$prof $bytes"
