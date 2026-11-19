@@ -9,6 +9,9 @@ const { makeJsonWriter } = require("../utils/json-writer");
 //   hls-assets.json  — hls_id → ассет (отпечаток, монтаж, серия, длительность, источник, профили на CDN);
 //   hls-aliases.json — "<adId>|<путь>" → { hls_id, shift_ms }: этот файл раздачи играет этот ассет со сдвигом;
 //   hls-queue.json   — job_id → задание кодировщика.
+// Холодный архив (§17) хранится в записи версии (profiles[<профиль>]) и переживает перезапуск вместе с ассетом:
+//   archived, archive_bytes, archived_at — копия проверена в архиве; status "cold" — вытеснена с CDN, есть в архиве;
+//   restore_requested_at, restore_attempts, restore_timeouts, restore_error, restore_user, restore_file — запрос возврата.
 // Индексы в памяти строятся при старте и поддерживаются при каждом изменении:
 //   byFingerprint — отпечаток → hls_id; byReuseKey — "canonical_id|edition|episode" → Set(hls_id);
 //   byAlias — hls_id → Set(ключей алиасов) (обратный индекс: вытеснение ассета удаляет его алиасы);

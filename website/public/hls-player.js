@@ -74,6 +74,7 @@
    * Что показать по ответу variant-url и возможностям браузера.
    * caps: {hevcMse, avcMse, nativeHls, nativeHevc, nativeAvc, safari, canPlay(mime) → bool}.
    * kind: legacy (блока hls нет — как раньше, внешние плееры) | hls | direct | wait | soon | unsupported.
+   * wait — encoding или restoring (у restoring — restoring: true); при direct_ok оба дают direct с upgrade.
    */
   function pickSource(resp, caps) {
     const c = caps || {};
@@ -94,13 +95,17 @@
       const p = Number(hls.progress);
       return { kind: "wait", etaMin: etaMinutes(hls.eta), progress: Number.isFinite(p) ? Math.max(0, Math.min(1, p)) : null };
     }
+    // Версия в холодном архиве, сервер уже попросил CDN вернуть её (docs/HLS.md §17): ждём, как при кодировании
+    if (hls.status === "restoring") return { kind: "wait", restoring: true, etaMin: etaMinutes(hls.eta), progress: null };
     return { kind: "soon" };
   }
 
   /** Строка под кнопкой в окне фильма. */
   function messageFor(src) {
     switch (src && src.kind) {
-      case "wait": return src.etaMin ? "Готовим для браузера, примерно " + src.etaMin + " мин" : "Готовим для браузера";
+      case "wait":
+        if (src.restoring) return src.etaMin ? "Достаём из архива, примерно " + src.etaMin + " мин" : "Достаём из архива";
+        return src.etaMin ? "Готовим для браузера, примерно " + src.etaMin + " мин" : "Готовим для браузера";
       case "soon": return "Скоро будет готово для браузера";
       case "unsupported": return "Этот браузер не показывает такое видео";
       default: return "";

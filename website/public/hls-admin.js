@@ -1,5 +1,5 @@
 /* Админка HLS (docs/HLS-CLIENT.md, T6): очередь кодирования, готовые видео, место на CDN.
-   Данные — GET api/hls/admin/state, действия — POST api/hls/admin/{retry,reencode,delete}.
+   Данные — GET api/hls/admin/state, действия — POST api/hls/admin/{retry,reencode,delete,restore}.
    Внешний скрипт без инлайна (CSP сайта: script-src 'self'). Чистые функции экспортируются для тестов в Node. */
 (function () {
   "use strict";
@@ -96,7 +96,7 @@
     done: "готово"
   };
   const PRIORITIES = ["Смотрят сейчас", "Следующие серии", "Новая раздача", "Остальное", "Улучшение качества"];
-  const PROFILE_STATUS = { ready: "готово", encoding: "кодируется" };
+  const PROFILE_STATUS = { ready: "готово", encoding: "кодируется", cold: "в архиве", restoring: "достаём из архива" };
 
   const stateText = s => STATES[s] || String(s || "—");
   const stageText = s => (s ? STAGES[s] || String(s) : "");
@@ -111,6 +111,7 @@
     if (status === 401) return "Нужно войти на сайт.";
     if (status === 403) return code === "forbidden" || !msg ? "Нет доступа." : msg;
     if (code === "already_queued") return "Перекодирование уже в очереди.";
+    if (code === "not_cold") return "Этой версии нет в архиве.";
     if (status === 409 || code === "busy") return "Задание сейчас в работе. Попробуйте позже.";
     if (code === "unknown_job") return "Задания уже нет.";
     if (code === "unknown_asset") return "Запись уже удалена.";
@@ -270,7 +271,9 @@
       [t.failed, "с ошибкой"],
       [t.ready, "готово"],
       [t.assets, "всего записей"],
-      [formatBytes(t.bytes), "занимают"]
+      [formatBytes(t.bytes), "занимают"],
+      ...(t.archived ? [[t.archived, "в архиве"], [formatBytes(t.archive_bytes), "в архиве занимают"]] : []),
+      ...(t.cold || t.restoring ? [[(t.cold || 0) + (t.restoring || 0), "только в архиве"]] : [])
     ]) {
       const box = el("div", "stat");
       box.append(el("b", null, value ?? 0), el("span", null, label));
@@ -395,13 +398,23 @@
       const row = el("div", "profile");
       const info = el("div");
       info.append(el("b", null, name + " "));
-      info.append(el("span", "tag " + (p.status === "ready" ? "ready" : "running"), profileStatusText(p.status)));
-      if (pending.includes(name)) info.append(el("span", "tag pending", "ждёт удаления на CDN"));
-      const bits = [formatBytes(p.bytes)];
+      info.append(el("span", "tag " + (p.status === "ready" ? "ready" : p.status === "cold" ? "" : "running"), profileStatusText(p.status)));
+      if (p.archived && p.status === "ready") info.append(el("span", "tag", "есть в архиве"));
+      if (pending.includes(name)) info.append(el("span", "tag pending", p.archived ? "ждёт удаления на CDN и в архиве" : "ждёт удаления на CDN"));
+      const bits = [formatBytes(p.status === "cold" || p.status === "restoring" ? p.archive_bytes || p.bytes : p.bytes)];
+      if (p.status === "restoring") bits.push(`осталось ${formatEta(p.eta_s)}`);
+      if (p.restore_error) bits.push(`ошибка возврата: ${p.restore_error}`);
       if (p.encoder) bits.push(p.encoder);
       if (p.created_at) bits.push(formatAgo(p.created_at, now));
       info.append(el("span", "muted", " " + bits.join(" · ")));
       row.append(info);
+      if ((p.status === "cold" || p.status === "restoring") && !pending.includes(name)) {
+        const rb = el("button", "primary", p.status === "restoring" ? "Уже достаём" : "Достать из архива");
+        rb.type = "button";
+        rb.disabled = p.status === "restoring";
+        rb.addEventListener("click", () => act(rb, "api/hls/admin/restore", { hls_id: a.hls_id, profile: name }, "CDN достанет версию из архива."));
+        row.append(rb);
+      }
       if (!pending.includes(name)) {
         const del = el("button", "danger", "Удалить");
         del.type = "button";
