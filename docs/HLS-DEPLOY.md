@@ -151,6 +151,27 @@ sudo systemctl start hls-evict.service && journalctl -u hls-evict -n 20         
 Кодировщик работает от отдельного системного пользователя `suslik-encoder` без пароля и входа. Ваш ключ и ваша учётка
 на CDN ему не нужны. На CDN он заходит только как `hls-upload`, а там разрешены лишь rsync в `.tmp/` и `finalize` (шаг 1).
 
+### Быстро: `encoder/install.sh`
+
+```bash
+sudo ubuntu-drivers install && sudo reboot                     # если драйвера NVIDIA ещё нет (nvidia-smi)
+sudo apt install -y git
+sudo git clone https://github.com/normikq/suslik-media.git /opt/suslik   # не в /home: служба его не увидит
+sudo git -C /opt/suslik checkout feature/hls                   # после слияния PR — main
+sudo /opt/suslik/encoder/install.sh                            # 1-й запуск создаёт /etc/suslik-encoder.env и останавливается
+sudo nano /etc/suslik-encoder.env                              # SM_SITE_URL, HLS_WORKER_TOKEN, SM_CDN_SSH
+sudo /opt/suslik/encoder/install.sh                            # всё остальное
+```
+
+Скрипт ставит из apt `ffmpeg`, `nodejs`, `rsync`, `ssh` (если их нет) и проверяет: Node ≥ 20, ffmpeg ≥ 6.1 с `hevc_nvenc`, `zscale`, `tonemap`, видеокарту.
+Дальше он заводит пользователя `suslik-encoder`, создаёт ssh-ключ и добавляет ключ хоста CDN (печатает отпечаток для сверки), даёт доступ к `/dev/nvidia*`.
+Пробно кодирует NVENC от этого пользователя, проверяет токен на сайте и вход на CDN. В конце ставит и (пере)запускает службу `suslik-encoder`.
+Если CDN ещё не знает ключ, скрипт печатает открытый ключ: добавьте его на CDN (`sudo ./install.sh --upload-key "…"` в `infra/cdn`) и запустите скрипт ещё раз.
+`--once` — после установки выполнить одно задание и показать вывод, `--no-start` — не запускать службу.
+Обновление: `sudo git -C /opt/suslik pull && sudo /opt/suslik/encoder/install.sh`.
+
+Ниже — то же вручную (если скрипт не подходит).
+
 **Нужно:**
 ```bash
 sudo ubuntu-drivers install && sudo reboot          # драйвер NVIDIA, затем nvidia-smi
@@ -328,7 +349,7 @@ journalctl -u suslik-encoder -f            # плюс /var/log/suslik-encoder/
 | Где | Как |
 |---|---|
 | CDN | `cd ~/suslik-media && git pull && cd infra/cdn && sudo ./install.sh` |
-| Кодировщик | `sudo git -C /opt/suslik pull && sudo systemctl restart suslik-encoder` |
+| Кодировщик | `sudo git -C /opt/suslik pull && sudo /opt/suslik/encoder/install.sh` |
 | Сайт | выкладка, как в 2.2 (`website-deploy.yml` или `scripts/deploy-website.sh`) |
 
 **Добавить архив на уже работающий CDN:**

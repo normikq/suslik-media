@@ -1,0 +1,26 @@
+# Шаблон: install.sh подставляет @ENCODER_DIR@ и @NODE@ и кладёт в /etc/systemd/system/suslik-encoder.service
+[Unit]
+Description=Suslik Media HLS encoder
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=suslik-encoder
+Group=suslik-encoder
+SupplementaryGroups=@GROUPS@
+EnvironmentFile=/etc/suslik-encoder.env
+WorkingDirectory=@ENCODER_DIR@
+ExecStart=@NODE@ @ENCODER_DIR@/index.js
+Restart=always
+RestartSec=30
+KillSignal=SIGTERM
+TimeoutStopSec=30
+LogsDirectory=suslik-encoder
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/suslik-encoder /var/log/suslik-encoder
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

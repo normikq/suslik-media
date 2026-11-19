@@ -122,6 +122,8 @@ nssm start SuslikEncoder
 
 ## Установка — Linux (systemd)
 
+Быстрее — `sudo ./install.sh` (Ubuntu: пакеты, проверки, пользователь, ssh-ключ, служба; см. `docs/HLS-DEPLOY.md`, раздел 3). Ниже — вручную.
+
 ```
 # драйвер NVIDIA (Ubuntu): sudo ubuntu-drivers install  → nvidia-smi
 # ffmpeg ≥ 6.1 с nvenc: статическая сборка BtbN (ffmpeg-master-latest-linux64-gpl) в /opt/ffmpeg
