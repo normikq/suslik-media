@@ -473,6 +473,7 @@
       info.append(el("b", null, name + " "));
       info.append(el("span", "tag " + (p.status === "ready" ? "ready" : p.status === "cold" || p.status === "queued" ? "" : p.status === "failed" ? "error" : "running"), profileStatusText(p.status)));
       if (p.archived && p.status === "ready") info.append(el("span", "tag", "есть в архиве"));
+      if (p.from_archive) info.append(el("span", "tag ready", "играет из архива"));
       if (pending.includes(name)) info.append(el("span", "tag pending", p.archived ? "ждёт удаления на CDN и в архиве" : "ждёт удаления на CDN"));
       const bits = [formatBytes(p.status === "cold" || p.status === "restoring" ? p.archive_bytes || p.bytes : p.bytes)];
       if (p.status === "restoring") bits.push(`осталось ${formatEta(p.eta_s)}`);
