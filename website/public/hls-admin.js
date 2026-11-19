@@ -100,7 +100,9 @@
 
   const stateText = s => STATES[s] || String(s || "—");
   const stageText = s => (s ? STAGES[s] || String(s) : "");
-  const priorityText = p => PRIORITIES[Number(p)] || `Приоритет ${p}`;
+  // у заданий «звук» (§18) приоритет 1 — «кто-то смотрит этот фильм», 3 — обычный; номера видео-очереди к ним не подходят
+  const AUDIO_PRIORITIES = { 0: "Смотрят сейчас", 1: "Смотрят сейчас", 3: "Фоном" };
+  const priorityText = (p, type) => (type === "audio" && AUDIO_PRIORITIES[Number(p)]) || PRIORITIES[Number(p)] || `Приоритет ${p}`;
   const profileStatusText = s => PROFILE_STATUS[s] || String(s || "—");
 
   /** Понятный текст ошибки по HTTP-коду и телу {error, code}. status 0 — нет связи. */
@@ -392,7 +394,7 @@
     const tags = el("div");
     tags.append(el("span", "tag " + (j.state || ""), stateText(j.state)));
     if (j.type === "audio") tags.append(el("span", "tag", "звук"));
-    tags.append(el("span", "tag", priorityText(j.priority)));
+    tags.append(el("span", "tag", priorityText(j.priority, j.type)));
     if (j.profile) tags.append(el("span", "tag", j.profile));
     if (j.force) tags.append(el("span", "tag pending", "перекодирование"));
     head.append(tags);

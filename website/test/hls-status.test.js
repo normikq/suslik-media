@@ -109,3 +109,10 @@ test("HLS_CDN_URL без схемы получает https:// — иначе с�
   const url = hls.signHlsUrl("aaaaaaaaaaaaaaa1", "v1", "1080p/index.m3u8", 1767225600, { cdnUrl: normalizeCdnUrl("cdn.example.org"), secret: "s" });
   assert.match(url, /^https:\/\/cdn\.example\.org\/hls\//);
 });
+
+test("hls-admin.js: приоритет задания «звук» подписывается по смыслу, а не как «Следующие серии»", () => {
+  assert.equal(ui.priorityText(1), "Следующие серии");
+  assert.equal(ui.priorityText(1, "audio"), "Смотрят сейчас");
+  assert.equal(ui.priorityText(3, "audio"), "Фоном");
+  assert.equal(ui.priorityText(2, "video"), "Новая раздача");
+});
