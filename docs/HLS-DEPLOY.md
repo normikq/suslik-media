@@ -1,6 +1,6 @@
 # Внедрение HLS: пошагово
 
-Три машины: **CDN** (Европа, Linux, HDD 1 ТБ), **основной сервер** (сайт), **кодировщик** (ПК владельца, Windows + NVIDIA).
+Три машины: **CDN** (Европа, Linux, HDD 1 ТБ), **основной сервер** (сайт), **кодировщик** (Ubuntu + NVIDIA).
 Подробности — `infra/cdn/README.md`, `encoder/README.md`, `docs/HLS-SERVER.md`, `docs/DEPLOY.md`. Контракт — `docs/HLS.md`.
 
 Порядок: 0 → 1 (CDN) → 2 (сайт, HLS выключен) → 3 (кодировщик) → 4 (бета на себя) → 5 (всем).
@@ -23,6 +23,19 @@ openssl rand -hex 32                     # HLS_CDN_TOKEN    — сайт и CDN
 ## 1. CDN
 
 Ubuntu 22.04+ / Debian 12+, отдельный HDD под `/srv/hls`.
+
+**Пользователи на CDN.** `install.sh` сам создаёт `hls-upload` — только для приёма файлов от кодировщика: вход по одному ключу,
+принудительная команда (rsync в `.tmp/` и `finalize`), без шелла, проброса портов и sftp. nginx работает от `www-data` и только читает `/srv/hls`,
+уборка (`hls-evict`) — служба systemd. Для себя заведите отдельного администратора с `sudo` и ключом и закройте вход root и по паролю
+(`install.sh` этого не делает):
+
+```bash
+sudo adduser <вы> && sudo usermod -aG sudo <вы>      # ключ — в /home/<вы>/.ssh/authorized_keys
+# /etc/ssh/sshd_config.d/10-hardening.conf:
+#   PermitRootLogin no
+#   PasswordAuthentication no
+sudo sshd -t && sudo systemctl reload ssh            # проверить вход новой учёткой в другом окне, не закрывая текущее
+```
 
 ```bash
 git clone https://github.com/normikq/suslik-media.git && cd suslik-media
@@ -133,43 +146,104 @@ sudo systemctl start hls-evict.service && journalctl -u hls-evict -n 20         
 
 После старта сайта медиатека в очередь **не** ставится целиком: в очередь попадают новые готовые раздачи и то, что нажали «Смотреть».
 
-## 3. Кодировщик (ПК, Windows)
+## 3. Кодировщик (Ubuntu + NVIDIA)
 
-**Нужно:** драйвер NVIDIA (`nvidia-smi`), Node.js ≥ 20, ffmpeg ≥ 6.1 с `hevc_nvenc` и `zscale`
-(`ffmpeg -hide_banner -encoders | findstr nvenc`, `ffmpeg -hide_banner -filters | findstr "zscale tonemap"`), rsync (MSYS2 `pacman -S rsync` или cwRsync), NSSM.
+Кодировщик работает от отдельного системного пользователя `suslik-encoder` без пароля и входа. Ваш ключ и ваша учётка
+на CDN ему не нужны. На CDN он заходит только как `hls-upload`, а там разрешены лишь rsync в `.tmp/` и `finalize` (шаг 1).
 
-**Код:** отдельная копия, не рабочая папка репозитория, например `C:\suslik\` (`git clone` и `git checkout feature/hls` / `main`). Зависимостей нет: `cd C:\suslik\encoder && npm test` — должно быть зелёным.
-
-**Ключ для CDN:**
-```bat
-ssh-keygen -t ed25519 -f %USERPROFILE%\.ssh\hls-upload -N "" -C encoder
-type %USERPROFILE%\.ssh\hls-upload.pub
+**Нужно:**
+```bash
+sudo ubuntu-drivers install && sudo reboot          # драйвер NVIDIA, затем nvidia-smi
+sudo apt install -y rsync openssh-client git curl xz-utils
+# Node.js ≥ 20 (в Ubuntu 24.04 apt даёт 18 — ставить из NodeSource или nvm для root):
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt install -y nodejs
+# ffmpeg ≥ 6.1 с hevc_nvenc и zscale (apt-шный обычно старый или без nvenc) — статическая сборка BtbN:
+sudo mkdir -p /opt/ffmpeg && curl -L https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz \
+  | sudo tar -xJ -C /opt/ffmpeg --strip-components=1
+/opt/ffmpeg/bin/ffmpeg -hide_banner -encoders | grep nvenc          # есть hevc_nvenc
+/opt/ffmpeg/bin/ffmpeg -hide_banner -filters  | grep -E 'zscale|tonemap'
 ```
-Строку `.pub` добавить на CDN (шаг 1, `authorized_keys`). Один раз зайти, чтобы принять ключ хоста:
-`ssh -i %USERPROFILE%\.ssh\hls-upload hls-upload@cdn.<ваш домен> finalize test` — ответ об ошибке имени — это нормально, главное — хост добавлен в `known_hosts`
-(тем же `ssh`, что будет в `SM_SSH`; у cwRsync/MSYS2 свой `known_hosts`).
 
-**Пробный запуск одного задания** (`cmd`):
-```bat
-cd C:\suslik\encoder
-set SM_SITE_URL=https://<сайт>& set HLS_WORKER_TOKEN=<токен>& set SM_CDN_SSH=hls-upload@cdn.<ваш домен>& set SM_CDN_SSH_KEY=%USERPROFILE%\.ssh\hls-upload& set SM_RSYNC=C:\msys64\usr\bin\rsync.exe& set SM_SSH=C:\msys64\usr\bin\ssh.exe& set SM_ONCE=1& node index.js
+**Код** (копия только для службы, владелец root — пользователь кодировщика его не меняет):
+```bash
+sudo git clone https://github.com/normikq/suslik-media.git /opt/suslik
+sudo git -C /opt/suslik checkout feature/hls            # после слияния PR — main
+cd /opt/suslik/encoder && npm test                      # зелёное; зависимостей нет
 ```
-Очередь пуста — выйдет с «204». Чтобы было что кодировать: на сайте (вы в бете — шаг 4) откройте фильм → «Смотреть» → задание с приоритетом 0.
 
-**Служба (NSSM):**
-```bat
-nssm install SuslikEncoder "C:\Program Files\nodejs\node.exe" "C:\suslik\encoder\index.js"
-nssm set SuslikEncoder AppDirectory C:\suslik\encoder
-nssm set SuslikEncoder AppEnvironmentExtra SM_SITE_URL=https://<сайт> HLS_WORKER_TOKEN=<токен> SM_ENCODER=nvenc SM_CDN_SSH=hls-upload@cdn.<ваш домен> SM_CDN_SSH_KEY=C:\Users\<user>\.ssh\hls-upload SM_RSYNC=C:\msys64\usr\bin\rsync.exe SM_SSH=C:\msys64\usr\bin\ssh.exe SM_FFMPEG=C:\ffmpeg\bin\ffmpeg.exe SM_FFPROBE=C:\ffmpeg\bin\ffprobe.exe
-nssm set SuslikEncoder AppStopMethodConsole 30000
-nssm set SuslikEncoder AppExit Default Restart
-nssm set SuslikEncoder AppRestartDelay 30000
-nssm set SuslikEncoder AppStdout C:\suslik\encoder\logs\service.out.log
-nssm set SuslikEncoder AppStderr C:\suslik\encoder\logs\service.err.log
-nssm start SuslikEncoder
+**Пользователь и ключ для CDN:**
+```bash
+sudo useradd --system --create-home --home-dir /var/lib/suslik-encoder --shell /usr/sbin/nologin suslik-encoder
+sudo -u suslik-encoder install -d -m 700 /var/lib/suslik-encoder/.ssh /var/lib/suslik-encoder/work
+sudo -u suslik-encoder ssh-keygen -t ed25519 -f /var/lib/suslik-encoder/.ssh/hls-upload -N "" -C encoder
+sudo cat /var/lib/suslik-encoder/.ssh/hls-upload.pub      # → на CDN в authorized_keys (шаг 1)
+sudo -u suslik-encoder sh -c 'ssh-keyscan -H cdn.<ваш домен> >> ~/.ssh/known_hosts'   # SSH не на 22: ssh-keyscan -p <порт>
 ```
-Служба от `LocalSystem` не видит ваш `known_hosts` и ключ в профиле — либо `nssm set SuslikEncoder ObjectName .\<user> <пароль>`, либо положить ключ и `known_hosts` туда, откуда их читает выбранный `ssh`.
-Журнал: `C:\suslik\encoder\logs\`. Прочие переменные (`SM_MAX_SOURCE_GB=40`, `SM_CQ`, `SM_NVENC_PRESET`…) — `encoder/README.md`.
+Проверить отпечаток ключа хоста: на CDN `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` должен совпасть с
+`sudo -u suslik-encoder ssh-keygen -lF cdn.<ваш домен>`.
+
+Пробный вход (ожидаемо отказ по имени — значит ключ и forced command работают):
+```bash
+sudo -u suslik-encoder ssh -i /var/lib/suslik-encoder/.ssh/hls-upload hls-upload@cdn.<ваш домен> finalize test
+```
+
+**Настройки** — `/etc/suslik-encoder.env` (`sudo install -m 600 /dev/null /etc/suslik-encoder.env`, затем редактировать):
+```
+SM_SITE_URL=https://<сайт, с путём, если сервер не в корне>
+HLS_WORKER_TOKEN=<из шага 0>
+SM_ENCODER=nvenc
+SM_CDN_SSH=hls-upload@cdn.<ваш домен>
+SM_CDN_SSH_KEY=/var/lib/suslik-encoder/.ssh/hls-upload
+# SM_CDN_SSH_PORT=2222                 # если SSH на CDN не на 22
+SM_FFMPEG=/opt/ffmpeg/bin/ffmpeg
+SM_FFPROBE=/opt/ffmpeg/bin/ffprobe
+SM_WORK_DIR=/var/lib/suslik-encoder/work
+SM_LOG_DIR=/var/log/suslik-encoder
+```
+Под `SM_WORK_DIR` нужно место на результат одного фильма (обычно 3–6 ГБ): исходник не скачивается, ffmpeg читает его с зеркала.
+
+**Пробный запуск одного задания:**
+```bash
+sudo install -d -o suslik-encoder -g suslik-encoder /var/log/suslik-encoder
+sudo -u suslik-encoder env $(sudo grep -v '^#' /etc/suslik-encoder.env | xargs) SM_ONCE=1 node /opt/suslik/encoder/index.js
+```
+Очередь пуста — выйдет с «204». Чтобы было что кодировать: на сайте (вы в бете — шаг 4) откройте фильм → «Смотреть».
+
+**Служба** — `/etc/systemd/system/suslik-encoder.service`:
+```ini
+[Unit]
+Description=Suslik Media HLS encoder
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=suslik-encoder
+Group=suslik-encoder
+EnvironmentFile=/etc/suslik-encoder.env
+WorkingDirectory=/opt/suslik/encoder
+ExecStart=/usr/bin/node /opt/suslik/encoder/index.js
+Restart=always
+RestartSec=30
+KillSignal=SIGTERM
+TimeoutStopSec=30
+LogsDirectory=suslik-encoder
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/suslik-encoder /var/log/suslik-encoder
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
+```
+```bash
+sudo systemctl daemon-reload && sudo systemctl enable --now suslik-encoder
+journalctl -u suslik-encoder -f            # плюс /var/log/suslik-encoder/
+```
+`ProtectHome=yes` не мешает: домашняя папка пользователя — `/var/lib/suslik-encoder`, не `/home`. Доступ к видеокарте (`/dev/nvidia*`) у обычных пользователей в Ubuntu есть по умолчанию;
+если `hevc_nvenc` в службе не стартует, а из консоли работает — `ls -l /dev/nvidia*` и добавить пользователя в группу-владельца (`video`/`render`).
+
+Обновление кода: `sudo git -C /opt/suslik pull && sudo systemctl restart suslik-encoder`. Прочие переменные (`SM_MAX_SOURCE_GB=40`, `SM_CQ`, `SM_NVENC_PRESET`…) — `encoder/README.md`.
 
 ## 4. Бета на себя
 
@@ -194,11 +268,11 @@ nssm start SuslikEncoder
 | Что | Как |
 |---|---|
 | Выключить HLS для всех | `HLS_ENABLED=false` в `.env`, перезапустить сайт. Плеер вернётся к прежнему поведению, зеркало работает как было |
-| Остановить кодирование | `nssm stop SuslikEncoder` (задание вернётся в очередь по истечении аренды) |
+| Остановить кодирование | `sudo systemctl stop suslik-encoder` (задание вернётся в очередь по истечении аренды) |
 | Откатить код сайта | `docs/DEPLOY.md` (резервная копия `.deploy/backup-<время>.tgz`) |
 | Ассет плохой | админка → «Перекодировать с этой раздачи» или «Удалить» (удаляется на CDN при следующем запуске `evict`) |
 | Сменить `HLS_SIGN_SECRET` | одновременно в `.env` сайта и `/etc/hls-cdn/cdn.env`, затем `sudo ./install.sh` на CDN (перегенерирует `/etc/nginx/hls-secret.conf`) и перезапуск сайта; открытые плееры получат 403 и возьмут новую ссылку |
-| Сменить токены | `.env` сайта + служба кодировщика (`nssm set … AppEnvironmentExtra`) / `cdn.env` |
+| Сменить токены | `.env` сайта + `/etc/suslik-encoder.env` + `systemctl restart suslik-encoder` / `cdn.env` |
 
 ## 7. Если не работает
 
@@ -206,7 +280,7 @@ nssm start SuslikEncoder
 |---|---|
 | Кодировщик: `401` | `HLS_WORKER_TOKEN` не совпадает с `.env` сайта |
 | Кодировщик: `404` на `/internal/hls/next` | nginx основного сервера не проксирует `/internal/hls/` (2.1) |
-| `finalize: неожиданный ответ` / `Permission denied` | ключ не в `authorized_keys`, или `known_hosts` у другого `ssh`; на CDN `journalctl -t hls-upload -t hls-finalize` |
+| `finalize: неожиданный ответ` / `Permission denied` | ключ не в `authorized_keys`, или хоста CDN нет в `known_hosts` пользователя `suslik-encoder`; на CDN `journalctl -t hls-upload -t hls-finalize` |
 | Плеер: `403` на `.m4s` | `HLS_SIGN_SECRET` на сайте и CDN разные; на CDN проверить `test.sh` |
 | Плеер: `410` | ссылка старше 12 ч (плеер сам переподписывает) или часы на CDN/сайте расходятся — `timedatectl` |
 | Плеер: CORS в консоли | `HLS_CORS_ORIGIN` в `cdn.env` ≠ origin сайта (схема + домен, без пути) |

@@ -126,6 +126,7 @@ nssm start SuslikEncoder
 # драйвер NVIDIA (Ubuntu): sudo ubuntu-drivers install  → nvidia-smi
 # ffmpeg ≥ 6.1 с nvenc: статическая сборка BtbN (ffmpeg-master-latest-linux64-gpl) в /opt/ffmpeg
 sudo useradd -r -m -d /var/lib/suslik-encoder suslik-encoder
+sudo -u suslik-encoder install -d -m 700 /var/lib/suslik-encoder/.ssh
 sudo -u suslik-encoder ssh-keygen -t ed25519 -f /var/lib/suslik-encoder/.ssh/hls-upload -N ""
 sudo -u suslik-encoder sh -c 'ssh-keyscan -H cdn.example.org >> ~/.ssh/known_hosts'
 ```
