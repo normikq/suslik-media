@@ -46,9 +46,56 @@ GET /internal/hls/next ──204──► пауза SM_IDLE_S
 - **v1** — HEVC (`hevc_nvenc`, `-rc vbr -cq` + `-maxrate`/`-bufsize`): 1080p ≤ 5 Мбит, 720p ≤ 3 Мбит; вписывание в 1920×1080 и 1280×720 без увеличения
   (исходник ≤ 1280×720 — только `720p/`). Ключевые кадры — только принудительные каждые 6 с
   (`-force_key_frames expr:gte(t,n_forced*6)`, `-forced-idr 1`, `-no-scenecut 1`, большой `-g`), поэтому сегменты 1080p и 720p совпадают.
-  HDR (PQ/HLG/DV) → SDR: `zscale` + `tonemap=hable`, метки bt709. Чересстрочный исходник — `bwdif`. `-tag:v hvc1`.
+  HDR (PQ/HLG/DV) → SDR: `libplacebo` на видеокарте или запасной `zscale` + `tonemap=hable` (см. «Тонмаппинг HDR → SDR»), метки bt709.
+  Чересстрочный исходник — `bwdif`. `-tag:v hvc1`.
 - **v1-copy** — `-c:v copy` одной дорожкой (`1080p/`), звук в AAC. Решает сервер по probe.
 - `SM_ENCODER=x265` — то же на процессоре (медленно), `x264` — H.264 (`avc1`), только для проверки без видеокарты.
+
+### Тонмаппинг HDR → SDR
+
+Два пути (`src/tonemap.js`, аргументы — `src/plan.js`):
+
+- **libplacebo** (основной): `-init_hw_device vulkan=vk:<N> -filter_hw_device vk`, один фильтр
+  `libplacebo=w=1920:h=1080:format=yuv420p:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:tonemapping=bt.2390:apply_dolbyvision=1`
+  делает на видеокарте масштаб до верхней ступени, тонмаппинг и перевод в bt709; 720p — `scale` от готового 1080p.
+  Декодирование — как и раньше, NVDEC (`-hwaccel cuda`, кадры в память); метаданные Dolby Vision (RPU) при этом доходят до фильтра,
+  поэтому `apply_dolbyvision` работает (проверено на DV 7, ffmpeg 9.0.2).
+- **cpu** (запасной): сначала `scale` до верхней ступени в 10 битах, затем прежняя цепочка `zscale=t=linear` → `tonemap=hable` → `zscale` bt709
+  уже на 1080p, а не на 4K float32. Цвет тот же, что был (PSNR к прежней цепочке ≈ 56 дБ — разница только в масштабировании).
+
+Dolby Vision без базы HDR10/HLG (профиль 5; или DV, у которого в заголовке нет PQ/HLG) восстанавливается только по RPU — через `zscale`
+получается зелёно-фиолетовая картинка. Такое задание без libplacebo — `failed` с `retryable=false` и понятной ошибкой.
+DV 7 и 8.1 (база HDR10) и 8.4 (HLG) — можно и cpu.
+
+Выбор при старте (`[start] тонмаппинг: libplacebo (NVIDIA GeForce RTX 3060 Ti, vulkan:0)` или `cpu (причина)` в журнале;
+путь каждого задания — в строке `[encode] … тонмаппинг libplacebo|cpu|нет`):
+
+1. есть ли в ffmpeg фильтр `libplacebo`;
+2. список устройств Vulkan — из `ffmpeg -v verbose -init_hw_device vulkan=vk:0 …` («GPU listing»), запасной — `vulkaninfo --summary`;
+   программные (`llvmpipe`, `lavapipe`, `SwiftShader`) не берутся никогда, из остальных — дискретная, потом встроенная;
+3. самопроверка: секунда синтетического HDR10 (PQ, bt2020, 10 бит) через `libplacebo` на выбранном устройстве.
+
+| Переменная | По умолчанию | Что |
+|---|---|---|
+| `SM_TONEMAP` | `auto` | `auto` — libplacebo, если проверки прошли, иначе cpu с предупреждением; `libplacebo` — только он (не прошёл — воркер не стартует); `cpu` — без Vulkan |
+| `SM_VULKAN_DEVICE` | пусто | индекс или часть имени устройства Vulkan (`0`, `3060`); пусто — первое не-программное |
+| `SM_VULKANINFO` | `vulkaninfo` | путь к `vulkaninfo` (только запасной способ получить список) |
+
+Проверить руками (Ubuntu): `vulkaninfo --summary` (пакет `vulkan-tools`) — в списке должна быть `NVIDIA GeForce …`
+(`PHYSICAL_DEVICE_TYPE_DISCRETE_GPU`); `llvmpipe` рядом — это нормально, его воркер пропустит.
+`mesa-vulkan-drivers` (это и есть llvmpipe) не нужен; нужен Vulkan ICD драйвера NVIDIA — `/usr/share/vulkan/icd.d/nvidia_icd.json`
+(или `/etc/vulkan/icd.d/`), он ставится вместе с драйвером (`libnvidia-gl-<версия>`; в «headless»-наборах драйвера его может не быть).
+То же, что делает воркер при старте: `node index.js --tonemap-check` (код выхода 0 — libplacebo, 3 — cpu, 1 — ошибка);
+`install.sh` запускает эту проверку от пользователя службы с её ограничениями.
+
+В журнале `cpu (…)` — по причине:
+- `в ffmpeg нет фильтра libplacebo` — ffmpeg собран без него (`ffmpeg -filters | grep libplacebo`; у ffmpeg 8.0.1 из apt на кодировщике он есть);
+- `устройств Vulkan нет` / `только программные` — нет ICD NVIDIA: `ls /usr/share/vulkan/icd.d/`, `sudo apt install libnvidia-gl-<версия драйвера>`,
+  у службы — доступ к `/dev/nvidia*` (`install.sh` добавляет группы);
+- `самопроверка … не прошла: …` — ошибка ffmpeg в скобках; попробовать вручную
+  `ffmpeg -v verbose -init_hw_device vulkan=vk:0 -filter_hw_device vk -f lavfi -i testsrc2=d=1 -vf "format=yuv420p10le,libplacebo=w=1280:h=720:format=yuv420p" -f null -`;
+- нужно другое устройство — `SM_VULKAN_DEVICE`.
+Пока путь cpu, всё кодируется как раньше (медленнее), кроме DV профиля 5.
 
 ## Задания «звук» — внешние озвучки (`docs/HLS.md` §18)
 
@@ -91,6 +138,7 @@ POST /internal/hls/audio-done {job_id, hls_id, profile, tracks:[{key, dir, codec
 | `SM_UPLOAD_LOCAL_DIR` | — | корень «CDN» для `local`: `<dir>/.tmp/<name>/` → `<dir>/<hls_id>/<profile>/` |
 | `SM_RSYNC`, `SM_SSH` | `rsync`, `ssh` | пути к программам |
 | `SM_FFMPEG`, `SM_FFPROBE` | `ffmpeg`, `ffprobe` | пути к программам |
+| `SM_TONEMAP`, `SM_VULKAN_DEVICE` | `auto`, пусто | путь HDR → SDR — раздел «Тонмаппинг HDR → SDR» |
 | `SM_HWDEC` | `1` при nvenc | декодирование исходника на видеокарте (`-hwaccel cuda`) |
 | `SM_CQ` | `24` (nvenc) / `23` | качество: `-cq` у nvenc, `-crf` у x265/x264 |
 | `SM_NVENC_PRESET` | `p5` | пресет nvenc |
@@ -218,6 +266,10 @@ npm test                    # = node --test: отпечаток (vectors.json), 
 Интеграционный тест сам делает образец (testsrc2 1080p, 2 × AC3 5.1, SRT, MKV, 36 с), гоняет весь цикл через заглушку
 и проверяет: EXT-X-MAP и EXT-X-BYTERANGE, непрерывные смещения до размера `.m4s`, ключевые кадры 1080p и 720p на одних
 временах с шагом 6 с, `subs.vtt` и его плейлист, `manifest.json`, `done`; затем v1-copy, alias, wait, лимит размера.
+`test/tonemap.test.js` — выбор устройства Vulkan (llvmpipe отбрасывается), аргументы cpu (уменьшение до тонмаппинга) и libplacebo,
+DV 5 без libplacebo → ошибка без повтора. `test/hdr.test.js` — синтетический HDR10 4K (PQ, bt2020, 10 бит, mastering display, 12 с, x265)
+через весь цикл путём cpu и путём libplacebo (без Vulkan-видеокарты — пропуск с причиной): bt709, yuv420p, ключевые кадры, средняя яркость,
+время обоих путей — в диагностике теста (`SM_TEST_HDR_SIZE=2560x1440` — меньше кадр).
 `test/audio.test.js` — задание «звук»: аргументы ffmpeg для сдвигов +, −, 0; на образце `.mka` (AC3 5.1, 34 с, `duration_ms` 36000) —
 сдвиги −2000 и +1500 (плейлисты, AAC-LC стерео, длина 36 с, тишина в начале при +), `audio-done`, замена той же `xN`, ошибка на несуществующем файле.
 Кодировщик — nvenc, если он работает, иначе x265; задать явно: `SM_TEST_ENCODER=x265 npm test`. Оставить файлы: `SM_TEST_KEEP=1`.

@@ -7,8 +7,23 @@ const { loadConfig, checkConfig } = require('./src/config');
 const { createLogger } = require('./src/log');
 const { createApi } = require('./src/api');
 const { runLoop, checkTools, acquireLock } = require('./src/worker');
+const { detectTonemap, describeTonemap } = require('./src/tonemap');
+
+/** `node index.js --tonemap-check` — только выбор пути тонмаппинга (install.sh, проверка руками); код 0 — libplacebo, 3 — cpu. */
+async function tonemapCheck() {
+  const cfg = loadConfig();
+  try {
+    const tm = await detectTonemap(cfg);
+    console.log(`тонмаппинг: ${describeTonemap(tm)}`);
+    process.exitCode = tm.mode === 'libplacebo' ? 0 : 3;
+  } catch (e) {
+    console.log(`тонмаппинг: ошибка — ${e.message}`);
+    process.exitCode = 1;
+  }
+}
 
 async function main() {
+  if (process.argv.includes('--tonemap-check')) return tonemapCheck();
   const cfg = loadConfig();
   const log = createLogger({ dir: cfg.logDir, maxBytes: cfg.logMaxBytes, keep: cfg.logKeep });
   const errs = checkConfig(cfg);
