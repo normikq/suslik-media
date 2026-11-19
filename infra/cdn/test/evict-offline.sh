@@ -96,8 +96,10 @@ check "case1: evicted[0].last_access" test "$(printf '%s' "$EV_JSON1" | jq_clean
 check "case1: eeee last_access (403 игнорирован)" test "$(printf '%s' "$EV_JSON1" | jq_clean -r '.[] | select(.hls_id=="eeeeeeeeeeeeeeee") | .last_access')" = "$((NOW - 25 * D))"
 check "case1: cccc last_access" test "$(printf '%s' "$EV_JSON1" | jq_clean -r '.[] | select(.hls_id=="cccccccccccccccc") | .last_access')" = "$((NOW - 40 * D))"
 
-FIX_EV_KEYS=$(jq_clean -cS '.[0] | keys' "$FIX/evicted-request.json")
+# с §17 у каждого элемента evicted есть archived (без архива — false)
+FIX_EV_KEYS=$(jq_clean -cS '.[0] | keys' "$FIX/evicted-request-archived.json")
 check "case1: ключи evicted совпадают с фикстурой" test "$(printf '%s' "$EV_JSON1" | jq_clean -cS 'all(keys == '"$FIX_EV_KEYS"')')" = "true"
+check "case1: без архива все archived:false" test "$(printf '%s' "$EV_JSON1" | jq_clean -c 'all(.archived == false)')" = "true"
 
 ST_JSON1=$(printf '%s\n' "$OUT1" | sed -n 's/^cdn-stats: //p')
 check "case1: cdn-stats disk_total" test "$(printf '%s' "$ST_JSON1" | jq_clean -r '.disk_total')" = "1000"

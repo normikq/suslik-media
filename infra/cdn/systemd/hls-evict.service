@@ -8,9 +8,11 @@ Type=oneshot
 ExecStart=/usr/local/lib/hls-cdn/evict.sh
 Nice=10
 IOSchedulingClass=idle
-# удаляет только внутри корня ассетов и пишет состояние
+# удаляет только внутри корня ассетов и пишет состояние; /etc/hls-cdn — rclone purge обновляет токен в rclone.conf
+Environment=RCLONE_CACHE_DIR=/var/cache/hls-rclone
+CacheDirectory=hls-rclone
 ProtectSystem=strict
-ReadWritePaths=/srv/hls /var/lib/hls-evict
+ReadWritePaths=/srv/hls /var/lib/hls-evict /etc/hls-cdn
 ProtectHome=yes
 PrivateTmp=yes
 NoNewPrivileges=yes

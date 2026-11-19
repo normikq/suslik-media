@@ -8,12 +8,16 @@
 #      сначала менее свежий профиль ассета, у которого их несколько (v1-copy рядом с v1), потом самые старые;
 #   4. сообщает POST /internal/hls/evicted (что удалено) и POST /internal/hls/cdn-stats;
 #   5. чистит брошенные загрузки в .tmp/ (старше 48 ч).
+# Холодный архив (§17, если задан HLS_ARCHIVE_REMOTE): в evicted у каждого профиля archived (по состоянию «archived»
+# от hls-archive.sh); при вытеснении по LRU в своей группе сначала уходят уже заархивированные; pending-deletes с archive:true
+# дополнительно удаляет копию в архиве (rclone purge; ошибка — повтор на следующем запуске) и отчитывается archived:false.
 # Удаление — на уровне профиля; <hls_id>/ удаляется, когда профилей не осталось.
 # Профиль, к которому обращались за последние MIN_IDLE секунд (по умолчанию 2 ч), не трогается — его, скорее всего, смотрят;
 # это касается и pending-deletes (удалится на следующих запусках).
 #
 # Настройки — /etc/hls-cdn/cdn.env (или --env FILE): SM_SITE_URL, HLS_CDN_TOKEN, HLS_ROOT, HLS_EVICT_HIGH, HLS_EVICT_LOW,
-# HLS_EVICT_MIN_IDLE, HLS_EVICT_STATE, HLS_ACCESS_LOG. Ключи командной строки важнее.
+# HLS_EVICT_MIN_IDLE, HLS_EVICT_STATE, HLS_ACCESS_LOG, HLS_ARCHIVE_REMOTE, HLS_RCLONE_CONFIG, HLS_RCLONE.
+# Ключи командной строки важнее.
 #
 # Ключи:
 #   --dry-run            ничего не удалять и не отправлять; печатать план и тела запросов
@@ -27,14 +31,15 @@
 #   --high P --low P     пороги, %
 #   --min-idle SEC       защитный интервал после последнего обращения
 #   --now TS             «текущее» время, Unix-секунды (для проверок)
+#   --reserve N          освободить место ещё под N байт (возврат из архива, hls-restore.sh): порог — от «занято + N»
 set -euo pipefail
 export LC_ALL=C
 
-usage() { sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'; }
 
 DRY=0; NO_REPORT=0; ENV_FILE=""; PENDING_FILE=""
 OPT_ROOT=""; OPT_STATE=""; OPT_HIGH=""; OPT_LOW=""; OPT_MIN_IDLE=""; OPT_NOW=""
-DISK_TOTAL=""; DISK_USED=""; LOGS=()
+DISK_TOTAL=""; DISK_USED=""; RESERVE=0; LOGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY=1 ;;
@@ -50,6 +55,7 @@ while [ $# -gt 0 ]; do
     --low) OPT_LOW=$2; shift ;;
     --min-idle) OPT_MIN_IDLE=$2; shift ;;
     --now) OPT_NOW=$2; shift ;;
+    --reserve) RESERVE=$2; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "evict: неизвестный ключ $1" >&2; exit 2 ;;
   esac
@@ -82,7 +88,7 @@ is_int() { [[ $1 =~ ^[0-9]+$ ]]; }
 valid_hid() { [[ $1 =~ ^[0-9a-f]{16}$ ]]; }
 valid_prof() { [[ $1 =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]]; }
 
-for v in HIGH LOW MIN_IDLE NOW; do is_int "${!v}" || { echo "evict: $v не число" >&2; exit 2; }; done
+for v in HIGH LOW MIN_IDLE NOW RESERVE; do is_int "${!v}" || { echo "evict: $v не число" >&2; exit 2; }; done
 [ "$LOW" -le "$HIGH" ] || { echo "evict: LOW > HIGH" >&2; exit 2; }
 [ -d "$ROOT" ] || { echo "evict: нет каталога $ROOT" >&2; exit 2; }
 command -v jq >/dev/null || { echo "evict: нужен jq" >&2; exit 2; }
@@ -91,8 +97,27 @@ WORK=$(mktemp -d)
 trap 'rm -rf -- "$WORK"' EXIT
 if [ "$DRY" = 0 ]; then mkdir -p "$STATE_DIR"; fi
 STATE_FILE="$STATE_DIR/lastaccess"   # строки «<hls_id> <profile> <unix-время>»
-SPOOL="$STATE_DIR/evicted.spool"     # строки «<hls_id> <profile> <last_access>», ещё не принятые сайтом
+SPOOL="$STATE_DIR/evicted.spool"     # строки «<hls_id> <profile> <last_access> <archived 0|1>», ещё не принятые сайтом
+ARCH_FILE="$STATE_DIR/archived"      # строки «<hls_id> <profile> <байт> <unix-время>»: копия в архиве проверена (hls-archive.sh)
+REMOTE=${HLS_ARCHIVE_REMOTE:-}
+REMOTE=${REMOTE%/}
+RCLONE=${HLS_RCLONE:-rclone}
+RCLONE_ARGS=(--retries=3 --low-level-retries=10)
+if [ -n "${HLS_RCLONE_CONFIG:-}" ]; then RCLONE_ARGS+=("--config=$HLS_RCLONE_CONFIG"); fi
 RC=0
+
+# Один запуск за раз (таймер и hls-restore.sh); та же блокировка охраняет файл «archived» (hls-archive.sh, hls-restore.sh).
+if [ "$DRY" = 0 ] && command -v flock >/dev/null; then
+  exec 7>>"$STATE_DIR/.lock"
+  flock -w 900 7 || { echo "evict: блокировка $STATE_DIR/.lock занята" >&2; exit 1; }
+fi
+
+# Что лежит в архиве (только при включённом архиве): «<hls_id> <profile>»
+: > "$WORK/archived"
+if [ -n "$REMOTE" ] && [ -r "$ARCH_FILE" ]; then
+  awk 'NF >= 2 { print $1, $2 }' "$ARCH_FILE" > "$WORK/archived"
+fi
+is_archived() { grep -qx "$1 $2" "$WORK/archived"; }
 
 # --- адрес сайта и запросы ---------------------------------------------------------------------------------------------
 SITE=${SM_SITE_URL:-}
@@ -140,10 +165,14 @@ for d in "$ROOT"/*/*/; do
   echo "$hid $prof $size $mtime" >> "$WORK/disk"
 done
 
-# Инвентарь «<hls_id> <profile> <байт> <last> <группа>»: last = max(журнал, время выкладки);
-# группа 0 — не самый свежий профиль ассета с несколькими профилями (при равенстве свежее считается v1), 1 — остальные.
-awk -v statefile="$WORK/state" '
-  BEGIN { while ((getline line < statefile) > 0) { split(line, a, " "); t[a[1] " " a[2]] = a[3] + 0 } }
+# Инвентарь «<hls_id> <profile> <байт> <last> <группа> <архив>»: last = max(журнал, время выкладки);
+# группа 0 — не самый свежий профиль ассета с несколькими профилями (при равенстве свежее считается v1), 1 — остальные;
+# архив 0 — копия есть в архиве (в своей группе вытесняется раньше), 1 — нет.
+awk -v statefile="$WORK/state" -v archfile="$WORK/archived" '
+  BEGIN {
+    while ((getline line < statefile) > 0) { split(line, a, " "); t[a[1] " " a[2]] = a[3] + 0 }
+    while ((getline line < archfile) > 0) { split(line, a, " "); arch[a[1] " " a[2]] = 1 }
+  }
   {
     k = $1 " " $2; last = $4 + 0; if (t[k] + 0 > last) last = t[k] + 0
     n++; H[n] = $1; P[n] = $2; S[n] = $3; L[n] = last
@@ -154,7 +183,7 @@ awk -v statefile="$WORK/state" '
   END {
     for (i = 1; i <= n; i++) {
       g = (cnt[H[i]] > 1 && best[H[i]] != P[i]) ? 0 : 1
-      print H[i], P[i], S[i], L[i], g
+      print H[i], P[i], S[i], L[i], g, (((H[i] " " P[i]) in arch) ? 0 : 1)
     }
   }
 ' "$WORK/disk" > "$WORK/inv"
@@ -175,7 +204,7 @@ is_int "$TOTAL" && is_int "$USED" && [ "$TOTAL" -gt 0 ] || { echo "evict: не �
 log "диск: занято $USED из $TOTAL байт ($((USED * 100 / TOTAL)) %), порог $HIGH %, цель $LOW %"
 
 # --- удаление ----------------------------------------------------------------------------------------------------------
-: > "$WORK/deleted"   # «<hls_id> <profile> <last_access>»
+: > "$WORK/deleted"   # «<hls_id> <profile> <last_access> <archived 0|1>»
 LOCKED=0
 take_lock() {
   [ "$DRY" = 0 ] && [ "$LOCKED" = 0 ] || return 0
@@ -186,8 +215,8 @@ take_lock() {
   LOCKED=1
 }
 
-delete_profile() { # hid prof last reason
-  local hid=$1 prof=$2 last=$3 reason=$4
+delete_profile() { # hid prof last reason [archived 0|1; пусто — по состоянию архива]
+  local hid=$1 prof=$2 last=$3 reason=$4 arch=${5:-}
   valid_hid "$hid" && valid_prof "$prof" || { warn "пропуск подозрительного имени: $hid/$prof"; return 0; }
   if grep -q "^$hid $prof " "$WORK/deleted"; then return 0; fi
   if [ "$DRY" = 1 ]; then
@@ -198,7 +227,28 @@ delete_profile() { # hid prof last reason
     rmdir -- "$ROOT/$hid" 2>/dev/null || true
     log "удалён $hid/$prof ($reason, last_access=$last)"
   fi
-  echo "$hid $prof ${last:-0}" >> "$WORK/deleted"
+  if [ -z "$arch" ]; then if is_archived "$hid" "$prof"; then arch=1; else arch=0; fi; fi
+  echo "$hid $prof ${last:-0} $arch" >> "$WORK/deleted"
+}
+
+# Удалить копию в архиве (pending-deletes с archive:true). Код ≠ 0 — не удалено, повтор на следующем запуске.
+purge_archive() { # hid prof
+  local hid=$1 prof=$2 out rc=0
+  if [ -z "$REMOTE" ]; then warn "архив выключен (HLS_ARCHIVE_REMOTE пуст): копию $hid/$prof в архиве не удалить"; return 0; fi
+  if [ "$DRY" = 1 ]; then log "[dry-run] удалить из архива $hid/$prof"; return 0; fi
+  out=$("$RCLONE" purge "${RCLONE_ARGS[@]}" "$REMOTE/$hid/$prof" 2>&1 </dev/null) || rc=$?
+  # 3 — каталога нет: в архиве уже пусто, этого и добивались
+  if [ "$rc" != 0 ] && [ "$rc" != 3 ]; then
+    warn "rclone purge $hid/$prof: код $rc: $(tail -n 2 <<< "$out" | tr '\n' ' ')"
+    return 1
+  fi
+  log "удалён из архива $hid/$prof"
+  if [ -f "$ARCH_FILE" ]; then
+    awk -v h="$hid" -v p="$prof" '!($1 == h && $2 == p)' "$ARCH_FILE" > "$ARCH_FILE.new"
+    mv -f -- "$ARCH_FILE.new" "$ARCH_FILE"
+  fi
+  grep -vx "$hid $prof" "$WORK/archived" > "$WORK/archived.new" || true
+  mv -f -- "$WORK/archived.new" "$WORK/archived"
 }
 
 # 2. pending-deletes
@@ -212,35 +262,44 @@ elif [ -n "$SITE" ]; then
 fi
 if [ -n "$pending_json" ]; then
   # tr -d '\r': jq под Windows (Git Bash) пишет CRLF
-  if ! printf '%s' "$pending_json" | jq -r '.items[]? | "\(.hls_id) \(.profile)"' 2>/dev/null | tr -d '\r' > "$WORK/pending"; then
+  if ! printf '%s' "$pending_json" | jq -r '.items[]? | "\(.hls_id) \(.profile) \(.archive == true)"' 2>/dev/null | tr -d '\r' > "$WORK/pending"; then
     warn "pending-deletes: не JSON"; : > "$WORK/pending"; RC=1
   fi
-  while read -r hid prof; do
+  while read -r hid prof purge <&3; do
     [ -n "$hid" ] || continue
     if ! valid_hid "$hid" || ! valid_prof "$prof"; then warn "pending-deletes: плохая запись «$hid $prof»"; continue; fi
     last=$(last_of "$hid" "$prof")
-    if [ -z "$last" ]; then
-      # на диске нет — сообщаем, что удалено, чтобы сайт убрал запись
-      last=$(awk -v h="$hid" -v p="$prof" '$1 == h && $2 == p { print $3 }' "$WORK/state")
-      delete_profile "$hid" "$prof" "${last:-0}" "pending, на диске нет"
-      continue
-    fi
-    if [ $((NOW - last)) -lt "$MIN_IDLE" ]; then
+    if [ -n "$last" ] && [ $((NOW - last)) -lt "$MIN_IDLE" ]; then
       log "отложено $hid/$prof (pending, обращались $((NOW - last)) с назад)"
       continue
     fi
+    arch=""
+    if [ "$purge" = true ]; then
+      # сначала копия в архиве; не вышло — ничего не удаляем и не отчитываемся, повтор на следующем запуске
+      purge_archive "$hid" "$prof" || { RC=1; continue; }
+      arch=0
+    fi
+    if [ -z "$last" ]; then
+      # на диске нет (в том числе холодная версия) — сообщаем, что удалено, чтобы сайт убрал запись
+      last=$(awk -v h="$hid" -v p="$prof" '$1 == h && $2 == p { print $3 }' "$WORK/state")
+      delete_profile "$hid" "$prof" "${last:-0}" "pending, на диске нет" "$arch"
+      continue
+    fi
     size=$(size_of "$hid" "$prof")
-    delete_profile "$hid" "$prof" "$last" "pending"
+    delete_profile "$hid" "$prof" "$last" "pending" "$arch"
     USED=$((USED - size))
-  done < "$WORK/pending"
+  done 3< "$WORK/pending"
 fi
 
-# 3. LRU при заполнении выше HIGH
+# 3. LRU при заполнении выше HIGH (с --reserve — с учётом места под возвращаемый из архива профиль)
+if [ "$RESERVE" -gt 0 ]; then log "резерв под возврат из архива: $RESERVE байт"; fi
+USED=$((USED + RESERVE))
 if [ $((USED * 100)) -gt $((TOTAL * HIGH)) ]; then
   target=$((TOTAL * LOW / 100))
   log "занято больше $HIGH %: освобождаю до $LOW % ($((USED - target)) байт)"
-  sort -k5,5n -k4,4n -k1,1 -k2,2r "$WORK/inv" > "$WORK/candidates"
-  while read -r hid prof size last group; do
+  # группа (лишние версии первыми), затем уже заархивированные, затем давность обращения
+  sort -k5,5n -k6,6n -k4,4n -k1,1 -k2,2r "$WORK/inv" > "$WORK/candidates"
+  while read -r hid prof size last group archgrp; do
     [ "$USED" -gt "$target" ] || break
     grep -q "^$hid $prof " "$WORK/deleted" && continue
     if [ $((NOW - last)) -lt "$MIN_IDLE" ]; then
@@ -248,6 +307,7 @@ if [ $((USED * 100)) -gt $((TOTAL * HIGH)) ]; then
       continue
     fi
     if [ "$group" = 0 ]; then reason="LRU, лишняя версия"; else reason="LRU"; fi
+    if [ "$archgrp" = 0 ]; then reason="$reason, есть в архиве"; fi
     delete_profile "$hid" "$prof" "$last" "$reason"
     USED=$((USED - size))
   done < "$WORK/candidates"
@@ -255,6 +315,7 @@ if [ $((USED * 100)) -gt $((TOTAL * HIGH)) ]; then
     warn "после уборки всё ещё больше $HIGH % (остальное свежее $MIN_IDLE с)"
   fi
 fi
+USED=$((USED - RESERVE))
 
 # --- 4. отчёты ---------------------------------------------------------------------------------------------------------
 if [ "$DRY" = 0 ]; then
@@ -263,7 +324,8 @@ if [ "$DRY" = 0 ]; then
 else
   report_src="$WORK/deleted"
 fi
-jq -Rn '[inputs | select(length > 0) | split(" ") | {hls_id: .[0], profile: .[1], last_access: (.[2] | tonumber)}]' \
+# строки очереди старого формата (без 4-го поля) уходят с archived:false
+jq -Rn '[inputs | select(length > 0) | split(" ") | {hls_id: .[0], profile: .[1], last_access: (.[2] | tonumber), archived: (.[3] == "1")}]' \
   < "$report_src" > "$WORK/evicted.json"
 
 if [ "$DRY" = 0 ] && [ -z "$DISK_TOTAL" ]; then
