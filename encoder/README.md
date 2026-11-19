@@ -53,7 +53,7 @@ GET /internal/hls/next ──204──► пауза SM_IDLE_S
 | `SM_CDN_SSH_KEY` | — | путь к закрытому ключу (пусто — ssh ищет сам) |
 | `SM_CDN_SSH_PORT` | — | порт ssh |
 | `SM_CDN_TMP_DIR` | `.tmp` | куда rsync кладёт папку (относительно корня rrsync у `hls-upload`) |
-| `SM_CDN_FINALIZE_CMD` | `finalize {name} {hls_id} {profile}` | команда по ssh после rsync; подстановки `{name}` (имя папки в `.tmp`), `{tmp}` (`.tmp/<name>`), `{hls_id}`, `{profile}` |
+| `SM_CDN_FINALIZE_CMD` | `finalize {name}` (так принимает `infra/cdn/bin/hls-upload-shell`, ответ `ok <hls_id>/<profile> <байт>`) | команда по ssh после rsync; подстановки `{name}` (имя папки в `.tmp`), `{tmp}` (`.tmp/<name>`), `{hls_id}`, `{profile}` |
 | `SM_UPLOAD_MODE` | `rsync` | `rsync` или `local` (копия в папку — для проверки без CDN) |
 | `SM_UPLOAD_LOCAL_DIR` | — | корень «CDN» для `local`: `<dir>/.tmp/<name>/` → `<dir>/<hls_id>/<profile>/` |
 | `SM_RSYNC`, `SM_SSH` | `rsync`, `ssh` | пути к программам |

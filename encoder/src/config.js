@@ -56,7 +56,7 @@ function loadConfig(env = process.env) {
       rsyncBin: env.SM_RSYNC || 'rsync',
       tmpDir: env.SM_CDN_TMP_DIR || '.tmp',      // относительно корня, доступного hls-upload (rrsync)
       // команда, которую ssh выполняет на CDN после rsync; подстановки {tmp} {name} {hls_id} {profile}
-      finalizeCmd: env.SM_CDN_FINALIZE_CMD || 'finalize {name} {hls_id} {profile}',
+      finalizeCmd: env.SM_CDN_FINALIZE_CMD || 'finalize {name}',
       localDir: env.SM_UPLOAD_LOCAL_DIR ? path.resolve(env.SM_UPLOAD_LOCAL_DIR) : '', // mode=local: «CDN» в папке
     },
     once: bool(env.SM_ONCE, false),              // одно задание и выход (для проверки)
