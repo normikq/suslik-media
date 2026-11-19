@@ -9,6 +9,7 @@
 evict.sh (таймер 15 мин) ──► сайт: GET pending-deletes, POST evicted, POST cdn-stats
 hls-archive.sh (таймер 5 мин) ──rclone sync──► Google Drive (crypt) ──► сайт: POST archived          (если задан архив)
 hls-restore.sh (служба, опрос 15 с) ◄── сайт: GET pending-restores; rclone copy ◄── архив; POST restored
+nginx: файла нет на диске ──@hls_archive──► rclone serve http 127.0.0.1:8781 ◄── архив   (если HLS_ARCHIVE_STREAM=1, §20)
 ```
 
 Домены и секреты в репозиторий не попадают: в файлах только `cdn.example.org` / `site.example.org`, настоящие значения — в `/etc/hls-cdn/cdn.env` на сервере.
@@ -28,6 +29,9 @@ hls-restore.sh (служба, опрос 15 с) ◄── сайт: GET pending-
 | `hls-archive.sh`, `systemd/hls-archive.{service,timer}` | копия v1 в холодный архив раз в 5 мин |
 | `hls-restore.sh`, `systemd/hls-restore.service` | возврат версий из архива (служба, опрос сайта) |
 | `lib-archive.sh` | общее для hls-archive.sh и hls-restore.sh |
+| `systemd/hls-archive-serve.service` | просмотр прямо из архива: `rclone serve http` на 127.0.0.1:8781 (§20) |
+| `nginx/hls-archive-stream.conf.template`, `nginx/hls-archive-stream-server.conf.template` | `try_files … @hls_archive` и сам `@hls_archive` (`/etc/nginx/hls-archive-stream*.conf`; выключено — пустые) |
+| `nginx/render.sh` | рендер конфигов nginx из шаблонов (install.sh и проверки) |
 | `fail2ban/` | sshd и перебор подписей (много 403 с одного IP) |
 | `install.sh` | установка на Ubuntu 22.04+ / Debian 12+ |
 | `cdn.env.example` | образец `/etc/hls-cdn/cdn.env` |
@@ -35,6 +39,7 @@ hls-restore.sh (служба, опрос 15 с) ◄── сайт: GET pending-
 | `make-sample.sh` | образец ассета `0000000000000000/v1` для test.sh |
 | `test/offline.sh` | все офлайн-проверки (вектор, evict, finalize, архив, внешние озвучки); работает в Git Bash на Windows |
 | `test/fake-rclone`, `test/fake-curl` | заглушки rclone (архив — локальная папка) и сайта для офлайн-проверок |
+| `test/fake-archive-server.js` | заглушка `rclone serve http` (Range, 404) для живой проверки nginx |
 
 ## Установка
 
@@ -162,7 +167,8 @@ evict.sh удаляет только `<hls_id>/<profile>/xN/`; если проф
 ## Архив на Google Drive
 
 Холодный архив (`docs/HLS.md` §17): запасная копия готовых `v1`. Вытесненная с диска версия не пропадает — сайт помечает её `cold`
-и по «Смотреть» просит CDN вернуть её из архива (минуты, без кодировщика). Отдавать видео прямо из архива нельзя — только возврат на CDN.
+и по «Смотреть» просит CDN вернуть её из архива (минуты, без кодировщика). Пока версия возвращается, её можно смотреть прямо из архива,
+если это включено (`HLS_ARCHIVE_STREAM=1`, §20, раздел «Просмотр прямо из архива» ниже); без этого — только возврат на CDN.
 Без `HLS_ARCHIVE_REMOTE` в `cdn.env` архива нет и всё работает как раньше (`evicted` с `archived:false`, службы архива не включены).
 
 **Как устроено.**
@@ -231,6 +237,56 @@ sudo rclone --config /etc/hls-cdn/rclone.conf size gdrive-crypt:hls
 остаток очереди уходит при следующих запусках. Первая выгрузка всего диска (≈ 1 ТБ) займёт больше суток — это нормально.
 `HLS_ARCHIVE_BWLIMIT` (например `20M` или `"08:00,10M 23:00,off"`) — чтобы архивация не мешала раздаче.
 
+## Просмотр прямо из архива
+
+`docs/HLS.md` §20: вытесненная (`cold`) версия играет сразу из Google Drive, пока `hls-restore` в фоне возвращает её на диск.
+Без этого зритель ждёт возврата («Достаём из архива…») или смотрит зеркало.
+
+**Как устроено.**
+- Служба `hls-archive-serve` (`systemd/hls-archive-serve.service`): `rclone serve http "$HLS_ARCHIVE_REMOTE" --addr 127.0.0.1:8781 --read-only`
+  с `--vfs-cache-mode full`, кэшем до `HLS_ARCHIVE_CACHE_GB` (20) ГБ в `/var/cache/hls-archive` (системный диск, не `/srv/hls` —
+  иначе кэш съедал бы место у вытеснения), `--vfs-read-chunk-size 8M`, `--dir-cache-time 1h`. Слушает только 127.0.0.1.
+  Работает от root, как остальные службы архива: rclone переписывает общий `rclone.conf` (0600 root) при обновлении токена Google;
+  взамен — без capabilities, файловая система только на чтение, кроме `/etc/hls-cdn` и кэша. Флаги есть в rclone 1.54 (он и так нужен для архива).
+- nginx: в location с подписью после проверки `secure_link` и `rewrite` стоит `try_files $uri @hls_archive;` (`/etc/nginx/hls-archive-stream.conf`).
+  Файл есть на диске — отдаётся с диска, как раньше (`Cache-Control: immutable` у `.m4s`). Нет — `@hls_archive` (`/etc/nginx/hls-archive-stream-server.conf`):
+  `proxy_pass http://127.0.0.1:8781$uri` с тем же `Range` (206, `Content-Range`), те же CORS (и на ошибках), типы по расширению,
+  `Accept-Ranges: bytes`, `Cache-Control: no-store` (через минуты файл будет на диске), без буферизации на диск.
+- Плохая подпись — 403, истёкшая — 410 ещё до `try_files`: в архив такие запросы не ходят. В архив проходят только файлы
+  `/<hls_id>/<profile>/…` с расширением `.m3u8 .m4s .mp4 .vtt .json`; каталоги (rclone отдал бы их список) и сегменты на «.» — 404.
+- Обращения из архива пишутся в тот же `hls-access.log`. evict.sh считает «последнее обращение» только для профилей на диске:
+  записи о профиле, которого на диске нет, на вытеснение не влияют и в `lastaccess` не сохраняются; pending-deletes такого профиля
+  удаляет его сразу (как любую холодную версию), `last_access` в отчёте — по журналу.
+- Без `HLS_ARCHIVE_STREAM=1` (или без `HLS_ARCHIVE_REMOTE`) оба файла `/etc/nginx/hls-archive-stream*.conf` пустые, служба остановлена — всё как раньше.
+
+**Свой client_id — обязательно.** Со встроенным в rclone client_id при перемотке быстро приходит `rateLimitExceeded` (общие квоты на всех пользователей rclone):
+см. «Свой client_id позже» выше — OAuth client в Google Cloud Console, `client_id`/`client_secret` в секцию `[gdrive]`, `rclone config reconnect gdrive:`.
+
+**Включение.**
+```
+sudo nano /etc/hls-cdn/cdn.env      # HLS_ARCHIVE_STREAM=1; HLS_ARCHIVE_CACHE_GB=20 (по желанию); HLS_ARCHIVE_REMOTE уже задан
+sudo ./install.sh                   # /var/cache/hls-archive, служба hls-archive-serve (enable --now), nginx с @hls_archive
+```
+install.sh после старта службы проверяет `curl http://127.0.0.1:8781/` (ждёт до минуты; не 200 — предупреждение и подсказка про `journalctl`).
+На сайте — `HLS_ARCHIVE_STREAM=true` в `.env` (иначе сайт про эту возможность не знает и показывает «Достаём из архива»).
+Выключение — `HLS_ARCHIVE_STREAM=0` и `sudo ./install.sh`; кэш `/var/cache/hls-archive` после этого можно удалить.
+
+**Проверка.**
+```
+systemctl status hls-archive-serve
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8781/            # 200 (список корня архива)
+# подписанная ссылка на сегмент холодной версии (её профиля нет в /srv/hls); sig — как в test.sh (lib-sign.sh)
+. /usr/local/lib/hls-cdn/lib-sign.sh; EXP=$(( $(date +%s) + 3600 )); ID=<hls_id>
+SIG=$(hls_sign "$EXP" "$ID" "$(sed -n 's/^HLS_SIGN_SECRET=//p' /etc/hls-cdn/cdn.env)")
+curl -s -D - -o /dev/null -H 'Range: bytes=0-1023' "https://cdn.example.org/hls/$SIG/$EXP/$ID/v1/1080p/index.m3u8"
+```
+Ожидается `206`, `Content-Range: bytes 0-1023/…`, `Cache-Control: no-store`; для сегмента — путь из `index.m3u8` (`1080p/video.m4s`).
+Тот же адрес с испорченной подписью — 403 (в `journalctl -u hls-archive-serve` запроса нет).
+
+**Чего ждать.** Старт и перемотка на ~1–2 с медленнее (ответ Drive API на каждый новый диапазон), назад в пределах буфера плеера (90 с) — мгновенно,
+повторно прочитанное — из кэша rclone. Каталоги кэшируются на час: только что удалённая из архива версия может отвечать ошибкой, а не 404, до часа.
+Нагрузка на Drive — чтения по 8 МБ; при `rateLimitExceeded` в `journalctl -u hls-archive-serve` проверьте, что подключён свой client_id.
+
 ## Проверки
 
 Офлайн (Windows/Git Bash или Linux; нужны `bash`, `openssl`, `jq`, `curl`):
@@ -248,6 +304,10 @@ bash infra/cdn/test/offline.sh
 - `test/audio-offline.sh` — внешние озвучки: `finalize-audio` (приём, замена `xN`, отказ без профиля, на лишнем файле/папке/имени, без `audio.m4s`,
   очередь архивации только для `v1`), `finalize-audio` через `hls-upload-shell` (лишние аргументы, `*`), evict.sh с `path`: удаление одной `xN`,
   MIN_IDLE, профиля нет на диске, purge `xN` в архиве и его ошибка, плохой `path`, смесь с обычными элементами;
+- `test/archive-stream-offline.sh` — просмотр прямо из архива: рендер nginx с включённым и выключенным потоком (`try_files`/`@hls_archive` есть или нет),
+  флаги и адрес юнита `hls-archive-serve`, evict.sh при обращениях к профилю не на диске; если есть nginx (`PATH` или `HLS_TEST_NGINX=…/nginx.exe`) и node —
+  живой nginx с отрендеренным конфигом и заглушкой `test/fake-archive-server.js` вместо rclone: файл с диска (`immutable`), из «архива» 206 с `Content-Range`,
+  `no-store`, типом и CORS, 404 из архива, плохая/истёкшая подпись — 403/410 без похода в архив, `../`, каталоги, HEAD; иначе живая часть пропускается.
 
 Против работающего CDN — `test.sh` (переменные в шапке файла): 200 и `Accept-Ranges`, 206 с `Content-Range`, типы и `Cache-Control`,
 404/403/410/405, подделка `exp` и `hls_id`, `../`, CORS на ответах и на 403, чужой Origin, preflight 204, HTTP/2.

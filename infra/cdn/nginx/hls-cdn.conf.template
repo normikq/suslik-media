@@ -6,6 +6,8 @@
 #   HLS_TLS_CERT, HLS_TLS_KEY — сертификат certbot
 #   HLS_SECRET_CONF  — файл с секретом подписи (map $hls_sign_secret), 0640 root, не в репозитории
 #   HLS_LOG_DIR      — каталог журналов (/var/log/nginx)
+#   HLS_ARCHIVE_STREAM_CONF, HLS_ARCHIVE_STREAM_SERVER_CONF — просмотр прямо из архива (§20): /etc/nginx/hls-archive-stream.conf
+#                      и …-server.conf; при выключенном потоке оба пустые (render.sh)
 # Здесь, в отличие от основного сервера, HTTP/2 можно: на этой машине нет Xray.
 
 # Длинный origin не влезает в корзину map по умолчанию (32/64 байта); директива должна стоять до первого map.
@@ -31,6 +33,15 @@ map "$request_method:$uri" $hls_cache_control {
     "~^(GET|HEAD):.*\.m3u8$"   "public, max-age=60";
     "~^(GET|HEAD):.*\.vtt$"    "public, max-age=3600";
     "~^(GET|HEAD):.*\.json$"   "no-cache";
+}
+
+# Типы для ответов из архива (§20, @hls_archive): у проксированного ответа «types» не действуют.
+map $uri $hls_archive_type {
+    default         application/octet-stream;
+    "~\.m3u8$"      application/vnd.apple.mpegurl;
+    "~\.(m4s|mp4)$" video/mp4;
+    "~\.vtt$"       text/vtt;
+    "~\.json$"      application/json;
 }
 
 server {
@@ -123,6 +134,9 @@ server {
         # /hls/<sig>/<exp>/<hls_id>/<profile>/<путь> → ${HLS_ROOT}/<hls_id>/<profile>/<путь>
         rewrite ^/hls/[^/]+/[0-9]+/(.*)$ /$1 break;
 
+        # Просмотр прямо из архива (§20): «try_files $uri @hls_archive;» или пусто. try_files — после проверки подписи и rewrite.
+        include ${HLS_ARCHIVE_STREAM_CONF};
+
         types {
             application/vnd.apple.mpegurl m3u8;
             video/mp4                     m4s mp4;
@@ -132,6 +146,9 @@ server {
         default_type application/octet-stream;
         charset off;
     }
+
+    # @hls_archive (§20) или пусто
+    include ${HLS_ARCHIVE_STREAM_SERVER_CONF};
 
     location / {
         return 404;

@@ -1,0 +1,5 @@
+# Просмотр прямо из архива (docs/HLS.md §20), часть 1: внутри location с secure_link (hls-cdn.conf).
+# Кладёт render.sh в /etc/nginx/hls-archive-stream.conf при HLS_ARCHIVE_STREAM=1 и заданном HLS_ARCHIVE_REMOTE, иначе файл пустой.
+# Фаза try_files идёт после rewrite и проверки подписи (if … return 403/410), $uri уже переписан: /<hls_id>/<profile>/<путь>.
+# Файл на диске — отдаётся с диска, как раньше; нет — в @hls_archive (hls-archive-stream-server.conf).
+try_files $uri @hls_archive;
