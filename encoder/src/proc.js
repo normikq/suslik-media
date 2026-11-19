@@ -33,9 +33,11 @@ function run(cmd, args, { cwd, env, signal, onLine, tailBytes = 8192, timeoutMs 
       if (!onLine) { stdout += d; return; }
       buf += d;
       let i;
-      while ((i = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, i).replace(/\r$/, '');
+      // конец строки — \n или \r: rsync --info=progress2 перерисовывает строку прогресса возвратом каретки
+      while ((i = buf.search(/[\r\n]/)) >= 0) {
+        const line = buf.slice(0, i);
         buf = buf.slice(i + 1);
+        if (!line) continue;
         try { onLine(line); } catch { /* ignore */ }
       }
     });

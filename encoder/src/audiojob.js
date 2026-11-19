@@ -179,7 +179,8 @@ async function processAudioJob(job, ctx, JobError) {
     state.stage = 'upload';
     state.progress = 0;
     state.eta_s = null;
-    try { await uploadAudio(cfg, outDir, hlsId, profile, tracks.map((t) => t.dir), { signal: jsig, log }); } catch (e) { throw new JobError('upload', e.message, true); }
+    const onUpload = (p) => { state.progress = Math.min(0.999, p.progress); state.eta_s = p.eta_s; };
+    try { await uploadAudio(cfg, outDir, hlsId, profile, tracks.map((t) => t.dir), { signal: jsig, log, onProgress: onUpload }); } catch (e) { throw new JobError('upload', e.message, true); }
     ctl.check();
 
     // 4. audio-done

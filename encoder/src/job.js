@@ -182,7 +182,9 @@ async function processJob(job, ctx) {
     // 6. CDN
     state.stage = 'upload';
     state.progress = 0;
-    try { await upload(cfg, outDir, hlsId, profile, { signal: jsig, log }); } catch (e) { throw new JobError('upload', e.message, true); }
+    state.eta_s = null;
+    const onUpload = (p) => { state.progress = Math.min(0.999, p.progress); state.eta_s = p.eta_s; };
+    try { await upload(cfg, outDir, hlsId, profile, { signal: jsig, log, onProgress: onUpload }); } catch (e) { throw new JobError('upload', e.message, true); }
     ctl.check();
 
     // 7. done

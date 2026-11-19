@@ -41,15 +41,30 @@ function rsyncTarget(tmpDir, name) {
   return base && base !== '.' ? `${base}/${name}` : name;
 }
 
+/**
+ * Строка rsync --info=progress2: «  1,234,567,890  45%   11.20MB/s    0:01:23  (xfr#3, to-chk=2/9)».
+ * → { progress: 0..1, eta_s, speed } или null. Время в строке — оставшееся (в последней, 100%, — затраченное).
+ */
+function parseRsyncProgress(line) {
+  const m = /^\s*[\d,.]+\s+(\d{1,3})%\s+(\S+\/s)\s+(\d+):(\d\d):(\d\d)/.exec(String(line || ''));
+  if (!m) return null;
+  const pct = Math.min(100, Number(m[1]));
+  return { progress: pct / 100, eta_s: pct >= 100 ? 0 : Number(m[3]) * 3600 + Number(m[4]) * 60 + Number(m[5]), speed: m[2] };
+}
+
 /** rsync содержимого srcDir в <name>/ и ssh-команда cmdTpl; ответ CDN — «ok <hls_id>/<profile> <байт>». */
-async function rsyncFinalize(cfg, srcDir, name, cmdTpl, hlsId, profile, { signal, log }) {
+async function rsyncFinalize(cfg, srcDir, name, cmdTpl, hlsId, profile, { signal, log, onProgress }) {
   const u = cfg.upload;
   const tmp = rsyncTarget(u.tmpDir, name);
   const e = [u.sshBin, ...sshOpts(u)].map(q).join(' ');
-  // cwd = папка профиля, источник «./»: без букв дисков (cwRsync/MSYS иначе принимают «C:» за хост)
-  const args = ['-a', '--partial', '--chmod=D755,F644', '-e', e, './', `${u.ssh}:${tmp}/`];
+  // cwd = папка профиля, источник «./»: без букв дисков (cwRsync/MSYS иначе принимают «C:» за хост).
+  // --info=progress2 — общий прогресс по всем файлам (для админки); --no-inc-recursive — общий объём известен сразу.
+  const args = ['-a', '--partial', '--chmod=D755,F644', '--info=progress2', '--no-inc-recursive', '-e', e, './', `${u.ssh}:${tmp}/`];
   log?.info(`[upload] rsync → ${u.ssh}:${tmp}/`);
-  const r = await run(u.rsyncBin, args, { cwd: srcDir, signal });
+  const r = await run(u.rsyncBin, args, {
+    cwd: srcDir, signal,
+    onLine: (line) => { const p = parseRsyncProgress(line); if (p && onProgress) onProgress(p); }
+  });
   if (r.code !== 0) throw new Error(`rsync exit ${r.code}: ${lastLine(r.stderr)}`);
   const cmd = fill(cmdTpl, { tmp, name, hls_id: hlsId, profile });
   log?.info(`[upload] ssh ${u.ssh} ${cmd}`);
@@ -138,4 +153,4 @@ function uploadAudio(cfg, srcDir, hlsId, profile, dirs, opts = {}) {
   return uploadAudioRsync(cfg, srcDir, hlsId, profile, opts);
 }
 
-module.exports = { upload, uploadAudio, fill, tmpName, audioTmpName, rsyncTarget, checkAnswer };
+module.exports = { upload, uploadAudio, fill, tmpName, audioTmpName, rsyncTarget, checkAnswer, parseRsyncProgress };

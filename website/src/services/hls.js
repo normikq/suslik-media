@@ -662,8 +662,8 @@ function progress(body, now = Date.now()) {
   const eta = Number(body.eta_s);
   job.progress = Number.isFinite(p) ? Math.min(1, Math.max(0, p)) : job.progress;
   if (typeof body.stage === "string") job.stage = body.stage.slice(0, 32);
-  // оценка «осталось» осмысленна только при кодировании (на разборе файла, выгрузке и т. п. — нет)
-  job.eta_s = job.stage === "encode" && Number.isFinite(eta) && eta >= 0 ? Math.round(eta) : null;
+  // «осталось» осмысленно при кодировании и выгрузке на CDN (rsync --info=progress2); на разборе файла и проверке — нет
+  job.eta_s = (job.stage === "encode" || job.stage === "upload") && Number.isFinite(eta) && eta >= 0 ? Math.round(eta) : null;
   job.state = "running";
   job.leased_until = t + LEASE_S;
   store.putJob(job.job_id, job);

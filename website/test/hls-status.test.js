@@ -28,7 +28,7 @@ test.beforeEach(() => {
   store._reset();
 });
 
-test("eta_s сохраняется только на стадии encode", () => {
+test("eta_s сохраняется только на стадиях encode и upload", () => {
   hls.enqueue({
     ad_id: "900001",
     path: "A.mkv",
@@ -47,10 +47,13 @@ test("eta_s сохраняется только на стадии encode", () =>
   // На стадии encode eta_s сохраняется
   hls.progress({ job_id: job.job_id, stage: "encode", progress: 0.1, eta_s: 1020 });
   assert.equal(store.getJob(job.job_id).eta_s, 1020);
-
-  // На стадии upload eta_s снова сбрасывается в null
-  hls.progress({ job_id: job.job_id, stage: "upload", progress: 0.9, eta_s: 5 });
+  // На стадии verify eta_s сбрасывается
+  hls.progress({ job_id: job.job_id, stage: "verify", progress: 1, eta_s: 3 });
   assert.equal(store.getJob(job.job_id).eta_s, null);
+  // На стадии upload eta_s сохраняется (прогресс rsync --info=progress2)
+  hls.progress({ job_id: job.job_id, stage: "upload", progress: 0.45, eta_s: 83 });
+  assert.equal(store.getJob(job.job_id).eta_s, 83);
+  assert.equal(store.getJob(job.job_id).progress, 0.45);
 });
 
 test("статус версии в adminState: queued, encoding и удаление профиля при failed", () => {

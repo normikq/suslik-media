@@ -405,8 +405,8 @@
       const stage = stageText(j.stage);
       if (stage) meta.push(stage);
       meta.push(`${progressPercent(j.progress)}%`);
-      // «осталось» — только при кодировании: на разборе файла и выгрузке оценки нет
-      if (j.stage === "encode" && j.eta_s != null) meta.push(`осталось ${formatEta(j.eta_s)}`);
+      // «осталось» — при кодировании и выгрузке на CDN; на разборе файла и проверке оценки нет
+      if ((j.stage === "encode" || j.stage === "upload") && j.eta_s != null) meta.push(`осталось ${formatEta(j.eta_s)}`);
     }
     if (j.size) meta.push(formatBytes(j.size));
     if (j.attempts) meta.push(`попыток: ${j.attempts}`);
