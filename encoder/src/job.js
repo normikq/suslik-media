@@ -157,7 +157,7 @@ async function processJob(job, ctx) {
 
     // 7. done
     try {
-      await api.done({ job_id: job.job_id, hls_id: hlsId, profile, manifest_sha256: out.sha256, bytes: out.bytes });
+      await api.done({ job_id: job.job_id, hls_id: hlsId, profile, manifest: out.manifest, manifest_sha256: out.sha256, bytes: out.bytes });
     } catch (e) { throw new JobError('done', `POST done: ${e.message}`, true); }
     log.info(`[done] ${job.job_id} → ${hlsId}/${profile}`);
     return { result: 'done', hls_id: hlsId, profile, bytes: out.bytes, manifest: out.manifest, outDir };

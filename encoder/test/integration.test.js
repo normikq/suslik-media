@@ -174,6 +174,8 @@ test('интеграция: образец → v1 и v1-copy через загл
     assert.equal(done.hls_id, stub.hlsId);
     assert.equal(done.profile, 'v1');
     assert.equal(done.manifest_sha256, crypto.createHash('sha256').update(fs.readFileSync(path.join(out, 'manifest.json'))).digest('hex'));
+    // T4: сервер требует manifest целиком в done
+    assert.deepEqual(done.manifest, JSON.parse(fs.readFileSync(path.join(out, 'manifest.json'), 'utf8')));
     assert.equal(done.bytes, dirBytes(out));
   });
 
