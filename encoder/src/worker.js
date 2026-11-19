@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { run } = require('./proc');
 const { processJob, sleep } = require('./job');
+const { detectTonemap, describeTonemap } = require('./tonemap');
 
 const ENCODER_NAME = { nvenc: 'hevc_nvenc', x265: 'libx265', x264: 'libx264' };
 
@@ -33,10 +34,13 @@ async function checkTools(cfg, log) {
   const enc = await run(cfg.ffmpeg, ['-hide_banner', '-encoders']);
   if (!enc.stdout.includes(ENCODER_NAME[cfg.encoder])) throw new Error(`в ffmpeg нет кодировщика ${ENCODER_NAME[cfg.encoder]}`);
   const flt = await run(cfg.ffmpeg, ['-hide_banner', '-filters']);
-  if (!/\bzscale\b/.test(flt.stdout) || !/\btonemap\b/.test(flt.stdout)) log.warn('[start] в ffmpeg нет zscale/tonemap — HDR-исходники кодировать не получится');
+  if (!/\bzscale\b/.test(flt.stdout) || !/\btonemap\b/.test(flt.stdout)) log.warn('[start] в ffmpeg нет zscale/tonemap — запасной тонмаппинг cpu не сработает');
   const pr = await run(cfg.ffprobe, ['-hide_banner', '-version']).catch(() => ({ code: -1 }));
   if (pr.code !== 0) throw new Error(`ffprobe не запускается (${cfg.ffprobe})`);
   log.info(`[start] ffmpeg ${v.full}, кодировщик ${ENCODER_NAME[cfg.encoder]}`);
+  cfg.tonemapPath = await detectTonemap(cfg, { filters: flt.stdout });
+  const tmMsg = `[start] тонмаппинг: ${describeTonemap(cfg.tonemapPath)}`;
+  if (cfg.tonemapPath.mode === 'cpu' && cfg.tonemapMode !== 'cpu') log.warn(tmMsg); else log.info(tmMsg);
   return v;
 }
 

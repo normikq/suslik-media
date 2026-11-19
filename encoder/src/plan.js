@@ -7,6 +7,7 @@
 const path = require('node:path');
 const { TEXT_SUBS, inputNetArgs, parseRate, isHdr } = require('./probe');
 const { lang2, trackName } = require('./langs');
+const { libplaceboFilter, vulkanArgs, doviNeedsRpu, tonemapPathFor } = require('./tonemap');
 
 const SEG = 6;            // длина сегмента и шаг ключевых кадров, с
 const MAX_AUDIO = 4;
@@ -46,6 +47,15 @@ function videoTiers(disp) {
   return out;
 }
 
+/** Dolby Vision: профиль и совместимость базы из DOVI configuration record (ffprobe), null — не DV. */
+function doviInfo(v, rawV) {
+  if (!v.dovi) return null;
+  const rec = (rawV?.side_data_list || []).find((d) => /dovi configuration/i.test(d.side_data_type || ''));
+  const profile = Number.isFinite(rec?.dv_profile) ? rec.dv_profile : null;
+  const compat = Number.isFinite(rec?.dv_bl_signal_compatibility_id) ? rec.dv_bl_signal_compatibility_id : null;
+  return { profile, compat, needsRpu: doviNeedsRpu({ profile, compat }, v.color_transfer) };
+}
+
 /**
  * @param probe   normalizeProbe(...) (+ raw: ответ ffprobe как есть)
  * @param profile 'v1' | 'v1-copy'
@@ -59,10 +69,12 @@ function buildPlan(probe, profile, raw = {}) {
 
   let video;
   let tonemap = false;
+  let dovi = null;
   if (profile === 'v1-copy') {
     video = [{ dir: '1080p', width: v.width, height: v.height, copy: true, codec_name: v.codec_name }];
   } else if (profile === 'v1') {
     tonemap = isHdr(v);
+    dovi = doviInfo(v, rawById.get(v.index));
     video = videoTiers(displaySize(v, rawById.get(v.index)));
   } else {
     throw Object.assign(new Error(`неизвестный профиль ${profile}`), { retryable: false });
@@ -85,7 +97,7 @@ function buildPlan(probe, profile, raw = {}) {
     subs.push({ dir: `s${subs.length}`, src_index: s.index, language: lang2(s.language), name: trackName(s.language, s.title, 'subtitle', subs.length), forced: !!s.forced });
   }
 
-  return { profile, srcVideoIndex: v.index, fps, interlaced: /^(tt|bb|tb|bt)$/.test(rawById.get(v.index)?.field_order || ''), tonemap, video, audio, subs, skipped };
+  return { profile, srcVideoIndex: v.index, fps, interlaced: /^(tt|bb|tb|bt)$/.test(rawById.get(v.index)?.field_order || ''), tonemap, dovi, video, audio, subs, skipped };
 }
 
 function hlsOut(dir, file) {
@@ -118,18 +130,31 @@ function videoEncoderArgs(cfg, tier, fps, tonemap) {
     '-g', String(gop), '-keyint_min', '1', '-sc_threshold', '0', '-x264-params', 'scenecut=0:open-gop=0', '-tag:v', 'avc1', ...color];
 }
 
-/** Полный список аргументов ffmpeg. outDir — папка профиля (в ней 1080p/, a0/, …). */
+/**
+ * Полный список аргументов ffmpeg. outDir — папка профиля (в ней 1080p/, a0/, …).
+ * HDR → SDR (plan.tonemapPath, иначе tonemapPathFor):
+ *   libplacebo — масштаб до верхней ступени + тонмаппинг + bt709 на видеокарте (Vulkan) за один проход;
+ *   cpu        — сначала уменьшить до верхней ступени (10 бит), потом zscale+tonemap уже на 1080p.
+ * Остальные ступени — scale от результата верхней.
+ */
 function buildFfmpegArgs(cfg, plan, src, outDir) {
   const args = ['-hide_banner', '-nostdin', '-y', '-loglevel', 'error', '-progress', 'pipe:1', '-nostats'];
+  const tm = plan.profile === 'v1' ? (plan.tonemapPath !== undefined ? plan.tonemapPath : tonemapPathFor(cfg, plan)) : null;
   if (plan.profile === 'v1' && cfg.encoder === 'nvenc' && cfg.hwdec) args.push('-hwaccel', 'cuda');
+  if (tm === 'libplacebo') args.push(...vulkanArgs(cfg.tonemapPath.device.index));
   args.push(...inputNetArgs(src, cfg), '-i', src);
 
   if (plan.profile === 'v1') {
+    const top = plan.video[0];
     const pre = [];
     if (plan.interlaced) pre.push('bwdif=mode=send_frame:deint=interlaced');
-    if (plan.tonemap) {
-      // HDR (PQ/HLG, DV с базой HDR10) → SDR bt709
-      pre.push('zscale=t=linear:npl=100', 'format=gbrpf32le', 'zscale=p=bt709', 'tonemap=tonemap=hable:desat=0',
+    if (tm === 'libplacebo') {
+      // HDR (PQ/HLG, DV с RPU) → SDR bt709, уже в размере верхней ступени, yuv420p
+      pre.push(libplaceboFilter(top.width, top.height));
+    } else if (tm === 'cpu') {
+      // HDR (PQ/HLG, DV с базой HDR10) → SDR bt709; уменьшаем до тонмаппинга, чтобы float32 считался не на 4K
+      pre.push(`scale=${top.width}:${top.height}`, 'format=yuv420p10le',
+        'zscale=t=linear:npl=100', 'format=gbrpf32le', 'zscale=p=bt709', 'tonemap=tonemap=hable:desat=0',
         'zscale=t=bt709:m=bt709:r=tv');
     }
     pre.push('format=yuv420p');

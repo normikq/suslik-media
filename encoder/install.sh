@@ -5,7 +5,8 @@
 #
 # Перед первым запуском: заполнить /etc/suslik-encoder.env (образец — suslik-encoder.env.example; скрипт сам положит его, если файла нет).
 # Что делает: пакеты (ffmpeg, nodejs, rsync, ssh из apt); проверка версий, NVENC и zscale; пользователь suslik-encoder;
-# ssh-ключ для hls-upload на CDN и ключ хоста CDN; доступ к /dev/nvidia*; пробное кодирование NVENC; проверка сайта и CDN;
+# ssh-ключ для hls-upload на CDN и ключ хоста CDN; доступ к /dev/nvidia*; пробное кодирование NVENC; путь тонмаппинга HDR
+# (libplacebo/Vulkan или cpu — та же самопроверка, что при старте, от пользователя службы с её ограничениями); проверка сайта и CDN;
 # служба systemd suslik-encoder (включается и перезапускается). --no-start — не запускать службу; --once — после установки
 # выполнить одно задание (или одно «204») от пользователя службы и показать журнал. Идёт кодирование — служба перезапустится
 # после текущего фильма (метка .restart); --now — перезапустить сразу (текущее задание вернётся в очередь).
@@ -20,7 +21,7 @@ while [ $# -gt 0 ]; do
     --no-start) START=0 ;;
     --once) ONCE=1 ;;
     --now) NOW=1 ;;
-    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
     *) echo "неизвестный ключ $1" >&2; exit 2 ;;
   esac
   shift
@@ -98,6 +99,8 @@ filters=$("$FFMPEG" -hide_banner -filters 2>/dev/null)
 grep -qE '^ *[.A-Z]+ zscale ' <<<"$filters" || die "в ffmpeg нет фильтра zscale (HDR → SDR)"
 grep -qE '^ *[.A-Z]+ tonemap ' <<<"$filters" || die "в ffmpeg нет фильтра tonemap"
 ok "zscale, tonemap"
+if grep -qE '^ *[.A-Z]+ libplacebo ' <<<"$filters"; then ok "libplacebo (HDR → SDR на видеокарте)"
+else warn "в ffmpeg нет фильтра libplacebo — HDR будет тонмаппиться на процессоре (медленно), Dolby Vision 5 не кодируется"; fi
 
 if [ "$ENCODER" = nvenc ]; then
   command -v nvidia-smi >/dev/null || die "нет nvidia-smi — драйвер NVIDIA: sudo ubuntu-drivers install && sudo reboot"
@@ -107,6 +110,10 @@ if [ "$ENCODER" = nvenc ]; then
   # вывод — в переменную: с pipefail «ffmpeg | grep -q» падает от SIGPIPE, даже когда строка найдена
   encoders=$("$FFMPEG" -hide_banner -encoders 2>/dev/null || true)
   grep -q hevc_nvenc <<<"$encoders" || die "в ffmpeg нет hevc_nvenc"
+  # Vulkan для libplacebo: ICD NVIDIA ставится с драйвером (libnvidia-gl-<версия>); mesa (llvmpipe) не нужен — воркер его не берёт
+  icd=$(ls /usr/share/vulkan/icd.d/nvidia_icd*.json /etc/vulkan/icd.d/nvidia_icd*.json 2>/dev/null | head -1 || true)
+  if [ -n "$icd" ]; then ok "Vulkan ICD NVIDIA: $icd"
+  else warn "нет Vulkan ICD NVIDIA (/usr/share/vulkan/icd.d/nvidia_icd.json) — libplacebo не заработает: sudo apt install libnvidia-gl-<версия драйвера>"; fi
 fi
 
 # --- пользователь и каталоги -------------------------------------------------
@@ -193,6 +200,26 @@ if [ "$ENCODER" = nvenc ]; then
     die "hevc_nvenc не кодирует от $USER_NAME (драйвер, /dev/nvidia*, версия libnvidia-encode)"
   fi
 fi
+
+# --- тонмаппинг HDR → SDR ----------------------------------------------------------
+# та же самопроверка, что воркер делает при старте (node index.js --tonemap-check), и в той же песочнице, что служба:
+# ProtectSystem/ProtectHome/PrivateTmp не мешают (ICD в /usr/share/vulkan читается, /dev/nvidia* не закрыты — PrivateDevices/DeviceAllow нет)
+step "тонмаппинг HDR → SDR от $USER_NAME"
+if grep -qE '^(PrivateDevices=yes|DeviceAllow=)' systemd/suslik-encoder.service; then
+  warn "в systemd/suslik-encoder.service есть PrivateDevices/DeviceAllow — служба не увидит /dev/nvidia* (NVENC, Vulkan)"
+fi
+tm_props=(-p EnvironmentFile="$ENV" -p WorkingDirectory="$DIR" -p NoNewPrivileges=yes -p ProtectSystem=strict -p ProtectHome=yes
+          -p PrivateTmp=yes -p ReadWritePaths="$HOME_DIR $WORK $LOGS")
+if [ ${#GROUPS_EXTRA[@]} -gt 0 ]; then tm_props+=(-p SupplementaryGroups="${GROUPS_EXTRA[*]}"); fi
+tm_rc=0
+tm_out=$(systemd-run --quiet --wait --pipe --collect --uid="$USER_NAME" --gid="$USER_NAME" "${tm_props[@]}" \
+         "$NODE" "$DIR/index.js" --tonemap-check 2>&1) || tm_rc=$?
+case "$tm_rc" in
+  0) ok "$(tail -1 <<<"$tm_out")" ;;
+  3) warn "$(tail -1 <<<"$tm_out") — HDR пойдёт на процессоре; что делать — encoder/README.md, «Тонмаппинг HDR → SDR»" ;;
+  *) echo "$tm_out" | tail -5 >&2
+     warn "проверка тонмаппинга не прошла (код $tm_rc); при SM_TONEMAP=libplacebo служба не запустится" ;;
+esac
 
 "$NODE" --check "$DIR/index.js" || die "index.js не разбирается этой версией Node"
 

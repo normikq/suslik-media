@@ -9,6 +9,7 @@ const path = require('node:path');
 const { ffprobeJson, normalizeProbe, mainVideo, copyCandidate, keyframeIntervalMax, firstFrameColor } = require('./probe');
 const { fingerprintUrl } = require('./fingerprint');
 const { buildPlan, buildFfmpegArgs, planDirs } = require('./plan');
+const { tonemapPathFor } = require('./tonemap');
 const { finalizeOutput } = require('./manifest');
 const { upload } = require('./upload');
 const { run, lastLine } = require('./proc');
@@ -127,13 +128,17 @@ async function processJob(job, ctx) {
     state.stage = 'encode';
     state.progress = 0;
     let plan;
-    try { plan = buildPlan(probe, profile, raw); } catch (e) { throw new JobError('encode', e.message, e.retryable !== false); }
+    try {
+      plan = buildPlan(probe, profile, raw);
+      plan.tonemapPath = profile === 'v1' ? tonemapPathFor(cfg, plan) : null; // DV без базы HDR10 и без libplacebo — без повтора
+    } catch (e) { throw new JobError('encode', e.message, e.retryable !== false); }
     const outDir = path.join(jobDir, profile);
     fs.rmSync(jobDir, { recursive: true, force: true });
     for (const d of planDirs(plan)) fs.mkdirSync(path.join(outDir, d), { recursive: true });
     const args = buildFfmpegArgs(cfg, plan, job.mirror_url, outDir);
     log.info(`[encode] ${profile} ${cfg.encoder}: видео ${plan.video.map((t) => `${t.dir} ${t.width}x${t.height}`).join(', ')}; ` +
-      `звук ${plan.audio.length}; субтитры ${plan.subs.length}; пропущено ${plan.skipped.length}; тонмаппинг ${plan.tonemap}`);
+      `звук ${plan.audio.length}; субтитры ${plan.subs.length}; пропущено ${plan.skipped.length}; тонмаппинг ${plan.tonemapPath || 'нет'}` +
+      `${plan.dovi ? ` (DV ${plan.dovi.profile ?? '?'}${plan.dovi.needsRpu ? ', по RPU' : ''})` : ''}`);
     log.info(`[encode] ffmpeg ${args.map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(' ')}`);
     const durS = probe.duration_ms / 1000;
     const t0 = Date.now();
@@ -160,7 +165,8 @@ async function processJob(job, ctx) {
     ctl.check();
     if (signal?.aborted) throw new JobError('encode', 'остановка воркера', true);
     if (r.code !== 0) throw new JobError('encode', `ffmpeg exit ${r.code}: ${lastLine(r.stderr)}`, true);
-    log.info(`[encode] готово за ${Math.round((Date.now() - t0) / 1000)} с`);
+    const encodeMs = Date.now() - t0;
+    log.info(`[encode] готово за ${(encodeMs / 1000).toFixed(1)} с (${plan.tonemapPath || 'без тонмаппинга'})`);
     state.progress = 1;
     state.eta_s = 0;
     state.fps = null;
@@ -187,7 +193,7 @@ async function processJob(job, ctx) {
       throw new JobError('done', `POST done: ${e.message}`, true);
     }
     log.info(`[done] ${job.job_id} → ${hlsId}/${profile}`);
-    return { result: 'done', hls_id: hlsId, profile, bytes: out.bytes, manifest: out.manifest, outDir };
+    return { result: 'done', hls_id: hlsId, profile, bytes: out.bytes, manifest: out.manifest, outDir, encode_ms: encodeMs };
   } catch (e) {
     // снято на сайте: ошибка этапа после убитого ffmpeg/rsync — следствие отмены, failed не шлём
     if (ctl.take(e) || ctl.cancelled) return cancelledResult(job, state.stage, ctl.cancelled, log);

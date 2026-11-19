@@ -66,7 +66,7 @@ s0/ … s5/  index.m3u8, subs.vtt    # текстовые субтитры, до
 - Ключевые кадры каждые 6 с на обеих дорожках (`-g`/`-force_key_frames "expr:gte(t,n_forced*6)"`, без scenecut-ключей между ними), чтобы сегменты 1080p и 720p совпадали.
 - fMP4, `-hls_segment_type fmp4 -hls_flags independent_segments+single_file` — один `.m4s` на дорожку, `EXT-X-BYTERANGE`, `EXT-X-MAP` с байтовым диапазоном. Тег `-tag:v hvc1`.
 - Звук DTS/TrueHD/AC3/E-AC3 и прочее → AAC-LC стерео (`mp4a.40.2`), 160 кбит.
-- HDR (PQ/HLG, Dolby Vision с HDR10-базой) → SDR, тонмаппинг (`zscale`+`tonemap` или `tonemap_cuda`), `VIDEO-RANGE=SDR`.
+- HDR (PQ/HLG, Dolby Vision) → SDR, `VIDEO-RANGE=SDR`. Тонмаппинг: `libplacebo` на видеокарте через Vulkan (масштаб + bt.2390 + bt709 за проход, DV по RPU), запасной — уменьшение до 1080p, затем `zscale`+`tonemap=hable`; DV 5 без libplacebo — `failed` без повтора (`encoder/README.md`, «Тонмаппинг HDR → SDR»).
 - Пример: `master-v1.m3u8`, `media-1080p.m3u8`.
 
 ### v1-copy (быстрая дорожка)

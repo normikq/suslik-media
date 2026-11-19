@@ -23,6 +23,10 @@ function loadConfig(env = process.env) {
   if (!['nvenc', 'x265', 'x264'].includes(encoder)) {
     throw new Error(`SM_ENCODER: ожидается nvenc|x265|x264, получено «${env.SM_ENCODER}»`);
   }
+  const tonemapMode = (env.SM_TONEMAP || 'auto').toLowerCase();
+  if (!['auto', 'libplacebo', 'cpu'].includes(tonemapMode)) {
+    throw new Error(`SM_TONEMAP: ожидается auto|libplacebo|cpu, получено «${env.SM_TONEMAP}»`);
+  }
   const siteUrl = (env.SM_SITE_URL || '').replace(/\/+$/, '');
   const cfg = {
     siteUrl,                                   // https://site.example.org (с путём, если сервер не в корне)
@@ -33,6 +37,11 @@ function loadConfig(env = process.env) {
     ffprobe: env.SM_FFPROBE || 'ffprobe',
     // аппаратное декодирование исходника (только с nvenc): -hwaccel cuda, кадры возвращаются в память для фильтров
     hwdec: bool(env.SM_HWDEC, encoder === 'nvenc'),
+    // HDR → SDR: auto — libplacebo (Vulkan на видеокарте), если самопроверка при старте прошла, иначе cpu (zscale+tonemap)
+    tonemapMode,
+    vulkanDevice: env.SM_VULKAN_DEVICE || '',  // индекс или подстрока имени устройства Vulkan; пусто — первая не-программная
+    vulkaninfo: env.SM_VULKANINFO || 'vulkaninfo',
+    tonemapPath: null,                         // решение при старте (worker.checkTools → tonemap.detectTonemap)
     workDir: path.resolve(env.SM_WORK_DIR || path.join(ROOT, 'work')),
     logDir: path.resolve(env.SM_LOG_DIR || path.join(ROOT, 'logs')),
     logMaxBytes: num(env.SM_LOG_MAX_MB, 10) * 1024 * 1024,
