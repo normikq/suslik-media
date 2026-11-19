@@ -7,7 +7,7 @@
 кодировщик ──rsync/ssh (hls-upload)──► /srv/hls/.tmp/<id>.<profile>.<rand>/ ──finalize (mv)──► /srv/hls/<hls_id>/<profile>/
 плеер ──https /hls/<sig>/<exp>/<hls_id>/<profile>/<путь>──► nginx (secure_link) ──► /srv/hls/<hls_id>/<profile>/<путь>
 evict.sh (таймер 15 мин) ──► сайт: GET pending-deletes, POST evicted, POST cdn-stats
-hls-archive.sh (таймер 5 мин) ──rclone copy──► Google Drive (crypt) ──► сайт: POST archived          (если задан архив)
+hls-archive.sh (таймер 5 мин) ──rclone sync──► Google Drive (crypt) ──► сайт: POST archived          (если задан архив)
 hls-restore.sh (служба, опрос 15 с) ◄── сайт: GET pending-restores; rclone copy ◄── архив; POST restored
 ```
 
@@ -142,7 +142,7 @@ sudo systemctl start hls-evict.service                 # настоящий пр
 **Как устроено.**
 - `hls-finalize` после приёма `v1` (не `v1-copy`) кладёт метку `<hls_id>.v1` в `/var/lib/hls-archive-queue/` — каталог 0700 пользователя `hls-upload`
   (только туда он и может писать; состояние `/var/lib/hls-evict/` остаётся закрытым, 0700 root). Метка не легла — приём всё равно успешен.
-- `hls-archive.sh` (таймер раз в 5 мин, `hls-archive.timer`): `rclone copy /srv/hls/<id>/v1/ <REMOTE>/<id>/v1/` с `--drive-stop-on-upload-limit`
+- `hls-archive.sh` (таймер раз в 5 мин, `hls-archive.timer`): `rclone sync /srv/hls/<id>/v1/ <REMOTE>/<id>/v1/` с `--drive-stop-on-upload-limit`
   и ретраями, проверка `rclone check --size-only --one-way`, строка `<id> v1 <байт> <время>` в `/var/lib/hls-evict/archived`,
   `POST /internal/hls/archived`. Отчёт не дошёл — копится в `archived.spool` и уходит при следующем запуске. Профиль удалён до архивации — снимается с очереди.
 - `evict.sh`: в `evicted` поле `archived`; при нехватке места в своей группе (лишние версии, затем остальные) сначала вытесняет уже заархивированные;
