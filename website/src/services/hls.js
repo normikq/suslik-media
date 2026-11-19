@@ -156,6 +156,21 @@ function canReuse(a, b) {
 
 const BAD_AUDIO = [[/^dts/i, "dts"], [/^truehd/i, "truehd"], [/^(dd\+|e-?ac-?3)/i, "eac3"], [/^(ac-?3|dd\b)/i, "ac3"]];
 
+// Звук, который браузер играет в mp4/webm без перекодирования
+const GOOD_AUDIO = new Set(["aac", "mp3", "opus", "vorbis", "flac"]);
+
+/** Кодек звука ffprobe → имя для direct.acodec: dts, truehd, ac3, eac3, aac, … */
+function normAcodec(c) {
+  const s = String(c || "").toLowerCase().trim();
+  if (!s) return "";
+  if (/^dts|^dca$/.test(s)) return "dts";
+  if (/^(truehd|mlp)$/.test(s)) return "truehd";
+  if (/^(eac3|e-ac-3|ec-3|ec3)$/.test(s)) return "eac3";
+  if (/^(ac3|ac-3)$/.test(s)) return "ac3";
+  if (/^(aac|aac_latm|mp4a)/.test(s)) return "aac";
+  return s.slice(0, 32);
+}
+
 function normVcodec(c) {
   const s = String(c || "").toLowerCase();
   if (/^(h\.?264|avc1?|x264)$/.test(s)) return "h264";
@@ -177,11 +192,20 @@ function computeDirectOk(path, tagsEntry) {
   }
   const vcodec = normVcodec(tagsEntry.meta?.codec);
   let acodec = "aac";
-  for (const tag of Array.isArray(tagsEntry.t) ? tagsEntry.t : []) {
-    const hit = BAD_AUDIO.find(([re]) => re.test(String(tag)));
-    if (hit) { acodec = hit[1]; break; }
+  let audioOk;
+  const acodecs = Array.isArray(tagsEntry.meta?.acodecs) ? tagsEntry.meta.acodecs.map(normAcodec).filter(Boolean) : null;
+  if (acodecs && acodecs.length) {
+    // кодеки звука из ffprobe (mediatags.js, meta.acodecs): точнее меток, которые ставятся только для DTS
+    const bad = acodecs.find(c => !GOOD_AUDIO.has(c));
+    acodec = bad || acodecs[0];
+    audioOk = !bad;
+  } else {
+    for (const tag of Array.isArray(tagsEntry.t) ? tagsEntry.t : []) {
+      const hit = BAD_AUDIO.find(([re]) => re.test(String(tag)));
+      if (hit) { acodec = hit[1]; break; }
+    }
+    audioOk = acodec === "aac";
   }
-  const audioOk = acodec === "aac";
   let ok = false;
   if (vcodec === "hevc") ok = false;
   else if (ext === "mp4" || ext === "m4v") ok = audioOk && (!vcodec || vcodec === "h264");
@@ -210,7 +234,7 @@ function decideProfile(body, size = 0) {
   if (/p0?1[0-6]/.test(String(v.pix_fmt || ""))) return "v1"; // 10/12 бит (yuv420p10le, p010le; nv12 — 8 бит)
   if (/^(smpte2084|arib-std-b67)$/i.test(String(v.color_transfer || ""))) return "v1";
   const side = Array.isArray(v.side_data_list) ? v.side_data_list.map(d => String(d?.side_data_type || "")) : [];
-  if (side.some(t => /dovi|dolby vision/i.test(t)) || /^dv/i.test(String(v.codec_tag_string || "")) || /dolby/i.test(String(v.profile || ""))) return "v1";
+  if (v.dovi === true || side.some(t => /dovi|dolby vision/i.test(t)) || /^dv/i.test(String(v.codec_tag_string || "")) || /dolby/i.test(String(v.profile || ""))) return "v1";
   const w = Number(v.width) || 0;
   const h = Number(v.height) || 0;
   if (!w || !h || h > 1080 || w > 1920) return "v1";
@@ -470,6 +494,27 @@ function handleProbe(jobOrId, body, now = Date.now()) {
   const durationMs = Number.isFinite(dur) && dur > 0 ? Math.round(dur) : null;
   const t = sec(now);
 
+  // Перекодирование по команде админа (reencode): без переиспользования, всегда v1 из этого файла
+  if (job.force && job.hls_id) {
+    if (liveEncoder(job.hls_id, job.job_id, t)) return waitJob(job, t);
+    const prev = store.getAsset(job.hls_id);
+    const info = job.canonical_id ? { canonical_id: job.canonical_id, edition: job.edition || "default" } : reuseInfoFor(job.ad_id);
+    const asset = {
+      ...(prev || {}),
+      fingerprint: fp,
+      canonical_id: info.canonical_id || null,
+      edition: info.edition || null,
+      episode: job.episode || episodeOf(job.path) || null,
+      duration_ms: durationMs,
+      source: { ad_id: String(job.ad_id), path: job.path, size: job.size, hash: job.hash || null },
+      profiles: prev?.profiles || {},
+      active_profile: prev?.active_profile || null,
+      pending_delete: prev?.pending_delete || [],
+      last_access: prev?.last_access || t
+    };
+    return startEncode(job, job.hls_id, asset, "v1", t);
+  }
+
   // Задание уже привязано к ассету и профилю (повтор после аренды или v1 после v1-copy)
   if (job.profile && job.hls_id) {
     const a = store.getAsset(job.hls_id);
@@ -554,6 +599,8 @@ function done(body, now = Date.now()) {
   if (!HEX16.test(id) || !PROFILES.has(profile)) throw new HlsError("bad_request", "Неверный hls_id или профиль.");
   const asset = store.getAsset(id);
   if (!asset) throw new HlsError("unknown_asset", "Ассет не найден.", 404);
+  const manifest = cleanManifest(body.manifest);
+  if (!manifest) throw new HlsError("bad_manifest", "Нет manifest или в нём нет видео.");
   const t = sec(now);
   const job = getLiveJob(body.job_id);
   if (job) store.deleteJob(job.job_id);
@@ -564,8 +611,10 @@ function done(body, now = Date.now()) {
     status: "ready",
     created_at: t,
     bytes: Number.isSafeInteger(Number(body.bytes)) ? Number(body.bytes) : 0,
-    manifest: typeof body.manifest_sha256 === "string" ? body.manifest_sha256.slice(0, 64) : null
+    manifest_sha256: typeof body.manifest_sha256 === "string" ? body.manifest_sha256.slice(0, 64) : null,
+    manifest
   };
+  if (!asset.duration_ms && manifest.duration_ms) asset.duration_ms = manifest.duration_ms;
   asset.pending_delete = asset.pending_delete.filter(p => p !== profile);
   delete asset.error;
   if (profile === "v1") {
@@ -575,7 +624,8 @@ function done(body, now = Date.now()) {
     asset.active_profile = "v1-copy";
   }
   store.putAsset(id, asset);
-  if (job && !store.getAlias(job.ad_id, job.path)) store.setAlias(job.ad_id, job.path, id, 0);
+  if (job?.force && job.replaces && job.replaces !== id) replaceAsset(job.replaces, id);
+  if (job && (job.force || !store.getAlias(job.ad_id, job.path))) store.setAlias(job.ad_id, job.path, id, 0);
 
   if (profile === "v1-copy" && !asset.profiles.v1) {
     const s = asset.source || {};
@@ -708,6 +758,283 @@ function forgetMagnet(adId) {
   return { aliases: store.deleteAliasesOf(key), jobs: store.deleteJobsOf(key) };
 }
 
+// ---- manifest.json и master.m3u8 (T4) ----
+
+const DIR_RE = /^[a-z0-9_-]{1,16}$/i;
+const CODEC_RE = /^[a-z0-9.]{3,40}$/i;
+const LANG_RE = /^[a-z]{2,3}(?:-[a-z0-9]{2,8})?$/i;
+const posInt = v => (Number.isSafeInteger(Number(v)) && Number(v) > 0 ? Number(v) : null);
+const cleanName = v => String(v ?? "").replace(/[\u0000-\u001f"\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
+
+/**
+ * manifest.json профиля (воркер присылает его целиком в done) → только поля, нужные master.m3u8. Без видео → null.
+ * Видео до 4 (у исходника ≤720p — только 720p/, у v1-copy — одна дорожка, кодек может быть avc1), звук до 4, субтитры до 6.
+ */
+function cleanManifest(m) {
+  if (!m || typeof m !== "object") return null;
+  const video = (Array.isArray(m.video) ? m.video : [])
+    .filter(v => v && DIR_RE.test(String(v.dir)) && CODEC_RE.test(String(v.codec)) && posInt(v.bandwidth))
+    .slice(0, 4)
+    .map(v => ({
+      dir: String(v.dir),
+      codec: String(v.codec),
+      width: posInt(v.width),
+      height: posInt(v.height),
+      bandwidth: posInt(v.bandwidth),
+      avg_bandwidth: posInt(v.avg_bandwidth),
+      fps: Number.isFinite(Number(v.fps)) && Number(v.fps) > 0 && Number(v.fps) < 1000 ? Number(v.fps) : null
+    }));
+  if (!video.length) return null;
+  const lang = v => (LANG_RE.test(String(v ?? "")) ? String(v).toLowerCase() : null);
+  const audio = (Array.isArray(m.audio) ? m.audio : [])
+    .filter(a => a && DIR_RE.test(String(a.dir)))
+    .slice(0, 4)
+    .map(a => ({
+      dir: String(a.dir),
+      codec: CODEC_RE.test(String(a.codec)) ? String(a.codec) : "mp4a.40.2",
+      channels: posInt(a.channels) || 2,
+      language: lang(a.language),
+      name: cleanName(a.name) || String(a.dir),
+      default: a.default === true
+    }));
+  const subtitles = (Array.isArray(m.subtitles) ? m.subtitles : [])
+    .filter(s => s && DIR_RE.test(String(s.dir)))
+    .slice(0, 6)
+    .map(s => ({ dir: String(s.dir), language: lang(s.language), name: cleanName(s.name) || String(s.dir), forced: s.forced === true }));
+  return {
+    duration_ms: posInt(m.duration_ms),
+    encoder: typeof m.encoder === "string" ? m.encoder.slice(0, 16) : null,
+    video,
+    audio,
+    subtitles
+  };
+}
+
+/**
+ * master.m3u8 ассета (§6, §10; пример — docs/hls-fixtures/master-v1.m3u8) строго по manifest: EXT-X-MEDIA для звука (aud)
+ * и субтитров (sub), EXT-X-STREAM-INF на каждый элемент manifest.video, абсолютные подписанные ссылки CDN с тем же exp.
+ * Ассет не готов или без manifest → HlsError 404; CDN не настроен → HlsError 503.
+ */
+function masterPlaylist(id, exp, opts = {}) {
+  const a = store.getAsset(String(id));
+  const profile = readyProfile(a);
+  const man = profile ? a.profiles[profile].manifest : null;
+  if (!man || !Array.isArray(man.video) || !man.video.length) throw new HlsError("not_ready", "HLS ещё не готов.", 404);
+  const url = rel => signHlsUrl(id, profile, `${rel}/index.m3u8`, exp, opts);
+  const yn = b => (b ? "YES" : "NO");
+  const lines = ["#EXTM3U", "#EXT-X-VERSION:7", "#EXT-X-INDEPENDENT-SEGMENTS"];
+  const audio = man.audio || [];
+  const subs = man.subtitles || [];
+  const defAudio = audio.findIndex(x => x.default);
+  audio.forEach((x, i) => {
+    const attrs = ["TYPE=AUDIO", 'GROUP-ID="aud"', `NAME="${cleanName(x.name) || x.dir}"`];
+    if (x.language) attrs.push(`LANGUAGE="${x.language}"`);
+    attrs.push(`DEFAULT=${yn(defAudio >= 0 ? i === defAudio : i === 0)}`, "AUTOSELECT=YES", `CHANNELS="${x.channels || 2}"`, `URI="${url(x.dir)}"`);
+    lines.push(`#EXT-X-MEDIA:${attrs.join(",")}`);
+  });
+  for (const x of subs) {
+    const attrs = ["TYPE=SUBTITLES", 'GROUP-ID="sub"', `NAME="${cleanName(x.name) || x.dir}"`];
+    if (x.language) attrs.push(`LANGUAGE="${x.language}"`);
+    // FORCED=YES требует AUTOSELECT=YES (RFC 8216 §4.3.4.1)
+    attrs.push("DEFAULT=NO", `AUTOSELECT=${yn(x.forced)}`, `FORCED=${yn(x.forced)}`, `URI="${url(x.dir)}"`);
+    lines.push(`#EXT-X-MEDIA:${attrs.join(",")}`);
+  }
+  const aCodec = audio.length ? audio[defAudio >= 0 ? defAudio : 0].codec || "mp4a.40.2" : null;
+  for (const v of man.video) {
+    const attrs = [`BANDWIDTH=${v.bandwidth}`];
+    if (v.avg_bandwidth) attrs.push(`AVERAGE-BANDWIDTH=${v.avg_bandwidth}`);
+    attrs.push(`CODECS="${aCodec ? `${v.codec},${aCodec}` : v.codec}"`);
+    if (v.width && v.height) attrs.push(`RESOLUTION=${v.width}x${v.height}`);
+    if (v.fps) attrs.push(`FRAME-RATE=${Number(v.fps.toFixed(3))}`);
+    attrs.push("VIDEO-RANGE=SDR");
+    if (audio.length) attrs.push('AUDIO="aud"');
+    if (subs.length) attrs.push('SUBTITLES="sub"');
+    lines.push(`#EXT-X-STREAM-INF:${attrs.join(",")}`, url(v.dir));
+  }
+  return lines.join("\n") + "\n";
+}
+
+// ---- Следующие серии (variant-url, приоритет 1) ----
+
+/** Видеофайлы раздачи со следующими сериями того же сезона (N+1 … N+count) после path. */
+function nextEpisodes(files, path, count = 2) {
+  const cur = episodeOf(path);
+  if (!cur) return [];
+  const [, s, e] = cur.match(/^S(\d+)E(\d+)$/);
+  const want = new Map();
+  for (let k = 1; k <= count; k++) want.set(epFmt(s, Number(e) + k), k);
+  const found = new Map();
+  for (const f of videoFiles(files)) {
+    const k = want.get(episodeOf(f.path));
+    if (k && !found.has(k) && normPath(f.path) !== normPath(path)) found.set(k, f);
+  }
+  return [...found.keys()].sort((a, b) => a - b).map(k => found.get(k));
+}
+
+// ---- Админка (T6) ----
+
+/**
+ * Перекодировать v1 из файла раздачи (новый источник). Файл получает свой ассет (hls_id файла), задание — приоритет 0,
+ * без переиспользования. replaces — ассет, который он заменяет (по умолчанию тот, что сейчас играет этот файл, или готовый
+ * по ключу переиспользования): после done алиасы старого ассета переходят на новый, старый уходит в pending_delete.
+ * → { job, replaces }.
+ */
+function reencode(opts, now = Date.now()) {
+  const adId = String(opts?.ad_id ?? "");
+  const path = normPath(opts?.path);
+  const hash = typeof opts?.hash === "string" && /^[0-9a-f]{32,64}$/i.test(opts.hash) ? opts.hash.toLowerCase() : null;
+  const size = Number(opts?.size);
+  if (!/^\d{1,20}$/.test(adId) || !path || !Number.isSafeInteger(size) || size < 0) throw new HlsError("bad_request", "Неверный файл.");
+  const id = hlsId({ hash, adId, path, size });
+  let replaces = typeof opts.replaces === "string" && HEX16.test(opts.replaces) ? opts.replaces : null;
+  if (replaces && !store.getAsset(replaces)) throw new HlsError("unknown_asset", "Ассет не найден.", 404);
+  if (!replaces) {
+    const al = store.getAlias(adId, path);
+    if (al && store.getAsset(al.hls_id)) replaces = al.hls_id;
+  }
+  if (!replaces) {
+    const info = reuseInfoFor(adId);
+    const key = store.reuseKeyOf({ ...info, episode: episodeOf(path) });
+    replaces = store.assetsByReuseKey(key).find(x => readyProfile(store.getAsset(x))) || null;
+  }
+  const t = sec(now);
+  for (const j of [store.jobForFile(adId, path), store.jobForHls(id)]) {
+    if (!j || !store.getJob(j.job_id)) continue;
+    if (j.state === "running" && (j.leased_until || 0) > t) throw new HlsError("busy", "Этот файл сейчас кодируется.", 409);
+    store.deleteJob(j.job_id);
+  }
+  const r = enqueue({ ad_id: adId, path, size, hash, priority: 0, hls_id: id, profile: "v1" }, now);
+  const job = r.job;
+  job.force = true;
+  job.replaces = replaces && replaces !== id ? replaces : null;
+  store.putJob(job.job_id, job);
+  return { job: publicJob(job), replaces: job.replaces };
+}
+
+/** done перекодирования: алиасы старого ассета → новый (сдвиг пересчитывается), старый — в pending_delete. */
+function replaceAsset(oldId, newId) {
+  const old = store.getAsset(oldId);
+  const nw = store.getAsset(newId);
+  if (!old || !nw) return;
+  const d = shiftMs(nw.duration_ms, old.duration_ms);
+  for (const key of store.aliasesOf(oldId)) {
+    const al = store.allAliases().get(key);
+    if (!al || d === null) continue;
+    const bar = key.indexOf("|");
+    store.setAlias(key.slice(0, bar), key.slice(bar + 1), newId, (al.shift_ms || 0) + d);
+  }
+  old.active_profile = null;
+  old.pending_delete = Object.keys(old.profiles || {});
+  store.putAsset(oldId, old);
+}
+
+/** Повторить задание (админка): снова в очередь сразу, попытки с нуля. Задание в аренде → HlsError 409. */
+function retryJob(jobId, now = Date.now()) {
+  const job = getLiveJob(String(jobId || ""));
+  if (!job) throw new HlsError("unknown_job", "Задание не найдено.", 404);
+  if (job.state === "running" && (job.leased_until || 0) > sec(now)) throw new HlsError("busy", "Задание сейчас выполняется.", 409);
+  Object.assign(job, { state: "queued", attempts: 0, leased_until: 0 });
+  delete job.error;
+  store.putJob(job.job_id, job);
+  const a = job.hls_id ? store.getAsset(job.hls_id) : null;
+  if (a?.error) {
+    delete a.error;
+    store.putAsset(job.hls_id, a);
+  }
+  return publicJob(job);
+}
+
+/**
+ * Удалить профиль или весь ассет (админка): профиль уходит в pending_delete, CDN удалит файлы и пришлёт evicted —
+ * тогда исчезнет и запись. Без профиля — все профили; задания ассета вне аренды снимаются. Ассет без профилей
+ * (на CDN ничего нет) удаляется сразу. → { hls_id, pending_delete, removed }.
+ */
+function requestDelete(id, profile, now = Date.now()) {
+  const a = store.getAsset(String(id || ""));
+  if (!a) throw new HlsError("unknown_asset", "Ассет не найден.", 404);
+  if (profile !== undefined && profile !== null && !PROFILES.has(profile)) throw new HlsError("bad_request", "Неверный профиль.");
+  if (profile && !a.profiles?.[profile]) throw new HlsError("unknown_profile", "У ассета нет такого профиля.", 404);
+  const t = sec(now);
+  const names = profile ? [profile] : Object.keys(a.profiles || {});
+  if (!profile) {
+    for (const j of [...store.allJobs().values()]) {
+      if (j.hls_id === id && !(j.state === "running" && (j.leased_until || 0) > t)) store.deleteJob(j.job_id);
+    }
+    if (!names.length) {
+      store.deleteAsset(id);
+      return { hls_id: id, pending_delete: [], removed: true };
+    }
+  }
+  a.pending_delete = [...new Set([...(Array.isArray(a.pending_delete) ? a.pending_delete : []), ...names])];
+  if (names.includes(a.active_profile)) {
+    a.active_profile = ["v1", "v1-copy"].find(p => !a.pending_delete.includes(p) && a.profiles?.[p]?.status === "ready") || null;
+  }
+  store.putAsset(id, a);
+  return { hls_id: id, pending_delete: a.pending_delete, removed: false };
+}
+
+/** Состояние для админки: очередь, ассеты с профилями и размерами, последнее cdn-stats. */
+function adminState(now = Date.now()) {
+  const jobs = [...store.allJobs().values()].sort(jobOrder).map(j => ({
+    ...publicJob(j),
+    state: j.state,
+    attempts: j.attempts || 0,
+    progress: j.progress ?? 0,
+    eta_s: j.eta_s ?? null,
+    stage: j.stage || null,
+    created_at: j.created_at || null,
+    error: j.error || null,
+    force: !!j.force,
+    replaces: j.replaces || null
+  }));
+  let bytes = 0;
+  let ready = 0;
+  const assets = [...store.allAssets()].map(([id, a]) => {
+    const profiles = {};
+    let total = 0;
+    for (const [name, p] of Object.entries(a.profiles || {})) {
+      profiles[name] = { status: p.status, bytes: p.bytes || 0, created_at: p.created_at || null, encoder: p.manifest?.encoder || null };
+      total += Number(p.bytes) || 0;
+    }
+    bytes += total;
+    if (readyProfile(a)) ready++;
+    const aliases = store.aliasesOf(id).map(key => {
+      const bar = key.indexOf("|");
+      return { ad_id: key.slice(0, bar), path: key.slice(bar + 1), shift_ms: store.allAliases().get(key)?.shift_ms || 0 };
+    });
+    return {
+      hls_id: id,
+      source: a.source || null,
+      canonical_id: a.canonical_id || null,
+      edition: a.edition || null,
+      episode: a.episode || null,
+      duration_ms: a.duration_ms || null,
+      active_profile: a.active_profile || null,
+      pending_delete: a.pending_delete || [],
+      last_access: a.last_access || null,
+      error: a.error || null,
+      profiles,
+      bytes: total,
+      aliases
+    };
+  }).sort((x, y) => (y.last_access || 0) - (x.last_access || 0));
+  const count = st => jobs.filter(j => j.state === st).length;
+  return {
+    enabled: !!config.HLS_ENABLED,
+    configured: {
+      cdn_url: !!config.HLS_CDN_URL,
+      sign_secret: !!config.HLS_SIGN_SECRET,
+      worker_token: !!config.HLS_WORKER_TOKEN,
+      cdn_token: !!config.HLS_CDN_TOKEN
+    },
+    now: sec(now),
+    totals: { jobs: jobs.length, queued: count("queued"), running: count("running"), failed: count("failed"), assets: assets.length, ready, bytes },
+    queue: jobs,
+    assets,
+    cdn: getCdnStats()
+  };
+}
+
 function _reset() {
   lastStatus.clear();
   baseline = false;
@@ -756,5 +1083,13 @@ module.exports = {
   statusFor,
   enabledFor,
   forgetMagnet,
+  normAcodec,
+  cleanManifest,
+  masterPlaylist,
+  nextEpisodes,
+  reencode,
+  retryJob,
+  requestDelete,
+  adminState,
   _reset
 };

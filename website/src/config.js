@@ -117,6 +117,11 @@ if (!process.env.SESSION_SECRET) {
 if (DISCORD_ENABLED && !(DISCORD_BOT_TOKEN && DISCORD_GUILD_ID) && DISCORD_ALLOWED_USERS.length === 0) {
   console.warn("ПРЕДУПРЕЖДЕНИЕ: вход через Discord включён, но не заданы ни бот (DISCORD_BOT_TOKEN + DISCORD_GUILD_ID), ни DISCORD_ALLOWED_USERS: войти сможет только DISCORD_OWNER_ID.");
 }
+// Секрет подписи CDN попадает в secure_link_md5 nginx: другие символы ломают конфиг CDN (infra/cdn)
+const HLS_SECRET_RE = /^[A-Za-z0-9._~+/=-]+$/;
+if (HLS_ENABLED && HLS_SIGN_SECRET && !HLS_SECRET_RE.test(HLS_SIGN_SECRET)) {
+  console.warn("ПРЕДУПРЕЖДЕНИЕ: HLS_SIGN_SECRET содержит недопустимые символы (можно A-Z a-z 0-9 . _ ~ + / = -): подписи CDN не совпадут с nginx.");
+}
 if (!SITE_PASSWORD) {
   console.warn("ПРЕДУПРЕЖДЕНИЕ: SITE_PASSWORD не задан. Вход будет недоступен, пока пароль не будет указан в .env.");
 }
@@ -180,6 +185,7 @@ module.exports = {
   HLS_WORKER_TOKEN,
   HLS_CDN_TOKEN,
   HLS_BETA_USERS,
+  HLS_SECRET_RE,
   GEMINI_API_KEY,
   AI_TITLE_MODEL,
   AI_TITLE_COOLDOWN_MIN,
