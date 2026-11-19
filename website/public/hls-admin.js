@@ -141,7 +141,33 @@
     return set;
   }
 
-  const api = { reencodingAssets, formatBytes, formatEta, formatDuration, formatAgo, percent, progressPercent, fileName, stateText, stageText, priorityText, profileStatusText, errorText, missingConfig };
+  /** Сдвиг в секундах для людей: «−4,2 с», «+1 с»; 0 — пусто. */
+  function offsetText(ms) {
+    const n = Number(ms) || 0;
+    if (!n) return "";
+    const s = (Math.abs(n) / 1000).toFixed(1).replace(/\.0$/, "").replace(".", ",");
+    return (n < 0 ? "\u2212" : "+") + s + " с";
+  }
+
+  /** Задание «звук» (§18): «Озвучки: HDRezka, LostFilm». */
+  function audioJobText(j) {
+    const names = (j && Array.isArray(j.tracks) ? j.tracks : []).map(t => (t && (t.name || t.key)) || "").filter(Boolean);
+    return names.length ? (names.length === 1 ? "Озвучка: " : "Озвучки: ") + names.join(", ") : "Озвучки";
+  }
+
+  /** Внешняя озвучка ассета: «HDRezka — x0, ru, сдвиг −4,2 с, в v1» или «… ещё не готова». */
+  function externalText(x) {
+    if (!x) return "";
+    const bits = [x.dir];
+    if (x.language) bits.push(x.language);
+    const off = offsetText(x.offset_ms);
+    if (off) bits.push("сдвиг " + off);
+    bits.push(x.kind === "custom" ? "добавлена пользователем" : "из раздачи");
+    const where = Array.isArray(x.profiles) && x.profiles.length ? "в " + x.profiles.join(", ") : "ещё не готова";
+    return `${x.name || x.key} — ${bits.join(", ")}, ${where}`;
+  }
+
+  const api = { offsetText, audioJobText, externalText, reencodingAssets, formatBytes, formatEta, formatDuration, formatAgo, percent, progressPercent, fileName, stateText, stageText, priorityText, profileStatusText, errorText, missingConfig };
 
   if (typeof module === "object" && module && module.exports) {
     module.exports = api;
@@ -326,10 +352,12 @@
     const left = el("div");
     left.style.minWidth = "0";
     left.append(el("div", "item-title", fileName(j.path)));
-    left.append(el("div", "item-meta", `Раздача ${j.ad_id} · ${j.path}`));
+    if (j.ad_id) left.append(el("div", "item-meta", `Раздача ${j.ad_id} · ${j.path}`));
+    if (j.type === "audio") left.append(el("div", "item-meta", audioJobText(j)));
     head.append(left);
     const tags = el("div");
     tags.append(el("span", "tag " + (j.state || ""), stateText(j.state)));
+    if (j.type === "audio") tags.append(el("span", "tag", "звук"));
     tags.append(el("span", "tag", priorityText(j.priority)));
     if (j.profile) tags.append(el("span", "tag", j.profile));
     if (j.force) tags.append(el("span", "tag pending", "перекодирование"));
@@ -429,6 +457,17 @@
     }
     if (!Object.keys(a.profiles || {}).length) profiles.append(el("div", "muted small", "Версий нет."));
     item.append(profiles);
+
+    // Внешние озвучки (§18): отдельные звуковые дорожки HLS из .mka
+    const ext = a.external && Array.isArray(a.external.tracks) ? a.external.tracks : [];
+    const extPending = a.external && Array.isArray(a.external.pending) ? a.external.pending : [];
+    if (ext.length || extPending.length) {
+      item.append(el("div", "item-meta", "Внешние озвучки:"));
+      const ul = el("ul", "files");
+      for (const x of ext) ul.append(el("li", null, externalText(x)));
+      for (const p of extPending) ul.append(el("li", "muted", `${p.profile}/${p.path} — ждёт удаления на CDN`));
+      item.append(ul);
+    }
 
     // Файлы: источник и алиасы, с каждого можно перекодировать
     const files = el("ul", "files");

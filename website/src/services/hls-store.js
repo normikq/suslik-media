@@ -16,6 +16,8 @@ const { makeJsonWriter } = require("../utils/json-writer");
 //   byFingerprint — отпечаток → hls_id; byReuseKey — "canonical_id|edition|episode" → Set(hls_id);
 //   byAlias — hls_id → Set(ключей алиасов) (обратный индекс: вытеснение ассета удаляет его алиасы);
 //   jobByFile — "<adId>|<путь>" → job_id, jobByHls — hls_id → job_id (дедупликация очереди, §11).
+// Задания «звук» (§18, type: "audio") в индексы файлов не входят: у них нет файла, только hls_id и профиль.
+// У ассета внешние озвучки (§18): ext_audio — ключ дорожки → { dir: "xN", … }, pending_delete_paths — [{profile, path}].
 // Логика (что ставить, что отвечать воркеру) — в services/hls.js; здесь только данные и индексы.
 
 let assets = new Map();
@@ -79,12 +81,16 @@ function unindexAsset(id, a) {
   if (rk) removeFrom(byReuseKey, rk, id);
 }
 
+const isAudioJob = j => !!j && j.type === "audio";
+
 function indexJob(id, j) {
+  if (isAudioJob(j)) return;
   jobByFile.set(fileKey(j.ad_id, j.path), id);
   if (j.hls_id) jobByHls.set(j.hls_id, id);
 }
 
 function unindexJob(id, j) {
+  if (isAudioJob(j)) return;
   const fk = fileKey(j.ad_id, j.path);
   if (jobByFile.get(fk) === id) jobByFile.delete(fk);
   if (j.hls_id && jobByHls.get(j.hls_id) === id) jobByHls.delete(j.hls_id);
@@ -100,7 +106,7 @@ function rebuildIndexes() {
 function load() {
   assets = new Map(Object.entries(readJson(config.HLS_ASSETS_FILE)).filter(([, a]) => a && typeof a === "object"));
   aliases = new Map(Object.entries(readJson(config.HLS_ALIASES_FILE)).filter(([, a]) => a && typeof a.hls_id === "string"));
-  jobs = new Map(Object.entries(readJson(config.HLS_QUEUE_FILE)).filter(([, j]) => j && j.ad_id != null && typeof j.path === "string"));
+  jobs = new Map(Object.entries(readJson(config.HLS_QUEUE_FILE)).filter(([, j]) => j && (isAudioJob(j) ? typeof j.hls_id === "string" && Array.isArray(j.keys) : j.ad_id != null && typeof j.path === "string")));
   rebuildIndexes();
 }
 load();
@@ -215,7 +221,7 @@ function jobForHls(hlsId) {
 /** Удалить задания раздачи. Возвращает, сколько удалено. */
 function deleteJobsOf(adId) {
   let n = 0;
-  for (const [id, j] of [...jobs]) if (String(j.ad_id) === String(adId) && deleteJob(id)) n++;
+  for (const [id, j] of [...jobs]) if (!isAudioJob(j) && String(j.ad_id) === String(adId) && deleteJob(id)) n++;
   return n;
 }
 
@@ -237,6 +243,7 @@ function _reset({ reload = false } = {}) {
 
 module.exports = {
   fileKey,
+  isAudioJob,
   reuseKeyOf,
   getAsset,
   putAsset,
