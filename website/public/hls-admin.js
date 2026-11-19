@@ -1,5 +1,5 @@
 /* Админка HLS (docs/HLS-CLIENT.md, T6): очередь кодирования, готовые видео, место на CDN.
-   Данные — GET api/hls/admin/state, действия — POST api/hls/admin/{retry,reencode,delete,restore}.
+   Данные — GET api/hls/admin/state, действия — POST api/hls/admin/{retry,reencode,delete,restore,cancel,clear}.
    Внешний скрипт без инлайна (CSP сайта: script-src 'self'). Чистые функции экспортируются для тестов в Node. */
 (function () {
   "use strict";
@@ -167,7 +167,37 @@
     return `${x.name || x.key} — ${bits.join(", ")}, ${where}`;
   }
 
-  const api = { offsetText, audioJobText, externalText, reencodingAssets, formatBytes, formatEta, formatDuration, formatAgo, percent, progressPercent, fileName, stateText, stageText, priorityText, profileStatusText, errorText, missingConfig };
+  /** Задание взято воркером и аренда жива (§19: «Остановить», а не «Убрать»). now — секунды. */
+  function isLiveJob(j, now) {
+    return !!j && j.state === "running" && (Number(j.leased_until) || 0) > now;
+  }
+
+  /** Кнопка снятия задания: «Остановить» (кодируется) или «Убрать» (ждёт, упало). */
+  function cancelLabel(j, now) {
+    return isLiveJob(j, now) ? "Остановить" : "Убрать";
+  }
+
+  /** Подтверждение снятия задания. */
+  function cancelConfirmText(j, now) {
+    const file = "«" + fileName(j && j.path) + "»";
+    const audio = !!j && j.type === "audio";
+    if (isLiveJob(j, now)) {
+      return `Остановить ${audio ? "кодирование озвучек для" : "кодирование"} ${file}? Кодировщик бросит работу, сделанное пропадёт.`;
+    }
+    return `Убрать из очереди ${audio ? "озвучки для " : ""}${file}?`;
+  }
+
+  /** Сколько заданий уберёт «Очистить очередь»: ждущие и упавшие (взятые воркером не трогаются). */
+  function clearableCount(queue, now) {
+    return (Array.isArray(queue) ? queue : []).filter(j => j && !isLiveJob(j, now)).length;
+  }
+
+  /** Подтверждение «Очистить очередь» с числом заданий. */
+  function clearConfirmText(n) {
+    return `Убрать из очереди ${n} ${plural(n, "задание", "задания", "заданий")} (ждут или с ошибкой)? Те, что сейчас кодируются, останутся.`;
+  }
+
+  const api = { isLiveJob, cancelLabel, cancelConfirmText, clearableCount, clearConfirmText, offsetText, audioJobText, externalText, reencodingAssets, formatBytes, formatEta, formatDuration, formatAgo, percent, progressPercent, fileName, stateText, stageText, priorityText, profileStatusText, errorText, missingConfig };
 
   if (typeof module === "object" && module && module.exports) {
     module.exports = api;
@@ -182,6 +212,7 @@
   let loading = false;
   let lastOk = 0;
   let toastTimer = null;
+  let clearable = 0;
 
   function el(tag, cls, text) {
     const e = document.createElement(tag);
@@ -335,6 +366,9 @@
     qBox.replaceChildren();
     if (!queue.length) qBox.append(el("p", "muted", "Очередь пуста."));
     for (const j of queue) qBox.append(renderJob(j, now));
+    clearable = clearableCount(queue, now);
+    $("clearQueue").disabled = !clearable;
+    $("clearQueue").title = clearable ? "" : "Нет ждущих и упавших заданий.";
 
     // Ассеты
     const assets = Array.isArray(s.assets) ? s.assets : [];
@@ -387,14 +421,22 @@
       const st = stageText(j.error.stage);
       item.append(el("div", "item-meta error", "Ошибка" + (st ? ` (${st})` : "") + ": " + j.error.error));
     }
+    const actions = el("div", "item-actions");
     if (j.state === "failed") {
-      const actions = el("div", "item-actions");
       const b = el("button", "primary", "Повторить");
       b.type = "button";
       b.addEventListener("click", () => act(b, "api/hls/admin/retry", { job_id: j.job_id }, "Задание снова в очереди."));
       actions.append(b);
-      item.append(actions);
     }
+    const live = isLiveJob(j, now);
+    const cb = el("button", "danger", cancelLabel(j, now));
+    cb.type = "button";
+    cb.addEventListener("click", () => {
+      if (!window.confirm(cancelConfirmText(j, now))) return;
+      act(cb, "api/hls/admin/cancel", { job_id: j.job_id }, live ? "Кодирование остановлено." : "Задание убрано.");
+    });
+    actions.append(cb);
+    item.append(actions);
     return item;
   }
 
@@ -530,6 +572,11 @@
     }
   });
   $("refresh").addEventListener("click", () => load());
+  $("clearQueue").addEventListener("click", () => {
+    const b = $("clearQueue");
+    if (!clearable || !window.confirm(clearConfirmText(clearable))) return;
+    act(b, "api/hls/admin/clear", { running: false }, "Очередь очищена.");
+  });
 
   load();
   if (!document.hidden) start();

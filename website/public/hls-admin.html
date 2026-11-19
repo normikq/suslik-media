@@ -25,6 +25,7 @@
     button{border:1px solid #373c4d;border-radius:10px;padding:7px 12px;background:#252938;color:var(--text);font:600 13px system-ui,sans-serif;cursor:pointer}
     button:hover{background:#343a4d}
     button:disabled{opacity:.55;cursor:wait}
+    #clearQueue:disabled{cursor:not-allowed}
     button.primary{background:var(--accent);color:#171222;border-color:var(--accent)}
     button.primary:hover{background:#c8b7ff}
     button.danger{border-color:#ff6b6b66;background:#ff6b6b1a;color:#ffb3b3}
@@ -97,6 +98,7 @@
 
     <section class="panel">
       <h2>Очередь <small id="queueCount"></small></h2>
+      <div class="toolbar"><button id="clearQueue" class="danger" type="button" disabled>Очистить очередь</button></div>
       <div id="queue"></div>
     </section>
 
