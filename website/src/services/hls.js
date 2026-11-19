@@ -295,7 +295,9 @@ function publicJob(j) {
     episode: j.episode || null,
     priority: j.priority,
     profile: j.profile || null,
-    leased_until: j.leased_until || 0
+    leased_until: j.leased_until || 0,
+    force: Boolean(j.force),
+    replaces: j.replaces || null
   };
 }
 
@@ -896,6 +898,13 @@ function reencode(opts, now = Date.now()) {
     const info = reuseInfoFor(adId);
     const key = store.reuseKeyOf({ ...info, episode: episodeOf(path) });
     replaces = store.assetsByReuseKey(key).find(x => readyProfile(store.getAsset(x))) || null;
+  }
+  // перекодирование этого файла или этого ассета уже в очереди — второе не ставим
+  for (const j of store.allJobs().values()) {
+    if (!j || !j.force || j.state === "failed") continue;
+    const sameFile = String(j.ad_id) === adId && j.path === path;
+    const sameAsset = j.hls_id === id || (replaces && (j.replaces === replaces || j.hls_id === replaces));
+    if (sameFile || sameAsset) throw new HlsError("already_queued", "Перекодирование уже в очереди.", 409);
   }
   const t = sec(now);
   for (const j of [store.jobForFile(adId, path), store.jobForHls(id)]) {

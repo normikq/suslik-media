@@ -201,6 +201,18 @@ test("reencode: задание с приоритетом 0 и hls_id замен�
   assert.equal(entry.priority, 0);
   assert.equal(entry.force, true);
 
+  // Повторное перекодирование, пока первое в очереди, — 409 already_queued, кнопка заблокирована
+  const rAgain = await call("POST", "/api/hls/admin/reencode", {
+    headers: { "X-Device-Token": adminTok },
+    json: { ad_id: 710003, path: "Film.mkv", hls_id: oldId }
+  });
+  assert.equal(rAgain.status, 409);
+  assert.equal(rAgain.json.code, "already_queued");
+  assert.equal(ui.errorText(409, rAgain.json), "Перекодирование уже в очереди.");
+  assert.equal(rState.json.queue.filter(j => j.force).length, 1);
+  assert.ok(ui.reencodingAssets(rState.json.queue).has(oldId));
+  assert.equal(ui.reencodingAssets([{ force: true, state: "failed", hls_id: oldId }]).size, 0);
+
   // Отсутствующий файл — 404 unknown_file
   const rMissing = await call("POST", "/api/hls/admin/reencode", {
     headers: { "X-Device-Token": adminTok },

@@ -110,6 +110,7 @@
     if (!status) return "Нет связи с сервером.";
     if (status === 401) return "Нужно войти на сайт.";
     if (status === 403) return code === "forbidden" || !msg ? "Нет доступа." : msg;
+    if (code === "already_queued") return "Перекодирование уже в очереди.";
     if (status === 409 || code === "busy") return "Задание сейчас в работе. Попробуйте позже.";
     if (code === "unknown_job") return "Задания уже нет.";
     if (code === "unknown_asset") return "Запись уже удалена.";
@@ -128,7 +129,18 @@
     return Object.keys(names).filter(k => !c[k]).map(k => names[k]);
   }
 
-  const api = { formatBytes, formatEta, formatDuration, formatAgo, percent, progressPercent, fileName, stateText, stageText, priorityText, profileStatusText, errorText, missingConfig };
+  /** hls_id ассетов, у которых перекодирование уже в очереди (кнопку блокируем). */
+  function reencodingAssets(queue) {
+    const set = new Set();
+    for (const j of Array.isArray(queue) ? queue : []) {
+      if (!j || !j.force || j.state === "failed") continue;
+      if (j.replaces) set.add(j.replaces);
+      if (j.hls_id) set.add(j.hls_id);
+    }
+    return set;
+  }
+
+  const api = { reencodingAssets, formatBytes, formatEta, formatDuration, formatAgo, percent, progressPercent, fileName, stateText, stageText, priorityText, profileStatusText, errorText, missingConfig };
 
   if (typeof module === "object" && module && module.exports) {
     module.exports = api;
@@ -301,7 +313,8 @@
     const aBox = $("assets");
     aBox.replaceChildren();
     if (!assets.length) aBox.append(el("p", "muted", "Пока ничего нет."));
-    for (const a of assets) aBox.append(renderAsset(a, now));
+    const reencoding = reencodingAssets(queue);
+    for (const a of assets) aBox.append(renderAsset(a, now, reencoding.has(a.hls_id)));
   }
 
   function renderJob(j, now) {
@@ -353,7 +366,7 @@
     return item;
   }
 
-  function renderAsset(a, now) {
+  function renderAsset(a, now, reencodeQueued) {
     const item = el("div", "item");
     const src = a.source || {};
     const pending = Array.isArray(a.pending_delete) ? a.pending_delete : [];
@@ -417,8 +430,9 @@
       seen.add(key);
       const li = el("li");
       li.append(el("span", null, `Раздача ${f.ad_id} · ${f.path}` + (f.label ? ` (${f.label})` : "")));
-      const b = el("button", null, "Перекодировать с этой раздачи");
+      const b = el("button", null, reencodeQueued ? "Уже в очереди" : "Перекодировать с этой раздачи");
       b.type = "button";
+      b.disabled = Boolean(reencodeQueued);
       b.addEventListener("click", () => {
         if (!window.confirm(`Перекодировать заново из «${fileName(f.path)}»? Пока идёт кодирование, играет старая версия.`)) return;
         act(b, "api/hls/admin/reencode", { ad_id: Number(f.ad_id), path: f.path, hls_id: a.hls_id }, "Поставлено в очередь первым.");
