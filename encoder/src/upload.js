@@ -26,10 +26,19 @@ function tmpName(hlsId, profile) {
   return `${hlsId}.${profile}.${crypto.randomBytes(4).toString('hex')}`;
 }
 
+/**
+ * Путь назначения rsync. Он считается от корня rrsync у hls-upload (на CDN это уже /srv/hls/.tmp/),
+ * поэтому по умолчанию — просто имя папки; «.tmp/<имя>» дал бы /srv/hls/.tmp/.tmp/<имя> и rsync exit 11.
+ */
+function rsyncTarget(tmpDir, name) {
+  const base = String(tmpDir || '').replace(/^(\.\/)+|\/+$/g, '');
+  return base && base !== '.' ? `${base}/${name}` : name;
+}
+
 async function uploadRsync(cfg, srcDir, hlsId, profile, { signal, log }) {
   const u = cfg.upload;
   const name = tmpName(hlsId, profile);
-  const tmp = `${u.tmpDir.replace(/\/+$/, '')}/${name}`;
+  const tmp = rsyncTarget(u.tmpDir, name);
   const e = [u.sshBin, ...sshOpts(u)].map(q).join(' ');
   // cwd = папка профиля, источник «./»: без букв дисков (cwRsync/MSYS иначе принимают «C:» за хост)
   const args = ['-a', '--partial', '--chmod=D755,F644', '-e', e, './', `${u.ssh}:${tmp}/`];
@@ -50,7 +59,7 @@ async function uploadRsync(cfg, srcDir, hlsId, profile, { signal, log }) {
 async function uploadLocal(cfg, srcDir, hlsId, profile, { log }) {
   const root = cfg.upload.localDir;
   const name = tmpName(hlsId, profile);
-  const tmp = path.join(root, cfg.upload.tmpDir, name);
+  const tmp = path.join(root, '.tmp', name);
   fs.mkdirSync(path.dirname(tmp), { recursive: true });
   fs.cpSync(srcDir, tmp, { recursive: true });
   const target = path.join(root, hlsId, profile);
@@ -72,4 +81,4 @@ function upload(cfg, srcDir, hlsId, profile, opts = {}) {
   return uploadRsync(cfg, srcDir, hlsId, profile, opts);
 }
 
-module.exports = { upload, fill, tmpName };
+module.exports = { upload, fill, tmpName, rsyncTarget };

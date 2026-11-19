@@ -21,7 +21,7 @@ GET /internal/hls/next ──204──► пауза SM_IDLE_S
    │     a0…a3/ — AAC-LC стерео 160 кбит, audio.m4s + index.m3u8
    │     s0…s5/ — subs.vtt (текстовые субтитры) + тривиальный index.m3u8; PGS/VobSub/DVB → skipped
    ├─ проверка плейлистов (EXT-X-MAP, EXT-X-BYTERANGE, смещения без дыр до конца файла), manifest.json
-   ├─ rsync → <SM_CDN_TMP_DIR>/<hls_id>.<profile>.<rand>/, затем ssh «finalize …» (атомарный перенос на CDN)
+   ├─ rsync → /srv/hls/.tmp/<hls_id>.<profile>.<rand>/ (rrsync), затем ssh «finalize …» (атомарный перенос на CDN)
    └─ POST done {job_id, hls_id, profile, manifest_sha256, bytes}
 Пока задание идёт — POST progress раз в SM_PROGRESS_S (продлевает аренду). Ошибка → POST failed {stage, error, retryable}.
 ```
@@ -52,7 +52,7 @@ GET /internal/hls/next ──204──► пауза SM_IDLE_S
 | `SM_CDN_SSH` | — | `hls-upload@cdn.example.org` |
 | `SM_CDN_SSH_KEY` | — | путь к закрытому ключу (пусто — ssh ищет сам) |
 | `SM_CDN_SSH_PORT` | — | порт ssh |
-| `SM_CDN_TMP_DIR` | `.tmp` | куда rsync кладёт папку (относительно корня rrsync у `hls-upload`) |
+| `SM_CDN_TMP_DIR` | пусто | подпапка для rsync внутри корня rrsync у `hls-upload` (корень на CDN уже `/srv/hls/.tmp/`); обычно не задаётся |
 | `SM_CDN_FINALIZE_CMD` | `finalize {name}` (так принимает `infra/cdn/bin/hls-upload-shell`, ответ `ok <hls_id>/<profile> <байт>`) | команда по ssh после rsync; подстановки `{name}` (имя папки в `.tmp`), `{tmp}` (`.tmp/<name>`), `{hls_id}`, `{profile}` |
 | `SM_UPLOAD_MODE` | `rsync` | `rsync` или `local` (копия в папку — для проверки без CDN) |
 | `SM_UPLOAD_LOCAL_DIR` | — | корень «CDN» для `local`: `<dir>/.tmp/<name>/` → `<dir>/<hls_id>/<profile>/` |

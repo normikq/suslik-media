@@ -11,7 +11,7 @@ const { buildPlan, buildFfmpegArgs, videoTiers } = require('../src/plan');
 const { copyCandidate, normalizeProbe } = require('../src/probe');
 const { lang2, trackName } = require('../src/langs');
 const { parseFfmpegVersion, versionOk } = require('../src/worker');
-const { fill } = require('../src/upload');
+const { fill, rsyncTarget } = require('../src/upload');
 
 const FIX = path.resolve(__dirname, '..', '..', 'docs', 'hls-fixtures');
 const probeReq = JSON.parse(fs.readFileSync(path.join(FIX, 'probe-request.json'), 'utf8'));
@@ -95,4 +95,15 @@ test('версия ffmpeg ≥ 6.1', () => {
 
 test('шаблон finalize', () => {
   assert.equal(fill('finalize {name} {hls_id} {profile}', { name: 'abc.v1.1234', hls_id: 'abc', profile: 'v1' }), 'finalize abc.v1.1234 abc v1');
+});
+
+test('rsyncTarget: путь от корня rrsync (/srv/hls/.tmp/) — по умолчанию просто имя', () => {
+  const n = '025efdf2bf922af6.v1.ab12cd34';
+  assert.equal(rsyncTarget('', n), n);
+  assert.equal(rsyncTarget(undefined, n), n);
+  assert.equal(rsyncTarget('.', n), n);
+  assert.equal(rsyncTarget('./', n), n);
+  assert.equal(rsyncTarget('sub/', n), `sub/${n}`);
+  // прежнее значение по умолчанию «.tmp» на CDN давало /srv/hls/.tmp/.tmp/<имя> → rsync exit 11
+  assert.notEqual(rsyncTarget('', n), `.tmp/${n}`);
 });
