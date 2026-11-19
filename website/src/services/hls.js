@@ -1302,6 +1302,106 @@ function requestDelete(id, profile, now = Date.now()) {
   return { hls_id: id, pending_delete: a.pending_delete, removed: false };
 }
 
+// ---- §19 Снятие заданий из админки ----
+
+const CANCEL_TTL_MS = 2 * 3600 * 1000; // помнить отменённые job_id 2 ч (в памяти)
+const cancelledJobs = new Map(); // job_id → до какого момента (мс)
+
+function pruneCancelled(now) {
+  for (const [id, until] of cancelledJobs) if (until <= now) cancelledJobs.delete(id);
+}
+
+/** job_id отменён из админки, пока воркер его делал (§19): на запросы воркера — 410 cancelled. */
+function isCancelled(jobId, now = Date.now()) {
+  const id = String(jobId || "");
+  if (!id || !cancelledJobs.size) return false;
+  pruneCancelled(now);
+  return cancelledJobs.has(id);
+}
+
+/**
+ * Видео-задание снято: его версия в статусе encoding без других заданий удаляется (как при неповторяемой ошибке);
+ * ассет, у которого не осталось версий и заданий, — тоже, если на него не ссылаются другие файлы. Алиас самого файла
+ * задания, ведущий на этот пустой ассет (его ставит startEncode), ничего не играет и снимается вместе с ассетом.
+ */
+function dropEncodingOf(job) {
+  if (!job.hls_id || !job.profile) return;
+  const a = store.getAsset(job.hls_id);
+  if (!a || a.profiles?.[job.profile]?.status !== "encoding") return;
+  const jobs = [...store.allJobs().values()];
+  if (jobs.some(j => !store.isAudioJob(j) && j.hls_id === job.hls_id && j.profile === job.profile)) return;
+  delete a.profiles[job.profile];
+  if (Array.isArray(a.pending_delete_paths)) a.pending_delete_paths = a.pending_delete_paths.filter(p => p && p.profile !== job.profile);
+  const own = store.fileKey(job.ad_id, job.path);
+  const empty = !Object.keys(a.profiles).length && !(a.pending_delete || []).length &&
+    !jobs.some(j => j.hls_id === job.hls_id) && !store.aliasesOf(job.hls_id).some(k => k !== own);
+  if (empty) store.deleteAsset(job.hls_id); // вместе с алиасом файла задания
+  else store.putAsset(job.hls_id, a);
+}
+
+/**
+ * Задание «звук» снято: в manifest.audio ничего не пишется. Дорожки задания, которых нет ни в одном manifest и ни в одном
+ * другом задании, освобождают папку xN (запись ext_audio удаляется). Задание было у воркера и версия на CDN — папка
+ * уходит в pending_delete_paths: воркер мог успеть выложить её (finalize-audio) до отмены.
+ */
+function dropAudioOf(job, wasRunning) {
+  const a = store.getAsset(job.hls_id);
+  const ext = a?.ext_audio && typeof a.ext_audio === "object" ? a.ext_audio : null;
+  if (!ext) return;
+  const inManifest = key => Object.values(a.profiles || {}).some(v => (v?.manifest?.audio || []).some(x => x.external?.key === key));
+  const inJobs = key => [...store.allJobs().values()].some(j => store.isAudioJob(j) && j.hls_id === job.hls_id && (j.keys || []).includes(key));
+  const v = a.profiles?.[job.profile];
+  const onCdn = !!v && v.status === "ready" && !(a.pending_delete || []).includes(job.profile);
+  let changed = false;
+  for (const key of Array.isArray(job.keys) ? job.keys : []) {
+    const e = ext[key];
+    if (!e || inManifest(key) || inJobs(key)) continue;
+    delete ext[key];
+    changed = true;
+    if (wasRunning && onCdn && EXT_DIR_RE.test(e.dir)) {
+      if (!Array.isArray(a.pending_delete_paths)) a.pending_delete_paths = [];
+      if (!a.pending_delete_paths.some(p => p && p.profile === job.profile && p.path === e.dir)) {
+        a.pending_delete_paths.push({ profile: job.profile, path: e.dir });
+      }
+    }
+  }
+  if (changed) store.putAsset(job.hls_id, a);
+}
+
+function removeJob(job, now) {
+  const taken = job.state === "running";
+  const live = taken && (job.leased_until || 0) > sec(now);
+  // взятое воркером (и с истёкшей арендой: воркер мог ещё работать) — запомнить как отменённое
+  if (taken) {
+    pruneCancelled(now);
+    cancelledJobs.set(job.job_id, now + CANCEL_TTL_MS);
+  }
+  store.deleteJob(job.job_id);
+  if (store.isAudioJob(job)) dropAudioOf(job, taken);
+  else dropEncodingOf(job);
+  return live ? "running" : "queued";
+}
+
+/** POST /api/hls/admin/cancel: убрать задание (§19). → { ok, cancelled: "queued" | "running" }; нет — 404 unknown_job. */
+function cancelJob(jobId, now = Date.now()) {
+  const job = getLiveJob(String(jobId || ""));
+  if (!job) throw new HlsError("unknown_job", "Задание не найдено.", 404);
+  return { ok: true, cancelled: removeJob(job, now) };
+}
+
+/** POST /api/hls/admin/clear: убрать ждущие и упавшие задания, с running: true — и взятые воркером. → { ok, removed }. */
+function clearQueue({ running = false } = {}, now = Date.now()) {
+  const t = sec(now);
+  let removed = 0;
+  for (const j of [...store.allJobs().values()]) {
+    if (!store.getJob(j.job_id)) continue;
+    if (running !== true && j.state === "running" && (j.leased_until || 0) > t) continue;
+    removeJob(j, now);
+    removed++;
+  }
+  return { ok: true, removed };
+}
+
 /** Задание «звук» для админки: файл — источник ассета, tracks — названия озвучек (§18). */
 function adminAudioJob(j) {
   const a = store.getAsset(j.hls_id);
@@ -1432,6 +1532,7 @@ function _reset() {
   baseline = false;
   lastCdnStats = null;
   jobSeq = 0;
+  cancelledJobs.clear();
   store._reset();
 }
 
@@ -1493,6 +1594,9 @@ module.exports = {
   reencode,
   retryJob,
   requestDelete,
+  cancelJob,
+  clearQueue,
+  isCancelled,
   adminState,
   // для services/hls-audio.js (§18)
   newJobId,

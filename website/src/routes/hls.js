@@ -74,6 +74,13 @@ internal.use("/internal/hls", hlsInternalLimiter);
 // Тело разбирается только после проверки токена
 const json256 = express.json({ limit: "256kb" });
 const worker = [bearer("HLS_WORKER_TOKEN"), json256];
+
+// §19: задание сняли из админки, пока воркер его делал — на любой запрос по нему 410 cancelled
+function notCancelled(req, res, next) {
+  if (hls.isCancelled(body(req).job_id)) return res.status(410).json({ error: "Задание отменено на сайте.", code: "cancelled" });
+  next();
+}
+const workerJob = [...worker, notCancelled];
 const cdn = [bearer("HLS_CDN_TOKEN"), json256];
 
 /**
@@ -132,28 +139,28 @@ internal.get("/internal/hls/next", ...worker, wrap(async (req, res) => {
   res.status(204).end();
 }));
 
-internal.post("/internal/hls/probe", ...worker, wrap(async (req, res) => {
+internal.post("/internal/hls/probe", ...workerJob, wrap(async (req, res) => {
   const b = body(req);
   res.json(hls.handleProbe(String(b.job_id || ""), b));
 }));
 
 // Любая стадия (probe, fingerprint, wait, encode, verify, upload, done) продлевает аренду
-internal.post("/internal/hls/progress", ...worker, wrap(async (req, res) => {
+internal.post("/internal/hls/progress", ...workerJob, wrap(async (req, res) => {
   const job = hls.progress(body(req));
   if (!job) return res.status(404).json({ error: "Задание не найдено.", code: "unknown_job" });
   res.json({ ok: true, leased_until: job.leased_until });
 }));
 
-internal.post("/internal/hls/done", ...worker, wrap(async (req, res) => {
+internal.post("/internal/hls/done", ...workerJob, wrap(async (req, res) => {
   res.json(hls.done(body(req)));
 }));
 
 // §18: итог задания «звук» — дорожки xN в manifest.audio профиля
-internal.post("/internal/hls/audio-done", ...worker, wrap(async (req, res) => {
+internal.post("/internal/hls/audio-done", ...workerJob, wrap(async (req, res) => {
   res.json(hlsAudio.audioDone(body(req)));
 }));
 
-internal.post("/internal/hls/failed", ...worker, wrap(async (req, res) => {
+internal.post("/internal/hls/failed", ...workerJob, wrap(async (req, res) => {
   const job = hls.failed(body(req));
   if (!job) return res.status(404).json({ error: "Задание не найдено.", code: "unknown_job" });
   const live = store.getJob(job.job_id);
@@ -323,6 +330,16 @@ router.post("/api/hls/admin/reencode", ...admin, wrap(async (req, res) => {
 router.post("/api/hls/admin/delete", ...admin, wrap(async (req, res) => {
   const b = body(req);
   res.json({ ok: true, ...hls.requestDelete(String(b.hls_id || ""), b.profile || null) });
+}));
+
+// §19: убрать задание {job_id} → {ok, cancelled: "queued"|"running"}; взятое воркером получит 410 cancelled
+router.post("/api/hls/admin/cancel", ...admin, wrap(async (req, res) => {
+  res.json(hls.cancelJob(String(body(req).job_id || "")));
+}));
+
+// §19: убрать все ждущие и упавшие задания {running?: false} (с running: true — и взятые воркером) → {ok, removed}
+router.post("/api/hls/admin/clear", ...admin, wrap(async (req, res) => {
+  res.json(hls.clearQueue({ running: body(req).running === true }));
 }));
 
 // Достать версию из архива вручную: {hls_id, profile?}. Не cold → 409 not_cold, уже запрошено → ok (already: true)

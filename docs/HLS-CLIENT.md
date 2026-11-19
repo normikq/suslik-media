@@ -165,6 +165,8 @@ Firefox (без HEVC) — заглушка:
 | «Удалить» | у профиля (кроме уже ждущих удаления), с подтверждением | `POST api/hls/admin/delete {hls_id, profile}` |
 | «Достать из архива» | у профиля «в архиве»; у «достаём из архива» — неактивная «Уже достаём» | `POST api/hls/admin/restore {hls_id, profile}` |
 | «Удалить всё» / «Удалить запись» | у ассета, где больше одной живой версии / нет версий | `POST api/hls/admin/delete {hls_id}` |
+| «Убрать» / «Остановить» | у каждого задания: ждёт или упало / взято воркером (аренда жива), с подтверждением | `POST api/hls/admin/cancel {job_id}` (§19) |
+| «Очистить очередь» | над очередью; неактивна, если ждущих и упавших нет; подтверждение с их числом | `POST api/hls/admin/clear {running: false}` |
 
 После удаления профиль помечен «ждёт удаления на CDN»; запись исчезает, когда CDN пришлёт `evicted`. После действия — короткое сообщение и обновление.
 
@@ -190,7 +192,8 @@ POST идут с cookie сайта (`credentials: "same-origin"`); браузе�
 ### Код
 
 `hls-admin.js` — одна обёртка без сборщика. Чистые функции (`formatBytes`, `formatEta`, `formatDuration`, `formatAgo`, `percent`, `progressPercent`,
-`fileName`, `stateText`, `stageText`, `priorityText`, `profileStatusText`, `errorText`, `missingConfig`) в Node экспортируются через `module.exports`
+`fileName`, `stateText`, `stageText`, `priorityText`, `profileStatusText`, `errorText`, `missingConfig`, для §19 — `isLiveJob`, `cancelLabel`,
+`cancelConfirmText`, `clearableCount`, `clearConfirmText`) в Node экспортируются через `module.exports`
 и DOM не трогают. Разметка строится через `textContent` (названия файлов не попадают в HTML). Файл проверяется `npm run check`
 (вместе с `hls-admin.html`: `lang="ru"`, встроенных скриптов нет).
 
@@ -200,6 +203,8 @@ POST идут с cookie сайта (`credentials: "same-origin"`); браузе�
 с чужого сайта, retry (`failed` → `queued`, в аренде → 409 `busy`), reencode (приоритет 0, `force`, в `state.queue`; нет файла → 404 `unknown_file`),
 delete → `pending_delete` → `pending-deletes` → `evicted` → записи нет (повтор → 404), `cdn-stats` в `state.cdn`, страница со CSP без встроенных скриптов
 и обработчиков, чистые функции `hls-admin.js` (в т.ч. статусы архива и `not_cold`). Сервер архива и `admin/restore` — `website/test/hls-archive.test.js`.
+Снятие заданий (§19) — `website/test/hls-cancel.test.js`: права, cancel ждущего, упавшего и взятого (410 `cancelled` воркеру, уборка версии и пустого ассета,
+готовая `v1-copy` не тронута), clear с `running: false` и `true`, задание «звук», тексты кнопок и подтверждений.
 
 Проверка в браузере (Chrome без окна, демо-сервер с тестовыми данными и подставленным токеном админа): страница на 1200 и 390 px
 (без горизонтальной прокрутки), без ошибок в консоли; 401 — ссылка на вход; «Повторить», «Удалить», «Перекодировать» работают и показывают сообщение.
