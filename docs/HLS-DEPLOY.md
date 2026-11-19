@@ -319,3 +319,23 @@ journalctl -u suslik-encoder -f            # плюс /var/log/suslik-encoder/
 | Ошибка CSP в консоли | `HLS_CDN_URL` в `.env` сайта не задан или с другим доменом |
 | В админке «место на CDN» пустое | `HLS_CDN_TOKEN` / `SM_SITE_URL` в `cdn.env`; `journalctl -u hls-evict` |
 | ffmpeg падает на HDR | ffmpeg без `zscale` — нужна сборка «full» (gyan.dev) |
+
+## 8. Обновление после установки
+
+`install.sh` можно запускать повторно: он обновляет скрипты, конфиг nginx и юниты, не трогая данные в `/srv/hls`, сертификат и уже добавленные ключи.
+`--disk`, `--upload-key` и `--sample` при повторном запуске не нужны.
+
+| Где | Как |
+|---|---|
+| CDN | `cd ~/suslik-media && git pull && cd infra/cdn && sudo ./install.sh` |
+| Кодировщик | `sudo git -C /opt/suslik pull && sudo systemctl restart suslik-encoder` |
+| Сайт | выкладка, как в 2.2 (`website-deploy.yml` или `scripts/deploy-website.sh`) |
+
+**Добавить архив на уже работающий CDN:**
+1. Код с архивом на CDN (`git pull` в папке, откуда ставили; ветка `feature/hls` после 19.11 или `main` после слияния PR) и на сайте (выкладка 2.2).
+   Кодировщик не меняется.
+2. rclone и remote `gdrive` + `gdrive-crypt` — пункты 1–3 шага 4а.
+3. `HLS_ARCHIVE_REMOTE=gdrive-crypt:hls` в `/etc/hls-cdn/cdn.env`, затем `sudo ./install.sh` из `infra/cdn` — включит таймер `hls-archive` и службу `hls-restore`.
+4. Однократно отправить в архив то, что уже лежит на диске: `sudo /usr/local/lib/hls-cdn/hls-archive.sh --enqueue-existing`.
+5. Проверить: `systemctl list-timers hls-archive.timer`, `systemctl status hls-restore`, через 5–10 мин `journalctl -u hls-archive -n 50`;
+   в админке появится сводка «в архиве».
