@@ -260,8 +260,8 @@ async function variantHls(req, { adId, path, size }) {
     st = hls.statusFor(adId, path);
   }
   // «Смотреть» на версии в архиве (в т.ч. найденной только что через enqueue по hls_id) сразу просит CDN вернуть её
-  // (§17); повтор — отметка «ждёт пользователь»
-  if ((st.status === "cold" || st.status === "restoring") && st.hls_id) {
+  // (§17); повтор — отметка «ждёт пользователь». §20: играет из архива (from_archive) — возврат так же, в фоне
+  if ((st.status === "cold" || st.status === "restoring" || st.from_archive) && st.hls_id) {
     try {
       hls.requestRestore(st.hls_id, st.profile, Date.now(), {
         user: true,
@@ -280,6 +280,7 @@ async function variantHls(req, { adId, path, size }) {
     block.url = `${publicBase(req)}/api/hls/${st.hls_id}/master.m3u8?exp=${exp}&sig=${hls.signMaster(st.hls_id, exp)}`;
     block.profile = st.profile;
     block.shift_ms = st.shift_ms || 0;
+    if (st.from_archive) block.from_archive = true; // §20: CDN отдаёт из архива, старт и перемотка медленнее
   } else if (st.status === "encoding") {
     if (st.profile) block.profile = st.profile;
     block.eta = st.eta ?? null;

@@ -222,7 +222,7 @@ POST — с cookie сайта (как остальной сайт, `sameOriginWr
 | `restore_attempts`, `restore_timeouts`, `restore_error` | неудачи `restored` подряд, тайм-ауты (30 мин без ответа), последняя ошибка |
 | `restore_user`, `restore_file` | возврат ждёт пользователь (`variant-url`) и на каком файле он нажал «Смотреть» |
 
-`readyProfile` считает готовой только `ready`: у `cold` `master.m3u8` → 404. Переиспользование (§8: алиас, отпечаток, ключ, отложенное
+`readyProfile` считает готовой только `ready`: у `cold` `master.m3u8` → 404 (кроме просмотра из архива, §20 ниже). Переиспользование (§8: алиас, отпечаток, ключ, отложенное
 кодирование серий, reencode) считает `cold` доступной (`availableProfile`) — новый файл получает алиас, при «Смотреть» версию возвращают.
 
 ### Запросы CDN (`Bearer HLS_CDN_TOKEN`, тело до 256 КБ, неизвестные записи пропускаются, ответ 200)
@@ -264,6 +264,23 @@ POST — с cookie сайта (как остальной сайт, `sameOriginWr
 на `cold` → `restoring` (`eta` 150), запрос в `pending-restores`; `restored` ok → `ready`, master 200; `not_in_archive` → версия удалена, задание приоритет 0;
 три тайм-аута и три ошибки подряд; `archive: true` в `pending-deletes`; удаление `cold` из админки; токены (без, чужой, воркера — 401); фикстуры §17;
 перезапуск (перечитывание JSON); `admin/restore` (401/403/409, `already`) и сводка в `state`.
+
+### Просмотр прямо из архива (§20)
+
+Флаг `HLS_ARCHIVE_STREAM=true` в `.env` (только когда CDN включил `HLS_ARCHIVE_STREAM=1`); без него — всё как выше.
+- `liveProfile(a)` — версия, которой играть: `readyProfile`, а если `active_profile` стал `cold` — другая готовая (не из `pending_delete`).
+  Готовая версия всегда важнее архива (`v1-copy` на диске, `v1` в архиве → играет `v1-copy`).
+- `archiveStreamProfile(a)` — при флаге и без готовой версии: `coldProfile`, не из `pending_delete`, **с `manifest`**; иначе `null`
+  (версия без `manifest` — как в §17, `restoring`).
+- `statusFor` для такой версии → `status: "ready"`, `from_archive: true` (тайм-ауты возврата считаются как раньше). `variant-url` отвечает как
+  для готовой (`url`, `profile`, `shift_ms`) плюс `hls.from_archive: true` и тем же вызовом `requestRestore` (`user`, `file`) ставит возврат, если его нет.
+- `master.m3u8` строится по `manifest` этой версии (с внешними озвучками §18), `touch()` — как у готовой. Ссылки те же
+  (`/<hls_id>/<profile>/…`): CDN отдаёт с диска, а нет файла — из архива. После `restored` версия `ready`, `from_archive` пропадает.
+- Админка: у профиля `from_archive: true` (эта `cold`-версия сейчас играет из архива), в `configured` — `archive_stream`.
+
+Тесты: `website/test/hls-archive-stream.test.js` — флаг выключен (`restoring`, master 404); включён (`ready` + `from_archive`, запрос в
+`pending-restores` без дублей, master 200 по `manifest` с внешней озвучкой, `last_access`); без `manifest` — `restoring`; готовая `v1-copy` важнее
+`cold` `v1`; после `restored` — без `from_archive`; админка; `pickSource`/`playerState` с `fromArchive`.
 
 ## Внешние озвучки (§18)
 

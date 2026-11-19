@@ -87,6 +87,8 @@ const HLS_SIGN_SECRET = process.env.HLS_SIGN_SECRET || "";
 const HLS_WORKER_TOKEN = process.env.HLS_WORKER_TOKEN || "";
 const HLS_CDN_TOKEN = process.env.HLS_CDN_TOKEN || "";
 const HLS_BETA_USERS = (process.env.HLS_BETA_USERS || "").split(",").map(s => s.trim()).filter(Boolean);
+// §20: CDN умеет отдавать вытесненную (cold) версию прямо из архива (HLS_ARCHIVE_STREAM=1 в cdn.env) — играть её сразу
+const HLS_ARCHIVE_STREAM = process.env.HLS_ARCHIVE_STREAM === "true";
 
 // Where small runtime files live (sessions, library cache, metadata cache). Defaults to the website folder.
 const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : ROOT_DIR;
@@ -205,6 +207,7 @@ module.exports = {
   HLS_WORKER_TOKEN,
   HLS_CDN_TOKEN,
   HLS_BETA_USERS,
+  HLS_ARCHIVE_STREAM,
   HLS_SECRET_RE,
   GEMINI_API_KEY,
   AI_TITLE_MODEL,

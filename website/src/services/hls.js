@@ -281,6 +281,28 @@ function coldProfile(a) {
   return ["v1", "v1-copy"].find(x => a.profiles[x]?.status === "cold") || null;
 }
 
+/**
+ * Готовая версия, которой играть: readyProfile, а если active_profile в архиве (cold) — другая готовая версия
+ * (не ждущая удаления). Иначе null.
+ */
+function liveProfile(a) {
+  const p = readyProfile(a);
+  if (p || !a?.profiles || a.profiles[a.active_profile]?.status !== "cold") return p;
+  return ["v1", "v1-copy"].find(x => a.profiles[x]?.status === "ready" && !(a.pending_delete || []).includes(x)) || null;
+}
+
+/**
+ * §20: версия, которая играет прямо из архива (HLS_ARCHIVE_STREAM): готовой нет, есть cold (coldProfile), не ждёт
+ * удаления и с manifest (без него мастер не построить — тогда как в §17). Иначе null.
+ */
+function archiveStreamProfile(a) {
+  if (!config.HLS_ARCHIVE_STREAM || !a || liveProfile(a)) return null;
+  const p = coldProfile(a);
+  if (!p || (a.pending_delete || []).includes(p)) return null;
+  const man = a.profiles[p].manifest;
+  return man && Array.isArray(man.video) && man.video.length ? p : null;
+}
+
 /** Ассет можно переиспользовать (§8): есть готовая версия или версия в архиве (её вернут при «Смотреть»). */
 function availableProfile(a) {
   return readyProfile(a) || coldProfile(a);
@@ -1031,6 +1053,7 @@ const getCdnStats = () => lastCdnStats;
 /**
  * Статус файла раздачи для variant-url (T4): { status: "none"|"encoding"|"ready"|"cold"|"restoring", hls_id, profile, shift_ms, eta,
  * progress, state }. eta — секунды (null — неизвестно). state — состояние задания (queued/running/failed) или null.
+ * §20 (HLS_ARCHIVE_STREAM): cold-версия с manifest — status "ready" и from_archive: true (возврат variant-url запрашивает сам).
  */
 function statusFor(adId, path, now = Date.now()) {
   const key = String(adId);
@@ -1041,11 +1064,16 @@ function statusFor(adId, path, now = Date.now()) {
     const a = store.getAsset(al.hls_id);
     res.hls_id = al.hls_id;
     if (a) {
-      const prof = readyProfile(a);
+      const prof = liveProfile(a);
       if (prof) return { ...res, status: "ready", profile: prof, shift_ms: al.shift_ms || 0 };
       const cold = coldProfile(a);
       if (cold && !(a.pending_delete || []).includes(cold)) {
         const v = a.profiles[cold];
+        if (archiveStreamProfile(a) === cold) {
+          // §20: играет прямо из архива, пока фоновый возврат не докачает версию; тайм-ауты возврата — как в §17
+          if (checkRestoreTimeout(al.hls_id, a, cold, now)) return statusFor(adId, path, now);
+          return { ...res, status: "ready", profile: cold, shift_ms: al.shift_ms || 0, from_archive: true };
+        }
         // cold без запроса: variant-url сам запрашивает возврат (§17) и спрашивает статус снова
         if (!v.restore_requested_at) return { ...res, status: "cold", profile: cold, shift_ms: al.shift_ms || 0 };
         // CDN не отвечает (не опрашивает pending-restores) — тайм-ауты считаются и здесь
@@ -1135,11 +1163,12 @@ function cleanManifest(m) {
 /**
  * master.m3u8 ассета (§6, §10; пример — docs/hls-fixtures/master-v1.m3u8) строго по manifest: EXT-X-MEDIA для звука (aud)
  * и субтитров (sub), EXT-X-STREAM-INF на каждый элемент manifest.video, абсолютные подписанные ссылки CDN с тем же exp.
- * Ассет не готов или без manifest → HlsError 404; CDN не настроен → HlsError 503.
+ * Ассет не готов или без manifest → HlsError 404 (cold-версия при HLS_ARCHIVE_STREAM — по её manifest, §20);
+ * CDN не настроен → HlsError 503.
  */
 function masterPlaylist(id, exp, opts = {}) {
   const a = store.getAsset(String(id));
-  const profile = readyProfile(a);
+  const profile = liveProfile(a) || archiveStreamProfile(a);
   const man = profile ? a.profiles[profile].manifest : null;
   if (!man || !Array.isArray(man.video) || !man.video.length) throw new HlsError("not_ready", "HLS ещё не готов.", 404);
   const url = rel => signHlsUrl(id, profile, `${rel}/index.m3u8`, exp, opts);
@@ -1467,9 +1496,11 @@ function adminState(now = Date.now()) {
   };
   const assets = [...store.allAssets()].map(([id, a]) => {
     const profiles = {};
+    const streamP = archiveStreamProfile(a);
     let total = 0;
     for (const [name, p] of Object.entries(a.profiles || {})) {
       const restoring = p.status === "cold" && !!p.restore_requested_at;
+      const fromArchive = p.status === "cold" && streamP === name;
       profiles[name] = {
         status: restoring ? "restoring" : p.status === "encoding" ? encState(id, name) : p.status,
         bytes: p.bytes || 0,
@@ -1481,7 +1512,8 @@ function adminState(now = Date.now()) {
         restore_requested_at: p.restore_requested_at || null,
         restore_attempts: p.restore_attempts || 0,
         restore_error: p.restore_error || null,
-        eta_s: restoring ? restoreEta(p, now) : null
+        eta_s: restoring ? restoreEta(p, now) : null,
+        from_archive: fromArchive // §20: играет прямо из архива
       };
       if (p.status !== "cold") total += Number(p.bytes) || 0; // на CDN; cold — только в архиве
       if (p.archived === true) { arch.archived++; arch.archive_bytes += archiveBytesOf(p); }
@@ -1517,7 +1549,8 @@ function adminState(now = Date.now()) {
       cdn_url: !!config.HLS_CDN_URL,
       sign_secret: !!config.HLS_SIGN_SECRET,
       worker_token: !!config.HLS_WORKER_TOKEN,
-      cdn_token: !!config.HLS_CDN_TOKEN
+      cdn_token: !!config.HLS_CDN_TOKEN,
+      archive_stream: !!config.HLS_ARCHIVE_STREAM
     },
     now: sec(now),
     totals: { jobs: jobs.length, queued: count("queued"), running: count("running"), failed: count("failed"), assets: assets.length, ready, bytes, ...arch },
@@ -1561,6 +1594,8 @@ module.exports = {
   computeDirectOk,
   decideProfile,
   readyProfile,
+  liveProfile,
+  archiveStreamProfile,
   videoFiles,
   // данные
   directFor,

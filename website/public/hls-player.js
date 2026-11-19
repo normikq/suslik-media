@@ -77,6 +77,7 @@
    * caps: {hevcMse, avcMse, nativeHls, nativeHevc, nativeAvc, safari, canPlay(mime) → bool}.
    * kind: legacy (блока hls нет — как раньше, внешние плееры) | hls | direct | wait | soon | unsupported.
    * wait — encoding или restoring (у restoring — restoring: true); при direct_ok оба дают direct с upgrade.
+   * hls из архива (docs/HLS.md §20, hls.from_archive) — fromArchive: true, источник выбирается как обычно.
    */
   function pickSource(resp, caps) {
     const c = caps || {};
@@ -88,7 +89,9 @@
     if (hls.status === "ready" && hls.url) {
       const engine = hlsEngine(hls, c);
       if (engine) {
-        return { kind: "hls", url: hls.url, engine, shiftMs: shiftOf(hls.shift_ms), profile: hls.profile || "v1", fallback: direct };
+        const out = { kind: "hls", url: hls.url, engine, shiftMs: shiftOf(hls.shift_ms), profile: hls.profile || "v1", fallback: direct };
+        if (hls.from_archive === true) out.fromArchive = true;
+        return out;
       }
       return direct || { kind: "unsupported" };
     }
@@ -101,6 +104,9 @@
     if (hls.status === "restoring") return { kind: "wait", restoring: true, etaMin: etaMinutes(hls.eta), progress: null };
     return { kind: "soon" };
   }
+
+  /** Подсказка, когда HLS идёт прямо из архива (docs/HLS.md §20). */
+  const ARCHIVE_NOTE = "Из архива: старт и перемотка медленнее";
 
   /** Строка под кнопкой в окне фильма. */
   function messageFor(src) {
@@ -307,8 +313,9 @@
    * Состояние для onState встраиваемого плеера (страница фильма). Чистая функция.
    * s: {source (pickSource), error (текст), engine ("hlsjs"|"native"|null), levels (hls.levels), level (-1 авто),
    *     levelNow (что играет), tracks {audio, subs, audioNow, subNow} (listTracks), note (текст под плеером)}.
-   * Возвращает {kind: hls|mirror|preparing|unsupported|error, message?, etaMin?, levels, level, levelNow, qualityLabel,
-   *             audio, audioIndex, subtitles, subtitleIndex} или null (ещё ничего не известно).
+   * Возвращает {kind: hls|mirror|preparing|unsupported|error, message?, etaMin?, fromArchive?, levels, level, levelNow,
+   *             qualityLabel, audio, audioIndex, subtitles, subtitleIndex} или null (ещё ничего не известно).
+   * fromArchive: true — HLS идёт прямо из архива (§20), страница может показать ARCHIVE_NOTE.
    */
   function playerState(s) {
     const x = s || {};
@@ -325,6 +332,7 @@
     }
     const st = { kind: src.kind === "hls" ? "hls" : "mirror" };
     if (x.note) st.message = String(x.note);
+    if (src.kind === "hls" && src.fromArchive === true) st.fromArchive = true;
     const q = src.kind === "hls" && showQualityMenu(x.levels, x.engine);
     st.levels = q ? levelList(x.levels) : [];
     st.level = q && x.level >= 0 && x.level < x.levels.length ? x.level : -1;
@@ -493,6 +501,7 @@
       b.type = "button";
       b.addEventListener("click", () => openOverlay(ctx, resp, src, caps));
       box.appendChild(b);
+      if (src.fromArchive) box.appendChild(el("div", "ps-hls-note", ARCHIVE_NOTE));
       return;
     }
     box.append(el("div", "ps-hls-note", messageFor(src)), appButton(sheet));
@@ -727,6 +736,9 @@
     P.error = "";
     P.shiftMs = src.kind === "hls" ? src.shiftMs : 0;
     P.errState = { net: 0, media: 0, refreshed: P.errState.refreshed };
+    // §20: в оверлее подсказка под плеером; встраиваемому режиму хватает fromArchive в onState
+    if (P.o.overlay && src.fromArchive && !P.noteText) setNote(P, ARCHIVE_NOTE);
+    else if (P.noteText === ARCHIVE_NOTE && !src.fromArchive) setNote(P, "");
     const at = toHlsMs(fileMs, P.shiftMs) / 1000;
     const video = P.video;
     const go = () => { if (!paused) { const p = video.play(); if (p && p.catch) p.catch(() => {}); } };
@@ -1101,7 +1113,7 @@
     pickSource, directMime, hlsEngine, toHlsMs, toFileMs, etaMinutes, messageFor,
     parseMasterMedia, pickTrack, hlsErrorAction, resumeMs,
     levelLabel, levelList, showQualityMenu, readQuality, saveQuality, startLevelFor, autoLabel, hlsConfig,
-    playerState, trackLabel, secToMs, QUALITY_KEY,
+    playerState, trackLabel, secToMs, QUALITY_KEY, ARCHIVE_NOTE,
     attach, mount, detectCaps
   };
 });

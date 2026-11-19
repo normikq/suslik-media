@@ -310,6 +310,18 @@ journalctl -u suslik-encoder -f            # плюс /var/log/suslik-encoder/
 **Свой ключ API позже:** OAuth client (Desktop) в Google Cloud Console + включить Drive API, вписать `client_id`/`client_secret` в секцию `[gdrive]`
 `/etc/hls-cdn/rclone.conf`, `sudo rclone config reconnect gdrive: --config /etc/hls-cdn/rclone.conf`. Код и архив не меняются.
 
+**Просмотр прямо из архива** (`docs/HLS.md` §20, по желанию): вытесненная версия играет сразу, пока CDN в фоне возвращает её на диск
+(старт и перемотка на 1–2 с медленнее). Нужен архив (пункты 1–4) и **обязательно свой `client_id` Google** — со встроенным перемотка упирается в `rateLimitExceeded`.
+1. Свой `client_id`: [Google Cloud Console](https://console.cloud.google.com/) → выбрать или создать проект → «APIs & Services» → «Library» →
+   **Google Drive API** → «Enable»; «OAuth consent screen» → тип **External**, название любое, в «Test users» добавить свой Google-аккаунт;
+   «Credentials» → «Create credentials» → **OAuth client ID**, тип **Desktop app** → скопировать `client_id` и `client_secret`.
+2. Вписать их в секцию `[gdrive]` файла `/etc/hls-cdn/rclone.conf` (строки `client_id = …` и `client_secret = …`) и переподключить:
+   `sudo rclone config reconnect gdrive: --config /etc/hls-cdn/rclone.conf` (на вопрос про браузер — `n`, `rclone authorize` на ПК, как в пункте 2).
+3. CDN: `sudo nano /etc/hls-cdn/cdn.env` → `HLS_ARCHIVE_STREAM=1` (и задан `HLS_ARCHIVE_REMOTE`), затем `cd suslik-media/infra/cdn && sudo ./install.sh`.
+4. Сайт: в `.env` — `HLS_ARCHIVE_STREAM=true`, перезапустить сайт. Порядок важен: сначала CDN, потом сайт.
+5. Проверка: в админке у версии «в архиве» — метка «играет из архива»; «Смотреть» на ней сразу запускает фильм (в браузере — подсказка
+   «Из архива: старт и перемотка медленнее»), через минуты версия снова «готово». Выключить — `HLS_ARCHIVE_STREAM` убрать в `.env` сайта (и в `cdn.env`).
+
 ## 5. Всем
 
 Добавить id в `HLS_BETA_USERS` через запятую или убрать строку целиком (= все), перезапустить сайт.

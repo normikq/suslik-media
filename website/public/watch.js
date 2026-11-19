@@ -593,7 +593,8 @@
     S.state = state || null;
     renderControls(S.state);
     showOverlay(S.ownScreens ? null : overlayFor(S.state));
-    setStatus(S.state && S.state.kind === "mirror" ? "Файл без подготовки для браузера: перемотка может быть медленнее." : "", false);
+    setStatus(S.state && S.state.kind === "mirror" ? "Файл без подготовки для браузера: перемотка может быть медленнее."
+      : S.state && S.state.fromArchive ? "Из архива: старт и перемотка медленнее." : "", false);
   }
 
   function showOverlay(o) {
