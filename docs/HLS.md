@@ -314,7 +314,7 @@ CDN опрашивает `pending-restores` часто (каждые 10–20 с,
 GET /internal/hls/next → { job_id, type: "audio", hls_id, profile, duration_ms,
                            tracks: [{ key, dir, mirror_url, offset_ms, name, language }] }
 ```
-Без probe и отпечатка: воркер кодирует каждую дорожку в `xN/`, выкладывает на CDN только эти папки (rsync в `.tmp/<hls_id>.<profile>.a<rand>/xN/…`,
+Без probe и отпечатка: воркер кодирует каждую дорожку в `xN/`, выкладывает на CDN только эти папки (rsync в `<hls_id>.<profile>.a<rand>/xN/…` — путь от корня rrsync у `hls-upload`, на CDN это `/srv/hls/.tmp/`,
 затем `ssh … finalize-audio <имя>` — CDN переносит каждую `xN/` в `/srv/hls/<hls_id>/<profile>/xN/` атомарной заменой, ответ `ok <hls_id>/<profile> <байт>`)
 и сообщает:
 
@@ -332,5 +332,9 @@ POST /internal/hls/audio-done { job_id, hls_id, profile, tracks: [{ key, dir, co
 - Только `.mka` (как у клиентов, `CustomAudio.isSupported`).
 
 **Архив (§17)** хранит профиль целиком, включая `xN/` (`rclone sync`); после `finalize-audio` профиль `v1` снова ставится в очередь архивации.
+
+Уточнения реализации (19.11): из `.mka` берётся первая звуковая дорожка; 404/410 от зеркала на файле озвучки — `failed` без повтора
+(файла нет), сеть/5xx/истёкшая подпись — с повтором. `name`, `language`, `offset_ms` сайт берёт из своего задания, в `audio-done` их нет.
+В конце плейлиста дорожки бывает хвостовой сегмент ~0,02 с (кадры AAC) — это нормально.
 
 Фикстуры: `next-job-audio.json`, `audio-done-request.json`, `pending-deletes-audio.json`, `manifest-external.json`.
