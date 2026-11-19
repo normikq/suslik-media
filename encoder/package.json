@@ -1,0 +1,16 @@
+{
+  "name": "suslik-hls-encoder",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Воркер-кодировщик HLS для Suslik Media (docs/HLS.md, T2)",
+  "main": "index.js",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "stub": "node stub/server.js",
+    "test": "node --test"
+  }
+}
