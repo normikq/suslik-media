@@ -48,6 +48,8 @@ async function buildLibrary(gen = libraryGen) {
       statusCode: Number(m.statusCode ?? 0),
       size: Number(m.size || 0),
       downloaded: Number(m.downloaded || 0),
+      // infohash раздачи: из него hls_id (docs/HLS.md §4); null, если AllDebrid его не дал
+      hash: typeof m.hash === "string" && /^[0-9a-f]{40}$/i.test(m.hash) ? m.hash.toLowerCase() : null,
       files: []
     }));
 
@@ -77,6 +79,15 @@ async function buildLibrary(gen = libraryGen) {
     }
   }
   if (cacheChanged) persistTreeCache();
+
+  // HLS: раздача впервые стала готовой — её видеофайлы в очередь кодирования (docs/HLS.md §11). Выключено — ничего.
+  if (config.HLS_ENABLED && gen === libraryGen) {
+    try {
+      require("./hls").onLibrary(normalized);
+    } catch (err) {
+      console.warn("[hls]", err.message);
+    }
+  }
 
   // The «two downloads per IP» slots of torrents that finished, failed or are gone (the app that added them may have
   // stopped asking for their status long ago: closed, or the PC gives up after ~30 minutes).
