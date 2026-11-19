@@ -56,7 +56,7 @@ ARCHIVE_QUEUE=${HLS_ARCHIVE_QUEUE:-/var/lib/hls-archive-queue}
 step "Пакеты"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
-apt-get install -y -q nginx rsync jq curl ufw fail2ban certbot gettext-base openssh-server util-linux logrotate
+apt-get install -y -q nginx rsync jq curl ufw fail2ban python3-systemd certbot gettext-base openssh-server util-linux logrotate
 # rclone — для холодного архива; уже стоит (например, с rclone.org) — не трогаем. Нужен ≥ 1.54 (--drive-stop-on-upload-limit):
 # в Ubuntu 22.04 пакет 1.53 — тогда ставить с rclone.org (README, «Архив на Google Drive»).
 command -v rclone >/dev/null || apt-get install -y -q rclone || echo "ВНИМАНИЕ: rclone из apt не поставился" >&2
@@ -200,8 +200,19 @@ install -m 644 fail2ban/nginx-hls-sig.conf /etc/fail2ban/filter.d/nginx-hls-sig.
 install -m 644 fail2ban/jail-hls.local /etc/fail2ban/jail.d/hls-cdn.local
 touch "$HLS_LOG_DIR/hls-access.log"
 systemctl enable fail2ban >/dev/null
-systemctl restart fail2ban
-fail2ban-client status | sed -n '1,3p' || true
+if ! fail2ban-client -t >/tmp/f2b-test.$$ 2>&1; then
+  tail -5 /tmp/f2b-test.$$ >&2; rm -f /tmp/f2b-test.$$
+  echo "ВНИМАНИЕ: конфиг fail2ban с ошибкой (выше) — fail2ban не перезапущен; остальное ставится дальше" >&2
+else
+  rm -f /tmp/f2b-test.$$
+  systemctl restart fail2ban
+  for _ in 1 2 3 4 5 6 7 8 9 10; do [ -S /run/fail2ban/fail2ban.sock ] && break; sleep 1; done
+  if [ -S /run/fail2ban/fail2ban.sock ]; then
+    fail2ban-client status | sed -n '1,3p' || true
+  else
+    echo "ВНИМАНИЕ: fail2ban не запустился: journalctl -u fail2ban -n 30" >&2
+  fi
+fi
 
 step "evict.sh по таймеру"
 install -d -m 700 /var/lib/hls-evict
