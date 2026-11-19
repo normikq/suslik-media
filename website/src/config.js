@@ -68,7 +68,21 @@ const ACTIVITY_SITE_URL = (process.env.ACTIVITY_SITE_URL || "").trim().replace(/
 const PASSWORD_AUTH_ENABLED = process.env.PASSWORD_AUTH_ENABLED !== "false" && Boolean(SITE_PASSWORD);
 // HLS (docs/HLS.md §13): только из .env, доменов и секретов по умолчанию нет. Выключено — сайт ведёт себя как раньше.
 const HLS_ENABLED = process.env.HLS_ENABLED === "true";
-const HLS_CDN_URL = (process.env.HLS_CDN_URL || "").trim().replace(/\/+$/, "");
+// Адрес CDN без схемы («cdn.example.org») дал бы в master.m3u8 относительные ссылки — браузер достроил бы их
+// от адреса сайта и получил 404. Поэтому схема по умолчанию https://.
+function normalizeCdnUrl(raw) {
+  let s = String(raw || "").trim().replace(/\/+$/, "");
+  if (!s) return "";
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) s = `https://${s.replace(/^\/+/, "")}`;
+  try {
+    const u = new URL(s);
+    if (!/^https?:$/.test(u.protocol) || !u.hostname) return "";
+    return `${u.origin}${u.pathname.replace(/\/+$/, "")}`;
+  } catch {
+    return "";
+  }
+}
+const HLS_CDN_URL = normalizeCdnUrl(process.env.HLS_CDN_URL);
 const HLS_SIGN_SECRET = process.env.HLS_SIGN_SECRET || "";
 const HLS_WORKER_TOKEN = process.env.HLS_WORKER_TOKEN || "";
 const HLS_CDN_TOKEN = process.env.HLS_CDN_TOKEN || "";
@@ -121,6 +135,11 @@ if (DISCORD_ENABLED && !(DISCORD_BOT_TOKEN && DISCORD_GUILD_ID) && DISCORD_ALLOW
 const HLS_SECRET_RE = /^[A-Za-z0-9._~+/=-]+$/;
 if (HLS_ENABLED && HLS_SIGN_SECRET && !HLS_SECRET_RE.test(HLS_SIGN_SECRET)) {
   console.warn("ПРЕДУПРЕЖДЕНИЕ: HLS_SIGN_SECRET содержит недопустимые символы (можно A-Z a-z 0-9 . _ ~ + / = -): подписи CDN не совпадут с nginx.");
+}
+if (HLS_ENABLED && process.env.HLS_CDN_URL && !HLS_CDN_URL) {
+  console.warn("ПРЕДУПРЕЖДЕНИЕ: HLS_CDN_URL не похож на адрес (нужно https://cdn.<домен>): HLS выдаваться не будет.");
+} else if (HLS_ENABLED && HLS_CDN_URL && !/^https?:\/\//i.test(String(process.env.HLS_CDN_URL).trim())) {
+  console.warn(`ПРЕДУПРЕЖДЕНИЕ: в HLS_CDN_URL нет схемы — используется ${HLS_CDN_URL}. Лучше записать её явно.`);
 }
 if (!SITE_PASSWORD) {
   console.warn("ПРЕДУПРЕЖДЕНИЕ: SITE_PASSWORD не задан. Вход будет недоступен, пока пароль не будет указан в .env.");
@@ -181,6 +200,7 @@ module.exports = {
   HLS_QUEUE_FILE,
   HLS_ENABLED,
   HLS_CDN_URL,
+  normalizeCdnUrl,
   HLS_SIGN_SECRET,
   HLS_WORKER_TOKEN,
   HLS_CDN_TOKEN,

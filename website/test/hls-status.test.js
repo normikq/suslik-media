@@ -97,3 +97,15 @@ test("hls-admin.js: тексты статусов queued и failed", () => {
   assert.equal(ui.profileStatusText("queued"), "в очереди");
   assert.equal(ui.profileStatusText("failed"), "ошибка");
 });
+
+test("HLS_CDN_URL без схемы получает https:// — иначе ссылки в master.m3u8 относительные (404 с сайта)", () => {
+  const { normalizeCdnUrl } = require("../src/config");
+  assert.equal(normalizeCdnUrl("cdn.example.org"), "https://cdn.example.org");
+  assert.equal(normalizeCdnUrl("cdn.example.org/"), "https://cdn.example.org");
+  assert.equal(normalizeCdnUrl(" https://cdn.example.org// "), "https://cdn.example.org");
+  assert.equal(normalizeCdnUrl("http://cdn.example.org:8080/media/"), "http://cdn.example.org:8080/media");
+  assert.equal(normalizeCdnUrl("ftp://cdn.example.org"), "");
+  assert.equal(normalizeCdnUrl(""), "");
+  const url = hls.signHlsUrl("aaaaaaaaaaaaaaa1", "v1", "1080p/index.m3u8", 1767225600, { cdnUrl: normalizeCdnUrl("cdn.example.org"), secret: "s" });
+  assert.match(url, /^https:\/\/cdn\.example\.org\/hls\//);
+});
