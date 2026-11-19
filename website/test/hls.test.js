@@ -177,6 +177,10 @@ test("6. decideProfile: выбор профиля кодирования", () =>
     hls.decideProfile(probeBody(fp(1), 7200000, { ...copyVideo, keyframe_interval_max_s: 12 }), 5000),
     "v1"
   );
+  // порог 11 с (§5): BDRip с ключевыми кадрами раз в 10,01 с (Вавилон, 19.11) идёт в быструю v1-copy
+  assert.equal(hls.decideProfile(probeBody(fp(1), 7200000, { ...copyVideo, keyframe_interval_max_s: 10.01 }), 5000), "v1-copy");
+  assert.equal(hls.decideProfile(probeBody(fp(1), 7200000, { ...copyVideo, keyframe_interval_max_s: 11 }), 5000), "v1-copy");
+  assert.equal(hls.decideProfile(probeBody(fp(1), 7200000, { ...copyVideo, keyframe_interval_max_s: 11.2 }), 5000), "v1");
   assert.equal(
     hls.decideProfile(probeBody(fp(1), 7200000, { ...copyVideo, width: 3840, height: 2160 }), 5000),
     "v1"
