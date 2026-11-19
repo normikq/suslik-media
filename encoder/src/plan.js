@@ -14,8 +14,8 @@ const MAX_AUDIO = 4;
 const MAX_SUBS = 6;
 const AUDIO_BITRATE = 160000;
 const TIERS = [
-  { dir: '1080p', maxW: 1920, maxH: 1080, maxrate: 5e6 },
-  { dir: '720p', maxW: 1280, maxH: 720, maxrate: 3e6 },
+  { dir: '1080p', maxW: 1920, maxH: 1080, maxrate: 7e6 },
+  { dir: '720p', maxW: 1280, maxH: 720, maxrate: 4e6 },
 ];
 
 const even = (x) => Math.max(2, 2 * Math.round(x / 2));

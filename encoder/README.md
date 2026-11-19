@@ -43,7 +43,7 @@ GET /internal/hls/next ──204──► пауза SM_IDLE_S
 
 ### Профили
 
-- **v1** — HEVC (`hevc_nvenc`, `-rc vbr -cq` + `-maxrate`/`-bufsize`): 1080p ≤ 5 Мбит, 720p ≤ 3 Мбит; вписывание в 1920×1080 и 1280×720 без увеличения
+- **v1** — HEVC (`hevc_nvenc`, `-rc vbr -cq` + `-maxrate`/`-bufsize`): 1080p ≤ 7 Мбит, 720p ≤ 4 Мбит, `-cq 21`; вписывание в 1920×1080 и 1280×720 без увеличения
   (исходник ≤ 1280×720 — только `720p/`). Ключевые кадры — только принудительные каждые 6 с
   (`-force_key_frames expr:gte(t,n_forced*6)`, `-forced-idr 1`, `-no-scenecut 1`, большой `-g`), поэтому сегменты 1080p и 720p совпадают.
   HDR (PQ/HLG/DV) → SDR: `libplacebo` на видеокарте или запасной `zscale` + `tonemap=hable` (см. «Тонмаппинг HDR → SDR»), метки bt709.
@@ -140,7 +140,7 @@ POST /internal/hls/audio-done {job_id, hls_id, profile, tracks:[{key, dir, codec
 | `SM_FFMPEG`, `SM_FFPROBE` | `ffmpeg`, `ffprobe` | пути к программам |
 | `SM_TONEMAP`, `SM_VULKAN_DEVICE` | `auto`, пусто | путь HDR → SDR — раздел «Тонмаппинг HDR → SDR» |
 | `SM_HWDEC` | `1` при nvenc | декодирование исходника на видеокарте (`-hwaccel cuda`) |
-| `SM_CQ` | `24` (nvenc) / `23` | качество: `-cq` у nvenc, `-crf` у x265/x264 |
+| `SM_CQ` | `21` (nvenc) / `23` | качество: `-cq` у nvenc, `-crf` у x265/x264 |
 | `SM_NVENC_PRESET` | `p5` | пресет nvenc |
 | `SM_SW_PRESET` | `medium` | пресет x265/x264 (`ultrafast` для тестов) |
 | `SM_WORK_DIR` | `encoder/work` | временные файлы (нужно место на весь фильм в HLS, ~3–5 ГБ) |

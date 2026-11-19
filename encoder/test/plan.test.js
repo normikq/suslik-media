@@ -42,8 +42,8 @@ test('аргументы ffmpeg v1: ключевые кадры каждые 6 �
   assert.equal(a.filter((x) => x === 'expr:gte(t,n_forced*6)').length, 2);
   assert.equal(a.filter((x) => x === 'hevc_nvenc').length, 2);
   assert.match(s, /-no-scenecut 1/);
-  assert.match(s, /-maxrate 5000000 -bufsize 10000000/);
-  assert.match(s, /-maxrate 3000000 -bufsize 6000000/);
+  assert.match(s, /-maxrate 7000000 -bufsize 14000000/);
+  assert.match(s, /-maxrate 4000000 -bufsize 8000000/);
   assert.equal(a.filter((x) => x === 'independent_segments+single_file').length, 4); // 2 видео + 2 звука
   assert.match(s, /tonemap=tonemap=hable/);
   assert.match(s, /-map 0:3 -c:s webvtt/);
@@ -106,4 +106,11 @@ test('rsyncTarget: путь от корня rrsync (/srv/hls/.tmp/) — по у�
   assert.equal(rsyncTarget('sub/', n), `sub/${n}`);
   // прежнее значение по умолчанию «.tmp» на CDN давало /srv/hls/.tmp/.tmp/<имя> → rsync exit 11
   assert.notEqual(rsyncTarget('', n), `.tmp/${n}`);
+});
+
+test('качество по умолчанию: nvenc -cq 21 (20.11, было 24), x265/x264 — 23', () => {
+  const { loadConfig } = require('../src/config');
+  assert.equal(loadConfig({ SM_SITE_URL: 'https://s.example.org', HLS_WORKER_TOKEN: 't' }).cq, 21);
+  assert.equal(loadConfig({ SM_SITE_URL: 'https://s.example.org', HLS_WORKER_TOKEN: 't', SM_ENCODER: 'x265' }).cq, 23);
+  assert.equal(loadConfig({ SM_SITE_URL: 'https://s.example.org', HLS_WORKER_TOKEN: 't', SM_CQ: '24' }).cq, 24);
 });

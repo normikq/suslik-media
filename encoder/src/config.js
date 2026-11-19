@@ -52,7 +52,7 @@ function loadConfig(env = process.env) {
     keyframeProbeSec: num(env.SM_KEYFRAME_PROBE_S, 600), // окно замера keyframe_interval_max_s
     reconnectDelayMax: num(env.SM_RECONNECT_DELAY_MAX, 30),
     // качество: -cq для nvenc, -crf для x265/x264
-    cq: num(env.SM_CQ, encoder === 'nvenc' ? 24 : 23),
+    cq: num(env.SM_CQ, encoder === 'nvenc' ? 21 : 23), // nvenc 24 → 21 (20.11): средний битрейт 1080p был ~1,6 Мбит, у сравнимых сервисов ~3,4
     nvencPreset: env.SM_NVENC_PRESET || 'p5',
     swPreset: env.SM_SW_PRESET || 'medium',    // x265/x264; для тестов — ultrafast
     // выгрузка на CDN

@@ -62,7 +62,7 @@ s0/ … s5/  index.m3u8, subs.vtt    # текстовые субтитры, до
 ## 5. Профили кодирования (ffmpeg ≥ 6.1)
 
 ### v1
-- HEVC NVENC: 1080p ≤ 5 Мбит, 720p ≤ 3 Мбит; ограниченный VBR (`-cq` + `-maxrate`/`-bufsize`).
+- HEVC NVENC: 1080p ≤ 7 Мбит, 720p ≤ 4 Мбит (до 20.11 — 5 и 3), `-cq 21` (было 24); ограниченный VBR (`-cq` + `-maxrate`/`-bufsize`).
 - Ключевые кадры каждые 6 с на обеих дорожках (`-g`/`-force_key_frames "expr:gte(t,n_forced*6)"`, без scenecut-ключей между ними), чтобы сегменты 1080p и 720p совпадали.
 - fMP4, `-hls_segment_type fmp4 -hls_flags independent_segments+single_file` — один `.m4s` на дорожку, `EXT-X-BYTERANGE`, `EXT-X-MAP` с байтовым диапазоном. Тег `-tag:v hvc1`.
 - Звук DTS/TrueHD/AC3/E-AC3 и прочее → AAC-LC стерео (`mp4a.40.2`), 160 кбит.
