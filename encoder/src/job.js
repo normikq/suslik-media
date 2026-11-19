@@ -2,6 +2,7 @@
 
 // Одно задание (видео; «звук» — audiojob.js): ffprobe → отпечаток → probe → alias | wait | encode → проверка → manifest → CDN → done.
 // Любая ошибка → POST failed {stage, error, retryable}. Пока идёт работа, раз в progressSec — progress (аренда).
+// Сайт снял задание (§19: 410 cancelled / 404 unknown_job) → всё останавливается, failed не шлётся, результат cancelled.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -12,6 +13,7 @@ const { finalizeOutput } = require('./manifest');
 const { upload } = require('./upload');
 const { run, lastLine } = require('./proc');
 const { processAudioJob } = require('./audiojob');
+const { createJobControl, cancelledResult, reportFailed } = require('./cancel');
 
 class JobError extends Error {
   constructor(stage, msg, retryable) { super(msg); this.stage = stage; this.retryable = retryable; }
@@ -25,7 +27,7 @@ const sleep = (ms, signal) => new Promise((resolve) => {
 
 /**
  * @param ctx {cfg, api, log, signal, ffmpegVersion}
- * @returns {Promise<{result:'done'|'alias'|'failed'|'aborted', ...}>}
+ * @returns {Promise<{result:'done'|'alias'|'failed'|'aborted'|'cancelled', ...}>}
  */
 async function processJob(job, ctx) {
   // задание «звук» (§18): внешние озвучки в xN/; без type — видео, как раньше
@@ -34,11 +36,18 @@ async function processJob(job, ctx) {
   const state = { stage: 'probe', progress: 0, eta_s: null, fps: null };
   const jobDir = path.join(cfg.workDir, String(job.job_id).replace(/[^\w.-]/g, '_'));
   let timer = null;
+  // jsig — сигнал задания: остановка воркера или снятие на сайте; signal — только остановка воркера
+  const ctl = createJobControl(signal);
+  const jsig = ctl.signal;
 
   const sendProgress = async () => {
+    if (ctl.cancelled) return;
     const body = { job_id: job.job_id, stage: state.stage, progress: Math.round(state.progress * 1000) / 1000, eta_s: state.eta_s };
     if (state.fps !== null) body.fps = state.fps;
-    try { await api.progress(body); } catch (e) { log.warn(`[progress] ${e.message}`); }
+    try { await api.progress(body); } catch (e) {
+      if (ctl.take(e)) { clearInterval(timer); return; }
+      log.warn(`[progress] ${e.message}`);
+    }
   };
 
   try {
@@ -55,31 +64,34 @@ async function processJob(job, ctx) {
     timer = setInterval(sendProgress, cfg.progressSec * 1000);
     timer.unref?.();
     await sendProgress();
+    ctl.check();
 
     // 1. ffprobe по зеркалу
     let raw;
-    try { raw = await ffprobeJson(cfg, job.mirror_url, { signal }); } catch (e) { throw new JobError('probe', e.message, e.retryable !== false); }
+    try { raw = await ffprobeJson(cfg, job.mirror_url, { signal: jsig }); } catch (e) { throw new JobError('probe', e.message, e.retryable !== false); }
     const probe = normalizeProbe(raw);
     const v = mainVideo(probe);
     if (!v) throw new JobError('probe', 'в файле нет видеодорожки', false);
     if (!probe.duration_ms) throw new JobError('probe', 'ffprobe не дал длительность', false);
     if (!v.color_transfer || v.color_transfer === 'unknown') {
       // в заголовке MKV цвета нет — смотрим первый кадр (PQ/HLG/DV в VUI и SEI)
-      const fc = await firstFrameColor(cfg, job.mirror_url, v.index, { signal });
+      const fc = await firstFrameColor(cfg, job.mirror_url, v.index, { signal: jsig });
       if (fc) { v.color_transfer = fc.color_transfer === 'unknown' ? '' : fc.color_transfer; v.dovi = v.dovi || fc.dovi; }
     }
     if (copyCandidate(probe)) {
       try {
-        v.keyframe_interval_max_s = await keyframeIntervalMax(cfg, job.mirror_url, v.index, cfg.keyframeProbeSec, { signal });
+        v.keyframe_interval_max_s = await keyframeIntervalMax(cfg, job.mirror_url, v.index, cfg.keyframeProbeSec, { signal: jsig });
       } catch (e) { log.warn(`[probe] ключевые кадры: ${e.message}`); }
     }
+    ctl.check();
     log.info(`[probe] ${probe.format.format_name} ${v.codec_name} ${v.width}x${v.height} ${v.pix_fmt} ${v.color_transfer || '-'} ` +
       `${Math.round((probe.format.bit_rate || 0) / 1000)} кбит/с, ${(probe.duration_ms / 60000).toFixed(1)} мин, kf_max=${v.keyframe_interval_max_s}`);
 
     // 2. отпечаток (Range-запросы к зеркалу)
     state.stage = 'fingerprint';
     let fingerprint;
-    try { fingerprint = await fingerprintUrl(job.mirror_url, job.size, { signal }); } catch (e) { throw new JobError('fingerprint', e.message, true); }
+    try { fingerprint = await fingerprintUrl(job.mirror_url, job.size, { signal: jsig }); } catch (e) { throw new JobError('fingerprint', e.message, true); }
+    ctl.check();
     log.info(`[fingerprint] ${fingerprint}`);
 
     // 3. probe → решение сервера
@@ -88,13 +100,17 @@ async function processJob(job, ctx) {
       state.stage = 'probe';
       try {
         decision = await api.probe({ job_id: job.job_id, fingerprint, duration_ms: probe.duration_ms, format: probe.format, streams: probe.streams });
-      } catch (e) { throw new JobError('probe', `POST probe: ${e.message}`, true); }
+      } catch (e) {
+        if (ctl.take(e)) throw e;
+        throw new JobError('probe', `POST probe: ${e.message}`, true);
+      }
       if (!decision || typeof decision.action !== 'string') throw new JobError('probe', 'пустой ответ probe', true);
       if (decision.action !== 'wait') break;
       const waitS = Math.max(1, Number(decision.retry_after_s) || 60);
       log.info(`[probe] wait ${waitS} с (ассет кодирует другое задание)`);
       state.stage = 'wait';
-      await sleep(waitS * 1000, signal);
+      await sleep(waitS * 1000, jsig);
+      ctl.check();
       if (signal?.aborted) throw new JobError('wait', 'остановка воркера', true);
     }
     if (decision.action === 'alias') {
@@ -123,7 +139,7 @@ async function processJob(job, ctx) {
     const t0 = Date.now();
     const kv = {};
     const r = await run(cfg.ffmpeg, args, {
-      signal,
+      signal: jsig,
       tailBytes: 16384,
       onLine(line) {
         const i = line.indexOf('=');
@@ -141,6 +157,7 @@ async function processJob(job, ctx) {
         }
       },
     });
+    ctl.check();
     if (signal?.aborted) throw new JobError('encode', 'остановка воркера', true);
     if (r.code !== 0) throw new JobError('encode', `ffmpeg exit ${r.code}: ${lastLine(r.stderr)}`, true);
     log.info(`[encode] готово за ${Math.round((Date.now() - t0) / 1000)} с`);
@@ -159,24 +176,30 @@ async function processJob(job, ctx) {
     // 6. CDN
     state.stage = 'upload';
     state.progress = 0;
-    try { await upload(cfg, outDir, hlsId, profile, { signal, log }); } catch (e) { throw new JobError('upload', e.message, true); }
+    try { await upload(cfg, outDir, hlsId, profile, { signal: jsig, log }); } catch (e) { throw new JobError('upload', e.message, true); }
+    ctl.check();
 
     // 7. done
     try {
       await api.done({ job_id: job.job_id, hls_id: hlsId, profile, manifest: out.manifest, manifest_sha256: out.sha256, bytes: out.bytes });
-    } catch (e) { throw new JobError('done', `POST done: ${e.message}`, true); }
+    } catch (e) {
+      if (ctl.take(e)) throw e;
+      throw new JobError('done', `POST done: ${e.message}`, true);
+    }
     log.info(`[done] ${job.job_id} → ${hlsId}/${profile}`);
     return { result: 'done', hls_id: hlsId, profile, bytes: out.bytes, manifest: out.manifest, outDir };
   } catch (e) {
+    // снято на сайте: ошибка этапа после убитого ffmpeg/rsync — следствие отмены, failed не шлём
+    if (ctl.take(e) || ctl.cancelled) return cancelledResult(job, state.stage, ctl.cancelled, log);
     const je = e instanceof JobError ? e : new JobError(state.stage, e.message || String(e), true);
     log.error(`[failed] ${job.job_id} ${je.stage}: ${je.message} (retryable=${je.retryable})`);
-    try {
-      await api.failed({ job_id: job.job_id, stage: je.stage, error: je.message.slice(0, 500), retryable: je.retryable });
-    } catch (e2) { log.error(`[failed] не удалось сообщить серверу: ${e2.message}`); }
+    await reportFailed(api, log, { job_id: job.job_id, stage: je.stage, error: je.message.slice(0, 500), retryable: je.retryable });
     return { result: signal?.aborted ? 'aborted' : 'failed', stage: je.stage, error: je.message, retryable: je.retryable };
   } finally {
     if (timer) clearInterval(timer);
-    if (!ctx.keepWork) fs.rmSync(jobDir, { recursive: true, force: true });
+    ctl.dispose();
+    // после отмены папку чистим всегда (keepWork — для разбора ошибок, снятое задание разбирать нечего)
+    if (!ctx.keepWork || ctl.cancelled) fs.rmSync(jobDir, { recursive: true, force: true });
   }
 }
 

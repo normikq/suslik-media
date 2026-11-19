@@ -4,6 +4,7 @@
 // На каждую дорожку — своя команда ffmpeg по mirror_url: сдвиг как на ТВ (CUSTOM-AUDIO-API.md §8),
 // длительность ровно duration_ms видео, AAC-LC стерео 128 кбит, HLS fMP4 single_file по 6 с.
 // Затем проверка плейлистов → CDN (finalize-audio, только папки xN/) → POST audio-done.
+// Снято на сайте (§19) — как у видео: всё останавливается, failed не шлётся, результат cancelled.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -13,6 +14,7 @@ const { readPlaylist, dirBytes } = require('./manifest');
 const { totalDuration } = require('./playlist');
 const { uploadAudio } = require('./upload');
 const { run, lastLine } = require('./proc');
+const { createJobControl, cancelledResult, reportFailed } = require('./cancel');
 
 const MAX_TRACKS = 8;
 const AUDIO_BITRATE = 128000;
@@ -99,10 +101,16 @@ async function processAudioJob(job, ctx, JobError) {
   const state = { stage: 'encode', progress: 0, eta_s: null };
   const jobDir = path.join(cfg.workDir, String(job.job_id || 'job').replace(/[^\w.-]/g, '_'));
   let timer = null;
+  const ctl = createJobControl(signal);
+  const jsig = ctl.signal;
 
   const sendProgress = async () => {
+    if (ctl.cancelled) return;
     const body = { job_id: job.job_id, stage: state.stage, progress: Math.round(state.progress * 1000) / 1000, eta_s: state.eta_s };
-    try { await api.progress(body); } catch (e) { log.warn(`[progress] ${e.message}`); }
+    try { await api.progress(body); } catch (e) {
+      if (ctl.take(e)) { clearInterval(timer); return; }
+      log.warn(`[progress] ${e.message}`);
+    }
   };
 
   try {
@@ -113,6 +121,7 @@ async function processAudioJob(job, ctx, JobError) {
     timer = setInterval(sendProgress, cfg.progressSec * 1000);
     timer.unref?.();
     await sendProgress();
+    ctl.check();
 
     // 1. кодирование, дорожка за дорожкой
     const outDir = path.join(jobDir, profile);
@@ -129,7 +138,7 @@ async function processAudioJob(job, ctx, JobError) {
       const t0 = Date.now();
       const kv = {};
       const r = await run(cfg.ffmpeg, args, {
-        signal,
+        signal: jsig,
         tailBytes: 16384,
         onLine(line) {
           const k = line.indexOf('=');
@@ -144,6 +153,7 @@ async function processAudioJob(job, ctx, JobError) {
           state.eta_s = speed > 0 ? Math.round(((1 - done) * durS + (n - i - 1) * durS) / speed) : null;
         },
       });
+      ctl.check();
       if (signal?.aborted) throw new JobError('encode', 'остановка воркера', true);
       if (r.code !== 0) {
         const c = classifyFfmpegError(r.stderr, r.code);
@@ -169,24 +179,28 @@ async function processAudioJob(job, ctx, JobError) {
     state.stage = 'upload';
     state.progress = 0;
     state.eta_s = null;
-    try { await uploadAudio(cfg, outDir, hlsId, profile, tracks.map((t) => t.dir), { signal, log }); } catch (e) { throw new JobError('upload', e.message, true); }
+    try { await uploadAudio(cfg, outDir, hlsId, profile, tracks.map((t) => t.dir), { signal: jsig, log }); } catch (e) { throw new JobError('upload', e.message, true); }
+    ctl.check();
 
     // 4. audio-done
     try {
       await api.audioDone({ job_id: job.job_id, hls_id: hlsId, profile, tracks: result });
-    } catch (e) { throw new JobError('done', `POST audio-done: ${e.message}`, true); }
+    } catch (e) {
+      if (ctl.take(e)) throw e;
+      throw new JobError('done', `POST audio-done: ${e.message}`, true);
+    }
     log.info(`[done] ${job.job_id} → ${hlsId}/${profile} ${result.map((t) => t.dir).join(' ')}`);
     return { result: 'done', type: 'audio', hls_id: hlsId, profile, tracks: result, outDir };
   } catch (e) {
+    if (ctl.take(e) || ctl.cancelled) return cancelledResult(job, state.stage, ctl.cancelled, log, { type: 'audio' });
     const je = e instanceof JobError ? e : new JobError(state.stage, e.message || String(e), true);
     log.error(`[failed] ${job.job_id} ${je.stage}: ${je.message} (retryable=${je.retryable})`);
-    try {
-      await api.failed({ job_id: job.job_id, stage: je.stage, error: je.message.slice(0, 500), retryable: je.retryable });
-    } catch (e2) { log.error(`[failed] не удалось сообщить серверу: ${e2.message}`); }
+    await reportFailed(api, log, { job_id: job.job_id, stage: je.stage, error: je.message.slice(0, 500), retryable: je.retryable });
     return { result: signal?.aborted ? 'aborted' : 'failed', type: 'audio', stage: je.stage, error: je.message, retryable: je.retryable };
   } finally {
     if (timer) clearInterval(timer);
-    if (!ctx.keepWork) fs.rmSync(jobDir, { recursive: true, force: true });
+    ctl.dispose();
+    if (!ctx.keepWork || ctl.cancelled) fs.rmSync(jobDir, { recursive: true, force: true });
   }
 }
 

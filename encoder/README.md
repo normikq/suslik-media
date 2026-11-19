@@ -32,6 +32,15 @@ GET /internal/hls/next ──204──► пауза SM_IDLE_S
 Ошибки цикла не роняют процесс; если процесс всё же упал — его поднимает NSSM/systemd.
 На SIGINT/SIGTERM (NSSM — Ctrl+Break) ffmpeg останавливается, серверу уходит `failed` с `retryable=true`.
 
+### Снятие задания на сайте (`docs/HLS.md` §19)
+
+Если владелец остановил задание в админке, сайт отвечает на его `progress`/`probe`/`done`/`audio-done`/`failed`
+**410 `{code:"cancelled"}`** (или 404 `{code:"unknown_job"}`) — в `api.js` это `JobCancelled`, а не сетевая ошибка.
+У каждого задания свой `AbortController` (`src/cancel.js`): первый же такой ответ (обычно на ближайший `progress`, раз в `SM_PROGRESS_S`)
+убивает текущий ffmpeg/ffprobe/rsync/ssh, рабочая папка задания удаляется, `failed` не шлётся,
+результат `{result:"cancelled"}`, в журнале `[job] <job_id> отменено на сайте`; цикл без паузы берёт следующее задание.
+Остановка самого воркера (SIGTERM) — как раньше, `failed` с `retryable=true`.
+
 ### Профили
 
 - **v1** — HEVC (`hevc_nvenc`, `-rc vbr -cq` + `-maxrate`/`-bufsize`): 1080p ≤ 5 Мбит, 720p ≤ 3 Мбит; вписывание в 1920×1080 и 1280×720 без увеличения
@@ -225,4 +234,5 @@ set SM_SITE_URL=http://127.0.0.1:8787& set HLS_WORKER_TOKEN=test-token& set SM_U
 
 Заглушка отдаёт `next-job.json` (с `mirror_url` на этот файл, Range поддерживается), на probe — `probe-response-*.json`
 из `docs/hls-fixtures/`, принимает progress/done/audio-done/failed; что пришло — `GET /stub/state`.
+`GET /stub/cancel` снимает текущее задание: дальше на его запросы — 410 `cancelled` (`?code=unknown_job` — 404, `?job_id=…` — другое задание).
 С `--profile audio` `/next` отдаёт `next-job-audio.json` с дорожками на этот файл (по одной на каждый `--offsets`).

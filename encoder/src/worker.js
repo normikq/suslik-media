@@ -99,6 +99,7 @@ async function runLoop({ cfg, api, log, signal, ffmpegVersion, keepWork = false,
     } finally {
       if (!keepWork) { try { cleanWork(cfg.workDir); } catch (e) { log.warn(`[clean] ${e.message}`); } }
     }
+    // result cancelled (снято на сайте, §19) — без паузы, сразу следующий next
     onResult?.(res, job);
     if (cfg.once) break;
   }
