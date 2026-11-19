@@ -155,13 +155,19 @@ sudo systemctl start hls-evict.service && journalctl -u hls-evict -n 20         
 ```bash
 sudo ubuntu-drivers install && sudo reboot          # драйвер NVIDIA, затем nvidia-smi
 sudo apt install -y rsync openssh-client git curl xz-utils
-# Node.js ≥ 20 (в Ubuntu 24.04 apt даёт 18 — ставить из NodeSource или nvm для root):
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt install -y nodejs
-# ffmpeg ≥ 6.1 с hevc_nvenc и zscale (apt-шный обычно старый или без nvenc) — статическая сборка BtbN:
-sudo mkdir -p /opt/ffmpeg && curl -L https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz \
-  | sudo tar -xJ -C /opt/ffmpeg --strip-components=1
-/opt/ffmpeg/bin/ffmpeg -hide_banner -encoders | grep nvenc          # есть hevc_nvenc
-/opt/ffmpeg/bin/ffmpeg -hide_banner -filters  | grep -E 'zscale|tonemap'
+# Node.js ≥ 20: сначала apt (apt-cache policy nodejs); если там старее — NodeSource:
+sudo apt install -y nodejs; node --version
+# curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt install -y nodejs
+# ffmpeg ≥ 6.1 с hevc_nvenc и zscale. В свежей Ubuntu подходит apt (проверено: 8.0.1 — nvenc, zscale, tonemap есть):
+sudo apt install -y ffmpeg
+ffmpeg -hide_banner -encoders | grep hevc_nvenc
+ffmpeg -hide_banner -filters  | grep -E 'zscale|tonemap'
+# NVENC реально кодирует (конец вывода — строка frame=… speed=…x без ошибок):
+ffmpeg -hide_banner -f lavfi -i testsrc2=size=1920x1080:rate=24 -t 3 -c:v hevc_nvenc -preset p5 -tag:v hvc1 -f null - 2>&1 | tail -2
+# Если в apt ffmpeg старее 6.1 или без nvenc — статическая сборка BtbN в /opt/ffmpeg (нужен доступ к GitHub;
+# при «Connection reset by peer» скачать архив на другом ПК и перенести через scp):
+#   sudo mkdir -p /opt/ffmpeg && curl -L https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz \
+#     | sudo tar -xJ -C /opt/ffmpeg --strip-components=1
 ```
 
 **Код** (копия только для службы, владелец root — пользователь кодировщика его не меняет):
@@ -195,8 +201,8 @@ SM_ENCODER=nvenc
 SM_CDN_SSH=hls-upload@cdn.<ваш домен>
 SM_CDN_SSH_KEY=/var/lib/suslik-encoder/.ssh/hls-upload
 # SM_CDN_SSH_PORT=2222                 # если SSH на CDN не на 22
-SM_FFMPEG=/opt/ffmpeg/bin/ffmpeg
-SM_FFPROBE=/opt/ffmpeg/bin/ffprobe
+SM_FFMPEG=/usr/bin/ffmpeg              # ffmpeg из apt; сборка BtbN — /opt/ffmpeg/bin/ffmpeg
+SM_FFPROBE=/usr/bin/ffprobe
 SM_WORK_DIR=/var/lib/suslik-encoder/work
 SM_LOG_DIR=/var/log/suslik-encoder
 ```
