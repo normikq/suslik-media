@@ -12,6 +12,8 @@
 # от hls-archive.sh); при вытеснении по LRU в своей группе сначала уходят уже заархивированные; pending-deletes с archive:true
 # дополнительно удаляет копию в архиве (rclone purge; ошибка — повтор на следующем запуске) и отчитывается archived:false.
 # Удаление — на уровне профиля; <hls_id>/ удаляется, когда профилей не осталось.
+# Внешняя озвучка (§18): элемент pending-deletes с path "xN" (x0…x7) удаляет только папку <hls_id>/<profile>/xN (и её копию в архиве,
+# если профиль заархивирован); отчёт evicted с тем же path. Размер профиля для LRU включает его xN.
 # Профиль, к которому обращались за последние MIN_IDLE секунд (по умолчанию 2 ч), не трогается — его, скорее всего, смотрят;
 # это касается и pending-deletes (удалится на следующих запусках).
 #
@@ -97,7 +99,7 @@ WORK=$(mktemp -d)
 trap 'rm -rf -- "$WORK"' EXIT
 if [ "$DRY" = 0 ]; then mkdir -p "$STATE_DIR"; fi
 STATE_FILE="$STATE_DIR/lastaccess"   # строки «<hls_id> <profile> <unix-время>»
-SPOOL="$STATE_DIR/evicted.spool"     # строки «<hls_id> <profile> <last_access> <archived 0|1>», ещё не принятые сайтом
+SPOOL="$STATE_DIR/evicted.spool"     # строки «<hls_id> <profile> <last_access> <archived 0|1> [<xN>]», ещё не принятые сайтом
 ARCH_FILE="$STATE_DIR/archived"      # строки «<hls_id> <profile> <байт> <unix-время>»: копия в архиве проверена (hls-archive.sh)
 REMOTE=${HLS_ARCHIVE_REMOTE:-}
 REMOTE=${REMOTE%/}
@@ -205,6 +207,7 @@ log "диск: занято $USED из $TOTAL байт ($((USED * 100 / TOTAL)) 
 
 # --- удаление ----------------------------------------------------------------------------------------------------------
 : > "$WORK/deleted"   # «<hls_id> <profile> <last_access> <archived 0|1>»
+: > "$WORK/deleted_paths"   # «<hls_id> <profile> <last_access> 0 <xN>» — удалённые дорожки (§18), профиль остаётся
 LOCKED=0
 take_lock() {
   [ "$DRY" = 0 ] && [ "$LOCKED" = 0 ] || return 0
@@ -251,6 +254,41 @@ purge_archive() { # hid prof
   mv -f -- "$WORK/archived.new" "$WORK/archived"
 }
 
+# Удалить внешнюю озвучку <hid>/<prof>/<xN> (§18). Код ≠ 0 — копию в архиве удалить не вышло, повтор на следующем запуске.
+delete_track() { # hid prof xN last purge(true|false)
+  local hid=$1 prof=$2 x=$3 last=$4 purge=$5 dir out rc=0 size=0
+  dir="$ROOT/$hid/$prof/$x"
+  if awk -v h="$hid" -v p="$prof" -v x="$x" '$1 == h && $2 == p && $5 == x { f = 1 } END { exit !f }' "$WORK/deleted_paths"; then return 0; fi
+  if [ -n "$REMOTE" ] && { is_archived "$hid" "$prof" || [ "$purge" = true ]; }; then
+    if [ "$DRY" = 1 ]; then
+      log "[dry-run] удалить из архива $hid/$prof/$x"
+    else
+      out=$("$RCLONE" purge "${RCLONE_ARGS[@]}" "$REMOTE/$hid/$prof/$x" 2>&1 </dev/null) || rc=$?
+      if [ "$rc" != 0 ] && [ "$rc" != 3 ]; then
+        warn "rclone purge $hid/$prof/$x: код $rc: $(tail -n 2 <<< "$out" | tr '\n' ' ')"
+        return 1
+      fi
+      log "удалён из архива $hid/$prof/$x"
+    fi
+  elif [ "$purge" = true ]; then
+    warn "архив выключен (HLS_ARCHIVE_REMOTE пуст): копию $hid/$prof/$x в архиве не удалить"
+  fi
+  if [ -e "$dir" ] || [ -L "$dir" ]; then
+    if [ ! -L "$dir" ]; then size=$(du -sb -- "$dir" | cut -f1); fi
+    if [ "$DRY" = 1 ]; then
+      log "[dry-run] удалить $hid/$prof/$x (pending, last_access=$last)"
+    else
+      take_lock
+      rm -rf -- "${ROOT:?}/$hid/$prof/$x"
+      log "удалена дорожка $hid/$prof/$x (pending, last_access=$last)"
+    fi
+    USED=$((USED - size))
+  else
+    log "дорожки $hid/$prof/$x на диске нет — сообщаю, что удалена"
+  fi
+  echo "$hid $prof ${last:-0} 0 $x" >> "$WORK/deleted_paths"
+}
+
 # 2. pending-deletes
 pending_json=""
 if [ -n "$PENDING_FILE" ]; then
@@ -262,15 +300,22 @@ elif [ -n "$SITE" ]; then
 fi
 if [ -n "$pending_json" ]; then
   # tr -d '\r': jq под Windows (Git Bash) пишет CRLF
-  if ! printf '%s' "$pending_json" | jq -r '.items[]? | "\(.hls_id) \(.profile) \(.archive == true)"' 2>/dev/null | tr -d '\r' > "$WORK/pending"; then
+  if ! printf '%s' "$pending_json" | jq -r '.items[]? | "\(.hls_id) \(.profile) \(.archive == true) \(.path // "-")"' 2>/dev/null | tr -d '\r' > "$WORK/pending"; then
     warn "pending-deletes: не JSON"; : > "$WORK/pending"; RC=1
   fi
-  while read -r hid prof purge <&3; do
+  while read -r hid prof purge path <&3; do
     [ -n "$hid" ] || continue
     if ! valid_hid "$hid" || ! valid_prof "$prof"; then warn "pending-deletes: плохая запись «$hid $prof»"; continue; fi
+    if [ "$path" != "-" ] && [[ ! $path =~ ^x[0-7]$ ]]; then warn "pending-deletes: плохой path «$hid/$prof/${path:0:40}»"; continue; fi
     last=$(last_of "$hid" "$prof")
     if [ -n "$last" ] && [ $((NOW - last)) -lt "$MIN_IDLE" ]; then
-      log "отложено $hid/$prof (pending, обращались $((NOW - last)) с назад)"
+      log "отложено $hid/$prof$([ "$path" = - ] || echo "/$path") (pending, обращались $((NOW - last)) с назад)"
+      continue
+    fi
+    if [ "$path" != "-" ]; then
+      # только дорожка xN, профиль остаётся; на диске профиля нет — last из состояния
+      [ -n "$last" ] || last=$(awk -v h="$hid" -v p="$prof" '$1 == h && $2 == p { print $3 }' "$WORK/state")
+      delete_track "$hid" "$prof" "$path" "${last:-0}" "$purge" || RC=1
       continue
     fi
     arch=""
@@ -319,13 +364,15 @@ USED=$((USED - RESERVE))
 
 # --- 4. отчёты ---------------------------------------------------------------------------------------------------------
 if [ "$DRY" = 0 ]; then
-  cat "$WORK/deleted" >> "$SPOOL"
+  cat "$WORK/deleted" "$WORK/deleted_paths" >> "$SPOOL"
   report_src="$SPOOL"
 else
-  report_src="$WORK/deleted"
+  cat "$WORK/deleted" "$WORK/deleted_paths" > "$WORK/report"
+  report_src="$WORK/report"
 fi
-# строки очереди старого формата (без 4-го поля) уходят с archived:false
-jq -Rn '[inputs | select(length > 0) | split(" ") | {hls_id: .[0], profile: .[1], last_access: (.[2] | tonumber), archived: (.[3] == "1")}]' \
+# строки очереди старого формата (без 4-го поля) уходят с archived:false; 5-е поле — path дорожки (§18)
+jq -Rn '[inputs | select(length > 0) | split(" ") | {hls_id: .[0], profile: .[1]} + (if (.[4] // "") != "" then {path: .[4]} else {} end)
+  + {last_access: (.[2] | tonumber), archived: (.[3] == "1")}]' \
   < "$report_src" > "$WORK/evicted.json"
 
 if [ "$DRY" = 0 ] && [ -z "$DISK_TOTAL" ]; then
@@ -373,5 +420,5 @@ if [ -d "$ROOT/.tmp" ]; then
   done
 fi
 
-log "готово: удалено $(wc -l < "$WORK/deleted" | tr -d ' '), ассетов $ASSETS, профилей $PROFILES, занято $USED"
+log "готово: удалено $(wc -l < "$WORK/deleted" | tr -d ' '), дорожек $(wc -l < "$WORK/deleted_paths" | tr -d ' '), ассетов $ASSETS, профилей $PROFILES, занято $USED"
 exit "$RC"

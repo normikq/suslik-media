@@ -20,7 +20,8 @@ hls-restore.sh (служба, опрос 15 с) ◄── сайт: GET pending-
 | `nginx/hls-cdn.conf.template` | сайт nginx (`/etc/nginx/conf.d/hls-cdn.conf`), подстановка `envsubst` |
 | `nginx/hls-secret.conf.template` | секрет подписи (`/etc/nginx/hls-secret.conf`, 0640) |
 | `nginx/logrotate-hls` | ротация `hls-access.log` (evict.sh читает `.log` и `.log.1`) |
-| `bin/hls-upload-shell` | принудительная команда ssh для `hls-upload`: только rsync в `.tmp/` и `finalize` |
+| `bin/hls-upload-shell` | принудительная команда ssh для `hls-upload`: только rsync в `.tmp/`, `finalize` и `finalize-audio` |
+| `bin/hls-finalize-audio` | приём внешних озвучек `xN/` в готовый профиль (§18) |
 | `bin/hls-finalize` | проверка и атомарный перенос загрузки в `/srv/hls/<hls_id>/<profile>/` |
 | `evict.sh` | уборка диска и отчёты сайту |
 | `systemd/hls-evict.{service,timer}` | запуск evict.sh раз в 15 мин |
@@ -32,7 +33,7 @@ hls-restore.sh (служба, опрос 15 с) ◄── сайт: GET pending-
 | `cdn.env.example` | образец `/etc/hls-cdn/cdn.env` |
 | `test.sh` | проверка работающего CDN; `--offline` — только вектор подписи |
 | `make-sample.sh` | образец ассета `0000000000000000/v1` для test.sh |
-| `test/offline.sh` | все офлайн-проверки (вектор, evict, finalize, архив); работает в Git Bash на Windows |
+| `test/offline.sh` | все офлайн-проверки (вектор, evict, finalize, архив, внешние озвучки); работает в Git Bash на Windows |
 | `test/fake-rclone`, `test/fake-curl` | заглушки rclone (архив — локальная папка) и сайта для офлайн-проверок |
 
 ## Установка
@@ -94,8 +95,8 @@ hls-restore.sh (служба, опрос 15 с) ◄── сайт: GET pending-
 ```
 command="/usr/local/lib/hls-cdn/hls-upload-shell",restrict ssh-ed25519 AAAA… encoder
 ```
-`hls-upload-shell` пропускает ровно две команды: `rsync --server …` (через `rrsync -wo -no-del /srv/hls/.tmp/` — только запись,
-только внутрь `.tmp/`, без удаления) и `finalize <имя>`. Шелл, scp, sftp, проброс портов запрещены.
+`hls-upload-shell` пропускает ровно три команды: `rsync --server …` (через `rrsync -wo -no-del /srv/hls/.tmp/` — только запись,
+только внутрь `.tmp/`, без удаления), `finalize <имя>` и `finalize-audio <имя>` (внешние озвучки, ниже). Шелл, scp, sftp, проброс портов запрещены.
 
 Воркер (`SM_CDN_SSH=hls-upload@cdn.example.org`):
 ```
@@ -132,6 +133,31 @@ sudo /usr/local/lib/hls-cdn/evict.sh --dry-run        # план без удал
 sudo systemctl start hls-evict.service                 # настоящий прогон
 ```
 Ключи для отладки: `--root`, `--log`, `--state-dir`, `--pending-file`, `--disk-total/--disk-used`, `--high/--low`, `--min-idle`, `--now`, `--no-report` (`evict.sh --help`).
+
+## Внешние озвучки (xN)
+
+Внешняя озвучка (`docs/HLS.md` §18) — ещё одна звуковая дорожка готового профиля: `/srv/hls/<hls_id>/<profile>/x0/ … x7/`,
+в каждой `index.m3u8` и `audio.m4s`. nginx отдаёт их тем же location (`/hls/<sig>/<exp>/<hls_id>/<profile>/xN/…`), типы и кэш — как у остальных
+`.m3u8`/`.m4s`; в журнале обращение идёт к профилю. Для evict.sh и архива `xN/` — часть профиля (размер по `du`, `rclone sync` и возврат — целиком).
+
+**Выкладка (задание «звук»).** Воркер грузит только папки дорожек и зовёт `finalize-audio`:
+```
+name="$hls_id.$profile.a$(openssl rand -hex 6)"                    # rand начинается с «a»
+rsync -a --partial ./out/ "$SM_CDN_SSH:$name/"                      # ./out/x0/{index.m3u8,audio.m4s}, ./out/x3/…
+ssh "$SM_CDN_SSH" finalize-audio "$name"                            # → «ok <hls_id>/<profile> <байт>», код 0
+```
+`finalize-audio` (`bin/hls-finalize-audio`) проверяет имя (`^[0-9a-f]{16}\.(v1|v1-copy)\.a[A-Za-z0-9_-]{4,64}$`) и состав: в загрузке только папки
+`x0`…`x7`, в каждой ровно непустые `index.m3u8` и `audio.m4s`, без ссылок и спецфайлов — иначе отказ. Профиль `<hls_id>/<profile>/` должен уже
+лежать на CDN (звук без видео не принимается; отказ — воркер сообщает `failed`). Под той же блокировкой `.tmp/.lock`, что у `finalize` и evict.sh,
+каждая `xN` ставится отдельно: `rename` в `<profile>/.xN.new`, старая `xN` → `.xN.old`, `.xN.new` → `xN`, `.xN.old` удаляется
+(окно 404 у одной дорожки — между двумя `rename`; папки с точкой nginx не отдаёт). Права — как у `finalize`. `<байт>` в ответе — объём принятых дорожек.
+Журнал — `journalctl -t hls-finalize`. При включённом архиве после приёма в `v1` профиль снова ставится в очередь архивации — архив получает `xN/` через `rclone sync`.
+
+**Удаление дорожки.** Сайт ставит в `pending-deletes` элемент `{hls_id, profile, path: "xN"}` (`path` — только `x0`…`x7`, иное пропускается с предупреждением).
+evict.sh удаляет только `<hls_id>/<profile>/xN/`; если профиль заархивирован (или в элементе `archive:true`) и архив включён — сначала
+`rclone purge <REMOTE>/<hls_id>/<profile>/xN` (ошибка — ничего не удаляется, повтор на следующем запуске). Отчёт — `evicted` с тем же `path`:
+`{hls_id, profile, path, last_access, archived:false}`; дорожки нет на диске — всё равно сообщается. Как и для профиля, дорожка профиля, к которому
+обращались меньше `HLS_EVICT_MIN_IDLE` назад, удаляется на следующих запусках.
 
 ## Архив на Google Drive
 
@@ -219,6 +245,9 @@ bash infra/cdn/test/offline.sh
   `archived` по фикстуре, снятие с очереди удалённого, spool при недоступном сайте, лимит Google (код 7), `evicted` с `archived`,
   порядок вытеснения (архивные первыми), pending-deletes с `archive:true` → purge (и ошибка purge, и холодная версия),
   возврат: успех (файлы, lastaccess, место, `restored ok`), `not_in_archive`, профиль уже на диске; без `HLS_ARCHIVE_REMOTE` — всё выключено.
+- `test/audio-offline.sh` — внешние озвучки: `finalize-audio` (приём, замена `xN`, отказ без профиля, на лишнем файле/папке/имени, без `audio.m4s`,
+  очередь архивации только для `v1`), `finalize-audio` через `hls-upload-shell` (лишние аргументы, `*`), evict.sh с `path`: удаление одной `xN`,
+  MIN_IDLE, профиля нет на диске, purge `xN` в архиве и его ошибка, плохой `path`, смесь с обычными элементами;
 
 Против работающего CDN — `test.sh` (переменные в шапке файла): 200 и `Accept-Ranges`, 206 с `Content-Range`, типы и `Cache-Control`,
 404/403/410/405, подделка `exp` и `hls_id`, `../`, CORS на ответах и на 403, чужой Origin, preflight 204, HTTP/2.

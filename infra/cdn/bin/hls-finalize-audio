@@ -1,0 +1,71 @@
+#!/bin/bash
+# Приём внешних озвучек (docs/HLS.md §18): ${HLS_ROOT}/.tmp/<hls_id>.<profile>.a<rand>/xN/ → ${HLS_ROOT}/<hls_id>/<profile>/xN/.
+# Вызывается через «ssh hls-upload@<cdn> finalize-audio <имя>» (см. hls-upload-shell) от пользователя hls-upload.
+# В загрузке — только папки x0…x7, в каждой ровно index.m3u8 и audio.m4s. Профиль должен уже лежать на диске (звук без видео не принимаем).
+# Каждая xN ставится отдельно: rename в <profile>/.xN.new, старая xN → .xN.old, .xN.new → xN, .xN.old удаляется.
+# Вывод: «ok <hls_id>/<profile> <байт>» (байты принятых xN) и код 0; иначе сообщение в stderr и код ≠ 0.
+set -euo pipefail
+umask 022
+
+[ -r /etc/hls-cdn/upload.env ] && . /etc/hls-cdn/upload.env
+HLS_ROOT=${HLS_ROOT:-/srv/hls}
+TMP="$HLS_ROOT/.tmp"
+
+die() { echo "finalize-audio: $*" >&2; exit 1; }
+
+name=${1:-}
+# hls_id — 16 hex (§4), профиль — v1 | v1-copy, rand от воркера начинается с «a» (§18).
+[[ $name =~ ^([0-9a-f]{16})\.(v1|v1-copy)\.a[A-Za-z0-9_-]{4,64}$ ]] || die "плохое имя: ${name:0:100}"
+hid=${BASH_REMATCH[1]}
+prof=${BASH_REMATCH[2]}
+src="$TMP/$name"
+dst="$HLS_ROOT/$hid/$prof"
+
+[ -d "$src" ] && [ ! -L "$src" ] || die "нет папки .tmp/$name"
+
+# Состав: только x0…x7 (папки, не ссылки), в каждой ровно index.m3u8 и audio.m4s (обычные непустые файлы).
+tracks=()
+while IFS= read -r -d '' e; do
+  x=${e##*/}
+  [[ $x =~ ^x[0-7]$ ]] || die "лишнее в загрузке: ${x:0:100}"
+  [ -d "$e" ] && [ ! -L "$e" ] || die "$x — не папка"
+  while IFS= read -r -d '' f; do
+    fn=${f##*/}
+    case "$fn" in index.m3u8|audio.m4s) ;; *) die "лишнее в $x: ${fn:0:100}" ;; esac
+    [ -f "$f" ] && [ ! -L "$f" ] || die "$x/$fn — не обычный файл"
+  done < <(find "$e" -mindepth 1 -maxdepth 1 -print0)
+  [ -s "$e/index.m3u8" ] || die "нет $x/index.m3u8"
+  [ -s "$e/audio.m4s" ] || die "нет $x/audio.m4s"
+  tracks+=("$x")
+done < <(find "$src" -mindepth 1 -maxdepth 1 -print0)
+[ ${#tracks[@]} -gt 0 ] || die "в загрузке нет папок x0…x7"
+
+chmod -R u=rwX,go=rX "$src"
+bytes=$(du -sb "$src" | cut -f1)
+
+# Общая блокировка с hls-finalize и evict.sh: профиль не удалят и не заменят, пока ставим дорожки.
+exec 9>>"$TMP/.lock"
+flock -w 120 9 || die "занято (блокировка .tmp/.lock)"
+
+[ -d "$dst" ] && [ ! -L "$dst" ] || die "нет профиля $hid/$prof на CDN"
+
+for x in "${tracks[@]}"; do
+  new="$dst/.$x.new"; old="$dst/.$x.old"
+  rm -rf -- "$new" "$old"            # остатки прерванного приёма
+  mv -T -- "$src/$x" "$new"
+  if [ -e "$dst/$x" ] || [ -L "$dst/$x" ]; then mv -T -- "$dst/$x" "$old"; fi
+  mv -T -- "$new" "$dst/$x"          # окно 404 у этой дорожки — между двумя rename
+  rm -rf -- "$old"
+done
+rmdir -- "$src" 2>/dev/null || true
+
+# Архив (§17) хранит профиль целиком: v1 снова в очередь, чтобы архив получил xN. Ошибка постановки не отменяет приём.
+if [ "$prof" = v1 ] && [ -n "${HLS_ARCHIVE_QUEUE:-}" ] && [ "${HLS_FINALIZE_NO_ARCHIVE:-0}" != 1 ]; then
+  if ! : > "$HLS_ARCHIVE_QUEUE/$hid.v1" 2>/dev/null; then
+    echo "finalize-audio: ВНИМАНИЕ: не удалось поставить $hid/v1 в очередь архивации" >&2
+    logger -t hls-finalize "не поставлен в очередь архивации: $hid/v1" 2>/dev/null || true
+  fi
+fi
+
+logger -t hls-finalize "ok audio $hid/$prof ${tracks[*]} $bytes" 2>/dev/null || true
+echo "ok $hid/$prof $bytes"

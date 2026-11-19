@@ -1,8 +1,9 @@
 #!/bin/bash
 # Принудительная команда для пользователя hls-upload (authorized_keys: command="/usr/local/lib/hls-cdn/hls-upload-shell",restrict).
-# Разрешено ровно два действия:
+# Разрешено ровно три действия:
 #   rsync … → rrsync, только запись и только в ${HLS_ROOT}/.tmp/
 #   finalize <hls_id>.<profile>.<rand> → hls-finalize (атомарный mv в ${HLS_ROOT}/<hls_id>/<profile>/)
+#   finalize-audio <hls_id>.<profile>.a<rand> → hls-finalize-audio (внешние озвучки xN/ в готовый профиль, docs/HLS.md §18)
 set -euo pipefail
 set -f   # без подстановки * в разборе команды
 
@@ -22,6 +23,12 @@ case "$cmd" in
     set -- $cmd
     if [ $# -ne 2 ]; then echo "использование: finalize <hls_id>.<profile>.<rand>" >&2; exit 2; fi
     exec "$LIB_DIR/hls-finalize" "$2"
+    ;;
+  "finalize-audio "*)
+    # shellcheck disable=SC2086
+    set -- $cmd
+    if [ $# -ne 2 ]; then echo "использование: finalize-audio <hls_id>.<profile>.a<rand>" >&2; exit 2; fi
+    exec "$LIB_DIR/hls-finalize-audio" "$2"
     ;;
   *)
     echo "hls-upload: команда запрещена" >&2
