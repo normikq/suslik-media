@@ -8,13 +8,13 @@
   <title>Suslik Media</title>
   <link rel="icon" type="image/svg+xml" href="../brand-mark.svg">
   <link rel="icon" href="../favicon.ico" sizes="any">
-  <link rel="stylesheet" href="../watch.css?v=2">
+  <link rel="stylesheet" href="../watch.css?v=3">
 </head>
 <body>
 <!-- Страница фильма: /watch/<номер раздачи>. Без встроенных скриптов — CSP пускает только файлы сайта (watch.js).
      Устройство и ручная проверка — docs/HLS-CLIENT.md «Страница фильма». -->
 <main class="wp" id="wp">
-  <nav class="wp-nav"><a class="wp-back" id="wpBack" href="../">← Медиатека</a></nav>
+  <nav class="wp-nav"><a class="wp-back" id="wpBack" href="../"><span aria-hidden="true">←</span> Назад в медиатеку</a></nav>
 
   <section class="wp-state" id="wpLoading"><div class="wp-spinner" aria-hidden="true"></div><p>Загружаем фильм…</p></section>
 
@@ -35,8 +35,13 @@
 
   <article class="hidden" id="wpPage">
     <header class="wp-head">
-      <h1 class="wp-h1" id="wpTitle"></h1>
-      <div class="wp-orig hidden" id="wpOrig"></div>
+      <div class="wp-head-text">
+        <h1 class="wp-h1" id="wpTitle"></h1>
+        <div class="wp-orig hidden" id="wpOrig"></div>
+      </div>
+      <div class="wp-head-actions">
+        <button type="button" class="wp-btn primary" id="wpPlayNow"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg><span>Смотреть</span></button>
+      </div>
     </header>
 
     <section class="wp-card">
@@ -54,10 +59,10 @@
     </section>
 
     <section class="wp-watch" id="wpWatch" aria-label="Просмотр">
-      <h2 class="wp-watch-title" id="wpNow"></h2>
+      <div class="wp-watch-head"><span class="wp-dot" aria-hidden="true"></span><h2 class="wp-watch-title" id="wpNow"></h2></div>
 
       <div class="wp-group hidden" id="wpAudioBox">
-        <div class="wp-label">Озвучка:</div>
+        <div class="wp-label">Озвучка</div>
         <div class="wp-grid3" id="wpAudio" role="radiogroup" aria-label="Озвучка"></div>
       </div>
 
@@ -67,7 +72,7 @@
       </div>
 
       <div class="wp-group hidden" id="wpVersionsBox">
-        <div class="wp-label">Версия:</div>
+        <div class="wp-label">Версия</div>
         <div class="wp-chips" id="wpVersions"></div>
       </div>
 
@@ -93,13 +98,18 @@
       </div>
       <div class="wp-under">
         <span class="wp-muted wp-small" id="wpStatus"></span>
-        <button type="button" class="wp-btn wp-small-btn" id="wpCopy">Скопировать ссылку</button>
+        <button type="button" class="wp-btn wp-small-btn" id="wpCopy"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="1.5"/><path d="M5 15H4a1 1 0 01-1-1V4a1 1 0 011-1h10a1 1 0 011 1v1"/></svg><span>Скопировать ссылку</span></button>
       </div>
+    </section>
+
+    <section class="wp-related hidden" id="wpRelated" aria-label="Смотрите также">
+      <div class="wp-related-head"><h2 class="wp-h2">Смотрите также</h2><a class="wp-link" id="wpRelatedAll" href="../">Вся коллекция →</a></div>
+      <div class="wp-related-grid" id="wpRelatedGrid"></div>
     </section>
   </article>
 </main>
 <script src="../library-model.js?v=1"></script>
 <script src="../hls-player.js" defer></script>
-<script src="../watch.js?v=1" defer></script>
+<script src="../watch.js?v=2" defer></script>
 </body>
 </html>

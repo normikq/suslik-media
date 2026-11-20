@@ -396,7 +396,7 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
 <script>/* App 1.2+: native library and bottom bar */try{if(Number(window.__suslikApp||0)>=3)document.documentElement.classList.add("suslik-native");}catch(e){}
 /* Пока не ответил /api/session, страница скрыта: иначе на секунду мелькает форма входа у тех, кто уже вошёл (снимается в showApp; страховка — через 4 с) */
 try{document.documentElement.classList.add("auth-pending");setTimeout(function(){document.documentElement.classList.remove("auth-pending");},4000);}catch(e){}</script>
-<link rel="stylesheet" href="redesign.css?v=43">
+<link rel="stylesheet" href="redesign.css?v=45">
 <style>
   /* Пока ждём /api/session (страница скрыта, до 4 с): если ответ задержался больше полсекунды — крутилка, а не пустой экран */
   html.auth-pending::after { content: ""; position: fixed; left: 50%; top: 45%; width: 28px; height: 28px; margin: -14px 0 0 -14px; z-index: 50;
@@ -418,25 +418,6 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
 .sr-badges .rb.medium { color: #A1A1AA; }
 .sr-badges .rb.heavy { color: #f87171; }
 .sr-row .sr-actions { margin-top: 2px; }
-@media (max-width: 700px) {
-  /* Поиск на телефоне: выдача и фильтры в одну колонку (десктопная сетка из redesign.css сжимала название) */
-  #searchTab .panel { padding: 16px 14px; }
-  .search-form { flex-direction: column; }
-  .search-form button { width: 100%; }
-  .search-tools { display: grid !important; grid-template-columns: 1fr 1fr; gap: 8px !important; padding: 12px !important; }
-  .search-tools select { width: 100%; min-width: 0; font-size: 14px; }
-  .search-tools label { grid-column: 1 / -1; white-space: normal !important; min-height: 32px; font-size: 14px !important; }
-  .search-tools input[type="checkbox"] { width: 20px; height: 20px; flex: none; }
-  .search-tools input[type="search"] { grid-column: 1 / -1; min-width: 0 !important; width: 100%; }
-  .sr-row { grid-template-columns: minmax(0, 1fr) !important; gap: 8px !important; padding: 12px 6px !important; }
-  .sr-row .sr-title { font-size: 15px; }
-  .sr-row .sr-actions { display: flex; gap: 8px; }
-  .sr-row .sr-actions button { flex: 1 1 0; min-height: 42px; }
-  .sr-row .sr-note { flex-basis: 100%; }
-  .sr-badges { gap: 5px; }
-  #searchMore { width: 100%; }
-  #searchProviders .chip { font-size: 11.5px; padding: 4px 10px; }
-}
 .sr-raw { opacity: .6; font-size: 12px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>
 </head>
@@ -485,116 +466,166 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
   </dialog>
 
   <section id="appPanel" class="hidden">
-    <aside class="app-sidebar">
-      <div class="sidebar-brand">
-        <div class="brand-mark-wrap">
-          <img class="sidebar-brand-logo" src="brand-mark.svg" alt="Suslik Media" width="28" height="28">
+    <aside class="sm-sidebar" id="smSidebar" aria-label="Меню">
+      <div class="sm-side-scroll">
+        <div class="sm-brand-row">
+          <button type="button" class="sm-brand" data-go-home><img class="sm-brand-logo" src="brand-mark.svg" alt="" width="28" height="28"><span>Suslik Media</span></button>
+          <button type="button" id="closeSidebarBtn" class="sm-icon-btn sm-mobile-only" aria-label="Закрыть меню"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M6 18L18 6M6 6l12 12"/></svg></button>
         </div>
-        <div class="sidebar-brand-text">
-          <strong>Suslik Media</strong>
+
+        <nav class="sm-nav" aria-label="Основная навигация">
+          <button type="button" id="showLibraryTab" class="sm-nav-btn secondary"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 10.5L12 3l9 7.5V20a1 1 0 01-1 1h-5.5v-6h-5v6H4a1 1 0 01-1-1v-9.5z"/></svg><span class="sm-nav-label">Главная</span></button>
+          <button type="button" id="showMineTab" class="sm-nav-btn secondary"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="1.5"/><path d="M9 4v16"/></svg><span class="sm-nav-label">Моя медиатека</span><span id="sideMineCount" class="sm-count"></span></button>
+          <button type="button" id="showSearchTab" class="sm-nav-btn secondary"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><span class="sm-nav-label">Поиск</span><span class="sm-tag">Трекеры</span></button>
+          <button type="button" id="showFavTab" class="sm-nav-btn secondary"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M5 4h14a1 1 0 011 1v15l-8-4-8 4V5a1 1 0 011-1z"/></svg><span class="sm-nav-label">Избранное</span><span id="sideFavCount" class="sm-count"></span></button>
+          <button type="button" id="showLinkTab" class="sm-nav-btn"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span class="sm-nav-label">Добавить по ссылке</span></button>
+        </nav>
+
+        <div class="sm-side-group side-collection" role="group" aria-label="Коллекции">
+          <div class="sm-side-caption"><span>Коллекции</span><span id="sideTotalCount" class="sm-count"></span></div>
+          <button type="button" class="side-cat sm-cat secondary" data-cat="all"><span class="side-name">Все названия</span><span class="side-count"></span></button>
+          <button type="button" class="side-cat sm-cat secondary" data-cat="movie"><span class="side-name">Фильмы</span><span class="side-count"></span></button>
+          <button type="button" class="side-cat sm-cat secondary" data-cat="series"><span class="side-name">Сериалы</span><span class="side-count"></span></button>
+          <button type="button" class="side-cat sm-cat secondary" data-cat="anime"><span class="side-name">Аниме</span><span class="side-count"></span></button>
+          <button type="button" class="side-cat sm-cat secondary" data-cat="cartoon"><span class="side-name">Мультфильмы</span><span class="side-count"></span></button>
+          <button type="button" class="side-cat sm-cat secondary" data-cat="other"><span class="side-name">Другое</span><span class="side-count"></span></button>
+        </div>
+
+        <div class="sm-side-group" role="group" aria-label="Сервис">
+          <div class="sm-side-caption"><span>Сервис</span></div>
+          <button type="button" id="sideAppsTab" class="side-cat sm-cat sm-cat-service secondary"><span class="side-name">Приложения</span><span class="sm-tag sm-tag-box">ПК · Android</span></button>
+          <button type="button" id="sideSessionsTab" class="side-cat sm-cat sm-cat-service secondary"><span class="side-name">Устройства и сессии</span><span id="sideSessionsCount" class="side-count"></span></button>
         </div>
       </div>
-      <div class="row navrow">
-        <button id="showLibraryTab" class="secondary"><span class="nav-icon" aria-hidden="true">▤</span><span class="nav-long">Главная</span><span class="nav-short">Библиотека</span></button>
-        <button id="showMineTab" class="secondary"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18l-6-4-6 4z"/></svg></span><span class="nav-long">Моя медиатека</span><span class="nav-short">Мои</span></button>
-        <button id="showSearchTab" class="secondary"><span class="nav-icon" aria-hidden="true">⌕</span><span class="nav-long">Поиск раздач</span><span class="nav-short">Поиск</span></button>
-        <button id="showLinkTab"><span class="nav-icon" aria-hidden="true">↗</span><span class="nav-long">Magnet / торрент</span><span class="nav-short">Ссылка</span></button>
-        <button id="showAppsTab" class="secondary"><span class="nav-icon" aria-hidden="true">⇩</span><span class="nav-long">Приложения</span><span class="nav-short">Скачать</span></button>
-      </div>
-      <nav class="side-collection" aria-label="Коллекция">
-        <div class="side-caption">Коллекция</div>
-        <button type="button" class="side-cat secondary" data-cat="movie"><span class="side-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 3v18M16 3v18M3 8h5M3 16h5M16 8h5M16 16h5"/></svg></span><span class="side-name">Фильмы</span><span class="side-count">0</span></button>
-        <button type="button" class="side-cat secondary" data-cat="series"><span class="side-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M12 16v4M8 20h8"/></svg></span><span class="side-name">Сериалы</span><span class="side-count">0</span></button>
-        <button type="button" class="side-cat secondary" data-cat="anime"><span class="side-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><circle cx="6" cy="5.5" r="2.5"/><circle cx="18" cy="5.5" r="2.5"/><path d="M9 12.5h.01M15 12.5h.01"/></svg></span><span class="side-name">Аниме</span><span class="side-count">0</span></button>
-        <button type="button" class="side-cat secondary" data-cat="cartoon"><span class="side-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><circle cx="6" cy="5.5" r="2.5"/><circle cx="18" cy="5.5" r="2.5"/><path d="M9 12h.01M15 12h.01M9 16c1.5 1.5 4.5 1.5 6 0"/></svg></span><span class="side-name">Мультфильмы</span><span class="side-count">0</span></button>
-        <button type="button" class="side-cat secondary" data-cat="other"><span class="side-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9 11.5h.01M15 11.5h.01M9 15.5c1.5 1.2 4.5 1.2 6 0"/></svg></span><span class="side-name">Другое</span><span class="side-count">0</span></button>
-        <div class="side-caption">Сервис</div>
-        <button type="button" id="sideAppsTab" class="side-cat secondary side-service"><span class="side-ico" aria-hidden="true">⇩</span><span class="side-name">Приложения</span></button>
-        <button type="button" id="sideSessionsTab" class="side-cat secondary side-service"><span class="side-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></span><span class="side-name">Сессии</span></button>
-      </nav>
-      <div class="sidebar-profile">
-        <div class="sidebar-profile-info">
-          <div id="profileAvatar" class="profile-avatar">S</div>
-          <div class="profile-meta">
+
+      <div class="sm-account sidebar-profile">
+        <div class="sm-account-row">
+          <div id="profileAvatar" class="sm-avatar">S</div>
+          <div class="sm-account-meta">
             <strong id="profileName">Suslik Media</strong>
-            <span id="profileSub" class="profile-sub" data-i18n="profile.connected">Облако подключено</span>
-            <button id="deviceLinkBtn" class="device-link-btn" type="button" data-i18n="auth.device_link" data-i18n-title="auth.device_link_title" title="Подключить Android TV или ПК">Связать устройство</button>
+            <span class="sm-account-sub"><i class="sm-dot-ok" aria-hidden="true"></i><span id="profileSub" data-i18n="profile.connected">Облако подключено</span></span>
           </div>
+          <button type="button" id="sideRefreshBtn" class="sm-icon-btn" title="Обновить медиатеку" aria-label="Обновить медиатеку"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg></button>
         </div>
-        <button id="logout" class="secondary btn-logout" type="button" data-i18n="auth.logout_btn">Выйти</button>
+        <div class="sm-account-actions">
+          <button id="deviceLinkBtn" class="sm-btn sm-btn-sm" type="button" data-i18n="auth.device_link" data-i18n-title="auth.device_link_title" title="Подключить Android TV или ПК">Связать устройство</button>
+          <button id="logout" class="sm-btn sm-btn-sm sm-btn-danger" type="button" data-i18n="auth.logout_btn">Выйти</button>
+        </div>
       </div>
     </aside>
+    <div id="sidebarOverlay" class="sm-overlay" hidden></div>
 
-    <div class="app-viewport">
-      <div class="mobile-topline topline">
-        <div class="mobile-brand">
-          <div class="brand-mark-wrap">
-            <img class="mobile-brand-logo" src="brand-mark.svg" alt="Suslik Media" width="28" height="28">
+    <div class="app-viewport sm-viewport">
+      <header class="sm-topbar">
+        <button type="button" id="mobileMenuBtn" class="sm-icon-btn sm-mobile-only" aria-label="Открыть меню"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="square" d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+        <button type="button" class="sm-brand sm-mobile-only sm-topbar-brand" data-go-home><img class="sm-brand-logo" src="brand-mark.svg" alt="" width="26" height="26"><span>Suslik Media</span></button>
+        <div class="sm-top-search library-search-bar">
+          <svg class="sm-top-lens" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          <input id="librarySearch" type="search" placeholder="Поиск по медиатеке, Enter — поиск по трекерам…" autocomplete="off" aria-label="Поиск по медиатеке" enterkeyhint="search">
+          <button id="clearLibrarySearch" type="button" class="clear-search-btn hidden" aria-label="Очистить поиск" title="Очистить">✕</button>
+          <kbd class="sm-kbd" aria-hidden="true">/</kbd>
+        </div>
+        <div class="sm-top-actions">
+          <button type="button" id="topSearchBtn" class="sm-btn">Поиск по трекерам</button>
+          <button type="button" id="showAppsTab" class="sm-btn secondary">Приложения</button>
+          <button type="button" id="topAddBtn" class="sm-btn sm-btn-primary">+ Добавить фильм</button>
+        </div>
+        <button type="button" id="topSearchBtnMobile" class="sm-btn sm-btn-sm sm-mobile-only">Поиск</button>
+        <button id="mobileSessions" class="hidden" type="button" aria-label="Активные сессии">Сессии</button>
+        <button id="mobileLogout" class="hidden" type="button">Выйти</button>
+      </header>
+
+      <div class="sm-content">
+      <section id="linkTab" class="sm-page">
+        <div class="sm-page-head">
+          <h1>Добавить в медиатеку</h1>
+          <p>Вставьте magnet-ссылку или выберите файл .torrent — фильм появится в медиатеке с обложкой и описанием.</p>
+        </div>
+        <div class="sm-link-grid">
+          <div class="sm-card sm-link-card">
+            <form id="linkForm">
+              <div class="input-modes" role="group" aria-label="Тип ввода">
+                <button id="magnetModeBtn" class="mode-card selected" type="button" aria-pressed="true"><span class="mode-icon">↗</span><span><strong>Magnet-ссылка</strong><small>Вставьте magnet-ссылку</small></span></button>
+                <button id="torrentModeBtn" class="mode-card" type="button" aria-pressed="false"><span class="mode-icon">⇧</span><span><strong>Torrent-файл</strong><small>Выберите файл .torrent</small></span></button>
+              </div>
+              <div id="magnetInputArea" class="input-area"><label for="url">Magnet-ссылка</label><div class="row"><input id="url" type="text" placeholder="magnet:?xt=urn:btih:…" maxlength="5000" autocomplete="off"><button id="submitBtn" type="submit">Добавить</button></div><p class="sm-hint">Фильм появится в вашей коллекции автоматически.</p></div>
+              <div id="torrentInputArea" class="input-area hidden"><label>Torrent-файл <span class="file-meta">(до 1 МБ)</span></label><input id="torrentFile" class="hidden" type="file" accept=".torrent,application/x-bittorrent"><div id="torrentDropzone" class="torrent-dropzone" role="button" tabindex="0"><div class="drop-icon">⇧</div><strong id="torrentDropTitle">Перетащите сюда файл .torrent</strong><p id="torrentDropHint">или нажмите, чтобы выбрать файл на устройстве</p><button id="chooseTorrentBtn" class="secondary" type="button">Выбрать файл</button></div><div id="torrentChosen" class="torrent-chosen hidden"><span class="torrent-file-icon">TORRENT</span><span id="torrentChosenName" class="torrent-chosen-name"></span><span id="torrentChosenSize" class="file-meta"></span><button id="removeTorrentBtn" class="secondary detach-btn" type="button" aria-label="Убрать файл" title="Убрать файл">×</button></div><button id="submitTorrentBtn" type="submit" class="submit-torrent hidden">Загрузить торрент</button></div>
+            </form>
+            <div id="linkStatus" class="status" role="status"></div>
+            <div id="magnetPanel" class="sm-magnet hidden"><div id="magnetStatus" class="status"></div><div id="magnetFiles" class="actions"></div></div>
           </div>
-          <div><h2>Suslik Media</h2><p data-i18n="app.tagline">Медиатека, поиск и просмотр фильмов онлайн.</p></div>
+          <section id="historyPanel" class="sm-card history-panel"><div class="sm-card-head"><h3>История поиска и загрузок</h3><button id="clearHistory" class="sm-btn sm-btn-sm" type="button">Очистить</button></div><p class="sm-hint">Сохраняется в этом браузере, в том числе после обновления страницы.</p><div id="searchHistory"></div></section>
         </div>
-        <button id="mobileSessions" class="secondary btn-logout-mobile" type="button" aria-label="Активные сессии">Сессии</button>
-        <button id="mobileLogout" class="secondary btn-logout-mobile" type="button">Выйти</button>
-      </div>
-
-      <section id="linkTab">
-        <div class="panel">
-          <form id="linkForm">
-            <label>Выберите тип ввода</label>
-            <div class="input-modes" role="group" aria-label="Input type">
-              <button id="magnetModeBtn" class="mode-card selected" type="button" aria-pressed="true"><span class="mode-icon">↗</span><span><strong>Magnet-ссылка</strong><small>Вставьте magnet-ссылку</small></span></button>
-              <button id="torrentModeBtn" class="mode-card" type="button" aria-pressed="false"><span class="mode-icon">⇧</span><span><strong>Torrent-файл</strong><small>Выберите файл .torrent</small></span></button>
-            </div>
-            <div id="magnetInputArea" class="input-area"><label for="url">Magnet-ссылка</label><div class="row"><input id="url" type="text" placeholder="magnet:?xt=urn:btih:…" maxlength="5000" autocomplete="off"><button id="submitBtn" type="submit">Добавить magnet</button></div></div>
-            <div id="torrentInputArea" class="input-area hidden"><label>Torrent-файл <span class="file-meta">(max 1 MB)</span></label><input id="torrentFile" class="hidden" type="file" accept=".torrent,application/x-bittorrent"><div id="torrentDropzone" class="torrent-dropzone" role="button" tabindex="0"><div class="drop-icon">⇧</div><strong id="torrentDropTitle">Перетащите сюда файл .torrent</strong><p id="torrentDropHint">или нажмите, чтобы выбрать файл на устройстве</p><button id="chooseTorrentBtn" class="secondary" type="button">Выбрать файл</button></div><div id="torrentChosen" class="torrent-chosen hidden"><span class="torrent-file-icon">TORRENT</span><span id="torrentChosenName" class="torrent-chosen-name"></span><span id="torrentChosenSize" class="file-meta"></span><button id="removeTorrentBtn" class="secondary detach-btn" type="button" aria-label="Detach file" title="Detach file">×</button></div><button id="submitTorrentBtn" type="submit" class="submit-torrent hidden">Загрузить торрент</button></div>
-          </form>
-          <div id="linkStatus" class="status" role="status"></div>
-          <section id="historyPanel" class="history-panel"><div class="topline"><h3>История поиска и загрузок</h3><button id="clearHistory" class="secondary" type="button">Очистить</button></div><p class="file-meta">Сохраняется в этом браузере, в том числе после обновления страницы.</p><div id="searchHistory"></div></section>
-        </div>
-        <div id="magnetPanel" class="panel hidden"><div id="magnetStatus" class="status"></div><div id="magnetFiles" class="actions"></div></div>
       </section>
 
-      <section id="searchTab" class="hidden">
-        <div class="panel">
-          <div class="topline"><div><h2 data-i18n="search.title">Поиск раздач</h2><p data-i18n="search.tagline">Один запрос — сразу по нескольким трекерам. Фильм мгновенно появится в медиатеке.</p></div></div>
-          <form id="searchForm" class="search-form" role="search">
+      <section id="searchTab" class="sm-page hidden">
+        <div class="sm-page-head">
+          <h1 data-i18n="search.title">Поиск фильмов и сериалов</h1>
+          <p data-i18n="search.tagline">Один запрос — сразу по нескольким трекерам. Фильм мгновенно появится в медиатеке.</p>
+        </div>
+        <form id="searchForm" class="sm-search-form" role="search">
+          <div class="sm-input-icon">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
             <input id="searchInput" type="search" placeholder="Название фильма или сериала…" maxlength="120" autocomplete="off" enterkeyhint="search" aria-label="Название для поиска">
-            <button id="searchBtn" type="submit">Найти</button>
-          </form>
-          <div id="searchProviders" class="search-providers"></div>
-          <div id="searchStatus" class="status" role="status"></div>
-          <div id="searchTools" class="search-tools hidden">
-            <select id="searchSort" aria-label="Сортировка"><option value="DEFAULT">Обычная (по релевантности)</option><option value="SIZE_ASC">Сначала лёгкие</option><option value="SEEDS_DESC">По сидам</option></select>
-            <select id="searchKind" aria-label="Тип раздачи"><option value="video">Фильмы и сериалы</option><option value="movie">Только фильмы</option><option value="cartoon">Только мультфильмы</option><option value="series">Только сериалы</option><option value="all">Всё подряд</option></select>
-            <select id="searchPreset" aria-label="Пресет"><option value="ALL">Все</option><option value="MOBILE">📱 Мобильная сеть</option><option value="BALANCED">Оптимальные (1080p)</option><option value="MAX_QUALITY">Макс. качество</option></select>
-            <select id="searchRes" aria-label="Качество"><option value="">Любое качество</option><option value="4K">4K</option><option value="1080p">1080p</option><option value="720p">720p</option></select>
-            <label><input id="searchHideDead" type="checkbox"> Только с сидами</label>
-            <label><input id="searchOnlyRu" type="checkbox"> Только RU-трекеры</label>
-            <input id="searchFilter" type="search" placeholder="Уточнить: 1080p, 2160p, rus…" autocomplete="off">
           </div>
-          <div id="searchHidden" class="file-meta"></div>
-          <div id="searchResults"></div>
-          <div class="actions"><button id="searchMore" class="secondary hidden" type="button">Показать ещё</button></div>
+          <button id="searchBtn" type="submit" class="sm-btn sm-btn-primary sm-btn-lg">Найти</button>
+        </form>
+        <div class="sm-search-sources">
+          <div id="searchProviders" class="search-providers"></div>
+          <div id="searchStatus" class="status sm-search-status" role="status"></div>
         </div>
+        <div id="searchTools" class="sm-filter-panel search-tools hidden" aria-label="Фильтры поиска">
+          <div class="sm-select sm-f-sort"><select id="searchSort" aria-label="Сортировка"><option value="DEFAULT">По релевантности</option><option value="SIZE_ASC">Сначала лёгкие</option><option value="SEEDS_DESC">По сидам</option></select></div>
+          <div class="sm-select sm-f-kind"><select id="searchKind" aria-label="Тип раздачи"><option value="video">Фильмы и сериалы</option><option value="movie">Только фильмы</option><option value="cartoon">Только мультфильмы</option><option value="series">Только сериалы</option><option value="all">Всё подряд</option></select></div>
+          <div class="sm-select sm-f-preset"><select id="searchPreset" aria-label="Пресет"><option value="ALL">Любой размер</option><option value="MOBILE">Мобильная сеть</option><option value="BALANCED">Оптимальные (1080p)</option><option value="MAX_QUALITY">Макс. качество</option></select></div>
+          <div class="sm-select sm-f-res"><select id="searchRes" aria-label="Качество"><option value="">Любое качество</option><option value="4K">4K</option><option value="1080p">1080p</option><option value="720p">720p</option></select></div>
+          <div class="sm-f-checks">
+            <label class="sm-check"><input id="searchHideDead" type="checkbox"><span>Только с сидами</span></label>
+            <label class="sm-check"><input id="searchOnlyRu" type="checkbox"><span>Только RU-трекеры</span></label>
+          </div>
+          <input id="searchFilter" class="sm-f-refine" type="search" placeholder="Уточнить: 1080p, 2160p, rus…" autocomplete="off" aria-label="Уточнить">
+        </div>
+        <div id="searchHidden" class="sm-hint"></div>
+        <div id="searchResults" class="sm-results"></div>
+        <div class="sm-more"><button id="searchMore" class="sm-btn hidden" type="button">Показать ещё</button></div>
       </section>
 
-      <section id="libraryTab" class="hidden">
-        <div class="library-search-bar library-search-top">
-          <span class="search-lens" aria-hidden="true">⌕</span>
-          <input id="librarySearch" type="search" placeholder="Поиск по названию или файлу…" autocomplete="off" aria-label="Поиск по названию">
-          <button id="clearLibrarySearch" type="button" class="clear-search-btn hidden" aria-label="Очистить поиск" title="Очистить">×</button>
-        </div>
-        <div id="continueHero" class="hero-banner hidden" aria-label="Продолжить просмотр"></div>
-        <div class="library-controls">
+      <section id="libraryTab" class="sm-page hidden">
+        <section id="continueHero" class="sm-hero hidden" aria-label="Продолжить просмотр"></section>
+        <section class="sm-catalog" aria-label="Каталог медиатеки">
+          <div class="sm-catalog-head library-controls">
+            <div class="sm-catalog-title">
+              <h2 id="catalogHeading">Вся медиатека</h2>
+              <span id="catalogCountLabel" class="sm-catalog-count"></span>
+            </div>
+            <div class="sm-catalog-tools">
+              <div class="sm-seg" id="libStatusSeg" role="group" aria-label="Статус просмотра">
+                <button type="button" class="sm-seg-btn active" data-status="all">Все</button>
+                <button type="button" class="sm-seg-btn" data-status="watching">Продолжить</button>
+                <button type="button" class="sm-seg-btn" data-status="unwatched">Непросмотренные</button>
+                <button type="button" class="sm-seg-btn" data-status="favorites">Избранное</button>
+              </div>
+              <div class="sm-select">
+                <select id="librarySort" aria-label="Сортировка">
+                  <option value="newest">Недавно добавленные</option>
+                  <option value="name">По названию</option>
+                  <option value="size">По размеру</option>
+                  <option value="fav">Сначала избранное</option>
+                </select>
+              </div>
+              <input id="libraryOnlyReady" type="checkbox" class="hidden">
+              <button type="button" id="libReadyBtn" class="sm-btn sm-toggle" aria-pressed="false" title="Только раздачи, готовые к просмотру">Только готовые</button>
+              <div class="sm-seg sm-seg-icons view-switch" role="group" aria-label="Вид отображения">
+                <button id="viewGridBtn" type="button" class="view-btn active" title="Сетка постеров" aria-label="Сетка"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></button>
+                <button id="viewListBtn" type="button" class="view-btn" title="Компактный список" aria-label="Список"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg></button>
+              </div>
+              <button id="refreshLibrary" type="button" class="sm-icon-btn sm-icon-btn-box btn-refresh" title="Обновить" aria-label="Обновить">
+                <svg class="refresh-spinner" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.6-5.9M20 4v5h-5"/></svg>
+              </button>
+            </div>
+          </div>
           <span id="libraryCountBadge" class="hidden">0</span>
-          <select id="librarySort" class="hidden" aria-label="Сортировка">
-            <option value="newest">Сначала новые</option>
-            <option value="name">По названию</option>
-            <option value="size">По размеру</option>
-            <option value="fav">Сначала избранное</option>
-          </select>
-          <input id="libraryOnlyReady" type="checkbox" class="hidden">
-          <div class="category-chips" id="libraryCategoryChips" role="tablist" aria-label="Категории">
+          <div class="category-chips hidden" id="libraryCategoryChips" role="tablist" aria-label="Категории">
             <button type="button" class="cat-chip active" data-cat="all">Все</button>
             <button type="button" class="cat-chip" data-cat="movie">Фильмы</button>
             <button type="button" class="cat-chip" data-cat="series">Сериалы</button>
@@ -602,55 +633,32 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
             <button type="button" class="cat-chip" data-cat="anime">Аниме</button>
             <button type="button" class="cat-chip" data-cat="other">Другое</button>
           </div>
-          <div id="libraryStatus" class="status" role="status">Нажмите «Обновить», чтобы загрузить медиатеку.</div>
-          <div class="lib-actions" role="toolbar" aria-label="Сортировка и вид">
-            <div class="lib-menu-wrap">
-            <button type="button" id="libMenuBtn" class="lib-menu-btn" aria-haspopup="true" aria-expanded="false"><svg class="lib-ic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4-2v-4z"/></svg>Вид<svg class="lib-caret" viewBox="0 0 12 8" width="10" height="7" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M1 1l5 5 5-5"/></svg></button>
-            <div class="lib-menu" id="libMenu" hidden>
-            <div class="lib-seg" id="libSortSeg" role="group" aria-label="Сортировка">
-              <button type="button" class="lib-pill active" data-sort="newest"><svg class="lib-ic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Новые</button>
-              <button type="button" class="lib-pill" data-sort="name"><svg class="lib-ic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 17l4-10 4 10M4.5 14h5M16 6v12M13 15l3 3 3-3"/></svg>Название</button>
-              <button type="button" class="lib-pill" data-sort="size"><svg class="lib-ic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="14" height="14" rx="2"/><path d="M21 9v10a2 2 0 0 1-2 2H9"/></svg>Размер</button>
-              <button type="button" class="lib-pill" data-sort="fav"><svg class="lib-ic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg>Избранное</button>
-              <button type="button" id="libReadyBtn" class="lib-pill lib-toggle" aria-pressed="false"><svg class="lib-ic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Только готовые</button>
-            </div>
-            <div class="view-switch lib-seg" role="group" aria-label="Вид отображения">
-              <button id="viewGridBtn" type="button" class="view-btn active" title="Сетка постеров" aria-label="Сетка"><svg class="lib-ic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="6.5" height="6.5" rx="1"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1"/></svg></button>
-              <button id="viewListBtn" type="button" class="view-btn" title="Список" aria-label="Список"><svg class="lib-ic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg></button>
-            </div>
-            </div>
-            </div>
-            <button id="refreshLibrary" type="button" class="btn-refresh" title="Обновить" aria-label="Обновить">
-              <svg class="refresh-spinner" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.6-5.9M20 4v5h-5"/></svg>
-              <span class="btn-refresh-text">Обновить</span>
-            </button>
-          </div>
-        </div>
-        <div id="libraryResults" class="library-grid"></div>
-        <div id="libraryPager" class="library-pager" aria-label="Страницы"></div>
+          <div id="libraryStatus" class="status sm-lib-status" role="status">Нажмите «Обновить», чтобы загрузить медиатеку.</div>
+          <div id="libraryResults" class="library-grid"></div>
+          <div id="libraryPager" class="library-pager" aria-label="Страницы"></div>
+        </section>
       </section>
 
-      <section id="sessionsTab" class="hidden">
-        <div class="panel sessions-panel">
-          <div class="sessions-head">
-            <div><h2>Активные сессии</h2><p class="sessions-hint">Браузеры и устройства (ПК, ТВ), где выполнен вход в ваш аккаунт. Завершите сессию, если не узнаёте устройство.</p></div>
-            <div class="sessions-actions"><button type="button" id="sessionsRevokeStale" class="sess-btn">Завершить неактивные (7+ дней)</button><button type="button" id="sessionsRevokeOthers" class="sess-btn danger">Завершить все остальные</button></div>
-          </div>
-          <div id="sessionsStatus" class="status" role="status"></div>
-          <div id="sessionsList" class="sessions-list"></div>
+      <section id="sessionsTab" class="sm-page hidden">
+        <div class="sm-page-head sm-page-head-row">
+          <div><h1>Устройства и сессии</h1><p>Браузеры и устройства (ПК, ТВ), где выполнен вход в ваш аккаунт. Завершите сессию, если не узнаёте устройство.</p></div>
+          <div class="sm-head-actions"><button type="button" id="sessionsRevokeStale" class="sm-btn sess-btn">Завершить неактивные (7+ дней)</button><button type="button" id="sessionsRevokeOthers" class="sm-btn sm-btn-danger sess-btn danger">Завершить все остальные</button></div>
         </div>
+        <div id="sessionsStatus" class="status" role="status"></div>
+        <div id="sessionsList" class="sessions-list sm-list"></div>
       </section>
 
-      <section id="appsTab" class="hidden">
-        <div class="apps-hero">
-          <div class="apps-hero-clip" aria-hidden="true"><div class="apps-hero-glow"></div></div>
-          <div class="apps-hero-text">
-            <span class="apps-kicker">Приложения</span>
-            <h2>Suslik Media на ваших устройствах</h2>
-            <p>Нативная библиотека, плеер с аппаратным декодированием, озвучки и субтитры из раздачи, прогресс просмотра.
-               Приложения сами проверяют обновления при каждом запуске.</p>
+      <section id="appsTab" class="sm-page hidden">
+        <section class="sm-apps-hero" aria-label="Приложения Suslik Media">
+          <div class="sm-apps-hero-main">
+            <div>
+              <span class="sm-kicker"><img src="brand-mark.svg" alt="" width="16" height="16"><span>Приложения</span></span>
+              <h1>Suslik Media на ваших устройствах</h1>
+              <p>Удобная библиотека на компьютере или смартфоне, просмотр в оригинальном качестве до 4K и HDR, выбор озвучек и субтитров, общий прогресс просмотра. Приложения сами проверяют обновления при каждом запуске.</p>
+            </div>
+            <div class="sm-apps-hero-foot"><span class="sm-dot-line"><i aria-hidden="true"></i>Единый аккаунт и история просмотра</span><span class="sm-sep">·</span><span>Без ограничений браузера</span></div>
           </div>
-          <div class="growth" id="appsGrowth">
+          <div class="growth sm-apps-hero-side" id="appsGrowth">
             <div class="growth-head">
               <span class="growth-title">Как росли приложения</span>
               <div class="growth-switch" role="tablist" aria-label="Платформа">
@@ -663,12 +671,8 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
               <svg viewBox="0 0 400 200" aria-hidden="true">
                 <defs>
                   <linearGradient id="growthFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0" stop-color="#FAFAFA" stop-opacity=".14"/><stop offset="1" stop-color="#FAFAFA" stop-opacity="0"/>
+                    <stop offset="0" stop-color="#FAFAFA" stop-opacity=".10"/><stop offset="1" stop-color="#FAFAFA" stop-opacity="0"/>
                   </linearGradient>
-                  <linearGradient id="growthStroke" x1="0" y1="0" x2="1" y2="0">
-                    <stop offset="0" stop-color="#A1A1AA" stop-opacity=".75"/><stop offset=".55" stop-color="#FAFAFA"/><stop offset="1" stop-color="#FAFAFA"/>
-                  </linearGradient>
-                  <filter id="growthGlow" x="-20%" y="-40%" width="140%" height="180%"><feGaussianBlur stdDeviation="2"/></filter>
                 </defs>
                 <g class="growth-grid"><line x1="0" y1="50" x2="400" y2="50"/><line x1="0" y1="100" x2="400" y2="100"/><line x1="0" y1="150" x2="400" y2="150"/></g>
                 <path class="growth-area" d=""/>
@@ -678,49 +682,53 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
               <div class="growth-points"></div>
               <div class="growth-tip" role="tooltip" aria-hidden="true"></div>
             </div>
-            <div class="growth-hint">Наведите на точку, чтобы узнать, что изменилось</div>
+            <div class="sm-release-note" id="growthNote">
+              <div class="sm-release-note-head"><span id="growthNoteVersion">Версия —</span><span id="growthNoteHint">последняя</span></div>
+              <p id="growthNoteText">Наведите на точку, чтобы узнать, что изменилось</p>
+            </div>
           </div>
-        </div>
-        <div id="appsGrid" class="apps-grid">
-          <article class="app-card" data-platform="desktop">
+        </section>
+        <div id="appsGrid" class="apps-grid sm-apps-grid">
+          <article class="app-card sm-app-card" data-platform="desktop">
             <div class="app-card-head">
-              <span class="app-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3.5" width="19" height="13" rx="2.2"/><path d="M8 20.5h8M12 16.5v4"/></svg></span>
+              <span class="app-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="1.5"/><path d="M8 21h8M12 17v4"/></svg></span>
               <div><h3>Windows</h3><p class="app-req">Windows 10 / 11 · 64-bit</p></div>
               <span class="app-badge hidden">Для этого устройства</span>
             </div>
             <div class="app-meta"><span class="app-version">Проверяем…</span><span class="app-size"></span><span class="app-date"></span></div>
             <ul class="app-features">
-              <li>Плеер прямо в окне библиотеки, оригинальное разрешение</li>
-              <li>Мини-плеер поверх окон, главы, скорость, ночной звук</li>
-              <li>Встроенный плеер mpv с аппаратным ускорением</li>
+              <li>Плеер прямо в окне библиотеки, оригинальное разрешение, Dolby Vision и объёмный звук</li>
+              <li>Мини-плеер поверх окон, главы, выбор скорости и ночной звук</li>
+              <li>Встроенный плеер mpv с аппаратным ускорением — без ограничений браузера</li>
             </ul>
             <details class="app-notes hidden"><summary>Что нового</summary><div class="app-notes-text"></div></details>
             <a class="app-download disabled" aria-disabled="true">Скачать .msi</a>
           </article>
-          <article class="app-card" data-platform="android">
+          <article class="app-card sm-app-card" data-platform="android">
             <div class="app-card-head">
-              <span class="app-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2.5" width="12" height="19" rx="2.6"/><path d="M10.5 18.5h3"/></svg></span>
+              <span class="app-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M12 18h.01"/></svg></span>
               <div><h3>Android</h3><p class="app-req">Android 7.0 и новее</p></div>
               <span class="app-badge hidden">Для этого устройства</span>
             </div>
             <div class="app-meta"><span class="app-version">Проверяем…</span><span class="app-size"></span><span class="app-date"></span></div>
             <ul class="app-features">
-              <li>Плеер VLC: жесты, картинка в картинке, фоновый звук</li>
-              <li>Библиотека, поиск и загрузки — как на сайте</li>
-              <li>При установке разрешите «установку из этого источника»</li>
+              <li>Управление жестами, режим «картинка в картинке» и фоновый звук</li>
+              <li>Библиотека, поиск и загрузки — как на сайте; работает и на Android TV</li>
+              <li>При установке разрешите «установку из этого источника» в настройках телефона</li>
             </ul>
             <details class="app-notes hidden"><summary>Что нового</summary><div class="app-notes-text"></div></details>
             <a class="app-download disabled" aria-disabled="true">Скачать .apk</a>
           </article>
         </div>
-        <div class="apps-steps">
-          <div class="apps-step"><b>1</b><div><strong>Скачайте</strong><span>файл для своей платформы — он всегда последней версии.</span></div></div>
-          <div class="apps-step"><b>2</b><div><strong>Установите</strong><span>Windows: запустите .msi. Android: откройте .apk и разрешите установку.</span></div></div>
-          <div class="apps-step"><b>3</b><div><strong>Войдите</strong><span>тем же паролем, что и на сайте. Дальше обновления приходят сами.</span></div></div>
-        </div>
+        <section class="sm-steps" aria-label="Как установить">
+          <div class="sm-step"><b>01</b><div><strong>Скачайте</strong><span>файл для своей платформы — на странице всегда последняя версия.</span></div></div>
+          <div class="sm-step"><b>02</b><div><strong>Установите</strong><span>на Windows запустите установщик, на Android откройте .apk и подтвердите установку.</span></div></div>
+          <div class="sm-step"><b>03</b><div><strong>Войдите</strong><span>тем же способом, что и на сайте. Дальше обновления приходят сами.</span></div></div>
+        </section>
       </section>
 
-      <div class="foot" data-i18n="footer.server_notice">Все запросы и медиафайлы безопасно обрабатываются нашим сервером.</div>
+      <div class="foot sm-foot" data-i18n="footer.server_notice">Все запросы и медиафайлы безопасно обрабатываются нашим сервером.</div>
+      </div>
     </div>
 
     <div id="libraryModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="library-modal"><div class="modal-head"><div><h2 id="modalTitle">Файлы</h2><p id="modalMeta"></p></div><div class="actions"><button id="closeLibraryModal" class="secondary" type="button">Закрыть</button></div></div><div id="modalFiles" class="modal-files"></div></div></div>
@@ -1260,6 +1268,12 @@ const growth = (() => {
       dot.addEventListener("click", e => { e.stopPropagation(); if (e.pointerType === "mouse") return; active === i ? hideTip() : showTip(i); }); // телефон: по нажатию
       pts.append(dot);
     });
+    const last = APP_HISTORY[platform][APP_HISTORY[platform].length - 1];
+    if ($("growthNoteVersion")) {
+      $("growthNoteVersion").textContent = last ? "Версия " + last.v : "Версия —";
+      $("growthNoteHint").textContent = last ? (platform === "android" ? "Android" : "Windows") : "";
+      $("growthNoteText").textContent = last ? (last.t || last.items[0] || "") : "История версий пока недоступна.";
+    }
     requestAnimationFrame(() => requestAnimationFrame(() => { line.classList.add("drawn"); glow.classList.add("drawn"); area.classList.add("drawn"); }));
     moveLens();
   }
@@ -1290,7 +1304,8 @@ function srEl(tag, cls, text) { const e = document.createElement(tag); if (cls) 
 function renderSearchProviders(list) {
   const box = $("searchProviders"); box.textContent = "";
   for (const p of list || []) {
-    const chip = srEl("span", "chip " + (p.ok ? "ok" : "bad"), `${p.ok ? "✓" : "✕"} ${p.name}${p.ok ? " · " + p.count : ""}`);
+    const chip = srEl("span", "chip " + (p.ok ? "ok" : "bad"));
+    chip.append(srEl("span", "chip-mark", p.ok ? "✓" : "✕"), srEl("span", "", p.name + (p.ok ? " · " + p.count : "")));
     if (!p.ok && p.error) chip.title = p.error;
     box.append(chip);
   }
@@ -1317,13 +1332,16 @@ function renderSearchResults(reset = true) {
   if (reset && !items.length && searchState.items.length) box.append(srEl("p", "file-meta", "Ничего не подходит под фильтр."));
 }
 function searchRow(r) {
-  const row = srEl("div", "sr-row");
+  // Карточка: слева название, метки и кнопки; справа размер, сиды, трекер и дата
+  const row = srEl("article", "sr-row");
+  const main = srEl("div", "sr-main");
   const clean = r.release.cleanTitle || r.title;
-  row.append(srEl("div", "sr-title", clean));
-  if (clean !== r.title) row.append(srEl("div", "sr-raw", r.title));
+  main.append(srEl("h3", "sr-title", clean));
+  if (clean !== r.title) main.append(srEl("div", "sr-raw", r.title));
   const badges = srEl("div", "sr-badges");
   for (const bd of SM.searchcore.badges(r.release)) badges.append(srEl("span", "rb " + bd.tone, bd.text));
-  if (badges.childNodes.length) row.append(badges);
+  if (badges.childNodes.length) main.append(badges);
+  row.append(main);
   const meta = srEl("div", "sr-meta");
   if (r.size) meta.append(srEl("span", "", formatBytes(r.size)));
   meta.append(srEl("span", "seed" + (r.seeders ? "" : " zero"), `↑ ${r.seeders}`), srEl("span", "", `↓ ${r.leechers}`));
@@ -1333,7 +1351,8 @@ function searchRow(r) {
   if (r.date) meta.append(srEl("span", "", r.date));
   row.append(meta);
   const act = srEl("div", "sr-actions");
-  const add = srEl("button", "", "＋ В библиотеку"); add.type = "button";
+  main.append(act);
+  const add = srEl("button", "", "+ В библиотеку"); add.type = "button";
   const note = srEl("span", "sr-note");
   add.addEventListener("click", () => addSearchResult(r, add, note));
   act.append(add);
@@ -1346,7 +1365,6 @@ function searchRow(r) {
     act.append(mg);
   }
   act.append(note);
-  row.append(act);
   return row;
 }
 async function runSearch(ev) {
@@ -1416,11 +1434,34 @@ try { const k = localStorage.getItem("searchKind"); if (k && [...$("searchKind")
 $("searchKind").addEventListener("change", () => { try { localStorage.setItem("searchKind", $("searchKind").value); } catch {} renderSearchResults(true); });
 $("searchFilter").addEventListener("input", () => renderSearchResults(true));
 $("searchMore").addEventListener("click", () => renderSearchResults(false));
-{ const mb=$("libMenuBtn"), mn=$("libMenu");
-  const setMenu=on=>{ mn.hidden=!on; mb.setAttribute("aria-expanded",String(on)); mb.classList.toggle("open",on); };
-  mb.addEventListener("click",e=>{ e.stopPropagation(); setMenu(mn.hidden); });
-  document.addEventListener("click",e=>{ if(!mn.hidden && !mn.contains(e.target)) setMenu(false); });
-  document.addEventListener("keydown",e=>{ if(e.key==="Escape") setMenu(false); }); }
+// ---- Оболочка: боковое меню (на телефоне — выезжает), верхняя панель, вкладки статуса ---------------
+{ const side=$("smSidebar"), over=$("sidebarOverlay");
+  const setSide=on=>{ side.classList.toggle("open",on); over.hidden=!on; document.body.classList.toggle("sm-side-open",on); };
+  $("mobileMenuBtn").addEventListener("click",()=>setSide(true));
+  $("closeSidebarBtn").addEventListener("click",()=>setSide(false));
+  over.addEventListener("click",()=>setSide(false));
+  // выбор пункта в выехавшем меню закрывает его
+  side.addEventListener("click",e=>{ if(e.target.closest(".sm-nav-btn,.sm-cat,[data-go-home]")) setSide(false); });
+  document.addEventListener("keydown",e=>{ if(e.key==="Escape") setSide(false); });
+  document.querySelectorAll("[data-go-home]").forEach(b=>b.addEventListener("click",()=>{ setLibraryStatus("all"); $("showLibraryTab").click(); }));
+  const toSearch=()=>setTab("search");
+  $("topSearchBtn").addEventListener("click",toSearch);
+  $("topSearchBtnMobile").addEventListener("click",toSearch);
+  $("topAddBtn").addEventListener("click",()=>setTab("links"));
+  $("sideRefreshBtn").addEventListener("click",()=>{ $("refreshLibrary").click(); if($("libraryTab").classList.contains("hidden")) setTab("library"); });
+  $("showFavTab").addEventListener("click",()=>{ libraryCategory="all"; try{sessionStorage.setItem("suslik.libraryCategory","all");}catch{} setLibraryStatus("favorites"); if($("libraryTab").classList.contains("hidden")) setTab("library"); else renderLibrary(false); });
+  $("libStatusSeg").addEventListener("click",e=>{ const b=e.target.closest("[data-status]"); if(!b) return; setLibraryStatus(b.dataset.status); renderLibrary(false); });
+  $("libReadyBtn").addEventListener("click",()=>{ const r=$("libraryOnlyReady"); r.checked=!r.checked; r.dispatchEvent(new Event("change",{bubbles:true}));
+    $("libReadyBtn").classList.toggle("active",r.checked); $("libReadyBtn").setAttribute("aria-pressed",String(r.checked)); });
+  // Поиск сверху: фильтрует медиатеку; Enter — тот же запрос по трекерам; «/» — фокус в поле
+  const ls=$("librarySearch");
+  ls.addEventListener("focus",()=>{ if($("libraryTab").classList.contains("hidden") && ls.value.trim()) setTab("library"); });
+  ls.addEventListener("input",()=>{ if($("libraryTab").classList.contains("hidden")) setTab("library"); });
+  ls.addEventListener("keydown",e=>{ if(e.key!=="Enter") return; const q=ls.value.trim(); if(q.length<2) return; e.preventDefault();
+    $("searchInput").value=q; setTab("search"); runSearch(); });
+  document.addEventListener("keydown",e=>{ if(e.key!=="/"||e.ctrlKey||e.metaKey||e.altKey) return; const t=e.target;
+    if(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+    if($("appPanel").classList.contains("hidden")) return; e.preventDefault(); ls.focus(); }); }
 $("refreshLibrary").addEventListener("click", () => {
   $("refreshLibrary").classList.add("loading");
   loadLibrary().finally(() => $("refreshLibrary").classList.remove("loading"));
@@ -2421,6 +2462,20 @@ let libraryCategory = (function() {
 if (catChipsWrap && libraryCategory !== "all") {
   catChipsWrap.querySelectorAll(".cat-chip").forEach(c => c.classList.toggle("active", (c.dataset.cat || "all") === libraryCategory));
 }
+// Вкладки над каталогом: все / начатые / не начатые / избранное. Прогресс — с аккаунта (/api/sync, его берёт home.js).
+let libraryStatusFilter = (function() {
+  try { const v = sessionStorage.getItem("suslik.libraryStatus"); return ["watching", "unwatched", "favorites"].includes(v) ? v : "all"; } catch { return "all"; }
+})();
+function setLibraryStatus(s) {
+  libraryStatusFilter = ["watching", "unwatched", "favorites"].includes(s) ? s : "all";
+  try { sessionStorage.setItem("suslik.libraryStatus", libraryStatusFilter); } catch {}
+  document.querySelectorAll("#libStatusSeg [data-status]").forEach(b => b.classList.toggle("active", b.dataset.status === libraryStatusFilter));
+}
+setLibraryStatus(libraryStatusFilter);
+// Доля просмотренного по раздаче (последний открытый файл), 0 — не начинали
+function magnetWatchFraction(id) { try { return (window.smWatchOf && window.smWatchOf(id)) || 0; } catch { return 0; } }
+const CATEGORY_TITLES = { all: "Вся медиатека", mine: "Моя медиатека", movie: "Фильмы", series: "Сериалы", anime: "Аниме", cartoon: "Мультфильмы", other: "Другое" };
+function titlesWord(n) { const t = n % 100, u = n % 10; return n + " " + (t >= 11 && t <= 14 ? "названий" : u === 1 ? "название" : u >= 2 && u <= 4 ? "названия" : "названий"); }
 let libraryPage = 0, libraryFilterSig = "";
 // Страница — 3 ряда постеров на компьютере и 5 на телефоне: сколько их в ряду, столько и ставится (колонки считает сама сетка).
 let libraryLastPageSize = 0;
@@ -2623,7 +2678,7 @@ function getItemSpecs(m) {
   return { quality, codec, type, cat };
 }
 
-function tileSig(m){ return JSON.stringify([(serverTagMap[m.id]||[]).join(),m.name,m.status,m.statusCode,m.size,m.downloaded,Boolean(m.favorite),Boolean(m.mine),m.canRemove!==false,(m.files||[]).length,libraryViewMode]); }
+function tileSig(m){ return JSON.stringify([(serverTagMap[m.id]||[]).join(),m.name,m.status,m.statusCode,m.size,m.downloaded,Boolean(m.favorite),Boolean(m.mine),m.canRemove!==false,(m.files||[]).length,libraryViewMode,Math.round(magnetWatchFraction(m.id)*100)]); }
 
 function renderLibrary(animate=true) {
   const target=$("libraryResults"), query=$("librarySearch") ? $("librarySearch").value.trim().toLowerCase() : "";
@@ -2645,6 +2700,9 @@ function renderLibrary(animate=true) {
     if (onlyReady && Number(m.statusCode) !== 4) return false;
     if (activeCategory === "mine") { if (!m.mine) return false; }
     else if (activeCategory !== "all" && getItemCategory(m) !== activeCategory) return false;
+    if (libraryStatusFilter === "favorites" && !m.favorite) return false;
+    if (libraryStatusFilter === "watching" && !(magnetWatchFraction(m.id) > 0)) return false;
+    if (libraryStatusFilter === "unwatched" && magnetWatchFraction(m.id) > 0) return false;
     return true;
   });
 
@@ -2661,7 +2719,7 @@ function renderLibrary(animate=true) {
   // Страница — 3 ряда постеров (на телефоне 5); новый поиск, категория или фильтр — снова с первой.
   const pageSize = libraryPageSize();
   libraryLastPageSize = pageSize;
-  const filterSig = [query, activeCategory, sort, onlyReady].join("|");
+  const filterSig = [query, activeCategory, sort, onlyReady, libraryStatusFilter].join("|");
   if (filterSig !== libraryFilterSig) { libraryFilterSig = filterSig; libraryPage = 0; }
   const grouped = groupLibraryVersions(allMagnets);
   const versionsOf = grouped.versions;
@@ -2670,6 +2728,11 @@ function renderLibrary(animate=true) {
   libraryPage = Math.min(Math.max(0, libraryPage), pageCount - 1);
   const magnets = grouped.shown.slice(libraryPage * pageSize, (libraryPage + 1) * pageSize);
   renderLibraryPager(pageCount);
+  if ($("catalogHeading")) {
+    $("catalogHeading").textContent = libraryStatusFilter === "favorites" && activeCategory === "all" ? "Избранное" : (CATEGORY_TITLES[activeCategory] || CATEGORY_TITLES.all);
+    const plain = activeCategory === "all" && libraryStatusFilter === "all" && !query && !onlyReady;
+    $("catalogCountLabel").textContent = !cachedLibrary.length ? "" : plain ? titlesWord(grouped.shown.length) : "Показано: " + grouped.shown.length;
+  }
 
   target.className = libraryViewMode === "list" ? "library-results library-list" : "library-grid";
 
@@ -2773,7 +2836,11 @@ function renderLibrary(animate=true) {
     // «год • тип · размер» — как под плиткой в Android и в подробностях плитки на ПК
     const yearM=/(?:^|[^\d])((?:19|20)\d{2})(?!\d)/.exec(magnet.name||"");
     const sub=document.createElement("div"); sub.className="file-meta tile-sub";
-    sub.textContent=[yearM?yearM[1]:"", specs.type].filter(Boolean).join(" • ")+(Number(magnet.size)?(yearM||specs.type?" · ":"")+formatBytes(magnet.size):"");
+    const subL=document.createElement("span"); subL.className="tile-sub-main"; subL.textContent=[yearM?yearM[1]:"", specs.type].filter(Boolean).join(" · ")||"—";
+    const subR=document.createElement("span"); subR.className="tile-sub-size"; subR.textContent=Number(magnet.size)?formatBytes(magnet.size):"";
+    sub.append(subL,subR);
+    const wf=magnetWatchFraction(magnet.id);
+    if(wf>0 && Number(magnet.statusCode)===4){ const wt=document.createElement("div"); wt.className="tile-watch"; const wi=document.createElement("i"); wi.style.width=Math.round(Math.min(1,wf)*100)+"%"; wt.append(wi); art.append(wt); }
     const more=document.createElement("div"); more.className="tile-more"+(Number(magnet.statusCode)<4?" open":"");
     const statusText=Number(magnet.statusCode)===4?"Готово":(total>0&&Number(magnet.statusCode)<4?Math.floor(Math.max(0,Math.min(100,done/total*100)))+"% · ":"")+(magnet.status||"Обработка");
     const st=document.createElement("span"); st.className="tile-status"+(Number(magnet.statusCode)===4?" ready":""); st.textContent=statusText;
@@ -3047,7 +3114,6 @@ checkSession();
 </script>
 
 <script src="hls-player.js" defer></script>
-<script src="redesign.js?v=6" defer></script>
-<script src="home.js?v=8" defer></script>
+<script src="home.js?v=9" defer></script>
 </body>
 </html>

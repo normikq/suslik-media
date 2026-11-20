@@ -116,7 +116,7 @@ suslik-media/
 | `search-ru.js` | парсеры русских трекеров (rutor, rutracker, kinozal, NNM-Club), кодировка windows-1251 |
 | `classify.js` | определяет тип раздачи по названию/категориям: сериал, фильм, «другое» |
 | `public/index.html` | сам сайт: одна страница с HTML, CSS и JS внутри |
-| `public/redesign.css`, `redesign.js`, `home.js`, `searchcore.js`, `i18n.js` | оформление, баннер и боковая панель, разбор раздач в поиске, строки |
+| `public/redesign.css`, `home.js`, `searchcore.js`, `i18n.js` | оформление, баннер и боковая панель, разбор раздач в поиске, строки |
 | `scripts/check.js` | проверка синтаксиса всего JS (`src/`, скрипты, встроенный JS страницы) (`npm run check`) |
 | `test/` | модульные тесты (`npm test`) |
 | `NGINX-MIRROR.md` | как настроить nginx, чтобы он сам отдавал видео |

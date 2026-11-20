@@ -36,7 +36,7 @@
 | `src/services/mirror.js:189` | `X-Accel-Redirect: /_alld/…` — внутренний адрес nginx | ✅, но `location /_alld/` должен быть в блоке `server` нового домена |
 | `src/routes/updates.js:82` | ссылка на APK/установщик относительная: `/api/app/download/…` | ✅ клиенты дописывают свой адрес |
 | CORS | не используется (сайт и API на одном адресе) | ✅ |
-| `public/redesign.js`, `public/home.js`, `public/index.html` | ~40 запросов `fetch("/api/…")`, ссылки `href="/api/auth/discord/start"` | ❌ от корня домена |
+| `public/home.js`, `public/index.html` | ~40 запросов `fetch("/api/…")`, ссылки `href="/api/auth/discord/start"` | ❌ от корня домена |
 | `NGINX-MIRROR.md` `@suslik_mirror_retry` | `proxy_pass …$request_uri` — с путём в Node уйдёт `/suslik/api/…` | ❌ (раздел 4) |
 
 ### Клиенты
