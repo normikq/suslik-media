@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Suslik Media — медиатека</title>
+  <title>Suslik Media — Личный кинотеатр</title>
+  <link rel="icon" type="image/svg+xml" href="brand-mark.svg">
   <link rel="icon" href="favicon.ico" sizes="any">
-  <link rel="icon" type="image/png" sizes="128x128" href="brand-mark.png">
   <link rel="apple-touch-icon" href="icon.png">
   <script src="i18n.js"></script>
   <style>
@@ -396,27 +396,27 @@ button.sheet-cancel{min-height:48px;background:rgba(255,255,255,.06);font-weight
 <script>/* App 1.2+: native library and bottom bar */try{if(Number(window.__suslikApp||0)>=3)document.documentElement.classList.add("suslik-native");}catch(e){}
 /* Пока не ответил /api/session, страница скрыта: иначе на секунду мелькает форма входа у тех, кто уже вошёл (снимается в showApp; страховка — через 4 с) */
 try{document.documentElement.classList.add("auth-pending");setTimeout(function(){document.documentElement.classList.remove("auth-pending");},4000);}catch(e){}</script>
-<link rel="stylesheet" href="redesign.css?v=42">
+<link rel="stylesheet" href="redesign.css?v=43">
 <style>
   /* Пока ждём /api/session (страница скрыта, до 4 с): если ответ задержался больше полсекунды — крутилка, а не пустой экран */
-  html.auth-pending::after { content: ""; position: fixed; left: 50%; top: 45%; width: 34px; height: 34px; margin: -17px 0 0 -17px; z-index: 50;
-    border: 3px solid rgba(255,255,255,.16); border-top-color: #a78bfa; border-radius: 50%; opacity: 0; pointer-events: none;
+  html.auth-pending::after { content: ""; position: fixed; left: 50%; top: 45%; width: 28px; height: 28px; margin: -14px 0 0 -14px; z-index: 50;
+    border: 2px solid #222226; border-top-color: #FAFAFA; border-radius: 50%; opacity: 0; pointer-events: none;
     animation: sm-auth-spin .8s linear infinite, sm-auth-show .2s ease .5s forwards; }
   @keyframes sm-auth-spin { to { transform: rotate(360deg); } }
   @keyframes sm-auth-show { to { opacity: 1; } }
 .sr-badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
-.sr-badges .rb { background: #1c2230; color: #c7d0e0; border: 1px solid #2e3850; border-radius: 6px; padding: 2px 8px; font-size: 12px; font-weight: 700; }
-.sr-badges .rb.res4k { background: #281e10; color: #ffb02e; border-color: #6e501c; }
-.sr-badges .rb.res { background: #101b2e; color: #7fafff; border-color: #243a66; }
-.sr-badges .rb.codec { background: #0f2218; color: #7fe0b0; border-color: #204d36; }
-.sr-badges .rb.hdr { background: #241d14; color: #ffc069; border-color: #5a4422; }
-.sr-badges .rb.cam { background: #2a1010; color: #ff8b85; border-color: #662222; }
-.sr-badges .rb.remux { background: #221430; color: #d49bff; border-color: #4c276e; }
-.sr-badges .rb.coll { background: #261d3b; color: #d6b4fc; border-color: #533b85; }
-.sr-badges .rb.voice { background: #14202b; color: #86b8e6; border-color: #233a50; }
-.sr-badges .rb.light { color: #5fd08a; }
-.sr-badges .rb.medium { color: #f3c34b; }
-.sr-badges .rb.heavy { color: #ff7a72; }
+.sr-badges .rb { background: #0A0A0B; color: #A1A1AA; border: 1px solid #222226; border-radius: 4px; padding: 2px 7px; font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; font-weight: 500; }
+.sr-badges .rb.res4k { background: #16161A; color: #FAFAFA; border-color: #2E2E35; }
+.sr-badges .rb.res { background: #16161A; color: #FAFAFA; border-color: #2E2E35; }
+.sr-badges .rb.codec { background: #0A0A0B; color: #A1A1AA; border-color: #222226; }
+.sr-badges .rb.hdr { background: #16161A; color: #FAFAFA; border-color: #2E2E35; }
+.sr-badges .rb.cam { background: rgba(248,113,113,.08); color: #f87171; border-color: rgba(248,113,113,.35); }
+.sr-badges .rb.remux { background: #16161A; color: #FAFAFA; border-color: #2E2E35; }
+.sr-badges .rb.coll { background: #16161A; color: #FAFAFA; border-color: #2E2E35; }
+.sr-badges .rb.voice { background: #0A0A0B; color: #A1A1AA; border-color: #222226; }
+.sr-badges .rb.light { color: #34d399; }
+.sr-badges .rb.medium { color: #A1A1AA; }
+.sr-badges .rb.heavy { color: #f87171; }
 .sr-row .sr-actions { margin-top: 2px; }
 @media (max-width: 700px) {
   /* Поиск на телефоне: выдача и фильтры в одну колонку (десктопная сетка из redesign.css сжимала название) */
@@ -444,10 +444,10 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
 <main>
   <div class="brand">
     <div class="brand-mark-wrap">
-      <img class="brand-logo" src="brand-mark.png" alt="Suslik Media" width="46" height="46">
+      <img class="brand-logo" src="brand-mark.svg" alt="Suslik Media" width="32" height="32">
     </div>
     <div>
-      <div class="eyebrow">Приватная медиатека</div>
+      <div class="eyebrow">Личный кинотеатр</div>
       <strong>Suslik Media</strong>
     </div>
   </div>
@@ -469,15 +469,15 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
     <div id="loginStatus" class="status" role="status"></div>
   </section>
 
-  <dialog id="deviceLinkModal" class="device-modal" style="background:#13151f;color:#e2e8f0;border:1px solid rgba(255,255,255,0.15);border-radius:16px;padding:24px;max-width:400px;width:90%;box-shadow:0 16px 40px rgba(0,0,0,0.6);">
-    <h3 style="margin-top:0;font-family:Unbounded,sans-serif;font-size:18px;">Связать устройство</h3>
-    <p style="color:#94a3b8;font-size:13.5px;line-height:1.4;">Введите 6-значный код с экрана ТВ или ПК-приложения для быстрой привязки к вашей библиотеке.</p>
+  <dialog id="deviceLinkModal" class="device-modal">
+    <h3>Связать устройство</h3>
+    <p>Введите 6-значный код с экрана ТВ или ПК-приложения для быстрой привязки к вашей библиотеке.</p>
     <form id="deviceLinkForm">
-      <input id="deviceCodeInput" type="text" placeholder="A3F-821" maxlength="12" required style="font-size:22px;text-align:center;letter-spacing:4px;text-transform:uppercase;margin:12px 0;width:100%;box-sizing:border-box;padding:10px;border-radius:8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.2);color:#fff;">
-      <p id="deviceLinkWho" style="color:#94a3b8;font-size:13px;line-height:1.4;margin:0 0 10px;"></p>
-      <a id="deviceLinkDiscord" class="btn-discord" href="../api/auth/discord/start" hidden style="margin-bottom:12px;"><span>Войти через Discord</span></a>
-      <div id="deviceLinkStatus" class="status" style="margin-bottom:12px;" role="status"></div>
-      <div style="display:flex;gap:10px;justify-content:flex-end;">
+      <input id="deviceCodeInput" type="text" placeholder="A3F-821" maxlength="12" required>
+      <p id="deviceLinkWho"></p>
+      <a id="deviceLinkDiscord" class="btn-discord" href="../api/auth/discord/start" hidden><span>Войти через Discord</span></a>
+      <div id="deviceLinkStatus" class="status" role="status"></div>
+      <div class="device-modal-actions">
         <button id="deviceLinkCancel" type="button" class="secondary">Отмена</button>
         <button id="deviceLinkSubmit" type="submit">Подтвердить</button>
       </div>
@@ -488,11 +488,10 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
     <aside class="app-sidebar">
       <div class="sidebar-brand">
         <div class="brand-mark-wrap">
-          <img class="sidebar-brand-logo" src="brand-mark.png" alt="Suslik Media" width="42" height="42">
+          <img class="sidebar-brand-logo" src="brand-mark.svg" alt="Suslik Media" width="28" height="28">
         </div>
         <div class="sidebar-brand-text">
-          <strong>Suslik</strong>
-          <span>MEDIA</span>
+          <strong>Suslik Media</strong>
         </div>
       </div>
       <div class="row navrow">
@@ -530,7 +529,7 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
       <div class="mobile-topline topline">
         <div class="mobile-brand">
           <div class="brand-mark-wrap">
-            <img class="mobile-brand-logo" src="brand-mark.png" alt="Suslik Media" width="34" height="34">
+            <img class="mobile-brand-logo" src="brand-mark.svg" alt="Suslik Media" width="28" height="28">
           </div>
           <div><h2>Suslik Media</h2><p data-i18n="app.tagline">Медиатека, поиск и просмотр фильмов онлайн.</p></div>
         </div>
@@ -664,12 +663,12 @@ try{document.documentElement.classList.add("auth-pending");setTimeout(function()
               <svg viewBox="0 0 400 200" aria-hidden="true">
                 <defs>
                   <linearGradient id="growthFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0" stop-color="#3b82f6" stop-opacity=".25"/><stop offset="1" stop-color="#3b82f6" stop-opacity="0"/>
+                    <stop offset="0" stop-color="#FAFAFA" stop-opacity=".14"/><stop offset="1" stop-color="#FAFAFA" stop-opacity="0"/>
                   </linearGradient>
                   <linearGradient id="growthStroke" x1="0" y1="0" x2="1" y2="0">
-                    <stop offset="0" stop-color="#3b82f6" stop-opacity=".35"/><stop offset=".55" stop-color="#60a5fa"/><stop offset="1" stop-color="#93c5fd"/>
+                    <stop offset="0" stop-color="#A1A1AA" stop-opacity=".75"/><stop offset=".55" stop-color="#FAFAFA"/><stop offset="1" stop-color="#FAFAFA"/>
                   </linearGradient>
-                  <filter id="growthGlow" x="-20%" y="-40%" width="140%" height="180%"><feGaussianBlur stdDeviation="4"/></filter>
+                  <filter id="growthGlow" x="-20%" y="-40%" width="140%" height="180%"><feGaussianBlur stdDeviation="2"/></filter>
                 </defs>
                 <g class="growth-grid"><line x1="0" y1="50" x2="400" y2="50"/><line x1="0" y1="100" x2="400" y2="100"/><line x1="0" y1="150" x2="400" y2="150"/></g>
                 <path class="growth-area" d=""/>
