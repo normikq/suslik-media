@@ -51,8 +51,8 @@ JSON в `DATA_DIR` (`website/src/config.js:71`) через `makeJsonWriter(file,
 
 ```
 manifest.json                 # см. hls-fixtures/manifest.json
-1080p/index.m3u8, video.m4s   # v1-copy: только 1080p/ (или исходное разрешение ≤1080p)
-720p/index.m3u8,  video.m4s   # только v1
+1080p/index.m3u8, video.m4s   # v1: перекодировано; v1-copy: копия исходника (если он выше 720p)
+720p/index.m3u8,  video.m4s   # v1 и v1-copy (с 20.11); у исходника ≤ 720p — только 720p/ (в v1-copy — копия)
 a0/ … a3/  index.m3u8, audio.m4s   # звук исходника → AAC стерео, до 4 дорожек
 s0/ … s5/  index.m3u8, subs.vtt    # текстовые субтитры, до 6
 ```
