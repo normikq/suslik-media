@@ -300,9 +300,11 @@ function ensure(id, keys, { priority = PRIORITY, profiles = null, now = Date.now
   const pending = Array.isArray(a.pending_delete) ? a.pending_delete : [];
   const targets = profiles || Object.keys(a.profiles || {}).filter(p => a.profiles[p]?.status === "ready");
   const out = [];
+  // v1 готов — v1-copy доживает до audio-done v1 (hls.settleCopy), новых озвучек ей не кодируем
+  const v1Ready = a.profiles?.v1?.status === "ready" && !pending.includes("v1");
   for (const profile of targets) {
     const v = a.profiles?.[profile];
-    if (!v || !v.manifest || pending.includes(profile)) continue;
+    if (!v || !v.manifest || pending.includes(profile) || (profile === "v1-copy" && v1Ready)) continue;
     const audio = Array.isArray(v.manifest.audio) ? v.manifest.audio : [];
     const need = (keys || []).filter(k => ext[k] && !audio.some(x =>
       x.external?.key === k && x.dir === ext[k].dir && x.external.offset_ms === ext[k].offset_ms));
@@ -353,6 +355,7 @@ function removeExternal(id, key, now = Date.now()) {
     if (j.keys.length) store.putJob(j.job_id, j);
     else store.deleteJob(j.job_id);
   }
+  hls.settleCopy(id);
   return true;
 }
 
@@ -422,6 +425,7 @@ function audioDone(body, now = Date.now()) {
   store.putAsset(id, a);
   if (myJob) store.deleteJob(myJob.job_id);
   ensure(id, Object.keys(ext), { profiles: [profile], now });
+  hls.settleCopy(id); // у v1 теперь все озвучки v1-copy — копия уходит в pending_delete
   return { ok: true, added, skipped };
 }
 
@@ -514,9 +518,33 @@ function onRemoved(tracks) {
   return n;
 }
 
+/**
+ * done видео-профиля. v1-copy: пока идёт подбор (сеть), видео-задания ассета (v1) не выдаются (hls.holdVideo) — задание
+ * «звук» для копии успевает встать раньше v1. v1 при живой v1-copy: известные дорожки сразу (до hls.settleCopy в done)
+ * ставятся на v1 с приоритетом 1 — копия держится, пока их нет в v1; ждущие задания «звук» копии снимаются.
+ */
 function onProfileReady({ hls_id: id, profile } = {}) {
   if (!config.HLS_ENABLED || !id || !profile) return null;
-  return run(() => refresh(id, { priority: PRIORITY, profiles: [profile] }));
+  if (profile === "v1-copy") {
+    hls.holdVideo(id);
+    return run(async () => {
+      try {
+        await refresh(id, { priority: PRIORITY, profiles: [profile] });
+      } finally {
+        hls.releaseVideo(id);
+      }
+    });
+  }
+  let priority = PRIORITY;
+  const a = store.getAsset(id);
+  if (profile === "v1" && a) {
+    const copyLive = a.profiles?.["v1-copy"]?.status === "ready" && !(a.pending_delete || []).includes("v1-copy");
+    if (copyLive) priority = WATCH_PRIORITY;
+    ensure(id, Object.keys(extOf(a)), { priority, profiles: ["v1"] });
+    const t = sec(Date.now());
+    for (const j of audioJobsOf(id, "v1-copy")) if (!isLive(j, t)) store.deleteJob(j.job_id);
+  }
+  return run(() => refresh(id, { priority, profiles: [profile] }));
 }
 
 hls.events.on("profile-ready", onProfileReady);

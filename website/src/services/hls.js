@@ -52,6 +52,25 @@ function emit(name, payload) {
 }
 const normPath = p => String(p ?? "").replace(/\\/g, "/");
 
+// §18: пока для только что готовой v1-copy подбираются внешние озвучки (hls-audio ходит в AllDebrid), видео-задания
+// ассета (v1, приоритет 4) не выдаются: иначе единственный воркер сразу берёт долгое v1, задание «звук» для v1-copy
+// ставится уже после этого и снимается, когда v1 готов, — у v1-copy озвучек так и не бывает. В памяти, не дольше 2 мин.
+const VIDEO_HOLD_MS = 2 * 60 * 1000;
+const videoHolds = new Map(); // hls_id → до какого момента (мс)
+function holdVideo(id, now = Date.now()) {
+  videoHolds.set(String(id), now + VIDEO_HOLD_MS);
+}
+function releaseVideo(id) {
+  videoHolds.delete(String(id));
+}
+function videoHeld(id, now) {
+  const until = videoHolds.get(String(id));
+  if (!until) return false;
+  if (until > now) return true;
+  videoHolds.delete(String(id));
+  return false;
+}
+
 // ---- §4 Идентификаторы ----
 
 /** hls_id = первые 16 hex sha1("<infohash>|<путь>|<размер>"), без hash — sha1("ad:<adId>|<путь>|<размер>"). */
@@ -520,6 +539,7 @@ function audioSnapshot(j) {
 function next(now = Date.now()) {
   const t = sec(now);
   let best = null;
+  const gone = new Set();
   for (const j of [...store.allJobs().values()]) {
     if (j.state === "running" && (j.leased_until || 0) <= t) {
       j.state = "queued";
@@ -529,11 +549,18 @@ function next(now = Date.now()) {
     if (j.state !== "queued" || (j.leased_until || 0) > t) continue;
     if (store.isAudioJob(j)) {
       const snap = audioSnapshot(j);
-      if (snap.gone) { store.deleteJob(j.job_id); continue; }
+      if (snap.gone) {
+        store.deleteJob(j.job_id);
+        gone.add(j.hls_id);
+        continue;
+      }
       if (snap.wait) continue;
+    } else if (j.hls_id && videoHeld(j.hls_id, now)) {
+      continue; // §18: для v1-copy ещё подбираются озвучки
     }
     if (!best || jobOrder(j, best) < 0) best = j;
   }
+  for (const id of gone) settleCopy(id);
   if (!best) return null;
   if (store.isAudioJob(best)) {
     // что именно и с каким сдвигом выдано воркеру: audio-done пишет в manifest этот сдвиг
@@ -694,7 +721,8 @@ function progress(body, now = Date.now()) {
 
 /**
  * POST /internal/hls/done. Профиль становится ready. v1-copy → active_profile (если v1 ещё нет) и в очередь v1
- * с приоритетом 4; v1 → active_profile, а v1-copy уходит в pending_delete. → { ok, active_profile }.
+ * с приоритетом 4; v1 → active_profile, а v1-copy уходит в pending_delete — сразу или, если у копии есть внешние
+ * озвучки, которых нет в v1, после audio-done v1 (settleCopy, §18). → { ok, active_profile }.
  */
 function done(body, now = Date.now()) {
   const id = String(body?.hls_id || "");
@@ -721,8 +749,11 @@ function done(body, now = Date.now()) {
   asset.pending_delete = asset.pending_delete.filter(p => p !== profile);
   delete asset.error;
   if (profile === "v1") {
-    asset.active_profile = "v1";
-    if (asset.profiles["v1-copy"] && !asset.pending_delete.includes("v1-copy")) asset.pending_delete.push("v1-copy");
+    // Готовая v1-copy остаётся, пока у v1 нет её внешних озвучек (§18): решает settleCopy после события
+    if (asset.profiles["v1-copy"]?.status !== "ready" || asset.pending_delete.includes("v1-copy")) {
+      asset.active_profile = "v1";
+      if (asset.profiles["v1-copy"] && !asset.pending_delete.includes("v1-copy")) asset.pending_delete.push("v1-copy");
+    }
   } else if (asset.profiles.v1?.status !== "ready") {
     asset.active_profile = "v1-copy";
   }
@@ -740,7 +771,42 @@ function done(body, now = Date.now()) {
     }
   }
   emit("profile-ready", { hls_id: id, profile });
-  return { ok: true, active_profile: asset.active_profile };
+  if (profile === "v1") settleCopy(id);
+  return { ok: true, active_profile: store.getAsset(id)?.active_profile ?? null };
+}
+
+/**
+ * §18: v1 готов, а v1-copy ещё нет в pending_delete. Пока у v1 нет внешних озвучек, которые уже играют в v1-copy,
+ * и задание «звук» для v1 на них ждёт или кодируется, играет v1-copy (active_profile), иначе мастер на v1 на это время
+ * терял бы озвучки. Иначе (всё уже есть в v1, озвучек у копии не было, задание упало или снято, копия не готова)
+ * active_profile = v1, а v1-copy уходит в pending_delete. Вызывается после done v1, audio-done, failed, снятия
+ * заданий и удаления дорожки. → true, если v1-copy отпущена.
+ */
+function settleCopy(id) {
+  const a = store.getAsset(String(id || ""));
+  const v1 = a?.profiles?.v1;
+  const copy = a?.profiles?.["v1-copy"];
+  const pending = Array.isArray(a?.pending_delete) ? a.pending_delete : [];
+  if (!v1 || v1.status !== "ready" || pending.includes("v1") || !copy || pending.includes("v1-copy")) return false;
+  const ext = a.ext_audio && typeof a.ext_audio === "object" ? a.ext_audio : {};
+  const inV1 = Array.isArray(v1.manifest?.audio) ? v1.manifest.audio : [];
+  const missing = (Array.isArray(copy.manifest?.audio) ? copy.manifest.audio : [])
+    .map(x => x?.external?.key)
+    .filter(k => k && ext[k] && !inV1.some(y => y.external?.key === k));
+  const held = copy.status === "ready" && missing.length > 0 && [...store.allJobs().values()].some(j =>
+    store.isAudioJob(j) && j.hls_id === String(id) && j.profile === "v1" && j.state !== "failed" &&
+    (j.keys || []).some(k => missing.includes(k)));
+  if (held) {
+    if (a.active_profile !== "v1-copy") {
+      a.active_profile = "v1-copy";
+      store.putAsset(String(id), a);
+    }
+    return false;
+  }
+  a.active_profile = "v1";
+  a.pending_delete = [...pending, "v1-copy"];
+  store.putAsset(String(id), a);
+  return true;
 }
 
 /**
@@ -767,6 +833,7 @@ function failed(body, now = Date.now()) {
     }
   }
   store.putJob(job.job_id, job);
+  if (store.isAudioJob(job) && job.state === "failed") settleCopy(job.hls_id); // §18: v1-copy больше не ждёт звука v1
   return publicJob(job);
 }
 
@@ -1406,8 +1473,10 @@ function removeJob(job, now) {
     cancelledJobs.set(job.job_id, now + CANCEL_TTL_MS);
   }
   store.deleteJob(job.job_id);
-  if (store.isAudioJob(job)) dropAudioOf(job, taken);
-  else dropEncodingOf(job);
+  if (store.isAudioJob(job)) {
+    dropAudioOf(job, taken);
+    settleCopy(job.hls_id);
+  } else dropEncodingOf(job);
   return live ? "running" : "queued";
 }
 
@@ -1566,6 +1635,7 @@ function _reset() {
   lastCdnStats = null;
   jobSeq = 0;
   cancelledJobs.clear();
+  videoHolds.clear();
   store._reset();
 }
 
@@ -1638,5 +1708,8 @@ module.exports = {
   nextSeq,
   jobOrder,
   cleanName,
+  settleCopy,
+  holdVideo,
+  releaseVideo,
   _reset
 };
