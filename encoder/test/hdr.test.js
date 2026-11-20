@@ -23,7 +23,8 @@ const { createStub } = require('../stub/server');
 const FFMPEG = process.env.SM_FFMPEG || 'ffmpeg';
 const FFPROBE = process.env.SM_FFPROBE || 'ffprobe';
 const DURATION = 12;
-const SIZE = process.env.SM_TEST_HDR_SIZE || '3840x2160';
+// 1440p по умолчанию: x265 на 4K просит много памяти и падал (malloc) на машинах с малым запасом; 4K — SM_TEST_HDR_SIZE=3840x2160
+const SIZE = process.env.SM_TEST_HDR_SIZE || '2560x1440';
 
 function sh(cmd, args) {
   const r = spawnSync(cmd, args, { encoding: 'utf8', windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
