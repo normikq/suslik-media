@@ -136,7 +136,10 @@ async function processJob(job, ctx) {
     fs.rmSync(jobDir, { recursive: true, force: true });
     for (const d of planDirs(plan)) fs.mkdirSync(path.join(outDir, d), { recursive: true });
     const args = buildFfmpegArgs(cfg, plan, job.mirror_url, outDir);
-    log.info(`[encode] ${profile} ${cfg.encoder}: видео ${plan.video.map((t) => `${t.dir} ${t.width}x${t.height}`).join(', ')}; ` +
+    const videoDesc = profile === 'v1-copy'
+      ? plan.video.map((t) => (t.copy ? `копия ${t.dir}` : `${t.dir}${t.sourceKeys ? ' (force_key_frames source)' : ''}`)).join(' + ')
+      : `видео ${plan.video.map((t) => `${t.dir} ${t.width}x${t.height}`).join(', ')}`;
+    log.info(`[encode] ${profile} ${cfg.encoder}: ${videoDesc}; ` +
       `звук ${plan.audio.length}; субтитры ${plan.subs.length}; пропущено ${plan.skipped.length}; тонмаппинг ${plan.tonemapPath || 'нет'}` +
       `${plan.dovi ? ` (DV ${plan.dovi.profile ?? '?'}${plan.dovi.needsRpu ? ', по RPU' : ''})` : ''}`);
     log.info(`[encode] ffmpeg ${args.map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(' ')}`);

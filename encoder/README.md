@@ -17,7 +17,7 @@ GET /internal/hls/next ──204──► пауза SM_IDLE_S
    │              wait:  повтор probe через retry_after_s
    │              encode {hls_id, profile}
    ├─ ffmpeg читает исходник прямо по HTTP (-reconnect…), одна команда на всё:
-   │     1080p/ 720p/ (v1) или 1080p/ (v1-copy) — video.m4s + index.m3u8
+   │     1080p/ 720p/ (v1 и v1-copy; у v1-copy 1080p/ — копия) — video.m4s + index.m3u8
    │     a0…a3/ — AAC-LC стерео 160 кбит, audio.m4s + index.m3u8
    │     s0…s5/ — subs.vtt (текстовые субтитры) + тривиальный index.m3u8; PGS/VobSub/DVB → skipped
    ├─ проверка плейлистов (EXT-X-MAP, EXT-X-BYTERANGE, смещения без дыр до конца файла), manifest.json
@@ -48,7 +48,11 @@ GET /internal/hls/next ──204──► пауза SM_IDLE_S
   (`-force_key_frames expr:gte(t,n_forced*6)`, `-forced-idr 1`, `-no-scenecut 1`, большой `-g`), поэтому сегменты 1080p и 720p совпадают.
   HDR (PQ/HLG/DV) → SDR: `libplacebo` на видеокарте или запасной `zscale` + `tonemap=hable` (см. «Тонмаппинг HDR → SDR»), метки bt709.
   Чересстрочный исходник — `bwdif`. `-tag:v hvc1`.
-- **v1-copy** — `-c:v copy` одной дорожкой (`1080p/`), звук в AAC. Решает сервер по probe.
+- **v1-copy** — верхняя дорожка `-c:v copy` (`1080p/`, у исходника ≤ 720 по высоте — `720p/` и больше ничего), звук в AAC. Решает сервер по probe.
+  Если исходник выше 720p, в том же проходе ffmpeg добавляется `720p/` (вписывание в 1280×720, тот же кодировщик, `-cq` и ≤ 4 Мбит, как 720p в v1;
+  с nvenc и `SM_HWDEC` — `-hwaccel cuda`) с `-force_key_frames source`, `-forced-idr 1` и без своих ключевых кадров (большой `-g`, без scenecut):
+  ключевые кадры 720p ровно там, где у исходника, и сегменты 720p режутся в тех же точках, что копия. Проверка после кодирования: число сегментов
+  и EXTINF (начала ±1 кадр) у копии и 720p совпадают, иначе `failed` (`verify`) без повтора. В журнале — `[encode] v1-copy nvenc: копия 1080p + 720p (force_key_frames source)`.
 - `SM_ENCODER=x265` — то же на процессоре (медленно), `x264` — H.264 (`avc1`), только для проверки без видеокарты.
 
 ### Тонмаппинг HDR → SDR
@@ -265,7 +269,8 @@ npm test                    # = node --test: отпечаток (vectors.json), 
 
 Интеграционный тест сам делает образец (testsrc2 1080p, 2 × AC3 5.1, SRT, MKV, 36 с), гоняет весь цикл через заглушку
 и проверяет: EXT-X-MAP и EXT-X-BYTERANGE, непрерывные смещения до размера `.m4s`, ключевые кадры 1080p и 720p на одних
-временах с шагом 6 с, `subs.vtt` и его плейлист, `manifest.json`, `done`; затем v1-copy, alias, wait, лимит размера.
+временах с шагом 6 с, `subs.vtt` и его плейлист, `manifest.json`, `done`; затем v1-copy на втором образце с неровными ключевыми кадрами (0; 4,2; 9,1; 13; 20,5; 24; 31,3 с, B-кадры):
+копия + 720p, совпадение EXTINF и ключевых кадров 720p с исходником и началами сегментов копии; alias, wait, лимит размера.
 `test/tonemap.test.js` — выбор устройства Vulkan (llvmpipe отбрасывается), аргументы cpu (уменьшение до тонмаппинга) и libplacebo,
 DV 5 без libplacebo → ошибка без повтора. `test/hdr.test.js` — синтетический HDR10 4K (PQ, bt2020, 10 бит, mastering display, 12 с, x265)
 через весь цикл путём cpu и путём libplacebo (без Vulkan-видеокарты — пропуск с причиной): bt709, yuv420p, ключевые кадры, средняя яркость,

@@ -10,6 +10,7 @@ const {
   validateByteRangePlaylist,
   totalDuration,
   bitrates,
+  segmentMismatch,
   subsPlaylist,
   parseAttrs,
 } = require('../src/playlist');
@@ -179,4 +180,39 @@ test('mp4: reverseBits32, hevcCodec, avcCodec и codecFromInit', () => {
   assert.equal(codecFromInit(initBuf), 'hvc1.1.6.L120.90');
 
   assert.equal(codecFromInit(Buffer.alloc(64)), null);
+});
+
+test('segmentMismatch: копия и 720p v1-copy — число, длительности и начала сегментов ±1 кадр', () => {
+  const pl = (...d) => ({ segments: d.map((duration) => ({ duration })) });
+  const frame = 1001 / 24000 + 0.002;
+  const copy = pl(9.134, 3.879, 7.508, 3.503, 7.299, 4.633);
+  assert.equal(segmentMismatch(copy, pl(9.134125, 3.878875, 7.5075, 3.5035, 7.298958, 4.713042), frame), null); // хвост короче на 2 кадра
+  assert.match(segmentMismatch(copy, pl(9.134, 3.879, 7.508, 3.503, 11.932), frame), /сегментов 6 и 5/);
+  assert.match(segmentMismatch(copy, pl(9.134, 3.879, 7.508, 3.6, 7.202, 4.633), frame), /сегмент 3: 3\.503 с и 3\.6 с/);
+  // по одному кадру в одну сторону — накопленный сдвиг начала тоже ловится
+  assert.match(segmentMismatch(pl(6, 6, 6, 6), pl(6.04, 6.04, 6.04, 5.88), frame), /сегмент 2 начинается/);
+  assert.match(segmentMismatch(pl(6, 6, 2), pl(6, 6, 3), frame), /сегмент 2: 2 с и 3 с/);
+});
+
+test('finalizeOutput v1-copy: сегменты 720p не совпали с копией → ошибка verify', () => {
+  const os = require('node:os');
+  const { finalizeOutput } = require('../src/manifest');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sm-verify-'));
+  try {
+    const write = (sub, durs) => {
+      fs.mkdirSync(path.join(dir, sub), { recursive: true });
+      const lines = ['#EXTM3U', '#EXT-X-VERSION:7', '#EXT-X-TARGETDURATION:11', '#EXT-X-MEDIA-SEQUENCE:0', '#EXT-X-PLAYLIST-TYPE:VOD',
+        '#EXT-X-MAP:URI="video.m4s",BYTERANGE="100@0"'];
+      let pos = 100;
+      for (const d of durs) { lines.push(`#EXTINF:${d},`, `#EXT-X-BYTERANGE:1000@${pos}`, 'video.m4s'); pos += 1000; }
+      lines.push('#EXT-X-ENDLIST', '');
+      fs.writeFileSync(path.join(dir, sub, 'index.m3u8'), lines.join('\n'));
+      fs.writeFileSync(path.join(dir, sub, 'video.m4s'), Buffer.alloc(pos));
+    };
+    write('1080p', [9.134, 3.879, 7.508, 4.5]);
+    write('720p', [9.134, 11.387, 4.5]);
+    const plan = { profile: 'v1-copy', fps: 24000 / 1001, video: [{ dir: '1080p', copy: true }, { dir: '720p' }], audio: [], subs: [], skipped: [] };
+    assert.throws(() => finalizeOutput({ outDir: dir, plan, job: { path: 'x', size: 1 }, hlsId: '0123456789abcdef', fingerprint: 'f', durationMs: 25000, encoder: 'nvenc', ffmpegVersion: 't' }),
+      /сегменты 720p не совпадают с 1080p: сегментов 4 и 3/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

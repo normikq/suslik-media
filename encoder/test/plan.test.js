@@ -51,17 +51,64 @@ test('аргументы ffmpeg v1: ключевые кадры каждые 6 �
   assert.ok(a.includes('-hwaccel'));
 });
 
-test('v1-copy: одна дорожка -c:v copy, звук в AAC', () => {
+function copyProbe(width, height) {
   const p = JSON.parse(JSON.stringify(probeReq));
-  Object.assign(p.streams[0], { codec_name: 'h264', pix_fmt: 'yuv420p', color_transfer: 'bt709', profile: 'High' });
+  Object.assign(p.streams[0], { codec_name: 'h264', pix_fmt: 'yuv420p', color_transfer: 'bt709', profile: 'High', width, height });
   p.format.bit_rate = 8e6;
+  return p;
+}
+
+test('v1-copy 1080p: копия + 720p с ключевыми кадрами исходника, звук в AAC', () => {
+  const p = copyProbe(1920, 1080);
   assert.equal(copyCandidate(normalizeProbe({ format: { ...p.format, duration: '10' }, streams: [{ ...p.streams[0], disposition: {} }] })), true);
   const plan = buildPlan(p, 'v1-copy');
-  assert.equal(plan.video.length, 1);
-  const s = buildFfmpegArgs({ ...cfg, encoder: 'x265' }, plan, '/src.mkv', '/w/v1-copy').join(' ');
+  assert.deepEqual(plan.video.map((t) => [t.dir, t.width, t.height, !!t.copy]), [['1080p', 1920, 1080, true], ['720p', 1280, 720, false]]);
+
+  // nvenc: -hwaccel cuda (декодирование для 720p), копия без фильтров, 720p — scale и force_key_frames source
+  const a = buildFfmpegArgs(cfg, plan, '/src.mkv', '/w/v1-copy');
+  const s = a.join(' ');
+  assert.ok(a.includes('-hwaccel'));
   assert.match(s, /-c:v copy -tag:v avc1/);
-  assert.doesNotMatch(s, /-reconnect/); // локальный файл
+  assert.equal(a[a.indexOf('-filter_complex') + 1], '[0:0]format=yuv420p,scale=1280:720,setsar=1[c720p]');
+  const enc = a.slice(a.indexOf('[c720p]', a.indexOf('-filter_complex') + 2));
+  const e = enc.join(' ');
+  assert.match(e, /-c:v hevc_nvenc .*-cq 24 .*-maxrate 4000000 -bufsize 8000000/);
+  assert.match(e, /-no-scenecut 1 -g (\d+) -force_key_frames source -forced-idr 1/);
+  assert.ok(Number(/-g (\d+)/.exec(e)[1]) >= 1000);
+  assert.doesNotMatch(s, /expr:gte/); // своих ключевых кадров у 720p нет
+  assert.equal(a.filter((x) => x === 'independent_segments+single_file').length, 4); // 2 видео + 2 звука
+  assert.match(s, /1080p.index\.m3u8 -map \[c720p\]/);
   assert.equal((s.match(/-c:a aac/g) || []).length, 2);
+  assert.doesNotMatch(s, /-reconnect/); // локальный файл
+
+  // x265 и x264: те же ключевые кадры, без scenecut
+  const x265 = buildFfmpegArgs({ ...cfg, encoder: 'x265' }, plan, '/src.mkv', '/w').join(' ');
+  assert.match(x265, /-c:v libx265 .*-force_key_frames source -forced-idr 1 -x265-params keyint=\d+:min-keyint=1:scenecut=0:open-gop=0/);
+  assert.doesNotMatch(x265, /-hwaccel/);
+  const x264 = buildFfmpegArgs({ ...cfg, encoder: 'x264' }, plan, '/src.mkv', '/w').join(' ');
+  assert.match(x264, /-c:v libx264 .*-force_key_frames source -forced-idr 1 -g \d+ -keyint_min 1 -sc_threshold 0 -x264-params scenecut=0:open-gop=0/);
+  // без hwdec — без cuda
+  assert.ok(!buildFfmpegArgs({ ...cfg, hwdec: false }, plan, '/src.mkv', '/w').includes('-hwaccel'));
+});
+
+test('v1-copy: широкий кадр и анаморф вписываются в 1280×720, чётные размеры', () => {
+  assert.deepEqual(buildPlan(copyProbe(1920, 800), 'v1-copy').video.map((t) => [t.dir, t.width, t.height]), [['1080p', 1920, 800], ['720p', 1280, 534]]);
+  assert.deepEqual(buildPlan(copyProbe(1440, 1080), 'v1-copy').video.map((t) => [t.dir, t.width, t.height]), [['1080p', 1440, 1080], ['720p', 960, 720]]);
+  // анаморф 1440x1080 с SAR 4:3 → 1920x1080 на экране → 720p 1280x720
+  const raw = { streams: [{ index: 0, sample_aspect_ratio: '4:3' }] };
+  assert.deepEqual(buildPlan(copyProbe(1440, 1080), 'v1-copy', raw).video.map((t) => [t.width, t.height]), [[1440, 1080], [1280, 720]]);
+});
+
+test('v1-copy 720p и ниже: только копия, без декодирования', () => {
+  for (const [w, h] of [[1280, 720], [1280, 536], [720, 576]]) {
+    const plan = buildPlan(copyProbe(w, h), 'v1-copy');
+    assert.deepEqual(plan.video.map((t) => [t.dir, t.width, t.height, t.copy]), [['720p', w, h, true]]);
+    const a = buildFfmpegArgs(cfg, plan, '/src.mkv', '/w');
+    assert.ok(!a.includes('-hwaccel'));
+    assert.ok(!a.includes('-filter_complex'));
+    assert.ok(!a.includes('-force_key_frames'));
+    assert.equal(a.filter((x) => x === 'copy').length, 1);
+  }
 });
 
 test('copyCandidate: HDR, 10 бит, > 1080, > 12 Мбит — нет', () => {

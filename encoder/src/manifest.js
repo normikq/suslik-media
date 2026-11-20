@@ -5,7 +5,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { parseMediaPlaylist, validateByteRangePlaylist, bitrates, subsPlaylist } = require('./playlist');
+const { parseMediaPlaylist, validateByteRangePlaylist, bitrates, segmentMismatch, subsPlaylist } = require('./playlist');
 const { codecFromFile } = require('./mp4');
 
 const AAC_LC = 'mp4a.40.2';
@@ -32,8 +32,16 @@ function finalizeOutput({ outDir, plan, job, hlsId, fingerprint, durationMs, enc
     audioAvg = Math.max(audioAvg, br.avg);
   }
 
-  const video = plan.video.map((t) => {
-    const { pl, mediaPath } = readPlaylist(outDir, t.dir, 'video.m4s');
+  const pls = plan.video.map((t) => readPlaylist(outDir, t.dir, 'video.m4s'));
+  // v1-copy с 720p: сегменты обязаны совпасть с копией, иначе ABR сломается (§5) — ошибка без повтора
+  for (let i = 1; plan.profile === 'v1-copy' && i < pls.length; i++) {
+    // допуск ±1 кадр (+ округление EXTINF)
+    const bad = segmentMismatch(pls[0].pl, pls[i].pl, 1 / (plan.fps || 24) + 0.002);
+    if (bad) throw new Error(`сегменты ${plan.video[i].dir} не совпадают с ${plan.video[0].dir}: ${bad}`);
+  }
+
+  const video = plan.video.map((t, i) => {
+    const { pl, mediaPath } = pls[i];
     const codec = codecFromFile(mediaPath, pl.map.length);
     if (!codec) throw new Error(`${t.dir}: не найден hvcC/avcC в init-сегменте`);
     const br = bitrates(pl);
