@@ -55,7 +55,7 @@ for (const file of files) {
   checkJavaScript(file, fs.readFileSync(path.join(root, file), "utf8"));
 }
 
-for (const file of [path.join("public", "index.html"), path.join("public", "hls-admin.html"), path.join("public", "watch.html")]) {
+for (const file of [path.join("public", "index.html"), path.join("public", "hls-admin.html"), path.join("public", "watch.html"), path.join("public", "privacy.html")]) {
   const html = fs.readFileSync(path.join(root, file), "utf8");
   const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)];
   if (!/<html[^>]*lang=["']ru["']/i.test(html)) {
