@@ -1,0 +1,6 @@
+{
+  "job_id": "j_01JD3X8Q",
+  "stage": "encode",
+  "error": "ffmpeg exit 1: Conversion failed!",
+  "retryable": true
+}

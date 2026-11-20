@@ -1,0 +1,58 @@
+{
+  "job_id": "j_01JD3X8Q",
+  "fingerprint": "c42e9ee5c3656987b56beb9ef1e6d78b7688dcd864b45913097f58dedc12e439",
+  "duration_ms": 7951200,
+  "format": {
+    "format_name": "matroska,webm",
+    "bit_rate": 8642000
+  },
+  "streams": [
+    {
+      "index": 0,
+      "codec_type": "video",
+      "codec_name": "hevc",
+      "profile": "Main 10",
+      "pix_fmt": "yuv420p10le",
+      "width": 1920,
+      "height": 800,
+      "color_transfer": "smpte2084",
+      "avg_frame_rate": "24000/1001",
+      "bit_rate": null,
+      "keyframe_interval_max_s": 4.2
+    },
+    {
+      "index": 1,
+      "codec_type": "audio",
+      "codec_name": "dts",
+      "channels": 6,
+      "language": "rus",
+      "title": "Дубляж",
+      "default": true
+    },
+    {
+      "index": 2,
+      "codec_type": "audio",
+      "codec_name": "ac3",
+      "channels": 6,
+      "language": "eng",
+      "title": "",
+      "default": false
+    },
+    {
+      "index": 3,
+      "codec_type": "subtitle",
+      "codec_name": "subrip",
+      "language": "rus",
+      "title": "Полные",
+      "forced": false
+    },
+    {
+      "index": 4,
+      "codec_type": "subtitle",
+      "codec_name": "hdmv_pgs_subtitle",
+      "language": "eng",
+      "title": "",
+      "forced": false
+    }
+  ]
+}

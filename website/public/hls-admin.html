@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Suslik Media — HLS</title>
+  <link rel="icon" href="favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" sizes="128x128" href="brand-mark.png">
+  <style>
+    :root{color-scheme:dark;--bg:#0b0c10;--panel:#141720;--line:#292d3a;--text:#f3f4f8;--muted:#9da4b5;--accent:#b7a0ff;--accent2:#8b70ed;--bad:#ff9caa;--good:#9be6bd;--warn:#ffd9a8}
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(ellipse at top,#19152a 0,#0b0c10 55%) fixed,var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh}
+    main{width:min(1000px,calc(100% - 32px));margin:0 auto;padding:36px 0 80px}
+    a{color:var(--accent)}
+    .brand{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:20px}
+    .brand h1{font-size:clamp(24px,4vw,34px);line-height:1.1;letter-spacing:-.03em;margin:0}
+    .eyebrow{color:var(--accent);font-size:12px;letter-spacing:.16em;text-transform:uppercase;font-weight:700}
+    .panel{background:rgba(20,23,32,.92);border:1px solid var(--line);border-radius:18px;padding:18px 20px;margin:14px 0;box-shadow:0 18px 60px #0003}
+    .panel h2{font-size:18px;margin:0 0 10px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+    .panel h2 small{font-size:13px;color:var(--muted);font-weight:400}
+    .hidden{display:none!important}
+    .muted{color:var(--muted)}.small{font-size:13px}
+    .error{color:var(--bad)}.ok{color:var(--good)}.warn{color:var(--warn)}
+    button{border:1px solid #373c4d;border-radius:10px;padding:7px 12px;background:#252938;color:var(--text);font:600 13px system-ui,sans-serif;cursor:pointer}
+    button:hover{background:#343a4d}
+    button:disabled{opacity:.55;cursor:wait}
+    #clearQueue:disabled{cursor:not-allowed}
+    button.primary{background:var(--accent);color:#171222;border-color:var(--accent)}
+    button.primary:hover{background:#c8b7ff}
+    button.danger{border-color:#ff6b6b66;background:#ff6b6b1a;color:#ffb3b3}
+    button.danger:hover{background:#ff6b6b33}
+    .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .totals{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px}
+    .stat{background:#0f1118;border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+    .stat b{display:block;font-size:22px;line-height:1.2}
+    .stat span{font-size:12px;color:var(--muted)}
+    .bar{height:10px;background:#252938;border-radius:999px;overflow:hidden;border:1px solid #373c4d;margin:8px 0 4px}
+    .bar>div{height:100%;width:0;background:linear-gradient(90deg,var(--accent2),#c8b7ff);border-radius:999px}
+    .bar.full>div{background:linear-gradient(90deg,#d9534f,#ff9caa)}
+    .item{border-top:1px solid var(--line);padding:12px 0}
+    .item:first-of-type{border-top:0}
+    .item-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+    .item-title{font-weight:700;overflow-wrap:anywhere;min-width:0}
+    .item-meta{font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+    .item-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+    .tag{display:inline-block;font-size:12px;border-radius:7px;padding:1px 7px;background:#252938;border:1px solid #373c4d;margin-right:4px;white-space:nowrap}
+    .tag.failed{border-color:#ff6b6b66;color:#ffb3b3}
+    .tag.running{border-color:#8b70ed;color:#d6caff}
+    .tag.ready{border-color:#4caf8066;color:var(--good)}
+    .tag.pending{border-color:#ffb86b66;color:var(--warn)}
+    .progress{height:6px;background:#252938;border-radius:999px;overflow:hidden;margin-top:6px;max-width:320px}
+    .progress>div{height:100%;background:linear-gradient(90deg,var(--accent2),#c8b7ff)}
+    .files{margin:6px 0 0;padding:0;list-style:none}
+    .files li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 0;font-size:13px;flex-wrap:wrap}
+    .files li span{overflow-wrap:anywhere;min-width:0;flex:1 1 220px}
+    .profiles{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+    .profile{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;background:#0f1118;border:1px solid var(--line);border-radius:10px;padding:6px 10px}
+    .notice{border-radius:12px;padding:10px 14px;margin:10px 0;background:#ff6b6b14;border:1px solid #ff6b6b44}
+    .notice.info{background:#8b70ed14;border-color:#8b70ed44}
+    #toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);max-width:calc(100% - 32px);background:#1c1f2b;border:1px solid #383b4d;border-radius:12px;padding:10px 16px;box-shadow:0 10px 40px #0008;z-index:10}
+    @media(max-width:600px){main{padding-top:20px}.panel{padding:14px}.item-head{flex-direction:column}}
+  </style>
+</head>
+<body>
+<main>
+  <div class="brand">
+    <div>
+      <div class="eyebrow">Suslik Media</div>
+      <h1>Видео для сайта (HLS)</h1>
+    </div>
+    <div class="toolbar">
+      <span id="updated" class="muted small" role="status"></span>
+      <button id="refresh" type="button">Обновить</button>
+      <a href="./" class="small">На сайт</a>
+    </div>
+  </div>
+
+  <section id="authPanel" class="panel hidden">
+    <p id="authText"></p>
+    <p id="authLink" class="hidden"><a id="loginLink" href="api/auth/discord/start">Войти через Discord</a></p>
+  </section>
+
+  <div id="loadError" class="notice hidden" role="alert"></div>
+
+  <div id="app" class="hidden">
+    <section class="panel">
+      <h2>Состояние</h2>
+      <p id="enabledText"></p>
+      <div id="configNotice" class="notice hidden"></div>
+      <div id="totals" class="totals"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Место на CDN <small id="cdnAt"></small></h2>
+      <div id="cdn"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Очередь <small id="queueCount"></small></h2>
+      <div class="toolbar"><button id="clearQueue" class="danger" type="button" disabled>Очистить очередь</button></div>
+      <div id="queue"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Готовые, кодируемые и в архиве <small id="assetsCount"></small></h2>
+      <div id="assets"></div>
+    </section>
+  </div>
+
+  <div id="loading" class="muted">Загрузка…</div>
+</main>
+<div id="toast" class="hidden" role="status"></div>
+<script src="hls-admin.js" defer></script>
+</body>
+</html>

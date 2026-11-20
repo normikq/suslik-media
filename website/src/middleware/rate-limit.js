@@ -72,6 +72,24 @@ const mirrorUrlLimiter = rateLimit({
   handler: (req, res, next, options) => res.status(options.statusCode).json({ error: "Слишком много запросов." })
 });
 
+// HLS (docs/HLS.md §12): master.m3u8 и админка, отдельно — запросы кодировщика и CDN к /internal/hls; как mirrorUrlLimiter
+const hlsLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 300,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  handler: (req, res, next, options) => res.status(options.statusCode).json({ error: "Слишком много запросов." })
+});
+
+const hlsInternalLimiter = rateLimit({
+  keyGenerator: ipKey,
+  windowMs: 60 * 1000,
+  limit: 300,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  handler: (req, res, next, options) => res.status(options.statusCode).json({ error: "Слишком много запросов." })
+});
+
 const searchLimiter = rateLimit({
   windowMs: 60 * 1000,
   limit: 15,
@@ -189,6 +207,8 @@ module.exports = {
   posterLimiter,
   mediaInfoLimiter,
   mirrorUrlLimiter,
+  hlsLimiter,
+  hlsInternalLimiter,
   searchLimiter,
   mirrorLimiter,
   reportLimiter,

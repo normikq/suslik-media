@@ -60,6 +60,17 @@ function tagsFromStreams(streams) {
   return tags;
 }
 
+/** Кодеки звуковых дорожек (без повторов, нижний регистр): для direct_ok в hls.js — метки ставятся только для DTS. */
+function audioCodecsFromStreams(streams) {
+  const out = [];
+  for (const s of Array.isArray(streams) ? streams : []) {
+    if (!s || s.codec_type !== "audio") continue;
+    const c = String(s.codec_name || "").toLowerCase().trim().slice(0, 32);
+    if (c && !out.includes(c)) out.push(c);
+  }
+  return out.slice(0, 16);
+}
+
 function probeTags(url) {
   return new Promise((resolve, reject) => {
     const args = ["-v", "error", "-rw_timeout", "12000000", "-user_agent", "Mozilla/5.0", "-analyzeduration", "10000000",
@@ -83,12 +94,14 @@ function probeTags(url) {
         const durationSec = Math.round(Number(format.duration || (v && v.duration)) || 0);
         const rawBitrate = Number(format.bit_rate || (v && v.bit_rate)) || 0;
         const bitrateMbps = rawBitrate > 0 ? Math.round((rawBitrate / 1000000) * 10) / 10 : 0;
-        const meta = (v || durationSec || bitrateMbps) ? {
+        const acodecs = audioCodecsFromStreams(streams);
+        const meta = (v || durationSec || bitrateMbps || acodecs.length) ? {
           w: v ? (Number(v.width) || 0) : 0,
           h: v ? (Number(v.height) || 0) : 0,
           codec: v ? (v.codec_name || "") : "",
           durationSec,
-          bitrateMbps
+          bitrateMbps,
+          acodecs
         } : null;
         resolve({ tags, meta });
       } catch { reject(new Error("Не удалось разобрать ответ ffprobe.")); }
@@ -429,6 +442,7 @@ function buildMediaVariant({
 module.exports = {
   snapshot,
   tagsFromStreams,
+  audioCodecsFromStreams,
   pickMainFile,
   store,
   buildMediaVariant,

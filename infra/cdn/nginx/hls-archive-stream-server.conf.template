@@ -1,0 +1,47 @@
+# Просмотр прямо из архива (docs/HLS.md §20), часть 2: уровень server в hls-cdn.conf.
+# Кладёт render.sh в /etc/nginx/hls-archive-stream-server.conf при HLS_ARCHIVE_STREAM=1 и заданном HLS_ARCHIVE_REMOTE, иначе файл пустой.
+# Сюда попадают только запросы, прошедшие подпись (try_files в location с secure_link): файла нет на диске → rclone serve http
+# (служба hls-archive-serve, ${HLS_ARCHIVE_ADDR}) с тем же Range. add_header из location сюда не наследуются — повторены.
+location @hls_archive {
+    access_log ${HLS_LOG_DIR}/hls-access.log hls_lru;
+
+    add_header Access-Control-Allow-Origin   $hls_cors_origin always;
+    add_header Access-Control-Allow-Methods  "GET, HEAD, OPTIONS" always;
+    add_header Access-Control-Allow-Headers  "Range" always;
+    add_header Access-Control-Expose-Headers "Content-Range, Content-Length, Accept-Ranges" always;
+    add_header Access-Control-Max-Age        86400 always;
+    add_header Vary                          Origin always;
+    add_header X-Content-Type-Options        nosniff always;
+    # через минуты файл будет на диске (hls-restore) — из архива ничего не кэшировать
+    add_header Cache-Control                 "no-store" always;
+    add_header Accept-Ranges                 bytes;
+    # типы по расширению, как у файлов с диска (у rclone свои, по системной таблице)
+    add_header Content-Type                  $hls_archive_type;
+
+    # Только файлы внутри /<hls_id>/<profile>/ с известным расширением: без каталогов (rclone отдал бы их список),
+    # без сегментов на «.» (в т. ч. «..»; $uri к тому же уже нормализован nginx).
+    if ($uri !~ "^/[0-9a-f]{16}/[a-z0-9][a-z0-9-]{0,31}/([A-Za-z0-9_-][A-Za-z0-9._-]*/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\.(m3u8|m4s|mp4|vtt|json)$") {
+        return 404;
+    }
+
+    # $uri — без query string (подписи в адресе нет, rclone она не нужна); Range, If-Range идут как есть
+    proxy_pass http://${HLS_ARCHIVE_ADDR}$uri;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Cookie "";
+    proxy_set_header Authorization "";
+    proxy_hide_header Content-Type;
+    proxy_hide_header Accept-Ranges;
+    proxy_hide_header Cache-Control;
+    proxy_hide_header Expires;
+    proxy_hide_header Content-Disposition;
+    proxy_hide_header Access-Control-Allow-Origin;
+    # сегмент сразу идёт плееру, без временных файлов на диске
+    proxy_buffering off;
+    proxy_request_buffering off;
+    proxy_connect_timeout 5s;
+    # первый байт из Drive — обычно 1–2 с, на холодном каталоге дольше
+    proxy_read_timeout 60s;
+    proxy_send_timeout 30s;
+    proxy_intercept_errors off;
+}

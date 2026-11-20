@@ -2323,6 +2323,7 @@ let psFileToken=0;
 async function psLoad(s,file,label,playlistReq,magnet){
   const open=playSheetToken, mine=++psFileToken, live=()=>open===playSheetToken&&mine===psFileToken;
   s._file=file; s._label=label;
+  const pg=s.querySelector(".ps-page"); pg.classList.toggle("hidden",!magnet||nativeApp()); if(magnet) pg.href="watch/"+magnet.id+"?f="+encodeURIComponent(file.path); // страница фильма (watch.html)
   psSyncShelf(s); psSyncAi(s); psSyncSelection(s); psWatchInfo(s);
   const sub=s.querySelector(".ps-status"); sub.textContent="Готовим к просмотру…"; sub.classList.remove("err");
   fillWatch(s,null,"Готовим к просмотру…");
@@ -2343,6 +2344,7 @@ async function psLoad(s,file,label,playlistReq,magnet){
   sub.textContent=mUrl?"Можно смотреть":(err?.message||"Не удалось открыть фильм");
   sub.classList.toggle("err",!mUrl);
   if(mUrl&&magnet&&s.dataset.kind!=="movie") saveLastEpisode(magnet.id,file.path);
+  if(window.SuslikHls) SuslikHls.attach({sheet:s,file,magnet,mirrorUrl:mUrl,live,api,watch:magnet?watchOf(magnet.id,file):null}); // встроенный плеер (hls-player.js)
 }
 function ensurePlaySheet(){
   let s=document.getElementById("playSheet");
@@ -2359,6 +2361,7 @@ function ensurePlaySheet(){
       '<div class="ps-resume-bar"><span class="ps-bar"><i></i></span><em></em></div></div>'+
     '<a class="sheet-btn ps-watch disabled" data-act="player" rel="noopener noreferrer">'+PS_ICON_PLAY+'<span></span></a>'+
     '<div class="ps-pick hidden"></div>'+
+    '<a class="ps-page hidden" data-act="page" style="display:block;text-align:center;margin:8px 0;font-weight:600">Страница фильма →</a>'+
     '<div class="ps-shelf"><button type="button" class="ps-btn secondary" data-act="mine"></button><button type="button" class="ps-btn secondary" data-act="fav"></button></div>'+
     '<div class="ps-ai hidden"></div>'+
     '<button type="button" class="ps-close-bottom secondary sheet-cancel">Закрыть</button></div>';
@@ -3053,6 +3056,7 @@ checkSession();
 })();
 </script>
 
+<script src="hls-player.js" defer></script>
 <script src="redesign.js?v=6" defer></script>
 <script src="home.js?v=8" defer></script>
 </body>

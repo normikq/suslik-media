@@ -1,0 +1,29 @@
+#!/bin/bash
+# fake-curl — фальшивый сайт для офлайн-проверок: кладётся в PATH под именем curl. Каталог FAKE_SITE:
+#   resp/<путь через _>.json — ответ на запрос (например resp/internal_hls_pending-restores.json); нет файла — пустой ответ;
+#   down — если есть, «сайт недоступен» (код 7, как у curl);
+#   req/NNN-<метод>-<путь через _>.json — тела принятых запросов по порядку.
+set -u
+: "${FAKE_SITE:?нужен FAKE_SITE}"
+method=GET; data=""; url=""; cfg=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -X) method=$2; shift ;;
+    --data-binary) data=$2; shift ;;
+    -K) cfg=1; shift ;;
+    -H|--max-time|--retry|--retry-delay) shift ;;
+    -*) ;;
+    *) url=$1 ;;
+  esac
+  shift
+done
+[ "$cfg" = 1 ] && cat > /dev/null   # конфиг с токеном из stdin
+if [ -e "$FAKE_SITE/down" ]; then echo "curl: (7) Failed to connect" >&2; exit 7; fi
+path=$(sed -E 's#^https?://[^/]+##; s#\?.*$##' <<< "$url")
+key=$(tr '/' '_' <<< "${path#/}")
+mkdir -p "$FAKE_SITE/req"
+n=$(find "$FAKE_SITE/req" -type f | wc -l | tr -d ' ')
+out="$FAKE_SITE/req/$(printf '%03d' "$n")-$method-$key.json"
+if [ -n "$data" ]; then cp -- "${data#@}" "$out"; else : > "$out"; fi
+if [ -f "$FAKE_SITE/resp/$key.json" ]; then cat -- "$FAKE_SITE/resp/$key.json"; fi
+exit 0

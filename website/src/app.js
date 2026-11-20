@@ -25,6 +25,8 @@ const customAudioRoutes = require("./routes/custom-audio");
 const aiTitleRoutes = require("./routes/aititle");
 const markersRoutes = require("./routes/markers");
 const activity = require("./routes/activity");
+const hlsRoutes = require("./routes/hls");
+const titleRoutes = require("./routes/title");
 
 function createApp() {
   const app = express();
@@ -43,6 +45,22 @@ function createApp() {
   // Страница и стили сайта сжимаются один раз (gzip и brotli), а не на каждый запрос
   app.get(["/", "/index.html", "/redesign.css"], (req, res, next) => {
     if (!sendPrecompressed(req, res, PRECOMPRESSED[req.path] || "index.html")) next();
+  });
+
+  // Страница фильма (docs/HLS-CLIENT.md «Страница фильма»): /watch/<номер раздачи>?s=&e=|f=&t= — своя страница со своим
+  // CSP (хеши её встроенных скриптов; их нет, код — watch.js). Номер не из цифр — та же страница с 404 («Не найдено»).
+  // Лишний путь после номера (/watch/1/, /watch/1/dune) — относительный редирект на /watch/1: страница грузит свои файлы
+  // по «../watch.js», а сайт может стоять под путём (/media/, docs/MIGRATION.md), поэтому абсолютный адрес нельзя.
+  app.get(/^\/watch\/([^/]+)(\/.*)?$/, (req, res, next) => {
+    const id = req.params[0];
+    const rest = req.params[1];
+    if (rest) {
+      const q = req.originalUrl.indexOf("?");
+      const depth = (rest.match(/\//g) || []).length;
+      return res.redirect(302, "../".repeat(depth) + encodeURIComponent(id) + (q >= 0 ? req.originalUrl.slice(q) : ""));
+    }
+    if (!/^\d{1,15}$/.test(id)) res.status(404);
+    if (!sendPrecompressed(req, res, "watch.html")) next();
   });
 
   // Сжатие текстовых ответов (страница, JSON медиатеки и поиска, CSS/JS)
@@ -69,6 +87,9 @@ function createApp() {
     }
     next();
   });
+
+  // HLS: кодировщик и CDN (Bearer-токены, без cookie) — свой парсер JSON до 256 КБ, поэтому до общего (20 КБ)
+  app.use(hlsRoutes.internal);
 
   // Body parsers
   app.use("/api/playlist", express.json({ limit: "200kb" }));
@@ -100,6 +121,8 @@ function createApp() {
   app.use(customAudioRoutes);
   app.use(aiTitleRoutes);
   app.use(markersRoutes);
+  app.use(hlsRoutes.router);
+  app.use(titleRoutes);
   app.use(activity.router);
 
   // Static files

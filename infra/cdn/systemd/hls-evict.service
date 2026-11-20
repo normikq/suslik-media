@@ -1,0 +1,18 @@
+[Unit]
+Description=Suslik Media CDN: уборка диска HLS и отчёт сайту (evict.sh)
+After=network-online.target nginx.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/hls-cdn/evict.sh
+Nice=10
+IOSchedulingClass=idle
+# удаляет только внутри корня ассетов и пишет состояние; /etc/hls-cdn — rclone purge обновляет токен в rclone.conf
+Environment=RCLONE_CACHE_DIR=/var/cache/hls-rclone
+CacheDirectory=hls-rclone
+ProtectSystem=strict
+ReadWritePaths=/srv/hls /var/lib/hls-evict /etc/hls-cdn
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes

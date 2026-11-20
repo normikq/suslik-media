@@ -1,0 +1,11 @@
+[Unit]
+Description=Suslik Media CDN: evict.sh раз в 15 минут
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+RandomizedDelaySec=60
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,37 @@
+[Unit]
+Description=Suslik Media CDN: просмотр прямо из архива (rclone serve http, docs/HLS.md §20)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# От root: rclone.conf (0600 root) общий с hls-archive/hls-restore/evict, и rclone переписывает его при обновлении токена Google
+# (новый файл рядом и переименование) — нужна запись в /etc/hls-cdn. Отдельному пользователю пришлось бы отдать /etc/hls-cdn
+# (там же cdn.env с токенами) или держать вторую копию конфига. Взамен: только 127.0.0.1, --read-only, без capabilities,
+# файловая система только на чтение, кроме /etc/hls-cdn и кэша.
+# Значения по умолчанию; cdn.env их переопределяет (пустое HLS_ARCHIVE_CACHE_GB= не допускается — install.sh проверяет).
+Environment=HLS_RCLONE_CONFIG=/etc/hls-cdn/rclone.conf HLS_ARCHIVE_CACHE_GB=20
+EnvironmentFile=/etc/hls-cdn/cdn.env
+# Флаги есть в rclone 1.54 (install.sh и так требует ≥ 1.54). Адрес — только 127.0.0.1: снаружи доступ лишь через nginx с подписью.
+ExecStart=rclone serve http ${HLS_ARCHIVE_REMOTE} --addr 127.0.0.1:8781 --read-only --config ${HLS_RCLONE_CONFIG} --vfs-cache-mode full --vfs-cache-max-size ${HLS_ARCHIVE_CACHE_GB}G --cache-dir /var/cache/hls-archive --vfs-read-chunk-size 8M --dir-cache-time 1h
+Restart=always
+RestartSec=5
+# Кэш — на системном диске, не в /srv/hls (вытеснение считает только /srv/hls)
+CacheDirectory=hls-archive
+CacheDirectoryMode=0700
+ProtectSystem=strict
+ReadWritePaths=/etc/hls-cdn /var/cache/hls-archive
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

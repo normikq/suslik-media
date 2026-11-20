@@ -1,0 +1,81 @@
+{
+  "hls_id": [
+    {
+      "infohash": "0123456789abcdef0123456789abcdef01234567",
+      "path": "Movie.2010.1080p/Movie.2010.1080p.mkv",
+      "size": 8589934592,
+      "input": "0123456789abcdef0123456789abcdef01234567|Movie.2010.1080p/Movie.2010.1080p.mkv|8589934592",
+      "hls_id": "178e77a7ddb10079"
+    },
+    {
+      "ad_id": "412345678",
+      "path": "Show.S01/Show.S01E02.mkv",
+      "size": 1572864000,
+      "input": "ad:412345678|Show.S01/Show.S01E02.mkv|1572864000",
+      "hls_id": "c70a26717c8a1374"
+    }
+  ],
+  "sign": [
+    {
+      "secret": "test-secret-do-not-use",
+      "exp": 1767225600,
+      "hls_id": "178e77a7ddb10079",
+      "input": "1767225600178e77a7ddb10079 test-secret-do-not-use",
+      "sig": "u0I87lwJqdrpHMhzlcq4hg"
+    },
+    {
+      "secret": "test-secret-do-not-use",
+      "exp": 1767268800,
+      "hls_id": "178e77a7ddb10079",
+      "input": "1767268800178e77a7ddb10079 test-secret-do-not-use",
+      "sig": "72wPE2UGsCTEGh7umtpVVQ"
+    }
+  ],
+  "fingerprint": [
+    {
+      "size": 2097152,
+      "mode": "whole",
+      "fingerprint": "cd548dd9defdf5233e2c6b761b4234072802cd5fb064be7fb360b439dd3c6546"
+    },
+    {
+      "size": 3145728,
+      "mode": "three",
+      "offsets": [
+        0,
+        1048576,
+        2097152
+      ],
+      "chunk_sha256": [
+        "ca6073392ee71dbd1a2d356c3caa233f8f828ae17f8f8ba8570ee3491be128ab",
+        "29d23c50c03bcd0796eb76ab5c2f688a8b84300e7f46ef19fbb40dcd6e4bc203",
+        "7d6296b1253820ee061c640f1f80ce89d423c7c55d9a86e836eb2d6e48c51c92"
+      ],
+      "fingerprint": "384c24d8e497b5691ca670c1c9ea3342bcf77d03919b71857ac8d865d58a1689"
+    },
+    {
+      "size": 10498105,
+      "mode": "three",
+      "offsets": [
+        0,
+        4724764,
+        9449529
+      ],
+      "chunk_sha256": [
+        "ca6073392ee71dbd1a2d356c3caa233f8f828ae17f8f8ba8570ee3491be128ab",
+        "0fd8e22a50616c85c664d4321bb77106395e0198a2af8cf73ce40f34f6cdd096",
+        "64e2cf6b526c9bcc397c4f4f419ece70d7142e7941cba393c31b97e811c7cd54"
+      ],
+      "fingerprint": "c42e9ee5c3656987b56beb9ef1e6d78b7688dcd864b45913097f58dedc12e439"
+    }
+  ],
+  "generator": "byte[i] = uint32(i * 2654435761) >> 24, i — смещение в файле",
+  "master_sign": [
+    {
+      "session_secret": "test-session-secret-do-not-use",
+      "exp": 1767225600,
+      "hls_id": "178e77a7ddb10079",
+      "input": "hls:1767225600:178e77a7ddb10079",
+      "sig": "cd7c295483d30ccfc524681e0f1b21eb0cd4ae644cea19a4874ff4a8426bcfc3"
+    }
+  ]
+}

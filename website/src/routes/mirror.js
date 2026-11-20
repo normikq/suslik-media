@@ -21,6 +21,7 @@ const { isLibraryAdmin } = require("../services/downloads");
 const { getUser, SHARED_USER } = require("../services/users");
 const ca = require("../services/custom-audio");
 const { findFile, pickAudio, pickSubtitles } = require("../services/sidecars");
+const { variantHls } = require("./hls");
 
 function authorOf(req, res) {
   if (!req.customAudioAuthor) {
@@ -193,7 +194,15 @@ router.post("/api/file/variant-url", requireLogin, mirrorUrlLimiter, async (req,
     markLinkOpened(entry.sourceUrl);
     // озвучки пользователей не кэшируем: «mine» зависит от того, кто спрашивает
     const customAudio = await resolveCustomAudioForVariant(adId, entry.path, req, res, base);
-    res.json(renderVariant(entry, base, customAudio));
+    const out = renderVariant(entry, base, customAudio);
+    // HLS (docs/HLS.md §10): статус и подпись master.m3u8 — свежие на каждый запрос, в кэш не попадают
+    try {
+      const block = await variantHls(req, { adId, path: entry.path, size: entry.size });
+      if (block) out.hls = block;
+    } catch (err) {
+      console.warn("[hls] variant-url:", err.message);
+    }
+    res.json(out);
   } catch (err) {
     res.status(502).json({ error: err.message || "Не удалось разрешить ссылку варианта." });
   }

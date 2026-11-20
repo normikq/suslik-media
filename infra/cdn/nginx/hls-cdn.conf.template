@@ -1,0 +1,156 @@
+# CDN Suslik Media для HLS (docs/HLS.md §6, §10). Контекст http (кладётся в /etc/nginx/conf.d/).
+# Шаблон: install.sh подставляет ${...} через envsubst (только перечисленные переменные, $-переменные nginx не трогаются).
+#   HLS_CDN_DOMAIN   — домен CDN (cdn.example.org)
+#   HLS_CORS_ORIGIN  — origin сайта, которому разрешён CORS (https://site.example.org)
+#   HLS_ROOT         — корень ассетов (/srv/hls)
+#   HLS_TLS_CERT, HLS_TLS_KEY — сертификат certbot
+#   HLS_SECRET_CONF  — файл с секретом подписи (map $hls_sign_secret), 0640 root, не в репозитории
+#   HLS_LOG_DIR      — каталог журналов (/var/log/nginx)
+#   HLS_ARCHIVE_STREAM_CONF, HLS_ARCHIVE_STREAM_SERVER_CONF — просмотр прямо из архива (§20): /etc/nginx/hls-archive-stream.conf
+#                      и …-server.conf; при выключенном потоке оба пустые (render.sh)
+# Здесь, в отличие от основного сервера, HTTP/2 можно: на этой машине нет Xray.
+
+# Длинный origin не влезает в корзину map по умолчанию (32/64 байта); директива должна стоять до первого map.
+# Если в nginx.conf она уже задана — убрать строку.
+map_hash_bucket_size 128;
+
+include ${HLS_SECRET_CONF};
+
+# Журнал для evict.sh и fail2ban: <время, с>.<мс> <hls_id> <profile> <статус> <байт> <метод> <IP>
+log_format hls_lru '$msec $hls_hid $hls_prof $status $body_bytes_sent $request_method $remote_addr';
+
+# CORS только для сайта; чужой Origin получает пустое значение (заголовок не отправляется).
+map $http_origin $hls_cors_origin {
+    default             "";
+    "${HLS_CORS_ORIGIN}" $http_origin;
+}
+
+# Cache-Control по типу файла. $uri здесь уже после rewrite: /<hls_id>/<profile>/<путь>.
+# Сегменты внутри профиля не меняются (подписанный URL к тому же меняется раз в 12 ч).
+map "$request_method:$uri" $hls_cache_control {
+    default                    "no-store";
+    "~^(GET|HEAD):.*\.m4s$"    "public, max-age=31536000, immutable";
+    "~^(GET|HEAD):.*\.m3u8$"   "public, max-age=60";
+    "~^(GET|HEAD):.*\.vtt$"    "public, max-age=3600";
+    "~^(GET|HEAD):.*\.json$"   "no-cache";
+}
+
+# Типы для ответов из архива (§20, @hls_archive): у проксированного ответа «types» не действуют.
+map $uri $hls_archive_type {
+    default         application/octet-stream;
+    "~\.m3u8$"      application/vnd.apple.mpegurl;
+    "~\.(m4s|mp4)$" video/mp4;
+    "~\.vtt$"       text/vtt;
+    "~\.json$"      application/json;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${HLS_CDN_DOMAIN};
+    server_tokens off;
+
+    # certbot --webroot
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type text/plain;
+    }
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    # «listen … http2» работает и в nginx 1.24 (Ubuntu 24.04), и в 1.25+ (там — с предупреждением о «http2 on»).
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name ${HLS_CDN_DOMAIN};
+    server_tokens off;
+
+    ssl_certificate     ${HLS_TLS_CERT};
+    ssl_certificate_key ${HLS_TLS_KEY};
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_session_cache   shared:hls_ssl:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    root ${HLS_ROOT};
+
+    # Отдача с HDD: sendfile без копирования, чтение в пуле потоков (не блокирует worker).
+    sendfile           on;
+    sendfile_max_chunk 512k;
+    tcp_nopush         on;
+    tcp_nodelay        on;
+    aio                threads;
+    open_file_cache          max=4000 inactive=120s;
+    open_file_cache_valid    60s;
+    open_file_cache_errors   off;
+    keepalive_timeout  75s;
+    keepalive_requests 10000;
+
+    access_log off;
+    error_log  ${HLS_LOG_DIR}/hls-error.log warn;
+
+    location = /healthz {
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    # URL: /hls/<sig>/<exp>/<hls_id>/<profile>/<путь>   (§6)
+    # Именованные захваты = $1..$3 контракта; rewrite ниже их не затирает (у него свой безымянный захват).
+    # sig — любой набор base64url-символов: кривая подпись даёт 403, а не 404.
+    location ~ "^/hls/(?<hls_sig>[A-Za-z0-9_=-]{1,64})/(?<hls_exp>[0-9]{1,12})/(?<hls_hid>[0-9a-f]{16})/(?<hls_prof>[a-z0-9][a-z0-9-]{0,31})/(?<hls_file>[A-Za-z0-9_-][A-Za-z0-9._/-]*)$" {
+        access_log ${HLS_LOG_DIR}/hls-access.log hls_lru;
+
+        # always — чтобы и 403/410/404 были видны скрипту в браузере.
+        add_header Access-Control-Allow-Origin   $hls_cors_origin always;
+        add_header Access-Control-Allow-Methods  "GET, HEAD, OPTIONS" always;
+        add_header Access-Control-Allow-Headers  "Range" always;
+        add_header Access-Control-Expose-Headers "Content-Range, Content-Length, Accept-Ranges" always;
+        add_header Access-Control-Max-Age        86400 always;
+        add_header Vary                          Origin always;
+        add_header X-Content-Type-Options        nosniff always;
+        # без always: только успешные ответы, ошибки не кэшируются как immutable
+        add_header Cache-Control                 $hls_cache_control;
+
+        # preflight — до проверки подписи (браузер шлёт его на тот же URL)
+        if ($request_method = OPTIONS) {
+            return 204;
+        }
+        if ($request_method !~ ^(GET|HEAD)$) {
+            return 405;
+        }
+
+        # sig = base64url_без_паддинга(md5_raw("<exp><hls_id> <HLS_SIGN_SECRET>")); профиль в подпись не входит.
+        secure_link     $hls_sig,$hls_exp;
+        secure_link_md5 "$secure_link_expires$hls_hid $hls_sign_secret";
+        if ($secure_link = "") {
+            return 403;
+        }
+        if ($secure_link = "0") {
+            return 410;
+        }
+
+        # /hls/<sig>/<exp>/<hls_id>/<profile>/<путь> → ${HLS_ROOT}/<hls_id>/<profile>/<путь>
+        rewrite ^/hls/[^/]+/[0-9]+/(.*)$ /$1 break;
+
+        # Просмотр прямо из архива (§20): «try_files $uri @hls_archive;» или пусто. try_files — после проверки подписи и rewrite.
+        include ${HLS_ARCHIVE_STREAM_CONF};
+
+        types {
+            application/vnd.apple.mpegurl m3u8;
+            video/mp4                     m4s mp4;
+            text/vtt                      vtt;
+            application/json              json;
+        }
+        default_type application/octet-stream;
+        charset off;
+    }
+
+    # @hls_archive (§20) или пусто
+    include ${HLS_ARCHIVE_STREAM_SERVER_CONF};
+
+    location / {
+        return 404;
+    }
+}

@@ -9,6 +9,16 @@ const config = require("../config");
 const PRECOMPRESSED = { "/index.html": "index.html", "/redesign.css": "redesign.css" };
 const precompressedCache = new Map(); // name -> { mtime, raw, gz, br, etag, type }
 
+// Origin CDN для HLS (docs/HLS.md §12): только схема и хост, без пути; не адрес http(s) — ничего
+function cdnOrigin(url) {
+  try {
+    const u = new URL(String(url || ""));
+    return /^https?:$/.test(u.protocol) ? ` ${u.origin}` : "";
+  } catch {
+    return "";
+  }
+}
+
 // CSP страницы: встроенные <script> разрешены только такими, какие они есть в файле (sha256), — внедрённый скрипт
 // (XSS через название торрента и т. п.) не выполнится. Хеши пересчитываются при замене index.html.
 // По стандарту HTML5 (Preprocessing the input stream) браузеры всегда нормализуют переводы строк CRLF (\r\n)
@@ -24,14 +34,16 @@ function pageCsp(html) {
       hashSet.add(`'sha256-${crypto.createHash("sha256").update(raw, "utf8").digest("base64")}'`);
     }
   }
+  const cdn = cdnOrigin(config.HLS_CDN_URL);
   return [
     "default-src 'self'",
     `script-src 'self' ${[...hashSet].join(" ")}`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https://cdn.discordapp.com",
     "font-src 'self' data:",
-    "media-src 'self' blob:",
-    "connect-src 'self' ws: wss:",
+    `media-src 'self' blob:${cdn}`,
+    `connect-src 'self' ws: wss:${cdn}`,
+    "worker-src 'self' blob:",
     "object-src 'none'",
     "base-uri 'none'",
     "form-action 'self'",

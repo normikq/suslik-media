@@ -1,0 +1,57 @@
+#!/bin/bash
+# fake-rclone — заглушка rclone для офлайн-проверок (HLS_RCLONE=…/test/fake-rclone). Архив — локальная папка FAKE_RCLONE_ROOT:
+# «remote:путь» → $FAKE_RCLONE_ROOT/путь, локальные пути как есть. Ключи (-…, --…=…) пропускаются: скрипты пишут их через «=».
+# Команды: copy SRC DST, check SRC DST (--one-way по размерам), purge PATH, size PATH (--json), lsf PATH, lsd PATH.
+# Нет каталога → код 3, как у rclone. Сбой по требованию: FAKE_RCLONE_FAIL="copy=7 purge=1". Журнал вызовов — FAKE_RCLONE_LOG.
+set -u
+: "${FAKE_RCLONE_ROOT:?нужен FAKE_RCLONE_ROOT}"
+args=()
+for a in "$@"; do case "$a" in -*) ;; *) args+=("$a") ;; esac; done
+cmd=${args[0]:-}
+echo "$cmd ${args[*]:1}" >> "${FAKE_RCLONE_LOG:-/dev/null}"
+for f in ${FAKE_RCLONE_FAIL:-}; do
+  if [ "${f%%=*}" = "$cmd" ]; then echo "fake-rclone: сбой $cmd по требованию" >&2; exit "${f#*=}"; fi
+done
+
+map() {
+  local p=$1
+  if [[ $p =~ ^[A-Za-z0-9_-]+:(.*)$ ]]; then p="$FAKE_RCLONE_ROOT/${BASH_REMATCH[1]}"; fi
+  p=${p%/}; echo "$p"
+}
+listing() { (cd "$1" && find . -type f -printf '%P %s\n' | sort); }
+need_dir() { [ -d "$1" ] || { echo "fake-rclone: directory not found: $1" >&2; exit 3; }; }
+
+case "$cmd" in
+  copy)
+    s=$(map "${args[1]}"); d=$(map "${args[2]}")
+    need_dir "$s"; mkdir -p "$d"; cp -R "$s/." "$d/"
+    ;;
+  sync)   # как copy, но лишнее в приёмнике удаляется
+    s=$(map "${args[1]}"); d=$(map "${args[2]}")
+    need_dir "$s"; rm -rf -- "$d"; mkdir -p "$d"; cp -R "$s/." "$d/"
+    ;;
+  check)
+    s=$(map "${args[1]}"); d=$(map "${args[2]}")
+    need_dir "$s"; need_dir "$d"
+    missing=$(comm -23 <(listing "$s") <(listing "$d"))
+    if [ -n "$missing" ]; then echo "fake-rclone: различия: $missing" >&2; exit 1; fi
+    ;;
+  purge)
+    p=$(map "${args[1]}"); need_dir "$p"; rm -rf -- "$p"
+    ;;
+  size)
+    p=$(map "${args[1]}"); need_dir "$p"
+    count=$(find "$p" -type f | wc -l | tr -d ' ')
+    bytes=$(find "$p" -type f -printf '%s\n' | awk '{ s += $1 } END { print s + 0 }')
+    printf '{"count":%d,"bytes":%d}\n' "$count" "$bytes"
+    ;;
+  lsf)
+    p=$(map "${args[1]}"); need_dir "$p"; ls -1p -- "$p"
+    ;;
+  lsd)
+    p=$(map "${args[1]}"); need_dir "$p"
+    ;;
+  *)
+    echo "fake-rclone: неизвестная команда ${cmd:-<нет>}" >&2; exit 1
+    ;;
+esac

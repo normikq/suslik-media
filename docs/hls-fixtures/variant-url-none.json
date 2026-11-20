@@ -1,0 +1,21 @@
+{
+  "ok": true,
+  "url": "https://site.example.org/api/file/proxy/Movie.2010.1080p.mkv?link=...&exp=1767225600&sig=<64 hex>",
+  "source_url": "...",
+  "name": "Movie.2010.1080p.mkv",
+  "path": "Movie.2010.1080p/Movie.2010.1080p.mkv",
+  "size": 8589934592,
+  "ad_id": "412345678",
+  "variant_key": "412345678|Movie.2010.1080p/Movie.2010.1080p.mkv",
+  "audio": [],
+  "subtitles": [],
+  "hls": {
+    "status": "none",
+    "direct_ok": false,
+    "direct": {
+      "ext": "mkv",
+      "vcodec": "hevc",
+      "acodec": "dts"
+    }
+  }
+}

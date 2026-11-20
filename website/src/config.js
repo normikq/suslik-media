@@ -66,6 +66,29 @@ const DISCORD_ENABLED = Boolean(DISCORD_CLIENT_ID && DISCORD_CLIENT_SECRET);
 // Discord Activity: внешний адрес сайта для ссылок «Открыть в приложении» (внутри Activity видно только discordsays.com)
 const ACTIVITY_SITE_URL = (process.env.ACTIVITY_SITE_URL || "").trim().replace(/\/+$/, "");
 const PASSWORD_AUTH_ENABLED = process.env.PASSWORD_AUTH_ENABLED !== "false" && Boolean(SITE_PASSWORD);
+// HLS (docs/HLS.md §13): только из .env, доменов и секретов по умолчанию нет. Выключено — сайт ведёт себя как раньше.
+const HLS_ENABLED = process.env.HLS_ENABLED === "true";
+// Адрес CDN без схемы («cdn.example.org») дал бы в master.m3u8 относительные ссылки — браузер достроил бы их
+// от адреса сайта и получил 404. Поэтому схема по умолчанию https://.
+function normalizeCdnUrl(raw) {
+  let s = String(raw || "").trim().replace(/\/+$/, "");
+  if (!s) return "";
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) s = `https://${s.replace(/^\/+/, "")}`;
+  try {
+    const u = new URL(s);
+    if (!/^https?:$/.test(u.protocol) || !u.hostname) return "";
+    return `${u.origin}${u.pathname.replace(/\/+$/, "")}`;
+  } catch {
+    return "";
+  }
+}
+const HLS_CDN_URL = normalizeCdnUrl(process.env.HLS_CDN_URL);
+const HLS_SIGN_SECRET = process.env.HLS_SIGN_SECRET || "";
+const HLS_WORKER_TOKEN = process.env.HLS_WORKER_TOKEN || "";
+const HLS_CDN_TOKEN = process.env.HLS_CDN_TOKEN || "";
+const HLS_BETA_USERS = (process.env.HLS_BETA_USERS || "").split(",").map(s => s.trim()).filter(Boolean);
+// §20: CDN умеет отдавать вытесненную (cold) версию прямо из архива (HLS_ARCHIVE_STREAM=1 в cdn.env) — играть её сразу
+const HLS_ARCHIVE_STREAM = process.env.HLS_ARCHIVE_STREAM === "true";
 
 // Where small runtime files live (sessions, library cache, metadata cache). Defaults to the website folder.
 const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : ROOT_DIR;
@@ -98,6 +121,10 @@ const AUDIO_TRACKS_FILE = path.join(DATA_DIR, "audio-tracks.json"); // внеш�
 const AI_TITLE_FILE = path.join(DATA_DIR, "ai-titles.json"); // названия, предложенные ИИ, и кулдауны (services/aititle.js)
 const MARKERS_FILE = path.join(DATA_DIR, "markers-cache.json"); // заставки и титры из AniSkip (services/markers.js)
 const VARIANT_OFFSETS_FILE = path.join(DATA_DIR, "variant-offsets.json"); // подстройка времени между раздачами в комнатах (services/variant-offsets.js)
+// HLS (services/hls-store.js, docs/HLS.md §3): ассеты, алиасы файлов раздач, очередь кодирования
+const HLS_ASSETS_FILE = path.join(DATA_DIR, "hls-assets.json");
+const HLS_ALIASES_FILE = path.join(DATA_DIR, "hls-aliases.json");
+const HLS_QUEUE_FILE = path.join(DATA_DIR, "hls-queue.json");
 // (Комнаты совместного просмотра живут только в памяти: после перезапуска приложения входят заново)
 
 if (!process.env.SESSION_SECRET) {
@@ -105,6 +132,16 @@ if (!process.env.SESSION_SECRET) {
 }
 if (DISCORD_ENABLED && !(DISCORD_BOT_TOKEN && DISCORD_GUILD_ID) && DISCORD_ALLOWED_USERS.length === 0) {
   console.warn("ПРЕДУПРЕЖДЕНИЕ: вход через Discord включён, но не заданы ни бот (DISCORD_BOT_TOKEN + DISCORD_GUILD_ID), ни DISCORD_ALLOWED_USERS: войти сможет только DISCORD_OWNER_ID.");
+}
+// Секрет подписи CDN попадает в secure_link_md5 nginx: другие символы ломают конфиг CDN (infra/cdn)
+const HLS_SECRET_RE = /^[A-Za-z0-9._~+/=-]+$/;
+if (HLS_ENABLED && HLS_SIGN_SECRET && !HLS_SECRET_RE.test(HLS_SIGN_SECRET)) {
+  console.warn("ПРЕДУПРЕЖДЕНИЕ: HLS_SIGN_SECRET содержит недопустимые символы (можно A-Z a-z 0-9 . _ ~ + / = -): подписи CDN не совпадут с nginx.");
+}
+if (HLS_ENABLED && process.env.HLS_CDN_URL && !HLS_CDN_URL) {
+  console.warn("ПРЕДУПРЕЖДЕНИЕ: HLS_CDN_URL не похож на адрес (нужно https://cdn.<домен>): HLS выдаваться не будет.");
+} else if (HLS_ENABLED && HLS_CDN_URL && !/^https?:\/\//i.test(String(process.env.HLS_CDN_URL).trim())) {
+  console.warn(`ПРЕДУПРЕЖДЕНИЕ: в HLS_CDN_URL нет схемы — используется ${HLS_CDN_URL}. Лучше записать её явно.`);
 }
 if (!SITE_PASSWORD) {
   console.warn("ПРЕДУПРЕЖДЕНИЕ: SITE_PASSWORD не задан. Вход будет недоступен, пока пароль не будет указан в .env.");
@@ -160,6 +197,18 @@ module.exports = {
   AI_TITLE_FILE,
   MARKERS_FILE,
   VARIANT_OFFSETS_FILE,
+  HLS_ASSETS_FILE,
+  HLS_ALIASES_FILE,
+  HLS_QUEUE_FILE,
+  HLS_ENABLED,
+  HLS_CDN_URL,
+  normalizeCdnUrl,
+  HLS_SIGN_SECRET,
+  HLS_WORKER_TOKEN,
+  HLS_CDN_TOKEN,
+  HLS_BETA_USERS,
+  HLS_ARCHIVE_STREAM,
+  HLS_SECRET_RE,
   GEMINI_API_KEY,
   AI_TITLE_MODEL,
   AI_TITLE_COOLDOWN_MIN,
