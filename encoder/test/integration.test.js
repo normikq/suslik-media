@@ -2,7 +2,7 @@
 
 // Полный цикл на синтетическом образце через заглушку сервера:
 // testsrc2 1080p + 2 звуковые дорожки (AC3 5.1) + SRT в MKV, ~36 с → next → ffprobe → отпечаток → probe →
-// encode (v1, затем v1-copy) → проверка → manifest → «CDN» в локальной папке → done.
+// encode (v1, затем v1-copy: копия + 720p на образце с неровными ключевыми кадрами) → проверка → manifest → «CDN» в локальной папке → done.
 // Кодировщик: SM_TEST_ENCODER, иначе nvenc (если работает), иначе x265 (ultrafast). Без ffmpeg тест пропускается.
 
 const test = require('node:test');
@@ -179,19 +179,96 @@ test('интеграция: образец → v1 и v1-copy через загл
     assert.equal(done.bytes, dirBytes(out));
   });
 
-  await t.test('v1-copy (H.264 без перекодирования)', async () => {
-    const { stub, results, out } = await runWorker('v1-copy');
-    assert.equal(results[0].result, 'done', JSON.stringify(results[0]));
-    assert.deepEqual(fs.readdirSync(out).sort(), ['1080p', 'a0', 'a1', 'manifest.json', 's0']);
-    const pl = checkPlaylist(path.join(out, '1080p'), 'video.m4s');
-    assert.ok(pl.segments.length >= 5);
-    const m = JSON.parse(fs.readFileSync(path.join(out, 'manifest.json'), 'utf8'));
-    assert.equal(m.profile, 'v1-copy');
-    assert.equal(m.encoder, 'copy');
-    assert.equal(m.video.length, 1);
-    assert.match(m.video[0].codec, /^avc1\.42/); // ultrafast → Constrained Baseline
-    assert.equal(m.audio.length, 2);
-    assert.equal(stub.state.done[0].profile, 'v1-copy');
+  await t.test('v1-copy: копия 1080p + 720p с ключевыми кадрами исходника', async () => {
+    // генерируем отдельный образец с B-кадрами и неравномерными ключевыми кадрами
+    const copySample = path.join(tmp, 'sample-copy.mkv');
+    const srt = path.join(tmp, 'sample.srt');
+    const genCopy = sh(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-y',
+      '-f', 'lavfi', '-i', `testsrc2=size=1920x1080:rate=24000/1001:duration=${DURATION}`,
+      '-f', 'lavfi', '-i', `sine=frequency=440:sample_rate=48000:duration=${DURATION}`,
+      '-f', 'lavfi', '-i', `sine=frequency=660:sample_rate=48000:duration=${DURATION}`,
+      '-i', srt,
+      '-map', '0', '-map', '1', '-map', '2', '-map', '3',
+      '-c:v', 'libx264', '-preset', 'fast', '-bf', '3', '-crf', '28', '-maxrate', '6M', '-bufsize', '12M',
+      '-pix_fmt', 'yuv420p', '-g', '1000', '-x264-params', 'scenecut=0',
+      '-force_key_frames', '0,4.2,9.1,13.0,20.5,24.0,31.3',
+      '-c:a', 'ac3', '-ac', '6', '-c:s', 'srt',
+      '-metadata:s:a:0', 'language=rus', '-metadata:s:a:0', 'title=Дубляж', '-disposition:a:0', 'default',
+      '-metadata:s:a:1', 'language=eng', '-disposition:a:1', '0',
+      '-metadata:s:s:0', 'language=rus', '-metadata:s:s:0', 'title=Полные',
+      copySample]);
+    assert.equal(genCopy.code, 0, genCopy.err);
+
+    const prev = sample;
+    sample = copySample;
+    try {
+      const { stub, results, out } = await runWorker('v1-copy');
+      assert.equal(results[0].result, 'done', JSON.stringify(results[0]));
+      assert.deepEqual(fs.readdirSync(out).sort(), ['1080p', '720p', 'a0', 'a1', 'manifest.json', 's0']);
+
+      const p1 = checkPlaylist(path.join(out, '1080p'), 'video.m4s');
+      const p2 = checkPlaylist(path.join(out, '720p'), 'video.m4s');
+      assert.equal(p1.segments.length, p2.segments.length);
+      assert.ok(p1.segments.length >= 5);
+
+      // длительности сегментов 1080p и 720p должны совпадать с точностью до кадра (последний — до 0.5 с)
+      const frame = 1001 / 24000;
+      const last = p1.segments.length - 1;
+      for (let i = 0; i < last; i++) {
+        assert.ok(
+          Math.abs(p1.segments[i].duration - p2.segments[i].duration) <= frame + 0.002,
+          `сегмент ${i}: 1080p=${p1.segments[i].duration}, 720p=${p2.segments[i].duration}`,
+        );
+      }
+      assert.ok(
+        Math.abs(p1.segments[last].duration - p2.segments[last].duration) <= 0.5,
+        `последний сегмент: 1080p=${p1.segments[last].duration}, 720p=${p2.segments[last].duration}`,
+      );
+
+      // начала сегментов копии (накопленная сумма длительностей p1)
+      const starts = [0];
+      for (let i = 0; i < p1.segments.length - 1; i++) {
+        starts.push(starts[i] + p1.segments[i].duration);
+      }
+
+      // ключевые кадры 720p — ровно там же, где у исходника и копии (отсчёт от первого кадра:
+      // у кодировщика с B-кадрами pts начинается не с 0); каждое начало сегмента копии — ключевой кадр 720p
+      const rel = (k) => k.map((x) => x - k[0]);
+      const ks = rel(keyframes(copySample));
+      const k1 = rel(keyframes(path.join(out, '1080p', 'video.m4s')));
+      const k2 = rel(keyframes(path.join(out, '720p', 'video.m4s')));
+      const near = (a, b) => a.length === b.length && a.every((x, i) => Math.abs(x - b[i]) <= frame + 0.002);
+      assert.ok(near(k1, ks), `копия ${JSON.stringify(k1)}, исходник ${JSON.stringify(ks)}`);
+      assert.ok(near(k2, ks), `720p ${JSON.stringify(k2)}, исходник ${JSON.stringify(ks)}`);
+      for (const s of starts) {
+        assert.ok(k2.some((k) => Math.abs(k - s) <= frame + 0.002), `начало сегмента ${s} не ключевой кадр 720p ${JSON.stringify(k2)}`);
+      }
+
+      // сегменты начинаются на ключевых кадрах исходника (неровных)
+      const expectedKfs = [4.2, 9.1, 13.0, 20.5, 24.0, 31.3];
+      for (const s of starts.slice(1)) {
+        assert.ok(
+          expectedKfs.some((kf) => Math.abs(s - kf) <= 0.05),
+          `начало сегмента ${s} не совпадает ни с одним из ${JSON.stringify(expectedKfs)}`,
+        );
+      }
+
+      // manifest.json и состояние заглушки
+      const m = JSON.parse(fs.readFileSync(path.join(out, 'manifest.json'), 'utf8'));
+      assert.equal(m.profile, 'v1-copy');
+      assert.equal(m.encoder, 'copy');
+      assert.deepEqual(m.video.map((x) => [x.dir, x.width, x.height]), [['1080p', 1920, 1080], ['720p', 1280, 720]]);
+      assert.match(m.video[0].codec, /^avc1\./);
+      assert.match(m.video[1].codec, encoder === 'x264' ? /^avc1\.[0-9a-f]{6}$/ : /^hvc1\.1\.6\.L\d+\.90$/);
+      for (const x of m.video) {
+        assert.ok(x.bandwidth >= x.avg_bandwidth && x.avg_bandwidth > 0);
+      }
+      assert.equal(m.audio.length, 2);
+      assert.equal(stub.state.done[0].profile, 'v1-copy');
+      assert.deepEqual(stub.state.failed, []);
+    } finally {
+      sample = prev;
+    }
   });
 
   await t.test('alias: без кодирования и без done', async () => {

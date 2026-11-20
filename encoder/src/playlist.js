@@ -99,6 +99,28 @@ function bitrates(pl) {
   return { peak: Math.round(peak), avg: dur > 0 ? Math.round((bytes * 8) / dur) : 0 };
 }
 
+/**
+ * Совпадают ли сегменты двух видеодорожек (ABR): одинаковое число, длительности EXTINF и начала сегментов
+ * в пределах tol, с. Последний сегмент — с допуском tailTol: у копии ffmpeg считает его без длительности
+ * последних кадров (на 1–3 кадра короче), на переключение качества это не влияет.
+ * @returns {string|null} описание первого расхождения или null
+ */
+function segmentMismatch(a, b, tol, tailTol = 0.5) {
+  if (a.segments.length !== b.segments.length) return `сегментов ${a.segments.length} и ${b.segments.length}`;
+  let ta = 0;
+  let tb = 0;
+  const n = a.segments.length;
+  for (let i = 0; i < n; i++) {
+    const da = a.segments[i].duration;
+    const db = b.segments[i].duration;
+    if (Math.abs(ta - tb) > tol) return `сегмент ${i} начинается на ${ta.toFixed(3)} с и ${tb.toFixed(3)} с`;
+    if (Math.abs(da - db) > (i === n - 1 ? tailTol : tol)) return `сегмент ${i}: ${da} с и ${db} с`;
+    ta += da;
+    tb += db;
+  }
+  return null;
+}
+
 /** Тривиальный медиаплейлист субтитров: один сегмент на всю длительность (как subs-s0.m3u8). */
 function subsPlaylist(durationMs, file = 'subs.vtt') {
   const sec = Math.max(0.001, durationMs / 1000);
@@ -115,4 +137,4 @@ function subsPlaylist(durationMs, file = 'subs.vtt') {
   ].join('\n');
 }
 
-module.exports = { parseMediaPlaylist, validateByteRangePlaylist, totalDuration, bitrates, subsPlaylist, parseAttrs };
+module.exports = { parseMediaPlaylist, validateByteRangePlaylist, totalDuration, bitrates, segmentMismatch, subsPlaylist, parseAttrs };

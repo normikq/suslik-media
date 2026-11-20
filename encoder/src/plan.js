@@ -47,6 +47,21 @@ function videoTiers(disp) {
   return out;
 }
 
+/**
+ * Дорожки v1-copy (§5): верхняя — копия исходника (папка по высоте: > 720 → 1080p/, иначе 720p/),
+ * при высоте > 720 — ещё 720p, перекодированная с ключевыми кадрами ровно там, где у исходника (sourceKeys).
+ */
+function copyTiers(v, disp) {
+  const big = v.height > 720;
+  const out = [{ dir: big ? '1080p' : '720p', width: v.width, height: v.height, copy: true, codec_name: v.codec_name }];
+  if (big) {
+    const t = TIERS[1];
+    const f = Math.min(1, t.maxW / disp.w, t.maxH / disp.h);
+    out.push({ dir: t.dir, width: even(disp.w * f), height: even(disp.h * f), maxrate: t.maxrate, sourceKeys: true });
+  }
+  return out;
+}
+
 /** Dolby Vision: профиль и совместимость базы из DOVI configuration record (ffprobe), null — не DV. */
 function doviInfo(v, rawV) {
   if (!v.dovi) return null;
@@ -71,7 +86,7 @@ function buildPlan(probe, profile, raw = {}) {
   let tonemap = false;
   let dovi = null;
   if (profile === 'v1-copy') {
-    video = [{ dir: '1080p', width: v.width, height: v.height, copy: true, codec_name: v.codec_name }];
+    video = copyTiers(v, displaySize(v, rawById.get(v.index)));
   } else if (profile === 'v1') {
     tonemap = isHdr(v);
     dovi = doviInfo(v, rawById.get(v.index));
@@ -111,8 +126,10 @@ function hlsOut(dir, file) {
 const commonOut = ['-map_metadata', '-1', '-map_chapters', '-1', '-max_muxing_queue_size', '4096'];
 
 function videoEncoderArgs(cfg, tier, fps, tonemap) {
-  const gop = Math.max(1000, Math.ceil(fps * SEG * 2)); // сами по себе ключевые кадры не появятся — только принудительные
-  const kf = ['-force_key_frames', `expr:gte(t,n_forced*${SEG})`, '-forced-idr', '1'];
+  // сами по себе ключевые кадры не появятся — только принудительные: каждые 6 с (v1)
+  // или ровно на ключевых кадрах исходника (720p в v1-copy, интервал у исходника до 11 с — §5)
+  const gop = tier.sourceKeys ? Math.max(1000, Math.ceil(fps * 30)) : Math.max(1000, Math.ceil(fps * SEG * 2));
+  const kf = ['-force_key_frames', tier.sourceKeys ? 'source' : `expr:gte(t,n_forced*${SEG})`, '-forced-idr', '1'];
   const rate = ['-maxrate', String(tier.maxrate), '-bufsize', String(tier.maxrate * 2)];
   // после тонмаппинга помечаем bt709 явно; иначе цвет берётся из кадров исходника
   const color = tonemap ? ['-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709'] : [];
@@ -140,7 +157,9 @@ function videoEncoderArgs(cfg, tier, fps, tonemap) {
 function buildFfmpegArgs(cfg, plan, src, outDir) {
   const args = ['-hide_banner', '-nostdin', '-y', '-loglevel', 'error', '-progress', 'pipe:1', '-nostats'];
   const tm = plan.profile === 'v1' ? (plan.tonemapPath !== undefined ? plan.tonemapPath : tonemapPathFor(cfg, plan)) : null;
-  if (plan.profile === 'v1' && cfg.encoder === 'nvenc' && cfg.hwdec) args.push('-hwaccel', 'cuda');
+  // v1-copy: декодировать нужно только для 720p (копия идёт пакетами)
+  const decodes = plan.profile === 'v1' || plan.video.some((t) => !t.copy);
+  if (decodes && cfg.encoder === 'nvenc' && cfg.hwdec) args.push('-hwaccel', 'cuda');
   if (tm === 'libplacebo') args.push(...vulkanArgs(cfg.tonemapPath.device.index));
   args.push(...inputNetArgs(src, cfg), '-i', src);
 
@@ -168,9 +187,22 @@ function buildFfmpegArgs(cfg, plan, src, outDir) {
       args.push('-map', `[v${i}]`, ...videoEncoderArgs(cfg, t, plan.fps, plan.tonemap), ...commonOut, ...hlsOut(dir, 'video.m4s'));
     });
   } else {
-    const t = plan.video[0];
-    const tag = t.codec_name === 'hevc' ? 'hvc1' : 'avc1';
-    args.push('-map', `0:${plan.srcVideoIndex}`, '-c:v', 'copy', '-tag:v', tag, ...commonOut, ...hlsOut(path.join(outDir, t.dir), 'video.m4s'));
+    // v1-copy: копия + (если есть) 720p из того же входа за один проход
+    const enc = plan.video.filter((t) => !t.copy);
+    if (enc.length) {
+      const pre = plan.interlaced ? ['bwdif=mode=send_frame:deint=interlaced'] : [];
+      args.push('-filter_complex', enc.map((t) =>
+        `[0:${plan.srcVideoIndex}]${[...pre, 'format=yuv420p', `scale=${t.width}:${t.height}`, 'setsar=1'].join(',')}[c${t.dir}]`).join(';'));
+    }
+    for (const t of plan.video) {
+      const dir = path.join(outDir, t.dir);
+      if (t.copy) {
+        const tag = t.codec_name === 'hevc' ? 'hvc1' : 'avc1';
+        args.push('-map', `0:${plan.srcVideoIndex}`, '-c:v', 'copy', '-tag:v', tag, ...commonOut, ...hlsOut(dir, 'video.m4s'));
+        continue;
+      }
+      args.push('-map', `[c${t.dir}]`, ...videoEncoderArgs(cfg, t, plan.fps, false), ...commonOut, ...hlsOut(dir, 'video.m4s'));
+    }
   }
 
   for (const a of plan.audio) {
