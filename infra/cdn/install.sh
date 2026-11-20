@@ -238,6 +238,13 @@ systemctl daemon-reload
 if [ -f "$RCLONE_CONF" ]; then chown root:root "$RCLONE_CONF"; chmod 600 "$RCLONE_CONF"; fi
 if [ -n "$ARCHIVE_REMOTE" ]; then
   [ -f "$RCLONE_CONF" ] || { echo "HLS_ARCHIVE_REMOTE задан, но нет $RCLONE_CONF — сначала rclone config (README, «Архив на Google Drive»)" >&2; exit 1; }
+  # remote из HLS_ARCHIVE_REMOTE (до двоеточия) должен быть в rclone.conf — иначе архив молча не работает
+  remotes=$(rclone listremotes --config "$RCLONE_CONF" 2>/dev/null || true)
+  if ! grep -qxF "${ARCHIVE_REMOTE%%:*}:" <<<"$remotes"; then
+    echo "В $RCLONE_CONF нет remote «${ARCHIVE_REMOTE%%:*}:» из HLS_ARCHIVE_REMOTE=$ARCHIVE_REMOTE. Есть: $(echo $remotes)" >&2
+    echo "Исправьте HLS_ARCHIVE_REMOTE в $ENV (например <имя crypt-remote>:hls) и запустите install.sh ещё раз." >&2
+    exit 1
+  fi
   systemctl enable --now hls-archive.timer
   systemctl enable hls-restore.service
   systemctl restart hls-restore.service

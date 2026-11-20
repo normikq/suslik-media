@@ -17,7 +17,9 @@ REMOTE=${HLS_ARCHIVE_REMOTE:-}
 REMOTE=${REMOTE%/}
 RCLONE=${HLS_RCLONE:-rclone}
 RCLONE_ARGS=(--retries=3 --low-level-retries=10)
-if [ -n "${HLS_RCLONE_CONFIG:-}" ]; then RCLONE_ARGS+=("--config=$HLS_RCLONE_CONFIG"); fi
+# по умолчанию — /etc/hls-cdn/rclone.conf: cdn.env из старого образца этой строки не содержит (иначе rclone ищет ~/.rclone.conf)
+HLS_RCLONE_CONFIG=${HLS_RCLONE_CONFIG:-/etc/hls-cdn/rclone.conf}
+RCLONE_ARGS+=("--config=$HLS_RCLONE_CONFIG")
 
 log() { echo "[$LOG_TAG] $*"; }
 warn() { echo "[$LOG_TAG] ВНИМАНИЕ: $*" >&2; }
