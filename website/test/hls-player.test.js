@@ -114,6 +114,23 @@ test("pickSource: профиль v1-copy с h264 работает на Firefox �
   assert.equal(hlsPlayer.pickSource(copyHevc, FIREFOX).kind, "unsupported");
 });
 
+test("pickSource: кодек из hls.vcodec (manifest) важнее меток раздачи", () => {
+  // раздачу удалили и добавили снова: меток media-tags ещё нет, direct.vcodec пуст
+  const readded = structuredClone(fxReady);
+  readded.hls.profile = "v1-copy";
+  readded.hls.direct = { ext: "mkv", vcodec: "", acodec: "" };
+  assert.equal(hlsPlayer.pickSource(readded, FIREFOX).kind, "unsupported");
+  readded.hls.vcodec = "h264";
+  const res = hlsPlayer.pickSource(readded, FIREFOX);
+  assert.equal(res.kind, "hls");
+  assert.equal(res.engine, "hlsjs");
+
+  const hevc = structuredClone(readded);
+  hevc.hls.vcodec = "hevc";
+  hevc.hls.direct.vcodec = "h264";
+  assert.equal(hlsPlayer.pickSource(hevc, FIREFOX).kind, "unsupported");
+});
+
 test("pickSource и messageFor: статус encoding", () => {
   const res = hlsPlayer.pickSource(fxEncoding, CHROME_HEVC);
   assert.equal(res.kind, "wait");
