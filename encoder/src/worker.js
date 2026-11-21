@@ -24,6 +24,20 @@ function versionOk(v) {
   return v.major > 6 || (v.major === 6 && v.minor >= 1);
 }
 
+/**
+ * Самопроверка масштаба на видеокарте: пять кадров через hwupload_cuda → scale_cuda → hevc_nvenc. → '' (работает) или причина.
+ * На деле, а не по списку фильтров: нужны и фильтр, и устройство CUDA, доступное пользователю службы.
+ */
+async function gpuScaleSelfTest(cfg) {
+  const r = await run(cfg.ffmpeg, ['-hide_banner', '-nostdin', '-loglevel', 'error', '-init_hw_device', 'cuda=cu', '-filter_hw_device', 'cu',
+    '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=25', '-frames:v', '5',
+    '-vf', 'format=nv12,hwupload_cuda,scale_cuda=w=320:h=180:format=yuv420p', '-c:v', 'hevc_nvenc', '-f', 'null', '-'],
+  { timeoutMs: 30000 }).catch((e) => ({ code: -1, stderr: e.message }));
+  if (r.code === 0) return '';
+  const tail = String(r.stderr || '').trim().split(/\r?\n/).filter(Boolean).pop();
+  return `ffmpeg exit ${r.code}: ${tail || 'без сообщения'}`;
+}
+
 /** Проверки при старте: ffmpeg ≥ 6.1, нужный кодировщик и фильтры есть. */
 async function checkTools(cfg, log) {
   const ver = await run(cfg.ffmpeg, ['-hide_banner', '-version']).catch((e) => ({ code: -1, stdout: '', stderr: e.message }));
@@ -39,11 +53,14 @@ async function checkTools(cfg, log) {
   if (pr.code !== 0) throw new Error(`ffprobe не запускается (${cfg.ffprobe})`);
   log.info(`[start] ffmpeg ${v.full}, кодировщик ${ENCODER_NAME[cfg.encoder]}`);
   if (cfg.gpuScale && (cfg.encoder !== 'nvenc' || !cfg.hwdec)) cfg.gpuScale = false;
-  if (cfg.gpuScale && !/scale_cuda/.test(flt.stdout)) {
-    cfg.gpuScale = false;
-    log.warn('[start] в ffmpeg нет scale_cuda — масштаб на CPU');
-  } else if (cfg.gpuScale && cfg.hwdec) {
-    log.info('[start] масштаб на видеокарте (scale_cuda)');
+  if (cfg.gpuScale) {
+    const why = await gpuScaleSelfTest(cfg);
+    if (why) {
+      cfg.gpuScale = false;
+      log.warn(`[start] масштаб на CPU: самопроверка scale_cuda не прошла (${why})`);
+    } else {
+      log.info('[start] масштаб на видеокарте (scale_cuda)');
+    }
   }
   cfg.tonemapPath = await detectTonemap(cfg, { filters: flt.stdout });
   const tmMsg = `[start] тонмаппинг: ${describeTonemap(cfg.tonemapPath)}`;
@@ -116,4 +133,4 @@ async function runLoop({ cfg, api, log, signal, ffmpegVersion, keepWork = false,
   }
 }
 
-module.exports = { runLoop, checkTools, acquireLock, cleanWork, parseFfmpegVersion, versionOk, RESTART_MARK };
+module.exports = { runLoop, checkTools, gpuScaleSelfTest, acquireLock, cleanWork, parseFfmpegVersion, versionOk, RESTART_MARK };

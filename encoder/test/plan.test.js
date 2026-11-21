@@ -200,3 +200,15 @@ test('масштаб на видеокарте (gpuScale): scale_cuda, кадр�
   assert.ok(!r.includes('-hwaccel_output_format'));
   assert.match(r[r.indexOf('-filter_complex') + 1], /^\[0:0\]format=yuv420p,split=2/);
 });
+
+test('самопроверка scale_cuda: без ffmpeg — причина, а не исключение', async () => {
+  const { gpuScaleSelfTest } = require('../src/worker');
+  assert.match(await gpuScaleSelfTest({ ffmpeg: 'ffmpeg-которого-нет' }), /^ffmpeg exit -1: /);
+});
+
+test('в исходниках нет управляющих символов (\b в регулярке, вписанный как backspace)', () => {
+  const dir = path.join(__dirname, '..', 'src');
+  for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.js'))) {
+    assert.doesNotMatch(fs.readFileSync(path.join(dir, f), 'utf8'), /[\x00-\x08\x0b\x0c\x0e-\x1f]/, f);
+  }
+});
