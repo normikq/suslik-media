@@ -59,11 +59,15 @@ for x in "${tracks[@]}"; do
 done
 rmdir -- "$src" 2>/dev/null || true
 
-# Архив (§17) хранит профиль целиком: v1 снова в очередь, чтобы архив получил xN. Ошибка постановки не отменяет приём.
-if [ "$prof" = v1 ] && [ -n "${HLS_ARCHIVE_QUEUE:-}" ] && [ "${HLS_FINALIZE_NO_ARCHIVE:-0}" != 1 ]; then
-  if ! : > "$HLS_ARCHIVE_QUEUE/$hid.v1" 2>/dev/null; then
-    echo "finalize-audio: ВНИМАНИЕ: не удалось поставить $hid/v1 в очередь архивации" >&2
-    logger -t hls-finalize "не поставлен в очередь архивации: $hid/v1" 2>/dev/null || true
+# В архив (§17): v1 и окончательная v1-copy — из HEVC (с 21.11 копия делается только из HEVC; старая H.264-копия временная,
+# её заменит v1). Кодек — по manifest.json: у H.264-копии видео "avc1…".
+archivable() { [ "$1" = v1 ] || { [ "$1" = v1-copy ] && ! grep -qE '"codec"[[:space:]]*:[[:space:]]*"(avc|h264)' "$2"; }; }
+
+# Архив хранит профиль целиком: профиль снова в очередь, чтобы архив получил xN. Ошибка постановки не отменяет приём.
+if archivable "$prof" "$dst/manifest.json" && [ -n "${HLS_ARCHIVE_QUEUE:-}" ] && [ "${HLS_FINALIZE_NO_ARCHIVE:-0}" != 1 ]; then
+  if ! : > "$HLS_ARCHIVE_QUEUE/$hid.$prof" 2>/dev/null; then
+    echo "finalize-audio: ВНИМАНИЕ: не удалось поставить $hid/$prof в очередь архивации" >&2
+    logger -t hls-finalize "не поставлен в очередь архивации: $hid/$prof" 2>/dev/null || true
   fi
 fi
 

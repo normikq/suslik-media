@@ -97,10 +97,18 @@ head -c 128 /dev/zero > "$ROOT1/.tmp/178e77a7ddb10079.v1.ab12cd/1080p/video.m4s"
 HLS_ROOT="$ROOT1" HLS_ARCHIVE_QUEUE="$Q1" bash "$CDN/bin/hls-finalize" "178e77a7ddb10079.v1.ab12cd" >/dev/null 2>&1
 check "case1: файл очереди создан для v1" test -e "$Q1/178e77a7ddb10079.v1"
 
+# старая H.264-копия (видео avc1) — временная, не архивируется
 mkdir -p "$ROOT1/.tmp/5d0c1f2a9e7b3c44.v1-copy.cd34ef"
-printf '{}' > "$ROOT1/.tmp/5d0c1f2a9e7b3c44.v1-copy.cd34ef/manifest.json"
+printf '{"video":[{"dir":"1080p","codec":"avc1.640028"},{"dir":"720p","codec":"hvc1.1.6.L93.90"}]}' > "$ROOT1/.tmp/5d0c1f2a9e7b3c44.v1-copy.cd34ef/manifest.json"
 HLS_ROOT="$ROOT1" HLS_ARCHIVE_QUEUE="$Q1" bash "$CDN/bin/hls-finalize" "5d0c1f2a9e7b3c44.v1-copy.cd34ef" >/dev/null 2>&1
-check "case1: файл очереди не создан для v1-copy" test ! -e "$Q1/5d0c1f2a9e7b3c44.v1-copy"
+check "case1: файл очереди не создан для H.264-копии" test ! -e "$Q1/5d0c1f2a9e7b3c44.v1-copy"
+
+# v1-copy из HEVC — окончательная, архивируется как v1
+mkdir -p "$ROOT1/.tmp/9e0c1f2a9e7b3c45.v1-copy.ef56gh/1080p"
+printf '{"video":[{"dir":"1080p","codec":"hvc1.1.6.L120.90"},{"dir":"720p","codec":"hvc1.1.6.L93.90"}]}' > "$ROOT1/.tmp/9e0c1f2a9e7b3c45.v1-copy.ef56gh/manifest.json"
+head -c 64 /dev/zero > "$ROOT1/.tmp/9e0c1f2a9e7b3c45.v1-copy.ef56gh/1080p/video.m4s"
+HLS_ROOT="$ROOT1" HLS_ARCHIVE_QUEUE="$Q1" bash "$CDN/bin/hls-finalize" "9e0c1f2a9e7b3c45.v1-copy.ef56gh" >/dev/null 2>&1
+check "case1: файл очереди создан для HEVC-копии" test -e "$Q1/9e0c1f2a9e7b3c45.v1-copy"
 
 OUT1=$(bash "$CDN/hls-archive.sh" --env "$T/cdn.env" --root "$ROOT1" --state-dir "$S1" --queue "$Q1" --now "$NOW" 2>&1 | tr -d '\r')
 RC1=$?
@@ -123,6 +131,9 @@ EXP_BYTES1=$(du -sb "$ROOT1/178e77a7ddb10079/v1" | awk '{print $1}')
 check "case1: bytes совпадает с du -sb" test "$(printf '%s' "$REQ1" | jq_clean -r '.[0].bytes')" = "$EXP_BYTES1"
 check "case1: archived.spool пуст" test ! -s "$S1/archived.spool"
 check "case1: нет архива для 5d0c1f2a9e7b3c44" test ! -e "$FAKE_RCLONE_ROOT/hls/5d0c1f2a9e7b3c44"
+check "case1: HEVC-копия в архиве" test -f "$FAKE_RCLONE_ROOT/hls/9e0c1f2a9e7b3c45/v1-copy/1080p/video.m4s"
+check "case1: archived содержит 9e0c1f2a9e7b3c45 v1-copy" grep -q "^9e0c1f2a9e7b3c45 v1-copy " "$S1/archived"
+check "case1: в запросе archived и v1-copy" test "$(printf '%s' "$REQ1" | jq_clean -r '.[1].profile')" = "v1-copy"
 
 # === Случай 2: отсутствующий профиль и мусор в очереди ===
 reset_site

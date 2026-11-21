@@ -126,7 +126,8 @@ test('интеграция: образец → v1 и v1-copy через загл
     assert.deepEqual(pr.streams.map((s) => s.codec_type), ['video', 'audio', 'audio', 'subtitle']);
     const v = pr.streams[0];
     assert.equal(v.codec_name, 'h264');
-    assert.ok(v.keyframe_interval_max_s > 1.9 && v.keyframe_interval_max_s < 2.1, `kf ${v.keyframe_interval_max_s}`);
+    // H.264 — не кандидат в v1-copy (только HEVC, 21.11): ключевые кадры не замеряются
+    assert.equal(v.keyframe_interval_max_s ?? null, null);
     assert.ok(stub.state.progress.length >= 1, 'progress');
 
     // плейлисты: BYTERANGE, MAP, непрерывные смещения до конца файла
@@ -189,8 +190,9 @@ test('интеграция: образец → v1 и v1-copy через загл
       '-f', 'lavfi', '-i', `sine=frequency=660:sample_rate=48000:duration=${DURATION}`,
       '-i', srt,
       '-map', '0', '-map', '1', '-map', '2', '-map', '3',
-      '-c:v', 'libx264', '-preset', 'fast', '-bf', '3', '-crf', '28', '-maxrate', '6M', '-bufsize', '12M',
-      '-pix_fmt', 'yuv420p', '-g', '1000', '-x264-params', 'scenecut=0',
+      // HEVC 8 бит: v1-copy делается только из HEVC (21.11)
+      '-c:v', 'libx265', '-preset', 'fast', '-crf', '28', '-maxrate', '6M', '-bufsize', '12M', '-tag:v', 'hvc1',
+      '-pix_fmt', 'yuv420p', '-x265-params', 'bframes=3:keyint=1000:min-keyint=1:scenecut=0:open-gop=0:log-level=error',
       '-force_key_frames', '0,4.2,9.1,13.0,20.5,24.0,31.3',
       '-c:a', 'ac3', '-ac', '6', '-c:s', 'srt',
       '-metadata:s:a:0', 'language=rus', '-metadata:s:a:0', 'title=Дубляж', '-disposition:a:0', 'default',
@@ -258,7 +260,7 @@ test('интеграция: образец → v1 и v1-copy через загл
       assert.equal(m.profile, 'v1-copy');
       assert.equal(m.encoder, 'copy');
       assert.deepEqual(m.video.map((x) => [x.dir, x.width, x.height]), [['1080p', 1920, 1080], ['720p', 1280, 720]]);
-      assert.match(m.video[0].codec, /^avc1\./);
+      assert.match(m.video[0].codec, /^hvc1\./);
       assert.match(m.video[1].codec, encoder === 'x264' ? /^avc1\.[0-9a-f]{6}$/ : /^hvc1\.1\.6\.L\d+\.90$/);
       for (const x of m.video) {
         assert.ok(x.bandwidth >= x.avg_bandwidth && x.avg_bandwidth > 0);

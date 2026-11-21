@@ -44,7 +44,7 @@ function probeBody(
 }
 
 const copyVideo = {
-  codec_name: "h264",
+  codec_name: "hevc",
   pix_fmt: "yuv420p",
   width: 1920,
   height: 1080,
@@ -63,15 +63,20 @@ function take() {
   return hls.next(NOW);
 }
 
-function encodeDone(job, body) {
+// v1-copy в тестах перехода — старая H.264-копия (до 21.11): после неё кодируется v1. Копия из HEVC окончательная — тест 15b
+const FIXTURE_MANIFEST = require("../../docs/hls-fixtures/manifest.json");
+const avcCopyManifest = { ...FIXTURE_MANIFEST, video: FIXTURE_MANIFEST.video.map(v => ({ ...v, codec: "avc1.640028" })) };
+
+function encodeDone(job, body, manifest) {
   const r = hls.handleProbe(job.job_id, body, NOW);
   assert.equal(r.action, "encode");
+  manifest = manifest || (r.profile === "v1-copy" ? avcCopyManifest : FIXTURE_MANIFEST);
   hls.done(
     {
       job_id: job.job_id,
       hls_id: r.hls_id,
       profile: r.profile,
-      manifest_sha256: "a".repeat(64), manifest: require("../../docs/hls-fixtures/manifest.json"),
+      manifest_sha256: "a".repeat(64), manifest,
       bytes: 1000
     },
     NOW
@@ -173,6 +178,8 @@ test("6. decideProfile: выбор профиля кодирования", () =>
   const probeReq = require("../../docs/hls-fixtures/probe-request.json");
   assert.equal(hls.decideProfile(probeReq, 8589934592), "v1");
   assert.equal(hls.decideProfile(probeBody(fp(1), 7200000, copyVideo), 5000), "v1-copy");
+  // H.264 — сразу v1 (21.11): v1-copy только из HEVC, она окончательная
+  assert.equal(hls.decideProfile(probeBody(fp(1), 7200000, { ...copyVideo, codec_name: "h264" }), 5000), "v1");
   assert.equal(
     hls.decideProfile(probeBody(fp(1), 7200000, { ...copyVideo, keyframe_interval_max_s: 12 }), 5000),
     "v1"
@@ -472,4 +479,21 @@ test("19. cdnStats и getCdnStats", () => {
   assert.equal(stats.assets, body.assets);
   assert.deepEqual(stats.profiles, body.profiles);
   assert.equal(stats.at, body.at);
+});
+
+test("15b. v1-copy из HEVC — окончательная: v1 не ставится, ни после done, ни при «Смотреть»", () => {
+  const a = add("100", "H/H.mkv");
+  take();
+  const r = encodeDone(a, probeBody(fp(77), 7200000, copyVideo), FIXTURE_MANIFEST); // manifest с hvc1
+  assert.equal(r.profile, "v1-copy");
+  assert.equal(store.getAsset(a.hls_id).active_profile, "v1-copy");
+  assert.equal(store.allJobs().size, 0);
+  hls.enqueue({ ad_id: "100", path: "H/H.mkv", size: 5000, priority: 0 }, NOW);
+  assert.equal(store.allJobs().size, 0);
+  assert.equal(hls.ensureV1(a.hls_id, { ad_id: "100", path: "H/H.mkv", size: 5000 }, NOW), null);
+  assert.equal(hls.statusFor("100", "H/H.mkv").profile, "v1-copy");
+  // архив и вытеснение — как у v1: archived → cold, ассет остаётся
+  assert.equal(hls.archived([{ hls_id: a.hls_id, profile: "v1-copy", bytes: 1000, at: 1 }], NOW), 1);
+  hls.evicted([{ hls_id: a.hls_id, profile: "v1-copy", last_access: 1 }]);
+  assert.equal(store.getAsset(a.hls_id).profiles["v1-copy"].status, "cold");
 });

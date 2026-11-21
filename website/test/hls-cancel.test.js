@@ -242,14 +242,16 @@ test("отмена v1 не трогает готовую v1-copy и алиас",
   const adminTok = deviceToken("cancel-admin-5", "admin");
   // 8-битный h264 без HDR — сначала v1-copy, после done сервер сам ставит v1 (приоритет 4)
   const copyBody = probeBody("fp-cancel-720005");
-  Object.assign(copyBody.streams[0], { codec_name: "h264", pix_fmt: "yuv420p", color_transfer: "bt709" });
+  Object.assign(copyBody.streams[0], { codec_name: "hevc", pix_fmt: "yuv420p", color_transfer: "bt709" });
   const { job: first } = hls.enqueue({ ad_id: "720005", path: "Ready.mkv", size: 2000000000, priority: 2 });
   first.state = "running";
   first.leased_until = Math.floor(Date.now() / 1000) + 600;
   store.putJob(first.job_id, first);
   const r = hls.handleProbe(first.job_id, copyBody);
   assert.equal(r.profile, "v1-copy");
-  hls.done({ job_id: first.job_id, hls_id: r.hls_id, profile: "v1-copy", manifest_sha256: "a".repeat(64), bytes: 1000, manifest });
+  // старая H.264-копия (до 21.11) — после неё v1
+  const avcManifest = { ...manifest, video: manifest.video.map(v => ({ ...v, codec: "avc1.640028" })) };
+  hls.done({ job_id: first.job_id, hls_id: r.hls_id, profile: "v1-copy", manifest_sha256: "a".repeat(64), bytes: 1000, manifest: avcManifest });
   const id = r.hls_id;
 
   const job = [...store.allJobs().values()].find(j => j.hls_id === id && j.profile === "v1");

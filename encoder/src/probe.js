@@ -106,12 +106,13 @@ function mainVideo(probe) {
 function copyCandidate(probe) {
   const v = mainVideo(probe);
   if (!v) return false;
-  if (!['h264', 'hevc'].includes(v.codec_name)) return false;
+  // v1-copy — только из HEVC (окончательная версия, в архив); H.264 сразу в v1 (§5)
+  if (v.codec_name !== 'hevc') return false;
   if (/10|12/.test(v.pix_fmt)) return false;
   if (HDR_TRC.has(v.color_transfer) || v.dovi) return false;
   if (v.height > 1080 || v.width > 1920) return false;
   const br = probe.format.bit_rate;
-  if (br === null || br > 12e6) return false;
+  if (br === null || br > 8e6) return false;
   return true;
 }
 

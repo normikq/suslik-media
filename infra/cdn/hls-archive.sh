@@ -1,8 +1,8 @@
 #!/bin/bash
-# hls-archive.sh — копия готовых профилей v1 в холодный архив (docs/HLS.md §17), раз в 5 мин по таймеру hls-archive.timer.
+# hls-archive.sh — копия готовых профилей v1 и окончательных v1-copy (из HEVC) в холодный архив (docs/HLS.md §17), раз в 5 мин по таймеру hls-archive.timer.
 #
-# Очередь — файлы <hls_id>.v1 в HLS_ARCHIVE_QUEUE (/var/lib/hls-archive-queue): их кладёт hls-finalize после приёма v1
-# (v1-copy не архивируется). Для каждого:
+# Очередь — файлы <hls_id>.<профиль> в HLS_ARCHIVE_QUEUE (/var/lib/hls-archive-queue): их кладёт hls-finalize после приёма
+# v1 или v1-copy из HEVC (H.264-копия — временная, не архивируется). Для каждого:
 #   rclone copy /srv/hls/<id>/v1/ → $HLS_ARCHIVE_REMOTE/<id>/v1/ (--drive-stop-on-upload-limit, ретраи, --bwlimit по желанию);
 #   rclone check --size-only --one-way; запись «<id> v1 <байт> <время>» в $HLS_EVICT_STATE/archived; отчёт POST /internal/hls/archived.
 # Профиля на диске уже нет (вытеснен или удалён до архивации) — снимается с очереди. Лимит Google (750 ГБ/сутки):
@@ -10,7 +10,7 @@
 # HLS_ARCHIVE_REMOTE пуст — архива нет, скрипт сразу выходит.
 #
 # Ключи:
-#   --enqueue-existing   поставить в очередь все v1 на диске, которых ещё нет в архиве (однократно при включении), и выйти
+#   --enqueue-existing   поставить в очередь все v1 и v1-copy из HEVC на диске, которых ещё нет в архиве (однократно при включении), и выйти
 #   --env FILE           файл настроек вместо /etc/hls-cdn/cdn.env
 #   --root DIR           корень ассетов (/srv/hls)
 #   --state-dir DIR      состояние (/var/lib/hls-evict, общее с evict.sh)
@@ -54,14 +54,15 @@ mkdir -p "$STATE_DIR" "$QUEUE"
 exec 6>>"$STATE_DIR/.archive.lock"
 if command -v flock >/dev/null && ! flock -n 6; then log "предыдущий запуск ещё идёт"; exit 0; fi
 
-# --- однократная постановка уже имеющихся v1 ---------------------------------------------------------------------------
+# --- однократная постановка уже имеющихся v1 и окончательных v1-copy (из HEVC) ---------------------------------------------
 if [ "$ENQUEUE" = 1 ]; then
   n=0
-  for d in "$ROOT"/*/v1/; do
-    d=${d%/}; hid=${d%/v1}; hid=${hid##*/}
+  for d in "$ROOT"/*/v1/ "$ROOT"/*/v1-copy/; do
+    d=${d%/}; prof=${d##*/}; hid=${d%/*}; hid=${hid##*/}
     valid_hid "$hid" && [ ! -L "$d" ] && [ -f "$d/manifest.json" ] || continue
-    [ -n "$(arch_bytes "$hid" v1)" ] && continue
-    : > "$QUEUE/$hid.v1"; n=$((n + 1))
+    archivable "$prof" "$d/manifest.json" || continue
+    [ -n "$(arch_bytes "$hid" "$prof")" ] && continue
+    : > "$QUEUE/$hid.$prof"; n=$((n + 1))
   done
   log "поставлено в очередь: $n (обработает таймер hls-archive.timer или запуск без ключей)"
   exit 0
@@ -74,35 +75,35 @@ RC=0; DONE=0
 for q in "$QUEUE"/*; do
   [ -f "$q" ] || continue
   name=${q##*/}
-  hid=${name%.v1}
-  if [ "$name" != "$hid.v1" ] || ! valid_hid "$hid"; then warn "чужой файл в очереди: ${name:0:80}"; rm -f -- "$q"; continue; fi
-  src="$ROOT/$hid/v1"
+  if [[ ! $name =~ ^([0-9a-f]{16}).(v1|v1-copy)$ ]]; then warn "чужой файл в очереди: ${name:0:80}"; rm -f -- "$q"; continue; fi
+  hid=${BASH_REMATCH[1]}; prof=${BASH_REMATCH[2]}
+  src="$ROOT/$hid/$prof"
   if [ ! -d "$src" ] || [ -L "$src" ] || [ ! -f "$src/manifest.json" ]; then
-    log "снят с очереди $hid/v1: на диске нет"
+    log "снят с очереди $hid/$prof: на диске нет"
     rm -f -- "$q"; continue
   fi
   m0=$(stat -c %Y -- "$src")
   # sync, а не copy: при перезаливе v1 с тем же hls_id в архиве не остаются файлы старой версии
-  rc=0; out=$("$RCLONE" sync "${RCLONE_ARGS[@]}" "${COPY_ARGS[@]}" "$src/" "$REMOTE/$hid/v1/" 2>&1) || rc=$?
+  rc=0; out=$("$RCLONE" sync "${RCLONE_ARGS[@]}" "${COPY_ARGS[@]}" "$src/" "$REMOTE/$hid/$prof/" 2>&1) || rc=$?
   if [ "$rc" = 7 ]; then
-    warn "rclone copy $hid/v1: фатальная ошибка (лимит загрузки Google?) — остаток очереди на следующем запуске: $(tail -n 2 <<< "$out" | tr '\n' ' ')"
+    warn "rclone copy $hid/$prof: фатальная ошибка (лимит загрузки Google?) — остаток очереди на следующем запуске: $(tail -n 2 <<< "$out" | tr '\n' ' ')"
     RC=1; break
   fi
-  if [ ! -d "$src" ]; then log "снят с очереди $hid/v1: удалён во время копирования"; rm -f -- "$q"; continue; fi
-  if [ "$rc" != 0 ]; then warn "rclone copy $hid/v1: код $rc: $(tail -n 2 <<< "$out" | tr '\n' ' ')"; RC=1; continue; fi
-  rc=0; out=$("$RCLONE" check "${RCLONE_ARGS[@]}" --size-only --one-way "$src/" "$REMOTE/$hid/v1/" 2>&1) || rc=$?
-  if [ "$rc" != 0 ]; then warn "rclone check $hid/v1: расхождение (код $rc), повтор позже: $(tail -n 2 <<< "$out" | tr '\n' ' ')"; RC=1; continue; fi
+  if [ ! -d "$src" ]; then log "снят с очереди $hid/$prof: удалён во время копирования"; rm -f -- "$q"; continue; fi
+  if [ "$rc" != 0 ]; then warn "rclone copy $hid/$prof: код $rc: $(tail -n 2 <<< "$out" | tr '\n' ' ')"; RC=1; continue; fi
+  rc=0; out=$("$RCLONE" check "${RCLONE_ARGS[@]}" --size-only --one-way "$src/" "$REMOTE/$hid/$prof/" 2>&1) || rc=$?
+  if [ "$rc" != 0 ]; then warn "rclone check $hid/$prof: расхождение (код $rc), повтор позже: $(tail -n 2 <<< "$out" | tr '\n' ' ')"; RC=1; continue; fi
   if [ ! -d "$src" ] || [ "$(stat -c %Y -- "$src")" != "$m0" ]; then
-    log "$hid/v1 заменён во время копирования — повтор на следующем запуске"; continue
+    log "$hid/$prof заменён во время копирования — повтор на следующем запуске"; continue
   fi
   bytes=$(du -sb -- "$src" | cut -f1)
   state_lock
-  state_put "$ARCH_FILE" "$hid" v1 "$hid v1 $bytes $NOW"
-  echo "$hid v1 $bytes $NOW" >> "$SPOOL"
+  state_put "$ARCH_FILE" "$hid" "$prof" "$hid $prof $bytes $NOW"
+  echo "$hid $prof $bytes $NOW" >> "$SPOOL"
   state_unlock
   rm -f -- "$q"
   DONE=$((DONE + 1))
-  log "в архиве $hid/v1 ($bytes байт)"
+  log "в архиве $hid/$prof ($bytes байт)"
 done
 
 # --- отчёт -------------------------------------------------------------------------------------------------------------

@@ -82,7 +82,7 @@ function copyProbeBody(fpSeed) {
       {
         index: 0,
         codec_type: "video",
-        codec_name: "h264",
+        codec_name: "hevc", // v1-copy — только из HEVC; manifest ниже с avc1 — старая H.264-копия (до 21.11), после неё v1
         pix_fmt: "yuv420p",
         width: 1920,
         height: 800,

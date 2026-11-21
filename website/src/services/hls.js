@@ -261,13 +261,16 @@ function directFor(adId, path) {
 
 // ---- §5 Выбор профиля ----
 
-/** v1-copy, если видео уже годится для HLS без перекодирования (все условия §5), иначе v1. */
+/**
+ * v1-copy, если видео уже годится для HLS без перекодирования (все условия §5), иначе v1. Только HEVC: такая копия —
+ * окончательная версия (v1 после неё не кодируется, она уходит в архив); H.264 — сразу v1, чтобы всё хранилось в HEVC.
+ */
 function decideProfile(body, size = 0) {
   const streams = Array.isArray(body?.streams) ? body.streams : [];
   const v = streams.find(s => s && s.codec_type === "video" && !s.disposition?.attached_pic);
   if (!v) return "v1";
   const codec = normVcodec(v.codec_name);
-  if (codec !== "h264" && codec !== "hevc") return "v1";
+  if (codec !== "hevc") return "v1";
   if (/p0?1[0-6]/.test(String(v.pix_fmt || ""))) return "v1"; // 10/12 бит (yuv420p10le, p010le; nv12 — 8 бит)
   if (/^(smpte2084|arib-std-b67)$/i.test(String(v.color_transfer || ""))) return "v1";
   const side = Array.isArray(v.side_data_list) ? v.side_data_list.map(d => String(d?.side_data_type || "")) : [];
@@ -729,7 +732,7 @@ function progress(body, now = Date.now()) {
 }
 
 /**
- * POST /internal/hls/done. Профиль становится ready. v1-copy → active_profile (если v1 ещё нет) и в очередь v1
+ * POST /internal/hls/done. Профиль становится ready. v1-copy → active_profile (если v1 ещё нет); у копии из H.264 (до 21.11) — в очередь v1
  * с приоритетом 4; v1 → active_profile, а v1-copy уходит в pending_delete — сразу или, если у копии есть внешние
  * озвучки, которых нет в v1, после audio-done v1 (settleCopy, §18). → { ok, active_profile }.
  */
@@ -1203,6 +1206,7 @@ function dropOrphanEncodings() {
 function ensureV1(id, file, now = Date.now()) {
   const a = store.getAsset(String(id || ""));
   if (!a || a.profiles?.["v1-copy"]?.status !== "ready" || a.profiles.v1 || (a.pending_delete || []).includes("v1-copy")) return null;
+  if (!copyNeedsV1(a.profiles["v1-copy"])) return null; // HEVC-копия — окончательная
   if (!file || file.ad_id == null || !file.path) return null;
   const mine = [...store.allJobs().values()].filter(j => !store.isAudioJob(j) && j.hls_id === String(id) && j.profile === "v1");
   if (mine.some(j => j.state !== "failed")) return null;
@@ -1216,6 +1220,16 @@ function ensureV1(id, file, now = Date.now()) {
     console.warn("[hls] не удалось поставить v1:", err.message);
     return null;
   }
+}
+
+/**
+ * v1 после этой v1-copy нужна, только если копия в H.264 (сделана до 21.11, когда копия бывала и из H.264): у копии из
+ * HEVC v1 не делается. Кодек — из manifest (avc1… / hvc1…); без manifest — нужна (как раньше).
+ */
+function copyNeedsV1(copy) {
+  const v = copy?.manifest?.video;
+  const c = Array.isArray(v) && v.length ? String(v[0].codec || "").toLowerCase() : "";
+  return !/^(hvc|hev)/.test(c);
 }
 
 /** Из чего кодировать v1: источник ассета, пока его раздача есть (у файла есть алиас), иначе file — файл, который смотрят. */

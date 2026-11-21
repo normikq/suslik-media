@@ -60,7 +60,11 @@ function copyProbe(width, height) {
 
 test('v1-copy 1080p: копия + 720p с ключевыми кадрами исходника, звук в AAC', () => {
   const p = copyProbe(1920, 1080);
-  assert.equal(copyCandidate(normalizeProbe({ format: { ...p.format, duration: '10' }, streams: [{ ...p.streams[0], disposition: {} }] })), true);
+  // H.264 — не кандидат (21.11: копия только из HEVC); план v1-copy строится и для него (старые задания, тесты аргументов)
+  assert.equal(copyCandidate(normalizeProbe({ format: { ...p.format, duration: '10' }, streams: [{ ...p.streams[0], disposition: {} }] })), false);
+  const ph = JSON.parse(JSON.stringify(p));
+  ph.streams[0].codec_name = 'hevc';
+  assert.equal(copyCandidate(normalizeProbe({ format: { ...ph.format, duration: '10' }, streams: [{ ...ph.streams[0], disposition: {} }] })), true);
   const plan = buildPlan(p, 'v1-copy');
   assert.deepEqual(plan.video.map((t) => [t.dir, t.width, t.height, !!t.copy]), [['1080p', 1920, 1080, true], ['720p', 1280, 720, false]]);
 
@@ -111,7 +115,7 @@ test('v1-copy 720p и ниже: только копия, без декодиро
   }
 });
 
-test('copyCandidate: HDR, 10 бит, > 1080, > 12 Мбит — нет', () => {
+test('copyCandidate: H.264, HDR, 10 бит, > 1080, > 8 Мбит — нет', () => {
   const mk = (v, br = 8e6) => ({ format: { bit_rate: br }, streams: [{ codec_type: 'video', codec_name: 'hevc', pix_fmt: 'yuv420p', width: 1920, height: 1080, color_transfer: '', dovi: false, ...v }] });
   assert.equal(copyCandidate(mk({})), true);
   assert.equal(copyCandidate(mk({ pix_fmt: 'yuv420p10le' })), false);
@@ -119,6 +123,8 @@ test('copyCandidate: HDR, 10 бит, > 1080, > 12 Мбит — нет', () => {
   assert.equal(copyCandidate(mk({ dovi: true })), false);
   assert.equal(copyCandidate(mk({ height: 1600, width: 3840 })), false);
   assert.equal(copyCandidate(mk({}, 20e6)), false);
+  assert.equal(copyCandidate(mk({}, 9e6)), false);
+  assert.equal(copyCandidate(mk({ codec_name: 'h264' })), false);
   assert.equal(copyCandidate(mk({}, null)), false);
   assert.equal(copyCandidate(mk({ codec_name: 'vc1' })), false);
 });

@@ -28,7 +28,7 @@ const body = {
   fingerprint: FP,
   duration_ms: 6_000_000,
   format: { format_name: "matroska,webm", bit_rate: 6_000_000 },
-  streams: [{ codec_type: "video", codec_name: "h264", pix_fmt: "yuv420p", width: 1920, height: 1080, color_transfer: "bt709", keyframe_interval_max_s: 4 }]
+  streams: [{ codec_type: "video", codec_name: "hevc", pix_fmt: "yuv420p", width: 1920, height: 1080, color_transfer: "bt709", keyframe_interval_max_s: 4 }]
 };
 const manCopy = { video: [{ dir: "src", codec: "avc1.640028", bandwidth: 6_000_000, width: 1920, height: 1080 }], audio: [{ dir: "a0", codec: "mp4a.40.2" }] };
 const manV1 = { video: [{ dir: "1080p", codec: "hvc1.1.6.L120.90", bandwidth: 4_000_000, width: 1920, height: 1080 }], audio: [{ dir: "a0", codec: "mp4a.40.2" }] };
