@@ -56,7 +56,7 @@ function loadConfig(env = process.env) {
     reconnectDelayMax: num(env.SM_RECONNECT_DELAY_MAX, 30),
     // качество: -cq для nvenc, -crf для x265/x264
     cq: num(env.SM_CQ, encoder === 'nvenc' ? 21 : 23), // nvenc 24 → 21 (20.11): средний битрейт 1080p был ~1,6 Мбит, у сравнимых сервисов ~3,4
-    nvencPreset: env.SM_NVENC_PRESET || 'p5',
+    nvencPreset: env.SM_NVENC_PRESET || 'p4', // p5 → p4 (21.11): RTX 3060 Ti упирается в NVENC — ×6,8 → ×10,3, VMAF тот же (94,8, Biutiful)
     swPreset: env.SM_SW_PRESET || 'medium',    // x265/x264; для тестов — ultrafast
     // выгрузка на CDN
     upload: {
