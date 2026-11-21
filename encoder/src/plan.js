@@ -20,6 +20,25 @@ const TIERS = [
 
 const even = (x) => Math.max(2, 2 * Math.round(x / 2));
 
+// Что NVDEC декодирует наверняка (кадры сразу в памяти GPU). Остальное (H.264 10 бит, 4:2:2, MPEG-4 ASP…) — масштаб на CPU
+const NVDEC_OK = {
+  h264: ['yuv420p', 'yuvj420p'],
+  hevc: ['yuv420p', 'yuvj420p', 'yuv420p10le'],
+  av1: ['yuv420p', 'yuv420p10le'],
+  vp9: ['yuv420p', 'yuv420p10le'],
+  mpeg2video: ['yuv420p'],
+};
+
+/**
+ * Можно ли весь видеотракт держать на видеокарте (plan.gpu): nvenc + hwdec + gpuScale, без тонмаппинга (у него свои пути)
+ * и исходник из NVDEC_OK. Черезстрочное — bwdif_cuda.
+ */
+function gpuPathOk(cfg, plan, tm) {
+  if (cfg.encoder !== 'nvenc' || !cfg.hwdec || !cfg.gpuScale || tm) return false;
+  if (plan.profile === 'v1-copy' && plan.video.every((t) => t.copy)) return false;
+  return (NVDEC_OK[plan.srcCodec] || []).includes(plan.srcPixFmt);
+}
+
 function skipReason(codec) {
   if (codec === 'hdmv_pgs_subtitle') return 'pgs';
   if (codec === 'dvd_subtitle') return 'vobsub';
@@ -112,7 +131,7 @@ function buildPlan(probe, profile, raw = {}) {
     subs.push({ dir: `s${subs.length}`, src_index: s.index, language: lang2(s.language), name: trackName(s.language, s.title, 'subtitle', subs.length), forced: !!s.forced });
   }
 
-  return { profile, srcVideoIndex: v.index, fps, interlaced: /^(tt|bb|tb|bt)$/.test(rawById.get(v.index)?.field_order || ''), tonemap, dovi, video, audio, subs, skipped };
+  return { profile, srcVideoIndex: v.index, srcCodec: v.codec_name || '', srcPixFmt: v.pix_fmt || '', fps, interlaced: /^(tt|bb|tb|bt)$/.test(rawById.get(v.index)?.field_order || ''), tonemap, dovi, video, audio, subs, skipped };
 }
 
 function hlsOut(dir, file) {
@@ -153,17 +172,45 @@ function videoEncoderArgs(cfg, tier, fps, tonemap) {
  *   libplacebo — масштаб до верхней ступени + тонмаппинг + bt709 на видеокарте (Vulkan) за один проход;
  *   cpu        — сначала уменьшить до верхней ступени (10 бит), потом zscale+tonemap уже на 1080p.
  * Остальные ступени — scale от результата верхней.
+ * Без тонмаппинга и с исходником, который декодирует NVDEC (gpuPathOk), — всё на видеокарте: scale_cuda (и bwdif_cuda),
+ * кадры не уходят в память. plan.gpu === false (повтор после сбоя) — по-старому, на CPU.
  */
 function buildFfmpegArgs(cfg, plan, src, outDir) {
   const args = ['-hide_banner', '-nostdin', '-y', '-loglevel', 'error', '-progress', 'pipe:1', '-nostats'];
   const tm = plan.profile === 'v1' ? (plan.tonemapPath !== undefined ? plan.tonemapPath : tonemapPathFor(cfg, plan)) : null;
   // v1-copy: декодировать нужно только для 720p (копия идёт пакетами)
   const decodes = plan.profile === 'v1' || plan.video.some((t) => !t.copy);
+  const gpu = plan.gpu !== false && gpuPathOk(cfg, plan, tm);
   if (decodes && cfg.encoder === 'nvenc' && cfg.hwdec) args.push('-hwaccel', 'cuda');
+  if (gpu) args.push('-hwaccel_output_format', 'cuda');
   if (tm === 'libplacebo') args.push(...vulkanArgs(cfg.tonemapPath.device.index));
   args.push(...inputNetArgs(src, cfg), '-i', src);
 
-  if (plan.profile === 'v1') {
+  if (gpu) {
+    const deint = plan.interlaced ? 'bwdif_cuda=mode=send_frame:deint=interlaced,' : '';
+    const enc = plan.video.filter((t) => !t.copy);
+    let graph;
+    if (plan.profile === 'v1') {
+      // верхняя ступень + 8 бит за один scale_cuda (тот же размер — без пересчёта), остальные — от неё
+      const [top, ...rest] = enc;
+      graph = `[0:${plan.srcVideoIndex}]${deint}scale_cuda=w=${top.width}:h=${top.height}:format=yuv420p`;
+      graph += rest.length ? `,split=${enc.length}${enc.map((_, i) => `[g${i}]`).join('')};[g0]setsar=1[v0]` : ',setsar=1[v0]';
+      rest.forEach((t, k) => { graph += `;[g${k + 1}]scale_cuda=w=${t.width}:h=${t.height},setsar=1[v${k + 1}]`; });
+    } else {
+      graph = enc.map((t) => `[0:${plan.srcVideoIndex}]${deint}scale_cuda=w=${t.width}:h=${t.height}:format=yuv420p,setsar=1[c${t.dir}]`).join(';');
+    }
+    args.push('-filter_complex', graph);
+    let i = 0;
+    for (const t of plan.video) {
+      const dir = path.join(outDir, t.dir);
+      if (t.copy) {
+        args.push('-map', `0:${plan.srcVideoIndex}`, '-c:v', 'copy', '-tag:v', t.codec_name === 'hevc' ? 'hvc1' : 'avc1', ...commonOut, ...hlsOut(dir, 'video.m4s'));
+        continue;
+      }
+      const label = plan.profile === 'v1' ? `[v${i++}]` : `[c${t.dir}]`;
+      args.push('-map', label, ...videoEncoderArgs(cfg, t, plan.fps, false), ...commonOut, ...hlsOut(dir, 'video.m4s'));
+    }
+  } else if (plan.profile === 'v1') {
     const top = plan.video[0];
     const pre = [];
     if (plan.interlaced) pre.push('bwdif=mode=send_frame:deint=interlaced');
@@ -220,4 +267,4 @@ function planDirs(plan) {
   return [...plan.video, ...plan.audio, ...plan.subs].map((x) => x.dir);
 }
 
-module.exports = { buildPlan, buildFfmpegArgs, planDirs, videoTiers, SEG, AUDIO_BITRATE, MAX_AUDIO, MAX_SUBS };
+module.exports = { buildPlan, buildFfmpegArgs, planDirs, gpuPathOk, videoTiers, SEG, AUDIO_BITRATE, MAX_AUDIO, MAX_SUBS };

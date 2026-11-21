@@ -35,8 +35,11 @@ function loadConfig(env = process.env) {
     maxSourceBytes: num(env.SM_MAX_SOURCE_GB, 40) * 1024 ** 3,
     ffmpeg: env.SM_FFMPEG || 'ffmpeg',
     ffprobe: env.SM_FFPROBE || 'ffprobe',
-    // аппаратное декодирование исходника (только с nvenc): -hwaccel cuda, кадры возвращаются в память для фильтров
+    // аппаратное декодирование исходника (только с nvenc): -hwaccel cuda; без gpuScale кадры возвращаются в память для фильтров
     hwdec: bool(env.SM_HWDEC, encoder === 'nvenc'),
+    // масштаб на видеокарте (с hwdec): кадры остаются в памяти GPU (-hwaccel_output_format cuda, scale_cuda) — без копий
+    // через PCIe и scale на CPU; 4K→1080p в 2,3 раза быстрее (RTX 5070 Ti, 21.11). Нет scale_cuda — выключается при старте
+    gpuScale: bool(env.SM_GPU_SCALE, encoder === 'nvenc'),
     // HDR → SDR: auto — libplacebo (Vulkan на видеокарте), если самопроверка при старте прошла, иначе cpu (zscale+tonemap)
     tonemapMode,
     vulkanDevice: env.SM_VULKAN_DEVICE || '',  // индекс или подстрока имени устройства Vulkan; пусто — первая не-программная
@@ -48,12 +51,12 @@ function loadConfig(env = process.env) {
     logKeep: num(env.SM_LOG_KEEP, 5),
     idleSec: num(env.SM_IDLE_S, 30),           // пауза после 204 от /next
     errorSec: num(env.SM_ERROR_S, 60),         // пауза после сбоя связи с сервером
-    progressSec: num(env.SM_PROGRESS_S, 10),   // progress продлевает аренду
+    progressSec: num(env.SM_PROGRESS_S, 2),    // progress продлевает аренду и двигает полосу в админке и окне фильма
     keyframeProbeSec: num(env.SM_KEYFRAME_PROBE_S, 600), // окно замера keyframe_interval_max_s
     reconnectDelayMax: num(env.SM_RECONNECT_DELAY_MAX, 30),
     // качество: -cq для nvenc, -crf для x265/x264
     cq: num(env.SM_CQ, encoder === 'nvenc' ? 21 : 23), // nvenc 24 → 21 (20.11): средний битрейт 1080p был ~1,6 Мбит, у сравнимых сервисов ~3,4
-    nvencPreset: env.SM_NVENC_PRESET || 'p5',
+    nvencPreset: env.SM_NVENC_PRESET || 'p4', // p5 → p4 (21.11): RTX 3060 Ti упирается в NVENC — ×6,8 → ×10,3, VMAF тот же (94,8, Biutiful)
     swPreset: env.SM_SW_PRESET || 'medium',    // x265/x264; для тестов — ultrafast
     // выгрузка на CDN
     upload: {

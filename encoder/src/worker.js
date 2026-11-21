@@ -38,6 +38,13 @@ async function checkTools(cfg, log) {
   const pr = await run(cfg.ffprobe, ['-hide_banner', '-version']).catch(() => ({ code: -1 }));
   if (pr.code !== 0) throw new Error(`ffprobe не запускается (${cfg.ffprobe})`);
   log.info(`[start] ffmpeg ${v.full}, кодировщик ${ENCODER_NAME[cfg.encoder]}`);
+  if (cfg.gpuScale && (cfg.encoder !== 'nvenc' || !cfg.hwdec)) cfg.gpuScale = false;
+  if (cfg.gpuScale && !/scale_cuda/.test(flt.stdout)) {
+    cfg.gpuScale = false;
+    log.warn('[start] в ffmpeg нет scale_cuda — масштаб на CPU');
+  } else if (cfg.gpuScale && cfg.hwdec) {
+    log.info('[start] масштаб на видеокарте (scale_cuda)');
+  }
   cfg.tonemapPath = await detectTonemap(cfg, { filters: flt.stdout });
   const tmMsg = `[start] тонмаппинг: ${describeTonemap(cfg.tonemapPath)}`;
   if (cfg.tonemapPath.mode === 'cpu' && cfg.tonemapMode !== 'cpu') log.warn(tmMsg); else log.info(tmMsg);

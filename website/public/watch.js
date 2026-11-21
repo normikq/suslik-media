@@ -293,7 +293,7 @@
   async function boot() {
     P = sitePaths(location.pathname);
     const home = P.siteBase + "/";
-    for (const id of ["wpBack", "wpMissingBack", "wpLoginSite"]) $(id).href = home;
+    for (const id of ["wpBack", "wpMissingBack", "wpLoginSite", "wpRelatedAll"]) $(id).href = home;
     if (!P.id) return showMissing("Неверный адрес страницы фильма.");
     let sess = null;
     try { sess = await api("/api/session"); } catch (e) { sess = null; }
@@ -350,6 +350,12 @@
       if (it && it !== S.item) select(it, { push: false });
     });
     $("wpCopy").addEventListener("click", copyLink);
+    $("wpPlayNow").addEventListener("click", () => {
+      $("wpWatch").scrollIntoView({ behavior: "smooth", block: "start" });
+      if (S.ctl && typeof S.ctl.play === "function") S.ctl.play();
+      else { const w = $("wpOverlayWatch"); if (w && !w.classList.contains("hidden")) w.click(); }
+    });
+    renderRelated();
     $("wpNextCancel").addEventListener("click", cancelNext);
     $("wpNextNow").addEventListener("click", () => { const n = S.next && S.next.item; cancelNext(); if (n) select(n, { push: true, autoplay: true }); });
     $("wpQuality").addEventListener("change", e => { if (S.ctl) S.ctl.setQuality(Number(e.target.value)); });
@@ -375,7 +381,7 @@
     tb.replaceChildren();
     for (const [label, value] of rows) {
       const tr = el("tr");
-      tr.append(el("th", null, label + ":"), el("td", null, value));
+      tr.append(el("th", null, label), el("td", null, value));
       tb.append(tr);
     }
     const badges = $("wpBadges");
@@ -387,6 +393,35 @@
       show($("wpAbout"), true);
     }
     renderNow();
+  }
+
+  // «Смотрите также»: готовые раздачи той же категории (если мало — любые), до 6 штук
+  function renderRelated() {
+    const L = S.L, cat = L.getItemCategory ? L.getItemCategory(S.m) : null;
+    const ready = S.list.filter(x => x.id !== S.m.id && Number(x.statusCode) === 4);
+    const same = cat ? ready.filter(x => L.getItemCategory(x) === cat) : [];
+    const picked = same.concat(ready.filter(x => same.indexOf(x) < 0)).slice(0, 6);
+    if (!picked.length) return;
+    const grid = $("wpRelatedGrid");
+    for (const x of picked) {
+      const a = el("a", "wp-rel");
+      a.href = P.siteBase + "/watch/" + encodeURIComponent(x.id);
+      const art = el("span", "wp-rel-art");
+      art.append(el("span", "wp-rel-ph", L.tileTitle(x)));
+      const img = el("img"); img.alt = ""; img.decoding = "async"; img.loading = "lazy";
+      img.onload = () => img.classList.add("loaded");
+      const known = L.posterPathOf(x);
+      if (known) img.src = apiUrl(known);
+      else {
+        const q = L.getPosterQueries(x)[0];
+        if (q) api("/api/poster?q=" + encodeURIComponent(q)).then(r => { if (r && typeof r.poster === "string" && r.poster.startsWith("/api/poster/img/")) img.src = apiUrl(r.poster); }).catch(() => {});
+      }
+      art.append(img);
+      const year = L.releaseYear ? L.releaseYear(x) : null;
+      a.append(art, el("span", "wp-rel-title", L.tileTitle(x)), el("span", "wp-rel-sub", [year, formatBytes(x.size)].filter(Boolean).join(" · ")));
+      grid.append(a);
+    }
+    show($("wpRelated"), true);
   }
 
   function setPoster(url) {

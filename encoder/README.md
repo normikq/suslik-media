@@ -144,15 +144,16 @@ POST /internal/hls/audio-done {job_id, hls_id, profile, tracks:[{key, dir, codec
 | `SM_FFMPEG`, `SM_FFPROBE` | `ffmpeg`, `ffprobe` | пути к программам |
 | `SM_TONEMAP`, `SM_VULKAN_DEVICE` | `auto`, пусто | путь HDR → SDR — раздел «Тонмаппинг HDR → SDR» |
 | `SM_HWDEC` | `1` при nvenc | декодирование исходника на видеокарте (`-hwaccel cuda`) |
+| `SM_GPU_SCALE` | `1` при nvenc | масштаб на видеокарте: `-hwaccel_output_format cuda`, `scale_cuda` (`bwdif_cuda` для черезстрочного) — кадры не копируются в память и обратно. Только без тонмаппинга и для исходников, которые декодирует NVDEC (H.264 8 бит, HEVC/AV1/VP9 8–10 бит 4:2:0, MPEG-2); иначе и при сбое ffmpeg (повтор сразу) — масштаб на CPU. Нет `scale_cuda` в ffmpeg — выключается при старте. 4K SDR → 1080p+720p в 2,3 раза быстрее (RTX 5070 Ti) |
 | `SM_CQ` | `21` (nvenc) / `23` | качество: `-cq` у nvenc, `-crf` у x265/x264 |
-| `SM_NVENC_PRESET` | `p5` | пресет nvenc |
+| `SM_NVENC_PRESET` | `p4` | пресет nvenc (p5 на RTX 3060 Ti в 1,5 раза медленнее при том же VMAF) |
 | `SM_SW_PRESET` | `medium` | пресет x265/x264 (`ultrafast` для тестов) |
 | `SM_WORK_DIR` | `encoder/work` | временные файлы (нужно место на весь фильм в HLS, ~3–5 ГБ) |
 | `SM_LOG_DIR` | `encoder/logs` | журнал |
 | `SM_LOG_MAX_MB`, `SM_LOG_KEEP` | `10`, `5` | ротация журнала |
 | `SM_IDLE_S` | `30` | пауза после `204` |
 | `SM_ERROR_S` | `60` | пауза после ошибки связи с сервером |
-| `SM_PROGRESS_S` | `10` | период `progress` |
+| `SM_PROGRESS_S` | `2` | период `progress` (аренда и полоса прогресса на сайте) |
 | `SM_KEYFRAME_PROBE_S` | `600` | окно замера интервала ключевых кадров |
 | `SM_RECONNECT_DELAY_MAX` | `30` | `-reconnect_delay_max` для ffmpeg/ffprobe |
 | `SM_ONCE` | `0` | одно задание (или одно `204`) и выход |

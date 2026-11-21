@@ -5,6 +5,7 @@
   "use strict";
 
   const REFRESH_MS = 10000;
+  const REFRESH_BUSY_MS = 3000; // что-то кодируется — чаще, чтобы полоса прогресса шла плавно (воркер шлёт раз в 2 с)
 
   // ---- Чистые функции (без DOM) ----
 
@@ -211,6 +212,7 @@
 
   const $ = id => document.getElementById(id);
   let timer = null;
+  let busy = false; // в очереди есть задание в работе
   let loading = false;
   let lastOk = 0;
   let toastTimer = null;
@@ -290,6 +292,7 @@
     $("loading").classList.add("hidden");
     $("app").classList.remove("hidden");
     render(r.body);
+    busy = Number(r.body.totals?.running) > 0;
     $("updated").textContent = "Обновлено в " + new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   }
 
@@ -558,11 +561,15 @@
 
   function start() {
     stop();
-    timer = setInterval(load, REFRESH_MS);
+    const tick = async () => {
+      await load();
+      if (timer) timer = setTimeout(tick, busy ? REFRESH_BUSY_MS : REFRESH_MS);
+    };
+    timer = setTimeout(tick, REFRESH_MS);
   }
 
   function stop() {
-    if (timer) clearInterval(timer);
+    if (timer) clearTimeout(timer);
     timer = null;
   }
 

@@ -16,7 +16,9 @@
   const HEVC_TYPE = 'video/mp4; codecs="hvc1.1.6.L120.90"';
   const AVC_TYPE = 'video/mp4; codecs="avc1.640028"';
   const HLS_MIME = "application/vnd.apple.mpegurl";
-  const POLL_SHEET_MS = 60000; // окно фильма открыто, ассет кодируется — спрашиваем статус раз в минуту
+  const POLL_SHEET_MS = 60000; // окно фильма открыто, файл ещё не в очереди — спрашиваем статус раз в минуту
+  const POLL_ENCODING_MS = 5000; // кодируется — чаще: процент и «осталось» идут плавно (воркер шлёт раз в 2 с)
+  const pollMs = src => (src && src.kind === "wait" ? POLL_ENCODING_MS : POLL_SHEET_MS);
   const POLL_PLAYING_MS = 90000; // смотрим зеркало — не стал ли готов HLS
   const SAVE_EVERY_MS = 30000;
   const NET_RETRIES = 3;
@@ -63,8 +65,10 @@
 
   /** Чем играть HLS: "native" (Safari), "hlsjs" (MediaSource) или null — браузер не умеет кодек. */
   function hlsEngine(hls, caps) {
-    // v1-copy копирует видео исходника: H.264-раздача даёт H.264 в HLS (docs/HLS.md §5)
-    const avc = hls.profile === "v1-copy" && String((hls.direct || {}).vcodec || "").toLowerCase() === "h264";
+    // Кодек версии — hls.vcodec (сервер берёт его из manifest). Без него: v1-copy копирует видео исходника,
+    // H.264-раздача даёт H.264 в HLS (docs/HLS.md §5), а v1 — HEVC
+    const own = String(hls.vcodec || "").toLowerCase();
+    const avc = own ? own === "h264" : hls.profile === "v1-copy" && String((hls.direct || {}).vcodec || "").toLowerCase() === "h264";
     const mse = avc ? !!caps.avcMse : !!caps.hevcMse;
     const nat = !!caps.nativeHls && (avc ? !!caps.nativeAvc : !!caps.nativeHevc);
     if (nat && (caps.safari || !mse)) return "native";
@@ -406,25 +410,25 @@
     "#playSheet .ps-hls-btn:hover{border-color:#4d86ff}",
     "#playSheet .ps-hls-btn[disabled]{opacity:.45;pointer-events:none}",
     ".shls{position:fixed;inset:0;z-index:10000;background:#000;display:flex;flex-direction:column}",
-    ".shls-player{display:flex;flex-direction:column;color:var(--text,#eef0f5);font:500 13px var(--ui,system-ui)}",
+    ".shls-player{display:flex;flex-direction:column;color:var(--text,#FAFAFA);font:500 13px var(--ui,Inter,system-ui)}",
     ".shls .shls-player{flex:1 1 auto;min-height:0}",
-    ".shls-stage{position:relative;background:#000}",
+    ".shls-stage{position:relative;background:#070708}",
     ".shls .shls-stage{flex:1 1 auto;min-height:0}",
-    ".shls-stage video{display:block;width:100%;height:100%;background:#000}",
+    ".shls-stage video{display:block;width:100%;height:100%;background:#070708}",
     ".shls-embed{width:100%;min-width:0}",
-    ".shls-embed .shls-stage{height:0;padding-top:56.25%;border-radius:14px;overflow:hidden;border:1px solid var(--line,#222838)}",
+    ".shls-embed .shls-stage{height:0;padding-top:56.25%;border-radius:4px;overflow:hidden;border:1px solid var(--line,#222226)}",
     ".shls-embed .shls-stage video{position:absolute;inset:0}",
-    ".shls-screen{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:16px;text-align:center;background:rgba(6,9,17,.88);font:500 14px/1.4 var(--ui,system-ui)}",
+    ".shls-screen{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:16px;text-align:center;background:radial-gradient(circle at 50% 42%,#19191E 0%,#070708 82%);font:500 13px/1.4 var(--ui,Inter,system-ui)}",
     ".shls-screen[hidden]{display:none}",
-    ".shls-screen.err .shls-msg{color:#ff9b8f}",
-    ".shls-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 16px;background:var(--booth,#10141e)}",
-    ".shls-embed .shls-bar{padding:8px 0 0;background:transparent}",
+    ".shls-screen.err .shls-msg{color:#f87171}",
+    ".shls-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 16px;background:var(--booth,#111113);border-top:1px solid var(--line,#222226)}",
+    ".shls-embed .shls-bar{padding:8px 0 0;background:transparent;border-top:0}",
     ".shls-title{flex:1 1 160px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
-    ".shls-bar select,.shls-bar button,.shls-btn{height:34px;border-radius:10px;border:1px solid var(--line2,#2e374c);background:var(--film,#161c28);color:var(--text,#eef0f5);font:inherit;padding:0 10px;max-width:100%;cursor:pointer}",
-    ".shls-bar select:hover,.shls-bar button:hover,.shls-btn:hover{border-color:var(--glass-edge-hover,rgba(96,165,250,.45))}",
-    ".shls-bar select:focus-visible,.shls-bar button:focus-visible,.shls-btn:focus-visible{outline:2px solid var(--electric,#2563eb);outline-offset:1px}",
+    ".shls-bar select,.shls-bar button,.shls-btn{height:34px;border-radius:4px;border:1px solid var(--line,#222226);background:var(--night,#0A0A0B);color:var(--text,#FAFAFA);font:inherit;padding:0 10px;max-width:100%;cursor:pointer}",
+    ".shls-bar select:hover,.shls-bar button:hover,.shls-btn:hover{background:#18181C;border-color:var(--line2,#2E2E35)}",
+    ".shls-bar select:focus-visible,.shls-bar button:focus-visible,.shls-btn:focus-visible{outline:1px solid #FAFAFA;outline-offset:1px}",
     ".shls-btn[disabled]{opacity:.45;pointer-events:none}",
-    ".shls-note{padding:6px 16px;background:var(--booth,#10141e);color:var(--muted,#8e96a8);font:400 12.5px var(--ui,system-ui)}",
+    ".shls-note{padding:6px 16px;background:var(--booth,#111113);color:var(--muted,#8E8E93);font:400 12px var(--ui,Inter,system-ui)}",
     ".shls-embed .shls-note{padding:6px 0 0;background:transparent}",
     ".shls-note:empty{display:none}",
     "@media (max-width:600px){.shls-bar{gap:6px;padding:6px 10px}.shls-title{flex-basis:100%}.shls-bar select{flex:1 1 0;min-width:0}}"
@@ -516,9 +520,9 @@
         if (next.kind === "hls" || next.kind === "direct") { attach(ctx); return; }
         const note = box.querySelector(".ps-hls-note");
         if (note && next.kind !== "legacy") note.textContent = messageFor(next);
-        setTimeout(tick, POLL_SHEET_MS);
+        setTimeout(tick, pollMs(next));
       };
-      setTimeout(tick, POLL_SHEET_MS);
+      setTimeout(tick, pollMs(src));
     }
   }
 
@@ -725,7 +729,7 @@
         emit(P);
       }
       schedulePrep(P, token);
-    }, POLL_SHEET_MS);
+    }, pollMs(P.view));
   }
 
   /** Запустить источник с места fileMs (время файла раздачи). */

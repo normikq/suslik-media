@@ -13,16 +13,22 @@
 
   function sideNavSync() {
     var inLib = libraryVisible();
-    var counts = { movie: 0, series: 0, anime: 0, cartoon: 0, other: 0 };
-    (cachedLibrary || []).forEach(function (m) { var c = getItemCategory(m); if (counts[c] !== undefined) counts[c]++; });
+    var lib = cachedLibrary || [];
+    var counts = { all: lib.length, movie: 0, series: 0, anime: 0, cartoon: 0, other: 0 }, fav = 0, mine = 0;
+    lib.forEach(function (m) { var c = getItemCategory(m); if (counts[c] !== undefined) counts[c]++; if (m.favorite) fav++; if (m.mine) mine++; });
+    var favMode = typeof libraryStatusFilter !== "undefined" && libraryStatusFilter === "favorites";
     document.querySelectorAll(".side-cat").forEach(function (b) {
       var cat = b.dataset.cat;
+      if (!cat) return;
       var n = b.querySelector(".side-count");
-      if (n) n.textContent = counts[cat];
+      if (n) n.textContent = lib.length ? counts[cat] : "";
       b.classList.toggle("active", inLib && libraryCategory === cat);
     });
-    $("showLibraryTab").classList.toggle("secondary", !(inLib && libraryCategory === "all"));
+    var setN = function (id, v) { var n = $(id); if (n) n.textContent = lib.length ? v : ""; };
+    setN("sideTotalCount", lib.length); setN("sideFavCount", fav); setN("sideMineCount", mine);
+    $("showLibraryTab").classList.toggle("secondary", !(inLib && libraryCategory === "all" && !favMode));
     $("showMineTab").classList.toggle("secondary", !(inLib && libraryCategory === "mine"));
+    if ($("showFavTab")) $("showFavTab").classList.toggle("secondary", !(inLib && favMode));
     var svc = $("sideAppsTab");
     if (svc) svc.classList.toggle("active", !$("appsTab").classList.contains("hidden"));
     var ses = $("sideSessionsTab");
@@ -43,6 +49,7 @@
   });
   // «Главная» всегда сбрасывает категорию на «Все»
   $("showLibraryTab").addEventListener("click", function () {
+    if (typeof setLibraryStatus === "function" && libraryStatusFilter === "favorites") setLibraryStatus("all");
     if (libraryCategory !== "all") setCategory("all");
   }, true);
   $("showMineTab").addEventListener("click", function () { setCategory("mine"); });
@@ -51,7 +58,7 @@
 
   // ---- Баннер «Продолжить просмотр» ---------------------------------------------------------------
   var hero = { entries: [], sig: "", idx: 0, timer: null, hover: false, fetchedAt: 0, fetching: false, info: new Map() };
-  var LIMIT = 4, ROTATE_MS = 9000, MAX_AGE = 60 * 864e5;
+  var LIMIT = 3, ROTATE_MS = 9000, MAX_AGE = 60 * 864e5;
   var pad2 = function (n) { return String(n).padStart(2, "0"); };
 
   function plural(n, one, few, many) {
@@ -76,7 +83,17 @@
       hero.raw = [...best.values()];
     } catch (e) { hero.raw = []; hero.rawSync = []; hero.fetchedAt = Date.now(); }
     hero.fetching = false;
+    // доля просмотра по раздаче — для полосок на постерах и вкладок «Продолжить» / «Непросмотренные»
+    var frac = new Map();
+    (hero.raw || []).forEach(function (w) {
+      var id = String(w.key).split("|")[0];
+      if (w.len > 0 && w.pos > 0) frac.set(id, Math.min(1, w.pos / w.len));
+    });
+    var sig = [...frac].map(function (x) { return x[0] + ":" + Math.round(x[1] * 100); }).join(",");
+    hero.frac = frac;
+    if (sig !== hero.fracSig) { hero.fracSig = sig; if (libraryVisible()) renderLibrary(false); }
   }
+  window.smWatchOf = function (id) { return (hero.frac && hero.frac.get(String(id))) || 0; };
 
   // Сборник фильмов — общие правила страницы (isCollection, collectionTypeLabel, COLLECTION_WORDS в index.html), не своя копия
   var TRACK_PREFIX = /^\s*(?:\[[^\]]*\]\s*|\([^\)]*\)\s*|(?:фильм|серия|часть|part|movie|vol|cd|диск)?\s*\d{1,3}[\s._-]*)+/i;
@@ -282,37 +299,56 @@
     if (!box) return;
     var e = hero.entries[hero.idx] || hero.entries[0];
     if (!e) { box.replaceChildren(); return; }
-    var bg = el("div", "hb-bg"), shade = el("div", "hb-shade"), text = el("div", "hb-text"), thumbs = el("div", "hb-thumbs");
-    var eyebrow = el("div", "hb-eyebrow", tr("hero.eyebrow", null, "ПРОДОЛЖИТЬ ПРОСМОТР"));
+    var pct = function (x) { return Math.round(Math.min(1, Math.max(0, x.fraction)) * 100); };
     var baseTitle = e.baseTitle || (typeof displayTitle === "function" ? displayTitle(e.magnet) : escapeTitle(e.magnet.name));
     var displayTitleText = e.isCollection ? (e.filmTitle || baseTitle) : baseTitle;
-    var titleBox = el("div", "hb-title"), title = el("h2", "", displayTitleText);
-    titleBox.append(title);
-    var chips = el("div", "hb-chips"), overview = el("p", "hb-overview");
+
+    // Левая часть: что смотрели, сведения, описание, прогресс и кнопки
+    var main = el("div", "hb-main"), top = el("div");
+    var head = el("div", "hb-head");
+    head.append(el("span", "hb-eyebrow", tr("hero.eyebrow", null, "Продолжить просмотр")), el("span", "hb-left", timeLeft(e)));
+    var title = el("h1", "hb-title", displayTitleText);
+    var meta = el("div", "hb-meta");
     var specs = getItemSpecs(e.magnet);
-    var typeChip = e.isCollection ? el("span", "hb-chip", collectionTypeLabel(e.filmCount, e.magnet.name)) : (specs.type ? el("span", "hb-chip", specs.type) : null);
-    var yearChip = el("span", "hb-chip hidden"), rating = el("span", "hb-rating hidden");
-    chips.append(yearChip);
-    if (typeChip) chips.append(typeChip);
-    if (e.isCollection) {
-      if (e.filmCount > 0) chips.append(el("span", "hb-chip", plural(e.filmCount, "фильм", "фильма", "фильмов")));
-    } else if (e.epCount) {
-      chips.append(el("span", "hb-chip", (e.epCount.season === 0 ? "Спецвыпуски" : "Сезон " + e.epCount.season) + " • " + plural(e.epCount.eps, "серия", "серии", "серий")));
+    var yearSpan = el("span", "hidden"), ratingSpan = el("span", "hb-rating hidden");
+    var parts = [yearSpan];
+    if (e.isCollection) parts.push(el("span", "", collectionTypeLabel(e.filmCount, e.magnet.name)));
+    else if (specs.type) parts.push(el("span", "", specs.type));
+    parts.push(ratingSpan);
+    if (e.sub && e.sub !== specs.type && e.sub !== tr("common.movie", null, "Фильм")) parts.push(el("span", "hb-sub", e.sub));
+    // точки-разделители только между показанными частями (год и рейтинг приходят позже)
+    function relayMeta() {
+      meta.replaceChildren();
+      parts.filter(function (p) { return !p.classList.contains("hidden"); }).forEach(function (p, i) { if (i) meta.append(el("span", "hb-dot", "·")); meta.append(p); });
     }
-    chips.append(rating);
+    var overview = el("p", "hb-overview");
+    top.append(head, title, meta, overview);
 
-    var meta = el("div", "hb-meta"), left = el("span", "", e.sub), right = el("span", "hb-left", timeLeft(e));
-    meta.append(left, right);
-    var bar = el("div", "hb-bar"), fill = el("i"); fill.style.width = Math.round(Math.min(1, Math.max(0, e.fraction)) * 100) + "%"; bar.append(fill);
-    var play = el("button", "hb-play"); play.type = "button";
-    play.append(el("span", "", "▶"), el("span", "", tr("hero.resume", null, "Продолжить")));
+    var foot = el("div", "hb-foot"), prog = el("div", "hb-progress");
+    var progHead = el("div", "hb-progress-head");
+    progHead.append(el("span", "", tr("hero.watched", null, "Просмотрено")), el("span", "hb-pct", pct(e) + "%"));
+    var bar = el("div", "hb-bar"), fill = el("i"); fill.style.width = pct(e) + "%"; bar.append(fill);
+    prog.append(progHead, bar);
+    var btns = el("div", "hb-actions");
+    var play = el("button", "hb-play sm-btn sm-btn-primary"); play.type = "button";
+    play.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>';
+    play.append(el("span", "", tr("hero.resume", null, "Продолжить")));
     play.addEventListener("click", function () { playEntry(e); });
-    text.append(eyebrow, titleBox, chips, overview, el("div", "hb-spacer"), meta, bar, play);
+    var about = el("button", "hb-about sm-btn", tr("hero.about", null, "О фильме")); about.type = "button";
+    about.addEventListener("click", function () { if (typeof openLibraryModal === "function") openLibraryModal(e.magnet); });
+    btns.append(play, about);
+    foot.append(prog, btns);
+    main.append(top, foot);
 
+    // Правая часть: «Недавно смотрели» — переключатель между начатыми фильмами
+    var side = el("div", "hb-side"), sideHead = el("div", "hb-side-head");
+    sideHead.append(el("span", "hb-eyebrow", tr("hero.recent", null, "Недавно смотрели")),
+      el("span", "hb-side-count", plural(hero.entries.length, "фильм", "фильма", "фильмов")));
+    var thumbs = el("div", "hb-thumbs");
     hero.entries.forEach(function (x, i) {
       var thumbTitle = x.isCollection ? (x.filmTitle || x.baseTitle) : x.baseTitle;
       var b = el("button", "hb-thumb" + (x === e ? " on" : "")); b.type = "button"; b.title = thumbTitle;
-      var titleFallback = el("span", "hb-thumb-title", thumbTitle);
+      var art = el("span", "hb-thumb-art");
       var img = el("img"); img.alt = ""; img.decoding = "async";
       (async function () {
         for (var q of x.queries) {
@@ -320,33 +356,29 @@
           if (u) { img.src = apiUrl(u); img.onload = function () { img.classList.add("loaded"); }; break; }
         }
       })();
-      var p = el("i", "hb-thumb-bar"); p.style.width = Math.round(Math.min(1, x.fraction) * 100) + "%";
-      b.append(titleFallback, img, p);
+      var p = el("span", "hb-thumb-bar"), pf = el("i"); pf.style.width = pct(x) + "%"; p.append(pf);
+      art.append(el("span", "hb-thumb-fallback", thumbTitle), img, p);
+      b.append(art, el("span", "hb-thumb-title", thumbTitle), el("span", "hb-thumb-pct", pct(x) + "%"));
       b.addEventListener("click", function () { hero.idx = i; renderHero(); armTimer(); });
       thumbs.append(b);
     });
-    box.replaceChildren(bg, shade, text, thumbs);
+    var sideFoot = el("div", "hb-side-foot");
+    sideFoot.append(el("span", "", tr("hero.pick", null, "Выберите фильм для быстрого возврата")), el("span", "hb-saved", tr("hero.saved", null, "Прогресс сохранён")));
+    side.append(sideHead, thumbs, sideFoot);
+    box.replaceChildren(main, side);
 
-    // широкий кадр, логотип, описание, год и рейтинг приходят с сервера (TMDB); пока их нет — баннер просто тёмный
+    // описание, год и рейтинг приходят с сервера (TMDB)
     var token = e;
     getInfo(e.queries, e.season).then(function (info) {
       if (!info || (hero.entries[hero.idx] || hero.entries[0]) !== token) return;
-      if (!box.contains(bg)) return;
-      if (info.backdrop && /^\/api\/poster\/img\//.test(info.backdrop)) {
-        var im = new Image();
-        im.onload = function () { bg.style.backgroundImage = "url(" + apiUrl(info.backdrop) + ")"; bg.classList.add("ready"); };
-        im.src = apiUrl(info.backdrop);
-      }
-      if (info.logo && /^\/api\/poster\/img\//.test(info.logo)) {
-        var logo = el("img", "hb-logo"); logo.alt = displayTitleText; logo.src = apiUrl(info.logo);
-        logo.onload = function () { title.replaceWith(logo); };
-      } else if (info.title && e.isCollection) {
-        title.textContent = info.title;
-      }
+      if (!box.contains(main)) return;
+      if (info.title && e.isCollection) title.textContent = info.title;
       if (info.overview) overview.textContent = info.overview;
-      if (info.year) { yearChip.textContent = info.year; yearChip.classList.remove("hidden"); }
-      if (info.rating) { rating.textContent = "★ " + Number(info.rating).toFixed(1); rating.classList.remove("hidden"); }
+      if (info.year) { yearSpan.textContent = info.year; yearSpan.classList.remove("hidden"); }
+      if (info.rating) { ratingSpan.textContent = "★ " + Number(info.rating).toFixed(1); ratingSpan.classList.remove("hidden"); }
+      relayMeta();
     });
+    relayMeta();
   }
 
   function armTimer() {
@@ -433,23 +465,4 @@
   } catch (e) {}
   sideNavSync();
   heroRefresh();
-})();
-
-// Кнопки сортировки и «Только готовые» под баннером: ведут за собой прежние скрытые select и флажок, на которых держится отрисовка.
-(function () {
-  "use strict";
-  var sel = document.getElementById("librarySort"), seg = document.getElementById("libSortSeg");
-  var ready = document.getElementById("libraryOnlyReady"), readyBtn = document.getElementById("libReadyBtn");
-  if (!sel || !seg || !ready || !readyBtn) return;
-  function fire(n) { n.dispatchEvent(new Event("change", { bubbles: true })); }
-  seg.addEventListener("click", function (e) {
-    var b = e.target.closest(".lib-pill"); if (!b) return;
-    sel.value = b.dataset.sort; fire(sel);
-    seg.querySelectorAll(".lib-pill").forEach(function (x) { x.classList.toggle("active", x === b); });
-  });
-  readyBtn.addEventListener("click", function () {
-    ready.checked = !ready.checked; fire(ready);
-    readyBtn.classList.toggle("active", ready.checked);
-    readyBtn.setAttribute("aria-pressed", String(ready.checked));
-  });
 })();

@@ -161,3 +161,42 @@ test('качество по умолчанию: nvenc -cq 21 (20.11, было 24
   assert.equal(loadConfig({ SM_SITE_URL: 'https://s.example.org', HLS_WORKER_TOKEN: 't', SM_ENCODER: 'x265' }).cq, 23);
   assert.equal(loadConfig({ SM_SITE_URL: 'https://s.example.org', HLS_WORKER_TOKEN: 't', SM_CQ: '24' }).cq, 24);
 });
+
+test('масштаб на видеокарте (gpuScale): scale_cuda, кадры в памяти GPU; иначе — по-старому', () => {
+  const g = { ...cfg, gpuScale: true };
+  const sdr = (w, h, extra = {}) => {
+    const p = copyProbe(w, h);
+    Object.assign(p.streams[0], extra);
+    return p;
+  };
+  // v1 из 4K SDR 10 бит: верхняя ступень и 8 бит одним scale_cuda, 720p — от неё
+  const plan = buildPlan(sdr(3840, 2160, { codec_name: 'hevc', pix_fmt: 'yuv420p10le' }), 'v1');
+  const a = buildFfmpegArgs(g, plan, '/src.mkv', '/w');
+  assert.deepEqual(a.slice(a.indexOf('-hwaccel'), a.indexOf('-hwaccel') + 4), ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda']);
+  assert.equal(a[a.indexOf('-filter_complex') + 1],
+    '[0:0]scale_cuda=w=1920:h=1080:format=yuv420p,split=2[g0][g1];[g0]setsar=1[v0];[g1]scale_cuda=w=1280:h=720,setsar=1[v1]');
+  assert.equal(a.filter((x) => x === 'hevc_nvenc').length, 2);
+  assert.doesNotMatch(a.join(' '), /-color_primaries/);
+
+  // одна ступень (720p-исходник), черезстрочное — bwdif_cuda
+  const one = buildPlan(sdr(1280, 720), 'v1');
+  one.interlaced = true;
+  const b = buildFfmpegArgs(g, one, '/src.mkv', '/w');
+  assert.equal(b[b.indexOf('-filter_complex') + 1], '[0:0]bwdif_cuda=mode=send_frame:deint=interlaced,scale_cuda=w=1280:h=720:format=yuv420p,setsar=1[v0]');
+
+  // v1-copy: 720p через scale_cuda, копия как раньше
+  const c = buildFfmpegArgs(g, buildPlan(sdr(1920, 1080), 'v1-copy'), '/src.mkv', '/w');
+  assert.equal(c[c.indexOf('-filter_complex') + 1], '[0:0]scale_cuda=w=1280:h=720:format=yuv420p,setsar=1[c720p]');
+  assert.match(c.join(' '), /-c:v copy -tag:v avc1 .*-map \[c720p\] -c:v hevc_nvenc .*-force_key_frames source/);
+
+  // не на GPU: HDR (тонмаппинг), H.264 10 бит (NVDEC не умеет), выключено, повтор после сбоя (plan.gpu = false)
+  const hdr = buildFfmpegArgs(g, buildPlan(probeReq, 'v1'), '/src.mkv', '/w');
+  assert.ok(!hdr.includes('-hwaccel_output_format'));
+  const hi10 = buildFfmpegArgs(g, buildPlan(sdr(1920, 1080, { pix_fmt: 'yuv420p10le' }), 'v1'), '/src.mkv', '/w');
+  assert.ok(!hi10.includes('-hwaccel_output_format'));
+  assert.ok(!buildFfmpegArgs(cfg, plan, '/src.mkv', '/w').includes('-hwaccel_output_format'));
+  const retry = { ...plan, gpu: false };
+  const r = buildFfmpegArgs(g, retry, '/src.mkv', '/w');
+  assert.ok(!r.includes('-hwaccel_output_format'));
+  assert.match(r[r.indexOf('-filter_complex') + 1], /^\[0:0\]format=yuv420p,split=2/);
+});
