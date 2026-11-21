@@ -1204,7 +1204,10 @@ function ensureV1(id, file, now = Date.now()) {
   const a = store.getAsset(String(id || ""));
   if (!a || a.profiles?.["v1-copy"]?.status !== "ready" || a.profiles.v1 || (a.pending_delete || []).includes("v1-copy")) return null;
   if (!file || file.ad_id == null || !file.path) return null;
-  if ([...store.allJobs().values()].some(j => !store.isAudioJob(j) && j.hls_id === String(id) && j.profile === "v1")) return null;
+  const mine = [...store.allJobs().values()].filter(j => !store.isAudioJob(j) && j.hls_id === String(id) && j.profile === "v1");
+  if (mine.some(j => j.state !== "failed")) return null;
+  // упавшее задание (например, на удалённую раздачу) иначе подхватил бы enqueue по hls_id со старым файлом
+  for (const j of mine) store.deleteJob(j.job_id);
   try {
     const r = enqueue({ ad_id: String(file.ad_id), path: file.path, size: Number(file.size) || 0, hash: file.hash || null, priority: 4,
       hls_id: String(id), profile: "v1", canonical_id: a.canonical_id, edition: a.edition, episode: a.episode }, now);
