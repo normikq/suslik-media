@@ -153,7 +153,7 @@ POST /internal/hls/audio-done {job_id, hls_id, profile, tracks:[{key, dir, codec
 | `SM_LOG_MAX_MB`, `SM_LOG_KEEP` | `10`, `5` | ротация журнала |
 | `SM_IDLE_S` | `30` | пауза после `204` |
 | `SM_ERROR_S` | `60` | пауза после ошибки связи с сервером |
-| `SM_PROGRESS_S` | `10` | период `progress` |
+| `SM_PROGRESS_S` | `2` | период `progress` (аренда и полоса прогресса на сайте) |
 | `SM_KEYFRAME_PROBE_S` | `600` | окно замера интервала ключевых кадров |
 | `SM_RECONNECT_DELAY_MAX` | `30` | `-reconnect_delay_max` для ffmpeg/ffprobe |
 | `SM_ONCE` | `0` | одно задание (или одно `204`) и выход |

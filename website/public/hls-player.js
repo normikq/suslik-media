@@ -16,7 +16,9 @@
   const HEVC_TYPE = 'video/mp4; codecs="hvc1.1.6.L120.90"';
   const AVC_TYPE = 'video/mp4; codecs="avc1.640028"';
   const HLS_MIME = "application/vnd.apple.mpegurl";
-  const POLL_SHEET_MS = 60000; // окно фильма открыто, ассет кодируется — спрашиваем статус раз в минуту
+  const POLL_SHEET_MS = 60000; // окно фильма открыто, файл ещё не в очереди — спрашиваем статус раз в минуту
+  const POLL_ENCODING_MS = 5000; // кодируется — чаще: процент и «осталось» идут плавно (воркер шлёт раз в 2 с)
+  const pollMs = src => (src && src.kind === "wait" ? POLL_ENCODING_MS : POLL_SHEET_MS);
   const POLL_PLAYING_MS = 90000; // смотрим зеркало — не стал ли готов HLS
   const SAVE_EVERY_MS = 30000;
   const NET_RETRIES = 3;
@@ -518,9 +520,9 @@
         if (next.kind === "hls" || next.kind === "direct") { attach(ctx); return; }
         const note = box.querySelector(".ps-hls-note");
         if (note && next.kind !== "legacy") note.textContent = messageFor(next);
-        setTimeout(tick, POLL_SHEET_MS);
+        setTimeout(tick, pollMs(next));
       };
-      setTimeout(tick, POLL_SHEET_MS);
+      setTimeout(tick, pollMs(src));
     }
   }
 
@@ -727,7 +729,7 @@
         emit(P);
       }
       schedulePrep(P, token);
-    }, POLL_SHEET_MS);
+    }, pollMs(P.view));
   }
 
   /** Запустить источник с места fileMs (время файла раздачи). */

@@ -51,7 +51,7 @@ function loadConfig(env = process.env) {
     logKeep: num(env.SM_LOG_KEEP, 5),
     idleSec: num(env.SM_IDLE_S, 30),           // пауза после 204 от /next
     errorSec: num(env.SM_ERROR_S, 60),         // пауза после сбоя связи с сервером
-    progressSec: num(env.SM_PROGRESS_S, 10),   // progress продлевает аренду
+    progressSec: num(env.SM_PROGRESS_S, 2),    // progress продлевает аренду и двигает полосу в админке и окне фильма
     keyframeProbeSec: num(env.SM_KEYFRAME_PROBE_S, 600), // окно замера keyframe_interval_max_s
     reconnectDelayMax: num(env.SM_RECONNECT_DELAY_MAX, 30),
     // качество: -cq для nvenc, -crf для x265/x264
