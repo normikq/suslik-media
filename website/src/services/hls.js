@@ -18,7 +18,7 @@ const MAX_ATTEMPTS = 3; // retryable-ошибок подряд, потом за�
 const FAIL_BACKOFF_S = 5 * 60; // пауза перед повтором: attempts × 5 мин
 const SHIFT_ZERO_MS = 1500; // §8: |Δ| ≤ 1,5 с — без сдвига
 const SHIFT_MAX_MS = 120 * 1000; // §8: |Δ| > 2 мин — другой монтаж
-const COPY_MAX_BITRATE = 12_000_000; // §5 v1-copy: средний битрейт ≤ 12 Мбит
+const COPY_MAX_BITRATE = 8_000_000; // §5 v1-copy: средний битрейт ≤ 8 Мбит
 const COPY_MAX_KEYINT_S = 11; // §5: у BDRip часто 10,0–10,5 с (keyint 250 при 23,976) — с порогом 10 они не проходили в v1-copy
 const VIDEO_EXT = /\.(mkv|mp4|avi|mov|webm|m4v|m2ts|ts|wmv|mpg|mpeg)$/i;
 const HEX16 = /^[0-9a-f]{16}$/;
@@ -406,9 +406,13 @@ function enqueue(opts, now = Date.now()) {
 
   if (!profile) {
     const al = store.getAlias(adId, path);
-    if (al && availableProfile(store.getAsset(al.hls_id))) return { skipped: "ready", hls_id: al.hls_id };
+    if (al && availableProfile(store.getAsset(al.hls_id))) {
+      ensureV1(al.hls_id, v1Source(store.getAsset(al.hls_id), { ad_id: adId, path, size, hash }), now);
+      return { skipped: "ready", hls_id: al.hls_id };
+    }
     if (availableProfile(store.getAsset(id))) {
       store.setAlias(adId, path, id, 0);
+      ensureV1(id, v1Source(store.getAsset(id), { ad_id: adId, path, size, hash }), now);
       return { skipped: "ready", hls_id: id };
     }
   }
@@ -579,9 +583,11 @@ function getLiveJob(jobOrId) {
   return id ? store.getJob(id) : null;
 }
 
-function finishAlias(job, id, shift) {
+function finishAlias(job, id, shift, sameFile = false) {
   store.setAlias(job.ad_id, job.path, id, shift);
   store.deleteJob(job.job_id);
+  // тот же файл (совпал отпечаток) — из него можно докодировать v1, если её нет
+  if (sameFile) ensureV1(id, job);
   return { action: "alias", hls_id: id, shift_ms: shift };
 }
 
@@ -594,6 +600,9 @@ function waitJob(job, t) {
 
 function startEncode(job, id, asset, profile, t) {
   asset.profiles = asset.profiles || {};
+  // Источник — файл этого задания: старая раздача могла быть удалена и добавлена снова (новый ad_id), а v1 после
+  // v1-copy ставится по asset.source
+  asset.source = { ad_id: String(job.ad_id), path: job.path, size: job.size, hash: job.hash || null };
   const ps = asset.profiles[profile]?.status;
   if (ps !== "ready" && ps !== "cold") asset.profiles[profile] = { status: "encoding", created_at: t };
   delete asset.error;
@@ -648,7 +657,7 @@ function handleProbe(jobOrId, body, now = Date.now()) {
     const a = store.getAsset(job.hls_id);
     if (a && (!a.fingerprint || a.fingerprint === fp)) {
       const ps = a.profiles?.[job.profile]?.status;
-      if (ps === "ready" || ps === "cold") return finishAlias(job, job.hls_id, store.getAlias(job.ad_id, job.path)?.shift_ms || 0);
+      if (ps === "ready" || ps === "cold") return finishAlias(job, job.hls_id, store.getAlias(job.ad_id, job.path)?.shift_ms || 0, true);
       if (liveEncoder(job.hls_id, job.job_id, t)) return waitJob(job, t);
       if (!a.fingerprint) a.fingerprint = fp;
       if (!a.duration_ms && durationMs) a.duration_ms = durationMs;
@@ -660,7 +669,7 @@ function handleProbe(jobOrId, body, now = Date.now()) {
   // 1. Тот же файл: совпал отпечаток
   const hit = store.assetByFingerprint(fp);
   if (hit) {
-    if (availableProfile(hit.asset)) return finishAlias(job, hit.id, 0);
+    if (availableProfile(hit.asset)) return finishAlias(job, hit.id, 0, true);
     if (liveEncoder(hit.id, job.job_id, t)) return waitJob(job, t);
     return startEncode(job, hit.id, hit.asset, decideProfile(body, job.size), t);
   }
@@ -761,15 +770,7 @@ function done(body, now = Date.now()) {
   if (job?.force && job.replaces && job.replaces !== id) replaceAsset(job.replaces, id);
   if (job && (job.force || !store.getAlias(job.ad_id, job.path))) store.setAlias(job.ad_id, job.path, id, 0);
 
-  if (profile === "v1-copy" && !asset.profiles.v1) {
-    const s = asset.source || {};
-    try {
-      enqueue({ ad_id: s.ad_id, path: s.path, size: s.size, hash: s.hash, priority: 4, hls_id: id, profile: "v1",
-        canonical_id: asset.canonical_id, edition: asset.edition, episode: asset.episode }, now);
-    } catch (err) {
-      console.warn("[hls] не удалось поставить v1:", err.message);
-    }
-  }
+  if (profile === "v1-copy") ensureV1(id, asset.source, now);
   emit("profile-ready", { hls_id: id, profile });
   if (profile === "v1") settleCopy(id);
   return { ok: true, active_profile: store.getAsset(id)?.active_profile ?? null };
@@ -1172,7 +1173,61 @@ function enabledFor(userId) {
 function forgetMagnet(adId) {
   const key = String(adId);
   lastStatus.delete(key);
-  return { aliases: store.deleteAliasesOf(key), jobs: store.deleteJobsOf(key) };
+  const res = { aliases: store.deleteAliasesOf(key), jobs: store.deleteJobsOf(key) };
+  dropOrphanEncodings();
+  return res;
+}
+
+/**
+ * Версии «encoding», у которых больше нет задания (раздачу удалили во время кодирования), убираются из записи
+ * ассета: иначе v1 после v1-copy больше не ставится, а пустой ассет мешает закодировать файл заново. → сколько убрано.
+ */
+function dropOrphanEncodings() {
+  const jobs = [...store.allJobs().values()].filter(j => !store.isAudioJob(j));
+  let n = 0;
+  for (const [id, a] of [...store.allAssets()]) {
+    for (const [name, v] of Object.entries(a.profiles || {})) {
+      if (v?.status !== "encoding") continue;
+      if (jobs.some(j => j.hls_id === id && (j.profile || null) === name)) continue;
+      n++;
+      if (dropProfile(id, a, name)) break; // ассет удалён
+    }
+  }
+  return n;
+}
+
+/**
+ * v1 после v1-copy (§5): у ассета готова v1-copy, а v1 нет и её никто не кодирует — задание v1 с приоритетом 4
+ * из файла file ({ad_id, path, size, hash}: файл, на котором сейчас смотрят, или источник ассета). → задание или null.
+ */
+function ensureV1(id, file, now = Date.now()) {
+  const a = store.getAsset(String(id || ""));
+  if (!a || a.profiles?.["v1-copy"]?.status !== "ready" || a.profiles.v1 || (a.pending_delete || []).includes("v1-copy")) return null;
+  if (!file || file.ad_id == null || !file.path) return null;
+  if ([...store.allJobs().values()].some(j => !store.isAudioJob(j) && j.hls_id === String(id) && j.profile === "v1")) return null;
+  try {
+    const r = enqueue({ ad_id: String(file.ad_id), path: file.path, size: Number(file.size) || 0, hash: file.hash || null, priority: 4,
+      hls_id: String(id), profile: "v1", canonical_id: a.canonical_id, edition: a.edition, episode: a.episode }, now);
+    return r.job || null;
+  } catch (err) {
+    console.warn("[hls] не удалось поставить v1:", err.message);
+    return null;
+  }
+}
+
+/** Из чего кодировать v1: источник ассета, пока его раздача есть (у файла есть алиас), иначе file — файл, который смотрят. */
+function v1Source(a, file) {
+  const s = a?.source;
+  return s && s.ad_id != null && s.path && store.getAlias(String(s.ad_id), s.path) ? s : file;
+}
+
+/** Кодек видео версии по её manifest: "h264" | "hevc" | "" (неизвестно). Для выбора движка в плеере сайта. */
+function videoCodecOf(id, profile) {
+  const v = store.getAsset(String(id || ""))?.profiles?.[profile]?.manifest?.video;
+  const c = Array.isArray(v) && v.length ? String(v[0].codec || "").toLowerCase() : "";
+  if (/^avc/.test(c)) return "h264";
+  if (/^(hvc|hev)/.test(c)) return "hevc";
+  return "";
 }
 
 // ---- manifest.json и master.m3u8 (T4) ----
@@ -1692,6 +1747,8 @@ module.exports = {
   statusFor,
   enabledFor,
   forgetMagnet,
+  ensureV1,
+  videoCodecOf,
   normAcodec,
   cleanManifest,
   masterPlaylist,

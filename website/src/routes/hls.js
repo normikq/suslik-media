@@ -280,6 +280,9 @@ async function variantHls(req, { adId, path, size }) {
     block.url = `${publicBase(req)}/api/hls/${st.hls_id}/master.m3u8?exp=${exp}&sig=${hls.signMaster(st.hls_id, exp)}`;
     block.profile = st.profile;
     block.shift_ms = st.shift_ms || 0;
+    // кодек видео версии из её manifest: у заново добавленной раздачи меток media-tags ещё нет (direct.vcodec пуст)
+    const vcodec = hls.videoCodecOf(st.hls_id, st.profile);
+    if (vcodec) block.vcodec = vcodec;
     if (st.from_archive) block.from_archive = true; // §20: CDN отдаёт из архива, старт и перемотка медленнее
   } else if (st.status === "encoding") {
     if (st.profile) block.profile = st.profile;

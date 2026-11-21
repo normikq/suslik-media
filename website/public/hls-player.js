@@ -63,8 +63,10 @@
 
   /** Чем играть HLS: "native" (Safari), "hlsjs" (MediaSource) или null — браузер не умеет кодек. */
   function hlsEngine(hls, caps) {
-    // v1-copy копирует видео исходника: H.264-раздача даёт H.264 в HLS (docs/HLS.md §5)
-    const avc = hls.profile === "v1-copy" && String((hls.direct || {}).vcodec || "").toLowerCase() === "h264";
+    // Кодек версии — hls.vcodec (сервер берёт его из manifest). Без него: v1-copy копирует видео исходника,
+    // H.264-раздача даёт H.264 в HLS (docs/HLS.md §5), а v1 — HEVC
+    const own = String(hls.vcodec || "").toLowerCase();
+    const avc = own ? own === "h264" : hls.profile === "v1-copy" && String((hls.direct || {}).vcodec || "").toLowerCase() === "h264";
     const mse = avc ? !!caps.avcMse : !!caps.hevcMse;
     const nat = !!caps.nativeHls && (avc ? !!caps.nativeAvc : !!caps.nativeHevc);
     if (nat && (caps.safari || !mse)) return "native";
