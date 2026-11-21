@@ -119,3 +119,17 @@ test("decideProfile: v1-copy — только до 8 Мбит", () => {
   assert.equal(at(8_000_001), "v1");
   assert.equal(at(12_000_000), "v1");
 });
+
+test("уже сломанный ассет: упавшее v1 на удалённую раздачу заменяется заданием на новую", () => {
+  reset();
+  watch("100");
+  const w = work();
+  done(w, manCopy);
+  const old = v1Jobs()[0];
+  hls.forgetMagnet("100");
+  // старое состояние (до исправления): v1 стоит на удалённой раздаче и упала
+  store.putJob(old.job_id, { ...old, state: "failed", attempts: 3 });
+  store.setAlias("200", FILE, w.r.hls_id, 0);
+  watch("200");
+  assert.deepEqual(v1Jobs().map(j => [j.ad_id, j.state]), [["200", "queued"]]);
+});
