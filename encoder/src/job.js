@@ -135,18 +135,19 @@ async function processJob(job, ctx) {
     const outDir = path.join(jobDir, profile);
     fs.rmSync(jobDir, { recursive: true, force: true });
     for (const d of planDirs(plan)) fs.mkdirSync(path.join(outDir, d), { recursive: true });
-    const args = buildFfmpegArgs(cfg, plan, job.mirror_url, outDir);
+    let args = buildFfmpegArgs(cfg, plan, job.mirror_url, outDir);
+    plan.gpu = args.includes('-hwaccel_output_format');
     const videoDesc = profile === 'v1-copy'
       ? plan.video.map((t) => (t.copy ? `копия ${t.dir}` : `${t.dir}${t.sourceKeys ? ' (force_key_frames source)' : ''}`)).join(' + ')
       : `видео ${plan.video.map((t) => `${t.dir} ${t.width}x${t.height}`).join(', ')}`;
     log.info(`[encode] ${profile} ${cfg.encoder}: ${videoDesc}; ` +
       `звук ${plan.audio.length}; субтитры ${plan.subs.length}; пропущено ${plan.skipped.length}; тонмаппинг ${plan.tonemapPath || 'нет'}` +
-      `${plan.dovi ? ` (DV ${plan.dovi.profile ?? '?'}${plan.dovi.needsRpu ? ', по RPU' : ''})` : ''}`);
-    log.info(`[encode] ffmpeg ${args.map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(' ')}`);
+      `${plan.dovi ? ` (DV ${plan.dovi.profile ?? '?'}${plan.dovi.needsRpu ? ', по RPU' : ''})` : ''}` +
+      `; масштаб ${plan.gpu ? 'GPU' : 'CPU'}`);
     const durS = probe.duration_ms / 1000;
     const t0 = Date.now();
     const kv = {};
-    const r = await run(cfg.ffmpeg, args, {
+    const encodeOnce = () => run(cfg.ffmpeg, args, {
       signal: jsig,
       tailBytes: 16384,
       onLine(line) {
@@ -165,11 +166,26 @@ async function processJob(job, ctx) {
         }
       },
     });
+    log.info(`[encode] ffmpeg ${args.map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(' ')}`);
+    let r = await encodeOnce();
     ctl.check();
     if (signal?.aborted) throw new JobError('encode', 'остановка воркера', true);
+    if (r.code !== 0 && plan.gpu) {
+      // путь на видеокарте не взлетел (старый ffmpeg, необычный исходник) — сразу повтор с масштабом на CPU
+      log.warn(`[encode] на GPU не вышло (ffmpeg exit ${r.code}: ${lastLine(r.stderr)}) — повтор с масштабом на CPU`);
+      plan.gpu = false;
+      fs.rmSync(outDir, { recursive: true, force: true });
+      for (const d of planDirs(plan)) fs.mkdirSync(path.join(outDir, d), { recursive: true });
+      args = buildFfmpegArgs(cfg, plan, job.mirror_url, outDir);
+      state.progress = 0;
+      log.info(`[encode] ffmpeg ${args.map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(' ')}`);
+      r = await encodeOnce();
+      ctl.check();
+      if (signal?.aborted) throw new JobError('encode', 'остановка воркера', true);
+    }
     if (r.code !== 0) throw new JobError('encode', `ffmpeg exit ${r.code}: ${lastLine(r.stderr)}`, true);
     const encodeMs = Date.now() - t0;
-    log.info(`[encode] готово за ${(encodeMs / 1000).toFixed(1)} с (${plan.tonemapPath || 'без тонмаппинга'})`);
+    log.info(`[encode] готово за ${(encodeMs / 1000).toFixed(1)} с (${plan.tonemapPath || 'без тонмаппинга'}, масштаб ${plan.gpu ? 'GPU' : 'CPU'})`);
     state.progress = 1;
     state.eta_s = 0;
     state.fps = null;

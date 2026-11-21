@@ -35,8 +35,11 @@ function loadConfig(env = process.env) {
     maxSourceBytes: num(env.SM_MAX_SOURCE_GB, 40) * 1024 ** 3,
     ffmpeg: env.SM_FFMPEG || 'ffmpeg',
     ffprobe: env.SM_FFPROBE || 'ffprobe',
-    // аппаратное декодирование исходника (только с nvenc): -hwaccel cuda, кадры возвращаются в память для фильтров
+    // аппаратное декодирование исходника (только с nvenc): -hwaccel cuda; без gpuScale кадры возвращаются в память для фильтров
     hwdec: bool(env.SM_HWDEC, encoder === 'nvenc'),
+    // масштаб на видеокарте (с hwdec): кадры остаются в памяти GPU (-hwaccel_output_format cuda, scale_cuda) — без копий
+    // через PCIe и scale на CPU; 4K→1080p в 2,3 раза быстрее (RTX 5070 Ti, 21.11). Нет scale_cuda — выключается при старте
+    gpuScale: bool(env.SM_GPU_SCALE, encoder === 'nvenc'),
     // HDR → SDR: auto — libplacebo (Vulkan на видеокарте), если самопроверка при старте прошла, иначе cpu (zscale+tonemap)
     tonemapMode,
     vulkanDevice: env.SM_VULKAN_DEVICE || '',  // индекс или подстрока имени устройства Vulkan; пусто — первая не-программная
